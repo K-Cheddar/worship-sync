@@ -10,7 +10,10 @@ import {
   findReusablePeriodSchedule,
   formatSchedulePeriodName,
 } from "./schedulePeriodUtils";
-import { filterServicesWithOccurrencesInRange } from "@/utils/teamScheduleOccurrences";
+import {
+  filterServicesWithOccurrencesInRange,
+  matchOccurrencesByIdentity,
+} from "@/utils/teamScheduleOccurrences";
 import { isActive } from "../teamsUtils";
 import { serverDate } from "@/utils/serverTime";
 
@@ -45,7 +48,7 @@ export const getCreateScheduleDefaultRange = ({
       timeZone,
     });
     const range = { startDate: upcoming.start, endDate: upcoming.end };
-    const coveredSchedule = upcoming.nextOccurrence && churchId
+    const reusableSchedule = upcoming.nextOccurrence && churchId
       ? findReusablePeriodSchedule({
         schedules,
         churchId,
@@ -56,7 +59,19 @@ export const getCreateScheduleDefaultRange = ({
         timeZone,
       }).schedule
       : null;
-    if (!coveredSchedule) return range;
+    const coverage = reusableSchedule
+      ? matchOccurrencesByIdentity(
+        reusableSchedule.occurrences || [],
+        upcoming.period.occurrences,
+        timeZone,
+      )
+      : null;
+    const fullyCovered = Boolean(
+      reusableSchedule && coverage &&
+      coverage.ambiguousCurrentIds.size === 0 &&
+      coverage.matches.size === upcoming.period.occurrences.length,
+    );
+    if (!fullyCovered) return range;
 
     const periodEnd = parsePlainDate(range.endDate);
     if (!periodEnd) return range;

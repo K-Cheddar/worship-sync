@@ -505,7 +505,7 @@ test("schedule creation, changes, and generation require a configured church tim
   assert.match(bulkPlan.payload.errorMessage, /valid church time zone/i);
 });
 
-test("generated schedule ensure reuses a compatible custom schedule", async (t) => {
+test("generated schedule ensure reports duplicate ownership instead of choosing between saved copies", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("generated_schedule_ensure");
   const { teamId, positionIds, memberIds } = await seedTeam(context, {
@@ -604,11 +604,10 @@ test("generated schedule ensure reuses a compatible custom schedule", async (t) 
       body,
     },
   );
-  assert.equal(preferred.statusCode, 200);
-  assert.equal(
-    preferred.payload.schedule.scheduleId,
-    first.payload.schedule.scheduleId,
-  );
+  assert.equal(preferred.statusCode, 409);
+  assert.match(preferred.payload.errorMessage, /more than one saved schedule owns/i);
+  assert.deepEqual((await getDoc("teamSchedules", first.payload.schedule.scheduleId)).assignments, assignment.payload.schedule.assignments);
+  assert.deepEqual((await getDoc("teamSchedules", equivalentLegacyId)).assignments, first.payload.schedule.assignments);
 
   const otherTeam = await callHandler(authHandlers.createTeam, {
     context,
@@ -785,7 +784,7 @@ test("generated schedule ensure reuses a compatible custom schedule", async (t) 
   assert.equal(reused.payload.schedule.source, "custom");
 });
 
-test("generated schedule ensure keeps a partial populated custom schedule as an alternate", async (t) => {
+test("generated schedule ensure preserves a populated partial schedule beside an empty duplicate", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("generated_schedule_custom_populated_reuse");
   const { teamId } = await seedTeam(context, { teamName: "Media" });
@@ -857,13 +856,13 @@ test("generated schedule ensure keeps a partial populated custom schedule as an 
     },
   });
 
-  assert.equal(result.statusCode, 200);
-  assert.equal(result.payload.created, false);
-  assert.equal(result.payload.schedule.scheduleId, emptyGeneratedId);
-  assert.equal(result.payload.schedule.startDate, "2026-10-01");
+  assert.equal(result.statusCode, 409);
+  assert.match(result.payload.errorMessage, /more than one saved schedule owns/i);
+  assert.equal((await getDoc("teamSchedules", populatedCustomId)).assignments[occurrence.occurrenceId]["camera::0"].primaryMemberId, "existing-member");
+  assert.deepEqual((await getDoc("teamSchedules", emptyGeneratedId)).occurrences, [occurrence]);
 });
 
-test("generated schedule ensure prefers an exact period over a broader custom schedule", async (t) => {
+test("generated schedule ensure reports duplicate ownership between an exact and broader period", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("generated_schedule_custom_generated_ambiguous");
   const { teamId } = await seedTeam(context, { teamName: "Media" });
@@ -934,8 +933,10 @@ test("generated schedule ensure prefers an exact period over a broader custom sc
     },
   });
 
-  assert.equal(result.statusCode, 200);
-  assert.equal(result.payload.schedule.scheduleId, generatedId);
+  assert.equal(result.statusCode, 409);
+  assert.match(result.payload.errorMessage, /more than one saved schedule owns/i);
+  assert.equal((await getDoc("teamSchedules", generatedId)).assignments[occurrence.occurrenceId]["camera::0"].primaryMemberId, "generated-member");
+  assert.equal((await getDoc("teamSchedules", "custom-october")).assignments[occurrence.occurrenceId]["camera::0"].primaryMemberId, "custom-member");
 });
 
 test("generated schedule ensure yields to a populated custom period", async (t) => {
@@ -973,12 +974,6 @@ test("generated schedule ensure yields to a populated custom period", async (t) 
     serviceIds: ["worship-experience"],
     occurrences: [occurrence],
   };
-  const generated = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
-    context,
-    body,
-  });
-  assert.equal(generated.statusCode, 200);
-  assert.equal(generated.payload.created, true);
   const customId = "custom-october-praise";
   await setDoc("teamSchedules", customId, {
     scheduleId: customId,
@@ -1169,7 +1164,7 @@ test("generated schedule ensure reuses an older rolling record by date coverage 
   );
 });
 
-test("Upcoming ensure creates the full period instead of reusing a partial generated schedule", async (t) => {
+test("Upcoming ensure blocks a full-period duplicate of an occurrence owned by a partial generated schedule", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("upcoming_october_partial_generated_bounds");
   const { teamId } = await seedTeam(context, { teamName: "Media" });
@@ -1209,10 +1204,6 @@ test("Upcoming ensure creates the full period instead of reusing a partial gener
     occurrences: [occurrence],
     assignments,
   });
-  const generatedKey = createHash("sha256")
-    .update(`${context.churchId}\u0000${teamId}\u00002026-10-01\u00002026-10-31`)
-    .digest("hex");
-
   const result = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
     context,
     body: {
@@ -1231,15 +1222,15 @@ test("Upcoming ensure creates the full period instead of reusing a partial gener
     },
   });
 
-  assert.equal(result.statusCode, 200);
-  assert.equal(result.payload.created, true);
-  assert.equal(result.payload.schedule.scheduleId, `generated_${generatedKey}`);
-  assert.equal(result.payload.schedule.startDate, "2026-10-01");
-  assert.equal(result.payload.schedule.endDate, "2026-10-31");
+  assert.equal(result.statusCode, 409);
+  assert.match(result.payload.errorMessage, /already owned by another schedule/i);
   assert.deepEqual((await getDoc("teamSchedules", oldScheduleId)).assignments, assignments);
+  assert.equal((await queryDocs(COLLECTIONS.teamSchedules, [
+    { field: "churchId", value: context.churchId },
+  ])).filter((schedule) => schedule.teamId === teamId && !schedule.archivedAt).length, 1);
 });
 
-test("Upcoming ensure creates the full December period beside a partial custom schedule", async (t) => {
+test("Upcoming ensure blocks a full-period duplicate of an occurrence in a partial custom schedule", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("upcoming_december_partial_bounds");
   const { teamId, positionIds } = await seedTeam(context, {
@@ -1300,12 +1291,12 @@ test("Upcoming ensure creates the full December period beside a partial custom s
     },
   });
 
-  assert.equal(result.statusCode, 200);
-  assert.equal(result.payload.created, true);
-  assert.equal(result.payload.schedule.startDate, "2026-12-01");
-  assert.equal(result.payload.schedule.endDate, "2026-12-31");
-  assert.notEqual(result.payload.schedule.scheduleId, savedScheduleId);
+  assert.equal(result.statusCode, 409);
+  assert.match(result.payload.errorMessage, /already owned by another schedule/i);
   assert.equal((await getDoc("teamSchedules", savedScheduleId)).assignments[occurrence.occurrenceId][`${cameraId}::0`].primaryMemberId, "existing-member");
+  assert.equal((await queryDocs(COLLECTIONS.teamSchedules, [
+    { field: "churchId", value: context.churchId },
+  ])).filter((schedule) => schedule.teamId === teamId && !schedule.archivedAt).length, 1);
 });
 
 test("generated schedule ensure preserves an incomplete saved schedule and creates current rows", async (t) => {
@@ -1441,7 +1432,7 @@ test("generated schedule ensure reuses only an equivalent source-less legacy per
   assert.equal(result.payload.schedule.scheduleId, legacyId);
 });
 
-test("generated schedule ensure prefers a populated old generated identity over its populated legacy copy", async (t) => {
+test("generated schedule ensure preserves populated generated and legacy copies with duplicate ownership", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("generated_schedule_old_period_key");
   const { teamId } = await seedTeam(context, { teamName: "Media" });
@@ -1512,17 +1503,13 @@ test("generated schedule ensure prefers a populated old generated identity over 
       occurrences: [occurrence],
     },
   });
-  assert.equal(result.statusCode, 200);
-  assert.equal(result.payload.created, false);
-  assert.equal(result.payload.schedule.scheduleId, legacyId);
-  assert.equal(
-    result.payload.schedule.assignments[occurrence.occurrenceId]["camera::0"]
-      .primaryMemberId,
-    "generated-member",
-  );
+  assert.equal(result.statusCode, 409);
+  assert.match(result.payload.errorMessage, /more than one saved schedule owns/i);
+  assert.equal((await getDoc("teamSchedules", legacyId)).assignments[occurrence.occurrenceId]["camera::0"].primaryMemberId, "generated-member");
+  assert.equal((await getDoc("teamSchedules", "legacy-equivalent-october")).assignments[occurrence.occurrenceId]["camera::0"].primaryMemberId, "legacy-member");
 });
 
-test("generated schedule ensure reuses source-less periods and picks deterministically among equivalent copies", async (t) => {
+test("generated schedule ensure reuses one source-less period and reports equivalent copies as ambiguous", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext(
     "generated_schedule_non_equivalent_legacy",
@@ -1620,8 +1607,10 @@ test("generated schedule ensure reuses source-less periods and picks determinist
       body: { ...body, teamId: ambiguousTeam.teamId },
     },
   );
-  assert.equal(ambiguous.statusCode, 200);
-  assert.equal(ambiguous.payload.schedule.scheduleId, "legacy-copy-a");
+  assert.equal(ambiguous.statusCode, 409);
+  assert.match(ambiguous.payload.errorMessage, /more than one saved schedule owns/i);
+  assert.ok(await getDoc("teamSchedules", "legacy-copy-a"));
+  assert.ok(await getDoc("teamSchedules", "legacy-copy-b"));
 });
 
 test("generated schedule ensure rejects inactive services and mismatched groups", async (t) => {
@@ -3923,6 +3912,58 @@ test("atomic assignment batches reject a row as a whole and require the current 
   );
 });
 
+test("schedule assignment mutations still require edit access to the owning team", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const admin = await createAdminContext("schedule_assignment_permission_owner");
+  const reader = await createHumanContext("schedule_assignment_permission_reader", {
+    churchId: admin.churchId,
+    role: "member",
+    permissions: { teams: "view", teamScopes: {} },
+  });
+  const { teamId, positionIds, memberIds } = await seedTeam(admin, {
+    teamName: "Worship",
+    positions: [{ name: "Vocal" }],
+    members: [{ firstName: "Morgan", lastName: "Lee", positions: ["Vocal"] }],
+  });
+  const occurrenceId = "sunday@2026-10-04T10:00:00.000Z";
+  const created = await callHandler(authHandlers.createTeamSchedule, {
+    context: admin,
+    body: {
+      name: "October",
+      teamId,
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      serviceIds: ["sunday"],
+      occurrences: [{
+        occurrenceId,
+        serviceId: "sunday",
+        name: "Sunday",
+        startsAt: occurrenceId.slice("sunday@".length),
+        positionRequirements: [{ positionId: positionIds.Vocal, count: 1 }],
+      }],
+    },
+  });
+  assert.equal(created.statusCode, 200);
+  const scheduleId = created.payload.schedule.scheduleId;
+
+  const rejected = await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context: reader,
+    params: { scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: `${positionIds.Vocal}::0`,
+      memberId: memberIds.Morgan,
+      serviceDate: "2026-10-04",
+    },
+  });
+
+  assert.equal(rejected.statusCode, 403);
+  assert.equal(rejected.payload.success, false);
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, { context: admin });
+  const unchanged = bootstrap.payload.schedules.find((schedule) => schedule.scheduleId === scheduleId);
+  assert.equal(unchanged.assignments?.[occurrenceId]?.[`${positionIds.Vocal}::0`], undefined);
+});
+
 test("schedule assignments fall back to one slot when occurrence requirements are missing", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("assignment_requirement_fallback");
@@ -4980,16 +5021,16 @@ test("occurrence conflict checks include same-team roles, different dates, and a
       occurrences: [firstOccurrence],
     },
   });
-  const sameTeamSchedule = await callHandler(authHandlers.createTeamSchedule, {
-    context,
-    body: {
-      name: "Worship same team",
-      teamId: worship.teamId,
-      startDate: "2026-07-01",
-      endDate: "2026-07-31",
-      serviceIds: ["svc"],
-      occurrences: [firstOccurrence],
-    },
+  assert.equal(worshipSchedule.statusCode, 200);
+  // Model a pre-existing duplicate record directly. New schedule mutations
+  // reject creating this ownership conflict, while assignment checks still
+  // protect records already present in legacy storage.
+  const sameTeamScheduleId = "legacy-duplicate-worship-schedule";
+  await setDoc(COLLECTIONS.teamSchedules, sameTeamScheduleId, {
+    ...worshipSchedule.payload.schedule,
+    scheduleId: sameTeamScheduleId,
+    name: "Worship same team",
+    assignments: {},
   });
   const differentDateSchedule = await callHandler(
     authHandlers.createTeamSchedule,
@@ -5021,7 +5062,7 @@ test("occurrence conflict checks include same-team roles, different dates, and a
     authHandlers.updateTeamScheduleAssignment,
     {
       context,
-      params: { scheduleId: sameTeamSchedule.payload.schedule.scheduleId },
+      params: { scheduleId: sameTeamScheduleId },
       body: {
         serviceId: firstOccurrence.occurrenceId,
         positionSlotKey: `${worship.positionIds.Vocal}::0`,
@@ -5035,7 +5076,7 @@ test("occurrence conflict checks include same-team roles, different dates, and a
     authHandlers.updateTeamScheduleAssignment,
     {
       context,
-      params: { scheduleId: sameTeamSchedule.payload.schedule.scheduleId },
+      params: { scheduleId: sameTeamScheduleId },
       body: {
         serviceId: firstOccurrence.occurrenceId,
         positionSlotKey: `${worship.positionIds.Vocal}::0`,
@@ -15746,7 +15787,7 @@ test("portable schedule import can resolve foreign service and member references
 });
 
 
-test("generated period rejects incomplete canonical reuse without overwriting any saved map", async (t) => {
+test("generated period additively reconciles missing occurrences without overwriting saved maps", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("canonical_missing_rows");
   const { teamId } = await seedTeam(context, { teamName: "Media" });
@@ -15765,12 +15806,310 @@ test("generated period rejects incomplete canonical reuse without overwriting an
   }, { merge: true });
   const before = await getDoc("teamSchedules", scheduleId);
   const requests = [1, 2].map(() => callHandler(authHandlers.ensureTeamScheduleForPeriod, {
-    context, body: { ...body, serviceIds: ["first", "second"], occurrences: [first, second], preferredScheduleId: scheduleId },
+    context, body: { ...body, serviceIds: ["first", "second"], occurrences: [first, second], operatorSelectedScheduleId: scheduleId },
   }));
   const results = await Promise.all(requests);
-  assert.deepEqual(results.map((result) => result.statusCode), [409, 409]);
-  assert.match(results[0].payload.errorMessage, /Edit its services or create a custom schedule/);
-  assert.deepEqual(await getDoc("teamSchedules", scheduleId), before);
+  assert.deepEqual(results.map((result) => result.statusCode), [200, 200]);
+  assert.equal(results[0].payload.schedule.scheduleId, scheduleId);
+  const after = await getDoc("teamSchedules", scheduleId);
+  assert.deepEqual(after.assignments, before.assignments);
+  assert.deepEqual(after.microphoneAssignments, before.microphoneAssignments);
+  assert.deepEqual(after.iemAssignments, before.iemAssignments);
+  assert.deepEqual(after.additionalPositionSlots, before.additionalPositionSlots);
+  assert.deepEqual(after.occurrences.map((occurrence) => occurrence.occurrenceId), [first.occurrenceId, second.occurrenceId]);
+  assert.deepEqual(after.serviceIds, ["first", "second"]);
+  assert.equal((await queryDocs("teamSchedules", [{ field: "churchId", value: context.churchId }])).filter((schedule) => schedule.teamId === teamId).length, 1);
+  assert.deepEqual((await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body: { ...body, serviceIds: ["first", "second"], occurrences: [first, second], operatorSelectedScheduleId: scheduleId },
+  })).payload.schedule, after);
+});
+
+test("overlapping period ensures keep one owner while another team may own the same occurrence", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("overlapping_period_ownership");
+  const firstTeam = await seedTeam(context, { teamName: "Media" });
+  const secondTeam = await seedTeam(context, { teamName: "Worship" });
+  const serviceId = "combined-service";
+  const occurrence = {
+    occurrenceId: `${serviceId}@2026-10-10T12:00:00.000Z`,
+    serviceId,
+    name: "Combined Service",
+    startsAt: "2026-10-10T12:00:00.000Z",
+    positionRequirements: [],
+  };
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [{
+      id: serviceId,
+      serviceId,
+      name: occurrence.name,
+      reccurence: "one_time",
+      dateTimeISO: occurrence.startsAt,
+    }],
+  });
+  const makeBody = (teamId, startDate, endDate) => ({
+    name: "October",
+    teamId,
+    startDate,
+    endDate,
+    timeZone: "UTC",
+    serviceIds: [serviceId],
+    occurrences: [occurrence],
+  });
+
+  const sameTeamResults = await Promise.all([
+    callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+      context,
+      body: makeBody(firstTeam.teamId, "2026-10-01", "2026-10-15"),
+    }),
+    callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+      context,
+      body: makeBody(firstTeam.teamId, "2026-10-10", "2026-10-31"),
+    }),
+  ]);
+  assert.deepEqual(sameTeamResults.map((result) => result.statusCode).sort(), [200, 409]);
+  const firstTeamSchedules = (await queryDocs(COLLECTIONS.teamSchedules, [
+    { field: "churchId", value: context.churchId },
+  ])).filter((schedule) => schedule.teamId === firstTeam.teamId && !schedule.archivedAt);
+  assert.equal(firstTeamSchedules.length, 1);
+  const firstTeamClaims = (await queryDocs(COLLECTIONS.teamScheduleOccurrenceOwners, [
+    { field: "churchId", value: context.churchId },
+  ])).filter((claim) => claim.teamId === firstTeam.teamId);
+  assert.equal(firstTeamClaims.length, 1);
+  assert.equal(firstTeamClaims[0].scheduleId, firstTeamSchedules[0].scheduleId);
+
+  const otherTeamResult = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body: makeBody(secondTeam.teamId, "2026-10-01", "2026-10-31"),
+  });
+  assert.equal(otherTeamResult.statusCode, 200, JSON.stringify(otherTeamResult.payload));
+  assert.notEqual(otherTeamResult.payload.schedule.scheduleId, firstTeamSchedules[0].scheduleId);
+  const allClaims = await queryDocs(COLLECTIONS.teamScheduleOccurrenceOwners, [
+    { field: "churchId", value: context.churchId },
+  ]);
+  assert.deepEqual(allClaims.map((claim) => claim.teamId).sort(), [firstTeam.teamId, secondTeam.teamId].sort());
+});
+
+test("custom schedules may overlap dates for distinct occurrences but cannot create or update duplicate owners", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("custom_occurrence_ownership");
+  const { teamId } = await seedTeam(context, { teamName: "Media" });
+  const services = [
+    { serviceId: "special-a", name: "Special A", startsAt: "2026-10-07T12:00:00.000Z" },
+    { serviceId: "special-b", name: "Special B", startsAt: "2026-10-10T12:00:00.000Z" },
+  ];
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: services.map((service) => ({
+      id: service.serviceId,
+      serviceId: service.serviceId,
+      name: service.name,
+      reccurence: "one_time",
+      dateTimeISO: service.startsAt,
+    })),
+  });
+  const makeBody = (service) => ({
+    name: service.name,
+    teamId,
+    startDate: "2026-10-01",
+    endDate: "2026-10-31",
+    serviceIds: [service.serviceId],
+    occurrences: [{
+      occurrenceId: `${service.serviceId}@${service.startsAt}`,
+      serviceId: service.serviceId,
+      name: service.name,
+      startsAt: service.startsAt,
+      positionRequirements: [],
+    }],
+  });
+
+  const first = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: makeBody(services[0]),
+  });
+  const second = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: makeBody(services[1]),
+  });
+  assert.equal(first.statusCode, 200, JSON.stringify(first.payload));
+  assert.equal(second.statusCode, 200, JSON.stringify(second.payload));
+  assert.notEqual(first.payload.schedule.scheduleId, second.payload.schedule.scheduleId);
+
+  const duplicate = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: { ...makeBody(services[0]), name: "Duplicate Special A" },
+  });
+  assert.equal(duplicate.statusCode, 409);
+  assert.match(duplicate.payload.errorMessage, /already owned/i);
+
+  const secondBefore = await getDoc(COLLECTIONS.teamSchedules, second.payload.schedule.scheduleId);
+  const updateDuplicate = await callHandler(authHandlers.updateTeamSchedule, {
+    context,
+    params: { scheduleId: second.payload.schedule.scheduleId },
+    body: { ...makeBody(services[0]), name: secondBefore.name },
+  });
+  assert.equal(updateDuplicate.statusCode, 409);
+  assert.match(updateDuplicate.payload.errorMessage, /already owned/i);
+  assert.deepEqual(await getDoc(COLLECTIONS.teamSchedules, second.payload.schedule.scheduleId), secondBefore);
+  const activeSchedules = (await queryDocs(COLLECTIONS.teamSchedules, [
+    { field: "churchId", value: context.churchId },
+  ])).filter((schedule) => schedule.teamId === teamId && !schedule.archivedAt);
+  assert.equal(activeSchedules.length, 2);
+});
+
+test("October period reuses the populated legacy schedule and safely adds newly defined services", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("october_schedule_reuse");
+  const members = Array.from({ length: 11 }, (_, index) => ({
+    firstName: `Volunteer${index + 1}`,
+    lastName: "Media",
+    positions: ["Camera"],
+  }));
+  const { teamId, positionIds, memberIds } = await seedTeam(context, {
+    teamName: "Media",
+    positions: [{ name: "Camera" }],
+    members,
+  });
+  const services = [
+    { serviceId: "sabbath-first", name: "Sabbath Worship", reccurence: "weekly", dayOfWeek: 6, time: "10:00", serviceGroupId: "combined-sabbath", positionRequirements: [{ positionId: positionIds.Camera, count: 11 }] },
+    { serviceId: "sabbath-second", name: "Sabbath Study", reccurence: "weekly", dayOfWeek: 6, time: "10:00", serviceGroupId: "combined-sabbath" },
+    { serviceId: "power-up", name: "Power Up", reccurence: "one_time", dateTimeISO: "2026-10-07T18:00:00.000Z", positionRequirements: [{ positionId: positionIds.Camera, count: 4 }] },
+    { serviceId: "lunch-learn", name: "Lunch and Learn", reccurence: "one_time", dateTimeISO: "2026-10-10T12:00:00.000Z", positionRequirements: [{ positionId: positionIds.Camera, count: 2 }] },
+  ];
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: services.map((service) => ({ id: service.serviceId, ...service })),
+  });
+  const period = buildTeamSchedulePeriod({
+    services,
+    positions: [{ positionId: positionIds.Camera, teamId, name: "Camera" }],
+    teamId,
+    startDate: "2026-10-01",
+    endDate: "2026-10-31",
+    timeZone: "UTC",
+  });
+  assert.equal(period.occurrences.length, 7);
+  assert.deepEqual(period.occurrences.map((item) => item.startsAt), [...period.occurrences.map((item) => item.startsAt)].sort());
+  const sabbathOccurrences = period.occurrences.filter((item) => item.groupId === "combined-sabbath");
+  assert.equal(sabbathOccurrences.length, 5);
+  const savedOccurrences = sabbathOccurrences.map((item) => ({
+    ...item,
+    // Preserve the old map key while carrying Phase 2 logical identity metadata.
+    occurrenceId: `${item.serviceId}@${item.startsAt}`,
+  }));
+  const assignments = {};
+  savedOccurrences.forEach((item) => {
+    assignments[item.occurrenceId] = {};
+    for (let slot = 0; slot < 11; slot += 1) {
+      assignments[item.occurrenceId][`${positionIds.Camera}::${slot}`] = {
+        primaryMemberId: memberIds[`Volunteer${slot + 1}`],
+      };
+    }
+  });
+  const savedGuestId = "scheduleGuest_october_media";
+  assignments[savedOccurrences[0].occurrenceId][`${positionIds.Camera}::10`] = {
+    primaryMemberId: savedGuestId,
+  };
+  const operationalData = {
+    assignments,
+    guests: [{ guestId: savedGuestId, name: "Guest Camera Operator" }],
+    responses: { [savedOccurrences[0].occurrenceId]: { [`${positionIds.Camera}::0`]: { memberId: memberIds.Volunteer1, response: "accepted" } } },
+    microphoneAssignments: { [savedOccurrences[0].occurrenceId]: { [`${positionIds.Camera}::0`]: ["mic-october"] } },
+    iemAssignments: { [savedOccurrences[0].occurrenceId]: { [`${positionIds.Camera}::0`]: ["iem-october"] } },
+    additionalPositionSlots: { [savedOccurrences[0].occurrenceId]: [`${positionIds.Camera}::11`] },
+    optionalPositionSlots: { [savedOccurrences[0].occurrenceId]: [`${positionIds.Camera}::12`] },
+  };
+  const scheduleId = "legacy-october-media";
+  const emptyAlternativeId = "generated_empty-october-alternative";
+  await setDoc("teamSchedules", scheduleId, {
+    scheduleId,
+    churchId: context.churchId,
+    name: "October 2026",
+    teamId,
+    startDate: "2026-10-01",
+    endDate: "2026-10-31",
+    serviceIds: ["sabbath-first", "sabbath-second"],
+    occurrences: savedOccurrences,
+    ...operationalData,
+    publicLinkToken: "existing-public-link-token",
+    sentAt: "2026-09-20T12:00:00.000Z",
+    archiveHistory: [{ archivedAt: "2025-01-01T00:00:00.000Z" }],
+    createdAt: "2026-09-01T12:00:00.000Z",
+    createdByUid: "legacy-editor",
+    // Missing publication metadata remains Published under the legacy contract.
+  });
+  const emptyAlternative = {
+    scheduleId: emptyAlternativeId,
+    churchId: context.churchId,
+    name: "October 2026",
+    teamId,
+    startDate: "2026-10-01",
+    endDate: "2026-10-31",
+    source: "generated-period",
+    generatedPeriodKey: "empty-october-alternative",
+    serviceIds: [],
+    occurrences: [],
+    assignments: {},
+  };
+  await setDoc("teamSchedules", emptyAlternativeId, emptyAlternative);
+  const before = await getDoc("teamSchedules", scheduleId);
+  const emptyAlternativeBefore = await getDoc("teamSchedules", emptyAlternativeId);
+  assert.equal(Object.values(before.assignments).flatMap((row) => Object.values(row)).length, 55);
+  const body = {
+    name: "October 2026",
+    teamId,
+    startDate: "2026-10-01",
+    endDate: "2026-10-31",
+    timeZone: "UTC",
+    serviceIds: period.serviceIds,
+    occurrences: period.occurrences,
+    visibleOccurrenceIds: period.occurrences.map((item) => item.occurrenceId),
+    // Simulate a stale ID retained by an older client. Only the explicit
+    // operatorSelectedScheduleId field may override the populated default.
+    preferredScheduleId: emptyAlternativeId,
+  };
+  const result = await callHandler(authHandlers.ensureTeamScheduleForPeriod, { context, body });
+  assert.equal(result.statusCode, 200, JSON.stringify(result.payload));
+  assert.equal(result.payload.schedule.scheduleId, scheduleId);
+  assert.equal(result.payload.created, false);
+  const after = await getDoc("teamSchedules", scheduleId);
+  assert.deepEqual(after.assignments, before.assignments);
+  assert.deepEqual(after.guests, before.guests);
+  assert.deepEqual(after.responses, before.responses);
+  assert.deepEqual(after.microphoneAssignments, before.microphoneAssignments);
+  assert.deepEqual(after.iemAssignments, before.iemAssignments);
+  assert.deepEqual(after.additionalPositionSlots, before.additionalPositionSlots);
+  assert.deepEqual(after.optionalPositionSlots, before.optionalPositionSlots);
+  assert.equal(after.publicLinkToken, before.publicLinkToken);
+  assert.equal(after.sentAt, before.sentAt);
+  assert.deepEqual(after.archiveHistory, before.archiveHistory);
+  assert.equal(after.published, undefined);
+  assert.deepEqual(after.serviceIds, [...new Set([...before.serviceIds, ...period.serviceIds])]);
+  assert.equal(after.occurrences.length, 7);
+  assert.deepEqual(after.occurrences.map((item) => item.startsAt), [...after.occurrences.map((item) => item.startsAt)].sort());
+  const newOccurrences = after.occurrences.filter((item) => item.serviceId === "power-up" || item.serviceId === "lunch-learn");
+  assert.deepEqual(newOccurrences.map((item) => item.serviceId).sort(), ["lunch-learn", "power-up"]);
+  assert.deepEqual(newOccurrences.map((item) => item.positionRequirements[0].count).sort((a, b) => a - b), [2, 4]);
+  newOccurrences.forEach((item) => {
+    assert.equal(after.assignments[item.occurrenceId], undefined);
+  });
+  assert.equal(Object.values(after.assignments).flatMap((row) => Object.values(row)).length, 55);
+  const teamSchedules = (await queryDocs("teamSchedules", [
+    { field: "churchId", value: context.churchId },
+  ])).filter((item) => item.teamId === teamId);
+  assert.equal(teamSchedules.length, 2);
+  assert.deepEqual(await getDoc("teamSchedules", emptyAlternativeId), emptyAlternativeBefore);
+  const claims = (await queryDocs(COLLECTIONS.teamScheduleOccurrenceOwners, [
+    { field: "churchId", value: context.churchId },
+  ])).filter((claim) => claim.teamId === teamId);
+  assert.equal(claims.length, 7);
+  assert.ok(claims.every((claim) => claim.scheduleId === scheduleId));
+  assert.equal((await queryDocs(COLLECTIONS.notificationIntents, [{ field: "churchId", value: context.churchId }])).length, 0);
+
+  const repeated = await callHandler(authHandlers.ensureTeamScheduleForPeriod, { context, body });
+  assert.equal(repeated.statusCode, 200);
+  assert.deepEqual(await getDoc("teamSchedules", scheduleId), after);
 });
 
 test("generated ensure does not substitute another service with the same name and timestamp", async (t) => {
@@ -15787,6 +16126,95 @@ test("generated ensure does not substitute another service with the same name an
   assert.equal(result.statusCode, 409);
   assert.match(result.payload.errorMessage, /cannot be matched safely/i);
   assert.deepEqual(await getDoc("teamSchedules", schedule.scheduleId), before);
+});
+
+test("November standalone services cannot replace a saved combined schedule or its operational data", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("november_group_identity_drift");
+  const { teamId } = await seedTeam(context, { teamName: "Media" });
+  const dates = ["2026-11-07", "2026-11-14", "2026-11-21", "2026-11-28"];
+  const standaloneServiceId = "sabbath-worship";
+  const studyServiceId = "sabbath-study";
+  const powerUpServiceId = "power-up";
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [
+      { id: standaloneServiceId, name: "Sabbath Service", reccurence: "weekly", dayOfWeek: 6, time: "10:00" },
+      { id: studyServiceId, name: "Sabbath Study", reccurence: "weekly", dayOfWeek: 6, time: "10:00" },
+      { id: powerUpServiceId, name: "Power Up", reccurence: "one_time", dateTimeISO: "2026-11-11T18:00:00.000Z" },
+    ],
+  });
+  const savedOccurrences = dates.map((serviceDate) => ({
+    occurrenceId: `group:sabbath@${serviceDate}`,
+    logicalOccurrenceId: `group:sabbath@${serviceDate}`,
+    groupId: "sabbath",
+    serviceId: standaloneServiceId,
+    serviceIds: [standaloneServiceId, studyServiceId],
+    serviceDate,
+    name: "Sabbath Worship & Study",
+    startsAt: `${serviceDate}T10:00:00.000Z`,
+  }));
+  const powerUpOccurrence = {
+    occurrenceId: `${powerUpServiceId}@2026-11-11T18:00:00.000Z`,
+    serviceId: powerUpServiceId,
+    name: "Power Up",
+    startsAt: "2026-11-11T18:00:00.000Z",
+  };
+  const assignments = Object.fromEntries(savedOccurrences.map((occurrence) => [
+    occurrence.occurrenceId,
+    { "camera::0": { primaryMemberId: `member-${occurrence.serviceDate}` } },
+  ]));
+  const scheduleId = "legacy-november-combined";
+  await setDoc("teamSchedules", scheduleId, {
+    scheduleId,
+    churchId: context.churchId,
+    name: "November combined services",
+    teamId,
+    startDate: "2026-11-01",
+    endDate: "2026-11-30",
+    serviceIds: [standaloneServiceId, studyServiceId, powerUpServiceId],
+    occurrences: [...savedOccurrences, powerUpOccurrence],
+    assignments,
+    responses: { [savedOccurrences[0].occurrenceId]: { "camera::0": { memberId: "member-2026-11-07", response: "accepted" } } },
+    guests: [{ guestId: "november-guest", name: "Guest Camera Operator" }],
+    microphoneAssignments: { [savedOccurrences[0].occurrenceId]: { "camera::0": ["mic-november"] } },
+    iemAssignments: { [savedOccurrences[0].occurrenceId]: { "camera::0": ["iem-november"] } },
+    additionalPositionSlots: { [savedOccurrences[0].occurrenceId]: ["camera::1"] },
+    publicLinkToken: "november-public-link",
+    sentAt: "2026-10-20T12:00:00.000Z",
+  });
+  const before = await getDoc("teamSchedules", scheduleId);
+  const standaloneOccurrences = dates.map((serviceDate) => ({
+    occurrenceId: `${standaloneServiceId}@${serviceDate}`,
+    logicalOccurrenceId: `${standaloneServiceId}@${serviceDate}`,
+    serviceId: standaloneServiceId,
+    serviceDate,
+    name: "Sabbath Service",
+    startsAt: `${serviceDate}T10:00:00.000Z`,
+    positionRequirements: [],
+  }));
+
+  const result = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body: {
+      name: "November 2026",
+      teamId,
+      startDate: "2026-11-01",
+      endDate: "2026-11-30",
+      timeZone: "UTC",
+      serviceIds: [standaloneServiceId],
+      occurrences: standaloneOccurrences,
+      visibleOccurrenceIds: standaloneOccurrences.map(({ occurrenceId }) => occurrenceId),
+    },
+  });
+
+  assert.equal(result.statusCode, 409, JSON.stringify(result.payload));
+  assert.match(result.payload.errorMessage, /cannot be matched safely|conflicting service identity|already owned/i);
+  assert.deepEqual(await getDoc("teamSchedules", scheduleId), before);
+  const activeSchedules = (await queryDocs(COLLECTIONS.teamSchedules, [
+    { field: "churchId", value: context.churchId },
+  ])).filter((schedule) => schedule.teamId === teamId && !schedule.archivedAt);
+  assert.deepEqual(activeSchedules.map(({ scheduleId: id }) => id), [scheduleId]);
 });
 
 test("legacy timestamp occurrence IDs remain readable when a recurring service time changes", async (t) => {

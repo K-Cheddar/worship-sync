@@ -2,9 +2,31 @@ import {
   getAvailableTeamsNavSections,
   getFirstAvailableTeamsNavPath,
   isTeamsNavPathAvailable,
+  getAvailableTeamsNavGroups,
+  matchesTeamsNavPath,
+  teamsNavSections,
+  servicesNavSections,
 } from "./teamsNavSections";
 
 describe("available Teams and Services sections", () => {
+  it("orders application destinations in three shared groups without changing URLs", () => {
+    const groups = getAvailableTeamsNavGroups([...teamsNavSections, ...servicesNavSections]);
+    expect(groups.map(({ label, sections }) => [label, sections.map(({ routePath }) => routePath)])).toEqual([
+      ["Services", ["services", "templates", "microphones", "service-setup"]],
+      ["Scheduling", ["schedules", "forms", "messages"]],
+      ["Teams", ["groups", "members", "positions", "roles", "qualifications"]],
+    ]);
+    expect(groups[0].sections[2].path).toBe("/teams-and-services/microphones");
+    expect(matchesTeamsNavPath("/teams-and-services/forms/form-1", "/teams-and-services/forms")).toBe(true);
+    expect(matchesTeamsNavPath("/teams-and-services/forms-other", "/teams-and-services/forms")).toBe(false);
+  });
+
+  it("omits empty groups and selects the first authorized page when a default is unavailable", () => {
+    const groups = getAvailableTeamsNavGroups(teamsNavSections.filter(({ routePath }) => routePath === "roles"));
+    expect(groups.map(({ label }) => label)).toEqual(["Teams"]);
+    expect(groups[0].sections[0].path).toBe("/teams-and-services/roles");
+    expect(getAvailableTeamsNavGroups([]).map(({ label }) => label)).toEqual([]);
+  });
   it("limits a membership-only reader to the safe Teams sections", () => {
     const sections = getAvailableTeamsNavSections({
       hasTeamsWorkspaceAccess: true,

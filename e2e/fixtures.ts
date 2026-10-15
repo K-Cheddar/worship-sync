@@ -71,7 +71,7 @@ export const test = base.extend({
     const blockedMailSlurpRequests: { count: number } = { count: 0 };
     const blockedUntrustedAuthRequests: { count: number } = { count: 0 };
 
-    if (testInfo.project.name === "chromium") {
+    if (["chromium", "smoke"].includes(testInfo.project.name)) {
       const trustedAuthOrigins = process.env.E2E_BASE_URL
         ? allowedE2EAuthOrigins(process.env.E2E_BASE_URL)
         : new Set<string>();

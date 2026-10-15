@@ -12,6 +12,7 @@ const mockChurchServiceTimeZone = {
   timeZone: "America/New_York" as string | null,
   isConfigured: true,
   legacyTimeZoneSuggestion: null,
+  refreshIssue: null as { kind: "unavailable" | "authentication" | "permission" | "configuration"; since: number } | null,
   refresh: jest.fn().mockResolvedValue(undefined),
 };
 
@@ -59,6 +60,7 @@ afterEach(() => {
   mockChurchServiceTimeZone.status = "ready";
   mockChurchServiceTimeZone.timeZone = "America/New_York";
   mockChurchServiceTimeZone.isConfigured = true;
+  mockChurchServiceTimeZone.refreshIssue = null;
 });
 
 describe("TeamsFormsPage period selection", () => {
@@ -149,10 +151,11 @@ describe("TeamsFormsPage period selection", () => {
     expect(mockGetTeamAvailabilityManagementData).toHaveBeenCalledWith("church-1");
   });
 
-  it("keeps saved forms visible when the initial church time zone request fails", () => {
+  it("keeps saved forms visible and offers retry when the initial time zone request fails", () => {
     mockChurchServiceTimeZone.status = "error";
     mockChurchServiceTimeZone.timeZone = null;
     mockChurchServiceTimeZone.isConfigured = false;
+    mockChurchServiceTimeZone.refreshIssue = { kind: "unavailable", since: Date.now() };
     mockUseTeamsPage.mockReturnValue({
       churchId: "church-1",
       pageData: {
@@ -176,9 +179,71 @@ describe("TeamsFormsPage period selection", () => {
 
     expect(screen.getByTestId("displayed-form-count")).toHaveTextContent("1");
     expect(screen.getByRole("alert")).toHaveTextContent(/date-based Availability forms actions are unavailable/i);
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Open Service setup" })).not.toBeInTheDocument();
+  });
+
+  it("uses the last confirmed time zone after a temporary refresh failure", () => {
+    mockChurchServiceTimeZone.status = "error";
+    mockChurchServiceTimeZone.timeZone = "America/New_York";
+    mockChurchServiceTimeZone.isConfigured = true;
+    mockChurchServiceTimeZone.refreshIssue = { kind: "unavailable", since: Date.now() };
+    mockUseTeamsPage.mockReturnValue({
+      churchId: "church-1",
+      pageData: {
+        services: [],
+        intakeForms: [{ formId: "saved-form", churchId: "church-1", name: "Saved form", active: true }],
+        intakeSubmissions: [],
+        intakeRecipients: [],
+        smsEligibilityByMemberId: {},
+        smsDeliveryAttempts: [],
+        members: [],
+        positions: [],
+        schedules: [],
+        teams: [],
+      },
+      canEditTeams: false,
+      serviceTimeZone: "America/New_York",
+      upsertData: jest.fn(),
+    } as unknown as ReturnType<typeof useTeamsPage>);
+
+    render(<MemoryRouter><TeamsFormsPage /></MemoryRouter>);
+
+    expect(screen.getByTestId("displayed-form-count")).toHaveTextContent("1");
+    expect(screen.getByText("2026-10-01:2026-10-31")).toBeInTheDocument();
+  });
+
+  it("offers Service setup only when the church time zone is confirmed unconfigured", () => {
+    mockChurchServiceTimeZone.status = "ready";
+    mockChurchServiceTimeZone.timeZone = "UTC";
+    mockChurchServiceTimeZone.isConfigured = false;
+    mockUseTeamsPage.mockReturnValue({
+      churchId: "church-1",
+      pageData: {
+        services: [],
+        intakeForms: [{ formId: "saved-form", churchId: "church-1", name: "Saved form", active: true }],
+        intakeSubmissions: [],
+        intakeRecipients: [],
+        smsEligibilityByMemberId: {},
+        smsDeliveryAttempts: [],
+        members: [],
+        positions: [],
+        schedules: [],
+        teams: [],
+      },
+      canEditTeams: false,
+      serviceTimeZone: "",
+      upsertData: jest.fn(),
+    } as unknown as ReturnType<typeof useTeamsPage>);
+
+    render(<MemoryRouter><TeamsFormsPage /></MemoryRouter>);
+
+    expect(screen.getByTestId("displayed-form-count")).toHaveTextContent("1");
+    expect(screen.getByRole("heading", { name: "Choose a church time zone" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open Service setup" })).toHaveAttribute(
       "href",
       "/teams-and-services/service-setup",
     );
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
   });
 });

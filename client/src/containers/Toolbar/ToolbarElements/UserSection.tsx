@@ -58,7 +58,7 @@ const getPresenceRouteLabel = (presenceRoute?: string | null) => {
   return "Display";
 };
 
-const UserSection = ({ variant = "default" }: { variant?: "default" | "compact" }) => {
+const UserSection = ({ variant = "default" }: { variant?: "default" | "compact" | "responsiveCompact" }) => {
   const {
     user,
     userEmail,
@@ -241,7 +241,9 @@ const UserSection = ({ variant = "default" }: { variant?: "default" | "compact" 
           padding="py-0.5 px-1"
           className={variant === "compact"
             ? "h-auto min-h-0! rounded-md p-0! font-normal"
-            : "h-auto min-h-0! max-md:min-h-0! rounded-md font-normal"}
+            : variant === "responsiveCompact"
+              ? "h-auto min-h-[44px]! max-lg:min-h-[44px]! max-lg:px-2! max-lg:py-0! rounded-md font-normal lg:min-h-0!"
+              : "h-auto min-h-0! max-md:min-h-0! rounded-md font-normal"}
           aria-label={accountAriaLabel}
         >
           {variant === "compact" ? (
@@ -271,10 +273,10 @@ const UserSection = ({ variant = "default" }: { variant?: "default" | "compact" 
               ) : null}
             </div>
           ) : <div
-            className={`flex min-w-0 flex-col gap-1 items-start text-left ${ACCOUNT_TRIGGER_MAX_W}`}
+            className={`flex min-w-0 flex-col gap-1 items-start text-left ${ACCOUNT_TRIGGER_MAX_W} ${variant === "responsiveCompact" ? "max-lg:flex-row max-lg:items-center max-lg:gap-2 max-lg:max-w-none" : ""}`}
           >
             {(!isDemo || anyAutosavePending) ? (
-              <div className="flex w-full min-w-0 items-center gap-1">
+              <div className={`flex w-full min-w-0 items-center gap-1 ${variant === "responsiveCompact" ? "max-lg:w-auto max-lg:shrink-0" : ""}`}>
                 <div
                   className="flex min-w-0 flex-1 items-center gap-1 text-xs font-medium"
                   aria-live="polite"
@@ -337,12 +339,12 @@ const UserSection = ({ variant = "default" }: { variant?: "default" | "compact" 
                 </span>
               </div>
             ) : null}
-            <div className="flex min-w-0 w-full flex-col gap-0.5 text-center">
+            <div className={`flex min-w-0 w-full flex-col gap-0.5 text-center ${variant === "responsiveCompact" ? "max-lg:w-auto max-lg:flex-1 max-lg:text-left" : ""}`}>
               <span className="w-full truncate text-sm font-semibold max-w-28">
                 {toolbarFirstName || fullDisplayName || "—"}
               </span>
               {churchLine ? (
-                <span className="w-full truncate text-xs text-gray-300 max-w-28">
+                <span className={`w-full truncate text-xs text-gray-300 max-w-28 ${variant === "responsiveCompact" ? "max-lg:hidden" : ""}`}>
                   {churchLine}
                 </span>
               ) : null}

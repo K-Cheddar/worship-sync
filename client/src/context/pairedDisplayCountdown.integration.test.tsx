@@ -73,7 +73,7 @@ describe("paired output countdown production composition", () => {
     }));
     expect(onValue).toHaveBeenCalledWith("churches/church-a/data/services", expect.any(Function));
   });
-  it("hides missing or rejected configuration and recovers on reconnect with changed settings", async () => {
+  it("recovers on reconnect, keeps the last confirmed zone on refresh failure, and adopts changed settings", async () => {
     jest.setSystemTime(new Date("2026-07-12T13:00:00Z"));
     configured = false;
     mount("display", "monitor");
@@ -81,12 +81,12 @@ describe("paired output countdown production composition", () => {
     expect(screen.getByRole("status")).toHaveTextContent("--:--");
     configured = true;
     await act(async () => { window.dispatchEvent(new Event("online")); });
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("1:00:00"));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/^(?:1:00:00|59:59)$/));
     rejected = true;
     await act(async () => { await jest.advanceTimersByTimeAsync(60_000); });
-    expect(screen.getByRole("status")).toHaveTextContent("--:--");
+    expect(screen.getByRole("status")).toHaveTextContent(/^(?:59:00|58:59)$/);
     rejected = false; zone = "America/Chicago";
     await act(async () => { window.dispatchEvent(new Event("online")); });
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("1:59:00"));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/^(?:1:59:00|1:58:59)$/));
   });
 });

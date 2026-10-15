@@ -121,5 +121,17 @@ export default defineConfig({
         trace: "off",
       },
     },
+    {
+      name: "smoke",
+      testMatch: /smoke\.spec\.ts$/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        browserName: "chromium",
+        storageState: authFile,
+        screenshot: "only-on-failure",
+        trace: "off",
+      },
+    },
   ],
 });

@@ -48,7 +48,7 @@ export type CurrentServiceOccurrence = {
 const sessionDayKey = (nowMs: number, timeZone: string): string =>
   calendarDateInTimeZone(new Date(nowMs), timeZone);
 
-const useAuthoritativeServerNowMs = (timeZone: string): number => {
+const useAuthoritativeServerNowMs = (timeZone: string | null): number => {
   const serverOffsetMs = useSyncExternalStore(
     subscribeServerTimeOffset,
     getServerTimeOffset,
@@ -57,6 +57,7 @@ const useAuthoritativeServerNowMs = (timeZone: string): number => {
   const [dayBoundaryTick, setDayBoundaryTick] = useState(0);
 
   useEffect(() => {
+    if (!timeZone) return undefined;
     const nowMs = serverDate().getTime();
     const nextDate = parsePlainDate(calendarDateInTimeZone(new Date(nowMs), timeZone));
     nextDate?.setDate(nextDate.getDate() + 1);
@@ -77,22 +78,23 @@ const useAuthoritativeServerNowMs = (timeZone: string): number => {
 export const useCurrentServiceOccurrence = (
   services: TeamService[],
 ): CurrentServiceOccurrence => {
-  const churchTimeZone = useChurchServiceTimeZone();
-  const serviceTimeZone = churchTimeZone.timeZone || "UTC";
+  const serviceTimeZone = useChurchServiceTimeZone().timeZone;
   const authoritativeNowMs = useAuthoritativeServerNowMs(serviceTimeZone);
   /** Anchored for the current server calendar-day context: the candidate
    * window shouldn't drift under a session that stays open through a service. */
   const [loadedAtMs, setLoadedAtMs] = useState(() => authoritativeNowMs);
-  const loadedDayKeyRef = useRef(sessionDayKey(loadedAtMs, serviceTimeZone));
+  const loadedDayKeyRef = useRef(
+    serviceTimeZone ? sessionDayKey(loadedAtMs, serviceTimeZone) : null,
+  );
   const [selectedOccurrenceId, setSelectedOccurrenceId] = useState<
     string | null
   >(null);
 
   const occurrences = useMemo(
-    () => churchTimeZone.status === "ready" && serviceTimeZone
+    () => serviceTimeZone
       ? listCurrentServiceOccurrences(services, loadedAtMs, { timeZone: serviceTimeZone })
       : [],
-    [churchTimeZone.status, loadedAtMs, serviceTimeZone, services],
+    [loadedAtMs, serviceTimeZone, services],
   );
 
   /**
@@ -107,6 +109,7 @@ export const useCurrentServiceOccurrence = (
   );
 
   const resetStaleSession = useCallback((nowMs = serverDate().getTime()) => {
+    if (!serviceTimeZone) return;
     const nextDayKey = sessionDayKey(nowMs, serviceTimeZone);
     if (nextDayKey === loadedDayKeyRef.current) return;
     loadedDayKeyRef.current = nextDayKey;

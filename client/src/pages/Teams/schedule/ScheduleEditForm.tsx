@@ -54,6 +54,7 @@ import {
   getCreateScheduleDefaultServiceIds,
   resolveScheduleNameForSave,
 } from "./scheduleCreateDefaults";
+import { findScheduleOccurrenceOwnershipConflicts } from "./schedulePeriodUtils";
 import TeamsCrossSectionLink from "../components/TeamsCrossSectionLink";
 import {
   buildSectionReturnTo,
@@ -82,6 +83,7 @@ const ScheduleEditForm = ({
   onScheduleSaved,
   onScheduleRemoved,
   setSelectedScheduleId,
+  onReviewSchedule,
   onCancel,
 }: ScheduleEditFormProps) => {
   const { showToast } = useToast();
@@ -271,6 +273,15 @@ const ScheduleEditForm = ({
       }),
     [draft.endDate, draft.serviceIds, draft.startDate, serviceTimeZone, services],
   );
+  const occurrenceOwnershipConflicts = useMemo(() => mode === "edit"
+    ? []
+    : findScheduleOccurrenceOwnershipConflicts({
+      schedules: seedSchedules,
+      churchId,
+      teamId: draft.teamId,
+      occurrences: draftOccurrences,
+      timeZone: serviceTimeZone,
+    }), [churchId, draft.teamId, draftOccurrences, mode, seedSchedules, serviceTimeZone]);
 
   const serviceOptions = useMemo(() => {
     const serviceIdsWithOccurrences = new Set(
@@ -664,6 +675,21 @@ const ScheduleEditForm = ({
                   ? `${draftOccurrences.length} service occurrences will appear in this schedule.`
                   : "No service occurrences match this date range. Choose another range or service."}
               </p>
+              {occurrenceOwnershipConflicts.length > 0 ? (
+                <div className="mt-2 rounded border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100">
+                  <p>Some selected services overlap a saved schedule. Review it before creating this schedule.</p>
+                  {onReviewSchedule ? (
+                    <Button
+                      type="button"
+                      variant="tertiary"
+                      className="mt-2"
+                      onClick={() => onReviewSchedule(occurrenceOwnershipConflicts[0].scheduleId)}
+                    >
+                      Review existing schedule
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
               {isCopy ? (
                 <p className="mt-1 text-xs text-gray-400">
                   Set the new date range. Assignments stay with matching services and
@@ -710,7 +736,8 @@ const ScheduleEditForm = ({
             (!draft.name.trim() && !suggestedName) ||
             !draft.teamId ||
             draft.serviceIds.length === 0 ||
-            draftOccurrences.length === 0
+            draftOccurrences.length === 0 ||
+            occurrenceOwnershipConflicts.length > 0
           }
         />
       </section>

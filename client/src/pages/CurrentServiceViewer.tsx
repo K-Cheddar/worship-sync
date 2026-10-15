@@ -17,6 +17,7 @@ import Button from "../components/Button/Button";
 import Select from "../components/Select/Select";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { useChurchServiceTimeZone } from "../context/churchServiceTimeZone";
+import { ChurchServiceTimeZoneNotice } from "./Teams/components/ChurchServiceTimeZoneGate";
 import { useChat } from "../chat/ChatContext";
 import { useSelector } from "../hooks";
 import {
@@ -110,8 +111,9 @@ export const getCurrentServiceViewerStatusLabel = (
 export const buildCurrentServiceViewerOptions = (
   occurrences: TeamScheduleOccurrence[],
   nowMs: number,
-  timeZone = "UTC",
+  timeZone: string | null = null,
 ): Option[] => {
+  if (!timeZone) return [];
   const todayKey = calendarDateInTimeZone(new Date(nowMs), timeZone);
   const groups = new Map<string, Option[]>();
 
@@ -154,8 +156,7 @@ export const buildCurrentServiceViewerOptions = (
 };
 
 export const useCurrentServiceViewerSelection = (services: ServiceTime[]) => {
-  const churchTimeZone = useChurchServiceTimeZone();
-  const timeZone = churchTimeZone.timeZone || "UTC";
+  const timeZone = useChurchServiceTimeZone().timeZone;
   const serverTimeOffset = useSyncExternalStore(
     subscribeServerTimeOffset,
     getServerTimeOffset,
@@ -167,20 +168,23 @@ export const useCurrentServiceViewerSelection = (services: ServiceTime[]) => {
   >(null);
   const nowMs = serverDate().getTime();
   const occurrences = useMemo(
-    () => churchTimeZone.status === "ready"
+    () => timeZone
       ? listCurrentServiceOccurrences(services, nowMs, {
         lookaheadDays: VIEWER_OCCURRENCE_LOOKAHEAD_DAYS,
         timeZone,
       })
       : [],
-    [churchTimeZone.status, nowMs, services, timeZone],
+    [nowMs, services, timeZone],
   );
   const automaticResolution = useMemo(
-    () => resolveCurrentServiceOccurrence(occurrences, nowMs, timeZone),
+    () => timeZone
+      ? resolveCurrentServiceOccurrence(occurrences, nowMs, timeZone)
+      : { occurrence: null, reason: "none" as const },
     [occurrences, nowMs, timeZone],
   );
 
   useEffect(() => {
+    if (!timeZone) return undefined;
     const nextDate = parsePlainDate(calendarDateInTimeZone(new Date(nowMs), timeZone));
     nextDate?.setDate(nextDate.getDate() + 1);
     const boundary = nextDate
@@ -274,7 +278,6 @@ const useCurrentServiceViewerData = (
   canUseTeamsLiveSync: boolean,
   requiresDetailedSnapshot: boolean,
   occurrence: TeamScheduleOccurrence | null,
-  timeZone: string,
 ): ViewerData => {
   const scopeKey = JSON.stringify([
     churchId,
@@ -691,7 +694,6 @@ const CurrentServiceViewer = () => {
     canUseTeamsLiveSync,
     requiresDetailedSnapshot,
     selection.occurrence,
-    selection.timeZone,
   );
   const options = useMemo(
     () => buildCurrentServiceViewerOptions(selection.occurrences, selection.nowMs, selection.timeZone),
@@ -729,6 +731,14 @@ const CurrentServiceViewer = () => {
             administrator for service-plan viewing access.
           </p>
         </section>
+      </CurrentServiceViewerFrame>
+    );
+  }
+
+  if (!selection.timeZone) {
+    return (
+      <CurrentServiceViewerFrame topBar={topBar}>
+        <ChurchServiceTimeZoneNotice area="current service plans" />
       </CurrentServiceViewerFrame>
     );
   }

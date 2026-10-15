@@ -473,6 +473,7 @@ export type ScheduleEditFormProps = {
   onScheduleSaved: (schedule: TeamSchedule, replaceId?: string) => void;
   onScheduleRemoved: (scheduleId: string) => void;
   setSelectedScheduleId: (scheduleId: string) => void;
+  onReviewSchedule?: (scheduleId: string) => void;
   onCancel: () => void;
 };
 

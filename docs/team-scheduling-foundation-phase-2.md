@@ -4,7 +4,7 @@
 **Date:** 2026-10-12  
 **Scope:** Canonical occurrence identity, complete combined-service generation, church-authoritative timezones, and alignment of schedule, availability, and service-plan lookups.
 
-Phase 2 implements the approved decisions in the [Team Scheduling Contract](features/team-scheduling.md). It does not implement transactional rekeying, ownership claims, publication, or broad conflict-resolution workflows.
+Phase 2 implements the approved occurrence identity, grouping, and timezone decisions in the [Team Scheduling Contract](features/team-scheduling.md). It did not implement transactional ownership or broad conflict-resolution workflows; the targeted Phase 3A implementation is recorded in [Scheduling Foundation Phase 3A](team-scheduling-foundation-phase-3a.md).
 
 ## Canonical identity and saved records
 
@@ -14,7 +14,7 @@ Phase 2 implements the approved decisions in the [Team Scheduling Contract](feat
 - Matching requires service/group IDs, church-local service date, and exact group membership. Display name and start timestamp never prove that two services are the same. A same-name, same-instant collision is reported as ambiguous, not mapped.
 - Existing timestamp-based IDs are resolved read-only when service/group identity, date, and membership provide a unique match. Group-membership changes, duplicate candidates, invalid dates, or conflicting identity metadata are surfaced as ambiguous; refresh is blocked rather than rekeying assignments, responses, guests, microphones, IEMs, or extra slots.
 - An unmatched saved occurrence with requirements or saved slots relevant to the selected team remains visible under its saved ID. Its displayed positions are filtered to that team's positions, preserving access to the old keyed rows while the schedule warns that identity cannot be reconciled safely.
-- Phase 2 does not migrate populated schedules or claim unique schedule ownership. Transactional reconciliation and conflict resolution remain Phase 3 work.
+- Phase 2 did not migrate populated schedules or claim unique schedule ownership. Phase 3A adds safe reuse, additive inclusion, and transactional ownership claims. Bulk backfill and broad conflict resolution remain later Phase 3 work.
 
 ## Generation, authorization, and timezone
 
@@ -44,8 +44,8 @@ The added regressions exercise actual client-built combined occurrence JSON thro
 
 ## Remaining Phase 3 work
 
-- Add transactional occurrence ownership and safe, bounded reconciliation for existing owners.
-- Design explicit conflict handling before changing keys for assignments, responses, guests, microphones, IEMs, and extra position slots.
+- Complete broad regrouping and ungrouping workflows that require operator choices for conflicting assignments, responses, guests, microphones, IEMs, and extra position slots.
+- Design an audit and migration plan for persisted duplicate owners; Phase 3A detects and preserves duplicates but does not bulk-repair them.
 - Keep unresolved or non-unique legacy references visible and operator-resolvable; do not bulk-migrate them automatically.
 
 Phase 4 publication/visibility behavior and Phase 5 cleanup are also outside this implementation. No notification delivery, database migration, or schedule-publication behavior was added here.

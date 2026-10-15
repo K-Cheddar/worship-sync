@@ -38,16 +38,21 @@ const SheetPortal = ({
 };
 
 function SheetOverlay({
+  animationEnabled = true,
   className,
   style,
   ...props
-}: React.ComponentProps<typeof DialogPrimitive.Overlay>) {
+}: React.ComponentProps<typeof DialogPrimitive.Overlay> & {
+  animationEnabled?: boolean;
+}) {
   return (
     <DialogPrimitive.Overlay
       data-slot="sheet-overlay"
       className={cn(
-        "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/25 duration-400 ease-out",
-        className
+        "fixed inset-0 z-50 bg-black/25",
+        animationEnabled &&
+          "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 duration-400 ease-out",
+        className,
       )}
       style={{ pointerEvents: "auto", ...style }}
       {...props}
@@ -65,6 +70,8 @@ type SheetContentProps = React.ComponentProps<
   showOverlay?: boolean;
   /** When false, omits the default corner close control. */
   showClose?: boolean;
+  /** Allows a controlled sheet to mount in its initial state without animating. */
+  animationEnabled?: boolean;
 };
 
 function SheetContent({
@@ -72,6 +79,7 @@ function SheetContent({
   container,
   showOverlay = true,
   showClose = true,
+  animationEnabled = true,
   className,
   children,
   style,
@@ -81,20 +89,38 @@ function SheetContent({
 
   return (
     <SheetPortal container={container ?? overlayPortalContainer ?? undefined}>
-      {showOverlay ? <SheetOverlay /> : null}
+      {showOverlay ? <SheetOverlay animationEnabled={animationEnabled} /> : null}
       <DialogPrimitive.Content
         data-slot="sheet-content"
         className={cn(
-          "fixed z-50 flex min-h-0 w-full flex-col overflow-hidden border-gray-500/35 bg-sheet-surface text-neutral-100 shadow-xl outline-none duration-400 ease-out",
-          "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+          "fixed z-50 flex min-h-0 w-full flex-col overflow-hidden border-gray-500/35 bg-sheet-surface text-neutral-100 shadow-xl outline-none",
+          animationEnabled && "duration-400 ease-out",
+          animationEnabled &&
+            "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
           side === "right" &&
-          "data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right inset-y-0 right-0 h-full max-h-dvh max-w-md border-l",
+            cn(
+              "inset-y-0 right-0 h-full max-h-dvh max-w-md border-l",
+              animationEnabled &&
+                "data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right",
+            ),
           side === "left" &&
-          "data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left inset-y-0 left-0 h-full max-h-dvh max-w-md border-r",
+            cn(
+              "inset-y-0 left-0 h-full max-h-dvh max-w-md border-r",
+              animationEnabled &&
+                "data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left",
+            ),
           side === "top" &&
-          "data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top inset-x-0 top-0 max-h-[85dvh] border-b",
+            cn(
+              "inset-x-0 top-0 max-h-[85dvh] border-b",
+              animationEnabled &&
+                "data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top",
+            ),
           side === "bottom" &&
-          "data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom inset-x-0 bottom-0 max-h-[85dvh] border-t",
+            cn(
+              "inset-x-0 bottom-0 max-h-[85dvh] border-t",
+              animationEnabled &&
+                "data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
+            ),
           className
         )}
         style={{ pointerEvents: "auto", ...style }}

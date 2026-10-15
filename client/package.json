@@ -105,6 +105,7 @@
     "test": "jest --watchAll=false",
     "test:coverage": "jest --watchAll=false --coverage",
     "test:watch": "jest",
+    "test:e2e:responsive-navigation": "node e2e/responsive-navigation.mjs",
     "eject": "vite eject",
     "lint": "eslint src --ext .ts,.tsx,.js,.jsx",
     "lint:fix": "eslint src --ext .ts,.tsx,.js,.jsx --fix",

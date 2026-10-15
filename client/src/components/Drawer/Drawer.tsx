@@ -17,6 +17,8 @@ export interface DrawerProps {
   showBackdrop?: boolean;
   closeOnBackdropClick?: boolean;
   closeOnEscape?: boolean;
+  /** Whether opening and closing this controlled drawer should animate. */
+  animationEnabled?: boolean;
   className?: string;
   contentClassName?: string;
   /** Parent dialog surface for nested drawers; defaults to the controller root. */
@@ -66,6 +68,7 @@ const Drawer: React.FC<DrawerProps> = ({
   showBackdrop = false,
   closeOnBackdropClick = true,
   closeOnEscape = true,
+  animationEnabled = true,
   className,
   contentClassName = "overflow-auto flex-1 min-h-0",
   portalContainer,
@@ -105,6 +108,7 @@ const Drawer: React.FC<DrawerProps> = ({
         }
         showOverlay={showBackdrop}
         showClose={false}
+        animationEnabled={animationEnabled}
         className={cn("max-w-full max-h-dvh", dimensionClass, className)}
         onPointerDownOutside={(e) => {
           if (!showBackdrop || !closeOnBackdropClick) e.preventDefault();

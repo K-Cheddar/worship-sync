@@ -3,5 +3,5 @@
   "date": "2026-10-02",
   "type": "improved",
   "title": "Team scheduling",
-  "description": "Team schedules stay aligned with service dates, while saved assignments remain available if a service refresh fails."
+  "description": "Team schedules add new service occurrences automatically, keep existing assignments and equipment, and save edits in the background so you can keep working."
 }
