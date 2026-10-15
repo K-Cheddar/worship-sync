@@ -284,11 +284,11 @@ export const getUpcomingAvailabilitySuggestions = ({
   teamCoverage.forEach((coverage) => {
     if (coverage.review.length) reviewOnly.push({ ...coverage, missing: [] });
     if (!coverage.missing.length) return;
-    // A shared form applies its selected service dates to every selected team.
-    // Teams with the same missing dates can safely share it even when each
-    // team staffs a different member of one combined occurrence.
+    // Teams can share a draft when their missing logical occurrences match.
+    // This includes different staffed members of one combined occurrence,
+    // while keeping unrelated events on the same date in separate drafts.
     const signature = `${coverage.range.start}:${coverage.range.end}:${[...new Set(coverage.missing
-      .map((occurrence) => getOccurrenceDate(occurrence, timeZone || "UTC")))].sort().join("|")}`;
+      .map((occurrence) => occurrence.logicalOccurrenceId || occurrence.occurrenceId))].sort().join("|")}`;
     const rows = byMissingSet.get(signature) || [];
     rows.push(coverage);
     byMissingSet.set(signature, rows);
@@ -298,16 +298,17 @@ export const getUpcomingAvailabilitySuggestions = ({
     const targetTeamIds = rows.map(({ teamId }) => teamId).sort();
     const missingByOccurrence = new Map<string, TeamScheduleOccurrence>();
     rows.flatMap(({ missing: teamMissing }) => teamMissing).forEach((occurrence) => {
-      const previous = missingByOccurrence.get(occurrence.occurrenceId);
+      const occurrenceKey = occurrence.logicalOccurrenceId || occurrence.occurrenceId;
+      const previous = missingByOccurrence.get(occurrenceKey);
       if (!previous) {
-        missingByOccurrence.set(occurrence.occurrenceId, occurrence);
+        missingByOccurrence.set(occurrenceKey, occurrence);
         return;
       }
       const serviceIds = [...new Set([
         ...(previous.serviceIds?.length ? previous.serviceIds : [previous.serviceId]),
         ...(occurrence.serviceIds?.length ? occurrence.serviceIds : [occurrence.serviceId]),
       ])];
-      missingByOccurrence.set(occurrence.occurrenceId, { ...previous, serviceIds });
+      missingByOccurrence.set(occurrenceKey, { ...previous, serviceIds });
     });
     const missing = [...missingByOccurrence.values()];
     const range = rows[0].range;

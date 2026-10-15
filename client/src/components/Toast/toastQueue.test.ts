@@ -101,5 +101,47 @@ describe("toastQueue", () => {
 
       expect(result.map((item) => item.id)).toEqual(["1", "3", "4"]);
     });
+
+    it("keeps actionable toasts ahead of transient notifications", () => {
+      const result = appendToast(
+        [
+          toast({
+            id: "fresh-session",
+            message: "Start a fresh session?",
+            children: "Start fresh",
+          }),
+          toast({ id: "saved", message: "Saved", variant: "success" }),
+          toast({ id: "synced", message: "Synced", variant: "info" }),
+        ],
+        toast({ id: "new-message", message: "New activity", variant: "success" }),
+      );
+
+      expect(result.map((item) => item.id)).toEqual([
+        "fresh-session",
+        "synced",
+        "new-message",
+      ]);
+    });
+
+    it("evicts an actionable toast only after the stack contains no other options", () => {
+      const result = appendToast(
+        [
+          toast({
+            id: "fresh-session",
+            message: "Start a fresh session?",
+            children: "Start fresh",
+          }),
+          toast({ id: "persistent-one", message: "One", persist: true }),
+          toast({ id: "persistent-two", message: "Two", persist: true }),
+        ],
+        toast({ id: "new-action", message: "Another action", children: "Do it" }),
+      );
+
+      expect(result.map((item) => item.id)).toEqual([
+        "fresh-session",
+        "persistent-two",
+        "new-action",
+      ]);
+    });
   });
 });

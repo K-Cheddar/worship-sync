@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import ToastContainer from "./ToastContainer";
 
 describe("ToastContainer", () => {
@@ -81,5 +81,24 @@ describe("ToastContainer", () => {
 
     expect(statuses).toHaveLength(2);
     expect(closeButtons).toHaveLength(2);
+  });
+
+  it("runs the toast close callback before removing an actionable toast", () => {
+    jest.useFakeTimers();
+    const onClose = jest.fn();
+    const onRemove = jest.fn();
+    render(
+      <ToastContainer
+        toasts={[{ id: "actionable", message: "Choose an action", onClose }]}
+        onRemove={onRemove}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Close toast" }));
+    act(() => jest.advanceTimersByTime(200));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onRemove).toHaveBeenCalledWith("actionable");
+    jest.useRealTimers();
   });
 });

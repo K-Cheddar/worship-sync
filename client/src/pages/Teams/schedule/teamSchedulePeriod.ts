@@ -255,6 +255,11 @@ export const buildTeamSchedulePeriod = ({
       const teamRequirements = new Map<string, PositionRequirement>();
       occurrenceServiceIds.forEach((serviceId) => {
         const service = allServiceById.get(serviceId);
+        const memberDefaultRequirements = resolveOccurrenceRequirements({
+          service,
+          teamPositionIds: teamPositionIdsForSchedule,
+          fallbackToAllTeamPositions: false,
+        });
         const serviceRequirements = resolveOccurrenceRequirements({
           // Generated combined occurrences carry the union of every member's
           // requirements. Resolve each member from its own service defaults;
@@ -264,7 +269,14 @@ export const buildTeamSchedulePeriod = ({
           teamPositionIds: teamPositionIdsForSchedule,
           fallbackToAllTeamPositions: false,
         });
-        if (serviceRequirements.length) relevantServiceIds.add(serviceId);
+        // A saved grouped override is an occurrence-wide staffing pool. Use
+        // each member's own defaults to attribute that pool to the team's
+        // service members instead of treating the override as repeated on
+        // every constituent service.
+        const membershipRequirements = savedMatch && occurrenceServiceIds.length > 1
+          ? memberDefaultRequirements
+          : serviceRequirements;
+        if (membershipRequirements.length) relevantServiceIds.add(serviceId);
         serviceRequirements.forEach((requirement) => {
           const current = teamRequirements.get(requirement.positionId);
           if (!current || current.count < requirement.count) teamRequirements.set(requirement.positionId, requirement);
@@ -275,7 +287,9 @@ export const buildTeamSchedulePeriod = ({
         ...(savedMatch ? [savedMatch.occurrenceId] : []),
       ]) || hasStoredLegacySlotForOccurrence(selectedTeamId, occurrence);
       if (!teamRequirements.size && !hasExplicitTeamSlot) return;
-      if (hasExplicitTeamSlot && !relevantServiceIds.size) relevantServiceIds.add(occurrence.serviceId);
+      if ((hasExplicitTeamSlot || (savedMatch && teamRequirements.size > 0)) && !relevantServiceIds.size) {
+        relevantServiceIds.add(occurrence.serviceId);
+      }
       relevant = true;
       teamRequirements.forEach((requirement, positionId) => {
         const current = requirementsByPosition.get(positionId);

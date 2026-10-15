@@ -66,10 +66,10 @@ describe("getUpcomingAvailabilitySuggestion", () => {
       timeZone: "America/New_York",
     });
 
-    expect(results).toHaveLength(1);
-    expect(results[0].teamIds).toEqual(["av", "worship"]);
-    expect(results[0].missingOccurrences.flatMap((occurrence) => occurrence.serviceIds || [occurrence.serviceId]))
-      .toEqual(expect.arrayContaining(["av-service", "worship-service"]));
+    expect(results).toHaveLength(2);
+    expect(results.map(({ teamIds }) => teamIds)).toEqual([["av"], ["worship"]]);
+    expect(results[0].missingOccurrences.every((occurrence) => occurrence.serviceIds?.includes("av-service"))).toBe(true);
+    expect(results[1].missingOccurrences.every((occurrence) => occurrence.serviceIds?.includes("worship-service"))).toBe(true);
   });
 
   it("uses every explicitly supplied church Team when the template is Team-specific", () => {
@@ -782,6 +782,53 @@ describe("team availability coverage", () => {
     expect(suggestion).toMatchObject({ kind: "create", teamIds: ["worship"], startDate: "2026-10-01" });
     expect(suggestion?.missingOccurrences.every((occurrence) => occurrence.serviceIds?.includes("worship-service"))).toBe(true);
     expect(suggestion?.missingOccurrences.every((occurrence) => !occurrence.serviceIds?.includes("media-service"))).toBe(true);
+  });
+
+  it("keeps unrelated services on the same date in separate availability drafts", () => {
+    const mediaMorningService = {
+      ...mediaService, reccurence: "weekly" as const, dayOfWeek: 6 as const, time: "10:00", serviceGroupId: "saturday-morning",
+    };
+    const worshipMorningService = {
+      ...worshipService, reccurence: "weekly" as const, dayOfWeek: 6 as const, time: "10:00", serviceGroupId: "saturday-morning",
+    };
+    const mediaEvening = {
+      ...mediaService, serviceId: "media-evening", name: "Media evening", reccurence: "weekly" as const,
+      dayOfWeek: 6 as const, time: "18:00",
+    };
+    const suggestions = getUpcomingAvailabilitySuggestions({
+      ...common, services: [mediaMorningService, worshipMorningService, mediaEvening],
+      teamIds: ["media", "worship"], teamScheduleScope: true, forms: [],
+    });
+    const mediaSuggestion = suggestions.find(({ teamIds }) => teamIds.includes("media"));
+    const worshipSuggestion = suggestions.find(({ teamIds }) => teamIds.includes("worship"));
+    expect(suggestions).toHaveLength(2);
+    const mediaMorning = mediaSuggestion?.missingOccurrences.filter(({ serviceDate }) => serviceDate === "2026-10-03") || [];
+    const worshipMorning = worshipSuggestion?.missingOccurrences.filter(({ serviceDate }) => serviceDate === "2026-10-03") || [];
+    expect(mediaMorning).toHaveLength(2);
+    expect(mediaMorning.map(({ logicalOccurrenceId }) => logicalOccurrenceId))
+      .toEqual(expect.arrayContaining([
+        "group:saturday-morning@2026-10-03",
+        "media-evening@2026-10-03",
+      ]));
+    expect(worshipMorning).toHaveLength(1);
+    expect(worshipMorning[0]?.logicalOccurrenceId).toBe("group:saturday-morning@2026-10-03");
+  });
+
+  it("uses team-specific service membership for a saved combined occurrence override", () => {
+    const media = { ...mediaService, reccurence: "weekly" as const, dayOfWeek: 6 as const, time: "10:00", serviceGroupId: "saturday" };
+    const worship = { ...worshipService, reccurence: "weekly" as const, dayOfWeek: 6 as const, time: "10:00", serviceGroupId: "saturday" };
+    const [generated] = occurrencesFor([media, worship], "2026-10-01", "2026-10-31");
+    const overridden = { ...generated, positionRequirements: [{ positionId: "camera", count: 1 }] };
+    const schedule: TeamSchedule = {
+      scheduleId: "media-schedule", churchId: "church-1", name: "Media", teamId: "media",
+      startDate: "2026-10-01", endDate: "2026-10-31", serviceIds: [media.serviceId, worship.serviceId],
+      occurrences: [overridden], assignments: {},
+    };
+    const [suggestion] = getUpcomingAvailabilitySuggestions({
+      ...common, services: [media, worship], teamIds: ["media"], teamScheduleScope: true,
+      forms: [availabilityForm(["media"], [media], "2026-10-01", "2026-10-31")], schedules: [schedule],
+    });
+    expect(suggestion).toMatchObject({ kind: "create", startDate: "2026-11-01", teamIds: ["media"] });
   });
 
   it("does not use a stale combined occurrence's primary service when its membership has no allowed intersection", () => {
