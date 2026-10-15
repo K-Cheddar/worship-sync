@@ -1070,7 +1070,7 @@ export const createTeamsAuthHandlers = ({
       // A stale claim is safe to replace only after its active schedule was read
       // in this transaction and shown not to contain this logical occurrence.
       if (previous.logicalOccurrenceId === logicalOccurrenceId &&
-          (previous.groupId !== identity.groupId ||
+          ((previous.groupId || null) !== (identity.groupId || null) ||
             !isDeepStrictEqual([...(previous.serviceIds || [])].sort(), [...identity.serviceIds].sort()))) {
         throw httpError(409, "A saved schedule has a conflicting service-group identity. Resolve it before continuing.");
       }
@@ -1142,6 +1142,7 @@ export const createTeamsAuthHandlers = ({
     const buildSchedule = (current) => {
       const now = nowIso();
       return {
+        ...(current || {}),
         ...payload,
         scheduleId,
         churchId,
@@ -14145,7 +14146,7 @@ export const createTeamsAuthHandlers = ({
                       `schedule:${churchId}:${existing.scheduleId}`,
                       ...[...new Set([
                         ...occurrenceOwnershipEntries(existing.occurrences || [], timeZone).keys(),
-                        ...occurrenceOwnershipEntries(occurrencesByKey.values(), timeZone).keys(),
+                        ...occurrenceOwnershipEntries([...occurrencesByKey.values()], timeZone).keys(),
                       ])].map((logicalOccurrenceId) =>
                         `occurrence:${churchId}:${team.teamId}:${logicalOccurrenceId}`,
                       ),
