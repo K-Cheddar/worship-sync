@@ -1,7 +1,7 @@
 import type { TeamIntakeForm, TeamPosition, TeamSchedule, TeamScheduleOccurrence, TeamService } from "../../api/authTypes";
 import { generateScheduleOccurrences } from "../../utils/teamScheduleOccurrences";
 import { getServicePlanKey } from "../../utils/servicePlanKeys";
-import { getUpcomingAvailabilitySuggestion } from "./intakeAvailabilitySuggestion";
+import { getUpcomingAvailabilitySuggestion, getUpcomingAvailabilitySuggestions } from "./intakeAvailabilitySuggestion";
 
 const service: TeamService = {
   id: "sunday",
@@ -57,7 +57,7 @@ describe("getUpcomingAvailabilitySuggestion", () => {
       { ...service, serviceId: "worship-service", name: "Worship", positionRequirements: [{ positionId: "vocal", count: 1 }] },
       { ...service, serviceId: "av-service", name: "AV", positionRequirements: [{ positionId: "camera", count: 1 }] },
     ];
-    const result = getUpcomingAvailabilitySuggestion({
+    const results = getUpcomingAvailabilitySuggestions({
       services,
       forms: [makeForm({ purpose: "team_availability", teamIds: ["worship"], startDate: "2026-08-01", endDate: "2026-08-31" })],
       positions: teamPositions,
@@ -66,8 +66,9 @@ describe("getUpcomingAvailabilitySuggestion", () => {
       timeZone: "America/New_York",
     });
 
-    expect(result?.draft.teamIds).toEqual(["worship", "av"]);
-    expect(result?.missingOccurrences.flatMap((occurrence) => occurrence.serviceIds?.length ? occurrence.serviceIds : [occurrence.serviceId])).toEqual(expect.arrayContaining(["worship-service", "av-service"]));
+    expect(results.map(({ teamIds }) => teamIds)).toEqual([["av"], ["worship"]]);
+    expect(results[0].missingOccurrences.every((occurrence) => occurrence.serviceId === "av-service")).toBe(true);
+    expect(results[1].missingOccurrences.every((occurrence) => occurrence.serviceId === "worship-service")).toBe(true);
   });
 
   it("uses every explicitly supplied church Team when the template is Team-specific", () => {
@@ -692,5 +693,187 @@ describe("getUpcomingAvailabilitySuggestion", () => {
     expect(result?.draft).not.toHaveProperty("formId");
     expect(result?.draft).not.toHaveProperty("publicUrl");
     expect(result?.draft).not.toHaveProperty("submissionCount");
+  });
+});
+
+describe("team availability coverage", () => {
+  const scopedService = (serviceId: string, positionId: string, date: string, groupId?: string): TeamService => ({
+    ...service,
+    serviceId,
+    name: serviceId,
+    reccurence: "one_time",
+    dateTimeISO: `${date}T14:00:00.000Z`,
+    serviceGroupId: groupId,
+    positionRequirements: [{ positionId, count: 1 }],
+  });
+  const mediaService = { ...service, serviceId: "media-service", name: "Media", positionRequirements: [{ positionId: "camera", count: 1 }] };
+  const worshipService = { ...service, serviceId: "worship-service", name: "Worship", positionRequirements: [{ positionId: "vocal", count: 1 }] };
+  const positions: TeamPosition[] = [
+    { positionId: "camera", churchId: "church-1", teamId: "media", name: "Camera" },
+    { positionId: "vocal", churchId: "church-1", teamId: "worship", name: "Vocal" },
+  ];
+  const occurrencesFor = (target: TeamService[], startDate: string, endDate: string) => generateScheduleOccurrences({
+    services: target,
+    serviceIds: target.map(({ serviceId }) => serviceId),
+    startDate,
+    endDate,
+    timeZone: "America/New_York",
+  });
+  const availabilityForm = (teamIds: string[], target: TeamService[], startDate: string, endDate: string, overrides: Partial<TeamIntakeForm> = {}) => makeForm({
+    purpose: "team_availability",
+    teamIds,
+    startDate,
+    endDate,
+    responseDeadline: endDate,
+    availabilityServices: target.map(({ serviceId, name }) => ({ serviceId, name })),
+    availabilityOccurrences: occurrencesFor(target, startDate, endDate).map(({ occurrenceId, serviceId, name, startsAt, serviceDate }) => ({ occurrenceId, serviceId, name, startsAt, serviceDate })),
+    ...overrides,
+  });
+  const common = {
+    positions,
+    now: new Date("2026-10-01T12:00:00.000Z"),
+    timeZone: "America/New_York",
+  };
+
+  it("suggests October for uncovered teams when Media already has October coverage", () => {
+    const media = { ...mediaService, reccurence: "weekly" as const, dayOfWeek: 0 as const, time: "10:00" };
+    const worship = { ...worshipService, reccurence: "weekly" as const, dayOfWeek: 0 as const, time: "10:00" };
+    const [suggestion] = getUpcomingAvailabilitySuggestions({
+      ...common, services: [media, worship], teamIds: ["media", "worship"], teamScheduleScope: true,
+      forms: [availabilityForm(["media"], [media], "2026-10-01", "2026-10-31")],
+    });
+    expect(suggestion).toMatchObject({ kind: "create", startDate: "2026-10-01", teamIds: ["worship"], draft: { purpose: "team_availability", teamIds: ["worship"] } });
+    expect(suggestion?.missingOccurrences.every((item) => item.serviceId === "worship-service")).toBe(true);
+  });
+
+  it("advances Media to November after its October service dates are covered", () => {
+    const media = { ...mediaService, reccurence: "weekly" as const, dayOfWeek: 0 as const, time: "10:00" };
+    const [suggestion] = getUpcomingAvailabilitySuggestions({
+      ...common, services: [media], teamIds: ["media"], teamScheduleScope: true,
+      forms: [availabilityForm(["media"], [media], "2026-10-01", "2026-10-31")],
+    });
+    expect(suggestion).toMatchObject({ kind: "create", startDate: "2026-11-01", teamIds: ["media"] });
+  });
+
+  it("combines overlapping forms to recognize only their included service dates", () => {
+    const target = { ...mediaService, reccurence: "weekly" as const, dayOfWeek: 0 as const, time: "10:00" };
+    const allOctober = occurrencesFor([target], "2026-10-01", "2026-10-31");
+    const makePartial = (formId: string, indices: number[]) => makeForm({
+      formId, purpose: "team_availability", teamIds: ["media"], startDate: "2026-10-01", endDate: "2026-10-31",
+      responseDeadline: "2026-10-31", availabilityServices: [{ serviceId: target.serviceId, name: target.name }],
+      availabilityOccurrences: indices.map((index) => allOctober[index]).map(({ occurrenceId, serviceId, name, startsAt, serviceDate }) => ({ occurrenceId, serviceId, name, startsAt, serviceDate })),
+    });
+    const result = getUpcomingAvailabilitySuggestions({
+      ...common, services: [target], teamIds: ["media"], teamScheduleScope: true,
+      forms: [makePartial("first", [0, 1]), makePartial("second", [1, 2, 3])],
+    });
+    expect(result[0]?.startDate).toBe("2026-11-01");
+    expect(result[0]?.missingOccurrences).not.toContainEqual(expect.objectContaining({ serviceDate: "2026-10-11" }));
+  });
+
+  it("keeps teams with different missing dates in separate drafts", () => {
+    const first = scopedService("media-service", "camera", "2026-10-11");
+    const second = scopedService("worship-service", "vocal", "2026-10-18");
+    const result = getUpcomingAvailabilitySuggestions({
+      ...common, services: [first, second], teamIds: ["media", "worship"], teamScheduleScope: true, forms: [],
+    });
+    expect(result).toHaveLength(2);
+    expect(result.map(({ teamIds }) => teamIds)).toEqual([["media"], ["worship"]]);
+    result.forEach((suggestion) => expect(suggestion.draft.availabilityOccurrences).toHaveLength(1));
+  });
+
+  it("uses combined occurrences, honors saved schedules, and omits past services", () => {
+    const grouped: TeamService[] = [
+      scopedService("worship-service", "vocal", "2026-10-18", "combined"),
+      scopedService("media-service", "camera", "2026-10-18", "combined"),
+      scopedService("past", "camera", "2026-09-27"),
+    ];
+    const result = getUpcomingAvailabilitySuggestions({
+      ...common, services: grouped, teamIds: ["media", "worship"], teamScheduleScope: true, forms: [],
+    });
+    expect(result).toHaveLength(1);
+    expect(result[0].missingOccurrences).toEqual(expect.arrayContaining([expect.objectContaining({
+      occurrenceId: "group:combined@2026-10-18", serviceDate: "2026-10-18",
+    })]));
+    expect(result[0].missingOccurrences).not.toEqual(expect.arrayContaining([expect.objectContaining({ serviceId: "past" })]));
+  });
+
+  it("uses saved occurrence staffing overrides when suggesting availability", () => {
+    const scheduled = scopedService("media-service", "vocal", "2026-10-18");
+    const [generated] = occurrencesFor([scheduled], "2026-10-01", "2026-10-31");
+    const overridden = { ...generated, positionRequirements: [{ positionId: "camera", count: 1 }] };
+    const schedule = {
+      scheduleId: "media-schedule", churchId: "church-1", name: "Media", teamId: "media",
+      startDate: "2026-10-01", endDate: "2026-10-31", serviceIds: [scheduled.serviceId],
+      occurrences: [overridden], assignments: {},
+    } as TeamSchedule;
+    const form = availabilityForm(["media"], [scheduled], "2026-10-01", "2026-10-31", {
+      availabilityServices: [],
+      availabilityOccurrences: [],
+      submissionCount: 12,
+    });
+    const [suggestion] = getUpcomingAvailabilitySuggestions({
+      ...common, services: [scheduled], teamIds: ["media"], teamScheduleScope: true, forms: [form], schedules: [schedule],
+    });
+    expect(suggestion?.kind).toBe("create");
+    expect(suggestion?.missingOccurrences[0].occurrenceId).toBe(generated.occurrenceId);
+    expect(suggestion?.missingOccurrences[0].positionRequirements).toEqual([{ positionId: "camera", count: 1 }]);
+  });
+
+  it("uses included service dates for coverage regardless of volunteer response count", () => {
+    const scheduled = { ...mediaService, reccurence: "weekly" as const, dayOfWeek: 0 as const, time: "10:00" };
+    const covered = availabilityForm(["media"], [scheduled], "2026-10-01", "2026-10-31", { submissionCount: 12 });
+    const [suggestion] = getUpcomingAvailabilitySuggestions({
+      ...common, services: [scheduled], teamIds: ["media"], teamScheduleScope: true, forms: [covered],
+    });
+    expect(suggestion?.startDate).toBe("2026-11-01");
+  });
+
+  it("reviews closed or expired coverage and creates a separate draft when requests were issued", () => {
+    const scheduled = scopedService("media-service", "camera", "2026-10-18");
+    const closed = availabilityForm(["media"], [scheduled], "2026-10-01", "2026-10-31", { active: false });
+    const closedSuggestion = getUpcomingAvailabilitySuggestions({
+      ...common, services: [scheduled], teamIds: ["media"], teamScheduleScope: true, forms: [closed],
+    });
+    expect(closedSuggestion[0]).toMatchObject({ kind: "review", reason: "closed", formId: closed.formId });
+
+    const expired = availabilityForm(["media"], [scheduled], "2026-10-01", "2026-10-31", { responseDeadline: "2026-09-30" });
+    const expiredSuggestion = getUpcomingAvailabilitySuggestions({
+      ...common, services: [scheduled], teamIds: ["media"], teamScheduleScope: true, forms: [expired],
+    });
+    expect(expiredSuggestion[0]).toMatchObject({ kind: "review", reason: "expired", formId: expired.formId });
+
+    const weeklyMedia = { ...mediaService, reccurence: "weekly" as const, dayOfWeek: 0 as const, time: "10:00" };
+    const octoberOccurrences = occurrencesFor([weeklyMedia], "2026-10-01", "2026-10-31");
+    const issued = availabilityForm(["media"], [weeklyMedia], "2026-10-01", "2026-10-31", {
+      hasIssuedRecipientRequests: true,
+      availabilityOccurrences: octoberOccurrences.slice(0, 1).map(({ occurrenceId, serviceId, name, startsAt, serviceDate }) => ({ occurrenceId, serviceId, name, startsAt, serviceDate })),
+    });
+    const issuedSuggestion = getUpcomingAvailabilitySuggestions({
+      ...common, services: [weeklyMedia], teamIds: ["media"], teamScheduleScope: true, forms: [issued],
+    });
+    expect(issuedSuggestion[0]).toMatchObject({ kind: "create", teamIds: ["media"], draft: { purpose: "team_availability" } });
+    expect(issuedSuggestion[0]).not.toHaveProperty("formId");
+  });
+
+  it("treats a legacy empty team scope as all teams", () => {
+    const media = { ...mediaService, reccurence: "weekly" as const, dayOfWeek: 0 as const, time: "10:00" };
+    const legacyAllTeams = availabilityForm([], [media], "2026-10-01", "2026-10-31");
+    const [suggestion] = getUpcomingAvailabilitySuggestions({
+      ...common, services: [media], teamIds: ["media"], teamScheduleScope: true, forms: [legacyAllTeams],
+    });
+    expect(suggestion?.startDate).toBe("2026-11-01");
+  });
+
+  it("updates a safe open form when its team scope and period match", () => {
+    const scheduled = { ...mediaService, reccurence: "weekly" as const, dayOfWeek: 0 as const, time: "10:00" };
+    const octoberOccurrences = occurrencesFor([scheduled], "2026-10-01", "2026-10-31");
+    const existing = availabilityForm(["media"], [scheduled], "2026-10-01", "2026-10-31", {
+      availabilityOccurrences: octoberOccurrences.slice(0, 1).map(({ occurrenceId, serviceId, name, startsAt, serviceDate }) => ({ occurrenceId, serviceId, name, startsAt, serviceDate })),
+    });
+    const [suggestion] = getUpcomingAvailabilitySuggestions({
+      ...common, services: [scheduled], teamIds: ["media"], teamScheduleScope: true, forms: [existing],
+    });
+    expect(suggestion).toMatchObject({ kind: "update", formId: existing.formId, draft: { purpose: "team_availability", teamIds: ["media"] } });
   });
 });

@@ -392,20 +392,37 @@ export const isTimestampFromPreviousLocalDay = (
   return thenStartOfDay < todayStartOfDay;
 };
 
-/**
- * True when a board still holds posts and every one of them is from an earlier
- * local day — i.e. leftover content from a previous gathering with no activity
- * today. A single post from today means the session is in active use, so this
- * returns false and we never offer to roll it. Drives the "start fresh session"
- * prompt; we key on post activity, never on the board's creation date, because a
- * board created earlier can be filled with today's live posts.
- */
-export const boardHasOnlyPreviousDayPosts = (
-  posts: Pick<DBBoardPost, "timestamp">[],
-  now: number = Date.now(),
-): boolean =>
-  posts.length > 0 &&
-  posts.every((post) => isTimestampFromPreviousLocalDay(post.timestamp, now));
+export type StaleBoardSessionScope = "board" | "restream" | "both";
+
+export const getStaleBoardSessionScope = ({
+  boardCreatedAt,
+  boardPosts,
+  restreamStartedAt,
+  restreamActivityTimestamps,
+  now = Date.now(),
+}: {
+  boardCreatedAt?: number;
+  boardPosts: Pick<DBBoardPost, "timestamp">[];
+  restreamStartedAt?: number;
+  restreamActivityTimestamps: number[];
+  now?: number;
+}): StaleBoardSessionScope | null => {
+  const boardStale =
+    isTimestampFromPreviousLocalDay(boardCreatedAt, now) &&
+    !boardPosts.some(
+      (post) => !isTimestampFromPreviousLocalDay(post.timestamp, now),
+    );
+  const restreamStale =
+    isTimestampFromPreviousLocalDay(restreamStartedAt, now) &&
+    !restreamActivityTimestamps.some(
+      (timestamp) => !isTimestampFromPreviousLocalDay(timestamp, now),
+    );
+
+  if (boardStale && restreamStale) return "both";
+  if (boardStale) return "board";
+  if (restreamStale) return "restream";
+  return null;
+};
 
 const CHURCH_ADJECTIVES = [
   "Joyful",

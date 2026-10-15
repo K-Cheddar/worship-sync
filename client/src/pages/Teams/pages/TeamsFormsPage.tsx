@@ -10,6 +10,7 @@ import { ChurchServiceTimeZoneNotice } from "../components/ChurchServiceTimeZone
 import { serverDate } from "../../../utils/serverTime";
 import { getTeamAvailabilityManagementData } from "../../../api/auth";
 import Button from "../../../components/Button/Button";
+import Select from "../../../components/Select/Select";
 import type {
   TeamAvailabilityManagementData,
   TeamAvailabilityResponse,
@@ -46,6 +47,20 @@ const TeamsFormsPage = () => {
       .sort(),
     [canEditTeam, pageData.teams],
   );
+  const authorizedActiveTeams = useMemo(
+    () => pageData.teams
+      .filter((team) => !team.archivedAt && (canEditTeams || canEditTeam(team.teamId)))
+      .sort((left, right) => left.name.localeCompare(right.name)),
+    [canEditTeam, canEditTeams, pageData.teams],
+  );
+  const teamFilterScopeKey = `${churchId}:${canEditTeams ? "admin" : "scoped"}:${authorizedActiveTeams.map(({ teamId }) => teamId).sort().join("|")}`;
+  const [teamFilterState, setTeamFilterState] = useState<{ scopeKey: string; teamId: string } | null>(null);
+  const selectedTeamId = teamFilterState?.scopeKey === teamFilterScopeKey
+    ? teamFilterState.teamId
+    : !canEditTeams && authorizedActiveTeams.length === 1 ? authorizedActiveTeams[0].teamId : "";
+  const suggestionTeamIds = selectedTeamId
+    ? [selectedTeamId]
+    : (scopedAvailabilityOnly ? managedTeamIds : authorizedActiveTeams.map(({ teamId }) => teamId));
   const availabilityScopeKey = `${churchId}:${managedTeamIds.join("|")}`;
   const [scopedDataState, setScopedDataState] = useState<{
     scopeKey: string;
@@ -92,12 +107,40 @@ const TeamsFormsPage = () => {
   });
   const visibleForms = useMemo(
     () => serviceTimeZone
-      ? filterFormsByDateRange(pageData.intakeForms, {
+      ? filterFormsByDateRange(pageData.intakeForms.filter((form) =>
+          !selectedTeamId || !(form.teamIds || []).length || (form.teamIds || []).includes(selectedTeamId),
+        ), {
           startDate: periodRange.start,
           endDate: periodRange.end,
         })
-      : pageData.intakeForms,
-    [pageData.intakeForms, periodRange.end, periodRange.start, serviceTimeZone],
+      : pageData.intakeForms.filter((form) =>
+          !selectedTeamId || !(form.teamIds || []).length || (form.teamIds || []).includes(selectedTeamId),
+        ),
+    [pageData.intakeForms, periodRange.end, periodRange.start, selectedTeamId, serviceTimeZone],
+  );
+
+  const teamRangeControls = (
+    <div className="mb-3 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2">
+      <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
+        <Select
+          className="w-full sm:w-60"
+          label="Team"
+          labelLayout="inline"
+          value={selectedTeamId}
+          onChange={(teamId) => setTeamFilterState({ scopeKey: teamFilterScopeKey, teamId })}
+          options={[{ label: "All teams", value: "" }, ...authorizedActiveTeams.map((team) => ({ label: team.name, value: team.teamId }))]}
+          disabled={!authorizedActiveTeams.length}
+        />
+        {serviceTimeZone ? (
+          <RangeSelector
+            preset={periodPreset}
+            range={periodRange}
+            onPresetChange={selectPeriodPreset}
+            onCustomRangeChange={selectCustomRange}
+          />
+        ) : <ChurchServiceTimeZoneNotice area="Availability forms" />}
+      </div>
+    </div>
   );
 
   const refreshScopedData = useCallback(() => {
@@ -122,27 +165,21 @@ const TeamsFormsPage = () => {
       <IntakeManager
         availabilityOnly
         managedTeamIds={managedTeamIds}
+        suggestionTeamIds={suggestionTeamIds}
         availabilityResponses={availabilityResponses}
         onAvailabilityRefresh={refreshScopedData}
         forms={availabilityForms}
         displayForms={serviceTimeZone
-          ? filterFormsByDateRange(availabilityForms, {
+          ? filterFormsByDateRange(availabilityForms.filter((form) =>
+              !selectedTeamId || !(form.teamIds || []).length || (form.teamIds || []).includes(selectedTeamId),
+            ), {
               startDate: periodRange.start,
               endDate: periodRange.end,
             })
-          : availabilityForms}
-        listHeader={(
-          serviceTimeZone ? (
-            <div className="mb-3 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2">
-              <RangeSelector
-                preset={periodPreset}
-                range={periodRange}
-                onPresetChange={selectPeriodPreset}
-                onCustomRangeChange={selectCustomRange}
-              />
-            </div>
-          ) : <ChurchServiceTimeZoneNotice area="Availability forms" />
-        )}
+          : availabilityForms.filter((form) =>
+              !selectedTeamId || !(form.teamIds || []).length || (form.teamIds || []).includes(selectedTeamId),
+            )}
+        listHeader={teamRangeControls}
         submissions={[]}
         intakeRecipients={scopedData.intakeRecipients}
         smsEligibilityByMemberId={scopedData.smsEligibilityByMemberId}
@@ -176,19 +213,9 @@ const TeamsFormsPage = () => {
   return (
     <IntakeManager
       forms={pageData.intakeForms}
+      suggestionTeamIds={suggestionTeamIds}
       displayForms={visibleForms}
-      listHeader={(
-        serviceTimeZone ? (
-          <div className="mb-3 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2">
-            <RangeSelector
-              preset={periodPreset}
-              range={periodRange}
-              onPresetChange={selectPeriodPreset}
-              onCustomRangeChange={selectCustomRange}
-            />
-          </div>
-        ) : <ChurchServiceTimeZoneNotice area="Availability forms" />
-      )}
+      listHeader={teamRangeControls}
       submissions={pageData.intakeSubmissions}
       intakeRecipients={pageData.intakeRecipients}
       smsEligibilityByMemberId={pageData.smsEligibilityByMemberId}

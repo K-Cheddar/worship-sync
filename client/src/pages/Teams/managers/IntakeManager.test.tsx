@@ -669,10 +669,14 @@ test("a newly created form offers Send form without sending anything during save
     reccurence: "weekly",
     dayOfWeek: 0,
     time: "10:00",
+    positionRequirements: [{ positionId: "vocal", count: 1 }],
   };
   const createdForm = { ...form, formId: "new-form", name: "October Availability", startDate: "2026-10-01", endDate: "2026-10-31" };
   jest.mocked(createTeamIntakeForm).mockResolvedValue({ success: true, form: createdForm, publicToken: "new-public-token", publicUrl: "https://example.test/new-form" });
-  renderManager({ forms: [], services: [service], eligibilityStatus: "enabled" });
+  renderManager({
+    forms: [], services: [service], eligibilityStatus: "enabled",
+    positions: [{ positionId: "vocal", churchId: "church-1", teamId: "team-1", name: "Vocal" }],
+  });
 
   await user.click(screen.getByRole("button", { name: "Review form" }));
   await user.click(screen.getByRole("button", { name: "Create form" }));
@@ -712,7 +716,7 @@ test.each([
     submissions: [submittedAvailability],
     submissionCount: 1,
   },
-])("reviewing an availability gap opens and updates the existing form with a $issuedBy", async ({
+])("reviewing an availability gap with a $issuedBy request creates a separate draft", async ({
   intakeRecipients,
   submissions,
   submissionCount,
@@ -728,7 +732,7 @@ test.each([
   const existingForm = {
     ...form,
     name: "October Availability",
-    teamIds: [],
+    teamIds: ["team-1"],
     availabilityServices: [{ serviceId: "saved-service", name: "Saved service" }],
     availabilityOccurrences: [existingOccurrence],
     enabledFields: ["firstName", "availability"],
@@ -754,42 +758,54 @@ test.each([
     submissions,
   });
 
-  expect(screen.getByRole("heading", { name: "October Availability needs updating" })).toBeInTheDocument();
-  expect(screen.getByText("1 upcoming service isn’t included.")).toBeInTheDocument();
-  expect(screen.getByRole("listitem")).toHaveTextContent(
-    "Power Up · Wed, Oct 14, 2026 @ 2:00 PM UTC",
-  );
+  expect(screen.getByText("Availability needed for Worship")).toBeInTheDocument();
+  expect(screen.getByText(/1 upcoming date missing/)).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Review form" }));
-  expect(screen.getByRole("button", { name: "Save form" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Create form" })).toBeInTheDocument();
   expect(screen.getByLabelText(/^Name/i)).toHaveValue("October Availability");
-  expect(screen.getByText(/newly suggested dates will be added when you save/)).toBeInTheDocument();
-  expect(screen.getByText(/Availability services: Saved service, Power Up/)).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Save form" }));
-
-  await waitFor(() => expect(updateTeamIntakeForm).toHaveBeenCalledWith(
-    "church-1",
-    existingForm.formId,
-    expect.objectContaining({
-      name: existingForm.name,
-      teamIds: existingForm.teamIds,
-      enabledFields: existingForm.enabledFields,
-      availabilityMessage: existingForm.availabilityMessage,
-      availabilityServices: [
-        { serviceId: "saved-service", name: "Saved service" },
-        { serviceId: "power-up", name: "Power Up" },
-      ],
-      availabilityOccurrences: [
-        existingOccurrence,
-        expect.objectContaining({
-          occurrenceId: "power-up@2026-10-14",
-          serviceId: "power-up",
-          startsAt: "2026-10-14T14:00:00.000Z",
-        }),
-      ],
-    }),
-  ));
+  expect(screen.getByText("Power Up")).toBeInTheDocument();
+  expect(updateTeamIntakeForm).not.toHaveBeenCalled();
   expect(createTeamIntakeForm).not.toHaveBeenCalled();
   jest.useRealTimers();
+});
+
+test("closed future availability coverage opens for review without creating another form", async () => {
+  const user = userEvent.setup();
+  const upcoming = {
+    id: "upcoming-service",
+    serviceId: "upcoming-service",
+    churchId: "church-1",
+    name: "Sunday service",
+    timerType: "countdown" as const,
+    reccurence: "one_time" as const,
+    dateTimeISO: "2026-10-18T14:00:00.000Z",
+    positionRequirements: [{ positionId: "vocal", count: 1 }],
+  };
+  const closedForm = {
+    ...form,
+    purpose: "team_availability" as const,
+    active: false,
+    enabledFields: ["availability" as const],
+    availabilityServices: [{ serviceId: upcoming.serviceId, name: upcoming.name }],
+    availabilityOccurrences: [{
+      occurrenceId: "upcoming-service@2026-10-18",
+      serviceId: upcoming.serviceId,
+      name: upcoming.name,
+      serviceDate: "2026-10-18",
+      startsAt: upcoming.dateTimeISO,
+    }],
+  } as TeamIntakeForm;
+  renderManager({
+    forms: [closedForm],
+    services: [upcoming],
+    positions: [{ positionId: "vocal", churchId: "church-1", teamId: "team-1", name: "Vocal" }],
+  });
+
+  expect(screen.getByText(/This form is closed/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Review form" }));
+  expect(screen.getByRole("button", { name: "Save form" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Create form" })).not.toBeInTheDocument();
+  expect(createTeamIntakeForm).not.toHaveBeenCalled();
 });
 
 test("a delayed form save cannot close a different form opened before it settles", async () => {

@@ -45,7 +45,8 @@ import {
   getBoardDocId,
   getBoardLabel,
   normalizeBoardPresentationFontScale,
-  boardHasOnlyPreviousDayPosts,
+  getStaleBoardSessionScope,
+  type StaleBoardSessionScope,
   isCurrentBoardView,
   isWorshipSyncModeratorBoardPost,
   setStoredBoardDisplayAliasId,
@@ -60,6 +61,7 @@ import {
 import {
   deleteBoardAlias,
   hardResetBoardAlias,
+  keepCurrentRestreamSession,
   resetRestreamSession,
   updateBoardPresentationFontScale,
   updateBoardPostHidden,
@@ -74,6 +76,7 @@ import {
 import { BoardControllerMenu } from "../boards/BoardControllerMenu";
 import { BoardToolsPanelBody } from "../boards/BoardControllerToolsPanel";
 import RestreamSessionSuggestionBanner from "../boards/RestreamSessionSuggestionBanner";
+import BoardSessionFreshStartSuggestion from "../boards/BoardSessionFreshStartSuggestion";
 import { BoardDiscussionPostComposer } from "../boards/BoardDiscussionPostComposer";
 import { BoardYouTubeChatComposer } from "../boards/BoardYouTubeChatComposer";
 import { BoardActivitySourceBadge } from "../boards/BoardActivitySourceBadge";
@@ -208,33 +211,12 @@ const getSelectedAliasViewData = async (
   };
 };
 
-const SessionResetToastAction = ({
-  keepLabel,
-  confirmLabel,
-  onKeep,
-  onConfirm,
-}: {
-  keepLabel: string;
-  confirmLabel: string;
-  onKeep: () => void;
-  onConfirm: () => void;
-}) => (
-  <div className="mt-3 flex flex-wrap justify-center gap-2">
-    <Button variant="primary" className="text-sm" wrap onClick={onKeep}>
-      {keepLabel}
-    </Button>
-    <Button variant="cta" className="text-sm" wrap onClick={onConfirm}>
-      {confirmLabel}
-    </Button>
-  </div>
-);
-
 export const BoardControllerContent = () => {
   const { db, status, pullFromRemote, retryNow, subscribeToChanges } =
     useBoardSync() || {};
   const { database, loginState, churchId, userId, logout, churchIntegrations } =
     useContext(GlobalInfoContext) || {};
-  const { showToast, removeToast } = useToast();
+  const { showToast } = useToast();
   const scrollbarWidth = useSelector(
     (state: RootState) => state.undoable.present.preferences.scrollbarWidth,
   );
@@ -262,6 +244,7 @@ export const BoardControllerContent = () => {
   const [boardsById, setBoardsById] = useState<Record<string, DBBoard>>({});
   const [posts, setPosts] = useState<DBBoardPost[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [hasLoadedSelectedAlias, setHasLoadedSelectedAlias] = useState(false);
   const [isActing, setIsActing] = useState(false);
   const [actingPostIds, setActingPostIds] = useState<Set<string>>(new Set());
   const [renameAliasId, setRenameAliasId] = useState("");
@@ -274,6 +257,12 @@ export const BoardControllerContent = () => {
     useState(false);
   const [freshBoardConfirmOpen, setFreshBoardConfirmOpen] =
     useState(false);
+  const [freshBoardResetScope, setFreshBoardResetScope] =
+    useState<StaleBoardSessionScope>("both");
+  const [freshBoardResetAliasId, setFreshBoardResetAliasId] = useState("");
+  const [freshBoardResetSessionIdentity, setFreshBoardResetSessionIdentity] =
+    useState("");
+  const [keptStaleSessionIdentity, setKeptStaleSessionIdentity] = useState("");
   const [isConfirmingFreshBoardSession, setIsConfirmingFreshBoardSession] =
     useState(false);
   const loadRequestIdRef = useRef(0);
@@ -285,11 +274,6 @@ export const BoardControllerContent = () => {
   const selectedAliasRevisionRef = useRef<string | null>(null);
   const selectedAliasBoardIdsRef = useRef<Set<string>>(new Set());
   const currentBoardIdRef = useRef("");
-  // Board ids we've already prompted about, so the "start fresh session"
-  // toast appears once per stale board rather than on every re-render or
-  // background sync.
-  const promptedFreshSessionBoardIdsRef = useRef<Set<string>>(new Set());
-
   activeDbRef.current = db;
   activeDatabaseRef.current = database;
 
@@ -322,6 +306,7 @@ export const BoardControllerContent = () => {
       setBoardsById({});
       setPosts([]);
       setCurrentBoardHighlightedCount(0);
+      setHasLoadedSelectedAlias(false);
       setIsLoading(false);
       return;
     }
@@ -339,6 +324,7 @@ export const BoardControllerContent = () => {
       selectedAliasRevisionRef.current === requestAliasRevision;
 
     setIsLoading(true);
+    setHasLoadedSelectedAlias(false);
     try {
       const alias = (await requestDb.get(
         getAliasDocId(requestAliasId),
@@ -361,6 +347,7 @@ export const BoardControllerContent = () => {
       setCurrentBoardHighlightedCount(
         nextViewData.currentBoardHighlightedCount,
       );
+      setHasLoadedSelectedAlias(true);
       const nextSelectedBoardId =
         nextViewData.boardIdToView === alias.currentBoardId
           ? ""
@@ -561,21 +548,34 @@ export const BoardControllerContent = () => {
   }, [churchId, isConfirmingRestreamReset, reloadRestreamSession, showToast]);
 
   // Automatic stream detection remains the normal Restream reset path. This
-  // explicit fresh-start action resets both sources as a reliable fallback for
-  // platforms that do not expose a stable broadcast identity.
+  // confirmed action resets only the stale sources for this session.
   const handleConfirmFreshBoardSession = useCallback(async () => {
-    if (!selectedAlias || !churchId || isConfirmingFreshBoardSession) return;
-    const aliasId = selectedAlias.aliasId;
+    if (!freshBoardResetAliasId || !churchId || isConfirmingFreshBoardSession) return;
+    const aliasId = freshBoardResetAliasId;
     setIsConfirmingFreshBoardSession(true);
     try {
-      await resetRestreamSession(churchId);
-      await hardResetBoardAlias(aliasId);
-      await reloadRestreamSession();
+      if (freshBoardResetScope === "both" || freshBoardResetScope === "restream") {
+        await resetRestreamSession(churchId);
+      }
+      if (freshBoardResetScope === "both" || freshBoardResetScope === "board") {
+        await hardResetBoardAlias(aliasId);
+      }
+      if (freshBoardResetScope !== "board") await reloadRestreamSession();
       setSelectedBoardId("");
       setFreshBoardConfirmOpen(false);
-      showToast("Started fresh for today and cleared earlier Restream chat.", "success");
+      showToast(
+        freshBoardResetScope === "both"
+          ? "Started fresh for today and cleared earlier Restream chat."
+          : freshBoardResetScope === "board"
+            ? "Started a fresh discussion board for today."
+            : "Started a new Restream session.",
+        "success",
+      );
       pullFromRemote?.();
     } catch (error) {
+      if (freshBoardResetScope !== "board") {
+        await reloadRestreamSession();
+      }
       showToast(
         error instanceof Error
           ? error.message
@@ -586,50 +586,97 @@ export const BoardControllerContent = () => {
       setIsConfirmingFreshBoardSession(false);
     }
   }, [
-    selectedAlias,
     churchId,
+    freshBoardResetAliasId,
+    freshBoardResetScope,
     isConfirmingFreshBoardSession,
     reloadRestreamSession,
     showToast,
     pullFromRemote,
   ]);
 
-  // Prompt (never force) a fresh start when the current board only holds
-  // content from an earlier day.
+  const restreamActivityTimestamps = [
+    restreamSession.session?.lastEventAt,
+    restreamSession.session?.lastMessageAt,
+    ...restreamSession.messages
+      .filter((message) => message.sessionId === restreamSession.session?.sessionId)
+      .flatMap((message) => [message.postedAt, message.receivedAt]),
+  ].filter((timestamp): timestamp is number => typeof timestamp === "number");
+  const staleSessionScope =
+    db &&
+    status === "connected" &&
+    hasLoadedSelectedAlias &&
+    !isLoading &&
+    isViewingCurrent &&
+    selectedAlias?.aliasId === selectedAliasId &&
+    currentBoard &&
+    churchId &&
+    !restreamSession.isLoading &&
+    !restreamSession.isRefreshing &&
+    !restreamSession.error &&
+    restreamSession.session
+      ? getStaleBoardSessionScope({
+          boardCreatedAt: currentBoard.createdAt,
+          boardPosts: posts,
+          restreamStartedAt: restreamSession.session.startedAt,
+          restreamActivityTimestamps,
+        })
+      : null;
+  const staleSessionDecisionKey = staleSessionScope
+    ? `worshipsync:board-session-decision:${churchId}:${selectedAliasId}`
+    : "";
+  const staleSessionIdentity = staleSessionScope
+    ? [
+        churchId || "",
+        selectedAliasId,
+        currentBoard?.id || "",
+        restreamSession.session?.sessionId || "",
+        new Date().toLocaleDateString(),
+        staleSessionScope,
+      ].join(":")
+    : "";
+  const showStaleSessionSuggestion = Boolean(
+    staleSessionScope &&
+      staleSessionDecisionKey &&
+      keptStaleSessionIdentity !== staleSessionIdentity &&
+      localStorage.getItem(staleSessionDecisionKey) !== staleSessionIdentity,
+  );
   useEffect(() => {
-    if (isLoading) return;
-
-    const boardIsStale =
-      isViewingCurrent &&
-      !!currentBoard &&
-      boardHasOnlyPreviousDayPosts(posts);
-    const staleBoardId = boardIsStale ? currentBoard!.id : "";
-    const promptBoard =
-      !!staleBoardId &&
-      !promptedFreshSessionBoardIdsRef.current.has(staleBoardId);
-
-    if (!promptBoard) return;
-
-    promptedFreshSessionBoardIdsRef.current.add(staleBoardId);
-
-    showToast({
-      message: "Earlier-day comments are still in the board. Start fresh for today?",
-      variant: "info",
-      duration: 15000,
-      showCloseButton: false,
-      children: (toastId) => (
-        <SessionResetToastAction
-          keepLabel="Keep current session"
-          confirmLabel="Start fresh for today"
-          onKeep={() => removeToast(toastId)}
-          onConfirm={() => {
-            removeToast(toastId);
-            setFreshBoardConfirmOpen(true);
-          }}
-        />
-      ),
-    });
-  }, [isLoading, isViewingCurrent, currentBoard, posts, showToast, removeToast]);
+    if (
+      freshBoardConfirmOpen &&
+      !isConfirmingFreshBoardSession &&
+      (selectedAlias?.aliasId !== freshBoardResetAliasId ||
+        staleSessionScope !== freshBoardResetScope ||
+        staleSessionIdentity !== freshBoardResetSessionIdentity)
+    ) {
+      setFreshBoardConfirmOpen(false);
+    }
+  }, [
+    freshBoardConfirmOpen,
+    isConfirmingFreshBoardSession,
+    selectedAlias?.aliasId,
+    freshBoardResetAliasId,
+    staleSessionScope,
+    freshBoardResetScope,
+    staleSessionIdentity,
+    freshBoardResetSessionIdentity,
+  ]);
+  const handleKeepStaleSession = async () => {
+    if (!staleSessionDecisionKey || !staleSessionIdentity) return;
+    try {
+      if (staleSessionScope !== "board" && churchId) {
+        await keepCurrentRestreamSession(churchId);
+        await reloadRestreamSession();
+      }
+      localStorage.setItem(staleSessionDecisionKey, staleSessionIdentity);
+      setKeptStaleSessionIdentity(staleSessionIdentity);
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : "Could not keep the current session.",
+        "error",
+      );
+    }
+  };
 
   const runPostAction = useCallback(
     async (
@@ -811,12 +858,26 @@ export const BoardControllerContent = () => {
 
   const restreamStatusItems = (
     <>
+      {showStaleSessionSuggestion && staleSessionScope ? (
+        <BoardSessionFreshStartSuggestion
+          scope={staleSessionScope}
+          onKeep={handleKeepStaleSession}
+          onStart={() => {
+            setFreshBoardResetAliasId(selectedAlias?.aliasId || "");
+            setFreshBoardResetSessionIdentity(staleSessionIdentity);
+            setFreshBoardResetScope(staleSessionScope);
+            setFreshBoardConfirmOpen(true);
+          }}
+        />
+      ) : null}
       {restreamSession.isOffline ? (
         <p className="text-xs text-amber-100/90">
           You appear to be offline. Live messages may not update until you reconnect.
         </p>
       ) : null}
-      {churchId && restreamSession.session?.sessionSuggestion ? (
+      {churchId &&
+      restreamSession.session?.sessionSuggestion &&
+      !showStaleSessionSuggestion ? (
         <RestreamSessionSuggestionBanner
           churchId={churchId}
           suggestion={restreamSession.session.sessionSuggestion}
@@ -881,6 +942,7 @@ export const BoardControllerContent = () => {
   );
   const hasRestreamStatus =
     restreamSession.isOffline ||
+    showStaleSessionSuggestion ||
     Boolean(restreamSession.session?.sessionSuggestion) ||
     Boolean(restreamSession.session?.streamTitle) ||
     !restreamSession.oauthConfigured ||
@@ -1170,15 +1232,39 @@ export const BoardControllerContent = () => {
           isOpen
           onClose={() => setFreshBoardConfirmOpen(false)}
           onConfirm={() => void handleConfirmFreshBoardSession()}
-          itemName="today's session"
-          title="Start fresh for today"
+          itemName={
+            freshBoardResetScope === "both"
+              ? "today's session"
+              : freshBoardResetScope === "board"
+                ? "today's discussion board"
+                : "today's Restream session"
+          }
+          title={
+            freshBoardResetScope === "both"
+              ? "Start fresh for today"
+              : freshBoardResetScope === "board"
+                ? "Start a fresh discussion board"
+                : "Start a new Restream session"
+          }
           message="Are you sure you want to start fresh for"
-          warningMessage="Board posts move to history. Earlier Restream chat is cleared."
-          impacts={[
-            "Discussion board archives its current posts and starts empty",
-            "Restream chat starts a new session",
-          ]}
-          confirmText="Start fresh"
+          warningMessage={
+            freshBoardResetScope === "both"
+              ? "Board posts move to history. Earlier Restream chat is cleared."
+              : freshBoardResetScope === "board"
+                ? "Board posts move to history and the discussion board starts empty."
+                : "Earlier Restream chat is cleared. Discussion board posts stay the same."
+          }
+          impacts={
+            freshBoardResetScope === "both"
+              ? [
+                  "Discussion board archives its current posts and starts empty",
+                  "Restream chat starts a new session",
+                ]
+              : freshBoardResetScope === "board"
+                ? ["Discussion board archives its current posts and starts empty"]
+                : ["Restream chat starts a new session"]
+          }
+          confirmText={freshBoardResetScope === "both" ? "Start fresh" : "Continue"}
           confirmingLabel="Starting fresh..."
           isConfirming={isConfirmingFreshBoardSession}
         />
