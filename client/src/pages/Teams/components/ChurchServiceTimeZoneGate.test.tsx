@@ -32,6 +32,8 @@ describe("ChurchServiceTimeZoneGate", () => {
 
     expect(screen.queryByText("Schedule editor")).not.toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent(/date-based Schedules actions are unavailable/i);
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Open Service setup" })).not.toBeInTheDocument();
   });
 
   it("keeps children available with this church's last confirmed time zone during a failed refresh", () => {
@@ -48,5 +50,27 @@ describe("ChurchServiceTimeZoneGate", () => {
 
     expect(screen.getByText("Schedule editor")).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent(/last confirmed time zone/i);
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Open Service setup" })).not.toBeInTheDocument();
+  });
+
+  it("offers Service setup after the server confirms the church has no configured time zone", () => {
+    mockTimeZoneValue.status = "ready";
+    mockTimeZoneValue.timeZone = "UTC";
+
+    render(
+      <MemoryRouter>
+        <ChurchServiceTimeZoneGate area="Schedules">
+          <p>Schedule editor</p>
+        </ChurchServiceTimeZoneGate>
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByText("Schedule editor")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open Service setup" })).toHaveAttribute(
+      "href",
+      "/teams-and-services/service-setup",
+    );
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
   });
 });
