@@ -3574,11 +3574,24 @@ const ScheduleTab = ({
     if (action === "add") {
       clearActiveSlot();
     }
+    const isShadowEditPending = (scheduleId: string) =>
+      [...pendingScheduleCellEditsRef.current.values()].some((edit) =>
+        edit.churchId === staged.edit.churchId &&
+        edit.scheduleId === scheduleId &&
+        edit.field === staged.edit.field &&
+        edit.occurrenceId === staged.edit.occurrenceId &&
+        edit.cellKey === staged.edit.cellKey &&
+        edit.sequence === staged.edit.sequence,
+      );
     const saveShadow = async (fingerprint?: string): Promise<void> => {
+      // The operator may have removed or replaced this shadow while a failed
+      // save's Retry button was still visible.
+      if (!isShadowEditPending(mutationSchedule.scheduleId)) return;
       try {
         const ensuredSchedule = await ensureActiveSchedule(mutationSchedule);
         if (!ensuredSchedule) return;
         mutationSchedule = ensuredSchedule;
+        if (!isShadowEditPending(ensuredSchedule.scheduleId)) return;
         const persistedEdit = [...pendingScheduleCellEditsRef.current.values()].find((edit) =>
           edit.churchId === staged.edit.churchId &&
           edit.scheduleId === ensuredSchedule.scheduleId &&
@@ -3586,8 +3599,11 @@ const ScheduleTab = ({
           edit.occurrenceId === staged.edit.occurrenceId &&
           edit.cellKey === staged.edit.cellKey &&
           edit.sequence === staged.edit.sequence,
-        ) || staged.edit;
-        const response = await enqueueAssignmentSave(ensuredSchedule.scheduleId, () => updateTeamScheduleAssignment(
+        );
+        if (!persistedEdit) return;
+        const response = await enqueueAssignmentSave(ensuredSchedule.scheduleId, async () => {
+          if (!isShadowEditPending(ensuredSchedule.scheduleId)) return null;
+          return updateTeamScheduleAssignment(
           churchId,
           ensuredSchedule.scheduleId,
           {
@@ -3603,7 +3619,9 @@ const ScheduleTab = ({
               : {}),
             ...assignmentConflictPayload(fingerprint),
           },
-        ));
+        );
+        });
+        if (!response) return;
         if (!shadowUndoRecorded) {
           shadowUndoRecorded = true;
           recordAssignmentChange(
@@ -3616,6 +3634,7 @@ const ScheduleTab = ({
         clearScheduleCellEdit(persistedEdit);
         publishScheduleCellResponses(response.schedule, "assignments", [persistedEdit]);
       } catch (error) {
+        if (!isShadowEditPending(mutationSchedule.scheduleId)) return;
         const conflictDetails = action === "add" ? getOccurrenceConflictDetails(error) : null;
         if (conflictDetails) {
           requestCrossTeamConflictConfirmation({
@@ -3655,6 +3674,7 @@ const ScheduleTab = ({
             <div className="mt-2 flex justify-center">
               <Button variant="primary" className="text-sm" onClick={() => {
                 removeToast(toastId);
+                if (!isShadowEditPending(mutationSchedule.scheduleId)) return;
                 void saveShadow(fingerprint);
               }}>Retry save</Button>
             </div>
