@@ -46,13 +46,15 @@ export const ChurchServiceTimeZoneNotice = ({ area }: Pick<Props, "area">) => {
             Try again
           </Button>
         ) : null}
-        <Button
-          component="link"
-          to="/teams-and-services/service-setup"
-          variant="tertiary"
-        >
-          Open Service setup
-        </Button>
+        {needsConfiguration ? (
+          <Button
+            component="link"
+            to="/teams-and-services/service-setup"
+            variant="tertiary"
+          >
+            Open Service setup
+          </Button>
+        ) : null}
       </div>
     </section>
   );
