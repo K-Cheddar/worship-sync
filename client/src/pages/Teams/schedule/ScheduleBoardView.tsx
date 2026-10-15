@@ -144,7 +144,8 @@ const ScheduleBoardView = ({
     group.occurrences.map((occurrence) => ({ occurrence, group })),
   );
   const columnCount = getBoardColumnCount(boardWidth, occurrences.length);
-  const boardColumnWidthClassName = columnCount === 1 ? "w-full" : "w-fit";
+  const boardColumnWidthClassName =
+    columnCount === 1 ? "w-full md:w-fit" : "w-fit";
 
   useLayoutEffect(() => {
     const board = boardRef.current;
@@ -185,8 +186,8 @@ const ScheduleBoardView = ({
         data-testid="schedule-board-card"
         className={cn(
           // Always render the border so colouring the marker card never
-          // shifts layout. Single-column boards fill the available width on
-          // narrow screens; multi-column masonry keeps cards content-sized.
+          // shifts layout. Single-column boards fill narrow screens and size to
+          // content on desktop; multi-column masonry keeps cards content-sized.
           "relative flex max-w-full break-inside-avoid flex-col rounded-xl border bg-gray-950/60",
           boardColumnWidthClassName,
           markerBorderClassName,
