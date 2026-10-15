@@ -1,3 +1,4 @@
+import { isPersistedScheduleId } from "./scheduleNotificationHistory";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import Input from "../../../components/Input/Input";
 import Select from "../../../components/Select/Select";
@@ -276,7 +277,7 @@ const ScheduleEditForm = ({
   const occurrenceOwnershipConflicts = useMemo(() => mode === "edit"
     ? []
     : findScheduleOccurrenceOwnershipConflicts({
-      schedules: seedSchedules,
+      schedules: seedSchedules.filter((schedule) => isPersistedScheduleId(schedule.scheduleId)),
       churchId,
       teamId: draft.teamId,
       occurrences: draftOccurrences,

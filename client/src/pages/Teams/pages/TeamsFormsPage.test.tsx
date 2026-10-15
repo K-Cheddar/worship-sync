@@ -184,7 +184,7 @@ describe("TeamsFormsPage period selection", () => {
   });
 
   it("uses the last confirmed time zone after a temporary refresh failure", () => {
-    mockChurchServiceTimeZone.status = "error";
+    mockChurchServiceTimeZone.status = "ready";
     mockChurchServiceTimeZone.timeZone = "America/New_York";
     mockChurchServiceTimeZone.isConfigured = true;
     mockChurchServiceTimeZone.refreshIssue = { kind: "unavailable", since: Date.now() };

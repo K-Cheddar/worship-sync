@@ -6,6 +6,8 @@ process.env.RESEND_API_KEY = "";
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash, randomUUID } from "node:crypto";
+import { createTeamsAuthHandlers } from "./teamsAuthHandlers.js";
 
 const {
   authHandlers,
@@ -273,12 +275,12 @@ const callHandler = async (handler, { context, params = {}, body = {} }) => {
   return response;
 };
 
-const createFixture = async (suffix, services) => {
-  const db = createTransactionalFirestore();
+const createFixture = async (suffix, services, firestore = true) => {
+  const db = firestore ? createTransactionalFirestore() : null;
   setServerFirestoreForTests(db);
   const context = await createAdminContext(suffix);
   const teamId = `schedule_ownership_team_${suffix}`;
-  await db.collection(COLLECTIONS.teams).doc(teamId).set({
+  await setDoc(COLLECTIONS.teams, teamId, {
     teamId,
     churchId: context.churchId,
     name: "Media",
@@ -444,3 +446,152 @@ test("Firestore ensures preserve legacy schedules, remain idempotent, and atomic
   assert.equal(claims[0].occurrenceId, secondOccurrence.occurrenceId);
   assert.equal(fixture.db.stats.readAfterWriteAttempts, 0);
 });
+
+for (const firestore of [false, true]) {
+  const store = firestore ? "Firestore" : "in-memory";
+  test(`${store} name-only schedule edits preserve operational metadata through persistence and detail reads`, async (t) => {
+    const event = occurrence("sunday", "2026-10-10T12:00:00.000Z");
+    const { context, teamId } = await createFixture(`metadata_${store}`, [service("sunday", event.startsAt)], firestore);
+    t.after(() => setServerFirestoreForTests(null));
+    const body = periodBody(teamId, "2026-10-01", "2026-10-31", [event]);
+    body.assignments = { [event.occurrenceId]: { "camera::0": { primaryMemberId: "volunteer", shadows: [] } } };
+    const created = await callHandler(authHandlers.createTeamSchedule, { context, body });
+    assert.equal(created.statusCode, 200, JSON.stringify(created.payload));
+    const scheduleId = created.payload.schedule.scheduleId;
+    const metadata = {
+      responses: { [event.occurrenceId]: { "camera::0": { memberId: "volunteer", response: "accepted", respondedAt: "2026-10-01T00:00:00.000Z" } } },
+      publicLinkToken: "public-link-preserved", publicToken: "legacy-public-token",
+      publicationStatus: "published", publishedAt: "2026-10-01T01:00:00.000Z",
+      sentAt: "2026-10-02T00:00:00.000Z", sentByUid: "sender",
+      publicationHistory: [{ actor: "publisher" }], notificationHistory: [{ status: "sent" }],
+      deliveryState: { queued: true, attempt: 2 }, futureOperationalField: { keep: "all fields" },
+    };
+    await setDoc(COLLECTIONS.teamSchedules, scheduleId, metadata, { merge: true });
+    const before = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+    const edited = await callHandler(authHandlers.updateTeamSchedule, {
+      context, params: { scheduleId }, body: { ...body, name: "Renamed only", publicLinkToken: "untrusted-replacement", createdAt: "untrusted" },
+    });
+    assert.equal(edited.statusCode, 200, JSON.stringify(edited.payload));
+    const persisted = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+    for (const [key, value] of Object.entries(metadata)) {
+      assert.deepEqual(persisted[key], value, key);
+      assert.deepEqual(edited.payload.schedule[key], value, `response ${key}`);
+    }
+    assert.deepEqual(persisted.assignments, before.assignments);
+    assert.equal(persisted.scheduleId, scheduleId);
+    assert.equal(persisted.createdAt, before.createdAt);
+    assert.equal(persisted.createdByUid, before.createdByUid);
+    assert.equal(persisted.name, "Renamed only");
+    assert.ok(persisted.updatedAt >= before.updatedAt);
+    const detail = await callHandler(authHandlers.getTeamScheduleDetail, { context, params: { scheduleId } });
+    assert.equal(detail.statusCode, 200);
+    assert.deepEqual(detail.payload.schedule.responses, metadata.responses);
+    assert.deepEqual(detail.payload.schedule.assignments, before.assignments);
+  });
+
+  for (const groupId of [undefined, null, "genuine-conflicting-group"]) {
+    test(`${store} standalone ownership normalizes ${String(groupId)} without accepting group conflicts`, async (t) => {
+      const event = occurrence("sunday", "2026-10-10T12:00:00.000Z");
+      const { context, teamId } = await createFixture(`claim_${store}_${String(groupId)}`, [service("sunday", event.startsAt)], firestore);
+      t.after(() => setServerFirestoreForTests(null));
+      const created = await callHandler(authHandlers.createTeamSchedule, { context, body: periodBody(teamId, "2026-10-01", "2026-10-31", [event]) });
+      assert.equal(created.statusCode, 200, JSON.stringify(created.payload));
+      const schedule = created.payload.schedule;
+      const [claim] = await queryDocs(COLLECTIONS.teamScheduleOccurrenceOwners, [{ field: "churchId", value: context.churchId }]);
+      const { id, ...claimData } = claim;
+      if (groupId === undefined) delete claimData.groupId;
+      else claimData.groupId = groupId;
+      // The active former owner no longer contains this occurrence.
+      await setDoc(COLLECTIONS.teamSchedules, schedule.scheduleId, { occurrences: [], assignments: { untouched: { "camera::0": "preserved" } } }, { merge: true });
+      await setDoc(COLLECTIONS.teamScheduleOccurrenceOwners, id, claimData, { merge: false });
+      const replacement = await callHandler(authHandlers.createTeamSchedule, { context, body: periodBody(teamId, "2026-10-01", "2026-10-31", [event]) });
+      assert.equal(replacement.statusCode, groupId ? 409 : 200, JSON.stringify(replacement.payload));
+      const owner = await getDoc(COLLECTIONS.teamSchedules, schedule.scheduleId);
+      assert.deepEqual(owner.assignments, { untouched: { "camera::0": "preserved" } });
+      if (!groupId) {
+        // Also check legacy missing/null group IDs on a claim for the same schedule.
+        const nextSchedule = replacement.payload.schedule;
+        const nextClaim = await getDoc(COLLECTIONS.teamScheduleOccurrenceOwners, id);
+        delete nextClaim.groupId;
+        await setDoc(COLLECTIONS.teamScheduleOccurrenceOwners, id, nextClaim, { merge: false });
+        const edited = await callHandler(authHandlers.updateTeamSchedule, { context, params: { scheduleId: nextSchedule.scheduleId }, body: { ...nextSchedule, name: "Legacy claim edit" } });
+        assert.equal(edited.statusCode, 200, JSON.stringify(edited.payload));
+      }
+    });
+  }
+}
+
+for (const firestore of [false, true]) {
+  test(`${firestore ? "Firestore" : "in-memory"} concurrent import and create have one occurrence owner and preserve existing data`, async (t) => {
+    const first = occurrence("sunday", "2026-10-10T12:00:00.000Z");
+    const second = occurrence("sunday", "2026-10-17T12:00:00.000Z");
+    const services = [service("sunday", first.startsAt)];
+    const { db, context, teamId } = await createFixture(`import_race_${firestore}`, services, firestore);
+    t.after(() => setServerFirestoreForTests(null));
+    const created = await callHandler(authHandlers.createTeamSchedule, { context, body: periodBody(teamId, "2026-10-01", "2026-10-31", [first]) });
+    assert.equal(created.statusCode, 200);
+    const scheduleId = created.payload.schedule.scheduleId;
+    const assignments = { [first.occurrenceId]: { "camera::0": { primaryMemberId: "preserved-volunteer" } } };
+    await setDoc(COLLECTIONS.teamSchedules, scheduleId, { assignments, publicLinkToken: "preserved-token" }, { merge: true });
+    const targetClaimId = createHash("sha256").update(`${context.churchId}\u0000${teamId}\u0000sunday@2026-10-17`).digest("hex");
+    let releaseImport;
+    const gate = new Promise((resolve) => { releaseImport = resolve; });
+    let entered;
+    const paused = new Promise((resolve) => { entered = resolve; });
+    let didPause = false;
+    const pauseClaimRead = async (collectionName, id) => {
+      const value = await getDoc(collectionName, id);
+      if (!didPause && collectionName === COLLECTIONS.teamScheduleOccurrenceOwners && id === targetClaimId) {
+        didPause = true;
+        entered();
+        await gate;
+      }
+      return value;
+    };
+    // Keep real storage and handlers; inject a controllable read and an authorized
+    // operator to stop precisely between ownership validation and commit.
+    const operator = { user: { uid: "race-operator" } };
+    const handlers = createTeamsAuthHandlers({
+      COLLECTIONS, getDoc: pauseClaimRead, queryDocs, setDoc,
+      hashValue: (value) => createHash("sha256").update(String(value)).digest("hex"),
+      requireFirestore: () => db,
+      assertCsrf: async () => {}, requireAdminSession: async () => operator,
+      requireTeamsViewSession: async () => operator,
+      requireTeamsEditForTeamSession: async () => operator,
+      readChurchServiceTimes: async () => services,
+      normalizeEmail: (value) => String(value || "").trim().toLowerCase(),
+      nowIso: () => new Date().toISOString(), createId: (prefix) => `${prefix}_${randomUUID()}`,
+      httpError: (statusCode, message) => Object.assign(new Error(message), { statusCode }),
+      addSecurityEvent: async () => {},
+    });
+    // Firestore's transaction.get bypasses getDoc, so gate its claim read instead.
+    if (db) {
+      const original = db.runTransaction.bind(db);
+      db.runTransaction = (callback) => original((transaction) => callback({ ...transaction, get: async (target) => {
+        const snapshot = await transaction.get(target);
+        if (!didPause && target.collectionName === COLLECTIONS.teamScheduleOccurrenceOwners && target.id === targetClaimId) {
+          didPause = true; entered(); await gate;
+        }
+        return snapshot;
+      } }));
+    }
+    const imported = callHandler(handlers.commitPortableImport, { context, body: { type: "schedules", approvedRows: [{ row: 2, action: "update", recordId: scheduleId, record: {
+      name: "October", team: "Media", teamId, startDate: "2026-10-01", endDate: "2026-10-31", service: "sunday", serviceId: "sunday", date: "2026-10-17", startTime: "12:00",
+    } }] } });
+    await Promise.race([paused, imported.then((result) => { throw new Error(`Import finished before ownership read: ${JSON.stringify(result.payload)}`); })]);
+    const rival = callHandler(handlers.createTeamSchedule, { context, body: { ...periodBody(teamId, "2026-10-17", "2026-10-17", [second]), name: "Rival" } });
+    // Let the competing request reach its lock/transaction before releasing import.
+    await new Promise((resolve) => setImmediate(resolve));
+    releaseImport();
+    const results = await Promise.all([imported, rival]);
+    const schedules = await queryDocs(COLLECTIONS.teamSchedules, [{ field: "churchId", value: context.churchId }]);
+    const owners = schedules.filter((schedule) => (schedule.occurrences || []).some((event) => event.startsAt === second.startsAt));
+    assert.equal(owners.length, 1, JSON.stringify(results.map((result) => result.payload)));
+    const claims = await queryDocs(COLLECTIONS.teamScheduleOccurrenceOwners, [{ field: "churchId", value: context.churchId }]);
+    assert.equal(claims.filter((claim) => claim.logicalOccurrenceId === "sunday@2026-10-17").length, 1);
+    const original = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+    assert.deepEqual(original.assignments, assignments);
+    assert.equal(original.publicLinkToken, "preserved-token");
+    assert.equal((results[0].payload.summary.updated || 0) + (results[1].statusCode === 200 ? 1 : 0), 1);
+  });
+}

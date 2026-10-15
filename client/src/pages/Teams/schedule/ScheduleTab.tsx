@@ -712,6 +712,7 @@ const ScheduleTab = ({
   const virtualSchedulePreviewsRef = useRef(virtualSchedulePreviews);
   useLayoutEffect(() => { virtualSchedulePreviewsRef.current = virtualSchedulePreviews; }, [virtualSchedulePreviews]);
   const pendingScheduleCellEditsRef = useRef(new Map<string, PendingScheduleCellEdit>());
+  const scheduleCellEditSequenceRef = useRef(0);
   const selectedSchedulePreview = selectedScheduleRecord
     ? virtualSchedulePreviews.get(virtualSchedulePreviewKey(churchId, selectedScheduleRecord.scheduleId))
     : undefined;
@@ -1820,6 +1821,10 @@ const ScheduleTab = ({
   const scheduleCellSaveWorkersRef = useRef(new Map<string, Promise<void>>());
   const scheduleCellSaveFailuresRef = useRef(new Map<string, number>());
   const scheduleCellSaveToastIdsRef = useRef(new Map<string, string>());
+  useEffect(() => () => {
+    for (const toastId of scheduleCellSaveToastIdsRef.current.values()) removeToast(toastId);
+    scheduleCellSaveToastIdsRef.current.clear();
+  }, [removeToast]);
   const runLatestScheduleCellSaveRef = useRef<((
     key: string,
     field: ScheduleCellMapField,
@@ -1842,7 +1847,7 @@ const ScheduleTab = ({
       occurrenceId,
       cellKey,
       value,
-      sequence: (pending.get(key)?.sequence || 0) + 1,
+      sequence: ++scheduleCellEditSequenceRef.current,
     };
     pending.set(key, edit);
     pendingScheduleCellEditsRef.current = pending;
@@ -3574,11 +3579,24 @@ const ScheduleTab = ({
     if (action === "add") {
       clearActiveSlot();
     }
+    const isShadowEditPending = (scheduleId: string) =>
+      [...pendingScheduleCellEditsRef.current.values()].some((edit) =>
+        edit.churchId === staged.edit.churchId &&
+        edit.scheduleId === scheduleId &&
+        edit.field === staged.edit.field &&
+        edit.occurrenceId === staged.edit.occurrenceId &&
+        edit.cellKey === staged.edit.cellKey &&
+        edit.sequence === staged.edit.sequence,
+      );
     const saveShadow = async (fingerprint?: string): Promise<void> => {
+      // The operator may have removed or replaced this shadow while a failed
+      // save's Retry button was still visible.
+      if (!scheduleTabMountedRef.current || !isShadowEditPending(mutationSchedule.scheduleId)) return;
       try {
         const ensuredSchedule = await ensureActiveSchedule(mutationSchedule);
         if (!ensuredSchedule) return;
         mutationSchedule = ensuredSchedule;
+        if (!isShadowEditPending(ensuredSchedule.scheduleId)) return;
         const persistedEdit = [...pendingScheduleCellEditsRef.current.values()].find((edit) =>
           edit.churchId === staged.edit.churchId &&
           edit.scheduleId === ensuredSchedule.scheduleId &&
@@ -3586,8 +3604,11 @@ const ScheduleTab = ({
           edit.occurrenceId === staged.edit.occurrenceId &&
           edit.cellKey === staged.edit.cellKey &&
           edit.sequence === staged.edit.sequence,
-        ) || staged.edit;
-        const response = await enqueueAssignmentSave(ensuredSchedule.scheduleId, () => updateTeamScheduleAssignment(
+        );
+        if (!persistedEdit) return;
+        const response = await enqueueAssignmentSave(ensuredSchedule.scheduleId, async () => {
+          if (!isShadowEditPending(ensuredSchedule.scheduleId)) return null;
+          return updateTeamScheduleAssignment(
           churchId,
           ensuredSchedule.scheduleId,
           {
@@ -3603,7 +3624,9 @@ const ScheduleTab = ({
               : {}),
             ...assignmentConflictPayload(fingerprint),
           },
-        ));
+        );
+        });
+        if (!response) return;
         if (!shadowUndoRecorded) {
           shadowUndoRecorded = true;
           recordAssignmentChange(
@@ -3616,6 +3639,7 @@ const ScheduleTab = ({
         clearScheduleCellEdit(persistedEdit);
         publishScheduleCellResponses(response.schedule, "assignments", [persistedEdit]);
       } catch (error) {
+        if (!scheduleTabMountedRef.current || !isShadowEditPending(mutationSchedule.scheduleId)) return;
         const conflictDetails = action === "add" ? getOccurrenceConflictDetails(error) : null;
         if (conflictDetails) {
           requestCrossTeamConflictConfirmation({
@@ -3647,6 +3671,12 @@ const ScheduleTab = ({
           });
           return;
         }
+        const retryKey = scheduleCellEditKey(
+          staged.edit.churchId, mutationSchedule.scheduleId, staged.edit.field,
+          staged.edit.occurrenceId, staged.edit.cellKey,
+        );
+        const previousToastId = scheduleCellSaveToastIdsRef.current.get(retryKey);
+        if (previousToastId) removeToast(previousToastId);
         const toastId = showToast({
           message: "Couldn't save this shadow assignment. Your choice is still here. Retry the save when ready.",
           variant: "error",
@@ -3655,11 +3685,14 @@ const ScheduleTab = ({
             <div className="mt-2 flex justify-center">
               <Button variant="primary" className="text-sm" onClick={() => {
                 removeToast(toastId);
+                if (!isShadowEditPending(mutationSchedule.scheduleId)) return;
+                scheduleCellSaveToastIdsRef.current.delete(retryKey);
                 void saveShadow(fingerprint);
               }}>Retry save</Button>
             </div>
           ),
         });
+        scheduleCellSaveToastIdsRef.current.set(retryKey, toastId);
       }
     };
     void saveShadow(confirmedOccurrenceConflictFingerprint);

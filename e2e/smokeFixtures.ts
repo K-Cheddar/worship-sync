@@ -9,6 +9,10 @@ import { test as diagnosticTest } from "./fixtures";
 export const test = diagnosticTest.extend<{}, { smokeContext: BrowserContext }>({
   smokeContext: [
     async ({ browser }, use, workerInfo) => {
+      const churchId = process.env.E2E_SMOKE_DISPOSABLE_CHURCH_ID?.trim();
+      if (!churchId) {
+        throw new Error("Set E2E_SMOKE_DISPOSABLE_CHURCH_ID to an isolated disposable test church. Opening Schedules can persist reconciliation changes.");
+      }
       const options = workerInfo.project.use;
       const context = await browser.newContext({
         baseURL: options.baseURL,
@@ -17,6 +21,15 @@ export const test = diagnosticTest.extend<{}, { smokeContext: BrowserContext }>(
         viewport: options.viewport,
         userAgent: options.userAgent,
         serviceWorkers: "block",
+      });
+      // Refuse church-scoped traffic outside the explicitly selected test tenant.
+      await context.route(/\/api\/churches\/[^/]+(?:\/|$)/, async (route) => {
+        const requestedChurch = new URL(route.request().url()).pathname.match(/\/api\/churches\/([^/]+)/)?.[1];
+        if (!requestedChurch || decodeURIComponent(requestedChurch) !== churchId) {
+          await route.abort("blockedbyclient");
+          throw new Error("Smoke request targeted a church other than E2E_SMOKE_DISPOSABLE_CHURCH_ID.");
+        }
+        await route.fallback();
       });
       context.setDefaultTimeout(options.actionTimeout ?? 15_000);
       context.setDefaultNavigationTimeout(options.navigationTimeout ?? 30_000);

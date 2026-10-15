@@ -148,22 +148,51 @@ describe("ChurchServiceTimeZoneProvider", () => {
 
   it("coalesces browser-online and realtime reconnect refreshes", async () => {
     jest.useFakeTimers();
-    mockGetChurchServiceTimeZone
-      .mockResolvedValueOnce(serviceTimeZoneResult("America/New_York") as never)
-      .mockResolvedValueOnce(serviceTimeZoneResult("America/Chicago") as never);
-    const { rerender } = renderHook(() => useChurchServiceTimeZone(), { wrapper });
-    await act(async () => { await Promise.resolve(); });
-    expect(mockGetChurchServiceTimeZone).toHaveBeenCalledTimes(1);
+    try {
+      mockGetChurchServiceTimeZone
+        .mockResolvedValueOnce(serviceTimeZoneResult("America/New_York") as never)
+        .mockResolvedValueOnce(serviceTimeZoneResult("America/Chicago") as never);
+      const { rerender } = renderHook(() => useChurchServiceTimeZone(), { wrapper });
+      await act(async () => { await Promise.resolve(); });
+      expect(mockGetChurchServiceTimeZone).toHaveBeenCalledTimes(1);
 
-    window.dispatchEvent(new Event("online"));
-    realtimeConnected = true;
-    rerender();
-    await act(async () => {
-      jest.advanceTimersByTime(200);
-      await Promise.resolve();
-    });
-    expect(mockGetChurchServiceTimeZone).toHaveBeenCalledTimes(2);
-    jest.useRealTimers();
+      window.dispatchEvent(new Event("online"));
+      realtimeConnected = true;
+      rerender();
+      await act(async () => {
+        jest.advanceTimersByTime(200);
+        await Promise.resolve();
+      });
+      expect(mockGetChurchServiceTimeZone).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("uses the current church when a delayed reconnect callback survives a church switch", async () => {
+    jest.useFakeTimers();
+    const timers = jest.spyOn(window, "setTimeout");
+    try {
+      mockGetChurchServiceTimeZone.mockResolvedValue(serviceTimeZoneResult("America/New_York") as never);
+      const { rerender, unmount } = renderHook(() => useChurchServiceTimeZone(), { wrapper });
+      await act(async () => { await Promise.resolve(); });
+      window.dispatchEvent(new Event("online"));
+      const delayed = timers.mock.calls.find(([, delay]) => delay === 0)?.[0];
+      expect(delayed).toEqual(expect.any(Function));
+      churchId = "church-b";
+      rerender();
+      await act(async () => { await Promise.resolve(); });
+      mockGetChurchServiceTimeZone.mockClear();
+      await act(async () => { (delayed as () => void)(); await Promise.resolve(); });
+      expect(mockGetChurchServiceTimeZone.mock.calls).toEqual([["church-b"]]);
+      unmount();
+      mockGetChurchServiceTimeZone.mockClear();
+      await act(async () => { (delayed as () => void)(); });
+      expect(mockGetChurchServiceTimeZone).not.toHaveBeenCalled();
+    } finally {
+      timers.mockRestore();
+      jest.useRealTimers();
+    }
   });
 
   it("keeps a confirmed value while reporting authentication and permission failures separately", async () => {
