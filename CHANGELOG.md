@@ -1,3 +1,17 @@
+# [2.45.0](https://github.com/K-Cheddar/worship-sync/compare/v2.44.0...v2.45.0) (2026-10-15)
+
+
+### Bug Fixes
+
+* Correct schedules entry animation ([f792cbc](https://github.com/K-Cheddar/worship-sync/commit/f792cbc7a1618104a0cfe6a91c444788ff8ef1c8))
+* link ([bd9eab9](https://github.com/K-Cheddar/worship-sync/commit/bd9eab92c8a0526455c9e2081023e463470f07f4))
+* **teams:** safely reconcile schedule occurrences ([fa6faa3](https://github.com/K-Cheddar/worship-sync/commit/fa6faa3a047e95dd9777841047142c2b60363416))
+
+
+### Features
+
+* Improving mobile navigation in Teams and Services ([111965a](https://github.com/K-Cheddar/worship-sync/commit/111965a737590ae81002606cee44533ae746e82f))
+
 # [2.44.0](https://github.com/K-Cheddar/worship-sync/compare/v2.43.0...v2.44.0) (2026-10-14)
 
 
