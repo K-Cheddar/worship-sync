@@ -200,7 +200,9 @@ export const getUpcomingAvailabilitySuggestions = ({
         continue;
       }
       const serviceIds = getServiceIds(missing);
-      const existing = openForms.find((form) => form.startDate <= range.start && form.endDate >= range.end);
+      const rangeStart = range.start;
+      const rangeEnd = range.end;
+      const existing = openForms.find((form) => form.startDate <= rangeStart && form.endDate >= rangeEnd);
       const purpose = (template?.purpose || "general_intake") as "team_availability" | "general_intake";
       const canUpdate = Boolean(existing && !hasIssuedRequests(existing, issuedIds));
       const draft = canUpdate && existing
