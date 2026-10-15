@@ -80,7 +80,7 @@ import {
   buildTeamSchedulePeriod,
   findInitialTeamSchedulePeriod,
 } from "./teamSchedulePeriod";
-import { mergeScheduleNotificationIntents } from "./scheduleNotificationHistory";
+import { useScheduleNotificationHistory } from "./useScheduleNotificationHistory";
 import RangeSelector from "../components/RangeSelector";
 import {
   resolveRangePreset,
@@ -105,7 +105,6 @@ import {
   removeTeamScheduleGuest,
   addTeamSchedulePositionSlot,
   removeTeamSchedulePositionSlot,
-  getNotificationIntents,
   getNotificationIntentPreview,
   resolveReplacementNotificationIntent,
   prepareReplacementNotificationIntent,
@@ -1494,9 +1493,19 @@ const ScheduleTab = ({
     () => new Set(),
   );
   const [autoFilling, setAutoFilling] = useState(false);
-  const [scheduleNotificationIntents, setScheduleNotificationIntents] = useState<NotificationIntent[]>([]);
-  const [scheduleNotificationNextCursor, setScheduleNotificationNextCursor] = useState("");
-  const [loadingScheduleNotifications, setLoadingScheduleNotifications] = useState(false);
+  const {
+    intents: scheduleNotificationIntents,
+    nextCursor: scheduleNotificationNextCursor,
+    loading: loadingScheduleNotifications,
+    refresh: refreshScheduleNotificationHistory,
+    addIntents: addScheduleNotificationIntents,
+    loadOlder: loadOlderScheduleNotifications,
+  } = useScheduleNotificationHistory({
+    churchId,
+    scheduleId: selectedScheduleId,
+    canEdit,
+    showToast,
+  });
   const [sendingNotificationIntentId, setSendingNotificationIntentId] = useState("");
   const [scheduleSmsPreview, setScheduleSmsPreview] = useState<{
     intent: NotificationIntent;
@@ -1516,44 +1525,6 @@ const ScheduleTab = ({
   const membersDrawerTriggerRef = useRef<HTMLButtonElement | null>(null);
   const wasScheduleMessagesOpenRef = useRef(false);
   const wasMembersDrawerOpenRef = useRef(false);
-  const scheduleHistoryScheduleIdRef = useRef(selectedScheduleId);
-  const refreshScheduleNotificationHistory = useCallback(async (scheduleId: string) => {
-    const response = await getNotificationIntents(churchId, { scheduleId });
-    if (scheduleHistoryScheduleIdRef.current === scheduleId) {
-      setScheduleNotificationIntents((current) =>
-        mergeScheduleNotificationIntents(current, response.intents || []),
-      );
-      setScheduleNotificationNextCursor(response.nextCursor || "");
-    }
-  }, [churchId]);
-  useEffect(() => {
-    let active = true;
-    scheduleHistoryScheduleIdRef.current = selectedScheduleId;
-    setScheduleNotificationIntents([]);
-    setScheduleNotificationNextCursor("");
-    if (!churchId || !selectedScheduleId || !canEdit) return () => { active = false; };
-    setLoadingScheduleNotifications(true);
-    void getNotificationIntents(churchId, { scheduleId: selectedScheduleId })
-      .then((response) => { if (active) { setScheduleNotificationIntents(response.intents || []); setScheduleNotificationNextCursor(response.nextCursor || ""); } })
-      .catch((error) => { if (active) showApiErrorToast(showToast, error, "Could not load schedule message status."); })
-      .finally(() => { if (active) setLoadingScheduleNotifications(false); });
-    return () => { active = false; };
-  }, [canEdit, churchId, selectedScheduleId, showToast]);
-
-  const loadOlderScheduleNotifications = async () => {
-    if (!scheduleNotificationNextCursor || loadingScheduleNotifications || !selectedScheduleId) return;
-    setLoadingScheduleNotifications(true);
-    try {
-      const response = await getNotificationIntents(churchId, { scheduleId: selectedScheduleId, cursor: scheduleNotificationNextCursor });
-      setScheduleNotificationIntents((current) => mergeScheduleNotificationIntents(current, response.intents || []));
-      setScheduleNotificationNextCursor(response.nextCursor || "");
-    } catch (error) {
-      showApiErrorToast(showToast, error, "Could not load older schedule message history.");
-    } finally {
-      setLoadingScheduleNotifications(false);
-    }
-  };
-
   const scheduleNotificationCounts = useMemo(() => {
     const responseTrackedIntents = scheduleNotificationIntents.filter((intent) => intent.intentType !== "schedule_initial_notification");
     const responded = responseTrackedIntents.filter((intent) => {
@@ -6210,6 +6181,23 @@ const ScheduleTab = ({
     />
   );
 
+  const openSavedScheduleForReview = (scheduleId: string) => {
+    const schedule = schedules.find((item) => item.scheduleId === scheduleId);
+    if (!schedule) return;
+    setFormState(null);
+    setPeriodScheduleSelection(null);
+    if (schedule.teamId !== workspaceTeamId) {
+      setScheduleTeamFilter(schedule.teamId);
+      writeScheduleTeamFilter(churchId, schedule.teamId);
+    }
+    if (schedule.startDate && schedule.endDate) {
+      hasExplicitPeriodSelectionRef.current = true;
+      setPeriodSelection("custom", { start: schedule.startDate, end: schedule.endDate });
+    }
+    setViewingSavedSchedule(true);
+    setSelectedScheduleId(schedule.scheduleId, true);
+  };
+
   const scheduleEditForm = (
     <ScheduleEditForm
       mode={formState?.mode || "create-custom"}
@@ -6234,6 +6222,7 @@ const ScheduleTab = ({
       onScheduleSaved={onScheduleSaved}
       onScheduleRemoved={onScheduleRemoved}
       setSelectedScheduleId={setSelectedScheduleId}
+      onReviewSchedule={(scheduleId) => requestDiscardAction(() => openSavedScheduleForReview(scheduleId))}
       onCancel={() => requestDiscardAction(() => setFormState(null))}
     />
   );
@@ -6494,14 +6483,40 @@ const ScheduleTab = ({
               />
             </div>
             {periodScheduleMatch.ambiguous && !viewingSavedSchedule ? (
-              <p role="status" className="mt-3 rounded border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100">
-                A saved schedule in this period has occurrence rows that cannot be matched safely to the current services. Its assignments remain preserved. Select that saved schedule to review it before creating another.
-              </p>
+              <div role="status" className="mt-3 rounded border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100">
+                This schedule contains services that have changed since it was saved. Review it before making changes.
+                {periodScheduleMatch.reviewSchedule ? (
+                  <Button
+                    type="button"
+                    variant="tertiary"
+                    className="mt-2"
+                    onClick={() => {
+                      const scheduleId = periodScheduleMatch.reviewSchedule?.scheduleId;
+                      if (scheduleId) openSavedScheduleForReview(scheduleId);
+                    }}
+                  >
+                    Review existing schedule
+                  </Button>
+                ) : null}
+              </div>
             ) : null}
             {periodScheduleMatch.ownershipConflict && !viewingSavedSchedule ? (
-              <p role="alert" className="mt-3 rounded border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100">
-                More than one saved schedule contains the same service occurrence. The populated schedule remains selected and its data is preserved. Review the listed schedules and resolve the duplicate before adding services.
-              </p>
+              <div role="alert" className="mt-3 rounded border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100">
+                More than one saved schedule contains the same service occurrence. Review ownership before making changes.
+                {periodScheduleMatch.reviewSchedule ? (
+                  <Button
+                    type="button"
+                    variant="tertiary"
+                    className="mt-2"
+                    onClick={() => {
+                      const scheduleId = periodScheduleMatch.reviewSchedule?.scheduleId;
+                      if (scheduleId) openSavedScheduleForReview(scheduleId);
+                    }}
+                  >
+                    Review existing schedule
+                  </Button>
+                ) : null}
+              </div>
             ) : null}
           </section>
 
@@ -7394,7 +7409,7 @@ const ScheduleTab = ({
                     const scheduleId = selectedSchedule.scheduleId;
                     const result = await prepareReplacementNotificationIntent(churchId, { scheduleId, occurrenceId: vacancy.occurrenceId, cellKey: vacancy.cellKey, memberId });
                     if (latestScheduleRef.current?.scheduleId !== scheduleId || latestScheduleRef.current?.churchId !== churchId) return;
-                    setScheduleNotificationIntents((current) => mergeScheduleNotificationIntents(current, [result.intent]));
+                    addScheduleNotificationIntents([result.intent]);
                     await handleSendScheduleIntent(result.intent);
                   }}
                 />

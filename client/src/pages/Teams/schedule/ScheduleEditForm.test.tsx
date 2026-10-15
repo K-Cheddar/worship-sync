@@ -490,6 +490,73 @@ describe("ScheduleEditForm", () => {
     expect(screen.getByRole("textbox", { name: /^Name:?$/i })).toHaveValue("Recoverable draft");
   });
 
+  it("reviews a saved schedule when a selected service has a changed group identity", async () => {
+    const user = userEvent.setup();
+    const service: TeamService = {
+      id: "service-sunday", serviceId: "service-sunday", churchId: "church-1",
+      name: "Sunday", timerType: "countdown", reccurence: "one_time",
+      dateTimeISO: "2026-07-05T10:00:00.000Z",
+    };
+    const owner: TeamSchedule = {
+      scheduleId: "saved-owner",
+      churchId: "church-1",
+      name: "July Sunday service",
+      teamId: "team-main",
+      startDate: "2026-07-01",
+      endDate: "2026-07-31",
+      serviceIds: [service.serviceId, "service-study"],
+      occurrences: [{
+        occurrenceId: "group:sabbath@2026-07-05",
+        logicalOccurrenceId: "group:sabbath@2026-07-05",
+        groupId: "sabbath",
+        serviceId: service.serviceId,
+        serviceIds: [service.serviceId, "service-study"],
+        serviceDate: "2026-07-05",
+        name: "Sabbath Worship & Study",
+        startsAt: "2026-07-05T10:00:00.000Z",
+      }],
+      assignments: {},
+    };
+    const onReviewSchedule = jest.fn();
+
+    render(
+      <MemoryRouter>
+        <TeamsNavigationGuardProvider>
+          <ToastProvider>
+            <ScheduleEditForm
+              mode="create-custom"
+              draftKey="new:custom"
+              selectedSchedule={null}
+              positions={[]}
+              defaultTeamId="team-main"
+              defaultServiceIds={[service.serviceId]}
+              defaultRange={{ startDate: "2026-07-01", endDate: "2026-07-31" }}
+              services={[service]}
+              activeTeams={[{ teamId: "team-main", churchId: "church-1", name: "Main Team", memberIds: [] }]}
+              schedules={[owner]}
+              seedSchedules={[owner]}
+              churchId="church-1"
+              canEdit
+              onDraftChange={jest.fn()}
+              onDraftFlush={jest.fn()}
+              onDraftClear={jest.fn()}
+              onScheduleSaved={jest.fn()}
+              onScheduleRemoved={jest.fn()}
+              setSelectedScheduleId={jest.fn()}
+              onReviewSchedule={onReviewSchedule}
+              onCancel={jest.fn()}
+            />
+          </ToastProvider>
+        </TeamsNavigationGuardProvider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText(/Some selected services overlap a saved schedule/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Create schedule/i })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: /Review existing schedule/i }));
+    expect(onReviewSchedule).toHaveBeenCalledWith("saved-owner");
+  });
+
   it("rolls a failed schedule save back to a newer incoming server record", async () => {
     const user = userEvent.setup();
     const service: TeamService = {

@@ -1,6 +1,12 @@
 import { parsePlainDate } from "@/utils/plainDate";
 import type { TeamScheduleOccurrence, TeamScheduleSummary } from "../../../api/authTypes";
-import { calendarDateInTimeZone, getOccurrenceDate, hasOccurrenceIdentityAmbiguity, matchOccurrencesByIdentity } from "@/utils/teamScheduleOccurrences";
+import {
+  calendarDateInTimeZone,
+  getOccurrenceDate,
+  hasOccurrenceIdentityAmbiguity,
+  matchOccurrencesByIdentity,
+  resolveOccurrenceIdentity,
+} from "@/utils/teamScheduleOccurrences";
 import { RANGE_PRESET_OPTIONS, resolveRangePreset, type RangePreset } from "../rangeSelection";
 
 export type SchedulePeriodPreset = RangePreset;
@@ -99,6 +105,7 @@ export const findReusablePeriodSchedule = ({
 }): {
   schedule: TeamScheduleSummary | null;
   ambiguous: boolean;
+  reviewSchedule?: TeamScheduleSummary;
   ownershipConflict?: boolean;
 } => {
   const visibleDates = occurrences
@@ -116,10 +123,10 @@ export const findReusablePeriodSchedule = ({
     Boolean(schedule.startDate && schedule.endDate) &&
     schedule.startDate! <= periodEndDate && schedule.endDate! >= periodStartDate,
   );
-  const ambiguous = inScope.some((schedule) =>
+  const ambiguousSchedules = inScope.filter((schedule) =>
     hasOccurrenceIdentityAmbiguity(schedule.occurrences || [], occurrences, timeZone),
   );
-  const ownershipConflict = occurrences.some((occurrence) => {
+  const duplicateOwners = occurrences.flatMap((occurrence) => {
     const owners = inScope.filter((schedule) => {
       const match = matchOccurrencesByIdentity(
         schedule.occurrences || [],
@@ -128,7 +135,7 @@ export const findReusablePeriodSchedule = ({
       );
       return match.matches.has(occurrence.occurrenceId);
     });
-    return owners.length > 1;
+    return owners.length > 1 ? owners : [];
   });
   const eligible = schedules.filter((schedule) => {
     if (
@@ -167,12 +174,57 @@ export const findReusablePeriodSchedule = ({
     String(left.endDate).localeCompare(String(right.endDate)) ||
     left.scheduleId.localeCompare(right.scheduleId),
   );
+  const schedule = explicitlySelected || ordered[0] || null;
+  const explicitlySelectedAmbiguity = ambiguousSchedules.find((candidate) =>
+    candidate.scheduleId === operatorSelectedScheduleId,
+  );
+  const unresolvedAmbiguity = explicitlySelectedAmbiguity ||
+    [...ambiguousSchedules].sort((left, right) =>
+      Number(hasScheduleData(right)) - Number(hasScheduleData(left)) ||
+      left.scheduleId.localeCompare(right.scheduleId),
+    )[0] || null;
+  const reviewSchedule = unresolvedAmbiguity ||
+    (duplicateOwners.length > 0 ? duplicateOwners[0] : null);
   return {
-    schedule: explicitlySelected || ordered[0] || null,
-    ambiguous,
-    ...(ownershipConflict ? { ownershipConflict: true } : {}),
+    schedule,
+    ambiguous: Boolean(unresolvedAmbiguity),
+    ...(reviewSchedule ? { reviewSchedule } : {}),
+    ...(duplicateOwners.length > 0 ? { ownershipConflict: true } : {}),
   };
 };
+
+/** Saved active schedules that own or have an unsafe identity match for the selected occurrences. */
+export const findScheduleOccurrenceOwnershipConflicts = ({
+  schedules,
+  churchId,
+  teamId,
+  occurrences,
+  excludeScheduleId,
+  timeZone = "UTC",
+}: {
+  schedules: TeamScheduleSummary[];
+  churchId: string;
+  teamId: string;
+  occurrences: TeamScheduleOccurrence[];
+  excludeScheduleId?: string;
+  timeZone?: string;
+}) => schedules.filter((schedule) => {
+  if (
+    schedule.archivedAt ||
+    schedule.churchId !== churchId ||
+    schedule.teamId !== teamId ||
+    schedule.scheduleId === excludeScheduleId ||
+    !occurrences.length
+  ) return false;
+  const stored = schedule.occurrences || [];
+  if (!stored.length) return false;
+  return occurrences.some((occurrence) => {
+    if (!resolveOccurrenceIdentity(occurrence, timeZone)) return false;
+    const match = matchOccurrencesByIdentity(stored, [occurrence], timeZone);
+    return match.matches.has(occurrence.occurrenceId) ||
+      match.ambiguousCurrentIds.has(occurrence.occurrenceId);
+  });
+});
 
 /** Preserve saved occurrence keys and append only safely identifiable current rows. */
 export const mergeCurrentScheduleOccurrences = (

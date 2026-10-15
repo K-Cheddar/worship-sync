@@ -1,5 +1,22 @@
 import type { NotificationIntent } from "../../../api/authTypes";
-import { mergeScheduleNotificationIntents } from "./scheduleNotificationHistory";
+import {
+  isPersistedScheduleId,
+  mergeScheduleNotificationIntents,
+  scheduleNotificationHistoryScope,
+} from "./scheduleNotificationHistory";
+
+describe("schedule notification history scope", () => {
+  it("allows persisted schedules and excludes virtual schedules", () => {
+    expect(isPersistedScheduleId("schedule-1")).toBe(true);
+    expect(isPersistedScheduleId("virtual:team:2026-11-01:2026-11-30")).toBe(false);
+    expect(isPersistedScheduleId("local-schedule-new")).toBe(false);
+    expect(scheduleNotificationHistoryScope("church-1", "schedule-1", true)).toBe(
+      JSON.stringify(["church-1", "schedule-1"]),
+    );
+    expect(scheduleNotificationHistoryScope("church-1", "virtual:team:period", true)).toBe("");
+    expect(scheduleNotificationHistoryScope("church-1", "schedule-1", false)).toBe("");
+  });
+});
 
 const intent = (intentId: string, status = "preview") => ({
   intentId,

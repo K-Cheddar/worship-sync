@@ -16128,6 +16128,95 @@ test("generated ensure does not substitute another service with the same name an
   assert.deepEqual(await getDoc("teamSchedules", schedule.scheduleId), before);
 });
 
+test("November standalone services cannot replace a saved combined schedule or its operational data", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("november_group_identity_drift");
+  const { teamId } = await seedTeam(context, { teamName: "Media" });
+  const dates = ["2026-11-07", "2026-11-14", "2026-11-21", "2026-11-28"];
+  const standaloneServiceId = "sabbath-worship";
+  const studyServiceId = "sabbath-study";
+  const powerUpServiceId = "power-up";
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [
+      { id: standaloneServiceId, name: "Sabbath Service", reccurence: "weekly", dayOfWeek: 6, time: "10:00" },
+      { id: studyServiceId, name: "Sabbath Study", reccurence: "weekly", dayOfWeek: 6, time: "10:00" },
+      { id: powerUpServiceId, name: "Power Up", reccurence: "one_time", dateTimeISO: "2026-11-11T18:00:00.000Z" },
+    ],
+  });
+  const savedOccurrences = dates.map((serviceDate) => ({
+    occurrenceId: `group:sabbath@${serviceDate}`,
+    logicalOccurrenceId: `group:sabbath@${serviceDate}`,
+    groupId: "sabbath",
+    serviceId: standaloneServiceId,
+    serviceIds: [standaloneServiceId, studyServiceId],
+    serviceDate,
+    name: "Sabbath Worship & Study",
+    startsAt: `${serviceDate}T10:00:00.000Z`,
+  }));
+  const powerUpOccurrence = {
+    occurrenceId: `${powerUpServiceId}@2026-11-11T18:00:00.000Z`,
+    serviceId: powerUpServiceId,
+    name: "Power Up",
+    startsAt: "2026-11-11T18:00:00.000Z",
+  };
+  const assignments = Object.fromEntries(savedOccurrences.map((occurrence) => [
+    occurrence.occurrenceId,
+    { "camera::0": { primaryMemberId: `member-${occurrence.serviceDate}` } },
+  ]));
+  const scheduleId = "legacy-november-combined";
+  await setDoc("teamSchedules", scheduleId, {
+    scheduleId,
+    churchId: context.churchId,
+    name: "November combined services",
+    teamId,
+    startDate: "2026-11-01",
+    endDate: "2026-11-30",
+    serviceIds: [standaloneServiceId, studyServiceId, powerUpServiceId],
+    occurrences: [...savedOccurrences, powerUpOccurrence],
+    assignments,
+    responses: { [savedOccurrences[0].occurrenceId]: { "camera::0": { memberId: "member-2026-11-07", response: "accepted" } } },
+    guests: [{ guestId: "november-guest", name: "Guest Camera Operator" }],
+    microphoneAssignments: { [savedOccurrences[0].occurrenceId]: { "camera::0": ["mic-november"] } },
+    iemAssignments: { [savedOccurrences[0].occurrenceId]: { "camera::0": ["iem-november"] } },
+    additionalPositionSlots: { [savedOccurrences[0].occurrenceId]: ["camera::1"] },
+    publicLinkToken: "november-public-link",
+    sentAt: "2026-10-20T12:00:00.000Z",
+  });
+  const before = await getDoc("teamSchedules", scheduleId);
+  const standaloneOccurrences = dates.map((serviceDate) => ({
+    occurrenceId: `${standaloneServiceId}@${serviceDate}`,
+    logicalOccurrenceId: `${standaloneServiceId}@${serviceDate}`,
+    serviceId: standaloneServiceId,
+    serviceDate,
+    name: "Sabbath Service",
+    startsAt: `${serviceDate}T10:00:00.000Z`,
+    positionRequirements: [],
+  }));
+
+  const result = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body: {
+      name: "November 2026",
+      teamId,
+      startDate: "2026-11-01",
+      endDate: "2026-11-30",
+      timeZone: "UTC",
+      serviceIds: [standaloneServiceId],
+      occurrences: standaloneOccurrences,
+      visibleOccurrenceIds: standaloneOccurrences.map(({ occurrenceId }) => occurrenceId),
+    },
+  });
+
+  assert.equal(result.statusCode, 409, JSON.stringify(result.payload));
+  assert.match(result.payload.errorMessage, /cannot be matched safely|conflicting service identity|already owned/i);
+  assert.deepEqual(await getDoc("teamSchedules", scheduleId), before);
+  const activeSchedules = (await queryDocs(COLLECTIONS.teamSchedules, [
+    { field: "churchId", value: context.churchId },
+  ])).filter((schedule) => schedule.teamId === teamId && !schedule.archivedAt);
+  assert.deepEqual(activeSchedules.map(({ scheduleId: id }) => id), [scheduleId]);
+});
+
 test("legacy timestamp occurrence IDs remain readable when a recurring service time changes", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("legacy_occurrence_id_read");

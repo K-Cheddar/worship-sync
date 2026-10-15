@@ -3,6 +3,7 @@ import {
   filterOccurrencesToRange,
   findOverlappingPeriodSchedules,
   findReusablePeriodSchedule,
+  findScheduleOccurrenceOwnershipConflicts,
   mergeCurrentScheduleOccurrences,
   rangeFromPreset,
   resolveDisplayedPeriodRange,
@@ -401,12 +402,97 @@ describe("findReusablePeriodSchedule", () => {
   it("does not match a different service by name and timestamp", () => {
     const saved = schedule({ occurrences: [{ ...occurrence, serviceId: "old", occurrenceId: "old@date" }] });
     saved.assignments = { "old@date": { "position::0": { primaryMemberId: "member" } } };
-    expect(findReusablePeriodSchedule({ schedules: [saved], ...target })).toEqual({
+    expect(findReusablePeriodSchedule({ schedules: [saved], ...target })).toMatchObject({
       schedule: null,
       ambiguous: true,
+      reviewSchedule: saved,
     });
     expect(saved.occurrences?.[0].occurrenceId).toBe("old@date");
     expect(saved.assignments?.["old@date"]).toEqual({ "position::0": { primaryMemberId: "member" } });
+  });
+
+  it("offers the saved schedule for review when a standalone service was previously grouped", () => {
+    const grouped = schedule({ occurrences: [{
+      occurrenceId: "group:sabbath@2026-10-03",
+      logicalOccurrenceId: "group:sabbath@2026-10-03",
+      groupId: "sabbath",
+      serviceId: "service",
+      serviceIds: ["service", "study"],
+      serviceDate: "2026-10-03",
+      name: "Service & Study",
+      startsAt: occurrence.startsAt,
+    }] });
+
+    expect(findReusablePeriodSchedule({ schedules: [grouped], ...target })).toMatchObject({
+      schedule: null,
+      ambiguous: true,
+      reviewSchedule: grouped,
+    });
+  });
+
+  it("does not flag an unrelated saved occurrence just because its date range overlaps", () => {
+    const unrelated = schedule({
+      scheduleId: "custom-youth",
+      name: "Youth Sabbath",
+      occurrences: [{
+        occurrenceId: "youth@2026-10-10T12:00:00.000Z",
+        serviceId: "youth",
+        name: "Youth Gathering",
+        startsAt: "2026-10-10T12:00:00.000Z",
+      }],
+    });
+
+    expect(findReusablePeriodSchedule({ schedules: [unrelated], ...target })).toMatchObject({
+      schedule: null,
+      ambiguous: false,
+    });
+    expect(findScheduleOccurrenceOwnershipConflicts({
+      schedules: [unrelated],
+      churchId: target.churchId,
+      teamId: target.teamId,
+      occurrences: target.occurrences,
+    })).toEqual([]);
+  });
+
+  it("surfaces an actual identity conflict even when another schedule is reusable", () => {
+    const reusable = schedule({ scheduleId: "reusable" });
+    const changedIdentity = schedule({
+      scheduleId: "changed-identity",
+      occurrences: [{ ...occurrence, occurrenceId: "old@same-time", serviceId: "old" }],
+    });
+
+    const defaultSelection = findReusablePeriodSchedule({
+      schedules: [reusable, changedIdentity],
+      ...target,
+    });
+    expect(defaultSelection).toMatchObject({
+      schedule: reusable,
+      ambiguous: true,
+      reviewSchedule: changedIdentity,
+    });
+
+    const explicitReview = findReusablePeriodSchedule({
+      schedules: [reusable, changedIdentity],
+      ...target,
+      operatorSelectedScheduleId: changedIdentity.scheduleId,
+    });
+    expect(explicitReview).toMatchObject({
+      ambiguous: true,
+      reviewSchedule: changedIdentity,
+    });
+  });
+
+  it("finds an active owner for selected occurrences and ignores unrelated teams and archived schedules", () => {
+    const owner = schedule({ scheduleId: "owner" });
+    const unrelatedTeam = schedule({ scheduleId: "other-team", teamId: "team-2" });
+    const archived = schedule({ scheduleId: "archived-owner", archivedAt: "2026-10-01T00:00:00.000Z" });
+
+    expect(findScheduleOccurrenceOwnershipConflicts({
+      schedules: [owner, unrelatedTeam, archived],
+      churchId: target.churchId,
+      teamId: target.teamId,
+      occurrences: target.occurrences,
+    })).toEqual([owner]);
   });
 
   it("reuses a compatible populated schedule missing a newly relevant service", () => {
