@@ -1107,7 +1107,7 @@ describe("Teams", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Service Setup" })).toHaveAttribute(
       "href",
-      "/teams-and-services/service-setup",
+      "#/teams-and-services/service-setup",
     );
   });
 
