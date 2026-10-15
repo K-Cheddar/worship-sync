@@ -11,6 +11,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { Link } from "react-router-dom";
 import {
   CalendarDays,
   ChevronsDownUp,
@@ -2722,7 +2723,7 @@ const ScheduleTab = ({
       return (
         <p className={messageClassName}>
           No service occurrences are configured for this period. Visit{" "}
-          <a className="font-medium text-cyan-300 underline" href="/teams-and-services/service-setup">Service Setup</a>{" "}
+          <Link className="font-medium text-cyan-300 underline" to="/teams-and-services/service-setup">Service Setup</Link>{" "}
           to review service schedules.
         </p>
       );
@@ -2731,7 +2732,7 @@ const ScheduleTab = ({
       return (
         <p className={messageClassName}>
           These services do not have any positions configured for this team. Update position requirements in{" "}
-          <a className="font-medium text-cyan-300 underline" href="/teams-and-services/service-setup">Service Setup</a>.
+          <Link className="font-medium text-cyan-300 underline" to="/teams-and-services/service-setup">Service Setup</Link>.
         </p>
       );
     }
