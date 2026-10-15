@@ -1052,6 +1052,7 @@ const ScheduleTab = ({
   ]);
   useEffect(() => {
     if (
+      !canEdit ||
       viewingSavedSchedule ||
       !selectedSchedule ||
       selectedSchedule.scheduleId.startsWith("virtual:") ||
@@ -1082,6 +1083,7 @@ const ScheduleTab = ({
     void ensureActiveSchedule(selectedSchedule).catch(offerRetry);
     return () => { active = false; };
   }, [
+    canEdit,
     ensureActiveSchedule,
     generatedPeriodOccurrences.length,
     periodReconciliationKey,

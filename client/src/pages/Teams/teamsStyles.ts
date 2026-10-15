@@ -4,7 +4,7 @@ export const panelShellClassName =
 export const panelClassName = `${panelShellClassName} p-4`;
 
 /** Shared dimensions for compact roster rows and their loading placeholders. */
-export const teamsCompactEntityRowLayoutClassName = "min-h-14 items-center gap-2 p-2";
+export const teamsCompactEntityRowLayoutClassName = "min-h-14 items-center gap-2 p-3 sm:p-2";
 
 /** Fixed header area inside a panel with an inner scroll region. */
 export const panelHeaderPaddingClassName = "px-4 pt-4";

@@ -150,6 +150,7 @@ jest.mock("../../api/auth", () => ({
   },
   getTeamsBootstrap: jest.fn(),
   getTeamScheduleDetail: jest.fn(),
+  getTeamAvailabilityManagementData: jest.fn().mockResolvedValue({ success: true, members: [] }),
   ensureTeamScheduleForPeriod: jest.fn(),
   sendTeamSchedule: jest.fn(),
   getNotificationIntents: jest.fn().mockResolvedValue({ success: true, intents: [], nextCursor: "", limit: 20 }),
@@ -277,6 +278,22 @@ const makeMatchMedia = (matches: boolean): typeof window.matchMedia =>
     removeListener: jest.fn(),
     dispatchEvent: jest.fn(),
   })) as unknown as typeof window.matchMedia;
+
+const makeViewportMatchMedia = (width: number): typeof window.matchMedia =>
+  jest.fn().mockImplementation((query: string) => {
+    const minWidth = query.match(/\(min-width:\s*(\d+)px\)/)?.[1];
+    const maxWidth = query.match(/\(max-width:\s*(\d+)px\)/)?.[1];
+    return {
+      matches: minWidth ? width >= Number(minWidth) : maxWidth ? width <= Number(maxWidth) : false,
+      media: query,
+      onchange: null,
+      addEventListener: jest.fn(),
+      removeEventListener: jest.fn(),
+      addListener: jest.fn(),
+      removeListener: jest.fn(),
+      dispatchEvent: jest.fn(),
+    };
+  }) as unknown as typeof window.matchMedia;
 
 const installScheduleResizeObserver = () => {
   const previousDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
@@ -1657,8 +1674,10 @@ describe("Teams", () => {
     mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse(bootstrap));
     let persistedSchedule: TeamSchedule | null = null;
     mockEnsureTeamScheduleForPeriod.mockImplementation(async (_churchId, body) => {
+      const created = !persistedSchedule;
       persistedSchedule = {
-        scheduleId: "generated_october-continuity",
+        ...persistedSchedule,
+        scheduleId: persistedSchedule?.scheduleId || "generated_october-continuity",
         churchId: "church-1",
         name: body.name,
         teamId: body.teamId,
@@ -1668,9 +1687,9 @@ describe("Teams", () => {
         occurrences: body.occurrences,
         source: "generated-period",
         generatedPeriodKey: "october-continuity",
-        assignments: {},
+        assignments: persistedSchedule?.assignments || {},
       };
-      return { success: true, created: true, schedule: persistedSchedule };
+      return { success: true, created, schedule: persistedSchedule };
     });
     mockUpdateTeamScheduleAssignment.mockImplementation(async (_churchId, scheduleId, body) => {
       persistedSchedule = {
@@ -1714,7 +1733,78 @@ describe("Teams", () => {
 
     expect(await screen.findByRole("button", { name: /Saturday service Vocal, Morgan/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Sep 29/i })).not.toBeInTheDocument();
-    expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1);
+    expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    {
+      access: "administrator",
+      context: { role: "admin" },
+      shouldReconcile: true,
+    },
+    {
+      access: "team-scoped editor",
+      context: {
+        role: "member",
+        permissions: { teams: "none", teamScopes: { "team-main": "edit" } },
+        canViewTeams: true,
+        hasBroadTeamsReadAccess: false,
+        canEditTeams: false,
+        canEditTeam: (teamId: string) => teamId === "team-main",
+        canViewTeam: (teamId: string) => teamId === "team-main",
+      },
+      shouldReconcile: true,
+    },
+    {
+      access: "read-only viewer",
+      context: {
+        role: "member",
+        permissions: { teams: "view" },
+        canViewTeams: true,
+        canEditTeams: false,
+        canEditTeam: () => false,
+      },
+      shouldReconcile: false,
+    },
+  ])("automatically reconciles saved schedules only for $access", async ({ context, shouldReconcile }) => {
+    jest.useFakeTimers({ advanceTimers: true });
+    jest.setSystemTime(new Date(2026, 9, 2, 12));
+    const serviceId = "service-october-permissions";
+    const positionId = "position-vocal";
+    const service = octoberSaturdayService(serviceId, positionId);
+    const savedSchedule: TeamSchedule = {
+      scheduleId: "schedule-october-permissions",
+      churchId: "church-1",
+      name: "October",
+      teamId: "team-main",
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      serviceIds: [serviceId],
+      occurrences: octoberServiceOccurrences(serviceId, "Saturday service", positionId, [3, 10, 17, 24, 31]),
+      assignments: {},
+    };
+    mockState = {
+      undoable: { present: { serviceTimes: { list: [service] } } },
+    };
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...baseBootstrap,
+      positions: [{ positionId, churchId: "church-1", teamId: "team-main", name: "Vocal" }],
+      schedules: [savedSchedule],
+    }));
+    mockEnsureTeamScheduleForPeriod.mockResolvedValue({
+      success: true,
+      created: false,
+      schedule: savedSchedule,
+    });
+
+    renderTeams("/teams-and-services/schedules", context);
+    await screen.findAllByRole("button", { name: /Saturday service Vocal/i });
+    await waitFor(() =>
+      expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(shouldReconcile ? 1 : 0),
+    );
+    expect(mockEnsureTeamScheduleForPeriod.mock.calls[0]?.[1]?.teamId).toBe(
+      shouldReconcile ? "team-main" : undefined,
+    );
   });
 
   it("auto-reuses the populated five-row schedule and persists its two new relevant occurrences", async () => {
@@ -2345,6 +2435,7 @@ describe("Teams", () => {
     const savedSchedule = scheduleBootstrap.schedules[0];
     const originalService = {
       ...mockSharedServices[0],
+      dateTimeISO: "2026-07-05T10:00:00.000Z",
       positionRequirements: [{ positionId: "position-vocal", count: 1 }],
     };
     mockState = { undoable: { present: { serviceTimes: { list: [originalService] } } } };
@@ -2371,7 +2462,7 @@ describe("Teams", () => {
       {
         ...originalService,
         time: "11:00",
-        dateTimeISO: "2026-07-05T11:00:00",
+        dateTimeISO: "2026-07-05T11:00:00.000Z",
         positionRequirements: [{ positionId: "position-vocal", count: 2 }],
       },
       {
@@ -2380,7 +2471,7 @@ describe("Teams", () => {
         serviceId: "service-power-up",
         name: "Power Up",
         reccurence: "one_time",
-        dateTimeISO: "2026-07-12T15:00:00",
+        dateTimeISO: "2026-07-12T15:00:00.000Z",
         positionRequirements: [{ positionId: "position-vocal", count: 1 }],
       },
     ] } } } };
@@ -2395,7 +2486,7 @@ describe("Teams", () => {
     );
     expect(mockEnsureTeamScheduleForPeriod.mock.calls[1][1].occurrences?.find(
       (occurrence) => occurrence.serviceId === "service-sunday",
-    )?.startsAt).toContain("T15:00:00");
+    )?.startsAt).toBe("2026-07-05T11:00:00.000Z");
     expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1);
     jest.useRealTimers();
   });
@@ -4621,20 +4712,27 @@ describe("Teams", () => {
     expect(screen.getByRole("textbox", { name: /^Name:?$/i })).toHaveValue("July");
   });
 
-  it("carries assignments into the new schedule when copying", async () => {
+  it("carries assignments into a nonconflicting period when copying", async () => {
     const user = userEvent.setup();
-    // A real service so the save can regenerate the same Sunday occurrence the
-    // copied assignments are keyed to.
+    const weeklySundayService = {
+      ...mockSharedServices[0],
+      serviceId: "service-sunday",
+      reccurence: "weekly",
+      dayOfWeek: 0,
+      time: "10:00",
+    };
+    mockState = {
+      undoable: { present: { serviceTimes: { list: [weeklySundayService] } } },
+    };
+    // A weekly service gives the copy a later occurrence while leaving the
+    // source occurrence owned by its original schedule.
     mockGetTeamsBootstrap.mockResolvedValue(
       asTeamsBootstrapResponse({
         ...scheduleBootstrap,
         services: [
           {
-            serviceId: "service-sunday",
+            ...weeklySundayService,
             churchId: "church-1",
-            name: "Sunday",
-            reccurence: "one_time",
-            dateTimeISO: "2026-07-05T10:00:00.000Z",
           } as TeamService,
         ],
       }),
@@ -4655,28 +4753,60 @@ describe("Teams", () => {
       await screen.findByRole("textbox", { name: /^Name:?$/i }),
     ).toHaveValue("Copy of July");
 
+    const selectDate = async (label: "Start date" | "End date", dayName: string) => {
+      await user.click(screen.getByRole("textbox", { name: label }));
+      const calendar = screen.getByRole("dialog");
+      await user.selectOptions(within(calendar).getByRole("combobox", { name: "Choose the Month" }), "7");
+      await user.selectOptions(within(calendar).getByRole("combobox", { name: "Choose the Year" }), "2026");
+      await user.click(within(calendar).getByRole("button", { name: dayName }));
+    };
+    await selectDate("Start date", "Saturday, August 1st, 2026");
+    await selectDate("End date", "Monday, August 31st, 2026");
+    expect(screen.getByRole("textbox", { name: "Start date" })).toHaveValue("08/01/2026");
+    expect(screen.getByRole("textbox", { name: "End date" })).toHaveValue("08/31/2026");
+    expect(screen.getByRole("button", { name: /Create schedule/i })).toBeEnabled();
+
     await user.click(screen.getByRole("button", { name: /Create schedule/i }));
-    const conflictDialogPromise = screen.findByRole(
-      "dialog",
-      { name: /Schedule conflict/i },
-      { timeout: 1_000 },
-    );
-    const conflictDialog = await conflictDialogPromise.catch(() => null);
-    if (conflictDialog) {
-      await user.click(
-        within(conflictDialog).getByRole("button", { name: /Save anyway/i }),
-      );
-    }
 
     await waitFor(() => {
       expect(mockCreateTeamSchedule).toHaveBeenCalled();
     });
     const payload = mockCreateTeamSchedule.mock.calls[0][1] as TeamSchedulePayload;
-    // The copy remaps assignments onto the freshly generated occurrence (its id
-    // is timezone-dependent), so assert on the carried-over content, not the key.
+    expect(payload.startDate).toBe("2026-08-01");
+    expect(payload.endDate).toBe("2026-08-31");
+    expect(screen.queryByRole("dialog", { name: /Schedule conflict/i })).not.toBeInTheDocument();
+    // The copy remaps assignments onto August's generated occurrence, so assert
+    // on the carried-over content rather than a timezone-dependent key.
     expect(Object.values(payload.assignments || {})).toEqual([
       { "position-keys::0": { primaryMemberId: "member-avery" } },
     ]);
+  });
+
+  it.each([375, 768, 1023])("integrates Teams and Services mobile navigation at %ipx", async (width) => {
+    window.matchMedia = makeViewportMatchMedia(width);
+    mockListServicePlans.mockResolvedValue({ success: true, servicePlans: [] });
+
+    renderTeams("/teams-and-services/services");
+
+    const toolbar = await screen.findByTestId("app-workspace-toolbar");
+    const appHeader = screen.getByRole("banner", { name: "Application header" });
+    const tabs = screen.getByRole("navigation", { name: "Services pages" });
+    const bottomNavigation = screen.getByRole("navigation", { name: "Primary navigation" });
+    await screen.findByTestId("service-plan-filter-controls");
+    await screen.findByTestId("service-plan-results-header");
+
+    expect(toolbar.className).toContain("h-[48px]");
+    expect(toolbar.className).toContain("min-h-[48px]");
+    expect(appHeader.className).toContain("contents");
+    expect(appHeader.className).not.toContain("transition-[grid-template-rows]");
+    expect(tabs.className).toContain("lg:hidden");
+    expect(bottomNavigation.className).toContain("fixed");
+    expect(bottomNavigation.className).toContain("lg:hidden");
+    const filterControls = screen.getByTestId("service-plan-filter-controls");
+    expect(filterControls.className).toContain("max-lg:grid-cols-2");
+    expect(filterControls.className).toContain("lg:grid-cols-[minmax(12rem,14rem)_minmax(0,1fr)]");
+    expect(screen.getByTestId("service-plan-results-header").className).toContain("lg:flex");
+    expect(window.matchMedia("(min-width: 1024px)").matches).toBe(false);
   });
 
   it("loads Teams in view-only mode without schedule edit actions", async () => {
