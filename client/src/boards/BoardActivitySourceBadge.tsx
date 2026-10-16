@@ -43,7 +43,7 @@ export const BoardActivitySourceBadge = ({
   return (
     <span
       className={cn(
-        "pointer-events-none absolute top-1/2 left-0 z-10 inline-flex h-6 w-6 -translate-x-[calc(100%+0.35rem)] -translate-y-1/2 items-center justify-center rounded-md text-[9px] font-bold tracking-wide shadow-sm",
+        "pointer-events-none absolute top-2.5 left-0 z-10 inline-flex h-6 w-6 -translate-x-[calc(100%+0.35rem)] items-center justify-center rounded-md text-[9px] font-bold tracking-wide shadow-sm",
         config.className,
         className,
       )}
