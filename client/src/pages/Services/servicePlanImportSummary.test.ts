@@ -209,11 +209,11 @@ describe("summarizeServicePlanImport", () => {
   });
 
   it("preserves item ownership when updates are accepted but source linking is declined", () => {
-    const current = [{ ...namedSection("message", "Message", [element("sermon", "Sermon", {
+    const current = [namedSection("message", "Message", [element("sermon", "Sermon", {
       sourcePlanningManaged: false,
       sourceTemplateElementId: "template-sermon",
       notes: plainTextToRichText("Operator notes"),
-    })]), sourcePlanningManaged: true }];
+    })])];
     const next = [{ ...namedSection("message", "Message", [element("sermon", "Sermon updated", {
       sourceOccurrenceId: "external-sermon",
       sourcePlanningManaged: true,
@@ -236,18 +236,15 @@ describe("summarizeServicePlanImport", () => {
       sourceTemplateElementId: "template-sermon",
     });
     expect(applied[0].elements[0].sourceOccurrenceId).toBeUndefined();
+    expect(applied[0].sourcePlanningManaged).toBeUndefined();
     expect(richTextToPlainText(applied[0].elements[0].notes)).toBe("Operator notes");
 
     const afterMissingSourceRow = refreshServicePlanFromImport(
       applied,
-      [{ ...namedSection("message", "Message", []), sourcePlanningManaged: true }],
+      [],
       { ...DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS, removeMissing: true },
     );
-    expect(afterMissingSourceRow[0].elements).toHaveLength(1);
-    expect(afterMissingSourceRow[0].elements[0]).toMatchObject({
-      id: "sermon",
-      sourcePlanningManaged: false,
-    });
+    expect(afterMissingSourceRow).toEqual(applied);
   });
 
   it("reviews a relocation separately and applies selected moves in imported order", () => {

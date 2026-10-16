@@ -667,6 +667,10 @@ export const applySelectedServicePlanImportChanges = (
       .map(servicePlanImportChangeKey);
     const selectedChangesInSection = [...selectedChanges.values()]
       .filter((change) => change.sectionId === currentSection.id);
+    const establishesSectionOwnership = selectedChangesInSection.some((change) =>
+      change.kind === "added" || change.kind === "linked" ||
+      change.kind === "moved" || change.kind === "legacy_match",
+    );
     const elements = currentSection.elements.flatMap((currentElement) => {
       if (selectedChangeFor("removed", currentElement.id)) return [];
       const confirmedLegacyMatch = selectedChangeFor("legacy_match", currentElement.id);
@@ -725,7 +729,7 @@ export const applySelectedServicePlanImportChanges = (
       )
         ? { name: nextSection.name }
         : {}),
-      ...(selectedChangesInSection.length && nextSection?.sourcePlanningManaged
+      ...(establishesSectionOwnership && nextSection?.sourcePlanningManaged
         ? { sourcePlanningManaged: true }
         : {}),
       elements: orderedElements,

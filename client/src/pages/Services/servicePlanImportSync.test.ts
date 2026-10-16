@@ -638,6 +638,33 @@ describe("stable external row identity", () => {
     expect(refreshed.find(({ id }) => id === "one")?.elements[0].id).toBe("sermon-1");
   });
 
+  it("preserves operator-owned items when removing an omitted source-managed section", () => {
+    const current = [section("source-section", "Message", [
+      element("source-sermon", "Source Sermon", {
+        sourceOccurrenceId: "source-sermon-id",
+        sourcePlanningManaged: true,
+      }),
+      element("template-sermon", "Template Sermon", {
+        sourcePlanningManaged: false,
+        sourceTemplateElementId: "template-sermon-id",
+        notes: plainTextToRichText("Operator notes"),
+      }),
+    ])];
+
+    const refreshed = refreshServicePlanFromImport(current, [], {
+      ...DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+      removeMissing: true,
+    });
+
+    expect(refreshed).toHaveLength(1);
+    expect(refreshed[0]).toMatchObject({
+      id: "source-section",
+      sourcePlanningManaged: true,
+    });
+    expect(refreshed[0].elements.map(({ id }) => id)).toEqual(["template-sermon"]);
+    expect(richTextToPlainText(refreshed[0].elements[0].notes)).toBe("Operator notes");
+  });
+
   it("does not move an unmarked manual item by title across sections", () => {
     const current = [
       section("message", "Message", [element("manual-sermon", "Sermon")]),

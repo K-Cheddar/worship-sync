@@ -1490,10 +1490,11 @@ export const refreshServicePlanFromImport = (
     (currentSection, currentSectionIndex) => {
       const importedSection = importedByCurrentIndex.get(currentSectionIndex);
       if (!importedSection) {
-        return options.removeMissing && currentSection.sourcePlanningManaged &&
-          !currentSection.elements.some(isProtectedCurrentElement)
-          ? []
-          : [currentSection];
+        if (!options.removeMissing || !currentSection.sourcePlanningManaged) return [currentSection];
+        const retainedElements = currentSection.elements.filter((element) =>
+          isProtectedCurrentElement(element) || !isSourceOwned(element),
+        );
+        return retainedElements.length ? [{ ...currentSection, elements: retainedElements }] : [];
       }
 
       const sourceSection = importedSection.value;
