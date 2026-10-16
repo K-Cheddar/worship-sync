@@ -26,12 +26,17 @@ export const findToastEvictionIndex = (toasts: ToastData[]): number => {
   if (toasts.length === 0) return -1;
 
   const softIdx = toasts.findIndex(
-    (toast) => !toast.persist && toast.variant !== "error",
+    (toast) => !toast.persist && !toast.children && toast.variant !== "error",
   );
   if (softIdx !== -1) return softIdx;
 
-  const nonPersistIdx = toasts.findIndex((toast) => !toast.persist);
+  const nonPersistIdx = toasts.findIndex(
+    (toast) => !toast.persist && !toast.children,
+  );
   if (nonPersistIdx !== -1) return nonPersistIdx;
+
+  const nonActionIdx = toasts.findIndex((toast) => !toast.children);
+  if (nonActionIdx !== -1) return nonActionIdx;
 
   return 0;
 };

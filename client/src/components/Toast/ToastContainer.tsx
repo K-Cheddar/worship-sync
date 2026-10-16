@@ -11,6 +11,7 @@ export type ToastData = {
   persist?: boolean;
   duration?: number;
   showCloseButton?: boolean;
+  onClose?: () => void;
 };
 
 type ToastContainerProps = {
@@ -59,7 +60,10 @@ const ToastStack: React.FC<ToastStackProps> = ({
             <Toast
               {...toast}
               children={children}
-              onClose={() => onRemove(toast.id)}
+              onClose={() => {
+                toast.onClose?.();
+                onRemove(toast.id);
+              }}
             />
           </div>
         );

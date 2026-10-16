@@ -309,6 +309,47 @@ test("sendLiveChatMessage posts to active broadcast live chat", async (t) => {
   assert.equal(result.broadcastTitle, "Sunday Live");
 });
 
+test("sendLiveChatMessage gives actionable guidance when the connected channel has no active live chat", async (t) => {
+  const previousId = process.env.YOUTUBE_CLIENT_ID;
+  const previousSecret = process.env.YOUTUBE_CLIENT_SECRET;
+  process.env.YOUTUBE_CLIENT_ID = "yt-client";
+  process.env.YOUTUBE_CLIENT_SECRET = "yt-secret";
+  t.after(() => {
+    process.env.YOUTUBE_CLIENT_ID = previousId;
+    process.env.YOUTUBE_CLIENT_SECRET = previousSecret;
+  });
+
+  const firestore = createFirestoreMock();
+  const rtdb = createRealtimeDbMock();
+  firestore.seed("youtubeTokens", "church-1", {
+    churchId: "church-1",
+    database: "db-1",
+    accessToken: "access-1",
+    refreshToken: "refresh-1",
+    accessTokenExpiresAt: Date.now() + 60 * 60 * 1000,
+    accountLabel: "Church Live",
+  });
+  const service = createYouTubeLiveChatService({
+    getFirestore: () => firestore,
+    getRealtimeDatabase: () => rtdb,
+    getIntegrationsPath: (churchId) => `churches/${churchId}/data/integrations`,
+    redirectBaseUrl: "https://local.worshipsync.net:5000",
+  });
+
+  const originalGet = axios.get;
+  axios.get = async () => ({ data: { items: [] } });
+  t.after(() => {
+    axios.get = originalGet;
+  });
+
+  await assert.rejects(
+    () => service.sendLiveChatMessage({ churchId: "church-1", messageText: "Hello" }),
+    (error) =>
+      error.statusCode === 400 &&
+      error.message === "No active YouTube live chat was found for the connected channel. Start the stream or choose a live stream to try again.",
+  );
+});
+
 test("sendLiveChatMessage rejects oversized messages", async () => {
   const service = createYouTubeLiveChatService({
     getFirestore: () => createFirestoreMock(),

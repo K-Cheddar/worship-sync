@@ -29,6 +29,8 @@ export type TeamSchedulePeriod = {
   allOccurrences: TeamScheduleOccurrence[];
   serviceIds: string[];
   requirementsByOccurrence: Map<string, PositionRequirement[]>;
+  /** Service members that actually contribute staffing needs for this team. */
+  serviceIdsByOccurrence: Map<string, string[]>;
 };
 
 type ResolvedOccurrenceIdentity = NonNullable<ReturnType<typeof resolveOccurrenceIdentity>>;
@@ -224,6 +226,7 @@ export const buildTeamSchedulePeriod = ({
   });
   const occurrences: TeamScheduleOccurrence[] = [];
   const requirementsByOccurrence = new Map<string, PositionRequirement[]>();
+  const serviceIdsByOccurrence = new Map<string, string[]>();
   const serviceIds = new Set<string>();
 
   generated.forEach((occurrence) => {
@@ -233,6 +236,7 @@ export const buildTeamSchedulePeriod = ({
     let hasAmbiguousPersistedKeyCollision = false;
     const requirementsByPosition = new Map<string, PositionRequirement>();
     let relevant = false;
+    const relevantServiceIds = new Set<string>();
     selectedTeamIds.forEach((selectedTeamId) => {
       const teamPositionIdsForSchedule = [...(positionIdsByTeam.get(selectedTeamId) || [])];
       const identityIndex = occurrenceIdentityIndexByTeam.get(selectedTeamId);
@@ -251,12 +255,29 @@ export const buildTeamSchedulePeriod = ({
       const teamRequirements = new Map<string, PositionRequirement>();
       occurrenceServiceIds.forEach((serviceId) => {
         const service = allServiceById.get(serviceId);
-        resolveOccurrenceRequirements({
-          occurrence: savedMatch || occurrence,
+        const memberDefaultRequirements = resolveOccurrenceRequirements({
           service,
           teamPositionIds: teamPositionIdsForSchedule,
           fallbackToAllTeamPositions: false,
-        }).forEach((requirement) => {
+        });
+        const serviceRequirements = resolveOccurrenceRequirements({
+          // Generated combined occurrences carry the union of every member's
+          // requirements. Resolve each member from its own service defaults;
+          // only a saved occurrence override applies across the whole group.
+          occurrence: savedMatch,
+          service,
+          teamPositionIds: teamPositionIdsForSchedule,
+          fallbackToAllTeamPositions: false,
+        });
+        // A saved grouped override is an occurrence-wide staffing pool. Use
+        // each member's own defaults to attribute that pool to the team's
+        // service members instead of treating the override as repeated on
+        // every constituent service.
+        const membershipRequirements = savedMatch && occurrenceServiceIds.length > 1
+          ? memberDefaultRequirements
+          : serviceRequirements;
+        if (membershipRequirements.length) relevantServiceIds.add(serviceId);
+        serviceRequirements.forEach((requirement) => {
           const current = teamRequirements.get(requirement.positionId);
           if (!current || current.count < requirement.count) teamRequirements.set(requirement.positionId, requirement);
         });
@@ -266,6 +287,9 @@ export const buildTeamSchedulePeriod = ({
         ...(savedMatch ? [savedMatch.occurrenceId] : []),
       ]) || hasStoredLegacySlotForOccurrence(selectedTeamId, occurrence);
       if (!teamRequirements.size && !hasExplicitTeamSlot) return;
+      if ((hasExplicitTeamSlot || (savedMatch && teamRequirements.size > 0)) && !relevantServiceIds.size) {
+        relevantServiceIds.add(occurrence.serviceId);
+      }
       relevant = true;
       teamRequirements.forEach((requirement, positionId) => {
         const current = requirementsByPosition.get(positionId);
@@ -285,6 +309,7 @@ export const buildTeamSchedulePeriod = ({
       positionRequirements: requirements,
     });
     requirementsByOccurrence.set(displayOccurrence.occurrenceId, requirements);
+    serviceIdsByOccurrence.set(displayOccurrence.occurrenceId, [...relevantServiceIds]);
     occurrenceServiceIds.forEach((serviceId) => serviceIds.add(serviceId));
   });
 
@@ -340,6 +365,14 @@ export const buildTeamSchedulePeriod = ({
       occurrences.push({ ...saved, positionRequirements: visibleRequirements });
       visibleOccurrenceIds.add(saved.occurrenceId);
       requirementsByOccurrence.set(saved.occurrenceId, visibleRequirements);
+      const savedServiceIds = (saved.serviceIds?.length ? saved.serviceIds : [saved.serviceId])
+        .filter((serviceId) => resolveOccurrenceRequirements({
+          occurrence: saved,
+          service: allServiceById.get(serviceId),
+          teamPositionIds: [...teamPositionIds],
+          fallbackToAllTeamPositions: false,
+        }).length > 0);
+      serviceIdsByOccurrence.set(saved.occurrenceId, savedServiceIds.length ? savedServiceIds : [saved.serviceId]);
       (saved.serviceIds?.length ? saved.serviceIds : [saved.serviceId])
         .forEach((serviceId) => serviceIds.add(serviceId));
     });
@@ -350,6 +383,7 @@ export const buildTeamSchedulePeriod = ({
     allOccurrences: generated,
     serviceIds: [...serviceIds],
     requirementsByOccurrence,
+    serviceIdsByOccurrence,
   };
 };
 

@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import type { TeamService } from "../../../api/authTypes";
 import { setServerTimeOffset } from "../../../utils/serverTime";
@@ -38,6 +39,7 @@ jest.mock("../managers/IntakeManager", () => ({
     submissions,
     positions,
     schedules,
+    suggestionTeamIds,
   }: {
     listHeader: ReactNode;
     availabilityOnly?: boolean;
@@ -47,7 +49,8 @@ jest.mock("../managers/IntakeManager", () => ({
     submissions: unknown[];
     positions?: { positionId: string; teamId: string }[];
     schedules?: { scheduleId: string; teamId: string }[];
-  }) => <><output data-testid="intake-manager-mode">{availabilityOnly ? `availability:${managedTeamIds?.join(",")}:forms=${forms.length}:submissions=${submissions.length}` : "intake"}</output><output data-testid="displayed-form-count">{displayForms?.length ?? forms.length}</output><output data-testid="authorized-scope-metadata">{`${positions?.map(({ positionId }) => positionId).join(",") || ""}|${schedules?.map(({ scheduleId }) => scheduleId).join(",") || ""}`}</output>{listHeader}</>,
+    suggestionTeamIds?: string[];
+  }) => <><output data-testid="intake-manager-mode">{availabilityOnly ? `availability:${managedTeamIds?.join(",")}:forms=${forms.length}:submissions=${submissions.length}` : "intake"}</output><output data-testid="displayed-form-count">{displayForms?.length ?? forms.length}</output><output data-testid="displayed-form-ids">{displayForms?.map(({ formId }) => formId).join(",") || ""}</output><output data-testid="suggestion-teams">{suggestionTeamIds?.join(",") || ""}</output><output data-testid="authorized-scope-metadata">{`${positions?.map(({ positionId }) => positionId).join(",") || ""}|${schedules?.map(({ scheduleId }) => scheduleId).join(",") || ""}`}</output>{listHeader}</>,
 }));
 
 const mockUseTeamsPage = jest.mocked(useTeamsPage);
@@ -64,6 +67,71 @@ afterEach(() => {
 });
 
 describe("TeamsFormsPage period selection", () => {
+  it("filters forms by team independently from Range and resets an invalid selection on church change", async () => {
+    const user = userEvent.setup();
+    const forms = [
+      { formId: "media-form", churchId: "church-1", name: "Media form", active: true, teamIds: ["media"], startDate: "2026-10-01", endDate: "2026-10-31" },
+      { formId: "worship-form", churchId: "church-1", name: "Worship form", active: true, teamIds: ["worship"], startDate: "2026-10-01", endDate: "2026-10-31" },
+      { formId: "legacy-form", churchId: "church-1", name: "Legacy form", active: true, teamIds: [], startDate: "2026-10-01", endDate: "2026-10-31" },
+    ];
+    const teamData = (churchId: string, teamIds: string[], isAdmin = true) => ({
+      churchId,
+      pageData: {
+        services: [], intakeForms: forms, intakeSubmissions: [], intakeRecipients: [], smsEligibilityByMemberId: {}, smsDeliveryAttempts: [],
+        members: [], positions: [], schedules: [],
+        teams: teamIds.map((teamId) => ({ teamId, churchId, name: teamId === "media" ? "Media" : "Worship", memberIds: [] })),
+      },
+      canEditTeams: isAdmin,
+      canEditTeam: (teamId: string) => teamIds.includes(teamId),
+      canManageTeamAvailability: false,
+      serviceTimeZone: "America/New_York",
+      upsertData: jest.fn(),
+    } as unknown as ReturnType<typeof useTeamsPage>);
+    mockUseTeamsPage.mockReturnValue(teamData("church-1", ["media", "worship"]));
+    const view = render(<TeamsFormsPage />);
+
+    expect(screen.getByRole("combobox", { name: "Team:" })).toBeInTheDocument();
+    expect(screen.getByText("All teams")).toBeInTheDocument();
+    expect(screen.getByTestId("displayed-form-ids")).toHaveTextContent("media-form,worship-form,legacy-form");
+    const rangeBefore = screen.getByText(/2026-10-01:2026-10-31/);
+    await user.click(screen.getByRole("combobox", { name: "Team:" }));
+    await user.click(screen.getByRole("option", { name: "Media" }));
+    expect(screen.getByTestId("displayed-form-ids")).toHaveTextContent("media-form,legacy-form");
+    expect(screen.getByText(/2026-10-01:2026-10-31/)).toBe(rangeBefore);
+
+    mockUseTeamsPage.mockReturnValue(teamData("church-2", ["worship"], false));
+    view.rerender(<TeamsFormsPage />);
+    expect(screen.getByRole("combobox", { name: "Team:" })).toHaveTextContent("Worship");
+    expect(screen.getByTestId("displayed-form-ids")).toHaveTextContent("worship-form,legacy-form");
+  });
+
+  it("offers only active teams the current operator can manage", async () => {
+    const user = userEvent.setup();
+    mockUseTeamsPage.mockReturnValue({
+      churchId: "church-1",
+      pageData: {
+        services: [], intakeForms: [], intakeSubmissions: [], intakeRecipients: [], smsEligibilityByMemberId: {}, smsDeliveryAttempts: [],
+        members: [], positions: [], schedules: [],
+        teams: [
+          { teamId: "media", churchId: "church-1", name: "Media", memberIds: [] },
+          { teamId: "worship", churchId: "church-1", name: "Worship", memberIds: [] },
+          { teamId: "archived", churchId: "church-1", name: "Archived", memberIds: [], archivedAt: "2026-01-01" },
+        ],
+      },
+      canEditTeams: false,
+      canEditTeam: (teamId: string) => teamId === "media",
+      canManageTeamAvailability: false,
+      serviceTimeZone: "America/New_York",
+      upsertData: jest.fn(),
+    } as unknown as ReturnType<typeof useTeamsPage>);
+    render(<TeamsFormsPage />);
+    expect(screen.getByRole("combobox", { name: "Team:" })).toHaveTextContent("Media");
+    await user.click(screen.getByRole("combobox", { name: "Team:" }));
+    expect(screen.getByRole("option", { name: "Media" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Worship" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Archived" })).not.toBeInTheDocument();
+  });
+
   it("uses the server instant when it crosses into the next month", () => {
     jest.useFakeTimers().setSystemTime(new Date("2026-10-31T23:30:00-04:00"));
     setServerTimeOffset(2 * 60 * 60 * 1000);

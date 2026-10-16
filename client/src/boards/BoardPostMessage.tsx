@@ -19,12 +19,15 @@ type BoardPostMessageProps = {
   isMine: boolean;
   /** Moderator list uses gray card colors; attendee view uses stone/amber. */
   tone?: "attendee" | "moderator";
+  /** Keep controller cards fully readable without a collapsed preview. */
+  unbounded?: boolean;
 };
 
 export const BoardPostMessage = ({
   text,
   isMine,
   tone = "attendee",
+  unbounded = false,
 }: BoardPostMessageProps) => {
   const [expanded, setExpanded] = useState(false);
   const [showToggle, setShowToggle] = useState(false);
@@ -33,6 +36,10 @@ export const BoardPostMessage = ({
   useLayoutEffect(() => {
     const el = bodyRef.current;
     if (!el) return;
+    if (unbounded) {
+      setShowToggle(false);
+      return;
+    }
 
     const updateToggle = () => {
       const node = bodyRef.current;
@@ -49,7 +56,7 @@ export const BoardPostMessage = ({
     const ro = new ResizeObserver(updateToggle);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [text, expanded]);
+  }, [text, expanded, unbounded]);
 
   const isModeratorTone = tone === "moderator";
 
@@ -75,12 +82,14 @@ export const BoardPostMessage = ({
         ref={bodyRef}
         className={cn(
           textClass,
-          expanded
+          unbounded
+            ? "min-w-0 overflow-visible break-words"
+            : expanded
             ? EXPANDED_BODY_CLASS
             : cn(COLLAPSED_MAX_CLASS, "overflow-hidden"),
         )}
         style={{
-          ...(expanded
+          ...(expanded && !unbounded
             ? { WebkitOverflowScrolling: "touch" as const }
             : {}),
           ...(showCollapsedFade ? collapsedBottomFadeMaskStyle : {}),
@@ -88,7 +97,7 @@ export const BoardPostMessage = ({
       >
         {text}
       </div>
-      {showToggle && (
+      {showToggle && !unbounded && (
         <Button
           type="button"
           variant="none"

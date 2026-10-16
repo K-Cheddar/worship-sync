@@ -5,8 +5,9 @@ import cn from "classnames";
 import {
   Eye,
   EyeOff,
+  ChevronDown,
+  Info,
   LayoutList,
-  Menu as MenuIcon,
   MessagesSquare,
   SlidersHorizontal,
   Sparkles,
@@ -15,7 +16,6 @@ import {
 import PouchDB from "pouchdb-browser";
 import Button from "../components/Button/Button";
 import DeleteModal from "../components/Modal/DeleteModal";
-import Menu from "../components/Menu/Menu";
 import Icon from "../components/Icon/Icon";
 import {
   Sheet,
@@ -45,7 +45,9 @@ import {
   getBoardDocId,
   getBoardLabel,
   normalizeBoardPresentationFontScale,
-  boardHasOnlyPreviousDayPosts,
+  getStaleBoardSessionScope,
+  isStaleBoardSession,
+  type StaleBoardSessionScope,
   isCurrentBoardView,
   isWorshipSyncModeratorBoardPost,
   setStoredBoardDisplayAliasId,
@@ -60,6 +62,7 @@ import {
 import {
   deleteBoardAlias,
   hardResetBoardAlias,
+  keepCurrentRestreamSession,
   resetRestreamSession,
   updateBoardPresentationFontScale,
   updateBoardPostHidden,
@@ -74,8 +77,7 @@ import {
 import { BoardControllerMenu } from "../boards/BoardControllerMenu";
 import { BoardToolsPanelBody } from "../boards/BoardControllerToolsPanel";
 import RestreamSessionSuggestionBanner from "../boards/RestreamSessionSuggestionBanner";
-import { BoardDiscussionPostComposer } from "../boards/BoardDiscussionPostComposer";
-import { BoardYouTubeChatComposer } from "../boards/BoardYouTubeChatComposer";
+import { BoardPostingDock } from "../boards/BoardPostingDock";
 import { BoardActivitySourceBadge } from "../boards/BoardActivitySourceBadge";
 import { ManageBoardsPanelBody } from "../boards/BoardControllerManageBoardsPanel";
 import {
@@ -92,6 +94,33 @@ import { getLocalBoardPosts } from "../boards/boardSyncData";
 type AllDocsResult<T> = {
   rows: Array<{ doc?: T }>;
 };
+
+type FreshBoardResetProgress = {
+  churchId: string;
+  aliasId: string;
+  boardId: string;
+  restreamSessionId: string;
+  completedRestreamSessionId: string;
+  serviceDayIdentity: string;
+  scope: StaleBoardSessionScope;
+  restreamCompleted: boolean;
+  boardCompleted: boolean;
+};
+
+type VerifiedRestreamStaleness = {
+  boardIdentity: string;
+  isStale: boolean;
+  sessionId: string;
+};
+
+const handledStaleSessionSuggestionToasts = new Set<string>();
+
+const formatSessionDay = (timestamp: number | undefined) =>
+  typeof timestamp === "number" && Number.isFinite(timestamp)
+    ? new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(
+        new Date(timestamp),
+      )
+    : "an earlier day";
 
 type LiveActivityItem =
   | {
@@ -208,27 +237,6 @@ const getSelectedAliasViewData = async (
   };
 };
 
-const SessionResetToastAction = ({
-  keepLabel,
-  confirmLabel,
-  onKeep,
-  onConfirm,
-}: {
-  keepLabel: string;
-  confirmLabel: string;
-  onKeep: () => void;
-  onConfirm: () => void;
-}) => (
-  <div className="mt-3 flex flex-wrap justify-center gap-2">
-    <Button variant="primary" className="text-sm" wrap onClick={onKeep}>
-      {keepLabel}
-    </Button>
-    <Button variant="cta" className="text-sm" wrap onClick={onConfirm}>
-      {confirmLabel}
-    </Button>
-  </div>
-);
-
 export const BoardControllerContent = () => {
   const { db, status, pullFromRemote, retryNow, subscribeToChanges } =
     useBoardSync() || {};
@@ -262,6 +270,10 @@ export const BoardControllerContent = () => {
   const [boardsById, setBoardsById] = useState<Record<string, DBBoard>>({});
   const [posts, setPosts] = useState<DBBoardPost[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [hasLoadedSelectedAlias, setHasLoadedSelectedAlias] = useState(false);
+  const [todaySessionIdentity, setTodaySessionIdentity] = useState(() =>
+    new Date().toLocaleDateString(),
+  );
   const [isActing, setIsActing] = useState(false);
   const [actingPostIds, setActingPostIds] = useState<Set<string>>(new Set());
   const [renameAliasId, setRenameAliasId] = useState("");
@@ -274,24 +286,49 @@ export const BoardControllerContent = () => {
     useState(false);
   const [freshBoardConfirmOpen, setFreshBoardConfirmOpen] =
     useState(false);
+  const [freshBoardResetScope, setFreshBoardResetScope] =
+    useState<StaleBoardSessionScope>("both");
+  const [freshBoardResetAliasId, setFreshBoardResetAliasId] = useState("");
+  const [freshBoardResetSessionIdentity, setFreshBoardResetSessionIdentity] =
+    useState("");
+  const [dismissedFreshStartPromptIdentity, setDismissedFreshStartPromptIdentity] =
+    useState("");
+  const [shownFreshStartPromptIdentity, setShownFreshStartPromptIdentity] =
+    useState("");
+  const [keptStaleSessionDecisions, setKeptStaleSessionDecisions] =
+    useState<Record<string, string>>({});
   const [isConfirmingFreshBoardSession, setIsConfirmingFreshBoardSession] =
     useState(false);
+  const freshBoardResetProgressRef = useRef<FreshBoardResetProgress | null>(null);
+  const verifiedRestreamStalenessRef =
+    useRef<VerifiedRestreamStaleness | null>(null);
   const loadRequestIdRef = useRef(0);
   const activeDbRef = useRef<PouchDB.Database | undefined>(db);
   const activeDatabaseRef = useRef(database);
   const boardIdToViewRef = useRef("");
   const selectedBoardIdRef = useRef("");
   const selectedAliasIdRef = useRef("");
+  const churchIdRef = useRef(churchId || "");
   const selectedAliasRevisionRef = useRef<string | null>(null);
   const selectedAliasBoardIdsRef = useRef<Set<string>>(new Set());
   const currentBoardIdRef = useRef("");
-  // Board ids we've already prompted about, so the "start fresh session"
-  // toast appears once per stale board rather than on every re-render or
-  // background sync.
-  const promptedFreshSessionBoardIdsRef = useRef<Set<string>>(new Set());
-
   activeDbRef.current = db;
   activeDatabaseRef.current = database;
+  churchIdRef.current = churchId || "";
+
+  useEffect(() => {
+    const now = new Date();
+    const nextLocalMidnight = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() + 1,
+    );
+    const timer = window.setTimeout(
+      () => setTodaySessionIdentity(new Date().toLocaleDateString()),
+      Math.max(1, nextLocalMidnight.getTime() - now.getTime() + 10),
+    );
+    return () => window.clearTimeout(timer);
+  }, [todaySessionIdentity]);
 
   const isXlUp = useMediaQuery("(min-width: 1280px)");
   const isMobileStack = !isXlUp;
@@ -301,6 +338,21 @@ export const BoardControllerContent = () => {
     setIsMobile?.(!isLgUp);
     return () => setIsMobile?.(false);
   }, [isLgUp, setIsMobile]);
+
+  const [controllerViewportHeight, setControllerViewportHeight] = useState<number>();
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const updateHeight = () => setControllerViewportHeight(viewport?.height || window.innerHeight);
+    updateHeight();
+    viewport?.addEventListener("resize", updateHeight);
+    viewport?.addEventListener("scroll", updateHeight);
+    window.addEventListener("resize", updateHeight);
+    return () => {
+      viewport?.removeEventListener("resize", updateHeight);
+      viewport?.removeEventListener("scroll", updateHeight);
+      window.removeEventListener("resize", updateHeight);
+    };
+  }, []);
 
   const loadAliases = useCallback(async () => {
     if (!db || !database) return;
@@ -322,6 +374,7 @@ export const BoardControllerContent = () => {
       setBoardsById({});
       setPosts([]);
       setCurrentBoardHighlightedCount(0);
+      setHasLoadedSelectedAlias(false);
       setIsLoading(false);
       return;
     }
@@ -339,6 +392,7 @@ export const BoardControllerContent = () => {
       selectedAliasRevisionRef.current === requestAliasRevision;
 
     setIsLoading(true);
+    setHasLoadedSelectedAlias(false);
     try {
       const alias = (await requestDb.get(
         getAliasDocId(requestAliasId),
@@ -361,6 +415,7 @@ export const BoardControllerContent = () => {
       setCurrentBoardHighlightedCount(
         nextViewData.currentBoardHighlightedCount,
       );
+      setHasLoadedSelectedAlias(true);
       const nextSelectedBoardId =
         nextViewData.boardIdToView === alias.currentBoardId
           ? ""
@@ -561,21 +616,157 @@ export const BoardControllerContent = () => {
   }, [churchId, isConfirmingRestreamReset, reloadRestreamSession, showToast]);
 
   // Automatic stream detection remains the normal Restream reset path. This
-  // explicit fresh-start action resets both sources as a reliable fallback for
-  // platforms that do not expose a stable broadcast identity.
+  // confirmed action resets only the stale sources for this session.
   const handleConfirmFreshBoardSession = useCallback(async () => {
-    if (!selectedAlias || !churchId || isConfirmingFreshBoardSession) return;
-    const aliasId = selectedAlias.aliasId;
+    if (!freshBoardResetAliasId || !churchId || isConfirmingFreshBoardSession) return;
+    const restreamResetAlreadyCompleted =
+      freshBoardResetProgressRef.current?.restreamCompleted ?? false;
+    if (
+      (freshBoardResetScope === "both" || freshBoardResetScope === "restream") &&
+      !restreamResetAlreadyCompleted &&
+      (restreamSession.isLoading ||
+        restreamSession.isRefreshing ||
+        Boolean(restreamSession.error))
+    ) {
+      return;
+    }
+    const aliasId = freshBoardResetAliasId;
+    let progress = freshBoardResetProgressRef.current;
+    if (
+      !progress ||
+      progress.churchId !== churchId ||
+      progress.aliasId !== aliasId ||
+      progress.scope !== freshBoardResetScope
+    ) {
+      progress = {
+        churchId,
+        aliasId,
+        boardId: currentBoard?.id || "",
+        restreamSessionId: restreamSession.session?.sessionId || "",
+        completedRestreamSessionId: "",
+        serviceDayIdentity: todaySessionIdentity,
+        scope: freshBoardResetScope,
+        restreamCompleted: false,
+        boardCompleted: false,
+      };
+      freshBoardResetProgressRef.current = progress;
+    }
+    if (progress.serviceDayIdentity !== todaySessionIdentity) {
+      setFreshBoardConfirmOpen(false);
+      showToast("The local day changed while you were confirming. Review the current session before starting fresh.", "info");
+      return;
+    }
     setIsConfirmingFreshBoardSession(true);
     try {
-      await resetRestreamSession(churchId);
-      await hardResetBoardAlias(aliasId);
-      await reloadRestreamSession();
+      const resetBoardIsStillEligible = async () => {
+        if (!db || !progress?.boardId) {
+          throw new Error("Could not verify the current discussion board. Try again.");
+        }
+        const latestAlias = (await db.get(getAliasDocId(aliasId))) as DBBoardAlias;
+        if (latestAlias.currentBoardId !== progress.boardId) {
+          setFreshBoardConfirmOpen(false);
+          void loadSelectedAlias();
+          showToast(
+            "The discussion board changed while you were confirming. The current board was left untouched.",
+            "success",
+          );
+          return false;
+        }
+        const [latestBoard, latestBoardPosts] = await Promise.all([
+          db.get(getBoardDocId(progress.boardId)) as Promise<DBBoard>,
+          getLocalBoardPosts(db, progress.boardId),
+        ]);
+        if (!isStaleBoardSession({
+          boardCreatedAt: latestBoard.createdAt,
+          boardPosts: latestBoardPosts,
+        })) {
+          setPosts(latestBoardPosts);
+          setFreshBoardConfirmOpen(false);
+          showToast(
+            "The discussion board is no longer stale or has activity today, so it was left unchanged.",
+            "success",
+          );
+          return false;
+        }
+        return true;
+      };
+      const currentRestreamActivityTimestamps = [
+        restreamSession.session?.lastEventAt,
+        restreamSession.session?.lastMessageAt,
+        ...restreamSession.messages
+          .filter((message) => message.sessionId === progress?.restreamSessionId)
+          .flatMap((message) => [message.postedAt, message.receivedAt]),
+      ].filter((timestamp): timestamp is number => typeof timestamp === "number");
+      const restreamIsStillEligible =
+        (restreamSession.session?.sessionId || "") === progress.restreamSessionId &&
+        getStaleBoardSessionScope({
+          boardPosts: [],
+          restreamStartedAt: restreamSession.session?.startedAt,
+          restreamActivityTimestamps: currentRestreamActivityTimestamps,
+        }) === "restream";
+      const expectedRestreamSession = restreamSession.session
+        ? {
+            sessionId: restreamSession.session.sessionId,
+            startedAt: restreamSession.session.startedAt,
+            lastEventAt: restreamSession.session.lastEventAt,
+            messageCount: restreamSession.session.messageCount,
+          }
+        : undefined;
+
+      // Validate all requested targets before changing either session.
+      if (
+        (progress.scope === "both" || progress.scope === "restream") &&
+        !progress.restreamCompleted &&
+        !restreamIsStillEligible
+      ) {
+        setFreshBoardConfirmOpen(false);
+        showToast(
+          "The Restream session changed or has activity today, so it was left unchanged.",
+          "success",
+        );
+        return;
+      }
+      if (
+        (progress.scope === "both" || progress.scope === "board") &&
+        !progress.boardCompleted &&
+        !(await resetBoardIsStillEligible())
+      ) {
+        return;
+      }
+      if (
+        (progress.scope === "both" || progress.scope === "restream") &&
+        !progress.restreamCompleted
+      ) {
+        const resetResult = await resetRestreamSession(churchId, expectedRestreamSession);
+        progress.restreamCompleted = true;
+        progress.completedRestreamSessionId =
+          resetResult?.session?.sessionId || "";
+      }
+      if (
+        (progress.scope === "both" || progress.scope === "board") &&
+        !progress.boardCompleted
+      ) {
+        if (!(await resetBoardIsStillEligible())) return;
+        await hardResetBoardAlias(aliasId, progress.boardId);
+        progress.boardCompleted = true;
+      }
+      if (progress.scope !== "board") await reloadRestreamSession();
+      freshBoardResetProgressRef.current = null;
       setSelectedBoardId("");
       setFreshBoardConfirmOpen(false);
-      showToast("Started fresh for today and cleared earlier Restream chat.", "success");
+      showToast(
+        progress.scope === "both"
+          ? "Started fresh for today and cleared earlier Restream chat."
+          : progress.scope === "board"
+            ? "Started a fresh discussion board for today."
+            : "Started a new Restream session.",
+        "success",
+      );
       pullFromRemote?.();
     } catch (error) {
+      if (progress.scope !== "board" && progress.restreamCompleted) {
+        await reloadRestreamSession();
+      }
       showToast(
         error instanceof Error
           ? error.message
@@ -586,51 +777,390 @@ export const BoardControllerContent = () => {
       setIsConfirmingFreshBoardSession(false);
     }
   }, [
-    selectedAlias,
     churchId,
+    currentBoard?.id,
+    todaySessionIdentity,
+    db,
+    freshBoardResetAliasId,
+    freshBoardResetScope,
     isConfirmingFreshBoardSession,
+    restreamSession.isLoading,
+    restreamSession.isRefreshing,
+    restreamSession.error,
+    restreamSession.messages,
+    restreamSession.session,
     reloadRestreamSession,
+    loadSelectedAlias,
     showToast,
     pullFromRemote,
   ]);
 
-  // Prompt (never force) a fresh start when the current board only holds
-  // content from an earlier day.
-  useEffect(() => {
-    if (isLoading) return;
-
-    const boardIsStale =
+  const restreamActivityTimestamps = [
+    restreamSession.session?.lastEventAt,
+    restreamSession.session?.lastMessageAt,
+    ...restreamSession.messages
+      .filter((message) => message.sessionId === restreamSession.session?.sessionId)
+      .flatMap((message) => [message.postedAt, message.receivedAt]),
+  ].filter((timestamp): timestamp is number => typeof timestamp === "number");
+  const canEvaluateCurrentBoardSession = Boolean(
+    db &&
+      status === "connected" &&
+      hasLoadedSelectedAlias &&
+      !isLoading &&
       isViewingCurrent &&
-      !!currentBoard &&
-      boardHasOnlyPreviousDayPosts(posts);
-    const staleBoardId = boardIsStale ? currentBoard!.id : "";
-    const promptBoard =
-      !!staleBoardId &&
-      !promptedFreshSessionBoardIdsRef.current.has(staleBoardId);
-
-    if (!promptBoard) return;
-
-    promptedFreshSessionBoardIdsRef.current.add(staleBoardId);
-
-    showToast({
-      message: "Earlier-day comments are still in the board. Start fresh for today?",
-      variant: "info",
-      duration: 15000,
-      showCloseButton: false,
-      children: (toastId) => (
-        <SessionResetToastAction
-          keepLabel="Keep current session"
-          confirmLabel="Start fresh for today"
-          onKeep={() => removeToast(toastId)}
-          onConfirm={() => {
-            removeToast(toastId);
-            setFreshBoardConfirmOpen(true);
-          }}
-        />
-      ),
-    });
-  }, [isLoading, isViewingCurrent, currentBoard, posts, showToast, removeToast]);
-
+      selectedAlias?.aliasId === selectedAliasId &&
+      currentBoard &&
+      churchId,
+  );
+  const boardSessionIdentity = canEvaluateCurrentBoardSession
+    ? [churchId, selectedAliasId, currentBoard?.id, todaySessionIdentity].join(":")
+    : "";
+  const boardIsStale = Boolean(
+    canEvaluateCurrentBoardSession &&
+      isStaleBoardSession({
+        boardCreatedAt: currentBoard?.createdAt,
+        boardPosts: posts,
+      }),
+  );
+  const restreamStatusIsSettled =
+    !restreamSession.isLoading &&
+    !restreamSession.isRefreshing &&
+    !restreamSession.error;
+  const settledRestreamIsStale =
+    getStaleBoardSessionScope({
+      boardPosts: [],
+      restreamStartedAt: restreamSession.session?.startedAt,
+      restreamActivityTimestamps,
+    }) === "restream";
+  useEffect(() => {
+    if (canEvaluateCurrentBoardSession && restreamStatusIsSettled) {
+      verifiedRestreamStalenessRef.current = {
+        boardIdentity: boardSessionIdentity,
+        isStale: settledRestreamIsStale,
+        sessionId: restreamSession.session?.sessionId || "",
+      };
+    }
+  }, [
+    canEvaluateCurrentBoardSession,
+    restreamStatusIsSettled,
+    boardSessionIdentity,
+    settledRestreamIsStale,
+    restreamSession.session?.sessionId,
+  ]);
+  const verifiedRestreamStaleness =
+    verifiedRestreamStalenessRef.current?.boardIdentity === boardSessionIdentity
+      ? verifiedRestreamStalenessRef.current
+      : null;
+  const canUseVerifiedRestreamStaleness = Boolean(
+    !restreamSession.isLoading &&
+      !restreamStatusIsSettled &&
+      verifiedRestreamStaleness,
+  );
+  const restreamIsStale = canEvaluateCurrentBoardSession
+    ? restreamStatusIsSettled
+      ? settledRestreamIsStale
+      : canUseVerifiedRestreamStaleness && verifiedRestreamStaleness
+        ? verifiedRestreamStaleness.isStale
+        : false
+    : false;
+  const eligibleRestreamSessionId = restreamStatusIsSettled
+    ? restreamSession.session?.sessionId || ""
+    : verifiedRestreamStaleness?.sessionId || "";
+  const restreamWasResetByPendingOperation = Boolean(
+    freshBoardResetProgressRef.current?.restreamCompleted &&
+      freshBoardResetProgressRef.current.churchId === churchId &&
+      freshBoardResetProgressRef.current.serviceDayIdentity === todaySessionIdentity &&
+      (eligibleRestreamSessionId ===
+        freshBoardResetProgressRef.current.restreamSessionId ||
+        eligibleRestreamSessionId ===
+          freshBoardResetProgressRef.current.completedRestreamSessionId),
+  );
+  const isRestreamSessionStale = restreamIsStale && !restreamWasResetByPendingOperation;
+  const hasEnoughRestreamData =
+    restreamStatusIsSettled || canUseVerifiedRestreamStaleness;
+  const staleSessionScope: StaleBoardSessionScope | null =
+    canEvaluateCurrentBoardSession && hasEnoughRestreamData
+      ? boardIsStale && isRestreamSessionStale
+        ? "both"
+        : boardIsStale
+          ? "board"
+          : isRestreamSessionStale
+            ? "restream"
+            : null
+      : null;
+  const staleSessionIdentity = staleSessionScope
+    ? [boardSessionIdentity, eligibleRestreamSessionId].join(":")
+    : "";
+  const boardDecisionKey = `worshipsync:board-session-decision:${churchId}:${selectedAliasId}:board`;
+  const restreamDecisionKey = `worshipsync:restream-session-decision:${churchId}`;
+  const legacyDecisionKey = `worshipsync:board-session-decision:${churchId}:${selectedAliasId}`;
+  const legacyDecisionPrefix = [
+    churchId,
+    selectedAliasId,
+    currentBoard?.id || "",
+    eligibleRestreamSessionId,
+    todaySessionIdentity,
+  ].join(":");
+  const legacyDecision = localStorage.getItem(legacyDecisionKey);
+  const legacyKeptScope = legacyDecision?.startsWith(`${legacyDecisionPrefix}:`)
+    ? legacyDecision.slice(legacyDecisionPrefix.length + 1)
+    : "";
+  const boardDecisionIdentity = boardIsStale
+    ? [boardSessionIdentity, "board"].join(":")
+    : "";
+  const restreamDecisionIdentity = restreamIsStale
+    ? [churchId, eligibleRestreamSessionId, todaySessionIdentity, "restream"].join(":")
+    : "";
+  const boardWasKept = Boolean(
+    boardDecisionIdentity &&
+      (keptStaleSessionDecisions[boardDecisionKey] === boardDecisionIdentity ||
+        localStorage.getItem(boardDecisionKey) === boardDecisionIdentity ||
+        legacyKeptScope === "board" ||
+        legacyKeptScope === "both"),
+  );
+  const restreamWasKept = Boolean(
+    restreamDecisionIdentity &&
+      (keptStaleSessionDecisions[restreamDecisionKey] === restreamDecisionIdentity ||
+        localStorage.getItem(restreamDecisionKey) === restreamDecisionIdentity ||
+        legacyKeptScope === "restream" ||
+        legacyKeptScope === "both"),
+  );
+  const unkeptBoardIsStale = boardIsStale && !boardWasKept;
+  const unkeptRestreamIsStale = restreamIsStale && !restreamWasKept;
+  const suggestionScope: StaleBoardSessionScope | null =
+    unkeptBoardIsStale && unkeptRestreamIsStale
+      ? "both"
+      : unkeptBoardIsStale
+        ? "board"
+        : unkeptRestreamIsStale
+          ? "restream"
+          : null;
+  const showStaleSessionSuggestion = Boolean(staleSessionScope && suggestionScope);
+  const freshStartPromptIdentity =
+    suggestionScope === "both"
+      ? [boardDecisionIdentity, restreamDecisionIdentity].join("|")
+      : suggestionScope === "board"
+        ? boardDecisionIdentity
+        : suggestionScope === "restream"
+          ? restreamDecisionIdentity
+          : "";
+  const freshStartPromptStorageKey = freshStartPromptIdentity
+    ? `worshipsync:board-session-prompt:${freshStartPromptIdentity}`
+    : "";
+  const staleSuggestionMessage =
+    suggestionScope === "both"
+      ? `The discussion board created ${formatSessionDay(currentBoard?.createdAt)} has no posts today. Restream started ${formatSessionDay(restreamSession.session?.startedAt)} and has no activity today.`
+      : suggestionScope === "board"
+        ? `The discussion board created ${formatSessionDay(currentBoard?.createdAt)} has no posts today.`
+        : `The Restream session started ${formatSessionDay(restreamSession.session?.startedAt)} and has no activity today.`;
+  const openFreshStartConfirmation = useCallback(
+    (scope: StaleBoardSessionScope) => {
+      if (!staleSessionIdentity) return;
+      freshBoardResetProgressRef.current = {
+        churchId: churchId || "",
+        aliasId: selectedAlias?.aliasId || "",
+        boardId: currentBoard?.id || "",
+        restreamSessionId: eligibleRestreamSessionId,
+        completedRestreamSessionId: "",
+        serviceDayIdentity: todaySessionIdentity,
+        scope,
+        restreamCompleted: false,
+        boardCompleted: false,
+      };
+      setFreshBoardResetAliasId(selectedAlias?.aliasId || "");
+      setFreshBoardResetSessionIdentity(staleSessionIdentity);
+      setFreshBoardResetScope(scope);
+      setFreshBoardConfirmOpen(true);
+    },
+    [
+      staleSessionIdentity,
+      churchId,
+      selectedAlias?.aliasId,
+      currentBoard?.id,
+      eligibleRestreamSessionId,
+      todaySessionIdentity,
+    ],
+  );
+  const showFreshStartFallback = Boolean(
+    showStaleSessionSuggestion &&
+      freshStartPromptIdentity &&
+      dismissedFreshStartPromptIdentity === freshStartPromptIdentity,
+  );
+  const handleKeepStaleSession = useCallback(async () => {
+    if (!suggestionScope || !staleSessionIdentity) return;
+    const shouldKeepBoard = suggestionScope === "board" || suggestionScope === "both";
+    const shouldKeepRestream = suggestionScope === "restream" || suggestionScope === "both";
+    try {
+      if (shouldKeepRestream && churchId) {
+        await keepCurrentRestreamSession(churchId);
+      }
+      const nextDecisions: Record<string, string> = {};
+      if (shouldKeepBoard && boardDecisionIdentity) {
+        localStorage.setItem(boardDecisionKey, boardDecisionIdentity);
+        nextDecisions[boardDecisionKey] = boardDecisionIdentity;
+      }
+      if (shouldKeepRestream && restreamDecisionIdentity) {
+        localStorage.setItem(restreamDecisionKey, restreamDecisionIdentity);
+        nextDecisions[restreamDecisionKey] = restreamDecisionIdentity;
+      }
+      setKeptStaleSessionDecisions((previous) => ({ ...previous, ...nextDecisions }));
+      if (shouldKeepRestream && churchId) {
+        await reloadRestreamSession();
+      }
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : "Could not keep the current session.",
+        "error",
+      );
+    }
+  }, [
+    suggestionScope,
+    staleSessionIdentity,
+    churchId,
+    boardDecisionIdentity,
+    boardDecisionKey,
+    restreamDecisionIdentity,
+    restreamDecisionKey,
+    reloadRestreamSession,
+    showToast,
+  ]);
+  useEffect(() => {
+    if (!showStaleSessionSuggestion || !freshStartPromptStorageKey || !suggestionScope) {
+      return;
+    }
+    const existingPromptState = localStorage.getItem(freshStartPromptStorageKey);
+    if (!existingPromptState) {
+      localStorage.setItem(freshStartPromptStorageKey, "shown");
+      setShownFreshStartPromptIdentity(freshStartPromptIdentity);
+      showToast({
+        message: staleSuggestionMessage,
+        variant: "info",
+        duration: 15000,
+        position: "top-center",
+        onClose: () => {
+          setShownFreshStartPromptIdentity((current) =>
+            current === freshStartPromptIdentity ? "" : current,
+          );
+          if (handledStaleSessionSuggestionToasts.delete(freshStartPromptIdentity)) {
+            return;
+          }
+          localStorage.setItem(freshStartPromptStorageKey, "dismissed");
+          setDismissedFreshStartPromptIdentity(freshStartPromptIdentity);
+        },
+        children: (toastId) => (
+          <div className="mt-2 flex flex-wrap justify-center gap-2">
+            <Button
+              variant="secondary"
+              className="min-h-9 text-xs sm:text-sm"
+              onClick={() => {
+                void (async () => {
+                  await handleKeepStaleSession();
+                  const isKept =
+                    ((suggestionScope === "board" || suggestionScope === "both")
+                      ? localStorage.getItem(boardDecisionKey) === boardDecisionIdentity
+                      : true) &&
+                    ((suggestionScope === "restream" || suggestionScope === "both")
+                      ? localStorage.getItem(restreamDecisionKey) === restreamDecisionIdentity
+                      : true);
+                  if (isKept) {
+                    handledStaleSessionSuggestionToasts.add(freshStartPromptIdentity);
+                    localStorage.setItem(freshStartPromptStorageKey, "kept");
+                    removeToast(toastId);
+                  }
+                })();
+              }}
+            >
+              Keep current session
+            </Button>
+            <Button
+              variant="primary"
+              className="min-h-9 text-xs sm:text-sm"
+              onClick={() => {
+                localStorage.setItem(freshStartPromptStorageKey, "dismissed");
+                setDismissedFreshStartPromptIdentity(freshStartPromptIdentity);
+                handledStaleSessionSuggestionToasts.add(freshStartPromptIdentity);
+                removeToast(toastId);
+                openFreshStartConfirmation(suggestionScope);
+              }}
+            >
+              {suggestionScope === "restream"
+                ? "Start new Restream session"
+                : "Start fresh for today"}
+            </Button>
+          </div>
+        ),
+      });
+      return;
+    }
+    if (
+      existingPromptState === "dismissed" ||
+      (existingPromptState === "shown" &&
+        shownFreshStartPromptIdentity !== freshStartPromptIdentity)
+    ) {
+      setDismissedFreshStartPromptIdentity(freshStartPromptIdentity);
+    }
+  }, [
+    showStaleSessionSuggestion,
+    freshStartPromptStorageKey,
+    freshStartPromptIdentity,
+    suggestionScope,
+    staleSuggestionMessage,
+    showToast,
+    removeToast,
+    boardDecisionKey,
+    boardDecisionIdentity,
+    restreamDecisionKey,
+    restreamDecisionIdentity,
+    handleKeepStaleSession,
+    openFreshStartConfirmation,
+    shownFreshStartPromptIdentity,
+  ]);
+  const hasPartialFreshBoardReset = Boolean(
+    freshBoardResetProgressRef.current &&
+      freshBoardResetProgressRef.current.churchId === churchId &&
+      freshBoardResetProgressRef.current.aliasId === freshBoardResetAliasId &&
+      selectedAlias?.aliasId === freshBoardResetAliasId &&
+      freshBoardResetProgressRef.current.scope === freshBoardResetScope &&
+      (freshBoardResetProgressRef.current.restreamCompleted ||
+        freshBoardResetProgressRef.current.boardCompleted),
+  );
+  const isWaitingForRestreamVerification = Boolean(
+    freshBoardConfirmOpen &&
+      (freshBoardResetScope === "both" || freshBoardResetScope === "restream") &&
+      !freshBoardResetProgressRef.current?.restreamCompleted &&
+      (restreamSession.isLoading ||
+        restreamSession.isRefreshing ||
+        restreamSession.error),
+  );
+  const requestedSourcesAreStillStale =
+    freshBoardResetScope === "both"
+      ? staleSessionScope === "both"
+      : freshBoardResetScope === "board"
+        ? staleSessionScope === "board" || staleSessionScope === "both"
+        : staleSessionScope === "restream" || staleSessionScope === "both";
+  useEffect(() => {
+    if (
+      freshBoardConfirmOpen &&
+      !isConfirmingFreshBoardSession &&
+      !hasPartialFreshBoardReset &&
+      (selectedAlias?.aliasId !== freshBoardResetAliasId ||
+        !requestedSourcesAreStillStale ||
+        staleSessionIdentity !== freshBoardResetSessionIdentity)
+    ) {
+      setFreshBoardConfirmOpen(false);
+    }
+  }, [
+    freshBoardConfirmOpen,
+    isConfirmingFreshBoardSession,
+    selectedAlias?.aliasId,
+    freshBoardResetAliasId,
+    staleSessionScope,
+    freshBoardResetScope,
+    staleSessionIdentity,
+    freshBoardResetSessionIdentity,
+    hasPartialFreshBoardReset,
+    requestedSourcesAreStillStale,
+  ]);
   const runPostAction = useCallback(
     async (
       postId: string,
@@ -816,7 +1346,9 @@ export const BoardControllerContent = () => {
           You appear to be offline. Live messages may not update until you reconnect.
         </p>
       ) : null}
-      {churchId && restreamSession.session?.sessionSuggestion ? (
+      {churchId &&
+      restreamSession.session?.sessionSuggestion &&
+      !showStaleSessionSuggestion ? (
         <RestreamSessionSuggestionBanner
           churchId={churchId}
           suggestion={restreamSession.session.sessionSuggestion}
@@ -881,6 +1413,7 @@ export const BoardControllerContent = () => {
   );
   const hasRestreamStatus =
     restreamSession.isOffline ||
+    showStaleSessionSuggestion ||
     Boolean(restreamSession.session?.sessionSuggestion) ||
     Boolean(restreamSession.session?.streamTitle) ||
     !restreamSession.oauthConfigured ||
@@ -897,16 +1430,21 @@ export const BoardControllerContent = () => {
 
   const liveActivityContent = (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-gray-500 bg-gray-900/60 px-4 py-2">
-        <div>
-          <h3 className="text-base font-semibold">Live activity</h3>
-          <p className="mt-0.5 text-sm text-gray-300">
-            Discussion board posts and Restream chat appear in time order.
-          </p>
+      <div className="flex min-h-[48px] shrink-0 items-center justify-between gap-2 border-b border-gray-500 bg-gray-900/60 px-3 py-0">
+        <div className="flex min-w-0 items-center gap-1">
+          <h3 className="truncate text-base font-semibold">Live activity</h3>
+          <details className="relative shrink-0">
+            <summary className="flex size-[44px] cursor-pointer list-none items-center justify-center rounded-md text-gray-300 hover:bg-gray-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400" aria-label="About live activity">
+              <Info className="size-4" aria-hidden="true" />
+            </summary>
+            <p className="absolute left-0 top-full z-20 mt-1 w-64 rounded-lg border border-gray-600 bg-gray-900 p-3 text-xs text-gray-200 shadow-lg">
+              Discussion board posts and Restream chat appear in time order.
+            </p>
+          </details>
         </div>
-        {hasNewActivity ? (
-          <Button variant="tertiary" onClick={scrollToBottom}>
-            New activity
+        {!isPinnedToBottom ? (
+          <Button variant="tertiary" onClick={scrollToBottom} className="min-h-[44px] shrink-0 px-2">
+            {hasNewActivity ? "New activity" : "Latest activity"}
           </Button>
         ) : null}
       </div>
@@ -918,7 +1456,9 @@ export const BoardControllerContent = () => {
       <div
         ref={scrollRef}
         onScroll={onScroll}
-        className="scrollbar-variable min-h-0 flex-1 overflow-y-auto py-2 pr-4 pl-9"
+        role="region"
+        aria-label="Live activity feed"
+        className="scrollbar-variable min-h-0 flex-1 overflow-y-auto overscroll-contain py-2 pr-3 pl-9 md:pr-4"
       >
         {isLoading ? (
           <div className="flex items-center gap-2 text-gray-300">
@@ -933,7 +1473,7 @@ export const BoardControllerContent = () => {
             </p>
           </div>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             {liveActivityItems.map((item) => {
               if (item.source === "restream") {
                 return (
@@ -958,7 +1498,7 @@ export const BoardControllerContent = () => {
                       : "Discussion board post"
                   }
                   className={cn(
-                    "relative rounded-lg border px-3 py-2.5",
+                    "relative rounded-lg border px-2.5 py-1.5 md:px-3 md:py-2",
                     post.deleted &&
                     "border-rose-900/50 bg-rose-950/25 ring-1 ring-rose-500/15",
                     !post.deleted &&
@@ -972,7 +1512,7 @@ export const BoardControllerContent = () => {
                   <BoardActivitySourceBadge
                     kind={isModeratorPost ? "moderator" : "discussion"}
                   />
-                  <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                     <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                       <span
                         className={cn(
@@ -1004,11 +1544,23 @@ export const BoardControllerContent = () => {
                         </span>
                       )}
                     </div>
-                    {isViewingCurrent && (
-                      <div className="flex shrink-0 gap-1.5">
-                        <Button
+                  </div>
+                  <div className="min-w-0">
+                    <BoardPostMessage
+                      text={post.text}
+                      isMine={false}
+                      tone="moderator"
+                      unbounded
+                    />
+                  </div>
+                  {isViewingCurrent && (
+                    <div className="flex justify-end gap-1 pt-0.5">
+                      <Button
                           variant="tertiary"
                           svg={post.hidden ? Eye : EyeOff}
+                          iconSize="sm"
+                          style={{ minHeight: 32, transition: "none" }}
+                          className="relative min-h-7 max-md:min-h-[32px] px-1.5 py-0 text-xs transition-colors after:absolute after:-inset-y-1 after:content-['']"
                           onClick={() => {
                             void runPostAction(
                               post._id,
@@ -1020,9 +1572,12 @@ export const BoardControllerContent = () => {
                         >
                           {post.hidden ? "Unhide" : "Hide"}
                         </Button>
-                        <Button
+                      <Button
                           variant="tertiary"
                           svg={post.highlighted ? StarOff : Sparkles}
+                          iconSize="sm"
+                          style={{ minHeight: 32, transition: "none" }}
+                          className="relative min-h-7 max-md:min-h-[32px] px-1.5 py-0 text-xs transition-colors after:absolute after:-inset-y-1 after:content-['']"
                           onClick={() =>
                             void runPostAction(
                               post._id,
@@ -1043,20 +1598,7 @@ export const BoardControllerContent = () => {
                           {post.highlighted ? "Unhighlight" : "Highlight"}
                         </Button>
                       </div>
-                    )}
-                  </div>
-                  <div
-                    className={cn(
-                      "min-w-0",
-                      post.deleted && "opacity-80",
-                    )}
-                  >
-                    <BoardPostMessage
-                      text={post.text}
-                      isMine={false}
-                      tone="moderator"
-                    />
-                  </div>
+                  )}
                 </article>
               );
             })}
@@ -1064,24 +1606,20 @@ export const BoardControllerContent = () => {
         )}
         <div ref={endRef} className="h-px shrink-0" aria-hidden />
       </div>
-      {(showYouTubeChatComposer || showBoardDiscussionComposer) ? (
-        <div className="sticky bottom-0 z-10 shrink-0 space-y-2">
-          {showYouTubeChatComposer ? (
-            <BoardYouTubeChatComposer
-              churchId={churchId || ""}
-              accountLabel={youtubeConnection.accountLabel}
-            />
-          ) : null}
-          {showBoardDiscussionComposer ? (
-            <BoardDiscussionPostComposer
-              aliasId={selectedAliasId}
-              showToast={showToast}
-              userId={String(userId || "").trim()}
-              pullFromRemote={pullFromRemote}
-            />
-          ) : null}
-        </div>
-      ) : null}
+      <BoardPostingDock
+        aliasId={selectedAliasId}
+        boardSessionId={selectedAlias?.currentBoardId || ""}
+        churchId={churchId || ""}
+        userId={String(userId || "").trim()}
+        accountLabel={youtubeConnection.accountLabel}
+        showBoardPost={showBoardDiscussionComposer}
+        showYouTubeChat={showYouTubeChatComposer}
+        isCompact={isMobileStack}
+        showToast={showToast}
+        pullFromRemote={pullFromRemote}
+        isFeedPinned={isPinnedToBottom}
+        onFeedLayoutComplete={scrollToBottom}
+      />
     </div>
   );
 
@@ -1102,10 +1640,11 @@ export const BoardControllerContent = () => {
   return (
     <main
       id="controller-main"
-      className="flex h-dvh flex-col bg-homepage-canvas text-white"
+      className="flex h-dvh flex-col overflow-hidden bg-homepage-canvas text-white"
       style={
         {
           "--scrollbar-width": scrollbarWidth,
+          ...(controllerViewportHeight ? { height: `${controllerViewportHeight}px`, maxHeight: `${controllerViewportHeight}px` } : {}),
         } as CSSProperties
       }
     >
@@ -1168,19 +1707,52 @@ export const BoardControllerContent = () => {
       {freshBoardConfirmOpen && (
         <DeleteModal
           isOpen
-          onClose={() => setFreshBoardConfirmOpen(false)}
+          onClose={() => {
+            if (!hasPartialFreshBoardReset) {
+              freshBoardResetProgressRef.current = null;
+            }
+            setFreshBoardConfirmOpen(false);
+          }}
           onConfirm={() => void handleConfirmFreshBoardSession()}
-          itemName="today's session"
-          title="Start fresh for today"
+          itemName={
+            freshBoardResetScope === "both"
+              ? "today's session"
+              : freshBoardResetScope === "board"
+                ? "today's discussion board"
+                : "today's Restream session"
+          }
+          title={
+            freshBoardResetScope === "both"
+              ? "Start fresh for today"
+              : freshBoardResetScope === "board"
+                ? "Start a fresh discussion board"
+                : "Start a new Restream session"
+          }
           message="Are you sure you want to start fresh for"
-          warningMessage="Board posts move to history. Earlier Restream chat is cleared."
-          impacts={[
-            "Discussion board archives its current posts and starts empty",
-            "Restream chat starts a new session",
-          ]}
-          confirmText="Start fresh"
-          confirmingLabel="Starting fresh..."
-          isConfirming={isConfirmingFreshBoardSession}
+          warningMessage={
+            freshBoardResetScope === "both"
+              ? "Board posts move to history. Earlier Restream chat is cleared."
+              : freshBoardResetScope === "board"
+                ? "Board posts move to history and the discussion board starts empty."
+                : "Earlier Restream chat is cleared. Discussion board posts stay the same."
+          }
+          impacts={
+            freshBoardResetScope === "both"
+              ? [
+                  "Discussion board archives its current posts and starts empty",
+                  "Restream chat starts a new session",
+                ]
+              : freshBoardResetScope === "board"
+                ? ["Discussion board archives its current posts and starts empty"]
+                : ["Restream chat starts a new session"]
+          }
+          confirmText={freshBoardResetScope === "both" ? "Start fresh" : "Continue"}
+          confirmingLabel={
+            isWaitingForRestreamVerification
+              ? "Checking Restream session..."
+              : "Starting fresh..."
+          }
+          isConfirming={isConfirmingFreshBoardSession || isWaitingForRestreamVerification}
         />
       )}
 
@@ -1254,7 +1826,7 @@ export const BoardControllerContent = () => {
         </Sheet>
       )}
 
-      <header className="flex shrink-0 items-center justify-between gap-3 border-b-2 border-gray-500 bg-gray-800 px-4 py-3">
+      <header data-board-toolbar className="flex h-[48px] min-h-[48px] shrink-0 items-center justify-between gap-3 border-b border-gray-600 bg-gray-800 px-2 py-0 xl:h-auto xl:min-h-0 xl:border-b-2 xl:px-4 xl:py-3">
         <div className="flex min-w-0 items-center gap-3">
           <BoardControllerMenu
             canOpenBoard={Boolean(selectedAliasId)}
@@ -1264,7 +1836,7 @@ export const BoardControllerContent = () => {
               }
             }}
           />
-          <h1 className="flex min-w-0 items-center gap-2 text-base font-semibold tracking-tight sm:text-lg">
+          <h1 className="hidden min-w-0 items-center gap-2 text-base font-semibold tracking-tight sm:text-lg xl:flex">
             <Icon
               svg={MessagesSquare}
               size="md"
@@ -1273,105 +1845,65 @@ export const BoardControllerContent = () => {
             <span className="truncate">Discussion Board</span>
           </h1>
         </div>
-        <UserSection />
+        <UserSection variant="responsiveCompact" />
       </header>
 
-      {(isMobileStack || selectedAlias) && (
-        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-500 bg-gray-950/70 px-3 py-2">
-          {isMobileStack ? (
-            selectedAlias ? (
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <Button
-                  variant="secondary"
-                  svg={LayoutList}
-                  gap="gap-1.5"
-                  iconSize="sm"
-                  className="hidden sm:flex max-md:min-h-0"
-                  onClick={() => setManageBoardsOpen(true)}
-                >
-                  Manage boards
-                </Button>
-                <Button
-                  variant="secondary"
-                  svg={SlidersHorizontal}
-                  gap="gap-1.5"
-                  iconSize="sm"
-                  className="hidden sm:flex max-md:min-h-0"
-                  onClick={() => setBoardToolsOpen(true)}
-                >
-                  Board tools
-                </Button>
-                <Menu
-                  align="start"
-                  menuItems={[
-                    {
-                      element: (
-                        <div className="flex items-center gap-2 max-md:min-h-12">
-                          <Icon svg={LayoutList} color="#d1d5dc" />
-                          Manage boards
-                        </div>
-                      ),
-                      onClick: () => setManageBoardsOpen(true),
-                    },
-                    {
-                      element: (
-                        <div className="flex items-center gap-2 max-md:min-h-12">
-                          <Icon svg={SlidersHorizontal} color="#d1d5dc" />
-                          Board tools
-                        </div>
-                      ),
-                      onClick: () => setBoardToolsOpen(true),
-                    },
-                  ]}
-                  TriggeringButton={
-                    <Button
-                      variant="secondary"
-                      svg={MenuIcon}
-                      gap="gap-1.5"
-                      iconSize="sm"
-                      className="sm:hidden max-md:min-h-0"
-                      aria-label="Board tools and management"
-                    >
-                      Tools
-                    </Button>
-                  }
-                />
-              </div>
-            ) : (
-              <Button
-                variant="secondary"
-                svg={LayoutList}
-                gap="gap-1.5"
-                iconSize="sm"
-                className="max-md:min-h-0"
-                onClick={() => setManageBoardsOpen(true)}
-              >
-                Manage boards
+      {isMobileStack ? (
+        <div className="shrink-0 border-b border-gray-600 bg-gray-950/80 px-2 py-1.5">
+          <div className="flex min-h-[44px] items-center justify-between gap-2">
+            {selectedAlias ? (
+              <Button variant="tertiary" svg={ChevronDown} iconPosition="right" className="min-h-[44px] max-md:min-h-[44px]! min-w-0 flex-1 justify-between truncate px-2 text-base font-semibold text-white" aria-label={`Manage boards. Current board: ${selectedAlias.title}`} aria-haspopup="dialog" onClick={() => setManageBoardsOpen(true)}>
+                <span className="truncate">{selectedAlias.title}</span>
               </Button>
-            )
-          ) : null}
-          {selectedAlias ? (
-            <div className="min-w-0 flex-1">
-              <h2 className="min-w-0 truncate text-sm font-semibold text-gray-100 sm:text-base">
-                {selectedAlias.title}
-              </h2>
-              <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                <p className="truncate text-xs text-gray-300 sm:text-sm">
-                  Current session: {getBoardLabel(currentBoard)}
-                </p>
-                <div
-                  className="rounded-md border border-gray-500 px-2 py-0.5 text-xs text-gray-200"
-                  aria-live="polite"
+            ) : (
+              <Button variant="secondary" svg={LayoutList} className="min-h-[44px] max-md:min-h-[44px]!" onClick={() => setManageBoardsOpen(true)}>Manage boards</Button>
+            )}
+            {selectedAlias ? <Button variant="secondary" svg={SlidersHorizontal} className="min-h-[44px] max-md:min-h-[44px]! shrink-0 px-2" onClick={() => setBoardToolsOpen(true)}>Board tools</Button> : null}
+          </div>
+          {selectedAlias ? <div className="space-y-1 px-1 text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0 truncate text-gray-300">Session: {getBoardLabel(currentBoard)}</div>
+              {showFreshStartFallback && suggestionScope ? (
+                <Button
+                  variant="none"
+                  className="min-h-0 shrink-0 px-1 py-0.5 text-xs text-sky-200 underline decoration-sky-300/60 underline-offset-2 hover:text-white"
+                  onClick={() => openFreshStartConfirmation(suggestionScope)}
                 >
-                  {posts.length} total · {visibleCount} visible ·{" "}
-                  {highlightedPresentationCount} highlighted
-                </div>
+                  Start fresh
+                </Button>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap gap-1.5 tabular-nums text-gray-200" aria-live="polite">
+              <span className="rounded-full border border-gray-600 px-2 py-0.5">{posts.length} total</span>
+              <span className="rounded-full border border-gray-600 px-2 py-0.5">{visibleCount} visible</span>
+              <span className="rounded-full border border-amber-400/40 px-2 py-0.5 text-amber-100">{highlightedPresentationCount} highlighted</span>
+            </div>
+          </div> : null}
+        </div>
+      ) : selectedAlias ? (
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-500 bg-gray-950/70 px-3 py-2">
+          <div className="min-w-0 flex-1">
+            <h2 className="min-w-0 truncate text-sm font-semibold text-gray-100 sm:text-base">{selectedAlias.title}</h2>
+            <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+              <p className="min-w-0 truncate text-xs text-gray-300 sm:text-sm">Current session: {getBoardLabel(currentBoard)}</p>
+              {showFreshStartFallback && suggestionScope ? (
+                <Button
+                  variant="none"
+                  className="min-h-0 px-1 py-0.5 text-xs text-sky-200 underline decoration-sky-300/60 underline-offset-2 hover:text-white"
+                  onClick={() => openFreshStartConfirmation(suggestionScope)}
+                >
+                  Start fresh
+                </Button>
+              ) : null}
+              <div className="flex flex-wrap gap-1.5 text-xs text-gray-200" aria-live="polite">
+                <span className="rounded-full border border-gray-500 px-2 py-0.5">{posts.length} total</span>
+                <span className="rounded-full border border-gray-500 px-2 py-0.5">{visibleCount} visible</span>
+                <span className="rounded-full border border-amber-400/40 px-2 py-0.5 text-amber-100">{highlightedPresentationCount} highlighted</span>
               </div>
             </div>
-          ) : null}
+          </div>
         </div>
-      )}
-
+      ) : null}
       <div className="flex min-h-0 flex-1 flex-col xl:flex-row">
         {/* Left aside — xl+ only */}
         <aside
