@@ -1526,8 +1526,17 @@ describe("MemberManager SMS consent recording", () => {
     await user.click(screen.getByRole("menuitem", { name: "Record text message consent" }));
 
     const dialog = screen.getByRole("dialog", { name: "Record text message consent" });
+    expect(within(dialog).getByTestId("modal-content")).toHaveClass("text-gray-100");
+    const consentDate = within(dialog).getByLabelText(/Date consent was obtained/);
+    expect(consentDate).toHaveClass("[color-scheme:dark]");
+    expect((consentDate as HTMLInputElement).value).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(within(dialog).getByText("Consent source")).toBeInTheDocument();
+    expect(within(dialog).getByRole("radio", { name: "Verbal consent" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("radio", { name: "Signed volunteer/ministry form" })).toBeInTheDocument();
     expect(within(dialog).getByText("(954) 555-1234")).toBeInTheDocument();
     expect(within(dialog).getByText(/agreed to receive WorshipSync texts about volunteer availability, scheduling, assignments, and related reminders/i)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Save consent" })).toBeInTheDocument();
     await user.click(within(dialog).getByRole("radio", { name: "Signed volunteer/ministry form" }));
     await user.clear(within(dialog).getByLabelText(/Date consent was obtained/));
     await user.type(within(dialog).getByLabelText(/Date consent was obtained/), "2026-09-30");

@@ -61,6 +61,7 @@ const RecordSmsConsentModal = ({ churchId, member, onClose, onSaved }: Props) =>
       description="Record consent already obtained from this roster member."
       size="sm"
       busy={saving}
+      contentClassName="text-gray-100"
     >
       <div className="space-y-4">
         <div className="rounded-md border border-gray-700 bg-gray-950/40 px-3 py-2 text-sm">
@@ -79,6 +80,7 @@ const RecordSmsConsentModal = ({ churchId, member, onClose, onSaved }: Props) =>
           type="date"
           value={consentedAt}
           max={today()}
+          inputClassName="[color-scheme:dark]"
           onChange={(value) => setConsentedAt(String(value))}
         />
         <label className="flex items-start gap-2 text-sm leading-5 text-gray-200">
