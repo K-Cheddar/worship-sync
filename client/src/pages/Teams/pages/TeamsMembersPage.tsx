@@ -7,6 +7,7 @@ const TeamsMembersPage = () => {
     upsertData,
     removeData,
     refresh,
+    refreshMemberSmsEligibility,
     canEditTeams,
     canEditTeam,
   } =
@@ -52,6 +53,7 @@ const TeamsMembersPage = () => {
       onSaved={(member, replaceId) =>
         upsertData("members", "memberId", member, replaceId)
       }
+      onSmsEligibilityRefresh={refreshMemberSmsEligibility}
       onTeamSaved={(team) => upsertData("teams", "teamId", team)}
       onArchived={() => void refresh()}
       onImported={() => refresh()}

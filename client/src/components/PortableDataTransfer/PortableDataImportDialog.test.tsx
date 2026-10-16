@@ -91,7 +91,7 @@ describe("PortableDataImportDialog import flow", () => {
     const outside = screen.getByRole("button", { name: "Outside target", hidden: true });
 
     fireEvent.change(screen.getByLabelText("Choose a CSV file"), { target: { files: [file] } });
-    await user.click(await screen.findByRole("button", { name: "Review changes" }));
+    await user.click(await screen.findByRole("button", { name: "Review your import" }));
     await user.click(await screen.findByRole("button", { name: "Import 1 member" }));
     expect(await screen.findByRole("button", { name: "Importing..." })).toBeDisabled();
     expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "true");
@@ -144,7 +144,7 @@ describe("PortableDataImportDialog import flow", () => {
     expect(await screen.findByText("1 member · 2 columns")).toBeInTheDocument();
     expect(commitPortableImport).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole("button", { name: "Review changes" }));
+    await user.click(screen.getByRole("button", { name: "Review your import" }));
     expect(await screen.findByText("1 row found")).toBeInTheDocument();
     expect(previewPortableImport).toHaveBeenCalledWith("church-1", "members", expect.any(String), { firstName: "first_name", lastName: "last_name" }, undefined, expect.objectContaining({ destinationTeamId: "team-1", updateMode: "merge" }));
     expect(commitPortableImport).not.toHaveBeenCalled();
@@ -167,11 +167,11 @@ describe("PortableDataImportDialog import flow", () => {
     Object.defineProperty(file, "text", { value: async () => "First Name,Last Name,Positions\nJane,Doe,Keys" });
     render(<PortableDataImportDialog open onOpenChange={() => undefined} churchId="church-1" type="members" teams={[{ teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: [] }]} destinationTeamId="team-1" />);
     fireEvent.change(screen.getByLabelText("Choose a CSV file"), { target: { files: [file] } });
-    await user.click(await screen.findByRole("button", { name: "Review changes" }));
-    await user.click(await screen.findByLabelText("Resolve Position: Keys for row 2"));
+    await user.click(await screen.findByRole("button", { name: "Review your import" }));
+    await user.click(await screen.findByLabelText("Choose a local position for Jane Doe"));
     await user.click(screen.getAllByRole("option", { name: "Keys" })[1]);
-    await user.click(screen.getByLabelText("Action for row 2"));
-    await user.click(screen.getAllByRole("option", { name: "Create new" })[0]);
+    await user.click(screen.getByLabelText("Choose an action for Jane Doe"));
+    await user.click(screen.getAllByRole("option", { name: "Add as new member" })[0]);
     await user.click(screen.getByRole("button", { name: "Import 1 member" }));
     await waitFor(() => expect(commitPortableImport).toHaveBeenCalledWith("church-1", "members", [expect.objectContaining({ resolutions: [{ field: "positions", referenceIndex: 0, selectedId: "position-b" }] })], undefined, expect.objectContaining({ updateMode: "merge" })));
   });
@@ -191,9 +191,9 @@ describe("PortableDataImportDialog import flow", () => {
     fireEvent.change(screen.getByLabelText("Choose a CSV file"), { target: { files: [file] } });
     expect(await screen.findByText("CSV ready")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Choose a different file" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Setup and column mapping" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Review changes" })).toHaveAttribute("data-variant", "presentCta");
-    await user.click(await screen.findByRole("button", { name: "Review changes" }));
+    expect(screen.getByRole("heading", { name: "Match information" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Review your import" })).toHaveAttribute("data-variant", "presentCta");
+    await user.click(await screen.findByRole("button", { name: "Review your import" }));
     expect(await screen.findByRole("heading", { name: "Match positions" })).toBeInTheDocument();
     expect(screen.getByText("1 position needs attention")).toBeInTheDocument();
     expect(screen.getByText("Video Director")).toBeInTheDocument();
@@ -204,7 +204,7 @@ describe("PortableDataImportDialog import flow", () => {
     expect(screen.getByLabelText("New position name for Video Director")).toHaveValue("Video Director");
     expect(screen.getAllByText("Create new position")).toHaveLength(2);
     await user.click(screen.getByRole("button", { name: "Continue to review" }));
-    expect(await screen.findByRole("heading", { name: "Review changes" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Review your import" })).toBeInTheDocument();
     expect(previewPortableImport).toHaveBeenLastCalledWith("church-1", "members", expect.any(String), { firstName: "First Name", lastName: "Last Name", positions: "Positions" }, undefined, expect.objectContaining({ positionActions: [{ teamId: "team-1", teamName: "New Test Team", sourceValue: "Video Director", action: "create", name: "Video Director" }] }));
     await user.click(screen.getByRole("button", { name: "Import 1 member" }));
     await waitFor(() => expect(commitPortableImport).toHaveBeenCalledWith("church-1", "members", expect.any(Array), undefined, expect.objectContaining({ positionActions: [{ teamId: "team-1", teamName: "New Test Team", sourceValue: "Video Director", action: "create", name: "Video Director" }], previewToken: "approved" })));
@@ -224,7 +224,7 @@ describe("PortableDataImportDialog import flow", () => {
     render(<PortableDataImportDialog open onOpenChange={() => undefined} churchId="church-1" type="members" teams={[{ teamId: "team-1", churchId: "church-1", name: "New Test Team", memberIds: [] }]} destinationTeamId="team-1" />);
 
     fireEvent.change(screen.getByLabelText("Choose a CSV file"), { target: { files: [file] } });
-    await user.click(await screen.findByRole("button", { name: "Review changes" }));
+    await user.click(await screen.findByRole("button", { name: "Review your import" }));
 
     expect(await screen.findByText("2 positions need attention")).toBeInTheDocument();
     expect(screen.getByText(longPosition)).toBeInTheDocument();
@@ -253,23 +253,23 @@ describe("PortableDataImportDialog import flow", () => {
     fireEvent.change(screen.getByLabelText("Choose a CSV file"), { target: { files: [file] } });
     expect(await screen.findByText("Team assignments found in your CSV. We'll use those assignments.")).toBeInTheDocument();
     expect(screen.queryByLabelText("Which team are these members joining?")).not.toBeInTheDocument();
-    await user.click(await screen.findByRole("button", { name: "Review changes" }));
+    await user.click(await screen.findByRole("button", { name: "Review your import" }));
     expect(await screen.findByRole("heading", { name: "Match teams" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Review changes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Review your import" })).not.toBeInTheDocument();
     await user.click(screen.getByLabelText("How to handle team CSV Test Media"));
     await user.click(screen.getByRole("option", { name: "Create CSV Test Media" }));
     await user.click(screen.getByRole("button", { name: "Continue to positions" }));
     await waitFor(() => expect(previewPortableImport).toHaveBeenCalledTimes(2));
     expect(previewPortableImport).toHaveBeenLastCalledWith("church-1", "members", expect.any(String), { firstName: "First Name", lastName: "Last Name", teams: "Teams", positions: "Positions" }, undefined, expect.objectContaining({ teamActions: [{ sourceValue: "CSV Test Media", action: "create", name: "CSV Test Media" }] }));
     expect(await screen.findByRole("heading", { name: "Match positions" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Review changes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Review your import" })).not.toBeInTheDocument();
     expect(screen.getByText("Camera Operator")).toBeInTheDocument();
     expect(screen.getByText(/Belongs to CSV Test Media \(new\)/)).toBeInTheDocument();
     const positionAction = screen.getByLabelText("How to handle Camera Operator in CSV Test Media (new)");
     await user.click(positionAction);
     await user.click(screen.getByRole("option", { name: "Create new position" }));
     await user.click(screen.getByRole("button", { name: "Continue to review" }));
-    expect(await screen.findByRole("heading", { name: "Review changes" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Review your import" })).toBeInTheDocument();
     expect(previewPortableImport).toHaveBeenLastCalledWith("church-1", "members", expect.any(String), { firstName: "First Name", lastName: "Last Name", teams: "Teams", positions: "Positions" }, undefined, expect.objectContaining({ teamActions: [{ sourceValue: "CSV Test Media", action: "create", name: "CSV Test Media" }], positionActions: [{ teamId: "portable-pending-team-media", teamName: "CSV Test Media", sourceValue: "Camera Operator", action: "create", name: "Camera Operator" }] }));
 
     await user.click(screen.getByRole("button", { name: "Import 1 member" }));
@@ -305,7 +305,7 @@ describe("PortableDataImportDialog import flow", () => {
     Object.defineProperty(file, "text", { value: async () => csv });
     render(<PortableDataImportDialog open onOpenChange={() => undefined} churchId="church-1" type="members" teams={[{ teamId: "team-media", churchId: "church-1", name: "Media", memberIds: [] }, { teamId: "team-worship", churchId: "church-1", name: "Worship", memberIds: [] }]} />);
     fireEvent.change(screen.getByLabelText("Choose a CSV file"), { target: { files: [file] } });
-    await user.click(await screen.findByRole("button", { name: "Review changes" }));
+    await user.click(await screen.findByRole("button", { name: "Review your import" }));
     expect(await screen.findByRole("heading", { name: "Match positions" })).toBeInTheDocument();
     const ownerField = screen.getByRole("combobox", { name: "Belongs to for Camera Operator" });
     await user.click(ownerField);
@@ -320,8 +320,8 @@ describe("PortableDataImportDialog import flow", () => {
 
   it("lets admins revisit team decisions and recalculates position choices", async () => {
     const user = userEvent.setup();
-    const csv = "First Name,Last Name,Teams,Positions\nJane,Doe,CSV Test Media,Camera Operator";
-    const row = { row: 2, record: { firstName: "Jane", lastName: "Doe", teams: "CSV Test Media", positions: "Camera Operator" }, action: "review" as const, matchedId: null, candidates: [], issues: [{ field: "teams", referenceIndex: 0, referenceValue: "CSV Test Media", code: "missing_reference", message: "Choose or create a local team.", candidates: [] }] };
+    const csv = "First Name,Last Name,Teams,Positions\nJane,Doe,CSV Test Media,\"Camera Operator, Existing Position\"";
+    const row = { row: 2, record: { firstName: "Jane", lastName: "Doe", teams: "CSV Test Media", positions: "Camera Operator, Existing Position" }, action: "review" as const, matchedId: null, candidates: [], issues: [{ field: "teams", referenceIndex: 0, referenceValue: "CSV Test Media", code: "missing_reference", message: "Choose or create a local team.", candidates: [] }] };
     const plannedPosition = (teamId: string, teamName: string, teamIsNew: boolean) => ({
       ...row,
       action: "create" as const,
@@ -339,9 +339,9 @@ describe("PortableDataImportDialog import flow", () => {
     Object.defineProperty(file, "text", { value: async () => csv });
     render(<PortableDataImportDialog open onOpenChange={() => undefined} churchId="church-1" type="members" teams={[{ teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: [] }]} />);
     fireEvent.change(screen.getByLabelText("Choose a CSV file"), { target: { files: [file] } });
-    await user.click(await screen.findByRole("button", { name: "Review changes" }));
+    await user.click(await screen.findByRole("button", { name: "Review your import" }));
     expect(await screen.findByRole("heading", { name: "Match teams" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Review changes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Review your import" })).not.toBeInTheDocument();
     await user.click(screen.getByLabelText("How to handle team CSV Test Media"));
     await user.click(screen.getByRole("option", { name: "Create CSV Test Media" }));
     await user.click(screen.getByRole("button", { name: "Continue to positions" }));
@@ -368,13 +368,13 @@ describe("PortableDataImportDialog import flow", () => {
     await user.click(remappedPositionAction);
     await user.click(screen.getByRole("option", { name: "Create new position" }));
     await user.click(screen.getByRole("button", { name: "Continue to review" }));
-    expect(await screen.findByRole("heading", { name: "Review changes" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Review your import" })).toBeInTheDocument();
+    expect(screen.getByText("Camera Operator, Existing Position")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Match positions" })).not.toBeInTheDocument();
-    expect(screen.getByText("Teams: Worship (mapped from CSV Test Media)")).toBeInTheDocument();
-    expect(screen.getByText("Positions: Camera Operator (new) · Worship")).toBeInTheDocument();
+    expect(screen.getByText(/Worship · 2 positions/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Back to positions" }));
     expect(await screen.findByRole("heading", { name: "Match positions" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Review changes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Review your import" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("How to handle Camera Operator in Worship (existing)")).toHaveTextContent("Create new position");
     expect(previewPortableImport).toHaveBeenLastCalledWith("church-1", "members", expect.any(String), { firstName: "First Name", lastName: "Last Name", teams: "Teams", positions: "Positions" }, undefined, expect.objectContaining({
       teamActions: [{ sourceValue: "CSV Test Media", action: "match", teamId: "team-1" }],
@@ -398,22 +398,22 @@ describe("PortableDataImportDialog import flow", () => {
     const onOpenChange = jest.fn();
     render(<PortableDataImportDialog open onOpenChange={onOpenChange} churchId="church-1" type="members" teams={[{ teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: [] }]} destinationTeamId="team-1" />);
     fireEvent.change(screen.getByLabelText("Choose a CSV file"), { target: { files: [file] } });
-    await user.click(await screen.findByRole("button", { name: "Review changes" }));
+    await user.click(await screen.findByRole("button", { name: "Review your import" }));
     await user.click(screen.getByRole("button", { name: "Import 2 members" }));
     expect(await screen.findByText("Import partially completed. Review the failed rows below.")).toBeInTheDocument();
     expect(await screen.findByText("Jane Doe")).toBeInTheDocument();
-    expect(screen.getByText("Created")).toBeInTheDocument();
-    expect(screen.getByText("Completed (excluded from retry)")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Jane Doe — Added" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Jane Doe — Added" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry 1 failed row" })).toBeInTheDocument();
-    expect(screen.getByText("Import failed: Try this row again.")).toBeInTheDocument();
+    expect(screen.getByText("Could not import: Try this row again.")).toBeInTheDocument();
     expect(screen.queryByText("Jane Doe Skipped")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Import 0 members" })).not.toBeInTheDocument();
-    expect(screen.getByText("Failed", { exact: true })).toBeInTheDocument();
+    expect(screen.getByText("Failed 1")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry 1 failed row" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "Retry 1 failed row" }));
     await waitFor(() => expect(commitPortableImport).toHaveBeenCalledTimes(2));
     expect(commitPortableImport).toHaveBeenLastCalledWith("church-1", "members", [expect.objectContaining({ row: 3, record: { firstName: "Alex", lastName: "Smith" } })], undefined, expect.any(Object));
-    expect(screen.queryByText("Import failed: Preview this file again.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Could not import: Preview this file again.")).not.toBeInTheDocument();
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
     expect(mockShowToast).toHaveBeenCalledWith("Members imported successfully. 2 added.", "success");
   });
@@ -436,14 +436,39 @@ describe("PortableDataImportDialog import flow", () => {
     };
     render(<ControlledDialog />);
     fireEvent.change(screen.getByLabelText("Choose a CSV file"), { target: { files: [file] } });
-    await user.click(await screen.findByRole("button", { name: "Review changes" }));
+    await user.click(await screen.findByRole("button", { name: "Review your import" }));
     expect(screen.getByRole("button", { name: "Import 1 member" })).toBeEnabled();
-    await user.click(screen.getByLabelText("Action for row 3"));
-    await user.click(screen.getByRole("option", { name: "Skip row" }));
+    await user.click(screen.getByLabelText("Choose an action for Alex Smith"));
+    await user.click(screen.getByRole("option", { name: "Skip member" }));
+    expect(screen.getByRole("tab", { name: "Skipped 1" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Import 1 member" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(commitPortableImport).toHaveBeenCalledTimes(1));
+    expect(commitPortableImport).toHaveBeenCalledWith("church-1", "members", [expect.objectContaining({ row: 2, action: "create" })], undefined, expect.any(Object));
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
     expect(mockShowToast).toHaveBeenCalledWith("Import completed. 1 added · 1 skipped.", "success");
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("classifies explicitly skipped unresolved members under Skipped", async () => {
+    const user = userEvent.setup();
+    const csv = "First Name,Last Name,Positions\nAlex,Smith,Missing Position";
+    jest.mocked(inspectPortableImport).mockResolvedValue({ success: true, headers: ["First Name", "Last Name", "Positions"], rowCount: 1, columnCount: 3, issues: [], mapping: { firstName: "First Name", lastName: "Last Name", positions: "Positions" }, sampleRows: [], columnStats: { Positions: { nonBlank: 1, blank: 0 } } });
+    jest.mocked(previewPortableImport).mockResolvedValue({ success: true, rows: [{ row: 2, record: { firstName: "Alex", lastName: "Smith", positions: "Missing Position" }, action: "review", matchedId: null, candidates: [], issues: [{ field: "positions", referenceIndex: 0, referenceValue: "Missing Position", code: "unresolved_reference", message: "Review this position before importing this member." }] }], issues: [], summary: { total: 1, create: 0, update: 0, review: 1, invalid: 0 } });
+    const file = new File([csv], "people.csv", { type: "text/csv" });
+    Object.defineProperty(file, "text", { value: async () => csv });
+    render(<PortableDataImportDialog open onOpenChange={() => undefined} churchId="church-1" type="members" teams={[{ teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: [] }]} destinationTeamId="team-1" />);
+
+    fireEvent.change(screen.getByLabelText("Choose a CSV file"), { target: { files: [file] } });
+    await user.click(await screen.findByRole("button", { name: "Review your import" }));
+    expect(screen.getByRole("tab", { name: "Needs review 1" })).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText("Choose an action for Alex Smith"));
+    await user.click(screen.getByRole("option", { name: "Skip member" }));
+    expect(screen.getByRole("heading", { name: "Alex Smith — Skip member" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Needs review 0" })).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Skipped 1" }));
+    expect(screen.getByRole("heading", { name: "Alex Smith — Skip member" })).toBeInTheDocument();
+    expect(commitPortableImport).not.toHaveBeenCalled();
   });
 
   it("requires a fresh preview after a stale-preview failure", async () => {
@@ -485,8 +510,8 @@ describe("PortableDataImportDialog import flow", () => {
     };
     render(<ControlledDialog />);
     fireEvent.change(screen.getByLabelText("Choose a CSV file"), { target: { files: [file] } });
-    await user.click(await screen.findByRole("button", { name: "Review changes" }));
-    await user.click(await screen.findByRole("button", { name: "Import 2 members" }));
+    await user.click(await screen.findByRole("button", { name: "Review your import" }));
+    await user.click(await screen.findByRole("button", { name: "Import 1 change" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(mockShowToast).toHaveBeenCalledWith("Import completed. 1 updated · 1 unchanged.", "success");
     expect(onImported).toHaveBeenCalledTimes(1);
@@ -549,7 +574,7 @@ describe("PortableDataImportDialog import flow", () => {
 
     fireEvent.change(screen.getByLabelText("Choose a CSV file"), { target: { files: [file] } });
     expect(screen.queryByText(/SMS preferences/)).not.toBeInTheDocument();
-    await user.click(await screen.findByRole("button", { name: "Review changes" }));
+    await user.click(await screen.findByRole("button", { name: "Review your import" }));
 
     expect(await screen.findByText("Some CSV fields won't be imported")).toBeInTheDocument();
     await user.click(screen.getByText("Some CSV fields won't be imported"));
@@ -569,12 +594,13 @@ describe("PortableDataImportDialog import flow", () => {
 
     fireEvent.change(screen.getByLabelText("Choose a CSV file"), { target: { files: [file] } });
     await user.click(await screen.findByRole("radio", { name: /Replace positions in the selected team/ }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Review changes" })).toBeEnabled());
-    await user.click(screen.getByRole("button", { name: "Review changes" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Review your import" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Review your import" }));
 
-    expect(await screen.findByText("Position removed from Worship: Camera Operator")).toBeInTheDocument();
-    expect(screen.getByText("Phone: 555-0100 -> 555-0199")).toBeInTheDocument();
-    expect(screen.getByText("Other team memberships and positions outside this import scope are preserved.")).toBeInTheDocument();
+    expect(await screen.findByText("Existing positions will be removed: Camera Operator. Only positions in the selected team are affected.")).toBeInTheDocument();
+    expect(screen.getByText("Change Phone number: 555-0100 to 555-0199")).toBeInTheDocument();
+    await user.click(screen.getByText("More details"));
+    expect(screen.getByText("Other team memberships and positions outside this import are preserved.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Replace positions and import 1 member" }));
     expect(commitPortableImport).toHaveBeenCalledWith("church-1", "members", [expect.objectContaining({ row: 2, action: "update", recordId: "member-1" })], undefined, expect.objectContaining({ updateMode: "replace" }));
   });
@@ -588,14 +614,14 @@ describe("PortableDataImportDialog import flow", () => {
     Object.defineProperty(file, "text", { value: async () => csv });
     render(<PortableDataImportDialog open onOpenChange={() => undefined} churchId="church-1" type="members" teams={[{ teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: [] }, { teamId: "team-2", churchId: "church-1", name: "Production", memberIds: [] }]} destinationTeamId="team-1" />);
     fireEvent.change(screen.getByLabelText("Choose a CSV file"), { target: { files: [file] } });
-    await user.click(await screen.findByRole("button", { name: "Review changes" }));
+    await user.click(await screen.findByRole("button", { name: "Review your import" }));
     expect(await screen.findByText("1 row found")).toBeInTheDocument();
 
-    await waitFor(() => expect(screen.getByRole("button", { name: "Back to setup and mapping" })).toBeEnabled());
-    await user.click(screen.getByRole("button", { name: "Back to setup and mapping" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Back to match information" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Back to match information" }));
     await user.click(await screen.findByRole("radio", { name: /Replace positions in the imported teams/ }));
     expect(screen.queryByText("1 row found")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Review changes" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Review your import" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Review column mapping" }));
     await user.click(screen.getByLabelText("Column for First name"));
@@ -613,5 +639,79 @@ describe("PortableDataImportDialog import flow", () => {
     Object.defineProperty(replacement, "text", { value: async () => csv.replace("Jane", "Janet") });
     fireEvent.change(screen.getByLabelText("Choose a CSV file"), { target: { files: [replacement] } });
     expect(screen.queryByText("1 row found")).not.toBeInTheDocument();
+  });
+
+  it("keeps ambiguous member identities unselected until the admin chooses", async () => {
+    const user = userEvent.setup();
+    const csv = "First Name,Last Name,Phone\nJane,Doe,555-0199";
+    const candidates = [{ id: "member-east", name: "Jane Doe East", stateHash: "east-hash" }, { id: "member-west", name: "Jane Doe West", stateHash: "west-hash" }];
+    jest.mocked(inspectPortableImport).mockResolvedValue({ success: true, headers: ["First Name", "Last Name", "Phone"], rowCount: 1, columnCount: 3, issues: [], mapping: { firstName: "First Name", lastName: "Last Name", phone: "Phone" }, sampleRows: [], columnStats: {} });
+    jest.mocked(previewPortableImport)
+      .mockResolvedValueOnce({ success: true, rows: [{ row: 2, record: { firstName: "Jane", lastName: "Doe", phone: "555-0199" }, action: "review", matchedId: null, candidates, issues: [] }], issues: [], summary: { total: 1, create: 0, update: 0, review: 1, invalid: 0 } })
+      .mockResolvedValueOnce({ success: true, rows: [{ row: 2, record: { firstName: "Jane", lastName: "Doe", phone: "555-0199" }, action: "update", matchedId: "member-west", candidates, expectedStateHash: "west-hash", changes: [{ field: "Phone", before: "555-0100", after: "555-0199" }], issues: [] }], issues: [], summary: { total: 1, create: 0, update: 1, review: 0, invalid: 0 } });
+    jest.mocked(commitPortableImport).mockResolvedValue({ success: true, results: [{ row: 2, status: "updated", id: "member-west" }], summary: { created: 0, updated: 1, failed: 0 } });
+    const file = new File([csv], "people.csv", { type: "text/csv" });
+    Object.defineProperty(file, "text", { value: async () => csv });
+    render(<PortableDataImportDialog open onOpenChange={() => undefined} churchId="church-1" type="members" teams={[{ teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: [] }]} destinationTeamId="team-1" />);
+
+    fireEvent.change(screen.getByLabelText("Choose a CSV file"), { target: { files: [file] } });
+    await user.click(await screen.findByRole("button", { name: "Review your import" }));
+
+    expect(screen.getByRole("heading", { name: "Jane Doe — Needs your review" })).toBeInTheDocument();
+    expect(screen.getByText("We found more than one possible member.")).toBeInTheDocument();
+    const choice = screen.getByLabelText("Choose which member to update or add for Jane Doe");
+    expect(choice).toHaveTextContent("Choose an action");
+    await user.click(choice);
+    await user.click(screen.getByRole("option", { name: "Update Jane Doe West" }));
+    expect(screen.getByText("Updating Jane Doe West")).toBeInTheDocument();
+    expect(await screen.findByText("Change Phone number: 555-0100 to 555-0199")).toBeInTheDocument();
+    expect(previewPortableImport).toHaveBeenLastCalledWith("church-1", "members", expect.any(String), { firstName: "First Name", lastName: "Last Name", phone: "Phone" }, undefined, expect.objectContaining({ memberMatches: { 2: "member-west" } }));
+    await user.click(screen.getByRole("button", { name: "Import 1 change" }));
+    await waitFor(() => expect(commitPortableImport).toHaveBeenCalledWith("church-1", "members", [expect.objectContaining({ row: 2, action: "update", recordId: "member-west", expectedStateHash: "west-hash" })], undefined, expect.objectContaining({ memberMatches: { 2: "member-west" } })));
+  });
+
+  it("shows compact member summaries, grouped position additions, and filters the full planned list", async () => {
+    const user = userEvent.setup();
+    const csv = "First Name,Last Name,Phone,Positions\nBunmi,Adedayo,12019147284,\"Camera (Director), Camera (Operator), Hand Held Camera, Light\"\nBryan,Cheddar,,";
+    jest.mocked(inspectPortableImport).mockResolvedValue({ success: true, headers: ["First Name", "Last Name", "Phone", "Positions"], rowCount: 2, columnCount: 4, issues: [], mapping: { firstName: "First Name", lastName: "Last Name", phone: "Phone", positions: "Positions" }, sampleRows: [], columnStats: {} });
+    jest.mocked(previewPortableImport).mockResolvedValue({ success: true, rows: [
+      { row: 2, record: { firstName: "Bunmi", lastName: "Adedayo", phone: "12019147284", positions: "Camera (Director), Camera (Operator), Hand Held Camera, Light" }, action: "create", matchedId: null, candidates: [], issues: [], sourceValues: { Phone: "12019147284", Positions: "Camera (Director), Camera (Operator), Hand Held Camera, Light" } },
+      { row: 3, record: { firstName: "Bryan", lastName: "Cheddar" }, action: "update", matchedId: "member-1", candidates: [], issues: [], changes: [
+        { field: "Position", before: "", after: "Camera (Director)" },
+        { field: "Position", before: "", after: "Online Mixing" },
+        { field: "Position", before: "", after: "Pro Presenter" },
+        { field: "Position", before: "", after: "Technical Director" },
+      ], sourceValues: { Phone: "", Positions: "Camera (Director), Online Mixing, Pro Presenter, Technical Director" } },
+    ], issues: [], summary: { total: 2, create: 1, update: 1, review: 0, invalid: 0 } });
+    const file = new File([csv], "people.csv", { type: "text/csv" });
+    Object.defineProperty(file, "text", { value: async () => csv });
+    render(<PortableDataImportDialog open onOpenChange={() => undefined} churchId="church-1" type="members" teams={[{ teamId: "team-1", churchId: "church-1", name: "Media Team", memberIds: [] }]} destinationTeamId="team-1" />);
+
+    fireEvent.change(screen.getByLabelText("Choose a CSV file"), { target: { files: [file] } });
+    await user.click(await screen.findByRole("button", { name: "Review your import" }));
+
+    expect(screen.getByRole("heading", { name: "Bunmi Adedayo — Add as new member" })).toBeInTheDocument();
+    expect(screen.getByText("Media Team · 4 positions")).toBeInTheDocument();
+    expect(screen.getAllByText("Camera (Director), Camera (Operator), Hand Held Camera, Light")).toHaveLength(2);
+    expect(screen.getByRole("heading", { name: "Bryan Cheddar — Update member" })).toBeInTheDocument();
+    expect(screen.getByText("Add 4 positions: Camera (Director), Online Mixing, Pro Presenter, Technical Director")).toBeInTheDocument();
+    expect(screen.queryByText("Position: No saved value → Camera (Director)")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Import 2 changes" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "All 2" })).toHaveAttribute("aria-selected", "true");
+
+    await user.click(screen.getByRole("tab", { name: "New 1" }));
+    expect(screen.getByRole("heading", { name: "Bunmi Adedayo — Add as new member" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Bryan Cheddar — Update member" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Updates 1" }));
+    expect(screen.getByRole("heading", { name: "Bryan Cheddar — Update member" })).toBeInTheDocument();
+    await user.click(screen.getByText("More details"));
+    expect(screen.getByText("Original CSV information")).toBeInTheDocument();
+    expect(screen.getAllByText("Camera (Director), Online Mixing, Pro Presenter, Technical Director")).toHaveLength(1);
+    await user.click(screen.getByRole("tab", { name: "All 2" }));
+    await user.click(screen.getAllByRole("button", { name: "Change" })[0]);
+    await user.click(screen.getByLabelText("Action for Bunmi Adedayo"));
+    await user.click(screen.getByRole("option", { name: "Skip member" }));
+    expect(screen.getByRole("tab", { name: "Skipped 1" })).toBeInTheDocument();
+    expect(screen.getByText("1 skipped")).toBeInTheDocument();
   });
 });

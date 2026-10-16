@@ -19755,18 +19755,36 @@ test("portable member import matches a foreign ID only to an explicit local choi
   assert.equal(row.candidates.some((candidate) => candidate.id === foreign.payload.member.memberId), false);
   const selectedCandidate = row.candidates.find((candidate) => candidate.id === selected.payload.member.memberId);
   assert.ok(selectedCandidate);
+  const foreignCandidateSelection = await previewMemberCsv(target, csv, {
+    destinationTeamId: destination.teamId,
+    memberMatches: { [row.row]: foreign.payload.member.memberId },
+  });
+  assert.equal(foreignCandidateSelection.statusCode, 400);
+  const selectedPreview = await previewMemberCsv(target, csv, {
+    destinationTeamId: destination.teamId,
+    memberMatches: { [row.row]: selectedCandidate.id },
+  });
+  const selectedRow = selectedPreview.payload.rows[0];
+  assert.equal(selectedRow.action, "update");
+  assert.equal(selectedRow.matchedId, selectedCandidate.id);
+  assert.equal(selectedRow.expectedStateHash, selectedCandidate.stateHash);
+  assert.deepEqual(selectedRow.changes, [
+    { field: "Email", before: "before@example.com", after: "after@example.com" },
+    { field: "Team membership", before: "", after: "Local Team" },
+  ]);
   const body = {
     type: "members",
     destinationTeamId: destination.teamId,
-    previewToken: preview.payload.previewToken,
-    previewCsvHash: preview.previewCsvHash,
-    mapping: preview.mapping,
+    previewToken: selectedPreview.payload.previewToken,
+    previewCsvHash: selectedPreview.previewCsvHash,
+    mapping: selectedPreview.mapping,
+    memberMatches: { [row.row]: selectedCandidate.id },
     approvedRows: [{
-      row: row.row,
+      row: selectedRow.row,
       action: "update",
       recordId: selectedCandidate.id,
-      expectedStateHash: selectedCandidate.stateHash,
-      record: row.record,
+      expectedStateHash: selectedRow.expectedStateHash,
+      record: selectedRow.record,
     }],
   };
   const committed = await callHandler(authHandlers.commitPortableImport, { context: target, body });

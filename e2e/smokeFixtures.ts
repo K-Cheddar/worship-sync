@@ -42,7 +42,15 @@ export const test = diagnosticTest.extend<{}, { smokeContext: BrowserContext }>(
     { scope: "worker" },
   ],
   context: async ({ smokeContext }, use) => {
-    await use(smokeContext);
+    try {
+      await use(smokeContext);
+    } finally {
+      // The context is worker-scoped, so Playwright's page fixture cannot
+      // retire its page by disposing the context after each test. Close pages
+      // here so route subscriptions and component effects unmount before the
+      // next smoke case starts.
+      for (const page of smokeContext.pages()) await page.close();
+    }
   },
 });
 

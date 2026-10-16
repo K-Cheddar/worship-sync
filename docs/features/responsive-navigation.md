@@ -20,6 +20,8 @@ For Teams and Services below the desktop sidebar breakpoint, a compact 48px appl
 
 Secondary route tabs use the shared Tabs primitive; labels never compress, horizontal scrolling keeps the selected tab visible, and browser history controls the selected state. The mobile bottom bar and menu behavior are unchanged.
 
+Teams and Services use the shared temporary pending-route mechanism to select a requested destination before its lazy page is ready. The Teams navigation guard continues to own unsaved-edit confirmation separately.
+
 ## Boundaries
 
 No pages are combined. Authorization and direct-route enforcement, data models, persisted navigation routes, lazy loading, workflows, and API behavior remain unchanged. Controller, projector, monitor, stream, public pages, authentication, and Home layouts are outside this redesign.

@@ -124,7 +124,6 @@ export default defineConfig({
     {
       name: "smoke",
       testMatch: /smoke\.spec\.ts$/,
-      dependencies: ["setup"],
       use: {
         ...devices["Desktop Chrome"],
         browserName: "chromium",

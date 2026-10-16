@@ -1,9 +1,13 @@
 import { useLayoutEffect, useRef, type ReactNode } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import Icon from "../../../components/Icon/Icon";
 import { Tabs, TabsList, TabsTrigger } from "../../../components/ui/tabs";
 import { cn } from "../../../utils/cnHelper";
 import { ACCOUNT_NAV_GROUPS, getActiveAccountNavGroup, getActiveAccountSection } from "../accountConstants";
+import {
+  isUnmodifiedLeftClick,
+  usePendingRouteNavigation,
+} from "../../../hooks/usePendingRouteNavigation";
 
 type AccountMobileShortcutsProps = {
   children?: ReactNode;
@@ -12,9 +16,10 @@ type AccountMobileShortcutsProps = {
 /** Mobile group shortcuts and route tabs, kept outside the administration scrollport. */
 const AccountMobileShortcuts = ({ children }: AccountMobileShortcutsProps) => {
   const { pathname } = useLocation();
-  const navigate = useNavigate();
-  const activeGroup = getActiveAccountNavGroup(pathname);
-  const activeSection = getActiveAccountSection(pathname);
+  const { pathname: pendingPathname, request } = usePendingRouteNavigation();
+  const activePath = pendingPathname || pathname;
+  const activeGroup = getActiveAccountNavGroup(activePath);
+  const activeSection = getActiveAccountSection(activePath);
   const tabsRef = useRef<HTMLElement>(null);
 
   useLayoutEffect(() => {
@@ -39,13 +44,13 @@ const AccountMobileShortcuts = ({ children }: AccountMobileShortcutsProps) => {
     const selected = strip.querySelector<HTMLElement>('[data-state="active"]');
     if (selected) observer.observe(selected);
     return () => observer.disconnect();
-  }, [pathname, activeGroup.id, activeSection.path]);
+  }, [activePath, activeGroup.id, activeSection.path]);
 
   return (
     <>
       <Tabs
         value={activeSection.path}
-        onValueChange={(path) => navigate(path)}
+        onValueChange={request}
         className="contents"
       >
         <nav
@@ -55,7 +60,11 @@ const AccountMobileShortcuts = ({ children }: AccountMobileShortcutsProps) => {
         >
           <TabsList variant="navigation" aria-label={`${activeGroup.label} pages`}>
             {activeGroup.sections.map((section) => (
-              <TabsTrigger key={section.path} value={section.path}>
+              <TabsTrigger
+                key={section.path}
+                value={section.path}
+                aria-busy={pendingPathname && activeSection.id === section.id ? true : undefined}
+              >
                 {section.label}
               </TabsTrigger>
             ))}
@@ -78,6 +87,12 @@ const AccountMobileShortcuts = ({ children }: AccountMobileShortcutsProps) => {
               to={defaultSection.path}
               aria-label={group.label}
               aria-current={selected ? "page" : undefined}
+              aria-busy={pendingPathname && selected ? true : undefined}
+              onClick={(event) => {
+                if (!isUnmodifiedLeftClick(event)) return;
+                event.preventDefault();
+                request(defaultSection.path);
+              }}
               className={cn(
                 "flex h-[56px] min-h-[44px] min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-none border-0 px-1 py-1 text-[11px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-cyan-300",
                 selected

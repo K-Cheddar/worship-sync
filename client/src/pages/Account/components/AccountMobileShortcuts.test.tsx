@@ -2,10 +2,16 @@ import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider, useLocation } from "react-router-dom";
 import AccountMobileShortcuts from "./AccountMobileShortcuts";
+import { PendingRouteNavigationProvider, PendingRouteReady } from "../../../hooks/usePendingRouteNavigation";
 
 const CurrentPath = () => {
   const { pathname } = useLocation();
   return <output aria-label="Current path">{pathname}</output>;
+};
+
+const ReadyAtCurrentRoute = () => {
+  const { pathname } = useLocation();
+  return <PendingRouteReady routePath={pathname} />;
 };
 
 const renderAt = (path: string) => {
@@ -14,10 +20,13 @@ const renderAt = (path: string) => {
       {
         path: "/account/*",
         element: (
-          <AccountMobileShortcuts>
-            <main>Page content</main>
-            <CurrentPath />
-          </AccountMobileShortcuts>
+          <PendingRouteNavigationProvider>
+            <AccountMobileShortcuts>
+              <main>Page content</main>
+              <ReadyAtCurrentRoute />
+              <CurrentPath />
+            </AccountMobileShortcuts>
+          </PendingRouteNavigationProvider>
         ),
       },
     ],

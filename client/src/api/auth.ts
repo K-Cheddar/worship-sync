@@ -3256,7 +3256,7 @@ export const previewPortableImport = async (
   csv: string,
   mapping: Record<string, string>,
   timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-  options: { destinationTeamId?: string; updateMode?: "merge" | "replace"; clearBlankScalars?: boolean; positionActions?: PortablePositionAction[]; teamActions?: PortableTeamAction[] } = {},
+  options: { destinationTeamId?: string; updateMode?: "merge" | "replace"; clearBlankScalars?: boolean; positionActions?: PortablePositionAction[]; teamActions?: PortableTeamAction[]; memberMatches?: Record<number, string> } = {},
 ) =>
   apiFetch<{
     success: boolean;
@@ -3288,7 +3288,7 @@ export const commitPortableImport = async (
     expectedStateHash?: string;
   }>,
   timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-  options: { destinationTeamId?: string; updateMode?: "merge" | "replace"; clearBlankScalars?: boolean; previewToken?: string; previewCsvHash?: string; mapping?: Record<string, string>; positionActions?: PortablePositionAction[]; teamActions?: PortableTeamAction[] } = {},
+  options: { destinationTeamId?: string; updateMode?: "merge" | "replace"; clearBlankScalars?: boolean; previewToken?: string; previewCsvHash?: string; mapping?: Record<string, string>; positionActions?: PortablePositionAction[]; teamActions?: PortableTeamAction[]; memberMatches?: Record<number, string> } = {},
 ) =>
   apiFetch<{
     success: boolean;

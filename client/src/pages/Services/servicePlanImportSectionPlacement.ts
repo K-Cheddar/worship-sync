@@ -1,4 +1,37 @@
-import type { ServicePlanSection } from "../../types/servicePlan";
+import type { ServicePlanElement, ServicePlanSection } from "../../types/servicePlan";
+
+/** Place only imported additions/moves around confidently matched source rows.
+ * Unmatched operator items keep their relative order and are never used as
+ * positional evidence. */
+export const placeServicePlanImportElements = (
+  existingElements: ServicePlanElement[],
+  sourceOrder: ServicePlanElement[],
+  elementsToPlace: ServicePlanElement[],
+): ServicePlanElement[] => {
+  const placementIds = new Set(elementsToPlace.map(({ id }) => id));
+  const result = existingElements.filter(({ id }) => !placementIds.has(id));
+  const sourceIndex = new Map(sourceOrder.map(({ id }, index) => [id, index]));
+  const orderedPlacements = elementsToPlace
+    .map((element) => ({ element, index: sourceIndex.get(element.id) ?? Number.MAX_SAFE_INTEGER }))
+    .sort((left, right) => left.index - right.index);
+
+  orderedPlacements.forEach(({ element, index }) => {
+    if (!sourceOrder.length || index === Number.MAX_SAFE_INTEGER) {
+      result.push(element);
+      return;
+    }
+    let before = result.findIndex((candidate) => (sourceIndex.get(candidate.id) ?? -1) > index);
+    if (before < 0) {
+      const previousIndexes = result.flatMap((candidate, candidateIndex) => {
+        const position = sourceIndex.get(candidate.id);
+        return position !== undefined && position < index ? [candidateIndex] : [];
+      });
+      before = previousIndexes.length ? previousIndexes.at(-1)! + 1 : result.length;
+    }
+    result.splice(before, 0, element);
+  });
+  return result;
+};
 
 /**
  * Inserts consecutive runs of new source sections beside the closest section
