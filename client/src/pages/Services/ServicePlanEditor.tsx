@@ -1736,6 +1736,7 @@ const ServicePlanEditor = ({
       hasPlanContent && sections
         ? refreshServicePlanFromImport(sections, importedSections, {
           ...refreshOptions,
+          suggestLegacyMatches: true,
           // Only plans imported before item-level provenance existed can have
           // their unmarked items regarded as source-owned, and then only when
           // removal was chosen. On a tracked plan those are operator items.
@@ -3746,14 +3747,6 @@ const ServicePlanEditor = ({
                       disabled={importing}
                       onCheckedChange={(checked) => updateRefreshOption("addMissing", checked)}
                     />
-                    {isLegacyUntrackedImport ? (
-                      <Checkbox
-                        label="Match legacy items by unique title and type"
-                        checked={Boolean(refreshOptions.matchLegacyItemsByTitle)}
-                        disabled={importing}
-                        onCheckedChange={(checked) => updateRefreshOption("matchLegacyItemsByTitle", checked)}
-                      />
-                    ) : null}
                     <Checkbox
                       label="Remove source items no longer listed"
                       checked={refreshOptions.removeMissing}
@@ -3771,8 +3764,9 @@ const ServicePlanEditor = ({
               ) : null}
               {hasPlanContent && isLegacyUntrackedImport ? (
                 <p className="text-xs text-amber-200">
-                  This plan predates source tracking. Unmarked items are left
-                  alone unless you explicitly enable legacy matching or removal.
+                  This plan predates source tracking. Possible cross-section
+                  matches are offered one item at a time for your confirmation.
+                  If you remove missing items, unmarked items are treated as source items.
                 </p>
               ) : null}
               {importSource !== "planningCenterPdf" ? (

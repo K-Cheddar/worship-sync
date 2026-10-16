@@ -31,9 +31,8 @@ export type ServicePlanningRefreshOptions = {
   /** Legacy imports predate source markers. This opt-in is only used when the
    * operator explicitly asks to remove items absent from the source. */
   treatUnmarkedItemsAsSource?: boolean;
-  /** Explicit operator confirmation to match unique unmarked legacy items by
-   * title and compatible type during cross-section relocation. */
-  matchLegacyItemsByTitle?: boolean;
+  /** Build individually reviewable legacy-match suggestions for import preview. */
+  suggestLegacyMatches?: boolean;
 };
 
 const normalizedImportSourceValue = (value: string | undefined): string =>
@@ -90,7 +89,7 @@ export const DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS: ServicePlanningRefreshOpt
     updateNotes: true,
     addMissing: true,
     removeMissing: false,
-    matchLegacyItemsByTitle: false,
+    suggestLegacyMatches: false,
   };
 
 type Indexed<T> = { value: T; index: number };
@@ -394,6 +393,11 @@ const pairByLabelThenOrder = <T>(
   const pairs: Array<[Indexed<T>, Indexed<T>]> = [];
   const usedCurrent = new Set<number>();
   const usedImported = new Set<number>();
+  const identitiesAreCompatible = (currentItem: T, importedItem: T): boolean => {
+    const currentIdentity = identity(currentItem)?.trim();
+    const importedIdentity = identity(importedItem)?.trim();
+    return !currentIdentity || !importedIdentity || currentIdentity === importedIdentity;
+  };
 
   for (const incoming of availableImported) {
     const sourceIdentity = identity(incoming.value);
@@ -412,6 +416,7 @@ const pairByLabelThenOrder = <T>(
       (existing) =>
         !usedImported.has(incoming.index) &&
         !usedCurrent.has(existing.index) &&
+        identitiesAreCompatible(existing.value, incoming.value) &&
         canPairByLabel(existing.value) &&
         labelsMatch(label(existing.value), label(incoming.value)),
     );
@@ -429,7 +434,9 @@ const pairByLabelThenOrder = <T>(
   );
   const count = Math.min(remainingCurrent.length, remainingImported.length);
   for (let index = 0; index < count; index += 1) {
-    pairs.push([remainingCurrent[index], remainingImported[index]]);
+    if (identitiesAreCompatible(remainingCurrent[index].value, remainingImported[index].value)) {
+      pairs.push([remainingCurrent[index], remainingImported[index]]);
+    }
   }
   return pairs;
 };
@@ -1289,11 +1296,7 @@ export const refreshServicePlanFromImport = (
     JSON.stringify([element.sourceTemplateElementType || element.type, normalized(richTextToPlainText(element.title))]);
   const templateCurrentCounts = new Map<string, number>();
   currentSections.forEach((section) => section.elements.forEach((element) => {
-    const markedTemplateElement = Boolean(element.sourceTemplateElementId);
-    const explicitlyConfirmedLegacyElement = Boolean(
-      options.matchLegacyItemsByTitle && !tracksSource && !element.sourcePlanningManaged,
-    );
-    if (!markedTemplateElement && !explicitlyConfirmedLegacyElement) return;
+    if (!element.sourceTemplateElementId) return;
     const key = templateMatchKey(element);
     templateCurrentCounts.set(key, (templateCurrentCounts.get(key) || 0) + 1);
   }));
@@ -1307,9 +1310,37 @@ export const refreshServicePlanFromImport = (
       count === 1 && templateImportedCounts.get(key) === 1 ? [key] : [],
     ),
   );
+  const legacyMatchCurrentCounts = new Map<string, number>();
+  currentSections.forEach((section) => section.elements.forEach((element) => {
+    if (element.sourcePlanningManaged || element.sourceTemplateElementId || element.sourceOccurrenceId?.trim()) return;
+    const key = templateMatchKey(element);
+    legacyMatchCurrentCounts.set(key, (legacyMatchCurrentCounts.get(key) || 0) + 1);
+  }));
+  const legacyMatchImportedCounts = new Map<string, number>();
+  importedSections.forEach((section) => section.elements.forEach((element) => {
+    const key = templateMatchKey(element);
+    legacyMatchImportedCounts.set(key, (legacyMatchImportedCounts.get(key) || 0) + 1);
+  }));
+  const safeLegacyMatchKeys = new Set(
+    [...legacyMatchCurrentCounts].flatMap(([key, count]) =>
+      count === 1 && legacyMatchImportedCounts.get(key) === 1 ? [key] : [],
+    ),
+  );
+  const legacyIdentityConflictCurrentIds = new Set<string>();
+  currentSections.forEach((section) => section.elements.forEach((currentElement) => {
+    const currentIdentity = currentElement.sourceOccurrenceId?.trim();
+    if (!currentIdentity) return;
+    const hasSameLabelWithDifferentIdentity = importedSections.some((importedSection) =>
+      importedSection.elements.some((importedElement) =>
+        importedElement.sourceOccurrenceId?.trim() &&
+        importedElement.sourceOccurrenceId.trim() !== currentIdentity &&
+        templateMatchKey(importedElement) === templateMatchKey(currentElement),
+      ),
+    );
+    if (hasSameLabelWithDifferentIdentity) legacyIdentityConflictCurrentIds.add(currentElement.id);
+  }));
   const currentIdentityElements = new Map<string, Array<{ sectionIndex: number; elementIndex: number; element: ServicePlanElement }>>();
   currentSections.forEach((section, sectionIndex) => section.elements.forEach((element, elementIndex) => {
-    if (!element.sourcePlanningManaged) return;
     const identity = element.sourceOccurrenceId?.trim();
     if (!identity) return;
     const matches = currentIdentityElements.get(identity) || [];
@@ -1345,6 +1376,8 @@ export const refreshServicePlanFromImport = (
   }>>();
   const movedElementKeys = new Set<string>();
   const movedElementIds = new Set<string>();
+  const legacyMatchCandidatesBySection = new Map<number, Map<ServicePlanElement, ServicePlanElement>>();
+  const legacyMatchCandidateCurrentIds = new Set<string>();
   safeImportedSections.forEach((section, importedSectionIndex) => {
     section.elements.forEach((importedElement) => {
       const identity = importedElement.sourceOccurrenceId?.trim();
@@ -1358,8 +1391,7 @@ export const refreshServicePlanFromImport = (
         safeTemplateMatchKeys.has(templateMatchKey(importedElement))) {
         const matches = currentSections.flatMap((currentSection, sectionIndex) =>
           currentSection.elements.flatMap((element, elementIndex) =>
-            (element.sourceTemplateElementId ||
-              (options.matchLegacyItemsByTitle && !tracksSource && !element.sourcePlanningManaged)) &&
+            element.sourceTemplateElementId &&
               !element.sourceOccurrenceId?.trim() &&
               templateMatchKey(element) === templateMatchKey(importedElement)
               ? [{ sectionIndex, elementIndex, element }]
@@ -1379,6 +1411,43 @@ export const refreshServicePlanFromImport = (
       moved.push({ current: existing.element, imported: importedElement });
       movedElementsBySection.set(importedSectionIndex, moved);
     });
+  });
+  if (options.suggestLegacyMatches) {
+    safeImportedSections.forEach((section, importedSectionIndex) => {
+      section.elements.forEach((importedElement) => {
+        const identity = importedElement.sourceOccurrenceId?.trim();
+        const identityMatches = identity ? currentIdentityElements.get(identity) || [] : [];
+        if (identity && (
+          ambiguousIdentities.has(identity) ||
+          importedIdentityCounts.get(identity) !== 1 ||
+          identityMatches.length > 0
+        )) return;
+        const key = templateMatchKey(importedElement);
+        if (!safeLegacyMatchKeys.has(key)) return;
+        const matches = currentSections.flatMap((currentSection, sectionIndex) =>
+          currentSection.elements.flatMap((element, elementIndex) =>
+            !element.sourcePlanningManaged && !element.sourceTemplateElementId &&
+              !element.sourceOccurrenceId?.trim() && templateMatchKey(element) === key
+              ? [{ sectionIndex, elementIndex, element }]
+              : [],
+          ),
+        );
+        if (matches.length !== 1) return;
+        const candidate = matches[0];
+        const candidates = legacyMatchCandidatesBySection.get(importedSectionIndex) || new Map();
+        candidates.set(importedElement, candidate.element);
+        legacyMatchCandidatesBySection.set(importedSectionIndex, candidates);
+        legacyMatchCandidateCurrentIds.add(candidate.element.id);
+      });
+    });
+  }
+  const asLegacyMatchCandidate = (
+    current: ServicePlanElement,
+    imported: ServicePlanElement,
+  ): ServicePlanElement => ({
+    ...mergeElement(current, imported, options),
+    id: imported.id,
+    legacyImportMatchCandidateForId: current.id,
   });
   const currentWithMovedElements = currentSections.map((section, sectionIndex) => ({
     ...section,
@@ -1414,12 +1483,15 @@ export const refreshServicePlanFromImport = (
 
   const isAmbiguousCurrentElement = (element: ServicePlanElement): boolean =>
     Boolean(element.sourceOccurrenceId?.trim() && ambiguousIdentities.has(element.sourceOccurrenceId.trim()));
+  const isProtectedCurrentElement = (element: ServicePlanElement): boolean =>
+    isAmbiguousCurrentElement(element) || legacyIdentityConflictCurrentIds.has(element.id) ||
+      legacyMatchCandidateCurrentIds.has(element.id);
   const refreshed = currentWithMovedElements.flatMap(
     (currentSection, currentSectionIndex) => {
       const importedSection = importedByCurrentIndex.get(currentSectionIndex);
       if (!importedSection) {
         return options.removeMissing && currentSection.sourcePlanningManaged &&
-          !currentSection.elements.some(isAmbiguousCurrentElement)
+          !currentSection.elements.some(isProtectedCurrentElement)
           ? []
           : [currentSection];
       }
@@ -1435,7 +1507,7 @@ export const refreshServicePlanFromImport = (
         ],
         (element) => !isAmbiguousCurrentElement(element) && canPairByLabel(element),
         (element) => !isAmbiguousCurrentElement(element) && isSourceOwned(element),
-        (element) => element.sourcePlanningManaged && !isAmbiguousCurrentElement(element)
+        (element) => !isAmbiguousCurrentElement(element)
           ? element.sourceOccurrenceId?.trim()
           : undefined,
       );
@@ -1453,7 +1525,7 @@ export const refreshServicePlanFromImport = (
             return [
               mergeElement(currentElement, importedElement.value, options),
             ];
-          return options.removeMissing && isSourceOwned(currentElement) && !isAmbiguousCurrentElement(currentElement)
+          return options.removeMissing && isSourceOwned(currentElement) && !isProtectedCurrentElement(currentElement)
             ? []
             : [currentElement];
         },
@@ -1464,15 +1536,16 @@ export const refreshServicePlanFromImport = (
         const merged = elements.find((element) => element.id === id);
         return merged ? [merged] : [];
       });
-      if (options.addMissing) {
-        for (const importedElement of sourceSection.elements) {
-          const sourceIndex = sourceSection.elements.indexOf(importedElement);
-          if (!pairedImportedElements.has(sourceIndex)) {
-            const added = managedImportedElement(importedElement);
-            elements.push(added);
-            elementsToPlace.push(added);
-          }
-        }
+      for (const importedElement of sourceSection.elements) {
+        const sourceIndex = sourceSection.elements.indexOf(importedElement);
+        if (pairedImportedElements.has(sourceIndex)) continue;
+        const legacyMatch = legacyMatchCandidatesBySection.get(importedSection.index)?.get(importedElement);
+        if (!legacyMatch && !options.addMissing) continue;
+        const added = legacyMatch
+          ? asLegacyMatchCandidate(legacyMatch, importedElement)
+          : managedImportedElement(importedElement);
+        elements.push(added);
+        elementsToPlace.push(added);
       }
       const currentByImportedIndex = new Map(
         elementPairs.map(([current, imported]) => [imported.index, current.value.id]),
@@ -1516,10 +1589,13 @@ export const refreshServicePlanFromImport = (
     const movedByImportedElement = new Map(
       (movedElementsBySection.get(index) || []).map(({ current, imported }) => [imported, current] as const),
     );
-    if (!options.addMissing && movedByImportedElement.size === 0) return;
+    const legacyMatchesByImportedElement = legacyMatchCandidatesBySection.get(index) || new Map();
+    if (!options.addMissing && movedByImportedElement.size === 0 && legacyMatchesByImportedElement.size === 0) return;
     const elements = section.elements.flatMap((importedElement) => {
       const moved = movedByImportedElement.get(importedElement);
       if (moved) return [mergeElement(moved, importedElement, options)];
+      const legacyMatch = legacyMatchesByImportedElement.get(importedElement);
+      if (legacyMatch) return [asLegacyMatchCandidate(legacyMatch, importedElement)];
       return options.addMissing ? [managedImportedElement(importedElement)] : [];
     });
     const managedSection = managedImportedSection(section);

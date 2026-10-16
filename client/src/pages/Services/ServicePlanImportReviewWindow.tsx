@@ -21,6 +21,7 @@ const kindLabel: Record<ServicePlanImportChangeKind, string> = {
   removed: "Removed",
   updated: "Updated",
   moved: "Moved",
+  legacy_match: "Moved",
 };
 
 const kindClassName: Record<ServicePlanImportChangeKind, string> = {
@@ -28,6 +29,7 @@ const kindClassName: Record<ServicePlanImportChangeKind, string> = {
   removed: "bg-red-400/10 text-red-200",
   updated: "bg-cyan-400/10 text-cyan-200",
   moved: "bg-violet-400/10 text-violet-200",
+  legacy_match: "bg-amber-400/10 text-amber-100",
 };
 
 /** Item type changes still apply with the import; omit them from the review UI. */
@@ -56,7 +58,9 @@ const ServicePlanImportReviewWindow = ({
     [summary.changes],
   );
   const [selectedChangeKeys, setSelectedChangeKeys] = useState<Set<string>>(
-    () => new Set(changeKeys),
+    () => new Set(summary.changes
+      .filter((change) => change.kind !== "legacy_match")
+      .map(servicePlanImportChangeKey)),
   );
   const selectedChanges = summary.changes.filter((change) =>
     selectedChangeKeys.has(servicePlanImportChangeKey(change)),
@@ -72,6 +76,9 @@ const ServicePlanImportReviewWindow = ({
       : "",
     selectedChanges.filter((change) => change.kind === "moved").length
       ? `${selectedChanges.filter((change) => change.kind === "moved").length} moved`
+      : "",
+    selectedChanges.filter((change) => change.kind === "legacy_match").length
+      ? `${selectedChanges.filter((change) => change.kind === "legacy_match").length} match confirmed`
       : "",
     selectedChanges.filter((change) => change.kind === "removed").length
       ? `${selectedChanges.filter((change) => change.kind === "removed").length} removed`
@@ -113,7 +120,9 @@ const ServicePlanImportReviewWindow = ({
           <p className="font-medium">
             {changeCount
               ? `${changeCount} ${changeCount === 1 ? "change" : "changes"} ready to apply`
-              : "No selected updates found"}
+              : summary.changes.some((change) => change.kind === "legacy_match")
+                ? "Confirm any suggested legacy matches to apply them"
+                : "No selected updates found"}
           </p>
           <p className="mt-1 text-xs text-gray-400">
             {summaryParts.length
@@ -152,7 +161,9 @@ const ServicePlanImportReviewWindow = ({
                             <li key={changeKey} className="rounded-md border border-gray-700/80 bg-gray-950/40 px-3 py-2">
                               <div className="flex items-start gap-2">
                                 <Checkbox
-                                  label={`${change.kind === "moved" ? "Move" : "Update"} ${change.itemName}`}
+                                  label={change.kind === "legacy_match"
+                                    ? `Confirm match for ${change.itemName}`
+                                    : `${change.kind === "moved" ? "Move" : "Update"} ${change.itemName}`}
                                   checked={selectedChangeKeys.has(changeKey)}
                                   onCheckedChange={(checked) => setSelected([changeKey], checked)}
                                   className="pt-0.5"
@@ -164,11 +175,13 @@ const ServicePlanImportReviewWindow = ({
                                     kindClassName[change.kind],
                                   )}
                                 >
-                                  {kindLabel[change.kind]}
+                                  {change.kind === "legacy_match" && change.fromSectionId === change.sectionId
+                                    ? "Review match"
+                                    : kindLabel[change.kind]}
                                 </span>
                                 <div className="min-w-0 flex-1">
                                   <p className="truncate font-medium text-gray-100">{change.itemName}</p>
-                                  {change.kind === "moved" ? (
+                                  {change.kind === "moved" || change.kind === "legacy_match" ? (
                                     <p className="mt-1 text-xs text-violet-200">
                                       {change.fromSectionName || "Previous section"} → {change.sectionName}
                                     </p>

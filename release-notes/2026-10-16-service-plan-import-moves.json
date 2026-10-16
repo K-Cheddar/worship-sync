@@ -3,5 +3,5 @@
   "date": "2026-10-16",
   "type": "fixed",
   "title": "Service plan imports keep moved items",
-  "description": "Imports now recognize items that move between sections and let you review each move while keeping the existing item and its local details."
+  "description": "Imports keep moved items and their local details, offer individual match suggestions for older plans, and protect items with conflicting source IDs."
 }

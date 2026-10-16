@@ -67,4 +67,42 @@ describe("ServicePlanImportReviewWindow", () => {
     await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
     expect(onApply).toHaveBeenCalledWith(["moved:sermon"]);
   });
+
+  it("requires individual confirmation for a legacy match while allowing other changes", async () => {
+    const user = userEvent.setup();
+    const onApply = jest.fn();
+    const summary: ServicePlanImportSummary = {
+      changes: [
+        {
+          id: "legacy-sermon",
+          incomingElementId: "incoming-sermon",
+          sectionId: "response",
+          fromSectionId: "message",
+          fromSectionName: "Message",
+          kind: "legacy_match",
+          itemName: "Sermon",
+          sectionName: "Response & Celebration",
+          fields: [],
+        },
+        { id: "prayer", sectionId: "response", kind: "updated", itemName: "Prayer", sectionName: "Response & Celebration", fields: [] },
+      ],
+      added: 0,
+      removed: 0,
+      updated: 1,
+      moved: 0,
+    };
+
+    render(
+      <FloatingWindowZIndexProvider>
+        <ServicePlanImportReviewWindow summary={summary} onApply={onApply} onClose={jest.fn()} />
+      </FloatingWindowZIndexProvider>,
+    );
+
+    expect(screen.getByText("Moved")).toBeInTheDocument();
+    expect(screen.getByText("Message → Response & Celebration")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Confirm match for Sermon" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Update Prayer" })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
+    expect(onApply).toHaveBeenCalledWith(["updated:prayer"]);
+  });
 });

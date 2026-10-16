@@ -18,7 +18,7 @@ import type {
 } from "../../types/servicePlan";
 import { insertNewServicePlanSectionRuns, placeServicePlanImportElements } from "./servicePlanImportSectionPlacement";
 
-export type ServicePlanImportChangeKind = "added" | "removed" | "updated" | "moved";
+export type ServicePlanImportChangeKind = "added" | "removed" | "updated" | "moved" | "legacy_match";
 
 export type ServicePlanImportFieldChange = {
   label: string;
@@ -28,6 +28,8 @@ export type ServicePlanImportFieldChange = {
 
 export type ServicePlanImportChange = {
   id: string;
+  /** ID of the incoming preview row for an operator-confirmed legacy match. */
+  incomingElementId?: string;
   sectionId: string;
   fromSectionId?: string;
   fromSectionName?: string;
@@ -463,6 +465,22 @@ export const summarizeServicePlanImport = (
 
   const changes: ServicePlanImportChange[] = [];
   nextItems.forEach(({ element, sectionId, sectionName }, id) => {
+    const legacyMatchForId = element.legacyImportMatchCandidateForId;
+    const legacyCurrent = legacyMatchForId ? currentItems.get(legacyMatchForId) : undefined;
+    if (legacyCurrent) {
+      changes.push({
+        id: legacyCurrent.element.id,
+        incomingElementId: id,
+        sectionId,
+        fromSectionId: legacyCurrent.sectionId,
+        fromSectionName: legacyCurrent.sectionName,
+        kind: "legacy_match",
+        itemName: itemName(element),
+        sectionName,
+        fields: changedFields(legacyCurrent.element, element, displayContext),
+      });
+      return;
+    }
     const current = currentItems.get(id);
     if (!current) {
       changes.push({
@@ -551,7 +569,9 @@ export const summarizeServicePlanImport = (
 
     const orderFor = (change: ServicePlanImportChange) => {
       if (change.kind !== "removed") {
-        return nextPositionById.get(change.id) ?? Number.MAX_SAFE_INTEGER;
+        return nextPositionById.get(
+          change.kind === "legacy_match" ? change.incomingElementId || change.id : change.id,
+        ) ?? Number.MAX_SAFE_INTEGER;
       }
       const currentSection = currentSections.find((section) => section.id === change.sectionId);
       const nextIds = nextIdsBySection.get(change.sectionId) ?? new Set<string>();
@@ -612,6 +632,8 @@ export const applySelectedServicePlanImportChanges = (
       .filter((change) => change.sectionId === currentSection.id);
     const elements = currentSection.elements.flatMap((currentElement) => {
       if (selectedChangeFor("removed", currentElement.id)) return [];
+      const confirmedLegacyMatch = selectedChangeFor("legacy_match", currentElement.id);
+      if (confirmedLegacyMatch) return [];
       const move = selectedChangeFor("moved", currentElement.id);
       if (move && move.sectionId !== currentSection.id) return [];
       if (selectedChangeFor("updated", currentElement.id)) {
@@ -620,6 +642,13 @@ export const applySelectedServicePlanImportChanges = (
       return [currentElement];
     });
     const placements = (nextSection?.elements || []).flatMap((nextElement) => {
+      const legacyMatchForId = nextElement.legacyImportMatchCandidateForId;
+      if (legacyMatchForId) {
+        const match = selectedChangeFor("legacy_match", legacyMatchForId);
+        return match
+          ? [{ ...nextElement, id: match.id, legacyImportMatchCandidateForId: undefined }]
+          : [];
+      }
       if (selectedChangeFor("added", nextElement.id)) return [nextElement];
       const move = selectedChangeFor("moved", nextElement.id);
       if (!move || move.sectionId !== currentSection.id) return [];
@@ -628,8 +657,13 @@ export const applySelectedServicePlanImportChanges = (
         : currentItemsById.get(nextElement.id) || nextElement];
     });
     elements.push(...placements);
+    const sourceOrder = nextSection?.elements.map((element) => {
+      const legacyMatchForId = element.legacyImportMatchCandidateForId;
+      const match = legacyMatchForId ? selectedChangeFor("legacy_match", legacyMatchForId) : undefined;
+      return match ? { ...element, id: match.id } : element;
+    }) || [];
     const orderedElements = placements.length && nextSection
-      ? placeServicePlanImportElements(elements, nextSection.elements, placements)
+      ? placeServicePlanImportElements(elements, sourceOrder, placements)
       : elements;
 
     const allElementsRemoved =
@@ -662,6 +696,13 @@ export const applySelectedServicePlanImportChanges = (
       return;
     }
     const elements = nextSection.elements.flatMap((element) => {
+      const legacyMatchForId = element.legacyImportMatchCandidateForId;
+      if (legacyMatchForId) {
+        const match = selectedChangeFor("legacy_match", legacyMatchForId);
+        return match
+          ? [{ ...element, id: match.id, legacyImportMatchCandidateForId: undefined }]
+          : [];
+      }
       if (selectedChangeFor("added", element.id)) return [element];
       const move = selectedChangeFor("moved", element.id);
       return move && move.sectionId === nextSection.id
@@ -669,9 +710,14 @@ export const applySelectedServicePlanImportChanges = (
         : [];
     });
     if (elements.length) {
+      const sourceOrder = nextSection.elements.map((element) => {
+        const legacyMatchForId = element.legacyImportMatchCandidateForId;
+        const match = legacyMatchForId ? selectedChangeFor("legacy_match", legacyMatchForId) : undefined;
+        return match ? { ...element, id: match.id } : element;
+      });
       newSectionByNextIndex.set(index, {
         ...nextSection,
-        elements: placeServicePlanImportElements([], nextSection.elements, elements),
+        elements: placeServicePlanImportElements([], sourceOrder, elements),
       });
     }
   });

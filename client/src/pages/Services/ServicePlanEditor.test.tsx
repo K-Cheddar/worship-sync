@@ -1856,6 +1856,66 @@ describe("ServicePlanEditor", () => {
     expect(body.sections[0].elements[0].startTime).toBeTruthy();
   });
 
+  it("offers a legacy item match during the first import into a mixed-provenance plan", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        sections: [
+          {
+            id: "message",
+            name: "Message",
+            elements: [{
+              id: "legacy-sermon",
+              type: "free",
+              title: plainTextToRichText("Sermon"),
+              notes: plainTextToRichText("Operator notes"),
+            }],
+          },
+          {
+            id: "worship",
+            sourcePlanningManaged: true,
+            name: "Worship",
+            elements: [{
+              id: "tracked-song",
+              sourcePlanningManaged: true,
+              sourceOccurrenceId: "pco-song",
+              type: "free",
+              title: plainTextToRichText("Opening Song"),
+            }],
+          },
+        ],
+      },
+    });
+    mockGetServicePlanningImportDataFromUrl.mockResolvedValue({
+      planLabel: "Sunday, Jul 26",
+      sections: [{
+        sectionName: "Response & Celebration",
+        rows: [{ elementType: "Sermon", title: "Sermon", ledBy: "", startTime: "10:30" }],
+      }],
+      teamAssignments: [],
+    });
+
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+    fireEvent.change(screen.getByLabelText(/Planning URL/i), {
+      target: { value: "https://services.planningcenteronline.com/plans/123" },
+    });
+    await user.click(screen.getByRole("button", { name: /Apply updates/i }));
+
+    expect(await screen.findByRole("checkbox", { name: "Confirm match for Sermon" })).not.toBeChecked();
+    expect(screen.getByText("Moved")).toBeInTheDocument();
+    expect(screen.getByText("Message → Response & Celebration")).toBeInTheDocument();
+    expect(screen.queryByText("Added")).not.toBeInTheDocument();
+  });
+
   it("offers one optional review prompt after an external import adds ambiguous items", async () => {
     mockGetServicePlanningImportDataFromUrl.mockResolvedValue({
       planLabel: "Sunday Service",
@@ -2024,41 +2084,6 @@ Opening Song to begin the worship experience.
     expect(body.sections?.[0]?.elements?.[0]?.assignees?.[0]?.name).toBe("Blair");
     // Non-generic elementType wins over the longer content title.
     expect(body.sections?.[0]?.elements?.[0]?.title.blocks[0].spans[0].text).toBe("Welcome");
-  });
-
-  it("offers default-off legacy title/type matching for an untracked imported plan", async () => {
-    mockGetServicePlan.mockResolvedValue({
-      success: true,
-      servicePlan: {
-        planId: "church-1::service-1@2026-07-26",
-        churchId: "church-1",
-        planKey: "service-1@2026-07-26",
-        serviceId: "service-1",
-        date: "2026-07-26",
-        name: "Easter Sunday",
-        sourceImport: {
-          source: "servicePlanning",
-          sourceUrl: "https://services.planningcenteronline.com/plans/123",
-          loadedAt: "2026-07-20T12:00:00.000Z",
-          planLabel: "Sunday, Jul 26",
-        },
-        sections: [{
-          id: "legacy-section",
-          name: "Message",
-          elements: [{ id: "legacy-sermon", type: "free", title: plainTextToRichText("Sermon") }],
-        }],
-      },
-    });
-
-    const user = userEvent.setup();
-    renderEditor();
-    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
-    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
-
-    const legacyMatch = screen.getByRole("checkbox", { name: /Match legacy items by unique title and type/i });
-    expect(legacyMatch).not.toBeChecked();
-    await user.click(legacyMatch);
-    expect(legacyMatch).toBeChecked();
   });
 
   it("suggests roster members and past free-text names for Assigned to, not roster-linked", async () => {
