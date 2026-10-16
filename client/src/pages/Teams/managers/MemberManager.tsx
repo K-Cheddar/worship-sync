@@ -237,14 +237,14 @@ const MemberManager = ({
     const phoneNumber = member.phoneNumber || "";
     setSmsEligibilityRefreshState((current) => ({
       ...current,
-      [member.memberId]: { churchId, phoneNumber, previousPhoneNumber, status: "checking" },
+      [requestKey]: { churchId, phoneNumber, previousPhoneNumber, status: "checking" },
     }));
     try {
       await onSmsEligibilityRefresh(member.memberId, phoneNumber, previousPhoneNumber);
       if (smsEligibilityRefreshVersionsRef.current.get(requestKey) === version) {
         setSmsEligibilityRefreshState((current) => {
           const next = { ...current };
-          delete next[member.memberId];
+          delete next[requestKey];
           return next;
         });
       }
@@ -252,7 +252,7 @@ const MemberManager = ({
       if (smsEligibilityRefreshVersionsRef.current.get(requestKey) === version) {
         setSmsEligibilityRefreshState((current) => ({
           ...current,
-          [member.memberId]: { churchId, phoneNumber, previousPhoneNumber, status: "error" },
+          [requestKey]: { churchId, phoneNumber, previousPhoneNumber, status: "error" },
         }));
       }
     }
@@ -267,7 +267,7 @@ const MemberManager = ({
     return eligibility;
   };
   const hasUnresolvedSmsEligibilityRefresh = (member: TeamRosterMember) => {
-    const refreshState = smsEligibilityRefreshState[member.memberId];
+    const refreshState = smsEligibilityRefreshState[`${churchId}:${member.memberId}`];
     return Boolean(
       refreshState?.churchId === churchId &&
       normalizeUsPhoneNumberForComparison(refreshState.phoneNumber) ===
@@ -1537,7 +1537,7 @@ const MemberManager = ({
             }
           />
           {editing ? (() => {
-            const refreshState = smsEligibilityRefreshState[editing.memberId];
+            const refreshState = smsEligibilityRefreshState[`${churchId}:${editing.memberId}`];
             const refreshStateMatches = refreshState?.churchId === churchId &&
               normalizeUsPhoneNumberForComparison(refreshState.phoneNumber) ===
                 normalizeUsPhoneNumberForComparison(editing.phoneNumber);

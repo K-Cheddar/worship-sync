@@ -900,19 +900,11 @@ export const useTeamsPageState = (
       smsEligibilityRefreshVersionsRef.current.get(requestKey) !== requestVersion
     ) return;
 
-    const currentMember = dataRef.current.members.find((member) => member.memberId === memberId);
     const serverMember = response.members?.find((member) => member.memberId === memberId);
     if (
       !serverMember ||
       normalizeUsPhoneNumberForComparison(serverMember.phoneNumber) !== expectedPhone
     ) throw new Error("The member's phone number changed before text message status loaded.");
-
-    const currentPhone = currentMember
-      ? normalizeUsPhoneNumberForComparison(currentMember.phoneNumber)
-      : null;
-    if (currentPhone !== null && currentPhone !== expectedPhone && currentPhone !== previousPhone) {
-      throw new Error("The member's phone number changed before text message status loaded.");
-    }
 
     const eligibility = response.smsEligibilityByMemberId?.[memberId];
     if (!eligibility) throw new Error("The server did not return text message eligibility.");
@@ -921,18 +913,24 @@ export const useTeamsPageState = (
     }
     applyingRemoteRef.current = true;
     try {
-      setData((current) => ({
-        ...current,
-        members: sortTeamsDataKey("members", currentMember
-          ? current.members.map((member) => member.memberId === memberId
+      setData((current) => {
+        const currentMember = current.members.find((member) => member.memberId === memberId);
+        if (!currentMember) return current;
+
+        const currentPhone = normalizeUsPhoneNumberForComparison(currentMember.phoneNumber);
+        if (currentPhone !== expectedPhone && currentPhone !== previousPhone) return current;
+
+        return {
+          ...current,
+          members: sortTeamsDataKey("members", current.members.map((member) => member.memberId === memberId
             ? { ...member, phoneNumber: serverMember.phoneNumber }
-            : member)
-          : [...current.members, serverMember]),
-        smsEligibilityByMemberId: {
-          ...current.smsEligibilityByMemberId,
-          [memberId]: eligibility,
-        },
-      }));
+            : member)),
+          smsEligibilityByMemberId: {
+            ...current.smsEligibilityByMemberId,
+            [memberId]: eligibility,
+          },
+        };
+      });
     } finally {
       applyingRemoteRef.current = false;
     }
