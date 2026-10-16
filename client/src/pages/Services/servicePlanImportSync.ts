@@ -31,6 +31,9 @@ export type ServicePlanningRefreshOptions = {
   /** Legacy imports predate source markers. This opt-in is only used when the
    * operator explicitly asks to remove items absent from the source. */
   treatUnmarkedItemsAsSource?: boolean;
+  /** Explicit operator confirmation to match unique unmarked legacy items by
+   * title and compatible type during cross-section relocation. */
+  matchLegacyItemsByTitle?: boolean;
 };
 
 const normalizedImportSourceValue = (value: string | undefined): string =>
@@ -87,6 +90,7 @@ export const DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS: ServicePlanningRefreshOpt
     updateNotes: true,
     addMissing: true,
     removeMissing: false,
+    matchLegacyItemsByTitle: false,
   };
 
 type Indexed<T> = { value: T; index: number };
@@ -406,6 +410,7 @@ const pairByLabelThenOrder = <T>(
   for (const incoming of availableImported) {
     const candidate = availableCurrent.find(
       (existing) =>
+        !usedImported.has(incoming.index) &&
         !usedCurrent.has(existing.index) &&
         canPairByLabel(existing.value) &&
         labelsMatch(label(existing.value), label(incoming.value)),
@@ -1284,13 +1289,16 @@ export const refreshServicePlanFromImport = (
     JSON.stringify([element.sourceTemplateElementType || element.type, normalized(richTextToPlainText(element.title))]);
   const templateCurrentCounts = new Map<string, number>();
   currentSections.forEach((section) => section.elements.forEach((element) => {
-    if (!element.sourceTemplateElementId) return;
+    const markedTemplateElement = Boolean(element.sourceTemplateElementId);
+    const explicitlyConfirmedLegacyElement = Boolean(
+      options.matchLegacyItemsByTitle && !tracksSource && !element.sourcePlanningManaged,
+    );
+    if (!markedTemplateElement && !explicitlyConfirmedLegacyElement) return;
     const key = templateMatchKey(element);
     templateCurrentCounts.set(key, (templateCurrentCounts.get(key) || 0) + 1);
   }));
   const templateImportedCounts = new Map<string, number>();
   importedSections.forEach((section) => section.elements.forEach((element) => {
-    if (element.sourceOccurrenceId?.trim()) return;
     const key = templateMatchKey(element);
     templateImportedCounts.set(key, (templateImportedCounts.get(key) || 0) + 1);
   }));
@@ -1331,20 +1339,29 @@ export const refreshServicePlanFromImport = (
   const currentSectionByImportedIndex = new Map(
     importedSectionPairs.map(([current, imported]) => [imported.index, current.index]),
   );
-  const movedElementsBySection = new Map<number, ServicePlanElement[]>();
+  const movedElementsBySection = new Map<number, Array<{
+    current: ServicePlanElement;
+    imported: ServicePlanElement;
+  }>>();
   const movedElementKeys = new Set<string>();
   const movedElementIds = new Set<string>();
   safeImportedSections.forEach((section, importedSectionIndex) => {
     section.elements.forEach((importedElement) => {
       const identity = importedElement.sourceOccurrenceId?.trim();
       let existing: { sectionIndex: number; elementIndex: number; element: ServicePlanElement } | undefined;
+      const identityMatches = identity ? currentIdentityElements.get(identity) || [] : [];
       if (identity && !ambiguousIdentities.has(identity) && importedIdentityCounts.get(identity) === 1) {
-        const existingMatches = currentIdentityElements.get(identity) || [];
-        if (existingMatches.length === 1) existing = existingMatches[0];
-      } else if (!identity && safeTemplateMatchKeys.has(templateMatchKey(importedElement))) {
+        if (identityMatches.length === 1) existing = identityMatches[0];
+      }
+      const mayUseTemplateFallback = !identity || identityMatches.length === 0;
+      if (!existing && mayUseTemplateFallback &&
+        safeTemplateMatchKeys.has(templateMatchKey(importedElement))) {
         const matches = currentSections.flatMap((currentSection, sectionIndex) =>
           currentSection.elements.flatMap((element, elementIndex) =>
-            element.sourceTemplateElementId && templateMatchKey(element) === templateMatchKey(importedElement)
+            (element.sourceTemplateElementId ||
+              (options.matchLegacyItemsByTitle && !tracksSource && !element.sourcePlanningManaged)) &&
+              !element.sourceOccurrenceId?.trim() &&
+              templateMatchKey(element) === templateMatchKey(importedElement)
               ? [{ sectionIndex, elementIndex, element }]
               : [],
           ),
@@ -1359,7 +1376,7 @@ export const refreshServicePlanFromImport = (
       movedElementKeys.add(`${existing.sectionIndex}:${existing.elementIndex}`);
       movedElementIds.add(existing.element.id);
       const moved = movedElementsBySection.get(importedSectionIndex) || [];
-      moved.push(existing.element);
+      moved.push({ current: existing.element, imported: importedElement });
       movedElementsBySection.set(importedSectionIndex, moved);
     });
   });
@@ -1376,19 +1393,9 @@ export const refreshServicePlanFromImport = (
     if (targetIndex !== undefined) {
       currentWithMovedElements[targetIndex] = {
         ...currentWithMovedElements[targetIndex],
-        elements: [...currentWithMovedElements[targetIndex].elements, ...moved],
+        elements: [...currentWithMovedElements[targetIndex].elements, ...moved.map(({ current }) => current)],
       };
-      return;
     }
-    // Keep a moved row even when its destination section is new. The source
-    // section ID is only used as a stable initial container ID; later refreshes
-    // pair that section by name as usual.
-    currentWithMovedElements.push({
-      id: section.id,
-      sourcePlanningManaged: true,
-      name: section.name,
-      elements: moved,
-    });
   });
 
   const safeSectionPairs = pairByLabelThenOrder(
@@ -1446,7 +1453,7 @@ export const refreshServicePlanFromImport = (
             return [
               mergeElement(currentElement, importedElement.value, options),
             ];
-          return options.removeMissing && isSourceOwned(currentElement)
+          return options.removeMissing && isSourceOwned(currentElement) && !isAmbiguousCurrentElement(currentElement)
             ? []
             : [currentElement];
         },
@@ -1497,20 +1504,31 @@ export const refreshServicePlanFromImport = (
     },
   );
 
-  if (options.addMissing) {
-    const currentSectionIdByImportedIndex = new Map(
-      safeSectionPairs.map(([current, imported]) => [
-        imported.index,
-        current.value.id,
-      ]),
+  const currentSectionIdByImportedIndex = new Map(
+    safeSectionPairs.map(([current, imported]) => [
+      imported.index,
+      current.value.id,
+    ]),
+  );
+  const newSectionByImportedIndex = new Map<number, ServicePlanSection>();
+  safeImportedSections.forEach((section, index) => {
+    if (pairedImportedSections.has(index)) return;
+    const movedByImportedElement = new Map(
+      (movedElementsBySection.get(index) || []).map(({ current, imported }) => [imported, current] as const),
     );
-    const newSectionByImportedIndex = new Map(
-      safeImportedSections.flatMap((section, index) =>
-        pairedImportedSections.has(index)
-          ? []
-          : [[index, managedImportedSection(section)] as const],
-      ),
-    );
+    if (!options.addMissing && movedByImportedElement.size === 0) return;
+    const elements = section.elements.flatMap((importedElement) => {
+      const moved = movedByImportedElement.get(importedElement);
+      if (moved) return [mergeElement(moved, importedElement, options)];
+      return options.addMissing ? [managedImportedElement(importedElement)] : [];
+    });
+    const managedSection = managedImportedSection(section);
+    newSectionByImportedIndex.set(index, {
+      ...managedSection,
+      elements: placeServicePlanImportElements([], section.elements, elements),
+    });
+  });
+  if (newSectionByImportedIndex.size > 0) {
     return insertNewServicePlanSectionRuns(
       refreshed,
       safeImportedSections.length,

@@ -648,6 +648,137 @@ describe("stable external row identity", () => {
     expect(refreshed.flatMap((candidate) => candidate.elements)).toEqual(current.flatMap((candidate) => candidate.elements));
     expect(richTextToPlainText(refreshed[0].elements[0].notes)).toBe("Keep local state");
   });
+
+  it("requires explicit opt-in to match a legacy unmarked item by unique title and type", () => {
+    const current = [
+      section("message", "Message", [element("legacy-sermon", "Sermon", {
+        notes: plainTextToRichText("Local notes"),
+      })], false),
+      section("worship", "Worship", [element("worship-song", "Song")], false),
+    ];
+    const incoming = [
+      section("new-message", "Message", []),
+      section("new-worship", "Worship", [element("source-song", "Song")]),
+      section("response", "Response & Celebration", [element("source-sermon", "Sermon", {
+        sourceOccurrenceId: "pco-sermon",
+      })]),
+    ];
+
+    const withoutConfirmation = refreshServicePlanFromImport(current, incoming, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    expect(withoutConfirmation.find(({ id }) => id === "message")?.elements.map(({ id }) => id)).toEqual(["legacy-sermon"]);
+    expect(withoutConfirmation.find(({ name }) => name === "Response & Celebration")?.elements.map(({ id }) => id)).toEqual(["source-sermon"]);
+
+    const confirmed = refreshServicePlanFromImport(current, incoming, {
+      ...DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+      matchLegacyItemsByTitle: true,
+    });
+    const moved = confirmed.find(({ name }) => name === "Response & Celebration")?.elements[0];
+    expect(confirmed.find(({ id }) => id === "message")?.elements).toEqual([]);
+    expect(moved).toMatchObject({
+      id: "legacy-sermon",
+      sourceOccurrenceId: "pco-sermon",
+      sourcePlanningManaged: true,
+    });
+    expect(richTextToPlainText(moved?.notes)).toBe("Local notes");
+    expect(summarizeServicePlanImport(current, confirmed).changes).toContainEqual(expect.objectContaining({
+      id: "legacy-sermon",
+      fromSectionId: "message",
+      sectionId: "response",
+      kind: "moved",
+    }));
+  });
+
+  it("uses a unique template match when the incoming row has an external ID", () => {
+    const current = [
+      section("message", "Message", [element("template-sermon", "Sermon", {
+        sourceTemplateElementId: "original-template-sermon",
+        sourceTemplateElementType: "free",
+        notes: plainTextToRichText("Keep this note"),
+      })]),
+      section("worship", "Worship", [element("worship-song", "Song", { sourcePlanningManaged: true })]),
+    ];
+    const incoming = [
+      section("new-message", "Message", []),
+      section("new-worship", "Worship", [element("source-song", "Song", { sourcePlanningManaged: true })]),
+      section("response", "Response & Celebration", [element("external-sermon", "Sermon", {
+        sourceOccurrenceId: "pco-sermon",
+        startTime: "10:30",
+      })]),
+    ];
+
+    const refreshed = refreshServicePlanFromImport(current, incoming, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    const moved = refreshed.find(({ name }) => name === "Response & Celebration")?.elements[0];
+    expect(moved).toMatchObject({
+      id: "template-sermon",
+      sourceTemplateElementId: "original-template-sermon",
+      sourceOccurrenceId: "pco-sermon",
+      startTime: "10:30",
+    });
+    expect(richTextToPlainText(moved?.notes)).toBe("Keep this note");
+    expect(refreshed.flatMap(({ elements }) => elements).filter(({ id }) => id === "template-sermon")).toHaveLength(1);
+  });
+
+  it("does not pair one imported row to two same-title current rows", () => {
+    const current = [section("section", "Worship", [
+      element("first-sermon", "Sermon", { sourceOccurrenceId: "pco-first", sourcePlanningManaged: true }),
+      element("second-sermon", "Sermon", { sourcePlanningManaged: true, notes: plainTextToRichText("Second local note") }),
+    ])];
+    const incoming = [section("incoming", "Worship", [
+      element("first-source-row", "Sermon", { sourceOccurrenceId: "pco-first", sourcePlanningManaged: true }),
+      element("second-source-row", "Sermon", { sourcePlanningManaged: true }),
+    ])];
+
+    const refreshed = refreshServicePlanFromImport(current, incoming, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    expect(refreshed[0].elements.map(({ id }) => id)).toEqual(["first-sermon", "second-sermon"]);
+    expect(refreshed[0].elements[1].sourceOccurrenceId).toBeUndefined();
+    expect(richTextToPlainText(refreshed[0].elements[1].notes)).toBe("Second local note");
+  });
+
+  it("protects a same-section item whose source identity is duplicated", () => {
+    const current = [section("section", "Worship", [element("existing", "Prayer", {
+      sourceOccurrenceId: "duplicate-id",
+      sourcePlanningManaged: true,
+      notes: plainTextToRichText("Keep this local note"),
+    })])];
+    const incoming = [section("incoming", "Worship", [
+      element("incoming-one", "Prayer", { sourceOccurrenceId: "duplicate-id", sourcePlanningManaged: true }),
+      element("incoming-two", "Prayer", { sourceOccurrenceId: "duplicate-id", sourcePlanningManaged: true }),
+    ])];
+
+    const refreshed = refreshServicePlanFromImport(current, incoming, {
+      ...DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+      removeMissing: true,
+    });
+    expect(refreshed).toHaveLength(1);
+    expect(refreshed[0].elements).toEqual(current[0].elements);
+  });
+
+  it("places a moved item in a new destination section at its source-relative section position", () => {
+    const current = [
+      section("message", "Message", [element("moving-sermon", "Sermon", {
+        sourceOccurrenceId: "pco-sermon",
+        sourcePlanningManaged: true,
+      })]),
+      section("worship", "Worship", [element("worship-song", "Song", { sourcePlanningManaged: true })]),
+      section("closing", "Closing", [element("closing-song", "Closing Song", { sourcePlanningManaged: true })]),
+    ];
+    const incoming = [
+      section("new-message", "Message", []),
+      section("new-worship", "Worship", [element("source-song", "Song", { sourcePlanningManaged: true })]),
+      section("new-response", "Response & Celebration", [element("source-sermon", "Sermon", {
+        sourceOccurrenceId: "pco-sermon",
+        sourcePlanningManaged: true,
+      })]),
+      section("new-closing", "Closing", [element("source-closing-song", "Closing Song", { sourcePlanningManaged: true })]),
+    ];
+
+    const refreshed = refreshServicePlanFromImport(current, incoming, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    expect(refreshed.map(({ name }) => name)).toEqual([
+      "Message", "Worship", "Response & Celebration", "Closing",
+    ]);
+    expect(refreshed.find(({ name }) => name === "Response & Celebration")?.elements.map(({ id }) => id))
+      .toEqual(["moving-sermon"]);
+  });
 });
 
 describe("remaining Service Planning import reconciliation defects", () => {

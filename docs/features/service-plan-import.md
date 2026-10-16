@@ -16,7 +16,8 @@ An operator imports or refreshes a plan, reviews the proposed item changes, sele
 
 ## Expected behavior
 
-- A uniquely identified external item can match an existing item across sections. A template-origin item without an external identity can match only when its normalized title and compatible template item type identify one item on each side.
+- A uniquely identified external item can match an existing item across sections. If no current item has that external identity, a template-origin item can match when normalized title and compatible type identify one item on each side, even when the incoming row has an external identity.
+- Legacy unmarked items can match across sections only after the operator explicitly enables unique title/type matching for that import. Each resulting move remains separately reviewable.
 - An ambiguous title or duplicate external identity does not claim an existing item. Manually created items are not claimed through title-only matching.
 - A matched item retains its WorshipSync item ID and operator-managed information. External fields continue to follow the existing import field ownership options.
 - A relocation appears as a selectable **Moved** change that names the prior and destination sections. Operators can select the move separately from updates to the item's fields.
@@ -36,7 +37,7 @@ An operator imports or refreshes a plan, reviews the proposed item changes, sele
 | Template-origin item moves to another section | Keep its ID and local information; show one selectable move; honor imported relative placement | `servicePlanImportSync.test.ts`, `servicePlanImportSummary.test.ts`, `ServicePlanImportReviewWindow.test.tsx` | Confirmed by current request |
 | Unique durable source identity moves | Match across sections before local title/order reconciliation | Existing durable-ID relocation test and current request | Confirmed by current request |
 | Duplicate or missing identity and duplicate title | Match only with safe, unique template provenance; otherwise retain existing items without silent relocation or deletion | Duplicate-ID and duplicate-title regression tests | Confirmed by current request |
-| Template plan created before item provenance was stored | Leave unmarked items untouched; do not infer template origin from a title alone | Earlier template clones stored no template-item provenance; current clone path now stores it | Confirmed by owner reply to current request, 2026-10-16 |
+| Template plan created before item provenance was stored | Leave unmarked items untouched unless the operator explicitly enables unique title/type matching for this import | Earlier template clones stored no template-item provenance; current clone path now stores it | Confirmed by owner reply to current request, 2026-10-16; explicit opt-in added |
 | Import field update alongside a move | Apply the move and selected imported fields independently | `servicePlanImportSync.test.ts` and selected-apply summary test | Confirmed by current request |
 | Repeated import | Preserve identity and avoid duplicate items | Reconciliation idempotence tests | Confirmed by current request |
 | Broader import, save/sync, and publication behavior | Existing behavior pending a complete workflow contract | Feature registry inventory | Open; outside this contract's confirmed scope |
@@ -55,6 +56,13 @@ An operator imports or refreshes a plan, reviews the proposed item changes, sele
 - **Why:** Avoid claiming or moving arbitrary manually created items.
 - **Material alternative rejected:** Automatically relocate a unique title/type match without evidence that it came from a template.
 - **Approval source/date:** Owner reply to current request, 2026-10-16.
+- **Affected workflow/contract:** Service-plan import and refresh.
+
+- **Question/problem:** Some legacy template clones have no stored template-item marker, but their source row may have moved.
+- **Approved behavior:** Offer a default-off unique title/type matching option for legacy, unmarked plans. Matches appear as individual selectable moves in the import review.
+- **Why:** Operators can confirm a likely template match without silently claiming a manually created item.
+- **Material alternative rejected:** Silently infer template ownership from title/type alone.
+- **Approval source/date:** Current request, 2026-10-16.
 - **Affected workflow/contract:** Service-plan import and refresh.
 
 ## Implementation references

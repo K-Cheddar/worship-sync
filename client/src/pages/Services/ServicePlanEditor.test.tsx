@@ -2026,6 +2026,41 @@ Opening Song to begin the worship experience.
     expect(body.sections?.[0]?.elements?.[0]?.title.blocks[0].spans[0].text).toBe("Welcome");
   });
 
+  it("offers default-off legacy title/type matching for an untracked imported plan", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        sourceImport: {
+          source: "servicePlanning",
+          sourceUrl: "https://services.planningcenteronline.com/plans/123",
+          loadedAt: "2026-07-20T12:00:00.000Z",
+          planLabel: "Sunday, Jul 26",
+        },
+        sections: [{
+          id: "legacy-section",
+          name: "Message",
+          elements: [{ id: "legacy-sermon", type: "free", title: plainTextToRichText("Sermon") }],
+        }],
+      },
+    });
+
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+
+    const legacyMatch = screen.getByRole("checkbox", { name: /Match legacy items by unique title and type/i });
+    expect(legacyMatch).not.toBeChecked();
+    await user.click(legacyMatch);
+    expect(legacyMatch).toBeChecked();
+  });
+
   it("suggests roster members and past free-text names for Assigned to, not roster-linked", async () => {
     const janeDoe: TeamRosterMember = {
       memberId: "member-1",
