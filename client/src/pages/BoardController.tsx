@@ -36,7 +36,6 @@ import { BoardRenameModal } from "../boards/BoardRenameModal";
 import { BoardPostMessage } from "../boards/BoardPostMessage";
 import {
   buildBoardPublicUrl,
-  boardHasOnlyPreviousDayPosts,
   filterHighlightedBoardPosts,
   filterHighlightedRestreamMessages,
   filterVisibleBoardPosts,
@@ -47,6 +46,7 @@ import {
   getBoardLabel,
   normalizeBoardPresentationFontScale,
   getStaleBoardSessionScope,
+  isStaleBoardSession,
   type StaleBoardSessionScope,
   isCurrentBoardView,
   isWorshipSyncModeratorBoardPost,
@@ -651,13 +651,93 @@ export const BoardControllerContent = () => {
       };
       freshBoardResetProgressRef.current = progress;
     }
+    if (progress.serviceDayIdentity !== todaySessionIdentity) {
+      setFreshBoardConfirmOpen(false);
+      showToast("The local day changed while you were confirming. Review the current session before starting fresh.", "info");
+      return;
+    }
     setIsConfirmingFreshBoardSession(true);
     try {
+      const resetBoardIsStillEligible = async () => {
+        if (!db || !progress?.boardId) {
+          throw new Error("Could not verify the current discussion board. Try again.");
+        }
+        const latestAlias = (await db.get(getAliasDocId(aliasId))) as DBBoardAlias;
+        if (latestAlias.currentBoardId !== progress.boardId) {
+          setFreshBoardConfirmOpen(false);
+          void loadSelectedAlias();
+          showToast(
+            "The discussion board changed while you were confirming. The current board was left untouched.",
+            "success",
+          );
+          return false;
+        }
+        const [latestBoard, latestBoardPosts] = await Promise.all([
+          db.get(getBoardDocId(progress.boardId)) as Promise<DBBoard>,
+          getLocalBoardPosts(db, progress.boardId),
+        ]);
+        if (!isStaleBoardSession({
+          boardCreatedAt: latestBoard.createdAt,
+          boardPosts: latestBoardPosts,
+        })) {
+          setPosts(latestBoardPosts);
+          setFreshBoardConfirmOpen(false);
+          showToast(
+            "The discussion board is no longer stale or has activity today, so it was left unchanged.",
+            "success",
+          );
+          return false;
+        }
+        return true;
+      };
+      const currentRestreamActivityTimestamps = [
+        restreamSession.session?.lastEventAt,
+        restreamSession.session?.lastMessageAt,
+        ...restreamSession.messages
+          .filter((message) => message.sessionId === progress?.restreamSessionId)
+          .flatMap((message) => [message.postedAt, message.receivedAt]),
+      ].filter((timestamp): timestamp is number => typeof timestamp === "number");
+      const restreamIsStillEligible =
+        (restreamSession.session?.sessionId || "") === progress.restreamSessionId &&
+        getStaleBoardSessionScope({
+          boardPosts: [],
+          restreamStartedAt: restreamSession.session?.startedAt,
+          restreamActivityTimestamps: currentRestreamActivityTimestamps,
+        }) === "restream";
+      const expectedRestreamSession = restreamSession.session
+        ? {
+            sessionId: restreamSession.session.sessionId,
+            startedAt: restreamSession.session.startedAt,
+            lastEventAt: restreamSession.session.lastEventAt,
+            messageCount: restreamSession.session.messageCount,
+          }
+        : undefined;
+
+      // Validate all requested targets before changing either session.
+      if (
+        (progress.scope === "both" || progress.scope === "restream") &&
+        !progress.restreamCompleted &&
+        !restreamIsStillEligible
+      ) {
+        setFreshBoardConfirmOpen(false);
+        showToast(
+          "The Restream session changed or has activity today, so it was left unchanged.",
+          "success",
+        );
+        return;
+      }
+      if (
+        (progress.scope === "both" || progress.scope === "board") &&
+        !progress.boardCompleted &&
+        !(await resetBoardIsStillEligible())
+      ) {
+        return;
+      }
       if (
         (progress.scope === "both" || progress.scope === "restream") &&
         !progress.restreamCompleted
       ) {
-        const resetResult = await resetRestreamSession(churchId);
+        const resetResult = await resetRestreamSession(churchId, expectedRestreamSession);
         progress.restreamCompleted = true;
         progress.completedRestreamSessionId =
           resetResult?.session?.sessionId || "";
@@ -666,41 +746,8 @@ export const BoardControllerContent = () => {
         (progress.scope === "both" || progress.scope === "board") &&
         !progress.boardCompleted
       ) {
-        if (!db || !progress.boardId) {
-          throw new Error("Could not verify the current discussion board. Try again.");
-        }
-        const latestAlias = (await db.get(
-          getAliasDocId(aliasId),
-        )) as DBBoardAlias;
-        if (latestAlias.currentBoardId !== progress.boardId) {
-          setFreshBoardConfirmOpen(false);
-          void loadSelectedAlias();
-          showToast(
-            "The discussion board changed while you were confirming. The current board was left untouched.",
-            "success",
-          );
-          return;
-        }
-        const [latestBoard, latestBoardPosts] = await Promise.all([
-          db.get(getBoardDocId(progress.boardId)) as Promise<DBBoard>,
-          getLocalBoardPosts(db, progress.boardId),
-        ]);
-        if (
-          getStaleBoardSessionScope({
-            boardCreatedAt: latestBoard.createdAt,
-            boardPosts: latestBoardPosts,
-            restreamActivityTimestamps: [],
-          }) !== "board"
-        ) {
-          setPosts(latestBoardPosts);
-          setFreshBoardConfirmOpen(false);
-          showToast(
-            "The discussion board is no longer stale or has activity today, so it was left unchanged. Restream stays on its new session.",
-            "success",
-          );
-          return;
-        }
-        await hardResetBoardAlias(aliasId);
+        if (!(await resetBoardIsStillEligible())) return;
+        await hardResetBoardAlias(aliasId, progress.boardId);
         progress.boardCompleted = true;
       }
       if (progress.scope !== "board") await reloadRestreamSession();
@@ -740,7 +787,8 @@ export const BoardControllerContent = () => {
     restreamSession.isLoading,
     restreamSession.isRefreshing,
     restreamSession.error,
-    restreamSession.session?.sessionId,
+    restreamSession.messages,
+    restreamSession.session,
     reloadRestreamSession,
     loadSelectedAlias,
     showToast,
@@ -769,12 +817,10 @@ export const BoardControllerContent = () => {
     : "";
   const boardIsStale = Boolean(
     canEvaluateCurrentBoardSession &&
-      (boardHasOnlyPreviousDayPosts(posts) ||
-        getStaleBoardSessionScope({
-          boardCreatedAt: currentBoard?.createdAt,
-          boardPosts: posts,
-          restreamActivityTimestamps: [],
-        }) === "board"),
+      isStaleBoardSession({
+        boardCreatedAt: currentBoard?.createdAt,
+        boardPosts: posts,
+      }),
   );
   const restreamStatusIsSettled =
     !restreamSession.isLoading &&

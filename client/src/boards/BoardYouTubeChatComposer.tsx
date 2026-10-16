@@ -17,6 +17,8 @@ export type BoardYouTubeChatComposerProps = {
   dockMode?: boolean;
   dockOpen?: boolean;
   onDockClose?: () => void;
+  showToast?: (message: string, variant: "success" | "error") => void;
+  onSendingChange?: (isSending: boolean) => void;
 };
 
 export const BoardYouTubeChatComposer = ({
@@ -25,6 +27,8 @@ export const BoardYouTubeChatComposer = ({
   dockMode = false,
   dockOpen = false,
   onDockClose,
+  showToast,
+  onSendingChange,
 }: BoardYouTubeChatComposerProps) => {
   const [expanded, setExpanded] = useState(false);
   const [text, setText] = useState("");
@@ -34,6 +38,7 @@ export const BoardYouTubeChatComposer = ({
   const [errorMessage, setErrorMessage] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const successTimerRef = useRef<number | null>(null);
+  const sendInFlightRef = useRef(false);
 
   const isSending = sendStatus === "sending";
   const isSuccess = sendStatus === "success";
@@ -54,7 +59,11 @@ export const BoardYouTubeChatComposer = ({
   );
 
   const collapse = useCallback(() => {
-    if (isSending) return;
+    if (isSending) {
+      if (dockMode) onDockClose?.();
+      else setExpanded(false);
+      return;
+    }
     if (successTimerRef.current !== null) {
       window.clearTimeout(successTimerRef.current);
       successTimerRef.current = null;
@@ -68,7 +77,7 @@ export const BoardYouTubeChatComposer = ({
   const handlePost = useCallback(async () => {
     const trimmed = text.trim();
     const trimmedLiveVideoUrl = liveVideoUrl.trim();
-    if (!trimmed || !churchId || isSending || isSuccess) return;
+    if (!trimmed || !churchId || sendInFlightRef.current || isSending || isSuccess) return;
     if (trimmed.length > YOUTUBE_LIVE_CHAT_MAX_LENGTH) {
       setSendStatus("error");
       setErrorMessage(
@@ -77,6 +86,8 @@ export const BoardYouTubeChatComposer = ({
       return;
     }
 
+    sendInFlightRef.current = true;
+    onSendingChange?.(true);
     setSendStatus("sending");
     setErrorMessage("");
     try {
@@ -85,6 +96,7 @@ export const BoardYouTubeChatComposer = ({
         ...(trimmedLiveVideoUrl ? { videoUrl: trimmedLiveVideoUrl } : {}),
       });
       setText("");
+      showToast?.("Message sent to YouTube live chat.", "success");
       setSendStatus("success");
       if (successTimerRef.current !== null) {
         window.clearTimeout(successTimerRef.current);
@@ -92,18 +104,20 @@ export const BoardYouTubeChatComposer = ({
       successTimerRef.current = window.setTimeout(() => {
         setSendStatus("idle");
         successTimerRef.current = null;
-        if (dockMode) onDockClose?.();
-        else textareaRef.current?.focus();
+        if (!dockMode) textareaRef.current?.focus();
       }, SUCCESS_FLASH_MS);
     } catch (nextError) {
+      const message = nextError instanceof Error
+        ? nextError.message
+        : "Could not post to YouTube live chat.";
       setSendStatus("error");
-      setErrorMessage(
-        nextError instanceof Error
-          ? nextError.message
-          : "Could not post to YouTube live chat.",
-      );
+      setErrorMessage(message);
+      showToast?.(message, "error");
+    } finally {
+      sendInFlightRef.current = false;
+      onSendingChange?.(false);
     }
-  }, [churchId, isSending, isSuccess, liveVideoUrl, text, dockMode, onDockClose]);
+  }, [churchId, isSending, isSuccess, liveVideoUrl, text, dockMode, showToast, onSendingChange]);
 
   const isExpanded = dockMode ? dockOpen : expanded;
 
@@ -152,7 +166,6 @@ export const BoardYouTubeChatComposer = ({
             className="min-h-0!"
             aria-label="Close YouTube composer"
             onClick={collapse}
-            disabled={isSending}
           />
         </div>
       ) : null}

@@ -2188,6 +2188,25 @@ app.post("/api/churches/:churchId/restream/session/reset", async (req, res) => {
       return res.status(403).json({ error: "That church is not available." });
     }
 
+    const expectedSession = req.body?.expectedSession;
+    if (expectedSession?.sessionId) {
+      const latest = await restreamService.getStatusForChurch({
+        churchId: req.params.churchId,
+        database: req.appSession.database,
+      });
+      const currentSession = latest.session;
+      if (
+        currentSession.sessionId !== expectedSession.sessionId ||
+        currentSession.startedAt !== expectedSession.startedAt ||
+        currentSession.lastEventAt !== expectedSession.lastEventAt ||
+        currentSession.messageCount !== expectedSession.messageCount
+      ) {
+        return res.status(409).json({
+          error: "The Restream session changed or has new activity. Review it before starting fresh.",
+        });
+      }
+    }
+
     await restreamService.resetSession({
       churchId: req.params.churchId,
       database: req.appSession.database,
@@ -3030,6 +3049,17 @@ app.post("/api/boards/admin/aliases/:aliasId/hard-reset", async (req, res) => {
       return res.status(404).json({ error: "Discussion board not found." });
     }
     if (!requireBoardDatabaseAccess(req, res, aliasDoc.database)) return;
+    const expectedCurrentBoardId = String(
+      req.body?.expectedCurrentBoardId || "",
+    ).trim();
+    if (
+      expectedCurrentBoardId &&
+      aliasDoc.currentBoardId !== expectedCurrentBoardId
+    ) {
+      return res.status(409).json({
+        error: "The discussion board session changed. Review it before starting fresh.",
+      });
+    }
 
     const currentBoardDoc = await getBoardDoc(
       `board:${aliasDoc.currentBoardId}`,
@@ -3351,6 +3381,13 @@ app.post("/api/boards/:aliasId/posts", async (req, res) => {
     const aliasDoc = await getBoardDoc(getAliasDocId(aliasId));
     if (!aliasDoc) {
       return res.status(404).json({ error: "Discussion board not found." });
+    }
+
+    const expectedBoardId = String(req.body?.expectedBoardId || "").trim();
+    if (expectedBoardId && aliasDoc.currentBoardId !== expectedBoardId) {
+      return res.status(409).json({
+        error: "The discussion board session changed. Refresh the board and try again.",
+      });
     }
 
     const validation = validateBoardPostInput(req.body || {});

@@ -37,11 +37,19 @@ export const BoardPostingDock = ({
   onFeedLayoutComplete,
 }: BoardPostingDockProps) => {
   const [activeDestination, setActiveDestination] = useState<Destination | null>(null);
+  const [youtubeIsSending, setYoutubeIsSending] = useState(false);
   const activeDestinationRef = useRef<Destination | null>(null);
+  const contextIdentity = `${churchId}:${aliasId}:${boardSessionId}`;
+  const contextIdentityRef = useRef(contextIdentity);
+  contextIdentityRef.current = contextIdentity;
   const preserveFeedPinRef = useRef(false);
   const boardButtonRef = useRef<HTMLButtonElement | null>(null);
   const youtubeButtonRef = useRef<HTMLButtonElement | null>(null);
   activeDestinationRef.current = activeDestination;
+
+  useEffect(() => {
+    setYoutubeIsSending(false);
+  }, [contextIdentity]);
 
   const selectDestination = useCallback((destination: Destination) => {
     preserveFeedPinRef.current = preserveFeedPinRef.current || isFeedPinned;
@@ -61,6 +69,10 @@ export const BoardPostingDock = ({
       (destination === "board" ? boardButtonRef : youtubeButtonRef).current?.focus();
     }
   }, [isFeedPinned]);
+
+  const closeForContext = useCallback((destination: Destination, owner: string) => {
+    if (contextIdentityRef.current === owner) closeDestination(destination);
+  }, [closeDestination]);
 
   const handleComposerTransitionEnd = useCallback(
     (event: React.TransitionEvent<HTMLDivElement>) => {
@@ -109,11 +121,12 @@ export const BoardPostingDock = ({
       >
         <div className={cn("min-h-0 overflow-hidden", boardOpen && "pt-2")}>
           <BoardDiscussionPostComposer
-            key={`${aliasId}:${boardSessionId}`}
+            key={contextIdentity}
             dockMode
             dockOpen={boardOpen}
-            onDockClose={() => closeDestination("board")}
+            onDockClose={() => closeForContext("board", contextIdentity)}
             aliasId={aliasId}
+            boardSessionId={boardSessionId}
             showToast={showToast}
             userId={userId}
             pullFromRemote={pullFromRemote}
@@ -134,11 +147,18 @@ export const BoardPostingDock = ({
       >
         <div className={cn("min-h-0 overflow-hidden", youtubeOpen && "pt-2")}>
           <BoardYouTubeChatComposer
+            key={contextIdentity}
             dockMode
             dockOpen={youtubeOpen}
-            onDockClose={() => closeDestination("youtube")}
+            onDockClose={() => closeForContext("youtube", contextIdentity)}
             churchId={churchId}
             accountLabel={accountLabel}
+            showToast={showToast}
+            onSendingChange={(isSending) => {
+              if (contextIdentityRef.current === contextIdentity) {
+                setYoutubeIsSending(isSending);
+              }
+            }}
           />
         </div>
       </div>
@@ -186,6 +206,7 @@ export const BoardPostingDock = ({
             onClick={() => selectDestination("youtube")}
           >
             <span>YouTube chat</span>
+            {youtubeIsSending ? <span className="text-[10px] text-cyan-200" role="status">Sending…</span> : null}
             {youtubeOpen ? <X className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : null}
           </Button>
         ) : null}

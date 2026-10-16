@@ -14,6 +14,7 @@ const MODERATOR_DISCUSSION_BOARD_AUTHOR = "Moderator";
 
 export type BoardDiscussionPostComposerProps = {
   aliasId: string;
+  boardSessionId?: string;
   showToast: (message: string, variant: "success" | "error") => void;
   userId: string;
   pullFromRemote?: () => void | Promise<void>;
@@ -24,6 +25,7 @@ export type BoardDiscussionPostComposerProps = {
 
 export const BoardDiscussionPostComposer = ({
   aliasId,
+  boardSessionId = "",
   showToast,
   userId,
   pullFromRemote,
@@ -36,6 +38,7 @@ export const BoardDiscussionPostComposer = ({
   const [busy, setBusy] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const sendInFlightRef = useRef(false);
   const authorId = useMemo(
     () => buildWorshipSyncModeratorBoardPostAuthorId(userId),
     [userId],
@@ -53,7 +56,7 @@ export const BoardDiscussionPostComposer = ({
 
   const handlePost = useCallback(async () => {
     const trimmed = text.trim();
-    if (!trimmed || !aliasId || busy) return;
+    if (!trimmed || !aliasId || sendInFlightRef.current || busy) return;
     if (trimmed.length > BOARD_POST_MAX_LENGTH) {
       showToast(
         `Message is too long (max ${BOARD_POST_MAX_LENGTH} characters).`,
@@ -61,6 +64,7 @@ export const BoardDiscussionPostComposer = ({
       );
       return;
     }
+    sendInFlightRef.current = true;
     setBusy(true);
     setErrorMessage("");
     try {
@@ -68,20 +72,26 @@ export const BoardDiscussionPostComposer = ({
         author: MODERATOR_DISCUSSION_BOARD_AUTHOR,
         authorId,
         text: trimmed,
+        ...(boardSessionId ? { expectedBoardId: boardSessionId } : {}),
       });
       setText("");
       if (dockMode) onDockClose?.();
       else setExpanded(false);
-      await Promise.resolve(pullFromRemote?.());
       showToast("Message posted to the discussion board.", "success");
+      try {
+        await Promise.resolve(pullFromRemote?.());
+      } catch {
+        showToast("Message posted, but the feed could not refresh.", "error");
+      }
     } catch (nextError) {
       const message = nextError instanceof Error ? nextError.message : "Could not post to the discussion board.";
       setErrorMessage(message);
       showToast(message, "error");
     } finally {
+      sendInFlightRef.current = false;
       setBusy(false);
     }
-  }, [aliasId, authorId, busy, text, showToast, pullFromRemote, dockMode, onDockClose]);
+  }, [aliasId, authorId, boardSessionId, busy, text, showToast, pullFromRemote, dockMode, onDockClose]);
 
   const isExpanded = dockMode ? dockOpen : expanded;
 

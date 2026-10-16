@@ -366,9 +366,9 @@ export const getBoardLabel = (board: DBBoard | undefined): string => {
 
 /**
  * True when `timestamp` falls on an earlier local calendar day than `now`.
- * Used to auto-roll the discussion board and Restream sessions when the
- * operator opens the controller on a new day. Invalid or future timestamps
- * return false so we never reset a session we cannot confidently age.
+ * Used to evaluate operator-confirmed stale-session suggestions. Invalid or
+ * future timestamps return false so we do not reset a session we cannot
+ * confidently age.
  */
 export const isTimestampFromPreviousLocalDay = (
   timestamp: number | undefined,
@@ -400,6 +400,21 @@ export const boardHasOnlyPreviousDayPosts = (
   posts.length > 0 &&
   posts.every((post) => isTimestampFromPreviousLocalDay(post.timestamp, now));
 
+/** A populated board is stale when every post is from a previous local day;
+ * an empty board is stale only when its own creation date is from a prior day. */
+export const isStaleBoardSession = ({
+  boardCreatedAt,
+  boardPosts,
+  now = Date.now(),
+}: {
+  boardCreatedAt?: number;
+  boardPosts: Pick<DBBoardPost, "timestamp">[];
+  now?: number;
+}): boolean =>
+  boardPosts.length > 0
+    ? boardHasOnlyPreviousDayPosts(boardPosts, now)
+    : isTimestampFromPreviousLocalDay(boardCreatedAt, now);
+
 export type StaleBoardSessionScope = "board" | "restream" | "both";
 
 export const getStaleBoardSessionScope = ({
@@ -415,11 +430,7 @@ export const getStaleBoardSessionScope = ({
   restreamActivityTimestamps: number[];
   now?: number;
 }): StaleBoardSessionScope | null => {
-  const boardStale =
-    isTimestampFromPreviousLocalDay(boardCreatedAt, now) &&
-    !boardPosts.some(
-      (post) => !isTimestampFromPreviousLocalDay(post.timestamp, now),
-    );
+  const boardStale = isStaleBoardSession({ boardCreatedAt, boardPosts, now });
   const restreamStale =
     isTimestampFromPreviousLocalDay(restreamStartedAt, now) &&
     !restreamActivityTimestamps.some(

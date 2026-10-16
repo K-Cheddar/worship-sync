@@ -108,8 +108,6 @@ const server = await createServer({
           return "\0board-global-context";
         if (path.endsWith("/context/controllerInfo") || path.endsWith("/context/controllerInfo.tsx"))
           return "\0board-controller-context";
-        if (path.endsWith("/context/toastContext") || path.endsWith("/context/toastContext.tsx"))
-          return "\0board-toast-context";
         if (path.endsWith("/boards/BoardSyncContext") || path.endsWith("/boards/BoardSyncContext.tsx"))
           return "\0board-sync-context";
         if (path.endsWith("/boards/useRestreamSession") || path.endsWith("/boards/useRestreamSession.ts"))
@@ -135,8 +133,6 @@ const server = await createServer({
           return `import {createContext} from 'react'; export const GlobalInfoContext=createContext(null); export const globalFireDbInfo={}; export const globalHostId='fixture-host';`;
         if (id === "\0board-controller-context")
           return `import {createContext} from 'react'; export const ControllerInfoContext=createContext(null); export const globalDb=undefined; export const globalBroadcastRef={postMessage:()=>{}};`;
-        if (id === "\0board-toast-context")
-          return `import React from 'react'; export const useToast=()=>({showToast:()=>'',removeToast:()=>{}}); export const ToastProvider=({children})=>children;`;
         if (id === "\0board-sync-context")
           return `export const useBoardSync=()=>({db:window.__boardDb,status:'connected',pullFromRemote:()=>{},subscribeToChanges:(listener)=>{window.__boardListeners??=new Set();window.__boardListeners.add(listener);return()=>window.__boardListeners.delete(listener)}}); export default ({children})=>children;`;
         if (id === "\0board-restream-hook")
@@ -182,6 +178,27 @@ try {
   });
   page.on("requestfailed", (request) => console.error("REQUEST FAILED", request.url(), request.failure()?.errorText));
   page.on("pageerror", (error) => console.error("BROWSER ERROR", error.message));
+  let firstYoutubeRequestRelease;
+  let secondYoutubeRequestRelease;
+  let youtubeSendCount = 0;
+  await page.route("**/api/churches/church-1/youtube/live-chat/messages", async (route) => {
+    youtubeSendCount += 1;
+    if (youtubeSendCount === 1) {
+      await new Promise((resolve) => { firstYoutubeRequestRelease = resolve; });
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true }) });
+    } else if (youtubeSendCount === 2) {
+      await new Promise((resolve) => { secondYoutubeRequestRelease = resolve; });
+      await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "YouTube is temporarily unavailable." }) });
+    } else {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true }) });
+    }
+  });
+  await page.route("**/api/boards/sunday/posts", async (route) => {
+    const body = route.request().postDataJSON();
+    assert.equal(body.expectedBoardId, "current", "board sends should stay bound to the selected board session");
+    assert.equal(body.text, "Board post stays on its destination");
+    await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ post: { success: true } }) });
+  });
   await page.addInitScript(
     (data) => {
       window.__boardAlias = data.alias;
@@ -273,20 +290,21 @@ try {
       assert.equal(await page.getByText("Discussion board posts and Restream chat appear in time order.").isVisible().catch(() => false), false);
       const actionRow = page.locator("[data-posting-dock-actions]");
       const rowBeforeComposer = await actionRow.boundingBox();
-      const pinnedBeforeComposer = await feed.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight <= 48);
-      assert(pinnedBeforeComposer, `${width}px initial feed should be following the latest activity`);
+      const feedPinMetrics = () => feed.evaluate((el) => ({ distance: el.scrollHeight - el.scrollTop - el.clientHeight, scrollHeight: el.scrollHeight, scrollTop: el.scrollTop, clientHeight: el.clientHeight }));
+      const pinnedBeforeComposer = (await feedPinMetrics()).distance <= 48;
+      assert(pinnedBeforeComposer, `${width}px initial feed should be following the latest activity: ${JSON.stringify(await feedPinMetrics())}`);
       await page.getByRole("button", { name: "Board post" }).click();
-      await page.waitForTimeout(220);
+      await page.waitForTimeout(300);
       const boardComposer = page.getByRole("textbox", { name: /Add to discussion board/i });
       const boardComposerBox = await boardComposer.boundingBox();
       const rowDuringComposer = await actionRow.boundingBox();
       assert(boardComposerBox && rowDuringComposer && boardComposerBox.y < rowDuringComposer.y, `${width}px composer should expand above the action row`);
       assert(boardComposerBox && boardComposerBox.width >= 120, `${width}px message field should retain useful width: ${JSON.stringify(boardComposerBox)}`);
       assert(rowBeforeComposer && rowDuringComposer && Math.abs(rowDuringComposer.y - rowBeforeComposer.y) <= 1, `${width}px opening composer moved the action row`);
-      const pinnedDuringComposer = await feed.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight <= 48);
-      assert(pinnedDuringComposer, `${width}px opening the composer should preserve follow-latest`);
+      const pinnedDuringComposer = (await feedPinMetrics()).distance <= 48;
+      assert(pinnedDuringComposer, `${width}px opening the composer should preserve follow-latest: ${JSON.stringify(await feedPinMetrics())}`);
       await page.getByRole("button", { name: "Board post" }).click();
-      await page.waitForTimeout(220);
+      await page.waitForTimeout(300);
       const rowAfterComposer = await actionRow.boundingBox();
       assert(rowBeforeComposer && rowAfterComposer && Math.abs(rowAfterComposer.y - rowBeforeComposer.y) <= 1, `${width}px closing composer moved the action row`);
       const pinnedAfterComposer = await feed.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight <= 48);
@@ -387,6 +405,36 @@ try {
           await page.getByRole("textbox", { name: "YouTube live chat message" }).inputValue(),
           "YouTube draft stays here",
         );
+        await page.getByRole("textbox", { name: "YouTube live chat message" }).fill("Success after switching");
+        await page.getByRole("button", { name: "Send to YouTube" }).click();
+        const pendingYoutubeIndicator = page.locator("[data-posting-dock-actions]").getByRole("status");
+        await pendingYoutubeIndicator.waitFor();
+        await page.getByRole("button", { name: "Board post" }).click();
+        assert(await page.getByRole("textbox", { name: /Add to discussion board/i }).isVisible(), "switching during YouTube send should keep Board composer available");
+        for (let attempt = 0; attempt < 100 && !firstYoutubeRequestRelease; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+        assert(firstYoutubeRequestRelease, "YouTube send request did not reach the held browser response");
+        firstYoutubeRequestRelease();
+        await page.getByText("Message sent to YouTube live chat.").waitFor();
+        assert(await page.getByRole("textbox", { name: /Add to discussion board/i }).isVisible(), "YouTube completion should not close the selected Board composer");
+        await page.getByRole("textbox", { name: /Add to discussion board/i }).fill("Board post stays on its destination");
+        await page.getByRole("button", { name: "Send to discussion board" }).click();
+        await page.getByText("Message posted to the discussion board.").waitFor();
+
+        await page.getByRole("button", { name: "YouTube chat" }).click();
+        const failedDraft = page.getByRole("textbox", { name: "YouTube live chat message" });
+        await failedDraft.fill("Retry after switching away");
+        await page.getByRole("button", { name: "Send to YouTube" }).click();
+        await page.locator("[data-posting-dock-actions]").getByRole("status").waitFor();
+        await page.getByRole("button", { name: "Board post" }).click();
+        for (let attempt = 0; attempt < 100 && !secondYoutubeRequestRelease; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+        assert(secondYoutubeRequestRelease, "second YouTube send request did not reach the held browser response");
+        secondYoutubeRequestRelease();
+        await page.getByText("YouTube is temporarily unavailable.").first().waitFor();
+        await page.getByRole("button", { name: "YouTube chat" }).click();
+        assert.equal(await page.getByRole("textbox", { name: "YouTube live chat message" }).inputValue(), "Retry after switching away", "failed message should remain available for retry");
+        await page.getByRole("button", { name: "Send to YouTube" }).click();
+        await page.getByText("Message sent to YouTube live chat.").waitFor();
+        await page.getByRole("button", { name: "Send to YouTube" }).waitFor();
         await page.setViewportSize({ width: 390, height: 420 });
         await page.waitForFunction(() => {
           const height = Number.parseFloat(document.querySelector("#controller-main")?.style.height || "0");

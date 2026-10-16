@@ -175,7 +175,7 @@ export const getBoardDisplayItems = (aliasId: string) =>
 
 export const createBoardPost = (
   aliasId: string,
-  payload: { author: string; authorId: string; text: string },
+  payload: { author: string; authorId: string; text: string; expectedBoardId?: string },
 ) =>
   fetchJson<{ post: DBBoardPost }>(
     `api/boards/${encodeURIComponent(aliasId)}/posts`,
@@ -227,10 +227,13 @@ export const softResetBoardAlias = (aliasId: string) =>
     { method: "POST" },
   );
 
-export const hardResetBoardAlias = (aliasId: string) =>
+export const hardResetBoardAlias = (aliasId: string, expectedCurrentBoardId?: string) =>
   fetchJson<BoardAliasResponse>(
     `api/boards/admin/aliases/${encodeURIComponent(aliasId)}/hard-reset`,
-    { method: "POST" },
+    {
+      method: "POST",
+      ...(expectedCurrentBoardId ? { body: { expectedCurrentBoardId } } : {}),
+    },
   );
 
 export const updateBoardAliasTitle = (aliasId: string, title: string) =>
@@ -364,12 +367,20 @@ export const updateRestreamMessageHighlighted = (
   value?: boolean,
 ) => updateRestreamMessageFlag(churchId, messageId, "highlighted", value);
 
-export const resetRestreamSession = (churchId: string) =>
+export const resetRestreamSession = (
+  churchId: string,
+  expectedSession?: {
+    sessionId: string;
+    startedAt?: number;
+    lastEventAt?: number;
+    messageCount: number;
+  },
+) =>
   fetchJson<RestreamSessionStatusResponse>(
     `api/churches/${encodeURIComponent(churchId)}/restream/session/reset`,
     {
       method: "POST",
-      body: {},
+      body: expectedSession ? { expectedSession } : {},
     },
   );
 

@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { BoardControllerContent } from "./BoardController";
@@ -936,8 +936,98 @@ describe("BoardControllerContent", () => {
     });
     expect(within(dialog).queryByText(/Restream chat starts a new session/i)).not.toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: /^Continue$/i }));
-    await waitFor(() => expect(mockHardResetBoardAlias).toHaveBeenCalledWith("sunday"));
+    await waitFor(() => expect(mockHardResetBoardAlias).toHaveBeenCalledWith("sunday", "board-current"));
     expect(mockResetRestreamSession).not.toHaveBeenCalled();
+  });
+
+  it("confirms reset eligibility for a board created today with only earlier-day posts", async () => {
+    const user = userEvent.setup();
+    mockBoardDb.__setBoardDoc("board-current", {
+      _id: "board:board-current", _rev: "1-b", type: "board", docType: "board",
+      id: "board-current", aliasId: "sunday", database: "test", createdAt: Date.now(), archived: false,
+    });
+    mockBoardDb.__setPosts("board-current", [{
+      _id: "post:board-current:old", _rev: "1-old", type: "post", docType: "board-post",
+      id: "old", aliasId: "sunday", boardId: "board-current", database: "test",
+      author: "Alex", text: "Earlier-day post", timestamp: Date.now() - 3 * 86400000,
+      hidden: false, highlighted: false,
+    }]);
+
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /Start fresh for today/i }));
+    const dialog = await screen.findByRole("dialog", { name: /Start a fresh discussion board/i });
+    await user.click(within(dialog).getByRole("button", { name: /^Continue$/i }));
+
+    await waitFor(() => expect(mockHardResetBoardAlias).toHaveBeenCalledWith("sunday", "board-current"));
+    expect(mockResetRestreamSession).not.toHaveBeenCalled();
+  });
+
+  it("validates both targets before a combined reset and preserves new board activity", async () => {
+    const user = userEvent.setup();
+    const yesterday = Date.now() - 3 * 86400000;
+    mockBoardDb.__setBoardDoc("board-current", {
+      _id: "board:board-current", _rev: "1-b", type: "board", docType: "board",
+      id: "board-current", aliasId: "sunday", database: "test", createdAt: yesterday, archived: false,
+    });
+    mockBoardDb.__setPosts("board-current", []);
+    mockUseRestreamSession.mockReturnValue({
+      session: {
+        churchId: "church-1", database: "test", sessionId: "restream-session-old",
+        startedAt: yesterday, lastMessageAt: yesterday, messageCount: 1, enabled: true,
+        connected: false, connectionState: "disconnected", accountLabel: "Main channel",
+        lastError: "", platformSummary: [],
+      },
+      messages: [], isLoading: false, error: "", bestEffortOnly: true, oauthConfigured: true,
+      isOffline: false, streamState: "disconnected", streamFailure: null, feedState: "empty",
+      reload: jest.fn(() => Promise.resolve()),
+    });
+
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /Start fresh for today/i }));
+    const dialog = await screen.findByRole("dialog", { name: /Start fresh for today/i });
+    mockBoardDb.__setPosts("board-current", [{
+      _id: "post:board-current:today", _rev: "1-today", type: "post", docType: "board-post",
+      id: "today", aliasId: "sunday", boardId: "board-current", database: "test",
+      author: "Alex", text: "New activity", timestamp: Date.now(), hidden: false, highlighted: false,
+    }]);
+    await user.click(within(dialog).getByRole("button", { name: /^Start fresh$/i }));
+
+    expect(await screen.findByText("The discussion board is no longer stale or has activity today, so it was left unchanged.")).toBeInTheDocument();
+    expect(mockResetRestreamSession).not.toHaveBeenCalled();
+    expect(mockHardResetBoardAlias).not.toHaveBeenCalled();
+  });
+
+  it("retries a combined reset without repeating the Restream reset after a board failure", async () => {
+    const user = userEvent.setup();
+    const yesterday = Date.now() - 3 * 86400000;
+    mockBoardDb.__setBoardDoc("board-current", {
+      _id: "board:board-current", _rev: "1-b", type: "board", docType: "board",
+      id: "board-current", aliasId: "sunday", database: "test", createdAt: yesterday, archived: false,
+    });
+    mockBoardDb.__setPosts("board-current", []);
+    mockUseRestreamSession.mockReturnValue({
+      session: {
+        churchId: "church-1", database: "test", sessionId: "restream-session-old",
+        startedAt: yesterday, lastMessageAt: yesterday, messageCount: 1, enabled: true,
+        connected: false, connectionState: "disconnected", accountLabel: "Main channel",
+        lastError: "", platformSummary: [],
+      },
+      messages: [], isLoading: false, error: "", bestEffortOnly: true, oauthConfigured: true,
+      isOffline: false, streamState: "disconnected", streamFailure: null, feedState: "empty",
+      reload: jest.fn(() => Promise.resolve()),
+    });
+    mockHardResetBoardAlias.mockRejectedValueOnce(new Error("Board archive failed"));
+
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /Start fresh for today/i }));
+    const dialog = await screen.findByRole("dialog", { name: /Start fresh for today/i });
+    const confirm = within(dialog).getByRole("button", { name: /^Start fresh$/i });
+    await user.click(confirm);
+    expect(await screen.findByText("Board archive failed")).toBeInTheDocument();
+    await user.click(confirm);
+
+    await waitFor(() => expect(mockHardResetBoardAlias).toHaveBeenCalledTimes(2));
+    expect(mockResetRestreamSession).toHaveBeenCalledTimes(1);
   });
 
   it("offers a board-only reset when Restream is authoritatively absent", async () => {
@@ -995,7 +1085,7 @@ describe("BoardControllerContent", () => {
     });
     await user.click(within(dialog).getByRole("button", { name: /^Continue$/i }));
 
-    await waitFor(() => expect(mockHardResetBoardAlias).toHaveBeenCalledWith("sunday"));
+    await waitFor(() => expect(mockHardResetBoardAlias).toHaveBeenCalledWith("sunday", "board-current"));
     expect(mockResetRestreamSession).not.toHaveBeenCalled();
   });
 
@@ -1675,8 +1765,13 @@ describe("BoardControllerContent", () => {
     expect(
       screen.queryByRole("dialog", { name: /Start fresh for today/i }),
     ).not.toBeInTheDocument();
-    expect(mockResetRestreamSession).toHaveBeenCalledWith("church-1");
-    expect(mockHardResetBoardAlias).toHaveBeenCalledWith("sunday");
+    expect(mockResetRestreamSession).toHaveBeenCalledWith("church-1", {
+      sessionId: "restream-session-old",
+      startedAt: oldSessionAt,
+      lastEventAt: undefined,
+      messageCount: 2,
+    });
+    expect(mockHardResetBoardAlias).toHaveBeenCalledWith("sunday", "board-current");
   });
 
   it("closes a combined reset confirmation when Restream becomes active", async () => {
@@ -2068,6 +2163,76 @@ describe("BoardControllerContent", () => {
 
     expect(screen.getByRole("textbox", { name: /Add to discussion board/i })).toBeVisible();
     expect(screen.queryByRole("textbox", { name: /YouTube live chat message/i })).not.toBeInTheDocument();
+    expect(await screen.findByText("Message sent to YouTube live chat.")).toBeInTheDocument();
+  });
+
+  it("keeps and reports a YouTube failure after switching destinations", async () => {
+    const user = userEvent.setup();
+    let rejectSend: ((reason: Error) => void) | undefined;
+    mockedBoardApi.sendYouTubeLiveChatMessage.mockImplementation(
+      () => new Promise((_resolve, reject) => { rejectSend = reject; }),
+    );
+    renderPage({ globalOverrides: { churchIntegrations: { youtube: { connected: true, accountLabel: "Main channel" } } } });
+    await user.click(await screen.findByRole("button", { name: "YouTube chat" }));
+    const input = await screen.findByRole("textbox", { name: /YouTube live chat message/i });
+    await user.type(input, "Retry this message");
+    await user.click(screen.getByRole("button", { name: "Send to YouTube" }));
+    await user.click(screen.getByRole("button", { name: "Board post" }));
+    await act(async () => rejectSend?.(new Error("YouTube is temporarily unavailable.")));
+
+    expect((await screen.findAllByText("YouTube is temporarily unavailable.")).length).toBeGreaterThanOrEqual(1);
+    await user.click(screen.getByRole("button", { name: "YouTube chat" }));
+    expect(screen.getByRole("textbox", { name: /YouTube live chat message/i })).toHaveValue("Retry this message");
+    expect(screen.getByRole("alert", { hidden: true })).toHaveTextContent("YouTube is temporarily unavailable.");
+    mockedBoardApi.sendYouTubeLiveChatMessage.mockResolvedValueOnce({ success: true });
+    await user.click(screen.getByRole("button", { name: "Send to YouTube" }));
+    expect(await screen.findByText("Message sent to YouTube live chat.")).toBeInTheDocument();
+    expect(mockedBoardApi.sendYouTubeLiveChatMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it("allows closing and reopening the dock while a YouTube send is pending", async () => {
+    const user = userEvent.setup();
+    let resolveSend: ((value: unknown) => void) | undefined;
+    mockedBoardApi.sendYouTubeLiveChatMessage.mockImplementation(
+      () => new Promise((resolve) => { resolveSend = resolve; }),
+    );
+    renderPage({ globalOverrides: { churchIntegrations: { youtube: { connected: true, accountLabel: "Main channel" } } } });
+    const youtubeButton = await screen.findByRole("button", { name: "YouTube chat" });
+    await user.click(youtubeButton);
+    await user.type(await screen.findByRole("textbox", { name: /YouTube live chat message/i }), "Pending message");
+    await user.click(screen.getByRole("button", { name: "Send to YouTube" }));
+    await user.click(screen.getByRole("button", { name: /YouTube chat Sending/i }));
+    expect(screen.queryByRole("textbox", { name: /YouTube live chat message/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /YouTube chat Sending/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /YouTube chat Sending/i }));
+    expect(screen.getByRole("textbox", { name: /YouTube live chat message/i })).toBeDisabled();
+    await act(async () => resolveSend?.({ success: true }));
+    expect(await screen.findByText("Message sent to YouTube live chat.")).toBeInTheDocument();
+    expect(screen.getByText("Sent to YouTube live chat")).toBeInTheDocument();
+  });
+
+  it("blocks rapid repeated YouTube sends and keeps old-context results out of a new composer", async () => {
+    const user = userEvent.setup();
+    let rejectSend: ((reason: Error) => void) | undefined;
+    mockedBoardApi.sendYouTubeLiveChatMessage.mockImplementation(
+      () => new Promise((_resolve, reject) => { rejectSend = reject; }),
+    );
+    const view = renderPage({ globalOverrides: { churchIntegrations: { youtube: { connected: true, accountLabel: "Main channel" } } } });
+    await user.click(await screen.findByRole("button", { name: "YouTube chat" }));
+    await user.type(await screen.findByRole("textbox", { name: /YouTube live chat message/i }), "Old church draft");
+    const sendButton = screen.getByRole("button", { name: "Send to YouTube" });
+    fireEvent.click(sendButton);
+    fireEvent.click(sendButton);
+    expect(mockedBoardApi.sendYouTubeLiveChatMessage).toHaveBeenCalledTimes(1);
+    expect(mockedBoardApi.sendYouTubeLiveChatMessage).toHaveBeenCalledWith("church-1", { messageText: "Old church draft" });
+
+    view.rerender(pageElement({ globalOverrides: {
+      churchId: "church-2",
+      churchIntegrations: { youtube: { connected: true, accountLabel: "Other channel" } },
+    } }));
+    await act(async () => rejectSend?.(new Error("Old church send failed.")));
+    expect(await screen.findByText("Old church send failed.")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: /YouTube live chat message/i })).toHaveValue("");
   });
 
   it("posts to the discussion board from the live activity feed", async () => {
@@ -2111,6 +2276,7 @@ describe("BoardControllerContent", () => {
         author: "Moderator",
         authorId: "worshipsync:test-user-id",
         text: "Announcement for everyone",
+        expectedBoardId: "board-current",
       });
     });
   });
