@@ -33,6 +33,9 @@ describe("BoardYouTubeChatComposer", () => {
     render(<BoardYouTubeChatComposer churchId="church-1" />);
 
     await expandComposer(user);
+    expect(
+      screen.queryByLabelText(/Live stream URL or video ID/i),
+    ).not.toBeInTheDocument();
     const messageField = screen.getByLabelText(/YouTube live chat message/i);
     fireEvent.change(messageField, {
       target: { value: "x".repeat(YOUTUBE_LIVE_CHAT_MAX_LENGTH + 1) },
@@ -88,7 +91,7 @@ describe("BoardYouTubeChatComposer", () => {
     expect(screen.getAllByText("Sending…").length).toBeGreaterThan(0);
     expect(screen.getByLabelText(/YouTube live chat message/i)).toBeDisabled();
     expect(
-      screen.getByRole("button", { name: /Sending…/i }),
+      screen.getByRole("button", { name: /Sending to YouTube/i }),
     ).toBeDisabled();
 
     await act(async () => {
@@ -169,12 +172,12 @@ describe("BoardYouTubeChatComposer", () => {
     );
   });
 
-  it("retries with a pasted live video URL when auto-detect fails", async () => {
+  it("reveals the URL override only when automatic live-chat detection finds no active stream", async () => {
     const user = userEvent.setup();
     mockSendYouTubeLiveChatMessage
       .mockRejectedValueOnce(
         new Error(
-          "No active YouTube live chat was found for the connected channel. Start the stream, or paste the live video URL.",
+          "No active YouTube live chat was found for the connected channel. Start the stream or choose a live stream to try again.",
         ),
       )
       .mockResolvedValueOnce({
@@ -196,12 +199,13 @@ describe("BoardYouTubeChatComposer", () => {
     await user.click(screen.getByRole("button", { name: /Send to YouTube/i }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      /paste the live video URL/i,
+      /choose a live stream/i,
     );
+    await user.click(screen.getByRole("button", { name: "Choose live stream" }));
 
     const liveVideoUrl = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
     await user.type(
-      screen.getByLabelText(/Live video URL \(optional\)/i),
+      screen.getByLabelText(/Live stream URL or video ID/i),
       liveVideoUrl,
     );
     await user.click(screen.getByRole("button", { name: /Send to YouTube/i }));
@@ -217,5 +221,26 @@ describe("BoardYouTubeChatComposer", () => {
       );
     });
     expect(screen.getByText("Sent to YouTube live chat")).toBeInTheDocument();
+  });
+
+  it("does not offer URL recovery for unrelated sending failures", async () => {
+    const user = userEvent.setup();
+    mockSendYouTubeLiveChatMessage.mockRejectedValue(
+      new Error("YouTube is not connected for this church."),
+    );
+
+    render(<BoardYouTubeChatComposer churchId="church-1" />);
+
+    await expandComposer(user);
+    await user.type(screen.getByLabelText(/YouTube live chat message/i), "Hello");
+    await user.click(screen.getByRole("button", { name: /Send to YouTube/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "YouTube is not connected for this church.",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Choose live stream" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Live stream URL or video ID/i)).not.toBeInTheDocument();
   });
 });

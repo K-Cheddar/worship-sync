@@ -16,6 +16,7 @@ Let moderators review discussion board and Restream activity and choose when to 
 - Show one actionable toast after authoritative data confirms a stale board or Restream session. Its message names the board creation date and/or Restream start date and confirms there has been no activity today.
 - Offer scoped **Keep current** and **Start fresh** actions in the toast. If the toast expires or is dismissed without a choice, show a compact **Start fresh** action beside the current board name in the header.
 - Treat an empty board as stale when its creation date is earlier and it has no posts today.
+- Treat a populated board as stale when every post has a valid timestamp from an earlier local day, even if the board document was created today. Activity with a missing, invalid, future, or current-day timestamp protects the board.
 - When only one session is stale, offer a reset for that session only. Activity today protects that session from a suggested reset.
 - Do not suggest a reset from incomplete board or Restream loading, failed board loads, or unavailable sync state.
 - Remember a keep decision for the same board, Restream session, and local day. Re-evaluate when a session or local day changes.
@@ -36,6 +37,11 @@ Let moderators review discussion board and Restream activity and choose when to 
 - **Why:** Operators need a visible recovery path for empty stale boards and ended Restream sessions without interrupting today's activity.
 - **Material alternative rejected:** Resetting automatically based on elapsed time or resetting both systems when only one is stale.
 - **Approval source/date:** Current user request, 2026-10-15.
+
+- **Question/problem:** The controller's populated-board suggestion and confirmation used different eligibility rules when a board document was created today but contained only earlier-day posts.
+- **Approved behavior:** Use the same eligibility rule when showing and confirming the suggestion: populated boards qualify when every post is verifiably from an earlier local day; empty boards qualify only when their creation date is earlier. Recheck the current board identity and activity before rotation, and validate both targets before beginning a combined reset.
+- **Why:** Operators need a consistent, recoverable confirmation path while today's activity remains protected.
+- **Approval source/date:** Current user request, 2026-10-16.
 
 ## Implementation references
 

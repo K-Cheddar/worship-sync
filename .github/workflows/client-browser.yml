@@ -1,0 +1,54 @@
+name: Focused Client Browser Checks
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Browser suite to run
+        type: choice
+        required: true
+        default: both
+        options:
+          - both
+          - responsive-navigation
+          - board-controller-mobile
+
+permissions:
+  contents: read
+
+jobs:
+  browser_checks:
+    name: Client Chromium browser checks (${{ inputs.suite }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            client/package-lock.json
+
+      - name: Install root and client dependencies
+        run: |
+          npm ci
+          npm ci --prefix client
+
+      - name: Install Chromium and system dependencies
+        run: npx playwright install --with-deps chromium
+
+      - name: Run selected browser suite
+        env:
+          BROWSER_SUITE: ${{ inputs.suite }}
+        run: |
+          case "$BROWSER_SUITE" in
+            responsive-navigation) npm run test:e2e:responsive-navigation --prefix client ;;
+            board-controller-mobile) npm run test:e2e:board-controller-mobile --prefix client ;;
+            both) npm run test:e2e:browser --prefix client ;;
+            *) echo "Unsupported browser suite: $BROWSER_SUITE" >&2; exit 1 ;;
+          esac

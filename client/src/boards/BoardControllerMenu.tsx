@@ -175,7 +175,7 @@ export const BoardControllerMenu = ({
         TriggeringButton={
           <Button
             variant="tertiary"
-            className="w-fit"
+            className="w-fit min-h-[44px] max-md:min-h-[44px]! xl:min-h-0"
             aria-label="Open menu"
             svg={MenuIcon}
             gap="gap-1.5"

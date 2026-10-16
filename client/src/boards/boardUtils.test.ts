@@ -14,6 +14,7 @@ import {
   getBoardPostRange,
   getBoardPostsForAttendeeView,
   isBoardAuthorInUse,
+  isStaleBoardSession,
   getStaleBoardSessionScope,
   isBoardPostOwnedByParticipant,
   isTimestampFromPreviousLocalDay,
@@ -366,6 +367,33 @@ describe("getStaleBoardSessionScope", () => {
         now,
       }),
     ).toBe("restream");
+  });
+
+  it("resets an earlier-day board with no activity today", () => {
+    expect(isStaleBoardSession({ boardCreatedAt: october10, boardPosts: [], now })).toBe(true);
+  });
+
+  it("resets a board created today when all posts are from earlier days", () => {
+    expect(isStaleBoardSession({
+      boardCreatedAt: now,
+      boardPosts: [{ timestamp: october10 }],
+      now,
+    })).toBe(true);
+    expect(getStaleBoardSessionScope({
+      boardCreatedAt: now,
+      boardPosts: [{ timestamp: october10 }],
+      restreamActivityTimestamps: [],
+      now,
+    })).toBe("board");
+  });
+
+  it("protects missing, invalid, and future timestamps", () => {
+    expect(isStaleBoardSession({ boardCreatedAt: undefined, boardPosts: [], now })).toBe(false);
+    expect(isStaleBoardSession({ boardCreatedAt: Number.NaN, boardPosts: [], now })).toBe(false);
+    expect(isStaleBoardSession({ boardCreatedAt: now + 1, boardPosts: [], now })).toBe(false);
+    expect(isStaleBoardSession({ boardCreatedAt: now, boardPosts: [{ timestamp: undefined as any }], now })).toBe(false);
+    expect(isStaleBoardSession({ boardCreatedAt: now, boardPosts: [{ timestamp: Number.NaN }], now })).toBe(false);
+    expect(isStaleBoardSession({ boardCreatedAt: now, boardPosts: [{ timestamp: now + 1 }], now })).toBe(false);
   });
 
   it("does not reset Restream when it has activity today", () => {

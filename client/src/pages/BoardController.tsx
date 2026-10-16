@@ -5,8 +5,9 @@ import cn from "classnames";
 import {
   Eye,
   EyeOff,
+  ChevronDown,
+  Info,
   LayoutList,
-  Menu as MenuIcon,
   MessagesSquare,
   SlidersHorizontal,
   Sparkles,
@@ -15,7 +16,6 @@ import {
 import PouchDB from "pouchdb-browser";
 import Button from "../components/Button/Button";
 import DeleteModal from "../components/Modal/DeleteModal";
-import Menu from "../components/Menu/Menu";
 import Icon from "../components/Icon/Icon";
 import {
   Sheet,
@@ -46,6 +46,7 @@ import {
   getBoardLabel,
   normalizeBoardPresentationFontScale,
   getStaleBoardSessionScope,
+  isStaleBoardSession,
   type StaleBoardSessionScope,
   isCurrentBoardView,
   isWorshipSyncModeratorBoardPost,
@@ -76,8 +77,7 @@ import {
 import { BoardControllerMenu } from "../boards/BoardControllerMenu";
 import { BoardToolsPanelBody } from "../boards/BoardControllerToolsPanel";
 import RestreamSessionSuggestionBanner from "../boards/RestreamSessionSuggestionBanner";
-import { BoardDiscussionPostComposer } from "../boards/BoardDiscussionPostComposer";
-import { BoardYouTubeChatComposer } from "../boards/BoardYouTubeChatComposer";
+import { BoardPostingDock } from "../boards/BoardPostingDock";
 import { BoardActivitySourceBadge } from "../boards/BoardActivitySourceBadge";
 import { ManageBoardsPanelBody } from "../boards/BoardControllerManageBoardsPanel";
 import {
@@ -308,11 +308,13 @@ export const BoardControllerContent = () => {
   const boardIdToViewRef = useRef("");
   const selectedBoardIdRef = useRef("");
   const selectedAliasIdRef = useRef("");
+  const churchIdRef = useRef(churchId || "");
   const selectedAliasRevisionRef = useRef<string | null>(null);
   const selectedAliasBoardIdsRef = useRef<Set<string>>(new Set());
   const currentBoardIdRef = useRef("");
   activeDbRef.current = db;
   activeDatabaseRef.current = database;
+  churchIdRef.current = churchId || "";
 
   useEffect(() => {
     const now = new Date();
@@ -336,6 +338,21 @@ export const BoardControllerContent = () => {
     setIsMobile?.(!isLgUp);
     return () => setIsMobile?.(false);
   }, [isLgUp, setIsMobile]);
+
+  const [controllerViewportHeight, setControllerViewportHeight] = useState<number>();
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const updateHeight = () => setControllerViewportHeight(viewport?.height || window.innerHeight);
+    updateHeight();
+    viewport?.addEventListener("resize", updateHeight);
+    viewport?.addEventListener("scroll", updateHeight);
+    window.addEventListener("resize", updateHeight);
+    return () => {
+      viewport?.removeEventListener("resize", updateHeight);
+      viewport?.removeEventListener("scroll", updateHeight);
+      window.removeEventListener("resize", updateHeight);
+    };
+  }, []);
 
   const loadAliases = useCallback(async () => {
     if (!db || !database) return;
@@ -634,13 +651,93 @@ export const BoardControllerContent = () => {
       };
       freshBoardResetProgressRef.current = progress;
     }
+    if (progress.serviceDayIdentity !== todaySessionIdentity) {
+      setFreshBoardConfirmOpen(false);
+      showToast("The local day changed while you were confirming. Review the current session before starting fresh.", "info");
+      return;
+    }
     setIsConfirmingFreshBoardSession(true);
     try {
+      const resetBoardIsStillEligible = async () => {
+        if (!db || !progress?.boardId) {
+          throw new Error("Could not verify the current discussion board. Try again.");
+        }
+        const latestAlias = (await db.get(getAliasDocId(aliasId))) as DBBoardAlias;
+        if (latestAlias.currentBoardId !== progress.boardId) {
+          setFreshBoardConfirmOpen(false);
+          void loadSelectedAlias();
+          showToast(
+            "The discussion board changed while you were confirming. The current board was left untouched.",
+            "success",
+          );
+          return false;
+        }
+        const [latestBoard, latestBoardPosts] = await Promise.all([
+          db.get(getBoardDocId(progress.boardId)) as Promise<DBBoard>,
+          getLocalBoardPosts(db, progress.boardId),
+        ]);
+        if (!isStaleBoardSession({
+          boardCreatedAt: latestBoard.createdAt,
+          boardPosts: latestBoardPosts,
+        })) {
+          setPosts(latestBoardPosts);
+          setFreshBoardConfirmOpen(false);
+          showToast(
+            "The discussion board is no longer stale or has activity today, so it was left unchanged.",
+            "success",
+          );
+          return false;
+        }
+        return true;
+      };
+      const currentRestreamActivityTimestamps = [
+        restreamSession.session?.lastEventAt,
+        restreamSession.session?.lastMessageAt,
+        ...restreamSession.messages
+          .filter((message) => message.sessionId === progress?.restreamSessionId)
+          .flatMap((message) => [message.postedAt, message.receivedAt]),
+      ].filter((timestamp): timestamp is number => typeof timestamp === "number");
+      const restreamIsStillEligible =
+        (restreamSession.session?.sessionId || "") === progress.restreamSessionId &&
+        getStaleBoardSessionScope({
+          boardPosts: [],
+          restreamStartedAt: restreamSession.session?.startedAt,
+          restreamActivityTimestamps: currentRestreamActivityTimestamps,
+        }) === "restream";
+      const expectedRestreamSession = restreamSession.session
+        ? {
+            sessionId: restreamSession.session.sessionId,
+            startedAt: restreamSession.session.startedAt,
+            lastEventAt: restreamSession.session.lastEventAt,
+            messageCount: restreamSession.session.messageCount,
+          }
+        : undefined;
+
+      // Validate all requested targets before changing either session.
+      if (
+        (progress.scope === "both" || progress.scope === "restream") &&
+        !progress.restreamCompleted &&
+        !restreamIsStillEligible
+      ) {
+        setFreshBoardConfirmOpen(false);
+        showToast(
+          "The Restream session changed or has activity today, so it was left unchanged.",
+          "success",
+        );
+        return;
+      }
+      if (
+        (progress.scope === "both" || progress.scope === "board") &&
+        !progress.boardCompleted &&
+        !(await resetBoardIsStillEligible())
+      ) {
+        return;
+      }
       if (
         (progress.scope === "both" || progress.scope === "restream") &&
         !progress.restreamCompleted
       ) {
-        const resetResult = await resetRestreamSession(churchId);
+        const resetResult = await resetRestreamSession(churchId, expectedRestreamSession);
         progress.restreamCompleted = true;
         progress.completedRestreamSessionId =
           resetResult?.session?.sessionId || "";
@@ -649,41 +746,8 @@ export const BoardControllerContent = () => {
         (progress.scope === "both" || progress.scope === "board") &&
         !progress.boardCompleted
       ) {
-        if (!db || !progress.boardId) {
-          throw new Error("Could not verify the current discussion board. Try again.");
-        }
-        const latestAlias = (await db.get(
-          getAliasDocId(aliasId),
-        )) as DBBoardAlias;
-        if (latestAlias.currentBoardId !== progress.boardId) {
-          setFreshBoardConfirmOpen(false);
-          void loadSelectedAlias();
-          showToast(
-            "The discussion board changed while you were confirming. The current board was left untouched.",
-            "success",
-          );
-          return;
-        }
-        const [latestBoard, latestBoardPosts] = await Promise.all([
-          db.get(getBoardDocId(progress.boardId)) as Promise<DBBoard>,
-          getLocalBoardPosts(db, progress.boardId),
-        ]);
-        if (
-          getStaleBoardSessionScope({
-            boardCreatedAt: latestBoard.createdAt,
-            boardPosts: latestBoardPosts,
-            restreamActivityTimestamps: [],
-          }) !== "board"
-        ) {
-          setPosts(latestBoardPosts);
-          setFreshBoardConfirmOpen(false);
-          showToast(
-            "The discussion board is no longer stale or has activity today, so it was left unchanged. Restream stays on its new session.",
-            "success",
-          );
-          return;
-        }
-        await hardResetBoardAlias(aliasId);
+        if (!(await resetBoardIsStillEligible())) return;
+        await hardResetBoardAlias(aliasId, progress.boardId);
         progress.boardCompleted = true;
       }
       if (progress.scope !== "board") await reloadRestreamSession();
@@ -723,7 +787,8 @@ export const BoardControllerContent = () => {
     restreamSession.isLoading,
     restreamSession.isRefreshing,
     restreamSession.error,
-    restreamSession.session?.sessionId,
+    restreamSession.messages,
+    restreamSession.session,
     reloadRestreamSession,
     loadSelectedAlias,
     showToast,
@@ -752,11 +817,10 @@ export const BoardControllerContent = () => {
     : "";
   const boardIsStale = Boolean(
     canEvaluateCurrentBoardSession &&
-      getStaleBoardSessionScope({
+      isStaleBoardSession({
         boardCreatedAt: currentBoard?.createdAt,
         boardPosts: posts,
-        restreamActivityTimestamps: [],
-      }) === "board",
+      }),
   );
   const restreamStatusIsSettled =
     !restreamSession.isLoading &&
@@ -1006,7 +1070,7 @@ export const BoardControllerContent = () => {
                 })();
               }}
             >
-              {suggestionScope === "both" ? "Keep current session" : "Keep current"}
+              Keep current session
             </Button>
             <Button
               variant="primary"
@@ -1366,16 +1430,21 @@ export const BoardControllerContent = () => {
 
   const liveActivityContent = (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-gray-500 bg-gray-900/60 px-4 py-2">
-        <div>
-          <h3 className="text-base font-semibold">Live activity</h3>
-          <p className="mt-0.5 text-sm text-gray-300">
-            Discussion board posts and Restream chat appear in time order.
-          </p>
+      <div className="flex min-h-[48px] shrink-0 items-center justify-between gap-2 border-b border-gray-500 bg-gray-900/60 px-3 py-0">
+        <div className="flex min-w-0 items-center gap-1">
+          <h3 className="truncate text-base font-semibold">Live activity</h3>
+          <details className="relative shrink-0">
+            <summary className="flex size-[44px] cursor-pointer list-none items-center justify-center rounded-md text-gray-300 hover:bg-gray-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400" aria-label="About live activity">
+              <Info className="size-4" aria-hidden="true" />
+            </summary>
+            <p className="absolute left-0 top-full z-20 mt-1 w-64 rounded-lg border border-gray-600 bg-gray-900 p-3 text-xs text-gray-200 shadow-lg">
+              Discussion board posts and Restream chat appear in time order.
+            </p>
+          </details>
         </div>
-        {hasNewActivity ? (
-          <Button variant="tertiary" onClick={scrollToBottom}>
-            New activity
+        {!isPinnedToBottom ? (
+          <Button variant="tertiary" onClick={scrollToBottom} className="min-h-[44px] shrink-0 px-2">
+            {hasNewActivity ? "New activity" : "Latest activity"}
           </Button>
         ) : null}
       </div>
@@ -1387,7 +1456,9 @@ export const BoardControllerContent = () => {
       <div
         ref={scrollRef}
         onScroll={onScroll}
-        className="scrollbar-variable min-h-0 flex-1 overflow-y-auto py-2 pr-4 pl-9"
+        role="region"
+        aria-label="Live activity feed"
+        className="scrollbar-variable min-h-0 flex-1 overflow-y-auto overscroll-contain py-2 pr-3 pl-9 md:pr-4"
       >
         {isLoading ? (
           <div className="flex items-center gap-2 text-gray-300">
@@ -1402,7 +1473,7 @@ export const BoardControllerContent = () => {
             </p>
           </div>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             {liveActivityItems.map((item) => {
               if (item.source === "restream") {
                 return (
@@ -1427,7 +1498,7 @@ export const BoardControllerContent = () => {
                       : "Discussion board post"
                   }
                   className={cn(
-                    "relative rounded-lg border px-3 py-2.5",
+                    "relative rounded-lg border px-2.5 py-1.5 md:px-3 md:py-2",
                     post.deleted &&
                     "border-rose-900/50 bg-rose-950/25 ring-1 ring-rose-500/15",
                     !post.deleted &&
@@ -1441,7 +1512,7 @@ export const BoardControllerContent = () => {
                   <BoardActivitySourceBadge
                     kind={isModeratorPost ? "moderator" : "discussion"}
                   />
-                  <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                     <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                       <span
                         className={cn(
@@ -1473,11 +1544,23 @@ export const BoardControllerContent = () => {
                         </span>
                       )}
                     </div>
-                    {isViewingCurrent && (
-                      <div className="flex shrink-0 gap-1.5">
-                        <Button
+                  </div>
+                  <div className="min-w-0">
+                    <BoardPostMessage
+                      text={post.text}
+                      isMine={false}
+                      tone="moderator"
+                      unbounded
+                    />
+                  </div>
+                  {isViewingCurrent && (
+                    <div className="flex justify-end gap-1 pt-0.5">
+                      <Button
                           variant="tertiary"
                           svg={post.hidden ? Eye : EyeOff}
+                          iconSize="sm"
+                          style={{ minHeight: 32, transition: "none" }}
+                          className="relative min-h-7 max-md:min-h-[32px] px-1.5 py-0 text-xs transition-colors after:absolute after:-inset-y-1 after:content-['']"
                           onClick={() => {
                             void runPostAction(
                               post._id,
@@ -1489,9 +1572,12 @@ export const BoardControllerContent = () => {
                         >
                           {post.hidden ? "Unhide" : "Hide"}
                         </Button>
-                        <Button
+                      <Button
                           variant="tertiary"
                           svg={post.highlighted ? StarOff : Sparkles}
+                          iconSize="sm"
+                          style={{ minHeight: 32, transition: "none" }}
+                          className="relative min-h-7 max-md:min-h-[32px] px-1.5 py-0 text-xs transition-colors after:absolute after:-inset-y-1 after:content-['']"
                           onClick={() =>
                             void runPostAction(
                               post._id,
@@ -1512,20 +1598,7 @@ export const BoardControllerContent = () => {
                           {post.highlighted ? "Unhighlight" : "Highlight"}
                         </Button>
                       </div>
-                    )}
-                  </div>
-                  <div
-                    className={cn(
-                      "min-w-0",
-                      post.deleted && "opacity-80",
-                    )}
-                  >
-                    <BoardPostMessage
-                      text={post.text}
-                      isMine={false}
-                      tone="moderator"
-                    />
-                  </div>
+                  )}
                 </article>
               );
             })}
@@ -1533,24 +1606,20 @@ export const BoardControllerContent = () => {
         )}
         <div ref={endRef} className="h-px shrink-0" aria-hidden />
       </div>
-      {(showYouTubeChatComposer || showBoardDiscussionComposer) ? (
-        <div className="sticky bottom-0 z-10 shrink-0 space-y-2">
-          {showYouTubeChatComposer ? (
-            <BoardYouTubeChatComposer
-              churchId={churchId || ""}
-              accountLabel={youtubeConnection.accountLabel}
-            />
-          ) : null}
-          {showBoardDiscussionComposer ? (
-            <BoardDiscussionPostComposer
-              aliasId={selectedAliasId}
-              showToast={showToast}
-              userId={String(userId || "").trim()}
-              pullFromRemote={pullFromRemote}
-            />
-          ) : null}
-        </div>
-      ) : null}
+      <BoardPostingDock
+        aliasId={selectedAliasId}
+        boardSessionId={selectedAlias?.currentBoardId || ""}
+        churchId={churchId || ""}
+        userId={String(userId || "").trim()}
+        accountLabel={youtubeConnection.accountLabel}
+        showBoardPost={showBoardDiscussionComposer}
+        showYouTubeChat={showYouTubeChatComposer}
+        isCompact={isMobileStack}
+        showToast={showToast}
+        pullFromRemote={pullFromRemote}
+        isFeedPinned={isPinnedToBottom}
+        onFeedLayoutComplete={scrollToBottom}
+      />
     </div>
   );
 
@@ -1571,10 +1640,11 @@ export const BoardControllerContent = () => {
   return (
     <main
       id="controller-main"
-      className="flex h-dvh flex-col bg-homepage-canvas text-white"
+      className="flex h-dvh flex-col overflow-hidden bg-homepage-canvas text-white"
       style={
         {
           "--scrollbar-width": scrollbarWidth,
+          ...(controllerViewportHeight ? { height: `${controllerViewportHeight}px`, maxHeight: `${controllerViewportHeight}px` } : {}),
         } as CSSProperties
       }
     >
@@ -1756,7 +1826,7 @@ export const BoardControllerContent = () => {
         </Sheet>
       )}
 
-      <header className="flex shrink-0 items-center justify-between gap-3 border-b-2 border-gray-500 bg-gray-800 px-4 py-3">
+      <header data-board-toolbar className="flex h-[48px] min-h-[48px] shrink-0 items-center justify-between gap-3 border-b border-gray-600 bg-gray-800 px-2 py-0 xl:h-auto xl:min-h-0 xl:border-b-2 xl:px-4 xl:py-3">
         <div className="flex min-w-0 items-center gap-3">
           <BoardControllerMenu
             canOpenBoard={Boolean(selectedAliasId)}
@@ -1766,7 +1836,7 @@ export const BoardControllerContent = () => {
               }
             }}
           />
-          <h1 className="flex min-w-0 items-center gap-2 text-base font-semibold tracking-tight sm:text-lg">
+          <h1 className="hidden min-w-0 items-center gap-2 text-base font-semibold tracking-tight sm:text-lg xl:flex">
             <Icon
               svg={MessagesSquare}
               size="md"
@@ -1775,114 +1845,65 @@ export const BoardControllerContent = () => {
             <span className="truncate">Discussion Board</span>
           </h1>
         </div>
-        <UserSection />
+        <UserSection variant="responsiveCompact" />
       </header>
 
-      {(isMobileStack || selectedAlias) && (
-        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-500 bg-gray-950/70 px-3 py-2">
-          {isMobileStack ? (
-            selectedAlias ? (
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <Button
-                  variant="secondary"
-                  svg={LayoutList}
-                  gap="gap-1.5"
-                  iconSize="sm"
-                  className="hidden sm:flex max-md:min-h-0"
-                  onClick={() => setManageBoardsOpen(true)}
-                >
-                  Manage boards
-                </Button>
-                <Button
-                  variant="secondary"
-                  svg={SlidersHorizontal}
-                  gap="gap-1.5"
-                  iconSize="sm"
-                  className="hidden sm:flex max-md:min-h-0"
-                  onClick={() => setBoardToolsOpen(true)}
-                >
-                  Board tools
-                </Button>
-                <Menu
-                  align="start"
-                  menuItems={[
-                    {
-                      element: (
-                        <div className="flex items-center gap-2 max-md:min-h-12">
-                          <Icon svg={LayoutList} color="#d1d5dc" />
-                          Manage boards
-                        </div>
-                      ),
-                      onClick: () => setManageBoardsOpen(true),
-                    },
-                    {
-                      element: (
-                        <div className="flex items-center gap-2 max-md:min-h-12">
-                          <Icon svg={SlidersHorizontal} color="#d1d5dc" />
-                          Board tools
-                        </div>
-                      ),
-                      onClick: () => setBoardToolsOpen(true),
-                    },
-                  ]}
-                  TriggeringButton={
-                    <Button
-                      variant="secondary"
-                      svg={MenuIcon}
-                      gap="gap-1.5"
-                      iconSize="sm"
-                      className="sm:hidden max-md:min-h-0"
-                      aria-label="Board tools and management"
-                    >
-                      Tools
-                    </Button>
-                  }
-                />
-              </div>
-            ) : (
-              <Button
-                variant="secondary"
-                svg={LayoutList}
-                gap="gap-1.5"
-                iconSize="sm"
-                className="max-md:min-h-0"
-                onClick={() => setManageBoardsOpen(true)}
-              >
-                Manage boards
+      {isMobileStack ? (
+        <div className="shrink-0 border-b border-gray-600 bg-gray-950/80 px-2 py-1.5">
+          <div className="flex min-h-[44px] items-center justify-between gap-2">
+            {selectedAlias ? (
+              <Button variant="tertiary" svg={ChevronDown} iconPosition="right" className="min-h-[44px] max-md:min-h-[44px]! min-w-0 flex-1 justify-between truncate px-2 text-base font-semibold text-white" aria-label={`Manage boards. Current board: ${selectedAlias.title}`} aria-haspopup="dialog" onClick={() => setManageBoardsOpen(true)}>
+                <span className="truncate">{selectedAlias.title}</span>
               </Button>
-            )
-          ) : null}
-          {selectedAlias ? (
-            <div className="min-w-0 flex-1">
-              <h2 className="min-w-0 truncate text-sm font-semibold text-gray-100 sm:text-base">
-                {selectedAlias.title}
-              </h2>
-              <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                <p className="truncate text-xs text-gray-300 sm:text-sm">
-                  Current session: {getBoardLabel(currentBoard)}
-                </p>
-                {showFreshStartFallback && suggestionScope ? (
-                  <Button
-                    variant="none"
-                    className="min-h-0 px-1 py-0.5 text-xs text-sky-200 underline decoration-sky-300/60 underline-offset-2 hover:text-white"
-                    onClick={() => openFreshStartConfirmation(suggestionScope)}
-                  >
-                    Start fresh
-                  </Button>
-                ) : null}
-                <div
-                  className="rounded-md border border-gray-500 px-2 py-0.5 text-xs text-gray-200"
-                  aria-live="polite"
+            ) : (
+              <Button variant="secondary" svg={LayoutList} className="min-h-[44px] max-md:min-h-[44px]!" onClick={() => setManageBoardsOpen(true)}>Manage boards</Button>
+            )}
+            {selectedAlias ? <Button variant="secondary" svg={SlidersHorizontal} className="min-h-[44px] max-md:min-h-[44px]! shrink-0 px-2" onClick={() => setBoardToolsOpen(true)}>Board tools</Button> : null}
+          </div>
+          {selectedAlias ? <div className="space-y-1 px-1 text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0 truncate text-gray-300">Session: {getBoardLabel(currentBoard)}</div>
+              {showFreshStartFallback && suggestionScope ? (
+                <Button
+                  variant="none"
+                  className="min-h-0 shrink-0 px-1 py-0.5 text-xs text-sky-200 underline decoration-sky-300/60 underline-offset-2 hover:text-white"
+                  onClick={() => openFreshStartConfirmation(suggestionScope)}
                 >
-                  {posts.length} total · {visibleCount} visible ·{" "}
-                  {highlightedPresentationCount} highlighted
-                </div>
+                  Start fresh
+                </Button>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap gap-1.5 tabular-nums text-gray-200" aria-live="polite">
+              <span className="rounded-full border border-gray-600 px-2 py-0.5">{posts.length} total</span>
+              <span className="rounded-full border border-gray-600 px-2 py-0.5">{visibleCount} visible</span>
+              <span className="rounded-full border border-amber-400/40 px-2 py-0.5 text-amber-100">{highlightedPresentationCount} highlighted</span>
+            </div>
+          </div> : null}
+        </div>
+      ) : selectedAlias ? (
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-500 bg-gray-950/70 px-3 py-2">
+          <div className="min-w-0 flex-1">
+            <h2 className="min-w-0 truncate text-sm font-semibold text-gray-100 sm:text-base">{selectedAlias.title}</h2>
+            <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+              <p className="min-w-0 truncate text-xs text-gray-300 sm:text-sm">Current session: {getBoardLabel(currentBoard)}</p>
+              {showFreshStartFallback && suggestionScope ? (
+                <Button
+                  variant="none"
+                  className="min-h-0 px-1 py-0.5 text-xs text-sky-200 underline decoration-sky-300/60 underline-offset-2 hover:text-white"
+                  onClick={() => openFreshStartConfirmation(suggestionScope)}
+                >
+                  Start fresh
+                </Button>
+              ) : null}
+              <div className="flex flex-wrap gap-1.5 text-xs text-gray-200" aria-live="polite">
+                <span className="rounded-full border border-gray-500 px-2 py-0.5">{posts.length} total</span>
+                <span className="rounded-full border border-gray-500 px-2 py-0.5">{visibleCount} visible</span>
+                <span className="rounded-full border border-amber-400/40 px-2 py-0.5 text-amber-100">{highlightedPresentationCount} highlighted</span>
               </div>
             </div>
-          ) : null}
+          </div>
         </div>
-      )}
-
+      ) : null}
       <div className="flex min-h-0 flex-1 flex-col xl:flex-row">
         {/* Left aside — xl+ only */}
         <aside

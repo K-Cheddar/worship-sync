@@ -1,5 +1,11 @@
 # Schedules performance browser check
 
+## Focused responsive browser suites
+
+From `client/`, run either suite with `npm run test:e2e:responsive-navigation` or `npm run test:e2e:board-controller-mobile`; run both sequentially with `npm run test:e2e:browser`. These checks use the existing root Playwright dependency and require Node.js 24, dependencies installed with `npm ci` at the repository root and `npm ci --prefix client`, plus the Playwright Chromium browser. Install Chromium with `npx playwright install chromium` (Linux CI also needs `--with-deps`). The suites start local Vite fixtures on ports 3108 and 3112, use synthetic data, and do not require a live church or credentials. Keep those ports free while the checks run.
+
+GitHub Actions runs them through the separate **Focused Client Browser Checks** workflow, where you can choose one suite or both. It installs Chromium and its Linux libraries and has a 15-minute job timeout. Both suites took about 28 seconds locally with dependencies and Chromium already installed; allow about 5–10 minutes for a fresh Ubuntu CI run, mostly for dependency and browser setup. The CI duration is an estimate. Normal pull request checks and local agent validation gain no browser setup or execution time.
+
 From `client/`, run `node e2e/schedules-performance.mjs` with Playwright and Chromium available. Set `PLAYWRIGHT_MODULE_PATH` to an existing Playwright package when it is not installed in this checkout. The runner uses a deterministic fixture (52 generated occurrences, 260 saved occurrences with 260 assignment rows, 20 members, UTC), blocks remote requests, and profiles the real Teams shell and `ScheduleTab` in Chromium. It reports first and repeat visits, browser long tasks, React Profiler commits, CDP CPU samples, module-resource timings, and a rapid switch away while the real lazy section module is held pending. It starts and stops a local Vite server on port 3113, then builds and previews the same fixture in production mode on port 3114 using an ignored cache directory under `node_modules`.
 
 
