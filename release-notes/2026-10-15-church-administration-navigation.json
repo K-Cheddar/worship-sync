@@ -3,5 +3,5 @@
   "date": "2026-10-15",
   "type": "improved",
   "title": "Church Administration navigation",
-  "description": "Church Administration now groups its pages for faster desktop and mobile navigation while keeping existing routes and access controls in place."
+  "description": "Church Administration now highlights your selection and shows the right loading screen while each page opens, alongside faster desktop and mobile navigation."
 }
