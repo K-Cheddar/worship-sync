@@ -564,6 +564,60 @@ describe("stable external row identity", () => {
     expect(moved.durationSeconds).toBe(240);
   });
 
+  it("keeps a newly adopted source identity when a move is selected without its field updates", () => {
+    const current = [
+      section("message", "Message", [element("stable-sermon", "Sermon", {
+        sourceTemplateElementId: "template-sermon",
+        notes: plainTextToRichText("Operator notes"),
+      })]),
+      section("response", "Response & Celebration", []),
+    ];
+    const incoming = [
+      section("next-message", "Message", []),
+      section("next-response", "Response & Celebration", [element("incoming-sermon", "Sermon", {
+        sourceOccurrenceId: "external-sermon",
+        sourcePlanningManaged: true,
+        startTime: "10:30",
+      })]),
+    ];
+    const preview = refreshServicePlanFromImport(current, incoming, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    const summary = summarizeServicePlanImport(current, preview);
+    expect(summary.changes.map(({ kind }) => kind)).toEqual(["moved", "updated"]);
+
+    const movedWithoutFieldUpdates = applySelectedServicePlanImportChanges(
+      current,
+      preview,
+      summary,
+      new Set(["moved:stable-sermon"]),
+    );
+    const moved = movedWithoutFieldUpdates.find(({ id }) => id === "response")?.elements[0];
+    expect(moved).toMatchObject({
+      id: "stable-sermon",
+      sourceOccurrenceId: "external-sermon",
+      sourcePlanningManaged: true,
+    });
+    expect(moved).not.toHaveProperty("startTime");
+    expect(richTextToPlainText(moved?.title)).toBe("Sermon");
+    expect(richTextToPlainText(moved?.notes)).toBe("Operator notes");
+
+    const nextImport = [
+      section("later-message", "Message", []),
+      section("later-response", "Response & Celebration", [element("later-sermon", "Sermon Updated", {
+        sourceOccurrenceId: "external-sermon",
+        sourcePlanningManaged: true,
+      })]),
+    ];
+    const refreshedAgain = refreshServicePlanFromImport(
+      movedWithoutFieldUpdates,
+      nextImport,
+      DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+    );
+    const updated = refreshedAgain.find(({ id }) => id === "response")?.elements[0];
+    expect(updated).toMatchObject({ id: "stable-sermon", sourceOccurrenceId: "external-sermon" });
+    expect(richTextToPlainText(updated?.title)).toBe("Sermon Updated");
+    expect(richTextToPlainText(updated?.notes)).toBe("Operator notes");
+  });
+
   it("does not match duplicate template titles across sections", () => {
     const current = [
       section("one", "Message", [element("sermon-1", "Sermon", { sourceTemplateElementId: "template-1" })]),
@@ -708,6 +762,44 @@ describe("stable external row identity", () => {
     expect(moved?.legacyImportMatchCandidateForId).toBeUndefined();
     expect(richTextToPlainText(moved?.notes)).toBe("Local notes");
     expect(movedRows.map(({ id }) => id)).toEqual(["legacy-sermon", "response-song"]);
+  });
+
+  it("requires confirmation for a same-section legacy match when suggestions are enabled", () => {
+    const current = [section("message", "Message", [element("legacy-sermon", "Sermon", {
+      notes: plainTextToRichText("Operator notes"),
+    })], false)];
+    const incoming = [section("message-import", "Message", [element("source-sermon", "Sermon", {
+      sourceOccurrenceId: "external-sermon",
+      startTime: "10:30",
+    })])];
+
+    const preview = refreshServicePlanFromImport(current, incoming, {
+      ...DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+      suggestLegacyMatches: true,
+    });
+    const summary = summarizeServicePlanImport(current, preview);
+
+    expect(preview[0].elements.map(({ id }) => id)).toEqual(["legacy-sermon", "source-sermon"]);
+    expect(summary.changes.map(({ kind }) => kind)).toEqual(["legacy_match"]);
+    expect(summary.changes[0]).toMatchObject({
+      id: "legacy-sermon",
+      sectionId: "message",
+      fromSectionId: "message",
+    });
+    expect(applySelectedServicePlanImportChanges(current, preview, summary, new Set())).toEqual(current);
+    const applied = applySelectedServicePlanImportChanges(
+      current,
+      preview,
+      summary,
+      new Set(["legacy_match:legacy-sermon"]),
+    );
+    expect(applied[0].elements).toHaveLength(1);
+    expect(applied[0].elements[0]).toMatchObject({
+      id: "legacy-sermon",
+      sourceOccurrenceId: "external-sermon",
+      startTime: "10:30",
+    });
+    expect(richTextToPlainText(applied[0].elements[0].notes)).toBe("Operator notes");
   });
 
   it.each([true, false])("does not match different external identities by title or delete the existing item (managed=%s)", (sourcePlanningManaged) => {

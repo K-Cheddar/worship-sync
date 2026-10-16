@@ -22,6 +22,7 @@ const kindLabel: Record<ServicePlanImportChangeKind, string> = {
   updated: "Updated",
   moved: "Moved",
   legacy_match: "Moved",
+  linked: "Linked",
 };
 
 const kindClassName: Record<ServicePlanImportChangeKind, string> = {
@@ -30,11 +31,18 @@ const kindClassName: Record<ServicePlanImportChangeKind, string> = {
   updated: "bg-cyan-400/10 text-cyan-200",
   moved: "bg-violet-400/10 text-violet-200",
   legacy_match: "bg-amber-400/10 text-amber-100",
+  linked: "bg-indigo-400/10 text-indigo-200",
 };
 
 /** Item type changes still apply with the import; omit them from the review UI. */
 const visibleFields = (change: ServicePlanImportSummary["changes"][number]) =>
   change.fields.filter((field) => field.label !== "Item type");
+
+const checkboxLabel = (change: ServicePlanImportSummary["changes"][number]) => {
+  if (change.kind === "legacy_match") return `Confirm match for ${change.itemName}`;
+  if (change.kind === "linked") return `Link ${change.itemName} to the import source`;
+  return `${change.kind === "moved" ? "Move" : "Update"} ${change.itemName}`;
+};
 
 const getInitialReviewWindowGeometry = () => {
   // The desktop workspace gives the preview column roughly one third of the
@@ -79,6 +87,9 @@ const ServicePlanImportReviewWindow = ({
       : "",
     selectedChanges.filter((change) => change.kind === "legacy_match").length
       ? `${selectedChanges.filter((change) => change.kind === "legacy_match").length} match confirmed`
+      : "",
+    selectedChanges.filter((change) => change.kind === "linked").length
+      ? `${selectedChanges.filter((change) => change.kind === "linked").length} linked`
       : "",
     selectedChanges.filter((change) => change.kind === "removed").length
       ? `${selectedChanges.filter((change) => change.kind === "removed").length} removed`
@@ -161,9 +172,7 @@ const ServicePlanImportReviewWindow = ({
                             <li key={changeKey} className="rounded-md border border-gray-700/80 bg-gray-950/40 px-3 py-2">
                               <div className="flex items-start gap-2">
                                 <Checkbox
-                                  label={change.kind === "legacy_match"
-                                    ? `Confirm match for ${change.itemName}`
-                                    : `${change.kind === "moved" ? "Move" : "Update"} ${change.itemName}`}
+                                  label={checkboxLabel(change)}
                                   checked={selectedChangeKeys.has(changeKey)}
                                   onCheckedChange={(checked) => setSelected([changeKey], checked)}
                                   className="pt-0.5"

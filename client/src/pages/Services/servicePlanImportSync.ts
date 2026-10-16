@@ -1505,8 +1505,10 @@ export const refreshServicePlanFromImport = (
           element.sourceElementTypeRaw || "",
           element.sourceContentTitleRaw || "",
         ],
-        (element) => !isAmbiguousCurrentElement(element) && canPairByLabel(element),
-        (element) => !isAmbiguousCurrentElement(element) && isSourceOwned(element),
+        (element) => !isAmbiguousCurrentElement(element) && canPairByLabel(element) &&
+          (!options.suggestLegacyMatches || Boolean(element.sourcePlanningManaged || element.sourceTemplateElementId)),
+        (element) => !isAmbiguousCurrentElement(element) && isSourceOwned(element) &&
+          (!options.suggestLegacyMatches || Boolean(element.sourcePlanningManaged || element.sourceTemplateElementId)),
         (element) => !isAmbiguousCurrentElement(element)
           ? element.sourceOccurrenceId?.trim()
           : undefined,

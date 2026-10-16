@@ -105,4 +105,33 @@ describe("ServicePlanImportReviewWindow", () => {
     await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
     expect(onApply).toHaveBeenCalledWith(["updated:prayer"]);
   });
+
+  it("offers source linking independently of item field updates", async () => {
+    const user = userEvent.setup();
+    const onApply = jest.fn();
+    const summary: ServicePlanImportSummary = {
+      changes: [{
+        id: "sermon",
+        sectionId: "message",
+        kind: "linked",
+        itemName: "Sermon",
+        sectionName: "Message",
+        fields: [],
+      }],
+      added: 0,
+      removed: 0,
+      updated: 0,
+      moved: 0,
+    };
+
+    render(
+      <FloatingWindowZIndexProvider>
+        <ServicePlanImportReviewWindow summary={summary} onApply={onApply} onClose={jest.fn()} />
+      </FloatingWindowZIndexProvider>,
+    );
+
+    expect(screen.getByRole("checkbox", { name: "Link Sermon to the import source" })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
+    expect(onApply).toHaveBeenCalledWith(["linked:sermon"]);
+  });
 });

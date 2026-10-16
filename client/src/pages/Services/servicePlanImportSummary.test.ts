@@ -172,6 +172,38 @@ describe("summarizeServicePlanImport", () => {
     );
   });
 
+  it("offers source identity adoption separately when no visible field changes", () => {
+    const current = [section([element("sermon", "Sermon", {
+      sourceTemplateElementId: "template-sermon",
+      notes: plainTextToRichText("Operator notes"),
+    })])];
+    const next = [section([element("sermon", "Sermon", {
+      sourceTemplateElementId: "template-sermon",
+      sourceOccurrenceId: "external-sermon",
+      sourcePlanningManaged: true,
+      notes: plainTextToRichText("Operator notes"),
+    })])];
+    const summary = summarizeServicePlanImport(current, next);
+
+    expect(summary.changes).toEqual([expect.objectContaining({
+      id: "sermon",
+      kind: "linked",
+      fields: [],
+    })]);
+    const applied = applySelectedServicePlanImportChanges(
+      current,
+      next,
+      summary,
+      new Set(["linked:sermon"]),
+    );
+    expect(applied[0].elements[0]).toMatchObject({
+      id: "sermon",
+      sourceOccurrenceId: "external-sermon",
+      sourcePlanningManaged: true,
+    });
+    expect(richTextToPlainText(applied[0].elements[0].notes)).toBe("Operator notes");
+  });
+
   it("reviews a relocation separately and applies selected moves in imported order", () => {
     const sermon = element("sermon", "Sermon", {
       sourceTemplateElementId: "template-sermon",

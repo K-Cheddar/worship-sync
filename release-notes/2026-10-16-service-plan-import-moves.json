@@ -3,5 +3,5 @@
   "date": "2026-10-16",
   "type": "fixed",
   "title": "Service plan imports keep moved items",
-  "description": "Imports keep moved items and their local details, offer individual match suggestions for older plans, and protect items with conflicting source IDs."
+  "description": "Imports retain moved items and local details, suggest individual matches for older plans, and keep source links stable without applying unrelated content updates."
 }

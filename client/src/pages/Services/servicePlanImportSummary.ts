@@ -18,7 +18,7 @@ import type {
 } from "../../types/servicePlan";
 import { insertNewServicePlanSectionRuns, placeServicePlanImportElements } from "./servicePlanImportSectionPlacement";
 
-export type ServicePlanImportChangeKind = "added" | "removed" | "updated" | "moved" | "legacy_match";
+export type ServicePlanImportChangeKind = "added" | "removed" | "updated" | "moved" | "legacy_match" | "linked";
 
 export type ServicePlanImportFieldChange = {
   label: string;
@@ -505,6 +505,18 @@ export const summarizeServicePlanImport = (
         sectionName,
         fields: [],
       });
+    } else if (
+      element.sourceOccurrenceId?.trim() &&
+      element.sourceOccurrenceId.trim() !== current.element.sourceOccurrenceId?.trim()
+    ) {
+      changes.push({
+        id,
+        sectionId,
+        kind: "linked",
+        itemName: itemName(element),
+        sectionName,
+        fields: [],
+      });
     }
     if (fields.length) {
       changes.push({
@@ -622,6 +634,21 @@ export const applySelectedServicePlanImportChanges = (
   const currentItemsById = new Map(currentSections.flatMap((section) =>
     section.elements.map((element) => [element.id, element] as const),
   ));
+  const withSourceAssociation = (
+    element: ServicePlanElement,
+    current: ServicePlanElement,
+    imported: ServicePlanElement | undefined,
+    associate: boolean,
+  ): ServicePlanElement => {
+    const sourceOccurrenceId = associate && imported?.sourceOccurrenceId?.trim()
+      ? imported.sourceOccurrenceId
+      : current.sourceOccurrenceId;
+    return {
+      ...element,
+      sourceOccurrenceId,
+      ...(associate && imported?.sourcePlanningManaged ? { sourcePlanningManaged: true } : {}),
+    };
+  };
 
   const result = currentSections.flatMap((currentSection) => {
     const nextSection = nextSectionsById.get(currentSection.id);
@@ -636,9 +663,16 @@ export const applySelectedServicePlanImportChanges = (
       if (confirmedLegacyMatch) return [];
       const move = selectedChangeFor("moved", currentElement.id);
       if (move && move.sectionId !== currentSection.id) return [];
+      const linked = Boolean(selectedChangeFor("linked", currentElement.id));
       if (selectedChangeFor("updated", currentElement.id)) {
-        return [nextItemsById.get(currentElement.id) || currentElement];
+        return [withSourceAssociation(
+          nextItemsById.get(currentElement.id) || currentElement,
+          currentElement,
+          nextItemsById.get(currentElement.id),
+          linked,
+        )];
       }
+      if (linked) return [withSourceAssociation(currentElement, currentElement, nextItemsById.get(currentElement.id), true)];
       return [currentElement];
     });
     const placements = (nextSection?.elements || []).flatMap((nextElement) => {
@@ -652,9 +686,9 @@ export const applySelectedServicePlanImportChanges = (
       if (selectedChangeFor("added", nextElement.id)) return [nextElement];
       const move = selectedChangeFor("moved", nextElement.id);
       if (!move || move.sectionId !== currentSection.id) return [];
-      return [selectedChangeFor("updated", nextElement.id)
-        ? nextElement
-        : currentItemsById.get(nextElement.id) || nextElement];
+      const currentElement = currentItemsById.get(nextElement.id) || nextElement;
+      const baseElement = selectedChangeFor("updated", nextElement.id) ? nextElement : currentElement;
+      return [withSourceAssociation(baseElement, currentElement, nextElement, true)];
     });
     elements.push(...placements);
     const sourceOrder = nextSection?.elements.map((element) => {
@@ -705,9 +739,10 @@ export const applySelectedServicePlanImportChanges = (
       }
       if (selectedChangeFor("added", element.id)) return [element];
       const move = selectedChangeFor("moved", element.id);
-      return move && move.sectionId === nextSection.id
-        ? [selectedChangeFor("updated", element.id) ? element : currentItemsById.get(element.id) || element]
-        : [];
+      if (!move || move.sectionId !== nextSection.id) return [];
+      const currentElement = currentItemsById.get(element.id) || element;
+      const baseElement = selectedChangeFor("updated", element.id) ? element : currentElement;
+      return [withSourceAssociation(baseElement, currentElement, element, true)];
     });
     if (elements.length) {
       const sourceOrder = nextSection.elements.map((element) => {

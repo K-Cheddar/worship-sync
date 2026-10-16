@@ -19,8 +19,10 @@ An operator imports or refreshes a plan, reviews the proposed item changes, sele
 - A uniquely identified external item can match an existing item across sections. If no current item has that external identity, a template-origin item can match when normalized title and compatible type identify one item on each side, even when the incoming row has an external identity.
 - An unmarked legacy item can be suggested as a match only when normalized title and compatible type identify exactly one current item and one incoming item. The suggestion is unchecked and must be confirmed individually in review, even when other plan items are source-tracked. Cross-section suggestions are shown as **Moved**.
 - Two different nonempty external identities are never equivalent through title or position. The existing item and its local information remain intact; the incoming row is handled separately.
+- With legacy suggestions enabled for review, unmarked rows are excluded from automatic same-section title and position matching. Confirmed unique matches are applied only when selected.
 - An ambiguous title or duplicate external identity does not claim an existing item. Manually created items are not claimed through title-only matching.
 - A matched item retains its WorshipSync item ID and operator-managed information. External fields continue to follow the existing import field ownership options.
+- Selecting a move also keeps its incoming source identity when field updates are skipped. For a same-section identity adoption with no move, review offers a separate **Linked** change.
 - A relocation appears as a selectable **Moved** change that names the prior and destination sections. Operators can select the move separately from updates to the item's fields.
 - Selected moved and new items follow source order relative to confidently matched items. Existing item order stays intact unless a selected relocation requires placement.
 - A confidently matched relocation is not represented as a separate removal and addition. Skipped changes remain untouched.
@@ -49,6 +51,13 @@ An operator imports or refreshes a plan, reviews the proposed item changes, sele
 - **Approved behavior:** Match uniquely by durable source identity first. For template-origin items without source IDs, match by normalized title and compatible type only when the match is unambiguous. Review relocation as an independent selectable change and place selected moves/additions from source-relative order.
 - **Why:** The two rows represent the same logical item, while ambiguous matches and operator edits must remain safe.
 - **Material alternative rejected:** Treat the old item as removed and the incoming item as a new addition, or infer a title match against an arbitrary manual item.
+- **Approval source/date:** Current request, 2026-10-16.
+- **Affected workflow/contract:** Service-plan import and refresh.
+
+- **Question/problem:** An operator selects a relocation but skips the imported field changes, or a matched item receives a new external identity without other visible changes.
+- **Approved behavior:** A selected move adopts the incoming source identity independently of field updates. A same-section identity-only adoption appears as a separately selectable **Linked** change.
+- **Why:** Future imports need the durable association, while operators must be able to skip unrelated content updates.
+- **Material alternative rejected:** Couple external identity adoption to the visible field update, making the selected move lose its future source match when that update is skipped.
 - **Approval source/date:** Current request, 2026-10-16.
 - **Affected workflow/contract:** Service-plan import and refresh.
 
