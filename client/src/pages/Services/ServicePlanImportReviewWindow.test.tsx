@@ -102,8 +102,16 @@ describe("ServicePlanImportReviewWindow", () => {
     expect(screen.getByText("Message → Response & Celebration")).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Confirm match for Sermon" })).not.toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Update Prayer" })).toBeChecked();
-    await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
-    expect(onApply).toHaveBeenCalledWith(["updated:prayer"]);
+    expect(screen.getByRole("checkbox", { name: "Select all updates" })).toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name: "Select all updates" }));
+    expect(screen.getByRole("checkbox", { name: "Confirm match for Sermon" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Update Prayer" })).not.toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name: "Response & Celebration" }));
+    expect(screen.getByRole("checkbox", { name: "Confirm match for Sermon" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Update Prayer" })).toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name: "Confirm match for Sermon" }));
+    await user.click(screen.getByRole("button", { name: "Apply 2 changes" }));
+    expect(onApply).toHaveBeenCalledWith(["updated:prayer", "legacy_match:legacy-sermon"]);
   });
 
   it("offers source linking independently of item field updates", async () => {

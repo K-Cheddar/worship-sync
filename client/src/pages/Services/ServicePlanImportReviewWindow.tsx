@@ -61,8 +61,10 @@ const ServicePlanImportReviewWindow = ({
   onApply,
   onClose,
 }: ServicePlanImportReviewWindowProps) => {
-  const changeKeys = useMemo(
-    () => summary.changes.map(servicePlanImportChangeKey),
+  const bulkChangeKeys = useMemo(
+    () => summary.changes
+      .filter((change) => change.kind !== "legacy_match")
+      .map(servicePlanImportChangeKey),
     [summary.changes],
   );
   const [selectedChangeKeys, setSelectedChangeKeys] = useState<Set<string>>(
@@ -147,20 +149,24 @@ const ServicePlanImportReviewWindow = ({
             <div className="space-y-3">
               <Checkbox
                 label="Select all updates"
-                checked={selectedChangeKeys.size === changeKeys.length}
-                onCheckedChange={(checked) => setSelected(changeKeys, checked)}
+                checked={bulkChangeKeys.length > 0 && bulkChangeKeys.every((key) => selectedChangeKeys.has(key))}
+                onCheckedChange={(checked) => setSelected(bulkChangeKeys, checked)}
+                disabled={!bulkChangeKeys.length}
                 className="border-b border-gray-700 pb-3"
               />
               <ul className="space-y-3" aria-label="Service Planning changes">
                 {changesBySection.map((sectionChanges) => {
-                  const sectionChangeKeys = sectionChanges.map(servicePlanImportChangeKey);
+                  const sectionChangeKeys = sectionChanges
+                    .filter((change) => change.kind !== "legacy_match")
+                    .map(servicePlanImportChangeKey);
                   const sectionName = sectionChanges[0]?.sectionName || "Untitled section";
                   return (
                     <li key={sectionChanges[0]?.sectionId} className="rounded-lg border border-gray-700 bg-gray-900/70">
                       <Checkbox
                         label={sectionName}
-                        checked={sectionChangeKeys.every((key) => selectedChangeKeys.has(key))}
+                        checked={sectionChangeKeys.length > 0 && sectionChangeKeys.every((key) => selectedChangeKeys.has(key))}
                         onCheckedChange={(checked) => setSelected(sectionChangeKeys, checked)}
+                        disabled={!sectionChangeKeys.length}
                         className="border-b border-gray-700 px-3 py-2"
                         labelClassName="font-medium"
                       />

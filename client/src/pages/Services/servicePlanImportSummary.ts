@@ -640,14 +640,24 @@ export const applySelectedServicePlanImportChanges = (
     imported: ServicePlanElement | undefined,
     associate: boolean,
   ): ServicePlanElement => {
-    const sourceOccurrenceId = associate && imported?.sourceOccurrenceId?.trim()
-      ? imported.sourceOccurrenceId
-      : current.sourceOccurrenceId;
-    return {
-      ...element,
-      sourceOccurrenceId,
-      ...(associate && imported?.sourcePlanningManaged ? { sourcePlanningManaged: true } : {}),
-    };
+    const result = { ...element };
+    if (!associate) {
+      if (current.sourceOccurrenceId === undefined) delete result.sourceOccurrenceId;
+      else result.sourceOccurrenceId = current.sourceOccurrenceId;
+      if (current.sourcePlanningManaged === undefined) delete result.sourcePlanningManaged;
+      else result.sourcePlanningManaged = current.sourcePlanningManaged;
+      return result;
+    }
+
+    if (imported?.sourceOccurrenceId?.trim()) {
+      result.sourceOccurrenceId = imported.sourceOccurrenceId;
+    } else if (current.sourceOccurrenceId === undefined) {
+      delete result.sourceOccurrenceId;
+    } else {
+      result.sourceOccurrenceId = current.sourceOccurrenceId;
+    }
+    if (imported?.sourcePlanningManaged) result.sourcePlanningManaged = true;
+    return result;
   };
 
   const result = currentSections.flatMap((currentSection) => {

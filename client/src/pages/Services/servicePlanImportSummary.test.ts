@@ -8,6 +8,10 @@ import {
   servicePlanImportChangeKey,
   summarizeServicePlanImport,
 } from "./servicePlanImportSummary";
+import {
+  DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+  refreshServicePlanFromImport,
+} from "./servicePlanImportSync";
 
 const element = (
   id: string,
@@ -202,6 +206,48 @@ describe("summarizeServicePlanImport", () => {
       sourcePlanningManaged: true,
     });
     expect(richTextToPlainText(applied[0].elements[0].notes)).toBe("Operator notes");
+  });
+
+  it("preserves item ownership when updates are accepted but source linking is declined", () => {
+    const current = [{ ...namedSection("message", "Message", [element("sermon", "Sermon", {
+      sourcePlanningManaged: false,
+      sourceTemplateElementId: "template-sermon",
+      notes: plainTextToRichText("Operator notes"),
+    })]), sourcePlanningManaged: true }];
+    const next = [{ ...namedSection("message", "Message", [element("sermon", "Sermon updated", {
+      sourceOccurrenceId: "external-sermon",
+      sourcePlanningManaged: true,
+      sourceTemplateElementId: "template-sermon",
+      notes: plainTextToRichText("Operator notes"),
+    })]), sourcePlanningManaged: true }];
+    const summary = summarizeServicePlanImport(current, next);
+
+    expect(summary.changes.map(({ kind }) => kind)).toEqual(["linked", "updated"]);
+    const applied = applySelectedServicePlanImportChanges(
+      current,
+      next,
+      summary,
+      new Set(["updated:sermon"]),
+    );
+
+    expect(applied[0].elements[0]).toMatchObject({
+      id: "sermon",
+      sourcePlanningManaged: false,
+      sourceTemplateElementId: "template-sermon",
+    });
+    expect(applied[0].elements[0].sourceOccurrenceId).toBeUndefined();
+    expect(richTextToPlainText(applied[0].elements[0].notes)).toBe("Operator notes");
+
+    const afterMissingSourceRow = refreshServicePlanFromImport(
+      applied,
+      [{ ...namedSection("message", "Message", []), sourcePlanningManaged: true }],
+      { ...DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS, removeMissing: true },
+    );
+    expect(afterMissingSourceRow[0].elements).toHaveLength(1);
+    expect(afterMissingSourceRow[0].elements[0]).toMatchObject({
+      id: "sermon",
+      sourcePlanningManaged: false,
+    });
   });
 
   it("reviews a relocation separately and applies selected moves in imported order", () => {
