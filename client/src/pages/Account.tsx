@@ -16,7 +16,7 @@ import Icon from "../components/Icon/Icon";
 import ErrorBoundary from "../components/ErrorBoundary/ErrorBoundary";
 import { cn } from "../utils/cnHelper";
 import {
-  ACCOUNT_SECTIONS,
+  getAccountSection,
   getActiveAccountSection,
   parseLegacyAccountTab,
 } from "./Account/accountConstants";
@@ -25,6 +25,7 @@ import AccountAccessDenied from "./Account/components/AccountAccessDenied";
 import AccountDeleteModalHost from "./Account/components/AccountDeleteModalHost";
 import AccountSidebarNav from "./Account/components/AccountSidebarNav";
 import AccountMobileNavigation from "./Account/components/AccountMobileNavigation";
+import AccountMobileShortcuts from "./Account/components/AccountMobileShortcuts";
 import { AccountSectionRouteSkeleton } from "./Account/accountPageSkeletons";
 import Sidebar from "../components/Sidebar/Sidebar";
 
@@ -68,7 +69,20 @@ const AccountSectionErrorFallback = () => (
 
 const AccountSectionRoute = ({ children }: { children: ReactNode }) => (
   <ErrorBoundary fallback={<AccountSectionErrorFallback />}>
-    <Suspense fallback={<AccountSectionRouteSkeleton />}>{children}</Suspense>
+    <Suspense
+      fallback={
+        <div
+          role="status"
+          aria-live="polite"
+          aria-busy="true"
+          aria-label="Loading administration page"
+        >
+          <AccountSectionRouteSkeleton />
+        </div>
+      }
+    >
+      {children}
+    </Suspense>
   </ErrorBoundary>
 );
 
@@ -116,6 +130,8 @@ const AccountShell = () => {
       mobileTitle={activeSection.label}
       centerTitleOnMobile
       icon={Building2}
+      compactMobileToolbar
+      className="[--account-bottom-navigation-height:calc(57px_+_env(safe-area-inset-bottom))] max-lg:pb-[var(--account-bottom-navigation-height)] lg:[--account-bottom-navigation-height:0px]"
       toolbarLogos={toolbarLogos}
       churchName={churchNameTrimmed}
       scrollbarWidth={scrollbarWidth}
@@ -139,29 +155,35 @@ const AccountShell = () => {
           : undefined
       }
     >
-      <section
-        className={cn(
-          "mx-auto mt-0 flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-none border border-gray-700 bg-gray-900/40",
-          canManage && "lg:grid lg:grid-cols-[13rem_minmax(0,1fr)]",
-        )}
-      >
-        {canManage ? (
-          <>
+      {canManage ? (
+        <AccountMobileShortcuts>
+          <section
+            data-account-workspace
+            className={cn(
+              "mx-auto mt-0 flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-none border border-gray-700 bg-gray-900/40",
+              "lg:grid lg:grid-cols-[13rem_minmax(0,1fr)]",
+            )}
+          >
             <Sidebar className="hidden lg:block lg:border-r">
               <AccountSidebarNav />
             </Sidebar>
-          </>
-        ) : null}
 
-        <div
-          className={cn(
-            "scrollbar-variable min-h-0 min-w-0 flex flex-1 flex-col overflow-y-auto overflow-x-hidden",
-            activeSection.id === "branding" ? "p-0" : "p-3 sm:p-5",
-          )}
-        >
+            <div
+              data-account-scrollport
+              className={cn(
+                "scrollbar-variable min-h-0 min-w-0 flex flex-1 flex-col overflow-y-auto overflow-x-hidden",
+                activeSection.id === "branding" ? "p-0" : "p-3 sm:p-5",
+              )}
+            >
+              <Outlet />
+            </div>
+          </section>
+        </AccountMobileShortcuts>
+      ) : (
+        <section data-account-workspace className="mx-auto mt-0 flex min-h-0 w-full flex-1 flex-col overflow-y-auto overflow-x-hidden rounded-none border border-gray-700 bg-gray-900/40 p-3 sm:p-5">
           <Outlet />
-        </div>
-      </section>
+        </section>
+      )}
     </AppWorkspaceShell>
   );
 };
@@ -172,7 +194,7 @@ const AccountRoutes = () => (
     <Route element={<AccountShell />}>
       <Route element={<AccountSectionLayout />}>
         <Route
-          path={ACCOUNT_SECTIONS[0].routePath}
+          path={getAccountSection("people").routePath}
           element={
             <AccountSectionRoute>
               <AccountPeoplePage />
@@ -180,7 +202,7 @@ const AccountRoutes = () => (
           }
         />
         <Route
-          path={ACCOUNT_SECTIONS[1].routePath}
+          path={getAccountSection("setup").routePath}
           element={
             <AccountSectionRoute>
               <AccountSetupPage />
@@ -188,7 +210,7 @@ const AccountRoutes = () => (
           }
         />
         <Route
-          path={ACCOUNT_SECTIONS[2].routePath}
+          path={getAccountSection("controllers").routePath}
           element={
             <AccountSectionRoute>
               <AccountControllersPage />
@@ -196,7 +218,7 @@ const AccountRoutes = () => (
           }
         />
         <Route
-          path={ACCOUNT_SECTIONS[3].routePath}
+          path={getAccountSection("branding").routePath}
           element={
             <AccountSectionRoute>
               <AccountBrandingPage />
@@ -204,7 +226,7 @@ const AccountRoutes = () => (
           }
         />
         <Route
-          path={ACCOUNT_SECTIONS[4].routePath}
+          path={getAccountSection("integrations").routePath}
           element={
             <AccountSectionRoute>
               <AccountIntegrationsPage />
@@ -212,7 +234,7 @@ const AccountRoutes = () => (
           }
         />
         <Route
-          path={ACCOUNT_SECTIONS[5].routePath}
+          path={getAccountSection("workspace").routePath}
           element={
             <AccountSectionRoute>
               <AccountWorkspacePage />
@@ -220,7 +242,7 @@ const AccountRoutes = () => (
           }
         />
         <Route
-          path={ACCOUNT_SECTIONS[6].routePath}
+          path={getAccountSection("data-transfer").routePath}
           element={
             <AccountSectionRoute>
               <AccountDataTransferPage />

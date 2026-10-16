@@ -728,7 +728,7 @@ export const createYouTubeLiveChatService = ({
       if (error?.statusCode === 400) throw error;
       console.warn("Could not resolve YouTube live chat:", error);
       const message =
-        "Could not find an active YouTube live chat. Confirm the stream is live, or paste the live video URL.";
+        "Could not check for an active YouTube live chat. Check the connected account and try again.";
       await persistIntegrationStatus(churchId, { lastError: message });
       throw createClientError(message);
     }
@@ -736,7 +736,7 @@ export const createYouTubeLiveChatService = ({
     if (!resolved.liveChatId) {
       const message = videoId
         ? "That YouTube video does not have an active live chat. Confirm the stream is live and chat is enabled."
-        : "No active YouTube live chat was found for the connected channel. Start the stream, or paste the live video URL.";
+        : "No active YouTube live chat was found for the connected channel. Start the stream or choose a live stream to try again.";
       await persistIntegrationStatus(churchId, { lastError: message });
       throw createClientError(message);
     }

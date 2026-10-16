@@ -98,7 +98,7 @@ export const RestreamActivityCard = ({
           : `Restream · ${localMessage.platform}`
       }
       className={cn(
-        "relative rounded-lg border px-3 py-2.5",
+        "relative rounded-lg border px-2.5 py-1.5 md:px-3 md:py-2",
         localMessage.hidden && "border-gray-600 bg-gray-800/60 opacity-75",
         !localMessage.hidden && "border-gray-500 bg-gray-800/90",
       )}
@@ -107,7 +107,7 @@ export const RestreamActivityCard = ({
         kind={isModeratorReply ? "moderator" : "restream"}
         detail={isModeratorReply ? undefined : localMessage.platform}
       />
-      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           <span
             className={cn(
@@ -158,18 +158,6 @@ export const RestreamActivityCard = ({
             </span>
           ) : null}
         </div>
-        {!isModeratorReply ? (
-          <div className="flex shrink-0 gap-1.5">
-            <Button
-              variant="tertiary"
-              svg={localMessage.isHighlighted ? StarOff : Sparkles}
-              onClick={() => void handleHighlight()}
-              disabled={isActing || localMessage.hidden}
-            >
-              {localMessage.isHighlighted ? "Unhighlight" : "Highlight"}
-            </Button>
-          </div>
-        ) : null}
       </div>
       {isModeratorReply &&
         localMessage.replyDeliveryStatus === "failed" &&
@@ -183,8 +171,24 @@ export const RestreamActivityCard = ({
           text={localMessage.text}
           isMine={false}
           tone="moderator"
+          unbounded
         />
       </div>
+      {!isModeratorReply ? (
+        <div className="flex justify-end pt-0.5">
+          <Button
+            variant="tertiary"
+            svg={localMessage.isHighlighted ? StarOff : Sparkles}
+            iconSize="sm"
+            style={{ minHeight: 32, transition: "none" }}
+            className="relative min-h-7 max-md:min-h-[32px] px-1.5 py-0 text-xs transition-colors after:absolute after:-inset-y-1 after:content-['']"
+            onClick={() => void handleHighlight()}
+            disabled={isActing || localMessage.hidden}
+          >
+            {localMessage.isHighlighted ? "Unhighlight" : "Highlight"}
+          </Button>
+        </div>
+      ) : null}
     </article>
   );
 };
