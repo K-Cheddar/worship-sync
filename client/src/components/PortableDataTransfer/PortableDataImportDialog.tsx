@@ -14,6 +14,7 @@ import {
 import type { PortableDataType, PortableImportIssue, PortableImportResolution, PortableImportRow, PortablePositionAction, PortableTeamAction, TeamRecord } from "../../api/authTypes";
 import { downloadBlob, PORTABLE_DATA_TYPES, PORTABLE_FIELD_LABELS, PORTABLE_FIELD_ORDER } from "./portableDataTransfer";
 import { useToast } from "../../context/toastContext";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export type PortableDataImportDialogProps = {
   open: boolean;
@@ -39,6 +40,145 @@ type Preview = {
   summary: { total: number; create: number; update: number; review: number; invalid: number };
   previewToken?: string;
   previewCsvHash?: string;
+};
+
+type MemberReviewFilter = "all" | "new" | "updates" | "review" | "skipped";
+
+const isUnresolvedMemberReference = (row: PortableImportRow, choices: Record<string, string>) => row.issues.some((issue) => {
+  if (issue.code === "required" || (issue.code === "missing_reference" && ["teams", "positions"].includes(issue.field))) return true;
+  if (["unresolved_reference", "not_found", "archived_match"].includes(issue.code)) return true;
+  if (!issue.candidates?.length || !["ambiguous_reference", "foreign_or_unknown_reference_id"].includes(issue.code)) return false;
+  return !choices[relationshipChoiceKey(row.row, issue.field, issue.referenceIndex)];
+});
+
+
+const memberReviewStatus = (row: PortableImportRow, selected: string) => {
+  if (row.action === "invalid") return "Needs your review";
+  if (row.action === "review" && selected === "review") return "Needs your review";
+  if (selected === "skip") return "Skip member";
+  if (selected.startsWith("update:")) return (row.changes || []).length ? "Update member" : "Already up to date";
+  return "Add as new member";
+};
+
+const memberIssueMessage = (issue: PortableImportIssue) => {
+  const field = issue.field === "positions" ? "position" : issue.field === "teams" ? "team" : PORTABLE_FIELD_LABELS[issue.field]?.toLowerCase() || "information";
+  if (issue.code === "required") return "Choose a " + field + " before importing this member.";
+  if (issue.code === "missing_reference") return issue.referenceValue
+    ? "“" + issue.referenceValue + "” isn't set up in this church yet. Choose a match or add it."
+    : "Choose a " + field + " before importing this member.";
+  if (issue.code === "ambiguous_reference") return "We found more than one possible " + field + ". Choose the one you mean.";
+  if (issue.code === "foreign_or_unknown_reference_id") return "Choose a local " + field + " for this member.";
+  if (issue.code === "unresolved_reference" || issue.code === "not_found") return "We couldn't find this " + field + ". Check the CSV information or skip this member.";
+  if (issue.code === "archived_match") return "This member is archived and can't be updated from this import.";
+  return issue.message;
+};
+
+const summarizeMemberChanges = (changes: NonNullable<PortableImportRow["changes"]>) => {
+  const summaries: string[] = [];
+  const positions = changes.filter((change) => /^positions?$/i.test(change.field));
+  const teams = changes.filter((change) => /^teams?$/i.test(change.field));
+  const positionAdds = positions.filter((change) => !change.before && change.after).map((change) => change.after);
+  const positionRemovals = positions.filter((change) => change.before && !change.after).map((change) => change.before);
+  const positionReplacements = positions.filter((change) => change.before && change.after);
+  if (positionAdds.length === 1) summaries.push(`Add ${positionAdds[0]}`);
+  if (positionAdds.length > 1) summaries.push(`Add ${positionAdds.length} positions: ${positionAdds.join(", ")}`);
+  if (positionRemovals.length === 1) summaries.push(`Remove ${positionRemovals[0]}`);
+  if (positionRemovals.length > 1) summaries.push(`Remove ${positionRemovals.length} positions: ${positionRemovals.join(", ")}`);
+  positionReplacements.forEach((change) => summaries.push(`Change ${change.before} to ${change.after}`));
+  const teamAdds = teams.filter((change) => !change.before && change.after).map((change) => change.after);
+  const teamRemovals = teams.filter((change) => change.before && !change.after).map((change) => change.before);
+  if (teamAdds.length === 1) summaries.push("Add to " + teamAdds[0]);
+  if (teamAdds.length > 1) summaries.push("Add to " + teamAdds.length + " teams: " + teamAdds.join(", "));
+  if (teamRemovals.length === 1) summaries.push("Remove from " + teamRemovals[0]);
+  if (teamRemovals.length > 1) summaries.push("Remove from " + teamRemovals.length + " teams: " + teamRemovals.join(", "));
+  changes.filter((change) => !/^positions?$/i.test(change.field) && !/^teams?$/i.test(change.field)).forEach((change) => {
+    const field = change.field.toLowerCase() === "phone" ? "Phone number" : change.field;
+    summaries.push(!change.before && change.after
+      ? `Add ${field}: ${change.after}`
+      : change.before && !change.after
+        ? `Remove ${field}`
+        : `Change ${field}: ${change.before} to ${change.after}`);
+  });
+  return summaries;
+};
+
+type MemberReviewCardProps = {
+  row: PortableImportRow;
+  selected: string;
+  onActionChange: (value: string) => void;
+  disabled: boolean;
+  alreadyCompleted: boolean;
+  result?: { status: "created" | "updated" | "unchanged" | "failed"; message?: string };
+  actionOpen: boolean;
+  onToggleAction: () => void;
+  relationshipChoices: Record<string, string>;
+  onRelationshipChange: (key: string, value: string) => void;
+  teamNames: string[];
+  positionNames: string[];
+  replaceMode: boolean;
+  hasCsvTeamAssignments: boolean;
+};
+
+const MemberReviewCard = ({ row, selected, onActionChange, disabled, alreadyCompleted, result, actionOpen, onToggleAction, relationshipChoices, onRelationshipChange, teamNames, positionNames, replaceMode, hasCsvTeamAssignments }: MemberReviewCardProps) => {
+  const name = row.record.name || [row.record.firstName, row.record.lastName].filter(Boolean).join(" ") || "Member from row " + row.row;
+  const needsReview = row.action === "invalid" || (row.action === "review" && selected === "review") || isUnresolvedMemberReference(row, relationshipChoices);
+  const status = result?.status === "created" ? "Added" : result?.status === "updated" ? "Updated" : result?.status === "unchanged" ? "Already up to date" : result?.status === "failed" || needsReview ? "Needs your review" : memberReviewStatus(row, selected);
+  const statusClass = status === "Already up to date" || status === "Skip member" ? "text-gray-400" : status === "Needs your review" ? "text-amber-200" : status === "Update member" ? "text-cyan-200" : "text-emerald-200";
+  const selectedCandidate = selected.startsWith("update:") ? row.candidates.find((candidate) => "update:" + candidate.id === selected) : undefined;
+  const actionOptions = [
+    { value: "skip", label: alreadyCompleted ? "Completed (excluded from retry)" : "Skip member" },
+    ...(row.action === "review" ? [{ value: "review", label: "Choose an action" }] : []),
+    { value: "create", label: "Add as new member" },
+    ...(row.matchedId ? [{ value: "update:" + row.matchedId, label: "Update this member" }] : []),
+    ...row.candidates.filter((candidate) => candidate.id !== row.matchedId).map((candidate) => ({ value: "update:" + candidate.id, label: "Update " + candidate.name })),
+  ];
+  const changes = row.changes || [];
+  const positionRemovals = changes.filter((change) => change.field.toLowerCase() === "position" && change.before && !change.after).map((change) => change.before);
+  return (
+    <article className={"rounded-md border p-3 " + (status === "Already up to date" || status === "Skip member" ? "border-gray-800 bg-gray-900/35" : needsReview ? "border-amber-700/70 bg-amber-950/15" : "border-gray-700 bg-gray-900/55")}>
+      <div className="flex min-w-0 items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="break-words text-sm font-semibold text-gray-100">{name}<span className={"ml-2 font-medium " + statusClass}>— {status}</span></h3>
+          {result?.status === "failed" && <p className="mt-1 text-sm text-red-200">Could not import: {result.message || "Review this file and try again."}</p>}
+          {selectedCandidate && <p className="mt-1 text-xs text-gray-300">Updating {selectedCandidate.name}</p>}
+          {selected === "create" && row.action === "review" && <p className="mt-1 text-sm text-gray-200">Adding as a new member.</p>}
+          {selected.startsWith("update:") && changes.length === 0 && <p className="mt-1 text-sm text-gray-300">No changes are needed.</p>}
+          {selected.startsWith("update:") && summarizeMemberChanges(changes).length > 0 && <ul className="mt-2 space-y-1 text-sm text-gray-200">
+            {summarizeMemberChanges(changes).map((summary) => <li key={summary} className="break-words">{summary}</li>)}
+          </ul>}
+          {selected === "create" && <div className="mt-1 break-words text-sm text-gray-300">
+            {teamNames.length > 0 && <p>{teamNames.join(", ")}{positionNames.length > 0 ? " · " + positionNames.length + (positionNames.length === 1 ? " position" : " positions") : ""}</p>}
+            {positionNames.length > 0 && <p className="mt-1 text-gray-200">{positionNames.join(", ")}</p>}
+            {row.record.phone && <p className="mt-1">Phone: {row.record.phone}</p>}
+            {row.record.email && <p className="mt-1">Email: {row.record.email}</p>}
+          </div>}
+          {replaceMode && positionRemovals.length > 0 && <p className="mt-2 rounded border border-amber-700/70 bg-amber-950/25 p-2 text-sm font-medium text-amber-100">Existing positions will be removed: {positionRemovals.join(", ")}. Only positions in {hasCsvTeamAssignments ? "the imported teams" : "the selected team"} are affected.</p>}
+        </div>
+        {!needsReview && !alreadyCompleted && !disabled && <div className="shrink-0">
+          {!actionOpen ? <Button type="button" variant="tertiary" className="min-h-10 px-2" onClick={onToggleAction}>Change</Button> : <Select aria-label={"Action for " + name} selectClassName="min-h-10 w-44 max-w-[45vw] rounded border border-gray-600 bg-gray-900 px-2 text-sm text-white" value={selected} onChange={onActionChange} options={actionOptions} />}
+        </div>}
+      </div>
+      {needsReview && <div className="mt-3 rounded-md border border-amber-700/70 bg-gray-950/65 p-3">
+        <p className="text-sm font-medium text-amber-100">{row.candidates.length > 0 ? "We found more than one possible member." : row.action === "invalid" ? "This member cannot be imported yet." : "This information needs your review."}</p>
+        <p className="mt-1 text-sm text-gray-200">{row.candidates.length > 0 ? "Choose which member to update, or add a new member." : "Choose an available action or skip this member."}</p>
+        <Select aria-label={(row.candidates.length > 0 ? "Choose which member to update or add for " : "Choose an action for ") + name} selectClassName="mt-2 min-h-11 w-full rounded border border-gray-600 bg-gray-900 px-3 text-sm text-white" value={selected} onChange={onActionChange} disabled={disabled || alreadyCompleted || row.action === "invalid"} options={actionOptions} />
+      </div>}
+      {row.issues.map((issue, index) => <p key={issue.code + "-" + index} className="mt-2 text-sm text-amber-100">{memberIssueMessage(issue)}</p>)}
+      {row.issues.filter((issue) => issue.candidates?.length && ["ambiguous_reference", "foreign_or_unknown_reference_id"].includes(issue.code)).map((issue) => {
+        const fieldLabel = issue.field === "positions" ? "Position" : issue.field === "teams" ? "Team" : PORTABLE_FIELD_LABELS[issue.field] || issue.field;
+        const referenceIndex = issue.referenceIndex ?? 0;
+        const key = relationshipChoiceKey(row.row, issue.field, referenceIndex);
+        const description = issue.referenceValue ? fieldLabel + ": " + issue.referenceValue : fieldLabel;
+        return <div key={"resolve-" + issue.field + "-" + referenceIndex + "-" + issue.code} className="mt-2 grid gap-1 text-sm text-gray-200"><span>{description}</span><Select aria-label={"Choose a local " + fieldLabel.toLowerCase() + " for " + name} selectClassName="min-h-10 w-full rounded border border-gray-600 bg-gray-900 px-2 text-sm text-white" value={relationshipChoices[key] || ""} onChange={(value) => onRelationshipChange(key, value)} options={[{ value: "", label: "Choose a match" }, ...(issue.candidates || []).map((candidate) => ({ value: candidate.id, label: candidate.teamName ? candidate.name + " · " + candidate.teamName : candidate.name }))]} /></div>;
+      })}
+      <details className="mt-3 rounded border border-gray-700/70 px-2.5 py-2 text-sm text-gray-300" open={needsReview || undefined}>
+        <summary className="cursor-pointer font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400">More details</summary>
+        {changes.length > 0 && <div className="mt-2"><h4 className="font-medium text-gray-200">Field changes</h4><dl className="mt-1 grid gap-x-3 gap-y-1 sm:grid-cols-[max-content_minmax(0,1fr)]">{changes.map((change, index) => <Fragment key={change.field + "-" + index}><dt>{change.field}</dt><dd className="break-words">{change.before || "No saved value"} → {change.after || "Remove"}</dd></Fragment>)}</dl></div>}
+        {row.sourceValues && Object.keys(row.sourceValues).length > 0 && <div className="mt-2"><h4 className="font-medium text-gray-200">Original CSV information</h4><dl className="mt-1 grid gap-x-3 gap-y-1 sm:grid-cols-[max-content_minmax(0,1fr)]">{Object.entries(row.sourceValues).filter(([, value]) => String(value || "").trim()).map(([label, value]) => <Fragment key={row.row + "-" + label}><dt>{label}</dt><dd className="break-words">{value}</dd></Fragment>)}</dl></div>}
+        {selected.startsWith("update:") && <p className="mt-2 text-xs text-gray-400">Other team memberships and positions outside this import are preserved.</p>}
+      </details>
+    </article>
+  );
 };
 
 const relationshipChoiceKey = (row: number, field: string, referenceIndex = 0) => `${row}:${field}:${referenceIndex}`;
@@ -121,6 +261,8 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
   const [createdPositionCount, setCreatedPositionCount] = useState(0);
   const [createdTeamCount, setCreatedTeamCount] = useState(0);
   const [previewPage, setPreviewPage] = useState(0);
+  const [memberReviewFilter, setMemberReviewFilter] = useState<MemberReviewFilter>("all");
+  const [changingMemberAction, setChangingMemberAction] = useState<number | null>(null);
   const [destinationTeamId, setDestinationTeamId] = useState(initialTeamId || "");
   const [updateMode, setUpdateMode] = useState<"merge" | "replace">("merge");
   const [clearBlankScalars, setClearBlankScalars] = useState(false);
@@ -171,6 +313,8 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
     setExplicitSkips({});
     setCreatedPositionCount(0);
     setCreatedTeamCount(0);
+    setMemberReviewFilter("all");
+    setChangingMemberAction(null);
   };
   useEffect(() => {
     if (!open) {
@@ -197,6 +341,8 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
     setExplicitSkips({});
     setCreatedPositionCount(0);
     setCreatedTeamCount(0);
+    setMemberReviewFilter("all");
+    setChangingMemberAction(null);
     setBusy(null);
   }, [open, initialTeamId]);
   const selectedRows = useMemo(() => (preview?.rows || []).filter((row) => {
@@ -218,7 +364,32 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
   const selectedUpdateRows = selectedRows.filter((row) => (rowChoices[row.row] || (row.action === "update" ? `update:${row.matchedId}` : "create")).startsWith("update:"));
   const unchangedCount = selectedUpdateRows.filter((row) => !(row.changes || []).length).length;
   const selectedUpdateCount = selectedUpdateRows.length - unchangedCount;
-  const skippedCount = Object.values(explicitSkips).filter(Boolean).length;
+  const skippedCount = (preview?.rows || []).filter((row) => !commitResults.some((result) => result.row === row.row && result.status !== "failed") && (explicitSkips[row.row] || (rowChoices[row.row] === "skip" && row.action !== "invalid"))).length;
+  const memberReviewCounts = (preview?.rows || []).reduce((counts, row) => {
+    const selected = rowChoices[row.row] || (row.action === "create" ? "create" : row.action === "update" ? `update:${row.matchedId}` : row.action === "review" ? "review" : "skip");
+    const outcome = commitResults.find((result) => result.row === row.row);
+    if (outcome && outcome.status !== "failed") return counts;
+    if (outcome?.status === "failed") { counts.review += 1; return counts; }
+    if (row.action === "invalid" || (row.action === "review" && selected === "review") || isUnresolvedMemberReference(row, relationshipChoices)) counts.review += 1;
+    else if (selected === "skip") counts.skipped += 1;
+    else if (selected.startsWith("update:")) {
+      if ((row.changes || []).length) counts.updates += 1;
+    } else if (selected === "create") counts.new += 1;
+    return counts;
+  }, { new: 0, updates: 0, review: 0, skipped: 0 });
+  const filteredMemberRows = (preview?.rows || []).filter((row) => {
+    const selected = rowChoices[row.row] || (row.action === "create" ? "create" : row.action === "update" ? `update:${row.matchedId}` : row.action === "review" ? "review" : "skip");
+    const outcome = commitResults.find((result) => result.row === row.row);
+    if (outcome && outcome.status !== "failed" && memberReviewFilter !== "all") return false;
+    const needsReview = outcome?.status === "failed" || row.action === "invalid" || (row.action === "review" && selected === "review") || isUnresolvedMemberReference(row, relationshipChoices);
+    if (memberReviewFilter === "new") return !needsReview && selected === "create";
+    if (memberReviewFilter === "updates") return !needsReview && selected.startsWith("update:") && Boolean(row.changes?.length);
+    if (memberReviewFilter === "review") return needsReview;
+    if (memberReviewFilter === "skipped") return !needsReview && selected === "skip";
+    return true;
+  });
+  const reviewRows = type === "members" ? filteredMemberRows : preview?.rows || [];
+  const visibleReviewRows = reviewRows.slice(previewPage * 50, previewPage * 50 + 50);
   const activePositionActions = approvedPositionActions.filter((action) => selectedRows.some((row) => approvedPositionRows[positionChoiceKey(action.teamId, action.sourceValue)]?.includes(row.row)));
   const activeTeamActions = approvedTeamActions.filter((action) => selectedRows.some((row) => approvedTeamRows[teamChoiceKey(action.sourceValue)]?.includes(row.row)));
   const plannedPositionRemovals = selectedRows.reduce((count, row) => count + (row.changes || []).filter((change) => change.field === "Position" && change.before && !change.after).length, 0);
@@ -564,12 +735,12 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
       setMessage(resultMessage);
       setMessageType(hasFailures ? (hasCompletedRows ? "attention" : "error") : "success");
       const completedRows = new Set(combinedResults.filter((item) => item.status !== "failed").map((item) => item.row));
-      const allRowsResolved = preview.rows.every((row) => completedRows.has(row.row) || explicitSkips[row.row]);
+      const allRowsResolved = preview.rows.every((row) => completedRows.has(row.row) || explicitSkips[row.row] || (rowChoices[row.row] === "skip" && row.action !== "invalid"));
       if (!hasFailures && allRowsResolved) {
         const created = combinedResults.filter((item) => item.status === "created").length;
         const updated = combinedResults.filter((item) => item.status === "updated").length;
         const unchanged = combinedResults.filter((item) => item.status === "unchanged").length;
-        const skipped = Object.values(explicitSkips).filter(Boolean).length;
+        const skipped = skippedCount;
         const entity = currentType.label;
         const counts = [created ? `${created} added` : "", updated ? `${updated} updated` : "", unchanged ? `${unchanged} unchanged` : "", skipped ? `${skipped} skipped` : "", teamsCreatedForImport ? `${teamsCreatedForImport} ${teamsCreatedForImport === 1 ? "team" : "teams"} created for this import` : "", positionsCreatedForImport ? `${positionsCreatedForImport} ${positionsCreatedForImport === 1 ? "position" : "positions"} created for this import` : ""].filter(Boolean).join(" · ");
         const title = created && !updated && !unchanged && !skipped ? `${entity} imported successfully` : created || updated || skipped ? "Import completed" : "No changes needed";
@@ -606,7 +777,7 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
     const outcomes = new Map(commitResults.map((result) => [result.row, result]));
     const rows: Array<Record<string, string>> = preview.rows.flatMap((row): Array<Record<string, string>> => {
       const outcome = outcomes.get(row.row);
-      const skipped = !outcome && explicitSkips[row.row];
+      const skipped = !outcome && (explicitSkips[row.row] || (rowChoices[row.row] === "skip" && row.action !== "invalid"));
       if (outcome?.status !== "failed" && !skipped) return [];
       return [{ ...(row.sourceValues || {}), "Import result": outcome?.status || "skipped", Reason: outcome?.message || (skipped ? "Skipped by operator." : "") }];
     });
@@ -623,15 +794,16 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
     downloadBlob(new Blob([csvText], { type: "text/csv;charset=utf-8" }), `${type}-import-recovery.csv`);
   };
 
-  const activeStep = !inspection ? 1 : preview ? teamStep ? 3 : positionStep ? 4 : type === "members" ? 5 : 3 : 2;
-  const stepLabel = activeStep === 1 ? "Choose CSV" : activeStep === 2 ? (type === "members" ? "Setup and column mapping" : "Map columns") : activeStep === 3 ? "Match teams" : activeStep === 4 && type === "members" ? "Match positions" : "Review changes";
+  const activeStep = !inspection ? 1 : preview && !teamStep && !positionStep && commitResults.length > 0 ? 4 : preview && !teamStep && !positionStep ? 3 : 2;
+  const stepLabel = activeStep === 1 ? "Choose file" : activeStep === 2 ? "Match information" : activeStep === 3 ? "Review" : "Finish";
   const eligibleFailedRows = selectedRows.filter((row) => commitResults.some((result) => result.row === row.row && result.status === "failed")).length;
   const requiresRepreview = commitResults.some((result) => result.status === "failed" && result.code === "stale_preview");
+  const importableCount = type === "members" ? selectedCreateCount + selectedUpdateCount : selectedRows.length;
   const commitButtonLabel = eligibleFailedRows === selectedRows.length && eligibleFailedRows > 0
     ? `Retry ${eligibleFailedRows} failed ${eligibleFailedRows === 1 ? "row" : "rows"}`
     : updateMode === "replace" && selectedRows.some((row) => (row.changes || []).some((change) => change.field === "Position" && change.before && !change.after))
       ? `Replace positions and import ${selectedRows.length} ${selectedRows.length === 1 ? "member" : "members"}`
-      : type === "members" ? `Import ${selectedRows.length} ${selectedRows.length === 1 ? "member" : "members"}` : `Import ${selectedRows.length} ${selectedRows.length === 1 ? "row" : "rows"}`;
+      : type === "members" ? (selectedCreateCount === 0 && selectedUpdateCount === 0 && unchangedCount > 0 ? "Finish review" : `Import ${importableCount} ${selectedUpdateCount > 0 ? importableCount === 1 ? "change" : "changes" : importableCount === 1 ? "member" : "members"}`) : `Import ${selectedRows.length} ${selectedRows.length === 1 ? "row" : "rows"}`;
 
   return (
     <Modal isOpen={open} onClose={() => onOpenChange(false)} busy={busy === "commit"}
@@ -643,6 +815,12 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
       contentClassName="flex flex-col overflow-hidden">
       <section className="flex min-h-0 flex-1 flex-col text-white">
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+          {type === "members" && <nav aria-label="Import progress" className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-400">
+            {["Choose file", "Match information", "Review", "Finish"].map((label, index) => <Fragment key={label}>
+              {index > 0 && <span aria-hidden="true" className="text-gray-600">›</span>}
+              <span aria-current={activeStep === index + 1 ? "step" : undefined} className={activeStep === index + 1 ? "font-semibold text-cyan-200" : ""}>{label}</span>
+            </Fragment>)}
+          </nav>}
           {type === "members" && <p id="member-import-intro" className="text-sm text-gray-300">Add new members or update existing ones using a CSV file. You'll review changes before importing.</p>}
           <div className={`rounded-lg ${inspection ? "bg-gray-800/60 p-3" : "border border-gray-700 bg-gray-950/40 p-4"}`}>
             {inspection ? <div className="flex flex-wrap items-center justify-between gap-3" aria-live="polite">
@@ -711,10 +889,10 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
           <div className="space-y-4 rounded-lg border border-cyan-400/35 bg-gray-800/65 p-4 shadow-sm shadow-black/20">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-3">
-                <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-cyan-400/15 text-sm font-semibold text-cyan-200" aria-hidden="true">{type === "members" ? "03" : "02"}</span>
+                  <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-cyan-400/15 text-sm font-semibold text-cyan-200" aria-hidden="true">02</span>
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wide text-cyan-200">Step 2</p>
-                  <h4 className="text-lg font-semibold leading-tight text-white">{type === "members" ? "Setup and column mapping" : "Column mapping"}</h4>
+                  <h4 className="text-lg font-semibold leading-tight text-white">{type === "members" ? "Match information" : "Column mapping"}</h4>
                 </div>
               </div>
               {type === "members" && <Button type="button" variant="tertiary" onClick={() => setMappingOpen((value) => !value)} aria-expanded={mappingOpen} disabled={Boolean(busy)}>{mappingOpen ? "Hide column mapping" : "Review column mapping"}</Button>}
@@ -741,9 +919,9 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
         {preview && teamStep && (
           <div className="space-y-4 rounded-lg border border-cyan-400/40 bg-gray-800/70 p-4 shadow-md shadow-black/20">
             <div className="flex items-start gap-3">
-              <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-cyan-400/15 text-sm font-semibold text-cyan-200" aria-hidden="true">03</span>
+              <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-cyan-400/15 text-sm font-semibold text-cyan-200" aria-hidden="true">02</span>
               <div className="min-w-0 flex-1">
-                <p className="text-xs font-semibold uppercase tracking-wide text-cyan-200">Step 3</p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-cyan-200">Step 2 · Match information</p>
                 <h4 className="text-xl font-semibold leading-tight text-white">Match teams</h4>
                 <p className="mt-2"><span className="inline-flex items-center gap-1.5 rounded-full bg-amber-400/10 px-2.5 py-1 text-xs font-semibold text-amber-200 ring-1 ring-inset ring-amber-300/25"><CircleAlert size={14} aria-hidden="true" />{teamGroups.length} {teamGroups.length === 1 ? "team needs" : "teams need"} attention</span></p>
                 <p className="mt-2 text-sm text-gray-300">Some teams in your CSV weren't found in this church. Choose how to handle each team.</p>
@@ -771,9 +949,9 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
         {preview && positionStep && !teamStep && (
           <div className="space-y-4 rounded-lg border border-cyan-400/40 bg-gray-800/70 p-4 shadow-md shadow-black/20">
             <div className="flex items-start gap-3">
-              <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-cyan-400/15 text-sm font-semibold text-cyan-200" aria-hidden="true">04</span>
+              <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-cyan-400/15 text-sm font-semibold text-cyan-200" aria-hidden="true">02</span>
               <div className="min-w-0 flex-1">
-                <p className="text-xs font-semibold uppercase tracking-wide text-cyan-200">Step 4</p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-cyan-200">Step 2 · Match information</p>
                 <h4 className="text-xl font-semibold leading-tight text-white">Match positions</h4>
                 <p className="mt-2"><span className="inline-flex items-center gap-1.5 rounded-full bg-amber-400/10 px-2.5 py-1 text-xs font-semibold text-amber-200 ring-1 ring-inset ring-amber-300/25"><CircleAlert size={14} aria-hidden="true" />{positionGroups.length} {positionGroups.length === 1 ? "position needs" : "positions need"} attention</span></p>
               <p className="mt-2 text-sm text-gray-300">Choose how to handle positions that aren't yet in their assigned team. When team ownership is unclear, select the team that owns each position.</p>
@@ -814,18 +992,30 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
         {preview && !teamStep && !positionStep && (
           <div className="space-y-4 rounded-lg border border-cyan-400/35 bg-gray-800/65 p-4 shadow-sm shadow-black/20">
             <div className="flex items-start gap-3">
-              <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-cyan-400/15 text-sm font-semibold text-cyan-200" aria-hidden="true">{type === "members" ? "04" : "03"}</span>
+                <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-cyan-400/15 text-sm font-semibold text-cyan-200" aria-hidden="true">03</span>
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-cyan-200">Step {type === "members" ? "5" : "3"}</p>
-                <h4 className="text-xl font-semibold leading-tight text-white">Review changes</h4>
+                <p className="text-xs font-semibold uppercase tracking-wide text-cyan-200">Step 3 · Review</p>
+                  <h4 className="text-xl font-semibold leading-tight text-white">{type === "members" ? "Review your import" : "Review changes"}</h4>
               </div>
             </div>
-              <div>
+              <div className={type === "members" ? "hidden" : ""}>
                 <p className="text-sm text-gray-300">{preview.summary.total} {preview.summary.total === 1 ? "row" : "rows"} found</p>
                 <p className="mt-1 text-sm text-gray-300">{type === "members" ? `${selectedCreateCount} new members · ${selectedUpdateCount} existing members to update` : `${selectedCreateCount} new · ${selectedUpdateCount} to update`} · {unchangedCount} unchanged · {preview.summary.review} need attention · {preview.summary.invalid} invalid · {skippedCount} skipped</p>
             </div>
-            {type === "members" && activePositionActions.length > 0 && <p className="text-sm text-gray-300">Positions: {activePositionActions.filter((action) => action.action === "create").length} new, {activePositionActions.filter((action) => action.action === "match").length} matched, {activePositionActions.filter((action) => action.action === "ignore").length} ignored.</p>}
-            {type === "members" && activeTeamActions.length > 0 && <p className="text-sm text-gray-300">Teams: {activeTeamActions.filter((action) => action.action === "create").length} new, {activeTeamActions.filter((action) => action.action === "match").length} mapped, {activeTeamActions.filter((action) => action.action === "ignore").length} ignored.</p>}
+            {type === "members" && <div>
+              <p className="text-sm text-gray-300">Here&apos;s what will change when you import this file.</p>
+              <p className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm text-gray-100">
+                {selectedCreateCount > 0 && <span>{selectedCreateCount} new {selectedCreateCount === 1 ? "member" : "members"}</span>}
+                {selectedUpdateCount > 0 && <span>{selectedUpdateCount} {selectedUpdateCount === 1 ? "member" : "members"} updated</span>}
+                {unchangedCount > 0 && <span>{unchangedCount} already up to date</span>}
+                {skippedCount > 0 && <span>{skippedCount} skipped</span>}
+                {memberReviewCounts.review > 0 && <span className="text-amber-200">{memberReviewCounts.review} need your review</span>}
+                {activePositionActions.filter((action) => action.action === "create").length > 0 && <span>{activePositionActions.filter((action) => action.action === "create").length} new {activePositionActions.filter((action) => action.action === "create").length === 1 ? "position" : "positions"}</span>}
+                {activeTeamActions.filter((action) => action.action === "create").length > 0 && <span>{activeTeamActions.filter((action) => action.action === "create").length} new {activeTeamActions.filter((action) => action.action === "create").length === 1 ? "team" : "teams"}</span>}
+              </p>
+            </div>}
+            {type !== "members" && activePositionActions.length > 0 && <p className="text-sm text-gray-300">Positions: {activePositionActions.filter((action) => action.action === "create").length} new, {activePositionActions.filter((action) => action.action === "match").length} matched, {activePositionActions.filter((action) => action.action === "ignore").length} ignored.</p>}
+            {type !== "members" && activeTeamActions.length > 0 && <p className="text-sm text-gray-300">Teams: {activeTeamActions.filter((action) => action.action === "create").length} new, {activeTeamActions.filter((action) => action.action === "match").length} mapped, {activeTeamActions.filter((action) => action.action === "ignore").length} ignored.</p>}
             {type === "members" && updateMode === "replace" && plannedPositionRemovals > 0 && <p className="rounded border border-amber-800 p-3 text-sm text-amber-100">{plannedPositionRemovals} existing position {plannedPositionRemovals === 1 ? "assignment" : "assignments"} will be removed from the imported team scope.</p>}
             {type === "members" && ignoredSourceFields.length > 0 && <details className="rounded border border-gray-700 p-3 text-sm text-gray-200">
               <summary className="cursor-pointer font-medium">Some CSV fields won't be imported</summary>
@@ -835,7 +1025,7 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
             {type === "members" && preview.rows.some((row) => /inactive|archived|disabled|deactivated/i.test(`${row.record.status || ""} ${row.record.archived || ""}`)) && <p className="rounded border border-amber-800 p-3 text-sm text-amber-100">Some source records are inactive or archived. Imports won't archive or restore members; skip rows that should remain unchanged.</p>}
             {type === "members" && updateMode === "replace" && activePositionActions.some((action) => action.action === "ignore") && <p className="rounded border border-amber-800 p-3 text-sm text-amber-100">In Replace mode, existing positions are preserved for members with an ignored position reference.</p>}
             {commitResults.length > 0 && <div className="rounded-md bg-gray-900/60 p-3 text-sm" aria-live="polite">
-              <h5 className="flex items-center gap-2 font-semibold"><Check size={16} className="text-emerald-300" aria-hidden="true" />Step {type === "members" ? "5" : "4"} · Import results</h5>
+              <h5 className="flex items-center gap-2 font-semibold"><Check size={16} className="text-emerald-300" aria-hidden="true" />Step 4 · Finish</h5>
               <div className="mt-2 flex flex-wrap gap-2 text-xs font-medium" aria-label="Import result summary">
                 <span className="rounded-full bg-emerald-500/10 px-2 py-1 text-emerald-200">Created {commitResults.filter((item) => item.status === "created").length}</span>
                 <span className="rounded-full bg-cyan-400/10 px-2 py-1 text-cyan-100">Updated {commitResults.filter((item) => item.status === "updated").length}</span>
@@ -849,8 +1039,19 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
               {type === "members" && <Button type="button" variant="tertiary" className="mt-2" onClick={downloadRecoveryRows}>Download failed and skipped rows</Button>}
             </div>}
             {preview.issues.map((issue) => <p key={`${issue.row}-${issue.code}`} className="text-sm text-red-200">Row {issue.row}: {issue.message}</p>)}
+            {type === "members" && <Tabs value={memberReviewFilter} onValueChange={(value) => { setMemberReviewFilter(value as MemberReviewFilter); setPreviewPage(0); }} className="mt-3">
+              <div className="scrollbar-variable w-full overflow-x-auto">
+                <TabsList variant="line" size="sm" aria-label="Filter members by import status">
+                  <TabsTrigger value="all">All {preview.rows.length}</TabsTrigger>
+                  <TabsTrigger value="new">New {memberReviewCounts.new}</TabsTrigger>
+                  <TabsTrigger value="updates">Updates {memberReviewCounts.updates}</TabsTrigger>
+                  <TabsTrigger value="review">Needs review {memberReviewCounts.review}</TabsTrigger>
+                  <TabsTrigger value="skipped">Skipped {memberReviewCounts.skipped}</TabsTrigger>
+                </TabsList>
+              </div>
+            </Tabs>}
             <div className="space-y-2">
-              {preview.rows.slice(previewPage * 50, previewPage * 50 + 50).map((row) => {
+              {visibleReviewRows.map((row) => {
                 const selected = rowChoices[row.row] || (row.action === "create" ? "create" : row.action === "update" ? `update:${row.matchedId}` : row.action === "review" ? "review" : "skip");
                 const mustSkip = row.issues.some((issue) => (issue.code === "missing_reference" && ["teams", "positions"].includes(issue.field)) || (issue.code === "required" && issue.field === "team"));
                 const fallbackTeamName = !String(row.record.teamIds || "").trim() && !String(row.record.positionIds || "").trim()
@@ -865,6 +1066,15 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
                 const importedTeamLabel = row.record.teams || fallbackTeamName || "the imported team";
                 const plannedPositions = approvedPositionActions.filter((action) => approvedPositionRows[positionChoiceKey(action.teamId, action.sourceValue)]?.includes(row.row));
                 const plannedTeams = approvedTeamActions.filter((action) => approvedTeamRows[teamChoiceKey(action.sourceValue)]?.includes(row.row));
+                if (type === "members") {
+                  const teamNames = plannedTeams.length
+                    ? plannedTeams.filter((action) => action.action !== "ignore").map((action) => action.action === "create" ? action.name || action.sourceValue : activeTeams.find((team) => team.teamId === action.teamId)?.name || action.sourceValue)
+                    : String(row.record.teams || fallbackTeamName || "").split(/[,;|]/).map((name) => name.trim()).filter(Boolean);
+                  const positionNames = plannedPositions.length
+                    ? plannedPositions.filter((action) => action.action !== "ignore").map((action) => action.name || action.sourceValue)
+                    : String(row.record.positions || "").split(/[,;|]/).map((name) => name.trim()).filter(Boolean);
+                  return <MemberReviewCard key={row.row} row={row} selected={selected} onActionChange={(value) => { setRowChoices((current) => ({ ...current, [row.row]: value })); setExplicitSkips((current) => ({ ...current, [row.row]: value === "skip" })); setChangingMemberAction(null); }} disabled={row.action === "invalid" || Boolean(busy)} alreadyCompleted={alreadyCompleted} result={outcome} actionOpen={changingMemberAction === row.row} onToggleAction={() => setChangingMemberAction((current) => current === row.row ? null : row.row)} relationshipChoices={relationshipChoices} onRelationshipChange={(key, value) => setRelationshipChoices((current) => ({ ...current, [key]: value }))} teamNames={[...new Set(teamNames)]} positionNames={[...new Set(positionNames)]} replaceMode={updateMode === "replace"} hasCsvTeamAssignments={hasCsvTeamAssignments} />;
+                }
                 return (
                   <div key={row.row} className="grid gap-2 rounded border border-gray-700 p-3 sm:grid-cols-[minmax(0,1fr)_14rem] sm:items-start">
                     <div className="min-w-0">
@@ -890,7 +1100,7 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
                   </div>
                 );
               })}
-              {preview.rows.length > 50 && <div className="flex items-center justify-between gap-3 text-sm text-gray-300"><span>Rows {previewPage * 50 + 1}–{Math.min((previewPage + 1) * 50, preview.rows.length)} of {preview.rows.length}</span><div className="flex gap-2"><Button type="button" variant="tertiary" onClick={() => setPreviewPage((page) => Math.max(0, page - 1))} disabled={previewPage === 0}>Previous</Button><Button type="button" variant="tertiary" onClick={() => setPreviewPage((page) => Math.min(Math.ceil(preview.rows.length / 50) - 1, page + 1))} disabled={(previewPage + 1) * 50 >= preview.rows.length}>Next</Button></div></div>}
+              {reviewRows.length > 50 && <div className="flex items-center justify-between gap-3 text-sm text-gray-300"><span>Rows {previewPage * 50 + 1}–{Math.min((previewPage + 1) * 50, reviewRows.length)} of {reviewRows.length}</span><div className="flex gap-2"><Button type="button" variant="tertiary" onClick={() => setPreviewPage((page) => Math.max(0, page - 1))} disabled={previewPage === 0}>Previous</Button><Button type="button" variant="tertiary" onClick={() => setPreviewPage((page) => Math.min(Math.ceil(reviewRows.length / 50) - 1, page + 1))} disabled={(previewPage + 1) * 50 >= reviewRows.length}>Next</Button></div></div>}
             </div>
           </div>
         )}
@@ -899,16 +1109,16 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
           {message}
         </p>}
         </div>
-        {inspection && <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-gray-700 bg-gray-900 px-4 py-3">
+        {inspection && <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-gray-700 bg-gray-900 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <div className="flex flex-wrap gap-2">
             {preview ? <>
-              <Button type="button" variant="tertiary" onClick={returnToSetup} disabled={Boolean(busy)}>{type === "members" ? "Back to setup and mapping" : "Back to column mapping"}</Button>
+              <Button type="button" variant="tertiary" onClick={returnToSetup} disabled={Boolean(busy)}>{type === "members" ? "Back to match information" : "Back to column mapping"}</Button>
               {positionStep && approvedTeamActions.length > 0 && <Button type="button" variant="tertiary" onClick={handleBackToTeams} disabled={Boolean(busy)}>Back to teams</Button>}
               {!teamStep && !positionStep && approvedPositionActions.length > 0 && <Button type="button" variant="tertiary" onClick={handleBackToPositions} disabled={Boolean(busy)}>Back to positions</Button>}
               {!teamStep && !positionStep && approvedPositionActions.length === 0 && approvedTeamActions.length > 0 && <Button type="button" variant="tertiary" onClick={handleBackToTeams} disabled={Boolean(busy)}>Back to teams</Button>}
             </> : <span className="text-xs text-gray-400" aria-live="polite">Step {activeStep}: {stepLabel}</span>}
           </div>
-          {preview ? teamStep ? <Button type="button" variant="cta" wrap className="min-h-10 w-full justify-center px-5 sm:w-auto" svg={ArrowRight} iconPosition="right" onClick={() => void handleApplyTeamActions()} disabled={Boolean(busy)} aria-busy={busy === "team-preview"}>{busy === "team-preview" ? "Updating review..." : "Continue to positions"}</Button> : positionStep ? <Button type="button" variant="cta" wrap className="min-h-10 w-full justify-center px-5 sm:w-auto" svg={ArrowRight} iconPosition="right" onClick={() => void handleApplyPositionActions()} disabled={Boolean(busy)} aria-busy={busy === "position-preview"}>{busy === "position-preview" ? "Updating review..." : "Continue to review"}</Button> : requiresRepreview ? <Button type="button" variant="cta" className="min-h-10 w-full justify-center px-5 sm:w-auto" svg={ArrowRight} iconPosition="right" onClick={() => void handlePreview()} disabled={Boolean(busy)} aria-busy={busy === "preview"}>{busy === "preview" ? "Checking rows..." : "Review changes again"}</Button> : selectedRows.length === 0 ? <Button type="button" variant="cta" className="min-h-10 w-full justify-center px-5 sm:w-auto" onClick={() => onOpenChange(false)} disabled={Boolean(busy)}>Close</Button> : <Button type="button" variant="cta" wrap className="min-h-10 w-full justify-center px-5 sm:w-auto" onClick={() => void handleCommit()} disabled={Boolean(busy)} aria-busy={busy === "commit"}>{busy === "commit" ? <><Spinner size="sm" className="mr-2 shrink-0" />Importing...</> : commitButtonLabel}</Button> : <Button type="button" variant="cta" className="min-h-10 w-full justify-center px-5 sm:w-auto" svg={ArrowRight} iconPosition="right" onClick={() => void handlePreview()} disabled={Boolean(busy) || !fileName || (needsDestinationTeam && !destinationTeamId)} aria-busy={busy === "preview"}>{busy === "preview" ? "Checking rows..." : type === "members" ? "Review changes" : "Review import"}</Button>}
+          {preview ? teamStep ? <Button type="button" variant="cta" wrap className="min-h-10 w-full justify-center px-5 sm:w-auto" svg={ArrowRight} iconPosition="right" onClick={() => void handleApplyTeamActions()} disabled={Boolean(busy)} aria-busy={busy === "team-preview"}>{busy === "team-preview" ? "Updating review..." : "Continue to positions"}</Button> : positionStep ? <Button type="button" variant="cta" wrap className="min-h-10 w-full justify-center px-5 sm:w-auto" svg={ArrowRight} iconPosition="right" onClick={() => void handleApplyPositionActions()} disabled={Boolean(busy)} aria-busy={busy === "position-preview"}>{busy === "position-preview" ? "Updating review..." : "Continue to review"}</Button> : requiresRepreview ? <Button type="button" variant="cta" className="min-h-10 w-full justify-center px-5 sm:w-auto" svg={ArrowRight} iconPosition="right" onClick={() => void handlePreview()} disabled={Boolean(busy)} aria-busy={busy === "preview"}>{busy === "preview" ? "Checking rows..." : "Review changes again"}</Button> : selectedRows.length === 0 ? <Button type="button" variant="cta" className="min-h-10 w-full justify-center px-5 sm:w-auto" onClick={() => onOpenChange(false)} disabled={Boolean(busy)}>Close</Button> : <Button type="button" variant="cta" wrap className="min-h-10 w-full justify-center px-5 sm:w-auto" onClick={() => void handleCommit()} disabled={Boolean(busy)} aria-busy={busy === "commit"}>{busy === "commit" ? <><Spinner size="sm" className="mr-2 shrink-0" />Importing...</> : commitButtonLabel}</Button> : <Button type="button" variant="cta" className="min-h-10 w-full justify-center px-5 sm:w-auto" svg={ArrowRight} iconPosition="right" onClick={() => void handlePreview()} disabled={Boolean(busy) || !fileName || (needsDestinationTeam && !destinationTeamId)} aria-busy={busy === "preview"}>{busy === "preview" ? "Checking rows..." : type === "members" ? "Review your import" : "Review import"}</Button>}
         </footer>}
       </section>
     </Modal>
