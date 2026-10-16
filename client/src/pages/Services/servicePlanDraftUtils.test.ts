@@ -589,6 +589,7 @@ describe("cloneSectionsFromTemplate", () => {
       name: "Audience",
       microphoneIds: ["mic-roving"],
     });
+    expect(element.sourceTemplateElementId).toBe("element-1");
   });
 
   it("re-keys everything so two plans from one template never collide", () => {
@@ -598,6 +599,10 @@ describe("cloneSectionsFromTemplate", () => {
     expect(section.elements[0].id).not.toBe("element-1");
     expect(section.elements[0].assignees?.[0].id).not.toBe("slot-1");
     expect(section.elements[0].assignees?.[1].id).not.toBe("slot-2");
+    expect(section.elements[0].sourceTemplateElementType).toBe("free");
+    const [savedTemplate] = cloneSectionsForTemplate([section]);
+    expect(savedTemplate.elements[0].sourceTemplateElementId).toBeUndefined();
+    expect(savedTemplate.elements[0].sourceTemplateElementType).toBeUndefined();
   });
 
   it("does not mutate the template it was given", () => {

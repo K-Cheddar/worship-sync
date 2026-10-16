@@ -1,4 +1,4 @@
-import { plainTextToRichText } from "../../types/richText";
+import { plainTextToRichText, richTextToPlainText } from "../../types/richText";
 import type {
   ServicePlanElement,
   ServicePlanSection,
@@ -172,6 +172,66 @@ describe("summarizeServicePlanImport", () => {
     );
   });
 
+  it("reviews a relocation separately and applies selected moves in imported order", () => {
+    const sermon = element("sermon", "Sermon", {
+      sourceTemplateElementId: "template-sermon",
+      notes: plainTextToRichText("Local note"),
+    });
+    const current = [
+      namedSection("message", "Message", [sermon]),
+      namedSection("response", "Response & Celebration", [element("closing", "Closing Song")]),
+    ];
+    const next = [
+      namedSection("message", "Message", []),
+      namedSection("response", "Response & Celebration", [
+        { ...sermon, title: plainTextToRichText("Sermon updated"), notes: plainTextToRichText("New note") },
+        element("new-song", "Response Song"),
+        element("closing", "Closing Song"),
+      ]),
+    ];
+    const summary = summarizeServicePlanImport(current, next);
+
+    expect(summary).toMatchObject({ moved: 1, updated: 1, added: 1, removed: 0 });
+    expect(summary.changes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "sermon", kind: "moved", fromSectionName: "Message", sectionName: "Response & Celebration",
+      }),
+      expect.objectContaining({ id: "sermon", kind: "updated" }),
+    ]));
+    const allChanges = new Set(summary.changes.map(servicePlanImportChangeKey));
+    const applied = applySelectedServicePlanImportChanges(current, next, summary, allChanges);
+    expect(applied.find(({ id }) => id === "response")?.elements.map(({ id }) => id)).toEqual([
+      "sermon", "new-song", "closing",
+    ]);
+    expect(applied.find(({ id }) => id === "response")?.elements[0].id).toBe("sermon");
+  });
+
+  it("leaves a move unchecked while accepting an item update and another destination change", () => {
+    const current = [
+      namedSection("message", "Message", [element("sermon", "Sermon")]),
+      namedSection("response", "Response", [element("song", "Old Song")]),
+    ];
+    const next = [
+      namedSection("message", "Message", []),
+      namedSection("response", "Response", [
+        element("sermon", "Sermon updated", { notes: plainTextToRichText("new details") }),
+        element("song", "New Song"),
+        element("added", "Added after song"),
+      ]),
+    ];
+    const summary = summarizeServicePlanImport(current, next);
+    const selected = new Set(summary.changes
+      .filter((change) => !(change.id === "sermon" && change.kind === "moved"))
+      .map(servicePlanImportChangeKey));
+
+    const applied = applySelectedServicePlanImportChanges(current, next, summary, selected);
+
+    expect(applied.find(({ id }) => id === "message")?.elements[0]).toMatchObject({ id: "sermon" });
+    expect(richTextToPlainText(applied.find(({ id }) => id === "message")!.elements[0].title)).toBe("Sermon updated");
+    expect(applied.find(({ id }) => id === "response")?.elements.map(({ id }) => id)).toEqual(["song", "added"]);
+    expect(richTextToPlainText(applied.find(({ id }) => id === "message")!.elements[0].notes)).toBe("new details");
+  });
+
   it("does not report item type changes in the review fields", () => {
     const summary = summarizeServicePlanImport(
       [section([element("welcome", "Welcome", { type: "free" })])],
@@ -211,7 +271,7 @@ describe("summarizeServicePlanImport", () => {
       ],
     );
 
-    expect(summary).toEqual({ changes: [], added: 0, removed: 0, updated: 0 });
+    expect(summary).toEqual({ changes: [], added: 0, removed: 0, updated: 0, moved: 0 });
   });
 
   it("surfaces declined source changes for explicit review and keeps them out when unchecked", () => {
@@ -268,6 +328,7 @@ describe("summarizeServicePlanImport", () => {
       added: 0,
       removed: 0,
       updated: 0,
+      moved: 0,
     });
   });
 
@@ -284,7 +345,7 @@ describe("summarizeServicePlanImport", () => {
     })])];
 
     expect(summarizeServicePlanImport(current, next)).toEqual({
-      changes: [], added: 0, removed: 0, updated: 0,
+      changes: [], added: 0, removed: 0, updated: 0, moved: 0,
     });
   });
 
@@ -435,7 +496,7 @@ describe("summarizeServicePlanImport", () => {
     })])];
 
     expect(summarizeServicePlanImport(current, next)).toEqual({
-      changes: [], added: 0, removed: 0, updated: 0,
+      changes: [], added: 0, removed: 0, updated: 0, moved: 0,
     });
   });
 

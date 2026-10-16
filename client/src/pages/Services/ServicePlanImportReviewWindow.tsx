@@ -20,12 +20,14 @@ const kindLabel: Record<ServicePlanImportChangeKind, string> = {
   added: "Added",
   removed: "Removed",
   updated: "Updated",
+  moved: "Moved",
 };
 
 const kindClassName: Record<ServicePlanImportChangeKind, string> = {
   added: "bg-emerald-400/10 text-emerald-200",
   removed: "bg-red-400/10 text-red-200",
   updated: "bg-cyan-400/10 text-cyan-200",
+  moved: "bg-violet-400/10 text-violet-200",
 };
 
 /** Item type changes still apply with the import; omit them from the review UI. */
@@ -67,6 +69,9 @@ const ServicePlanImportReviewWindow = ({
       : "",
     selectedChanges.filter((change) => change.kind === "updated").length
       ? `${selectedChanges.filter((change) => change.kind === "updated").length} updated`
+      : "",
+    selectedChanges.filter((change) => change.kind === "moved").length
+      ? `${selectedChanges.filter((change) => change.kind === "moved").length} moved`
       : "",
     selectedChanges.filter((change) => change.kind === "removed").length
       ? `${selectedChanges.filter((change) => change.kind === "removed").length} removed`
@@ -147,7 +152,7 @@ const ServicePlanImportReviewWindow = ({
                             <li key={changeKey} className="rounded-md border border-gray-700/80 bg-gray-950/40 px-3 py-2">
                               <div className="flex items-start gap-2">
                                 <Checkbox
-                                  label={`Update ${change.itemName}`}
+                                  label={`${change.kind === "moved" ? "Move" : "Update"} ${change.itemName}`}
                                   checked={selectedChangeKeys.has(changeKey)}
                                   onCheckedChange={(checked) => setSelected([changeKey], checked)}
                                   className="pt-0.5"
@@ -163,6 +168,11 @@ const ServicePlanImportReviewWindow = ({
                                 </span>
                                 <div className="min-w-0 flex-1">
                                   <p className="truncate font-medium text-gray-100">{change.itemName}</p>
+                                  {change.kind === "moved" ? (
+                                    <p className="mt-1 text-xs text-violet-200">
+                                      {change.fromSectionName || "Previous section"} → {change.sectionName}
+                                    </p>
+                                  ) : null}
                                   {fields.length ? (
                                     <div className="mt-2 grid grid-cols-1 gap-2 border-t border-gray-700/80 pt-2 sm:grid-cols-2">
                                       {fields.map((field) => (

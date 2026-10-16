@@ -12,7 +12,7 @@ import type {
   ServicePlanSection,
   ServicePlanTeamNote,
 } from "../../types/servicePlan";
-import { insertNewServicePlanSectionRuns } from "./servicePlanImportSectionPlacement";
+import { insertNewServicePlanSectionRuns, placeServicePlanImportElements } from "./servicePlanImportSectionPlacement";
 import { reconcileReviewedServicePlanParts, servicePlanNoteFingerprint, upgradeLegacyImportedDescriptionTitles } from "./servicePlanImportOwnership";
 import { splitServicePlanningLedByNames } from "./servicePlanFromImport";
 import { claimServicePlanAssigneeSlot, copyServicePlanAssigneeEquipment, hasServicePlanAssigneeEquipment, stripServicePlanAssigneeIdentityPreservingEquipment } from "./servicePlanAssigneeUtils";
@@ -925,7 +925,10 @@ const mergeElement = (
     // still pending.
     const currentSongRefs = getServicePlanElementSongRefs(current);
     const reconciledSongs = reconcileImportedSongRefs(current, imported);
-    const mergedSongRefs = reconciledSongs.refs;
+    const mergedSongRefs = current.sourceTemplateElementId &&
+      getServicePlanElementSongRefs(imported).length === 0
+      ? currentSongRefs
+      : reconciledSongs.refs;
     const songRefsUnchanged =
       mergedSongRefs.length === currentSongRefs.length &&
       mergedSongRefs.every((ref, index) => ref === currentSongRefs[index]);
@@ -1235,8 +1238,8 @@ const managedImportedSection = (
 /**
  * Reconciles a fresh Service Planning parse into an editable plan without
  * replacing locally-created IDs, notes, roster links, or outline-push state.
- * It intentionally does not reorder current items; importing source order is
- * a separate operator decision from refreshing source fields.
+ * It keeps existing item order, placing only source additions and
+ * confidently matched relocations relative to matched source rows.
  */
 export const refreshServicePlanFromImport = (
   currentSections: ServicePlanSection[],
@@ -1251,7 +1254,9 @@ export const refreshServicePlanFromImport = (
    * operator's, and a source row with the same title must not consume it.
    */
   const canPairByLabel = (item: { sourcePlanningManaged?: boolean }): boolean =>
-    Boolean(item.sourcePlanningManaged) || !tracksSource;
+    Boolean(item.sourcePlanningManaged) || !tracksSource ||
+    ("sourceTemplateElementId" in item && Boolean(item.sourceTemplateElementId) &&
+      safeTemplateMatchKeys.has(templateMatchKey(item as ServicePlanElement)));
   /**
    * Position alone is weak evidence, and the same predicate decides removal:
    * only items the source demonstrably owns can be rewritten by order or
@@ -1275,6 +1280,25 @@ export const refreshServicePlanFromImport = (
     const identity = element.sourceOccurrenceId?.trim();
     if (identity) importedIdentityCounts.set(identity, (importedIdentityCounts.get(identity) || 0) + 1);
   }));
+  const templateMatchKey = (element: ServicePlanElement): string =>
+    JSON.stringify([element.sourceTemplateElementType || element.type, normalized(richTextToPlainText(element.title))]);
+  const templateCurrentCounts = new Map<string, number>();
+  currentSections.forEach((section) => section.elements.forEach((element) => {
+    if (!element.sourceTemplateElementId) return;
+    const key = templateMatchKey(element);
+    templateCurrentCounts.set(key, (templateCurrentCounts.get(key) || 0) + 1);
+  }));
+  const templateImportedCounts = new Map<string, number>();
+  importedSections.forEach((section) => section.elements.forEach((element) => {
+    if (element.sourceOccurrenceId?.trim()) return;
+    const key = templateMatchKey(element);
+    templateImportedCounts.set(key, (templateImportedCounts.get(key) || 0) + 1);
+  }));
+  const safeTemplateMatchKeys = new Set(
+    [...templateCurrentCounts].flatMap(([key, count]) =>
+      count === 1 && templateImportedCounts.get(key) === 1 ? [key] : [],
+    ),
+  );
   const currentIdentityElements = new Map<string, Array<{ sectionIndex: number; elementIndex: number; element: ServicePlanElement }>>();
   currentSections.forEach((section, sectionIndex) => section.elements.forEach((element, elementIndex) => {
     if (!element.sourcePlanningManaged) return;
@@ -1309,16 +1333,31 @@ export const refreshServicePlanFromImport = (
   );
   const movedElementsBySection = new Map<number, ServicePlanElement[]>();
   const movedElementKeys = new Set<string>();
+  const movedElementIds = new Set<string>();
   safeImportedSections.forEach((section, importedSectionIndex) => {
     section.elements.forEach((importedElement) => {
       const identity = importedElement.sourceOccurrenceId?.trim();
-      if (!identity || ambiguousIdentities.has(identity) || importedIdentityCounts.get(identity) !== 1) return;
-      const existingMatches = currentIdentityElements.get(identity) || [];
-      if (existingMatches.length !== 1) return;
-      const existing = existingMatches[0];
+      let existing: { sectionIndex: number; elementIndex: number; element: ServicePlanElement } | undefined;
+      if (identity && !ambiguousIdentities.has(identity) && importedIdentityCounts.get(identity) === 1) {
+        const existingMatches = currentIdentityElements.get(identity) || [];
+        if (existingMatches.length === 1) existing = existingMatches[0];
+      } else if (!identity && safeTemplateMatchKeys.has(templateMatchKey(importedElement))) {
+        const matches = currentSections.flatMap((currentSection, sectionIndex) =>
+          currentSection.elements.flatMap((element, elementIndex) =>
+            element.sourceTemplateElementId && templateMatchKey(element) === templateMatchKey(importedElement)
+              ? [{ sectionIndex, elementIndex, element }]
+              : [],
+          ),
+        );
+        if (matches.length === 1) {
+          existing = matches[0];
+        }
+      }
+      if (!existing) return;
       const destinationIndex = currentSectionByImportedIndex.get(importedSectionIndex);
       if (destinationIndex === existing.sectionIndex) return;
       movedElementKeys.add(`${existing.sectionIndex}:${existing.elementIndex}`);
+      movedElementIds.add(existing.element.id);
       const moved = movedElementsBySection.get(importedSectionIndex) || [];
       moved.push(existing.element);
       movedElementsBySection.set(importedSectionIndex, moved);
@@ -1413,18 +1452,36 @@ export const refreshServicePlanFromImport = (
         },
       );
 
+      const elementsToPlace = currentSection.elements.flatMap(({ id }) => {
+        if (!movedElementIds.has(id)) return [];
+        const merged = elements.find((element) => element.id === id);
+        return merged ? [merged] : [];
+      });
       if (options.addMissing) {
         for (const importedElement of sourceSection.elements) {
           const sourceIndex = sourceSection.elements.indexOf(importedElement);
-          if (!pairedImportedElements.has(sourceIndex))
-            elements.push(managedImportedElement(importedElement));
+          if (!pairedImportedElements.has(sourceIndex)) {
+            const added = managedImportedElement(importedElement);
+            elements.push(added);
+            elementsToPlace.push(added);
+          }
         }
       }
+      const currentByImportedIndex = new Map(
+        elementPairs.map(([current, imported]) => [imported.index, current.value.id]),
+      );
+      const sourceOrder = sourceSection.elements.map((element, index) => {
+        const matchedId = currentByImportedIndex.get(index);
+        return matchedId ? elements.find((candidate) => candidate.id === matchedId) || element : element;
+      });
+      const placedElements = elementsToPlace.length
+        ? placeServicePlanImportElements(elements, sourceOrder, elementsToPlace)
+        : elements;
 
       if (
         options.removeMissing &&
         currentSection.sourcePlanningManaged &&
-        elements.length === 0 &&
+        placedElements.length === 0 &&
         sourceSection.elements.length > 0
       ) {
         return [];
@@ -1434,7 +1491,7 @@ export const refreshServicePlanFromImport = (
           ...currentSection,
           sourcePlanningManaged: true,
           name: options.updateTitles ? sourceSection.name : currentSection.name,
-          elements,
+          elements: placedElements,
         },
       ];
     },

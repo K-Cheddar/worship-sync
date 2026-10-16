@@ -16,9 +16,9 @@ import type {
   ServicePlanMicrophone,
   ServicePlanSection,
 } from "../../types/servicePlan";
-import { insertNewServicePlanSectionRuns } from "./servicePlanImportSectionPlacement";
+import { insertNewServicePlanSectionRuns, placeServicePlanImportElements } from "./servicePlanImportSectionPlacement";
 
-export type ServicePlanImportChangeKind = "added" | "removed" | "updated";
+export type ServicePlanImportChangeKind = "added" | "removed" | "updated" | "moved";
 
 export type ServicePlanImportFieldChange = {
   label: string;
@@ -29,6 +29,8 @@ export type ServicePlanImportFieldChange = {
 export type ServicePlanImportChange = {
   id: string;
   sectionId: string;
+  fromSectionId?: string;
+  fromSectionName?: string;
   kind: ServicePlanImportChangeKind;
   itemName: string;
   sectionName: string;
@@ -44,6 +46,7 @@ export type ServicePlanImportSummary = {
   added: number;
   removed: number;
   updated: number;
+  moved: number;
 };
 
 export type ServicePlanImportEquipmentDisplayContext = {
@@ -473,6 +476,18 @@ export const summarizeServicePlanImport = (
       return;
     }
     const fields = changedFields(current.element, element, displayContext);
+    if (current.sectionId !== sectionId) {
+      changes.push({
+        id,
+        sectionId,
+        fromSectionId: current.sectionId,
+        fromSectionName: current.sectionName,
+        kind: "moved",
+        itemName: itemName(element),
+        sectionName,
+        fields: [],
+      });
+    }
     if (fields.length) {
       changes.push({
         id,
@@ -556,6 +571,7 @@ export const summarizeServicePlanImport = (
     added: changes.filter((change) => change.kind === "added").length,
     removed: changes.filter((change) => change.kind === "removed").length,
     updated: changes.filter((change) => change.kind === "updated").length,
+    moved: changes.filter((change) => change.kind === "moved").length,
   };
 };
 
@@ -574,7 +590,6 @@ export const applySelectedServicePlanImportChanges = (
       .filter((change) => selectedChangeKeys.has(servicePlanImportChangeKey(change)))
       .map((change) => [servicePlanImportChangeKey(change), change]),
   );
-  const currentSectionIds = new Set(currentSections.map((section) => section.id));
   const nextSectionsById = new Map(nextSections.map((section) => [section.id, section]));
   const nextItemsById = new Map(
     nextSections.flatMap((section) =>
@@ -584,6 +599,9 @@ export const applySelectedServicePlanImportChanges = (
 
   const selectedChangeFor = (kind: ServicePlanImportChangeKind, id: string) =>
     selectedChanges.get(`${kind}:${id}`);
+  const currentItemsById = new Map(currentSections.flatMap((section) =>
+    section.elements.map((element) => [element.id, element] as const),
+  ));
 
   const result = currentSections.flatMap((currentSection) => {
     const nextSection = nextSectionsById.get(currentSection.id);
@@ -592,17 +610,27 @@ export const applySelectedServicePlanImportChanges = (
       .map(servicePlanImportChangeKey);
     const selectedChangesInSection = [...selectedChanges.values()]
       .filter((change) => change.sectionId === currentSection.id);
-    const selectedAdditions = nextSection?.elements.filter((element) =>
-      Boolean(selectedChangeFor("added", element.id)),
-    ) || [];
     const elements = currentSection.elements.flatMap((currentElement) => {
       if (selectedChangeFor("removed", currentElement.id)) return [];
+      const move = selectedChangeFor("moved", currentElement.id);
+      if (move && move.sectionId !== currentSection.id) return [];
       if (selectedChangeFor("updated", currentElement.id)) {
         return [nextItemsById.get(currentElement.id) || currentElement];
       }
       return [currentElement];
     });
-    elements.push(...selectedAdditions);
+    const placements = (nextSection?.elements || []).flatMap((nextElement) => {
+      if (selectedChangeFor("added", nextElement.id)) return [nextElement];
+      const move = selectedChangeFor("moved", nextElement.id);
+      if (!move || move.sectionId !== currentSection.id) return [];
+      return [selectedChangeFor("updated", nextElement.id)
+        ? nextElement
+        : currentItemsById.get(nextElement.id) || nextElement];
+    });
+    elements.push(...placements);
+    const orderedElements = placements.length && nextSection
+      ? placeServicePlanImportElements(elements, nextSection.elements, placements)
+      : elements;
 
     const allElementsRemoved =
       !nextSection &&
@@ -622,22 +650,29 @@ export const applySelectedServicePlanImportChanges = (
       ...(selectedChangesInSection.length && nextSection?.sourcePlanningManaged
         ? { sourcePlanningManaged: true }
         : {}),
-      elements,
+      elements: orderedElements,
     }];
   });
 
   const currentSectionIdByNextIndex = new Map<number, string>();
   const newSectionByNextIndex = new Map<number, ServicePlanSection>();
   nextSections.forEach((nextSection, index) => {
-    if (currentSectionIds.has(nextSection.id)) {
+    if (currentSections.some((section) => section.id === nextSection.id)) {
       currentSectionIdByNextIndex.set(index, nextSection.id);
       return;
     }
-    const elements = nextSection.elements.filter((element) =>
-      Boolean(selectedChangeFor("added", element.id)),
-    );
+    const elements = nextSection.elements.flatMap((element) => {
+      if (selectedChangeFor("added", element.id)) return [element];
+      const move = selectedChangeFor("moved", element.id);
+      return move && move.sectionId === nextSection.id
+        ? [selectedChangeFor("updated", element.id) ? element : currentItemsById.get(element.id) || element]
+        : [];
+    });
     if (elements.length) {
-      newSectionByNextIndex.set(index, { ...nextSection, elements });
+      newSectionByNextIndex.set(index, {
+        ...nextSection,
+        elements: placeServicePlanImportElements([], nextSection.elements, elements),
+      });
     }
   });
 
