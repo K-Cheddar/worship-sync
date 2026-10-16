@@ -16,6 +16,7 @@ import { getBirthDateValidationError } from "../../../utils/birthDate";
 import {
   formatUsPhoneInput,
   formatUsPhoneNumber,
+  normalizeUsPhoneNumberForComparison,
 } from "../../../utils/phoneNumber";
 import { buildShareablePublicPathUrl } from "../../../utils/environment";
 import FormActionButtons from "../components/FormActionButtons";
@@ -184,6 +185,7 @@ type MemberManagerProps = {
   onRemoved: (memberId: string) => void;
   onImported?: () => void | Promise<void>;
   onSmsConsentRecorded?: () => Promise<void> | void;
+  onSmsEligibilityRefresh?: (memberId: string, phoneNumber: string, previousPhoneNumber: string) => Promise<void>;
 };
 
 const MemberManager = ({
@@ -200,6 +202,7 @@ const MemberManager = ({
   onRemoved,
   onImported,
   onSmsConsentRecorded,
+  onSmsEligibilityRefresh,
 }: MemberManagerProps) => {
   const context = useContext(GlobalInfoContext);
   const { showToast, removeToast } = useToast();
@@ -219,6 +222,58 @@ const MemberManager = ({
    * receive account-linking authority.
    */
   const isChurchAdmin = context?.role === "admin";
+  const [smsEligibilityRefreshState, setSmsEligibilityRefreshState] = useState<Record<string, {
+    churchId: string;
+    phoneNumber: string;
+    previousPhoneNumber: string;
+    status: "checking" | "error";
+  }>>({});
+  const smsEligibilityRefreshVersionsRef = useRef(new Map<string, number>());
+  const refreshSmsEligibility = useCallback(async (member: TeamRosterMember, previousPhoneNumber: string) => {
+    if (!onSmsEligibilityRefresh) return;
+    const requestKey = `${churchId}:${member.memberId}`;
+    const version = (smsEligibilityRefreshVersionsRef.current.get(requestKey) || 0) + 1;
+    smsEligibilityRefreshVersionsRef.current.set(requestKey, version);
+    const phoneNumber = member.phoneNumber || "";
+    setSmsEligibilityRefreshState((current) => ({
+      ...current,
+      [member.memberId]: { churchId, phoneNumber, previousPhoneNumber, status: "checking" },
+    }));
+    try {
+      await onSmsEligibilityRefresh(member.memberId, phoneNumber, previousPhoneNumber);
+      if (smsEligibilityRefreshVersionsRef.current.get(requestKey) === version) {
+        setSmsEligibilityRefreshState((current) => {
+          const next = { ...current };
+          delete next[member.memberId];
+          return next;
+        });
+      }
+    } catch {
+      if (smsEligibilityRefreshVersionsRef.current.get(requestKey) === version) {
+        setSmsEligibilityRefreshState((current) => ({
+          ...current,
+          [member.memberId]: { churchId, phoneNumber, previousPhoneNumber, status: "error" },
+        }));
+      }
+    }
+  }, [churchId, onSmsEligibilityRefresh]);
+  const getCurrentSmsEligibility = (member: TeamRosterMember) => {
+    const eligibility = data.smsEligibilityByMemberId?.[member.memberId];
+    if (
+      !eligibility ||
+      normalizeUsPhoneNumberForComparison(eligibility.phoneNumber) !==
+        normalizeUsPhoneNumberForComparison(member.phoneNumber)
+    ) return undefined;
+    return eligibility;
+  };
+  const hasUnresolvedSmsEligibilityRefresh = (member: TeamRosterMember) => {
+    const refreshState = smsEligibilityRefreshState[member.memberId];
+    return Boolean(
+      refreshState?.churchId === churchId &&
+      normalizeUsPhoneNumberForComparison(refreshState.phoneNumber) ===
+        normalizeUsPhoneNumberForComparison(member.phoneNumber),
+    );
+  };
   const [isUpdatingLink, setIsUpdatingLink] = useState(false);
   const [isInviting, setIsInviting] = useState(false);
   const [churchAccounts, setChurchAccounts] = useState<ChurchMemberRow[]>([]);
@@ -911,6 +966,12 @@ const MemberManager = ({
         // failed.
         onSaved(finalMember, wasEditing.memberId);
       }
+      if (
+        normalizeUsPhoneNumberForComparison(wasEditing?.phoneNumber) !==
+        normalizeUsPhoneNumberForComparison(finalMember.phoneNumber)
+      ) {
+        void refreshSmsEligibility(finalMember, wasEditing?.phoneNumber || "");
+      }
       // The server reconciles `team.memberIds` from the teams (and positions)
       // this save asked for. Apply the rosters it changed now so the Teams tab
       // and schedule reflect the join or removal right away, rather than
@@ -1338,7 +1399,8 @@ const MemberManager = ({
                     ...(isChurchAdmin &&
                       canEditActiveMember &&
                       !editing.archivedAt &&
-                      data.smsEligibilityByMemberId?.[editing.memberId]?.status === "consent_needed" &&
+                      !hasUnresolvedSmsEligibilityRefresh(editing) &&
+                      getCurrentSmsEligibility(editing)?.status === "consent_needed" &&
                       isValidSmsPhone(editing.phoneNumber)
                       ? [{ text: "Record text message consent", onClick: () => setRecordingSmsConsentFor(editing) }]
                       : []),
@@ -1474,11 +1536,36 @@ const MemberManager = ({
               }))
             }
           />
-          {editing && data.smsEligibilityByMemberId?.[editing.memberId] ? (
-            <p role="status" className="text-xs text-gray-300">
-              Text message status: {smsEligibilityLabel(data.smsEligibilityByMemberId[editing.memberId].status)}
-            </p>
-          ) : null}
+          {editing ? (() => {
+            const refreshState = smsEligibilityRefreshState[editing.memberId];
+            const refreshStateMatches = refreshState?.churchId === churchId &&
+              normalizeUsPhoneNumberForComparison(refreshState.phoneNumber) ===
+                normalizeUsPhoneNumberForComparison(editing.phoneNumber);
+            const eligibility = getCurrentSmsEligibility(editing);
+            if (refreshStateMatches && refreshState?.status === "checking") {
+              return <p role="status" className="text-xs text-gray-300">Checking text message status…</p>;
+            }
+            if (refreshStateMatches && refreshState?.status === "error") {
+              return (
+                <div className="flex items-center gap-2 text-xs text-amber-200" role="alert">
+                  <span>Could not check text message status.</span>
+                  <Button variant="tertiary" padding="p-0" onClick={() => void refreshSmsEligibility(editing, refreshState.previousPhoneNumber)}>
+                    Try again
+                  </Button>
+                </div>
+              );
+            }
+            if (!eligibility) {
+              return refreshStateMatches
+                ? <p role="status" className="text-xs text-gray-300">Checking text message status…</p>
+                : null;
+            }
+            return (
+              <p role="status" className="text-xs text-gray-300">
+                Text message status: {smsEligibilityLabel(eligibility.status)}
+              </p>
+            );
+          })() : null}
           {/* Account link. Separate from the email above on purpose: an address is
             a contact detail, the link is an identity, and one never implies the
             other. Only shown for saved members — there is nothing to link yet

@@ -118,6 +118,7 @@ const renderManager = ({
   canEditMember,
   initialEntry,
   onSmsConsentRecorded = jest.fn(),
+  onSmsEligibilityRefresh,
 }: {
   data?: TeamsData;
   onSaved?: jest.Mock;
@@ -131,6 +132,7 @@ const renderManager = ({
   canEditMember?: (member: TeamRosterMember) => boolean;
   initialEntry?: string | { pathname: string; state?: unknown };
   onSmsConsentRecorded?: jest.Mock;
+  onSmsEligibilityRefresh?: (memberId: string, phoneNumber: string, previousPhoneNumber: string) => Promise<void>;
 } = {}) => {
   render(
     <MemoryRouter initialEntries={initialEntry ? [initialEntry] : undefined}>
@@ -156,6 +158,7 @@ const renderManager = ({
               onArchived={jest.fn()}
               onRemoved={jest.fn()}
               onSmsConsentRecorded={onSmsConsentRecorded}
+              onSmsEligibilityRefresh={onSmsEligibilityRefresh}
             />
           </TeamsNavigationGuardProvider>
         </ToastProvider>
@@ -1556,6 +1559,39 @@ describe("MemberManager SMS consent recording", () => {
     await openMember(user, /Rae Kim/);
     await user.click(screen.getAllByRole("button", { name: "Member actions" }).at(-1)!);
     expect(screen.queryByRole("menuitem", { name: "Record text message consent" })).not.toBeInTheDocument();
+  });
+
+  it("shows a checking state after a saved phone change and offers retry when eligibility cannot load", async () => {
+    const user = userEvent.setup();
+    const member = { ...worshipMember, phoneNumber: "" };
+    let rejectRefresh: (error: Error) => void = () => undefined;
+    const refresh = jest.fn<Promise<void>, [string, string, string]>()
+      .mockImplementationOnce(() => new Promise((_, reject) => { rejectRefresh = reject; }))
+      .mockResolvedValueOnce();
+    mockUpdateTeamRosterMember.mockResolvedValue({
+      success: true,
+      member: { ...member, phoneNumber: "+19545551234" },
+    });
+    renderManager({
+      data: joinedData({
+        members: [member],
+        smsEligibilityByMemberId: {
+          [member.memberId]: { status: "no_mobile", eligible: false, phoneNumber: "" },
+        },
+      }),
+      onSmsEligibilityRefresh: refresh,
+    });
+    await openMember(user, /Rae Kim/);
+    await user.type(screen.getByLabelText(/Mobile/), "9545551234");
+    await user.click(saveButton());
+
+    expect(await screen.findByText("Checking text message status…")).toBeInTheDocument();
+    await act(async () => rejectRefresh(new Error("Network unavailable")));
+    expect(await screen.findByText("Could not check text message status.")).toBeInTheDocument();
+    expect(refresh).toHaveBeenCalledWith(member.memberId, "+19545551234", "");
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(2));
   });
 
   it.each([

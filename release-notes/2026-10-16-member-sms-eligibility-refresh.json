@@ -1,0 +1,7 @@
+{
+  "id": "member-sms-eligibility-refresh",
+  "date": "2026-10-16",
+  "type": "fixed",
+  "title": "Refresh text message status after phone changes",
+  "description": "Member text message eligibility now updates after a phone number is saved, so available consent actions appear without restarting WorshipSync."
+}
