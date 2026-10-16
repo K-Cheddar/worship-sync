@@ -36,6 +36,7 @@ import { BoardRenameModal } from "../boards/BoardRenameModal";
 import { BoardPostMessage } from "../boards/BoardPostMessage";
 import {
   buildBoardPublicUrl,
+  boardHasOnlyPreviousDayPosts,
   filterHighlightedBoardPosts,
   filterHighlightedRestreamMessages,
   filterVisibleBoardPosts,
@@ -768,11 +769,12 @@ export const BoardControllerContent = () => {
     : "";
   const boardIsStale = Boolean(
     canEvaluateCurrentBoardSession &&
-      getStaleBoardSessionScope({
-        boardCreatedAt: currentBoard?.createdAt,
-        boardPosts: posts,
-        restreamActivityTimestamps: [],
-      }) === "board",
+      (boardHasOnlyPreviousDayPosts(posts) ||
+        getStaleBoardSessionScope({
+          boardCreatedAt: currentBoard?.createdAt,
+          boardPosts: posts,
+          restreamActivityTimestamps: [],
+        }) === "board"),
   );
   const restreamStatusIsSettled =
     !restreamSession.isLoading &&
@@ -1022,7 +1024,7 @@ export const BoardControllerContent = () => {
                 })();
               }}
             >
-              {suggestionScope === "both" ? "Keep current session" : "Keep current"}
+              Keep current session
             </Button>
             <Button
               variant="primary"

@@ -392,6 +392,14 @@ export const isTimestampFromPreviousLocalDay = (
   return thenStartOfDay < todayStartOfDay;
 };
 
+/** True when a board has posts and every post is from an earlier local day. */
+export const boardHasOnlyPreviousDayPosts = (
+  posts: Pick<DBBoardPost, "timestamp">[],
+  now: number = Date.now(),
+): boolean =>
+  posts.length > 0 &&
+  posts.every((post) => isTimestampFromPreviousLocalDay(post.timestamp, now));
+
 export type StaleBoardSessionScope = "board" | "restream" | "both";
 
 export const getStaleBoardSessionScope = ({
