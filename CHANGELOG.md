@@ -1,3 +1,11 @@
+## [2.45.1](https://github.com/K-Cheddar/worship-sync/compare/v2.45.0...v2.45.1) (2026-10-16)
+
+
+### Bug Fixes
+
+* correct code ([b3c6bb6](https://github.com/K-Cheddar/worship-sync/commit/b3c6bb68ec574fbe09cdc54819864d3ea3806058))
+* improve mobile experience on church administration and board controller ([4f6b5d1](https://github.com/K-Cheddar/worship-sync/commit/4f6b5d1c93a82fe89cc1885e11b1409b1f36226c))
+
 # [2.45.0](https://github.com/K-Cheddar/worship-sync/compare/v2.44.0...v2.45.0) (2026-10-15)
 
 
