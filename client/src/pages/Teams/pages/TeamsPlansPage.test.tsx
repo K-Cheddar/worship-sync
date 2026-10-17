@@ -21,11 +21,13 @@ import {
 } from "../../../api/auth";
 import type { TeamService } from "../../../api/authTypes";
 import type { ServicePlanTemplate } from "../../../types/servicePlan";
-import { formatPlainDate } from "../../../utils/plainDate";
 import { plainTextToRichText } from "../../../types/richText";
 import { setServerTimeOffset } from "../../../utils/serverTime";
 import { formatResolvedDateRange } from "../rangeSelection";
 import { writePlansFilterPreferences } from "../plansFilterPersistence";
+import { getNextOccurrenceForService } from "../../../utils/serviceTimes";
+import { calendarDateInTimeZone } from "../../../utils/teamScheduleOccurrences";
+import { getUpcomingServiceRange } from "../servicePeriodRange";
 
 jest.mock("../../../api/auth", () => ({
   // Autosave's conflict check does `error instanceof AuthApiError`.
@@ -79,13 +81,15 @@ const sabbath: TeamService = {
   time: "10:00",
 };
 
-/** Keep the fixture inside Upcoming even when the suite runs near month end. */
-const oneTimeDate = (() => {
-  const date = new Date();
-  date.setDate(date.getDate() + 15);
-  return date;
-})();
-const oneTimePlainDate = formatPlainDate(oneTimeDate);
+/** Keep this one-time fixture in the month selected by the next Sabbath. */
+const upcomingOneTimeDate = (now: Date) => {
+  const nextSabbathDate = getNextOccurrenceForService(sabbath, now, "America/New_York");
+  if (!nextSabbathDate) throw new Error("Expected the weekly Sabbath fixture to have an upcoming occurrence");
+  return new Date(nextSabbathDate.getTime() + 4 * 60 * 60 * 1000);
+};
+const oneTimeDate = upcomingOneTimeDate(new Date());
+const oneTimePlainDate = calendarDateInTimeZone(oneTimeDate, "America/New_York");
+const oneTimeStartsAt = oneTimeDate.toISOString();
 
 const easterOneTime: TeamService = {
   id: "easter",
@@ -94,11 +98,10 @@ const easterOneTime: TeamService = {
   name: "Easter Sunday",
   timerType: "countdown",
   reccurence: "one_time",
-  dateTimeISO: new Date(`${oneTimePlainDate}T14:00:00`).toISOString(),
+  dateTimeISO: oneTimeStartsAt,
 };
 
 /** Occurrences for a one-time service are keyed `<serviceId>@<startsAt>`. */
-const oneTimeStartsAt = easterOneTime.dateTimeISO as string;
 const oneTimeOccurrenceId = `easter@${oneTimeStartsAt}`;
 
 const oneTimeService = (
@@ -424,6 +427,15 @@ describe("TeamsPlansPage", () => {
       screen.getAllByText("Sabbath Service").length,
     ).toBeGreaterThan(0);
     expect(screen.getByText("Easter Sunday")).toBeInTheDocument();
+  });
+
+  it("keeps the one-time fixture inside Upcoming when the next service is near month end", () => {
+    const now = new Date("2026-10-17T16:00:00.000Z");
+    const upcomingRange = getUpcomingServiceRange([sabbath], now, "America/New_York");
+    const fixtureDate = calendarDateInTimeZone(upcomingOneTimeDate(now), "America/New_York");
+
+    expect(fixtureDate >= upcomingRange.start && fixtureDate <= upcomingRange.end).toBe(true);
+    expect(fixtureDate).toBe("2026-10-24");
   });
 
   it("can switch to by-service cards", async () => {
