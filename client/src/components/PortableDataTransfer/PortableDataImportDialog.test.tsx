@@ -648,6 +648,7 @@ describe("PortableDataImportDialog import flow", () => {
     jest.mocked(inspectPortableImport).mockResolvedValue({ success: true, headers: ["First Name", "Last Name", "Phone"], rowCount: 1, columnCount: 3, issues: [], mapping: { firstName: "First Name", lastName: "Last Name", phone: "Phone" }, sampleRows: [], columnStats: {} });
     jest.mocked(previewPortableImport)
       .mockResolvedValueOnce({ success: true, rows: [{ row: 2, record: { firstName: "Jane", lastName: "Doe", phone: "555-0199" }, action: "review", matchedId: null, candidates, issues: [] }], issues: [], summary: { total: 1, create: 0, update: 0, review: 1, invalid: 0 } })
+      .mockRejectedValueOnce(new Error("Selected member preview failed"))
       .mockResolvedValueOnce({ success: true, rows: [{ row: 2, record: { firstName: "Jane", lastName: "Doe", phone: "555-0199" }, action: "update", matchedId: "member-west", candidates, expectedStateHash: "west-hash", changes: [{ field: "Phone", before: "555-0100", after: "555-0199" }], issues: [] }], issues: [], summary: { total: 1, create: 0, update: 1, review: 0, invalid: 0 } });
     jest.mocked(commitPortableImport).mockResolvedValue({ success: true, results: [{ row: 2, status: "updated", id: "member-west" }], summary: { created: 0, updated: 1, failed: 0 } });
     const file = new File([csv], "people.csv", { type: "text/csv" });
@@ -664,6 +665,9 @@ describe("PortableDataImportDialog import flow", () => {
     await user.click(choice);
     await user.click(screen.getByRole("option", { name: "Update Jane Doe West" }));
     expect(screen.getByText("Updating Jane Doe West")).toBeInTheDocument();
+    expect(await screen.findByText("Selected member preview failed")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Review selected member" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Review selected member" }));
     expect(await screen.findByText("Change Phone number: 555-0100 to 555-0199")).toBeInTheDocument();
     expect(previewPortableImport).toHaveBeenLastCalledWith("church-1", "members", expect.any(String), { firstName: "First Name", lastName: "Last Name", phone: "Phone" }, undefined, expect.objectContaining({ memberMatches: { 2: "member-west" } }));
     await user.click(screen.getByRole("button", { name: "Import 1 change" }));
