@@ -1,3 +1,20 @@
+## [2.45.2](https://github.com/K-Cheddar/worship-sync/compare/v2.45.1...v2.45.2) (2026-10-17)
+
+
+### Bug Fixes
+
+* **import:** retry selected member preview ([0e83ea7](https://github.com/K-Cheddar/worship-sync/commit/0e83ea719685b1db89a0ff9a0f3c963602e6669a))
+* **imports:** preserve preview order and settings ([cdc9377](https://github.com/K-Cheddar/worship-sync/commit/cdc9377ddf5fd8e1290be8e22cb4795b2c1e335f))
+* improve SMS consent modal contrast ([631b43d](https://github.com/K-Cheddar/worship-sync/commit/631b43d018a9b8a2eac202921ee68321b38ad441))
+* **service-plans:** close import reconciliation gaps ([25e3041](https://github.com/K-Cheddar/worship-sync/commit/25e3041649e689c8efdeb03eeaf6a09d09bf1e29))
+* **service-plans:** preserve import ownership choices ([a649ab6](https://github.com/K-Cheddar/worship-sync/commit/a649ab6b9add9f766b3857cbb3b25a9bc5c8d9d5))
+* **service-plans:** preserve local items in removed sections ([96a8658](https://github.com/K-Cheddar/worship-sync/commit/96a865887b1954d540b965442610c288ddb1ccc9))
+* **service-plans:** reconcile cross-section imports ([7ea397b](https://github.com/K-Cheddar/worship-sync/commit/7ea397bb90446612b3d4fe9e75b07ecbdc6b19e1))
+* **service-plans:** reconcile cross-section imports ([29b33fd](https://github.com/K-Cheddar/worship-sync/commit/29b33fd726c23745dde435d78a2d602f3d6487ff))
+* **service-plans:** retain import source associations ([957da99](https://github.com/K-Cheddar/worship-sync/commit/957da99c95f9ecaae2adb078037b948bf61a33f6))
+* **service-plans:** review legacy import matches ([2bd7e5a](https://github.com/K-Cheddar/worship-sync/commit/2bd7e5ab400caab484d1002bc3b942de2efdc59c))
+* **teams:** refresh member SMS eligibility after phone changes ([cc8698c](https://github.com/K-Cheddar/worship-sync/commit/cc8698ce69bf9f0c22c2b8403922f4abbae1a844))
+
 ## [2.45.1](https://github.com/K-Cheddar/worship-sync/compare/v2.45.0...v2.45.1) (2026-10-16)
 
 
