@@ -34,6 +34,7 @@ import {
 import { getTeamsSectionSkeleton } from "./teamsPageSkeletons";
 import { teamsSectionScrollClassName } from "./teamsStyles";
 import { lazyRoute } from "../../utils/lazyRoute";
+import { PendingRouteReady } from "../../hooks/usePendingRouteNavigation";
 import { getPageTitle } from "../../utils/pageTitles";
 import {
   getActiveTeamsNavSection,
@@ -67,22 +68,6 @@ const TeamsSectionLoadingFallback = () => {
 const isTeamsSectionPath = (pathname: string, routePath: string) => {
   const sectionPath = `/teams-and-services/${routePath}`;
   return pathname === sectionPath || pathname.startsWith(`${sectionPath}/`);
-};
-
-const TeamsSectionReady = ({ routePath }: { routePath: string }) => {
-  const location = useLocation();
-  const { pathname, clear } = usePendingTeamsNavigation();
-
-  useLayoutEffect(() => {
-    if (
-      pathname === location.pathname &&
-      isTeamsSectionPath(location.pathname, routePath)
-    ) {
-      clear();
-    }
-  }, [clear, location.pathname, pathname, routePath]);
-
-  return null;
 };
 
 const TeamsSectionErrorFallback = ({ routePath }: { routePath: string }) => {
@@ -130,7 +115,7 @@ const TeamsSectionRoute = ({
     <Suspense fallback={<TeamsSectionLoadingFallback />}>
       <>
         {children}
-        <TeamsSectionReady routePath={routePath} />
+        <PendingRouteReady routePath={`/teams-and-services/${routePath}`} />
       </>
     </Suspense>
   </ErrorBoundary>

@@ -3,5 +3,5 @@
   "date": "2026-10-08",
   "type": "improved",
   "title": "Clearer member CSV imports",
-  "description": "Create or match teams and positions from the same CSV, review member changes, and retry failed rows without duplicating approved import resources."
+  "description": "Review member CSV imports with compact change summaries, clear match choices, and filters that keep large lists easy to scan."
 }

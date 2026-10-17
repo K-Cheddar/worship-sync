@@ -1,4 +1,4 @@
-import { lazy, Suspense, useContext, useMemo, type ReactNode } from "react";
+import { Suspense, useContext, useEffect, useMemo, type ReactNode } from "react";
 import { Building2, ListChecks, LogIn } from "lucide-react";
 import {
   Navigate,
@@ -19,6 +19,7 @@ import {
   getAccountSection,
   getActiveAccountSection,
   parseLegacyAccountTab,
+  type AccountTabId,
 } from "./Account/accountConstants";
 import { AccountPageProvider, useAccountPage } from "./Account/AccountPageContext";
 import AccountAccessDenied from "./Account/components/AccountAccessDenied";
@@ -26,28 +27,34 @@ import AccountDeleteModalHost from "./Account/components/AccountDeleteModalHost"
 import AccountSidebarNav from "./Account/components/AccountSidebarNav";
 import AccountMobileNavigation from "./Account/components/AccountMobileNavigation";
 import AccountMobileShortcuts from "./Account/components/AccountMobileShortcuts";
-import { AccountSectionRouteSkeleton } from "./Account/accountPageSkeletons";
+import { getAccountSectionSkeleton } from "./Account/accountPageSkeletons";
 import Sidebar from "../components/Sidebar/Sidebar";
+import {
+  PendingRouteNavigationProvider,
+  PendingRouteReady,
+  usePendingRouteNavigation,
+} from "../hooks/usePendingRouteNavigation";
+import { lazyRoute } from "../utils/lazyRoute";
 
-const AccountPeoplePage = lazy(() => import("./Account/pages/AccountPeoplePage"));
-const AccountSetupPage = lazy(() => import("./Account/pages/AccountSetupPage"));
-const AccountControllersPage = lazy(
+const AccountPeoplePage = lazyRoute(() => import("./Account/pages/AccountPeoplePage"));
+const AccountSetupPage = lazyRoute(() => import("./Account/pages/AccountSetupPage"));
+const AccountControllersPage = lazyRoute(
   () => import("./Account/pages/AccountControllersPage"),
 );
-const AccountBrandingPage = lazy(
+const AccountBrandingPage = lazyRoute(
   () => import("./Account/pages/AccountBrandingPage"),
 );
-const AccountIntegrationsPage = lazy(
+const AccountIntegrationsPage = lazyRoute(
   () => import("./Account/pages/AccountIntegrationsPage"),
 );
-const AccountWorkspacePage = lazy(
+const AccountWorkspacePage = lazyRoute(
   () => import("./Account/pages/AccountWorkspacePage"),
 );
-const AccountDataTransferPage = lazy(
+const AccountDataTransferPage = lazyRoute(
   () => import("./Account/pages/AccountDataTransferPage"),
 );
 
-const AccountSectionErrorFallback = () => (
+const AccountSectionErrorFallback = ({ routePath }: { routePath: string }) => (
   <div
     className="flex min-h-64 flex-col items-center justify-center gap-3 rounded-lg border border-red-700/60 bg-red-950/30 p-6 text-center"
     role="alert"
@@ -64,27 +71,36 @@ const AccountSectionErrorFallback = () => (
     <Button type="button" onClick={() => window.location.reload()}>
       Reload administration
     </Button>
+    <PendingRouteReady routePath={routePath} />
   </div>
 );
 
-const AccountSectionRoute = ({ children }: { children: ReactNode }) => (
-  <ErrorBoundary fallback={<AccountSectionErrorFallback />}>
-    <Suspense
-      fallback={
-        <div
-          role="status"
-          aria-live="polite"
-          aria-busy="true"
-          aria-label="Loading administration page"
-        >
-          <AccountSectionRouteSkeleton />
-        </div>
-      }
-    >
-      {children}
-    </Suspense>
-  </ErrorBoundary>
-);
+const AccountSectionLoadingFallback = () => {
+  const location = useLocation();
+  const { pathname: pendingPathname } = usePendingRouteNavigation();
+  const section = getActiveAccountSection(pendingPathname || location.pathname);
+  return getAccountSectionSkeleton(section.id);
+};
+
+const AccountSectionRoute = ({
+  children,
+  sectionId,
+}: {
+  children: ReactNode;
+  sectionId: AccountTabId;
+}) => {
+  const routePath = getAccountSection(sectionId).path;
+  return (
+    <ErrorBoundary fallback={<AccountSectionErrorFallback routePath={routePath} />}>
+      <Suspense fallback={<AccountSectionLoadingFallback />}>
+        <>
+          {children}
+          <PendingRouteReady routePath={routePath} />
+        </>
+      </Suspense>
+    </ErrorBoundary>
+  );
+};
 
 const AccountIndexRedirect = () => {
   const location = useLocation();
@@ -115,11 +131,18 @@ const AccountShell = () => {
   const location = useLocation();
   const { loginState, churchName } = useContext(GlobalInfoContext) || {};
   const { canManage, toolbarLogos } = useAccountPage();
+  const { pathname: pendingPathname, clear } = usePendingRouteNavigation();
+  useEffect(() => {
+    if (!canManage) clear();
+  }, [canManage, clear]);
   const isLoggedIn = loginState === "success";
   const churchNameTrimmed = churchName?.trim() ?? "";
   const activeSection = useMemo(
-    () => getActiveAccountSection(location.pathname),
-    [location.pathname],
+    () =>
+      getActiveAccountSection(
+        canManage ? pendingPathname || location.pathname : location.pathname,
+      ),
+    [canManage, location.pathname, pendingPathname],
   );
   const scrollbarWidth = useSelector(
     (state: RootState) => state.undoable.present.preferences.scrollbarWidth,
@@ -175,7 +198,15 @@ const AccountShell = () => {
                 activeSection.id === "branding" ? "p-0" : "p-3 sm:p-5",
               )}
             >
-              <Outlet />
+              <div
+                className={
+                  pendingPathname ? "hidden" : "flex min-h-0 flex-1 flex-col"
+                }
+                aria-hidden={pendingPathname ? true : undefined}
+              >
+                <Outlet />
+              </div>
+              {pendingPathname ? getAccountSectionSkeleton(activeSection.id) : null}
             </div>
           </section>
         </AccountMobileShortcuts>
@@ -189,70 +220,72 @@ const AccountShell = () => {
 };
 
 const AccountRoutes = () => (
-  <Routes>
-    <Route index element={<AccountIndexRedirect />} />
-    <Route element={<AccountShell />}>
-      <Route element={<AccountSectionLayout />}>
-        <Route
-          path={getAccountSection("people").routePath}
-          element={
-            <AccountSectionRoute>
-              <AccountPeoplePage />
-            </AccountSectionRoute>
-          }
-        />
-        <Route
-          path={getAccountSection("setup").routePath}
-          element={
-            <AccountSectionRoute>
-              <AccountSetupPage />
-            </AccountSectionRoute>
-          }
-        />
-        <Route
-          path={getAccountSection("controllers").routePath}
-          element={
-            <AccountSectionRoute>
-              <AccountControllersPage />
-            </AccountSectionRoute>
-          }
-        />
-        <Route
-          path={getAccountSection("branding").routePath}
-          element={
-            <AccountSectionRoute>
-              <AccountBrandingPage />
-            </AccountSectionRoute>
-          }
-        />
-        <Route
-          path={getAccountSection("integrations").routePath}
-          element={
-            <AccountSectionRoute>
-              <AccountIntegrationsPage />
-            </AccountSectionRoute>
-          }
-        />
-        <Route
-          path={getAccountSection("workspace").routePath}
-          element={
-            <AccountSectionRoute>
-              <AccountWorkspacePage />
-            </AccountSectionRoute>
-          }
-        />
-        <Route
-          path={getAccountSection("data-transfer").routePath}
-          element={
-            <AccountSectionRoute>
-              <AccountDataTransferPage />
-            </AccountSectionRoute>
-          }
-        />
-        <Route path="*" element={<Navigate to="people" replace />} />
+  <PendingRouteNavigationProvider>
+    <Routes>
+      <Route index element={<AccountIndexRedirect />} />
+      <Route element={<AccountShell />}>
+        <Route element={<AccountSectionLayout />}>
+          <Route
+            path={getAccountSection("people").routePath}
+            element={
+              <AccountSectionRoute sectionId="people">
+                <AccountPeoplePage />
+              </AccountSectionRoute>
+            }
+          />
+          <Route
+            path={getAccountSection("setup").routePath}
+            element={
+              <AccountSectionRoute sectionId="setup">
+                <AccountSetupPage />
+              </AccountSectionRoute>
+            }
+          />
+          <Route
+            path={getAccountSection("controllers").routePath}
+            element={
+              <AccountSectionRoute sectionId="controllers">
+                <AccountControllersPage />
+              </AccountSectionRoute>
+            }
+          />
+          <Route
+            path={getAccountSection("branding").routePath}
+            element={
+              <AccountSectionRoute sectionId="branding">
+                <AccountBrandingPage />
+              </AccountSectionRoute>
+            }
+          />
+          <Route
+            path={getAccountSection("integrations").routePath}
+            element={
+              <AccountSectionRoute sectionId="integrations">
+                <AccountIntegrationsPage />
+              </AccountSectionRoute>
+            }
+          />
+          <Route
+            path={getAccountSection("workspace").routePath}
+            element={
+              <AccountSectionRoute sectionId="workspace">
+                <AccountWorkspacePage />
+              </AccountSectionRoute>
+            }
+          />
+          <Route
+            path={getAccountSection("data-transfer").routePath}
+            element={
+              <AccountSectionRoute sectionId="data-transfer">
+                <AccountDataTransferPage />
+              </AccountSectionRoute>
+            }
+          />
+          <Route path="*" element={<Navigate to="people" replace />} />
+        </Route>
       </Route>
-    </Route>
-  </Routes>
+    </Routes>
+  </PendingRouteNavigationProvider>
 );
 
 const AccountPage = () => (

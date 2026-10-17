@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { cn } from "../../utils/cnHelper";
+import type { AccountTabId } from "./accountConstants";
 
 const skeletonBar = "animate-pulse rounded bg-white/10";
 const cardClassName =
@@ -154,15 +155,42 @@ export const AccountWorkspacePageSkeleton = () => (
   </SkeletonStatus>
 );
 
-export const AccountSectionRouteSkeleton = () => (
-  <div className="space-y-4">
-    <div className="flex flex-col gap-3 border-b border-gray-700/70 pb-4 sm:flex-row sm:items-start sm:justify-between">
-      <div className="space-y-2">
-        <div className={cn(skeletonBar, "h-8 w-44")} />
-        <div className={cn(skeletonBar, "h-4 w-full max-w-xl")} />
-      </div>
-      <div className={cn(skeletonBar, "h-7 w-28 shrink-0 rounded-full")} />
-    </div>
-    <AccountPeoplePageSkeleton />
-  </div>
+export const AccountControllersPageSkeleton = () => (
+  <SkeletonStatus label="Loading controllers">
+    <section className={cardClassName}>
+      <SkeletonSectionHeader />
+      <SkeletonFormRow />
+      <SkeletonListRows count={3} />
+    </section>
+  </SkeletonStatus>
 );
+
+export const AccountDataTransferPageSkeleton = () => (
+  <SkeletonStatus label="Loading data export">
+    <section className={cardClassName}>
+      <SkeletonSectionHeader />
+      <div className="border-t border-gray-700 pt-5">
+        <div className={cn(skeletonBar, "h-10 w-36")} />
+      </div>
+    </section>
+  </SkeletonStatus>
+);
+
+export const getAccountSectionSkeleton = (sectionId: AccountTabId) => {
+  switch (sectionId) {
+    case "people":
+      return <AccountPeoplePageSkeleton />;
+    case "setup":
+      return <AccountSetupPageSkeleton />;
+    case "branding":
+      return <AccountBrandingPageSkeleton />;
+    case "integrations":
+      return <AccountIntegrationsPageSkeleton />;
+    case "workspace":
+      return <AccountWorkspacePageSkeleton />;
+    case "controllers":
+      return <AccountControllersPageSkeleton />;
+    case "data-transfer":
+      return <AccountDataTransferPageSkeleton />;
+  }
+};

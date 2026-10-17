@@ -11672,6 +11672,9 @@ export const createTeamsAuthHandlers = ({
           );
         const records = await readPortableDatasets(churchId);
         const destinationTeamId = String(req.body?.destinationTeamId || "").trim();
+        const memberMatches = req.body?.memberMatches && typeof req.body.memberMatches === "object" && !Array.isArray(req.body.memberMatches)
+          ? Object.fromEntries(Object.entries(req.body.memberMatches).map(([row, memberId]) => [String(Number(row)), String(memberId || "").trim()]).filter(([row, memberId]) => Number(row) > 1 && memberId))
+          : {};
         const previewUpdateMode = req.body?.updateMode === "replace" ? "replace" : "merge";
         const previewClearBlankScalars = req.body?.clearBlankScalars === true;
         const teamActions = Array.isArray(req.body?.teamActions) ? req.body.teamActions : [];
@@ -11724,6 +11727,7 @@ export const createTeamsAuthHandlers = ({
           mapping: req.body?.mapping,
         });
         const usedPositionActionKeys = new Set();
+        const usedMemberMatchRows = new Set();
         const rows = mapped.map(({ row, record }) => {
           const issues = parsed.issues
             .filter((issue) => issue.row === row)
@@ -11790,6 +11794,17 @@ export const createTeamsAuthHandlers = ({
                   !item.archivedAt,
               );
               if (candidates.length === 1) match = candidates[0];
+            }
+            const selectedMemberId = memberMatches[String(row)];
+            if (selectedMemberId) {
+              const selectedCandidate = candidates.find((item) => item.memberId === selectedMemberId);
+              if (!selectedCandidate)
+                throw httpError(400, "The selected member is no longer an available match. Review the file again.");
+              match = selectedCandidate;
+              usedMemberMatchRows.add(String(row));
+              for (let index = issues.length - 1; index >= 0; index -= 1) {
+                if (issues[index].code === "foreign_or_unknown_record_id") issues.splice(index, 1);
+              }
             }
             const referenceIssue = (
               field,
@@ -12672,7 +12687,7 @@ export const createTeamsAuthHandlers = ({
           let action = classifyPortablePreviewAction({
             issues,
             match,
-            candidates: rowCandidates,
+            candidates: memberMatches[String(row)] ? [] : rowCandidates,
           });
           if (type === "members" && issues.some((issue) => issue.code === "source_inactive") && action !== "invalid") action = "review";
           const hasRequiredMemberNames = Boolean(record.firstName && record.lastName);
@@ -12802,6 +12817,8 @@ export const createTeamsAuthHandlers = ({
         if (positionActionsByKey.size !== positionActions.length
           || usedPositionActionKeys.size !== positionActionsByKey.size)
           throw httpError(400, "One or more position decisions do not match this CSV. Review the file again.");
+        if (usedMemberMatchRows.size !== Object.keys(memberMatches).length)
+          throw httpError(400, "One or more selected members do not match this CSV. Review the file again.");
         if (type === "members") {
           validatePortableMemberDependencyPlan({
             churchId,
@@ -12825,6 +12842,7 @@ export const createTeamsAuthHandlers = ({
             teamActions,
             csvHash: crypto.createHash("sha256").update(String(req.body?.csv || "")).digest("hex"),
             positionActions,
+            memberMatches,
           },
           rows: rows.map(({ row, action, record, matchedId, candidates, issues, expectedStateHash }) => ({
             row,
@@ -12885,6 +12903,9 @@ export const createTeamsAuthHandlers = ({
         };
         const requestedTeamActions = Array.isArray(req.body?.teamActions) ? req.body.teamActions : [];
         const requestedPositionActions = Array.isArray(req.body?.positionActions) ? req.body.positionActions : [];
+        const requestedMemberMatches = req.body?.memberMatches && typeof req.body.memberMatches === "object" && !Array.isArray(req.body.memberMatches)
+          ? req.body.memberMatches
+          : {};
         const rowOperationIdentity = type === "members"
           ? portableMemberRowOperationIdentity({
               churchId,
@@ -12953,6 +12974,7 @@ export const createTeamsAuthHandlers = ({
             || preview.settings?.clearBlankScalars !== clearBlankScalars
             || stablePortableJson(preview.settings?.teamActions || []) !== stablePortableJson(requestedTeamActions)
             || stablePortableJson(preview.settings?.positionActions || []) !== stablePortableJson(requestedPositionActions)
+            || stablePortableJson(preview.settings?.memberMatches || {}) !== stablePortableJson(requestedMemberMatches)
             || stablePortableJson(preview.settings?.mapping || {}) !== stablePortableJson(req.body?.mapping || {})
             || preview.settings?.csvHash !== String(req.body?.previewCsvHash || "")) {
             throw httpError(409, "The import settings or preview changed. Review the file again before importing.");

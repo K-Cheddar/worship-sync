@@ -21,6 +21,7 @@ import {
   autosaveIndicatorSlice,
 } from "../../../store/autosaveIndicatorSlice";
 import { resolveChurchToolbarLogoUrls } from "../../../utils/churchBranding";
+import { normalizeUsPhoneNumberForComparison } from "../../../utils/phoneNumber";
 import { teamsDataKeys } from "../teamsConstants";
 import type { TeamsData, TeamsDataKey, TeamsScheduleDrafts } from "../types";
 import {
@@ -190,6 +191,7 @@ export const useTeamsPageState = (
   // `refresh`'s own dedupe (which keys off refreshInFlightRef + bootstrapLoadRef).
   const backgroundRefreshInFlightRef = useRef(false);
   const backgroundRefreshPromiseRef = useRef<Promise<void> | null>(null);
+  const smsEligibilityRefreshVersionsRef = useRef(new Map<string, number>());
   // Cleared on unmount so a background request that resolves after the page is gone
   // doesn't apply state (mirrors refresh's isCancelled guard).
   const isMountedRef = useRef(true);
@@ -864,6 +866,76 @@ export const useTeamsPageState = (
     }
   }, [churchId, denyTeamsAccess, loadTeamsProjection]);
 
+  const refreshMemberSmsEligibility = useCallback(async (
+    memberId: string,
+    expectedPhoneNumber: string,
+    previousPhoneNumber: string,
+  ) => {
+    const churchIdAtStart = churchId;
+    if (!churchIdAtStart || accessDeniedRef.current) {
+      throw new Error("Teams access is unavailable.");
+    }
+    const requestKey = `${churchIdAtStart}:${memberId}`;
+    const requestVersion = (smsEligibilityRefreshVersionsRef.current.get(requestKey) || 0) + 1;
+    smsEligibilityRefreshVersionsRef.current.set(requestKey, requestVersion);
+    const expectedPhone = normalizeUsPhoneNumberForComparison(expectedPhoneNumber);
+    const previousPhone = normalizeUsPhoneNumberForComparison(previousPhoneNumber);
+
+    // A bootstrap that began before the member save can contain the old phone
+    // and eligibility. Let it settle, then fetch a fresh server projection.
+    await Promise.allSettled([
+      refreshInFlightRef.current ? bootstrapLoadRef.current : null,
+      backgroundRefreshPromiseRef.current,
+    ].filter((pending): pending is Promise<void> => Boolean(pending)));
+    if (
+      !isMountedRef.current ||
+      churchIdRef.current !== churchIdAtStart ||
+      smsEligibilityRefreshVersionsRef.current.get(requestKey) !== requestVersion
+    ) return;
+
+    const response = await getTeamsBootstrap(churchIdAtStart);
+    if (
+      !isMountedRef.current ||
+      churchIdRef.current !== churchIdAtStart ||
+      smsEligibilityRefreshVersionsRef.current.get(requestKey) !== requestVersion
+    ) return;
+
+    const serverMember = response.members?.find((member) => member.memberId === memberId);
+    if (
+      !serverMember ||
+      normalizeUsPhoneNumberForComparison(serverMember.phoneNumber) !== expectedPhone
+    ) throw new Error("The member's phone number changed before text message status loaded.");
+
+    const eligibility = response.smsEligibilityByMemberId?.[memberId];
+    if (!eligibility) throw new Error("The server did not return text message eligibility.");
+    if (normalizeUsPhoneNumberForComparison(eligibility.phoneNumber) !== expectedPhone) {
+      throw new Error("The server returned text message status for a different phone number.");
+    }
+    applyingRemoteRef.current = true;
+    try {
+      setData((current) => {
+        const currentMember = current.members.find((member) => member.memberId === memberId);
+        if (!currentMember) return current;
+
+        const currentPhone = normalizeUsPhoneNumberForComparison(currentMember.phoneNumber);
+        if (currentPhone !== expectedPhone && currentPhone !== previousPhone) return current;
+
+        return {
+          ...current,
+          members: sortTeamsDataKey("members", current.members.map((member) => member.memberId === memberId
+            ? { ...member, phoneNumber: serverMember.phoneNumber }
+            : member)),
+          smsEligibilityByMemberId: {
+            ...current.smsEligibilityByMemberId,
+            [memberId]: eligibility,
+          },
+        };
+      });
+    } finally {
+      applyingRemoteRef.current = false;
+    }
+  }, [churchId]);
+
   // Merge server-hydrated schedules over their summaries in place, keeping list
   // order stable so the picker and grid don't reshuffle when hydration lands.
   const mergeHydratedSchedules = useCallback(
@@ -1318,6 +1390,7 @@ export const useTeamsPageState = (
     trackTeamsSave,
     refresh,
     reconcileTeamsProjection,
+    refreshMemberSmsEligibility,
     updateSelectedScheduleId,
     updateScheduleDraft,
     flushScheduleDraft,
@@ -1352,6 +1425,7 @@ export const useTeamsPageState = (
     trackTeamsSave,
     refresh,
     reconcileTeamsProjection,
+    refreshMemberSmsEligibility,
     updateSelectedScheduleId,
     updateScheduleDraft,
     flushScheduleDraft,

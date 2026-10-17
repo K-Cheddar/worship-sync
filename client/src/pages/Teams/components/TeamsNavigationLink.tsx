@@ -2,6 +2,7 @@ import { Link, useLocation } from "react-router-dom";
 import type { ComponentProps } from "react";
 import { usePendingTeamsNavigation, useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 import { matchesTeamsNavPath } from "../teamsNavSections";
+import { isUnmodifiedLeftClick } from "../../../hooks/usePendingRouteNavigation";
 
 /** All workspace shortcuts share pending selection and unsaved-change handling. */
 const TeamsNavigationLink = ({
@@ -21,7 +22,7 @@ const TeamsNavigationLink = ({
       to={path}
       aria-current={selected ? "page" : undefined}
       onClick={(event) => {
-        if (event.button !== 0 || event.metaKey || event.altKey || event.ctrlKey || event.shiftKey) return;
+        if (!isUnmodifiedLeftClick(event)) return;
         event.preventDefault();
         requestNavigation(path, { onNavigated: onNavigate });
       }}
