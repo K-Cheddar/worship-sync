@@ -1604,7 +1604,10 @@ export const refreshServicePlanFromImport = (
     const managedSection = managedImportedSection(section);
     newSectionByImportedIndex.set(index, {
       ...managedSection,
-      elements: placeServicePlanImportElements([], section.elements, elements),
+      // Elements were constructed by walking section.elements in source order.
+      // Their stable local IDs can differ from the incoming IDs, so the shared
+      // placement helper cannot safely resolve their source-order anchors here.
+      elements,
     });
   });
   if (newSectionByImportedIndex.size > 0) {

@@ -670,6 +670,81 @@ describe("PortableDataImportDialog import flow", () => {
     await waitFor(() => expect(commitPortableImport).toHaveBeenCalledWith("church-1", "members", [expect.objectContaining({ row: 2, action: "update", recordId: "member-west", expectedStateHash: "west-hash" })], undefined, expect.objectContaining({ memberMatches: { 2: "member-west" } })));
   });
 
+  it.each([
+    ["Skip member", [3]],
+    ["Add as new member", [2, 3]],
+  ] as const)("keeps the validated preview settings after a failed member match and choosing %s", async (nextAction, expectedRows) => {
+    const user = userEvent.setup();
+    const csv = "First Name,Last Name\nJane,Doe\nSam,Smith";
+    const candidates = [{ id: "member-east", name: "Jane Doe East", stateHash: "east-hash" }];
+    const rows = [
+      { row: 2, record: { firstName: "Jane", lastName: "Doe" }, action: "review" as const, matchedId: null, candidates, issues: [] },
+      { row: 3, record: { firstName: "Sam", lastName: "Smith" }, action: "create" as const, matchedId: null, candidates: [], issues: [] },
+    ];
+    jest.mocked(inspectPortableImport).mockResolvedValue({ success: true, headers: ["First Name", "Last Name"], rowCount: 2, columnCount: 2, issues: [], mapping: { firstName: "First Name", lastName: "Last Name" }, sampleRows: [], columnStats: {} });
+    jest.mocked(previewPortableImport)
+      .mockResolvedValueOnce({ success: true, rows, issues: [], summary: { total: 2, create: 1, update: 0, review: 1, invalid: 0 }, previewToken: "validated-preview" })
+      .mockRejectedValueOnce(new Error("Match preview failed"));
+    jest.mocked(commitPortableImport).mockResolvedValue({
+      success: true,
+      results: [{ row: 3, status: "created", id: "member-sam" }],
+      summary: { created: 1, updated: 0, failed: 0 },
+    });
+    const file = new File([csv], "people.csv", { type: "text/csv" });
+    Object.defineProperty(file, "text", { value: async () => csv });
+    render(<PortableDataImportDialog open onOpenChange={() => undefined} churchId="church-1" type="members" teams={[{ teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: [] }]} destinationTeamId="team-1" />);
+
+    fireEvent.change(screen.getByLabelText("Choose a CSV file"), { target: { files: [file] } });
+    await user.click(await screen.findByRole("button", { name: "Review your import" }));
+    await user.click(screen.getByLabelText("Choose which member to update or add for Jane Doe"));
+    await user.click(screen.getByRole("option", { name: "Update Jane Doe East" }));
+    expect(await screen.findByText("Match preview failed")).toBeInTheDocument();
+    await user.click(screen.getByLabelText("Choose which member to update or add for Jane Doe"));
+    await user.click(screen.getByRole("option", { name: nextAction }));
+
+    await user.click(screen.getByRole("button", { name: `Import ${expectedRows.length} ${expectedRows.length === 1 ? "member" : "members"}` }));
+    await waitFor(() => expect(commitPortableImport).toHaveBeenCalled());
+    const commitCall = jest.mocked(commitPortableImport).mock.calls[0];
+    const committedRows = commitCall[2];
+    const commitOptions = commitCall[4];
+    expect(committedRows.map(({ row }) => row)).toEqual(expectedRows);
+    expect(commitOptions).toMatchObject({ previewToken: "validated-preview" });
+    expect(commitOptions).not.toHaveProperty("memberMatches.2");
+  });
+
+  it("returns to the last populated page when a filter loses its final row", async () => {
+    const user = userEvent.setup();
+    const csv = `First Name,Last Name\n${Array.from({ length: 51 }, (_, index) => `Member${index + 1},Last`).join("\n")}`;
+    const rows = Array.from({ length: 51 }, (_, index) => ({
+      row: index + 2,
+      record: { firstName: `Member${index + 1}`, lastName: "Last" },
+      action: "create" as const,
+      matchedId: null,
+      candidates: [],
+      issues: [],
+    }));
+    jest.mocked(inspectPortableImport).mockResolvedValue({ success: true, headers: ["First Name", "Last Name"], rowCount: 51, columnCount: 2, issues: [], mapping: { firstName: "First Name", lastName: "Last Name" }, sampleRows: [], columnStats: {} });
+    jest.mocked(previewPortableImport).mockResolvedValue({ success: true, rows, issues: [], summary: { total: 51, create: 51, update: 0, review: 0, invalid: 0 } });
+    const file = new File([csv], "people.csv", { type: "text/csv" });
+    Object.defineProperty(file, "text", { value: async () => csv });
+    render(<PortableDataImportDialog open onOpenChange={() => undefined} churchId="church-1" type="members" teams={[{ teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: [] }]} destinationTeamId="team-1" />);
+
+    fireEvent.change(screen.getByLabelText("Choose a CSV file"), { target: { files: [file] } });
+    await user.click(await screen.findByRole("button", { name: "Review your import" }));
+    await user.click(screen.getByRole("tab", { name: "New 51" }));
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.getByText("Rows 51–51 of 51")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Member51 Last — Add as new member" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Change" }));
+    await user.click(screen.getByLabelText("Action for Member51 Last"));
+    await user.click(screen.getByRole("option", { name: "Skip member" }));
+
+    expect(screen.getByRole("heading", { name: "Member1 Last — Add as new member" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Member51 Last — Add as new member" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Rows \d+–\d+ of 50/)).not.toBeInTheDocument();
+  });
+
   it("shows compact member summaries, grouped position additions, and filters the full planned list", async () => {
     const user = userEvent.setup();
     const csv = "First Name,Last Name,Phone,Positions\nBunmi,Adedayo,12019147284,\"Camera (Director), Camera (Operator), Hand Held Camera, Light\"\nBryan,Cheddar,,";
