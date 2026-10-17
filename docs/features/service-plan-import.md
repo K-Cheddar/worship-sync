@@ -90,4 +90,4 @@ An operator imports or refreshes a plan, reviews the proposed item changes, sele
 
 ## Technical design notes
 
-Template-to-plan cloning stores the original template element ID and item type on each cloned element. A shared placement helper is used by reconciliation and selected-change application so preview and apply use the same source-relative placement behavior.
+Template-to-plan cloning stores the original template element ID and item type on each cloned element. Existing sections use the shared placement helper in reconciliation and selected-change application. A newly created destination section uses the already source-ordered reconciled element list directly, since moved items retain local IDs that may differ from the incoming IDs used as placement anchors.

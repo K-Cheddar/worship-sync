@@ -924,11 +924,12 @@ describe("stable external row identity", () => {
     expect(refreshed[0].elements).toEqual(current[0].elements);
   });
 
-  it("places a moved item in a new destination section at its source-relative section position", () => {
+  it("keeps moved and added items in source order inside a new destination section", () => {
     const current = [
       section("message", "Message", [element("moving-sermon", "Sermon", {
         sourceOccurrenceId: "pco-sermon",
         sourcePlanningManaged: true,
+        notes: plainTextToRichText("Operator notes"),
       })]),
       section("worship", "Worship", [element("worship-song", "Song", { sourcePlanningManaged: true })]),
       section("closing", "Closing", [element("closing-song", "Closing Song", { sourcePlanningManaged: true })]),
@@ -936,10 +937,13 @@ describe("stable external row identity", () => {
     const incoming = [
       section("new-message", "Message", []),
       section("new-worship", "Worship", [element("source-song", "Song", { sourcePlanningManaged: true })]),
-      section("new-response", "Response & Celebration", [element("source-sermon", "Sermon", {
-        sourceOccurrenceId: "pco-sermon",
-        sourcePlanningManaged: true,
-      })]),
+      section("new-response", "Response & Celebration", [
+        element("source-sermon", "Sermon", {
+          sourceOccurrenceId: "pco-sermon",
+          sourcePlanningManaged: true,
+        }),
+        element("response-song", "Response Song", { sourceOccurrenceId: "pco-response-song", sourcePlanningManaged: true }),
+      ]),
       section("new-closing", "Closing", [element("source-closing-song", "Closing Song", { sourcePlanningManaged: true })]),
     ];
 
@@ -947,8 +951,10 @@ describe("stable external row identity", () => {
     expect(refreshed.map(({ name }) => name)).toEqual([
       "Message", "Worship", "Response & Celebration", "Closing",
     ]);
-    expect(refreshed.find(({ name }) => name === "Response & Celebration")?.elements.map(({ id }) => id))
-      .toEqual(["moving-sermon"]);
+    const responseItems = refreshed.find(({ name }) => name === "Response & Celebration")?.elements || [];
+    expect(responseItems.map(({ id }) => id)).toEqual(["moving-sermon", "response-song"]);
+    expect(responseItems[0]).toMatchObject({ id: "moving-sermon", sourceOccurrenceId: "pco-sermon" });
+    expect(richTextToPlainText(responseItems[0].notes)).toBe("Operator notes");
   });
 });
 

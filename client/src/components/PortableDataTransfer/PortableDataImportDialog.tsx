@@ -40,6 +40,7 @@ type Preview = {
   summary: { total: number; create: number; update: number; review: number; invalid: number };
   previewToken?: string;
   previewCsvHash?: string;
+  memberMatches: Record<number, string>;
 };
 
 type MemberReviewFilter = "all" | "new" | "updates" | "review" | "skipped";
@@ -374,6 +375,14 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
   const unchangedCount = selectedUpdateRows.filter((row) => !(row.changes || []).length).length;
   const selectedUpdateCount = selectedUpdateRows.length - unchangedCount;
   const hasUnconfirmedMemberMatches = type === "members" && (preview?.rows || []).some((row) => isUnconfirmedMemberMatch(row, rowChoices[row.row] || ""));
+  const retryMemberMatches = () => {
+    const requestedMatches = { ...memberMatches };
+    (preview?.rows || []).forEach((row) => {
+      const selected = rowChoices[row.row] || (row.action === "create" ? "create" : row.action === "update" ? `update:${row.matchedId}` : row.action === "review" ? "review" : "skip");
+      if (isUnconfirmedMemberMatch(row, selected)) requestedMatches[row.row] = selected.slice("update:".length);
+    });
+    return requestedMatches;
+  };
   const skippedCount = (preview?.rows || []).filter((row) => !commitResults.some((result) => result.row === row.row && result.status !== "failed") && (explicitSkips[row.row] || (rowChoices[row.row] === "skip" && row.action !== "invalid"))).length;
   const memberReviewCounts = (preview?.rows || []).reduce((counts, row) => {
     const selected = rowChoices[row.row] || (row.action === "create" ? "create" : row.action === "update" ? `update:${row.matchedId}` : row.action === "review" ? "review" : "skip");
@@ -401,7 +410,9 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
     return true;
   });
   const reviewRows = type === "members" ? filteredMemberRows : preview?.rows || [];
-  const visibleReviewRows = reviewRows.slice(previewPage * 50, previewPage * 50 + 50);
+  const lastPreviewPage = Math.max(0, Math.ceil(reviewRows.length / 50) - 1);
+  const effectivePreviewPage = Math.min(previewPage, lastPreviewPage);
+  const visibleReviewRows = reviewRows.slice(effectivePreviewPage * 50, effectivePreviewPage * 50 + 50);
   const activePositionActions = approvedPositionActions.filter((action) => selectedRows.some((row) => approvedPositionRows[positionChoiceKey(action.teamId, action.sourceValue)]?.includes(row.row)));
   const activeTeamActions = approvedTeamActions.filter((action) => selectedRows.some((row) => approvedTeamRows[teamChoiceKey(action.sourceValue)]?.includes(row.row)));
   const plannedPositionRemovals = selectedRows.reduce((count, row) => count + (row.changes || []).filter((change) => change.field === "Position" && change.before && !change.after).length, 0);
@@ -479,7 +490,9 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
       });
       if (previewGeneration !== previewGenerationRef.current) return;
       const successfulRows = new Set(commitResults.filter((item) => item.status !== "failed").map((item) => item.row));
-      setPreview(result);
+      const validatedPreview = { ...result, memberMatches: requestedMemberMatches };
+      setPreview(validatedPreview);
+      if (memberMatchOverrides) setMemberMatches(requestedMemberMatches);
       setPreviewPage(0);
       if (!preserveRowChoices) setRelationshipChoices({});
       const initialPositionChoices: typeof positionChoices = {};
@@ -519,10 +532,10 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
       if (Object.keys(initialTeamRows).length || !approvedTeamActions.length) setApprovedTeamRows(initialTeamRows);
       const needsTeamResolution = Object.keys(initialTeamChoices).length > 0;
       const needsPositionResolution = Object.keys(initialPositionChoices).length > 0;
-      if (!approvedTeamActions.length) setTeamResolutionPreview(needsTeamResolution ? result : null);
+      if (!approvedTeamActions.length) setTeamResolutionPreview(needsTeamResolution ? validatedPreview : null);
       setTeamStep(needsTeamResolution);
       setPositionStep(!needsTeamResolution && needsPositionResolution);
-      if (!approvedPositionActions.length && needsPositionResolution) setPositionResolutionPreview(result);
+      if (!approvedPositionActions.length && needsPositionResolution) setPositionResolutionPreview(validatedPreview);
       // Keep the exact decisions that were signed into this successful preview.
       // Filtering them here would make the next commit disagree with its token.
       setCommitResults((current) => current.filter((item) => item.status !== "failed"));
@@ -548,7 +561,6 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
     const memberId = value.slice("update:".length);
     if (memberId === row.matchedId) return;
     const nextMatches = { ...memberMatches, [row.row]: memberId };
-    setMemberMatches(nextMatches);
     void handlePreview(nextMatches, true, { ...rowChoices, [row.row]: value });
   };
 
@@ -587,7 +599,8 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
       if (previewGeneration !== previewGenerationRef.current) return;
       setApprovedTeamActions(actions);
       setApprovedTeamRows(Object.fromEntries(teamGroups.map((group) => [group.key, [...group.memberRows]])));
-      setPreview(result);
+      const validatedPreview = { ...result, memberMatches };
+      setPreview(validatedPreview);
       setPreviewPage(0);
       setRelationshipChoices({});
       const initialPositionChoices: typeof positionChoices = {};
@@ -609,7 +622,7 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
       setApprovedPositionActions([]);
       setApprovedPositionRows({});
       const hasPositionIssues = Object.keys(initialPositionChoices).length > 0;
-      setPositionResolutionPreview(hasPositionIssues ? result : null);
+      setPositionResolutionPreview(hasPositionIssues ? validatedPreview : null);
       setTeamStep(false);
       setPositionStep(hasPositionIssues);
       setRowChoices(Object.fromEntries(result.rows.map((row) => [row.row, row.action === "create" ? "create" : row.action === "update" ? `update:${row.matchedId}` : row.action === "review" ? "review" : "skip"])));
@@ -658,7 +671,7 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
       if (previewGeneration !== previewGenerationRef.current) return;
       setApprovedPositionActions(actions);
       setApprovedPositionRows(Object.fromEntries(actions.map((action) => [positionChoiceKey(action.teamId, action.sourceValue), [...(positionGroups.find((group) => group.sourceValue === action.sourceValue && (group.teamId === action.teamId || group.teamOptions.some((option) => option.teamId === action.teamId)))?.memberRows || [])]])));
-      setPreview(result);
+      setPreview({ ...result, memberMatches });
       setPreviewPage(0);
       setPositionStep(false);
       setRowChoices(Object.fromEntries(result.rows.map((row) => [row.row, row.action === "create" ? "create" : row.action === "update" ? `update:${row.matchedId}` : row.action === "review" ? "review" : "skip"])));
@@ -732,7 +745,7 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
         ...(preview.previewToken ? { previewToken: preview.previewToken } : {}),
         ...(approvedTeamActions.length ? { teamActions: approvedTeamActions } : {}),
         ...(approvedPositionActions.length ? { positionActions: approvedPositionActions } : {}),
-        ...(Object.keys(memberMatches).length ? { memberMatches } : {}),
+        ...(Object.keys(preview.memberMatches).length ? { memberMatches: preview.memberMatches } : {}),
       });
       const resultByRow = new Map(commitResults.map((item) => [item.row, item]));
       result.results.forEach((item) => resultByRow.set(item.row, item));
@@ -1142,7 +1155,7 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
                   </div>
                 );
               })}
-              {reviewRows.length > 50 && <div className="flex items-center justify-between gap-3 text-sm text-gray-300"><span>Rows {previewPage * 50 + 1}–{Math.min((previewPage + 1) * 50, reviewRows.length)} of {reviewRows.length}</span><div className="flex gap-2"><Button type="button" variant="tertiary" onClick={() => setPreviewPage((page) => Math.max(0, page - 1))} disabled={previewPage === 0}>Previous</Button><Button type="button" variant="tertiary" onClick={() => setPreviewPage((page) => Math.min(Math.ceil(reviewRows.length / 50) - 1, page + 1))} disabled={(previewPage + 1) * 50 >= reviewRows.length}>Next</Button></div></div>}
+              {reviewRows.length > 50 && <div className="flex items-center justify-between gap-3 text-sm text-gray-300"><span>Rows {effectivePreviewPage * 50 + 1}–{Math.min((effectivePreviewPage + 1) * 50, reviewRows.length)} of {reviewRows.length}</span><div className="flex gap-2"><Button type="button" variant="tertiary" onClick={() => setPreviewPage(Math.max(0, effectivePreviewPage - 1))} disabled={effectivePreviewPage === 0}>Previous</Button><Button type="button" variant="tertiary" onClick={() => setPreviewPage(Math.min(lastPreviewPage, effectivePreviewPage + 1))} disabled={effectivePreviewPage >= lastPreviewPage}>Next</Button></div></div>}
             </div>
           </div>
         )}
@@ -1160,7 +1173,7 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
               {!teamStep && !positionStep && approvedPositionActions.length === 0 && approvedTeamActions.length > 0 && <Button type="button" variant="tertiary" onClick={handleBackToTeams} disabled={Boolean(busy)}>Back to teams</Button>}
             </> : <span className="text-xs text-gray-400" aria-live="polite">Step {activeStep}: {stepLabel}</span>}
           </div>
-          {preview ? teamStep ? <Button type="button" variant="cta" wrap className="min-h-10 w-full justify-center px-5 sm:w-auto" svg={ArrowRight} iconPosition="right" onClick={() => void handleApplyTeamActions()} disabled={Boolean(busy)} aria-busy={busy === "team-preview"}>{busy === "team-preview" ? "Updating review..." : "Continue to positions"}</Button> : positionStep ? <Button type="button" variant="cta" wrap className="min-h-10 w-full justify-center px-5 sm:w-auto" svg={ArrowRight} iconPosition="right" onClick={() => void handleApplyPositionActions()} disabled={Boolean(busy)} aria-busy={busy === "position-preview"}>{busy === "position-preview" ? "Updating review..." : "Continue to review"}</Button> : requiresRepreview ? <Button type="button" variant="cta" className="min-h-10 w-full justify-center px-5 sm:w-auto" svg={ArrowRight} iconPosition="right" onClick={() => void handlePreview()} disabled={Boolean(busy)} aria-busy={busy === "preview"}>{busy === "preview" ? "Checking rows..." : "Review changes again"}</Button> : hasUnconfirmedMemberMatches ? <Button type="button" variant="cta" className="min-h-10 w-full justify-center px-5 sm:w-auto" onClick={() => void handlePreview(memberMatches, true)} disabled={Boolean(busy)} aria-busy={busy === "preview"}>{busy === "preview" ? "Checking selected member..." : "Review selected member"}</Button> : selectedRows.length === 0 ? <Button type="button" variant="cta" className="min-h-10 w-full justify-center px-5 sm:w-auto" onClick={() => onOpenChange(false)} disabled={Boolean(busy)}>Close</Button> : <Button type="button" variant="cta" wrap className="min-h-10 w-full justify-center px-5 sm:w-auto" onClick={() => void handleCommit()} disabled={Boolean(busy)} aria-busy={busy === "commit"}>{busy === "commit" ? <><Spinner size="sm" className="mr-2 shrink-0" />Importing...</> : commitButtonLabel}</Button> : <Button type="button" variant="cta" className="min-h-10 w-full justify-center px-5 sm:w-auto" svg={ArrowRight} iconPosition="right" onClick={() => void handlePreview()} disabled={Boolean(busy) || !fileName || (needsDestinationTeam && !destinationTeamId)} aria-busy={busy === "preview"}>{busy === "preview" ? "Checking rows..." : type === "members" ? "Review your import" : "Review import"}</Button>}
+          {preview ? teamStep ? <Button type="button" variant="cta" wrap className="min-h-10 w-full justify-center px-5 sm:w-auto" svg={ArrowRight} iconPosition="right" onClick={() => void handleApplyTeamActions()} disabled={Boolean(busy)} aria-busy={busy === "team-preview"}>{busy === "team-preview" ? "Updating review..." : "Continue to positions"}</Button> : positionStep ? <Button type="button" variant="cta" wrap className="min-h-10 w-full justify-center px-5 sm:w-auto" svg={ArrowRight} iconPosition="right" onClick={() => void handleApplyPositionActions()} disabled={Boolean(busy)} aria-busy={busy === "position-preview"}>{busy === "position-preview" ? "Updating review..." : "Continue to review"}</Button> : requiresRepreview ? <Button type="button" variant="cta" className="min-h-10 w-full justify-center px-5 sm:w-auto" svg={ArrowRight} iconPosition="right" onClick={() => void handlePreview()} disabled={Boolean(busy)} aria-busy={busy === "preview"}>{busy === "preview" ? "Checking rows..." : "Review changes again"}</Button> : hasUnconfirmedMemberMatches ? <Button type="button" variant="cta" className="min-h-10 w-full justify-center px-5 sm:w-auto" onClick={() => void handlePreview(retryMemberMatches(), true)} disabled={Boolean(busy)} aria-busy={busy === "preview"}>{busy === "preview" ? "Checking selected member..." : "Review selected member"}</Button> : selectedRows.length === 0 ? <Button type="button" variant="cta" className="min-h-10 w-full justify-center px-5 sm:w-auto" onClick={() => onOpenChange(false)} disabled={Boolean(busy)}>Close</Button> : <Button type="button" variant="cta" wrap className="min-h-10 w-full justify-center px-5 sm:w-auto" onClick={() => void handleCommit()} disabled={Boolean(busy)} aria-busy={busy === "commit"}>{busy === "commit" ? <><Spinner size="sm" className="mr-2 shrink-0" />Importing...</> : commitButtonLabel}</Button> : <Button type="button" variant="cta" className="min-h-10 w-full justify-center px-5 sm:w-auto" svg={ArrowRight} iconPosition="right" onClick={() => void handlePreview()} disabled={Boolean(busy) || !fileName || (needsDestinationTeam && !destinationTeamId)} aria-busy={busy === "preview"}>{busy === "preview" ? "Checking rows..." : type === "members" ? "Review your import" : "Review import"}</Button>}
         </footer>}
       </section>
     </Modal>
