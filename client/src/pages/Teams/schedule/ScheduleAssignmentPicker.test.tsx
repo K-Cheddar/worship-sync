@@ -1,4 +1,9 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import ScheduleQuickMemberForm from "./ScheduleQuickMemberForm";
+import ScheduleMemberConsentFollowup from "./ScheduleMemberConsentFollowup";
+import { ToastProvider } from "../../../context/toastContext";
+import { AuthApiError, getTeamsBootstrap, recordMemberSmsConsent, searchTeamRosterCandidates } from "../../../api/auth";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import type {
   TeamRosterMember,
@@ -6,6 +11,9 @@ import type {
 } from "../../../api/authTypes";
 import type { MemberAssignmentActionIssues } from "./MemberAssignmentSubmenu";
 import ScheduleAssignmentPicker from "./ScheduleAssignmentPicker";
+
+jest.mock("../../../api/auth", () => ({ AuthApiError: class extends Error { isReachabilityError = true; }, getTeamsBootstrap: jest.fn(), recordMemberSmsConsent: jest.fn(), searchTeamRosterCandidates: jest.fn().mockResolvedValue({ candidates: [] }) }));
+const searchCandidates = jest.mocked(searchTeamRosterCandidates);
 
 const PickerHarness = ({
   currentPrimaryMemberId,
@@ -22,6 +30,7 @@ const PickerHarness = ({
   getAssignmentActionIssues,
   onAssignmentAction,
   onClose,
+  onCreateMember,
 }: {
   currentPrimaryMemberId: string;
   currentAssigneeLabel: string;
@@ -36,6 +45,7 @@ const PickerHarness = ({
   members: TeamRosterMember[];
   getAssignmentActionIssues?: (memberId: string) => MemberAssignmentActionIssues;
   onAssignmentAction?: jest.Mock;
+  onCreateMember?: jest.Mock;
   onClose?: jest.Mock;
 }) => {
   const [anchorEl, setAnchorEl] = useState<HTMLButtonElement | null>(null);
@@ -47,6 +57,10 @@ const PickerHarness = ({
       </button>
       <ScheduleAssignmentPicker
         open
+        churchId="church-1"
+        teamId="team-1"
+        teamName="Worship"
+        onCreateMember={onCreateMember}
         anchorEl={anchorEl}
         label="Sunday Camera"
         positionId="camera"
@@ -89,6 +103,7 @@ const renderPicker = ({
   getAssignmentActionIssues,
   onAssignmentAction,
   onClose = jest.fn(),
+  onCreateMember,
 }: {
   currentPrimaryMemberId?: string;
   currentAssigneeLabel?: string;
@@ -104,6 +119,7 @@ const renderPicker = ({
   getAssignmentActionIssues?: (memberId: string) => MemberAssignmentActionIssues;
   onAssignmentAction?: jest.Mock;
   onClose?: jest.Mock;
+  onCreateMember?: jest.Mock;
 } = {}) => {
   render(
     <PickerHarness
@@ -121,6 +137,7 @@ const renderPicker = ({
       getAssignmentActionIssues={getAssignmentActionIssues}
       onAssignmentAction={onAssignmentAction}
       onClose={onClose}
+      onCreateMember={onCreateMember}
     />,
   );
   return { onAssignGuest, onEditGuest, onRemoveGuest, onClose };
@@ -431,5 +448,175 @@ describe("ScheduleAssignmentPicker occupied slots", () => {
       "https://example.com/taylor.jpg",
     );
     expect(within(option).queryByRole("button")).not.toBeInTheDocument();
+  });
+});
+
+
+describe("quick member creation", () => {
+  const newMember = { memberId: "new", churchId: "church-1", firstName: "Jordan", lastName: "Ray", positionIds: ["camera"], blockoutDates: [] };
+  beforeEach(() => { searchCandidates.mockReset(); searchCandidates.mockResolvedValue({ candidates: [] }); });
+
+  const openForm = async (onCreateMember = jest.fn().mockResolvedValue({ member: newMember })) => {
+    const user = userEvent.setup();
+    renderPicker({ onCreateMember });
+    await user.click(screen.getByRole("button", { name: "Add new member" }));
+    return { user, onCreateMember };
+  };
+  const fillNames = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.type(screen.getByRole("textbox", { name: /First name/ }), "Jordan");
+    await user.type(screen.getByRole("textbox", { name: /Last name/ }), "Ray");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Add & assign" })).toBeEnabled());
+  };
+
+  it("shows one creation action without searching, alongside guests, only with permission", async () => {
+    const { user } = await openForm();
+    expect(screen.getByText(/Team: Worship/)).toBeInTheDocument();
+    expect(screen.getByText(/Position: Camera/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add & assign" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getAllByRole("button", { name: "Add new member" })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Add guest" })).toBeInTheDocument();
+  });
+
+  it("prefills a typed name and validates optional contact information", async () => {
+    const user = userEvent.setup();
+    const onCreateMember = jest.fn().mockResolvedValue({ member: newMember });
+    renderPicker({ onCreateMember });
+    await user.type(screen.getByRole("combobox"), "Jordan Ray");
+    await user.click(screen.getByRole("button", { name: "Add new member" }));
+    expect(screen.getByRole("textbox", { name: /First name/ })).toHaveValue("Jordan");
+    expect(screen.getByRole("textbox", { name: /Last name/ })).toHaveValue("Ray");
+    await user.type(screen.getByRole("textbox", { name: /Mobile phone/ }), "2025550123");
+    expect(screen.getByRole("textbox", { name: /Mobile phone/ })).toHaveValue("(202) 555-0123");
+    await user.type(screen.getByRole("textbox", { name: /Email/ }), "bad");
+    expect(screen.getByText("Enter a valid email address.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add & assign" })).toBeDisabled();
+    await user.clear(screen.getByRole("textbox", { name: /Email/ }));
+    await user.type(screen.getByRole("textbox", { name: /Email/ }), "Jordan@Example.com");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Add & assign" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Add & assign" }));
+    expect(onCreateMember).toHaveBeenCalledWith({ firstName: "Jordan", lastName: "Ray", phoneNumber: "(202) 555-0123", email: "jordan@example.com" }, undefined);
+  });
+
+  it("keeps values and displays the actual create failure", async () => {
+    const { user, onCreateMember } = await openForm(jest.fn().mockRejectedValue(new Error("Member could not be saved.")));
+    await fillNames(user);
+    await user.click(screen.getByRole("button", { name: "Add & assign" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Member could not be saved.");
+    expect(screen.getByRole("textbox", { name: /Last name/ })).toHaveValue("Ray");
+    expect(onCreateMember).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains the created member and retries assignment with its ID after partial success", async () => {
+    const onCreateMember = jest.fn().mockResolvedValueOnce({ member: newMember, assignmentError: "Connection lost." }).mockResolvedValue({ member: newMember });
+    const { user } = await openForm(onCreateMember);
+    await fillNames(user);
+    await user.click(screen.getByRole("button", { name: "Add & assign" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Member saved. Could not confirm the schedule assignment.");
+    expect(screen.queryByRole("textbox", { name: /First name/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Retry assignment" }));
+    expect(onCreateMember).toHaveBeenLastCalledWith({ firstName: "Jordan", lastName: "Ray" }, "new");
+  });
+
+  it("requires an explicit distinct-person decision for a duplicate name", async () => {
+    searchCandidates.mockResolvedValue({ candidates: [{ memberId: "existing", firstName: "Jordan", lastName: "Ray" }] });
+    const { user, onCreateMember } = await openForm();
+    await user.type(screen.getByRole("textbox", { name: /First name/ }), "Jordan");
+    await user.type(screen.getByRole("textbox", { name: /Last name/ }), "Ray");
+    await screen.findByRole("button", { name: "Use Jordan Ray" });
+    expect(screen.getByRole("button", { name: "Add & assign" })).toBeDisabled();
+    await user.click(screen.getByRole("checkbox", { name: /different person/ }));
+    await user.click(screen.getByRole("button", { name: "Add & assign" }));
+    expect(onCreateMember).toHaveBeenCalledWith({ firstName: "Jordan", lastName: "Ray" }, undefined);
+  });
+
+  it("uses an explicitly selected candidate without creating a new person", async () => {
+    searchCandidates.mockResolvedValue({ candidates: [{ memberId: "existing", firstName: "Jordan", lastName: "Ray" }] });
+    const { user, onCreateMember } = await openForm();
+    await user.type(screen.getByRole("textbox", { name: /First name/ }), "Jordan");
+    await user.type(screen.getByRole("textbox", { name: /Last name/ }), "Ray");
+    await user.click(await screen.findByRole("button", { name: "Use Jordan Ray" }));
+    expect(onCreateMember).toHaveBeenCalledWith({ firstName: "Jordan", lastName: "Ray" }, "existing");
+  });
+
+
+  it("blocks duplicate activation immediately while a submission is pending", async () => {
+    let finish!: (value: { member: TeamRosterMember }) => void;
+    const onCreateMember = jest.fn(() => new Promise<{ member: TeamRosterMember }>((resolve) => { finish = resolve; }));
+    const { user } = await openForm(onCreateMember);
+    await fillNames(user);
+    await user.dblClick(screen.getByRole("button", { name: "Add & assign" }));
+    expect(onCreateMember).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Add & assign" })).toBeDisabled();
+    await act(async () => { finish({ member: newMember }); });
+  });
+
+  it("ignores stale duplicate lookups after editing a name", async () => {
+    let resolveOld!: (value: Awaited<ReturnType<typeof searchTeamRosterCandidates>>) => void;
+    searchCandidates.mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }));
+    const user = userEvent.setup();
+    render(<ScheduleQuickMemberForm churchId="church-1" teamId="team-1" teamName="Worship" positionName="Camera" initialName="Jordan Ray" members={[]} onSubmit={jest.fn()} onCancel={jest.fn()} onSuccess={jest.fn()} />);
+    await waitFor(() => expect(searchCandidates).toHaveBeenCalledWith("church-1", "team-1", "jordan ray"));
+    await user.clear(screen.getByRole("textbox", { name: /First name/ }));
+    await user.type(screen.getByRole("textbox", { name: /First name/ }), "Jane");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Add & assign" })).toBeEnabled());
+    await act(async () => { resolveOld({ candidates: [{ memberId: "old", firstName: "Jordan", lastName: "Ray" }] }); });
+    expect(screen.queryByRole("button", { name: "Use Jordan Ray" })).not.toBeInTheDocument();
+  });
+
+  it("ignores completion after the form unmounts", async () => {
+    let finish!: (value: { member: TeamRosterMember }) => void;
+    const onSuccess = jest.fn();
+    const user = userEvent.setup();
+    const view = render(<ScheduleQuickMemberForm churchId="church-1" teamId="team-1" teamName="Worship" positionName="Camera" initialName="Jordan Ray" members={[]} onSubmit={() => new Promise((resolve) => { finish = resolve; })} onCancel={jest.fn()} onSuccess={onSuccess} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Add & assign" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Add & assign" }));
+    view.unmount();
+    await act(async () => { finish({ member: newMember }); });
+    expect(onSuccess).not.toHaveBeenCalled();
+  });
+
+  it("checks the team roster after an uncertain create response before permitting another creation", async () => {
+    const onCreateMember = jest.fn().mockRejectedValue(new AuthApiError("Connection lost."));
+    const { user } = await openForm(onCreateMember);
+    await fillNames(user);
+    await user.click(screen.getByRole("button", { name: "Add & assign" }));
+    await screen.findByRole("button", { name: "Check roster" });
+    expect(screen.getByRole("button", { name: "Add & assign" })).toBeDisabled();
+    jest.mocked(getTeamsBootstrap).mockResolvedValue({ success: true, teams: [], positions: [], schedules: [], members: [newMember] });
+    await user.click(screen.getByRole("button", { name: "Check roster" }));
+    await screen.findByRole("button", { name: "Use Jordan Ray" });
+    expect(screen.getByRole("button", { name: "Add & assign" })).toBeDisabled();
+    expect(onCreateMember).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not show member creation without its permission callback", () => {
+    renderPicker();
+    expect(screen.queryByRole("button", { name: "Add new member" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add guest" })).toBeInTheDocument();
+  });
+});
+
+
+describe("optional quick-member SMS consent", () => {
+  const member: TeamRosterMember = { memberId: "consent-member", churchId: "church-1", firstName: "Jordan", lastName: "Ray", phoneNumber: "+12025550123", positionIds: [], blockoutDates: [] };
+  it.each(["consent_needed", "opted_out", "enabled"] as const)("only offers recording for consent_needed, current status %s", async (status) => {
+    jest.mocked(getTeamsBootstrap).mockResolvedValue({ success: true, members: [member], teams: [], positions: [], schedules: [], smsEligibilityByMemberId: {
+      [member.memberId]: { status, eligible: status === "enabled", phoneNumber: member.phoneNumber! },
+    } });
+    render(<ToastProvider><ScheduleMemberConsentFollowup churchId="church-1" member={member} onClose={jest.fn()} /></ToastProvider>);
+    await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+    const record = screen.queryByRole("button", { name: "Record text message consent" });
+    expect(Boolean(record)).toBe(status === "consent_needed");
+    const inspectConsentForm = async () => {
+      expect(screen.getByRole("button", { name: "Save consent" })).toBeDisabled();
+      expect(screen.getByText("Consent source")).toBeInTheDocument();
+      expect(screen.getByLabelText(/Date consent was obtained/)).toBeInTheDocument();
+    };
+    if (status === "consent_needed") {
+      await userEvent.click(record!);
+      await inspectConsentForm();
+    }
+    expect(recordMemberSmsConsent).not.toHaveBeenCalled();
   });
 });

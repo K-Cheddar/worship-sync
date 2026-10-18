@@ -95,7 +95,10 @@ import {
   getTeamSchedulePublicLink,
   getServicePlanMicrophones,
   getServiceEquipment,
-  updateTeam,
+  addTeamRosterMemberToTeam,
+  getTeamRosterMemberProfile,
+  updateTeamRosterMemberProfile,
+  getTeamsBootstrap,
   updateTeamSchedule,
   updateTeamScheduleAssignment,
   updateTeamScheduleAssignmentsBatch,
@@ -122,6 +125,8 @@ import ScheduleBrowserDialog from "./ScheduleBrowserDialog";
 import ScheduleOverlapPicker from "./ScheduleOverlapPicker";
 import PortableDataImportDialog from "../../../components/PortableDataTransfer/PortableDataImportDialog";
 import { createScheduleCsvMenuItems } from "./scheduleCsvActions";
+import ScheduleMemberConsentFollowup from "./ScheduleMemberConsentFollowup";
+import type { ScheduleQuickMemberDraft, ScheduleQuickMemberResult } from "./ScheduleQuickMemberForm";
 import SmsConfirmationModal from "../components/SmsConfirmationModal";
 import {
   ALL_TEAMS_SCHEDULE_FILTER,
@@ -1780,6 +1785,17 @@ const ScheduleTab = ({
     writeScheduleOrganizeMode(mode);
   }, []);
   const [activeSlot, setActiveSlot] = useState<ScheduleFocusedCell | null>(null);
+  const quickMemberContextScope = JSON.stringify([churchId, workspaceTeamId, periodSelectionScope,
+    viewingSavedSchedule ? selectedScheduleRecord?.scheduleId : operatorSelectedPeriodScheduleId]);
+  const quickMemberScope = JSON.stringify([quickMemberContextScope, activeSlot?.occurrenceId, activeSlot?.columnKey]);
+  const quickMemberOwnerRef = useRef({ scope: quickMemberScope });
+  useLayoutEffect(() => {
+    if (quickMemberOwnerRef.current.scope !== quickMemberScope) {
+      quickMemberOwnerRef.current = { scope: quickMemberScope };
+    }
+  }, [quickMemberScope]);
+  const [consentMember, setConsentMember] = useState<{ scope: string; member: TeamRosterMember } | null>(null);
+
   // The standard grid flow supports replacing, shadowing, and clearing slots.
   const [slotPickerMode, setSlotPickerMode] = useState<"assign" | "replace">(
     "assign",
@@ -4200,64 +4216,79 @@ const ScheduleTab = ({
     }
   };
 
-  // Create a brand-new roster member straight from a schedule cell: make the
-  // person, add them to this team (so they're eligible), then assign them to the
-  // cell. Keeps the scheduler in flow instead of bouncing to the Members tab.
+  // Roster creation already joins the position's team. Never send a whole-team
+  // settings update here. The picker retains the returned member after a later
+  // assignment failure, so retry cannot create another person.
   const createMemberForCell = async ({
-    serviceId,
-    cellKey,
-    basePositionId,
-    firstName,
-    lastName,
-  }: {
+    serviceId, cellKey, basePositionId, firstName, lastName, phoneNumber, email, existingMemberId,
+  }: ScheduleQuickMemberDraft & {
     serviceId: string;
     cellKey: string;
     basePositionId: string;
-    firstName: string;
-    lastName: string;
-  }) => {
-    if (!canEdit) return;
-    if (!selectedSchedule || !selectedTeam) return;
-    const trimmedFirst = firstName.trim();
-    if (!trimmedFirst) return;
+    existingMemberId?: string;
+  }): Promise<ScheduleQuickMemberResult> => {
+    if (!canEdit || !selectedSchedule || !selectedTeam) throw new Error("Choose an editable schedule before adding a member.");
+    const owner = quickMemberOwnerRef.current;
+    const isCurrent = () => scheduleTabMountedRef.current && quickMemberOwnerRef.current === owner;
+    const assertCurrent = () => { if (!isCurrent()) throw new Error("The schedule changed. Select the member from the roster to continue."); };
     const occurrence = scheduleOccurrences.find((item) => item.occurrenceId === serviceId);
-    const serviceDate = occurrence ? getOccurrenceDate(occurrence, serviceTimeZone) : "";
+    if (!occurrence) throw new Error("This service is no longer available.");
+    const serviceDate = getOccurrenceDate(occurrence, serviceTimeZone);
+    const schedule = await ensureActiveSchedule(selectedSchedule);
+    assertCurrent();
+    if (!schedule) throw new Error("Could not prepare this schedule. Try again.");
+    let member: TeamRosterMember;
+    const knownMember = existingMemberId ? data.members.find((item) => item.memberId === existingMemberId) : undefined;
+    if (knownMember && selectedTeam.memberIds.includes(knownMember.memberId) && knownMember.positionIds.includes(basePositionId)) {
+      member = knownMember;
+    } else if (existingMemberId) {
+      // Both APIs are team-scoped; the profile patch carries only this team's
+      // existing eligibility plus the selected position, leaving other data alone.
+      const added = await addTeamRosterMemberToTeam(churchId, selectedTeam.teamId, existingMemberId);
+      assertCurrent();
+      onTeamSaved(added.team);
+      const profile = await getTeamRosterMemberProfile(churchId, selectedTeam.teamId, existingMemberId);
+      assertCurrent();
+      if (!profile.teamProfile.positionIds.includes(basePositionId)) {
+        await updateTeamRosterMemberProfile(churchId, selectedTeam.teamId, existingMemberId, {
+          positionIds: [...profile.teamProfile.positionIds, basePositionId],
+        });
+        assertCurrent();
+      }
+      const refreshed = await getTeamsBootstrap(churchId);
+      assertCurrent();
+      const saved = refreshed.members.find((item) => item.memberId === existingMemberId);
+      if (!saved) throw new Error("The member could not be refreshed. Try again.");
+      member = saved;
+      const team = refreshed.teams.find((item) => item.teamId === selectedTeam.teamId);
+      if (team) onTeamSaved(team);
+    } else {
+      const response = await createTeamRosterMember(churchId, {
+        firstName: firstName.trim(), lastName: lastName.trim(),
+        ...(phoneNumber ? { phoneNumber } : {}), ...(email ? { email } : {}),
+        positionIds: [basePositionId], blockoutDates: [],
+      });
+      assertCurrent();
+      member = response.member;
+      response.teams?.forEach((team) => onTeamSaved(team));
+    }
+    onMemberSaved(member);
+    if (!existingMemberId && isChurchAdmin && member.phoneNumber) setConsentMember({ scope: quickMemberContextScope, member });
     try {
-      const schedule = await ensureActiveSchedule();
-      if (!schedule) return;
-      const { member } = await createTeamRosterMember(churchId, {
-        firstName: trimmedFirst,
-        lastName: lastName.trim(),
-        positionIds: [basePositionId],
-        blockoutDates: [],
+      const response = await enqueueAssignmentSave(schedule.scheduleId, () => {
+        assertCurrent();
+        return updateTeamScheduleAssignment(churchId, schedule.scheduleId, {
+          serviceId, positionSlotKey: cellKey, memberId: member.memberId, serviceDate,
+        });
       });
-      const teamResponse = await updateTeam(churchId, selectedTeam.teamId, {
-        name: selectedTeam.name,
-        description: selectedTeam.description,
-        icon: selectedTeam.icon,
-        memberIds: [...selectedTeam.memberIds, member.memberId],
-        baseMemberIds: selectedTeam.memberIds,
-      });
-      await enqueueAssignmentSave(schedule.scheduleId, async () => {
-        const response = await updateTeamScheduleAssignment(
-          churchId,
-          schedule.scheduleId,
-          {
-            serviceId,
-            positionSlotKey: cellKey,
-            memberId: member.memberId,
-            serviceDate,
-          },
-        );
-        onScheduleSaved(response.schedule);
-      });
-      // Pull the new member + team membership into the page data so the roster,
-      // member panel, and cell label all reflect the addition.
-      onMemberSaved(member);
-      onTeamSaved(teamResponse.team);
+      assertCurrent();
+      // Merge through the existing pending-cell reconciliation boundary.
+      publishScheduleSnapshot(response.schedule, ["assignments"]);
       clearActiveSlot();
+      return { member };
     } catch (error) {
-      showApiErrorToast(showToast, error, "Could not add this member.");
+      assertCurrent();
+      return { member, assignmentError: error instanceof Error ? error.message : "Could not save the assignment." };
     }
   };
 
@@ -5019,18 +5050,14 @@ const ScheduleTab = ({
     setPendingCellAssignment(null);
   };
 
-  const handleActiveSlotCreateMember = async (member: {
-    firstName: string;
-    lastName: string;
-  }) => {
-    if (!canEdit) return;
-    if (!activeSlot || !activeSlotMeta) return;
-    await createMemberForCell({
+  const handleActiveSlotCreateMember = async (member: ScheduleQuickMemberDraft, existingMemberId?: string) => {
+    if (!canEdit || !activeSlot || !activeSlotMeta) throw new Error("Select an editable schedule cell first.");
+    return createMemberForCell({
       serviceId: activeSlot.occurrenceId,
       cellKey: activeSlot.columnKey,
       basePositionId: activeSlotMeta.positionId,
-      firstName: member.firstName,
-      lastName: member.lastName,
+      ...member,
+      existingMemberId,
     });
   };
 
@@ -6435,6 +6462,10 @@ const ScheduleTab = ({
 
   return (
     <div className={scheduleTabRootClassName}>
+      {consentMember?.scope === quickMemberContextScope && isChurchAdmin ? (
+        <ScheduleMemberConsentFollowup key={consentMember.member.memberId} churchId={churchId} member={consentMember.member}
+          onClose={() => setConsentMember(null)} />
+      ) : null}
       {isChurchAdmin ? (
         <PortableDataImportDialog
           open={scheduleImportOpen}
@@ -7326,6 +7357,10 @@ const ScheduleTab = ({
                     </div>
                   </div>
                   <ScheduleAssignmentPicker
+                    key={quickMemberScope}
+                    churchId={churchId}
+                    teamId={selectedTeam?.teamId || ""}
+                    teamName={selectedTeam?.name || ""}
                     open={Boolean(canEdit && activeSlot && activeSlotMeta && pickerAnchorEl)}
                     anchorEl={pickerAnchorEl}
                     label={`${activeSlotMeta?.occurrenceName || ""} ${activeSlotMeta?.positionLabel || ""}`}

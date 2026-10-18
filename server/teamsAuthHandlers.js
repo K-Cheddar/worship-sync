@@ -5774,8 +5774,12 @@ export const createTeamsAuthHandlers = ({
       name,
       description: normalizeLongText(body?.description),
       icon: validateEntityIcon(body?.icon, existingTeam?.icon, "Team") || "",
-      usesMicrophoneAssignments: body?.usesMicrophoneAssignments === true,
-      usesIemAssignments: body?.usesIemAssignments === true,
+      // Existing-team writes merge fields. Leave omitted flags out of the patch
+      // so a concurrent settings edit cannot be replaced by an older snapshot.
+      ...(existingTeam && body?.usesMicrophoneAssignments === undefined
+        ? {} : { usesMicrophoneAssignments: body?.usesMicrophoneAssignments === true }),
+      ...(existingTeam && body?.usesIemAssignments === undefined
+        ? {} : { usesIemAssignments: body?.usesIemAssignments === true }),
     };
   };
 

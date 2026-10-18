@@ -20121,3 +20121,79 @@ test("my availability uses current recipient scope without disclosing tokens or 
   assert.equal(revoked.statusCode, 404);
   assert.deepEqual((await callHandler(authHandlers.getMyVolunteerAvailability, { context })).payload.requests, []);
 });
+
+
+test("quick member creation preserves equipment settings, roster membership and equipment assignments on reload", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("quick_member_equipment_regression");
+  const { teamId, positionIds } = await seedTeam(context, { teamName: "Worship", positions: [{ name: "Vocal" }] });
+  const positionId = positionIds.Vocal;
+  const flags = { usesMicrophoneAssignments: true, usesIemAssignments: true };
+  const enabled = await callHandler(authHandlers.updateTeam, { context, params: { teamId }, body: { name: "Worship", ...flags } });
+  assert.equal(enabled.statusCode, 200);
+  const occurrenceId = "quick-service@2026-10-18T10:00:00.000Z";
+  const schedule = await callHandler(authHandlers.createTeamSchedule, { context, body: {
+    name: "Quick member", teamId, startDate: "2026-10-18", endDate: "2026-10-18", serviceIds: ["quick-service"],
+    occurrences: [{ occurrenceId, serviceId: "quick-service", startsAt: "2026-10-18T10:00:00.000Z", positionRequirements: [{ positionId, count: 1 }] }],
+  } });
+  assert.equal(schedule.statusCode, 200, JSON.stringify(schedule.payload));
+  const created = await callHandler(authHandlers.createTeamRosterMember, { context, body: {
+    firstName: "Jordan", lastName: "Ray", positionIds: [positionId], blockoutDates: [],
+    phoneNumber: "(202) 555-0123", email: "jordan@example.com",
+  } });
+  assert.equal(created.statusCode, 200);
+  const member = created.payload.member;
+  assert.deepEqual(member.positionIds, [positionId]);
+  assert.equal(member.phoneNumber, "+12025550123");
+  assert.equal(created.payload.teams.find((team) => team.teamId === teamId).memberIds.includes(member.memberId), true);
+  const scheduleId = schedule.payload.schedule.scheduleId;
+  const positionSlotKey = `${positionId}::0`;
+  const assigned = await callHandler(authHandlers.updateTeamScheduleAssignment, { context, params: { scheduleId }, body: {
+    serviceId: occurrenceId, positionSlotKey, memberId: member.memberId, serviceDate: "2026-10-18",
+  } });
+  assert.equal(assigned.statusCode, 200, JSON.stringify(assigned.payload));
+  const microphones = await callHandler(authHandlers.saveServicePlanMicrophones, { context, body: {
+    microphones: [{ id: "quick-mic", name: "Quick mic", type: "Handheld", color: "#22d3ee" }], audiences: [],
+  } });
+  assert.equal(microphones.statusCode, 200);
+  const iems = await callHandler(authHandlers.saveServiceEquipment, { context, body: {
+    equipment: [{ id: "quick-iem", category: "iem", name: "Quick IEM", subtype: "wireless-beltpack" }],
+  } });
+  assert.equal(iems.statusCode, 200);
+  assert.equal((await callHandler(authHandlers.updateTeamScheduleAssignmentMicrophones, { context, params: { scheduleId }, body: {
+    serviceId: occurrenceId, positionSlotKey, microphoneIds: ["quick-mic"],
+  } })).statusCode, 200);
+  assert.equal((await callHandler(authHandlers.updateTeamScheduleAssignmentIems, { context, params: { scheduleId }, body: {
+    serviceId: occurrenceId, positionSlotKey, iemIds: ["quick-iem"],
+  } })).statusCode, 200);
+  const reloaded = await callHandler(authHandlers.getTeamsBootstrap, { context });
+  const team = reloaded.payload.teams.find((item) => item.teamId === teamId);
+  assert.equal(team.usesMicrophoneAssignments, true);
+  assert.equal(team.usesIemAssignments, true);
+  const persisted = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+  assert.equal(getMemberId(persisted.assignments[occurrenceId][positionSlotKey]), member.memberId);
+  assert.deepEqual(persisted.microphoneAssignments[occurrenceId][positionSlotKey], ["quick-mic"]);
+  assert.deepEqual(persisted.iemAssignments[occurrenceId][positionSlotKey], ["quick-iem"]);
+  const eligibility = reloaded.payload.smsEligibilityByMemberId?.[member.memberId];
+  if (eligibility) assert.equal(eligibility.status, "consent_needed");
+});
+
+test("team updates preserve omitted equipment flags and honor explicit enable and disable", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("team_equipment_omitted_flags");
+  const created = await callHandler(authHandlers.createTeam, { context, body: { name: "Worship", memberIds: [] } });
+  const teamId = created.payload.team.teamId;
+  assert.equal(created.payload.team.usesMicrophoneAssignments, false);
+  assert.equal(created.payload.team.usesIemAssignments, false);
+  const update = (body) => callHandler(authHandlers.updateTeam, { context, params: { teamId }, body: { name: "Worship", ...body } });
+  await update({ usesMicrophoneAssignments: true, usesIemAssignments: true });
+  const omitted = await update({ description: "Renamed description" });
+  assert.equal(omitted.payload.team.usesMicrophoneAssignments, true);
+  assert.equal(omitted.payload.team.usesIemAssignments, true);
+  const partial = await update({ usesMicrophoneAssignments: false });
+  assert.equal(partial.payload.team.usesMicrophoneAssignments, false);
+  assert.equal(partial.payload.team.usesIemAssignments, true);
+  const disabled = await update({ usesMicrophoneAssignments: false, usesIemAssignments: false });
+  assert.equal(disabled.payload.team.usesMicrophoneAssignments, false);
+  assert.equal(disabled.payload.team.usesIemAssignments, false);
+});

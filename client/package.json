@@ -107,6 +107,7 @@
     "test:watch": "jest",
     "test:e2e:responsive-navigation": "node e2e/run-browser-suite.mjs account-responsive-navigation.mjs",
     "test:e2e:board-controller-mobile": "node e2e/run-browser-suite.mjs board-controller-mobile.mjs",
+    "test:e2e:schedule-quick-member": "node e2e/run-browser-suite.mjs schedule-quick-member.mjs",
     "test:e2e:browser": "npm run test:e2e:responsive-navigation && npm run test:e2e:board-controller-mobile",
     "eject": "vite eject",
     "lint": "eslint src --ext .ts,.tsx,.js,.jsx",

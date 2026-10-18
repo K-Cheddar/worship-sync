@@ -26,11 +26,11 @@ import MemberAssignmentSubmenu, {
   type MemberAssignmentActionIssues,
 } from "./MemberAssignmentSubmenu";
 import {
-  splitTypedMemberName,
   shouldShowScheduleMemberPositionGroupDivider,
   type ScheduleMemberPickerMember,
   type ScheduleMemberRecommendationStats,
 } from "./scheduleMemberPickerUtils";
+import ScheduleQuickMemberForm, { type ScheduleQuickMemberSubmit } from "./ScheduleQuickMemberForm";
 import ScheduleMemberPositionGroupDivider from "./ScheduleMemberPositionGroupDivider";
 import { useScheduleMemberPicker } from "./useScheduleMemberPicker";
 import { WantsThisIcon } from "./WantsThisIndicator";
@@ -182,7 +182,10 @@ type ScheduleAssignmentPickerProps = {
   onApplySwapRecommendation?: (
     recommendation: ScheduleAssignmentSwapRecommendation,
   ) => void;
-  onCreateMember?: (member: { firstName: string; lastName: string }) => Promise<void> | void;
+  onCreateMember?: ScheduleQuickMemberSubmit;
+  churchId?: string;
+  teamId?: string;
+  teamName?: string;
   recentGuests?: TeamScheduleGuest[];
   editableGuestIds?: Set<string>;
   getGuestWarning?: (guestId: string) => string;
@@ -231,6 +234,9 @@ const ScheduleAssignmentPicker = memo(({
   swapRecommendations = [],
   onApplySwapRecommendation,
   onCreateMember,
+  churchId = "",
+  teamId = "",
+  teamName = "",
   recentGuests = [],
   editableGuestIds = emptyGuestIds,
   getGuestWarning,
@@ -259,7 +265,6 @@ const ScheduleAssignmentPicker = memo(({
   const [activeSubmenuMemberId, setActiveSubmenuMemberId] = useState<string | null>(null);
   const [activeSwapRecommendation, setActiveSwapRecommendation] =
     useState<ScheduleAssignmentSwapRecommendation | null>(null);
-  const [createDraft, setCreateDraft] = useState({ firstName: "", lastName: "" });
   const [guestDraft, setGuestDraft] = useState({
     guestId: "",
     name: "",
@@ -267,7 +272,6 @@ const ScheduleAssignmentPicker = memo(({
     phone: "",
     note: "",
   });
-  const [creatingMember, setCreatingMember] = useState(false);
   const [assigningGuest, setAssigningGuest] = useState(false);
   const [editingGuest, setEditingGuest] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
@@ -275,7 +279,7 @@ const ScheduleAssignmentPicker = memo(({
   const currentAssigneePresent =
     hasCurrentAssignee ?? Boolean(currentPrimaryMemberId);
 
-  const { positionMembers, showCreateOption } = useScheduleMemberPicker({
+  const { positionMembers } = useScheduleMemberPicker({
     members,
     positionId,
     assignmentQuery,
@@ -331,9 +335,7 @@ const ScheduleAssignmentPicker = memo(({
       setActiveSubmenuMemberId(null);
       setActiveSwapRecommendation(null);
       setHighlightedIndex(0);
-      setCreateDraft({ firstName: "", lastName: "" });
       setGuestDraft({ guestId: "", name: "", email: "", phone: "", note: "" });
-      setCreatingMember(false);
       setAssigningGuest(false);
       setEditingGuest(false);
       return;
@@ -420,7 +422,6 @@ const ScheduleAssignmentPicker = memo(({
   };
 
   const openCreateMember = () => {
-    setCreateDraft(splitTypedMemberName(assignmentQuery));
     setMenuView("createMember");
   };
 
@@ -456,20 +457,6 @@ const ScheduleAssignmentPicker = memo(({
   ) => {
     setActiveSwapRecommendation(recommendation);
     setMenuView("swapConfirmation");
-  };
-
-  const submitCreateMember = async () => {
-    if (!onCreateMember || creatingMember) return;
-    const firstName = createDraft.firstName.trim();
-    if (!firstName) return;
-    setCreatingMember(true);
-    try {
-      await onCreateMember({ firstName, lastName: createDraft.lastName.trim() });
-      resetMenuView();
-      setCreateDraft({ firstName: "", lastName: "" });
-    } finally {
-      setCreatingMember(false);
-    }
   };
 
   const assignGuest = async (
@@ -635,6 +622,8 @@ const ScheduleAssignmentPicker = memo(({
     currentAssigneePresent &&
     menuView === "members" &&
     !pendingSubmenu;
+
+  const showCreateOption = Boolean(onCreateMember) && !memberPickerAction;
 
   const showListContent =
     menuView === "occupiedActions" ||
@@ -825,13 +814,17 @@ const ScheduleAssignmentPicker = memo(({
         ref={contentRef}
         id={listboxId}
         data-schedule-assignment-menu
-        role={menuView === "members" ? "listbox" : "menu"}
+        aria-label={menuView === "createMember" ? "Add new member" : undefined}
+        role={menuView === "createMember" ? "dialog" : menuView === "members" ? "listbox" : "menu"}
         align="start"
         side={preferredSide ?? "bottom"}
         sideOffset={4}
         avoidCollisions
         collisionPadding={8}
-        className="relative z-50 min-w-48 max-w-xs w-max overflow-hidden rounded-md border border-gray-700 bg-gray-900 p-0 shadow-xl"
+        className={cn(
+          "relative z-50 min-w-48 overflow-hidden rounded-md border border-gray-700 bg-gray-900 p-0 shadow-xl",
+          menuView === "createMember" ? "w-80 max-w-[calc(100vw-1rem)]" : "max-w-xs w-max",
+        )}
         onOpenAutoFocus={(event) => event.preventDefault()}
         onMouseDown={(event) => {
           if (
@@ -857,7 +850,7 @@ const ScheduleAssignmentPicker = memo(({
             }}
           />
         ) : null}
-        {menuView !== "occupiedActions" ? <div className="border-b border-gray-800 p-2">
+        {menuView !== "occupiedActions" && menuView !== "createMember" ? <div className="border-b border-gray-800 p-2">
           <label className="sr-only">{label}</label>
           <div className="relative flex min-w-0 items-stretch">
             <input
@@ -882,7 +875,10 @@ const ScheduleAssignmentPicker = memo(({
             </div>
           </div>
         </div> : null}
-        <div className="scrollbar-portal max-h-[min(24rem,55dvh)] overflow-x-hidden overflow-y-auto">
+        <div className={cn(
+          "scrollbar-portal overflow-x-hidden overflow-y-auto",
+          menuView === "createMember" ? "max-h-[min(38rem,calc(100dvh-4rem))]" : "max-h-[min(24rem,55dvh)]",
+        )}>
           {menuView === "occupiedActions" ? (
             <OccupiedAssignmentActions
               currentAssigneeLabel={currentAssigneeLabel}
@@ -914,63 +910,17 @@ const ScheduleAssignmentPicker = memo(({
               }
             />
           ) : menuView === "createMember" ? (
-            <form
-              className="space-y-2 p-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void submitCreateMember();
-              }}
-            >
-              <p className="px-1 text-xs font-semibold text-gray-300">Add new member</p>
-              <Input
-                autoFocus
-                hideLabel
-                label="First name"
-                placeholder="First name"
-                inputClassName="border-gray-700 bg-gray-950 focus:border-gray-500"
-                value={createDraft.firstName}
-                onChange={(value) =>
-                  setCreateDraft((draft) => ({ ...draft, firstName: String(value) }))
-                }
-              />
-              <Input
-                hideLabel
-                label="Last name"
-                placeholder="Last name"
-                inputClassName="border-gray-700 bg-gray-950 focus:border-gray-500"
-                value={createDraft.lastName}
-                onChange={(value) =>
-                  setCreateDraft((draft) => ({ ...draft, lastName: String(value) }))
-                }
-              />
-              {positionName ? (
-                <p className="px-1 text-xs text-gray-500">Position: {positionName}</p>
-              ) : null}
-              <div className="flex items-center justify-end gap-2 pt-1">
-                <Button
-                  type="button"
-                  variant="tertiary"
-                  padding="px-2 py-1"
-                  className="text-xs"
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                    resetMenuView();
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="submit"
-                  variant="primary"
-                  padding="px-3 py-1"
-                  className="text-xs"
-                  disabled={!createDraft.firstName.trim() || creatingMember}
-                  isLoading={creatingMember}
-                >
-                  {creatingMember ? "Adding…" : "Add & assign"}
-                </Button>
-              </div>
-            </form>
+            onCreateMember ? <ScheduleQuickMemberForm
+              churchId={churchId}
+              teamId={teamId}
+              teamName={teamName}
+              positionName={positionName}
+              initialName={assignmentQuery}
+              members={members}
+              onSubmit={onCreateMember}
+              onCancel={resetMenuView}
+              onSuccess={resetMenuView}
+            /> : null
           ) : menuView === "createGuest" ? (
             <form
               className="space-y-2 p-2"
@@ -1397,7 +1347,6 @@ const ScheduleAssignmentPicker = memo(({
                         "mt-1 border-t border-gray-800",
                       )}
                     >
-                      <p className="px-0.5">No members match “{trimmedQuery}”.</p>
                       <Button
                         type="button"
                         variant="tertiary"
@@ -1406,12 +1355,9 @@ const ScheduleAssignmentPicker = memo(({
                         color="#22d3ee"
                         padding="px-2 py-1"
                         className="mt-1 w-full justify-start text-sm font-medium text-cyan-300 hover:bg-gray-800"
-                        onMouseDown={(event) => {
-                          event.preventDefault();
-                          openCreateMember();
-                        }}
+                        onClick={openCreateMember}
                       >
-                        Add “{trimmedQuery}” to the team
+                        Add new member
                       </Button>
                     </div>
                   ) : null}

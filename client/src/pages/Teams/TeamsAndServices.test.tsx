@@ -16,6 +16,10 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import { ToastContext, ToastProvider, useToast } from "../../context/toastContext";
 import { createMockGlobalContext } from "../../test/mocks";
 import {
+  searchTeamRosterCandidates,
+  addTeamRosterMemberToTeam,
+  getTeamRosterMemberProfile,
+  updateTeamRosterMemberProfile,
   createTeamPosition,
   createTeamRosterMember,
   createTeamSchedule,
@@ -148,6 +152,11 @@ jest.mock("../../api/auth", () => ({
       this.details = options.details;
     }
   },
+  addTeamRosterMemberToTeam: jest.fn(),
+  getTeamRosterMemberProfile: jest.fn(),
+  updateTeamRosterMemberProfile: jest.fn(),
+  manageVolunteerPersonalAccess: jest.fn().mockResolvedValue({ enabled: false }),
+  searchTeamRosterCandidates: jest.fn().mockResolvedValue({ candidates: [] }),
   getTeamsBootstrap: jest.fn(),
   getTeamScheduleDetail: jest.fn(),
   getTeamAvailabilityManagementData: jest.fn().mockResolvedValue({ success: true, members: [] }),
@@ -5775,16 +5784,19 @@ describe("Teams", () => {
     }));
   });
 
-  it("creates and assigns a new member when the typed name matches nobody", async () => {
+  it.each(["success", "create failure", "assignment failure"])("quick member workflow: %s preserves equipment and retries safely", async (scenario) => {
     const user = userEvent.setup();
+    mockGetServiceEquipment.mockResolvedValue({ success: true, equipment: [{ id: "iem-quick", category: "iem", name: "Quick IEM", subtype: "wireless-beltpack" }] });
     mockGetTeamsBootstrap.mockResolvedValue(
       asTeamsBootstrapResponse({
         ...scheduleBootstrap,
+        teams: [{ ...scheduleBootstrap.teams[0], usesMicrophoneAssignments: true, usesIemAssignments: true }],
         schedules: [{ ...scheduleBootstrap.schedules[0], assignments: {} }],
       }),
     );
     mockCreateTeamRosterMember.mockResolvedValue({
       success: true,
+      teams: [{ ...scheduleBootstrap.teams[0], usesMicrophoneAssignments: true, usesIemAssignments: true, memberIds: [...scheduleBootstrap.teams[0].memberIds, "member-new"] }],
       member: {
         memberId: "member-new",
         churchId: "church-1",
@@ -5814,6 +5826,8 @@ describe("Teams", () => {
       },
     } satisfies UpdateTeamScheduleAssignmentResponse);
 
+    if (scenario === "create failure") mockCreateTeamRosterMember.mockRejectedValueOnce(new Error("Member creation denied."));
+    if (scenario === "assignment failure") mockUpdateTeamScheduleAssignment.mockRejectedValueOnce(new Error("Assignment unavailable."));
     renderTeams();
     const vocalCombo = await openVocalSlot(user);
     await user.click(vocalCombo);
@@ -5821,13 +5835,28 @@ describe("Teams", () => {
 
     // No match -> the dropdown offers to add the typed person to the team.
     await user.click(
-      await screen.findByRole("button", { name: /Add .*Jordan Ray.* to the team/i }),
+      await screen.findByRole("button", { name: /Add new member/i }),
     );
 
     // The mini-form is prefilled by splitting the typed name.
     expect(screen.getByRole("textbox", { name: /First name/i })).toHaveValue("Jordan");
     expect(screen.getByRole("textbox", { name: /Last name/i })).toHaveValue("Ray");
+    await waitFor(() => expect(screen.getByRole("button", { name: /Add .*assign/i })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: /Add .*assign/i }));
+    const recoverScenario: Record<string, () => Promise<void>> = {
+      "create failure": async () => {
+        expect(await screen.findByRole("alert")).toHaveTextContent("Member creation denied.");
+        expect(screen.getByRole("textbox", { name: /Last name/i })).toHaveValue("Ray");
+        expect(mockUpdateTeamScheduleAssignment).not.toHaveBeenCalled();
+        await user.click(screen.getByRole("button", { name: /Add .*assign/i }));
+      },
+      "assignment failure": async () => {
+        expect(await screen.findByRole("alert")).toHaveTextContent("Member saved. Could not confirm the schedule assignment.");
+        await user.click(screen.getByRole("button", { name: "Retry assignment" }));
+      },
+      success: () => Promise.resolve(),
+    };
+    await recoverScenario[scenario]();
 
     await waitFor(() => {
       expect(mockCreateTeamRosterMember).toHaveBeenCalledWith("church-1", {
@@ -5837,15 +5866,8 @@ describe("Teams", () => {
         blockoutDates: [],
       });
     });
-    // New member is added to the team so they're eligible to be scheduled.
-    expect(mockUpdateTeam).toHaveBeenCalledWith(
-      "church-1",
-      "team-main",
-      expect.objectContaining({
-        memberIds: expect.arrayContaining(["member-new"]),
-        baseMemberIds: scheduleBootstrap.teams[0].memberIds,
-      }),
-    );
+    // Membership comes from the creation response; no whole-team update.
+    expect(mockUpdateTeam).not.toHaveBeenCalled();
     await waitFor(() => {
       expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledWith(
         "church-1",
@@ -5858,5 +5880,59 @@ describe("Teams", () => {
         },
       );
     });
+    await waitFor(() => expect(mockCreateTeamRosterMember).toHaveBeenCalledTimes(scenario === "create failure" ? 2 : 1));
+    await screen.findByRole("combobox", { name: /Microphone for Jordan.*\(Vocal\)$/i });
+    expect(screen.getByRole("combobox", { name: /Microphone for Jordan.*Vocal.*IEM/i })).toBeInTheDocument();
+
   });
+
+  it.each(["church change", "unmount"])("quick member creation does not assign after %s", async (transition) => {
+    const user = userEvent.setup();
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({ ...scheduleBootstrap, schedules: [{ ...scheduleBootstrap.schedules[0], assignments: {} }] }));
+    let finish!: (response: CreateTeamRosterMemberResponse) => void;
+    mockCreateTeamRosterMember.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const contextOverrides: Record<string, unknown> = {};
+    const view = renderTeams("/teams-and-services", contextOverrides);
+    const combo = await openVocalSlot(user);
+    await user.type(combo, "Jordan Ray");
+    await user.click(await screen.findByRole("button", { name: "Add new member" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Add & assign" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Add & assign" }));
+    await waitFor(() => expect(mockCreateTeamRosterMember).toHaveBeenCalledTimes(1));
+    if (transition === "unmount") view.unmount();
+    else {
+      contextOverrides.churchId = "church-2";
+      mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({ ...scheduleBootstrap, teams: scheduleBootstrap.teams.map((team) => ({ ...team, churchId: "church-2" })) }));
+      view.rerenderWithCurrentTestState();
+    }
+    await act(async () => { finish({ success: true, member: { memberId: "late-member", churchId: "church-1", firstName: "Jordan", lastName: "Ray", positionIds: ["position-vocal"], blockoutDates: [] }, teams: [{ ...scheduleBootstrap.teams[0], memberIds: ["late-member"] }] }); });
+    expect(mockUpdateTeamScheduleAssignment).not.toHaveBeenCalled();
+    expect(screen.queryByText("Jordan Ray")).not.toBeInTheDocument();
+  });
+
+  it("quick member selection adds an existing person with a team-only eligibility patch", async () => {
+    const user = userEvent.setup();
+    const member = { memberId: "existing-candidate", churchId: "church-1", firstName: "Jordan", lastName: "Ray", positionIds: ["position-keys", "position-vocal"], blockoutDates: [] };
+    const team = { ...scheduleBootstrap.teams[0], memberIds: [...scheduleBootstrap.teams[0].memberIds, member.memberId] };
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({ ...scheduleBootstrap, schedules: [{ ...scheduleBootstrap.schedules[0], assignments: {} }] }));
+    jest.mocked(searchTeamRosterCandidates).mockResolvedValue({ candidates: [member] });
+    jest.mocked(addTeamRosterMemberToTeam).mockResolvedValue({ success: true, member, team });
+    const profile = { member, teamProfile: { teamId: team.teamId, positionIds: ["position-keys"], desiredPositionIds: [], membership: { isTeamLead: false }, qualifications: [] } };
+    jest.mocked(getTeamRosterMemberProfile).mockResolvedValue(profile);
+    jest.mocked(updateTeamRosterMemberProfile).mockResolvedValue({ success: true, ...profile });
+    mockUpdateTeamScheduleAssignment.mockResolvedValue({ success: true, schedule: { ...scheduleBootstrap.schedules[0], assignments: { [sundayOccurrenceId]: { "position-vocal::0": { primaryMemberId: member.memberId } } } } });
+    renderTeams();
+    const combo = await openVocalSlot(user);
+    await user.type(combo, "Jordan Ray");
+    await user.click(screen.getByRole("button", { name: "Add new member" }));
+    const useExisting = await screen.findByRole("button", { name: "Use Jordan Ray" });
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({ ...scheduleBootstrap, teams: [team], members: [...scheduleBootstrap.members, member] }));
+    await user.click(useExisting);
+    await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledWith("church-1", "schedule-july", expect.objectContaining({ memberId: member.memberId, positionSlotKey: "position-vocal::0" })));
+    expect(mockCreateTeamRosterMember).not.toHaveBeenCalled();
+    expect(mockUpdateTeam).not.toHaveBeenCalled();
+    expect(updateTeamRosterMemberProfile).toHaveBeenCalledWith("church-1", "team-main", member.memberId, { positionIds: ["position-keys", "position-vocal"] });
+    jest.mocked(searchTeamRosterCandidates).mockResolvedValue({ candidates: [] });
+  });
+
 });

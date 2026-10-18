@@ -7,6 +7,7 @@ const [suite] = process.argv.slice(2);
 const allowedSuites = new Set([
   "account-responsive-navigation.mjs",
   "board-controller-mobile.mjs",
+  "schedule-quick-member.mjs",
 ]);
 if (!allowedSuites.has(suite)) {
   throw new Error(`Unknown browser suite: ${suite || "(missing)"}`);

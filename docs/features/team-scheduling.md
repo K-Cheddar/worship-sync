@@ -132,3 +132,17 @@ These references locate current code, not additional product requirements.
 
 The current schedule document is persisted in the teamSchedules collection. Its occurrence list is referenced by assignments, responses, guests, microphone and IEM allocations, and additional position slots. Availability forms and service plans keep their own occurrence references/keys. The Phase 1 report maps those relationships and the compatibility risks of changing them.
 
+
+
+### Quick member creation from schedule cells
+
+**Approval source:** Product-owner request, 2026-10-18.
+
+- The normal primary-assignment picker offers Add new member alongside Add guest. Typed names prefill the compact form; first and last names are required, and mobile phone and email are optional.
+- Quick creation assigns the selected team and position through the roster API's existing membership synchronization. Scheduling never reconstructs a whole-team settings update. Existing equipment flags survive omitted-field updates; explicit true/false still enable/disable them.
+- Team-scoped candidate lookup exposes safe names/avatars only. Operators explicitly select an existing member or confirm that a matching name represents a different person. Selecting an existing person uses roster membership and team-profile APIs and preserves unrelated member data.
+- If a creation response is lost or the server reports an uncertain failure, refresh the authorized roster before permitting another create; on-team matches also require an explicit existing/distinct-person decision.
+- Creation and assignment are separate durable steps. A failed create preserves the draft; a failed assignment retains the saved member and retries using its ID. Church, team, period, schedule selection and slot changes invalidate old UI callbacks.
+- Saving a phone number never records consent, sends a message, creates an account or issues an invitation. Administrators may separately record already-obtained consent using the existing consent modal, only after current server eligibility confirms consent is needed. STOP restrictions remain enforced.
+
+Regression coverage: ScheduleAssignmentPicker.test.tsx, TeamsAndServices.test.tsx, server/teamsApi.test.js, and the scheduling quick-member browser suite.
