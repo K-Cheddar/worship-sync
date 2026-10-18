@@ -12,6 +12,7 @@ type MyScheduleServicePlanPanelProps = {
   occurrence: MyScheduleOccurrence;
   churchName?: string;
   churchLogoUrl?: string;
+  timeZone?: string;
 };
 
 /**
@@ -23,8 +24,10 @@ const MyScheduleServicePlanPanel = ({
   occurrence,
   churchName = "",
   churchLogoUrl = "",
+  timeZone,
 }: MyScheduleServicePlanPanelProps) => {
-  const churchTimeZone = useChat()?.context?.timeZone || "UTC";
+  const chat = useChat();
+  const churchTimeZone = timeZone || chat?.context?.timeZone || "UTC";
   // Prefer the detailed/team public token — never the simple/general link.
   const scrollbarWidth = useSelector(
     (state) => state.undoable.present.preferences.scrollbarWidth,

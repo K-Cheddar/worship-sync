@@ -31,6 +31,7 @@ const createHarness = ({
   validateReplacementCandidate,
   beforeSetDoc,
   resolveAvailabilityNotificationContext,
+  resolveScheduleNotificationContext,
   logger = { info() {}, warn() {}, error() {} },
 } = {}) => {
   const collections = new Map();
@@ -216,7 +217,7 @@ const createHarness = ({
       church: storeFor("churches").get(churchId),
       publicUrl: "https://www.worshipsync.net/a/secure-token",
     })),
-    resolveScheduleNotificationContext: async (intent) => {
+    resolveScheduleNotificationContext: resolveScheduleNotificationContext || (async (intent) => {
       const currentSchedule = storeFor("teamSchedules").get(intent.sourceId);
       const currentMember = storeFor("teamRosterMembers").get(intent.memberId);
       if (intent.intentType === "schedule_initial_notification") return {
@@ -236,7 +237,7 @@ const createHarness = ({
         positionName: "Worship",
         responseUrl: "https://www.worshipsync.net/schedule-response/secure-token",
       };
-    },
+    }),
     prepareScheduleInitialSmsRecipients: async ({ churchId: targetChurchId, schedule: currentSchedule }) =>
       getScheduleAssignedMemberIds(currentSchedule).map((memberId) => {
         const currentMember = storeFor("teamRosterMembers").get(memberId);
@@ -1822,5 +1823,54 @@ test("Firestore emulator preserves callback evidence through duplicate, delayed,
     assert.equal(restarted.providerCalls, 0, "accepted work remains fenced after process restart");
   } finally {
     await deleteApp(app);
+  }
+});
+
+test("compact personal SMS binds the reviewed URL/body to the provider and requires fresh review after replacement", async () => {
+  for (const replaced of [false, true]) {
+    let h;
+    let active = true;
+    const delivered = [];
+    const url = `https://www.worshipsync.net/s#v_${"x".repeat(32)}`;
+    const expiresAt = Date.now() + 90 * 24 * 60 * 60 * 1000;
+    h = createHarness({ firestore: true, scheduleBulkDispatchReady: true,
+      providerSend: async (input) => { delivered.push(input); return { providerMessageId: "SM_personal", status: "accepted" }; },
+      resolveScheduleNotificationContext: async (intent, options = {}) => {
+        if (!active || (options.responseUrlOverride && options.responseUrlOverride !== url)) {
+          throw Object.assign(new Error("Personal access changed. Review again."), { statusCode: 409 });
+        }
+        return { schedule: h.schedule, member: h.member, church: { name: "First Church" },
+          assignments: getScheduleMemberAssignments({ schedule: h.schedule, memberId: intent.memberId, positions: [...h.storeFor("teamPositions").values()] }),
+          serviceTimeZone: "UTC", responseUrl: url, personalAccessExpiresAt: expiresAt };
+      },
+    });
+    h.schedule.published = true;
+    h.schedule.startDate = "2026-11-01"; h.schedule.endDate = "2026-11-30";
+    h.schedule.assignments = { occ_1: { "position::0": h.member.memberId } };
+    const preparedResponse = h.makeResponse();
+    await h.handler.prepareScheduleInitialSmsBatch({ params: { churchId: h.churchId, scheduleId: h.schedule.scheduleId },
+      body: { memberIds: [h.member.memberId] } }, preparedResponse);
+    assert.equal(preparedResponse.statusCode, 200, JSON.stringify(preparedResponse.payload));
+    const batch = preparedResponse.payload.batch;
+    const persisted = h.storeFor("notificationIntents").get(batch.intentIds[0]);
+    const exactBody = persisted.message;
+    assert.match(exactBody, /Your November volunteer schedule is ready/);
+    assert.ok(exactBody.includes(url));
+    assert.ok(!JSON.stringify(batch).includes(url));
+    assert.equal(batch.recipients[0].segmentCount, measureSmsMessage(exactBody).segmentCount);
+    active = !replaced;
+    const approval = await h.dispatch(batch.batchId);
+    if (replaced) {
+      assert.equal(approval.statusCode, 409);
+      assert.equal(delivered.length, 0);
+    } else {
+      assert.equal(approval.statusCode, 200);
+      for (let attempt = 0; attempt < 100 && !delivered.length; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+      assert.equal(delivered.length, 1);
+      assert.equal(delivered[0].body, exactBody);
+      await h.dispatch(batch.batchId);
+      assert.equal(delivered.length, 1);
+    }
+    await h.handler.stopScheduleBatchDispatcher();
   }
 });

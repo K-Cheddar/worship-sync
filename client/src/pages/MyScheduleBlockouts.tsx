@@ -1,14 +1,15 @@
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { CalendarOff, ChevronDown, ChevronUp, TriangleAlert } from "lucide-react";
 import Button from "../components/Button/Button";
 import Icon from "../components/Icon/Icon";
 import BlockoutDatesField from "./Teams/components/BlockoutDatesField";
 import { findBlockoutRangeForDate } from "./Teams/teamsUtils";
 import { updateMyBlockoutDates, type MyScheduleOccurrence } from "../api/auth";
-import type { TeamBlockoutDateRange, TeamRosterMember } from "../api/authTypes";
+import type { TeamBlockoutDateRange } from "../api/authTypes";
 import { getApiErrorStatus, showApiErrorToast } from "../utils/apiErrorToast";
 import { useToast } from "../context/toastContext";
 import { calendarDateInTimeZone } from "../utils/teamScheduleOccurrences";
+import type { MyScheduleMember, MyScheduleOperations } from "./myScheduleOperations";
 
 /**
  * A volunteer's own time off, on the one Teams surface they can reach.
@@ -31,7 +32,8 @@ type MyScheduleBlockoutsProps = {
   expectedUpdatedAt: string;
   /** Used to spot dates the member is already scheduled for. */
   occurrences: MyScheduleOccurrence[];
-  onSaved: (member: TeamRosterMember) => void;
+  onSaved: (member: MyScheduleMember) => void;
+  saveBlockouts?: MyScheduleOperations["saveBlockouts"];
   /** Lets the page skip a background refresh while an edit is open. */
   onDirtyChange: (dirty: boolean) => void;
   /** Called when the record moved underneath this edit, to pick up the change. */
@@ -88,8 +90,11 @@ const MyScheduleBlockouts = ({
   onSaved,
   onDirtyChange,
   onStale,
+  saveBlockouts,
 }: MyScheduleBlockoutsProps) => {
   const { showToast } = useToast();
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const conflictHeadingId = useId();
   const [open, setOpen] = useState(false);
   const { current } = useMemo(
@@ -182,11 +187,10 @@ const MyScheduleBlockouts = ({
     try {
       // Entries hidden from the editor are sent back untouched. Editing what is
       // actionable must not amount to deleting the rest.
-      const result = await updateMyBlockoutDates(
-        churchId,
-        draft,
-        expectedUpdatedAt,
-      );
+      const result = await (saveBlockouts
+        ? saveBlockouts(draft, expectedUpdatedAt)
+        : updateMyBlockoutDates(churchId, draft, expectedUpdatedAt));
+      if (!mounted.current) return;
       const saved = result.member?.blockoutDates || [];
       // Re-seed from the server so its normalization is what stays on screen: a
       // single day collapsed to one date, a blank row dropped, history past the
@@ -196,13 +200,14 @@ const MyScheduleBlockouts = ({
       onSaved(result.member);
       showToast("Time off saved.", "success");
     } catch (error) {
+      if (!mounted.current) return;
       // 409: the record moved under this edit. Pull the change in so the reader
       // is comparing against what is actually stored, but keep their draft —
       // discarding an edit to report a conflict trades one loss for another.
       if (getApiErrorStatus(error) === 409) onStale();
       showApiErrorToast(showToast, error, "Could not save your time off.");
     } finally {
-      setSaving(false);
+      if (mounted.current) setSaving(false);
     }
   };
 

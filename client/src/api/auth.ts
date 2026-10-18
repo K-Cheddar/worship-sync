@@ -2,6 +2,7 @@ import {
   getApiBasePath,
   isPackagedElectronRenderer,
 } from "../utils/environment";
+import type { VolunteerAvailabilityRequest, VolunteerBulkResult } from "../pages/myScheduleOperations";
 import {
   getCsrfToken,
   getHumanApiToken,
@@ -2125,6 +2126,22 @@ export const respondToMyAssignment = async (
     `api/churches/${churchId}/my-assignments/respond`,
     { method: "POST", body: JSON.stringify(body) },
   );
+
+export const acceptMyUnansweredAssignments = (churchId: string) => apiFetch<VolunteerBulkResult>(
+  `api/churches/${churchId}/my-assignments/accept-unanswered`, { method: "POST", body: "{}" },
+);
+export const getMyVolunteerAvailability = (churchId: string) => apiFetch<{ success: boolean; requests: VolunteerAvailabilityRequest[] }>(
+  `api/churches/${churchId}/my-availability`,
+);
+export const submitMyVolunteerAvailability = (churchId: string, recipientId: string, occurrenceAvailability: VolunteerAvailabilityRequest["availability"]) => apiFetch<{ success: boolean }>(
+  `api/churches/${churchId}/my-availability`, { method: "POST", body: JSON.stringify({ recipientId, occurrenceAvailability }) },
+);
+
+export const manageVolunteerPersonalAccess = (churchId: string, memberId: string,
+  action: "status" | "prepare" | "replace" | "revoke" | "restore" | "verify-contact/start" | "verify-contact/complete", body: unknown = {}) => apiFetch<{
+    success: boolean; enabled?: boolean; status?: string; expiresAt?: number; url?: string; challengeId?: string;
+  }>(`api/churches/${churchId}/team-roster-members/${memberId}/personal-access/${action}`,
+    action === "status" ? {} : { method: "POST", body: JSON.stringify(body) });
 
 /**
  * Replaces the signed-in person's own blockout dates.

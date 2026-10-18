@@ -32,15 +32,21 @@ import { showApiErrorToast } from "../utils/apiErrorToast";
 import { useSyncOnReconnect } from "../hooks/useSyncOnReconnect";
 import {
   getMyTeamAssignments,
+  acceptMyUnansweredAssignments,
+  getMyVolunteerAvailability,
+  submitMyVolunteerAvailability,
+  updateMyBlockoutDates,
   respondToMyAssignment,
   type MyScheduleOccurrence,
   type MyScheduleServing,
 } from "../api/auth";
-import type { TeamBlockoutDateRange, TeamRosterMember } from "../api/authTypes";
+import type { TeamBlockoutDateRange } from "../api/authTypes";
 import {
   buildMyScheduleExportModelForOccurrences,
 } from "./buildMyScheduleExportModel";
 import MyScheduleBlockouts from "./MyScheduleBlockouts";
+import MyScheduleAvailability from "./MyScheduleAvailability";
+import type { MyScheduleMember, MyScheduleOperations, PersonalScheduleAccess } from "./myScheduleOperations";
 import MyScheduleServicePlanPanel from "./MyScheduleServicePlanPanel";
 import {
   findBlockoutRangeForDate,
@@ -629,7 +635,7 @@ const OccurrenceDetail = ({
                   <AssignmentResponseRow
                     key={slot.columnKey}
                     slot={slot}
-                    disabled={respondingKey === slot.columnKey}
+                    disabled={respondingKey === "__all__" || respondingKey === slot.columnKey}
                     onRespond={onRespond}
                   />
                 ))}
@@ -692,6 +698,7 @@ const OccurrenceDetail = ({
               <MyScheduleServicePlanPanel
                 occurrence={occurrence}
                 churchName={churchName}
+                timeZone={timeZone}
               />
             </>
           )}
@@ -701,13 +708,21 @@ const OccurrenceDetail = ({
   );
 };
 
-const MySchedule = () => {
+const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
   const context = useContext(GlobalInfoContext);
   const { showToast } = useToast();
-  const churchId = context?.churchId || "";
+  const churchId = access?.churchId || context?.churchId || "";
+  const operations = useMemo<MyScheduleOperations>(() => access?.operations || ({
+    load: () => getMyTeamAssignments(churchId),
+    respond: (body) => respondToMyAssignment(churchId, body),
+    saveBlockouts: (ranges, stamp) => updateMyBlockoutDates(churchId, ranges, stamp),
+    acceptUnanswered: () => acceptMyUnansweredAssignments(churchId),
+    availability: () => getMyVolunteerAvailability(churchId),
+    submitAvailability: (recipientId, values) => submitMyVolunteerAvailability(churchId, recipientId, values),
+  }), [access, churchId]);
   /** Changes the unlinked message: an admin can fix this themselves. */
-  const isChurchAdmin = context?.role === "admin";
-  const churchName = context?.churchName || "";
+  const isChurchAdmin = !access && context?.role === "admin";
+  const churchName = access?.churchName || context?.churchName || "";
   const [occurrences, setOccurrences] = useState<MyScheduleOccurrence[]>([]);
   const [serviceTimeZone, setServiceTimeZone] = useState("UTC");
   const [hasMemberRecord, setHasMemberRecord] = useState(true);
@@ -743,7 +758,7 @@ const MySchedule = () => {
       if (!churchId) return;
       const request = ++requestRef.current;
       if (showLoading) setStatus("loading");
-      void getMyTeamAssignments(churchId)
+      void operations.load()
         .then((result) => {
           if (!mountedRef.current || request !== requestRef.current) return;
           setOccurrences(result.occurrences || []);
@@ -761,7 +776,7 @@ const MySchedule = () => {
           if (showLoading) setStatus("error");
         });
     },
-    [churchId],
+    [churchId, operations],
   );
 
   useEffect(() => {
@@ -785,7 +800,7 @@ const MySchedule = () => {
     timeOffDirtyRef.current = dirty;
   }, []);
 
-  const handleBlockoutsSaved = useCallback((member: TeamRosterMember) => {
+  const handleBlockoutsSaved = useCallback((member: MyScheduleMember) => {
     setBlockoutDates(member?.blockoutDates || []);
     setMemberUpdatedAt(member?.updatedAt || "");
   }, []);
@@ -831,21 +846,40 @@ const MySchedule = () => {
         );
       apply(response);
       try {
-        await respondToMyAssignment(churchId, {
+        await operations.respond({
           scheduleId: slot.scheduleId,
           occurrenceId: selectedId,
           cellKey: slot.columnKey,
           response,
         });
       } catch (error) {
+        if (!mountedRef.current) return;
         showApiErrorToast(showToast, error, "Could not save your response.");
         load({ showLoading: false });
       } finally {
-        setRespondingKey("");
+        if (mountedRef.current) setRespondingKey("");
       }
     },
-    [churchId, load, selectedId, showToast],
+    [load, operations, selectedId, showToast],
   );
+
+  const [accepting, setAccepting] = useState(false);
+  const acceptingRef = useRef(false);
+  const unansweredCount = occurrences.reduce((count, occurrence) => count + occurrence.serving.filter(
+    (slot) => slot.isMe && slot.isPrimary && (!slot.response || slot.response === "pending"),
+  ).length, 0);
+  const acceptUnanswered = async () => {
+    if (acceptingRef.current) return;
+    acceptingRef.current = true; setAccepting(true);
+    try {
+      const result = await operations.acceptUnanswered();
+      if (!mountedRef.current) return;
+      if (!result.success) showToast("Some assignments could not be accepted. Your saved responses are kept. Try again.", "error");
+      load({ showLoading: false });
+    } catch (error) {
+      if (mountedRef.current) showApiErrorToast(showToast, error, "Could not accept your unanswered assignments.");
+    } finally { acceptingRef.current = false; if (mountedRef.current) setAccepting(false); }
+  };
 
   const datedOccurrences = useMemo(
     () => occurrences.filter(hasDatedStartsAt),
@@ -1012,6 +1046,7 @@ const MySchedule = () => {
     <AppPageShell
       title="My schedule"
       icon={CalendarDays}
+      showAccountNavigation={!access}
     >
       <div className="flex w-full flex-col gap-4">
         {status === "loading" ? (
@@ -1068,12 +1103,20 @@ const MySchedule = () => {
                 ? undefined
                 : respondToAssignment
             }
-            respondingKey={respondingKey}
+            respondingKey={accepting ? "__all__" : respondingKey}
           />
         ) : null}
 
         {status === "ready" && hasMemberRecord && !selected ? (
           <>
+            {unansweredCount > 0 ? <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-gray-300">{unansweredCount} unanswered {unansweredCount === 1 ? "assignment" : "assignments"}</p>
+              <Button variant="secondary" disabled={accepting} onClick={() => void acceptUnanswered()}>
+                {accepting ? "Accepting?" : "Accept all unanswered"}
+              </Button>
+            </div> : null}
+            <MyScheduleAvailability operations={operations} />
+            {access ? <a className="text-sm text-orange-300 underline" href={`/sms-opt-in/${encodeURIComponent(churchId)}`}>SMS preferences</a> : null}
             <MyScheduleBlockouts
               churchId={churchId}
               serviceTimeZone={serviceTimeZone}
@@ -1081,6 +1124,7 @@ const MySchedule = () => {
               expectedUpdatedAt={memberUpdatedAt}
               occurrences={occurrences}
               onSaved={handleBlockoutsSaved}
+              saveBlockouts={operations.saveBlockouts}
               onDirtyChange={handleTimeOffDirtyChange}
               onStale={refreshAfterConflict}
             />
@@ -1188,6 +1232,12 @@ const MySchedule = () => {
       </div>
     </AppPageShell>
   );
+};
+
+const MySchedule = ({ access }: { access?: PersonalScheduleAccess }) => {
+  const context = useContext(GlobalInfoContext);
+  const identity = access ? `${access.churchId}:${access.memberId}` : `${context?.churchId || ""}:${context?.userId || ""}`;
+  return <MyScheduleView key={identity} access={access} />;
 };
 
 export default MySchedule;

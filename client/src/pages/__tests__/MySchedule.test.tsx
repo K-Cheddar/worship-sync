@@ -5,6 +5,7 @@ import store from "../../store/store";
 import userEvent from "@testing-library/user-event";
 import type { ContextType } from "react";
 import MySchedule from "../MySchedule";
+import type { PersonalScheduleAccess } from "../myScheduleOperations";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import {
   getMyTeamAssignments,
@@ -17,6 +18,9 @@ jest.mock("../../api/auth", () => ({
   getMyTeamAssignments: jest.fn(),
   updateMyBlockoutDates: jest.fn(),
   respondToMyAssignment: jest.fn(),
+  acceptMyUnansweredAssignments: jest.fn(),
+  getMyVolunteerAvailability: jest.fn().mockResolvedValue({ success: true, requests: [] }),
+  submitMyVolunteerAvailability: jest.fn(),
   // showApiErrorToast narrows with `instanceof`, so the error path needs a real
   // class here rather than an undefined export.
   AuthApiError: class AuthApiError extends Error {
@@ -124,6 +128,33 @@ const openFirstService = async (user: ReturnType<typeof userEvent.setup>) => {
   });
   await user.click(tile);
 };
+
+it("retires pending bulk work when church changes with the same member and schedule IDs", async () => {
+  const user = userEvent.setup();
+  let finish!: (value: { success: boolean; results: [] }) => void;
+  const pending = new Promise<{ success: boolean; results: [] }>((resolve) => { finish = resolve; });
+  const makeAccess = (churchId: string): PersonalScheduleAccess => ({
+    churchId, memberId: "m1", operations: {
+      load: jest.fn().mockResolvedValue({ success: true, member: { memberId: "m1", updatedAt: STAMP },
+        occurrences: [occurrence({ serving: [me({ response: "pending" })] })] }),
+      respond: jest.fn(), saveBlockouts: jest.fn(),
+      acceptUnanswered: jest.fn().mockReturnValue(pending),
+      availability: jest.fn().mockResolvedValue({ success: true, requests: [] }), submitAvailability: jest.fn(),
+    },
+  });
+  const first = makeAccess("church-a");
+  const second = makeAccess("church-b");
+  const view = (access: PersonalScheduleAccess) => <Provider store={store}><MemoryRouter><MySchedule access={access} /></MemoryRouter></Provider>;
+  const { rerender } = render(view(first));
+  await user.click(await screen.findByRole("button", { name: "Accept all unanswered" }));
+  expect(screen.getByRole("button", { name: /Accepting/i })).toBeDisabled();
+  rerender(view(second));
+  expect(await screen.findByRole("button", { name: "Accept all unanswered" })).toBeEnabled();
+  await act(async () => { finish({ success: true, results: [] }); });
+  expect(first.operations.load).toHaveBeenCalledTimes(1);
+  expect(second.operations.load).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("button", { name: "Accept all unanswered" })).toBeEnabled();
+});
 
 describe("MySchedule", () => {
   beforeEach(() => {

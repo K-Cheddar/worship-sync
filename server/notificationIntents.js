@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { redactVolunteerSecrets } from "./volunteerPrivacy.js";
 import {
   approveReviewedScheduleBatch,
   claimReviewedNotificationBatch,
@@ -207,9 +208,9 @@ export const createNotificationIntentHandlers = ({
   const listChurchDocs = (collection, churchId, filters = [], limit = 500) =>
     queryDocs(collection, [{ field: "churchId", value: churchId }, ...filters], { limit });
 
-  const redactPersonalizedLinks = (message) => normalize(message)
+  const redactPersonalizedLinks = (message) => redactVolunteerSecrets(normalize(message)
     .replace(/(?:https?:\/\/[^\s]+)?\/a\/[^\s?#]+/gi, "[private response link]")
-    .replace(/(?:https?:\/\/[^\s]+)?\/(?:schedule-response|teams\/intake)\/[^\s?#]+/gi, "[private response link]");
+    .replace(/(?:https?:\/\/[^\s]+)?\/(?:schedule-response|teams\/intake)\/[^\s?#]+/gi, "[private response link]"));
 
   const accessFingerprintFor = ({ admin, scoped, schedule } = {}) => {
     if (!scoped) return "";
@@ -456,6 +457,8 @@ export const createNotificationIntentHandlers = ({
     let occurrence = null;
     if (intent.sourceType === "team_schedule") {
       if (intent.intentType === "schedule_initial_notification") {
+        sourceContext = { ...sourceContext, ...await resolveScheduleNotificationContext(intent, { responseUrlOverride }) };
+
         sourceContext.assignments ||= getScheduleMemberAssignments({
           schedule,
           memberId: intent.memberId,
@@ -518,7 +521,7 @@ export const createNotificationIntentHandlers = ({
     const currentMessage = intent.sourceType === "team_intake_recipient"
       ? buildTeamIntakeSms({ churchName: church?.name, formName: form.name, publicUrl: responseUrlOverride || sourceContext.publicUrl, intentType: intent.intentType, collectsAvailability: intakeFormCollectsServiceAvailability(form.enabledFields, form.availabilityOccurrences) }).body
       : intent.intentType === "schedule_initial_notification"
-        ? buildScheduleInitialSmsMessage({ churchName: church?.name, assignments: sourceContext.assignments, responseUrl: responseUrlOverride || sourceContext.responseUrl, timeZone: sourceContext.serviceTimeZone })
+        ? buildScheduleInitialSmsMessage({ churchName: church?.name, assignments: sourceContext.assignments, responseUrl: responseUrlOverride || sourceContext.responseUrl, timeZone: sourceContext.serviceTimeZone, schedule })
         : messageFor({ intentType: intent.intentType, church, schedule, occurrence, ...sourceContext, responseUrl: responseUrlOverride || sourceContext.responseUrl });
     if (intent.sourceType === "team_schedule" && intent.sourceVersion && intent.sourceVersion !== normalize(schedule.updatedAt) && !["assignment_notification", "schedule_initial_notification"].includes(intent.intentType)) {
       throw httpError(409, "The schedule changed after this preview. Refresh the message preview.");
@@ -538,6 +541,7 @@ export const createNotificationIntentHandlers = ({
         ? {
             scheduleId: schedule.scheduleId || intent.sourceId,
             published: schedule.published !== false,
+            ...(sourceContext.personalAccessExpiresAt ? { personalAccessExpiresAt: sourceContext.personalAccessExpiresAt, personalAccessUrl: sourceContext.responseUrl } : {}),
             assignments: sourceContext.assignments.map((assignment) => ({
               occurrenceId: assignment.occurrenceId,
               serviceName: assignment.serviceName,
@@ -645,11 +649,11 @@ export const createNotificationIntentHandlers = ({
       previewEligible: reviewed.eligible,
       previewError: reviewed.eligible ? "" : "This volunteer is not currently eligible for SMS.",
     }),
-    message: scoped ? redactPersonalizedLinks(reviewed.validated.message) : reviewed.validated.message,
+    message: scoped ? redactPersonalizedLinks(reviewed.validated.message) : redactVolunteerSecrets(reviewed.validated.message),
   });
 
   const safeIntentProjection = (intent, extra = {}) => {
-    const messagePreview = normalize(intent.message)
+    const messagePreview = redactVolunteerSecrets(normalize(intent.message))
       .replace(/(?:https?:\/\/[^\s]+)?\/a\/[^\s?#]+/gi, "/a/[secure link]")
       .replace(/(?:https?:\/\/[^\s]+)?\/(?:schedule-response|teams\/intake)\/[^\s?#]+/gi, "/[secure link]");
     return {
@@ -809,7 +813,7 @@ export const createNotificationIntentHandlers = ({
           expiresAt: reviewed.intent.approvalSnapshot?.expiresAt || 0,
           eligible: reviewed.eligible,
           ...(!access.scoped ? { eligibilityStatus: current.eligibilityStatus } : {}),
-          message: access.scoped ? redactPersonalizedLinks(current.message) : current.message,
+          message: access.scoped ? redactPersonalizedLinks(current.message) : redactVolunteerSecrets(current.message),
           phoneNumberSnapshot: access.scoped ? maskedPhoneNumber : current.phoneNumber || "",
           characterCount: measureSmsMessage(current.message).characterCount,
           segmentCount: measureSmsMessage(current.message).segmentCount,
@@ -1497,7 +1501,7 @@ export const createNotificationIntentHandlers = ({
         approvalVersion: snapshot?.approvalVersion || "",
         ...(!privacySafe ? { phoneNumberSnapshot: snapshot?.phoneNumberSnapshot || "" } : {}),
           ...(exposeMessages && intent?.approvalSnapshot
-            ? { message: privacySafe ? redactPersonalizedLinks(intent.message) : intent.message }
+            ? { message: privacySafe ? redactPersonalizedLinks(intent.message) : redactVolunteerSecrets(intent.message) }
             : {}),
       };
       });
@@ -1606,7 +1610,7 @@ export const createNotificationIntentHandlers = ({
         approvalVersion: snapshot?.approvalVersion || "",
         maskedPhoneNumber: snapshot?.phoneLast4 ? `••• ••• ${snapshot.phoneLast4}` : row.maskedPhoneNumber || "",
         ...(!privacySafe ? { phoneNumberSnapshot: snapshot?.phoneNumberSnapshot || "" } : {}),
-        ...(message !== undefined ? { message: privacySafe ? redactPersonalizedLinks(message) : message } : {}),
+        ...(message !== undefined ? { message: privacySafe ? redactPersonalizedLinks(message) : redactVolunteerSecrets(message) } : {}),
       };
     });
     const selected = (batch.selectedMemberIds || []).length;
@@ -1892,6 +1896,8 @@ export const createNotificationIntentHandlers = ({
         if (!row.eligible || !["first_send", "failed"].includes(deliveryState)) {
           return batchRow;
         }
+        const context = await resolveScheduleNotificationContext({ churchId, sourceType: "team_schedule", sourceId: scheduleId, memberId, intentType: "schedule_initial_notification" }, { preparePersonalAccess: true }) || {};
+        const preparedMessage = buildScheduleInitialSmsMessage({ churchName: context.church?.name, assignments: context.assignments, responseUrl: context.responseUrl, timeZone: context.serviceTimeZone, schedule: context.schedule });
         let intent;
         if (current) {
           if (current.churchId !== churchId || current.sourceType !== "team_schedule" || current.sourceId !== scheduleId || current.memberId !== memberId || current.idempotencyKey !== scheduleInitialSmsIdempotencyKey(scheduleId, memberId)) {
@@ -1905,6 +1911,7 @@ export const createNotificationIntentHandlers = ({
               batchId,
               status: latest.status === "failed" ? "ready" : latest.status,
               approvalSnapshot: null,
+              message: preparedMessage,
               updatedAt: nowIso(),
             };
           });
@@ -1915,7 +1922,6 @@ export const createNotificationIntentHandlers = ({
           intent = adopted;
         } else {
           const key = scheduleInitialSmsIdempotencyKey(scheduleId, memberId);
-          const context = await resolveScheduleNotificationContext({ churchId, sourceType: "team_schedule", sourceId: scheduleId, memberId, intentType: "schedule_initial_notification" }) || {};
           const draft = createNotificationIntent({
             churchId,
             intentType: "schedule_initial_notification",
@@ -1924,7 +1930,7 @@ export const createNotificationIntentHandlers = ({
             memberId,
             batchId,
             idempotencyKey: key,
-            message: buildScheduleInitialSmsMessage({ churchName: context.church?.name, assignments: context.assignments, responseUrl: context.responseUrl, timeZone: context.serviceTimeZone }),
+            message: preparedMessage,
             now: nowIso(),
           });
           const saved = await mutateIntent(churchId, intentId, (latest) => latest ? null : { intentId, ...draft });
@@ -1945,7 +1951,7 @@ export const createNotificationIntentHandlers = ({
         batchRow.segmentCount = measureSmsMessage(reviewed.validated.message).segmentCount;
         batchRow.approvalVersion = reviewed.approvalVersion;
         batchRow.sourceFingerprint = reviewed.validated.sourceFingerprint;
-        batchRow.message = access.scoped ? redactPersonalizedLinks(reviewed.validated.message) : reviewed.validated.message;
+        batchRow.message = access.scoped ? redactPersonalizedLinks(reviewed.validated.message) : redactVolunteerSecrets(reviewed.validated.message);
         return batchRow;
       });
       const intentIds = recipients.filter((row) => row.eligible && row.intentId).map((row) => row.intentId);

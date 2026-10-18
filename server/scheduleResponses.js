@@ -123,28 +123,27 @@ export const pruneStaleResponses = (responses, readHolder) => {
 /**
  * Decide what a batch of answers becomes, given the schedule as read.
  *
- * Pulled out of the writer deliberately. That writer has two branches — a
- * Firestore transaction and an in-memory fallback — and **the suite only ever
- * exercises the fallback** (`skipUnlessInMemoryAuth`), so any logic living
- * inside the transaction branch is untested by construction. Keeping the
- * decision here means both branches share tested code and the untested part is
- * reduced to Firestore's own read/write, which is not our logic to verify.
+ * Both the Firestore transaction and serialized in-memory writer use this
+ * decision. Emulator tests exercise actual transaction contention separately.
  *
  * Slots the member no longer holds are skipped rather than failing the batch:
  * with one link covering a whole schedule, an owner reshuffling one date must
  * not block the reader answering the rest.
  *
  * @param {{ assignments?: object, responses?: object }} schedule
- * @param {{ memberId: string, targets: Array<{occurrenceId: string, cellKey: string}>, response: string, respondedAt: string, readHolder: (cell: unknown) => string }} params
+ * @param {{ memberId: string, targets: Array<{occurrenceId: string, cellKey: string}>, response: string, respondedAt: string, readHolder: (cell: unknown) => string, pendingOnly?: boolean }} params
  * @returns {{ responses: object, applied: number }}
  */
 export const applyAssignmentResponses = (
   schedule,
-  { memberId, targets, response, respondedAt, readHolder },
+  { memberId, targets, response, respondedAt, readHolder, pendingOnly = false },
 ) => {
   const applicable = (targets || []).filter(
     ({ occurrenceId, cellKey }) =>
-      readHolder(schedule?.assignments?.[occurrenceId]?.[cellKey]) === memberId,
+      readHolder(schedule?.assignments?.[occurrenceId]?.[cellKey]) === memberId &&
+      (!pendingOnly || readAssignmentResponse(
+        schedule?.responses?.[occurrenceId]?.[cellKey], memberId,
+      ).response === "pending"),
   );
   let responses = schedule?.responses;
   applicable.forEach(({ occurrenceId, cellKey }) => {

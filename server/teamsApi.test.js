@@ -20003,3 +20003,121 @@ test("concurrent member imports cannot create same-named positions by separate s
   assert.equal(importedMembers.length, 1);
   assert.deepEqual(importedMembers[0].positionIds, [positions.find((position) => position.name === "Video Director").positionId]);
 });
+
+// Unified My Schedule shared-core regressions. These use the real session/CSRF
+// adapter and persisted in-memory store; transaction races live in the emulator suite.
+test("my schedule excludes Draft assignments, teammate joins and legacy response links", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("volunteer_draft_boundary");
+  const assigned = await seedAssignedSchedule(context, "volunteer_draft_boundary");
+  const { scheduleId, occurrenceId, cellKey, memberId } = assigned;
+  const draftId = `${scheduleId}_draft`;
+  const base = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+  await setDoc(COLLECTIONS.teamSchedules, draftId, {
+    ...base, scheduleId: draftId, published: false,
+    assignments: { [occurrenceId]: { [cellKey]: memberId } },
+  });
+  const visible = await callHandler(authHandlers.getMyTeamAssignments, { context });
+  assert.equal(visible.statusCode, 200);
+  assert.ok(visible.payload.occurrences.length > 0);
+  assert.ok(visible.payload.occurrences.every((entry) => entry.serving.every((slot) => slot.scheduleId !== draftId)));
+  await setDoc(COLLECTIONS.teamSchedules, scheduleId, { published: false }, { merge: true });
+  const hidden = await callHandler(authHandlers.getMyTeamAssignments, { context });
+  assert.deepEqual(hidden.payload.occurrences, []);
+  const tokenUrl = authHandlers.buildAssignmentResponseUrl({ churchId: context.churchId, scheduleId, memberId });
+  const token = decodeURIComponent(new URL(tokenUrl).pathname.split("/").pop());
+  const tokenRead = await callHandler(authHandlers.getAssignmentResponseContext, { context, query: { token } });
+  assert.equal(tokenRead.statusCode, 404);
+  const tokenWrite = await callHandler(authHandlers.respondToAssignmentByToken, { context, body: { token, response: "accepted" } });
+  assert.equal(tokenWrite.statusCode, 404);
+  const accountWrite = await callHandler(authHandlers.respondToMyAssignment, {
+    context, body: { scheduleId, occurrenceId, cellKey, response: "accepted" },
+  });
+  assert.equal(accountWrite.statusCode, 404);
+  assert.equal((await getDoc(COLLECTIONS.teamSchedules, scheduleId)).responses?.[occurrenceId]?.[cellKey], undefined);
+});
+
+test("accept all unanswered preserves answers, ignores forged identity and safely retries partial success", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("volunteer_pending_bulk");
+  const first = await seedAssignedSchedule(context, "volunteer_pending_bulk");
+  const base = await getDoc(COLLECTIONS.teamSchedules, first.scheduleId);
+  const otherScheduleId = `${first.scheduleId}_second`;
+  await setDoc(COLLECTIONS.teamSchedules, otherScheduleId, { ...base, scheduleId: otherScheduleId });
+  const declinedKey = `${first.cellKey}_declined`;
+  await setDoc(COLLECTIONS.teamSchedules, first.scheduleId, {
+    assignments: { [first.occurrenceId]: { [first.cellKey]: first.memberId, [declinedKey]: first.memberId } },
+    responses: { [first.occurrenceId]: { [declinedKey]: { memberId: first.memberId, response: "declined", respondedAt: "before-bulk" } } },
+  }, { merge: true });
+  const call = () => callHandler(authHandlers.acceptMyUnansweredAssignments, {
+    context, body: { churchId: "forged", memberId: "another-member" },
+  });
+  setAuthReadObserverForServerTests(({ type, collectionName, id }) => {
+    if (type === "getDoc" && collectionName === COLLECTIONS.teamSchedules && id === otherScheduleId) {
+      throw new Error("Controlled interrupted schedule read");
+    }
+  });
+  let partial;
+  try { partial = await call(); } finally { setAuthReadObserverForServerTests(null); }
+  assert.equal(partial.statusCode, 200);
+  assert.equal(partial.payload.success, false);
+  assert.equal(partial.payload.results.find((row) => row.scheduleId === first.scheduleId).applied, 1);
+  assert.equal(partial.payload.results.find((row) => row.scheduleId === otherScheduleId).success, false);
+  const retry = await call();
+  assert.equal(retry.payload.success, true);
+  assert.equal(retry.payload.results.find((row) => row.scheduleId === first.scheduleId).applied, 0);
+  assert.equal(retry.payload.results.find((row) => row.scheduleId === otherScheduleId).applied, 1);
+  const saved = await getDoc(COLLECTIONS.teamSchedules, first.scheduleId);
+  assert.equal(saved.responses[first.occurrenceId][declinedKey].response, "declined");
+  assert.equal(saved.responses[first.occurrenceId][declinedKey].respondedAt, "before-bulk");
+  assert.equal((await call()).payload.results.every((row) => row.applied === 0), true);
+  const foreign = await callHandler(authHandlers.acceptMyUnansweredAssignments, { context, params: { churchId: "other" } });
+  assert.equal(foreign.statusCode, 403);
+  const noCsrf = await callHandler(authHandlers.acceptMyUnansweredAssignments, { context: { ...context, headers: { authorization: context.headers.authorization } } });
+  assert.equal(noCsrf.statusCode, 403);
+});
+
+test("my availability uses current recipient scope without disclosing tokens or another member", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("volunteer_availability");
+  const assigned = await seedAssignedSchedule(context, "volunteer_availability");
+  const formId = "volunteer_availability_form";
+  const recipientId = "volunteer_availability_recipient";
+  await setDoc(COLLECTIONS.teams, assigned.media.teamId, { memberIds: [assigned.memberId] }, { merge: true });
+  await setDoc(COLLECTIONS.teamIntakeForms, formId, {
+    formId, churchId: context.churchId, name: "November availability", purpose: "team_availability",
+    teamIds: [assigned.media.teamId], active: true, enabledFields: ["availability"],
+    startDate: "2099-11-01", endDate: "2099-11-30", responseDeadline: "2099-11-01",
+    availabilityOccurrences: [{ occurrenceId: assigned.occurrenceId, name: "Sunday", startsAt: "2099-11-08T14:00:00.000Z" }],
+  });
+  await setDoc(COLLECTIONS.teamIntakeRecipients, recipientId, {
+    recipientId, formId, memberId: assigned.memberId, churchId: context.churchId,
+    recipientTokenHash: "private-hash", recipientTokenCiphertext: "private-ciphertext", revokedAt: null,
+  });
+  await setDoc(COLLECTIONS.teamIntakeRecipients, `${recipientId}_other`, {
+    recipientId: `${recipientId}_other`, formId, memberId: "someone-else", churchId: context.churchId,
+  });
+  const read = await callHandler(authHandlers.getMyVolunteerAvailability, { context });
+  assert.equal(read.statusCode, 200);
+  assert.equal(read.payload.requests.length, 1);
+  assert.equal(read.payload.requests[0].recipientId, recipientId);
+  assert.doesNotMatch(JSON.stringify(read.payload), /private-hash|private-ciphertext|someone-else/);
+  const saved = await callHandler(authHandlers.submitMyVolunteerAvailability, {
+    context, body: { recipientId, occurrenceAvailability: { [assigned.occurrenceId]: "unavailable", forbidden: "available" },
+      positionIds: ["forged"], notes: "must not persist", memberId: "someone-else" },
+  });
+  assert.equal(saved.statusCode, 200, JSON.stringify(saved.payload));
+  const member = await getDoc(COLLECTIONS.teamRosterMembers, assigned.memberId);
+  assert.deepEqual(member.serviceAvailability, { [assigned.occurrenceId]: "unavailable" });
+  assert.deepEqual(member.positionIds, [assigned.media.positionIds.Camera]);
+  const other = await callHandler(authHandlers.submitMyVolunteerAvailability, {
+    context, body: { recipientId: `${recipientId}_other`, occurrenceAvailability: {} },
+  });
+  assert.equal(other.statusCode, 404);
+  await setDoc(COLLECTIONS.teamIntakeRecipients, recipientId, { revokedAt: "now" }, { merge: true });
+  const revoked = await callHandler(authHandlers.submitMyVolunteerAvailability, {
+    context, body: { recipientId, occurrenceAvailability: {} },
+  });
+  assert.equal(revoked.statusCode, 404);
+  assert.deepEqual((await callHandler(authHandlers.getMyVolunteerAvailability, { context })).payload.requests, []);
+});

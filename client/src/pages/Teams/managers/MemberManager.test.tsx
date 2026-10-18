@@ -25,6 +25,7 @@ const mockRecordMemberSmsConsent = jest.fn(async (..._args: unknown[]) => ({ suc
 jest.mock("../../../api/auth", () => ({
   AuthApiError: class MockAuthApiError extends Error {},
   archiveTeamRosterMember: jest.fn(),
+  manageVolunteerPersonalAccess: jest.fn().mockResolvedValue({ success: true, enabled: false }),
   createTeamRosterMember: (...args: unknown[]) =>
     mockCreateTeamRosterMember(...args),
   deleteTeamRosterMember: jest.fn(),

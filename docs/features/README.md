@@ -41,6 +41,11 @@ Existing `docs/` pages are focused architecture, migration, and rollout referenc
 
 ## What to document next
 
+The [Unified volunteer My Schedule contract](volunteer-my-schedule.md) records
+the October 18, 2026 request for one volunteer interface, shared operations,
+personal access, verified recovery and concise explicitly approved schedule SMS.
+Its implementation record distinguishes completed stages from remaining work.
+
 The [Song TXT import contract](song-txt-import.md) records the October 18, 2026
 request for local TXT review, draft protection, and duplicate-song decisions.
 

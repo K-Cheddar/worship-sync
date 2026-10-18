@@ -10,6 +10,7 @@ import SearchableSelect from "../../../components/SearchableSelect";
 import TextArea from "../../../components/TextArea/TextArea";
 import DeleteModal from "../../../components/Modal/DeleteModal";
 import RecordSmsConsentModal from "./RecordSmsConsentModal";
+import VolunteerPersonalAccessControls from "./VolunteerPersonalAccessControls";
 import DatePicker from "@/components/ui/DatePicker";
 import BirthDateField from "../components/BirthDateField";
 import { getBirthDateValidationError } from "../../../utils/birthDate";
@@ -2283,6 +2284,7 @@ const MemberManager = ({
           }
         />
         <TextArea label="Notes" value={draft.notes || ""} textareaClassName="min-h-24" onChange={(notes) => setDraft((d) => ({ ...d, notes }))} />
+        {isChurchAdmin && editing && !editing.archivedAt ? <VolunteerPersonalAccessControls key={`${churchId}:${editing.memberId}`} churchId={churchId} memberId={editing.memberId} /> : null}
       </CreatePanel>
       <DeleteModal
         isOpen={Boolean(deleting)}
