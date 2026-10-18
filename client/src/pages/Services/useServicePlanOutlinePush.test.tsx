@@ -7,6 +7,7 @@ import type { ServicePlan } from "../../types/servicePlan";
 import { plainTextToRichText } from "../../types/richText";
 import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
 import { updateItemList } from "../../store/itemListSlice";
+import { selectSongLibrary } from "../../store/songLibrarySelectors";
 import { useServicePlanOutlinePush } from "./useServicePlanOutlinePush";
 import { buildServicePlanOutlineItem, planServicePlanOutlineItems } from "./servicePlanOutlineBridge";
 
@@ -127,6 +128,37 @@ describe("useServicePlanOutlinePush", () => {
     expect(mockDispatch).toHaveBeenCalledWith(
       upsertItemInAllItemsList({ ...bibleItem, listId: "" }),
     );
+  });
+
+  it("continues multiple scripture steps when indexing refreshes the library during a run", async () => {
+    const first: ServiceItem = { _id: "psalm", name: "Psalms 105 NIV", type: "bible", listId: "psalm-link" };
+    const second: ServiceItem = { _id: "john", name: "John 3:16-18 NKJV", type: "bible", listId: "john-link" };
+    setPlannedItems([first, second]);
+    const db = {} as PouchDB.Database;
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <ControllerInfoContext.Provider value={{ db } as never}>{children}</ControllerInfoContext.Provider>
+    );
+    const { result, rerender } = renderHook(() => useServicePlanOutlinePush(), { wrapper });
+    let resume!: () => void;
+    const indexed = new Promise<void>((resolve) => { resume = resolve; });
+    const onAdded = jest.fn((item: ServiceItem) => item.listId === first.listId ? indexed : undefined);
+    let pending!: ReturnType<typeof result.current.pushPlanToOutline>;
+    await act(async () => {
+      pending = result.current.pushPlanToOutline({} as ServicePlan, () => true, onAdded);
+    });
+    expect(mockDispatch).toHaveBeenCalledWith(upsertItemInAllItemsList({ ...first, listId: "" }));
+    // Reproduce the allItems update from Bible indexing and its selector refresh.
+    mockState.allItems.list = [{ ...first, listId: "" }];
+    // This test harness mutates one state object; real Redux supplies a new
+    // root, so invalidate the argument cache to reproduce its recomputation.
+    selectSongLibrary.clearCache();
+    rerender();
+    await act(async () => {
+      resume();
+      expect((await pending).insertedCount).toBe(2);
+    });
+    expect(mockState.undoable.present.itemList.list).toEqual([worshipHeading, first, second]);
+    expect(onAdded).toHaveBeenCalledTimes(2);
   });
 
   it("does not overwrite an existing custom document with its outline reference", async () => {

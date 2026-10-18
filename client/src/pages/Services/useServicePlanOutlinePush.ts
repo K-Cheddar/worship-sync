@@ -76,6 +76,8 @@ export const useServicePlanOutlinePush = () => {
       // One run uses one mapping configuration even if integrations refresh
       // while the operator is watching the visible per-item progress.
       const sectionRulesSnapshot = (sectionRules ?? []).map((rule) => ({ ...rule }));
+      // Library refreshes are not owner changes: indexing a Bible item can
+      // refresh the song selector during this run. Steps retain their snapshot.
       const isContextCurrent = () =>
         mounted.current && isSourcePlanCurrent()
         &&
@@ -83,9 +85,7 @@ export const useServicePlanOutlinePush = () => {
         &&
         contextRef.current.selectedList?._id === startingContext.selectedList?._id
         && contextRef.current.db === startingContext.db
-        && contextRef.current.bibleDb === startingContext.bibleDb
-        && contextRef.current.songs === startingContext.songs
-        && contextRef.current.customDocuments === startingContext.customDocuments;
+        && contextRef.current.bibleDb === startingContext.bibleDb;
       const planResult = planServicePlanOutlineItems({
         plan,
         currentList: startingList,
