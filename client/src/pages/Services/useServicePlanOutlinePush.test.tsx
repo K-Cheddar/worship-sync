@@ -51,8 +51,8 @@ jest.mock("react-redux", () => ({
 jest.mock("./servicePlanOutlineBridge", () => ({
   buildServicePlanOutlineItem: jest.fn(),
   planServicePlanOutlineItems: jest.fn(),
-  insertServicePlanOutlineItem: (...args: Parameters<typeof import("./servicePlanOutlineBridge").insertServicePlanOutlineItem>) =>
-    jest.requireActual<typeof import("./servicePlanOutlineBridge")>("./servicePlanOutlineBridge").insertServicePlanOutlineItem(...args),
+  placeServicePlanOutlineItem: (...args: Parameters<typeof import("./servicePlanOutlineBridge").placeServicePlanOutlineItem>) =>
+    jest.requireActual<typeof import("./servicePlanOutlineBridge")>("./servicePlanOutlineBridge").placeServicePlanOutlineItem(...args),
 }));
 
 const mockBuildItem = jest.mocked(buildServicePlanOutlineItem);
@@ -67,7 +67,6 @@ const setPlannedItems = (items: ServiceItem[], skippedTitles: string[] = []) => 
       destination: { kind: "heading", listId: worshipHeading.listId, name: worshipHeading.name },
     }) as never),
     skippedTitles,
-    placementIssues: [],
   });
   mockBuildItem.mockImplementation(async ({ step }) => items.find((item) => item.listId === step.planned.listId)!);
 };
@@ -402,7 +401,7 @@ describe("useServicePlanOutlinePush", () => {
     ]));
   });
 
-  it("skips and reports a heading removed while an item is being built", async () => {
+  it("appends and reports a heading removed while an item is being built", async () => {
     const song: ServiceItem = { _id: "song-1", name: "Song", type: "song", listId: "song-link" };
     setPlannedItems([song]);
     mockBuildItem.mockImplementation(async () => {
@@ -416,11 +415,116 @@ describe("useServicePlanOutlinePush", () => {
       response = await result.current.pushPlanToOutline({} as ServicePlan);
     });
 
-    expect(mockDispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: updateItemList.type }));
-    expect(response?.placementIssues).toEqual([{
+    expect(mockDispatch).toHaveBeenCalledWith(updateItemList([song]));
+    expect(response?.insertedCount).toBe(1);
+    expect(response?.placementFallbacks).toEqual([{
       sectionName: "Worship",
       headingName: "Worship",
       reason: "heading-removed",
+      listId: song.listId,
+      title: song.name,
     }]);
+  });
+
+  it("appends missing mapped headings in order, reports committed fallbacks, and does not duplicate on retry", async () => {
+    const song: ServiceItem = { _id: "song", listId: "library", name: "Song", type: "song" };
+    const bridge = jest.requireActual<typeof import("./servicePlanOutlineBridge")>("./servicePlanOutlineBridge");
+    mockPlanOutline.mockImplementation((args) => bridge.planServicePlanOutlineItems({ ...args, songs: [song] }));
+    mockBuildItem.mockImplementation(bridge.buildServicePlanOutlineItem);
+    const sectionRules = ["Praise & Prayer", "Praise & Worship"].map((name, index) => ({ id: `rule-${index}`, matchSectionName: name, matchMode: "exact" as const, headingName: ["Call to Prayer", "Praise and Worship"][index] }));
+    const plan = { sections: sectionRules.map((rule, index) => ({ id: rule.id, name: rule.matchSectionName, elements: [{
+      id: `element-${index}`, type: "song", title: plainTextToRichText(song.name),
+      songRef: { kind: "library", songId: song._id, songName: song.name },
+    }] })) } as ServicePlan;
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <GlobalInfoContext.Provider value={{ churchIntegrations: { servicePlanning: { sectionRules } } } as never}>{children}</GlobalInfoContext.Provider>
+    );
+    const { result } = renderHook(() => useServicePlanOutlinePush(), { wrapper });
+    const committed = jest.fn((_item, fallback) => {
+      expect(mockState.undoable.present.itemList.list.some((item) => item.listId === fallback.listId)).toBe(true);
+    });
+    await act(async () => {
+      const first = await result.current.pushPlanToOutline(plan, () => true, committed);
+      expect(first.insertedCount).toBe(2);
+      expect(first.skippedTitles).toEqual([]);
+      expect(first.placementFallbacks.map((fallback) => fallback.headingName)).toEqual(["Call to Prayer", "Praise and Worship"]);
+      const repeated = await result.current.pushPlanToOutline(plan);
+      expect(repeated.insertedCount).toBe(0);
+      expect(repeated.placementFallbacks).toEqual([]);
+    });
+    expect(committed).toHaveBeenCalledTimes(2);
+    expect(mockState.undoable.present.itemList.list.map((item) => item.listId)).toEqual([
+      worshipHeading.listId, "element-0::attachment:legacy-song-0-library", "element-1::attachment:legacy-song-0-library",
+    ]);
+  });
+
+  it.each(["outline", "database", "unmount"])("does not append or report a pending fallback after a %s context change", async (change) => {
+    const song: ServiceItem = { _id: "song", name: "Song", type: "song", listId: "song-link" };
+    setPlannedItems([song]);
+    let finish!: (item: ServiceItem) => void;
+    mockBuildItem.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    let db = {} as PouchDB.Database;
+    const wrapper = ({ children }: { children: ReactNode }) => <ControllerInfoContext.Provider value={{ db } as never}>{children}</ControllerInfoContext.Provider>;
+    const { result, rerender, unmount } = renderHook(() => useServicePlanOutlinePush(), { wrapper });
+    const onAdded = jest.fn();
+    let pending!: ReturnType<typeof result.current.pushPlanToOutline>;
+    await act(async () => { pending = result.current.pushPlanToOutline({} as ServicePlan, () => true, onAdded); });
+    // The destination disappears during the build; a new owner must never receive its fallback.
+    mockState.undoable.present.itemList.list = [];
+    if (change === "outline") mockState.undoable.present.itemLists.selectedList = { _id: "outline-2", name: "Other" };
+    else if (change === "database") db = {} as PouchDB.Database; // Same outline ID under a different database.
+    if (change === "unmount") unmount();
+    else rerender();
+    await act(async () => {
+      finish(song);
+      await expect(pending).rejects.toThrow("The selected outline changed");
+    });
+    expect(mockDispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: updateItemList.type }));
+    expect(onAdded).not.toHaveBeenCalled();
+  });
+
+  it("finishes the active fallback on stop, leaves later items untouched, and retries without duplication", async () => {
+    const song: ServiceItem = { _id: "song", name: "Song", type: "song", listId: "song-link" };
+    const next = { ...song, listId: "next-link" };
+    setPlannedItems([song, next]);
+    mockState.undoable.present.itemList.list = [];
+    let finish!: (item: ServiceItem) => void;
+    mockBuildItem.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    const { result } = renderHook(() => useServicePlanOutlinePush());
+    const onAdded = jest.fn();
+    let shouldContinue = true;
+    let pending!: ReturnType<typeof result.current.pushPlanToOutline>;
+    await act(async () => { pending = result.current.pushPlanToOutline({} as ServicePlan, () => true, onAdded, () => shouldContinue); });
+    shouldContinue = false;
+    await act(async () => {
+      finish(song);
+      const response = await pending;
+      expect(response.insertedCount).toBe(1);
+      expect(response.placementFallbacks).toHaveLength(1);
+    });
+    expect(mockBuildItem).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      const retry = await result.current.pushPlanToOutline({} as ServicePlan);
+      expect(retry.insertedCount).toBe(1);
+    });
+    expect(mockState.undoable.present.itemList.list).toEqual([song, next]);
+  });
+
+  it("does not report a fallback when another insertion wins during the build", async () => {
+    const song: ServiceItem = { _id: "song", name: "Song", type: "song", listId: "song-link" };
+    setPlannedItems([song]);
+    mockBuildItem.mockImplementation(async () => {
+      mockState.undoable.present.itemList.list = [song];
+      return song;
+    });
+    const onAdded = jest.fn();
+    const { result } = renderHook(() => useServicePlanOutlinePush());
+    await act(async () => {
+      const response = await result.current.pushPlanToOutline({} as ServicePlan, () => true, onAdded);
+      expect(response.insertedCount).toBe(0);
+      expect(response.placementFallbacks).toEqual([]);
+    });
+    expect(onAdded).not.toHaveBeenCalled();
+    expect(mockState.undoable.present.itemList.list).toEqual([song]);
   });
 });

@@ -5,7 +5,7 @@
  * the Teams plan editor, which only autosaves the Firestore ServicePlan.
  * Native pushes do not write outline state back into the saved plan.
  */
-import { useCallback, useContext, useRef } from "react";
+import { useCallback, useContext, useEffect, useRef } from "react";
 import { useStore } from "react-redux";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
@@ -14,9 +14,10 @@ import { updateItemList } from "../../store/itemListSlice";
 import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
 import {
   buildServicePlanOutlineItem,
-  insertServicePlanOutlineItem,
+  placeServicePlanOutlineItem,
   planServicePlanOutlineItems,
   type ServicePlanOutlinePushResult,
+  type ServicePlanOutlinePlacementFallback,
 } from "./servicePlanOutlineBridge";
 import { useServicePlanSongLibrary } from "./useServicePlanSongLibrary";
 import type { ServicePlan } from "../../types/servicePlan";
@@ -27,6 +28,11 @@ const OUTLINE_STEP_DELAY_MS = 300;
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export const useServicePlanOutlinePush = () => {
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   const { db, bibleDb } = useContext(ControllerInfoContext) || {};
   const globalInfo = useContext(GlobalInfoContext);
   const sectionRules = globalInfo?.churchIntegrations?.servicePlanning?.sectionRules;
@@ -47,7 +53,7 @@ export const useServicePlanOutlinePush = () => {
     async (
       plan: ServicePlan,
       isSourcePlanCurrent: () => boolean = () => true,
-      onItemAdded?: (item: ServiceItem) => Promise<void> | void,
+      onItemAdded?: (item: ServiceItem, fallback?: ServicePlanOutlinePlacementFallback) => Promise<void> | void,
       shouldContinue: () => boolean = () => true,
     ): Promise<ServicePlanOutlinePushResult> => {
       const stateAtStart = store.getState().undoable.present;
@@ -71,7 +77,7 @@ export const useServicePlanOutlinePush = () => {
       // while the operator is watching the visible per-item progress.
       const sectionRulesSnapshot = (sectionRules ?? []).map((rule) => ({ ...rule }));
       const isContextCurrent = () =>
-        isSourcePlanCurrent()
+        mounted.current && isSourcePlanCurrent()
         &&
         store.getState().undoable.present.itemLists.selectedList?._id === startingContext.selectedList._id
         &&
@@ -91,32 +97,14 @@ export const useServicePlanOutlinePush = () => {
         throw new Error("The selected outline changed before the service plan could be imported.");
       }
       const items: ServiceItem[] = [];
-      const placementIssues = [...planResult.placementIssues];
-      const recordPlacementIssue = (issue: (typeof placementIssues)[number]) => {
-        if (!placementIssues.some((existing) =>
-          existing.sectionName === issue.sectionName &&
-          existing.headingName === issue.headingName &&
-          existing.reason === issue.reason,
-        )) {
-          placementIssues.push(issue);
-        }
-      };
+      const placementFallbacks: ServicePlanOutlinePlacementFallback[] = [];
       for (const step of planResult.steps) {
         if (!shouldContinue()) break;
         if (!isContextCurrent()) {
           throw new Error("The selected outline changed before the service plan could be imported.");
         }
-        const destination = step.destination;
         let latestList = store.getState().undoable.present.itemList.list;
         if (latestList.some((existing) => existing.listId === step.planned.listId)) continue;
-        if (destination.kind === "heading" && !latestList.some((existing) => existing.type === "heading" && existing.listId === destination.listId)) {
-          recordPlacementIssue({
-            sectionName: step.sectionName,
-            headingName: destination.name,
-            reason: "heading-removed",
-          });
-          continue;
-        }
         // Build only the item that is about to be shown. In particular, a stop
         // request must not pre-create Bible documents for later steps.
         // eslint-disable-next-line no-await-in-loop -- order and visible progress are intentional
@@ -126,19 +114,11 @@ export const useServicePlanOutlinePush = () => {
         }
         latestList = store.getState().undoable.present.itemList.list;
         if (latestList.some((existing) => existing.listId === item.listId)) continue;
-        const placedList = insertServicePlanOutlineItem(latestList, item, destination);
-        if (!placedList) {
-          recordPlacementIssue({
-            sectionName: step.sectionName,
-            ...(destination.kind === "heading" ? { headingName: destination.name } : {}),
-            reason: "heading-removed",
-          });
-          continue;
-        }
+        const placed = placeServicePlanOutlineItem(latestList, item, step);
         if (!isContextCurrent()) {
           throw new Error("The selected outline changed before the service plan could be imported.");
         }
-        dispatch(updateItemList(placedList));
+        dispatch(updateItemList(placed.list));
         if (db && item.type === "bible") {
           if (!isContextCurrent()) {
             throw new Error("The selected outline changed before the service plan could be imported.");
@@ -146,7 +126,8 @@ export const useServicePlanOutlinePush = () => {
           dispatch(upsertItemInAllItemsList({ ...item, listId: "" }));
         }
         items.push(item);
-        await onItemAdded?.(item);
+        if (placed.fallback) placementFallbacks.push(placed.fallback);
+        await onItemAdded?.(item, placed.fallback);
         if (!isContextCurrent()) {
           throw new Error("The selected outline changed before the service plan could be imported.");
         }
@@ -159,7 +140,7 @@ export const useServicePlanOutlinePush = () => {
         items,
         insertedCount: items.length,
         skippedTitles: planResult.skippedTitles,
-        placementIssues,
+        placementFallbacks,
       };
     },
     [db, bibleDb, customDocuments, dispatch, selectedList, songs, store, sectionRules],

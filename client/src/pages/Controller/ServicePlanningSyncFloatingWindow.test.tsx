@@ -386,17 +386,14 @@ describe("ServicePlanningSyncFloatingWindow", () => {
 
   it("shows an expanded native-plan summary that collapses as one card", async () => {
     const item = { _id: "song-1", name: "What A Beautiful Name", type: "song", listId: "song-link" };
+    const fallback = { sectionName: "Announcements", headingName: "Welcome & Notices", reason: "mapped-heading-missing", listId: item.listId, title: item.name };
     mockPushPlanToOutline.mockImplementation(async (_plan, _isCurrent, onItemAdded) => {
-      await onItemAdded?.(item);
+      await onItemAdded?.(item, fallback);
       return {
         items: [item],
         insertedCount: 1,
         skippedTitles: ["Example Song"],
-        placementIssues: [{
-          sectionName: "Announcements",
-          headingName: "Welcome & Notices",
-          reason: "mapped-heading-missing",
-        }],
+        placementFallbacks: [fallback],
       };
     });
     mockPlanSource.isPlanSourced = true;
@@ -428,31 +425,61 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     renderWindow(store);
 
     await userEvent.setup().click(await screen.findByRole("button", { name: "Sync outline" }));
-    const summaryButton = await screen.findByRole("button", { name: /1 outline · 0 overlays · 2 skipped/i });
+    const summaryButton = await screen.findByRole("button", { name: /1 outline · 0 overlays · 1 skipped/i });
     const summaryCard = screen.getByLabelText("Most recent sync");
     const summary = within(summaryCard);
     expect(summaryButton).toHaveAttribute("aria-expanded", "true");
     expect(summary.getByText("Outline added · 1")).toBeInTheDocument();
     expect(summary.getByText("What A Beautiful Name")).toBeInTheDocument();
-    expect(summary.getByText("Skipped · 2")).toBeInTheDocument();
+    expect(summary.getByText("Skipped · 1")).toBeInTheDocument();
     expect(summary.getByText("Example Song")).toBeInTheDocument();
     expect(summary.getByText(/Unresolved Service Plan attachment/)).toBeInTheDocument();
-    expect(summary.getByText("Announcements")).toBeInTheDocument();
-    expect(summary.getByText(/Mapped outline heading "Welcome & Notices" is not present/)).toBeInTheDocument();
+    expect(summary.getByText(/Added at end — mapped heading "Welcome & Notices" wasn't found\./)).toBeInTheDocument();
     expect(summary.getByRole("heading", { name: "Outline added · 1" })).toHaveClass("text-cyan-300");
-    expect(summary.getByRole("heading", { name: "Skipped · 2" })).toHaveClass("text-amber-300");
+    expect(summary.getByRole("heading", { name: "Skipped · 1" })).toHaveClass("text-amber-300");
 
     await userEvent.setup().click(summaryButton);
     expect(summaryButton).toHaveAttribute("aria-expanded", "false");
     expect(summary.queryByText("What A Beautiful Name")).not.toBeInTheDocument();
     expect(summary.queryByText("Example Song")).not.toBeInTheDocument();
-    expect(summaryButton).toHaveTextContent("1 outline · 0 overlays · 2 skipped");
+    expect(summaryButton).toHaveTextContent("1 outline · 0 overlays · 1 skipped");
     expect(summary.queryByText(/Outline added ·/)).not.toBeInTheDocument();
 
     await userEvent.setup().click(summaryButton);
     expect(summaryButton).toHaveAttribute("aria-expanded", "true");
     expect(summary.getByText("What A Beautiful Name")).toBeInTheDocument();
     expect(summary.getByText("Example Song")).toBeInTheDocument();
+  });
+
+  it.each([false, true])("reports only committed fallbacks when a later step fails (committed: %s)", async (committed) => {
+    const item = { _id: "song", name: "Prayer song", type: "song", listId: "prayer-link" };
+    mockPushPlanToOutline.mockImplementation(async (_plan, _isCurrent, onItemAdded) => {
+      if (committed) await onItemAdded(item, {
+        sectionName: "Prayer", headingName: "Call to Prayer", reason: "heading-removed", listId: item.listId, title: item.name,
+      });
+      throw new Error("Could not load Bible passage");
+    });
+    mockPlanSource.isPlanSourced = true;
+    mockPlanSource.selectedPlanKey = "service@2026-10-18";
+    mockPlanSource.selectedPlanDetails = {
+      planKey: "service@2026-10-18", name: "Sunday", date: "2026-10-18",
+      sections: [{ id: "prayer", name: "Prayer", elements: [{
+        id: "song", type: "song", title: { blocks: [] },
+        songRef: { kind: "library", songId: item._id, songName: item.name },
+      }] }],
+    };
+    const store = configureStore({ reducer: {
+      servicePlanningImport: servicePlanningImportReducer, allDocs: allDocsReducer,
+      undoable: (state = { present: { itemLists: { selectedList: { _id: "outline", name: "Sunday" } }, itemList: { list: [], selectedItemListId: "" } } }) => state,
+    } });
+    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+    renderWindow(store);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Sync outline" }));
+    const summary = within(await screen.findByLabelText("Most recent sync"));
+    expect(await summary.findByText("Sync incomplete")).toBeInTheDocument();
+    expect(summary.getByText("Could not load Bible passage")).toBeInTheDocument();
+    expect(summary.queryAllByText("Outline added · 1")).toHaveLength(Number(committed));
+    expect(summary.queryAllByText(/Added at end — heading "Call to Prayer" was removed before insertion\./)).toHaveLength(Number(committed));
   });
 
   it("summarizes updated and created overlays separately", async () => {
@@ -505,9 +532,10 @@ describe("ServicePlanningSyncFloatingWindow", () => {
 
   it("combines native outline additions and overlay changes after Sync All", async () => {
     const song = { _id: "song-1", name: "What A Beautiful Name", type: "song", listId: "song-link" };
+    const fallback = { sectionName: "Worship", headingName: "Praise and Worship", reason: "mapped-heading-missing", listId: song.listId, title: song.name };
     mockPushPlanToOutline.mockImplementation(async (_plan, _isCurrent, onItemAdded) => {
-      await onItemAdded?.(song);
-      return { items: [song], insertedCount: 1, skippedTitles: [], placementIssues: [] };
+      await onItemAdded?.(song, fallback);
+      return { items: [song], insertedCount: 1, skippedTitles: [], placementFallbacks: [fallback] };
     });
     mockPlanSource.isPlanSourced = true;
     mockPlanSource.selectedPlanKey = "service-1@2026-07-30";
@@ -561,6 +589,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     expect(summaryButton).toHaveAttribute("aria-expanded", "true");
     const summary = within(screen.getByLabelText("Most recent sync"));
     expect(summary.getByText("What A Beautiful Name")).toBeInTheDocument();
+    expect(summary.getByText(/Added at end — mapped heading "Praise and Worship" wasn't found\./)).toBeInTheDocument();
     expect(summary.getByText("Clarence Jones — Sabbath School Host")).toBeInTheDocument();
   });
 

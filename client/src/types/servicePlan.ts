@@ -12,6 +12,7 @@
  * client/src/api/auth.ts (getServicePlan/saveServicePlan/deleteServicePlan).
  */
 import type { RichTextDocument } from "./richText";
+import { getServicePlanScriptureResourceTitle } from "../../../shared/servicePlanScripture";
 
 // Mirrors ServiceItem.type (client/src/types.ts) minus the presentation-only
 // "timer"/"service-time" kinds, so pushing a plan into the outline is 1:1.
@@ -233,6 +234,7 @@ export type ServicePlanScriptureReference = {
   label: string;
   book: string;
   chapter: string;
+  /** Empty for a whole-chapter reading. */
   verseRange: string;
   version: string;
 };
@@ -478,7 +480,11 @@ export const getServicePlanElementContentResources = (
     }
     return true;
   });
-  const allResources = [...legacyResources, ...resourcesWithoutLegacyDuplicates];
+  const allResources = [...legacyResources, ...resourcesWithoutLegacyDuplicates].map(
+    (resource) => resource.type === "scripture"
+      ? { ...resource, title: getServicePlanScriptureResourceTitle(resource) }
+      : resource,
+  );
   if (!element.contentOrder?.length) return allResources;
   const byId = new Map(allResources.map((resource) => [resource.id, resource]));
   const ordered = element.contentOrder.flatMap((id) => {

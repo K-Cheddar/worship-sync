@@ -1,7 +1,33 @@
 import { buildServicePlanFlowSnapshot } from "./buildServicePlanFlowSnapshot";
 import type { ServicePlan } from "../types/servicePlan";
+import scriptureFixtures from "../../../shared/servicePlanScripture.fixtures.json";
 
 describe("buildServicePlanFlowSnapshot resources", () => {
+  it("matches server Scripture titles for legacy and explicit structured references", () => {
+    const references = scriptureFixtures.map(({ reference }) => reference);
+    const elements = [
+      ...references.map((scriptureRef, index) => ({ id: `single-${index}`, scriptureRef })),
+      { id: "multiple", scriptureRefs: references },
+      ...["scripture", "scriptureRef", "flat"].map((shape) => ({
+        id: shape,
+        resources: references.map((reference, index) => ({
+          id: `${shape}-${index}`, type: "scripture", title: reference.label,
+          data: shape === "flat" ? reference : { [shape]: reference },
+        })),
+      })),
+    ];
+    const plan = {
+      planKey: "scripture", sections: [{ id: "main", elements }],
+    } as unknown as ServicePlan;
+    const saved = JSON.stringify(plan);
+    const snapshot = buildServicePlanFlowSnapshot({ plan, startsAt: "2026-10-18T10:00:00Z" });
+    const titles = scriptureFixtures.map(({ title }) => title);
+    expect(snapshot.service.sections[0].items.map((item) => item.resources?.map((r) => r.title))).toEqual([
+      ...titles.map((title) => [title]), titles, titles, titles, titles,
+    ]);
+    expect(JSON.stringify(plan)).toBe(saved);
+  });
+
   it("preserves rich notes and normalizes legacy generic resource text", () => {
     const richText = {
       blocks: [

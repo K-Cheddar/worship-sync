@@ -1,0 +1,7 @@
+{
+  "id": "service-plan-outline-sync-20261018",
+  "date": "2026-10-18",
+  "type": "fixed",
+  "title": "Sync complete Service Plan content",
+  "description": "Sync whole Bible chapters from saved Service Plans, and keep valid attachments by adding them at the outline end when a mapped heading is missing."
+}

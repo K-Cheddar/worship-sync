@@ -386,7 +386,7 @@ const ServicePlanningSyncFloatingWindow = ({
   const [isSyncSummaryExpanded, setIsSyncSummaryExpanded] = useState(true);
   const cancelSavedPlanPushRef = useRef(false);
   const pendingSavedPlanSummaryRef = useRef<{
-    addedTitles: string[];
+    outline: SyncSummaryEntry[];
     skipped: SyncSummaryEntry[];
   } | null>(null);
   const [activeTab, setActiveTab] = useState<"plan" | "assignments">("plan");
@@ -576,31 +576,26 @@ const ServicePlanningSyncFloatingWindow = ({
       setIsPushingSavedPlan(true);
       cancelSavedPlanPushRef.current = false;
       const sourcePlan = selectedPlanDetails;
-      const addedTitles: string[] = [];
+      const outline: SyncSummaryEntry[] = [];
       void pushPlanToOutline(
         sourcePlan,
         () => currentPlanRef.current === sourcePlan,
-        async (item) => {
-          addedTitles.push(item.name);
+        async (item, fallback) => {
+          outline.push({
+            label: item.name,
+            ...(fallback ? { reason: fallback.reason === "mapped-heading-missing"
+              ? `Added at end — mapped heading "${fallback.headingName}" wasn't found.`
+              : `Added at end — heading "${fallback.headingName}" was removed before insertion.` } : {}),
+          });
           dispatch(setActiveItemInList(item.listId));
           await ensureElementInView(`service-item-${item.listId}`, "service-items-list");
         },
         () => !cancelSavedPlanPushRef.current,
       )
         .then((result) => {
-          const skipped = [
-            ...result.skippedTitles.map((label) => ({ label, reason: "Unresolved Service Plan attachment" })),
-            ...result.placementIssues.map((issue) => ({
-              label: issue.sectionName,
-              reason: issue.reason === "mapped-heading-missing"
-                ? `Mapped outline heading "${issue.headingName}" is not present`
-                : issue.reason === "heading-removed"
-                  ? `Outline heading "${issue.headingName}" disappeared before insertion`
-                  : "No matching outline heading or section rule",
-            })),
-          ];
+          const skipped = result.skippedTitles.map((label) => ({ label, reason: "Unresolved Service Plan attachment" }));
           setLastSyncSummary({
-            outline: addedTitles.map((label) => ({ label })),
+            outline,
             overlaysUpdated: [],
             overlaysCreated: [],
             skipped,
@@ -613,7 +608,7 @@ const ServicePlanningSyncFloatingWindow = ({
           });
           setIsSyncSummaryExpanded(true);
           if (mode === "both" && !cancelSavedPlanPushRef.current && allowOverlaySync && canSyncOverlays) {
-            pendingSavedPlanSummaryRef.current = { addedTitles, skipped };
+            pendingSavedPlanSummaryRef.current = { outline, skipped };
             dispatch(setServicePlanningFloatingWindowDismissed(false));
             dispatch(startServicePlanningSync({ mode: "overlays" }));
           } else {
@@ -629,7 +624,7 @@ const ServicePlanningSyncFloatingWindow = ({
         })
         .catch((error: unknown) => {
           const message = error instanceof Error ? error.message : "Could not add plan content to the outline.";
-          setLastSyncSummary({ outline: addedTitles.map((label) => ({ label })), overlaysUpdated: [], overlaysCreated: [], skipped: [], errors: [{ label: message }], title: "Sync incomplete" });
+          setLastSyncSummary({ outline, overlaysUpdated: [], overlaysCreated: [], skipped: [], errors: [{ label: message }], title: "Sync incomplete" });
           setIsSyncSummaryExpanded(true);
           showToast(message, "error");
         })
@@ -671,7 +666,7 @@ const ServicePlanningSyncFloatingWindow = ({
     const overlaysCreated = sync.syncItems.filter((item) => item.phase === "overlays" && item.status === "created").map((item) => ({ label: overlayLabel(item) }));
     if (!savedOutline && sync.mode === "outline") return;
     setLastSyncSummary({
-      outline: (savedOutline?.addedTitles || sync.syncItems.filter((item) => item.phase === "outline" && item.status === "added").map((item) => item.label)).map((label) => ({ label })),
+      outline: savedOutline?.outline ?? sync.syncItems.filter((item) => item.phase === "outline" && item.status === "added").map((item) => ({ label: item.label })),
       overlaysUpdated,
       overlaysCreated,
       skipped: [

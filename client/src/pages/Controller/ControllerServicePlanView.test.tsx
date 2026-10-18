@@ -14,6 +14,7 @@ import { getServicePlanLiveProgress } from "../Services/servicePlanLive";
 import { plainTextToRichText } from "../../types/richText";
 import type { DBItem } from "../../types";
 import type { ServicePlan, ServicePlanElement } from "../../types/servicePlan";
+import scriptureFixtures from "../../../../shared/servicePlanScripture.fixtures.json";
 
 jest.mock("../../hooks/useCachedMediaUrl", () => ({
   useCachedMediaUrl: (url?: string) => url,
@@ -193,7 +194,18 @@ describe("ControllerServicePlanView", () => {
     expect(screen.getByRole("heading", { name: "Welcome" })).toHaveClass("min-w-0", "flex-1", "break-words", "whitespace-normal", "text-xs", "font-semibold");
     expect(screen.getByText("18:00")).toHaveClass("shrink-0");
     expect(screen.getByText("1:30")).toHaveClass("shrink-0");
-    expect(screen.getByRole("button", { name: "View Web link: Run sheet" })).toHaveClass("border-neutral-700", "bg-neutral-900/80");
+    expect(screen.getByRole("button", { name: "View Web link: Run sheet" })).toHaveClass("border-neutral-500", "bg-neutral-900", "text-neutral-100");
+    const songPill = screen.getByTitle("Song: Opening Song");
+    const scripturePill = screen.getByTitle("Scripture: Psalm 100:1–5");
+    expect(songPill).toHaveClass("border-cyan-400/60", "bg-cyan-950/60", "text-cyan-50", "hover:border-cyan-300", "focus-visible:ring-cyan-300");
+    expect(scripturePill).toHaveClass("border-violet-400/60", "bg-violet-950/60", "text-violet-50", "hover:border-violet-300", "focus-visible:ring-violet-300");
+    for (const pill of [songPill, scripturePill]) {
+      expect(pill).toHaveClass("min-w-0", "max-w-full", "whitespace-normal", "py-0.5", "focus-visible:ring-2");
+      // eslint-disable-next-line testing-library/no-node-access -- The decorative SVG is intentionally hidden from accessible queries.
+      const eye = pill.querySelector(".lucide-eye");
+      expect(eye).toBeInTheDocument();
+      expect(eye).not.toHaveClass("opacity-70");
+    }
     expect(screen.getByTitle("Song: Opening Song")).toBeInTheDocument();
     expect(screen.getByTitle("Scripture: Psalm 100:1–5")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Worship" })).toHaveClass("px-2.5", "py-1.5");
@@ -285,6 +297,7 @@ describe("ControllerServicePlanView", () => {
     );
 
     expect(screen.getByText("Dropbox link")).toBeInTheDocument();
+    expect(screen.getByText("Dropbox link")).toHaveClass("break-words", "whitespace-normal", "[overflow-wrap:anywhere]");
     expect(screen.queryByText(longUrl)).not.toBeInTheDocument();
     expect(screen.getByText(/View notes/)).toBeInTheDocument();
     expect(screen.getByRole("group")).not.toHaveAttribute("open");
@@ -294,6 +307,30 @@ describe("ControllerServicePlanView", () => {
     expect(screen.getByRole("group")).toHaveAttribute("open");
     await user.click(screen.getByRole("button", { name: "View Web link: Dropbox link" }));
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("keeps long song and Scripture labels wrapping inside compact, keyboard-accessible pills", async () => {
+    const longSong = "A long song title ".repeat(20).trim();
+    const longScripture = `${"Reading for the congregation ".repeat(12)}John 3:16 (NIV)`;
+    const longPlan = makePlanWithElement({
+      id: "long", type: "free", title: plainTextToRichText("Readings"),
+      resources: [
+        { id: "song", type: "song", title: longSong },
+        { id: "scripture", type: "scripture", title: longScripture, data: { scripture: {
+          label: longScripture, book: "John", chapter: "3", verseRange: "16", version: "NIV",
+        } } },
+      ],
+    });
+    renderWithStore(<ControllerServicePlanView {...brandColors} plan={longPlan} churchId="church-1" controllerProfileId="presentation" />);
+    const song = screen.getByRole("button", { name: `View Song: ${longSong}` });
+    const scripture = screen.getByRole("button", { name: `View Scripture: ${longScripture}` });
+    for (const label of [longSong, longScripture]) {
+      expect(screen.getByText(label)).toHaveClass("min-w-0", "break-words", "whitespace-normal", "[overflow-wrap:anywhere]");
+    }
+    song.focus();
+    await userEvent.setup().tab();
+    expect(scripture).toHaveFocus();
+    expect(scripture).toHaveClass("focus-visible:ring-2", "focus-visible:ring-offset-2");
   });
 
   it("marks the live item clearly and supports an unpublished plan without a viewer snapshot", () => {
@@ -590,6 +627,45 @@ describe("ControllerServicePlanView", () => {
     expect(screen.getByText("This song is no longer available in the song library."))
       .toBeInTheDocument();
   });
+
+  it.each(["legacy", "scripture", "scriptureRef", "flat"])(
+    "shows authoritative versions and navigates every %s attachment with an older snapshot",
+    async (shape) => {
+      const user = userEvent.setup();
+      const references = scriptureFixtures.map(({ reference }, index) => ({ ...reference, id: `passage-${index}` }));
+      const scripturePlan = makePlanWithElement({
+        id: "reading", type: "free", title: plainTextToRichText("Reading"),
+        ...(shape === "legacy"
+          ? { scriptureRefs: references }
+          : { resources: references.map((reference) => ({
+              id: reference.id, type: "scripture", title: reference.label,
+              data: shape === "flat" ? reference : { [shape]: reference },
+            })) }),
+      });
+      const olderSnapshot = buildServicePlanFlowSnapshot({ plan: scripturePlan, startsAt: scripturePlan.startsAt! });
+      olderSnapshot.service.sections[0].items[0].resources!.forEach((resource, index) => {
+        resource.title = references[index].label;
+      });
+      const saved = JSON.stringify(scripturePlan);
+      const outlineStateBefore = store.getState().itemList;
+      const dispatchSpy = jest.spyOn(store, "dispatch");
+      renderWithStore(<>
+        <RouteProbe />
+        <ControllerServicePlanView {...brandColors} plan={scripturePlan} snapshot={olderSnapshot}
+          churchId="church-1" controllerProfileId="presentation" />
+      </>);
+      for (const { reference, title } of scriptureFixtures) {
+        await user.click(screen.getByRole("button", { name: `View Scripture: ${title}` }));
+        const params = new URLSearchParams({ book: reference.book, chapter: reference.chapter });
+        if (reference.verseRange) params.set("verses", reference.verseRange);
+        if (reference.version) params.set("version", reference.version);
+        expect(screen.getByTestId("controller-route")).toHaveTextContent(`/controller/bible?${params}`);
+      }
+      expect(JSON.stringify(scripturePlan)).toBe(saved);
+      expect(store.getState().itemList).toBe(outlineStateBefore);
+      expect(dispatchSpy).not.toHaveBeenCalled();
+    },
+  );
 
   it("navigates scripture to the existing Bible route without changing the outline", async () => {
     const user = userEvent.setup();
