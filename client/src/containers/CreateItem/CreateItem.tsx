@@ -1,4 +1,6 @@
 import Spinner from "@/components/Spinner/Spinner";
+import SongTxtImport from "./SongTxtImport";
+import { findSongDuplicates } from "../../utils/songTxtImport";
 import { useStore } from "react-redux";
 import {
   useContext,
@@ -146,7 +148,8 @@ const CreateItem = ({
   const { list, isInitialized: isAllItemsInitialized } = useSelector(
     (state: RootState) => state.allItems,
   );
-  const { songs: songLibrary } = useSelector(selectSongLibrary);
+  const { songs: songLibrary, documents: songDocuments } = useSelector(selectSongLibrary);
+  const [duplicateReview, setDuplicateReview] = useState(false);
 
   const {
     preferences: {
@@ -165,8 +168,8 @@ const CreateItem = ({
   const [justAdded, setJustAdded] = useState(false);
   const [justCreated, setJustCreated] = useState(false);
   const [createError, setCreateError] = useState("");
-  const [isCreatingFreeForm, setIsCreatingFreeForm] = useState(false);
-  const isCreatingFreeFormRef = useRef(false);
+  const [isCreatingItem, setIsCreatingItem] = useState(false);
+  const isCreatingItemRef = useRef(false);
   const [isImportingLyrics, setIsImportingLyrics] = useState(false);
   const [mobileSongTab, setMobileSongTab] =
     useState<MobileSongTab>("create");
@@ -210,6 +213,8 @@ const CreateItem = ({
   }, []);
 
   const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
+  const currentDatabaseRef = useRef(db);
+  currentDatabaseRef.current = db;
   const canCreateEmbeddedItem = Boolean(db && isAllItemsInitialized);
 
   const navigate = useNavigate();
@@ -583,6 +588,10 @@ const CreateItem = ({
     return undefined;
   }, [itemName, list, selectedType, songLibrary]);
 
+  const duplicateSongs = selectedType === "song"
+    ? findSongDuplicates(itemName, songMetadata?.ccliSongNumber, songLibrary, songDocuments)
+    : [];
+
   const goToItem = (itemId: string, listId: string) => {
     navigate(
       `${controllerBasePath}/item/${window.btoa(encodeURI(itemId))}/${window.btoa(
@@ -616,7 +625,7 @@ const CreateItem = ({
     goToItem(item._id, addedAction.payload.listId);
   };
 
-  const createItem = async () => {
+  const createItem = async (allowSeparateSong = false) => {
     // A Service Plan must not point at a song that exists only in this tab's
     // Redux state. The regular Controller creator can still build its local
     // draft before Pouch is ready, but the embedded "Create and attach" path
@@ -631,6 +640,18 @@ const CreateItem = ({
     const draftText = removeParentheticals ? removeParentheticalPhrases(text) : text;
 
     if (selectedType === "song") {
+      if (isCreatingItemRef.current) return;
+      if (duplicateSongs.length && !allowSeparateSong) {
+        setDuplicateReview(true);
+        return;
+      }
+      setDuplicateReview(false);
+      isCreatingItemRef.current = true;
+      setIsCreatingItem(true);
+      const draftAtStart = reduxStore.getState().createItem;
+      const isCurrentSongCreate = () => lyricsImportMountedRef.current
+        && currentDatabaseRef.current === db
+        && reduxStore.getState().createItem === draftAtStart;
       const { formattedLyrics: _formattedLyrics, songOrder: _songOrder } =
         createSections({
           unformattedLyrics: draftText,
@@ -651,23 +672,33 @@ const CreateItem = ({
           background: defaultSongBackground.background,
           mediaInfo: defaultSongBackground.mediaInfo,
           brightness: defaultSongBackgroundBrightness,
-          songMetadata,
+          songMetadata: songMetadata?.importFilename ? {
+            ...songMetadata, trackName: itemName, artistName: songArtist, albumName: songAlbum,
+          } : songMetadata,
           shouldSendTo,
         });
 
+        // The write belongs to its original database. A closed picker or a newer
+        // draft must not be reset, navigated away from, or attached on completion.
+        if (!isCurrentSongCreate()) return;
         setJustCreated(true);
         dispatch(resetCreateItem());
         dispatchNewItem(newItem);
       } catch {
-        setCreateError("Could not create the song. Check your connection and try again.");
+        if (isCurrentSongCreate()) {
+          setCreateError("Could not create the song. Check your connection and try again.");
+        }
+      } finally {
+        isCreatingItemRef.current = false;
+        setIsCreatingItem(false);
       }
       return;
     }
 
     if (selectedType === "free") {
-      if (isCreatingFreeFormRef.current) return;
-      isCreatingFreeFormRef.current = true;
-      setIsCreatingFreeForm(true);
+      if (isCreatingItemRef.current) return;
+      isCreatingItemRef.current = true;
+      setIsCreatingItem(true);
       onCreatingChange?.(true);
       try {
         let newItem: ItemState;
@@ -692,8 +723,8 @@ const CreateItem = ({
         dispatch(resetCreateItem());
         dispatchNewItem(newItem);
       } finally {
-        isCreatingFreeFormRef.current = false;
-        setIsCreatingFreeForm(false);
+        isCreatingItemRef.current = false;
+        setIsCreatingItem(false);
         onCreatingChange?.(false);
       }
       return;
@@ -877,7 +908,7 @@ const CreateItem = ({
               type="button"
               variant="tertiary"
               className="justify-start"
-              disabled={justCreated || isCreatingFreeForm}
+              disabled={justCreated || isCreatingItem}
               onClick={() => {
                 dispatch(resetCreateItem());
                 onCancel();
@@ -1023,6 +1054,19 @@ const CreateItem = ({
                   </div>
                 </div>
                 <div className="space-y-2 rounded-md p-3">
+                  <SongTxtImport
+                    key={`${createItemDraft.draftId}:${db?.name ?? "local"}`}
+                    hasDraft={Boolean(itemName.trim() || text.trim() || songArtist.trim() || songAlbum.trim() || songMetadata)}
+                    onApply={imported => {
+                      updateCreateItemDraft({
+                        name: imported.title, text: imported.lyrics,
+                        songArtist: imported.metadata.artistName, songAlbum: "",
+                        songMetadata: imported.metadata,
+                        lyricsImportCandidates: [], lyricsImportError: "",
+                      });
+                      setDuplicateReview(false);
+                    }}
+                  />
                   <Button
                     variant="primary"
                     className="w-full justify-center"
@@ -1175,6 +1219,12 @@ const CreateItem = ({
               </div>
             )}
             <div className="mt-3 flex shrink-0 flex-col gap-2">
+              {duplicateReview && duplicateSongs.length > 0 && <section aria-label="Possible duplicate songs" className="space-y-2 rounded-md border border-amber-300/30 p-3">
+                <p className="text-sm text-amber-200">These songs may already be in your library. Open an existing song, return to editing, or create a separate song.</p>
+                {duplicateSongs.map(song => <Button key={song._id} variant="tertiary" onClick={() => goToItem(song._id, song.listId || song._id)}>Open {song.name}</Button>)}
+                <Button variant="tertiary" onClick={() => setDuplicateReview(false)}>Return to editing</Button>
+                <Button variant="primary" disabled={isCreatingItem} onClick={() => void createItem(true)}>Create separate song</Button>
+              </section>}
               {isEmbedded && !canCreateEmbeddedItem ? (
                 <p className="text-sm text-amber-200" role="status">
                   {embeddedType === "free" ? "Custom document" : "Song"} library is still connecting.
@@ -1190,16 +1240,16 @@ const CreateItem = ({
                   !itemName ||
                   (selectedType !== "song" && !!existingItem) ||
                   justCreated ||
-                  isCreatingFreeForm ||
+                  isCreatingItem ||
                   (isEmbedded && !canCreateEmbeddedItem)
                 }
                 variant="cta"
                 className="w-full justify-center text-base"
-                onClick={createItem}
+                onClick={() => void createItem()}
                 svg={justCreated ? Check : Plus}
                 color={justCreated ? "#84cc16" : undefined}
               >
-                {isCreatingFreeForm ? "Creating..." : createButtonLabel}
+                {isCreatingItem ? "Creating..." : createButtonLabel}
               </Button>
             </div>
           </div>

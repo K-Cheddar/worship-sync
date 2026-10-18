@@ -7,6 +7,7 @@ const SECTION_LABEL_MAP: Record<string, string> = {
   bridge: "Bridge",
   intro: "Intro",
   outro: "Ending",
+  ending: "Ending",
   tag: "Tag",
   interlude: "Interlude",
   hook: "Hook",
@@ -161,6 +162,10 @@ const parseWithSectionLabels = (
       flush();
       currentType = labelType;
     } else if (currentType !== null) {
+      contentLines.push(line);
+    } else if (line.trim()) {
+      // Unlabelled opening lyrics must survive when later sections have labels.
+      currentType = "Verse";
       contentLines.push(line);
     }
   }

@@ -365,6 +365,22 @@ describe("ServicePlanLibraryPicker", () => {
     });
   });
 
+  it("imports TXT in the embedded form and waits for Create and attach", async () => {
+    const user = userEvent.setup();
+    const { onSelectSong } = renderPicker();
+    await user.click(screen.getByRole("button", { name: /Create a new song/i }));
+    const file = new File(["Lyrics"], "new.txt", { type: "text/plain" });
+    Object.defineProperty(file, "arrayBuffer", { value: async () => new TextEncoder().encode("Title: Brand New Song\nVerse 1\nWords to sing\nCCLI Song # 789\n© Example").buffer });
+    await user.click(screen.getByRole("button", { name: "Import TXT" }));
+    await user.upload(screen.getByLabelText("TXT song file"), file);
+    await user.click(await screen.findByRole("button", { name: "Apply TXT to draft" }));
+    expect(mockCreateNewSong).not.toHaveBeenCalled();
+    expect(onSelectSong).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: /Create and attach/i }));
+    await waitFor(() => expect(onSelectSong).toHaveBeenCalledWith({ kind: "library", songId: "song-new", songName: "Brand New Song" }));
+    expect(mockCreateNewSong).toHaveBeenCalledWith(expect.objectContaining({ songMetadata: expect.objectContaining({ ccliSongNumber: "789" }) }));
+  });
+
   it("waits for the song library before allowing a new song to be attached", async () => {
     const user = userEvent.setup();
     const controllerContext = {

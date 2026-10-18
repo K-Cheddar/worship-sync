@@ -1,0 +1,7 @@
+{
+  "id": "song-txt-import",
+  "date": "2026-10-18",
+  "type": "new",
+  "title": "Import songs from TXT",
+  "description": "Import a SongSelect or plain lyrics TXT file, review its lyrics and song details, and check for existing songs before adding it to your library."
+}
