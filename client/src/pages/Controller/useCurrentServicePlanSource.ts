@@ -17,6 +17,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useStore } from "react-redux";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector } from "../../hooks";
@@ -48,16 +49,46 @@ import type {
   ServicePlanParticipantOverlayProjection,
   ServicePlanSummary,
 } from "../../types/servicePlan";
-import type { ServicePlanningTeamAssignment } from "../../types/servicePlanningImport";
+import type {
+  ServicePlanningPreview,
+  ServicePlanningTeamAssignment,
+} from "../../types/servicePlanningImport";
 import type { PublicServiceFlowSnapshot } from "../../services/serviceFlowTypes";
 import {
   chooseControllerServicePlanKey,
   sortControllerServicePlans,
 } from "./controllerServicePlanSelection";
 import { useActiveControllerId } from "../../context/activeController";
+import type { RootState } from "../../store/store";
+
+const failedParticipantOverlayProjection =
+  (): ServicePlanParticipantOverlayProjection => ({
+    status: "failed",
+    elements: [],
+  });
+
+const participantOverlayProjectionMatchesPlan = (
+  plan: ServicePlan,
+  projection: ServicePlanParticipantOverlayProjection,
+): boolean =>
+  projection.status !== "ready" ||
+  projection.planRevision === undefined ||
+  projection.planRevision === (plan.revision ?? 0);
+
+const participantOverlayProjectionForPlan = (
+  plan: ServicePlan,
+  projection: ServicePlanParticipantOverlayProjection | undefined,
+): ServicePlanParticipantOverlayProjection => {
+  const resolvedProjection = projection ?? failedParticipantOverlayProjection();
+  if (!participantOverlayProjectionMatchesPlan(plan, resolvedProjection)) {
+    return failedParticipantOverlayProjection();
+  }
+  return resolvedProjection;
+};
 
 export const useCurrentServicePlanSource = () => {
   const dispatch = useDispatch();
+  const store = useStore<RootState>();
   const activeControllerId = useActiveControllerId();
   const { canViewServices, canViewTeams, canUseTeamsLiveSync, churchId, loginState } =
     useContext(GlobalInfoContext) || {};
@@ -400,6 +431,45 @@ export const useCurrentServicePlanSource = () => {
     },
     [dispatch],
   );
+  const invalidateNativeParticipantPreview = useCallback(
+    (planKey: string) => {
+      const current = store.getState().servicePlanningImport;
+      const outline = current.serviceOutline;
+      const nativeSummary = outline?.preview.nativeOverlaySummary;
+      if (
+        current.servicePlanKey !== planKey ||
+        !outline ||
+        !nativeSummary
+      ) {
+        return;
+      }
+
+      const reason =
+        "Plan participants changed. Refresh the plan before syncing.";
+      const preview: ServicePlanningPreview = {
+        ...outline.preview,
+        nativeOverlaySummary: {
+          ...nativeSummary,
+          status: "failed",
+          assignedParticipantCount: null,
+        },
+        overlayPlan: outline.preview.overlayPlan.map((item) => ({
+          ...item,
+          action: "skip" as const,
+          placementOnly: undefined,
+          patch: { ...item.patch, name: "", title: "" },
+          reason,
+        })),
+      };
+      dispatch(
+        setServicePlanningPlanOutline({
+          outline: { ...outline, preview },
+          planKey,
+        }),
+      );
+    },
+    [dispatch, store],
+  );
 
   type ReconciliationOptions = {
     refreshPlanList?: boolean;
@@ -539,12 +609,12 @@ export const useCurrentServicePlanSource = () => {
           await applyPlan(
             plan,
             assignmentsResult?.ok ? assignmentsResult.result.assignments : [],
-            assignmentsResult?.ok
-              ? assignmentsResult.result.participantOverlay ?? {
-                  status: "failed",
-                  elements: [],
-                }
-              : { status: "failed", elements: [] },
+            participantOverlayProjectionForPlan(
+              plan,
+              assignmentsResult?.ok
+                ? assignmentsResult.result.participantOverlay
+                : undefined,
+            ),
             isCurrentRequest,
           );
         } catch (error) {
@@ -823,13 +893,21 @@ export const useCurrentServicePlanSource = () => {
           .catch(() => undefined);
         void getServicePlanAssignments(churchIdAtStart, planKeyAtStart)
           .then((result) => {
+            const participantOverlay = result.participantOverlay;
+            if (
+              participantOverlay &&
+              !participantOverlayProjectionMatchesPlan(plan, participantOverlay)
+            ) {
+              if (isCurrentRequest()) {
+                invalidateNativeParticipantPreview(planKeyAtStart);
+                void reconcileSelectedPlan({ preserveOnFailure: true });
+              }
+              return;
+            }
             return applyPlan(
               plan,
               result.assignments,
-              result.participantOverlay ?? {
-                status: "failed",
-                elements: [],
-              },
+              participantOverlayProjectionForPlan(plan, participantOverlay),
               () => isCurrentRequest() && planRef.current === plan,
             );
           })
@@ -855,6 +933,7 @@ export const useCurrentServicePlanSource = () => {
       churchId,
       clearUnavailablePlan,
       isEnabled,
+      invalidateNativeParticipantPreview,
       refreshPlans,
       reconcileSelectedPlan,
       selectedOutlineId,

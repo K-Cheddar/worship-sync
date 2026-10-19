@@ -110,6 +110,7 @@ const planFixture = {
   serviceId: "service-1",
   date: "2026-08-01",
   name: "Sabbath Service",
+  revision: 1,
   sections: [],
 };
 
@@ -648,6 +649,132 @@ describe("useCurrentServicePlanSource", () => {
     expect(mockLoadPlanPreview).toHaveBeenCalledWith(planFixture, [
       { teamName: "Band", role: "Keys", name: "Dana Robinson" },
     ], { status: "ready", elements: [] });
+  });
+
+  it("blocks a participant projection read from a different saved-plan revision", async () => {
+    const newerPlan = { ...planFixture, revision: 2 };
+    const staleProjection = {
+      status: "ready" as const,
+      planRevision: 1,
+      elements: [{
+        elementId: "element-1",
+        assignees: [{
+          name: "Stale Person",
+          memberStatus: "resolved" as const,
+          roleStatus: "resolved" as const,
+          roleTitle: "Stale Role",
+        }],
+      }],
+    };
+    mockGetServicePlan.mockResolvedValue({ servicePlan: newerPlan });
+    mockGetServicePlanAssignments.mockResolvedValue({
+      assignments: [],
+      participantOverlay: staleProjection,
+    });
+
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalled());
+    expect(mockLoadPlanPreview).toHaveBeenCalledWith(
+      newerPlan,
+      [],
+      { status: "failed", elements: [] },
+    );
+  });
+
+  it("reloads the selected plan when schedule data carries a newer plan revision", async () => {
+    const newerPlan = { ...planFixture, revision: 2, name: "Revised service" };
+    const currentProjection = {
+      status: "ready" as const,
+      planRevision: 2,
+      elements: [{
+        elementId: "element-1",
+        assignees: [{
+          name: "Current Person",
+          memberStatus: "resolved" as const,
+          roleStatus: "resolved" as const,
+          roleTitle: "Current Role",
+        }],
+      }],
+    };
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+
+    mockGetServicePlan.mockResolvedValue({ servicePlan: newerPlan });
+    mockGetServicePlanAssignments
+      .mockResolvedValueOnce({ assignments: [], participantOverlay: currentProjection })
+      .mockResolvedValueOnce({ assignments: [], participantOverlay: currentProjection });
+
+    act(() => {
+      mockLiveHandler?.({ type: "schedule-updated", scheduleId: "schedule-1" });
+    });
+
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(2));
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(2);
+    expect(mockLoadPlanPreview).toHaveBeenLastCalledWith(
+      newerPlan,
+      [],
+      currentProjection,
+    );
+  });
+
+  it("keeps a mismatched preview non-syncable when the follow-up plan read fails", async () => {
+    const staleOutline = {
+      ...outlineFixture,
+      preview: {
+        ...outlineFixture.preview,
+        overlayPlan: [{
+          sectionName: "Worship",
+          sourceRowIndex: 0,
+          elementType: "free",
+          title: "Sermon",
+          ledBy: "Stale Person",
+          personIndex: 0,
+          rawNameToken: "Stale Person",
+          action: "update" as const,
+          targetOverlayId: "weekly-host",
+          patch: { name: "Stale Person", title: "Stale Role", event: "Sermon" },
+        }],
+        nativeOverlaySummary: {
+          status: "ready" as const,
+          selectedItemCount: 1,
+          assignedParticipantCount: 1,
+        },
+      },
+    };
+    mockLoadPlanPreview.mockResolvedValue(staleOutline);
+
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+
+    mockGetServicePlanAssignments.mockResolvedValueOnce({
+      assignments: [],
+      participantOverlay: {
+        status: "ready",
+        planRevision: 2,
+        elements: [],
+      },
+    });
+    mockGetServicePlan.mockRejectedValueOnce(new Error("plan refresh failed"));
+    act(() => {
+      mockLiveHandler?.({ type: "schedule-updated", scheduleId: "schedule-1" });
+    });
+
+    await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(latestResult?.isLoading).toBe(false));
+    const preview = store.getState().servicePlanningImport.preview;
+    expect(preview?.nativeOverlaySummary).toMatchObject({
+      status: "failed",
+      assignedParticipantCount: null,
+    });
+    expect(preview?.overlayPlan[0]).toMatchObject({
+      action: "skip",
+      patch: { name: "", title: "", event: "Sermon" },
+      reason: expect.stringMatching(/refresh the plan before syncing/i),
+    });
   });
 
   it("does not publish a late participant projection after switching plans", async () => {

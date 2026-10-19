@@ -171,6 +171,8 @@ export type ServicePlanParticipantOverlayElement = {
 /** Plan-scoped, contact-free read projection used only for overlay preview. */
 export type ServicePlanParticipantOverlayProjection = {
   status: "ready" | "restricted" | "failed";
+  /** Revision of the saved plan used to resolve these participants. */
+  planRevision?: number;
   elements: ServicePlanParticipantOverlayElement[];
 };
 

@@ -7088,7 +7088,11 @@ export const createTeamsAuthHandlers = ({
       }),
     );
 
-    return { status: "ready", elements };
+    return {
+      status: "ready",
+      planRevision: getServicePlanRevision(servicePlan),
+      elements,
+    };
   };
 
   const isMemberAvailableDuringServiceWeek = (member, service) => {

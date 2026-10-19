@@ -106,6 +106,30 @@ describe("mapNativeServicePlanParticipants", () => {
     expect(mapping.overlayCandidates[0].candidates[0].patch.name).not.toBe("Stale Name");
   });
 
+  it("keeps the member name and leaves the title blank when team-role context is ambiguous", () => {
+    const servicePlan = plan([
+      element("item-1", "Sermon", { enabled: true }),
+    ]);
+    const projection = readyProjection([
+      {
+        elementId: "item-1",
+        assignees: [{
+          name: "Dr. Avery Stone",
+          memberStatus: "resolved",
+          roleStatus: "ambiguous",
+        }],
+      },
+    ]);
+
+    const preview = buildNativePreview(servicePlan, projection);
+
+    expect(preview.overlayPlan[0]).toMatchObject({
+      action: "create",
+      patch: { name: "Dr. Avery Stone", title: "", event: "Sermon" },
+      resolutionNotice: expect.stringMatching(/multiple team roles/i),
+    });
+  });
+
   it("defaults the event label to the item title and skips ambiguous duplicate item labels", () => {
     const servicePlan = plan([
       element("item-1", "Sermon", { enabled: true }),

@@ -24,6 +24,7 @@ For a native saved plan, an operator opts individual items into participant over
 - Native item labels default to the item title and can be overridden per item. Duplicate selected item labels and duplicate exact target overlay labels are skipped with an explanation; native matching does not use fuzzy person or event matching.
 - The preview shows names, titles, event labels, and planned update, clone, create, and skip actions before an explicit sync.
 - Native roster data comes from a plan-scoped, contact-free server projection for opted-in items. A restricted or failed lookup is distinguishable from an empty assignment and cannot produce executable overlay changes.
+- The participant projection carries the saved plan revision it read. If separate plan and assignment requests return different revisions, the Controller treats participant details as unavailable and blocks syncing until a refresh returns a matching revision.
 - The existing overlay sync runner, persistence path, explicit action boundary, and live audience behavior are retained. Updating a participant overlay continues to patch only mapped name, title, and event fields, preserving unrelated formatting and properties.
 
 ## Important scenarios
@@ -79,4 +80,5 @@ For a native saved plan, an operator opts individual items into participant over
 - Native event labels are lowercased and repeated whitespace is collapsed before exact comparison. Native matching has no fuzzy fallback; duplicate exact target overlays are ambiguous and skipped. URL imports retain their legacy fuzzy fallback and first-exact behavior.
 - Repeated native participants claim available overlays in assignment order. When there is no unclaimed exact match, the existing template clone/create behavior is shown in the preview and used only after explicit sync.
 - Existing-overlay updates patch mapped fields (`name`, `title`, `event`) and leave other overlay properties intact. Preview and execution share the matcher; execution reads the current overlay list before acting.
+- Participant projections are revision-bound to the saved plan they read; a schedule refresh that sees a newer plan revision reloads the plan before rebuilding its preview.
 - Legacy `servicePlanSource`, `servicePlanBaseline`, and `servicePlanOverrides` fields may remain in stored documents for compatibility. Current matching and explicit-sync behavior do not consult them.

@@ -5543,6 +5543,13 @@ test("native overlay projection resolves opted-in Teams assignees without roster
             assignees: [{ id: "assignee-av", memberId: fixture.sharedId, name: "Old name" }],
           },
           {
+            id: "item-ambiguous",
+            type: "free",
+            title: { blocks: [{ type: "paragraph", spans: [{ text: "Unscoped panel" }] }] },
+            participantOverlay: { enabled: true },
+            assignees: [{ id: "assignee-ambiguous", memberId: fixture.sharedId, name: "Old name" }],
+          },
+          {
             id: "item-guest",
             type: "free",
             title: { blocks: [{ type: "paragraph", spans: [{ text: "Guest Speaker" }] }] },
@@ -5590,6 +5597,7 @@ test("native overlay projection resolves opted-in Teams assignees without roster
   assert.equal(result.statusCode, 200, JSON.stringify(result.payload));
   assert.deepEqual(result.payload.participantOverlay, {
     status: "ready",
+    planRevision: saved.payload.servicePlan.revision,
     elements: [
       {
         elementId: "item-av",
@@ -5598,6 +5606,14 @@ test("native overlay projection resolves opted-in Teams assignees without roster
           memberStatus: "resolved",
           roleStatus: "resolved",
           roleTitle: "Audio Director",
+        }],
+      },
+      {
+        elementId: "item-ambiguous",
+        assignees: [{
+          name: "Dr. Shared Member",
+          memberStatus: "resolved",
+          roleStatus: "ambiguous",
         }],
       },
       {
