@@ -483,6 +483,8 @@ export const useCurrentServicePlanSource = () => {
   type ReconciliationOptions = {
     refreshPlanList?: boolean;
     preserveOnFailure?: boolean;
+    /** Start a newer selected-plan read even when one is already in flight. */
+    force?: boolean;
   };
 
   /**
@@ -495,6 +497,7 @@ export const useCurrentServicePlanSource = () => {
     async ({
       refreshPlanList = false,
       preserveOnFailure = false,
+      force = false,
     }: ReconciliationOptions = {}) => {
       const churchIdAtStart = churchId;
       const controllerIdAtStart = activeControllerId;
@@ -503,6 +506,7 @@ export const useCurrentServicePlanSource = () => {
       const planKeyAtStart = selectedPlanKeyRef.current;
       const existing = reconciliationInFlightRef.current;
       if (
+        !force &&
         existing &&
         existing.churchId === churchIdAtStart &&
         existing.controllerId === controllerIdAtStart &&
@@ -890,12 +894,34 @@ export const useCurrentServicePlanSource = () => {
       }
 
       if (event.type === "schedule-updated" || event.type === "schedule-removed") {
-        if (!churchId || !planRef.current) return;
+        const planKeyAtStart = selectedPlanKeyRef.current;
+        if (!churchId || !planKeyAtStart) return;
+        const existing = reconciliationInFlightRef.current;
+        const selectedPlanReadInFlight = Boolean(
+          existing &&
+            existing.controllerId === activeControllerId &&
+            existing.churchId === churchId &&
+            existing.selectedOutlineId === selectedOutlineId &&
+            existing.planKey === planKeyAtStart &&
+            existing.generation === generationRef.current,
+        );
         const plan = planRef.current;
+        if (selectedPlanReadInFlight || plan?.planKey !== planKeyAtStart) {
+          // Schedule changes can arrive while a full plan read is in flight,
+          // including during initial loading. Supersede that request with a
+          // fresh plan + assignments read so the newer event is not lost and
+          // its predecessor cannot strand the refresh indicator.
+          void reconcileSelectedPlan({
+            refreshPlanList:
+              selectedPlanReadInFlight && Boolean(existing?.refreshPlanList),
+            preserveOnFailure: plan?.planKey === planKeyAtStart,
+            force: selectedPlanReadInFlight,
+          });
+          return;
+        }
         const churchIdAtStart = churchId;
         const controllerIdAtStart = activeControllerId;
         const outlineIdAtStart = selectedOutlineId;
-        const planKeyAtStart = plan.planKey;
         const generation = ++generationRef.current;
         const isCurrentRequest = () =>
           generation === generationRef.current &&

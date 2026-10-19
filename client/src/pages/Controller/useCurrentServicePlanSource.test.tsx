@@ -287,6 +287,16 @@ const setVisibility = (visibility: DocumentVisibilityState) => {
   });
 };
 
+const createDeferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+};
+
 describe("useCurrentServicePlanSource", () => {
   beforeEach(() => {
     mockServicePlanningEnabled = true;
@@ -1110,6 +1120,289 @@ describe("useCurrentServicePlanSource", () => {
       expect.objectContaining({ status: "ready" }),
     );
     expect(mockGetServicePlan).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the initial load active when a schedule update arrives before the plan is loaded", async () => {
+    const latestPlan = {
+      ...planFixture,
+      revision: 2,
+      name: "Latest initial plan",
+    };
+    const supersededPlanRequest = createDeferred<{
+      servicePlan: typeof planFixture;
+    }>();
+    const supersededAssignmentsRequest = createDeferred<{
+      assignments: Array<{ teamName: string; role: string; name: string }>;
+      participantOverlay: { status: "ready"; elements: [] };
+    }>();
+    const latestPlanRequest = createDeferred<{
+      servicePlan: typeof planFixture;
+    }>();
+    const latestAssignmentsRequest = createDeferred<{
+      assignments: Array<{ teamName: string; role: string; name: string }>;
+      participantOverlay: { status: "ready"; elements: [] };
+    }>();
+    mockGetServicePlan
+      .mockReturnValueOnce(supersededPlanRequest.promise)
+      .mockReturnValueOnce(latestPlanRequest.promise);
+    mockGetServicePlanAssignments
+      .mockReturnValueOnce(supersededAssignmentsRequest.promise)
+      .mockReturnValueOnce(latestAssignmentsRequest.promise);
+    mockLoadPlanPreview.mockImplementation(async (
+      plan: { name: string },
+      assignments: Array<{ name: string }>,
+    ) => ({
+      ...outlineFixture,
+      planLabel: `${plan.name}:${assignments.map((assignment) => assignment.name).join(",")}`,
+    }));
+
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(1));
+    expect(latestResult?.isLoading).toBe(true);
+
+    act(() => {
+      mockLiveHandler?.({ type: "schedule-updated", scheduleId: "schedule-1" });
+    });
+    await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(2));
+    expect(latestResult?.isLoading).toBe(true);
+
+    await act(async () => {
+      latestPlanRequest.resolve({ servicePlan: latestPlan });
+      latestAssignmentsRequest.resolve({
+        assignments: [{ teamName: "Band", role: "Keys", name: "Latest musician" }],
+        participantOverlay: { status: "ready", elements: [] },
+      });
+      await Promise.all([
+        latestPlanRequest.promise,
+        latestAssignmentsRequest.promise,
+      ]);
+    });
+
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.serviceOutline?.planLabel).toBe(
+        "Latest initial plan:Latest musician",
+      ),
+    );
+    await act(async () => {
+      supersededPlanRequest.resolve({
+        servicePlan: { ...planFixture, name: "Superseded initial plan" },
+      });
+      supersededAssignmentsRequest.resolve({
+        assignments: [{ teamName: "Band", role: "Keys", name: "Stale musician" }],
+        participantOverlay: { status: "ready", elements: [] },
+      });
+      await Promise.all([
+        supersededPlanRequest.promise,
+        supersededAssignmentsRequest.promise,
+      ]);
+    });
+
+    expect(latestResult?.selectedPlanDetails).toEqual(latestPlan);
+    expect(store.getState().servicePlanningImport.serviceOutline?.planLabel).toBe(
+      "Latest initial plan:Latest musician",
+    );
+    expect(latestResult?.isLoading).toBe(false);
+    expect(latestResult?.isRefreshing).toBe(false);
+  });
+
+  it("restarts a full reconciliation when a schedule update overlaps a plan update", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+
+    const supersededPlan = {
+      ...planFixture,
+      revision: 2,
+      name: "Superseded plan response",
+    };
+    const latestPlan = {
+      ...planFixture,
+      revision: 3,
+      name: "Latest plan response",
+    };
+    const supersededPlanRequest = createDeferred<{
+      servicePlan: typeof planFixture;
+    }>();
+    const supersededAssignmentsRequest = createDeferred<{
+      assignments: Array<{ teamName: string; role: string; name: string }>;
+      participantOverlay: { status: "ready"; elements: [] };
+    }>();
+    const latestPlanRequest = createDeferred<{
+      servicePlan: typeof planFixture;
+    }>();
+    const latestAssignmentsRequest = createDeferred<{
+      assignments: Array<{ teamName: string; role: string; name: string }>;
+      participantOverlay: { status: "ready"; elements: [] };
+    }>();
+    mockGetServicePlan
+      .mockReturnValueOnce(supersededPlanRequest.promise)
+      .mockReturnValueOnce(latestPlanRequest.promise);
+    mockGetServicePlanAssignments
+      .mockReturnValueOnce(supersededAssignmentsRequest.promise)
+      .mockReturnValueOnce(latestAssignmentsRequest.promise);
+    mockListServicePlans
+      .mockResolvedValueOnce({
+        servicePlans: [{
+          planKey: planFixture.planKey,
+          serviceId: planFixture.serviceId,
+          date: planFixture.date,
+          name: supersededPlan.name,
+        }],
+      })
+      .mockResolvedValueOnce({
+        servicePlans: [{
+          planKey: planFixture.planKey,
+          serviceId: planFixture.serviceId,
+          date: planFixture.date,
+          name: latestPlan.name,
+        }],
+      });
+    mockLoadPlanPreview.mockImplementation(async (
+      plan: { name: string },
+      assignments: Array<{ name: string }>,
+    ) => ({
+      ...outlineFixture,
+      planLabel: `${plan.name}:${assignments.map((assignment) => assignment.name).join(",")}`,
+    }));
+
+    act(() => {
+      mockLiveHandler?.({
+        type: "service-plan-updated",
+        planKey: planFixture.planKey,
+      });
+    });
+    await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(latestResult?.isRefreshing).toBe(true));
+
+    act(() => {
+      mockLiveHandler?.({ type: "schedule-updated", scheduleId: "schedule-1" });
+    });
+    await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(mockListServicePlans).toHaveBeenCalledTimes(3));
+    expect(latestResult?.isLoading).toBe(false);
+    expect(latestResult?.isRefreshing).toBe(true);
+    expect(latestResult?.selectedPlanDetails).toEqual(planFixture);
+    await act(async () => {
+      latestPlanRequest.resolve({ servicePlan: latestPlan });
+      latestAssignmentsRequest.resolve({
+        assignments: [{ teamName: "Band", role: "Keys", name: "Latest musician" }],
+        participantOverlay: { status: "ready", elements: [] },
+      });
+      await Promise.all([
+        latestPlanRequest.promise,
+        latestAssignmentsRequest.promise,
+      ]);
+    });
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.serviceOutline?.planLabel).toBe(
+        "Latest plan response:Latest musician",
+      ),
+    );
+
+    await act(async () => {
+      supersededPlanRequest.resolve({ servicePlan: supersededPlan });
+      supersededAssignmentsRequest.resolve({
+        assignments: [{ teamName: "Band", role: "Keys", name: "Stale musician" }],
+        participantOverlay: { status: "ready", elements: [] },
+      });
+      await Promise.all([
+        supersededPlanRequest.promise,
+        supersededAssignmentsRequest.promise,
+      ]);
+    });
+
+    expect(latestResult?.selectedPlanDetails).toEqual(latestPlan);
+    expect(latestResult?.selectedPlan?.name).toBe(latestPlan.name);
+    expect(store.getState().servicePlanningImport.serviceOutline?.planLabel).toBe(
+      "Latest plan response:Latest musician",
+    );
+    expect(latestResult?.isLoading).toBe(false);
+    expect(latestResult?.isRefreshing).toBe(false);
+  });
+
+  it("ignores an older schedule response when a plan update fails, then recovers on refresh", async () => {
+    const reportError = jest.spyOn(console, "error").mockImplementation(() => {});
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+
+    const originalPreview = store.getState().servicePlanningImport.preview;
+    const recoveredPlan = {
+      ...planFixture,
+      revision: 3,
+      name: "Recovered plan",
+    };
+    const delayedScheduleAssignments = createDeferred<{
+      assignments: Array<{ teamName: string; role: string; name: string }>;
+      participantOverlay: { status: "ready"; elements: [] };
+    }>();
+    const failedPlanRequest = createDeferred<{
+      servicePlan: typeof planFixture;
+    }>();
+    mockGetServicePlanAssignments
+      .mockReturnValueOnce(delayedScheduleAssignments.promise)
+      .mockResolvedValueOnce({
+        assignments: [{ teamName: "Band", role: "Keys", name: "Failed refresh data" }],
+        participantOverlay: { status: "ready", elements: [] },
+      })
+      .mockResolvedValueOnce({
+        assignments: [{ teamName: "Band", role: "Keys", name: "Recovered musician" }],
+        participantOverlay: { status: "ready", elements: [] },
+      });
+    mockGetServicePlan
+      .mockReturnValueOnce(failedPlanRequest.promise)
+      .mockResolvedValueOnce({ servicePlan: recoveredPlan });
+    mockLoadPlanPreview.mockImplementation(async (
+      plan: { name: string },
+      assignments: Array<{ name: string }>,
+    ) => ({
+      ...outlineFixture,
+      planLabel: `${plan.name}:${assignments.map((assignment) => assignment.name).join(",")}`,
+    }));
+
+    act(() => {
+      mockLiveHandler?.({ type: "schedule-updated", scheduleId: "schedule-1" });
+    });
+    await waitFor(() => expect(mockGetServicePlanAssignments).toHaveBeenCalledTimes(2));
+
+    act(() => {
+      mockLiveHandler?.({
+        type: "service-plan-updated",
+        planKey: planFixture.planKey,
+      });
+    });
+    await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(latestResult?.isRefreshing).toBe(true));
+
+    await act(async () => {
+      failedPlanRequest.reject(new Error("plan refresh failed"));
+      await failedPlanRequest.promise.catch(() => undefined);
+    });
+    await waitFor(() => expect(latestResult?.isRefreshing).toBe(false));
+    expect(latestResult?.isLoading).toBe(false);
+    expect(latestResult?.selectedPlanDetails).toEqual(planFixture);
+    expect(store.getState().servicePlanningImport.preview).toBe(originalPreview);
+
+    await act(async () => {
+      delayedScheduleAssignments.resolve({
+        assignments: [{ teamName: "Band", role: "Keys", name: "Stale schedule musician" }],
+        participantOverlay: { status: "ready", elements: [] },
+      });
+      await delayedScheduleAssignments.promise;
+    });
+    expect(store.getState().servicePlanningImport.preview).toBe(originalPreview);
+
+    await act(async () => {
+      await latestResult?.refresh();
+    });
+    expect(latestResult?.selectedPlanDetails).toEqual(recoveredPlan);
+    expect(store.getState().servicePlanningImport.serviceOutline?.planLabel).toBe(
+      "Recovered plan:Recovered musician",
+    );
+    expect(latestResult?.isLoading).toBe(false);
+    expect(latestResult?.isRefreshing).toBe(false);
+    reportError.mockRestore();
   });
 
   it("keeps the loaded plan usable when a manual refresh request fails", async () => {

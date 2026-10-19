@@ -1,82 +1,97 @@
 import { createRequire } from "node:module";
 import assert from "node:assert/strict";
+import { resolve } from "node:path";
+import react from "@vitejs/plugin-react";
+import { build, preview } from "vite";
 
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE_PATH || "playwright");
-const browser = await chromium.launch({headless: true});
+const root = process.cwd();
+const outDir = resolve(root, "node_modules/.cache/service-plan-refresh-build");
+const viteOptions = {
+  configFile: false,
+  root,
+  plugins: [react()],
+  resolve: { alias: { "@": resolve(root, "src") } },
+  build: {
+    outDir,
+    emptyOutDir: true,
+    rollupOptions: {
+      input: resolve(root, "e2e/service-plan-refresh-fixture.html"),
+    },
+  },
+};
+await build(viteOptions);
 
+const server = await preview({
+  ...viteOptions,
+  preview: { host: "127.0.0.1", port: 3115, strictPort: true },
+});
+const browser = await chromium.launch({ headless: true });
 try {
-  const page = await browser.newPage({viewport: {width: 900, height: 700}});
-  await page.setContent(`
-    <style>
-      body { margin: 0; background: #181818; color: white; font: 14px Arial, sans-serif; }
-      #window { position: fixed; left: 24px; top: 24px; display: flex; flex-direction: column; width: 520px; height: 360px; overflow: hidden; border: 1px solid #888; background: #222; }
-      #title { flex: none; height: 40px; box-sizing: border-box; padding: 12px; background: #444; }
-      #scrollport { min-height: 0; flex: 1; overflow-y: auto; padding: 12px; }
-      section { margin-bottom: 8px; border: 1px solid #555; }
-      h2 { margin: 0; padding: 8px; background: #292929; font-size: 12px; }
-      ol { margin: 0; padding: 0; list-style: none; }
-      li { box-sizing: border-box; min-height: 48px; padding: 14px 8px; border-top: 1px solid #444; }
-    </style>
-    <div id="window">
-      <div id="title">Fixture Service</div>
-      <div id="scrollport"><section><h2>Order of Worship</h2><ol id="items"></ol></section></div>
-    </div>
-  `);
+  const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.goto("http://127.0.0.1:3115/e2e/service-plan-refresh-fixture.html");
 
-  const dimensions = await page.evaluate(() => {
-    const items = document.getElementById("items");
-    for (let index = 1; index <= 48; index += 1) {
-      const item = document.createElement("li");
-      item.id = `plan-item-${index}`;
-      item.textContent = `Plan item ${index}`;
-      items.append(item);
-    }
-    const scrollport = document.getElementById("scrollport");
-    return {
-      clientHeight: scrollport.clientHeight,
-      scrollHeight: scrollport.scrollHeight,
-    };
-  });
-  assert(dimensions.scrollHeight > dimensions.clientHeight, "the plan content should overflow its scrollport");
-
-  const readingItem = page.locator("#plan-item-25");
+  const scrollport = page.locator('[data-testid="floating-window"] .overflow-y-auto').first();
+  const readingItem = page
+    .getByRole("heading", { name: "Plan item 25" })
+    .locator("xpath=../..");
+  await readingItem.waitFor();
   const beforeTop = await readingItem.evaluate((element) => {
-    const scrollport = document.getElementById("scrollport");
-    const currentTop = element.getBoundingClientRect().top - scrollport.getBoundingClientRect().top;
-    scrollport.scrollTop += currentTop - 120;
+    const floatingWindow = element.closest('[data-testid="floating-window"]');
+    const scrollContainer = floatingWindow?.querySelector(".overflow-y-auto");
+    if (!(scrollContainer instanceof HTMLElement)) throw new Error("Missing FloatingWindow scroll container");
+    scrollContainer.scrollTop +=
+      element.getBoundingClientRect().top -
+      scrollContainer.getBoundingClientRect().top -
+      100;
     return element.getBoundingClientRect().top;
   });
-  await page.waitForTimeout(50);
+  assert((await scrollport.evaluate((element) => element.scrollTop)) > 0, "the controller plan should be scrolled halfway down");
 
-  await page.evaluate(() => {
-    const insertedItem = document.createElement("li");
-    insertedItem.id = "plan-item-0";
-    insertedItem.textContent = "Plan item 0";
-    document.getElementById("items").prepend(insertedItem);
-  });
-  await page.locator("#plan-item-0").waitFor();
-  await page.waitForTimeout(50);
+  const notes = readingItem.locator("details");
+  await notes.locator("summary").click();
+  assert.equal(await notes.evaluate((element) => element.open), true, "the visible item's notes should expand");
+  const anchoredTop = await readingItem.evaluate((element) => element.getBoundingClientRect().top);
+  assert(Number.isFinite(beforeTop), "the initial reading position should be measurable");
+
+  await page.evaluate(() => window.applyServicePlanRefresh?.());
+  await page.getByRole("heading", { name: "Inserted plan item" }).waitFor();
+  await page.evaluate(() => new Promise((resolveFrame) => requestAnimationFrame(() => requestAnimationFrame(resolveFrame))));
 
   const afterTop = await readingItem.evaluate((element) => element.getBoundingClientRect().top);
   assert(
-    Math.abs(afterTop - beforeTop) <= 4,
-    `the reading item moved from ${beforeTop}px to ${afterTop}px after inserting content above it`,
+    Math.abs(afterTop - anchoredTop) <= 4,
+    `the visible Controller item moved from ${anchoredTop}px to ${afterTop}px after an in-place plan refresh`,
   );
+  assert.equal(await notes.evaluate((element) => element.open), true, "expanded notes should stay open during the update");
+  console.log("PASS real FloatingWindow and ControllerServicePlanView preserve the visible item and expanded notes after insertion above it");
 
-  const nextItem = page.locator("#plan-item-26");
+  const nextItem = page
+    .getByRole("heading", { name: "Plan item 26" })
+    .locator("xpath=../..");
   const beforeDeleteTop = await nextItem.evaluate((element) => element.getBoundingClientRect().top);
-  await page.evaluate(() => document.getElementById("plan-item-25").remove());
-  await page.waitForTimeout(50);
+  await page.evaluate(() => window.removeServicePlanItem?.("item-25"));
+  await readingItem.waitFor({ state: "detached" });
+  await page.evaluate(() => new Promise((resolveFrame) => requestAnimationFrame(() => requestAnimationFrame(resolveFrame))));
   const afterDeleteTop = await nextItem.evaluate((element) => element.getBoundingClientRect().top);
-  const scrollTopAfterDelete = await page.locator("#scrollport").evaluate((element) => element.scrollTop);
-  assert(scrollTopAfterDelete > 0, "deleting the visible item should not reset the plan to its beginning");
+  const scrollTopAfterDelete = await scrollport.evaluate((element) => element.scrollTop);
+  const scrollportBounds = await scrollport.boundingBox();
+  assert(scrollTopAfterDelete > 0, "deleting the visible Controller item should not reset the plan to its beginning");
+  assert(scrollportBounds, "the Controller scroll container should have browser bounds");
   assert(
-    Math.abs(afterDeleteTop - beforeDeleteTop) <= 52,
-    `the nearest surviving item moved from ${beforeDeleteTop}px to ${afterDeleteTop}px after deleting the reading item`,
+    afterDeleteTop >= scrollportBounds.y && afterDeleteTop < scrollportBounds.y + scrollportBounds.height,
+    "the nearest surviving item should remain in the visible reading area after deletion",
   );
-  console.log("PASS Chromium keeps the visible reading item anchored after inserting content above it");
-  console.log("PASS Chromium retains a nearby reading position after deleting the visible item");
+  assert(
+    Math.abs(afterDeleteTop - beforeDeleteTop) <= 100,
+    `the nearest Controller item moved from ${beforeDeleteTop}px to ${afterDeleteTop}px after deletion`,
+  );
+  assert.deepEqual(pageErrors, [], "the controller fixture should not emit browser errors");
+  console.log("PASS real ControllerServicePlanView retains a nearby reading position when its visible item is deleted");
 } finally {
   await browser.close();
+  await server.close();
 }

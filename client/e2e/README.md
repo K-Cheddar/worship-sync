@@ -15,4 +15,4 @@ From `client/`, run `node e2e/responsive-navigation.mjs --smoke`. This uses the 
 
 # Service-plan refresh scroll regression
 
-From `client/`, run `npm run test:e2e:service-plan-refresh`. It uses Chromium layout and a floating-window-shaped scrollport to verify native scroll anchoring after an insertion above the reading position and a deletion at it. Jest separately covers the production plan renderer's stable item identity. The check needs the existing root Playwright dependency and Chromium, and requires no church account or authentication.
+From `client/`, run `npm run test:e2e:service-plan-refresh`. It mounts the real `FloatingWindow` and `ControllerServicePlanView` with a local long-plan fixture in Chromium, then verifies native scroll anchoring and expanded-note continuity after an insertion above the reading position, plus a nearby reading position after deleting the visible item. The check needs the existing root Playwright dependency and Chromium, and requires no church account or authentication.
