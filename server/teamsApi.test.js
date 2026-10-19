@@ -10332,6 +10332,67 @@ test("my assignments is empty rather than an error when nothing is claimed", asy
   assert.deepEqual(res.payload.occurrences, []);
 });
 
+test("My Schedule filters Draft schedules in both occurrence passes and hides them after unpublishing", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("my_assignments_draft_visibility");
+  const assigned = await seedAssignedSchedule(context, "draft_visibility");
+  const publishedSchedule = await getDoc(COLLECTIONS.teamSchedules, assigned.scheduleId);
+  await setDoc(COLLECTIONS.teamSchedules, assigned.scheduleId, { published: true }, { merge: true });
+
+  const teammate = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Draft", lastName: "Teammate" },
+  });
+  const draftId = `${assigned.scheduleId}_draft`;
+  await setDoc(COLLECTIONS.teamSchedules, draftId, {
+    ...publishedSchedule,
+    scheduleId: draftId,
+    published: false,
+    assignments: {
+      [assigned.occurrenceId]: { "draft-position::0": teammate.payload.member.memberId },
+    },
+  });
+
+  const visible = await callHandler(authHandlers.getMyTeamAssignments, { context });
+  assert.equal(visible.statusCode, 200);
+  const occurrence = visible.payload.occurrences.find((row) => row.occurrenceId === assigned.occurrenceId);
+  assert.ok(occurrence);
+  assert.equal(occurrence.serving.some((row) => row.scheduleId === draftId), false);
+  assert.equal(occurrence.serving.some((row) => row.name === "Draft Teammate"), false);
+
+  const tokenUrl = authHandlers.buildAssignmentResponseUrl({
+    churchId: context.churchId,
+    scheduleId: assigned.scheduleId,
+    memberId: assigned.memberId,
+  });
+  const token = decodeURIComponent(new URL(tokenUrl).pathname.split("/").pop());
+  await setDoc(COLLECTIONS.teamSchedules, assigned.scheduleId, { published: false }, { merge: true });
+
+  const hidden = await callHandler(authHandlers.getMyTeamAssignments, { context });
+  assert.deepEqual(hidden.payload.occurrences, []);
+  const linkRead = await callHandler(authHandlers.getAssignmentResponseContext, {
+    context: { churchId: context.churchId, headers: {}, session: {} },
+    query: { token },
+  });
+  assert.equal(linkRead.statusCode, 404);
+  const linkWrite = await callHandler(authHandlers.respondToAssignmentByToken, {
+    context: { churchId: context.churchId, headers: {}, session: {} },
+    body: { token, response: "accepted" },
+  });
+  assert.equal(linkWrite.statusCode, 404);
+  const accountWrite = await callHandler(authHandlers.respondToMyAssignment, {
+    context,
+    body: {
+      scheduleId: assigned.scheduleId,
+      occurrenceId: assigned.occurrenceId,
+      cellKey: assigned.cellKey,
+      response: "accepted",
+    },
+  });
+  assert.equal(accountWrite.statusCode, 404);
+  assert.equal((await getDoc(COLLECTIONS.teamSchedules, assigned.scheduleId)).responses?.[assigned.occurrenceId]?.[assigned.cellKey], undefined);
+});
+
 test("my assignments refuses a church the session does not belong to", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("my_assignments_cross_church");
@@ -10559,6 +10620,13 @@ test("my blockout dates writes only the caller's own record", async (t) => {
     context,
     params: { memberId },
   });
+  await setDoc(COLLECTIONS.teamRosterMembers, memberId, {
+    email: "self@example.test",
+    phoneNumber: "+15555550111",
+    roles: ["volunteer"],
+    qualifications: ["First Aid"],
+    accountLinkMetadata: { source: "admin" },
+  }, { merge: true });
 
   const res = await callHandler(authHandlers.updateMyBlockoutDates, {
     context,
@@ -10578,6 +10646,12 @@ test("my blockout dates writes only the caller's own record", async (t) => {
   // self-granting eligibility.
   assert.deepEqual(res.payload.member.positionIds, [media.positionIds.Camera]);
   assert.equal(res.payload.member.notes, "Keep me");
+  assert.equal(res.payload.member.archivedAt, null);
+  assert.equal(res.payload.member.email, "self@example.test");
+  assert.equal(res.payload.member.phoneNumber, "+15555550111");
+  assert.deepEqual(res.payload.member.roles, ["volunteer"]);
+  assert.deepEqual(res.payload.member.qualifications, ["First Aid"]);
+  assert.deepEqual(res.payload.member.accountLinkMetadata, { source: "admin" });
 });
 
 test("my blockout dates ignores a memberId supplied by the caller", async (t) => {
@@ -10715,6 +10789,28 @@ test("my blockout dates rejects an unlinked account and a foreign church", async
   });
   assert.equal(crossChurch.statusCode, 403);
   assert.equal(crossChurch.payload.success, false);
+});
+
+test("my blockout dates cannot restore an archived member", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("my_blockouts_archived");
+  const created = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Archived", lastName: "Volunteer" },
+  });
+  const memberId = created.payload.member.memberId;
+  await callHandler(authHandlers.linkTeamRosterMember, { context, params: { memberId } });
+  await callHandler(authHandlers.archiveTeamRosterMember, { context, params: { memberId } });
+
+  const saved = await callHandler(authHandlers.updateMyBlockoutDates, {
+    context,
+    body: {
+      expectedUpdatedAt: await currentMemberStamp(context),
+      blockoutDates: [{ startDate: "2099-11-01", endDate: "2099-11-01" }],
+    },
+  });
+  assert.equal(saved.statusCode, 403);
+  assert.ok((await getDoc(COLLECTIONS.teamRosterMembers, memberId)).archivedAt);
 });
 
 test("my blockout dates bounds upcoming entries without counting expired ones", async (t) => {
@@ -10861,6 +10957,44 @@ test("my blockout dates rejects a save built on a stale record", async (t) => {
     },
   });
   assert.equal(retry.statusCode, 200);
+});
+
+test("a stale Teams roster save cannot overwrite newer volunteer blockouts", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("stale_roster_blockout_revision");
+  const created = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Revision", lastName: "Guard" },
+  });
+  const memberId = created.payload.member.memberId;
+  await callHandler(authHandlers.linkTeamRosterMember, { context, params: { memberId } });
+  const staleUpdatedAt = await currentMemberStamp(context);
+
+  const volunteerSave = await callHandler(authHandlers.updateMyBlockoutDates, {
+    context,
+    body: {
+      expectedUpdatedAt: staleUpdatedAt,
+      blockoutDates: [{ startDate: "2099-11-01", endDate: "2099-11-02", notes: "Volunteer edit" }],
+    },
+  });
+  assert.equal(volunteerSave.statusCode, 200);
+
+  const staleAdminSave = await callHandler(authHandlers.updateTeamRosterMember, {
+    context,
+    params: { memberId },
+    body: {
+      expectedUpdatedAt: staleUpdatedAt,
+      firstName: "Revision",
+      lastName: "Guard",
+      positionIds: [],
+      // MemberManager includes this field even when membership is unchanged.
+      teamMemberships: {},
+      blockoutDates: [{ startDate: "2099-12-01", endDate: "2099-12-02", notes: "Stale admin draft" }],
+    },
+  });
+  assert.equal(staleAdminSave.statusCode, 409);
+  const persisted = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+  assert.deepEqual(persisted.blockoutDates, volunteerSave.payload.member.blockoutDates);
 });
 
 test("my blockout dates refuses a write with no precondition", async (t) => {
@@ -11184,6 +11318,44 @@ test("an emailed token answers one assignment without any session", async (t) =>
   ]);
   assert.equal(confirmationPreviews.length, 1);
   assert.equal(confirmationPreviews[0].status, "preview");
+});
+
+test("a published schedule guest can still answer from the schedule-specific link", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("respond_guest_token");
+  const { scheduleId, occurrenceId, cellKey } = await seedAssignedSchedule(
+    context,
+    "guesttoken",
+  );
+  const guestId = "scheduleGuest_response_compat";
+  const schedule = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+  await setDoc(COLLECTIONS.teamSchedules, scheduleId, {
+    guests: [{ guestId, name: "Guest Volunteer" }],
+    assignments: {
+      ...schedule.assignments,
+      [occurrenceId]: { ...schedule.assignments[occurrenceId], [cellKey]: { primaryMemberId: guestId } },
+    },
+  }, { merge: true });
+  const token = tokenForMember(context.churchId, scheduleId, guestId);
+  const anonymous = { churchId: context.churchId, headers: {}, session: {} };
+
+  const page = await callHandler(authHandlers.getAssignmentResponseContext, {
+    context: anonymous,
+    query: { token },
+  });
+  assert.equal(page.statusCode, 200);
+  assert.equal(page.payload.firstName, "Guest");
+  const answer = await callHandler(authHandlers.respondToAssignmentByToken, {
+    context: anonymous,
+    body: { token, response: "accepted" },
+  });
+
+  assert.equal(answer.statusCode, 200);
+  assert.equal(answer.payload.applied, 1);
+  assert.equal(answer.payload.assignments[0].response, "accepted");
+  const saved = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+  assert.equal(saved.responses[occurrenceId][cellKey].memberId, guestId);
+  assert.equal(saved.responses[occurrenceId][cellKey].response, "accepted");
 });
 
 test("a tampered or unsigned token is refused", async (t) => {

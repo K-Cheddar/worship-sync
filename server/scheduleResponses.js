@@ -18,6 +18,15 @@
 const RESPONSE_VALUES = new Set(["pending", "accepted", "declined"]);
 
 /**
+ * Schedule visibility for volunteer self-service and schedule-specific
+ * response links. Publication belongs to the schedule document; service-plan
+ * publication remains a separate concern. Missing publication metadata keeps
+ * the established Published behavior for legacy schedules.
+ */
+export const isVolunteerScheduleVisible = (schedule) =>
+  Boolean(schedule && !schedule.archivedAt && schedule.published !== false);
+
+/**
  * The member who holds an assignment cell.
  *
  * Lives here, and is shared by everything that has to read a cell, because the

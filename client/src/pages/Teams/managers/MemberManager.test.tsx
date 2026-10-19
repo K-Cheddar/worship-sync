@@ -916,6 +916,26 @@ describe("MemberManager team membership", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("submits the member revision so stale roster edits cannot overwrite newer time off", async () => {
+    const user = userEvent.setup();
+    const member = { ...worshipMember, updatedAt: "member-revision-a" };
+    mockUpdateTeamRosterMember.mockResolvedValue({
+      success: true,
+      member: { ...member, firstName: "Rachel" },
+    });
+    renderManager({
+      data: joinedData({ members: [member] }),
+    });
+    await openMember(user, /Rae Kim/);
+    await user.clear(screen.getByLabelText(/^First name/));
+    await user.type(screen.getByLabelText(/^First name/), "Rachel");
+    await user.click(saveButton());
+
+    await waitFor(() => expect(mockUpdateTeamRosterMember).toHaveBeenCalledTimes(1));
+    const [, , body] = mockUpdateTeamRosterMember.mock.calls[0];
+    expect(body.expectedUpdatedAt).toBe("member-revision-a");
+  });
+
   it("sends the remaining membership so the server can drop the roster", async () => {
     const user = userEvent.setup();
     mockUpdateTeamRosterMember.mockResolvedValue({

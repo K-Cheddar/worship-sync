@@ -3,12 +3,21 @@ import assert from "node:assert/strict";
 
 import {
   applyAssignmentResponses,
+  isVolunteerScheduleVisible,
   normalizeAssignmentResponse,
   normalizeScheduleResponses,
   pruneStaleResponses,
   readAssignmentResponse,
   withAssignmentResponse,
 } from "./scheduleResponses.js";
+
+test("volunteer schedule visibility excludes Draft and archived schedules but keeps legacy Published schedules", () => {
+  assert.equal(isVolunteerScheduleVisible({ scheduleId: "draft", published: false }), false);
+  assert.equal(isVolunteerScheduleVisible({ scheduleId: "published", published: true }), true);
+  assert.equal(isVolunteerScheduleVisible({ scheduleId: "legacy" }), true);
+  assert.equal(isVolunteerScheduleVisible({ scheduleId: "archived", archivedAt: "archived" }), false);
+  assert.equal(isVolunteerScheduleVisible(null), false);
+});
 
 test("absent and unreadable answers both read as pending", () => {
   // Most assignments are never answered, so absence is normal, not an error —

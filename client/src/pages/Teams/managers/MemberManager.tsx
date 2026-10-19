@@ -775,6 +775,9 @@ const MemberManager = ({
         (range) => range.startDate || range.endDate,
       ),
     };
+    if (wasEditing) {
+      body.expectedUpdatedAt = wasEditing.updatedAt || "";
+    }
     if (wasEditing && membershipChanged) {
       body = {
         ...body,

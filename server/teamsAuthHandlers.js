@@ -27,13 +27,13 @@ import {
 // translation.
 import { normalizeRichTextDocument } from "./serviceFlowService.js";
 import {
-  applyAssignmentResponses,
+  isVolunteerScheduleVisible,
   normalizeAssignmentResponse,
   pruneStaleResponses,
   readAssignmentCellHolderId,
   readAssignmentResponse,
-  withAssignmentResponse,
 } from "./scheduleResponses.js";
+import { createVolunteerOperations } from "./volunteerOperations.js";
 import {
   ASSIGNMENT_TOKEN_TTL_MS,
   createAssignmentResponseToken,
@@ -682,88 +682,6 @@ export const createTeamsAuthHandlers = ({
 
   // One definition, shared with the pure modules that also have to read cells.
   const readCellHolderId = readAssignmentCellHolderId;
-
-  /**
-   * Write one or more answers for a member, atomically.
-   *
-   * **Transactional because the map is replaced wholesale.** `responses` is a
-   * single field; a read-modify-write from a stale snapshot silently discards
-   * whatever landed in between. Right after a send is exactly when several
-   * volunteers answer at once, so the lost write is not a rare race — it is the
-   * expected traffic pattern.
-   *
-   * Slots the member no longer holds are skipped rather than failing the whole
-   * batch: with one link covering a whole schedule, an owner reshuffling one
-   * date must not block the reader from answering the other three.
-   */
-  const writeAssignmentResponses = async ({
-    churchId,
-    scheduleId,
-    memberId,
-    targets,
-    response,
-    actorUid,
-  }) => {
-    // The decision is pure and unit-tested (`applyAssignmentResponses`), because
-    // only the in-memory branch below is reachable from the test suite.
-    const apply = (schedule) => {
-      if (!schedule || schedule.churchId !== churchId) {
-        throw httpError(404, "That schedule is no longer available.");
-      }
-      const result = applyAssignmentResponses(schedule, {
-        memberId,
-        targets,
-        response,
-        respondedAt: nowIso(),
-        readHolder: readCellHolderId,
-      });
-      if (result.applied === 0) {
-        throw httpError(
-          409,
-          "This assignment changed. Your team lead will be in touch.",
-        );
-      }
-      return result;
-    };
-
-    const db = requireFirestore();
-    if (!db) {
-      const schedule = await getTeamEntity("schedule", scheduleId);
-      const { responses, applied } = apply(schedule);
-      await setDoc(
-        COLLECTIONS.teamSchedules,
-        scheduleId,
-        {
-          responses,
-          updatedAt: nowIso(),
-          ...(actorUid ? { updatedByUid: actorUid } : {}),
-        },
-        { merge: true },
-      );
-      return { schedule: { ...schedule, responses }, applied };
-    }
-
-    return db.runTransaction(async (transaction) => {
-      const ref = db.collection(COLLECTIONS.teamSchedules).doc(scheduleId);
-      const snapshot = await transaction.get(ref);
-      const schedule = readTransactionTeamEntity(
-        snapshot,
-        "scheduleId",
-        "Schedule",
-      );
-      const { responses, applied } = apply(schedule);
-      transaction.set(
-        ref,
-        {
-          responses,
-          updatedAt: nowIso(),
-          ...(actorUid ? { updatedByUid: actorUid } : {}),
-        },
-        { merge: true },
-      );
-      return { schedule: { ...schedule, responses }, applied };
-    });
-  };
 
   /**
    * Every slot a member holds on a schedule, with enough context to answer:
@@ -5783,6 +5701,7 @@ export const createTeamsAuthHandlers = ({
     payload,
     adminUserId,
     portableCreateKey,
+    expectedUpdatedAt,
   }) => {
     const config = TEAM_ENTITY_CONFIG[kind];
     const db = requireFirestore();
@@ -5868,7 +5787,59 @@ export const createTeamsAuthHandlers = ({
       });
       return { [config.idField]: nextId, ...saved };
     }
-    if (kind === "member" && id && Object.hasOwn(payload, "teamMemberships")) {
+    if (kind === "member" && id && expectedUpdatedAt !== undefined) {
+      const hasMemberships = Object.hasOwn(payload, "teamMemberships");
+      const ref = db?.collection(config.collection).doc(nextId);
+      const writeIfCurrent = async (transaction) => {
+        let current;
+        if (transaction) {
+          const snapshot = await transaction.get(ref);
+          current = snapshot.exists
+            ? { [config.idField]: snapshot.id, ...snapshot.data() }
+            : null;
+        } else {
+          current = await getDoc(config.collection, nextId);
+        }
+        if (!current || current.churchId !== churchId) {
+          throw httpError(404, "Member not found.");
+        }
+        if (current.memberId && current.memberId !== nextId) {
+          throw httpError(409, "Member ownership is invalid.");
+        }
+        if (current.updatedAt && expectedUpdatedAt !== current.updatedAt) {
+          throw httpError(409, "This member changed somewhere else. Reload and try again.");
+        }
+        if (hasMemberships) {
+          // Keep the established per-team key updates while binding them to
+          // the same revision check as the member fields. Reading the current
+          // map inside this transaction also preserves team keys added since
+          // the editor loaded.
+          const { teamMemberships, ...memberFields } = doc;
+          await updateDocMapKeys(
+            config.collection,
+            nextId,
+            "teamMemberships",
+            {
+              set: teamMemberships,
+              remove: Object.keys(current.teamMemberships || {}).filter(
+                (teamId) => !Object.hasOwn(teamMemberships, teamId),
+              ),
+              fields: memberFields,
+              transaction,
+            },
+          );
+        } else if (transaction) {
+          transaction.set(ref, doc, { merge: true });
+        } else {
+          await setDoc(config.collection, nextId, doc, { merge: true });
+        }
+      };
+      if (db?.runTransaction) {
+        await db.runTransaction(writeIfCurrent);
+      } else {
+        await enqueueInMemoryRosterMemberMutation(nextId, () => writeIfCurrent(null));
+      }
+    } else if (kind === "member" && id && Object.hasOwn(payload, "teamMemberships")) {
       // Reconcile explicit membership keys individually. Merge-set resurrects
       // omitted keys, while whole-map update can overwrite another team's
       // concurrently added membership.
@@ -11539,6 +11510,48 @@ export const createTeamsAuthHandlers = ({
       : "";
   };
 
+  // Resolve the church and roster identity only from a validated human
+  // session. A request body or route parameter can never choose the member.
+  const resolveSignedInVolunteerIdentity = async (req) => {
+    const session = await requireHumanSession(req);
+    const churchId = String(req.params.churchId || "").trim();
+    if (session.churchId !== churchId) {
+      throw httpError(403, "Access required");
+    }
+    const userId = session.user?.uid;
+    if (!userId) throw httpError(401, "Authentication required");
+    const members = await listTeamCollectionForChurch(
+      COLLECTIONS.teamRosterMembers,
+      "memberId",
+      churchId,
+    );
+    return {
+      churchId,
+      userId,
+      members,
+      member: members.find((row) => row.userId === userId) || null,
+    };
+  };
+
+  const volunteerOperations = createVolunteerOperations({
+    COLLECTIONS,
+    requireFirestore,
+    getDoc,
+    updateDocFields,
+    nowIso,
+    httpError,
+    enqueueSchedule: enqueueInMemoryScheduleSave,
+    enqueueMember: enqueueInMemoryRosterMemberMutation,
+    normalizeBlockoutDates,
+    blockoutHistoryRetentionDays: BLOCKOUT_HISTORY_RETENTION_DAYS,
+    maxUpcomingBlockoutRanges: MAX_SELF_UPCOMING_BLOCKOUT_RANGES,
+    maxBlockoutRanges: MAX_SELF_BLOCKOUT_RANGES,
+  });
+  const {
+    saveBlockouts: saveVolunteerBlockouts,
+    writeAssignmentResponses,
+  } = volunteerOperations;
+
   return {
     prepareAvailabilityNotificationRecipients,
     prepareScheduleInitialSmsRecipients,
@@ -15287,6 +15300,9 @@ export const createTeamsAuthHandlers = ({
           id: req.params.memberId,
           payload,
           adminUserId: admin.user.uid,
+          ...(Object.hasOwn(req.body || {}, "expectedUpdatedAt")
+            ? { expectedUpdatedAt: normalizeShortText(req.body?.expectedUpdatedAt, { max: 64 }) }
+            : {}),
         });
         // Positions are team-scoped, so being eligible for a team's position
         // implies belonging to that team's roster. Mirror the intake-apply flow
@@ -15499,26 +15515,14 @@ export const createTeamsAuthHandlers = ({
      */
     async getMyTeamAssignments(req, res) {
       try {
-        const session = await requireHumanSession(req);
-        if (session.churchId !== req.params.churchId) {
-          throw httpError(403, "Access required");
-        }
-        const userId = session.user?.uid;
-        if (!userId) {
-          throw httpError(401, "Authentication required");
-        }
+        const { churchId, member, members } =
+          await resolveSignedInVolunteerIdentity(req);
 
-        const church = await getDoc(COLLECTIONS.churches, req.params.churchId);
+        const church = await getDoc(COLLECTIONS.churches, churchId);
         const serviceTimeZone = isValidPortableTimeZone(church?.serviceTimeZone)
           ? church.serviceTimeZone
           : "UTC";
 
-        const members = await listTeamCollectionForChurch(
-          COLLECTIONS.teamRosterMembers,
-          "memberId",
-          req.params.churchId,
-        );
-        const member = members.find((row) => row.userId === userId);
         if (!member) {
           return res.json({ success: true, serviceTimeZone, member: null, occurrences: [] });
         }
@@ -15527,19 +15531,20 @@ export const createTeamsAuthHandlers = ({
           listTeamCollectionForChurch(
             COLLECTIONS.teamSchedules,
             "scheduleId",
-            req.params.churchId,
+            churchId,
           ),
           listTeamCollectionForChurch(
             COLLECTIONS.teamPositions,
             "positionId",
-            req.params.churchId,
+            churchId,
           ),
           listTeamCollectionForChurch(
             COLLECTIONS.teams,
             "teamId",
-            req.params.churchId,
+            churchId,
           ),
         ]);
+        const visibleSchedules = schedules.filter(isVolunteerScheduleVisible);
         const positionNameById = new Map(
           positions.map((position) => [position.positionId, position.name]),
         );
@@ -15616,8 +15621,7 @@ export const createTeamsAuthHandlers = ({
 
         // First pass: only occurrences this person is on. Everything else stays
         // invisible — this endpoint must never become a roster read.
-        schedules.forEach((schedule) => {
-          if (schedule.archivedAt) return;
+        visibleSchedules.forEach((schedule) => {
           Object.entries(schedule.assignments || {}).forEach(
             ([occurrenceId, cells]) => {
               Object.entries(cells || {}).forEach(([columnKey, cell]) => {
@@ -15633,8 +15637,7 @@ export const createTeamsAuthHandlers = ({
         // Second pass: the full serving roster for those services, this person
         // included and flagged. One list rather than "mine" and "theirs" so it
         // reads like the public schedule, with their own row highlighted.
-        schedules.forEach((schedule) => {
-          if (schedule.archivedAt) return;
+        visibleSchedules.forEach((schedule) => {
           Object.entries(schedule.assignments || {}).forEach(
             ([occurrenceId, cells]) => {
               const entry = byOccurrence.get(occurrenceId);
@@ -15967,7 +15970,7 @@ export const createTeamsAuthHandlers = ({
         const { churchId, scheduleId, memberId } = assertAssignmentToken(token);
 
         const schedule = await getTeamEntity("schedule", scheduleId);
-        if (!schedule || schedule.churchId !== churchId) {
+        if (schedule?.churchId !== churchId || !isVolunteerScheduleVisible(schedule)) {
           throw httpError(404, "That schedule is no longer available.");
         }
         const members = await listTeamCollectionForChurch(
@@ -16037,7 +16040,7 @@ export const createTeamsAuthHandlers = ({
         const { churchId, scheduleId, memberId } = assertAssignmentToken(token);
 
         const existing = await getTeamEntity("schedule", scheduleId);
-        if (!existing || existing.churchId !== churchId) {
+        if (existing?.churchId !== churchId || !isVolunteerScheduleVisible(existing)) {
           throw httpError(404, "That schedule is no longer available.");
         }
         const occurrenceId = normalizeShortText(req.body?.occurrenceId, {
@@ -16194,12 +16197,8 @@ export const createTeamsAuthHandlers = ({
     async respondToMyAssignment(req, res) {
       try {
         await assertCsrf(req);
-        const session = await requireHumanSession(req);
-        if (session.churchId !== req.params.churchId) {
-          throw httpError(403, "Access required");
-        }
-        const userId = session.user?.uid;
-        if (!userId) throw httpError(401, "Authentication required");
+        const { churchId, userId, member } =
+          await resolveSignedInVolunteerIdentity(req);
 
         const response = normalizeAssignmentResponse(req.body?.response);
         if (response === "pending") {
@@ -16216,12 +16215,6 @@ export const createTeamsAuthHandlers = ({
           throw httpError(400, "That assignment is no longer available.");
         }
 
-        const members = await listTeamCollectionForChurch(
-          COLLECTIONS.teamRosterMembers,
-          "memberId",
-          req.params.churchId,
-        );
-        const member = members.find((row) => row.userId === userId);
         if (!member) {
           throw httpError(
             404,
@@ -16232,14 +16225,14 @@ export const createTeamsAuthHandlers = ({
         // Same writer as the emailed path, so the two can never disagree about
         // who may answer or how a concurrent answer is handled.
         const { schedule } = await writeAssignmentResponses({
-          churchId: req.params.churchId,
+          churchId,
           scheduleId,
           memberId: member.memberId,
           targets: [{ occurrenceId, cellKey }],
           response,
           actorUid: userId,
         });
-        emitTeamsEvent(req.params.churchId, "schedule-updated", { schedule });
+        emitTeamsEvent(churchId, "schedule-updated", { schedule });
         // Owners learn about this without watching the grid. Coalesced, so a
         // burst of answers after a send arrives as one email.
         await scheduleAssignmentResponseDigest(scheduleId);
@@ -16258,9 +16251,9 @@ export const createTeamsAuthHandlers = ({
      * admin roster endpoint would mean granting them edit rights over the whole
      * roster to maintain their own availability.
      *
-     * Writes `blockoutDates` and nothing else — the merge in `upsertTeamEntity`
-     * leaves positions, qualifications, and links untouched, so this cannot
-     * become a self-service path to eligibility.
+     * Writes only the blockout date field and its revision/audit stamps in the
+     * shared volunteer operation. The committing transaction rechecks the
+     * session's account link and current archive/revision state.
      *
      * Dates the member is already scheduled for are accepted, not refused. The
      * conflict is real information for both sides; swallowing the blockout to
@@ -16269,127 +16262,69 @@ export const createTeamsAuthHandlers = ({
     async updateMyBlockoutDates(req, res) {
       try {
         await assertCsrf(req);
-        const session = await requireHumanSession(req);
-        if (session.churchId !== req.params.churchId) {
-          throw httpError(403, "Access required");
-        }
-        const userId = session.user?.uid;
-        if (!userId) {
-          throw httpError(401, "Authentication required");
-        }
-
-        const members = await listTeamCollectionForChurch(
-          COLLECTIONS.teamRosterMembers,
-          "memberId",
-          req.params.churchId,
-        );
-        const member = members.find((row) => row.userId === userId);
+        const { churchId, userId, member } =
+          await resolveSignedInVolunteerIdentity(req);
         if (!member) {
           throw httpError(
             404,
             "Your account is not linked to a team member yet.",
           );
         }
-        // Load-bearing, not defensive: `upsertTeamEntity` writes
-        // `archivedAt: null` on every save, so without this an archived
-        // volunteer could restore themselves to the roster by saving a date.
-        if (member.archivedAt) {
-          throw httpError(
-            403,
-            "Your member record is archived. Ask an admin to restore it.",
-          );
-        }
 
-        // The write replaces the whole array, so without a precondition an
-        // admin editing this member's blockouts loses their change the moment
-        // the member saves a page loaded beforehand — silently, with nothing
-        // but a securityEvents row saying the member saved. Required rather
-        // than advisory: this endpoint has only ever had one client.
+        // The operation checks this revision again inside the committing
+        // transaction, after rereading the current member record.
         const expectedUpdatedAt = normalizeShortText(
           req.body?.expectedUpdatedAt,
           { max: 64 },
         );
-        if (member.updatedAt && expectedUpdatedAt !== member.updatedAt) {
-          throw httpError(
-            409,
-            "Your time off changed somewhere else. Check the dates and save again.",
-          );
-        }
 
-        const submitted = normalizeBlockoutDates(req.body?.blockoutDates);
-
-        // Drop history past the retention window, so the array reaches a steady
-        // state rather than growing for the life of the account.
-        const retentionCutoff = new Date(
-          Date.now() - BLOCKOUT_HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000,
-        )
-          .toISOString()
-          .slice(0, 10);
-        const blockoutDates = submitted.filter(
-          (range) => (range.endDate || range.startDate) >= retentionCutoff,
-        );
-
-        // Two bounds, because they answer different questions.
-        //
-        // Entries still accumulate within the retention window, so a limit
-        // counted across the whole array would blame last year's trips for
-        // refusing next month's. Only entries that have not ended yet count
-        // against the limit a person can actually feel.
-        const today = nowIso().slice(0, 10);
-        const upcoming = blockoutDates.filter(
-          (range) => (range.endDate || range.startDate) >= today,
-        );
-        if (upcoming.length > MAX_SELF_UPCOMING_BLOCKOUT_RANGES) {
-          throw httpError(
-            400,
-            `That is over ${MAX_SELF_UPCOMING_BLOCKOUT_RANGES} upcoming blockout entries. Remove one before adding another.`,
-          );
-        }
-        // The absolute ceiling is about document size, not about what anyone
-        // needs. The admin roster editor is behind an edit permission; this
-        // endpoint is reachable by the narrowest tier there is, and every
-        // member document is read on the Teams bootstrap, so one bloated record
-        // slows the whole church.
-        if (blockoutDates.length > MAX_SELF_BLOCKOUT_RANGES) {
-          throw httpError(
-            400,
-            "That is too many blockout entries to store. Remove some old ones and try again.",
-          );
-        }
-
-        const saved = await upsertTeamEntity({
-          kind: "member",
-          churchId: req.params.churchId,
-          id: member.memberId,
-          payload: { blockoutDates },
-          adminUserId: userId,
-        });
-        await addSecurityEvent({
-          type: "team_roster_member_blockouts_self_updated",
-          churchId: req.params.churchId,
-          userId,
+        const saved = await saveVolunteerBlockouts({
+          churchId,
           memberId: member.memberId,
+          actorUid: userId,
+          expectedUpdatedAt,
+          blockoutDates: req.body?.blockoutDates,
         });
+        try {
+          await addSecurityEvent({
+            type: "team_roster_member_blockouts_self_updated",
+            churchId,
+            userId,
+            memberId: member.memberId,
+          });
+        } catch (error) {
+          try {
+            logAuthEvent?.("warn", "schedule.blockout.audit-error", {
+              churchId,
+              memberId: member.memberId,
+              errorMessage: error?.message || "audit write failed",
+            });
+          } catch {}
+        }
 
         // Owners have no other way to learn about this. The person who made the
         // change cannot see the schedule, and the amber grid flag only reaches
         // someone who happens to open it. Deliberately after the response is
         // committed and never fatal: the volunteer's time off is saved either
         // way, and a queueing failure must not read to them as a failed save.
-        await recordBlockoutConflicts({
-          churchId: req.params.churchId,
-          memberId: member.memberId,
-          previousRanges: member.blockoutDates || [],
-          nextRanges: blockoutDates,
-        }).catch((error) =>
-          logAuthEvent("warn", "schedule.blockout.conflict-notify-error", {
-            churchId: req.params.churchId,
+        try {
+          await recordBlockoutConflicts({
+            churchId,
             memberId: member.memberId,
-            errorMessage: error?.message || "notify failed",
-          }),
-        );
+            previousRanges: saved.previousRanges,
+            nextRanges: saved.blockoutDates,
+          });
+        } catch (error) {
+          try {
+            logAuthEvent?.("warn", "schedule.blockout.conflict-notify-error", {
+              churchId,
+              memberId: member.memberId,
+              errorMessage: error?.message || "notify failed",
+            });
+          } catch {}
+        }
 
-        return res.json({ success: true, member: saved });
+        return res.json({ success: true, member: saved.member });
       } catch (error) {
         return sendTeamsJsonError(
           res,

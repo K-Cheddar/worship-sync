@@ -1263,6 +1263,8 @@ export const updateCurrentServiceWorkspace = async (
 };
 
 export type TeamRosterMemberPayload = {
+  /** Revision the member editor loaded; protects roster and time-off edits from stale saves. */
+  expectedUpdatedAt?: string;
   title?: string;
   firstName: string;
   lastName: string;
