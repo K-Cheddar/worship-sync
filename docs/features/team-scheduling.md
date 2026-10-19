@@ -146,3 +146,6 @@ The current schedule document is persisted in the teamSchedules collection. Its 
 - Saving a phone number never records consent, sends a message, creates an account or issues an invitation. Administrators may separately record already-obtained consent using the existing consent modal, only after current server eligibility confirms consent is needed. STOP restrictions remain enforced.
 
 Regression coverage: ScheduleAssignmentPicker.test.tsx, TeamsAndServices.test.tsx, server/teamsApi.test.js, and the scheduling quick-member browser suite.
+
+
+Unified workspace Phase 1 (product-owner request, 2026-10-19): establish a pure Team/date-range read model across saved owners and generated occurrences, preserving saved occurrence keys, staffing overrides, custom services and unsafe legacy rows. Summary-only owners remain explicitly unhydrated, never empty staffing. This phase extracts stable period logic but preserves existing selection/editing, overlap review, publication, permissions and communication. Unified grid integration and owner-aware mutations are deferred. See the [Phase 1 implementation and integration boundaries](../unified-scheduling-workspace-phase-1.md).
