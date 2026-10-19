@@ -1,8 +1,14 @@
-import { AuthApiError } from "./auth";
 import type { MyScheduleOperations, PersonalScheduleAccess } from "../pages/myScheduleOperations";
 import { clearVolunteerIngress, readVolunteerIngress } from "../public/volunteerIngress";
 
 export type VolunteerSession = { csrfToken: string; churchId: string; memberId: string; expiresAt: number };
+// Personal access failures must not invoke the human-session sign-in toast.
+export class VolunteerApiError extends Error {
+  constructor(message: string, readonly status: number, readonly details: { accessStatus?: string }) {
+    super(message);
+    this.name = "VolunteerApiError";
+  }
+}
 export const volunteerRequest = async <T>(path: string, body?: unknown, csrfToken = "", signal?: AbortSignal): Promise<T> => {
   const response = await fetch(`/api/volunteer/${path}`, {
     method: body === undefined ? "GET" : "POST", credentials: "include", cache: "no-store",
@@ -11,9 +17,8 @@ export const volunteerRequest = async <T>(path: string, body?: unknown, csrfToke
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const result = await response.json();
-  if (!response.ok) throw new AuthApiError(result.errorMessage || "Open your personal link to continue.", {
-    status: response.status, details: { accessStatus: result.accessStatus },
-  });
+  if (!response.ok) throw new VolunteerApiError(result.errorMessage || "Open your personal link to continue.",
+    response.status, { accessStatus: result.accessStatus });
   return result as T;
 };
 
@@ -25,7 +30,7 @@ export const openVolunteerSession = async () => {
       clearVolunteerIngress(); return result;
     }).catch((error: unknown) => {
       redemption = undefined;
-      if (error instanceof AuthApiError && error.status && error.status !== 410) clearVolunteerIngress();
+      if (error instanceof VolunteerApiError && error.status !== 410) clearVolunteerIngress();
       throw error;
     });
     await redemption;

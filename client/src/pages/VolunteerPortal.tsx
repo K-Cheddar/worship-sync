@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AuthApiError } from "../api/auth";
-import { openVolunteerSession, personalScheduleAccess, volunteerRequest, volunteerRequestKey, type VolunteerSession } from "../api/volunteer";
+import { openVolunteerSession, personalScheduleAccess, volunteerRequest, volunteerRequestKey, VolunteerApiError, type VolunteerSession } from "../api/volunteer";
 import Button from "../components/Button/Button";
 import Input from "../components/Input/Input";
 import { readVolunteerIngress, clearVolunteerIngress } from "../public/volunteerIngress";
@@ -25,8 +24,7 @@ const VolunteerPortal = () => {
     let active = true;
     void openVolunteerSession().then((value) => { if (active) { setSession(value); setStatus("ready"); } }).catch((error: unknown) => {
       if (!active) return;
-      const details = error instanceof AuthApiError ? error.details as { accessStatus?: string } | undefined : undefined;
-      setStatus(error instanceof AuthApiError && error.status ? details?.accessStatus || "invalid" : "error");
+      setStatus(error instanceof VolunteerApiError ? error.details.accessStatus || "invalid" : "error");
     });
     return () => { active = false; mounted.current = false; controller.current?.abort(); };
   }, [retry]);

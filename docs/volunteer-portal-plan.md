@@ -38,3 +38,10 @@ Required: directly affected server/client suites; real Firestore interleavings a
 
 ## Operational configuration
 Personal access remains disabled unless `AUTH_VOLUNTEER_PORTAL_ENABLED=true`. Configure a dedicated random `AUTH_VOLUNTEER_PORTAL_SECRET` of at least 32 characters, retain it across restarts, and set `AUTH_APP_BASE_URL` to the HTTPS origin. `AUTH_VOLUNTEER_ACCESS_DAYS` defaults to 90. Configure existing SMS/email delivery before assisted verification. Secret replacement invalidates personal access. Operational rollout is separate; do not enable the bulk dispatcher as part of this work.
+
+## October 19 correctness and pilot phase
+
+See the [correctness plan](volunteer-time-off-correctness-plan.md), current
+[review](volunteer-portal-review.md) and inactive [pilot runbook](volunteer-portal-pilot.md).
+The earlier review missed a draft-baseline revision transfer; the current phase
+owns its correction and adversarial verification.

@@ -3,7 +3,7 @@ import { CalendarOff, ChevronDown, ChevronUp, TriangleAlert } from "lucide-react
 import Button from "../components/Button/Button";
 import Icon from "../components/Icon/Icon";
 import BlockoutDatesField from "./Teams/components/BlockoutDatesField";
-import { findBlockoutRangeForDate } from "./Teams/teamsUtils";
+import { findBlockoutRangeForDate, formatBlockoutDateRangeLabel } from "./Teams/teamsUtils";
 import { updateMyBlockoutDates, type MyScheduleOccurrence } from "../api/auth";
 import type { TeamBlockoutDateRange } from "../api/authTypes";
 import { getApiErrorStatus, showApiErrorToast } from "../utils/apiErrorToast";
@@ -28,7 +28,7 @@ type MyScheduleBlockoutsProps = {
   churchId: string;
   serviceTimeZone: string;
   blockoutDates: TeamBlockoutDateRange[];
-  /** `updatedAt` of the record this edit started from; the write precondition. */
+  /** Latest saved revision. A dirty draft retains its own baseline revision. */
   expectedUpdatedAt: string;
   /** Used to spot dates the member is already scheduled for. */
   occurrences: MyScheduleOccurrence[];
@@ -37,7 +37,7 @@ type MyScheduleBlockoutsProps = {
   /** Lets the page skip a background refresh while an edit is open. */
   onDirtyChange: (dirty: boolean) => void;
   /** Called when the record moved underneath this edit, to pick up the change. */
-  onStale: () => void;
+  onStale: () => Promise<boolean> | undefined;
 };
 
 type BlockoutConflict = {
@@ -109,6 +109,10 @@ const MyScheduleBlockouts = ({
   );
   const editorRanges = showEnded ? draft : draftCurrent;
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const [rejectedAsStale, setRejectedAsStale] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshingRef = useRef(false);
   // BlockoutDatesField seeds its rows from `value` once, so re-seeding needs a
   // remount rather than a prop change.
   const [fieldKey, setFieldKey] = useState(0);
@@ -121,11 +125,14 @@ const MyScheduleBlockouts = ({
    * saving it would push the older dates back over the newer ones with a
    * freshly refreshed write stamp the server has no reason to reject.
    */
-  const [baseline, setBaseline] = useState(() => signRanges(blockoutDates));
+  const [baseline, setBaseline] = useState(() => ({
+    ranges: blockoutDates, updatedAt: expectedUpdatedAt,
+  }));
 
-  const seedDraft = useCallback((ranges: TeamBlockoutDateRange[]) => {
+  const seedDraft = useCallback((ranges: TeamBlockoutDateRange[], updatedAt: string) => {
     setDraft(ranges);
-    setBaseline(signRanges(ranges));
+    setBaseline({ ranges, updatedAt });
+    setRejectedAsStale(false);
     setFieldKey((key) => key + 1);
   }, []);
 
@@ -152,7 +159,9 @@ const MyScheduleBlockouts = ({
 
   const draftSignature = signRanges(draft);
   const serverSignature = signRanges(blockoutDates);
-  const isDirty = draftSignature !== baseline;
+  const baselineSignature = signRanges(baseline.ranges);
+  const isDirty = draftSignature !== baselineSignature;
+  const hasConflict = rejectedAsStale || (isDirty && expectedUpdatedAt !== baseline.updatedAt);
 
   /**
    * Adopt server state that arrived while this editor was mounted — a
@@ -162,10 +171,10 @@ const MyScheduleBlockouts = ({
    * is how stale dates get written back.
    */
   useEffect(() => {
-    if (serverSignature === baseline) return;
-    if (draftSignature !== baseline) return;
-    seedDraft(blockoutDates);
-  }, [baseline, blockoutDates, draftSignature, seedDraft, serverSignature]);
+    if (saving || rejectedAsStale || isDirty) return;
+    if (serverSignature === baselineSignature && expectedUpdatedAt === baseline.updatedAt) return;
+    seedDraft(blockoutDates, expectedUpdatedAt);
+  }, [baseline.updatedAt, baselineSignature, blockoutDates, expectedUpdatedAt, isDirty, rejectedAsStale, saving, seedDraft, serverSignature]);
 
   // Reported up so a background refresh cannot replace an open edit. Cleared on
   // unmount, or leaving the list view would pin the page as permanently dirty.
@@ -174,7 +183,7 @@ const MyScheduleBlockouts = ({
     return () => onDirtyChange(false);
   }, [isDirty, onDirtyChange]);
 
-  const discard = () => seedDraft(blockoutDates);
+  const discard = () => seedDraft(blockoutDates, expectedUpdatedAt);
 
   const handleDraftChange = (next: TeamBlockoutDateRange[]) => {
     // When past dates are hidden, preserve them in the draft while applying
@@ -182,21 +191,36 @@ const MyScheduleBlockouts = ({
     setDraft(showEnded ? next : [...draftEnded, ...next]);
   };
 
+  const refreshSavedDates = async () => {
+    if (refreshingRef.current) return;
+    refreshingRef.current = true;
+    setRefreshing(true);
+    try {
+      const refreshed = await onStale();
+      if (mounted.current && !refreshed) showToast("Could not refresh saved dates. Your draft is kept. Try again.", "error");
+    } finally {
+      refreshingRef.current = false;
+      if (mounted.current) setRefreshing(false);
+    }
+  };
+
   const save = async () => {
+    if (savingRef.current || hasConflict) return;
+    savingRef.current = true;
     setSaving(true);
     try {
       // Entries hidden from the editor are sent back untouched. Editing what is
       // actionable must not amount to deleting the rest.
       const result = await (saveBlockouts
-        ? saveBlockouts(draft, expectedUpdatedAt)
-        : updateMyBlockoutDates(churchId, draft, expectedUpdatedAt));
+        ? saveBlockouts(draft, baseline.updatedAt)
+        : updateMyBlockoutDates(churchId, draft, baseline.updatedAt));
       if (!mounted.current) return;
       const saved = result.member?.blockoutDates || [];
       // Re-seed from the server so its normalization is what stays on screen: a
       // single day collapsed to one date, a blank row dropped, history past the
       // retention window pruned. Seeding also moves the baseline, so the save
       // leaves the editor clean rather than looking edited again.
-      seedDraft(saved);
+      seedDraft(saved, result.member.updatedAt || "");
       onSaved(result.member);
       showToast("Time off saved.", "success");
     } catch (error) {
@@ -204,9 +228,13 @@ const MyScheduleBlockouts = ({
       // 409: the record moved under this edit. Pull the change in so the reader
       // is comparing against what is actually stored, but keep their draft —
       // discarding an edit to report a conflict trades one loss for another.
-      if (getApiErrorStatus(error) === 409) onStale();
+      if (getApiErrorStatus(error) === 409) {
+        setRejectedAsStale(true);
+        void refreshSavedDates();
+      }
       showApiErrorToast(showToast, error, "Could not save your time off.");
     } finally {
+      savingRef.current = false;
       if (mounted.current) setSaving(false);
     }
   };
@@ -249,14 +277,32 @@ const MyScheduleBlockouts = ({
             the schedule.
           </p>
 
-          <BlockoutDatesField
-            key={`${fieldKey}-${showEnded ? "all" : "current"}`}
-            variant="admin"
-            showNotes
-            emptyLabel="No upcoming dates added yet."
-            value={editorRanges}
-            onChange={handleDraftChange}
-          />
+          {hasConflict ? <div role="status" className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-100">
+            <p>Your saved information changed elsewhere. Your unsaved dates are kept.</p>
+            <p>Review the saved dates, then discard your draft and reapply any changes you still need.</p>
+            <details>
+              <summary className="cursor-pointer underline">Review saved dates</summary>
+              {blockoutDates.length ? <ul className="mt-2 space-y-1">
+                {blockoutDates.map((range, index) => <li key={index}>
+                  {formatBlockoutDateRangeLabel(range)}{range.notes ? ` · ${range.notes}` : ""}
+                </li>)}
+              </ul> : <p className="mt-2">No saved dates.</p>}
+            </details>
+            <Button type="button" variant="tertiary" disabled={refreshing} onClick={() => void refreshSavedDates()}>
+              {refreshing ? "Refreshing saved dates…" : "Refresh saved dates"}
+            </Button>
+          </div> : null}
+
+          <fieldset disabled={saving}>
+            <BlockoutDatesField
+              key={`${fieldKey}-${showEnded ? "all" : "current"}`}
+              variant="admin"
+              showNotes
+              emptyLabel="No upcoming dates added yet."
+              value={editorRanges}
+              onChange={handleDraftChange}
+            />
+          </fieldset>
 
           {draftEnded.length > 0 ? (
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -308,7 +354,7 @@ const MyScheduleBlockouts = ({
               type="button"
               variant="tertiary"
               className="max-md:min-h-0"
-              disabled={!isDirty || saving}
+              disabled={(!isDirty && !hasConflict) || saving || refreshing}
               onClick={discard}
             >
               Discard changes
@@ -317,7 +363,7 @@ const MyScheduleBlockouts = ({
               type="button"
               variant="cta"
               className="max-md:min-h-0"
-              disabled={!isDirty || saving}
+              disabled={!isDirty || saving || hasConflict}
               onClick={save}
             >
               {saving ? "Saving…" : "Save time off"}

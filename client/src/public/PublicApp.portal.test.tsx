@@ -66,3 +66,20 @@ it("cleans the fragment and completes expired-link verification before restoring
   const sent = fetchMock.mock.calls.find(([path]) => String(path).endsWith("/recovery/start"));
   expect(JSON.parse(sent?.[1].body as string).token).toBe(token);
 });
+
+it.each([401, 403])("keeps unsaved time off and gives personal-link guidance when access changes (HTTP %s)", async (status) => {
+  const user = userEvent.setup();
+  const normal = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (path: string, options: RequestInit) => {
+    if (path.endsWith("/blockouts")) return { ok: false, status, json: async () => ({ errorMessage: "Open your personal link to continue." }) };
+    return normal(path, options);
+  });
+  render(<PublicApp />);
+  await user.click(await screen.findByRole("button", { name: /Time off/i }));
+  await user.click(screen.getByRole("button", { name: /Add single day/i }));
+  await user.type(screen.getByRole("textbox", { name: /Notes/i }), "Unsaved travel dates");
+  await user.click(screen.getByRole("button", { name: "Save time off" }));
+  expect(await screen.findByText("Open your personal link to continue.")).toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue("Unsaved travel dates");
+  expect(screen.queryByRole("button", { name: "Refresh page" })).not.toBeInTheDocument();
+});

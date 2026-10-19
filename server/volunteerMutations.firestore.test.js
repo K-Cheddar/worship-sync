@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { initializeApp, deleteApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { createVolunteerMutations } from "./volunteerMutations.js";
+import { createVolunteerPersonalAccess } from "./volunteerPersonalAccess.js";
 
 const enabled = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
 const httpError = (status, message) => Object.assign(new Error(message), { status });
@@ -35,7 +36,7 @@ const fixture = async (task) => {
   });
   try {
     await Promise.all([memberRef.set(member), scheduleRef.set(schedule)]);
-    await task({ db, operations, identity, member, memberRef, scheduleRef,
+    await task({ db, COLLECTIONS, operations, identity, member, memberRef, scheduleRef,
       beforeTransaction: (fn) => { beforeTransaction = fn; } });
   } finally {
     await Promise.all(Object.values(COLLECTIONS).map((name) => db.recursiveDelete(db.collection(name))));
@@ -121,4 +122,39 @@ test("Firestore time-off revisions advance even when the stored clock is ahead",
   const saved = await operations.saveBlockouts({ ...identity, expectedUpdatedAt: baseline, blockoutDates: [] });
   assert.equal(saved.member.updatedAt, "2099-01-01T00:00:00.001Z");
   await assert.rejects(operations.saveBlockouts({ ...identity, expectedUpdatedAt: baseline, blockoutDates: [] }), { status: 409 });
+}));
+
+test("Firestore delayed personal time-off save rechecks revocation before committing", { skip: !enabled }, async () => fixture(async ({ db, COLLECTIONS, operations, identity, memberRef, beforeTransaction }) => {
+  const prefix = `delayed_personal_${randomUUID()}`;
+  const collections = Object.fromEntries(["access", "credentials", "sessions"].map((kind) => [kind, `${prefix}_${kind}`]));
+  const access = createVolunteerPersonalAccess({ db, memberCollection: COLLECTIONS.teamRosterMembers, collections,
+    secret: "synthetic-delayed-personal-mutation-test-secret" });
+  let proceed;
+  let entered;
+  const paused = new Promise((yes) => { entered = yes; });
+  const resumed = new Promise((yes) => { proceed = yes; });
+  try {
+    const credential = await access.prepare(identity);
+    const session = await access.redeem(credential.token);
+    assert.equal((await access.readSession(session.session)).memberId, identity.memberId);
+    beforeTransaction(async () => { entered(); await resumed; });
+    const save = operations.saveBlockouts({ churchId: identity.churchId, memberId: identity.memberId,
+      expectedUpdatedAt: "baseline", blockoutDates: [{ startDate: "2099-12-01" }],
+      authorize: async (transaction) => {
+        if (!await access.readSession(session.session, transaction)) throw httpError(401, "Personal access is no longer valid.");
+      },
+    });
+    const result = assert.rejects(save, { status: 401 });
+    await paused;
+    await access.revoke(identity, "admin");
+    proceed();
+    await result;
+    const saved = (await memberRef.get()).data();
+    assert.deepEqual(saved.blockoutDates, []);
+    assert.equal(saved.updatedAt, "baseline");
+    assert.deepEqual(saved.qualifications, ["qualified"]);
+  } finally {
+    proceed();
+    await Promise.all(Object.values(collections).map((name) => db.recursiveDelete(db.collection(name))));
+  }
 }));

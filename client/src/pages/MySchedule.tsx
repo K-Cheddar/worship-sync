@@ -758,22 +758,24 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
       if (!churchId) return;
       const request = ++requestRef.current;
       if (showLoading) setStatus("loading");
-      void operations.load()
+      return operations.load()
         .then((result) => {
-          if (!mountedRef.current || request !== requestRef.current) return;
+          if (!mountedRef.current || request !== requestRef.current) return false;
           setOccurrences(result.occurrences || []);
           setServiceTimeZone(result.serviceTimeZone || "UTC");
           setHasMemberRecord(Boolean(result.member));
           setBlockoutDates(result.member?.blockoutDates || []);
           setMemberUpdatedAt(result.member?.updatedAt || "");
           setStatus("ready");
+          return true;
         })
         .catch(() => {
-          if (!mountedRef.current || request !== requestRef.current) return;
+          if (!mountedRef.current || request !== requestRef.current) return false;
           // A background refresh that fails leaves the page as it is. Replacing
           // a working schedule with an error because a resume failed is worse
           // than showing data that is a few minutes old.
           if (showLoading) setStatus("error");
+          return false;
         });
     },
     [churchId, operations],
@@ -801,6 +803,8 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
   }, []);
 
   const handleBlockoutsSaved = useCallback((member: MyScheduleMember) => {
+    // A load started before this commit may still contain the old dates/stamp.
+    ++requestRef.current;
     setBlockoutDates(member?.blockoutDates || []);
     setMemberUpdatedAt(member?.updatedAt || "");
   }, []);
@@ -808,11 +812,10 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
   /**
    * The save was rejected because the record moved. Pull the current state in
    * so the reader compares against what is stored — the editor keeps their
-   * draft, so nothing they typed is lost, and saving again now carries a write
-   * stamp the server will accept.
+   * draft and its original precondition until they explicitly resolve it.
    */
   const refreshAfterConflict = useCallback(() => {
-    load({ showLoading: false });
+    return load({ showLoading: false });
   }, [load]);
 
   const [respondingKey, setRespondingKey] = useState("");
@@ -1236,7 +1239,7 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
 
 const MySchedule = ({ access }: { access?: PersonalScheduleAccess }) => {
   const context = useContext(GlobalInfoContext);
-  const identity = access ? `${access.churchId}:${access.memberId}` : `${context?.churchId || ""}:${context?.userId || ""}`;
+  const identity = access ? `personal:${access.churchId}:${access.memberId}` : `human:${context?.churchId || ""}:${context?.userId || ""}`;
   return <MyScheduleView key={identity} access={access} />;
 };
 

@@ -38,7 +38,7 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
   const { authHandlers, COLLECTIONS, setServerFirestoreForTests } = await import("../authService.js");
   registerVolunteerRoutes(application, authHandlers);
   application.use(express.static(resolve("client/dist")));
-  application.get("/{*path}", (_req, res) => res.sendFile(resolve("client/dist/index.html")));
+  application.get("/{*path}", (_req, res) => res.type("html").send(readFileSync(resolve("client/dist/index.html"))));
   const suffix = randomUUID();
   const churchId = `browser_church_${suffix}`;
   const memberId = `browser_member_${suffix}`;
@@ -113,16 +113,30 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
     assert.equal(new URL(page.url()).hash, "");
     assert.equal(await page.getByText("PRIVATE-DRAFT").count(), 0);
     await page.getByRole("button", { name: /Time off/i }).click();
+    await page.getByRole("textbox", { name: /Notes/i }).fill("Volunteer unsaved dates");
+    await memberRef.update({ updatedAt: "admin-revision-b", blockoutDates: [{
+      startDate: "2099-11-02", endDate: "2099-11-02", notes: "Administrator saved dates",
+    }] });
+    const acceptedResponse = page.waitForResponse((response) => response.url().endsWith("/api/volunteer/accept-unanswered"));
+    await page.getByRole("button", { name: "Accept all unanswered" }).click();
+    assert.equal((await (await acceptedResponse).json()).success, true);
+    await page.getByText(/Your saved information changed elsewhere/).waitFor();
+    assert.equal(await page.getByRole("textbox", { name: /Notes/i }).inputValue(), "Volunteer unsaved dates");
+    assert.equal(await page.getByRole("button", { name: /Save time off/i }).isDisabled(), true);
+    await page.getByText("Review saved dates").click();
+    await page.getByText(/Administrator saved dates/).waitFor();
+    if (process.env.VOLUNTEER_BROWSER_SCREENSHOT) {
+      await page.screenshot({ path: process.env.VOLUNTEER_BROWSER_SCREENSHOT, fullPage: true });
+    }
+    assert.equal((await scheduleRef.get()).data().responses[occurrenceId]["camera::0"].response, "accepted");
+    await page.getByRole("button", { name: "Discard changes" }).click();
+    assert.equal(await page.getByRole("textbox", { name: /Notes/i }).inputValue(), "Administrator saved dates");
     await page.getByRole("button", { name: /Remove blockout/i }).click();
     await page.getByRole("button", { name: /Save time off/i }).click();
     await page.getByText("Time off saved.").waitFor();
     assert.deepEqual((await memberRef.get()).data().blockoutDates, []);
     assert.equal((await memberRef.get()).data().notes, "PRIVATE-BROWSER-NOTE");
-    const acceptedResponse = page.waitForResponse((response) => response.url().endsWith("/api/volunteer/accept-unanswered"));
-    await page.getByRole("button", { name: "Accept all unanswered" }).click();
-    assert.equal((await (await acceptedResponse).json()).success, true);
     await page.getByRole("button", { name: "Accept all unanswered" }).waitFor({ state: "detached" });
-    assert.equal((await scheduleRef.get()).data().responses[occurrenceId]["camera::0"].response, "accepted");
     await page.getByText("Availability requests (1)").click();
     await page.getByRole("combobox", { name: /December service/i }).click();
     await page.getByRole("option", { name: "Unavailable", exact: true }).click();

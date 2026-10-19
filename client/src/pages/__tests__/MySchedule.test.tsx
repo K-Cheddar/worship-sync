@@ -652,7 +652,8 @@ describe("MySchedule", () => {
       // trade one kind of loss for another.
       expect(
         screen.getByRole("button", { name: /Save time off/i }),
-      ).toBeEnabled();
+      ).toBeDisabled();
+      expect(screen.getByText(/Your unsaved dates are kept/)).toBeInTheDocument();
     });
 
     it("offers time off even when nothing is scheduled yet", async () => {
