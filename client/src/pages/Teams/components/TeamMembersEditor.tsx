@@ -21,6 +21,7 @@ type TeamMembersEditorProps = {
   canEditMembership: boolean;
   isSearching?: boolean;
   isAdding?: boolean;
+  hasMoreSuggestions?: boolean;
   addingMemberId?: string | null;
   searchError?: string;
   onRetrySearch?: () => void;
@@ -43,6 +44,7 @@ const TeamMembersEditor = ({
   canEditMembership,
   isSearching = false,
   isAdding = false,
+  hasMoreSuggestions = false,
   addingMemberId = null,
   searchError = "",
   onRetrySearch,
@@ -224,7 +226,7 @@ const TeamMembersEditor = ({
           {queryLength >= minimumQueryLength && !isSearching && !searchError && visibleSuggestions.length === 0 ? (
             <p role="status" className="text-sm text-gray-400">No matching members found.</p>
           ) : null}
-          {visibleSuggestions.length > VISIBLE_SUGGESTION_LIMIT ? (
+          {hasMoreSuggestions || visibleSuggestions.length > VISIBLE_SUGGESTION_LIMIT ? (
             <p className="text-sm text-gray-400">Showing the first 20 matches. Refine your search to narrow the list.</p>
           ) : null}
           {onCreateMember ? (

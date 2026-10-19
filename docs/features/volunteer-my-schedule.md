@@ -25,6 +25,16 @@ these budgets durably. Existing unverified contacts remain ineligible until an
 administrator establishes independent possession verification. Consent is not
 possession proof; do not derive the latter from an administrative consent entry.
 
+Duplicate-contact eligibility currently scans the church roster and normalizes
+legacy phone formats before allowing recovery. Replacing that scan requires a
+church-scoped contact index keyed by a keyed hash of the church, channel, and
+normalized contact. A safe migration must dual-write the index on every contact,
+archive, and church-membership change; backfill existing members; record collisions
+instead of choosing one member; and audit index coverage before reads can rely
+on it. Keep the roster scan as the authority until the backfill and every
+contact writer are covered, then retain a fail-closed path for incomplete or
+ambiguous index entries. Contact uniqueness must remain scoped to one church.
+
 ## Implementation record
 
 See [implementation plan](../volunteer-portal-plan.md). Required milestones are

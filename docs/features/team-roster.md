@@ -4,7 +4,7 @@
 
 **Approval source:** Current request dated 2026-10-18
 
-**Last reviewed:** 2026-10-18
+**Last reviewed:** 2026-10-19
 
 ## Purpose
 
@@ -18,6 +18,7 @@ An editor opens a team, reviews the assigned members in alphabetical order, and 
 
 - Show assigned members first, sorted by display name using `memberName` and a locale-aware comparison. Show eight at first for larger teams, with an inline control to show the full list. Always render assigned membership, even when a member projection is unavailable.
 - Do not show the available directory until the editor searches. Show matching unassigned members in alphabetical order, with one Add action per member. Exclude archived people from global-admin suggestions.
+- Scoped search sorts all eligible matches before returning at most 20 candidates and reports when more matches exist, so the editor can prompt users to refine a broad search.
 - Church-wide administrators change `memberIds` in the existing draft. Save uses the existing `memberIds` and `baseMemberIds` contract when membership changed; an unrelated settings save omits membership fields. Cancel discards draft changes.
 - Team-scoped managers search only through `searchTeamRosterCandidates`, then add or remove through the scoped roster endpoints. These endpoints retain their existing authorization checks, safe member projections, membership synchronization, and projection reconciliation.
 - Confirm before removing a member. Scoped removal explains that team positions, role, and qualifications are removed, while historical schedule assignments remain. Removing someone from a team never deletes their member record.
@@ -60,5 +61,5 @@ An editor opens a team, reviews the assigned members in alphabetical order, and 
 ## Technical design notes
 
 - Global edits update the team draft and use `updateTeam` with the captured baseline only when membership changed. The server applies the membership delta to its current roster so concurrent additions are retained.
-- Scoped search returns safe display projections for active candidates. Scoped membership mutations synchronize team/member projection state, remove team-owned positions and qualifications where appropriate, and retain historical schedule assignments.
+- Scoped search returns safe display projections for active candidates and indicates when its sorted 20-result page is truncated. Scoped membership mutations synchronize team/member projection state, remove team-owned positions and qualifications where appropriate, and retain historical schedule assignments.
 - Suggestions and assigned rows use `memberId` for identity. Names are display values only.

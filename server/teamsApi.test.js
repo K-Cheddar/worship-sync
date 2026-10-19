@@ -17656,7 +17656,28 @@ test("scoped managers can mutate one Team roster without editing shared member r
   const candidates = await run(authHandlers.searchTeamRosterCandidates, manager, {}, {}, { q: "sarah" });
   assert.equal(candidates.statusCode, 200);
   assert.deepEqual(candidates.payload.candidates.map(({ memberId }) => memberId), [linkedSarahId]);
+  assert.equal(candidates.payload.hasMore, false);
   assert.deepEqual(Object.keys(candidates.payload.candidates[0]).sort(), ["firstName", "lastName", "memberId"]);
+
+  for (let index = 24; index >= 1; index -= 1) {
+    const suffix = String(index).padStart(2, "0");
+    await setDoc(COLLECTIONS.teamRosterMembers, `${fixture.churchId}_candidate_${suffix}`, {
+      memberId: `${fixture.churchId}_candidate_${suffix}`,
+      churchId: fixture.churchId,
+      firstName: `Candidate ${suffix}`,
+      lastName: "Person",
+      createdAt: new Date(1_700_000_000_000 + (24 - index) * 1000).toISOString(),
+      positionIds: [], desiredPositionIds: [], blockoutDates: [], qualifications: [], teamMemberships: {},
+    }, { merge: false });
+  }
+  const broadSearch = await run(authHandlers.searchTeamRosterCandidates, manager, {}, {}, { q: "candidate" });
+  assert.equal(broadSearch.statusCode, 200);
+  assert.equal(broadSearch.payload.hasMore, true);
+  assert.equal(broadSearch.payload.candidates.length, 20);
+  assert.deepEqual(
+    broadSearch.payload.candidates.map(({ firstName }) => firstName),
+    Array.from({ length: 20 }, (_, index) => `Candidate ${String(index + 1).padStart(2, "0")}`),
+  );
   assert.equal((await run(authHandlers.searchTeamRosterCandidates, manager, {}, {}, { q: "s" })).statusCode, 400);
   assert.equal((await run(authHandlers.searchTeamRosterCandidates, noTeamsAccess, {}, {}, { q: "sarah" })).statusCode, 403);
   assert.equal((await run(authHandlers.addTeamRosterMember, avManager, { memberId: linkedSarahId })).statusCode, 403);
@@ -20222,6 +20243,84 @@ test("my schedule excludes Draft assignments, teammate joins and legacy response
   });
   assert.equal(accountWrite.statusCode, 404);
   assert.equal((await getDoc(COLLECTIONS.teamSchedules, scheduleId)).responses?.[occurrenceId]?.[cellKey], undefined);
+});
+
+test("my schedule matches plans by church date across UTC midnight and combined legacy occurrences", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("volunteer_church_date_plans");
+  await setDoc(COLLECTIONS.churches, context.churchId, { serviceTimeZone: "America/New_York" }, { merge: true });
+  const assigned = await seedAssignedSchedule(context, "volunteer_church_date_plans", { serviceDate: "2026-10-31" });
+  const cases = [
+    {
+      occurrenceId: "fall-service@2026-10-31",
+      serviceId: "fall-service",
+      serviceIds: ["fall-service"],
+      serviceDate: "2026-10-31",
+      startsAt: "2026-11-01T03:30:00.000Z", // 11:30 p.m. EDT on October 31.
+      plans: [{ serviceId: "fall-service", date: "2026-10-31", name: "Saturday fall service", published: false }],
+      decoys: [{ serviceId: "fall-service", date: "2026-11-01", name: "Wrong UTC-date plan", published: true, publicLinkToken: "wrong-date-token" }],
+    },
+    {
+      occurrenceId: "spring-legacy@2026-03-08T04:30:00.000Z",
+      serviceId: "spring-legacy",
+      serviceIds: ["spring-legacy"],
+      startsAt: "2026-03-08T04:30:00.000Z", // 11:30 p.m. EST before the spring clock change.
+      plans: [{ serviceId: "spring-legacy", date: "2026-03-07", name: "Legacy spring service", published: false }],
+    },
+    {
+      occurrenceId: "group:fall-combined@2026-11-01",
+      serviceId: "combined-first",
+      serviceIds: ["combined-first", "combined-second"],
+      groupId: "fall-combined",
+      startsAt: "2026-11-02T04:30:00.000Z", // 11:30 p.m. EST after the fall clock change.
+      plans: [
+        { serviceId: "combined-first", date: "2026-11-01", name: "Combined Worship", published: true, publicLinkToken: "published-token" },
+        { serviceId: "combined-second", date: "2026-11-01", name: "Combined Evening", published: false, publicLinkToken: "unpublished-token" },
+      ],
+    },
+  ];
+  const originalSchedule = await getDoc(COLLECTIONS.teamSchedules, assigned.scheduleId);
+  const cell = { primaryMemberId: assigned.memberId };
+  await setDoc(COLLECTIONS.teamSchedules, assigned.scheduleId, {
+    ...originalSchedule,
+    occurrences: cases.map(({ plans, decoys, ...occurrence }) => occurrence),
+    assignments: Object.fromEntries(cases.map(({ occurrenceId }) => [occurrenceId, { [assigned.cellKey]: cell }])),
+  }, { merge: false });
+
+  const expectedByOccurrence = new Map();
+  for (const scenario of cases) {
+    const matching = [];
+    for (const plan of [...scenario.plans, ...(scenario.decoys || [])]) {
+      const planId = `${plan.serviceId}@${plan.date}`;
+      await setDoc(COLLECTIONS.servicePlans, `${context.churchId}::${planId}`, {
+        planId,
+        planKey: planId,
+        churchId: context.churchId,
+        ...plan,
+        sections: [{ name: "Songs", elements: [{
+          type: "song", title: plan.name, assignedMemberId: "private-roster-id", assignedName: "Private roster name",
+        }] }],
+      }, { merge: false });
+      if (scenario.plans.includes(plan)) matching.push(planId);
+    }
+    expectedByOccurrence.set(scenario.occurrenceId, matching);
+  }
+
+  const result = await callHandler(authHandlers.getMyTeamAssignments, { context });
+  assert.equal(result.statusCode, 200, JSON.stringify(result.payload));
+  assert.equal(result.payload.occurrences.length, cases.length, "combined services remain one occurrence tile");
+  const byId = new Map(result.payload.occurrences.map((entry) => [entry.occurrenceId, entry]));
+  assert.equal(byId.get(cases[0].occurrenceId).date, "2026-10-31");
+  assert.deepEqual(byId.get(cases[0].occurrenceId).plans.map((plan) => plan.planId), expectedByOccurrence.get(cases[0].occurrenceId));
+  assert.equal(byId.get(cases[1].occurrenceId).date, "2026-03-07");
+  assert.deepEqual(byId.get(cases[1].occurrenceId).plans.map((plan) => plan.planId), expectedByOccurrence.get(cases[1].occurrenceId));
+  const combined = byId.get(cases[2].occurrenceId);
+  assert.equal(combined.date, "2026-11-01");
+  assert.deepEqual(combined.plans.map((plan) => plan.planId), expectedByOccurrence.get(cases[2].occurrenceId));
+  assert.equal(combined.plan.planId, combined.plans[0].planId, "the legacy singular field remains available");
+  assert.equal(combined.plans[0].publicUrls.team.includes("published-token"), true);
+  assert.equal(combined.plans[1].publicUrls, undefined, "unpublished plans do not expose private share tokens");
+  assert.doesNotMatch(JSON.stringify(result.payload), /private-roster-id|Private roster name|unpublished-token|wrong-date-token/);
 });
 
 test("accept all unanswered preserves answers, ignores forged identity and safely retries partial success", async (t) => {

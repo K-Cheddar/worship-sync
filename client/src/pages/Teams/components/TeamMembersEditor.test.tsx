@@ -179,6 +179,23 @@ it("caps broad search suggestions and asks the editor to refine the query", () =
   expect(screen.getByText("Showing the first 20 matches. Refine your search to narrow the list.")).toBeInTheDocument();
 });
 
+it("shows when the scoped server search has more matches beyond its returned page", () => {
+  const suggestions = Array.from({ length: 20 }, (_, index) => ({
+    memberId: `m-${String(index).padStart(2, "0")}`,
+    firstName: `Member ${String(index).padStart(2, "0")}`,
+    lastName: "Singer",
+  }));
+  renderEditor({
+    searchMode: "scoped",
+    searchQuery: "member",
+    suggestions,
+    hasMoreSuggestions: true,
+  });
+
+  expect(within(screen.getByRole("list", { name: "Matching members to add" })).getAllByRole("button", { name: /Add .* to team/ })).toHaveLength(20);
+  expect(screen.getByText("Showing the first 20 matches. Refine your search to narrow the list.")).toBeInTheDocument();
+});
+
 it("provides labeled keyboard-operable controls with mobile touch targets", async () => {
   const user = userEvent.setup();
   renderEditor({

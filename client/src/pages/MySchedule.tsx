@@ -86,6 +86,13 @@ const ALL_SERVICES = "__all_services__";
 
 type DetailTab = "schedule" | "servicePlan";
 
+const plansForOccurrence = (occurrence: MyScheduleOccurrence) =>
+  occurrence.plans?.length
+    ? occurrence.plans
+    : occurrence.plan
+      ? [occurrence.plan]
+      : [];
+
 const SCHEDULE_LAYOUT_OPTIONS: {
   value: ScheduleExportLayout;
   label: string;
@@ -361,7 +368,7 @@ const OccurrenceTile = ({
   const tile = getOccurrenceTileParts(occurrence, timeZone);
   const serviceName = occurrenceServiceLabel(occurrence);
   const role = myRoleLabel(occurrence);
-  const hasPlan = Boolean(occurrence.plan);
+  const hasPlan = plansForOccurrence(occurrence).length > 0;
   const openLabel = `Open ${serviceName} on ${tile.label}`;
   const isToday = !isNextUpcoming && isOccurrenceToday(occurrence, timeZone);
 
@@ -498,9 +505,17 @@ const OccurrenceDetail = ({
   const [tab, setTab] = useState<DetailTab>("schedule");
   const [scheduleLayout, setScheduleLayout] =
     useState<ScheduleExportLayout>("byDate");
+  const [planSelection, setPlanSelection] = useState<{
+    occurrenceId: string;
+    planId: string;
+  } | null>(null);
   const serviceName = occurrenceServiceLabel(occurrence);
   const role = myRoleLabel(occurrence);
-  const plan = occurrence.plan;
+  const plans = plansForOccurrence(occurrence);
+  const selectedPlanId = planSelection?.occurrenceId === occurrence.occurrenceId
+    ? planSelection.planId
+    : "";
+  const plan = plans.find((candidate) => candidate.planId === selectedPlanId) || plans[0] || null;
   const teamUrl = plan?.publicUrls?.team;
   const generalUrl = plan?.publicUrls?.general || teamUrl;
   const canShare = Boolean(plan?.published && teamUrl);
@@ -508,6 +523,18 @@ const OccurrenceDetail = ({
     () => buildMyScheduleExportModelForOccurrences(scheduleOccurrences, timeZone),
     [scheduleOccurrences, timeZone],
   );
+  const planNameCounts = new Map<string, number>();
+  plans.forEach((candidate) => {
+    const name = candidate.name.trim() || "Service plan";
+    planNameCounts.set(name, (planNameCounts.get(name) || 0) + 1);
+  });
+  const planOptions = plans.map((candidate, index) => {
+    const name = candidate.name.trim() || `Service plan ${index + 1}`;
+    return {
+      value: candidate.planId,
+      label: (planNameCounts.get(name) || 0) > 1 ? `${name} (${index + 1})` : name,
+    };
+  });
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
@@ -668,6 +695,18 @@ const OccurrenceDetail = ({
             </>
           ) : (
             <>
+              {plans.length > 1 ? (
+                <Select
+                  label="Service plan"
+                  className="w-full sm:max-w-sm"
+                  value={plan?.planId || ""}
+                  options={planOptions}
+                  onChange={(value) => setPlanSelection({
+                    occurrenceId: occurrence.occurrenceId,
+                    planId: value,
+                  })}
+                />
+              ) : null}
               {canShare && teamUrl ? (
                 <section className="rounded-lg border border-gray-700/80 bg-gray-900/50 p-3">
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
@@ -697,6 +736,7 @@ const OccurrenceDetail = ({
               ) : null}
               <MyScheduleServicePlanPanel
                 occurrence={occurrence}
+                plan={plan}
                 churchName={churchName}
                 timeZone={timeZone}
               />
@@ -970,10 +1010,12 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
           person.positionName,
           person.teamName,
         ]),
-        occurrence.plan?.name || "",
-        ...(occurrence.plan?.sections || []).flatMap((section) =>
-          section.elements.map((element) => element.title),
-        ),
+        ...plansForOccurrence(occurrence).flatMap((plan) => [
+          plan.name,
+          ...(plan.sections || []).flatMap((section) =>
+            section.elements.map((element) => element.title),
+          ),
+        ]),
       ]
         .join(" ")
         .toLowerCase();

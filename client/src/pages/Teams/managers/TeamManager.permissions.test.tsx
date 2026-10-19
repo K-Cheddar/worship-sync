@@ -256,6 +256,61 @@ it("searches safe candidate results and adds the selected person", async () => {
   expect(within(screen.getByRole("list", { name: "Members on this team" })).getByText("Jordan Lee")).toBeInTheDocument();
 });
 
+it("limits pending add feedback to the team whose roster is being changed", async () => {
+  const user = userEvent.setup();
+  const pendingAdd = deferred<{
+    success: boolean;
+    team: TeamRecord;
+    member: TeamRosterMember;
+  }>();
+  const worshipCandidates = Array.from({ length: 20 }, (_, index) => ({
+    memberId: `worship-candidate-${String(index + 1).padStart(2, "0")}`,
+    firstName: `Candidate ${String(index + 1).padStart(2, "0")}`,
+    lastName: "Person",
+  }));
+  jest.mocked(searchTeamRosterCandidates)
+    .mockResolvedValueOnce({ candidates: worshipCandidates, hasMore: true } as never)
+    .mockResolvedValueOnce({
+      candidates: [{ memberId: "av-candidate", firstName: "Maya", lastName: "New" }],
+      hasMore: false,
+    } as never);
+  jest.mocked(addTeamRosterMemberToTeam).mockReturnValue(pendingAdd.promise as never);
+  const onTeamRosterSaved = jest.fn();
+  renderManager(TEAMS_SECTION_PATHS.groups, {
+    canEditTeam: () => true,
+  }, { onTeamRosterSaved });
+
+  await user.click(screen.getByRole("button", { name: "Edit Worship" }));
+  await user.type(screen.getByRole("textbox", { name: /Add members/i }), "candidate");
+  expect(await screen.findByText("Candidate 01 Person")).toBeInTheDocument();
+  expect(screen.getByText("Showing the first 20 matches. Refine your search to narrow the list.")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Add Candidate 01 Person to team" }));
+  expect(screen.getByText("Adding member...")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Add Candidate 02 Person to team" })).toBeDisabled();
+
+  await user.click(screen.getByRole("button", { name: "Edit AV" }));
+  await user.type(screen.getByRole("textbox", { name: /Add members/i }), "Maya");
+  expect(await screen.findByText("Maya New")).toBeInTheDocument();
+  expect(screen.queryByText("Adding member...")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Add Maya New to team" })).toBeEnabled();
+
+  pendingAdd.resolve({
+    success: true,
+    team: { ...worship, memberIds: ["member-1", worshipCandidates[0].memberId] },
+    member: {
+      memberId: worshipCandidates[0].memberId,
+      churchId: "church-1",
+      firstName: worshipCandidates[0].firstName,
+      lastName: worshipCandidates[0].lastName,
+      positionIds: [],
+      blockoutDates: [],
+    },
+  });
+  await waitFor(() => expect(onTeamRosterSaved).toHaveBeenCalledTimes(1));
+  expect(addTeamRosterMemberToTeam).toHaveBeenCalledTimes(1);
+  expect(screen.queryByText("Adding member...")).not.toBeInTheDocument();
+});
+
 it("ignores stale scoped search results after switching teams", async () => {
   const user = userEvent.setup();
   const oldSearch = deferred<{ candidates: Array<{ memberId: string; firstName: string; lastName: string }> }>();

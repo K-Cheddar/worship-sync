@@ -242,6 +242,47 @@ describe("MySchedule", () => {
     expect(screen.getByText("Worship")).toBeInTheDocument();
   });
 
+  it("lets a volunteer choose each saved plan for one combined service occurrence", async () => {
+    const user = userEvent.setup();
+    const plans = [
+      {
+        planId: "plan-worship",
+        serviceId: "worship",
+        name: "Worship plan",
+        published: false,
+        sections: [{ name: "Songs", elements: [{ type: "song", title: "First service song", startTime: "", durationSeconds: 180 }] }],
+      },
+      {
+        planId: "plan-evening",
+        serviceId: "evening",
+        name: "Evening plan",
+        published: true,
+        publicUrls: { team: "https://example.test/#/services/evening-token" },
+        sections: [{ name: "Response", elements: [{ type: "song", title: "Second service song", startTime: "", durationSeconds: 210 }] }],
+      },
+    ];
+    respond([occurrence({
+      occurrenceId: "group:combined@2099-09-06",
+      serviceIds: ["worship", "evening"],
+      plans,
+      plan: plans[0],
+    })]);
+    renderPage();
+
+    expect((await screen.findAllByRole("button", { name: /Open Sunday Gathering/i })).length).toBe(1);
+    await openFirstService(user);
+    await user.click(screen.getByRole("tab", { name: /^Service plan$/i }));
+    expect(screen.getByText("First service song")).toBeInTheDocument();
+    expect(mockUsePublicServiceFlow).toHaveBeenLastCalledWith("");
+
+    await user.click(screen.getByRole("combobox", { name: /Service plan/i }));
+    await user.click(within(await screen.findByRole("listbox")).getByRole("option", { name: "Evening plan" }));
+
+    expect(screen.getByText("Second service song")).toBeInTheDocument();
+    expect(screen.queryByText("First service song")).not.toBeInTheDocument();
+    expect(mockUsePublicServiceFlow).toHaveBeenLastCalledWith("evening-token");
+  });
+
   it("offers view and copy for a published public service plan", async () => {
     const user = userEvent.setup();
     respond([

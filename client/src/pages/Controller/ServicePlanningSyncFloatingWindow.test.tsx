@@ -87,6 +87,8 @@ const mockPlanSource = {
   isEnabled: true,
   isLoading: false,
   isRefreshing: false,
+  isRefreshingParticipants: false,
+  isParticipantOverlayUnsafe: false,
   isLoadingPlans: false,
   plansError: null as string | null,
   isPlanSourced: false,
@@ -151,6 +153,8 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     mockPlanSource.isPlanSourced = false;
     mockPlanSource.isLoading = false;
     mockPlanSource.isRefreshing = false;
+    mockPlanSource.isRefreshingParticipants = false;
+    mockPlanSource.isParticipantOverlayUnsafe = false;
     mockPlanSource.occurrences = [];
     mockPlanSource.occurrence = null;
     mockPlanSource.selectedOccurrenceId = null;
@@ -1674,6 +1678,47 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     expect(screen.getByRole("button", { name: "Sync outline" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Sync overlays" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Sync All" })).not.toBeInTheDocument();
+  });
+
+  it("disables overlay sync only while participant data is refreshing or unsafe", () => {
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
+      },
+    });
+    store.dispatch(setServicePlanningServiceOutline(wrapImport({
+      overlayCandidates: [],
+      overlayPlan: [{ action: "create", elementType: "Welcome" }],
+      outlineCandidates: [],
+      lineItems: [],
+      teamAssignments: [],
+    }) as any));
+    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+    const { rerender } = renderWindow(store);
+    const renderAgain = () => rerender(
+      <MemoryRouter>
+        <Provider store={store}>
+          <ServicePlanningSyncFloatingWindow />
+        </Provider>
+      </MemoryRouter>,
+    );
+
+    const syncButton = screen.getByRole("button", { name: "Sync overlays" });
+    expect(syncButton).toBeEnabled();
+
+    mockPlanSource.isRefreshingParticipants = true;
+    renderAgain();
+    expect(syncButton).toBeDisabled();
+
+    mockPlanSource.isRefreshingParticipants = false;
+    mockPlanSource.isParticipantOverlayUnsafe = true;
+    renderAgain();
+    expect(syncButton).toBeDisabled();
+
+    mockPlanSource.isParticipantOverlayUnsafe = false;
+    renderAgain();
+    expect(syncButton).toBeEnabled();
   });
 
   it("normalizes Sync All to overlays when no target outline is selected", () => {

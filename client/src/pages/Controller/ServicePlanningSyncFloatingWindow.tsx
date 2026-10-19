@@ -408,6 +408,8 @@ const ServicePlanningSyncFloatingWindow = ({
     isEnabled: isSavedPlanAccessEnabled,
     isLoading,
     isRefreshing: isPlanRefreshing,
+    isRefreshingParticipants,
+    isParticipantOverlayUnsafe,
     isLoadingPlans,
     plansError,
     isPlanSourced,
@@ -560,6 +562,8 @@ const ServicePlanningSyncFloatingWindow = ({
   const canSyncOverlays =
     allowOverlaySync &&
     !isContextChanging &&
+    !isRefreshingParticipants &&
+    !isParticipantOverlayUnsafe &&
     hasSyncableOverlayItems(preview, overlays);
   const canSyncOutline =
     !isContextChanging && Boolean(selectedList) && (isPlanSourced && selectedPlanDetails
@@ -935,6 +939,15 @@ const ServicePlanningSyncFloatingWindow = ({
           aria-live="polite"
         >
           Updating…
+        </span>
+      ) : null}
+      {isRefreshingParticipants ? (
+        <span
+          className="shrink-0 text-[11px] font-normal text-zinc-400"
+          role="status"
+          aria-live="polite"
+        >
+          Updating participants…
         </span>
       ) : null}
       {stateLabel ? (

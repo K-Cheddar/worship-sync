@@ -1866,7 +1866,7 @@ export const searchTeamRosterCandidates = async (
   churchId: string,
   teamId: string,
   query: string,
-) => apiFetch<{ candidates: TeamRosterCandidate[] }>(
+) => apiFetch<{ candidates: TeamRosterCandidate[]; hasMore?: boolean }>(
   `api/churches/${churchId}/teams/${teamId}/roster-candidates?q=${encodeURIComponent(query)}`,
 );
 
@@ -1961,6 +1961,8 @@ export type MySchedulePlanElement = {
 
 export type MySchedulePlan = {
   planId: string;
+  /** Service whose saved plan belongs to this occurrence date. */
+  serviceId?: string;
   name: string;
   /** True when share links have been enabled for this plan. */
   published?: boolean;
@@ -1995,6 +1997,8 @@ export type MyScheduleOccurrence = {
    * only when the plan is already published.
    */
   plan: MySchedulePlan | null;
+  /** All saved plans matched to a combined occurrence; absent on older servers. */
+  plans?: MySchedulePlan[];
 };
 
 /**

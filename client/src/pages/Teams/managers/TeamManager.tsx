@@ -113,6 +113,7 @@ const TeamManager = ({
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [candidateQuery, setCandidateQuery] = useState("");
   const [candidates, setCandidates] = useState<TeamRosterCandidate[]>([]);
+  const [candidateHasMore, setCandidateHasMore] = useState(false);
   const [candidateBusy, setCandidateBusy] = useState(false);
   const [candidateError, setCandidateError] = useState("");
   const [candidateSearchRevision, setCandidateSearchRevision] = useState(0);
@@ -397,6 +398,7 @@ const TeamManager = ({
   const updateCandidateQuery = (query: string) => {
     candidateRequestSequenceRef.current += 1;
     setCandidates([]);
+    setCandidateHasMore(false);
     setCandidateBusy(false);
     setCandidateError("");
     setCandidateQuery(query);
@@ -421,6 +423,7 @@ const TeamManager = ({
       query.length < 2
     ) {
       setCandidates([]);
+      setCandidateHasMore(false);
       setCandidateBusy(false);
       setCandidateError("");
       return undefined;
@@ -429,17 +432,20 @@ const TeamManager = ({
     const requestSequence = ++candidateRequestSequenceRef.current;
     const requestedTeamId = requestedTeam.teamId;
     setCandidateBusy(true);
+    setCandidateHasMore(false);
     setCandidateError("");
     const timeout = window.setTimeout(() => {
       void searchTeamRosterCandidates(churchId, requestedTeamId, query)
         .then((result) => {
           if (requestSequence === candidateRequestSequenceRef.current) {
             setCandidates(result.candidates || []);
+            setCandidateHasMore(Boolean(result.hasMore));
           }
         })
         .catch((error) => {
           if (requestSequence === candidateRequestSequenceRef.current) {
             setCandidates([]);
+            setCandidateHasMore(false);
             setCandidateError("Could not search people. Try again.");
             showApiErrorToast(showToast, error, "Could not search people.");
           }
@@ -668,7 +674,8 @@ const TeamManager = ({
             onSearchQueryChange={updateCandidateQuery}
             canEditMembership={canEditCurrentTeam && (canEditTeams || !editing?.archivedAt)}
             isSearching={!canEditTeams && candidateBusy}
-            isAdding={Boolean(candidateAdding)}
+            isAdding={Boolean(editing && candidateAdding?.teamId === editing.teamId)}
+            hasMoreSuggestions={!canEditTeams && candidateHasMore}
             addingMemberId={editing && candidateAdding?.teamId === editing.teamId ? candidateAdding.memberId : null}
             searchError={canEditTeams ? "" : candidateError}
             onRetrySearch={() => setCandidateSearchRevision((revision) => revision + 1)}

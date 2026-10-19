@@ -79,6 +79,27 @@ test("unverified, shared, changed and revoked contacts cannot recover and unknow
   assert.equal(deliveries.length, count);
 }));
 
+test("legacy-formatted duplicate phone numbers block recovery for the wrong member", { skip: !enabled }, async () => fixture(async ({ db, access, identity, member, memberCollection, consentCollection, enroll, expire, start, deliveries }) => {
+  const consentRef = db.collection(consentCollection).doc(smsConsentIdForChurchPhone(identity.churchId, member.phoneNumber));
+  await consentRef.set({ churchId: identity.churchId, phoneNumber: member.phoneNumber, status: "opted_in" });
+  const original = await access.prepare(identity);
+  await enroll("sms");
+  const enrollmentDeliveryCount = deliveries.length;
+  assert.equal(deliveries.at(-1).channel, "sms");
+  expire();
+
+  // This older roster row differs textually but normalizes to the same number.
+  await db.collection(memberCollection).doc("legacy-format-duplicate").set({
+    ...member,
+    memberId: "legacy-format-duplicate",
+    phoneNumber: "(212) 555-0123",
+    email: "another-volunteer@example.test",
+  });
+  await start({ token: original.token });
+  await start({ contact: member.phoneNumber });
+  assert.equal(deliveries.length, enrollmentDeliveryCount);
+}));
+
 test("verification enforces five attempts, expiry and current contact state", { skip: !enabled }, async () => fixture(async ({ access, identity, enroll, expire, start, recovery, deliveries, advance, memberRef }) => {
   const original = await access.prepare(identity); await enroll(); expire();
   const challenge = await start({ token: original.token });

@@ -945,29 +945,39 @@ export const createTeamsAuthHandlers = ({
           (item) => item?.occurrenceId === occurrenceId,
         );
         const startsAt = record?.startsAt || "";
+        const serviceIds =
+          record?.serviceIds?.length > 0
+            ? record.serviceIds
+            : [record?.serviceId || String(occurrenceId).split("@")[0]].filter(Boolean);
+        const date = isValidPortablePlainDate(record?.serviceDate)
+          ? record.serviceDate
+          : resolveOccurrenceIdentity(
+              {
+                ...record,
+                occurrenceId,
+                serviceId: record?.serviceId || serviceIds[0] || "",
+                serviceIds,
+                // Invalid legacy values must not prevent resolving from the
+                // occurrence's established church-calendar identity.
+                serviceDate: "",
+              },
+              serviceTimeZone,
+            )?.serviceDate || "";
         entry = {
           occurrenceId,
-          serviceIds:
-            record?.serviceIds?.length > 0
-              ? record.serviceIds
-              : [
-                  record?.serviceId || String(occurrenceId).split("@")[0],
-                ].filter(Boolean),
+          serviceIds,
           // Display name for the service, taken from the schedule's own
           // occurrence record — already joined with " & " when several
           // services share a combined date — so the client need not
           // rebuild it.
           name: String(record?.name || "").trim(),
-          // Calendar date is what plans are keyed by; fall back to the id
-          // suffix, which is already a date for combined occurrences.
-          date: (
-            startsAt ||
-            String(occurrenceId).split("@")[1] ||
-            ""
-          ).slice(0, 10),
+          // `serviceDate` is the saved church-calendar date. Legacy records
+          // resolve through the shared occurrence identity and church timezone.
+          date,
           startsAt,
           serving: [],
           plan: null,
+          plans: [],
         };
         byOccurrence.set(occurrenceId, entry);
       }
@@ -1068,45 +1078,55 @@ export const createTeamsAuthHandlers = ({
     });
 
     byOccurrence.forEach((entry) => {
-      const plan = entry.serviceIds
-        .map((serviceId) =>
-          planByServiceDate.get(`${serviceId}@${entry.date}`),
-        )
-        .find(Boolean);
-      if (!plan) return;
-      // Share URLs only when already published. Assigned volunteers already
-      // see the plan content here; the public link lets them open or copy
-      // the same share view the service plan editor exposes. Do not mint
-      // tokens from this read path.
-      const published = Boolean(plan.published);
-      const publicUrls =
-        published && plan.publicLinkToken
-          ? {
-              team: buildPublicServicePlanUrl(plan.publicLinkToken),
-              ...(plan.publicGeneralLinkToken
-                ? {
-                    general: buildPublicServicePlanUrl(
-                      plan.publicGeneralLinkToken,
-                    ),
-                  }
-                : {}),
-            }
-          : undefined;
-      entry.plan = {
-        planId: plan.planId,
-        name: plan.name || "",
-        published,
-        ...(publicUrls ? { publicUrls } : {}),
-        sections: (plan.sections || []).map((section) => ({
-          name: section?.name || "Section",
-          elements: (section?.elements || []).map((element) => ({
-            type: element?.type || "free",
-            title: richTextToPlainText(element?.title) || "Untitled item",
-            startTime: element?.startTime || "",
-            durationSeconds: element?.durationSeconds,
+      const matchingPlans = [
+        ...new Map(
+          entry.serviceIds
+            .map((serviceId) =>
+              planByServiceDate.get(`${serviceId}@${entry.date}`),
+            )
+            .filter(Boolean)
+            .map((plan) => [plan.planId, plan]),
+        ).values(),
+      ];
+      entry.plans = matchingPlans.map((plan) => {
+        // Share URLs only when already published. Assigned volunteers already
+        // see the plan content here; the public link lets them open or copy
+        // the same share view the service plan editor exposes. Do not mint
+        // tokens from this read path.
+        const published = Boolean(plan.published);
+        const publicUrls =
+          published && plan.publicLinkToken
+            ? {
+                team: buildPublicServicePlanUrl(plan.publicLinkToken),
+                ...(plan.publicGeneralLinkToken
+                  ? {
+                      general: buildPublicServicePlanUrl(
+                        plan.publicGeneralLinkToken,
+                      ),
+                    }
+                  : {}),
+              }
+            : undefined;
+        return {
+          planId: plan.planId,
+          serviceId: plan.serviceId,
+          name: plan.name || "",
+          published,
+          ...(publicUrls ? { publicUrls } : {}),
+          sections: (plan.sections || []).map((section) => ({
+            name: section?.name || "Section",
+            elements: (section?.elements || []).map((element) => ({
+              type: element?.type || "free",
+              title: richTextToPlainText(element?.title) || "Untitled item",
+              startTime: element?.startTime || "",
+              durationSeconds: element?.durationSeconds,
+            })),
           })),
-        })),
-      };
+        };
+      });
+      // Keep the original field for older clients and preserve its prior
+      // first-matching-service behavior.
+      entry.plan = entry.plans[0] || null;
     });
 
     const occurrences = [...byOccurrence.values()].sort((a, b) =>
@@ -16089,18 +16109,24 @@ export const createTeamsAuthHandlers = ({
           churchId,
         );
         const alreadyOnTeam = new Set(Array.isArray(team.memberIds) ? team.memberIds : []);
-        const candidates = members
+        const matchingCandidates = members
           .filter((member) => !member.archivedAt && !alreadyOnTeam.has(member.memberId))
           .filter((member) => `${member.firstName || ""} ${member.lastName || ""}`.toLocaleLowerCase().includes(query))
-          .slice(0, 20)
           .map((member) => ({
             memberId: member.memberId,
             ...(member.title !== undefined ? { title: member.title } : {}),
             ...(member.firstName !== undefined ? { firstName: member.firstName } : {}),
             ...(member.lastName !== undefined ? { lastName: member.lastName } : {}),
             ...(member.profileImageUrl !== undefined ? { profileImageUrl: member.profileImageUrl } : {}),
-          }));
-        return res.json({ candidates });
+          }))
+          .sort((left, right) => {
+            const leftName = `${left.title || ""} ${left.firstName || ""} ${left.lastName || ""}`.trim();
+            const rightName = `${right.title || ""} ${right.firstName || ""} ${right.lastName || ""}`.trim();
+            return leftName.localeCompare(rightName, undefined, { sensitivity: "base" }) ||
+              left.memberId.localeCompare(right.memberId);
+          });
+        const hasMore = matchingCandidates.length > 20;
+        return res.json({ candidates: matchingCandidates.slice(0, 20), hasMore });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not search roster candidates.");
       }
