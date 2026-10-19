@@ -5473,6 +5473,173 @@ test("service plan assignments expose only the selected plan's serving roster", 
   assert.equal(scopedResult.statusCode, 403);
 });
 
+test("native overlay projection resolves opted-in Teams assignees without roster details", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const fixture = await seedEffectiveTeamsReadFixture("native_overlay_projection");
+  const worshipRoleId = `${fixture.churchId}_worship_role`;
+  const avRoleId = `${fixture.churchId}_av_role`;
+  const archivedRoleId = `${fixture.churchId}_archived_role`;
+  const missingRoleMemberId = `${fixture.churchId}_missing_role_member`;
+
+  await setDoc(COLLECTIONS.teamRoles, worshipRoleId, {
+    roleId: worshipRoleId,
+    churchId: fixture.churchId,
+    teamId: fixture.ids.worship,
+    name: "Worship Leader",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamRoles, avRoleId, {
+    roleId: avRoleId,
+    churchId: fixture.churchId,
+    teamId: fixture.ids.av,
+    name: "Audio Director",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamRoles, archivedRoleId, {
+    roleId: archivedRoleId,
+    churchId: fixture.churchId,
+    teamId: fixture.ids.worship,
+    name: "Former Leader",
+    archivedAt: "2026-10-01T00:00:00.000Z",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId, {
+    title: "Dr.",
+    teamMemberships: {
+      [fixture.ids.worship]: { teamId: fixture.ids.worship, roleId: worshipRoleId },
+      [fixture.ids.av]: { teamId: fixture.ids.av, roleId: avRoleId },
+    },
+  }, { merge: true });
+  await setDoc(COLLECTIONS.teamRosterMembers, fixture.memberId, {
+    teamMemberships: {
+      [fixture.ids.worship]: { teamId: fixture.ids.worship, roleId: archivedRoleId },
+    },
+  }, { merge: true });
+  await setDoc(COLLECTIONS.teamRosterMembers, missingRoleMemberId, {
+    memberId: missingRoleMemberId,
+    churchId: fixture.churchId,
+    firstName: "Morgan",
+    lastName: "Lee",
+    teamMemberships: {
+      [fixture.ids.worship]: { teamId: fixture.ids.worship, roleId: "deleted-role" },
+    },
+  }, { merge: false });
+
+  const planKey = "worship-service@2026-10-18";
+  const saved = await callHandler(authHandlers.saveServicePlan, {
+    context: fixture.owner,
+    params: { planKey },
+    body: {
+      serviceId: "worship-service",
+      date: "2026-10-18",
+      name: "Native overlay service",
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        elements: [
+          {
+            id: "item-av",
+            type: "free",
+            title: { blocks: [{ type: "paragraph", spans: [{ text: "Panel" }] }] },
+            positionId: `${fixture.ids.av}_position`,
+            participantOverlay: { enabled: true, eventLabel: "Panelist" },
+            assignees: [{ id: "assignee-av", memberId: fixture.sharedId, name: "Old name" }],
+          },
+          {
+            id: "item-guest",
+            type: "free",
+            title: { blocks: [{ type: "paragraph", spans: [{ text: "Guest Speaker" }] }] },
+            participantOverlay: { enabled: true },
+            assignees: [{ id: "assignee-guest", name: "Guest Speaker" }],
+          },
+          {
+            id: "item-archived",
+            type: "free",
+            title: { blocks: [{ type: "paragraph", spans: [{ text: "Welcome" }] }] },
+            positionId: `${fixture.ids.worship}_position`,
+            participantOverlay: { enabled: true },
+            assignees: [{ id: "assignee-archived", memberId: fixture.memberId, name: "Saved worship name" }],
+          },
+          {
+            id: "item-missing",
+            type: "free",
+            title: { blocks: [{ type: "paragraph", spans: [{ text: "Prayer" }] }] },
+            positionId: `${fixture.ids.worship}_position`,
+            participantOverlay: { enabled: true },
+            assignees: [{ id: "assignee-missing", memberId: missingRoleMemberId }],
+          },
+          {
+            id: "item-disabled",
+            type: "free",
+            title: { blocks: [{ type: "paragraph", spans: [{ text: "Announcements" }] }] },
+            participantOverlay: { enabled: false },
+            assignees: [{ id: "assignee-disabled", name: "Not opted in" }],
+          },
+        ],
+      }],
+    },
+  });
+  assert.equal(saved.statusCode, 200, JSON.stringify(saved.payload));
+  assert.deepEqual(
+    saved.payload.servicePlan.sections[0].elements[0].participantOverlay,
+    { enabled: true, eventLabel: "Panelist" },
+  );
+
+  const result = await callHandler(authHandlers.getServicePlanAssignments, {
+    context: fixture.owner,
+    params: { planKey },
+  });
+
+  assert.equal(result.statusCode, 200, JSON.stringify(result.payload));
+  assert.deepEqual(result.payload.participantOverlay, {
+    status: "ready",
+    elements: [
+      {
+        elementId: "item-av",
+        assignees: [{
+          name: "Dr. Shared Member",
+          memberStatus: "resolved",
+          roleStatus: "resolved",
+          roleTitle: "Audio Director",
+        }],
+      },
+      {
+        elementId: "item-guest",
+        assignees: [{
+          name: "Guest Speaker",
+          memberStatus: "guest",
+          roleStatus: "not-applicable",
+        }],
+      },
+      {
+        elementId: "item-archived",
+        assignees: [{
+          name: "Worship Member",
+          memberStatus: "resolved",
+          roleStatus: "archived",
+        }],
+      },
+      {
+        elementId: "item-missing",
+        assignees: [{
+          name: "Morgan Lee",
+          memberStatus: "resolved",
+          roleStatus: "missing",
+        }],
+      },
+    ],
+  });
+  const projectionJson = JSON.stringify(result.payload.participantOverlay);
+  for (const privateValue of [
+    "private@example.com",
+    "+15551234567",
+    "Private roster note",
+    "private/image-id",
+    "Not opted in",
+    "Old name",
+  ]) {
+    assert.equal(projectionJson.includes(privateValue), false);
+  }
+  assert.equal(projectionJson.includes("Lead"), false);
+});
+
 test("schedule assignment updates broadcast the new schedule over SSE", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("sse_broadcast");
@@ -8651,6 +8818,10 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     },
   );
   assert.deepEqual(planOnlyAssignments.payload.assignments, []);
+  assert.deepEqual(planOnlyAssignments.payload.participantOverlay, {
+    status: "restricted",
+    elements: [],
+  });
   const planOnlyPublicSnapshot = await callHandler(
     authHandlers.getServicePlanPublicSnapshot,
     {

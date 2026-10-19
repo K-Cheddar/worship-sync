@@ -90,7 +90,7 @@ export const getRepeatedOverlayDedupeKey = (
   block: Pick<ServicePlanningMappedRow, "rule">,
   candidate: Pick<OverlaySyncPlanItem, "patch">,
 ): string | null => {
-  if (!block.rule.dedupeRepeatedOverlays) {
+  if (!block.rule?.dedupeRepeatedOverlays) {
     return null;
   }
 
@@ -116,20 +116,6 @@ export const overlayPlanHasExecutableChange = (
   const claimed = new Set<string>();
   for (const item of overlayPlan) {
     if (item.action === "skip") continue;
-
-    if (item.action === "update") {
-      const target = overlays.find((o) => o.id === item.targetOverlayId);
-      if (target) {
-        if (
-          Object.keys(getChangedOverlayPatch(target, item.patch)).length > 0
-        ) {
-          return true;
-        }
-        claimed.add(target.id);
-        continue;
-      }
-    }
-
     const excluded = new Set(claimed);
     if (item.action === "clone" && item.targetOverlayId) {
       excluded.add(item.targetOverlayId);
@@ -139,6 +125,10 @@ export const overlayPlanHasExecutableChange = (
       item.patch.event,
       overlays,
       excluded,
+      {
+        duplicateExactMatchesAreAmbiguous:
+          item.duplicateExactMatchesAreAmbiguous === true,
+      },
     );
 
     if (resolution.kind === "ambiguous") continue;
@@ -175,6 +165,10 @@ export type BuildServicePlanningPreviewInput = {
    * schedule instead.
    */
   teamAssignments?: ServicePlanningTeamAssignment[];
+  /** Native service-plan participant mapping; URL imports continue using rules. */
+  nativeOverlayCandidates?: ServicePlanningMappedRow[];
+  /** Native participant lookup state shown when no candidates are available. */
+  nativeOverlaySummary?: ServicePlanningPreview["nativeOverlaySummary"];
 };
 
 export const buildServicePlanningPreview = ({
@@ -185,6 +179,8 @@ export const buildServicePlanningPreview = ({
   customDocumentLibrary = [],
   activeOutlineList,
   teamAssignments,
+  nativeOverlayCandidates,
+  nativeOverlaySummary,
 }: BuildServicePlanningPreviewInput): ServicePlanningPreview => {
   const sections = importData.sections;
   const sectionNameByRow = new WeakMap<EventData, string>();
@@ -196,7 +192,8 @@ export const buildServicePlanningPreview = ({
     });
   });
   const allRows = sections.flatMap((s) => s.rows);
-  const overlayCandidates = mapServicePlanningRows(allRows, sp);
+  const overlayCandidates =
+    nativeOverlayCandidates ?? mapServicePlanningRows(allRows, sp);
   const previewUsedOverlayIds = new Set<string>();
   const repeatedOverlayKeys = new Set<string>();
   const overlayReadyByRow = new WeakMap<EventData, boolean>();
@@ -206,21 +203,47 @@ export const buildServicePlanningPreview = ({
     let allCandidatesResolvable = true;
     const sectionName = sectionNameByRow.get(block.source) ?? "";
     const sourceRowIndex = sectionRowIndexByRow.get(block.source) ?? -1;
+    const strictNativeMatch = block.sourceKind === "native";
+    const planItemBase = {
+      sectionName,
+      sourceRowIndex,
+      elementType: block.source.elementType,
+      title: block.source.title,
+      ledBy: block.source.ledBy,
+      ...(strictNativeMatch
+        ? { duplicateExactMatchesAreAmbiguous: true }
+        : {}),
+    };
     for (const candidate of block.candidates) {
       const repeatedOverlayKey = getRepeatedOverlayDedupeKey(block, candidate);
       if (repeatedOverlayKey && repeatedOverlayKeys.has(repeatedOverlayKey)) {
         overlayPlan.push({
-          sectionName,
-          sourceRowIndex,
-          elementType: block.source.elementType,
-          title: block.source.title,
-          ledBy: block.source.ledBy,
+          ...planItemBase,
           personIndex: candidate.personIndex,
           rawNameToken: candidate.rawNameToken,
           action: "skip",
           patch: { ...candidate.patch },
+          ...(candidate.resolutionNotice
+            ? { resolutionNotice: candidate.resolutionNotice }
+            : {}),
           reason:
             "An identical overlay for this rule is already planned earlier in the service.",
+        });
+        continue;
+      }
+
+      if (candidate.skipReason) {
+        allCandidatesResolvable = false;
+        overlayPlan.push({
+          ...planItemBase,
+          personIndex: candidate.personIndex,
+          rawNameToken: candidate.rawNameToken,
+          action: "skip",
+          patch: { ...candidate.patch },
+          ...(candidate.resolutionNotice
+            ? { resolutionNotice: candidate.resolutionNotice }
+            : {}),
+          reason: candidate.skipReason,
         });
         continue;
       }
@@ -230,20 +253,24 @@ export const buildServicePlanningPreview = ({
         candidate.patch.event,
         overlays,
         previewUsedOverlayIds,
+        {
+          duplicateExactMatchesAreAmbiguous: strictNativeMatch,
+        },
       );
       if (resolution.kind === "ambiguous") {
         allCandidatesResolvable = false;
         overlayPlan.push({
-          sectionName,
-          sourceRowIndex,
-          elementType: block.source.elementType,
-          title: block.source.title,
-          ledBy: block.source.ledBy,
+          ...planItemBase,
           personIndex: candidate.personIndex,
           rawNameToken: candidate.rawNameToken,
           action: "skip",
           patch: { ...candidate.patch },
-          reason: `More than one overlay could match "${candidate.patch.event || block.source.elementType}". Adjust the event mapping before syncing this item.`,
+          ...(candidate.resolutionNotice
+            ? { resolutionNotice: candidate.resolutionNotice }
+            : {}),
+          reason: strictNativeMatch
+            ? `More than one overlay uses the event label "${candidate.patch.event || block.source.elementType}". Remove the duplicate or give the item a unique event label before syncing.`
+            : `More than one overlay could match "${candidate.patch.event || block.source.elementType}". Adjust the event mapping before syncing this item.`,
         });
         continue;
       }
@@ -254,11 +281,7 @@ export const buildServicePlanningPreview = ({
         const hasFieldChanges = Object.keys(changedPatch).length > 0;
         if (!hasFieldChanges) {
           overlayPlan.push({
-            sectionName,
-            sourceRowIndex,
-            elementType: block.source.elementType,
-            title: block.source.title,
-            ledBy: block.source.ledBy,
+            ...planItemBase,
             personIndex: candidate.personIndex,
             rawNameToken: candidate.rawNameToken,
             action: "update",
@@ -267,6 +290,9 @@ export const buildServicePlanningPreview = ({
             targetOverlayName: target.name || undefined,
             targetOverlayEvent: target.event || undefined,
             patch: { ...candidate.patch },
+            ...(candidate.resolutionNotice
+              ? { resolutionNotice: candidate.resolutionNotice }
+              : {}),
             reason: "Existing overlay is already up to date.",
           });
           if (repeatedOverlayKey) {
@@ -275,11 +301,7 @@ export const buildServicePlanningPreview = ({
           continue;
         }
         overlayPlan.push({
-          sectionName,
-          sourceRowIndex,
-          elementType: block.source.elementType,
-          title: block.source.title,
-          ledBy: block.source.ledBy,
+          ...planItemBase,
           personIndex: candidate.personIndex,
           rawNameToken: candidate.rawNameToken,
           action: "update",
@@ -287,6 +309,9 @@ export const buildServicePlanningPreview = ({
           targetOverlayName: target.name || undefined,
           targetOverlayEvent: target.event || undefined,
           patch: { ...candidate.patch },
+          ...(candidate.resolutionNotice
+            ? { resolutionNotice: candidate.resolutionNotice }
+            : {}),
         });
         if (repeatedOverlayKey) {
           repeatedOverlayKeys.add(repeatedOverlayKey);
@@ -300,11 +325,7 @@ export const buildServicePlanningPreview = ({
       );
       if (template) {
         overlayPlan.push({
-          sectionName,
-          sourceRowIndex,
-          elementType: block.source.elementType,
-          title: block.source.title,
-          ledBy: block.source.ledBy,
+          ...planItemBase,
           personIndex: candidate.personIndex,
           rawNameToken: candidate.rawNameToken,
           action: "clone",
@@ -312,6 +333,9 @@ export const buildServicePlanningPreview = ({
           targetOverlayName: template.name || undefined,
           targetOverlayEvent: template.event || undefined,
           patch: { ...candidate.patch },
+          ...(candidate.resolutionNotice
+            ? { resolutionNotice: candidate.resolutionNotice }
+            : {}),
         });
         if (repeatedOverlayKey) {
           repeatedOverlayKeys.add(repeatedOverlayKey);
@@ -320,15 +344,14 @@ export const buildServicePlanningPreview = ({
       }
 
       overlayPlan.push({
-        sectionName,
-        sourceRowIndex,
-        elementType: block.source.elementType,
-        title: block.source.title,
-        ledBy: block.source.ledBy,
+        ...planItemBase,
         personIndex: candidate.personIndex,
         rawNameToken: candidate.rawNameToken,
         action: "create",
         patch: { ...candidate.patch },
+        ...(candidate.resolutionNotice
+          ? { resolutionNotice: candidate.resolutionNotice }
+          : {}),
         reason: `Create overlay for "${candidate.patch.event || block.source.elementType}"`,
       });
       if (repeatedOverlayKey) {
@@ -551,5 +574,6 @@ export const buildServicePlanningPreview = ({
         : item;
     }),
     teamAssignments: teamAssignments ?? importData.teamAssignments,
+    ...(nativeOverlaySummary ? { nativeOverlaySummary } : {}),
   };
 };

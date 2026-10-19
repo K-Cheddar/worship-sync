@@ -141,6 +141,39 @@ export type ServicePlanAssignee = {
   iemIds?: string[];
 };
 
+/** Explicit opt-in for preparing participant overlays from one plan item. */
+export type ServicePlanParticipantOverlaySettings = {
+  enabled?: boolean;
+  /** Blank or omitted uses the item title as the reusable overlay event. */
+  eventLabel?: string;
+};
+
+export type ServicePlanParticipantOverlayAssignee = {
+  /** Current name resolved from Teams, or the saved free-text guest name. */
+  name: string;
+  memberStatus: "resolved" | "missing" | "guest";
+  roleStatus:
+    | "resolved"
+    | "ambiguous"
+    | "missing"
+    | "archived"
+    | "unavailable"
+    | "not-applicable";
+  /** TeamRole.name only; scheduling position names are never returned here. */
+  roleTitle?: string;
+};
+
+export type ServicePlanParticipantOverlayElement = {
+  elementId: string;
+  assignees: ServicePlanParticipantOverlayAssignee[];
+};
+
+/** Plan-scoped, contact-free read projection used only for overlay preview. */
+export type ServicePlanParticipantOverlayProjection = {
+  status: "ready" | "restricted" | "failed";
+  elements: ServicePlanParticipantOverlayElement[];
+};
+
 /** Structured source assignment retained when an importer can distinguish a
  * person from a Planning Center team position. */
 export type ServicePlanSourceLedByAssignment = {
@@ -334,6 +367,8 @@ export type ServicePlanElement = {
   contentOrder?: string[];
   /** Everyone doing this item, and the microphones each of them carries. */
   assignees?: ServicePlanAssignee[];
+  /** Explicitly opts this item into the Controller's participant overlay preview. */
+  participantOverlay?: ServicePlanParticipantOverlaySettings;
   /**
    * @deprecated Superseded by `assignees`. Read only for plans saved before
    * multi-assignee support; see getServicePlanElementAssignees.

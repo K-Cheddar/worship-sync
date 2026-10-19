@@ -152,7 +152,7 @@ test("confirming a nested deletion closes only its confirmation and restores foc
 
   const parent = screen.getByRole("dialog", { name: "Media Library" });
   await user.click(screen.getByRole("button", { name: "Delete media" }));
-  await user.click(screen.getByRole("button", { name: "Delete", exact: true }));
+  await user.click(screen.getByRole("button", { name: /^Delete$/ }));
 
   expect(screen.queryByRole("dialog", { name: "Delete media?" })).not.toBeInTheDocument();
   expect(parent).toBeInTheDocument();

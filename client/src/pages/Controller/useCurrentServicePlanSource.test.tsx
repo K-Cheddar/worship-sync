@@ -313,6 +313,7 @@ describe("useCurrentServicePlanSource", () => {
     mockGetServicePlanAssignments.mockResolvedValue({
       success: true,
       assignments: [{ teamName: "Band", role: "Keys", name: "Dana Robinson" }],
+      participantOverlay: { status: "ready", elements: [] },
     });
     mockGetServicePlanViewer.mockResolvedValue({
       success: true,
@@ -333,6 +334,29 @@ describe("useCurrentServicePlanSource", () => {
     renderHookWith(store, enabledGlobalInfo);
     await waitFor(() => expect(latestResult?.selectedPlanDetails?.planKey).toBe(planFixture.planKey));
     expect(mockListServicePlans).toHaveBeenCalledWith("church-1");
+  });
+
+  it("does not publish a plan preview after the hook unmounts", async () => {
+    let resolvePreview!: (outline: typeof outlineFixture) => void;
+    const pendingPreview = new Promise<typeof outlineFixture>((resolve) => {
+      resolvePreview = resolve;
+    });
+    mockLoadPlanPreview.mockReturnValue(pendingPreview);
+
+    const store = makeStore();
+    const view = renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+
+    view.unmount();
+    await act(async () => {
+      resolvePreview(outlineFixture);
+      await pendingPreview;
+    });
+
+    expect(store.getState().servicePlanningImport.serviceOutline).toBeNull();
+    expect(
+      dispatchedTypes.some((type) => type.endsWith("/setServicePlanningPlanOutline")),
+    ).toBe(false);
   });
 
   afterEach(() => {
@@ -595,6 +619,7 @@ describe("useCurrentServicePlanSource", () => {
       expect(mockLoadPlanPreview).toHaveBeenCalledWith(
         planFixture,
         expect.anything(),
+        expect.objectContaining({ status: "ready" }),
       ),
     );
 
@@ -622,7 +647,293 @@ describe("useCurrentServicePlanSource", () => {
     await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalled());
     expect(mockLoadPlanPreview).toHaveBeenCalledWith(planFixture, [
       { teamName: "Band", role: "Keys", name: "Dana Robinson" },
-    ]);
+    ], { status: "ready", elements: [] });
+  });
+
+  it("does not publish a late participant projection after switching plans", async () => {
+    const secondPlan = {
+      ...planFixture,
+      planKey: "service-2@2026-08-01",
+      serviceId: "service-2",
+      name: "Evening Service",
+    };
+    const staleProjection = {
+      status: "ready" as const,
+      elements: [{
+        elementId: "element-1",
+        assignees: [{
+          name: "Stale Person",
+          memberStatus: "resolved" as const,
+          roleStatus: "resolved" as const,
+          roleTitle: "Stale Role",
+        }],
+      }],
+    };
+    const freshProjection = {
+      status: "ready" as const,
+      elements: [{
+        elementId: "element-1",
+        assignees: [{
+          name: "Fresh Person",
+          memberStatus: "resolved" as const,
+          roleStatus: "resolved" as const,
+          roleTitle: "Fresh Role",
+        }],
+      }],
+    };
+    let resolveStaleAssignments!: (value: {
+      assignments: [];
+      participantOverlay: typeof staleProjection;
+    }) => void;
+    const staleAssignments = new Promise<{
+      assignments: [];
+      participantOverlay: typeof staleProjection;
+    }>((resolve) => {
+      resolveStaleAssignments = resolve;
+    });
+    mockGetServicePlan.mockImplementation((_churchId: string, planKey: string) =>
+      Promise.resolve({ servicePlan: planKey === secondPlan.planKey ? secondPlan : planFixture }),
+    );
+    mockGetServicePlanAssignments
+      .mockResolvedValueOnce({
+        assignments: [],
+        participantOverlay: { status: "ready", elements: [] },
+      })
+      .mockReturnValueOnce(staleAssignments)
+      .mockResolvedValue({ assignments: [], participantOverlay: freshProjection });
+    mockLoadPlanPreview.mockImplementation(async (plan, assignments, participantOverlay) => ({
+      ...outlineFixture,
+      planLabel: `${plan.name}:${participantOverlay.elements[0]?.assignees[0]?.name || "empty"}`,
+    }));
+
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      mockLiveHandler?.({ type: "schedule-updated", scheduleId: "schedule-1" });
+    });
+    await waitFor(() => expect(mockGetServicePlanAssignments).toHaveBeenCalledTimes(2));
+
+    act(() => {
+      latestResult?.selectPlan(secondPlan.planKey);
+    });
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(secondPlan.planKey),
+    );
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.serviceOutline?.planLabel).toBe(
+        "Evening Service:Fresh Person",
+      ),
+    );
+
+    await act(async () => {
+      resolveStaleAssignments({ assignments: [], participantOverlay: staleProjection });
+      await staleAssignments;
+    });
+    await waitFor(() =>
+      expect(mockLoadPlanPreview).toHaveBeenCalledWith(
+        planFixture,
+        [],
+        staleProjection,
+      ),
+    );
+
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBe(secondPlan.planKey);
+    expect(store.getState().servicePlanningImport.serviceOutline?.planLabel).toBe(
+      "Evening Service:Fresh Person",
+    );
+  });
+
+  it("does not publish participant data from the previous church when a plan key repeats", async () => {
+    const oldProjection = {
+      status: "ready" as const,
+      elements: [{ elementId: "element-1", assignees: [{
+        name: "Church One Person",
+        memberStatus: "resolved" as const,
+        roleStatus: "resolved" as const,
+        roleTitle: "Church One Role",
+      }] }],
+    };
+    const newProjection = {
+      status: "ready" as const,
+      elements: [{ elementId: "element-1", assignees: [{
+        name: "Church Two Person",
+        memberStatus: "resolved" as const,
+        roleStatus: "resolved" as const,
+        roleTitle: "Church Two Role",
+      }] }],
+    };
+    let resolveOldAssignments!: (value: {
+      assignments: [];
+      participantOverlay: typeof oldProjection;
+    }) => void;
+    const oldAssignments = new Promise<{
+      assignments: [];
+      participantOverlay: typeof oldProjection;
+    }>((resolve) => {
+      resolveOldAssignments = resolve;
+    });
+    mockGetServicePlan.mockImplementation((churchId: string) =>
+      Promise.resolve({
+        servicePlan: {
+          ...planFixture,
+          churchId,
+          name: churchId === "church-2" ? "Church Two Service" : "Church One Service",
+        },
+      }),
+    );
+    mockGetServicePlanAssignments
+      .mockResolvedValueOnce({ assignments: [], participantOverlay: { status: "ready", elements: [] } })
+      .mockReturnValueOnce(oldAssignments)
+      .mockResolvedValue({ assignments: [], participantOverlay: newProjection });
+    mockLoadPlanPreview.mockImplementation(async (plan, _assignments, projection) => ({
+      ...outlineFixture,
+      planLabel: `${plan.name}:${projection.elements[0]?.assignees[0]?.name || "empty"}`,
+    }));
+
+    const store = makeStore();
+    const view = renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.serviceOutline?.planLabel).toBe(
+        "Church One Service:empty",
+      ),
+    );
+    act(() => {
+      mockLiveHandler?.({ type: "schedule-updated", scheduleId: "schedule-1" });
+    });
+    await waitFor(() => expect(mockGetServicePlanAssignments).toHaveBeenCalledTimes(2));
+
+    view.rerender(
+      <Provider store={store}>
+        <ActiveControllerContext.Provider value="presentation">
+          <GlobalInfoContext.Provider value={{ ...enabledGlobalInfo, churchId: "church-2" } as never}>
+            <ControllerInfoContext.Provider value={{} as never}>
+              <Harness onResult={(result) => { latestResult = result; }} />
+            </ControllerInfoContext.Provider>
+          </GlobalInfoContext.Provider>
+        </ActiveControllerContext.Provider>
+      </Provider>,
+    );
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.serviceOutline?.planLabel).toBe(
+        "Church Two Service:Church Two Person",
+      ),
+    );
+    expect(mockGetServicePlanAssignments).toHaveBeenLastCalledWith(
+      "church-2",
+      planFixture.planKey,
+    );
+
+    await act(async () => {
+      resolveOldAssignments({ assignments: [], participantOverlay: oldProjection });
+      await oldAssignments;
+    });
+    await waitFor(() =>
+      expect(mockLoadPlanPreview).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "Church One Service" }),
+        [],
+        oldProjection,
+      ),
+    );
+    expect(store.getState().servicePlanningImport.serviceOutline?.planLabel).toBe(
+      "Church Two Service:Church Two Person",
+    );
+  });
+
+  it("does not publish participant data from the previous outline", async () => {
+    const staleProjection = {
+      status: "ready" as const,
+      elements: [{ elementId: "element-1", assignees: [{
+        name: "Old outline person",
+        memberStatus: "resolved" as const,
+        roleStatus: "resolved" as const,
+        roleTitle: "Old outline role",
+      }] }],
+    };
+    const freshProjection = {
+      status: "ready" as const,
+      elements: [{ elementId: "element-1", assignees: [{
+        name: "New outline person",
+        memberStatus: "resolved" as const,
+        roleStatus: "resolved" as const,
+        roleTitle: "New outline role",
+      }] }],
+    };
+    let resolveStaleAssignments!: (value: {
+      assignments: [];
+      participantOverlay: typeof staleProjection;
+    }) => void;
+    const staleAssignments = new Promise<{
+      assignments: [];
+      participantOverlay: typeof staleProjection;
+    }>((resolve) => {
+      resolveStaleAssignments = resolve;
+    });
+    mockGetServicePlanAssignments
+      .mockResolvedValueOnce({ assignments: [], participantOverlay: { status: "ready", elements: [] } })
+      .mockReturnValueOnce(staleAssignments)
+      .mockResolvedValue({ assignments: [], participantOverlay: freshProjection });
+    mockLoadPlanPreview.mockImplementation(async (plan, _assignments, projection) => ({
+      ...outlineFixture,
+      planLabel: `${plan.name}:${projection.elements[0]?.assignees[0]?.name || "empty"}`,
+    }));
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+        undoable: (
+          state: typeof undoableState = undoableState,
+          action: { type?: string },
+        ): typeof undoableState =>
+          action.type === "SWITCH_OUTLINE"
+            ? {
+                ...state,
+                present: {
+                  ...state.present,
+                  itemLists: {
+                    ...state.present.itemLists,
+                    selectedList: { _id: "outline-2", name: "Evening" },
+                  },
+                },
+              }
+            : state,
+      },
+    });
+    renderHookWith(store, enabledGlobalInfo, { db: {} });
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      mockLiveHandler?.({ type: "schedule-updated", scheduleId: "schedule-1" });
+    });
+    await waitFor(() => expect(mockGetServicePlanAssignments).toHaveBeenCalledTimes(2));
+    act(() => {
+      store.dispatch({ type: "SWITCH_OUTLINE" });
+    });
+    await waitFor(() =>
+      expect(store.getState().undoable.present.itemLists.selectedList?._id).toBe("outline-2"),
+    );
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.serviceOutline?.planLabel).toBe(
+        "Sabbath Service:New outline person",
+      ),
+    );
+
+    await act(async () => {
+      resolveStaleAssignments({ assignments: [], participantOverlay: staleProjection });
+      await staleAssignments;
+    });
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(3));
+    await waitFor(() =>
+      expect(mockLoadPlanPreview).toHaveBeenCalledWith(
+        planFixture,
+        [],
+        staleProjection,
+      ),
+    );
+    expect(store.getState().servicePlanningImport.serviceOutline?.planLabel).toBe(
+      "Sabbath Service:New outline person",
+    );
   });
 
   it("leaves the pasted URL untouched so Import still looks unused", async () => {
@@ -651,6 +962,7 @@ describe("useCurrentServicePlanSource", () => {
     expect(mockLoadPlanPreview).toHaveBeenLastCalledWith(
       editedPlan,
       expect.anything(),
+      expect.objectContaining({ status: "ready" }),
     );
     expect(mockGetServicePlan).toHaveBeenCalledTimes(2);
   });
@@ -931,7 +1243,11 @@ describe("useCurrentServicePlanSource", () => {
     renderHookWith(store, enabledGlobalInfo);
 
     await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalled());
-    expect(mockLoadPlanPreview).toHaveBeenCalledWith(planFixture, []);
+    expect(mockLoadPlanPreview).toHaveBeenCalledWith(
+      planFixture,
+      [],
+      { status: "failed", elements: [] },
+    );
     expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
       "service-1@2026-08-01",
     );
@@ -1245,6 +1561,7 @@ describe("useCurrentServicePlanSource", () => {
     expect(mockLoadPlanPreview).toHaveBeenLastCalledWith(
       { ...planFixture, name: "Selected plan refreshed" },
       expect.any(Array),
+      expect.objectContaining({ status: "ready" }),
     );
   });
 
@@ -1283,6 +1600,7 @@ describe("useCurrentServicePlanSource", () => {
     expect(mockLoadPlanPreview).toHaveBeenLastCalledWith(
       { ...planFixture, name: "Selected plan refreshed" },
       expect.any(Array),
+      expect.objectContaining({ status: "ready" }),
     );
   });
 
@@ -1301,6 +1619,7 @@ describe("useCurrentServicePlanSource", () => {
     mockGetServicePlanAssignments.mockResolvedValue({
       success: true,
       assignments: refreshedAssignments,
+      participantOverlay: { status: "ready", elements: [] },
     });
 
     act(() => {
@@ -1318,6 +1637,7 @@ describe("useCurrentServicePlanSource", () => {
     expect(mockLoadPlanPreview).toHaveBeenLastCalledWith(
       refreshedPlan,
       refreshedAssignments,
+      { status: "ready", elements: [] },
     );
   });
 
@@ -1354,6 +1674,7 @@ describe("useCurrentServicePlanSource", () => {
     mockGetServicePlanAssignments.mockResolvedValue({
       success: true,
       assignments: refreshedAssignments,
+      participantOverlay: { status: "ready", elements: [] },
     });
     act(() => {
       window.dispatchEvent(new Event("offline"));
@@ -1368,6 +1689,7 @@ describe("useCurrentServicePlanSource", () => {
     expect(mockLoadPlanPreview).toHaveBeenLastCalledWith(
       planFixture,
       refreshedAssignments,
+      { status: "ready", elements: [] },
     );
   });
 

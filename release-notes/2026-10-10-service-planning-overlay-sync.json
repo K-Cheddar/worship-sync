@@ -3,5 +3,5 @@
   "date": "2026-10-10",
   "type": "fixed",
   "title": "Weekly overlay sync",
-  "description": "Service Planning now refreshes reusable overlays with current participant details while keeping their order and formatting."
+  "description": "Native service plans can prepare reusable participant overlays from assigned Teams members and role titles, with per-item event labels and a preview before explicit sync."
 }

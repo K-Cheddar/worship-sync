@@ -36,6 +36,7 @@ import Input from "../../components/Input/Input";
 import { useToast } from "../../context/toastContext";
 import type { RootState } from "../../store/store";
 import Button from "../../components/Button/Button";
+import ServicePlanningOverlayPreview from "../../components/ServicePlanningOverlayPreview/ServicePlanningOverlayPreview";
 import FloatingWindow, { type FloatingWindowHandle } from "../../components/FloatingWindow/FloatingWindow";
 import Spinner from "../../components/Spinner/Spinner";
 import ProfileImagePreview from "../../components/ProfileImagePreview/ProfileImagePreview";
@@ -384,6 +385,7 @@ const ServicePlanningSyncFloatingWindow = ({
   const [isStoppingSavedPlan, setIsStoppingSavedPlan] = useState(false);
   const [lastSyncSummary, setLastSyncSummary] = useState<SyncSummary | null>(null);
   const [isSyncSummaryExpanded, setIsSyncSummaryExpanded] = useState(true);
+  const [isOverlayPreviewExpanded, setIsOverlayPreviewExpanded] = useState(true);
   const cancelSavedPlanPushRef = useRef(false);
   const pendingSavedPlanSummaryRef = useRef<{
     outline: SyncSummaryEntry[];
@@ -1313,6 +1315,14 @@ const ServicePlanningSyncFloatingWindow = ({
 
         {!isLoading && (preview || (isPlanSourced && selectedPlanDetails)) ? (
           <div className="flex flex-col gap-2">
+            {activeTab === "plan" && preview?.nativeOverlaySummary ? (
+              <ServicePlanningOverlayPreview
+                items={preview.overlayPlan}
+                nativeSummary={preview.nativeOverlaySummary}
+                expanded={isOverlayPreviewExpanded}
+                onExpandedChange={setIsOverlayPreviewExpanded}
+              />
+            ) : null}
             {activeTab === "plan" ? (
               isPlanSourced && selectedPlanDetails ? (
                 <ControllerServicePlanView

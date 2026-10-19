@@ -25,6 +25,7 @@ import type {
   ServicePlanMicrophone,
   ServicePlanMicrophoneAudience,
   ServiceEquipment,
+  ServicePlanParticipantOverlayProjection,
 } from "../types/servicePlan";
 import type { ServicePlanningTeamAssignment } from "../types/servicePlanningImport";
 import type {
@@ -2695,7 +2696,11 @@ export const getServicePlanAssignments = async (
   churchId: string,
   planKey: string,
 ) =>
-  apiFetch<{ success: boolean; assignments: ServicePlanningTeamAssignment[] }>(
+  apiFetch<{
+    success: boolean;
+    assignments: ServicePlanningTeamAssignment[];
+    participantOverlay?: ServicePlanParticipantOverlayProjection;
+  }>(
     `api/churches/${churchId}/service-plans/${encodeURIComponent(planKey)}/assignments`,
     { method: "GET" },
   );

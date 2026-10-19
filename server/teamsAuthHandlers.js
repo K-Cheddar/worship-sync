@@ -2255,6 +2255,17 @@ export const createTeamsAuthHandlers = ({
       .slice(0, MAX_SERVICE_PLAN_ASSIGNEES);
   };
 
+  const normalizeServicePlanParticipantOverlay = (raw) => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+    const enabled = raw.enabled === true;
+    const eventLabel = normalizeShortText(raw.eventLabel, { max: 120 });
+    if (!enabled && !eventLabel) return undefined;
+    return {
+      ...(enabled ? { enabled: true } : {}),
+      ...(eventLabel ? { eventLabel } : {}),
+    };
+  };
+
   const normalizeServicePlanMicrophoneAssignments = (raw) =>
     (Array.isArray(raw) ? raw : [])
       .map((assignment) => {
@@ -2628,6 +2639,9 @@ export const createTeamsAuthHandlers = ({
           .slice(0, MAX_SERVICE_PLAN_TEAM_NOTES)
       : undefined;
     const assignees = normalizeServicePlanAssignees(raw?.assignees);
+    const participantOverlay = normalizeServicePlanParticipantOverlay(
+      raw?.participantOverlay,
+    );
     const microphoneAssignments = normalizeServicePlanMicrophoneAssignments(
       raw?.microphoneAssignments,
     );
@@ -2665,6 +2679,7 @@ export const createTeamsAuthHandlers = ({
       ...(isRichTextDocEmpty(notes) ? {} : { notes }),
       ...(teamNotes?.length ? { teamNotes } : {}),
       ...(assignees.length ? { assignees } : {}),
+      ...(participantOverlay ? { participantOverlay } : {}),
       // Legacy shapes are still accepted from a client that has not reloaded
       // yet, and converted for good by
       // scripts/migrate-service-plan-assignees.js. Never written alongside
@@ -6909,6 +6924,171 @@ export const createTeamsAuthHandlers = ({
         });
       });
     });
+  };
+
+  /**
+   * Resolve only people explicitly opted into participant overlays for this
+   * saved plan. The response contains no contact fields or unrelated roster
+   * rows. A position may scope which team membership to inspect, but its name
+   * is never used as the participant title.
+   */
+  const buildServicePlanParticipantOverlayProjection = async (
+    churchId,
+    servicePlan,
+  ) => {
+    const memberPromises = new Map();
+    const positionPromises = new Map();
+    const rolePromises = new Map();
+    const readCached = (cache, key, read) => {
+      if (!cache.has(key)) cache.set(key, read());
+      return cache.get(key);
+    };
+    const readMember = (memberId) =>
+      readCached(memberPromises, memberId, () =>
+        getDoc(COLLECTIONS.teamRosterMembers, memberId),
+      );
+    const readPosition = (positionId) =>
+      readCached(positionPromises, positionId, () =>
+        getDoc(COLLECTIONS.teamPositions, positionId),
+      );
+    const readRole = (roleId) =>
+      readCached(rolePromises, roleId, () =>
+        getDoc(COLLECTIONS.teamRoles, roleId),
+      );
+    const legacyAssignees = (element) => {
+      const name = normalizeShortText(element?.assignedName, { max: 200 });
+      const memberId = normalizeShortText(element?.assignedMemberId, {
+        max: 160,
+      });
+      return name || memberId ? [{ name, memberId }] : [];
+    };
+    const assigneesForElement = (element) =>
+      Array.isArray(element?.assignees)
+        ? element.assignees
+        : legacyAssignees(element);
+    const resolveRole = async (member, positionIds) => {
+      let teamId = "";
+      if (positionIds.length) {
+        const positions = await Promise.all(positionIds.map(readPosition));
+        if (
+          positions.some(
+            (position) =>
+              !position ||
+              position.churchId !== churchId ||
+              !normalizeShortText(position.teamId, { max: 160 }),
+          )
+        ) {
+          return { roleStatus: "unavailable" };
+        }
+        const contextTeamIds = [
+          ...new Set(
+            positions.map((position) =>
+              normalizeShortText(position.teamId, { max: 160 }),
+            ),
+          ),
+        ];
+        if (contextTeamIds.length !== 1) {
+          return { roleStatus: "ambiguous" };
+        }
+        [teamId] = contextTeamIds;
+      } else {
+        const memberships = Object.entries(
+          member.teamMemberships && typeof member.teamMemberships === "object"
+            ? member.teamMemberships
+            : {},
+        ).filter(([, membership]) => membership && typeof membership === "object");
+        if (memberships.length > 1) return { roleStatus: "ambiguous" };
+        if (memberships.length === 0) return { roleStatus: "missing" };
+        [teamId] = memberships[0];
+      }
+
+      const membership = member.teamMemberships?.[teamId];
+      const roleId = normalizeShortText(membership?.roleId, { max: 160 });
+      if (!roleId) return { roleStatus: "missing" };
+      const role = await readRole(roleId);
+      if (
+        !role ||
+        role.churchId !== churchId ||
+        role.teamId !== teamId ||
+        !normalizeShortText(role.name, { max: 120 })
+      ) {
+        return { roleStatus: "missing" };
+      }
+      if (role.archivedAt) return { roleStatus: "archived" };
+      return {
+        roleStatus: "resolved",
+        roleTitle: normalizeShortText(role.name, { max: 120 }),
+      };
+    };
+
+    const resolveAssignee = async (assignee, positionIds) => {
+      const savedName = normalizeShortText(assignee?.name, { max: 200 });
+      const memberId = normalizeShortText(assignee?.memberId, { max: 160 });
+      if (!memberId) {
+        return savedName
+          ? {
+              name: savedName,
+              memberStatus: "guest",
+              roleStatus: "not-applicable",
+            }
+          : null;
+      }
+
+      const member = await readMember(memberId);
+      if (!member || member.churchId !== churchId || member.archivedAt) {
+        return {
+          name: savedName,
+          memberStatus: "missing",
+          roleStatus: "unavailable",
+        };
+      }
+      const prefix = normalizeShortText(member.title, { max: 80 });
+      const firstName = normalizeShortText(member.firstName, { max: 100 });
+      const lastName = normalizeShortText(member.lastName, { max: 100 });
+      const name = [prefix, firstName, lastName].filter(Boolean).join(" ");
+      if (!firstName && !lastName) {
+        return {
+          name: savedName,
+          memberStatus: "missing",
+          roleStatus: "unavailable",
+        };
+      }
+      const role = await resolveRole(member, positionIds);
+      return { name, memberStatus: "resolved", ...role };
+    };
+
+    const enabledElements = (servicePlan?.sections || []).flatMap((section) =>
+      (section?.elements || []).filter(
+        (element) => element?.participantOverlay?.enabled === true,
+      ),
+    );
+    const elements = await Promise.all(
+      enabledElements.map(async (element) => {
+        const positionIds = [
+          ...new Set(
+            [
+              element.positionId,
+              ...(Array.isArray(element.scheduledPositionIds)
+                ? element.scheduledPositionIds
+                : []),
+            ]
+              .map((value) => normalizeShortText(value, { max: 160 }))
+              .filter(Boolean),
+          ),
+        ].slice(0, MAX_SERVICE_PLAN_POSITIONS);
+        const assignees = await Promise.all(
+          assigneesForElement(element).map((assignee) =>
+            resolveAssignee(assignee, positionIds),
+          ),
+        );
+        return {
+          elementId: normalizeShortText(element.id, { max: 160 }),
+          assignees: assignees.filter(Boolean),
+        };
+      }),
+    );
+
+    return { status: "ready", elements };
   };
 
   const isMemberAvailableDuringServiceWeek = (member, service) => {
@@ -19587,7 +19767,14 @@ export const createTeamsAuthHandlers = ({
           servicePlan.churchId !== churchId ||
           planOnlyWorkstation
         ) {
-          return res.json({ success: true, assignments: [] });
+          return res.json({
+            success: true,
+            assignments: [],
+            participantOverlay: {
+              status: "restricted",
+              elements: [],
+            },
+          });
         }
         return res.json({
           success: true,
@@ -19596,6 +19783,11 @@ export const createTeamsAuthHandlers = ({
             planKey,
             servicePlan,
           ),
+          participantOverlay:
+            await buildServicePlanParticipantOverlayProjection(
+              churchId,
+              servicePlan,
+            ),
         });
       } catch (error) {
         return sendTeamsJsonError(

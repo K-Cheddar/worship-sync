@@ -304,6 +304,63 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     expect(await screen.findByText("Welcome")).toBeInTheDocument();
   });
 
+  it("shows native participant names, titles, and sync actions before explicit sync", () => {
+    mockPlanSource.isPlanSourced = true;
+    mockPlanSource.selectedPlanKey = "service-1@2026-07-30";
+    mockPlanSource.selectedPlanDetails = {
+      planKey: "service-1@2026-07-30",
+      name: "Native service plan",
+      date: "2026-07-30",
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        elements: [{
+          id: "element-1",
+          type: "free",
+          title: { blocks: [{ type: "paragraph", spans: [{ text: "Sabbath School" }] }] },
+        }],
+      }],
+    };
+
+    const store = configureStore({
+      reducer: { servicePlanningImport: servicePlanningImportReducer, allDocs: allDocsReducer },
+    });
+    store.dispatch(setServicePlanningServiceOutline(wrapImport({
+      overlayCandidates: [],
+      overlayPlan: [{
+        sectionName: "Worship",
+        sourceRowIndex: 0,
+        elementType: "free",
+        title: "Sabbath School",
+        ledBy: "Greg Baldeo",
+        personIndex: 0,
+        rawNameToken: "Greg Baldeo",
+        action: "update",
+        targetOverlayId: "weekly-host",
+        targetOverlayName: "Weekly Host",
+        patch: { name: "Dr. Greg Baldeo", title: "Lead Pastor", event: "Sabbath School" },
+        duplicateExactMatchesAreAmbiguous: true,
+      }],
+      nativeOverlaySummary: {
+        status: "ready",
+        selectedItemCount: 1,
+        assignedParticipantCount: 1,
+      },
+      outlineCandidates: [],
+      lineItems: [],
+      teamAssignments: [],
+    }) as any));
+    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+
+    renderWindow(store);
+
+    const overlayPreview = screen.getByRole("region", { name: "Overlay preview" });
+    expect(within(overlayPreview).getByText("Dr. Greg Baldeo")).toBeInTheDocument();
+    expect(within(overlayPreview).getByText("Lead Pastor")).toBeInTheDocument();
+    expect(within(overlayPreview).getByText("Sabbath School")).toBeInTheDocument();
+    expect(within(overlayPreview).getByText("Update existing")).toBeInTheDocument();
+  });
+
   it("keeps the scheduled LIVE row when the outline selection changes", () => {
     const startsAt = new Date(Date.now() - 100_000).toISOString();
     mockPlanSource.isPlanSourced = true;

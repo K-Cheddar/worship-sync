@@ -43,7 +43,11 @@ import {
 import { getServicePlanKey } from "../../utils/servicePlanKeys";
 import { toTeamService } from "../Teams/teamsUtils";
 import { useCurrentServiceOccurrence } from "./useCurrentServiceOccurrence";
-import type { ServicePlan, ServicePlanSummary } from "../../types/servicePlan";
+import type {
+  ServicePlan,
+  ServicePlanParticipantOverlayProjection,
+  ServicePlanSummary,
+} from "../../types/servicePlan";
 import type { ServicePlanningTeamAssignment } from "../../types/servicePlanningImport";
 import type { PublicServiceFlowSnapshot } from "../../services/serviceFlowTypes";
 import {
@@ -381,9 +385,14 @@ export const useCurrentServicePlanSource = () => {
     async (
       plan: ServicePlan,
       assignments: ServicePlanningTeamAssignment[],
+      participantOverlay: ServicePlanParticipantOverlayProjection,
       shouldApply: () => boolean = () => true,
     ) => {
-      const outline = await loadPlanPreviewRef.current(plan, assignments);
+      const outline = await loadPlanPreviewRef.current(
+        plan,
+        assignments,
+        participantOverlay,
+      );
       if (!shouldApply()) return;
       dispatch(
         setServicePlanningPlanOutline({ outline, planKey: plan.planKey }),
@@ -530,6 +539,12 @@ export const useCurrentServicePlanSource = () => {
           await applyPlan(
             plan,
             assignmentsResult?.ok ? assignmentsResult.result.assignments : [],
+            assignmentsResult?.ok
+              ? assignmentsResult.result.participantOverlay ?? {
+                  status: "failed",
+                  elements: [],
+                }
+              : { status: "failed", elements: [] },
             isCurrentRequest,
           );
         } catch (error) {
@@ -786,27 +801,36 @@ export const useCurrentServicePlanSource = () => {
       if (event.type === "schedule-updated" || event.type === "schedule-removed") {
         if (!churchId || !planRef.current) return;
         const plan = planRef.current;
+        const churchIdAtStart = churchId;
+        const controllerIdAtStart = activeControllerId;
+        const outlineIdAtStart = selectedOutlineId;
+        const planKeyAtStart = plan.planKey;
         const generation = ++generationRef.current;
-        void getServicePlanViewer(churchId, plan.planKey)
+        const isCurrentRequest = () =>
+          generation === generationRef.current &&
+          activeControllerIdRef.current === controllerIdAtStart &&
+          selectedOutlineIdRef.current === outlineIdAtStart &&
+          churchIdRef.current === churchIdAtStart &&
+          selectedPlanKeyRef.current === planKeyAtStart &&
+          isEnabledRef.current &&
+          isMountedRef.current;
+        void getServicePlanViewer(churchIdAtStart, planKeyAtStart)
           .then((result) => {
-            if (
-              generation === generationRef.current &&
-              planRef.current === plan &&
-              selectedPlanKeyRef.current === plan.planKey
-            ) {
+            if (isCurrentRequest() && planRef.current === plan) {
               setSelectedPlanSnapshot(result.snapshot);
             }
           })
           .catch(() => undefined);
-        void getServicePlanAssignments(churchId, plan.planKey)
+        void getServicePlanAssignments(churchIdAtStart, planKeyAtStart)
           .then((result) => {
             return applyPlan(
               plan,
               result.assignments,
-              () =>
-                generation === generationRef.current &&
-                planRef.current === plan &&
-                selectedPlanKeyRef.current === plan.planKey,
+              result.participantOverlay ?? {
+                status: "failed",
+                elements: [],
+              },
+              () => isCurrentRequest() && planRef.current === plan,
             );
           })
           .catch(() => undefined);
@@ -826,12 +850,14 @@ export const useCurrentServicePlanSource = () => {
       });
     },
     [
+      activeControllerId,
       applyPlan,
       churchId,
       clearUnavailablePlan,
       isEnabled,
       refreshPlans,
       reconcileSelectedPlan,
+      selectedOutlineId,
     ],
   );
 
