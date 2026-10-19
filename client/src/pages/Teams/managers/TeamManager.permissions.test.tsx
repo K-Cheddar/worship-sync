@@ -1,5 +1,6 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { MemoryRouter } from "react-router-dom";
 import TeamManager from "./TeamManager";
 import { ToastProvider } from "../../../context/toastContext";
@@ -23,6 +24,7 @@ jest.mock("../../../api/auth", () => ({
   addTeamRosterMemberToTeam: jest.fn(), removeTeamRosterMemberFromTeam: jest.fn(), searchTeamRosterCandidates: jest.fn(),
   getTeamRosterMemberProfile: jest.fn(), updateTeamRosterMemberProfile: jest.fn(),
 }));
+jest.mock("../../../utils/apiErrorToast", () => ({ showApiErrorToast: jest.fn() }));
 
 const worship: TeamRecord = {
   churchId: "church-1", teamId: "team-worship", name: "Worship",
@@ -47,12 +49,23 @@ const data: TeamsData = {
   intakeForms: [], intakeSubmissions: [], intakeRecipients: [],
 };
 
+const deferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+};
+
 const renderManager = (
   initialEntry: string | { pathname: string; state?: unknown } = TEAMS_SECTION_PATHS.groups,
   permissions: { canEditTeams?: boolean; canEditTeam?: (teamId: string) => boolean } = {},
   overrides: {
     teams?: TeamRecord[];
     member?: TeamRosterMember;
+    members?: TeamRosterMember[];
     positions?: TeamsData["positions"];
     roles?: TeamsData["teamRoles"];
     qualificationAreas?: TeamsData["qualificationAreas"];
@@ -60,28 +73,57 @@ const renderManager = (
     onRosterMemberSaved?: (member: TeamRosterMember) => void;
     onRosterMemberRemoved?: (memberId: string) => void;
     onRosterMutationReconcile?: (memberId: string) => void;
+    onTeamRosterSaved?: (team: TeamRecord) => void;
     onSaved?: (team: TeamRecord) => void;
   } = {},
-) =>
-  render(
-    <MemoryRouter initialEntries={[initialEntry]}>
-      <GlobalInfoContext.Provider value={{ churchId: "church-1", churchBranding: { colors: [] } } as never}>
-        <ToastProvider>
-          <TeamsNavigationGuardProvider>
-            <TeamManager
-              teams={overrides.teams ?? [worship, av]} positions={overrides.positions ?? []} roles={overrides.roles ?? []} qualificationAreas={overrides.qualificationAreas ?? []}
-              members={[overrides.member ?? member]} data={{ ...data, teams: overrides.teams ?? [worship, av], members: [overrides.member ?? member], qualificationLevels: overrides.qualificationLevels ?? [] }} canEditTeams={permissions.canEditTeams ?? false}
-              canEditTeam={permissions.canEditTeam ?? ((teamId) => teamId === worship.teamId)}
-              onSaved={overrides.onSaved ?? jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()}
-              onRosterMemberSaved={overrides.onRosterMemberSaved}
-              onRosterMemberRemoved={overrides.onRosterMemberRemoved}
-              onRosterMutationReconcile={overrides.onRosterMutationReconcile}
-            />
-          </TeamsNavigationGuardProvider>
-        </ToastProvider>
-      </GlobalInfoContext.Provider>
-    </MemoryRouter>,
-  );
+) => {
+  const initialTeams = overrides.teams ?? [worship, av];
+  const initialMembers = overrides.members ?? [overrides.member ?? member];
+  const Harness = () => {
+    const [renderedTeams, setRenderedTeams] = useState(initialTeams);
+    const [renderedMembers, setRenderedMembers] = useState(initialMembers);
+    const upsertTeam = (team: TeamRecord, replaceId?: string) => {
+      setRenderedTeams((current) => {
+        const targetId = replaceId || team.teamId;
+        const found = current.some((item) => item.teamId === targetId);
+        return found
+          ? current.map((item) => item.teamId === targetId ? team : item)
+          : [...current, team];
+      });
+    };
+    const upsertMember = (saved: TeamRosterMember) => {
+      setRenderedMembers((current) => current.some((item) => item.memberId === saved.memberId)
+        ? current.map((item) => item.memberId === saved.memberId ? saved : item)
+        : [...current, saved]);
+    };
+
+    return (
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <GlobalInfoContext.Provider value={{ churchId: "church-1", churchBranding: { colors: [] } } as never}>
+          <ToastProvider>
+            <TeamsNavigationGuardProvider>
+              <TeamManager
+                teams={renderedTeams} positions={overrides.positions ?? []} roles={overrides.roles ?? []} qualificationAreas={overrides.qualificationAreas ?? []}
+                members={renderedMembers} data={{ ...data, teams: renderedTeams, members: renderedMembers, qualificationLevels: overrides.qualificationLevels ?? [] }} canEditTeams={permissions.canEditTeams ?? false}
+                canEditTeam={permissions.canEditTeam ?? ((teamId) => teamId === worship.teamId)}
+                onSaved={(team, replaceId) => { upsertTeam(team, replaceId); overrides.onSaved?.(team); }}
+                onArchived={jest.fn()} onRemoved={(teamId) => setRenderedTeams((current) => current.filter((team) => team.teamId !== teamId))}
+                onTeamRosterSaved={(team) => { upsertTeam(team); overrides.onTeamRosterSaved?.(team); }}
+                onRosterMemberSaved={(saved) => { upsertMember(saved); overrides.onRosterMemberSaved?.(saved); }}
+                onRosterMemberRemoved={(memberId) => {
+                  setRenderedMembers((current) => current.filter((item) => item.memberId !== memberId));
+                  overrides.onRosterMemberRemoved?.(memberId);
+                }}
+                onRosterMutationReconcile={overrides.onRosterMutationReconcile}
+              />
+            </TeamsNavigationGuardProvider>
+          </ToastProvider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>
+    );
+  };
+  return render(<Harness />);
+};
 
 beforeEach(() => {
   jest.mocked(createTeam).mockReset();
@@ -120,8 +162,8 @@ it("lets a scoped manager edit team settings and manage only that team's roster"
   await user.click(screen.getByRole("button", { name: "Edit Worship" }));
   expect(screen.getByRole("heading", { name: "Edit team" })).toBeInTheDocument();
   expect(within(screen.getByRole("region", { name: "Edit team" })).getByText("Avery Singer")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Add member" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Remove from team" })).toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: /Add members/i })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Remove Avery Singer from team" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Team actions" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /select members/i })).not.toBeInTheDocument();
 
@@ -154,34 +196,53 @@ it("searches safe candidate results and adds the selected person", async () => {
   jest.mocked(searchTeamRosterCandidates).mockResolvedValue({
     candidates: [{ memberId: "member-new", firstName: "Jordan", lastName: "Lee" }],
   } as never);
-  jest.mocked(addTeamRosterMemberToTeam).mockResolvedValue({
+  const pendingAdd = deferred<{
+    success: boolean;
+    team: TeamRecord;
+    member: TeamRosterMember;
+  }>();
+  jest.mocked(addTeamRosterMemberToTeam).mockReturnValue(pendingAdd.promise as never);
+  const addResult = {
     success: true,
     team: { ...worship, memberIds: ["member-1", "member-new"] },
     member: { memberId: "member-new", churchId: "church-1", firstName: "Jordan", lastName: "Lee" },
-  } as never);
+  };
   const onTeamRosterSaved = jest.fn();
   const onRosterMemberSaved = jest.fn();
   const onRosterMutationReconcile = jest.fn();
-  render(
-    <MemoryRouter initialEntries={[TEAMS_SECTION_PATHS.groups]}>
-      <GlobalInfoContext.Provider value={{ churchId: "church-1", churchBranding: { colors: [] } } as never}>
-        <ToastProvider><TeamsNavigationGuardProvider>
-          <TeamManager teams={[worship, av]} positions={[]} roles={[]} qualificationAreas={[]} members={[member]} data={data}
-            canEditTeams={false} canEditTeam={(teamId) => teamId === worship.teamId}
-            onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()}
-            onTeamRosterSaved={onTeamRosterSaved} onRosterMemberSaved={onRosterMemberSaved}
-            onRosterMutationReconcile={onRosterMutationReconcile} />
-        </TeamsNavigationGuardProvider></ToastProvider>
-      </GlobalInfoContext.Provider>
-    </MemoryRouter>,
-  );
+  const privateOtherTeamMember: TeamRosterMember = {
+    memberId: "private-other-team",
+    churchId: "church-1",
+    firstName: "Private",
+    lastName: "Directory Entry",
+    email: "private@example.test",
+    positionIds: [],
+    blockoutDates: [],
+  };
+  renderManager(TEAMS_SECTION_PATHS.groups, {
+    canEditTeam: (teamId) => teamId === worship.teamId,
+  }, {
+    members: [member, privateOtherTeamMember],
+    onTeamRosterSaved,
+    onRosterMemberSaved,
+    onRosterMutationReconcile,
+  });
   await user.click(screen.getByRole("button", { name: "Edit Worship" }));
-  await user.click(screen.getByRole("button", { name: "Add member" }));
-  await user.type(screen.getByRole("textbox", { name: "Search existing person:" }), "Jordan");
-  await user.click(screen.getByRole("button", { name: "Search" }));
+  const search = screen.getByRole("textbox", { name: /Add members/i });
+  expect(screen.queryByText("Private Directory Entry")).not.toBeInTheDocument();
+  await user.type(search, "Jordan");
   expect(await screen.findByText("Jordan Lee")).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: /^Add$/ }));
-  await waitFor(() => expect(addTeamRosterMemberToTeam).toHaveBeenCalledWith("church-1", worship.teamId, "member-new"));
+  expect(searchTeamRosterCandidates).toHaveBeenCalledWith("church-1", worship.teamId, "Jordan");
+  expect(screen.queryByText("Private Directory Entry")).not.toBeInTheDocument();
+  const addButton = screen.getByRole("button", { name: "Add Jordan Lee to team" });
+  await user.click(addButton);
+  expect(screen.getByText("Adding member...")).toBeInTheDocument();
+  expect(addButton).toBeDisabled();
+  await user.click(addButton);
+  expect(addTeamRosterMemberToTeam).toHaveBeenCalledTimes(1);
+  pendingAdd.resolve(addResult as never);
+  await waitFor(() => expect(search).toHaveValue(""));
+  expect(addTeamRosterMemberToTeam).toHaveBeenCalledWith("church-1", worship.teamId, "member-new");
   expect(onTeamRosterSaved).toHaveBeenCalledWith(expect.objectContaining({ memberIds: ["member-1", "member-new"] }));
   expect(onRosterMemberSaved).toHaveBeenCalledWith(expect.objectContaining({
     memberId: "member-new", positionIds: [], desiredPositionIds: [], blockoutDates: [],
@@ -192,6 +253,51 @@ it("searches safe candidate results and adds the selected person", async () => {
   expect(immediatelyAddedMember.phoneNumber).toBeUndefined();
   expect(immediatelyAddedMember.notes).toBeUndefined();
   expect(onRosterMutationReconcile).toHaveBeenCalledWith("member-new");
+  expect(within(screen.getByRole("list", { name: "Members on this team" })).getByText("Jordan Lee")).toBeInTheDocument();
+});
+
+it("ignores stale scoped search results after switching teams", async () => {
+  const user = userEvent.setup();
+  const oldSearch = deferred<{ candidates: Array<{ memberId: string; firstName: string; lastName: string }> }>();
+  const newSearch = deferred<{ candidates: Array<{ memberId: string; firstName: string; lastName: string }> }>();
+  jest.mocked(searchTeamRosterCandidates)
+    .mockReturnValueOnce(oldSearch.promise as never)
+    .mockReturnValueOnce(newSearch.promise as never);
+  renderManager(TEAMS_SECTION_PATHS.groups, {
+    canEditTeam: () => true,
+  });
+
+  await user.click(screen.getByRole("button", { name: "Edit Worship" }));
+  await user.type(screen.getByRole("textbox", { name: /Add members/i }), "Jordan");
+  expect(await screen.findByText("Searching members...")).toBeInTheDocument();
+  await waitFor(() => expect(searchTeamRosterCandidates).toHaveBeenCalledWith("church-1", worship.teamId, "Jordan"));
+
+  await user.click(screen.getByRole("button", { name: "Edit AV" }));
+  await user.type(screen.getByRole("textbox", { name: /Add members/i }), "Maya");
+  await waitFor(() => expect(searchTeamRosterCandidates).toHaveBeenCalledWith("church-1", av.teamId, "Maya"));
+  newSearch.resolve({ candidates: [{ memberId: "m-maya", firstName: "Maya", lastName: "New" }] });
+  expect(await screen.findByText("Maya New")).toBeInTheDocument();
+
+  oldSearch.resolve({ candidates: [{ memberId: "m-jordan", firstName: "Jordan", lastName: "Old" }] });
+  await waitFor(() => expect(screen.queryByText("Jordan Old")).not.toBeInTheDocument());
+  expect(screen.getByText("Maya New")).toBeInTheDocument();
+});
+
+it("shows scoped search failures and retries inline", async () => {
+  const user = userEvent.setup();
+  jest.mocked(searchTeamRosterCandidates)
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValueOnce({
+      candidates: [{ memberId: "member-retry", firstName: "Riley", lastName: "Ready" }],
+    } as never);
+  renderManager();
+
+  await user.click(screen.getByRole("button", { name: "Edit Worship" }));
+  await user.type(screen.getByRole("textbox", { name: /Add members/i }), "Riley");
+  expect(await screen.findByText("Could not search people. Try again.")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  expect(await screen.findByText("Riley Ready")).toBeInTheDocument();
+  expect(searchTeamRosterCandidates).toHaveBeenCalledTimes(2);
 });
 
 it("confirms team removal and explains that existing assignments stay", async () => {
@@ -209,9 +315,12 @@ it("confirms team removal and explains that existing assignments stay", async ()
     onRosterMemberSaved, onRosterMemberRemoved, onRosterMutationReconcile,
   });
   await user.click(screen.getByRole("button", { name: "Edit Worship" }));
-  await user.click(screen.getByRole("button", { name: "Remove from team" }));
+  await user.click(screen.getByRole("button", { name: "Remove Avery Singer from team" }));
   expect(screen.getByRole("dialog", { name: "Remove Avery Singer from Worship?" })).toHaveTextContent(
     "Existing schedule assignments will remain and can be reassigned separately.",
+  );
+  expect(screen.getByRole("dialog", { name: "Remove Avery Singer from Worship?" })).toHaveTextContent(
+    "It does not delete their member record.",
   );
   await user.click(screen.getByRole("button", { name: /^Remove from team$/ }));
   await waitFor(() => expect(removeTeamRosterMemberFromTeam).toHaveBeenCalledWith("church-1", worship.teamId, member.memberId));
@@ -225,6 +334,7 @@ it("confirms team removal and explains that existing assignments stay", async ()
   expect(immediatelyRemovedMember.notes).toBeUndefined();
   expect(onRosterMemberRemoved).not.toHaveBeenCalled();
   expect(onRosterMutationReconcile).toHaveBeenCalledWith(member.memberId);
+  expect(screen.getByText("No members on this team yet.")).toBeInTheDocument();
 });
 
 it("removes a sole-Team member from projected state immediately", async () => {
@@ -242,11 +352,12 @@ it("removes a sole-Team member from projected state immediately", async () => {
     teams: [worship], onRosterMemberSaved, onRosterMemberRemoved, onRosterMutationReconcile,
   });
   await user.click(screen.getByRole("button", { name: "Edit Worship" }));
-  await user.click(screen.getByRole("button", { name: "Remove from team" }));
+  await user.click(screen.getByRole("button", { name: "Remove Avery Singer from team" }));
   await user.click(screen.getByRole("button", { name: /^Remove from team$/ }));
   await waitFor(() => expect(onRosterMemberRemoved).toHaveBeenCalledWith(member.memberId));
   expect(onRosterMemberSaved).not.toHaveBeenCalled();
   expect(onRosterMutationReconcile).toHaveBeenCalledWith(member.memberId);
+  expect(screen.getByText("No members on this team yet.")).toBeInTheDocument();
 });
 
 it("does not open a read-only team's editor from a restore request", async () => {
@@ -279,9 +390,9 @@ it("shows counts without member names or edit controls for read-only Team viewer
   });
   expect(screen.queryByRole("button", { name: "Edit Worship" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Edit AV" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Add member" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Manage" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Remove from team" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("textbox", { name: /Add members/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Manage .*$/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Remove .* from team/ })).not.toBeInTheDocument();
 });
 
 it("keeps creation and roster controls available to global Teams editors", async () => {
@@ -294,11 +405,77 @@ it("keeps creation and roster controls available to global Teams editors", async
   expect(within(screen.getByTestId("teams-create-panel-list")).getByRole("button", { name: "Create team" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Edit AV" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Edit Worship" }));
-  expect(screen.queryByRole("button", { name: "Add member" })).not.toBeInTheDocument();
-  expect(within(screen.getByRole("group", { name: "Members" })).getByText("Clear all")).toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: /Add members/i })).toBeInTheDocument();
+  expect(screen.queryByRole("dialog", { name: /Add member to/ })).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Team actions" }));
   expect(await screen.findByText("Archive team")).toBeInTheDocument();
   expect(screen.getByText("Delete team")).toBeInTheDocument();
+});
+
+it("keeps global membership edits in the draft until Save and sends the original baseline", async () => {
+  const user = userEvent.setup();
+  const jordan = {
+    memberId: "member-jordan", churchId: "church-1", firstName: "Jordan", lastName: "Lee",
+  } as TeamRosterMember;
+  const archivedJordan = {
+    memberId: "member-archived", churchId: "church-1", firstName: "Jordan", lastName: "Archived",
+    archivedAt: "2026-10-01T00:00:00.000Z",
+  } as TeamRosterMember;
+  jest.mocked(updateTeam).mockResolvedValue({
+    success: true,
+    team: { ...worship, memberIds: [jordan.memberId] },
+  } as never);
+  renderManager(TEAMS_SECTION_PATHS.groups, {
+    canEditTeams: true,
+    canEditTeam: () => true,
+  }, { members: [member, jordan, archivedJordan] });
+
+  await user.click(screen.getByRole("button", { name: "Edit Worship" }));
+  const search = screen.getByRole("textbox", { name: /Add members/i });
+  await user.type(search, "Jordan");
+  expect(await screen.findByText("Jordan Lee")).toBeInTheDocument();
+  expect(screen.queryByText("Jordan Archived")).not.toBeInTheDocument();
+  expect(searchTeamRosterCandidates).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Add Jordan Lee to team" }));
+  const assigned = screen.getByRole("list", { name: "Members on this team" });
+  expect(within(assigned).getByText("Jordan Lee")).toBeInTheDocument();
+  expect(addTeamRosterMemberToTeam).not.toHaveBeenCalled();
+
+  await user.click(screen.getByRole("button", { name: "Remove Avery Singer from team" }));
+  expect(screen.getByRole("dialog", { name: "Remove Avery Singer from Worship?" })).toHaveTextContent(
+    "when you save your changes",
+  );
+  await user.click(screen.getByRole("button", { name: /^Remove from team$/ }));
+  expect(within(assigned).queryByText("Avery Singer")).not.toBeInTheDocument();
+  expect(updateTeam).not.toHaveBeenCalled();
+
+  await user.click(screen.getByRole("button", { name: "Save team" }));
+  await waitFor(() => expect(updateTeam).toHaveBeenCalledWith("church-1", worship.teamId, expect.objectContaining({
+    memberIds: [jordan.memberId],
+    baseMemberIds: [member.memberId],
+  })));
+});
+
+it("discards global membership draft additions when the editor is cancelled", async () => {
+  const user = userEvent.setup();
+  const jordan = {
+    memberId: "member-jordan", churchId: "church-1", firstName: "Jordan", lastName: "Lee",
+  } as TeamRosterMember;
+  renderManager(TEAMS_SECTION_PATHS.groups, {
+    canEditTeams: true,
+    canEditTeam: () => true,
+  }, { members: [member, jordan] });
+
+  await user.click(screen.getByRole("button", { name: "Edit Worship" }));
+  await user.type(screen.getByRole("textbox", { name: /Add members/i }), "Jordan");
+  await user.click(await screen.findByRole("button", { name: "Add Jordan Lee to team" }));
+  expect(within(screen.getByRole("list", { name: "Members on this team" })).getByText("Jordan Lee")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await user.click(screen.getByRole("button", { name: "Discard changes" }));
+  expect(updateTeam).not.toHaveBeenCalled();
+
+  await user.click(screen.getByRole("button", { name: "Edit Worship" }));
+  expect(within(screen.getByRole("list", { name: "Members on this team" })).queryByText("Jordan Lee")).not.toBeInTheDocument();
 });
 
 it("opens a Team-only member profile and saves through the scoped profile API", async () => {
@@ -347,7 +524,7 @@ it("opens a Team-only member profile and saves through the scoped profile API", 
   });
 
   await user.click(screen.getByRole("button", { name: "Edit Worship" }));
-  await user.click(screen.getByRole("button", { name: "Manage" }));
+  await user.click(screen.getByRole("button", { name: "Manage Avery Singer" }));
   const dialog = await screen.findByRole("dialog", { name: "Manage Avery Singer" });
   expect(getTeamRosterMemberProfile).toHaveBeenCalledWith("church-1", worship.teamId, member.memberId);
   expect(screen.getAllByText("Worship Singer")).toHaveLength(2);
@@ -431,7 +608,7 @@ it("explicitly clears an existing Team role when No role is saved", async () => 
   renderManager(TEAMS_SECTION_PATHS.groups, {}, { roles: [worshipRole] });
 
   await user.click(screen.getByRole("button", { name: "Edit Worship" }));
-  await user.click(screen.getByRole("button", { name: "Manage" }));
+  await user.click(screen.getByRole("button", { name: "Manage Avery Singer" }));
   const dialog = await screen.findByRole("dialog", { name: "Manage Avery Singer" });
   expect(getTeamRosterMemberProfile).toHaveBeenCalledWith("church-1", worship.teamId, member.memberId);
   await user.click(within(dialog).getByRole("combobox", { name: "Worship role:" }));
