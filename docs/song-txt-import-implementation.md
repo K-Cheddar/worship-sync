@@ -1,5 +1,9 @@
 # TXT import implementation plan and verification
 
+Historical implementation record: the October 19 audit found two defects missed
+by this initial review. See [TXT import corrections](song-txt-import-fixes.md) for
+the conservative footer parsing and contextual duplicate attachment fixes.
+
 ## Goal
 Import a local TXT song through the existing editable Create Song draft and writer.
 

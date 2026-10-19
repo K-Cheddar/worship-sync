@@ -20,6 +20,30 @@ const file = (bytes: Uint8Array, name = "song.txt") =>
   ({ name, size: bytes.length, arrayBuffer: async () => bytes.buffer }) as File;
 
 describe("TXT song import", () => {
+  it.each(["Stay with me", "Stay with me\nThrough the night"])(
+    "retains an ambiguous final stanza before the CCLI footer: %s",
+    (ending) => {
+      const parsed = parseSongTxt(
+        `Title: Example\nVerse 1\nOpening words\n\n${ending}\nCCLI Song # 456\n© 2026 Example Songs`,
+        "song.txt",
+      );
+      expect(parsed.lyrics).toBe(`Verse 1\nOpening words\n\n${ending}`);
+      expect(parsed.metadata.authors).toBeUndefined();
+      expect(parsed.metadata.ccliSongNumber).toBe("456");
+      expect(parsed.metadata.copyright).toBe("© 2026 Example Songs");
+      expect(parsed.warnings.join(" ")).toContain("Unlabelled text before the CCLI footer is kept in the lyrics");
+      expect(inferLyricsSections(parsed.lyrics).map(section => section.words).join("\n")).toContain(ending);
+    },
+  );
+
+  it.each(["Authors:", "Songwriters:", "Words and Music by"])(
+    "extracts explicitly labelled footer credits using %s",
+    (label) => {
+      const parsed = parseSongTxt(`Title: Example\nVerse 1\nWords to sing\n\n${label} Alex Example | Jamie Sample\nCCLI Song # 456\n© 2026 Example Songs\nPublisher: Sample Publishing`, "song.txt");
+      expect(parsed.lyrics).toBe("Verse 1\nWords to sing");
+      expect(parsed.metadata).toMatchObject({ authors: "Alex Example | Jamie Sample", ccliSongNumber: "456", copyright: "© 2026 Example Songs", publisher: "Sample Publishing" });
+    },
+  );
   it("retains adjacent unlabelled opening lyrics instead of inventing a title", () => {
     const parsed = parseSongTxt(
       "An opening lyric\nVerse 1\nMore words",
@@ -46,7 +70,7 @@ describe("TXT song import", () => {
     );
   });
 
-  it("supports another layout with header metadata and unlabelled footer songwriters", () => {
+  it("preserves unlabelled credits for review while extracting supported SongSelect footer metadata", () => {
     const parsed = parseSongTxt(
       fixture("songselect-footer-credits.txt"),
       "export.txt",
@@ -55,13 +79,14 @@ describe("TXT song import", () => {
       title: "Another Morning",
       metadata: {
         artistName: "Example Ensemble",
-        authors: "Alex Example | Jamie Sample",
         ccliSongNumber: "2345678",
         publisher: "Sample Publishing",
       },
     });
-    expect(parsed.lyrics).not.toMatch(/Alex|Jamie|CCLI|Copyright|Sample/);
-    expect(parsed.warnings.join(" ")).toMatch(/Check the credits/);
+    expect(parsed.lyrics).toContain("Alex Example | Jamie Sample");
+    expect(parsed.lyrics).not.toMatch(/CCLI|Copyright|Sample Publishing/);
+    expect(parsed.metadata.authors).toBeUndefined();
+    expect(parsed.warnings.join(" ")).toContain("Unlabelled text before the CCLI footer is kept in the lyrics");
   });
 
   it("extracts a SongSelect export and preserves repeated references through the existing pipeline", () => {

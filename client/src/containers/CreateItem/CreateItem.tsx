@@ -127,6 +127,8 @@ export type CreateItemProps = {
    * The item is still written to the library (allItems + allDocs).
    */
   onCreated?: (item: ItemState) => void;
+  /** Embedded: select a library duplicate in the caller's context. Never creates a song. */
+  onSelectExistingSong?: (song: ServiceItem) => void;
   /** Embedded: reports the lifetime of a durable free-form create operation. */
   onCreatingChange?: (isCreating: boolean) => void;
   /** Parent dialog surface for lyrics drawers opened from the embedded form. */
@@ -139,6 +141,7 @@ const CreateItem = ({
   title,
   onCancel,
   onCreated,
+  onSelectExistingSong,
   onCreatingChange,
   drawerPortalContainer,
 }: CreateItemProps = {}) => {
@@ -1220,8 +1223,13 @@ const CreateItem = ({
             )}
             <div className="mt-3 flex shrink-0 flex-col gap-2">
               {duplicateReview && duplicateSongs.length > 0 && <section aria-label="Possible duplicate songs" className="space-y-2 rounded-md border border-amber-300/30 p-3">
-                <p className="text-sm text-amber-200">These songs may already be in your library. Open an existing song, return to editing, or create a separate song.</p>
-                {duplicateSongs.map(song => <Button key={song._id} variant="tertiary" onClick={() => goToItem(song._id, song.listId || song._id)}>Open {song.name}</Button>)}
+                <p className="text-sm text-amber-200">These songs may already be in your library. You can return to editing or create a separate song.</p>
+                {duplicateSongs.map(song => isEmbedded && !onSelectExistingSong
+                  ? <p key={song._id} className="text-sm">{song.name}</p>
+                  : <Button key={song._id} variant="tertiary" onClick={() => {
+                    if (isEmbedded) onSelectExistingSong?.(song);
+                    else goToItem(song._id, song.listId || song._id);
+                  }}>{isEmbedded ? "Attach" : "Open"} {song.name}</Button>)}
                 <Button variant="tertiary" onClick={() => setDuplicateReview(false)}>Return to editing</Button>
                 <Button variant="primary" disabled={isCreatingItem} onClick={() => void createItem(true)}>Create separate song</Button>
               </section>}

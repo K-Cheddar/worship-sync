@@ -962,7 +962,7 @@ describe("CreateItem", () => {
     });
   });
 
-  it("shows an existing song from the document-backed library in embedded create", () => {
+  it("shows an existing song without controller actions when an embedded caller has no attachment callback", () => {
     const store = createTestStore({
       createItem: {
         ...initialCreateItemState,
@@ -992,6 +992,14 @@ describe("CreateItem", () => {
     expect(
       screen.getByText(/A song named “Amazing Grace” already exists\./),
     ).toBeInTheDocument();
+    const draftBefore = store.getState().createItem;
+    fireEvent.click(screen.getByRole("button", { name: "Create and attach" }));
+    expect(screen.getByRole("region", { name: "Possible duplicate songs" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open Amazing Grace" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Attach Amazing Grace" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Return to editing" }));
+    expect(store.getState().createItem).toEqual(draftBefore);
+    expect(mockedCreateNewSong).not.toHaveBeenCalled();
   });
 
   it("waits for the shared item index before embedded song creation", () => {

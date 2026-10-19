@@ -42,8 +42,8 @@ export const parseSongTxt = (raw: string, filename: string): SongTxtImport => {
   const hasSongSelectMarker = lines.some((line) =>
     /^\s*CCLI\s+Song\s*(?:#|No\.?|Number)\s*:?\s*\d+/i.test(line),
   );
-  // SongSelect groups unlabelled songwriter credits with its CCLI/copyright footer.
-  // Only use that structural evidence when the credits are separated from lyrics.
+  // A short block before the footer may be lyrics or credits. Its position is
+  // useful for a review warning, but cannot establish that it contains names.
   const ccliIndex = lines.findIndex((line) =>
     /^\s*CCLI\s+Song\s*(?:#|No\.?|Number)\s*:?\s*\d+/i.test(line),
   );
@@ -53,7 +53,7 @@ export const parseSongTxt = (raw: string, filename: string): SongTxtImport => {
   const hasCopyrightFooter = lines
     .slice(ccliIndex + 1)
     .some((line) => /^\s*(?:©|\(c\)|Copyright\s*:)/i.test(line));
-  const bareCreditBlock =
+  const hasUnlabelledFooterBlock =
     footerStart > 0 &&
     creditLines.length > 0 &&
     creditLines.length <= 2 &&
@@ -65,6 +65,7 @@ export const parseSongTxt = (raw: string, filename: string): SongTxtImport => {
         !/^(?:©|\(c\)|CCLI)/i.test(line.trim()),
     );
   let copyrightContinuation = false;
+  let hasAmbiguousFooterText = false;
 
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index];
@@ -74,8 +75,6 @@ export const parseSongTxt = (raw: string, filename: string): SongTxtImport => {
     if ((match = trimmed.match(/^(?:Title|Song Title)\s*:\s*(.+)$/i))) {
       if (!title) title = match[1];
       else lyrics.push(line);
-    } else if (bareCreditBlock && index >= footerStart && index < ccliIndex) {
-      append("authors", trimmed);
     } else if (
       (match = trimmed.match(
         /^(?:(?:Authors?|Songwriters?)\s*:\s*|Words\s+(?:and|&)\s+Music\s+by\s*:?\s+)(.+)$/i,
@@ -133,11 +132,14 @@ export const parseSongTxt = (raw: string, filename: string): SongTxtImport => {
       }
     } else {
       lyrics.push(line);
+      if (hasUnlabelledFooterBlock && index >= footerStart && index < ccliIndex) {
+        hasAmbiguousFooterText = true;
+      }
     }
   }
-  if (bareCreditBlock)
+  if (hasAmbiguousFooterText)
     warnings.push(
-      "Text grouped with the CCLI footer was identified as songwriters. Check the credits before applying.",
+      "Unlabelled text before the CCLI footer is kept in the lyrics. Review it before applying; move any credits to Songwriters.",
     );
   // Metadata headers can appear between a title and the first section.
   const first = lyrics.findIndex((line) => line.trim());

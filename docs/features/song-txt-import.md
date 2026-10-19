@@ -26,6 +26,13 @@ creation. Existing songs and arrangements must never be overwritten by import.
 - **Source/date:** Same request. Recognized metadata and license boilerplate are
   excluded from lyrics. Ambiguous content is retained and flagged for operator
   review rather than guessed away. Missing metadata is not invented.
+- **Source/date:** October 19, 2026 correction request. An unlabelled block before
+  CCLI/copyright is ambiguous even if it looks like names. Keep it in lyrics with a
+  warning; extract explicitly labelled credits. This supersedes the original
+  implementation's short-block credit inference.
+- **Source/date:** Same correction request. In the embedded Service Plan picker,
+  explicitly attaching a duplicate uses the picker's existing selection/close
+  callback and retains the Service Plan route. Controller pages still open songs.
 
 ## Implementation and compatibility observations
 
@@ -33,9 +40,11 @@ creation. Existing songs and arrangements must never be overwritten by import.
 `songTxtImport.ts` extracts metadata and decodes UTF-8, BOM-marked UTF-16, and
 Windows-1252 fallback. Input is bounded to 1 MB and binary control text is rejected.
 Labeled metadata and isolated titles before section labels are recognized.
-Short unlabelled credit blocks grouped with CCLI/copyright footers and copyright
-continuations are preserved as editable metadata with classification warnings.
-Other unrecognized credits and nonstandard layouts may require manual correction.
+Short unlabelled blocks before CCLI/copyright remain in lyrics with review warnings;
+they are never reclassified as authors based on position or apparent names.
+Labelled credits and supported CCLI/copyright/publisher footer fields still extract.
+Copyright continuations remain editable metadata with classification warnings.
+Unlabelled credits and nonstandard layouts may require manual correction.
 
 The existing `inferLyricsSections`, `createSections`, `updateFormattedSections`,
 `createNewSong`, formatting, and persistence path remain authoritative. Opening
