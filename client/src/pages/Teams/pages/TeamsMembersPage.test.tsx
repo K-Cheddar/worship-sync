@@ -29,6 +29,7 @@ jest.mock("../../../api/auth", () => ({
   listChurchMembers: jest.fn(async () => ({ members: [] })),
   inviteTeamRosterMember: jest.fn(),
   recordMemberSmsConsent: jest.fn(),
+  manageVolunteerPersonalAccess: jest.fn().mockResolvedValue({ enabled: false }),
 }));
 
 jest.mock("../hooks/useTeamsLiveSync", () => ({

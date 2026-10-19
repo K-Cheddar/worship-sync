@@ -771,6 +771,8 @@ test.each([
 
 test("closed future availability coverage opens for review without creating another form", async () => {
   const user = userEvent.setup();
+  const serviceDate = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const startsAt = `${serviceDate}T14:00:00.000Z`;
   const upcoming = {
     id: "upcoming-service",
     serviceId: "upcoming-service",
@@ -778,7 +780,7 @@ test("closed future availability coverage opens for review without creating anot
     name: "Sunday service",
     timerType: "countdown" as const,
     reccurence: "one_time" as const,
-    dateTimeISO: "2026-10-18T14:00:00.000Z",
+    dateTimeISO: startsAt,
     positionRequirements: [{ positionId: "vocal", count: 1 }],
   };
   const closedForm = {
@@ -788,11 +790,11 @@ test("closed future availability coverage opens for review without creating anot
     enabledFields: ["availability" as const],
     availabilityServices: [{ serviceId: upcoming.serviceId, name: upcoming.name }],
     availabilityOccurrences: [{
-      occurrenceId: "upcoming-service@2026-10-18",
+      occurrenceId: `upcoming-service@${serviceDate}`,
       serviceId: upcoming.serviceId,
       name: upcoming.name,
-      serviceDate: "2026-10-18",
-      startsAt: upcoming.dateTimeISO,
+      serviceDate,
+      startsAt,
     }],
   } as TeamIntakeForm;
   renderManager({
