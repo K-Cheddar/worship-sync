@@ -97,11 +97,29 @@ const createClientMessageId = () => {
   return `client-${id || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
 };
 
+const invokeTaskbarBridge = (
+  operation?: () => Promise<boolean> | undefined,
+) => {
+  if (!operation) return;
+  try {
+    const result = operation();
+    if (result) void result.catch(() => undefined);
+  } catch {
+    // Taskbar support is optional and must never interrupt browser chat.
+  }
+};
+
 export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
   const globalInfo = useContext(GlobalInfoContext);
   const { showToast, removeToast, updateToast } = useToast();
   const location = useLocation();
   const churchId = globalInfo?.churchId || "";
+  const chatSessionKey = [
+    globalInfo?.userId || "",
+    globalInfo?.hostId || "",
+    globalInfo?.sessionKind || "",
+    globalInfo?.operatorName || "",
+  ].join("\u0000");
   const eligible =
     globalInfo?.loginState === "success" &&
     (globalInfo.sessionKind === "human" ||
@@ -133,6 +151,8 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
   const contextSyncRequestRef = useRef<Promise<void> | null>(null);
   const requestIdRef = useRef(0);
   const isOpenRef = useRef(false);
+  const lastReadAtRef = useRef(0);
+  const taskbarRevisionRef = useRef(0);
   const liveStreamReadyRef = useRef(false);
   const initialMessagesReceivedRef = useRef(false);
   const todayFallbackRef = useRef<Promise<void> | null>(null);
@@ -473,12 +493,15 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
     if (!eligible) {
       requestIdRef.current += 1;
       setIsOpen(false);
+      contextRef.current = null;
       setContext(null);
       setSelectedDayKey("");
       setMessagesByDay({});
       setHasMoreByDay({});
       setIsLoading(false);
       setConnectionStatus("idle");
+      lastReadAtRef.current = 0;
+      setLastReadAt(0);
       setTypingUsers([]);
       liveStreamReadyRef.current = false;
       initialMessagesReceivedRef.current = false;
@@ -498,6 +521,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
     todayFallbackRef.current = null;
     activeRoomRef.current = "";
     contextRef.current = null;
+    lastReadAtRef.current = 0;
     contextSyncRequestRef.current = null;
     knownMessageIdsRef.current.clear();
     knownMessagesRef.current.clear();
@@ -511,11 +535,12 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
       .then(({ context: nextContext }) => {
         if (cancelled) return;
         contextRef.current = nextContext;
-        setContext(nextContext);
         activeRoomRef.current = `${churchId}:${nextContext.todayKey}`;
+        setContext(nextContext);
         setSelectedDayKey(nextContext.todayKey);
         const readKey = `worshipsync-chat-read:${churchId}:${nextContext.actorId}`;
         const storedRead = Number(localStorage.getItem(readKey)) || 0;
+        lastReadAtRef.current = storedRead;
         setLastReadAt(storedRead);
       })
       .catch((contextError) => {
@@ -531,7 +556,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
     return () => {
       cancelled = true;
     };
-  }, [churchId, eligible, removeToast, retrySequence]);
+  }, [chatSessionKey, churchId, eligible, removeToast, retrySequence]);
 
   useEffect(() => {
     if (!eligible || !context?.todayKey) return;
@@ -688,6 +713,21 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
               if (
                 isNew &&
                 liveStreamReadyRef.current &&
+                !message.deletedAt &&
+                !message.editedAt &&
+                message.reactions.length === 0 &&
+                message.dayKey === context.todayKey &&
+                message.authorId !== context.actorId &&
+                message.createdAt > lastReadAtRef.current
+              ) {
+                const scope = { churchId, actorId: context.actorId };
+                invokeTaskbarBridge(() =>
+                  window.electronAPI?.requestChatTaskbarAttention?.(scope),
+                );
+              }
+              if (
+                isNew &&
+                liveStreamReadyRef.current &&
                 !isOpenRef.current &&
                 !message.deletedAt &&
                 message.dayKey === context.todayKey &&
@@ -793,15 +833,51 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
     ).length
     : 0;
 
+  useEffect(() => {
+    const scope =
+      eligible &&
+      context &&
+      activeRoomRef.current === `${churchId}:${context.todayKey}`
+        ? { churchId, actorId: context.actorId }
+        : null;
+    // Keep revisions monotonic across a renderer reload so queued old state loses.
+    const revision = Math.max(
+      taskbarRevisionRef.current + 1,
+      Date.now() * 1_000,
+    );
+    taskbarRevisionRef.current = revision;
+    const state = {
+      scope,
+      unread: Boolean(scope && unreadCount > 0),
+      revision,
+    };
+    invokeTaskbarBridge(() =>
+      window.electronAPI?.setChatTaskbarUnreadState?.(state),
+    );
+  }, [
+    chatSessionKey,
+    churchId,
+    context,
+    eligible,
+    unreadCount,
+  ]);
+
   const markReadThrough = useCallback(
     (createdAt: number) => {
-      if (!churchId || !context || !createdAt) return;
-      setLastReadAt((current) => {
-        if (createdAt <= current) return current;
-        const readKey = `worshipsync-chat-read:${churchId}:${context.actorId}`;
-        localStorage.setItem(readKey, String(createdAt));
-        return createdAt;
-      });
+      if (
+        !churchId ||
+        !context ||
+        !createdAt ||
+        churchIdRef.current !== churchId ||
+        contextRef.current !== context ||
+        createdAt <= lastReadAtRef.current
+      ) {
+        return;
+      }
+      lastReadAtRef.current = createdAt;
+      const readKey = `worshipsync-chat-read:${churchId}:${context.actorId}`;
+      localStorage.setItem(readKey, String(createdAt));
+      setLastReadAt((current) => Math.max(current, createdAt));
     },
     [churchId, context],
   );

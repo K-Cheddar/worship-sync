@@ -4,6 +4,7 @@ import { GlobalInfoContext } from "../context/globalInfo";
 import { ToastContext } from "../context/toastContext";
 import { createMockGlobalInfo } from "../test/mocks";
 import { ChatProvider, useChat } from "./ChatContext";
+import ChatWindow from "./ChatWindow";
 import type { ChatMessage, ChatStreamEvent } from "./types";
 import {
   getChatContext,
@@ -79,6 +80,34 @@ const MessageCountHarness = () => {
   return <div>{chat?.messages.length ?? 0} messages</div>;
 };
 
+const UnreadHarness = () => {
+  const chat = useChat();
+  const latestMessage = chat?.messages.at(-1);
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        if (latestMessage) chat?.markReadThrough(latestMessage.createdAt);
+      }}
+    >
+      Mark latest read ({chat?.unreadCount ?? 0})
+    </button>
+  );
+};
+
+const OpenChatHarness = () => {
+  const chat = useChat();
+  return (
+    <>
+      <button type="button" onClick={chat?.openChat}>
+        Open team chat
+      </button>
+      <div data-testid="live-unread-count">{chat?.unreadCount ?? 0}</div>
+      {chat?.isOpen ? <ChatWindow /> : null}
+    </>
+  );
+};
+
 const PaginationHarness = () => {
   const chat = useChat();
   return (
@@ -94,6 +123,8 @@ const PaginationHarness = () => {
 describe("ChatProvider incoming notifications", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    localStorage.clear();
+    delete window.electronAPI;
   });
 
   it("suppresses initial history and notifies for the next incoming message", async () => {
@@ -113,6 +144,10 @@ describe("ChatProvider incoming notifications", () => {
         }),
     );
     const showToast = jest.fn(() => "toast-chat");
+    const requestTaskbarAttention = jest.fn().mockResolvedValue(true);
+    window.electronAPI = {
+      requestChatTaskbarAttention: requestTaskbarAttention,
+    } as unknown as ElectronAPI;
 
     render(
       <MemoryRouter initialEntries={["/current-service/view"]}>
@@ -171,6 +206,300 @@ describe("ChatProvider incoming notifications", () => {
         position: "top-right",
         duration: 12_000,
       }),
+    );
+    expect(requestTaskbarAttention).toHaveBeenCalledWith({
+      churchId: "church-1",
+      actorId: "user_1",
+    });
+
+    act(() => {
+      onStreamEvent?.({
+        type: "message-updated",
+        message: message({
+          messageId: "chat_2",
+          clientMessageId: "client_2",
+          text: "Replayed after reconnect",
+          createdAt: 2,
+        }),
+      });
+      onStreamEvent?.({
+        type: "initial-messages",
+        dayKey: chatContext.todayKey,
+        messages: [message()],
+        hasMore: false,
+      });
+      onStreamEvent?.({ type: "stream-ready" });
+      onStreamEvent?.({
+        type: "message-updated",
+        message: message({
+          messageId: "chat_own",
+          clientMessageId: "client_own",
+          authorId: "user_1",
+          createdAt: 3,
+        }),
+      });
+      onStreamEvent?.({
+        type: "message-updated",
+        message: message({
+          messageId: "chat_edited",
+          clientMessageId: "client_edited",
+          editedAt: 4,
+          createdAt: 4,
+        }),
+      });
+      onStreamEvent?.({
+        type: "message-updated",
+        message: message({
+          messageId: "chat_deleted",
+          clientMessageId: "client_deleted",
+          deletedAt: 5,
+          createdAt: 5,
+        }),
+      });
+      onStreamEvent?.({
+        type: "message-updated",
+        message: message({
+          messageId: "chat_reaction",
+          clientMessageId: "client_reaction",
+          createdAt: 6,
+          reactions: [
+            { emoji: "👍", actors: [{ actorId: "user_3", name: "Sam" }] },
+          ],
+        }),
+      });
+    });
+    expect(requestTaskbarAttention).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows initial unread history without flashing and clears when read", async () => {
+    let onStreamEvent: ((event: ChatStreamEvent) => void) | null = null;
+    const setTaskbarUnread = jest.fn().mockResolvedValue(true);
+    const requestTaskbarAttention = jest.fn().mockResolvedValue(true);
+    window.electronAPI = {
+      setChatTaskbarUnreadState: setTaskbarUnread,
+      requestChatTaskbarAttention: requestTaskbarAttention,
+    } as unknown as ElectronAPI;
+    mockedGetChatContext.mockResolvedValue({ context: chatContext });
+    mockedGetChatMessages.mockResolvedValue({
+      context: chatContext,
+      dayKey: chatContext.todayKey,
+      messages: [],
+      hasMore: false,
+    });
+    mockedStreamChatEvents.mockImplementation(
+      ({ signal, onEvent }) =>
+        new Promise<void>((resolve) => {
+          onStreamEvent = onEvent;
+          signal.addEventListener("abort", () => resolve(), { once: true });
+        }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/home"]}>
+        <GlobalInfoContext.Provider value={createMockGlobalInfo() as never}>
+          <ToastContext.Provider
+            value={{
+              showToast: jest.fn(),
+              updateToast: jest.fn(),
+              removeToast: jest.fn(),
+            }}
+          >
+            <ChatProvider>
+              <UnreadHarness />
+            </ChatProvider>
+          </ToastContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(onStreamEvent).not.toBeNull());
+    act(() => {
+      onStreamEvent?.({
+        type: "initial-messages",
+        dayKey: chatContext.todayKey,
+        messages: [message()],
+        hasMore: false,
+      });
+      onStreamEvent?.({ type: "stream-ready" });
+    });
+
+    await waitFor(() =>
+      expect(setTaskbarUnread).toHaveBeenLastCalledWith(
+        expect.objectContaining({ scope: { churchId: "church-1", actorId: "user_1" }, unread: true }),
+      ),
+    );
+    expect(requestTaskbarAttention).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Mark latest read (1)" }));
+    await waitFor(() =>
+      expect(setTaskbarUnread).toHaveBeenLastCalledWith(
+        expect.objectContaining({ unread: false }),
+      ),
+    );
+  });
+
+  it("clears taskbar unread state on church changes and logout", async () => {
+    let onStreamEvent: ((event: ChatStreamEvent) => void) | null = null;
+    const setTaskbarUnread = jest.fn().mockResolvedValue(true);
+    window.electronAPI = {
+      setChatTaskbarUnreadState: setTaskbarUnread,
+    } as unknown as ElectronAPI;
+    mockedGetChatContext.mockResolvedValue({ context: chatContext });
+    mockedGetChatMessages.mockResolvedValue({
+      context: chatContext,
+      dayKey: chatContext.todayKey,
+      messages: [],
+      hasMore: false,
+    });
+    mockedStreamChatEvents.mockImplementation(
+      ({ signal, onEvent }) =>
+        new Promise<void>((resolve) => {
+          onStreamEvent = onEvent;
+          signal.addEventListener("abort", () => resolve(), { once: true });
+        }),
+    );
+
+    const renderChat = (globalInfo: Record<string, unknown>) => (
+      <MemoryRouter initialEntries={["/home"]}>
+        <GlobalInfoContext.Provider value={globalInfo as never}>
+          <ToastContext.Provider
+            value={{
+              showToast: jest.fn(),
+              updateToast: jest.fn(),
+              removeToast: jest.fn(),
+            }}
+          >
+            <ChatProvider>
+              <UnreadHarness />
+            </ChatProvider>
+          </ToastContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>
+    );
+    const view = render(renderChat(createMockGlobalInfo()));
+
+    await waitFor(() => expect(onStreamEvent).not.toBeNull());
+    act(() => {
+      onStreamEvent?.({
+        type: "initial-messages",
+        dayKey: chatContext.todayKey,
+        messages: [message()],
+        hasMore: false,
+      });
+      onStreamEvent?.({ type: "stream-ready" });
+    });
+    await waitFor(() =>
+      expect(setTaskbarUnread).toHaveBeenLastCalledWith(
+        expect.objectContaining({ scope: { churchId: "church-1", actorId: "user_1" }, unread: true }),
+      ),
+    );
+
+    view.rerender(renderChat(createMockGlobalInfo({ churchId: "church-2" })));
+    await waitFor(() =>
+      expect(setTaskbarUnread).toHaveBeenLastCalledWith(
+        expect.objectContaining({ scope: { churchId: "church-2", actorId: "user_1" }, unread: false }),
+      ),
+    );
+    expect(
+      setTaskbarUnread.mock.calls.some(
+        ([state]) => state.scope === null && state.unread === false,
+      ),
+    ).toBe(true);
+
+    view.rerender(
+      renderChat(createMockGlobalInfo({ churchId: "church-2", loginState: "idle" })),
+    );
+    await waitFor(() =>
+      expect(setTaskbarUnread).toHaveBeenLastCalledWith(
+        expect.objectContaining({ scope: null, unread: false }),
+      ),
+    );
+  });
+
+  it("keeps an open chat unread behind another app and reads it on focus", async () => {
+    let onStreamEvent: ((event: ChatStreamEvent) => void) | null = null;
+    const setTaskbarUnread = jest.fn().mockResolvedValue(true);
+    const requestTaskbarAttention = jest.fn().mockResolvedValue(true);
+    window.electronAPI = {
+      setChatTaskbarUnreadState: setTaskbarUnread,
+      requestChatTaskbarAttention: requestTaskbarAttention,
+    } as unknown as ElectronAPI;
+    mockedGetChatContext.mockResolvedValue({ context: chatContext });
+    mockedGetChatMessages.mockResolvedValue({
+      context: chatContext,
+      dayKey: chatContext.todayKey,
+      messages: [],
+      hasMore: false,
+    });
+    mockedStreamChatEvents.mockImplementation(
+      ({ signal, onEvent }) =>
+        new Promise<void>((resolve) => {
+          onStreamEvent = onEvent;
+          signal.addEventListener("abort", () => resolve(), { once: true });
+        }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/home"]}>
+        <GlobalInfoContext.Provider value={createMockGlobalInfo() as never}>
+          <ToastContext.Provider
+            value={{
+              showToast: jest.fn(),
+              updateToast: jest.fn(),
+              removeToast: jest.fn(),
+            }}
+          >
+            <ChatProvider>
+              <OpenChatHarness />
+            </ChatProvider>
+          </ToastContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(onStreamEvent).not.toBeNull());
+    act(() => {
+      onStreamEvent?.({
+        type: "initial-messages",
+        dayKey: chatContext.todayKey,
+        messages: [],
+        hasMore: false,
+      });
+      onStreamEvent?.({ type: "stream-ready" });
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Open team chat" }));
+    act(() => window.dispatchEvent(new Event("blur")));
+
+    const incomingMessage = message({
+      messageId: "background-chat",
+      clientMessageId: "client-background-chat",
+      text: "Arrived while another app is active",
+      createdAt: 2,
+    });
+    act(() => {
+      onStreamEvent?.({ type: "message-updated", message: incomingMessage });
+    });
+
+    expect(await screen.findByTestId("live-unread-count")).toHaveTextContent("1");
+    await waitFor(() =>
+      expect(setTaskbarUnread).toHaveBeenLastCalledWith(
+        expect.objectContaining({ unread: true }),
+      ),
+    );
+    expect(requestTaskbarAttention).toHaveBeenCalledWith({
+      churchId: "church-1",
+      actorId: "user_1",
+    });
+    expect(localStorage.getItem("worshipsync-chat-read:church-1:user_1")).toBeNull();
+
+    act(() => window.dispatchEvent(new Event("focus")));
+    await waitFor(() =>
+      expect(setTaskbarUnread).toHaveBeenLastCalledWith(
+        expect.objectContaining({ unread: false }),
+      ),
+    );
+    expect(localStorage.getItem("worshipsync-chat-read:church-1:user_1")).toBe(
+      String(incomingMessage.createdAt),
     );
   });
 

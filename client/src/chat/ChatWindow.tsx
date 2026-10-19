@@ -342,6 +342,15 @@ const ChatWindow = () => {
   const updateTypingDraft = chat?.updateTypingDraft;
   const [showNewMessages, setShowNewMessages] = useState(false);
   const [visibleMessageDay, setVisibleMessageDay] = useState("");
+  const [isWindowFocused, setIsWindowFocused] = useState(() =>
+    document.hasFocus(),
+  );
+  const [isDocumentVisible, setIsDocumentVisible] = useState(
+    () => document.visibilityState === "visible",
+  );
+  const canMarkMessagesRead = Boolean(
+    chat?.isOpen && isWindowFocused && isDocumentVisible,
+  );
 
   const isCurrentWeek = Boolean(
     chat?.context && chat.selectedDayKey === chat.context.todayKey,
@@ -375,6 +384,21 @@ const ChatWindow = () => {
   }, [chat?.draftsByDay, chat?.selectedDayKey]);
 
   useEffect(() => {
+    const handleFocus = () => setIsWindowFocused(true);
+    const handleBlur = () => setIsWindowFocused(false);
+    const handleVisibilityChange = () =>
+      setIsDocumentVisible(document.visibilityState === "visible");
+    window.addEventListener("focus", handleFocus);
+    window.addEventListener("blur", handleBlur);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("blur", handleBlur);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, []);
+
+  useEffect(() => {
     const latestMessageId = chat?.messages.at(-1)?.messageId;
     const latestMessageChanged = latestMessageId !== latestMessageIdRef.current;
     const selectedDayChanged =
@@ -391,10 +415,18 @@ const ChatWindow = () => {
   }, [chat?.messages, isCurrentWeek, chat?.selectedDayKey]);
 
   useEffect(() => {
-    if (!isCurrentWeek || !isNearBottomRef.current) return;
+    if (!isCurrentWeek || !canMarkMessagesRead || !isNearBottomRef.current) {
+      return;
+    }
     const latestMessage = chat?.messages.at(-1);
     if (latestMessage) chat?.markReadThrough(latestMessage.createdAt);
-  }, [chat, chat?.messages, chat?.markReadThrough, isCurrentWeek]);
+  }, [
+    canMarkMessagesRead,
+    chat,
+    chat?.messages,
+    chat?.markReadThrough,
+    isCurrentWeek,
+  ]);
 
   const handleMessagesScroll = (event: UIEvent<HTMLDivElement>) => {
     const { scrollTop, scrollHeight, clientHeight } = event.currentTarget;
@@ -403,7 +435,9 @@ const ChatWindow = () => {
     if (isNearBottom) {
       setShowNewMessages(false);
       const latestMessage = chat?.messages.at(-1);
-      if (latestMessage) chat?.markReadThrough(latestMessage.createdAt);
+      if (canMarkMessagesRead && latestMessage) {
+        chat?.markReadThrough(latestMessage.createdAt);
+      }
     }
     updateVisibleMessageDay();
   };
@@ -412,7 +446,9 @@ const ChatWindow = () => {
     isNearBottomRef.current = true;
     setShowNewMessages(false);
     const latestMessage = chat?.messages.at(-1);
-    if (latestMessage) chat?.markReadThrough(latestMessage.createdAt);
+    if (canMarkMessagesRead && latestMessage) {
+      chat?.markReadThrough(latestMessage.createdAt);
+    }
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   };
 
