@@ -407,6 +407,7 @@ const ServicePlanningSyncFloatingWindow = ({
     isManualSelection,
     isEnabled: isSavedPlanAccessEnabled,
     isLoading,
+    isRefreshing: isPlanRefreshing,
     isLoadingPlans,
     plansError,
     isPlanSourced,
@@ -555,7 +556,7 @@ const ServicePlanningSyncFloatingWindow = ({
     url,
   ]);
 
-  const isContextChanging = isLoading || targetOutlineLoading;
+  const isContextChanging = isLoading || isPlanRefreshing || targetOutlineLoading;
   const canSyncOverlays =
     allowOverlaySync &&
     !isContextChanging &&
@@ -927,6 +928,15 @@ const ServicePlanningSyncFloatingWindow = ({
   const titleNode = (
     <span className="flex min-w-0 items-baseline gap-1.5 truncate">
       <span className="truncate">{planLabel}</span>
+      {isPlanRefreshing ? (
+        <span
+          className="shrink-0 text-[11px] font-normal text-zinc-400"
+          role="status"
+          aria-live="polite"
+        >
+          Updating…
+        </span>
+      ) : null}
       {stateLabel ? (
         <span className="shrink-0 text-[11px] font-normal text-zinc-400">
           ({stateLabel})
@@ -1326,7 +1336,7 @@ const ServicePlanningSyncFloatingWindow = ({
             {activeTab === "plan" ? (
               isPlanSourced && selectedPlanDetails ? (
                 <ControllerServicePlanView
-                  key={`${churchId}:${controllerProfile.id}`}
+                  key={`${churchId}:${controllerProfile.id}:${selectedPlanDetails.planKey}`}
                   plan={selectedPlanDetails}
                   snapshot={selectedPlanSnapshot}
                   churchId={churchId || ""}

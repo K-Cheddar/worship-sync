@@ -86,6 +86,7 @@ const mockPlanSource = {
   isManualSelection: false,
   isEnabled: true,
   isLoading: false,
+  isRefreshing: false,
   isLoadingPlans: false,
   plansError: null as string | null,
   isPlanSourced: false,
@@ -149,6 +150,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     mockPlanSource.selectedPlanKey = null;
     mockPlanSource.isPlanSourced = false;
     mockPlanSource.isLoading = false;
+    mockPlanSource.isRefreshing = false;
     mockPlanSource.occurrences = [];
     mockPlanSource.occurrence = null;
     mockPlanSource.selectedOccurrenceId = null;
@@ -302,6 +304,103 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     renderWindow(store);
 
     expect(await screen.findByText("Welcome")).toBeInTheDocument();
+  });
+
+  it("keeps a same-plan view mounted and updates its content during refresh", async () => {
+    const user = userEvent.setup();
+    const planKey = "service-1@2026-07-30";
+    const makeElement = (
+      id: string,
+      title: string,
+      options: { notes?: string; assignedName?: string } = {},
+    ) => ({
+      id,
+      type: "free",
+      title: { blocks: [{ type: "paragraph", spans: [{ text: title }] }] },
+      ...(options.notes
+        ? {
+            notes: {
+              blocks: [{
+                type: "paragraph",
+                spans: [{ text: options.notes }],
+              }],
+            },
+          }
+        : {}),
+      ...(options.assignedName ? { assignedName: options.assignedName } : {}),
+    });
+    const initialPlan = {
+      planId: "plan-1",
+      planKey,
+      name: "Native service plan",
+      date: "2026-07-30",
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        elements: [
+          makeElement("item-1", "First item", {
+            notes: "Original note",
+            assignedName: "Original lead",
+          }),
+          makeElement("item-2", "Second item"),
+        ],
+      }],
+    };
+    mockPlanSource.isPlanSourced = true;
+    mockPlanSource.selectedPlan = {
+      planKey,
+      serviceId: "service-1",
+      name: initialPlan.name,
+      date: initialPlan.date,
+    };
+    mockPlanSource.selectedPlanKey = planKey;
+    mockPlanSource.selectedPlanDetails = initialPlan;
+    mockPlanSource.isRefreshing = true;
+
+    const store = configureStore({
+      reducer: { servicePlanningImport: servicePlanningImportReducer, allDocs: allDocsReducer },
+    });
+    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+    const { rerender } = renderWindow(store);
+
+    expect(screen.getByRole("status")).toHaveTextContent("Updating…");
+    const notesSummary = screen.getByText("View notes");
+    await user.click(notesSummary);
+    expect(screen.getByText("Original note")).toBeVisible();
+
+    const refreshedPlan = {
+      ...initialPlan,
+      revision: 2,
+      sections: [{
+        ...initialPlan.sections[0],
+        elements: [
+          makeElement("item-2", "Second item revised"),
+          makeElement("item-1", "First item revised", {
+            notes: "Updated note",
+            assignedName: "Updated lead",
+          }),
+        ],
+      }],
+    };
+    mockPlanSource.selectedPlanDetails = refreshedPlan;
+    rerender(
+      <MemoryRouter>
+        <Provider store={store}>
+          <ServicePlanningSyncFloatingWindow />
+        </Provider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent("Updating…");
+    expect(screen.getByRole("heading", { name: "First item revised" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Second item revised" })).toBeVisible();
+    expect(screen.getByText("Updated note")).toBeVisible();
+    expect(screen.getByText("Updated lead")).toBeVisible();
+    expect(screen.queryByText("Original note")).not.toBeInTheDocument();
+    const planView = screen.getByLabelText("Selected service plan running order");
+    expect(
+      within(planView).getAllByRole("heading", { level: 4 }).map((heading) => heading.textContent),
+    ).toEqual(["Second item revised", "First item revised"]);
   });
 
   it("shows native participant names, titles, and sync actions before explicit sync", () => {

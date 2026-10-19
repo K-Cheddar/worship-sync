@@ -124,6 +124,7 @@ export const useCurrentServicePlanSource = () => {
   const [selectedPlanKey, setSelectedPlanKey] = useState<string | null>(null);
   const [isLoadingPlans, setIsLoadingPlans] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [plansError, setPlansError] = useState<string | null>(null);
   const [plansLoaded, setPlansLoaded] = useState(false);
   const [selectedPlanSnapshot, setSelectedPlanSnapshot] =
@@ -211,6 +212,8 @@ export const useCurrentServicePlanSource = () => {
     setSelectedPlanSnapshot(null);
     selectedPlanKeyRef.current = null;
     setSelectedPlanKey(null);
+    setIsLoading(false);
+    setIsRefreshing(false);
     dispatch(clearServicePlanningPreview());
   }, [activeControllerId, dispatch, returnOccurrenceToCurrent]);
 
@@ -224,6 +227,7 @@ export const useCurrentServicePlanSource = () => {
     // outline and its identity checks prevent old-outline writes.
     planRef.current = null;
     setSelectedPlanSnapshot(null);
+    setIsRefreshing(false);
     dispatch(clearServicePlanningPreview());
   }, [dispatch, selectedOutlineId]);
 
@@ -243,6 +247,7 @@ export const useCurrentServicePlanSource = () => {
         current.filter((candidate) => candidate.planKey !== planKey),
       );
       setIsLoading(false);
+      setIsRefreshing(false);
       dispatch(clearServicePlanningPlanOutline());
     },
     [dispatch],
@@ -316,6 +321,7 @@ export const useCurrentServicePlanSource = () => {
       setPlansLoaded(false);
       setSelectedPlanKey(null);
       setIsLoading(false);
+      setIsRefreshing(false);
       dispatch(clearServicePlanningPlanOutline());
       returnOccurrenceToCurrent();
       automaticSelectionContextRef.current = undefined;
@@ -342,6 +348,7 @@ export const useCurrentServicePlanSource = () => {
     selectedPlanKeyRef.current = null;
     setSelectedPlanKey(null);
     setIsLoading(false);
+    setIsRefreshing(false);
   }, [hasUrlSourcedPreview, urlSelectionRevision]);
 
   // A refresh can remove a plan without an SSE removal event (for example,
@@ -395,6 +402,8 @@ export const useCurrentServicePlanSource = () => {
       dispatch(clearServicePlanningPreview());
     }
     selectedPlanKeyRef.current = nextKey;
+    setIsLoading(Boolean(nextKey));
+    setIsRefreshing(false);
     setSelectedPlanKey(nextKey);
   }, [
     activeControllerId,
@@ -507,7 +516,15 @@ export const useCurrentServicePlanSource = () => {
       }
 
       const generation = ++generationRef.current;
-      if (planKeyAtStart) setIsLoading(true);
+      if (planKeyAtStart) {
+        const refreshingLoadedPlan =
+          planRef.current?.planKey === planKeyAtStart;
+        setIsLoading(!refreshingLoadedPlan);
+        setIsRefreshing(refreshingLoadedPlan);
+      } else {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
       const planListRequestId = refreshPlanList
         ? ++planListRequestIdRef.current
         : null;
@@ -629,6 +646,7 @@ export const useCurrentServicePlanSource = () => {
             isMountedRef.current
           ) {
             setIsLoading(false);
+            setIsRefreshing(false);
           }
         }
       })().finally(() => {
@@ -775,6 +793,7 @@ export const useCurrentServicePlanSource = () => {
       setSelectedPlanSnapshot(null);
       selectedPlanKeyRef.current = planKey || null;
       setIsLoading(Boolean(planKey));
+      setIsRefreshing(false);
       dispatch(clearServicePlanningPreview());
       setSelectedPlanKey(planKey || null);
     },
@@ -809,6 +828,7 @@ export const useCurrentServicePlanSource = () => {
       );
       selectedPlanKeyRef.current = hasSavedPlan ? nextPlanKey : null;
       setIsLoading(hasSavedPlan);
+      setIsRefreshing(false);
       setSelectedPlanKey(hasSavedPlan ? nextPlanKey : null);
       dispatch(clearServicePlanningPreview());
     },
@@ -825,6 +845,7 @@ export const useCurrentServicePlanSource = () => {
     selectedPlanKeyRef.current = null;
     setSelectedPlanKey(null);
     setIsLoading(false);
+    setIsRefreshing(false);
     dispatch(clearServicePlanningPreview());
     returnOccurrenceToCurrent();
   }, [dispatch, returnOccurrenceToCurrent]);
@@ -982,6 +1003,7 @@ export const useCurrentServicePlanSource = () => {
       : currentOccurrence,
     isEnabled,
     isLoading,
+    isRefreshing,
     isLoadingPlans,
     plansError,
     isPlanSourced: Boolean(servicePlanKey),

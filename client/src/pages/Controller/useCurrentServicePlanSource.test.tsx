@@ -1077,21 +1077,61 @@ describe("useCurrentServicePlanSource", () => {
     await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
 
     const editedPlan = { ...planFixture, name: "Sabbath Service (revised)" };
-    mockGetServicePlan.mockResolvedValue({ servicePlan: editedPlan });
-    await act(async () => {
+    let resolveRefresh!: (value: { servicePlan: typeof planFixture }) => void;
+    const pendingRefresh = new Promise<{ servicePlan: typeof planFixture }>(
+      (resolve) => {
+        resolveRefresh = resolve;
+      },
+    );
+    mockGetServicePlan.mockReturnValue(pendingRefresh);
+    act(() => {
       mockLiveHandler?.({
         type: "service-plan-updated",
         planKey: editedPlan.planKey,
       });
     });
 
+    await waitFor(() => expect(latestResult?.isRefreshing).toBe(true));
+    expect(latestResult?.isLoading).toBe(false);
+    expect(latestResult?.selectedPlanDetails).toEqual(planFixture);
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+      planFixture.planKey,
+    );
+
+    await act(async () => {
+      resolveRefresh({ servicePlan: editedPlan });
+      await pendingRefresh;
+    });
     await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(latestResult?.isRefreshing).toBe(false));
     expect(mockLoadPlanPreview).toHaveBeenLastCalledWith(
       editedPlan,
       expect.anything(),
       expect.objectContaining({ status: "ready" }),
     );
     expect(mockGetServicePlan).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the loaded plan usable when a manual refresh request fails", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+    const originalPreview = store.getState().servicePlanningImport.preview;
+    const reportError = jest.spyOn(console, "error").mockImplementation(() => {});
+    mockGetServicePlan.mockRejectedValueOnce(new Error("network unavailable"));
+
+    await act(async () => {
+      await latestResult?.refresh();
+    });
+
+    expect(latestResult?.selectedPlanDetails).toEqual(planFixture);
+    expect(latestResult?.isLoading).toBe(false);
+    expect(latestResult?.isRefreshing).toBe(false);
+    expect(store.getState().servicePlanningImport.preview).toBe(originalPreview);
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+      planFixture.planKey,
+    );
+    reportError.mockRestore();
   });
 
   it("loads newly created plans into the saved plans list from an unrelated update", async () => {
@@ -1616,10 +1656,16 @@ describe("useCurrentServicePlanSource", () => {
         resolveRefresh = resolve;
       },
     );
+    let resolveSelectedPlan!: (value: { servicePlan: typeof planFixture }) => void;
+    const selectedPlanRequest = new Promise<{ servicePlan: typeof planFixture }>(
+      (resolve) => {
+        resolveSelectedPlan = resolve;
+      },
+    );
     mockGetServicePlan.mockImplementation(
       (_churchId: string, planKey: string) =>
         planKey === secondPlan.planKey
-          ? Promise.resolve({ servicePlan: secondPlan })
+          ? selectedPlanRequest
           : slowRefresh,
     );
     let refreshPromise: Promise<void> | undefined;
@@ -1627,6 +1673,15 @@ describe("useCurrentServicePlanSource", () => {
       refreshPromise = latestResult?.refresh();
     });
     act(() => latestResult?.selectPlan(secondPlan.planKey));
+    await waitFor(() => expect(latestResult?.isLoading).toBe(true));
+    expect(latestResult?.selectedPlanDetails).toBeNull();
+    expect(latestResult?.isRefreshing).toBe(false);
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBeNull();
+
+    await act(async () => {
+      resolveSelectedPlan({ servicePlan: secondPlan });
+      await selectedPlanRequest;
+    });
     await waitFor(() =>
       expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
         secondPlan.planKey,

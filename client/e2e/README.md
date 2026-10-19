@@ -12,3 +12,7 @@ From `client/`, run `node e2e/schedules-performance.mjs` with Playwright and Chr
 # Isolated smoke navigation regressions
 
 From `client/`, run `node e2e/responsive-navigation.mjs --smoke`. This uses the real Teams editor, scheduling page, shared smoke assertions, and synthetic church/team/service data on localhost. It checks a view-only first team followed by an editable team, an empty next period, restoration of controls, and rejection of error text as an empty state. API responses are local fixtures; no saved authentication or live church is used. The authenticated suite still requires the disposable-church prerequisites in `docs/testing/smoke-coverage.md`.
+
+# Service-plan refresh scroll regression
+
+From `client/`, run `npm run test:e2e:service-plan-refresh`. It uses Chromium layout and a floating-window-shaped scrollport to verify native scroll anchoring after an insertion above the reading position and a deletion at it. Jest separately covers the production plan renderer's stable item identity. The check needs the existing root Playwright dependency and Chromium, and requires no church account or authentication.
