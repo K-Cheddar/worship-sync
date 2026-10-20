@@ -7,10 +7,21 @@ import {
   resourceEntryKind,
   resourceEntrySize,
   resourceEntrySource,
+  resourceEntryFileVisual,
 } from "./churchResourceCatalog";
 import type { DBItem } from "../types";
 
 describe("church resource catalog", () => {
+  it.each(["google-drive", "sharepoint", "dropbox"])("keeps %s source metadata while recognizing a renamed external file", (provider) => {
+    const [entry] = buildChurchResourceLibraryEntries({ resources: [{
+      id: "external", churchId: "church", name: "Sunday guide", kind: "other", sourceType: "external",
+      external: { url: "https://example.test/resource", provider, fileName: "original.docx", mimeType: "application/octet-stream", mediaType: "web" },
+      createdAt: "", createdBy: "", updatedAt: "", updatedBy: "",
+    }], songs: [] });
+    expect(resourceEntryFileVisual(entry)).toEqual({ type: "word", label: "DOCX" });
+    expect(resourceEntrySource(entry)).toBe({ "google-drive": "Google Drive", sharepoint: "SharePoint", dropbox: "Dropbox" }[provider]);
+    expect(resourceEntrySize(entry)).toBeNull();
+  });
   it("combines ChurchResources with virtual SongAudio entries without migrating audio", () => {
     const resource = {
       id: "churchResource_1",
