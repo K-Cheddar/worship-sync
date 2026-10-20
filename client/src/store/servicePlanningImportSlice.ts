@@ -168,7 +168,28 @@ export const servicePlanningImportSlice = createSlice({
       state,
       action: PayloadAction<ServiceOutline | null>,
     ) => {
-      if (state.preview) return;
+      // A selected saved plan may have failed before producing a preview. Do
+      // not let automatic legacy restoration replace that unresolved choice
+      // or clear its synchronization trust gate.
+      if (state.preview || state.isPlanPreviewStale) return;
+      state.serviceOutline = action.payload;
+      state.preview = action.payload?.preview ?? null;
+      state.isPlanPreviewStale = false;
+      state.servicePlanKey = null;
+      if (action.payload?.sourceUrl) {
+        state.url = action.payload.sourceUrl;
+      }
+    },
+    /**
+     * Restores the selected outline's persisted import for Credits Editor,
+     * preserving its existing replacement behavior only while the current
+     * plan preview is trusted. URL imports use the explicit setter above.
+     */
+    setServicePlanningRestoredOutlineUnlessStale: (
+      state,
+      action: PayloadAction<ServiceOutline | null>,
+    ) => {
+      if (state.isPlanPreviewStale) return;
       state.serviceOutline = action.payload;
       state.preview = action.payload?.preview ?? null;
       state.isPlanPreviewStale = false;
@@ -439,6 +460,7 @@ export const {
   setServicePlanningOutlinePlanBinding,
   setServicePlanningServiceOutline,
   setStoredServicePlanningOutlineIfIdle,
+  setServicePlanningRestoredOutlineUnlessStale,
   setServicePlanningPlanOutline,
   markServicePlanningPlanPreviewStale,
   markServicePlanningPlanPreviewFresh,

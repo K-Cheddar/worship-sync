@@ -11,6 +11,7 @@ import servicePlanningImportReducer, {
   recordServicePlanningSyncResult,
   resetServicePlanningImportPreview,
   setServicePlanningServiceOutline,
+  setServicePlanningRestoredOutlineUnlessStale,
   setStoredServicePlanningOutlineIfIdle,
   setServicePlanningImportOutlinePreviewExpanded,
   setServicePlanningImportOverlaySummaryExpanded,
@@ -163,6 +164,99 @@ describe("servicePlanningImportSlice", () => {
     store.dispatch(setServicePlanningServiceOutline(serviceOutlineFixture));
     store.dispatch(markServicePlanningPlanPreviewStale(planKey));
     expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
+  });
+
+  it("does not restore a stored outline while a saved plan is unresolved", () => {
+    const store = createStore();
+    const planKey = "service-1@2026-05-02";
+    const storedOutline = {
+      ...serviceOutlineFixture,
+      sourceUrl: "https://example.com/legacy-outline",
+      planLabel: "Legacy outline",
+    };
+
+    store.dispatch(markServicePlanningPlanPreviewStale(planKey));
+    store.dispatch(setStoredServicePlanningOutlineIfIdle(storedOutline));
+
+    const state = store.getState().servicePlanningImport;
+    expect(state.serviceOutline).toBeNull();
+    expect(state.preview).toBeNull();
+    expect(state.servicePlanKey).toBeNull();
+    expect(state.isPlanPreviewStale).toBe(true);
+  });
+
+  it("still restores a legacy outline when no saved-plan refresh is pending", () => {
+    const store = createStore();
+
+    store.dispatch(setStoredServicePlanningOutlineIfIdle(serviceOutlineFixture));
+
+    expect(store.getState().servicePlanningImport.serviceOutline).toEqual(
+      serviceOutlineFixture,
+    );
+    expect(store.getState().servicePlanningImport.preview).toEqual(
+      previewFixture,
+    );
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
+  });
+
+  it("does not let other persisted-outline restoration clear a saved-plan failure", () => {
+    const store = createStore();
+    const storedOutline = {
+      ...serviceOutlineFixture,
+      sourceUrl: "https://example.com/credits-outline",
+    };
+
+    store.dispatch(markServicePlanningPlanPreviewStale("saved-plan"));
+    store.dispatch(setServicePlanningRestoredOutlineUnlessStale(storedOutline));
+
+    expect(store.getState().servicePlanningImport.serviceOutline).toBeNull();
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
+  });
+
+  it("preserves trusted persisted-outline replacement behavior", () => {
+    const store = createStore();
+    const selectedPlanOutline = {
+      ...serviceOutlineFixture,
+      planLabel: "Previously selected plan",
+    };
+    const storedOutline = {
+      ...serviceOutlineFixture,
+      planLabel: "Selected outline's stored plan",
+    };
+
+    store.dispatch(
+      setServicePlanningPlanOutline({
+        outline: selectedPlanOutline,
+        planKey: "service-1@2026-05-02",
+      }),
+    );
+    store.dispatch(setServicePlanningRestoredOutlineUnlessStale(storedOutline));
+
+    expect(store.getState().servicePlanningImport.serviceOutline).toEqual(
+      storedOutline,
+    );
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBeNull();
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
+  });
+
+  it("keeps an explicit URL import as a separate source choice", () => {
+    const store = createStore();
+    const urlOutline = {
+      ...serviceOutlineFixture,
+      sourceUrl: "https://example.com/operator-selected-plan",
+    };
+
+    store.dispatch(markServicePlanningPlanPreviewStale("saved-plan"));
+    store.dispatch(setStoredServicePlanningOutlineIfIdle(serviceOutlineFixture));
+    store.dispatch(setServicePlanningServiceOutline(urlOutline));
+
+    expect(store.getState().servicePlanningImport.serviceOutline).toEqual(
+      urlOutline,
+    );
+    expect(store.getState().servicePlanningImport.preview).toEqual(previewFixture);
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBeNull();
   });
 
   it("preserves expand/collapse flags when preview is cleared", () => {

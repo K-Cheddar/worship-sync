@@ -7,7 +7,9 @@ import servicePlanningImportReducer, {
   cancelServicePlanningSync,
   markServicePlanningPlanPreviewStale,
   setServicePlanningPlanOutline,
+  setServicePlanningRestoredOutlineUnlessStale,
   setServicePlanningServiceOutline,
+  setStoredServicePlanningOutlineIfIdle,
   startServicePlanningSync,
 } from "../../store/servicePlanningImportSlice";
 import itemListsReducer, {
@@ -211,6 +213,48 @@ describe("useServicePlanningSyncRunner", () => {
       </Provider>,
     );
 
+    act(() => {
+      store.dispatch(startServicePlanningSync({ mode: "both" }));
+    });
+
+    await waitFor(() => {
+      expect(store.getState().servicePlanningImport.sync.status).toBe("failed");
+    });
+    expect(store.getState().servicePlanningImport.sync.error).toMatch(
+      /saved plan could not be verified.*refresh before syncing/i,
+    );
+    expect(mockPlanOutlineSyncSteps).not.toHaveBeenCalled();
+    expect(mockPlanOverlaySyncSteps).not.toHaveBeenCalled();
+    expect(mockExecuteOutlineSyncStep).not.toHaveBeenCalled();
+    expect(mockExecuteOverlaySyncStep).not.toHaveBeenCalled();
+  });
+
+  it("rejects stored content after an unresolved saved plan blocks its restoration", async () => {
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+        undoable: () => undoableState,
+      },
+    });
+    store.dispatch(markServicePlanningPlanPreviewStale("service-1@2026-05-02"));
+    store.dispatch(
+      setStoredServicePlanningOutlineIfIdle(serviceOutlineFixture as any),
+    );
+    store.dispatch(
+      setServicePlanningRestoredOutlineUnlessStale(
+        serviceOutlineFixture as any,
+      ),
+    );
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
+
+    render(
+      <Provider store={store}>
+        <MemoryRouter initialEntries={["/controller/service-planning"]}>
+          <RunnerHarness />
+        </MemoryRouter>
+      </Provider>,
+    );
     act(() => {
       store.dispatch(startServicePlanningSync({ mode: "both" }));
     });

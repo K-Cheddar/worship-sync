@@ -358,6 +358,48 @@ describe("useCurrentServicePlanSource", () => {
     );
   });
 
+  it("keeps a failed first saved-plan load protected from stored restoration until retry succeeds", async () => {
+    mockGetServicePlanAssignments.mockRejectedValueOnce(
+      new Error("assignments temporarily unavailable"),
+    );
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+
+    await waitFor(() => {
+      expect([
+        latestResult?.selectedPlanKey,
+        latestResult?.isLoading,
+        store.getState().servicePlanningImport.isPlanPreviewStale,
+      ]).toEqual([planFixture.planKey, false, true]);
+    });
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
+    expect(mockLoadPlanPreview).not.toHaveBeenCalled();
+
+    act(() => {
+      store.dispatch(setStoredServicePlanningOutlineIfIdle({
+        ...outlineFixture,
+        sourceUrl: "https://example.com/legacy-outline",
+      }));
+    });
+    expect(store.getState().servicePlanningImport.serviceOutline).toBeNull();
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
+
+    let retryResult: unknown;
+    await act(async () => {
+      retryResult = await latestResult?.refresh();
+    });
+
+    expect(retryResult).toBe("updated");
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+      planFixture.planKey,
+    );
+    expect(store.getState().servicePlanningImport.preview).toEqual(
+      outlineFixture.preview,
+    );
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
+  });
+
   it("prefers the current occurrence over an old outline binding", async () => {
     mockGetServicePlan.mockResolvedValue({
       success: true,
