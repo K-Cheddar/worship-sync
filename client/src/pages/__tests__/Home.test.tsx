@@ -1,10 +1,13 @@
+/* eslint-disable testing-library/no-node-access -- Compare the launcher SVG path data to verify shared icon identity. */
 import { act, fireEvent, render as rtlRender, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
-import type { ReactElement } from "react";
+import { createElement, type ReactElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import Home from "../Home";
+import { PAGE_APPEARANCES } from "../pageAppearances";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import {
@@ -25,6 +28,20 @@ import {
 } from "../../utils/controllerProfiles";
 import { getDefaultDisplayOutputs } from "../../utils/displayOutputs";
 import { getHomeNavigationCacheKey, readHomeNavigationMetadata, writeHomeNavigationMetadata } from "../home/homeNavigationCache";
+
+jest.mock("../pageAppearances", () => {
+  const actual = jest.requireActual<typeof import("../pageAppearances")>("../pageAppearances");
+  const { AlarmClock } = jest.requireActual<typeof import("lucide-react")>("lucide-react");
+  return {
+    ...actual,
+    PAGE_APPEARANCES: Object.fromEntries(
+      Object.keys(actual.PAGE_APPEARANCES).map((key) => [key, {
+        icon: AlarmClock,
+        iconColorClass: `test-appearance-${key}`,
+      }]),
+    ),
+  };
+});
 
 jest.mock("../../containers/Toolbar/ToolbarElements/UserSection", () => () => (
   <div>User</div>
@@ -103,6 +120,17 @@ const render = (
   };
 };
 
+const renderHomeWithGlobalOverrides = (overrides: Record<string, unknown> = {}) =>
+  render(
+    <MemoryRouter initialEntries={["/home"]}>
+      <GlobalInfoContext.Provider value={createMockGlobalContext(overrides) as any}>
+        <ControllerInfoContext.Provider value={createMockControllerContext() as any}>
+          <Home />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>
+    </MemoryRouter>,
+  );
+
 const openHomeHubMenu = async (user: ReturnType<typeof userEvent.setup>) => {
   await user.click(screen.getByRole("button", { name: /open menu/i }));
 };
@@ -171,6 +199,45 @@ describe("Home", () => {
     }
     expect(screen.getByRole("link", { name: /^Church administration\b/ })).toHaveAttribute("href", "/account");
     expect(screen.queryByRole("heading", { name: "Church administration" })).not.toBeInTheDocument();
+  });
+
+  it("renders fixed launcher appearances from the shared map", () => {
+    const cases: Array<readonly [keyof typeof PAGE_APPEARANCES, string]> = [
+      ["churchAdministration", "Church administration"],
+      ["teamsAndServices", "Teams and Services"],
+      ["resources", "Resources"],
+      ["mySchedule", "My schedule"],
+      ["serviceWorkspace", "Service Workspace"],
+      ["currentServiceViewer", "Current Service Viewer"],
+      ["boardModeration", "Board moderation"],
+      ["creditsEditor", "Credits Editor"],
+    ];
+
+    const assertAppearances = (
+      visibleCases: readonly (readonly [keyof typeof PAGE_APPEARANCES, string])[],
+    ) => {
+      for (const [key, title] of visibleCases) {
+        const appearance = PAGE_APPEARANCES[key];
+        const card = screen.getByRole("link", {
+          name: new RegExp(`^${title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`),
+        });
+        const iconContainer = within(card).getByTestId("home-navigation-icon");
+        const expectedContainer = document.createElement("div");
+        expectedContainer.innerHTML = renderToStaticMarkup(createElement(appearance.icon));
+
+        expect(iconContainer).toHaveClass(appearance.iconColorClass);
+        expect(iconContainer.querySelector("svg")?.innerHTML).toBe(
+          expectedContainer.querySelector("svg")?.innerHTML,
+        );
+      }
+    };
+
+    const view = renderHomeWithGlobalOverrides();
+    assertAppearances(cases);
+    view.unmount();
+
+    renderHomeWithGlobalOverrides({ canViewTeams: false });
+    assertAppearances([["myTeams", "My teams"]]);
   });
 
   it("shows descriptions by default and toggles them across the homepage", async () => {

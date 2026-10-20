@@ -14,6 +14,7 @@ type AppWorkspaceShellProps = {
   mobileTitle?: string;
   centerTitleOnMobile?: boolean;
   icon: LucideIcon;
+  iconColorClass?: string;
   toolbarLogos?: ChurchToolbarLogoUrls | null;
   churchName?: string | null;
   scrollbarWidth?: string | number;
@@ -264,6 +265,7 @@ const AppWorkspaceShell = ({
   mobileTitle,
   centerTitleOnMobile = false,
   icon,
+  iconColorClass = "text-orange-400",
   toolbarLogos,
   churchName,
   scrollbarWidth,
@@ -314,7 +316,7 @@ const AppWorkspaceShell = ({
               compactMobileToolbar && "hidden lg:flex",
               centerTitleOnMobile && "max-sm:absolute max-sm:left-1/2 max-sm:max-w-[45vw] max-sm:-translate-x-1/2",
             )}>
-              <Icon svg={icon} size="sm" className="shrink-0 text-orange-400 sm:size-5" />
+              <Icon svg={icon} size="sm" className={cn("shrink-0 sm:size-5", iconColorClass)} />
               <span className="truncate sm:hidden">{mobileTitle ?? title}</span>
               <span className="hidden truncate sm:inline">{title}</span>
             </h1>

@@ -1,6 +1,8 @@
+/* eslint-disable testing-library/no-node-access -- Compare the rendered SVG from the mocked shell to the shared icon identity. */
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
+import type { LucideIcon } from "lucide-react";
 import { ControllerInfoContext } from "../context/controllerInfo";
 import { GlobalInfoContext as AppGlobalInfoContext } from "../context/globalInfo";
 import { TransferProvider } from "../context/transferContext";
@@ -20,6 +22,8 @@ import {
   uploadChurchResource,
 } from "../api/auth";
 import { updateAllDocs } from "../utils/dbUtils";
+import { PAGE_APPEARANCES } from "./pageAppearances";
+import { getLucideIconInnerMarkup } from "../test/lucideIconTestUtils";
 
 // Renderer behavior and binary fetching are covered by the shared preview tests.
 jest.mock("../components/ContentPreview/DocxPreview", () => ({
@@ -29,7 +33,29 @@ jest.mock("../components/ContentPreview/DocxPreview", () => ({
 
 jest.mock("../components/AppPageShell/AppWorkspaceShell", () => ({
   __esModule: true,
-  default: ({ children }: { children: ReactNode }) => <>{children}</>,
+  default: ({
+    children,
+    title,
+    icon: PageIcon,
+    iconColorClass,
+  }: {
+    children: ReactNode;
+    title: string;
+    icon: LucideIcon;
+    iconColorClass?: string;
+  }) => (
+    <>
+      <header>
+        <h1>
+          <span data-testid="workspace-title-icon" className={iconColorClass}>
+            <PageIcon />
+          </span>
+          {title}
+        </h1>
+      </header>
+      {children}
+    </>
+  ),
 }));
 
 jest.mock("../api/auth", () => ({
@@ -165,6 +191,19 @@ const deferred = <T,>() => {
 };
 
 describe("Resources page", () => {
+  it("uses the shared Resources page icon identity", () => {
+    renderPage();
+
+    const title = screen.getByRole("heading", { name: "Resources" });
+    const titleIcon = title.querySelector("svg");
+    expect(titleIcon?.innerHTML).toBe(
+      getLucideIconInnerMarkup(PAGE_APPEARANCES.resources.icon),
+    );
+    expect(screen.getByTestId("workspace-title-icon")).toHaveClass(
+      PAGE_APPEARANCES.resources.iconColorClass,
+    );
+  });
+
   it.each(["asc", "desc"])("navigates the searched, filtered %s order and prepares only immediate neighbors", async (direction) => {
     mockSongDocs = [];
     const files = ["D", "A", "C", "B"].map((letter) => ({

@@ -8,7 +8,6 @@ import {
   Download,
   FileText,
   Image as ImageIcon,
-  FolderOpen,
   Pencil,
   Plus,
   Link2,
@@ -25,6 +24,7 @@ import ContentPreviewDialog, { type ContentPreviewNavigation } from "../componen
 import { createChurchResourcePreview, createSongAudioPreview, resolvePreviewSource } from "../components/ContentPreview/contentPreview";
 import { createPreviewSourceCache, type PreviewSourceCache } from "../components/ContentPreview/previewSourceCache";
 import { ExternalResourceDialog } from "./ExternalResourceDialog";
+import { PAGE_APPEARANCES } from "./pageAppearances";
 import { ControllerInfoContext } from "../context/controllerInfo";
 import { GlobalInfoContext } from "../context/globalInfo";
 import {
@@ -508,7 +508,7 @@ const ResourcesPage = () => {
   };
 
   return (
-    <AppWorkspaceShell title="Resources" mobileTitle="Resources" icon={FolderOpen} churchName={churchName} scrollbarWidth={scrollbarWidth}>
+    <AppWorkspaceShell title="Resources" mobileTitle="Resources" {...PAGE_APPEARANCES.resources} churchName={churchName} scrollbarWidth={scrollbarWidth}>
       <section className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col overflow-hidden border border-gray-700 bg-gray-900/40">
         {!canBrowse ? (
           <div className="m-4 rounded border border-amber-700/50 bg-amber-950/20 p-4 text-sm text-amber-100" role="alert">Resource browsing is not available for this session.</div>

@@ -7,7 +7,6 @@ import {
   ChevronDown,
   Info,
   LayoutDashboard,
-  ListChecks,
   MessagesSquare,
   Monitor,
   Presentation,
@@ -15,8 +14,6 @@ import {
   Radio,
   ScrollText,
   ScreenShare,
-  Users,
-  FolderOpen,
 } from "lucide-react";
 import Button from "../components/Button/Button";
 import Icon from "../components/Icon/Icon";
@@ -76,6 +73,7 @@ import {
   HomeSectionHeading,
   HomeOutputLinkCard,
 } from "./home/HomeNavigation";
+import { PAGE_APPEARANCES } from "./pageAppearances";
 
 type HomeLink = {
   title: string;
@@ -100,15 +98,13 @@ const secondaryControllers: HomeLink[] = [
   {
     title: "Board moderation",
     to: "/boards/controller",
-    icon: MessagesSquare,
-    iconColorClass: "text-blue-300",
+    ...PAGE_APPEARANCES.boardModeration,
     description: "Review and present audience posts.",
   },
   {
     title: "Credits Editor",
     to: "/credits-editor",
-    icon: ScrollText,
-    iconColorClass: "text-pink-300",
+    ...PAGE_APPEARANCES.creditsEditor,
     description: "Prepare and run service credits.",
   },
 ];
@@ -117,22 +113,19 @@ const adminLinks: HomeLink[] = [
   {
     title: "Resources",
     to: "/resources",
-    icon: FolderOpen,
-    iconColorClass: "text-violet-300",
+    ...PAGE_APPEARANCES.resources,
     description: "Access shared files and church resources.",
   },
   {
     title: "Church administration",
     to: "/account",
-    icon: Building2,
-    iconColorClass: "text-amber-300",
+    ...PAGE_APPEARANCES.churchAdministration,
     description: "Manage settings, devices, and access.",
   },
   {
     title: "Teams and Services",
     to: "/teams-and-services",
-    icon: Users,
-    iconColorClass: "text-cyan-300",
+    ...PAGE_APPEARANCES.teamsAndServices,
     description: "Organize volunteers, schedules, and services.",
   },
 ];
@@ -571,8 +564,7 @@ const Welcome = () => {
                 <HomeNavigationLink
                   title="My schedule"
                   to="/my-schedule"
-                  icon={CalendarClock}
-                  iconColorClass="text-teal-300"
+                  {...PAGE_APPEARANCES.mySchedule}
                   description="View assignments and availability."
                   showDescriptions={showDescriptions}
                 />
@@ -581,8 +573,7 @@ const Welcome = () => {
                 <HomeNavigationLink
                   title="My teams"
                   to="/teams-and-services"
-                  icon={Users}
-                  iconColorClass="text-cyan-300"
+                  {...PAGE_APPEARANCES.myTeams}
                   description="See your teams and responsibilities."
                   showDescriptions={showDescriptions}
                 />
@@ -591,8 +582,7 @@ const Welcome = () => {
                 <HomeNavigationLink
                   title="Service Workspace"
                   to="/current-service"
-                  icon={LayoutDashboard}
-                  iconColorClass="text-blue-300"
+                  {...PAGE_APPEARANCES.serviceWorkspace}
                   description="Prepare and manage the service plan."
                   showDescriptions={showDescriptions}
                 />
@@ -601,8 +591,7 @@ const Welcome = () => {
                 <HomeNavigationLink
                   title="Current Service Viewer"
                   to="/current-service/view"
-                  icon={ListChecks}
-                  iconColorClass="text-indigo-300"
+                  {...PAGE_APPEARANCES.currentServiceViewer}
                   description="Follow the current order of service."
                   showDescriptions={showDescriptions}
                 />

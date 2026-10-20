@@ -1,9 +1,12 @@
+/* eslint-disable testing-library/no-node-access -- Compare the decorative icon SVG directly to verify its identity. */
 import { act, render, screen, within } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { MemoryRouter } from "react-router-dom";
 import store from "../../store/store";
 import userEvent from "@testing-library/user-event";
 import type { ContextType } from "react";
+import { PAGE_APPEARANCES } from "../pageAppearances";
+import { getLucideIconInnerMarkup } from "../../test/lucideIconTestUtils";
 import MySchedule from "../MySchedule";
 import type { PersonalScheduleAccess } from "../myScheduleOperations";
 import { GlobalInfoContext } from "../../context/globalInfo";
@@ -167,6 +170,20 @@ describe("MySchedule", () => {
       revoked: false,
       refresh: jest.fn(),
     });
+  });
+
+  it("uses the shared schedule identity in its page header", () => {
+    respond([]);
+    renderPage();
+
+    const title = screen.getByRole("heading", { name: "My schedule" });
+    const titleIcon = title.querySelector("svg");
+    expect(titleIcon?.innerHTML).toBe(
+      getLucideIconInnerMarkup(PAGE_APPEARANCES.mySchedule.icon),
+    );
+    expect(titleIcon?.parentElement).toHaveClass(
+      PAGE_APPEARANCES.mySchedule.iconColorClass,
+    );
   });
 
   it("lists services as tiles with role and opens a detail view", async () => {

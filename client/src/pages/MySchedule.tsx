@@ -19,6 +19,7 @@ import {
   X,
 } from "lucide-react";
 import AppPageShell from "../components/AppPageShell/AppPageShell";
+import { PAGE_APPEARANCES } from "./pageAppearances";
 import Button from "../components/Button/Button";
 import ButtonGroup from "../components/Button/ButtonGroup";
 import ButtonGroupItem from "../components/Button/ButtonGroupItem";
@@ -1090,7 +1091,7 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
   return (
     <AppPageShell
       title="My schedule"
-      icon={CalendarDays}
+      {...PAGE_APPEARANCES.mySchedule}
       showAccountNavigation={!access}
     >
       <div className="flex w-full flex-col gap-4">

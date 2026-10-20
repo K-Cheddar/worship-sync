@@ -1,3 +1,4 @@
+/* eslint-disable testing-library/no-node-access -- Compare the decorative icon SVG directly to verify its identity. */
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Fragment, useMemo, type ContextType, type PropsWithChildren, type ReactElement, type SVGProps } from "react";
@@ -60,6 +61,8 @@ import { buildTeamsRestoreNavigationState } from "./teamsReturnNavigation";
 import { calendarMonthRange, shiftRange } from "./rangeSelection";
 import { setServerTimeOffset } from "../../utils/serverTime";
 import { serviceDateTimeInTimeZone } from "../../utils/teamScheduleOccurrences";
+import { PAGE_APPEARANCES } from "../pageAppearances";
+import { getLucideIconInnerMarkup } from "../../test/lucideIconTestUtils";
 
 jest.mock("../../utils/lazyRoute", () => {
   const react = jest.requireActual("react") as typeof import("react");
@@ -742,6 +745,25 @@ describe("Teams", () => {
     window.matchMedia = originalMatchMedia;
     window.localStorage.clear();
     window.history.replaceState({}, "", originalLocationHref);
+  });
+
+  it("uses the shared page identity and preserves its compact toolbar", async () => {
+    renderTeams();
+    await waitForTeamsBootstrap();
+
+    const title = screen.getByTestId("app-workspace-title");
+    const titleIcon = title.querySelector("svg");
+    expect(title).toHaveTextContent("Teams and Services");
+    expect(titleIcon?.innerHTML).toBe(
+      getLucideIconInnerMarkup(PAGE_APPEARANCES.teamsAndServices.icon),
+    );
+    expect(titleIcon?.parentElement).toHaveClass(
+      PAGE_APPEARANCES.teamsAndServices.iconColorClass,
+    );
+    expect(screen.getByTestId("app-workspace-toolbar")).toHaveClass(
+      "h-[48px]",
+      "min-h-[48px]",
+    );
   });
 
   it("confirms guest removal in-app, preserves cancel and blocks duplicate activation", async () => {

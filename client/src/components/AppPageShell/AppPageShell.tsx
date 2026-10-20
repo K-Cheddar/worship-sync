@@ -24,12 +24,14 @@ import type { RootState } from "../../store/store";
 const AppPageShell = ({
   title,
   icon,
+  iconColorClass = "text-orange-300",
   description,
   children,
   showAccountNavigation = true,
 }: {
   title: string;
   icon?: LucideIcon;
+  iconColorClass?: string;
   description?: string;
   children: ReactNode;
   showAccountNavigation?: boolean;
@@ -50,7 +52,7 @@ const AppPageShell = ({
             <div>
               <h1 className="flex items-center gap-2 text-base font-semibold sm:text-lg">
                 {icon ? (
-                  <Icon svg={icon} size="md" className="text-orange-300" />
+                  <Icon svg={icon} size="md" className={iconColorClass} />
                 ) : null}
                 {title}
               </h1>
