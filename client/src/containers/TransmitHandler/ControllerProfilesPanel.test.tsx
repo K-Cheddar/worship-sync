@@ -160,6 +160,26 @@ describe("displays a controller can be given", () => {
   });
 });
 
+describe("controller home appearance", () => {
+  it("changes the curated icon and color through the existing church profile writer", async () => {
+    const user = userEvent.setup();
+    const { store } = renderPanel();
+
+    await user.click(screen.getByRole("button", { name: "Visual Technician icon: Camera" }));
+    await user.click(screen.getByRole("button", { name: "Visual Technician icon color: Teal" }));
+
+    expect(
+      store.getState().controllerProfiles.list.find((profile) => profile.id === "ctrl_visual"),
+    ).toMatchObject({ icon: "camera", iconColor: "teal" });
+    await waitFor(() => expect(writeControllerProfiles).toHaveBeenCalled());
+    expect(writeControllerProfiles.mock.calls.at(-1)?.[2]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "ctrl_visual", icon: "camera", iconColor: "teal" }),
+      ]),
+    );
+  });
+});
+
 describe("assigning a display", () => {
   it("scopes the controller and persists it", async () => {
     const { store } = renderPanel();

@@ -1145,7 +1145,7 @@ export const createTeamsAuthHandlers = ({
 
     if (access === "personal") {
       occurrences.forEach((entry) => {
-        if (entry.plan) delete entry.plan.publicUrls;
+        entry.plans.forEach((plan) => delete plan.publicUrls);
       });
     }
     const visibleMember = projectVolunteerMember(member, access);

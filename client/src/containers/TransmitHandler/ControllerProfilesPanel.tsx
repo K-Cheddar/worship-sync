@@ -5,6 +5,7 @@ import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import TextArea from "../../components/TextArea/TextArea";
 import Toggle from "../../components/Toggle/Toggle";
+import ControllerAppearancePicker from "../../components/ControllerAppearancePicker/ControllerAppearancePicker";
 import { useDispatch, useSelector } from "../../hooks";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { useToast } from "../../context/toastContext";
@@ -17,6 +18,7 @@ import {
   setControllerProfileDefaultSends,
   setControllerProfileDescription,
   setControllerProfileEnabled,
+  setControllerProfileAppearance,
   setControllerProfileOutputs,
 } from "../../store/controllerProfilesSlice";
 import { RootState } from "../../store/store";
@@ -28,6 +30,10 @@ import {
   isBuiltInControllerId,
   toggleControllerOutput,
 } from "../../utils/controllerProfiles";
+import {
+  normalizeControllerIcon,
+  normalizeControllerIconColor,
+} from "../../utils/controllerAppearance";
 import { writeControllerProfiles } from "../../utils/controllerProfilesWriter";
 import { isPushOutputType } from "../../utils/displayOutputs";
 import { buildShareableHashRouterUrl } from "../../utils/environment";
@@ -255,6 +261,25 @@ const ControllerProfilesPanel = () => {
               }),
             );
           }}
+        />
+
+        <ControllerAppearancePicker
+          controllerName={profile.name}
+          icon={normalizeControllerIcon(profile.icon, profile.type)}
+          color={normalizeControllerIconColor(
+            profile.iconColor,
+            profile.type,
+            profile.order,
+          )}
+          onChange={({ icon, color }) =>
+            withPersist(
+              setControllerProfileAppearance({
+                id: profile.id,
+                icon,
+                iconColor: color,
+              }),
+            )
+          }
         />
 
         {/* aria-label carries the controller name so each card's group is

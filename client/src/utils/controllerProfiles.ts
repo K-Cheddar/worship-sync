@@ -23,6 +23,14 @@
  */
 import generateRandomId from "./generateRandomId";
 import { DisplayOutput, PUSH_OUTPUT_TYPES } from "./displayOutputs";
+import {
+  getDefaultControllerIcon,
+  getDefaultControllerIconColor,
+  normalizeControllerIcon,
+  normalizeControllerIconColor,
+  type ControllerIconColor,
+  type ControllerIconId,
+} from "./controllerAppearance";
 
 /**
  * What kind of operator surface a profile describes.
@@ -53,6 +61,10 @@ export type ControllerProfile = {
   description: string;
   /** Ascending sort order for pickers and navigation. */
   order: number;
+  /** Curated Lucide identifier used by the Home navigation tile. */
+  icon?: ControllerIconId;
+  /** Curated palette identifier used by the Home navigation tile. */
+  iconColor?: ControllerIconColor;
   /**
    * Retired controllers stay in the registry so their outlines and quick links
    * survive, but are hidden from navigation and drive nothing.
@@ -155,6 +167,8 @@ export const DEFAULT_CONTROLLER_PROFILES: ControllerProfile[] = [
     name: "Presentation",
     description: "",
     order: 0,
+    icon: getDefaultControllerIcon("presentation"),
+    iconColor: getDefaultControllerIconColor("presentation"),
     enabled: true,
     outputIds: [],
     outputsConfigured: false,
@@ -167,6 +181,8 @@ export const DEFAULT_CONTROLLER_PROFILES: ControllerProfile[] = [
     name: "Overlays",
     description: "",
     order: 1,
+    icon: getDefaultControllerIcon("overlay"),
+    iconColor: getDefaultControllerIconColor("overlay"),
     enabled: true,
     outputIds: [],
     outputsConfigured: false,
@@ -312,6 +328,12 @@ export const normalizeControllerProfiles = (
       // Absent/empty keeps the type default on the home page.
       description: sanitizeControllerProfileDescription(candidate.description),
       order: Number.isFinite(order) ? order : UNORDERED,
+      icon: normalizeControllerIcon(candidate.icon, candidate.type),
+      iconColor: normalizeControllerIconColor(
+        candidate.iconColor,
+        candidate.type,
+        Number.isFinite(order) ? order : 0,
+      ),
       // Absent means enabled: churches written before the flag existed are live.
       enabled: candidate.enabled !== false,
       outputIds: normalizeIdList(candidate.outputIds),
@@ -418,6 +440,8 @@ const synthesizeAuxProfile = (id: string): ControllerProfile => ({
   name: "Controller",
   description: "",
   order: Number.MAX_SAFE_INTEGER,
+  icon: getDefaultControllerIcon("aux-presentation"),
+  iconColor: getDefaultControllerIconColor("aux-presentation"),
   enabled: true,
   outputIds: [],
   outputsConfigured: true,

@@ -71,6 +71,10 @@ describe("defaults", () => {
       expect(p.outputsConfigured).toBe(false);
       expect(p.defaultSendOutputIds).toEqual([]);
     }
+    expect(defaults.map((p) => [p.icon, p.iconColor])).toEqual([
+      ["presentation", "orange"],
+      ["layers", "purple"],
+    ]);
   });
 
   it("returns fresh arrays so a caller cannot mutate the shared defaults", () => {
@@ -339,6 +343,45 @@ describe("descriptions", () => {
       { id: "ctrl_1", type: "aux-presentation", name: "Lobby", order: 0 },
     ]);
     expect(result.find((p) => p.id === "ctrl_1")?.description).toBe("");
+  });
+
+  it("normalizes configured appearance and supplies defaults for old profiles", () => {
+    const result = normalizeControllerProfiles([
+      {
+        id: "presentation",
+        type: "presentation",
+        name: "Text Master",
+        order: 0,
+        icon: "captions",
+        iconColor: "cyan",
+      },
+      { id: "ctrl_lobby", type: "aux-presentation", name: "Lobby", order: 2 },
+    ]);
+    expect(result.find((p) => p.id === "presentation")).toMatchObject({
+      icon: "captions",
+      iconColor: "cyan",
+    });
+    expect(result.find((p) => p.id === "ctrl_lobby")).toMatchObject({
+      icon: "monitor",
+      iconColor: "cyan",
+    });
+  });
+
+  it("replaces invalid icon identifiers and colors with safe type defaults", () => {
+    const result = normalizeControllerProfiles([
+      {
+        id: "ctrl_lobby",
+        type: "aux-presentation",
+        name: "Lobby",
+        order: 2,
+        icon: "https://example.test/icon.svg",
+        iconColor: "bg-[url(javascript:alert(1))]",
+      },
+    ]);
+    expect(result.find((p) => p.id === "ctrl_lobby")).toMatchObject({
+      icon: "monitor",
+      iconColor: "cyan",
+    });
   });
 });
 
