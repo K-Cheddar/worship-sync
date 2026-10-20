@@ -10,6 +10,7 @@ import reducer, {
   setControllerProfileDescription,
   setControllerProfileEnabled,
   setControllerProfileAppearance,
+  setControllerProfileHomeIcon,
   setControllerProfileOutputs,
   setControllerProfilesFromRemote,
   setControllerProfilesForChurch,
@@ -134,6 +135,24 @@ describe("editing a controller", () => {
     expect(profilesOf(store).find((p) => p.id === id)).toMatchObject({
       icon: "camera",
       iconColor: "teal",
+    });
+  });
+
+  it("saves a rich icon and custom color without overwriting legacy appearance", () => {
+    const store = createStore();
+    store.dispatch(addControllerProfile({ name: "Lobby" }));
+    const id = auxIdOf(store);
+    const before = profilesOf(store).find((p) => p.id === id)!;
+
+    store.dispatch(setControllerProfileHomeIcon({
+      id,
+      icon: { source: "tabler", name: "device-desktop", color: "#12abef" },
+    }));
+
+    expect(profilesOf(store).find((p) => p.id === id)).toMatchObject({
+      icon: before.icon,
+      iconColor: before.iconColor,
+      homeIcon: { source: "tabler", name: "device-desktop", color: "#12abef" },
     });
   });
 

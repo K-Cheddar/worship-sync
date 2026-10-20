@@ -3,5 +3,5 @@
   "date": "2026-10-19",
   "type": "improved",
   "title": "A clearer Home launcher",
-  "description": "Home groups church, service, and controller tools in a branded grid with clearer sections and larger icons, while keeping custom controller icons and colors and display links collapsed until needed."
+  "description": "Home organizes church, service, and controller tools in a branded grid, showing concise explanations by default and supporting custom controller descriptions."
 }

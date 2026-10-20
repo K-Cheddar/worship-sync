@@ -31,6 +31,7 @@ import {
   type ControllerIconColor,
   type ControllerIconId,
 } from "./controllerAppearance";
+import { normalizeEntityIcon, type IconRef } from "../components/icons/iconTypes";
 
 /**
  * What kind of operator surface a profile describes.
@@ -65,6 +66,8 @@ export type ControllerProfile = {
   icon?: ControllerIconId;
   /** Curated palette identifier used by the Home navigation tile. */
   iconColor?: ControllerIconColor;
+  /** Rich shared icon reference and optional custom hex color for Home. */
+  homeIcon?: IconRef;
   /**
    * Retired controllers stay in the registry so their outlines and quick links
    * survive, but are hidden from navigation and drive nothing.
@@ -106,6 +109,15 @@ export type ControllerProfile = {
 export const PRESENTATION_CONTROLLER_ID = "presentation";
 export const OVERLAY_CONTROLLER_ID = "overlay";
 
+export const getControllerProfileTypeForId = (
+  id: string,
+): ControllerProfileType =>
+  id === PRESENTATION_CONTROLLER_ID
+    ? "presentation"
+    : id === OVERLAY_CONTROLLER_ID
+      ? "overlay"
+      : "aux-presentation";
+
 /**
  * Seeded profiles present in every church. Renameable and reconfigurable, but
  * never removable: each is a route that already exists, and the presentation
@@ -116,6 +128,29 @@ export const BUILT_IN_CONTROLLER_IDS = [
   PRESENTATION_CONTROLLER_ID,
   OVERLAY_CONTROLLER_ID,
 ] as const;
+
+/** Presentation order for rendering only; persisted profile order stays configurable. */
+export const getControllerProfilesInNavigationOrder = <T extends Pick<ControllerProfile, "id" | "order">>(
+  profiles: readonly T[],
+): T[] => {
+  const builtInRank = new Map<string, number>([
+    [PRESENTATION_CONTROLLER_ID, 0],
+    [OVERLAY_CONTROLLER_ID, 1],
+  ]);
+  return profiles
+    .map((profile, index) => ({ profile, index }))
+    .sort((left, right) => {
+      const leftBuiltInRank = builtInRank.get(left.profile.id);
+      const rightBuiltInRank = builtInRank.get(right.profile.id);
+      if (leftBuiltInRank !== undefined || rightBuiltInRank !== undefined) {
+        if (leftBuiltInRank === undefined) return 1;
+        if (rightBuiltInRank === undefined) return -1;
+        return leftBuiltInRank - rightBuiltInRank;
+      }
+      return left.profile.order - right.profile.order || left.index - right.index;
+    })
+    .map(({ profile }) => profile);
+};
 
 export type BuiltInControllerId = (typeof BUILT_IN_CONTROLLER_IDS)[number];
 
@@ -139,11 +174,10 @@ export const DEFAULT_CONTROLLER_PROFILE_DESCRIPTIONS: Record<
   string
 > = {
   presentation:
-    "Build and run the main presentation. Arrange service items, edit slides, and send output to projector, monitor, and stream.",
-  overlay:
-    "Manage overlays, service timers, credits, and lower thirds for the stream.",
+    "Present slides, songs, and scripture on your screens.",
+  overlay: "Manage stream overlays, timers, and credits.",
   "aux-presentation":
-    "Drive this screen with its own outline and content, or mirror another display.",
+    "Show independent content or mirror another display.",
 };
 
 export const getDefaultControllerProfileDescription = (
@@ -321,6 +355,7 @@ export const normalizeControllerProfiles = (
     if (!isControllerProfileType(candidate.type)) continue;
     const order = Number(candidate.order);
     const outlineScope = String(candidate.outlineScope ?? "").trim() || id;
+    const homeIcon = normalizeEntityIcon(candidate.homeIcon);
     byId.set(id, {
       id,
       type: candidate.type,
@@ -334,6 +369,7 @@ export const normalizeControllerProfiles = (
         candidate.type,
         Number.isFinite(order) ? order : 0,
       ),
+      ...(homeIcon ? { homeIcon } : {}),
       // Absent means enabled: churches written before the flag existed are live.
       enabled: candidate.enabled !== false,
       outputIds: normalizeIdList(candidate.outputIds),

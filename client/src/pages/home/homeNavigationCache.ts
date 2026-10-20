@@ -4,7 +4,13 @@ import {
   type ControllerIconColor,
   type ControllerIconId,
 } from "../../utils/controllerAppearance";
-import type { ControllerProfileType } from "../../utils/controllerProfiles";
+import {
+  getControllerProfilesInNavigationOrder,
+  getControllerProfileTypeForId,
+  sanitizeControllerProfileDescription,
+  type ControllerProfileType,
+} from "../../utils/controllerProfiles";
+import { normalizeEntityIcon, type IconRef } from "../../components/icons/iconTypes";
 import type { DisplayOutputType } from "../../utils/displayOutputs";
 
 const CACHE_VERSION = 1;
@@ -21,12 +27,25 @@ const DISPLAY_TYPES: readonly DisplayOutputType[] = [
   "credits",
   "board",
 ];
+const LEGACY_DEFAULT_DESCRIPTIONS: Record<ControllerProfileType, readonly string[]> = {
+  presentation: [
+    "Build and run the main presentation. Arrange service items, edit slides, and send output to projector, monitor, and stream.",
+  ],
+  overlay: [
+    "Manage overlays, service timers, credits, and lower thirds for the stream.",
+  ],
+  "aux-presentation": [
+    "Drive this screen with its own outline and content, or mirror another display.",
+  ],
+};
 
 export type CachedControllerNavigation = {
   id: string;
   name: string;
+  description?: string;
   icon: ControllerIconId;
   iconColor: ControllerIconColor;
+  homeIcon?: IconRef;
   order: number;
 };
 
@@ -79,13 +98,22 @@ const normalizeController = (raw: unknown): CachedControllerNavigation | null =>
   const name = safeName(entry.name);
   const order = safeOrder(entry.order);
   if (!id || !name || order === null) return null;
-  const type: ControllerProfileType =
-    id === "presentation" ? "presentation" : id === "overlay" ? "overlay" : "aux-presentation";
+  const type = getControllerProfileTypeForId(id);
+  const homeIcon = normalizeEntityIcon(entry.homeIcon);
+  const description = typeof entry.description === "string"
+    ? sanitizeControllerProfileDescription(entry.description)
+    : "";
+  const descriptionIsDefault = entry.descriptionIsDefault === true ||
+    (entry.descriptionIsDefault !== false &&
+      LEGACY_DEFAULT_DESCRIPTIONS[type].includes(description));
+  const customDescription = descriptionIsDefault ? "" : description;
   return {
     id,
     name,
     icon: normalizeControllerIcon(entry.icon, type),
     iconColor: normalizeControllerIconColor(entry.iconColor, type, order),
+    ...(customDescription ? { description: customDescription } : {}),
+    ...(homeIcon ? { homeIcon } : {}),
     order,
   };
 };
@@ -122,11 +150,10 @@ export const normalizeHomeNavigationMetadata = (
     return null;
   }
 
-  const controllers = record.controllers
+  const controllers = getControllerProfilesInNavigationOrder(record.controllers
     .slice(0, MAX_CONTROLLER_COUNT)
     .map(normalizeController)
-    .filter((item): item is CachedControllerNavigation => item !== null)
-    .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+    .filter((item): item is CachedControllerNavigation => item !== null));
   const displays = record.displays
     .slice(0, MAX_DISPLAY_COUNT)
     .map(normalizeDisplay)
@@ -154,9 +181,26 @@ export const readHomeNavigationMetadata = (
   const availableStorage = getStorage(storage);
   if (!availableStorage) return null;
   try {
-    const serialized = availableStorage.getItem(getHomeNavigationCacheKey(churchId));
+    const key = getHomeNavigationCacheKey(churchId);
+    const serialized = availableStorage.getItem(key);
     if (!serialized) return null;
-    return normalizeHomeNavigationMetadata(JSON.parse(serialized), churchId, now);
+    const raw = JSON.parse(serialized);
+    const normalized = normalizeHomeNavigationMetadata(raw, churchId, now);
+    if (!normalized) return null;
+    const record = raw as Partial<HomeNavigationCacheRecord>;
+    const cleaned = JSON.stringify({
+      version: CACHE_VERSION,
+      updatedAt: record.updatedAt,
+      ...normalized,
+    });
+    if (cleaned !== serialized) {
+      try {
+        availableStorage.setItem(key, cleaned);
+      } catch {
+        // A cache migration failure must not prevent rendering normalized data.
+      }
+    }
+    return normalized;
   } catch {
     return null;
   }

@@ -19,11 +19,16 @@ beforeEach(() => {
 });
 
 describe("persisting controller profiles", () => {
-  it("writes configured icons and colors in the church-scoped profile update", async () => {
+  it("writes legacy and rich icon appearance in the church-scoped profile update", async () => {
     const previous = getDefaultControllerProfiles();
     const next = previous.map((profile) =>
       profile.id === "presentation"
-        ? { ...profile, icon: "captions" as const, iconColor: "teal" as const }
+        ? {
+          ...profile,
+          icon: "captions" as const,
+          iconColor: "teal" as const,
+          homeIcon: { source: "tabler" as const, name: "device-desktop", color: "#12abef" },
+        }
         : profile,
     );
 
@@ -37,6 +42,7 @@ describe("persisting controller profiles", () => {
       presentation: expect.objectContaining({
         icon: "captions",
         iconColor: "teal",
+        homeIcon: { source: "tabler", name: "device-desktop", color: "#12abef" },
       }),
     });
   });

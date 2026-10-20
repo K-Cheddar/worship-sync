@@ -1,4 +1,5 @@
 import { useContext, useEffect, useMemo, useState } from "react";
+import type { MouseEvent } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
   Building2,
@@ -19,11 +20,14 @@ import {
 } from "lucide-react";
 import Button from "../components/Button/Button";
 import Icon from "../components/Icon/Icon";
+import AnimateCollapse from "../components/AnimateCollapse/AnimateCollapse";
+import Toggle from "../components/Toggle/Toggle";
 import WorshipSyncIcon from "../assets/WorshipSyncIconNoBg.png";
 import WorshipSyncWordmark from "../assets/WorshipSyncWordmark.png";
 import Modal from "../components/Modal/Modal";
 import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
 import HomeToolbarMenu from "../components/HomeToolbarMenu/HomeToolbarMenu";
+import type { EntityIcon } from "../components/icons/iconTypes";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { useAppInstallChrome } from "../hooks/useAppInstallChrome";
 import { useSelector } from "../hooks";
@@ -41,6 +45,7 @@ import { hasControllerAccess, isViewOnlyAccess } from "../utils/accessTiers";
 import {
   getControllerIconColorClass,
   getControllerIconComponent,
+  getRenderableControllerHomeIcon,
   normalizeControllerIcon,
   normalizeControllerIconColor,
 } from "../utils/controllerAppearance";
@@ -48,6 +53,10 @@ import type { ControllerProfile } from "../utils/controllerProfiles";
 import {
   OVERLAY_CONTROLLER_ID,
   PRESENTATION_CONTROLLER_ID,
+  getControllerProfileDescription,
+  getControllerProfilesInNavigationOrder,
+  getControllerProfileTypeForId,
+  getDefaultControllerProfileDescription,
 } from "../utils/controllerProfiles";
 import {
   getDisplayOutputBrowserSourceHomePath,
@@ -56,11 +65,15 @@ import {
   type DisplayOutput,
 } from "../utils/displayOutputs";
 import { readHomeNavigationMetadata, writeHomeNavigationMetadata } from "./home/homeNavigationCache";
+import { readHomeDescriptionsPreference, writeHomeDescriptionsPreference } from "./home/homeDescriptionsPreference";
 import {
   HOME_NAVIGATION_GRID_CLASS,
   HOME_TILE_CLASS,
+  HOME_TILE_CONTENT_CLASS,
+  HOME_TILE_ICON_CLASS,
   HomeNavigationLink,
   HomeNavigationSection,
+  HomeSectionHeading,
   HomeOutputLinkCard,
 } from "./home/HomeNavigation";
 
@@ -69,6 +82,8 @@ type HomeLink = {
   to: string;
   icon: LucideIcon;
   iconColorClass: string;
+  iconRef?: EntityIcon;
+  description?: string;
 };
 
 type LockedFeaturePrompt = {
@@ -87,12 +102,14 @@ const secondaryControllers: HomeLink[] = [
     to: "/boards/controller",
     icon: MessagesSquare,
     iconColorClass: "text-blue-300",
+    description: "Review and present audience posts.",
   },
   {
     title: "Credits Editor",
     to: "/credits-editor",
     icon: ScrollText,
     iconColorClass: "text-pink-300",
+    description: "Prepare and run service credits.",
   },
 ];
 
@@ -102,18 +119,21 @@ const adminLinks: HomeLink[] = [
     to: "/resources",
     icon: FolderOpen,
     iconColorClass: "text-violet-300",
+    description: "Access shared files and church resources.",
   },
   {
     title: "Church administration",
     to: "/account",
     icon: Building2,
     iconColorClass: "text-amber-300",
+    description: "Manage settings, devices, and access.",
   },
   {
     title: "Teams and Services",
     to: "/teams-and-services",
     icon: Users,
     iconColorClass: "text-cyan-300",
+    description: "Organize volunteers, schedules, and services.",
   },
 ];
 
@@ -127,6 +147,7 @@ const guestLockedFeatures: HomeLink[] = [
     to: "/projector",
     icon: ScreenShare,
     iconColorClass: "text-indigo-300",
+    description: "Links for room screens and streaming software.",
   },
 ];
 
@@ -150,13 +171,24 @@ const outputIconColor = (type: DisplayOutput["type"]) => {
   return "text-gray-300";
 };
 
+const FULLSCREEN_DISPLAY_DESCRIPTIONS: Record<DisplayOutput["type"], string> = {
+  projector: "Show full-screen projection content.",
+  monitor: "Open the monitor display full-screen.",
+  stream: "Open the live stream output.",
+  "stream-info": "Open the stream information display.",
+  credits: "Open the service credits display.",
+  board: "Open the audience board screen.",
+};
+
 const getPrimaryControllerLink = (profile: ControllerProfile): HomeLink => ({
   title: profile.name,
+  description: getControllerProfileDescription(profile),
   to: primaryControllerPaths[profile.id] ?? `/aux-controller/${encodeURIComponent(profile.id)}`,
   icon: getControllerIconComponent(normalizeControllerIcon(profile.icon, profile.type)),
   iconColorClass: getControllerIconColorClass(
     normalizeControllerIconColor(profile.iconColor, profile.type, profile.order),
   ),
+  iconRef: getRenderableControllerHomeIcon(profile.homeIcon),
 });
 
 const asDisplayOutput = (output: {
@@ -168,6 +200,7 @@ const asDisplayOutput = (output: {
 
 type DisplayLink = {
   title: string;
+  description: string;
   to: string | null;
   icon: typeof Presentation;
   iconColorClass: string;
@@ -192,6 +225,9 @@ const getDisplayLinks = (
     const isProjectorBrowserSource = kind === "browser-source" && output.type === "projector";
     return [{
       title: isProjectorBrowserSource ? `${output.name} (browser source)` : output.name,
+      description: kind === "browser-source"
+        ? "Use as a browser source in streaming software."
+        : FULLSCREEN_DISPLAY_DESCRIPTIONS[output.type],
       to,
       icon: outputIcon(output.type),
       iconColorClass: outputIconColor(output.type),
@@ -200,10 +236,12 @@ const getDisplayLinks = (
 
 const HomeLockedFeatureCard = ({
   title,
+  description,
   icon,
   iconColorClass,
+  showDescriptions = false,
   onSelect,
-}: HomeLink & { onSelect: () => void }) => (
+}: HomeLink & { showDescriptions?: boolean; onSelect: () => void }) => (
   <Button
     variant="none"
     component="button"
@@ -211,19 +249,30 @@ const HomeLockedFeatureCard = ({
     onClick={onSelect}
     className={`${HOME_TILE_CLASS} cursor-pointer justify-between gap-2`}
     wrap
-    aria-label={`${title}. Sign in required.`}
+    aria-label={showDescriptions && description
+      ? `${title}. ${description} Sign in required.`
+      : `${title}. Sign in required.`}
   >
-    <span className="flex min-w-0 flex-1 items-center gap-3">
-      <span
-        aria-hidden
-        className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl sm:h-14 sm:w-14 ${iconColorClass}`}
-      >
-        <Icon svg={icon} size="xl" className={iconColorClass} svgClassName={iconColorClass} />
+    <span className={`${HOME_TILE_CONTENT_CLASS} justify-between gap-2`}>
+      <span className="flex min-w-0 flex-1 items-center gap-3">
+        <span
+          aria-hidden
+          className={`${HOME_TILE_ICON_CLASS} ${iconColorClass}`}
+        >
+          <Icon svg={icon} size="xl" className={iconColorClass} svgClassName={iconColorClass} />
+        </span>
+        {showDescriptions && description ? (
+          <span className="min-w-0 flex-1">
+            <span className="block break-words text-[15px] font-semibold leading-snug tracking-[-0.01em] sm:text-[17px]">{title}</span>
+            <span className="mt-1 block break-words text-xs font-normal leading-snug text-gray-400">{description}</span>
+          </span>
+        ) : (
+          <span className="min-w-0 break-words text-[15px] font-semibold leading-snug tracking-[-0.01em] sm:text-[17px]">{title}</span>
+        )}
       </span>
-      <span className="min-w-0 break-words text-[15px] font-semibold leading-snug tracking-[-0.01em] sm:text-[17px]">{title}</span>
-    </span>
-    <span className="shrink-0 rounded border border-gray-600 px-1.5 py-0.5 text-[10px] font-medium text-gray-300 sm:text-xs">
-      Sign in
+      <span className="shrink-0 rounded border border-gray-600 px-1.5 py-0.5 text-[10px] font-medium text-gray-300 sm:text-xs">
+        Sign in
+      </span>
     </span>
   </Button>
 );
@@ -232,10 +281,12 @@ const HomeOutputGroup = ({
   heading,
   links,
   pending,
+  showDescriptions,
 }: {
   heading: string;
   links: DisplayLink[];
   pending: boolean;
+  showDescriptions: boolean;
 }) => (
   <div className="space-y-2">
     <h3 className="text-xs font-semibold text-gray-300">{heading}</h3>
@@ -245,6 +296,8 @@ const HomeOutputGroup = ({
           <HomeOutputLinkCard
             key={`${heading}:${link.to ?? link.title}`}
             title={link.title}
+            description={link.description}
+            showDescriptions={showDescriptions}
             to={link.to}
             icon={link.icon}
             iconColorClass={link.iconColorClass}
@@ -277,6 +330,9 @@ const Welcome = () => {
   const displayOutputsChurchId = useSelector(selectDisplayOutputsChurchId);
   const [lockedFeaturePrompt, setLockedFeaturePrompt] =
     useState<LockedFeaturePrompt | null>(null);
+  const [showDescriptions, setShowDescriptions] = useState(readHomeDescriptionsPreference);
+  const [displayOutputsExpanded, setDisplayOutputsExpanded] = useState(false);
+  const [displayOutputsDetailsOpen, setDisplayOutputsDetailsOpen] = useState(false);
   const isLoggedIn = loginState === "success";
   const isGuest = loginState === "guest";
   const isHumanSession = sessionKind === "human";
@@ -289,9 +345,12 @@ const Welcome = () => {
     Boolean(churchId) && displayOutputsChurchId === churchId;
   const controllerRegistryReady =
     (controllerProfilesLoaded && controllerRegistryMatchesChurch) || isGuest;
-  const controllerNavigationProfiles = controllerRegistryReady
-    ? controllerProfiles
-    : EMPTY_CONTROLLER_PROFILES;
+  const controllerNavigationProfiles = useMemo(
+    () => controllerRegistryReady
+      ? getControllerProfilesInNavigationOrder(controllerProfiles)
+      : EMPTY_CONTROLLER_PROFILES,
+    [controllerProfiles, controllerRegistryReady],
+  );
   const cachedNavigation = useMemo(
     () => readHomeNavigationMetadata(churchId),
     [churchId],
@@ -316,6 +375,10 @@ const Welcome = () => {
                 profile.type,
                 profile.order,
               ),
+              ...(profile.description.trim()
+                ? { description: profile.description }
+                : {}),
+              homeIcon: profile.homeIcon,
               order: profile.order,
             }))
         : previouslyCached?.controllers ?? [],
@@ -353,7 +416,7 @@ const Welcome = () => {
     ? primaryControllerLinks
     : [];
   const showPendingControllers = hasOperatorControllerAccess && !controllerRegistryReady;
-  const cachedControllerLinks = (cachedNavigation?.controllers ?? [])
+  const cachedControllerLinks = getControllerProfilesInNavigationOrder(cachedNavigation?.controllers ?? [])
     .filter((profile) => !isMusicAccess || profile.id === PRESENTATION_CONTROLLER_ID)
     .map((profile) => ({
       title: profile.name,
@@ -364,6 +427,12 @@ const Welcome = () => {
           : `/aux-controller/${encodeURIComponent(profile.id)}`,
       icon: getControllerIconComponent(profile.icon),
       iconColorClass: getControllerIconColorClass(profile.iconColor),
+      iconRef: getRenderableControllerHomeIcon(profile.homeIcon),
+      description:
+        profile.description ??
+        getDefaultControllerProfileDescription(
+          getControllerProfileTypeForId(profile.id),
+        ),
     }));
   const visibleSecondaryControllers = !hasOperatorControllerAccess
     ? []
@@ -394,6 +463,27 @@ const Welcome = () => {
   const browserSourceLinks = getDisplayLinks(visibleOutputs, "browser-source");
 
   const closeLockedFeaturePrompt = () => setLockedFeaturePrompt(null);
+  const updateShowDescriptions = (nextValue: boolean) => {
+    setShowDescriptions(nextValue);
+    writeHomeDescriptionsPreference(nextValue);
+  };
+  const toggleDisplayOutputs = (event: MouseEvent<HTMLElement>) => {
+    event.preventDefault();
+
+    if (displayOutputsExpanded) {
+      setDisplayOutputsExpanded(false);
+      if (
+        typeof window.matchMedia === "function" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      ) {
+        setDisplayOutputsDetailsOpen(false);
+      }
+      return;
+    }
+
+    setDisplayOutputsDetailsOpen(true);
+    setDisplayOutputsExpanded(true);
+  };
 
   return (
     <main className="flex h-dvh flex-col overflow-y-auto bg-homepage-canvas text-white">
@@ -442,18 +532,40 @@ const Welcome = () => {
           </section>
         ) : null}
 
+        <div className="flex w-full justify-end">
+          <Toggle
+            label={<span>Show what each page does</span>}
+            labelClassName="text-xs font-medium text-gray-300"
+            value={showDescriptions}
+            onChange={updateShowDescriptions}
+            className="w-fit gap-2"
+          />
+        </div>
+
         {visibleAdminLinks.length > 0 ? (
-          <HomeNavigationSection title="Church administration" icon={Building2} iconColorClass="text-amber-300">
+          <HomeNavigationSection
+            title="Church management"
+            description="Manage resources, access, teams, and services."
+            showDescriptions={showDescriptions}
+            icon={Building2}
+            iconColorClass="text-amber-300"
+          >
             <div className={HOME_NAVIGATION_GRID_CLASS} role="group" aria-label="Church administration navigation">
               {visibleAdminLinks.map((link) => (
-                <HomeNavigationLink key={link.to} {...link} />
+                <HomeNavigationLink key={link.to} {...link} showDescriptions={showDescriptions} />
               ))}
             </div>
           </HomeNavigationSection>
         ) : null}
 
         {(showMySchedule || showMyTeams || showServiceWorkspace || showCurrentServiceViewer) ? (
-          <HomeNavigationSection title="Personal and service tools" icon={CalendarClock} iconColorClass="text-teal-300">
+          <HomeNavigationSection
+            title="Personal and service tools"
+            description="View your assignments and prepare for services."
+            showDescriptions={showDescriptions}
+            icon={CalendarClock}
+            iconColorClass="text-teal-300"
+          >
             <div className={HOME_NAVIGATION_GRID_CLASS} role="group" aria-label="Personal and service tools navigation">
               {showMySchedule ? (
                 <HomeNavigationLink
@@ -461,6 +573,8 @@ const Welcome = () => {
                   to="/my-schedule"
                   icon={CalendarClock}
                   iconColorClass="text-teal-300"
+                  description="View assignments and availability."
+                  showDescriptions={showDescriptions}
                 />
               ) : null}
               {showMyTeams ? (
@@ -469,6 +583,8 @@ const Welcome = () => {
                   to="/teams-and-services"
                   icon={Users}
                   iconColorClass="text-cyan-300"
+                  description="See your teams and responsibilities."
+                  showDescriptions={showDescriptions}
                 />
               ) : null}
               {showServiceWorkspace ? (
@@ -477,6 +593,8 @@ const Welcome = () => {
                   to="/current-service"
                   icon={LayoutDashboard}
                   iconColorClass="text-blue-300"
+                  description="Prepare and manage the service plan."
+                  showDescriptions={showDescriptions}
                 />
               ) : null}
               {showCurrentServiceViewer ? (
@@ -485,6 +603,8 @@ const Welcome = () => {
                   to="/current-service/view"
                   icon={ListChecks}
                   iconColorClass="text-indigo-300"
+                  description="Follow the current order of service."
+                  showDescriptions={showDescriptions}
                 />
               ) : null}
             </div>
@@ -496,15 +616,22 @@ const Welcome = () => {
           visibleSecondaryControllers.length > 0 ||
           showPendingControllers
         ) ? (
-          <HomeNavigationSection title="Controllers" icon={LayoutDashboard} iconColorClass="text-orange-300" busy={showPendingControllers}>
+          <HomeNavigationSection
+            title="Controllers"
+            description="Run presentations, stream graphics, and displays."
+            showDescriptions={showDescriptions}
+            icon={LayoutDashboard}
+            iconColorClass="text-orange-300"
+            busy={showPendingControllers}
+          >
             <div className={HOME_NAVIGATION_GRID_CLASS} role="group" aria-label="Controllers navigation">
               {controllerRegistryReady
                 ? visiblePrimaryControllers.map((link) => (
-                    <HomeNavigationLink key={link.to} {...link} />
+                    <HomeNavigationLink key={link.to} {...link} showDescriptions={showDescriptions} />
                   ))
                 : cachedControllerLinks.length
                   ? cachedControllerLinks.map((link) => (
-                      <HomeNavigationLink key={link.to} {...link} pending />
+                      <HomeNavigationLink key={link.to} {...link} pending showDescriptions={showDescriptions} />
                     ))
                   : Array.from({ length: isMusicAccess ? 1 : 2 }, (_, index) => (
                       <div
@@ -513,25 +640,34 @@ const Welcome = () => {
                         aria-label={index === 0 ? "Loading controller settings" : undefined}
                         className={`${HOME_TILE_CLASS} animate-pulse gap-3`}
                       >
-                        {index === 0 ? <span className="sr-only">Loading controller settings</span> : null}
-                        <span aria-hidden className="h-12 w-12 shrink-0 rounded-xl bg-gray-700 sm:h-14 sm:w-14" />
-                        <span aria-hidden className="h-4 w-2/3 rounded bg-gray-700" />
+                        <span className={`${HOME_TILE_CONTENT_CLASS} gap-3`}>
+                          {index === 0 ? <span className="sr-only">Loading controller settings</span> : null}
+                          <span aria-hidden className="h-8 w-8 shrink-0 rounded bg-gray-700" />
+                          <span aria-hidden className="h-4 w-2/3 rounded bg-gray-700" />
+                        </span>
                       </div>
                     ))}
               {visibleSecondaryControllers.map((link) => (
-                <HomeNavigationLink key={link.to} {...link} />
+                <HomeNavigationLink key={link.to} {...link} showDescriptions={showDescriptions} />
               ))}
             </div>
           </HomeNavigationSection>
         ) : null}
 
         {isGuest ? (
-          <HomeNavigationSection title="Available after sign in" icon={Info} iconColorClass="text-gray-400">
+          <HomeNavigationSection
+            title="Available after sign in"
+            description="Sign in to access these church tools."
+            showDescriptions={showDescriptions}
+            icon={Info}
+            iconColorClass="text-gray-400"
+          >
             <div className={HOME_NAVIGATION_GRID_CLASS} role="group" aria-label="Guest navigation">
               {guestLockedFeatures.map((feature) => (
                 <HomeLockedFeatureCard
                   key={feature.title}
                   {...feature}
+                  showDescriptions={showDescriptions}
                   onSelect={() => setLockedFeaturePrompt({ title: feature.title })}
                 />
               ))}
@@ -540,29 +676,68 @@ const Welcome = () => {
         ) : null}
 
         {isLoggedIn && access === "full" ? (
-          <details data-testid="display-outputs-details" className="group w-full rounded-2xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5 lg:p-6">
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-xl px-2 py-2 text-lg font-semibold tracking-[-0.015em] text-white hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 sm:text-xl">
-              <span className="flex items-center gap-3">
-                <ScreenShare aria-hidden className="h-6 w-6 text-violet-300" />
-                Display outputs
-              </span>
+          <details
+            data-testid="display-outputs-details"
+            open={displayOutputsDetailsOpen}
+            className="group w-full rounded-2xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5 lg:p-6"
+          >
+            <summary
+              aria-controls="home-display-outputs-panel"
+              aria-expanded={displayOutputsExpanded}
+              onClick={toggleDisplayOutputs}
+              className="flex cursor-pointer list-none items-start justify-between gap-3 rounded-xl px-2 py-2 text-lg font-semibold tracking-[-0.015em] text-white hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 sm:text-xl md:items-center"
+            >
+              <HomeSectionHeading
+                as="span"
+                className="flex-1"
+                title="Display outputs"
+                description="Links for room screens and streaming software."
+                showDescriptions={showDescriptions}
+                icon={ScreenShare}
+                iconColorClass="text-violet-300"
+              />
               <span className="flex items-center gap-1 text-xs font-normal text-gray-400">
-                Open or copy links
-                <ChevronDown aria-hidden className="h-4 w-4 transition-transform group-open:rotate-180" />
+                View links
+                <ChevronDown aria-hidden className={`h-4 w-4 transition-transform duration-200 ease-out motion-reduce:transition-none ${displayOutputsExpanded ? "rotate-180" : ""}`} />
               </span>
             </summary>
-            <div className="mt-3 space-y-4 border-t border-gray-700 pt-4" aria-busy={displayMetadataPending}>
-              {displayMetadataPending && !visibleOutputs.length ? (
-                <p className="text-xs text-gray-400" role="status">Loading this church&apos;s displays...</p>
-              ) : null}
-              <HomeOutputGroup heading="Fullscreen in the browser" links={fullscreenDisplayLinks} pending={displayMetadataPending} />
-              <div className="border-t border-gray-700 pt-3">
-                <HomeOutputGroup heading="Browser sources (streaming)" links={browserSourceLinks} pending={displayMetadataPending} />
+            <AnimateCollapse
+              open={displayOutputsExpanded}
+              onCloseComplete={() => setDisplayOutputsDetailsOpen(false)}
+            >
+              <div
+                id="home-display-outputs-panel"
+                className={`mt-3 space-y-4 border-t border-gray-700 pt-4 transition-opacity duration-200 ease-out motion-reduce:transition-none ${displayOutputsExpanded ? "opacity-100" : "opacity-0"}`}
+                aria-busy={displayMetadataPending}
+              >
+                {displayMetadataPending && !visibleOutputs.length ? (
+                  <p className="text-xs text-gray-400" role="status">Loading this church&apos;s displays...</p>
+                ) : null}
+                <HomeOutputGroup
+                  heading="Fullscreen in the browser"
+                  links={fullscreenDisplayLinks}
+                  pending={displayMetadataPending}
+                  showDescriptions={showDescriptions}
+                />
+                <div className="border-t border-gray-700 pt-3">
+                  <HomeOutputGroup
+                    heading="Browser sources (streaming)"
+                    links={browserSourceLinks}
+                    pending={displayMetadataPending}
+                    showDescriptions={showDescriptions}
+                  />
+                </div>
               </div>
-            </div>
+            </AnimateCollapse>
           </details>
         ) : !isLoggedIn && !isGuest ? (
-          <HomeNavigationSection title="Display outputs" icon={ScreenShare} iconColorClass="text-violet-300">
+          <HomeNavigationSection
+            title="Display outputs"
+            description="Sign in to open or copy links for room screens and streaming software."
+            showDescriptions={showDescriptions}
+            icon={ScreenShare}
+            iconColorClass="text-violet-300"
+          >
             <p className="text-sm text-gray-400">Sign in to show display links.</p>
           </HomeNavigationSection>
         ) : null}

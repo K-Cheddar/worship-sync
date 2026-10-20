@@ -37,7 +37,7 @@ import TeamEditorRelatedSection from "../components/TeamEditorRelatedSection";
 import TeamMemberProfileEditor from "./TeamMemberProfileEditor";
 import TeamMembersEditor from "../components/TeamMembersEditor";
 import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
-import EntityIconPicker from "../EntityIconPicker";
+import EntityIconPicker from "@/components/icons/EntityIconPicker";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import EntityIconBadge from "../../../components/icons/EntityIconBadge";
 import { describeDeletionImpacts, memberName, normalizeSafeRosterMember, sortPositionsByOrder } from "../teamsUtils";

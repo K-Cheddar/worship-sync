@@ -17,6 +17,7 @@ import {
   sanitizeControllerProfileDescription,
   sanitizeControllerProfileName,
 } from "../utils/controllerProfiles";
+import { normalizeEntityIcon, type EntityIcon } from "../components/icons/iconTypes";
 
 type ControllerProfilesState = {
   list: ControllerProfile[];
@@ -158,6 +159,19 @@ export const controllerProfilesSlice = createSlice({
       profile.icon = icon;
       profile.iconColor = iconColor;
     },
+    setControllerProfileHomeIcon: (
+      state,
+      action: PayloadAction<{ id: string; icon: EntityIcon | "" }>,
+    ) => {
+      const profile = state.list.find((p) => p.id === action.payload.id);
+      if (!profile) return;
+      if (action.payload.icon === "") {
+        delete profile.homeIcon;
+        return;
+      }
+      const homeIcon = normalizeEntityIcon(action.payload.icon);
+      if (homeIcon) profile.homeIcon = homeIcon;
+    },
     setControllerProfileEnabled: (
       state,
       action: PayloadAction<{ id: string; enabled: boolean }>,
@@ -256,6 +270,7 @@ export const {
   renameControllerProfile,
   setControllerProfileDescription,
   setControllerProfileAppearance,
+  setControllerProfileHomeIcon,
   setControllerProfileEnabled,
   setControllerProfileOutputs,
   setControllerProfileDefaultSends,

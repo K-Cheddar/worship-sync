@@ -68,6 +68,157 @@ describe("home navigation metadata cache", () => {
     ]);
   });
 
+  it("round trips rich icon references and restores built-in presentation order", () => {
+    const normalized = normalizeHomeNavigationMetadata(
+      {
+        ...metadata,
+        version: 1,
+        updatedAt: 1000,
+        controllers: [
+          { id: "ctrl_lobby", name: "Lobby", icon: "monitor", iconColor: "teal", order: 0 },
+          { id: "overlay", name: "Graphics Lead", icon: "layers", iconColor: "purple", order: 1 },
+          { id: "presentation", name: "Text Master", icon: "presentation", iconColor: "orange", order: 2,
+            homeIcon: { source: "tabler", name: "device-desktop", color: "#12abef" } },
+        ],
+      },
+      "church-1",
+      1001,
+    );
+
+    expect(normalized?.controllers.map(({ id }) => id)).toEqual([
+      "presentation",
+      "overlay",
+      "ctrl_lobby",
+    ]);
+    expect(normalized?.controllers[0].homeIcon).toEqual({
+      source: "tabler",
+      name: "device-desktop",
+      color: "#12abef",
+    });
+  });
+
+  it("round trips controller descriptions without rejecting older v1 entries", () => {
+    const description = "Operate the room display.";
+    const withDescription = {
+      ...metadata,
+      controllers: [
+        { ...metadata.controllers[0], description },
+        metadata.controllers[1],
+      ],
+    };
+    const storage = createStorage();
+
+    expect(writeHomeNavigationMetadata(withDescription, storage, 1000)).toBe(true);
+    expect(readHomeNavigationMetadata("church-1", storage, 1001)).toEqual(withDescription);
+
+    const legacy = normalizeHomeNavigationMetadata(
+      { ...metadata, version: 1, updatedAt: 1000 },
+      "church-1",
+      1001,
+    );
+    expect(legacy?.controllers[0].description).toBeUndefined();
+  });
+
+  it("drops resolved defaults from older caches but preserves descriptions marked custom", () => {
+    const legacyPresentationDescription = "Build and run the main presentation. Arrange service items, edit slides, and send output to projector, monitor, and stream.";
+    const legacyOverlayDescription = "Manage overlays, service timers, credits, and lower thirds for the stream.";
+    const legacyAuxiliaryDescription = "Drive this screen with its own outline and content, or mirror another display.";
+    const normalized = normalizeHomeNavigationMetadata(
+      {
+        ...metadata,
+        version: 1,
+        updatedAt: 1000,
+        controllers: [
+          { ...metadata.controllers[0], description: legacyPresentationDescription },
+          { id: "overlay", name: "Graphics", icon: "layers", iconColor: "purple", order: 1,
+            description: legacyOverlayDescription, descriptionIsDefault: true },
+          { ...metadata.controllers[1], description: legacyAuxiliaryDescription,
+            descriptionIsDefault: false },
+        ],
+      },
+      "church-1",
+      1001,
+    );
+
+    expect(normalized?.controllers[0].description).toBeUndefined();
+    expect(normalized?.controllers[1].description).toBeUndefined();
+    expect(normalized?.controllers[2]).toMatchObject({ description: legacyAuxiliaryDescription });
+    expect(normalized?.controllers[2]).not.toHaveProperty("descriptionIsDefault");
+  });
+
+  it("rewrites a legacy cache to remove resolved defaults while retaining its age", () => {
+    const storage = createStorage();
+    const key = getHomeNavigationCacheKey("church-1");
+    storage.setItem(key, JSON.stringify({
+      version: 1,
+      updatedAt: 1000,
+      ...metadata,
+      controllers: [
+        { ...metadata.controllers[0], description: "Build and run the main presentation. Arrange service items, edit slides, and send output to projector, monitor, and stream." },
+      ],
+    }));
+
+    expect(readHomeNavigationMetadata("church-1", storage, 1001)?.controllers[0].description).toBeUndefined();
+    const migrated = JSON.parse(storage.getItem(key) ?? "{}");
+    expect(migrated.updatedAt).toBe(1000);
+    expect(migrated.controllers[0]).not.toHaveProperty("description");
+  });
+
+  it("does not persist resolved defaults in newly written metadata", () => {
+    const storage = createStorage();
+    const metadataWithoutCustomDescriptions = {
+      ...metadata,
+      controllers: metadata.controllers.map(({ ...profile }) => profile),
+    };
+
+    expect(writeHomeNavigationMetadata(metadataWithoutCustomDescriptions, storage, 1000)).toBe(true);
+    const stored = JSON.parse(storage.getItem(getHomeNavigationCacheKey("church-1")) ?? "{}");
+
+    expect(stored.controllers.every((profile: { description?: string }) => !profile.description)).toBe(true);
+    expect(stored.controllers.every((profile: { descriptionIsDefault?: boolean }) => profile.descriptionIsDefault === undefined)).toBe(true);
+  });
+
+  it("preserves a custom description even when it matches the old default", () => {
+    const legacyDescription = "Build and run the main presentation. Arrange service items, edit slides, and send output to projector, monitor, and stream.";
+    const normalized = normalizeHomeNavigationMetadata(
+      {
+        ...metadata,
+        version: 1,
+        updatedAt: 1000,
+        controllers: [
+          {
+            ...metadata.controllers[0],
+            description: legacyDescription,
+            descriptionIsDefault: false,
+          },
+        ],
+      },
+      "church-1",
+      1001,
+    );
+
+    expect(normalized?.controllers[0]).toMatchObject({ description: legacyDescription });
+    expect(normalized?.controllers[0]).not.toHaveProperty("descriptionIsDefault");
+  });
+
+  it("normalizes and bounds cached controller descriptions", () => {
+    const normalized = normalizeHomeNavigationMetadata(
+      {
+        ...metadata,
+        version: 1,
+        updatedAt: 1000,
+        controllers: [
+          { ...metadata.controllers[0], description: `  ${"x ".repeat(200)} ` },
+        ],
+      },
+      "church-1",
+      1001,
+    );
+
+    expect(normalized?.controllers[0].description).toHaveLength(280);
+    expect(normalized?.controllers[0].description).not.toMatch(/\s{2}/);
+  });
+
   it("tolerates malformed JSON and unavailable storage", () => {
     const brokenJsonStorage = {
       getItem: jest.fn(() => "{"),

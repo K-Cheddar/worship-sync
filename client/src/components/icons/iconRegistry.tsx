@@ -1,7 +1,9 @@
-import { useEffect, useState, type ComponentType, type SVGProps } from "react";
+import { useEffect, useState, type ComponentType, type ReactNode, type SVGProps } from "react";
 import * as LucideIcons from "lucide-react";
-import type { EntityIcon, IconCatalogEntry, IconRef } from "./iconTypes";
+import { normalizeEntityIcon } from "./iconTypes";
+import type { EntityIcon, IconCatalogEntry } from "./iconTypes";
 import { worshipSyncProductionIcons } from "./production";
+export { normalizeEntityIcon } from "./iconTypes";
 
 export type EntityGlyphProps = SVGProps<SVGSVGElement> & { size?: number | string };
 export type EntityGlyph = ComponentType<EntityGlyphProps>;
@@ -29,29 +31,6 @@ const excludedLucideExports = new Set([
 const isIconComponent = (value: unknown): value is PositionGlyph =>
   typeof value === "function" || (typeof value === "object" && value !== null);
 
-export const normalizeEntityIcon = (
-  value?: EntityIcon | null,
-): IconRef | null => {
-  if (typeof value === "string") {
-    return value ? { source: "lucide", name: value } : null;
-  }
-  if (!value || typeof value !== "object") return null;
-  const color = value.color;
-  if (color !== undefined && (typeof color !== "string" || !/^#[0-9a-f]{6}$/i.test(color))) return null;
-  const colorField = color ? { color } : {};
-  if (value.source === "custom") {
-    return typeof value.id === "string" && value.id.trim()
-      ? { source: "custom", id: value.id.trim(), ...colorField }
-      : null;
-  }
-  if (
-    (value.source === "lucide" || value.source === "tabler" || value.source === "worshipsync") &&
-    typeof value.name === "string" && value.name.trim()
-  ) {
-    return { source: value.source, name: value.name.trim(), ...colorField };
-  }
-  return null;
-};
 /** @deprecated Use normalizeEntityIcon. */
 export const normalizePositionIcon = normalizeEntityIcon;
 
@@ -74,7 +53,7 @@ const loadTablerIcons = () => {
   return tablerPromise;
 };
 
-export const TablerGlyph = ({ name, ...props }: PositionGlyphProps & { name: string }) => {
+export const TablerGlyph = ({ name, fallback, ...props }: PositionGlyphProps & { name: string; fallback?: ReactNode }) => {
   const [resolved, setResolved] = useState<{ name: string; icon: PositionGlyph | null } | null>(null);
   useEffect(() => {
     let active = true;
@@ -105,7 +84,7 @@ export const TablerGlyph = ({ name, ...props }: PositionGlyphProps & { name: str
   } else if (resolved?.name === name) {
     Icon = resolved.icon;
   }
-  return Icon ? <Icon {...props} /> : null;
+  return Icon ? <Icon {...props} /> : fallback ?? null;
 };
 
 /** Resolve only icon sources available synchronously; Tabler uses TablerGlyph. */

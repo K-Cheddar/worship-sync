@@ -19,9 +19,12 @@ import {
   setControllerProfilesForChurch,
 } from "../../store/controllerProfilesSlice";
 import { displayOutputsSlice, setDisplayOutputsForChurch } from "../../store/displayOutputsSlice";
-import { getDefaultControllerProfiles } from "../../utils/controllerProfiles";
+import {
+  getDefaultControllerProfileDescription,
+  getDefaultControllerProfiles,
+} from "../../utils/controllerProfiles";
 import { getDefaultDisplayOutputs } from "../../utils/displayOutputs";
-import { readHomeNavigationMetadata, writeHomeNavigationMetadata } from "../home/homeNavigationCache";
+import { getHomeNavigationCacheKey, readHomeNavigationMetadata, writeHomeNavigationMetadata } from "../home/homeNavigationCache";
 
 jest.mock("../../containers/Toolbar/ToolbarElements/UserSection", () => () => (
   <div>User</div>
@@ -153,7 +156,7 @@ describe("Home", () => {
       expect(grid.className).not.toMatch(/(?:xl|2xl):grid-cols-5/);
     }
     for (const sectionName of [
-      "Church administration",
+      "Church management",
       "Personal and service tools",
       "Controllers",
     ]) {
@@ -166,9 +169,93 @@ describe("Home", () => {
         "sm:p-5",
       );
     }
+    expect(screen.getByRole("link", { name: /^Church administration\b/ })).toHaveAttribute("href", "/account");
+    expect(screen.queryByRole("heading", { name: "Church administration" })).not.toBeInTheDocument();
+  });
+
+  it("shows descriptions by default and toggles them across the homepage", async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/home"]}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+          <ControllerInfoContext.Provider value={createMockControllerContext() as any}>
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    const toggle = screen.getByRole("switch", { name: "Show what each page does" });
+    expect(toggle).toBeChecked();
+    expect(screen.getByText("Manage resources, access, teams, and services.")).toBeInTheDocument();
+    expect(screen.getByText("Access shared files and church resources.")).toBeInTheDocument();
+    expect(screen.getByText(getDefaultControllerProfileDescription("presentation"))).toBeInTheDocument();
+    expect(screen.getByTestId("display-outputs-details")).not.toHaveAttribute("open");
+
+    await user.click(toggle);
+
+    expect(toggle).not.toBeChecked();
+    expect(screen.queryByText("Manage resources, access, teams, and services.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Access shared files and church resources.")).not.toBeInTheDocument();
+    expect(screen.queryByText(getDefaultControllerProfileDescription("presentation"))).not.toBeInTheDocument();
+    expect(screen.getByTestId("display-outputs-details")).not.toHaveAttribute("open");
+    expect(
+      readHomeNavigationMetadata("church-1")?.controllers.find(({ id }) => id === "presentation"),
+    ).not.toHaveProperty("description");
+
+    await user.click(toggle);
+
+    expect(toggle).toBeChecked();
+    expect(screen.getByText("Manage resources, access, teams, and services.")).toBeInTheDocument();
+    expect(screen.getByText("View your assignments and prepare for services.")).toBeInTheDocument();
+    expect(screen.getByText("Run presentations, stream graphics, and displays.")).toBeInTheDocument();
+    expect(screen.getByText("Access shared files and church resources.")).toBeInTheDocument();
+    expect(screen.getByText(getDefaultControllerProfileDescription("presentation"))).toBeInTheDocument();
+    expect(screen.getByText("Links for room screens and streaming software.")).toBeInTheDocument();
+    expect(screen.getByTestId("display-outputs-details")).not.toHaveAttribute("open");
+
+    await user.click(toggle);
+
+    expect(toggle).not.toBeChecked();
+    expect(screen.queryByText("Manage resources, access, teams, and services.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Access shared files and church resources.")).not.toBeInTheDocument();
+    expect(screen.queryByText(getDefaultControllerProfileDescription("presentation"))).not.toBeInTheDocument();
+  });
+
+  it("restores the saved descriptions preference on a new Home mount", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("worshipsync.home-descriptions.v1", "false");
+    const { unmount } = render(
+      <MemoryRouter initialEntries={["/home"]}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+          <ControllerInfoContext.Provider value={createMockControllerContext() as any}>
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("switch", { name: "Show what each page does" })).not.toBeChecked();
+    await user.click(screen.getByRole("switch", { name: "Show what each page does" }));
+    expect(localStorage.getItem("worshipsync.home-descriptions.v1")).toBe("true");
+    unmount();
+
+    render(
+      <MemoryRouter initialEntries={["/home"]}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+          <ControllerInfoContext.Provider value={createMockControllerContext() as any}>
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("switch", { name: "Show what each page does" })).toBeChecked();
+    expect(screen.getByText("Access shared files and church resources.")).toBeInTheDocument();
   });
 
   it("hydrates cached controller labels without making cached-only routes actionable", () => {
+    localStorage.setItem("worshipsync.home-descriptions.v1", "true");
     writeHomeNavigationMetadata({
       churchId: "church-1",
       controllers: [
@@ -190,10 +277,46 @@ describe("Home", () => {
 
     expect(screen.getByText("Text Master")).toBeInTheDocument();
     expect(screen.getByText("Lobby Screen")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Text Master" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Lobby Screen" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /^Text Master\b/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /^Lobby Screen\b/ })).not.toBeInTheDocument();
+    expect(screen.getByText(getDefaultControllerProfileDescription("presentation"))).toBeInTheDocument();
+    expect(screen.getByText(getDefaultControllerProfileDescription("aux-presentation"))).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Controllers" })).toHaveAttribute("aria-busy", "true");
     expect(store.getState().controllerProfiles.isLoaded).toBe(false);
+  });
+
+  it("shows the refreshed Presentation default from a legacy navigation cache immediately", () => {
+    const oldDefault = "Build and run the main presentation. Arrange service items, edit slides, and send output to projector, monitor, and stream.";
+    localStorage.setItem("worshipsync.home-descriptions.v1", "true");
+    localStorage.setItem(
+      getHomeNavigationCacheKey("church-1"),
+      JSON.stringify({
+        version: 1,
+        updatedAt: Date.now(),
+        churchId: "church-1",
+        controllers: [
+          { id: "presentation", name: "Text Master", description: oldDefault, icon: "presentation", iconColor: "orange", order: 0 },
+        ],
+        displays: [],
+      }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/home"]}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+          <ControllerInfoContext.Provider value={createMockControllerContext() as any}>
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+      { profilesLoaded: false, displayOutputsLoaded: false },
+    );
+
+    expect(screen.getByText("Present slides, songs, and scripture on your screens.")).toBeInTheDocument();
+    expect(screen.queryByText(oldDefault)).not.toBeInTheDocument();
+    expect(
+      JSON.parse(localStorage.getItem(getHomeNavigationCacheKey("church-1")) ?? "{}").controllers[0],
+    ).not.toHaveProperty("description");
   });
 
   it("does not show another church's cached navigation during a church change", () => {
@@ -239,19 +362,20 @@ describe("Home", () => {
     );
 
     expect(screen.queryByText("Church One Slides")).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Church One Slides" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /^Church One Slides\b/ })).not.toBeInTheDocument();
     expect(screen.getByRole("status", { name: "Loading controller settings" })).toBeInTheDocument();
 
     await userEvent.click(screen.getByText("Display outputs"));
     expect(screen.getByText("Loading this church's displays...")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Open Church One Projector" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /^Open Church One Projector\b/ })).not.toBeInTheDocument();
   });
 
   it("replaces cached controller metadata with remote names and removes retired entries", () => {
+    localStorage.setItem("worshipsync.home-descriptions.v1", "true");
     writeHomeNavigationMetadata({
       churchId: "church-1",
       controllers: [
-        { id: "presentation", name: "Text Master", icon: "captions", iconColor: "teal", order: 0 },
+        { id: "presentation", name: "Text Master", icon: "captions", iconColor: "teal", description: "Cached controller instructions.", order: 0 },
         { id: "overlay", name: "Old Overlay", icon: "layers", iconColor: "purple", order: 1 },
         { id: "ctrl_lobby", name: "Lobby Screen", icon: "monitor", iconColor: "cyan", order: 2 },
       ],
@@ -274,7 +398,7 @@ describe("Home", () => {
       store.dispatch(setControllerProfilesForChurch({
         churchId: "church-1",
         data: [
-          { ...defaults[0], name: "Sunday Slides", icon: "presentation", iconColor: "orange", order: 0 },
+          { ...defaults[0], name: "Sunday Slides", description: "Current controller instructions.", icon: "presentation", iconColor: "orange", order: 0 },
           { ...defaults[1], enabled: false, order: 1 },
         ],
       }));
@@ -284,20 +408,23 @@ describe("Home", () => {
       }));
     });
 
-    expect(screen.getByRole("link", { name: "Sunday Slides" })).toHaveAttribute("href", "/controller");
+    expect(screen.getByRole("link", { name: /^Sunday Slides/ })).toHaveAttribute("href", "/controller");
     expect(screen.queryByText("Lobby Screen")).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Old Overlay" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /^Old Overlay\b/ })).not.toBeInTheDocument();
+    expect(screen.getByText("Current controller instructions.")).toBeInTheDocument();
+    expect(screen.queryByText("Cached controller instructions.")).not.toBeInTheDocument();
     expect(readHomeNavigationMetadata("church-1")?.controllers).toEqual([
-      expect.objectContaining({ id: "presentation", name: "Sunday Slides", iconColor: "orange" }),
+      expect.objectContaining({ id: "presentation", name: "Sunday Slides", iconColor: "orange", description: "Current controller instructions." }),
     ]);
   });
 
-  it("follows configured controller order and hides disabled auxiliary controllers", () => {
+  it("renders built-ins first, keeps saved additional order, and hides disabled controllers", () => {
+    localStorage.setItem("worshipsync.home-descriptions.v1", "true");
     const lobby = {
       id: "ctrl_lobby",
       type: "aux-presentation" as const,
       name: "Lobby",
-      description: "",
+      description: "Drive this lobby screen with its own outline.",
       order: 2,
       enabled: true,
       outputIds: [],
@@ -321,11 +448,17 @@ describe("Home", () => {
     const controllerGrid = screen.getByRole("group", { name: "Controllers navigation" });
     const hrefs = within(controllerGrid).getAllByRole("link").map((link) => link.getAttribute("href"));
     expect(hrefs.slice(0, 3)).toEqual([
-      "/aux-controller/ctrl_lobby",
-      "/overlay-controller",
       "/controller",
+      "/overlay-controller",
+      "/aux-controller/ctrl_lobby",
     ]);
-    expect(screen.getByRole("link", { name: "Lobby" })).toBeInTheDocument();
+    expect(store.getState().controllerProfiles.list.slice(0, 3).map((profile) => profile.id)).toEqual([
+      "ctrl_lobby",
+      "overlay",
+      "presentation",
+    ]);
+    expect(screen.getByRole("link", { name: /^Lobby/ })).toBeInTheDocument();
+    expect(screen.getByText("Drive this lobby screen with its own outline.")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Disabled" })).not.toBeInTheDocument();
   });
 
@@ -365,9 +498,9 @@ describe("Home", () => {
     );
     await user.click(screen.getByText("Display outputs"));
     expect(screen.getByTestId("display-outputs-details")).toHaveAttribute("open", "");
-    expect(screen.getByRole("link", { name: "Open Sanctuary" })).toHaveAttribute("href", "/projector?output=out_sanctuary");
-    expect(screen.getByRole("link", { name: "Open Sanctuary (browser source)" })).toHaveAttribute("href", "/projector-full?output=out_sanctuary");
-    expect(screen.getByRole("link", { name: "Open Stream" })).toHaveAttribute("href", "/stream?output=stream");
+    expect(screen.getByRole("link", { name: /^Open Sanctuary\./ })).toHaveAttribute("href", "/projector?output=out_sanctuary");
+    expect(screen.getByRole("link", { name: /^Open Sanctuary \(browser source\)/ })).toHaveAttribute("href", "/projector-full?output=out_sanctuary");
+    expect(screen.getByRole("link", { name: /^Open Stream\./ })).toHaveAttribute("href", "/stream?output=stream");
     await user.click(screen.getByRole("button", { name: "Copy Sanctuary link" }));
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining("#/projector?output=out_sanctuary"));
     expect(await screen.findByRole("status")).toHaveTextContent("Link copied for Sanctuary.");
@@ -398,22 +531,22 @@ describe("Home", () => {
     expect(screen.queryByAltText("WorshipSync")).not.toBeInTheDocument();
 
     expect(
-      screen.getByRole("link", { name: /^Presentation$/i }),
+      screen.getByRole("link", { name: /^Presentation\b/i }),
     ).toHaveAttribute("href", "/controller");
     expect(
-      screen.getByRole("link", { name: /^Overlays$/i }),
+      screen.getByRole("link", { name: /^Overlays\b/i }),
     ).toHaveAttribute("href", "/overlay-controller");
     expect(
       screen.getByRole("link", { name: /Service Workspace/i }),
     ).toHaveAttribute("href", "/current-service");
     expect(
-      screen.getByRole("link", { name: /^Credits Editor$/ }),
+      screen.getByRole("link", { name: /^Credits Editor\b/ }),
     ).toHaveAttribute("href", "/credits-editor");
     expect(
       screen.getByRole("link", { name: /Board moderation/i }),
     ).toHaveAttribute("href", "/boards/controller");
     expect(
-      screen.getByRole("link", { name: /^Teams and Services$/i }),
+      screen.getByRole("link", { name: /^Teams and Services\b/i }),
     ).toHaveAttribute("href", "/teams-and-services");
 
     expect(screen.getByRole("link", { name: /^Support$/i })).toHaveAttribute(
@@ -499,7 +632,7 @@ describe("Home", () => {
         "/teams-and-services",
       );
       expect(
-        screen.queryByRole("link", { name: /^Teams and Services$/i }),
+        screen.queryByRole("link", { name: /^Teams and Services\b/i }),
       ).not.toBeInTheDocument();
       expect(
         screen.queryByText("View your team rosters, positions, and schedules."),
@@ -553,7 +686,7 @@ describe("Home", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole("link", { name: /^Teams and Services$/i })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /^Teams and Services\b/i })).toHaveAttribute(
       "href",
       "/teams-and-services",
     );
@@ -575,7 +708,7 @@ describe("Home", () => {
     );
 
     const overlayLink = screen.getByRole("link", {
-      name: /^Overlays$/i,
+      name: /^Overlays\b/i,
     });
     // Button omits aria-busy when idle (`isLoading || undefined`).
     expect(overlayLink).not.toHaveAttribute("aria-busy");
@@ -653,7 +786,7 @@ describe("Home", () => {
       screen.queryByRole("link", { name: /Board moderation/i }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: /^Credits Editor$/ }),
+      screen.getByRole("link", { name: /^Credits Editor\b/ }),
     ).toHaveAttribute("href", "/credits-editor");
   });
 
@@ -677,10 +810,10 @@ describe("Home", () => {
       screen.getByRole("heading", { name: /Offline demo/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: /^Presentation$/i }),
+      screen.getByRole("link", { name: /^Presentation\b/i }),
     ).toHaveAttribute("href", "/controller");
     expect(
-      screen.getByRole("link", { name: /^Overlays$/i }),
+      screen.getByRole("link", { name: /^Overlays\b/i }),
     ).toHaveAttribute("href", "/overlay-controller");
     expect(
       screen.getByRole("heading", { name: /Available after sign in/i }),
@@ -689,9 +822,19 @@ describe("Home", () => {
       screen.queryByText(/Sign in to show display links/),
     ).not.toBeInTheDocument();
 
+    expect(screen.getByRole("switch", { name: "Show what each page does" })).toBeChecked();
+    expect(screen.getByText("Sign in to access these church tools.")).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("region", { name: "Available after sign in" })).getByText(
+        "Organize volunteers, schedules, and services.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText(getDefaultControllerProfileDescription("presentation"))).toBeInTheDocument();
+    expect(screen.getByText("Links for room screens and streaming software.")).toBeInTheDocument();
+
     await user.click(
       screen.getByRole("button", {
-        name: /Teams and Services\. Sign in required\./i,
+        name: /^Teams and Services\. Organize volunteers/i,
       }),
     );
     const signInDialog = screen.getByRole("dialog", {
@@ -827,13 +970,13 @@ describe("Home", () => {
 
     expect(
       screen.getByRole("link", {
-        name: "Text Master",
+        name: /^Text Master\b/,
       }),
     ).toHaveAttribute("href", "/controller");
     expect(
-      within(screen.getByRole("link", { name: "Text Master" })).getByTestId("home-navigation-icon"),
+      within(screen.getByRole("link", { name: /^Text Master\b/ })).getByTestId("home-navigation-icon"),
     ).toHaveClass("text-teal-300");
-    expect(screen.queryByText("Run slides for the sanctuary.")).not.toBeInTheDocument();
+    expect(screen.getByText("Run slides for the sanctuary.")).toBeInTheDocument();
   });
 
   it("hides built-in controllers that are switched off in Controllers admin", () => {
@@ -857,13 +1000,13 @@ describe("Home", () => {
     );
 
     expect(
-      screen.queryByRole("link", { name: /^Presentation$/i }),
+      screen.queryByRole("link", { name: /^Presentation\b/i }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("link", { name: /^Overlays$/i }),
+      screen.queryByRole("link", { name: /^Overlays\b/i }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: /^Credits Editor$/ }),
+      screen.getByRole("link", { name: /^Credits Editor\b/ }),
     ).toHaveAttribute("href", "/credits-editor");
   });
 
@@ -898,7 +1041,7 @@ describe("Home", () => {
     expect(hrefs.some((h) => h.includes("/monitor"))).toBe(false);
     expect(hrefs.some((h) => h.includes("/stream"))).toBe(false);
     expect(
-      screen.getByRole("link", { name: /^Credits Editor$/ }),
+      screen.getByRole("link", { name: /^Credits Editor\b/ }),
     ).toHaveAttribute("href", "/credits-editor");
   });
 
@@ -923,13 +1066,13 @@ describe("Home", () => {
     );
 
     expect(
-      screen.getByRole("link", { name: /^Presentation$/i }),
+      screen.getByRole("link", { name: /^Presentation\b/i }),
     ).toHaveAttribute("href", "/controller");
     expect(
-      screen.queryByRole("link", { name: /^Overlays$/i }),
+      screen.queryByRole("link", { name: /^Overlays\b/i }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("link", { name: /^Credits Editor$/ }),
+      screen.queryByRole("link", { name: /^Credits Editor\b/ }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("link", { name: /Board moderation/i }),

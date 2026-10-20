@@ -46,7 +46,7 @@ import TeamsSectionReturnPrompt from "../components/TeamsSectionReturnPrompt";
 import SortablePositionRow from "../components/SortablePositionRow";
 import FormActionButtons from "../components/FormActionButtons";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
-import EntityIconPicker from "../EntityIconPicker";
+import EntityIconPicker from "@/components/icons/EntityIconPicker";
 import type { PositionIcon } from "../../../components/icons/iconTypes";
 import { useSensors } from "../../../utils/dndUtils";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
