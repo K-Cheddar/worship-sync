@@ -34,6 +34,7 @@ import {
   readAssignmentResponse,
 } from "./scheduleResponses.js";
 import { createVolunteerOperations } from "./volunteerOperations.js";
+import { resolveSignedInVolunteerMember } from "./volunteerIdentity.js";
 import {
   ASSIGNMENT_TOKEN_TTL_MS,
   createAssignmentResponseToken,
@@ -207,6 +208,8 @@ export const createTeamsAuthHandlers = ({
   renderScheduleAssignmentEmail,
   renderServicePlanShareEmail,
   sendRosterMemberInvite,
+  linkVolunteerRosterMember,
+  unlinkVolunteerRosterMember,
   logAuthEvent,
 }) => {
   const requireTeamsEdit = requireTeamsEditSession || requireAdminSession;
@@ -11512,7 +11515,10 @@ export const createTeamsAuthHandlers = ({
 
   // Resolve the church and roster identity only from a validated human
   // session. A request body or route parameter can never choose the member.
-  const resolveSignedInVolunteerIdentity = async (req) => {
+  const resolveSignedInVolunteerIdentity = async (
+    req,
+    { includeChurchRoster = false } = {},
+  ) => {
     const session = await requireHumanSession(req);
     const churchId = String(req.params.churchId || "").trim();
     if (session.churchId !== churchId) {
@@ -11520,16 +11526,40 @@ export const createTeamsAuthHandlers = ({
     }
     const userId = session.user?.uid;
     if (!userId) throw httpError(401, "Authentication required");
-    const members = await listTeamCollectionForChurch(
+    const linkedMembers = await queryDocs(
       COLLECTIONS.teamRosterMembers,
-      "memberId",
-      churchId,
+      [
+        { field: "churchId", value: churchId },
+        { field: "userId", value: userId },
+      ],
+      { limit: 0 },
     );
+    const member = resolveSignedInVolunteerMember({
+      members: linkedMembers.map((row) => ({
+        ...row,
+        memberId: row.id || row.memberId,
+      })),
+      churchId,
+      userId,
+      httpError,
+    });
+    const hasArchivedLinkedMember = linkedMembers.some(
+      (row) => row.archivedAt,
+    );
+    const members =
+      includeChurchRoster && member
+        ? await listTeamCollectionForChurch(
+            COLLECTIONS.teamRosterMembers,
+            "memberId",
+            churchId,
+          )
+        : [];
     return {
       churchId,
       userId,
       members,
-      member: members.find((row) => row.userId === userId) || null,
+      member,
+      hasArchivedLinkedMember,
     };
   };
 
@@ -15516,7 +15546,9 @@ export const createTeamsAuthHandlers = ({
     async getMyTeamAssignments(req, res) {
       try {
         const { churchId, member, members } =
-          await resolveSignedInVolunteerIdentity(req);
+          await resolveSignedInVolunteerIdentity(req, {
+            includeChurchRoster: true,
+          });
 
         const church = await getDoc(COLLECTIONS.churches, churchId);
         const serviceTimeZone = isValidPortableTimeZone(church?.serviceTimeZone)
@@ -15978,9 +16010,17 @@ export const createTeamsAuthHandlers = ({
           "memberId",
           churchId,
         );
-        const member =
-          members.find((row) => row.memberId === memberId) ||
-          (schedule.guests || []).find((guest) => guest?.guestId === memberId);
+        const rosterMember = members.find((row) => row.memberId === memberId);
+        if (rosterMember?.archivedAt) {
+          throw httpError(404, "That schedule is no longer available.");
+        }
+        const guest = (schedule.guests || []).find(
+          (row) => row?.guestId === memberId,
+        );
+        const member = rosterMember || guest;
+        if (!member) {
+          throw httpError(404, "That schedule is no longer available.");
+        }
         const church = await getChurchById(churchId);
 
         return res.json({
@@ -16262,9 +16302,15 @@ export const createTeamsAuthHandlers = ({
     async updateMyBlockoutDates(req, res) {
       try {
         await assertCsrf(req);
-        const { churchId, userId, member } =
+        const { churchId, userId, member, hasArchivedLinkedMember } =
           await resolveSignedInVolunteerIdentity(req);
         if (!member) {
+          if (hasArchivedLinkedMember) {
+            throw httpError(
+              403,
+              "Your member record is archived. Ask an admin to restore it.",
+            );
+          }
           throw httpError(
             404,
             "Your account is not linked to a team member yet.",
@@ -16385,58 +16431,25 @@ export const createTeamsAuthHandlers = ({
           }
         }
 
-        if (existing.userId === userId) {
-          return res.json({ success: true });
-        }
-        if (existing.userId) {
-          throw httpError(
-            400,
-            "That member is already linked to another account. Unlink them first.",
-          );
-        }
-
-        // One account may claim at most one member per church, or notifications
-        // would have two candidate records for the same person.
-        const members = await listTeamCollectionForChurch(
-          COLLECTIONS.teamRosterMembers,
-          "memberId",
-          req.params.churchId,
-        );
-        const alreadyClaimed = members.find(
-          (member) =>
-            member.userId === userId && member.memberId !== req.params.memberId,
-        );
-        if (alreadyClaimed) {
-          throw httpError(
-            400,
-            isSelf
-              ? "Your account is already linked to another member in this church. Unlink that one first."
-              : "That account is already linked to another member in this church. Unlink that one first.",
-          );
-        }
-
-        const now = nowIso();
-        await setDoc(
-          COLLECTIONS.teamRosterMembers,
-          req.params.memberId,
-          {
-            userId,
-            linkedAt: now,
-            updatedAt: now,
-            updatedByUid: admin.user.uid,
-          },
-          { merge: true },
-        );
-        await addSecurityEvent({
-          type: "team_member_linked",
+        const link = await linkVolunteerRosterMember({
           churchId: req.params.churchId,
-          // Who performed the link, so the audit trail names the actor rather
-          // than the subject.
-          userId: admin.user.uid,
-          linkedUserId: userId,
           memberId: req.params.memberId,
+          userId,
+          actorUid: admin.user.uid,
           source: isSelf ? "self" : "admin",
         });
+        if (link.changed) {
+          await addSecurityEvent({
+            type: "team_member_linked",
+            churchId: req.params.churchId,
+            // Who performed the link, so the audit trail names the actor rather
+            // than the subject.
+            userId: admin.user.uid,
+            linkedUserId: userId,
+            memberId: req.params.memberId,
+            source: isSelf ? "self" : "admin",
+          });
+        }
         return res.json({ success: true });
       } catch (error) {
         return sendTeamsJsonError(
@@ -16466,33 +16479,30 @@ export const createTeamsAuthHandlers = ({
         );
         // Only church-wide Teams editors may detach account links.
         const admin = await requireTeamsEdit(req, req.params.churchId);
-        if (existing.userId && existing.userId !== admin.user.uid) {
+        const canUnlinkOtherAccount = Boolean(
+          existing.userId && existing.userId !== admin.user.uid,
+        );
+        if (canUnlinkOtherAccount) {
           await requireAdminSession(req, req.params.churchId);
         }
-        if (!existing.userId) {
-          return res.json({ success: true, member: existing });
-        }
-        const now = nowIso();
-        await setDoc(
-          COLLECTIONS.teamRosterMembers,
-          req.params.memberId,
-          {
-            userId: "",
-            linkedAt: "",
-            invitedAt: "",
-            updatedAt: now,
-            updatedByUid: admin.user.uid,
-          },
-          { merge: true },
-        );
-        await addSecurityEvent({
-          type: "team_member_unlinked",
+        const result = await unlinkVolunteerRosterMember({
           churchId: req.params.churchId,
-          userId: admin.user.uid,
           memberId: req.params.memberId,
-          previousUserId: existing.userId,
+          actorUid: admin.user.uid,
+          allowUnlinkOtherAccount: canUnlinkOtherAccount,
         });
-        return res.json({ success: true });
+        if (result.previousUserId) {
+          await addSecurityEvent({
+            type: "team_member_unlinked",
+            churchId: req.params.churchId,
+            userId: admin.user.uid,
+            memberId: req.params.memberId,
+            previousUserId: result.previousUserId,
+          });
+        }
+        return result.previousUserId
+          ? res.json({ success: true })
+          : res.json({ success: true, member: result.member });
       } catch (error) {
         return sendTeamsJsonError(
           res,

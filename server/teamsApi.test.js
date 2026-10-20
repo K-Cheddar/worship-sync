@@ -10204,8 +10204,43 @@ test("an account cannot claim a second member in the same church", async (t) => 
 
   // Two candidate records for one person would make notification routing
   // ambiguous.
-  assert.equal(conflict.statusCode, 400);
+  assert.equal(conflict.statusCode, 409);
   assert.equal(conflict.payload.success, false);
+  assert.match(conflict.payload.errorMessage, /church administrator/i);
+});
+
+test("simultaneous link attempts leave one roster identity for the account", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("member_link_simultaneous");
+  const first = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Concurrent", lastName: "First" },
+  });
+  const second = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Concurrent", lastName: "Second" },
+  });
+
+  const attempts = await Promise.all([
+    callHandler(authHandlers.linkTeamRosterMember, {
+      context,
+      params: { memberId: first.payload.member.memberId },
+    }),
+    callHandler(authHandlers.linkTeamRosterMember, {
+      context,
+      params: { memberId: second.payload.member.memberId },
+    }),
+  ]);
+
+  assert.deepEqual(
+    attempts.map((result) => result.statusCode).sort(),
+    [200, 409],
+  );
+  const linked = await queryDocs(COLLECTIONS.teamRosterMembers, [
+    { field: "churchId", value: context.churchId },
+    { field: "userId", value: `teams_api_admin_member_link_simultaneous` },
+  ]);
+  assert.equal(linked.length, 1);
 });
 
 test("unlinking frees the account to claim a different member", async (t) => {
@@ -10330,6 +10365,158 @@ test("my assignments is empty rather than an error when nothing is claimed", asy
   assert.equal(res.statusCode, 200);
   assert.equal(res.payload.member, null);
   assert.deepEqual(res.payload.occurrences, []);
+});
+
+test("My Schedule does not infer a link from matching roster email or name", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const userId = "my_schedule_no_email_fallback_user";
+  const email = "same-email@example.com";
+  const context = await createHumanContext("no_email_fallback", {
+    userId,
+    email,
+  });
+  const assigned = await seedAssignedSchedule(context, "no_email_fallback", {
+    link: false,
+  });
+  await setDoc(
+    COLLECTIONS.teamRosterMembers,
+    assigned.memberId,
+    { email, firstName: "Same", lastName: "Volunteer" },
+    { merge: true },
+  );
+
+  const read = await callHandler(authHandlers.getMyTeamAssignments, { context });
+  assert.equal(read.statusCode, 200);
+  assert.equal(read.payload.member, null);
+  assert.deepEqual(read.payload.occurrences, []);
+
+  const response = await callHandler(authHandlers.respondToMyAssignment, {
+    context,
+    body: {
+      scheduleId: assigned.scheduleId,
+      occurrenceId: assigned.occurrenceId,
+      cellKey: assigned.cellKey,
+      response: "accepted",
+    },
+  });
+  assert.equal(response.statusCode, 404);
+});
+
+test("My Schedule rejects duplicate account links instead of choosing the first roster row", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const userId = "my_schedule_duplicate_identity_user";
+  const context = await createHumanContext("duplicate_identity", { userId });
+  const wrongMemberId = "my_schedule_duplicate_wrong_first";
+  await setDoc(COLLECTIONS.teamRosterMembers, wrongMemberId, {
+    memberId: wrongMemberId,
+    churchId: context.churchId,
+    userId,
+    firstName: "Wrong",
+    lastName: "Person",
+    linkedAt: "old-link",
+    invitedAt: "old-invite",
+    blockoutDates: [],
+  });
+  const assigned = await seedAssignedSchedule(context, "duplicate_identity", {
+    link: false,
+  });
+  await setDoc(
+    COLLECTIONS.teamRosterMembers,
+    assigned.memberId,
+    { userId, linkedAt: "current-link" },
+    { merge: true },
+  );
+
+  const read = await callHandler(authHandlers.getMyTeamAssignments, { context });
+  assert.equal(read.statusCode, 409);
+  assert.match(read.payload.errorMessage, /correct the links/i);
+  assert.equal(read.payload.member, undefined);
+  assert.equal(read.payload.occurrences, undefined);
+
+  const response = await callHandler(authHandlers.respondToMyAssignment, {
+    context,
+    body: {
+      scheduleId: assigned.scheduleId,
+      occurrenceId: assigned.occurrenceId,
+      cellKey: assigned.cellKey,
+      response: "accepted",
+    },
+  });
+  assert.equal(response.statusCode, 409);
+
+  const memberBefore = await getDoc(COLLECTIONS.teamRosterMembers, assigned.memberId);
+  const blockout = await callHandler(authHandlers.updateMyBlockoutDates, {
+    context,
+    body: {
+      expectedUpdatedAt: memberBefore.updatedAt || "",
+      blockoutDates: [{ startDate: "2099-10-01", endDate: "2099-10-02" }],
+    },
+  });
+  assert.equal(blockout.statusCode, 409);
+  assert.deepEqual(
+    (await getDoc(COLLECTIONS.teamRosterMembers, assigned.memberId)).blockoutDates,
+    [],
+  );
+});
+
+test("an archived linked member exposes no My Schedule assignments or self-service mutations", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("archived_my_schedule");
+  const assigned = await seedAssignedSchedule(context, "archived_my_schedule");
+  const memberBefore = await getDoc(COLLECTIONS.teamRosterMembers, assigned.memberId);
+  await setDoc(
+    COLLECTIONS.teamRosterMembers,
+    assigned.memberId,
+    { archivedAt: "archived-for-test" },
+    { merge: true },
+  );
+  const scheduleBefore = await getDoc(COLLECTIONS.teamSchedules, assigned.scheduleId);
+
+  const read = await callHandler(authHandlers.getMyTeamAssignments, { context });
+  assert.equal(read.statusCode, 200);
+  assert.equal(read.payload.member, null);
+  assert.deepEqual(read.payload.occurrences, []);
+
+  const response = await callHandler(authHandlers.respondToMyAssignment, {
+    context,
+    body: {
+      scheduleId: assigned.scheduleId,
+      occurrenceId: assigned.occurrenceId,
+      cellKey: assigned.cellKey,
+      response: "accepted",
+    },
+  });
+  assert.equal(response.statusCode, 404);
+
+  const blockout = await callHandler(authHandlers.updateMyBlockoutDates, {
+    context,
+    body: {
+      expectedUpdatedAt: memberBefore.updatedAt || "",
+      blockoutDates: [{ startDate: "2099-10-01", endDate: "2099-10-02" }],
+    },
+  });
+  assert.equal(blockout.statusCode, 403);
+
+  const token = tokenForMember(context.churchId, assigned.scheduleId, assigned.memberId);
+  const anonymous = { churchId: context.churchId, headers: {}, session: {} };
+  const emailedRead = await callHandler(authHandlers.getAssignmentResponseContext, {
+    context: anonymous,
+    query: { token },
+  });
+  assert.equal(emailedRead.statusCode, 404);
+  const emailedResponse = await callHandler(authHandlers.respondToAssignmentByToken, {
+    context: anonymous,
+    body: { token, response: "accepted" },
+  });
+  assert.equal(emailedResponse.statusCode, 404);
+  assert.deepEqual(
+    (await getDoc(COLLECTIONS.teamSchedules, assigned.scheduleId)).responses,
+    scheduleBefore.responses,
+  );
+  assert.equal(
+    (await getDoc(COLLECTIONS.teamRosterMembers, assigned.memberId)).archivedAt,
+    "archived-for-test",
+  );
 });
 
 test("My Schedule filters Draft schedules in both occurrence passes and hides them after unpublishing", async (t) => {

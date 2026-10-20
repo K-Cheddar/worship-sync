@@ -72,6 +72,16 @@ A schedule follows **Virtual → Draft ↔ Published**.
 
 **Approval source:** Current product-owner request, 2026-10-15. This Forms behavior adds Team-level availability coverage and filtering without changing scheduling, form-link, response, SMS, or authorization contracts.
 
+### Volunteer account identity and church membership
+
+- Signed-in My Schedule resolves identity only from the authenticated account's roster link in the requested church. Names and email addresses are never used to find a roster record.
+- An account may link to one roster member per church. When existing links are ambiguous, My Schedule asks the volunteer to have a church administrator correct them; it never selects the first match.
+- Archived roster members do not expose My Schedule assignments and cannot use signed-in schedule responses or time-off changes. Existing schedule-specific response links remain available to eligible roster members and guests.
+- Manual linking, self-claiming, invitation acceptance, unlinking, and church removal preserve the one-link rule under concurrent requests. A linked account is not reassigned implicitly; an authorized unlink or correction is required.
+- Removing church membership also clears that account's roster link and link metadata in that church. It retains roster records, assignments, blockouts, other church data, and historical schedules, and does not delete the authentication account or match another person by email.
+
+**Approval source:** Current product-owner request, 2026-10-19 (Phase 1A identity-integrity follow-up).
+
 ## Core data invariants
 
 1. Each logical occurrence has a canonical identity that survives start-time edits, its original recurrence date and current church-local date/start instant, service membership, and optional group identity.
