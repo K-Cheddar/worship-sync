@@ -18,8 +18,8 @@ The operator receives team messages in WorshipSync. If they are working elsewher
 
 - `ChatContext.unreadCount` remains the source for the persistent unread marker. Any positive count shows a small Windows taskbar overlay; zero clears it.
 - Initial message history can show the unread overlay but never requests a flash.
-- A genuinely new incoming unread message requests taskbar attention only when the main controller is unfocused. The main process coalesces bursts and stops flashing on focus or after a bounded interval.
-- Automatic read marking requires the chat to be open while the controller document is visible and focused, and the operator is at the latest messages. On focus return, messages at the latest position are marked read.
+- A genuinely new incoming unread message requests taskbar attention only when the main controller is unfocused. Newness is determined by message identity: an incoming message can flash when first observed with reactions, while reaction updates to a known message do not. The main process coalesces bursts and stops flashing on focus or after a bounded interval.
+- Automatic read marking requires the chat content to be fully open, the controller document visible and focused, and the operator at the latest messages. A minimized, opening, restoring, or closing chat does not mark messages read. When focus or visibility returns while the chat is open at the latest messages, visible messages are marked read.
 - Focusing or opening the main controller without an open chat does not clear unread messages.
 - Logout, church or chat actor changes, renderer reload, renderer crash, and main-window closure clear stale taskbar state.
 
@@ -35,9 +35,9 @@ The operator receives team messages in WorshipSync. If they are working elsewher
 | Scenario | Confirmed expected behavior | Current implementation or test evidence | Status / open question |
 | --- | --- | --- | --- |
 | Initial unread history | Show the unread marker without flashing | `ChatContext.notifications.test.tsx`; `chatTaskbar.test.ts` | Confirmed by current request |
-| New incoming unread message | Request attention only for a new, incoming, non-edited, non-deleted, non-reaction message; main process checks focus | `ChatContext.notifications.test.tsx`; `chatTaskbar.test.ts` | Confirmed by current request |
+| New incoming unread message | Request attention for a first-seen incoming, non-edited, non-deleted unread message; a known message's reaction update does not flash. Main process checks focus | `ChatContext.notifications.test.tsx`; `chatTaskbar.test.ts` | Confirmed by current request and review clarification |
 | Read latest messages | Clear the marker when the unread count reaches zero | `ChatContext.notifications.test.tsx` | Confirmed by current request |
-| Chat open in background | Keep incoming messages unread until the chat is visible and focused | `ChatWindow.test.tsx` | Confirmed by current request |
+| Chat open in background or minimized | Keep incoming messages unread until chat content is fully open, visible, and focused at the latest position | `ChatContext.notifications.test.tsx`; `ChatWindow.test.tsx`; `FloatingWindow` phase callback | Confirmed by current request and review clarification |
 | Account or renderer transition | Clear stale status and reject outdated updates | `ChatContext.notifications.test.tsx`; `chatTaskbar.test.ts` | Confirmed by current request |
 
 ## Product decisions
@@ -48,6 +48,7 @@ The operator receives team messages in WorshipSync. If they are working elsewher
 - **Material alternative rejected:** System tray support, desktop notifications, numeric badges, and automatic read marking whenever the latest message is near the bottom, even in the background.
 - **Approval source/date:** WorshipSync — Phase 1: Windows Electron Taskbar Chat Notifications request, 2026-10-19.
 - **Affected workflow/contract:** Windows Electron team chat.
+- **Review clarification (2026-10-20):** Automatic reads require the chat floating window to be fully open; minimized or transitioning chat content remains unread. Taskbar attention follows first-seen incoming message identity, so a new message already carrying reactions can alert while later reaction updates do not. Approved by the user's explicit response to the bounded fix design on 2026-10-20.
 
 ## Implementation references
 

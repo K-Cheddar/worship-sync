@@ -715,7 +715,6 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
                 liveStreamReadyRef.current &&
                 !message.deletedAt &&
                 !message.editedAt &&
-                message.reactions.length === 0 &&
                 message.dayKey === context.todayKey &&
                 message.authorId !== context.actorId &&
                 message.createdAt > lastReadAtRef.current

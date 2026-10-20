@@ -3,5 +3,5 @@
   "date": "2026-10-19",
   "type": "new",
   "title": "Windows chat taskbar alerts",
-  "description": "Unread team chat stays marked on the Windows taskbar, and new messages briefly draw your attention while WorshipSync is in the background."
+  "description": "Unread team chat stays marked on the Windows taskbar until you view the latest messages, even when chat is minimized. New messages briefly draw your attention while WorshipSync is in the background."
 }

@@ -321,7 +321,11 @@ const ChatMessageRow = ({
   );
 };
 
-const ChatWindow = () => {
+const ChatWindow = ({
+  floatingWindowContentVisible = true,
+}: {
+  floatingWindowContentVisible?: boolean;
+} = {}) => {
   const chat = useChat();
   const [showComposerEmojis, setShowComposerEmojis] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -349,7 +353,10 @@ const ChatWindow = () => {
     () => document.visibilityState === "visible",
   );
   const canMarkMessagesRead = Boolean(
-    chat?.isOpen && isWindowFocused && isDocumentVisible,
+    chat?.isOpen &&
+    floatingWindowContentVisible &&
+    isWindowFocused &&
+    isDocumentVisible,
   );
 
   const isCurrentWeek = Boolean(

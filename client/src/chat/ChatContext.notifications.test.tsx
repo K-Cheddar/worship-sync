@@ -3,7 +3,9 @@ import { MemoryRouter } from "react-router-dom";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { ToastContext } from "../context/toastContext";
 import { createMockGlobalInfo } from "../test/mocks";
+import { FloatingWindowZIndexProvider } from "../components/FloatingWindow/FloatingWindowZIndexContext";
 import { ChatProvider, useChat } from "./ChatContext";
+import ChatWindowHost from "./ChatWindowHost";
 import ChatWindow from "./ChatWindow";
 import type { ChatMessage, ChatStreamEvent } from "./types";
 import {
@@ -104,6 +106,19 @@ const OpenChatHarness = () => {
       </button>
       <div data-testid="live-unread-count">{chat?.unreadCount ?? 0}</div>
       {chat?.isOpen ? <ChatWindow /> : null}
+    </>
+  );
+};
+
+const FloatingOpenChatHarness = () => {
+  const chat = useChat();
+  return (
+    <>
+      <button type="button" onClick={chat?.openChat}>
+        Open team chat
+      </button>
+      <div data-testid="live-unread-count">{chat?.unreadCount ?? 0}</div>
+      <ChatWindowHost />
     </>
   );
 };
@@ -268,7 +283,22 @@ describe("ChatProvider incoming notifications", () => {
         }),
       });
     });
-    expect(requestTaskbarAttention).toHaveBeenCalledTimes(1);
+    expect(requestTaskbarAttention).toHaveBeenCalledTimes(2);
+
+    act(() => {
+      onStreamEvent?.({
+        type: "message-updated",
+        message: message({
+          messageId: "chat_2",
+          clientMessageId: "client_2",
+          createdAt: 2,
+          reactions: [
+            { emoji: "👍", actors: [{ actorId: "user_3", name: "Sam" }] },
+          ],
+        }),
+      });
+    });
+    expect(requestTaskbarAttention).toHaveBeenCalledTimes(2);
   });
 
   it("shows initial unread history without flashing and clears when read", async () => {
@@ -493,6 +523,93 @@ describe("ChatProvider incoming notifications", () => {
     expect(localStorage.getItem("worshipsync-chat-read:church-1:user_1")).toBeNull();
 
     act(() => window.dispatchEvent(new Event("focus")));
+    await waitFor(() =>
+      expect(setTaskbarUnread).toHaveBeenLastCalledWith(
+        expect.objectContaining({ unread: false }),
+      ),
+    );
+    expect(localStorage.getItem("worshipsync-chat-read:church-1:user_1")).toBe(
+      String(incomingMessage.createdAt),
+    );
+  });
+
+  it("keeps incoming messages unread while the focused chat window is minimized", async () => {
+    let onStreamEvent: ((event: ChatStreamEvent) => void) | null = null;
+    const setTaskbarUnread = jest.fn().mockResolvedValue(true);
+    window.electronAPI = {
+      setChatTaskbarUnreadState: setTaskbarUnread,
+    } as unknown as ElectronAPI;
+    mockedGetChatContext.mockResolvedValue({ context: chatContext });
+    mockedGetChatMessages.mockResolvedValue({
+      context: chatContext,
+      dayKey: chatContext.todayKey,
+      messages: [],
+      hasMore: false,
+    });
+    mockedStreamChatEvents.mockImplementation(
+      ({ signal, onEvent }) =>
+        new Promise<void>((resolve) => {
+          onStreamEvent = onEvent;
+          signal.addEventListener("abort", () => resolve(), { once: true });
+        }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/home"]}>
+        <FloatingWindowZIndexProvider>
+          <GlobalInfoContext.Provider value={createMockGlobalInfo() as never}>
+            <ToastContext.Provider
+              value={{
+                showToast: jest.fn(),
+                updateToast: jest.fn(),
+                removeToast: jest.fn(),
+              }}
+            >
+              <ChatProvider>
+                <FloatingOpenChatHarness />
+              </ChatProvider>
+            </ToastContext.Provider>
+          </GlobalInfoContext.Provider>
+        </FloatingWindowZIndexProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(onStreamEvent).not.toBeNull());
+    act(() => {
+      onStreamEvent?.({
+        type: "initial-messages",
+        dayKey: chatContext.todayKey,
+        messages: [],
+        hasMore: false,
+      });
+      onStreamEvent?.({ type: "stream-ready" });
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Open team chat" }));
+    await screen.findByRole("button", { name: "Minimize window" });
+    act(() => window.dispatchEvent(new Event("focus")));
+    fireEvent.click(screen.getByRole("button", { name: "Minimize window" }));
+    await screen.findByRole("button", { name: "Restore window" });
+
+    const incomingMessage = message({
+      messageId: "minimized-chat",
+      clientMessageId: "client-minimized-chat",
+      text: "Arrived while chat was minimized",
+      createdAt: 2,
+    });
+    act(() => {
+      onStreamEvent?.({ type: "message-updated", message: incomingMessage });
+    });
+
+    expect(await screen.findByTestId("live-unread-count")).toHaveTextContent("1");
+    await waitFor(() =>
+      expect(setTaskbarUnread).toHaveBeenLastCalledWith(
+        expect.objectContaining({ unread: true }),
+      ),
+    );
+    expect(localStorage.getItem("worshipsync-chat-read:church-1:user_1")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Restore window" }));
     await waitFor(() =>
       expect(setTaskbarUnread).toHaveBeenLastCalledWith(
         expect.objectContaining({ unread: false }),
