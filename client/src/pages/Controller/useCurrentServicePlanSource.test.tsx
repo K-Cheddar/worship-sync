@@ -1509,6 +1509,85 @@ describe("useCurrentServicePlanSource", () => {
     );
   });
 
+  it("keeps a failed plan preview stale across schedule updates until plan refresh succeeds", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+    expect(latestResult?.isPlanPreviewStale).toBe(false);
+    const displayedPreview = store.getState().servicePlanningImport.preview;
+    mockGetServicePlan.mockRejectedValueOnce(new Error("temporarily unavailable"));
+
+    await act(async () => {
+      await latestResult?.refresh();
+    });
+
+    expect(latestResult?.isPlanPreviewStale).toBe(true);
+    expect(store.getState().servicePlanningImport.preview).toEqual(displayedPreview);
+
+    const scheduleAssignments = [
+      { teamName: "Band", role: "Keys", name: "Updated Volunteer" },
+    ];
+    mockGetServicePlanAssignments.mockResolvedValueOnce({
+      success: true,
+      assignments: scheduleAssignments,
+    });
+    act(() => {
+      mockLiveHandler?.({
+        type: "schedule-updated",
+        schedule: { scheduleId: "schedule-1" },
+      });
+    });
+
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(2));
+    expect(mockLoadPlanPreview).toHaveBeenLastCalledWith(
+      planFixture,
+      scheduleAssignments,
+    );
+    expect(store.getState().servicePlanningImport.preview).not.toBeNull();
+    expect(latestResult?.isPlanPreviewStale).toBe(true);
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      await latestResult?.refresh();
+    });
+
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(3);
+    expect(latestResult?.isPlanPreviewStale).toBe(false);
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
+  });
+
+  it("still applies schedule-only assignment updates to a trusted plan preview", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+    const scheduleAssignments = [
+      { teamName: "Choir", role: "Lead", name: "Current Volunteer" },
+    ];
+    const updatedOutline = { ...outlineFixture, planLabel: "Schedule refreshed" };
+    mockGetServicePlanAssignments.mockResolvedValueOnce({
+      success: true,
+      assignments: scheduleAssignments,
+    });
+    mockLoadPlanPreview.mockResolvedValueOnce(updatedOutline);
+
+    act(() => {
+      mockLiveHandler?.({ type: "schedule-removed", scheduleId: "schedule-1" });
+    });
+
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(2));
+
+    expect(mockLoadPlanPreview).toHaveBeenLastCalledWith(
+      planFixture,
+      scheduleAssignments,
+    );
+    expect(store.getState().servicePlanningImport.serviceOutline).toEqual(
+      updatedOutline,
+    );
+    expect(latestResult?.isPlanPreviewStale).toBe(false);
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
+  });
+
   it("retains a failed refresh marker when the plan source hook remounts", async () => {
     const store = makeStore();
     const { unmount: unmountFirstView } = renderHookWith(store, enabledGlobalInfo);

@@ -14,6 +14,7 @@ import servicePlanningImportReducer, {
   setServicePlanningImportOutlinePreviewExpanded,
   setServicePlanningImportOverlaySummaryExpanded,
   setServicePlanningImportUrl,
+  markServicePlanningPlanPreviewFresh,
   markServicePlanningPlanPreviewStale,
   setServicePlanningPlanOutline,
   setServicePlanningSyncActiveStep,
@@ -107,7 +108,7 @@ describe("servicePlanningImportSlice", () => {
     expect(state.url).toBe(serviceOutlineFixture.sourceUrl);
   });
 
-  it("keeps saved-plan staleness with the preview until it is replaced or cleared", () => {
+  it("does not trust an applied outline while the saved-plan preview is stale", () => {
     const store = createStore();
 
     store.dispatch(
@@ -125,6 +126,10 @@ describe("servicePlanningImportSlice", () => {
         planKey: "service-1@2026-05-02",
       }),
     );
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
+    store.dispatch(markServicePlanningPlanPreviewFresh("another-plan"));
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
+    store.dispatch(markServicePlanningPlanPreviewFresh("service-1@2026-05-02"));
     expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
 
     store.dispatch(markServicePlanningPlanPreviewStale("service-1@2026-05-02"));

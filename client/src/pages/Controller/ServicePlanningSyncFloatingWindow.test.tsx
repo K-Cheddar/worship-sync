@@ -1753,13 +1753,23 @@ describe("ServicePlanningSyncFloatingWindow", () => {
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
         allDocs: allDocsReducer,
+        undoable: () => ({
+          present: {
+            itemLists: { selectedList: { _id: "outline-1", name: "Sunday" } },
+            itemList: { isLoading: false, list: [] },
+          },
+        }),
       },
     });
     store.dispatch(
       setServicePlanningServiceOutline(wrapImport({
         overlayCandidates: [],
         overlayPlan: [{ action: "create" }],
-        outlineCandidates: [],
+        outlineCandidates: [{
+          outlineItemType: "song",
+          outlineAlreadyPresent: false,
+          matchedLibraryItem: { _id: "song-1", type: "song" },
+        }],
         lineItems: [],
         teamAssignments: [],
       }) as any),
@@ -1767,11 +1777,24 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     store.dispatch(setServicePlanningFloatingWindowDismissed(false));
     mockPlanSource.isPlanSourced = true;
     mockPlanSource.selectedPlanKey = "service-1@2026-05-02";
-    mockPlanSource.isPlanPreviewStale = true;
+    mockPlanSource.isPlanPreviewStale = false;
 
-    renderWindow(store);
+    const view = renderWindow(store);
+    expect(screen.getByRole("button", { name: "Sync overlays" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Sync outline" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Sync All" })).toBeEnabled();
+
+    mockPlanSource.isPlanPreviewStale = true;
+    view.rerender(
+      <MemoryRouter>
+        <Provider store={store}>
+          <ServicePlanningSyncFloatingWindow />
+        </Provider>
+      </MemoryRouter>,
+    );
 
     expect(screen.getByRole("button", { name: "Sync overlays" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Sync outline" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Sync All" })).toBeDisabled();
     expect(
       screen.getByText(/refresh before syncing/i),

@@ -182,6 +182,8 @@ export const servicePlanningImportSlice = createSlice({
      * `url` alone: the plan's original import URL is provenance, not something
      * the operator pasted, and overwriting the box would make Import look like
      * it had already been used for this service.
+     * Applying the outline alone does not establish freshness: schedule-only
+     * events can rebuild it from the currently cached plan.
      */
     setServicePlanningPlanOutline: (
       state,
@@ -190,7 +192,6 @@ export const servicePlanningImportSlice = createSlice({
       state.serviceOutline = action.payload.outline;
       state.preview = action.payload.outline.preview;
       state.servicePlanKey = action.payload.planKey;
-      state.isPlanPreviewStale = false;
     },
     markServicePlanningPlanPreviewStale: (
       state,
@@ -198,6 +199,16 @@ export const servicePlanningImportSlice = createSlice({
     ) => {
       if (state.servicePlanKey === action.payload && state.preview) {
         state.isPlanPreviewStale = true;
+      }
+    },
+    // Called after the selected plan and its preview have been authoritatively
+    // reconciled. Applying an outline by itself is not proof that it is fresh.
+    markServicePlanningPlanPreviewFresh: (
+      state,
+      action: PayloadAction<string>,
+    ) => {
+      if (state.servicePlanKey === action.payload && state.preview) {
+        state.isPlanPreviewStale = false;
       }
     },
     /**
@@ -423,6 +434,7 @@ export const {
   setStoredServicePlanningOutlineIfIdle,
   setServicePlanningPlanOutline,
   markServicePlanningPlanPreviewStale,
+  markServicePlanningPlanPreviewFresh,
   clearServicePlanningPlanOutline,
   clearServicePlanningPreview,
   resetServicePlanningImportPreview,

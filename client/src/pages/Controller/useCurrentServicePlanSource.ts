@@ -30,9 +30,10 @@ import {
 import {
   clearServicePlanningPlanOutline,
   clearServicePlanningPreview,
+  markServicePlanningPlanPreviewFresh,
+  markServicePlanningPlanPreviewStale,
   setServicePlanningOutlinePlanBinding,
   setServicePlanningPlanOutline,
-  markServicePlanningPlanPreviewStale,
 } from "../../store/servicePlanningImportSlice";
 import { persistItemListServicePlanBinding } from "../../utils/itemListImports";
 import { useServicePlanningImport } from "../../hooks/useServicePlanningImport";
@@ -551,7 +552,8 @@ export const useCurrentServicePlanSource = () => {
             assignmentsResult?.ok ? assignmentsResult.result.assignments : [],
             isCurrentRequest,
           );
-          if (!appliedOutline) return "superseded";
+          if (!appliedOutline || !isCurrentRequest()) return "superseded";
+          dispatch(markServicePlanningPlanPreviewFresh(planKeyAtStart));
           return _.isEqual(previousPlan, plan) &&
             _.isEqual(previousPreview, appliedOutline.preview)
             ? "unchanged"
