@@ -59,7 +59,7 @@ try {
     preview: { host: "127.0.0.1", port: 3116, strictPort: true },
   });
   browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 375, height: 780 }, isMobile: true, hasTouch: true });
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   const page = await context.newPage();
   const pageErrors = [];
@@ -73,9 +73,12 @@ try {
   const mobileColumns = await getColumnCount("Church administration navigation");
   const mobileScrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
   const mobileToolbarHeight = await page.getByTestId("home-toolbar").evaluate((element) => element.getBoundingClientRect().height);
+  const mobileCard = await page.getByRole("link", { name: "Resources", exact: true }).boundingBox();
   assert.equal(mobileColumns, 2, "mobile launcher should use two columns");
-  assert.equal(mobileScrollWidth, 375, "mobile launcher should not overflow horizontally");
+  assert.equal(mobileScrollWidth, 390, "mobile launcher should not overflow horizontally");
   assert.ok(mobileToolbarHeight <= 48, "mobile Home toolbar should stay within its current compact height");
+  assert.ok(mobileCard && mobileCard.height >= 84, "mobile navigation cards should keep a comfortable touch height");
+  assert.equal(await page.getByText("WorshipSync", { exact: true }).isVisible(), false, "wordmark should stay out of the narrow mobile header");
   assert.equal(await page.getByRole("group", { name: "Church administration navigation" }).getByRole("link").count(), 3);
   assert.equal(await page.getByRole("link", { name: "Text Master" }).count(), 1);
   assert.equal(await page.getByRole("link", { name: "Lobby Screens" }).count(), 1);
@@ -85,6 +88,13 @@ try {
   assert.equal(await getColumnCount("Church administration navigation"), 3, "tablet launcher should use three columns");
   await page.setViewportSize({ width: 1440, height: 900 });
   assert.equal(await getColumnCount("Church administration navigation"), 4, "desktop launcher should use four columns");
+  assert.equal(await page.getByTestId("home-toolbar").evaluate((element) => element.getBoundingClientRect().width), 1440, "desktop toolbar should use the full viewport width");
+  assert.equal(await page.getByTestId("home-content").evaluate((element) => element.getBoundingClientRect().width), 1152, "desktop navigation content should use a centered max-w-6xl width");
+  assert.equal(await page.getByText("WorshipSync", { exact: true }).isVisible(), true, "desktop header should show the centered wordmark");
+  const desktopCard = await page.getByRole("link", { name: "Resources", exact: true }).boundingBox();
+  assert.ok(desktopCard && desktopCard.height >= 88 && desktopCard.height <= 100, "desktop navigation cards should be approximately 88–100px tall");
+  const adminSectionRadius = await page.getByRole("region", { name: "Church administration" }).evaluate((element) => getComputedStyle(element).borderTopLeftRadius);
+  assert.ok(parseFloat(adminSectionRadius) >= 12, "major navigation sections should have rounded containers");
   const controllerCards = page.getByRole("group", { name: "Controllers navigation" }).getByRole("link");
   assert.equal(await controllerCards.count(), 5, "all three configured controllers and both controller tools should stay together");
   const controllerRows = await controllerCards.evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().top));
@@ -98,9 +108,23 @@ try {
   const desktopToolbarHeight = await page.getByTestId("home-toolbar").evaluate((element) => element.getBoundingClientRect().height);
   assert.ok(desktopToolbarHeight <= 56, "desktop Home toolbar should stay within its current height");
 
+  await page.evaluate(() => { document.documentElement.style.fontSize = "80%"; });
+  assert.equal(await page.getByRole("group", { name: "Church administration navigation" }).evaluate((element) => getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).length), 4, "80% interface zoom should preserve the desktop grid");
+  assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= 1440, "80% interface zoom should not create horizontal overflow");
+  await page.evaluate(() => { document.documentElement.style.fontSize = "150%"; });
+  assert.equal(await page.getByRole("group", { name: "Church administration navigation" }).evaluate((element) => getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).length), 4, "150% interface zoom should preserve the desktop grid");
+  assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= 1440, "150% interface zoom should not create horizontal overflow");
+  await page.evaluate(() => { document.documentElement.style.fontSize = "100%"; });
+
   await page.setViewportSize({ width: 2560, height: 1000 });
   assert.equal(await getColumnCount("Church administration navigation"), 4, "ultrawide launcher should remain four columns");
   assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= 2560, "ultrawide launcher should remain centered without horizontal overflow");
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => { document.documentElement.style.fontSize = "125%"; });
+  assert.equal(await getColumnCount("Church administration navigation"), 2, "125% mobile interface zoom should preserve the two-column grid");
+  assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= 390, "125% mobile interface zoom should not create horizontal overflow");
+  await page.evaluate(() => { document.documentElement.style.fontSize = "100%"; });
 
   const details = page.getByTestId("display-outputs-details");
   assert.equal(await details.getAttribute("open"), null, "display outputs should be collapsed initially");

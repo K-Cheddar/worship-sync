@@ -152,6 +152,19 @@ describe("Home", () => {
       expect(grid).toHaveClass("grid-cols-2", "md:grid-cols-3", "lg:grid-cols-4");
       expect(grid.className).not.toMatch(/(?:xl|2xl):grid-cols-5/);
     }
+    for (const sectionName of [
+      "Church administration",
+      "Personal and service tools",
+      "Controllers",
+    ]) {
+      expect(screen.getByRole("region", { name: sectionName })).toHaveClass(
+        "rounded-xl",
+        "border",
+        "bg-gray-900/40",
+        "p-4",
+        "sm:p-5",
+      );
+    }
   });
 
   it("hydrates cached controller labels without making cached-only routes actionable", () => {
@@ -342,6 +355,12 @@ describe("Home", () => {
     );
 
     expect(screen.getByTestId("display-outputs-details")).not.toHaveAttribute("open");
+    expect(screen.getByTestId("display-outputs-details")).toHaveClass(
+      "rounded-xl",
+      "border",
+      "bg-gray-900/25",
+      "p-4",
+    );
     await user.click(screen.getByText("Display outputs"));
     expect(screen.getByTestId("display-outputs-details")).toHaveAttribute("open", "");
     expect(screen.getByRole("link", { name: "Open Sanctuary" })).toHaveAttribute("href", "/projector?output=out_sanctuary");

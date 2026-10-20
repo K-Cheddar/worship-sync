@@ -213,9 +213,9 @@ const HomeLockedFeatureCard = ({
   >
     <span className="flex min-w-0 flex-1 items-center gap-3">
       <span aria-hidden className={`shrink-0 ${iconColorClass}`}>
-        <Icon svg={icon} size="md" className={iconColorClass} svgClassName={iconColorClass} />
+        <Icon svg={icon} size="lg" className={iconColorClass} svgClassName={iconColorClass} />
       </span>
-      <span className="min-w-0 break-words text-sm font-semibold leading-snug sm:text-base">{title}</span>
+      <span className="min-w-0 break-words text-base font-semibold leading-snug">{title}</span>
     </span>
     <span className="shrink-0 rounded border border-gray-600 px-1.5 py-0.5 text-[10px] font-medium text-gray-300 sm:text-xs">
       Sign in
@@ -391,13 +391,13 @@ const Welcome = () => {
   const closeLockedFeaturePrompt = () => setLockedFeaturePrompt(null);
 
   return (
-    <main className="h-dvh overflow-y-auto bg-homepage-canvas text-white">
-      <div className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-5 px-4 pb-8">
-        <div data-testid="home-toolbar" className="flex w-full items-center justify-between gap-4 border-b border-gray-700 py-3 text-lg">
-          <div className="flex flex-wrap items-center gap-2">
+    <main className="flex h-dvh flex-col overflow-y-auto bg-homepage-canvas text-white">
+      <header data-testid="home-toolbar" className="relative w-full shrink-0 border-b border-gray-700/80 bg-gray-950/15">
+        <div className="relative mx-auto flex w-full items-center justify-between gap-4 px-4 py-3 text-lg sm:px-6 lg:px-8">
+          <div className="flex shrink-0 items-center gap-2">
             <HomeToolbarMenu extraMenuItems={installMenuItems} />
           </div>
-          <div className="flex flex-1 justify-end gap-4">
+          <div className="flex min-w-0 flex-1 items-center justify-end gap-2 sm:gap-4">
             {!isLoggedIn ? (
               <Button variant="tertiary" component="link" to="/login" padding="px-4 py-1">
                 Sign in
@@ -405,8 +405,13 @@ const Welcome = () => {
             ) : null}
             <UserSection />
           </div>
+          <span aria-hidden className="pointer-events-none absolute left-1/2 hidden -translate-x-1/2 select-none items-center text-sm font-semibold tracking-wide text-gray-200 lg:flex">
+            <span className="mr-1 text-orange-300">Worship</span>Sync
+          </span>
         </div>
+      </header>
 
+      <div data-testid="home-content" className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 pb-8 pt-5">
         {isGuest ? (
           <section
             className="w-full rounded-lg border border-orange-400/25 bg-orange-500/5 px-3 py-2.5"
@@ -423,7 +428,7 @@ const Welcome = () => {
 
         {visibleAdminLinks.length > 0 ? (
           <HomeNavigationSection title="Church administration" icon={Building2} iconColorClass="text-amber-300">
-              <div className={HOME_NAVIGATION_GRID_CLASS} role="group" aria-label="Church administration navigation">
+            <div className={HOME_NAVIGATION_GRID_CLASS} role="group" aria-label="Church administration navigation">
               {visibleAdminLinks.map((link) => (
                 <HomeNavigationLink key={link.to} {...link} />
               ))}
@@ -493,8 +498,8 @@ const Welcome = () => {
                         className={`${HOME_TILE_CLASS} animate-pulse border-gray-800 bg-gray-900/70`}
                       >
                         {index === 0 ? <span className="sr-only">Loading controller settings</span> : null}
-                        <span aria-hidden className="h-5 w-5 shrink-0 rounded bg-gray-700" />
-                        <span aria-hidden className="h-3 w-2/3 rounded bg-gray-700" />
+                        <span aria-hidden className="h-6 w-6 shrink-0 rounded bg-gray-700" />
+                        <span aria-hidden className="h-4 w-2/3 rounded bg-gray-700" />
                       </div>
                     ))}
               {visibleSecondaryControllers.map((link) => (
@@ -519,10 +524,10 @@ const Welcome = () => {
         ) : null}
 
         {isLoggedIn && access === "full" ? (
-          <details data-testid="display-outputs-details" className="group w-full border-t border-gray-800 pt-3">
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-md px-1 py-1.5 text-sm font-semibold text-gray-200 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300">
+          <details data-testid="display-outputs-details" className="group w-full rounded-xl border border-gray-700/60 bg-gray-900/25 p-4 sm:p-5">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-lg px-1 py-1.5 text-base font-semibold tracking-wide text-gray-200 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 sm:text-lg">
               <span className="flex items-center gap-2">
-                <ScreenShare aria-hidden className="h-4 w-4 text-violet-300" />
+                <ScreenShare aria-hidden className="h-5 w-5 text-violet-300" />
                 Display outputs
               </span>
               <span className="flex items-center gap-1 text-xs font-normal text-gray-400">
@@ -541,16 +546,9 @@ const Welcome = () => {
             </div>
           </details>
         ) : !isLoggedIn && !isGuest ? (
-          <section
-            className="w-full border-t border-gray-800 pt-3"
-            aria-labelledby="display-outputs-heading"
-          >
-            <h2 id="display-outputs-heading" className="flex items-center gap-2 text-sm font-semibold text-gray-200">
-              <ScreenShare aria-hidden className="h-4 w-4 text-violet-300" />
-              Display outputs
-            </h2>
-            <p className="mt-2 text-xs text-gray-400">Sign in to show display links.</p>
-          </section>
+          <HomeNavigationSection title="Display outputs" icon={ScreenShare} iconColorClass="text-violet-300">
+            <p className="text-sm text-gray-400">Sign in to show display links.</p>
+          </HomeNavigationSection>
         ) : null}
 
         <footer className="mt-1 flex w-full flex-wrap items-center justify-center gap-x-4 gap-y-2 border-t border-gray-800 pt-4 text-sm text-gray-400">

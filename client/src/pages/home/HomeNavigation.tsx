@@ -11,7 +11,7 @@ export const HOME_NAVIGATION_GRID_CLASS =
   "grid auto-rows-fr grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4";
 
 export const HOME_TILE_CLASS =
-  "flex h-full min-h-[76px] min-w-0 w-full items-center rounded-lg border border-gray-700 bg-gray-900 px-3 py-2.5 text-left text-white transition-colors hover:border-gray-500 hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 active:bg-gray-800";
+  "flex h-full min-h-[84px] max-md:min-h-[84px] min-w-0 w-full items-center rounded-xl border border-gray-700/80 bg-gray-900/75 px-4 py-3 text-left text-white transition-colors hover:border-gray-500 hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 active:bg-gray-800 sm:min-h-[96px]";
 
 type HomeNavigationLinkProps = {
   title: string;
@@ -61,11 +61,11 @@ export const HomeNavigationLink = ({
   };
 
   const content = (
-    <span className="flex w-full min-w-0 items-center gap-3">
+    <span className="flex w-full min-w-0 items-center gap-3.5">
       <span aria-hidden data-testid="home-navigation-icon" className={cn("shrink-0", iconColorClass)}>
-        <Icon svg={icon} size="md" className={iconColorClass} svgClassName={iconColorClass} />
+        <Icon svg={icon} size="lg" className={iconColorClass} svgClassName={iconColorClass} />
       </span>
-      <span className="min-w-0 flex-1 break-words text-sm font-semibold leading-snug sm:text-base">
+      <span className="min-w-0 flex-1 break-words text-base font-semibold leading-snug">
         {title}
       </span>
     </span>
@@ -112,10 +112,17 @@ export const HomeNavigationSection = ({
   className,
   busy = false,
 }: HomeNavigationSectionProps) => (
-  <section className={cn("w-full space-y-3", className)} aria-label={title} aria-busy={busy || undefined}>
-    <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-200">
+  <section
+    className={cn(
+      "w-full space-y-4 rounded-xl border border-gray-700/75 bg-gray-900/40 p-4 sm:p-5",
+      className,
+    )}
+    aria-label={title}
+    aria-busy={busy || undefined}
+  >
+    <h2 className="flex items-center gap-2.5 text-base font-semibold tracking-wide text-gray-100 sm:text-lg">
       {SectionIcon ? (
-        <SectionIcon aria-hidden className={cn("h-4 w-4", iconColorClass)} />
+        <SectionIcon aria-hidden className={cn("h-5 w-5", iconColorClass)} />
       ) : null}
       {title}
     </h2>
@@ -183,9 +190,9 @@ export const HomeOutputLinkCard = ({
       ) : null}
       <span className="pointer-events-none relative z-0 flex min-w-0 flex-1 items-center gap-3">
         <span aria-hidden className={cn("shrink-0", iconColorClass)}>
-          <Icon svg={icon} size="md" className={iconColorClass} svgClassName={iconColorClass} />
+          <Icon svg={icon} size="lg" className={iconColorClass} svgClassName={iconColorClass} />
         </span>
-        <span className="min-w-0 flex-1 break-words text-sm font-semibold leading-snug sm:text-base">
+        <span className="min-w-0 flex-1 break-words text-base font-semibold leading-snug">
           {title}
         </span>
       </span>
@@ -202,7 +209,7 @@ export const HomeOutputLinkCard = ({
         isLoading={copyState === "copying"}
         onClick={() => void copyLink()}
         className={cn(
-          "relative z-10 h-10 min-h-10 w-10 shrink-0 p-0",
+          "relative z-10 h-11 min-h-11 w-11 shrink-0 p-0",
           copyState === "copied" && "text-emerald-300",
           copyState === "error" && "text-red-300",
         )}
