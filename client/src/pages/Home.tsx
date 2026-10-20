@@ -20,6 +20,7 @@ import {
 import Button from "../components/Button/Button";
 import Icon from "../components/Icon/Icon";
 import WorshipSyncIcon from "../assets/WorshipSyncIconNoBg.png";
+import WorshipSyncWordmark from "../assets/WorshipSyncWordmark.png";
 import Modal from "../components/Modal/Modal";
 import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
 import HomeToolbarMenu from "../components/HomeToolbarMenu/HomeToolbarMenu";
@@ -216,7 +217,7 @@ const HomeLockedFeatureCard = ({
     <span className="flex min-w-0 flex-1 items-center gap-3">
       <span
         aria-hidden
-        className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/[0.08] bg-slate-950/25 shadow-inner sm:h-14 sm:w-14 ${iconColorClass}`}
+        className={`home-launcher-icon-surface flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border sm:h-14 sm:w-14 ${iconColorClass}`}
       >
         <Icon svg={icon} size="xl" className={iconColorClass} svgClassName={iconColorClass} />
       </span>
@@ -253,7 +254,7 @@ const HomeOutputGroup = ({
         ))}
       </div>
     ) : !pending ? (
-      <p className="text-xs text-gray-500">No links in this group.</p>
+      <p className="text-xs text-gray-400">No links in this group.</p>
     ) : null}
   </div>
 );
@@ -397,7 +398,7 @@ const Welcome = () => {
 
   return (
     <main className="home-launcher-canvas flex h-dvh flex-col overflow-y-auto text-white">
-      <header data-testid="home-toolbar" className="relative w-full shrink-0 border-b border-white/[0.08] bg-slate-950/20 backdrop-blur-md">
+      <header data-testid="home-toolbar" className="relative w-full shrink-0 border-b border-white/10 bg-white/[0.035] backdrop-blur-md">
         <div className="relative mx-auto flex w-full items-center justify-between gap-4 px-4 py-3 text-lg sm:px-6 lg:px-8">
           <div className="flex shrink-0 items-center gap-2">
             <HomeToolbarMenu extraMenuItems={installMenuItems} />
@@ -415,10 +416,14 @@ const Welcome = () => {
             aria-label="WorshipSync"
             className="pointer-events-none absolute left-1/2 hidden -translate-x-1/2 select-none items-center gap-2 lg:flex"
           >
-            <img src={WorshipSyncIcon} alt="" className="h-6 w-6 object-contain" />
-            <span aria-hidden className="text-base font-semibold tracking-wide text-white">
-              Worship<span className="text-orange-400">Sync</span>
-            </span>
+            <img src={WorshipSyncIcon} alt="" className="h-7 w-auto object-contain" />
+            <img
+              src={WorshipSyncWordmark}
+              alt=""
+              className="h-4 w-auto object-contain"
+              width={1204}
+              height={94}
+            />
           </span>
         </div>
       </header>
@@ -507,11 +512,11 @@ const Welcome = () => {
                         key={`controller-loading-${index}`}
                         role={index === 0 ? "status" : undefined}
                         aria-label={index === 0 ? "Loading controller settings" : undefined}
-                        className={`${HOME_TILE_CLASS} animate-pulse gap-3 border-slate-500/15 bg-slate-900/60`}
+                        className={`${HOME_TILE_CLASS} home-launcher-tile-pending animate-pulse gap-3`}
                       >
                         {index === 0 ? <span className="sr-only">Loading controller settings</span> : null}
-                        <span aria-hidden className="h-12 w-12 shrink-0 rounded-xl bg-slate-700/70 sm:h-14 sm:w-14" />
-                        <span aria-hidden className="h-4 w-2/3 rounded bg-slate-700/70" />
+                        <span aria-hidden className="h-12 w-12 shrink-0 rounded-xl bg-white/10 sm:h-14 sm:w-14" />
+                        <span aria-hidden className="h-4 w-2/3 rounded bg-white/10" />
                       </div>
                     ))}
               {visibleSecondaryControllers.map((link) => (
@@ -536,7 +541,7 @@ const Welcome = () => {
         ) : null}
 
         {isLoggedIn && access === "full" ? (
-          <details data-testid="display-outputs-details" className="group w-full rounded-2xl border border-slate-400/15 bg-slate-900/35 p-4 shadow-[0_10px_26px_rgba(0,0,0,0.16)] sm:p-5 lg:p-6">
+          <details data-testid="display-outputs-details" className="home-launcher-section home-launcher-section-secondary group w-full rounded-2xl border p-4 sm:p-5 lg:p-6">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-xl px-2 py-2 text-lg font-semibold tracking-[-0.015em] text-slate-100 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 sm:text-xl">
               <span className="flex items-center gap-3">
                 <ScreenShare aria-hidden className="h-6 w-6 text-violet-300" />
@@ -552,7 +557,7 @@ const Welcome = () => {
                 <p className="text-xs text-gray-400" role="status">Loading this church&apos;s displays...</p>
               ) : null}
               <HomeOutputGroup heading="Fullscreen in the browser" links={fullscreenDisplayLinks} pending={displayMetadataPending} />
-              <div className="border-t border-gray-800 pt-3">
+              <div className="border-t border-white/10 pt-3">
                 <HomeOutputGroup heading="Browser sources (streaming)" links={browserSourceLinks} pending={displayMetadataPending} />
               </div>
             </div>
@@ -563,7 +568,7 @@ const Welcome = () => {
           </HomeNavigationSection>
         ) : null}
 
-        <footer className="mt-1 flex w-full flex-wrap items-center justify-center gap-x-4 gap-y-2 border-t border-gray-800 pt-4 text-sm text-gray-400">
+        <footer className="mt-1 flex w-full flex-wrap items-center justify-center gap-x-4 gap-y-2 border-t border-white/10 pt-4 text-sm text-gray-400">
           <Button component="link" to="/support" variant="none" className="h-auto cursor-pointer p-0 font-normal text-gray-400 underline underline-offset-2 hover:text-white">Support</Button>
           <span aria-hidden className="text-gray-700">{"\u00b7"}</span>
           <Button component="link" to="/privacy" variant="none" className="h-auto cursor-pointer p-0 font-normal text-gray-400 underline underline-offset-2 hover:text-white">Privacy Policy</Button>

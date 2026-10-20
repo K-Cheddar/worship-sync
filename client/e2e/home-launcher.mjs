@@ -98,6 +98,25 @@ try {
   assert.equal(await page.getByTestId("home-toolbar").evaluate((element) => element.getBoundingClientRect().width), 1440, "desktop toolbar should use the full viewport width");
   assert.equal(await page.getByTestId("home-content").evaluate((element) => element.getBoundingClientRect().width), 1152, "desktop navigation content should use a centered max-w-6xl width");
   assert.equal(await page.getByRole("img", { name: "WorshipSync" }).isVisible(), true, "desktop header should show the branded lockup");
+  const launcherCanvasColor = await page.locator("main.home-launcher-canvas").evaluate((element) => getComputedStyle(element).backgroundColor);
+  assert.equal(launcherCanvasColor, "rgb(43, 53, 68)", "launcher canvas should retain the original slate-blue token");
+  const brandImages = await page.getByRole("img", { name: "WorshipSync" }).locator("img").evaluateAll((images) =>
+    images.map((image) => ({
+      loaded: image.complete && image.naturalWidth > 0,
+      naturalWidth: image.naturalWidth,
+      naturalHeight: image.naturalHeight,
+      renderedWidth: image.getBoundingClientRect().width,
+      renderedHeight: image.getBoundingClientRect().height,
+    })),
+  );
+  assert.equal(brandImages.length, 2, "desktop brand lockup should use the original icon and wordmark artwork");
+  assert.ok(brandImages.every((image) => image.loaded), "both WorshipSync logo assets should load");
+  assert.equal(brandImages[1].naturalWidth, 1204, "toolbar wordmark should use the cropped existing logo artwork");
+  assert.equal(brandImages[1].naturalHeight, 94, "toolbar wordmark should preserve the source crop dimensions");
+  assert.ok(
+    Math.abs(brandImages[1].renderedWidth / brandImages[1].renderedHeight - 1204 / 94) < 0.02,
+    "toolbar wordmark should retain its original aspect ratio",
+  );
   if (screenshotDirectory) {
     await page.screenshot({ path: join(screenshotDirectory, "desktop-1440x900.png"), animations: "disabled" });
   }

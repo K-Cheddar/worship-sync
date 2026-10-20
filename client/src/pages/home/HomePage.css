@@ -1,16 +1,64 @@
 .home-launcher-canvas {
-  background-color: #0b1422;
+  background-color: var(--color-homepage-canvas);
   background-image:
     radial-gradient(
-      ellipse 86% 52% at 50% -14%,
-      rgb(48 87 139 / 0.34) 0%,
-      rgb(26 49 79 / 0.16) 48%,
-      transparent 76%
-    ),
-    radial-gradient(
-      ellipse 54% 42% at 100% 38%,
-      rgb(31 65 105 / 0.14) 0%,
+      ellipse 88% 58% at 50% -12%,
+      color-mix(in oklab, var(--color-homepage-canvas) 86%, white) 0%,
+      color-mix(in oklab, var(--color-homepage-canvas) 95%, white) 42%,
       transparent 78%
     ),
-    linear-gradient(180deg, #101b2d 0%, #0b1422 58%, #09111d 100%);
+    linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--color-homepage-canvas) 97%, white) 0%,
+      var(--color-homepage-canvas) 60%,
+      color-mix(in oklab, var(--color-homepage-canvas) 98%, black) 100%
+    );
+}
+
+.home-launcher-section {
+  border-color: rgb(255 255 255 / 0.14);
+  background: linear-gradient(
+    145deg,
+    color-mix(in oklab, var(--color-homepage-canvas) 91%, white) 0%,
+    color-mix(in oklab, var(--color-homepage-canvas) 95%, white) 100%
+  );
+  box-shadow: 0 12px 28px rgb(8 18 30 / 0.15);
+}
+
+.home-launcher-section-secondary {
+  border-color: rgb(255 255 255 / 0.11);
+  background: color-mix(in oklab, var(--color-homepage-canvas) 96%, white);
+  box-shadow: 0 8px 20px rgb(8 18 30 / 0.11);
+}
+
+.home-launcher-tile {
+  border-color: rgb(255 255 255 / 0.17);
+  background: linear-gradient(
+    145deg,
+    color-mix(in oklab, var(--color-homepage-canvas) 85%, white) 0%,
+    color-mix(in oklab, var(--color-homepage-canvas) 89%, white) 100%
+  );
+  box-shadow: 0 5px 16px rgb(8 18 30 / 0.16);
+}
+
+.home-launcher-tile:hover {
+  border-color: rgb(255 255 255 / 0.27);
+  background: linear-gradient(
+    145deg,
+    color-mix(in oklab, var(--color-homepage-canvas) 81%, white) 0%,
+    color-mix(in oklab, var(--color-homepage-canvas) 85%, white) 100%
+  );
+  box-shadow: 0 9px 22px rgb(8 18 30 / 0.21);
+}
+
+.home-launcher-tile-pending {
+  border-color: rgb(255 255 255 / 0.12);
+  background: color-mix(in oklab, var(--color-homepage-canvas) 94%, white);
+  box-shadow: none;
+}
+
+.home-launcher-icon-surface {
+  border-color: rgb(255 255 255 / 0.12);
+  background: color-mix(in oklab, var(--color-homepage-canvas) 92%, white);
+  box-shadow: inset 0 1px 2px rgb(255 255 255 / 0.045);
 }

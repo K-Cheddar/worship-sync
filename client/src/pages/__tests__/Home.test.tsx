@@ -158,9 +158,9 @@ describe("Home", () => {
       "Controllers",
     ]) {
       expect(screen.getByRole("region", { name: sectionName })).toHaveClass(
+        "home-launcher-section",
         "rounded-2xl",
         "border",
-        "bg-gradient-to-br",
         "p-4",
         "sm:p-5",
       );
@@ -356,9 +356,10 @@ describe("Home", () => {
 
     expect(screen.getByTestId("display-outputs-details")).not.toHaveAttribute("open");
     expect(screen.getByTestId("display-outputs-details")).toHaveClass(
+      "home-launcher-section",
+      "home-launcher-section-secondary",
       "rounded-2xl",
       "border",
-      "bg-slate-900/35",
       "p-4",
     );
     await user.click(screen.getByText("Display outputs"));
