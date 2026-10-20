@@ -414,6 +414,8 @@ const ServicePlanningSyncFloatingWindow = ({
   } = useCurrentServicePlanSource();
   const currentPlanRef = useRef(selectedPlanDetails);
   currentPlanRef.current = selectedPlanDetails;
+  const planSyncEligibilityRef = useRef({ isLoading, isPlanPreviewStale });
+  planSyncEligibilityRef.current = { isLoading, isPlanPreviewStale };
 
   const preview = useSelector((s: RootState) => s.servicePlanningImport.preview);
   const allFreeFormDocs = useSelector((s: RootState) => s.allDocs.allFreeFormDocs);
@@ -514,10 +516,9 @@ const ServicePlanningSyncFloatingWindow = ({
     ) {
       return;
     }
-    // A plan-sourced preview follows the Services plan, so re-read that rather
-    // than re-scraping `url` — which is only the plan's original import source
-    // and may belong to a different service entirely.
-    if (isPlanSourced) {
+    // A selected saved plan is authoritative even before it has produced a
+    // preview; retry that read instead of scraping the URL from an older import.
+    if (selectedPlanKey || isPlanSourced) {
       setIsRefreshing(true);
       try {
         const result = await refreshPlan();
@@ -562,6 +563,7 @@ const ServicePlanningSyncFloatingWindow = ({
     isRefreshing,
     loadPreview,
     refreshPlan,
+    selectedPlanKey,
     showToast,
     sync.status,
     url,
@@ -597,7 +599,10 @@ const ServicePlanningSyncFloatingWindow = ({
       const addedTitles: string[] = [];
       void pushPlanToOutline(
         sourcePlan,
-        () => currentPlanRef.current === sourcePlan,
+        () =>
+          currentPlanRef.current === sourcePlan &&
+          !planSyncEligibilityRef.current.isLoading &&
+          !planSyncEligibilityRef.current.isPlanPreviewStale,
         async (item) => {
           addedTitles.push(item.name);
           dispatch(setActiveItemInList(item.listId));
@@ -1224,12 +1229,14 @@ const ServicePlanningSyncFloatingWindow = ({
     >
       <div className="flex flex-col gap-3 text-sm text-white">
         {planContextControls}
-        {isPlanPreviewStale ? (
+        {isPlanPreviewStale && !isLoading ? (
           <p
             role="alert"
             className="rounded border border-amber-500/40 bg-amber-950/30 px-2 py-1.5 text-xs text-amber-200"
           >
-            The plan could not be refreshed. Refresh before syncing.
+            {preview
+              ? "The plan could not be refreshed. Refresh before syncing."
+              : "The plan and its assignments could not be fully loaded. Retry before syncing."}
           </p>
         ) : null}
 

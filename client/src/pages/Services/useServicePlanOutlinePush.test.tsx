@@ -223,6 +223,28 @@ describe("useServicePlanOutlinePush", () => {
     expect(mockDispatch).toHaveBeenCalledWith(updateItemList([worshipHeading, song]));
   });
 
+  it("rejects outline insertion when the saved plan becomes untrusted before the item is committed", async () => {
+    const song: ServiceItem = { _id: "song-1", name: "Song", type: "song", listId: "song-link" };
+    setPlannedItems([song]);
+    let planIsTrusted = true;
+    mockBuildItem.mockImplementationOnce(async () => {
+      planIsTrusted = false;
+      return song;
+    });
+    const { result } = renderHook(() => useServicePlanOutlinePush());
+
+    await expect(
+      result.current.pushPlanToOutline({} as ServicePlan, () => planIsTrusted),
+    ).rejects.toThrow(
+      "The selected service plan changed or could not be verified. Refresh it before syncing.",
+    );
+
+    expect(mockBuildItem).toHaveBeenCalledTimes(1);
+    expect(mockDispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: updateItemList.type }),
+    );
+  });
+
   it("passes a run-level snapshot of configured section rules into the planner", async () => {
     setPlannedItems([]);
     const sectionRules = [{

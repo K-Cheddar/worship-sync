@@ -346,6 +346,9 @@ const ServicePlanningImportPanel = () => {
 
   const url = useSelector((s) => s.servicePlanningImport.url);
   const preview = useSelector((s) => s.servicePlanningImport.preview);
+  const isPlanPreviewStale = useSelector(
+    (s) => s.servicePlanningImport.isPlanPreviewStale,
+  );
   const overlayList = useSelector(
     (s) => s.undoable?.present?.overlays?.list ?? EMPTY_OVERLAY_LIST,
   );
@@ -424,7 +427,7 @@ const ServicePlanningImportPanel = () => {
   };
 
   const handleSync = (overlays: boolean, outline: boolean) => {
-    if (!preview) return;
+    if (!preview || isPlanPreviewStale) return;
     const hasSyncableOverlays = overlayPlanHasExecutableChange(
       preview.overlayPlan,
       overlayList,
@@ -542,6 +545,25 @@ const ServicePlanningImportPanel = () => {
           <span>Fetching planning data…</span>
         </div>
       )}
+
+      {isPlanPreviewStale ? (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-500/40 bg-amber-950/30 px-3 py-2 text-sm text-amber-200"
+        >
+          <span>This saved plan hasn’t been verified. Open Service Plan and refresh before syncing.</span>
+          {!preview ? (
+            <Button
+              type="button"
+              variant="secondary"
+              svg={PanelsTopLeft}
+              onClick={() => dispatch(setServicePlanningFloatingWindowDismissed(false))}
+            >
+              Open Service Plan
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
 
       {preview && !isLoading && (
         <>
@@ -680,6 +702,7 @@ const ServicePlanningImportPanel = () => {
                 isLoading={isSyncing}
                 disabled={
                   isSyncing ||
+                  isPlanPreviewStale ||
                   !isServicePlanningEnabled ||
                   !hasSyncableOverlayItems
                 }
@@ -698,6 +721,7 @@ const ServicePlanningImportPanel = () => {
                 isLoading={isSyncing}
                 disabled={
                   isSyncing ||
+                  isPlanPreviewStale ||
                   !isServicePlanningEnabled ||
                   !hasSyncableOutlineItems
                 }
@@ -716,6 +740,7 @@ const ServicePlanningImportPanel = () => {
                 isLoading={isSyncing}
                 disabled={
                   isSyncing ||
+                  isPlanPreviewStale ||
                   !isServicePlanningEnabled ||
                   !hasAnySyncableItems
                 }

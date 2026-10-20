@@ -6,6 +6,8 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import ServicePlanningImportPanel from "./ServicePlanningImportPanel";
 import servicePlanningImportReducer, {
+  markServicePlanningPlanPreviewStale,
+  setServicePlanningPlanOutline,
   setServicePlanningServiceOutline,
 } from "../../store/servicePlanningImportSlice";
 
@@ -128,6 +130,59 @@ describe("ServicePlanningImportPanel", () => {
     expect(screen.getByRole("button", { name: "Sync Overlays" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Sync Outline" })).toBeDisabled();
     expect(screen.queryByText(/syncing outline/i)).not.toBeInTheDocument();
+  });
+
+  it("blocks every sync action when a saved-plan preview is stale", async () => {
+    const user = userEvent.setup();
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+      },
+    });
+    const planKey = "service-1@2026-05-02";
+    store.dispatch(setServicePlanningPlanOutline({
+      outline: wrapImport({
+        overlayCandidates: [],
+        overlayPlan: [
+          {
+            sectionName: "Welcome",
+            elementType: "Welcome",
+            title: "Welcome Song",
+            action: "update",
+            patch: { event: "Welcome Song" },
+          },
+        ],
+        outlineCandidates: [
+          {
+            outlineItemType: "song",
+            outlineAlreadyPresent: false,
+            matchedLibraryItem: { _id: "song-1", name: "Welcome Song", type: "song" },
+            title: "Welcome Song",
+            cleanedTitle: "Welcome Song",
+          },
+        ],
+      }) as any,
+      planKey,
+    }));
+    store.dispatch(markServicePlanningPlanPreviewStale(planKey));
+
+    render(
+      <Provider store={store}>
+        <MemoryRouter>
+          <ServicePlanningImportPanel />
+        </MemoryRouter>
+      </Provider>,
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /open service plan and refresh before syncing/i,
+    );
+    expect(screen.getByRole("button", { name: "Sync Overlays" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Sync Outline" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Sync All" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Sync Outline" }));
+    expect(store.getState().servicePlanningImport.sync.status).toBe("idle");
   });
 
   it("shows already-present outline items and disables sync when nothing would change", () => {

@@ -117,7 +117,6 @@ export const useCurrentServicePlanSource = () => {
     planKey: string | null;
     generation: number;
     refreshPlanList: boolean;
-    preserveOnFailure: boolean;
     promise: Promise<ReconciliationResult>;
   } | null>(null);
   const planListRequestIdRef = useRef(0);
@@ -370,7 +369,12 @@ export const useCurrentServicePlanSource = () => {
     if (selectedPlanKeyRef.current === nextKey) return;
     if (nextKey) {
       currentVisitUrlSelectionRef.current = false;
-      dispatch(clearServicePlanningPreview());
+      // A saved-plan preview already associated with this plan is still
+      // useful while a remounted Controller revalidates its authoritative
+      // data. A different plan or URL preview must be cleared on selection.
+      if (servicePlanKey !== nextKey) {
+        dispatch(clearServicePlanningPreview());
+      }
     }
     selectedPlanKeyRef.current = nextKey;
     setSelectedPlanKey(nextKey);
@@ -383,6 +387,7 @@ export const useCurrentServicePlanSource = () => {
     itemListLoading,
     plansLoaded,
     savedPlans,
+    servicePlanKey,
     selectedOutlineId,
   ]);
 
@@ -408,19 +413,16 @@ export const useCurrentServicePlanSource = () => {
 
   type ReconciliationOptions = {
     refreshPlanList?: boolean;
-    preserveOnFailure?: boolean;
   };
 
   /**
-   * Reconciles one selected plan from authoritative REST data. The request is
-   * keyed by church, plan, and failure policy so resume/reconnect signals for
-   * the same state share one request while an explicit plan switch can start
-   * its own request and invalidate the older result through generationRef.
+   * Reconciles one selected plan from authoritative REST data. Resume/reconnect
+   * signals for the same scope share one request while an explicit plan switch
+   * starts its own request and invalidates the older result through generationRef.
    */
   const reconcileSelectedPlan = useCallback(
     async ({
       refreshPlanList = false,
-      preserveOnFailure = false,
     }: ReconciliationOptions = {}) => {
       const churchIdAtStart = churchId;
       const controllerIdAtStart = activeControllerId;
@@ -435,14 +437,19 @@ export const useCurrentServicePlanSource = () => {
         existing.selectedOutlineId === selectedOutlineIdAtStart &&
         existing.planKey === planKeyAtStart &&
         existing.generation === generationRef.current &&
-        (existing.refreshPlanList || !refreshPlanList) &&
-        existing.preserveOnFailure === preserveOnFailure
+        (existing.refreshPlanList || !refreshPlanList)
       ) {
         return existing.promise;
       }
 
       const generation = ++generationRef.current;
-      if (planKeyAtStart) setIsLoading(true);
+      if (planKeyAtStart) {
+        setIsLoading(true);
+        // Treat the cached preview as untrusted until every required read and
+        // the preview rebuild complete. All sync entry points use this shared
+        // Redux gate, including routes without this hook's local loading state.
+        dispatch(markServicePlanningPlanPreviewStale(planKeyAtStart));
+      }
       const planListRequestId = refreshPlanList
         ? ++planListRequestIdRef.current
         : null;
@@ -499,34 +506,70 @@ export const useCurrentServicePlanSource = () => {
 
           const hasCurrentPlanList =
             planListResult !== null &&
-            planListRequestId === planListRequestIdRef.current;
+            planListRequestId === planListRequestIdRef.current &&
+            planListResult.success === true &&
+            Array.isArray(planListResult.servicePlans);
           if (!planKeyAtStart || !planResult) {
             if (hasCurrentPlanList) {
               setSavedPlans(sortControllerServicePlans(planListResult.servicePlans));
               setPlansLoaded(true);
               setPlansError(null);
             }
-            if (planKeyAtStart && preserveOnFailure) {
+            if (planKeyAtStart) {
               dispatch(markServicePlanningPlanPreviewStale(planKeyAtStart));
             }
             return planKeyAtStart ? "failed" : "unchanged";
           }
-          if (!assignmentsResult?.ok && preserveOnFailure) {
+
+          if (planResult.success !== true) {
+            dispatch(markServicePlanningPlanPreviewStale(planKeyAtStart));
+            console.error("Could not reconcile the selected service plan: the plan response was unsuccessful.");
+            return "failed";
+          }
+
+          const plan = planResult.servicePlan;
+          if (plan === null) {
+            // The plan detail read is authoritative for this key. A deleted
+            // plan needs no assignment read to confirm removal; keep a valid
+            // refreshed summary list before clearing the selected preview.
+            if (hasCurrentPlanList) {
+              setSavedPlans(sortControllerServicePlans(planListResult.servicePlans));
+              setPlansLoaded(true);
+              setPlansError(null);
+            }
+            clearUnavailablePlan(planKeyAtStart);
+            return "failed";
+          }
+          if (!plan) {
+            dispatch(markServicePlanningPlanPreviewStale(planKeyAtStart));
+            console.error("Could not reconcile the selected service plan: the plan response was incomplete.");
+            return "failed";
+          }
+
+          if (
+            !assignmentsResult?.ok ||
+            assignmentsResult.result.success !== true ||
+            !Array.isArray(assignmentsResult.result.assignments)
+          ) {
             console.error(
               "Could not reconcile the selected service plan assignments:",
-              assignmentsResult?.error,
+              assignmentsResult?.ok
+                ? "The assignment response was unsuccessful or incomplete."
+                : assignmentsResult?.error,
             );
             dispatch(markServicePlanningPlanPreviewStale(planKeyAtStart));
             return "failed";
           }
 
-          if (hasCurrentPlanList) {
-            setSavedPlans(sortControllerServicePlans(planListResult.servicePlans));
-            setPlansLoaded(true);
-            setPlansError(null);
+          if (
+            refreshPlanList &&
+            planListRequestId === planListRequestIdRef.current &&
+            !hasCurrentPlanList
+          ) {
+            dispatch(markServicePlanningPlanPreviewStale(planKeyAtStart));
+            console.error("Could not reconcile the selected service plan: the saved plan list was unsuccessful or incomplete.");
+            return "failed";
           }
-
-          const plan = planResult.servicePlan;
           if (
             hasCurrentPlanList &&
             !planListResult.servicePlans.some(
@@ -536,9 +579,11 @@ export const useCurrentServicePlanSource = () => {
             clearUnavailablePlan(planKeyAtStart);
             return "failed";
           }
-          if (!plan) {
-            clearUnavailablePlan(planKeyAtStart);
-            return "failed";
+
+          if (hasCurrentPlanList) {
+            setSavedPlans(sortControllerServicePlans(planListResult.servicePlans));
+            setPlansLoaded(true);
+            setPlansError(null);
           }
 
           const previousPlan = planRef.current;
@@ -549,7 +594,7 @@ export const useCurrentServicePlanSource = () => {
           }
           const appliedOutline = await applyPlan(
             plan,
-            assignmentsResult?.ok ? assignmentsResult.result.assignments : [],
+            assignmentsResult.result.assignments,
             isCurrentRequest,
           );
           if (!appliedOutline || !isCurrentRequest()) return "superseded";
@@ -563,8 +608,8 @@ export const useCurrentServicePlanSource = () => {
           if (planKeyAtStart) {
             dispatch(markServicePlanningPlanPreviewStale(planKeyAtStart));
           }
-          // Background recovery must not replace a usable preview with an
-          // empty state. The next reconnect or explicit refresh can retry.
+          // A failed required read must not replace a usable preview with
+          // incomplete plan data. The next reconnect or explicit refresh retries.
           console.error("Could not reconcile the selected service plan:", error);
           return "failed";
         } finally {
@@ -597,7 +642,6 @@ export const useCurrentServicePlanSource = () => {
         planKey: planKeyAtStart,
         generation,
         refreshPlanList,
-        preserveOnFailure,
         promise: request,
       };
       return request;
@@ -666,7 +710,7 @@ export const useCurrentServicePlanSource = () => {
         currentVisitUrlSelectionRef.current &&
         !manualSelectionRef.current)
     ) {
-      if (plansLoaded && !selectedPlanKey) {
+      if (plansLoaded && !selectedPlanKeyRef.current) {
         planRef.current = null;
         dispatch(clearServicePlanningPlanOutline());
       }
@@ -676,7 +720,6 @@ export const useCurrentServicePlanSource = () => {
       // The summary list was just loaded by refreshPlans. Reconnect paths use
       // true so the selected key is checked against a fresh authoritative list.
       refreshPlanList: false,
-      preserveOnFailure: false,
     });
   }, [
     churchId,
@@ -788,7 +831,6 @@ export const useCurrentServicePlanSource = () => {
         if (hasReceivedLiveConnectionRef.current) {
           void reconcileSelectedPlan({
             refreshPlanList: true,
-            preserveOnFailure: true,
           });
         } else {
           hasReceivedLiveConnectionRef.current = true;
@@ -815,9 +857,18 @@ export const useCurrentServicePlanSource = () => {
       }
 
       if (event.type === "schedule-updated" || event.type === "schedule-removed") {
-        if (!churchId || !planRef.current) return;
+        if (
+          !churchId ||
+          !planRef.current ||
+          selectedPlanKeyRef.current !== planRef.current.planKey
+        ) return;
         const plan = planRef.current;
+        const currentReconciliation = reconciliationInFlightRef.current;
+        const supersedesCurrentRefresh =
+          currentReconciliation?.planKey === plan.planKey &&
+          currentReconciliation.generation === generationRef.current;
         const generation = ++generationRef.current;
+        if (supersedesCurrentRefresh) setIsLoading(false);
         void getServicePlanViewer(churchId, plan.planKey)
           .then((result) => {
             if (
@@ -853,7 +904,6 @@ export const useCurrentServicePlanSource = () => {
       }
       void reconcileSelectedPlan({
         refreshPlanList: true,
-        preserveOnFailure: true,
       });
     },
     [
@@ -881,7 +931,6 @@ export const useCurrentServicePlanSource = () => {
     () =>
       reconcileSelectedPlan({
         refreshPlanList: true,
-        preserveOnFailure: true,
       }),
     [reconcileSelectedPlan],
   );

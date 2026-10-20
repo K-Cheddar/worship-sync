@@ -2,6 +2,7 @@ import { configureStore } from "@reduxjs/toolkit";
 import servicePlanningImportReducer, {
   advanceServicePlanningSyncStep,
   cancelServicePlanningSync,
+  clearServicePlanningPlanOutline,
   clearServicePlanningPreview,
   clearServicePlanningSyncState,
   completeServicePlanningSync,
@@ -134,6 +135,33 @@ describe("servicePlanningImportSlice", () => {
 
     store.dispatch(markServicePlanningPlanPreviewStale("service-1@2026-05-02"));
     store.dispatch(clearServicePlanningPreview());
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
+  });
+
+  it("uses the same stale gate when a saved plan fails before its first preview", () => {
+    const store = createStore();
+    const planKey = "service-1@2026-05-02";
+
+    store.dispatch(markServicePlanningPlanPreviewStale(planKey));
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
+
+    store.dispatch(
+      setServicePlanningPlanOutline({
+        outline: serviceOutlineFixture,
+        planKey,
+      }),
+    );
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
+    store.dispatch(markServicePlanningPlanPreviewFresh(planKey));
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
+
+    store.dispatch(markServicePlanningPlanPreviewStale(planKey));
+    store.dispatch(clearServicePlanningPlanOutline());
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
+
+    store.dispatch(setServicePlanningServiceOutline(serviceOutlineFixture));
+    store.dispatch(markServicePlanningPlanPreviewStale(planKey));
     expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
   });
 

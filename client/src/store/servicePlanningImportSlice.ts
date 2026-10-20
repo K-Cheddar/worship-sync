@@ -70,7 +70,7 @@ export type ServicePlanningImportState = {
   url: string;
   serviceOutline: ServiceOutline | null;
   preview: ServicePlanningPreview | null;
-  /** True when the visible saved-plan preview could not be reconciled. */
+  /** True when the selected saved plan has no successfully reconciled preview. */
   isPlanPreviewStale: boolean;
   /**
    * planKey when the current preview was built from the Teams ServicePlan
@@ -199,6 +199,10 @@ export const servicePlanningImportSlice = createSlice({
     ) => {
       if (state.servicePlanKey === action.payload && state.preview) {
         state.isPlanPreviewStale = true;
+      } else if (!state.servicePlanKey && !state.preview) {
+        // A newly selected plan can fail before it has produced any preview.
+        // Use the same trust gate so plan details alone cannot authorize Sync.
+        state.isPlanPreviewStale = true;
       }
     },
     // Called after the selected plan and its preview have been authoritatively
@@ -207,7 +211,7 @@ export const servicePlanningImportSlice = createSlice({
       state,
       action: PayloadAction<string>,
     ) => {
-      if (state.servicePlanKey === action.payload && state.preview) {
+      if (state.servicePlanKey === action.payload) {
         state.isPlanPreviewStale = false;
       }
     },
@@ -219,7 +223,10 @@ export const servicePlanningImportSlice = createSlice({
      * invite an operator to sync overlays or the outline for the wrong service.
      */
     clearServicePlanningPlanOutline: (state) => {
-      if (!state.servicePlanKey) return;
+      if (!state.servicePlanKey) {
+        if (!state.preview) state.isPlanPreviewStale = false;
+        return;
+      }
       state.serviceOutline = null;
       state.preview = null;
       state.servicePlanKey = null;

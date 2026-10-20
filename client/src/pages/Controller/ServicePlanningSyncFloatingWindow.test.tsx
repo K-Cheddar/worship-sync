@@ -31,6 +31,7 @@ jest.mock("../../hooks/useServicePlanningImport", () => ({
     Array.isArray(plan) && plan.some((item) => item.action !== "skip"),
 }));
 const mockPushPlanToOutline = jest.fn();
+const mockLoadPreview = jest.fn();
 jest.mock("../../context/toastContext", () => ({
   useToast: jest.fn(),
 }));
@@ -127,8 +128,9 @@ const wrapImport = (preview: any) => ({
 describe("ServicePlanningSyncFloatingWindow", () => {
   beforeEach(() => {
     mockPushPlanToOutline.mockReset();
+    mockLoadPreview.mockReset();
     mockedUseServicePlanningImport.mockReturnValue({
-      loadPreview: jest.fn(),
+      loadPreview: mockLoadPreview,
       loadPlanPreview: jest.fn(),
       runImport: jest.fn(),
       planOutlineSyncSteps: jest.fn(),
@@ -569,6 +571,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
 
   it("does not start overlay sync if the plan becomes stale while Sync All pushes the outline", async () => {
     const song = { _id: "song-1", name: "What A Beautiful Name", type: "song", listId: "song-link" };
+    let isSourcePlanCurrent: (() => boolean) | undefined;
     let resolveOutlinePush!: (result: {
       items: typeof song[];
       insertedCount: number;
@@ -576,10 +579,12 @@ describe("ServicePlanningSyncFloatingWindow", () => {
       placementIssues: [];
     }) => void;
     mockPushPlanToOutline.mockImplementation(
-      () =>
-        new Promise((resolve) => {
+      (_plan, isCurrent) => {
+        isSourcePlanCurrent = isCurrent;
+        return new Promise((resolve) => {
           resolveOutlinePush = resolve;
-        }),
+        });
+      },
     );
     mockPlanSource.isPlanSourced = true;
     mockPlanSource.selectedPlanKey = "service-1@2026-07-30";
@@ -618,6 +623,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
 
     await userEvent.setup().click(screen.getByRole("button", { name: "Sync All" }));
     await waitFor(() => expect(mockPushPlanToOutline).toHaveBeenCalled());
+    expect(isSourcePlanCurrent?.()).toBe(true);
 
     mockPlanSource.isPlanPreviewStale = true;
     rerender(
@@ -627,6 +633,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
         </Provider>
       </MemoryRouter>,
     );
+    expect(isSourcePlanCurrent?.()).toBe(false);
 
     await act(async () => {
       resolveOutlinePush({
@@ -1799,6 +1806,55 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     expect(
       screen.getByText(/refresh before syncing/i),
     ).toBeInTheDocument();
+  });
+
+  it("keeps saved-plan sync disabled and retries the selected plan when no preview could be built", async () => {
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
+        undoable: () => ({
+          present: {
+            itemLists: { selectedList: { _id: "outline-1", name: "Sunday" } },
+            itemList: { isLoading: false, list: [] },
+          },
+        }),
+      },
+    });
+    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+    mockPlanSource.isPlanSourced = true;
+    mockPlanSource.selectedPlanKey = "service-1@2026-05-02";
+    mockPlanSource.selectedPlanDetails = {
+      planKey: "service-1@2026-05-02",
+      name: "Sabbath Service",
+      date: "2026-05-02",
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        elements: [{
+          id: "element-1",
+          type: "song",
+          title: { blocks: [{ type: "paragraph", spans: [{ text: "Opening Song" }] }] },
+          songRef: { kind: "library", songId: "song-1", songName: "Opening Song" },
+        }],
+      }],
+    };
+    mockPlanSource.isPlanPreviewStale = true;
+    mockPlanSource.refresh.mockResolvedValue("failed");
+
+    renderWindow(store);
+
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
+    expect(screen.getByRole("button", { name: "Sync overlays" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Sync outline" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Sync All" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
+    expect(screen.getByText(/plan and its assignments could not be fully loaded/i)).toBeInTheDocument();
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Refresh" }));
+
+    expect(mockPlanSource.refresh).toHaveBeenCalledTimes(1);
+    expect(mockLoadPreview).not.toHaveBeenCalled();
   });
 
   it.each([

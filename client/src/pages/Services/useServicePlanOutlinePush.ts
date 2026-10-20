@@ -70,9 +70,7 @@ export const useServicePlanOutlinePush = () => {
       // One run uses one mapping configuration even if integrations refresh
       // while the operator is watching the visible per-item progress.
       const sectionRulesSnapshot = (sectionRules ?? []).map((rule) => ({ ...rule }));
-      const isContextCurrent = () =>
-        isSourcePlanCurrent()
-        &&
+      const isOutlineContextCurrent = () =>
         store.getState().undoable.present.itemLists.selectedList?._id === startingContext.selectedList._id
         &&
         contextRef.current.selectedList?._id === startingContext.selectedList?._id
@@ -80,6 +78,16 @@ export const useServicePlanOutlinePush = () => {
         && contextRef.current.bibleDb === startingContext.bibleDb
         && contextRef.current.songs === startingContext.songs
         && contextRef.current.customDocuments === startingContext.customDocuments;
+      const assertCurrent = () => {
+        if (!isSourcePlanCurrent()) {
+          throw new Error(
+            "The selected service plan changed or could not be verified. Refresh it before syncing.",
+          );
+        }
+        if (!isOutlineContextCurrent()) {
+          throw new Error("The selected outline changed before the service plan could be imported.");
+        }
+      };
       const planResult = planServicePlanOutlineItems({
         plan,
         currentList: startingList,
@@ -87,9 +95,7 @@ export const useServicePlanOutlinePush = () => {
         customDocuments,
         sectionRules: sectionRulesSnapshot,
       });
-      if (!isContextCurrent()) {
-        throw new Error("The selected outline changed before the service plan could be imported.");
-      }
+      assertCurrent();
       const items: ServiceItem[] = [];
       const placementIssues = [...planResult.placementIssues];
       const recordPlacementIssue = (issue: (typeof placementIssues)[number]) => {
@@ -103,9 +109,7 @@ export const useServicePlanOutlinePush = () => {
       };
       for (const step of planResult.steps) {
         if (!shouldContinue()) break;
-        if (!isContextCurrent()) {
-          throw new Error("The selected outline changed before the service plan could be imported.");
-        }
+        assertCurrent();
         const destination = step.destination;
         let latestList = store.getState().undoable.present.itemList.list;
         if (latestList.some((existing) => existing.listId === step.planned.listId)) continue;
@@ -121,9 +125,7 @@ export const useServicePlanOutlinePush = () => {
         // request must not pre-create Bible documents for later steps.
         // eslint-disable-next-line no-await-in-loop -- order and visible progress are intentional
         const item = await buildServicePlanOutlineItem({ step, list: latestList, db, bibleDb });
-        if (!isContextCurrent()) {
-          throw new Error("The selected outline changed before the service plan could be imported.");
-        }
+        assertCurrent();
         latestList = store.getState().undoable.present.itemList.list;
         if (latestList.some((existing) => existing.listId === item.listId)) continue;
         const placedList = insertServicePlanOutlineItem(latestList, item, destination);
@@ -135,25 +137,17 @@ export const useServicePlanOutlinePush = () => {
           });
           continue;
         }
-        if (!isContextCurrent()) {
-          throw new Error("The selected outline changed before the service plan could be imported.");
-        }
+        assertCurrent();
         dispatch(updateItemList(placedList));
         if (db && item.type === "bible") {
-          if (!isContextCurrent()) {
-            throw new Error("The selected outline changed before the service plan could be imported.");
-          }
+          assertCurrent();
           dispatch(upsertItemInAllItemsList({ ...item, listId: "" }));
         }
         items.push(item);
         await onItemAdded?.(item);
-        if (!isContextCurrent()) {
-          throw new Error("The selected outline changed before the service plan could be imported.");
-        }
+        assertCurrent();
         await delay(OUTLINE_STEP_DELAY_MS);
-        if (!isContextCurrent()) {
-          throw new Error("The selected outline changed before the service plan could be imported.");
-        }
+        assertCurrent();
       }
       return {
         items,

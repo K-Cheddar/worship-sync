@@ -5,6 +5,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import servicePlanningImportReducer, {
   cancelServicePlanningSync,
+  markServicePlanningPlanPreviewStale,
   setServicePlanningPlanOutline,
   setServicePlanningServiceOutline,
   startServicePlanningSync,
@@ -184,6 +185,98 @@ describe("useServicePlanningSyncRunner", () => {
   afterEach(() => {
     jest.runOnlyPendingTimers();
     jest.useRealTimers();
+  });
+
+  it("rejects a sync run when the selected saved-plan preview is stale", async () => {
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+        undoable: () => undoableState,
+      },
+    });
+    const planKey = "service-1@2026-05-02";
+    store.dispatch(
+      setServicePlanningPlanOutline({
+        outline: serviceOutlineFixture as any,
+        planKey,
+      }),
+    );
+    store.dispatch(markServicePlanningPlanPreviewStale(planKey));
+
+    render(
+      <Provider store={store}>
+        <MemoryRouter initialEntries={["/controller/service-planning"]}>
+          <RunnerHarness />
+        </MemoryRouter>
+      </Provider>,
+    );
+
+    act(() => {
+      store.dispatch(startServicePlanningSync({ mode: "both" }));
+    });
+
+    await waitFor(() => {
+      expect(store.getState().servicePlanningImport.sync.status).toBe("failed");
+    });
+    expect(store.getState().servicePlanningImport.sync.error).toMatch(
+      /saved plan could not be verified.*refresh before syncing/i,
+    );
+    expect(mockPlanOutlineSyncSteps).not.toHaveBeenCalled();
+    expect(mockPlanOverlaySyncSteps).not.toHaveBeenCalled();
+    expect(mockExecuteOutlineSyncStep).not.toHaveBeenCalled();
+    expect(mockExecuteOverlaySyncStep).not.toHaveBeenCalled();
+  });
+
+  it("stops advancing a sync run when its saved plan becomes stale mid-step", async () => {
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+        undoable: () => undoableState,
+      },
+    });
+    const planKey = "service-1@2026-05-02";
+    store.dispatch(
+      setServicePlanningPlanOutline({
+        outline: serviceOutlineFixture as any,
+        planKey,
+      }),
+    );
+    mockPlanOutlineSyncSteps.mockReturnValue([
+      { kind: "insertSong", candidate: { title: "First song" } },
+      { kind: "insertSong", candidate: { title: "Second song" } },
+    ]);
+    mockPlanSyncItemsInOrder.mockReturnValue([]);
+    let finishFirstStep!: (value: { inserted: number }) => void;
+    mockExecuteOutlineSyncStep.mockImplementationOnce(
+      () => new Promise((resolve) => { finishFirstStep = resolve; }),
+    );
+
+    render(
+      <Provider store={store}>
+        <MemoryRouter initialEntries={["/controller/service-planning"]}>
+          <RunnerHarness />
+        </MemoryRouter>
+      </Provider>,
+    );
+    act(() => {
+      store.dispatch(startServicePlanningSync({ mode: "outline" }));
+    });
+    await waitFor(() => expect(mockExecuteOutlineSyncStep).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      store.dispatch(markServicePlanningPlanPreviewStale(planKey));
+    });
+    await waitFor(() => {
+      expect(store.getState().servicePlanningImport.sync.status).toBe("failed");
+    });
+
+    await act(async () => {
+      finishFirstStep({ inserted: 1 });
+      await jest.advanceTimersByTimeAsync(300);
+    });
+
+    expect(mockExecuteOutlineSyncStep).toHaveBeenCalledTimes(1);
+    expect(store.getState().servicePlanningImport.sync.status).toBe("failed");
   });
 
   it("runs outline steps before overlay steps and ends on overlays", async () => {
