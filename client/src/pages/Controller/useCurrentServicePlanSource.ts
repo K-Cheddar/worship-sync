@@ -17,6 +17,7 @@ import {
   useRef,
   useState,
 } from "react";
+import _ from "lodash";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector } from "../../hooks";
@@ -31,6 +32,7 @@ import {
   clearServicePlanningPreview,
   setServicePlanningOutlinePlanBinding,
   setServicePlanningPlanOutline,
+  markServicePlanningPlanPreviewStale,
 } from "../../store/servicePlanningImportSlice";
 import { persistItemListServicePlanBinding } from "../../utils/itemListImports";
 import { useServicePlanningImport } from "../../hooks/useServicePlanningImport";
@@ -51,6 +53,8 @@ import {
   sortControllerServicePlans,
 } from "./controllerServicePlanSelection";
 import { useActiveControllerId } from "../../context/activeController";
+
+type ReconciliationResult = "updated" | "unchanged" | "failed" | "superseded";
 
 export const useCurrentServicePlanSource = () => {
   const dispatch = useDispatch();
@@ -74,6 +78,12 @@ export const useCurrentServicePlanSource = () => {
   const servicePlanKey = useSelector(
     (state) => state.servicePlanningImport.servicePlanKey,
   );
+  const currentPreview = useSelector(
+    (state) => state.servicePlanningImport.preview,
+  );
+  const isPlanPreviewStale = useSelector(
+    (state) => state.servicePlanningImport.isPlanPreviewStale,
+  );
   const hasUrlSourcedPreview = useSelector(
     (state) =>
       Boolean(
@@ -95,6 +105,8 @@ export const useCurrentServicePlanSource = () => {
     useState<PublicServiceFlowSnapshot | null>(null);
 
   const planRef = useRef<ServicePlan | null>(null);
+  const currentPreviewRef = useRef(currentPreview);
+  currentPreviewRef.current = currentPreview;
   const selectedPlanKeyRef = useRef<string | null>(null);
   const generationRef = useRef(0);
   const reconciliationInFlightRef = useRef<{
@@ -105,7 +117,7 @@ export const useCurrentServicePlanSource = () => {
     generation: number;
     refreshPlanList: boolean;
     preserveOnFailure: boolean;
-    promise: Promise<void>;
+    promise: Promise<ReconciliationResult>;
   } | null>(null);
   const planListRequestIdRef = useRef(0);
   const planListActiveRequestIdRef = useRef<number | null>(null);
@@ -384,10 +396,11 @@ export const useCurrentServicePlanSource = () => {
       shouldApply: () => boolean = () => true,
     ) => {
       const outline = await loadPlanPreviewRef.current(plan, assignments);
-      if (!shouldApply()) return;
+      if (!shouldApply()) return null;
       dispatch(
         setServicePlanningPlanOutline({ outline, planKey: plan.planKey }),
       );
+      return outline;
     },
     [dispatch],
   );
@@ -411,7 +424,7 @@ export const useCurrentServicePlanSource = () => {
       const churchIdAtStart = churchId;
       const controllerIdAtStart = activeControllerId;
       const selectedOutlineIdAtStart = selectedOutlineId;
-      if (!isEnabled || !churchIdAtStart) return;
+      if (!isEnabled || !churchIdAtStart) return "failed";
       const planKeyAtStart = selectedPlanKeyRef.current;
       const existing = reconciliationInFlightRef.current;
       if (
@@ -466,7 +479,7 @@ export const useCurrentServicePlanSource = () => {
             .catch((error: unknown) => ({ ok: false as const, error }))
         : Promise.resolve(null);
 
-      let request!: Promise<void>;
+      let request!: Promise<ReconciliationResult>;
       request = (async () => {
         try {
           const [
@@ -481,7 +494,7 @@ export const useCurrentServicePlanSource = () => {
               assignmentsPromise,
               viewerSnapshotPromise,
             ]);
-          if (!isCurrentRequest()) return;
+          if (!isCurrentRequest()) return "superseded";
 
           const hasCurrentPlanList =
             planListResult !== null &&
@@ -492,14 +505,18 @@ export const useCurrentServicePlanSource = () => {
               setPlansLoaded(true);
               setPlansError(null);
             }
-            return;
+            if (planKeyAtStart && preserveOnFailure) {
+              dispatch(markServicePlanningPlanPreviewStale(planKeyAtStart));
+            }
+            return planKeyAtStart ? "failed" : "unchanged";
           }
           if (!assignmentsResult?.ok && preserveOnFailure) {
             console.error(
               "Could not reconcile the selected service plan assignments:",
               assignmentsResult?.error,
             );
-            return;
+            dispatch(markServicePlanningPlanPreviewStale(planKeyAtStart));
+            return "failed";
           }
 
           if (hasCurrentPlanList) {
@@ -516,26 +533,38 @@ export const useCurrentServicePlanSource = () => {
             )
           ) {
             clearUnavailablePlan(planKeyAtStart);
-            return;
+            return "failed";
           }
           if (!plan) {
             clearUnavailablePlan(planKeyAtStart);
-            return;
+            return "failed";
           }
 
+          const previousPlan = planRef.current;
+          const previousPreview = currentPreviewRef.current;
           planRef.current = plan;
           if (snapshotResult?.ok) {
             setSelectedPlanSnapshot(snapshotResult.snapshot);
           }
-          await applyPlan(
+          const appliedOutline = await applyPlan(
             plan,
             assignmentsResult?.ok ? assignmentsResult.result.assignments : [],
             isCurrentRequest,
           );
+          if (!appliedOutline) return "superseded";
+          return _.isEqual(previousPlan, plan) &&
+            _.isEqual(previousPreview, appliedOutline.preview)
+            ? "unchanged"
+            : "updated";
         } catch (error) {
+          if (!isCurrentRequest()) return "superseded";
+          if (planKeyAtStart) {
+            dispatch(markServicePlanningPlanPreviewStale(planKeyAtStart));
+          }
           // Background recovery must not replace a usable preview with an
           // empty state. The next reconnect or explicit refresh can retry.
           console.error("Could not reconcile the selected service plan:", error);
+          return "failed";
         } finally {
           if (
             planKeyAtStart &&
@@ -571,7 +600,7 @@ export const useCurrentServicePlanSource = () => {
       };
       return request;
     },
-    [activeControllerId, applyPlan, churchId, clearUnavailablePlan, isEnabled, selectedOutlineId],
+    [activeControllerId, applyPlan, churchId, clearUnavailablePlan, dispatch, isEnabled, selectedOutlineId],
   );
 
   /**
@@ -877,6 +906,7 @@ export const useCurrentServicePlanSource = () => {
       : currentOccurrence,
     isEnabled,
     isLoading,
+    isPlanPreviewStale,
     isLoadingPlans,
     plansError,
     isPlanSourced: Boolean(servicePlanKey),

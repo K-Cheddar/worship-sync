@@ -3,5 +3,5 @@
   "date": "2026-10-10",
   "type": "fixed",
   "title": "Weekly overlay sync",
-  "description": "Service Planning now refreshes reusable overlays with current participant details while keeping their order and formatting."
+  "description": "Service Planning refreshes reusable overlays with current participant details and keeps their order and formatting; if a plan refresh fails, sync stays disabled until the data refreshes."
 }

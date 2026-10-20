@@ -89,6 +89,7 @@ const mockPlanSource = {
   isLoadingPlans: false,
   plansError: null as string | null,
   isPlanSourced: false,
+  isPlanPreviewStale: false,
   refresh: jest.fn(),
   refreshPlans: jest.fn(),
 };
@@ -148,6 +149,8 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     mockPlanSource.selectedPlanDetails = null;
     mockPlanSource.selectedPlanKey = null;
     mockPlanSource.isPlanSourced = false;
+    mockPlanSource.isPlanPreviewStale = false;
+    mockPlanSource.refresh.mockReset();
     mockPlanSource.isLoading = false;
     mockPlanSource.occurrences = [];
     mockPlanSource.occurrence = null;
@@ -562,6 +565,80 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const summary = within(screen.getByLabelText("Most recent sync"));
     expect(summary.getByText("What A Beautiful Name")).toBeInTheDocument();
     expect(summary.getByText("Clarence Jones — Sabbath School Host")).toBeInTheDocument();
+  });
+
+  it("does not start overlay sync if the plan becomes stale while Sync All pushes the outline", async () => {
+    const song = { _id: "song-1", name: "What A Beautiful Name", type: "song", listId: "song-link" };
+    let resolveOutlinePush!: (result: {
+      items: typeof song[];
+      insertedCount: number;
+      skippedTitles: string[];
+      placementIssues: [];
+    }) => void;
+    mockPushPlanToOutline.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveOutlinePush = resolve;
+        }),
+    );
+    mockPlanSource.isPlanSourced = true;
+    mockPlanSource.selectedPlanKey = "service-1@2026-07-30";
+    mockPlanSource.selectedPlanDetails = {
+      planKey: "service-1@2026-07-30",
+      name: "Native service plan",
+      date: "2026-07-30",
+      sections: [{ id: "section-1", name: "Worship", elements: [{
+        id: "element-1",
+        type: "song",
+        title: { blocks: [{ type: "paragraph", spans: [{ text: song.name }] }] },
+        songRef: { kind: "library", songId: song._id, songName: song.name },
+      }] }],
+    };
+    const existingOverlay = { id: "overlay-1", type: "participant", name: "Dobney Keen", event: "Sabbath School Host" };
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
+        undoable: (state = { present: {
+          itemLists: { selectedList: { _id: "outline-1", name: "Sunday" } },
+          itemList: { list: [], selectedItemListId: "" },
+          overlays: { list: [existingOverlay] },
+        } }) => state,
+      },
+    });
+    store.dispatch(setServicePlanningServiceOutline(wrapImport({
+      overlayCandidates: [],
+      overlayPlan: [{ action: "update", elementType: "Sabbath School Host", targetOverlayId: existingOverlay.id, patch: { name: "Clarence Jones", event: "Sabbath School Host" } }],
+      outlineCandidates: [],
+      lineItems: [],
+      teamAssignments: [],
+    }) as any));
+    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+    const { rerender } = renderWindow(store);
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Sync All" }));
+    await waitFor(() => expect(mockPushPlanToOutline).toHaveBeenCalled());
+
+    mockPlanSource.isPlanPreviewStale = true;
+    rerender(
+      <MemoryRouter>
+        <Provider store={store}>
+          <ServicePlanningSyncFloatingWindow />
+        </Provider>
+      </MemoryRouter>,
+    );
+
+    await act(async () => {
+      resolveOutlinePush({
+        items: [song],
+        insertedCount: 1,
+        skippedTitles: [],
+        placementIssues: [],
+      });
+      await Promise.resolve();
+    });
+
+    expect(store.getState().servicePlanningImport.sync.status).toBe("idle");
   });
 
   // Regression: the menu was portaled, which escapes the floating window's
@@ -1670,4 +1747,81 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     expect(screen.getByText("Worship Leader")).toBeInTheDocument();
     expect(screen.getByText("Kailyn Reid")).toBeInTheDocument();
   });
+
+  it("disables overlay sync while the saved plan preview is stale", () => {
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
+      },
+    });
+    store.dispatch(
+      setServicePlanningServiceOutline(wrapImport({
+        overlayCandidates: [],
+        overlayPlan: [{ action: "create" }],
+        outlineCandidates: [],
+        lineItems: [],
+        teamAssignments: [],
+      }) as any),
+    );
+    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+    mockPlanSource.isPlanSourced = true;
+    mockPlanSource.selectedPlanKey = "service-1@2026-05-02";
+    mockPlanSource.isPlanPreviewStale = true;
+
+    renderWindow(store);
+
+    expect(screen.getByRole("button", { name: "Sync overlays" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Sync All" })).toBeDisabled();
+    expect(
+      screen.getByText(/refresh before syncing/i),
+    ).toBeInTheDocument();
+  });
+
+  it.each([
+    ["updated", "Plan refreshed", "success"],
+    ["unchanged", "Plan is up to date", "success"],
+    [
+      "failed",
+      "Plan refresh failed. Check your connection and try again.",
+      "error",
+    ],
+  ] as const)(
+    "shows the %s result from a saved-plan refresh",
+    async (status, message, kind) => {
+      const store = configureStore({
+        reducer: {
+          servicePlanningImport: servicePlanningImportReducer,
+          allDocs: allDocsReducer,
+        },
+      });
+      store.dispatch(
+        setServicePlanningServiceOutline(wrapImport({
+          overlayCandidates: [],
+          overlayPlan: [],
+          outlineCandidates: [],
+          lineItems: [],
+          teamAssignments: [],
+        }) as any),
+      );
+      store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+      mockPlanSource.isPlanSourced = true;
+      mockPlanSource.selectedPlanKey = "service-1@2026-05-02";
+      mockPlanSource.refresh.mockResolvedValue(status);
+      const showToast = jest.fn();
+      mockedUseToast.mockReturnValue({
+        showToast,
+        hideToast: jest.fn(),
+        toasts: [],
+      } as any);
+
+      renderWindow(store);
+
+      await userEvent.setup().click(
+        screen.getByRole("button", { name: "Refresh" }),
+      );
+
+      await waitFor(() => expect(showToast).toHaveBeenCalledWith(message, kind));
+    },
+  );
 });

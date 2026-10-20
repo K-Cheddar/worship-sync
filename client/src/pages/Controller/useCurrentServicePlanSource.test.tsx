@@ -1179,7 +1179,7 @@ describe("useCurrentServicePlanSource", () => {
           ? Promise.resolve({ servicePlan: secondPlan })
           : slowRefresh,
     );
-    let refreshPromise: Promise<void> | undefined;
+    let refreshPromise: Promise<unknown> | undefined;
     act(() => {
       refreshPromise = latestResult?.refresh();
     });
@@ -1222,7 +1222,7 @@ describe("useCurrentServicePlanSource", () => {
       },
     );
     mockGetServicePlan.mockReturnValue(slowRefresh);
-    let refreshPromise: Promise<void> | undefined;
+    let refreshPromise: Promise<unknown> | undefined;
     act(() => {
       refreshPromise = latestResult?.refresh();
     });
@@ -1260,7 +1260,7 @@ describe("useCurrentServicePlanSource", () => {
       },
     );
     mockGetServicePlan.mockReturnValue(slowRefresh);
-    let refreshPromise: Promise<void> | undefined;
+    let refreshPromise: Promise<unknown> | undefined;
     act(() => {
       refreshPromise = latestResult?.refresh();
     });
@@ -1446,16 +1446,107 @@ describe("useCurrentServicePlanSource", () => {
     await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
     const displayedPreview = store.getState().servicePlanningImport.preview;
     mockGetServicePlan.mockRejectedValue(new Error("temporarily unavailable"));
+    let refreshResult: unknown;
 
     await act(async () => {
-      await latestResult?.refresh();
+      refreshResult = await latestResult?.refresh();
     });
 
+    expect(refreshResult).toBe("failed");
     expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1);
     expect(store.getState().servicePlanningImport.preview).toEqual(
       displayedPreview,
     );
     expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey);
+    expect(latestResult?.isPlanPreviewStale).toBe(true);
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
+  });
+
+  it("keeps a failed live plan update visible but blocks it until a successful refresh", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+    const displayedPreview = store.getState().servicePlanningImport.preview;
+    let rejectPlanRequest!: (error: Error) => void;
+    mockGetServicePlan.mockReturnValueOnce(
+      new Promise((_, reject) => {
+        rejectPlanRequest = reject;
+      }),
+    );
+
+    let liveRefreshPromise: Promise<unknown> | undefined;
+    act(() => {
+      mockLiveHandler?.({
+        type: "service-plan-updated",
+        planKey: planFixture.planKey,
+      });
+      liveRefreshPromise = latestResult?.refresh();
+    });
+
+    expect(latestResult?.isLoading).toBe(true);
+    await act(async () => {
+      rejectPlanRequest(new Error("temporarily unavailable"));
+      await liveRefreshPromise;
+    });
+    await waitFor(() => expect(latestResult?.isLoading).toBe(false));
+
+    expect(store.getState().servicePlanningImport.preview).toEqual(
+      displayedPreview,
+    );
+    expect(latestResult?.isPlanPreviewStale).toBe(true);
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
+
+    let refreshResult: unknown;
+    await act(async () => {
+      refreshResult = await latestResult?.refresh();
+    });
+
+    expect(refreshResult).toBe("unchanged");
+    expect(latestResult?.isPlanPreviewStale).toBe(false);
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
+    expect(store.getState().servicePlanningImport.preview).toEqual(
+      displayedPreview,
+    );
+  });
+
+  it("retains a failed refresh marker when the plan source hook remounts", async () => {
+    const store = makeStore();
+    const { unmount: unmountFirstView } = renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+
+    mockGetServicePlan.mockRejectedValue(new Error("temporarily unavailable"));
+    await act(async () => {
+      await latestResult?.refresh();
+    });
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
+
+    unmountFirstView();
+    mockListServicePlans.mockReturnValue(new Promise(() => undefined));
+    const { unmount: unmountRemountedView } = renderHookWith(store, enabledGlobalInfo);
+    expect(latestResult?.isPlanPreviewStale).toBe(true);
+    unmountRemountedView();
+  });
+
+  it("reports an updated plan when manual refresh fetches changed plan data", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+    const updatedPlan = { ...planFixture, name: "Updated Sabbath Service" };
+    mockGetServicePlan.mockResolvedValueOnce({ servicePlan: updatedPlan });
+    mockLoadPlanPreview.mockResolvedValueOnce({
+      ...outlineFixture,
+      planLabel: "Updated Sabbath Service",
+    });
+
+    let refreshResult: unknown;
+    await act(async () => {
+      refreshResult = await latestResult?.refresh();
+    });
+
+    expect(refreshResult).toBe("updated");
+    expect(latestResult?.selectedPlanDetails?.name).toBe(
+      "Updated Sabbath Service",
+    );
   });
 
   it("keeps the displayed assignments when background assignment reconciliation fails", async () => {
@@ -1491,6 +1582,10 @@ describe("useCurrentServicePlanSource", () => {
         expect.objectContaining({ planKey: planFixture.planKey }),
       ]),
     );
+    expect(
+      (latestResult as (Result & { isPlanPreviewStale?: boolean }) | null)
+        ?.isPlanPreviewStale,
+    ).toBe(true);
   });
 
   it("switches to another occurrence when the operator overrides it", async () => {

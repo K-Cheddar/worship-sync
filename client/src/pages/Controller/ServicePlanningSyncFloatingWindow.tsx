@@ -406,6 +406,7 @@ const ServicePlanningSyncFloatingWindow = ({
     isEnabled: isSavedPlanAccessEnabled,
     isLoading,
     isLoadingPlans,
+    isPlanPreviewStale,
     plansError,
     isPlanSourced,
     refresh: refreshPlan,
@@ -519,11 +520,24 @@ const ServicePlanningSyncFloatingWindow = ({
     if (isPlanSourced) {
       setIsRefreshing(true);
       try {
-        await refreshPlan();
-        setMicrophoneRefreshVersion((version) => version + 1);
-        showToast("Plan refreshed", "success");
+        const result = await refreshPlan();
+        if (result === "updated" || result === "unchanged") {
+          setMicrophoneRefreshVersion((version) => version + 1);
+          showToast(
+            result === "updated" ? "Plan refreshed" : "Plan is up to date",
+            "success",
+          );
+        } else if (result === "failed") {
+          showToast(
+            "Plan refresh failed. Check your connection and try again.",
+            "error",
+          );
+        }
       } catch {
-        showToast("Failed to refresh plan", "error");
+        showToast(
+          "Plan refresh failed. Check your connection and try again.",
+          "error",
+        );
       } finally {
         setIsRefreshing(false);
       }
@@ -556,9 +570,13 @@ const ServicePlanningSyncFloatingWindow = ({
   const isContextChanging = isLoading || targetOutlineLoading;
   const canSyncOverlays =
     allowOverlaySync &&
+    !isPlanPreviewStale &&
     !isContextChanging &&
     hasSyncableOverlayItems(preview, overlays);
+  const canSyncOverlaysRef = useRef(canSyncOverlays);
+  canSyncOverlaysRef.current = canSyncOverlays;
   const canSyncOutline =
+    !isPlanPreviewStale &&
     !isContextChanging && Boolean(selectedList) && (isPlanSourced && selectedPlanDetails
       ? selectedPlanDetails.sections.some((section) => section.elements.some((element) =>
           getServicePlanElementContentResources(element).some((resource) =>
@@ -612,7 +630,7 @@ const ServicePlanningSyncFloatingWindow = ({
                 : "Sync complete",
           });
           setIsSyncSummaryExpanded(true);
-          if (mode === "both" && !cancelSavedPlanPushRef.current && allowOverlaySync && canSyncOverlays) {
+          if (mode === "both" && !cancelSavedPlanPushRef.current && allowOverlaySync && canSyncOverlaysRef.current) {
             pendingSavedPlanSummaryRef.current = { addedTitles, skipped };
             dispatch(setServicePlanningFloatingWindowDismissed(false));
             dispatch(startServicePlanningSync({ mode: "overlays" }));
@@ -1206,6 +1224,14 @@ const ServicePlanningSyncFloatingWindow = ({
     >
       <div className="flex flex-col gap-3 text-sm text-white">
         {planContextControls}
+        {isPlanPreviewStale ? (
+          <p
+            role="alert"
+            className="rounded border border-amber-500/40 bg-amber-950/30 px-2 py-1.5 text-xs text-amber-200"
+          >
+            The plan could not be refreshed. Refresh before syncing.
+          </p>
+        ) : null}
 
         <div className="sticky -top-3 z-10 -mx-3 -mt-2 border-b border-zinc-700 bg-gray-800/95 px-3 pt-3 pb-2 backdrop-blur">
           <Tabs

@@ -14,6 +14,8 @@ import servicePlanningImportReducer, {
   setServicePlanningImportOutlinePreviewExpanded,
   setServicePlanningImportOverlaySummaryExpanded,
   setServicePlanningImportUrl,
+  markServicePlanningPlanPreviewStale,
+  setServicePlanningPlanOutline,
   setServicePlanningSyncActiveStep,
   setServicePlanningSyncPlanInfo,
   setServicePlanningSyncPhase,
@@ -103,6 +105,31 @@ describe("servicePlanningImportSlice", () => {
     expect(state.serviceOutline).toBeNull();
     expect(state.servicePlanKey).toBeNull();
     expect(state.url).toBe(serviceOutlineFixture.sourceUrl);
+  });
+
+  it("keeps saved-plan staleness with the preview until it is replaced or cleared", () => {
+    const store = createStore();
+
+    store.dispatch(
+      setServicePlanningPlanOutline({
+        outline: serviceOutlineFixture,
+        planKey: "service-1@2026-05-02",
+      }),
+    );
+    store.dispatch(markServicePlanningPlanPreviewStale("service-1@2026-05-02"));
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
+
+    store.dispatch(
+      setServicePlanningPlanOutline({
+        outline: serviceOutlineFixture,
+        planKey: "service-1@2026-05-02",
+      }),
+    );
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
+
+    store.dispatch(markServicePlanningPlanPreviewStale("service-1@2026-05-02"));
+    store.dispatch(clearServicePlanningPreview());
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
   });
 
   it("preserves expand/collapse flags when preview is cleared", () => {

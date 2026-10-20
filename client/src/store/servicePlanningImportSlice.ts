@@ -70,6 +70,8 @@ export type ServicePlanningImportState = {
   url: string;
   serviceOutline: ServiceOutline | null;
   preview: ServicePlanningPreview | null;
+  /** True when the visible saved-plan preview could not be reconciled. */
+  isPlanPreviewStale: boolean;
   /**
    * planKey when the current preview was built from the Teams ServicePlan
    * rather than a pasted URL; null for a URL-sourced preview. A plan-sourced
@@ -116,6 +118,7 @@ export const initialServicePlanningImportState: ServicePlanningImportState = {
   url: "",
   serviceOutline: null,
   preview: null,
+  isPlanPreviewStale: false,
   servicePlanKey: null,
   urlSelectionRevision: 0,
   outlinePlanBinding: null,
@@ -148,6 +151,7 @@ export const servicePlanningImportSlice = createSlice({
     ) => {
       state.serviceOutline = action.payload;
       state.preview = action.payload?.preview ?? null;
+      state.isPlanPreviewStale = false;
       // Pasting a URL is an explicit operator choice, so it takes over from a
       // plan-sourced preview until the next plan load.
       state.servicePlanKey = null;
@@ -167,6 +171,7 @@ export const servicePlanningImportSlice = createSlice({
       if (state.preview) return;
       state.serviceOutline = action.payload;
       state.preview = action.payload?.preview ?? null;
+      state.isPlanPreviewStale = false;
       state.servicePlanKey = null;
       if (action.payload?.sourceUrl) {
         state.url = action.payload.sourceUrl;
@@ -185,6 +190,15 @@ export const servicePlanningImportSlice = createSlice({
       state.serviceOutline = action.payload.outline;
       state.preview = action.payload.outline.preview;
       state.servicePlanKey = action.payload.planKey;
+      state.isPlanPreviewStale = false;
+    },
+    markServicePlanningPlanPreviewStale: (
+      state,
+      action: PayloadAction<string>,
+    ) => {
+      if (state.servicePlanKey === action.payload && state.preview) {
+        state.isPlanPreviewStale = true;
+      }
     },
     /**
      * Drops a plan-sourced preview when its service no longer has a saved plan
@@ -198,6 +212,7 @@ export const servicePlanningImportSlice = createSlice({
       state.serviceOutline = null;
       state.preview = null;
       state.servicePlanKey = null;
+      state.isPlanPreviewStale = false;
     },
     /**
      * Clears whichever preview is currently visible while a saved plan is
@@ -209,11 +224,13 @@ export const servicePlanningImportSlice = createSlice({
       state.serviceOutline = null;
       state.preview = null;
       state.servicePlanKey = null;
+      state.isPlanPreviewStale = false;
     },
     resetServicePlanningImportPreview: (state) => {
       state.serviceOutline = null;
       state.preview = null;
       state.servicePlanKey = null;
+      state.isPlanPreviewStale = false;
       state.floatingWindowDismissed = true;
     },
     setServicePlanningFloatingWindowDismissed: (
@@ -405,6 +422,7 @@ export const {
   setServicePlanningServiceOutline,
   setStoredServicePlanningOutlineIfIdle,
   setServicePlanningPlanOutline,
+  markServicePlanningPlanPreviewStale,
   clearServicePlanningPlanOutline,
   clearServicePlanningPreview,
   resetServicePlanningImportPreview,

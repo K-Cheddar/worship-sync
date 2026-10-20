@@ -2,9 +2,9 @@
 
 **Contract status:** Mixed. Only the outcomes under **Confirmed product outcomes** are owner-confirmed; matching, creation, and live-output behavior remain unresolved. Implementation notes below describe current behavior and are not product approval.
 
-**Approval source:** Product-owner request, 2026-10-10; the two approved outcomes are recorded under **Product decisions**.
+**Approval source:** Product-owner requests, 2026-10-10 and 2026-10-19; the approved outcomes are recorded under **Product decisions**.
 
-**Last reviewed:** 2026-10-11
+**Last reviewed:** 2026-10-19
 
 ## Purpose
 
@@ -18,6 +18,7 @@ Current UI observation: operators maintain participant overlays and mapping rule
 
 - A previous plan association does not prevent reuse of an overlay for the same event or role in a later plan.
 - Manual edits to mapped values remain until an explicit sync. An explicit sync replaces mapped values with the current plan values.
+- If refreshing the selected saved plan fails, keep the last preview available for review but block overlay and outline sync until a successful refresh.
 
 ## Important scenarios
 
@@ -25,6 +26,7 @@ Current UI observation: operators maintain participant overlays and mapping rule
 | --- | --- | --- | --- |
 | Same event in a later plan | Reuse the event/role overlay across plan occurrences, regardless of its previous plan association. | Matching does not use the legacy plan-source fields. | Confirmed by the product decision below. |
 | Manual edit to a mapped value | Keep it until explicit sync; then apply the current plan value. | The sync patch covers mapped `name`, `title`, and `event` fields. | Confirmed by the product decision below. |
+| Selected plan refresh fails | Keep the last preview visible for review and disable overlay and outline sync until a refresh succeeds. | The controller retains the prior preview, marks it stale, and disables sync actions. | Confirmed by the product decision below. |
 | Matching and ambiguity | No product decision specifies normalization, fuzzy fallback, tie handling, or which duplicate event entry to use. | Configured events use case/whitespace-normalized exact matching. Fuzzy matching is used only when no event is configured; equal best fuzzy matches are skipped. Repeated candidates claim available overlays in list order. | Unresolved; see Product decisions. |
 | No available match / repeated role | No product decision specifies whether sync may create or clone overlays. | The current path clones an exact-event template or creates a participant overlay when it finds no match. | Unresolved; see Product decisions. |
 | Active participant overlay | No product decision specifies whether sync should affect an overlay currently shown to the audience. | The sync path updates the reusable overlay list and writes persisted overlay documents when the Pouch database is available; this contract does not treat that implementation path as approval of the live-output outcome. | Unresolved; see Product decisions. |
@@ -43,6 +45,12 @@ Current UI observation: operators maintain participant overlays and mapping rule
   - **Material alternative rejected:** Preserve edited values across sync by comparing baselines and overrides.
   - **Approval source/date:** Product-owner request, 2026-10-10.
   - **Affected workflow/contract:** Weekly service-plan overlay sync.
+- **Question/problem:** May an operator sync a selected saved plan after its live refresh fails?
+  - **Approved behavior:** Keep the last plan preview visible for review, but disable overlay and outline sync until a later refresh succeeds.
+  - **Why:** A preview from before a plan update may contain outdated participants or content; sync must use successfully refreshed plan data.
+  - **Material alternative rejected:** Allow sync from the retained preview while the church's live plan data is unavailable.
+  - **Approval source/date:** Current user request, 2026-10-19.
+  - **Affected workflow/contract:** Service-plan overlay and outline sync.
 - **Question/problem:** What matching policy should determine which saved overlay receives a participant's values?
   - **Unresolved options:** Keep the current exact-event and fuzzy fallback rules, or require an explicit mapping/operator resolution when the configured event does not identify one overlay. The current rules can select a different saved record when labels collide or are incomplete; requiring resolution can leave a participant unsynced until an operator fixes the mapping.
   - **Affected workflow/contract:** Weekly service-plan overlay sync.
@@ -56,6 +64,7 @@ Current UI observation: operators maintain participant overlays and mapping rule
 ## Implementation references
 
 - Entry point: `client/src/pages/Controller/ServicePlanningImportPanel.tsx` and `client/src/pages/Controller/ServicePlanningSyncFloatingWindow.tsx`
+- Plan freshness: `client/src/pages/Controller/useCurrentServicePlanSource.ts`
 - Implementation: `client/src/integrations/servicePlanning/findBestOverlayMatch.ts`, `client/src/integrations/servicePlanning/buildServicePlanningPreview.ts`, `client/src/hooks/useServicePlanningImport.ts`, `client/src/hooks/useServicePlanningSync.ts`, `client/src/integrations/servicePlanning/servicePlanningOverlayClone.ts`
 - Tests: `client/src/integrations/servicePlanning/findBestOverlayMatch.test.ts`, `client/src/integrations/servicePlanning/buildServicePlanningPreview.test.ts`, `client/src/integrations/servicePlanning/servicePlanningOverlayClone.test.ts`, `client/src/hooks/useServicePlanningImport.test.ts`
 
