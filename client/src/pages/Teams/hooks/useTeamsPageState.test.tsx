@@ -220,7 +220,7 @@ describe("useTeamsPageState bootstrap recovery", () => {
     expect(result.current.selfMemberId).toBeNull();
 
     churchId = "church-2";
-    act(() => rerender());
+    rerender();
     expect(result.current.selfMemberId).toBeNull();
     await act(async () => oldChurchBootstrap.resolve({
       ...emptyBootstrap,
@@ -232,11 +232,11 @@ describe("useTeamsPageState bootstrap recovery", () => {
     const oldAccountBootstrap = deferred<typeof emptyBootstrap & { selfMemberId: string }>();
     mockGetTeamsBootstrap.mockImplementationOnce(() => oldAccountBootstrap.promise as never);
     contextOverrides.userId = "user-2";
-    act(() => rerender());
+    rerender();
     expect(result.current.selfMemberId).toBeNull();
     contextOverrides.sessionKind = null;
     contextOverrides.userId = "";
-    act(() => rerender());
+    rerender();
     expect(result.current.selfMemberId).toBeNull();
     await act(async () => oldAccountBootstrap.resolve({
       ...emptyBootstrap,

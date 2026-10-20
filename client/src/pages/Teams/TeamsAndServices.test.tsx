@@ -4666,8 +4666,9 @@ describe("Teams", () => {
     );
 
     expect(await screen.findByText("Recommended swap")).toBeInTheDocument();
-    expect(screen.getByText(/Move Avery from Vocal to Keys/i)).toBeInTheDocument();
-    expect(screen.getByText(/Assign Jordan to Vocal/i)).toBeInTheDocument();
+    const [moveStep, assignStep] = within(screen.getByRole("list")).getAllByRole("listitem");
+    expect(moveStep).toHaveTextContent(/Move Avery from Vocal to Keys/i);
+    expect(assignStep).toHaveTextContent(/Assign Jordan to Vocal/i);
     await user.click(screen.getByRole("button", { name: /Apply swap/i }));
     await waitFor(() => expect(mockUpdateTeamScheduleAssignmentSwap).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole("heading", { name: /Schedule conflict/i })).toBeInTheDocument();

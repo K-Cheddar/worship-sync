@@ -892,7 +892,7 @@ export const useTeamsPageState = (
       backgroundRefreshInFlightRef.current = false;
       backgroundRefreshPromiseRef.current = null;
     }
-  }, [churchId, denyTeamsAccess, isLocalEditCoolingDown, loadTeamsProjection]);
+  }, [churchId, denyTeamsAccess, identityScopeKey, isLocalEditCoolingDown, loadTeamsProjection]);
 
   // Authorization changes caused by roster mutations require a fresh server
   // projection even during the ordinary local-edit cooldown. Wait out older
@@ -927,7 +927,7 @@ export const useTeamsPageState = (
       backgroundRefreshInFlightRef.current = false;
       backgroundRefreshPromiseRef.current = null;
     }
-  }, [churchId, denyTeamsAccess, loadTeamsProjection]);
+  }, [churchId, denyTeamsAccess, identityScopeKey, loadTeamsProjection]);
 
   const refreshMemberSmsEligibility = useCallback(async (
     memberId: string,
