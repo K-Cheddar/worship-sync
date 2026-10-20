@@ -60,9 +60,9 @@ try {
     preview: { host: "127.0.0.1", port: 3116, strictPort: true },
   });
   browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  let context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  const page = await context.newPage();
+  let page = await context.newPage();
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.goto("http://127.0.0.1:3116/e2e/home-launcher-entry.html#/home");
@@ -91,6 +91,14 @@ try {
     await page.screenshot({ path: join(screenshotDirectory, "mobile-390x844.png"), animations: "disabled" });
   }
 
+  await context.close();
+  context = await browser.newContext({ viewport: { width: 900, height: 900 } });
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  page = await context.newPage();
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.goto("http://127.0.0.1:3116/e2e/home-launcher-entry.html#/home");
+  await page.getByRole("heading", { name: "Church administration" }).waitFor();
+
   await page.setViewportSize({ width: 900, height: 900 });
   assert.equal(await getColumnCount("Church administration navigation"), 3, "tablet launcher should use three columns");
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -98,8 +106,38 @@ try {
   assert.equal(await page.getByTestId("home-toolbar").evaluate((element) => element.getBoundingClientRect().width), 1440, "desktop toolbar should use the full viewport width");
   assert.equal(await page.getByTestId("home-content").evaluate((element) => element.getBoundingClientRect().width), 1152, "desktop navigation content should use a centered max-w-6xl width");
   assert.equal(await page.getByRole("img", { name: "WorshipSync" }).isVisible(), true, "desktop header should show the branded lockup");
-  const launcherCanvasColor = await page.locator("main.home-launcher-canvas").evaluate((element) => getComputedStyle(element).backgroundColor);
+  const launcherCanvasColor = await page.locator("main").evaluate((element) => getComputedStyle(element).backgroundColor);
   assert.equal(launcherCanvasColor, "rgb(43, 53, 68)", "launcher canvas should retain the original slate-blue token");
+  const launcherCanvasImage = await page.locator("main").evaluate((element) => getComputedStyle(element).backgroundImage);
+  assert.equal(launcherCanvasImage, "none", "launcher should use the original flat canvas color without added gradients");
+  const adminSection = await page.getByRole("region", { name: "Church administration" }).evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { classes: [...element.classList], backgroundColor: style.backgroundColor, backgroundImage: style.backgroundImage, boxShadow: style.boxShadow };
+  });
+  assert.ok(adminSection.classes.includes("bg-gray-900/40"), "homepage sections should use the original gray-900/40 surface");
+  assert.ok(adminSection.classes.includes("border-gray-700"), "homepage sections should use the original gray-700 border");
+  assert.equal(adminSection.backgroundImage, "none", "homepage sections should not add gradients");
+  assert.equal(adminSection.boxShadow, "none", "homepage sections should not add shadows");
+  const displaySection = await page.getByTestId("display-outputs-details").evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { classes: [...element.classList], backgroundColor: style.backgroundColor, backgroundImage: style.backgroundImage, boxShadow: style.boxShadow };
+  });
+  assert.ok(displaySection.classes.includes("bg-gray-900/40"), "collapsed display outputs should use the original section surface");
+  assert.ok(displaySection.classes.includes("border-gray-700"), "collapsed display outputs should use the original section border");
+  assert.equal(displaySection.backgroundColor, adminSection.backgroundColor, "collapsed display outputs should match the other section surface");
+  assert.equal(displaySection.backgroundImage, "none");
+  assert.equal(displaySection.boxShadow, "none");
+  const resourceCard = page.getByRole("link", { name: "Resources", exact: true });
+  const cardStyle = await resourceCard.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { classes: [...element.classList], backgroundColor: style.backgroundColor, backgroundImage: style.backgroundImage, boxShadow: style.boxShadow, borderColor: style.borderTopColor };
+  });
+  assert.ok(cardStyle.classes.includes("bg-gray-900"), "navigation cards should use the original gray-900 surface");
+  assert.ok(cardStyle.classes.includes("border-gray-600"), "navigation cards should use the original gray-600 border");
+  assert.ok(cardStyle.classes.includes("hover:bg-gray-800"), "navigation cards should use the original gray-800 hover surface");
+  assert.ok(cardStyle.classes.includes("hover:border-gray-500"), "navigation cards should use the original gray-500 hover border");
+  assert.equal(cardStyle.backgroundImage, "none", "navigation cards should not add gradients");
+  assert.equal(cardStyle.boxShadow, "none", "navigation cards should not add shadows");
   const brandImages = await page.getByRole("img", { name: "WorshipSync" }).locator("img").evaluateAll((images) =>
     images.map((image) => ({
       loaded: image.complete && image.naturalWidth > 0,
@@ -120,6 +158,24 @@ try {
   if (screenshotDirectory) {
     await page.screenshot({ path: join(screenshotDirectory, "desktop-1440x900.png"), animations: "disabled" });
   }
+  const resourceHref = await resourceCard.getAttribute("href");
+  await resourceCard.hover();
+  await page.waitForFunction(
+    (original) => {
+      const element = [...document.querySelectorAll("a")].find((anchor) => anchor.getAttribute("href") === original.href);
+      if (!element) return false;
+      const style = getComputedStyle(element);
+      return style.backgroundColor !== original.backgroundColor && style.borderTopColor !== original.borderColor;
+    },
+    { href: resourceHref, backgroundColor: cardStyle.backgroundColor, borderColor: cardStyle.borderColor },
+  );
+  const cardHoverStyle = await resourceCard.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { hovered: element.matches(":hover"), backgroundColor: style.backgroundColor, borderColor: style.borderTopColor };
+  });
+  assert.equal(cardHoverStyle.hovered, true, "the browser should apply the actual navigation card hover state");
+  assert.notEqual(cardHoverStyle.backgroundColor, cardStyle.backgroundColor, "hover should apply the gray-800 background treatment");
+  assert.notEqual(cardHoverStyle.borderColor, cardStyle.borderColor, "hover should apply the gray-500 border treatment");
   const desktopCard = await page.getByRole("link", { name: "Resources", exact: true }).boundingBox();
   assert.ok(desktopCard && desktopCard.height >= 96 && desktopCard.height <= 112, "desktop navigation cards should be approximately 96–112px tall");
   const desktopIconWidth = await page.getByRole("link", { name: "Resources", exact: true }).locator("[data-testid=home-navigation-icon] svg").evaluate((element) => element.getBoundingClientRect().width);

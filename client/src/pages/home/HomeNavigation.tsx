@@ -11,7 +11,7 @@ export const HOME_NAVIGATION_GRID_CLASS =
   "grid auto-rows-fr grid-cols-2 gap-3 md:grid-cols-3 md:gap-4 lg:grid-cols-4";
 
 export const HOME_TILE_CLASS =
-  "home-launcher-tile flex h-full min-h-[88px] max-md:min-h-[88px] min-w-0 w-full items-center rounded-2xl border px-3.5 py-3 text-left text-slate-50 transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 active:translate-y-px md:min-h-[96px] lg:min-h-[100px] sm:px-4";
+  "flex h-full min-h-[88px] max-md:min-h-[88px] min-w-0 w-full items-center rounded-2xl border border-gray-600 bg-gray-900 px-3.5 py-3 text-left text-white transition-colors duration-150 hover:border-gray-500 hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 active:translate-y-px md:min-h-[96px] lg:min-h-[100px] sm:px-4";
 
 type HomeNavigationLinkProps = {
   title: string;
@@ -66,7 +66,7 @@ export const HomeNavigationLink = ({
         aria-hidden
         data-testid="home-navigation-icon"
         className={cn(
-          "home-launcher-icon-surface flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border sm:h-14 sm:w-14",
+          "flex h-12 w-12 shrink-0 items-center justify-center rounded-xl sm:h-14 sm:w-14",
           iconColorClass,
         )}
       >
@@ -80,7 +80,7 @@ export const HomeNavigationLink = ({
 
   if (pending) {
     return (
-      <div className={cn(HOME_TILE_CLASS, "home-launcher-tile-pending pointer-events-none")} aria-disabled="true">
+      <div className={cn(HOME_TILE_CLASS, "pointer-events-none border-gray-700 bg-gray-900")} aria-disabled="true">
         {content}
       </div>
     );
@@ -121,7 +121,7 @@ export const HomeNavigationSection = ({
 }: HomeNavigationSectionProps) => (
   <section
     className={cn(
-      "home-launcher-section w-full space-y-4 rounded-2xl border p-4 sm:p-5",
+      "w-full space-y-4 rounded-2xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5",
       className,
     )}
     aria-label={title}
@@ -184,7 +184,7 @@ export const HomeOutputLinkCard = ({
       className={cn(
         HOME_TILE_CLASS,
         "relative gap-2",
-        pending && "home-launcher-tile-pending pointer-events-none",
+        pending && "pointer-events-none border-gray-700 bg-gray-900",
       )}
       aria-disabled={disabled || undefined}
     >
@@ -199,7 +199,7 @@ export const HomeOutputLinkCard = ({
         <span
           aria-hidden
           className={cn(
-            "home-launcher-icon-surface flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border sm:h-14 sm:w-14",
+            "flex h-12 w-12 shrink-0 items-center justify-center rounded-xl sm:h-14 sm:w-14",
             iconColorClass,
           )}
         >

@@ -56,7 +56,6 @@ import {
   type DisplayOutput,
 } from "../utils/displayOutputs";
 import { readHomeNavigationMetadata, writeHomeNavigationMetadata } from "./home/homeNavigationCache";
-import "./home/HomePage.css";
 import {
   HOME_NAVIGATION_GRID_CLASS,
   HOME_TILE_CLASS,
@@ -217,7 +216,7 @@ const HomeLockedFeatureCard = ({
     <span className="flex min-w-0 flex-1 items-center gap-3">
       <span
         aria-hidden
-        className={`home-launcher-icon-surface flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border sm:h-14 sm:w-14 ${iconColorClass}`}
+        className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl sm:h-14 sm:w-14 ${iconColorClass}`}
       >
         <Icon svg={icon} size="xl" className={iconColorClass} svgClassName={iconColorClass} />
       </span>
@@ -397,8 +396,8 @@ const Welcome = () => {
   const closeLockedFeaturePrompt = () => setLockedFeaturePrompt(null);
 
   return (
-    <main className="home-launcher-canvas flex h-dvh flex-col overflow-y-auto text-white">
-      <header data-testid="home-toolbar" className="relative w-full shrink-0 border-b border-white/10 bg-white/[0.035] backdrop-blur-md">
+    <main className="flex h-dvh flex-col overflow-y-auto bg-homepage-canvas text-white">
+      <header data-testid="home-toolbar" className="relative w-full shrink-0 border-b border-gray-700">
         <div className="relative mx-auto flex w-full items-center justify-between gap-4 px-4 py-3 text-lg sm:px-6 lg:px-8">
           <div className="flex shrink-0 items-center gap-2">
             <HomeToolbarMenu extraMenuItems={installMenuItems} />
@@ -512,11 +511,11 @@ const Welcome = () => {
                         key={`controller-loading-${index}`}
                         role={index === 0 ? "status" : undefined}
                         aria-label={index === 0 ? "Loading controller settings" : undefined}
-                        className={`${HOME_TILE_CLASS} home-launcher-tile-pending animate-pulse gap-3`}
+                        className={`${HOME_TILE_CLASS} animate-pulse gap-3`}
                       >
                         {index === 0 ? <span className="sr-only">Loading controller settings</span> : null}
-                        <span aria-hidden className="h-12 w-12 shrink-0 rounded-xl bg-white/10 sm:h-14 sm:w-14" />
-                        <span aria-hidden className="h-4 w-2/3 rounded bg-white/10" />
+                        <span aria-hidden className="h-12 w-12 shrink-0 rounded-xl bg-gray-700 sm:h-14 sm:w-14" />
+                        <span aria-hidden className="h-4 w-2/3 rounded bg-gray-700" />
                       </div>
                     ))}
               {visibleSecondaryControllers.map((link) => (
@@ -541,8 +540,8 @@ const Welcome = () => {
         ) : null}
 
         {isLoggedIn && access === "full" ? (
-          <details data-testid="display-outputs-details" className="home-launcher-section home-launcher-section-secondary group w-full rounded-2xl border p-4 sm:p-5 lg:p-6">
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-xl px-2 py-2 text-lg font-semibold tracking-[-0.015em] text-slate-100 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 sm:text-xl">
+          <details data-testid="display-outputs-details" className="group w-full rounded-2xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5 lg:p-6">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-xl px-2 py-2 text-lg font-semibold tracking-[-0.015em] text-white hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 sm:text-xl">
               <span className="flex items-center gap-3">
                 <ScreenShare aria-hidden className="h-6 w-6 text-violet-300" />
                 Display outputs
@@ -552,12 +551,12 @@ const Welcome = () => {
                 <ChevronDown aria-hidden className="h-4 w-4 transition-transform group-open:rotate-180" />
               </span>
             </summary>
-            <div className="mt-3 space-y-4" aria-busy={displayMetadataPending}>
+            <div className="mt-3 space-y-4 border-t border-gray-700 pt-4" aria-busy={displayMetadataPending}>
               {displayMetadataPending && !visibleOutputs.length ? (
                 <p className="text-xs text-gray-400" role="status">Loading this church&apos;s displays...</p>
               ) : null}
               <HomeOutputGroup heading="Fullscreen in the browser" links={fullscreenDisplayLinks} pending={displayMetadataPending} />
-              <div className="border-t border-white/10 pt-3">
+              <div className="border-t border-gray-700 pt-3">
                 <HomeOutputGroup heading="Browser sources (streaming)" links={browserSourceLinks} pending={displayMetadataPending} />
               </div>
             </div>
@@ -568,12 +567,12 @@ const Welcome = () => {
           </HomeNavigationSection>
         ) : null}
 
-        <footer className="mt-1 flex w-full flex-wrap items-center justify-center gap-x-4 gap-y-2 border-t border-white/10 pt-4 text-sm text-gray-400">
-          <Button component="link" to="/support" variant="none" className="h-auto cursor-pointer p-0 font-normal text-gray-400 underline underline-offset-2 hover:text-white">Support</Button>
+        <footer className="mt-1 flex w-full flex-wrap items-center justify-center gap-x-4 gap-y-2 border-t border-gray-700 pt-4 text-sm text-gray-300">
+          <Button component="link" to="/support" variant="none" className="h-auto cursor-pointer p-0 font-normal text-gray-300 underline underline-offset-2 hover:text-white">Support</Button>
           <span aria-hidden className="text-gray-700">{"\u00b7"}</span>
-          <Button component="link" to="/privacy" variant="none" className="h-auto cursor-pointer p-0 font-normal text-gray-400 underline underline-offset-2 hover:text-white">Privacy Policy</Button>
+          <Button component="link" to="/privacy" variant="none" className="h-auto cursor-pointer p-0 font-normal text-gray-300 underline underline-offset-2 hover:text-white">Privacy Policy</Button>
           <span aria-hidden className="text-gray-700">{"\u00b7"}</span>
-          <Button component="link" to="/terms" variant="none" className="h-auto cursor-pointer p-0 font-normal text-gray-400 underline underline-offset-2 hover:text-white">Terms of Service</Button>
+          <Button component="link" to="/terms" variant="none" className="h-auto cursor-pointer p-0 font-normal text-gray-300 underline underline-offset-2 hover:text-white">Terms of Service</Button>
         </footer>
       </div>
 
