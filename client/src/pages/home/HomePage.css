@@ -1,0 +1,16 @@
+.home-launcher-canvas {
+  background-color: #0b1422;
+  background-image:
+    radial-gradient(
+      ellipse 86% 52% at 50% -14%,
+      rgb(48 87 139 / 0.34) 0%,
+      rgb(26 49 79 / 0.16) 48%,
+      transparent 76%
+    ),
+    radial-gradient(
+      ellipse 54% 42% at 100% 38%,
+      rgb(31 65 105 / 0.14) 0%,
+      transparent 78%
+    ),
+    linear-gradient(180deg, #101b2d 0%, #0b1422 58%, #09111d 100%);
+}

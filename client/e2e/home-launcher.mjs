@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { build, preview } from "vite";
@@ -11,6 +11,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE_PATH || "playwright")
 const root = process.cwd();
 const buildDirectory = await mkdtemp(join(tmpdir(), "worshipsync-home-launcher-"));
 const outputDirectory = join(buildDirectory, "dist");
+const screenshotDirectory = process.env.WORSHIPSYNC_HOME_SCREENSHOT_DIR;
 const virtualModules = new Map([
   ["\0home-launcher-menu", `import React from "react"; export default function HomeToolbarMenu(){return React.createElement("button", {"aria-label":"Open menu"}, "Menu");}`],
   ["\0home-launcher-user", `import React from "react"; export default function UserSection(){return React.createElement("div", null, "Account");}`],
@@ -78,11 +79,17 @@ try {
   assert.equal(mobileScrollWidth, 390, "mobile launcher should not overflow horizontally");
   assert.ok(mobileToolbarHeight <= 48, "mobile Home toolbar should stay within its current compact height");
   assert.ok(mobileCard && mobileCard.height >= 84, "mobile navigation cards should keep a comfortable touch height");
-  assert.equal(await page.getByText("WorshipSync", { exact: true }).isVisible(), false, "wordmark should stay out of the narrow mobile header");
+  assert.equal(await page.getByRole("img", { name: "WorshipSync" }).count(), 0, "desktop brand lockup should stay out of the narrow mobile header");
   assert.equal(await page.getByRole("group", { name: "Church administration navigation" }).getByRole("link").count(), 3);
   assert.equal(await page.getByRole("link", { name: "Text Master" }).count(), 1);
   assert.equal(await page.getByRole("link", { name: "Lobby Screens" }).count(), 1);
   assert.equal(await page.getByRole("link", { name: "Text Master" }).locator("[data-testid=home-navigation-icon]").getAttribute("class").then((value) => value?.includes("text-orange-300")), true);
+  assert.equal(await page.getByRole("link", { name: "Overlays" }).locator("[data-testid=home-navigation-icon]").getAttribute("class").then((value) => value?.includes("text-purple-300")), true);
+  assert.equal(await page.getByRole("link", { name: "Lobby Screens" }).locator("[data-testid=home-navigation-icon]").getAttribute("class").then((value) => value?.includes("text-cyan-300")), true);
+  if (screenshotDirectory) {
+    await mkdir(screenshotDirectory, { recursive: true });
+    await page.screenshot({ path: join(screenshotDirectory, "mobile-390x844.png"), animations: "disabled" });
+  }
 
   await page.setViewportSize({ width: 900, height: 900 });
   assert.equal(await getColumnCount("Church administration navigation"), 3, "tablet launcher should use three columns");
@@ -90,11 +97,18 @@ try {
   assert.equal(await getColumnCount("Church administration navigation"), 4, "desktop launcher should use four columns");
   assert.equal(await page.getByTestId("home-toolbar").evaluate((element) => element.getBoundingClientRect().width), 1440, "desktop toolbar should use the full viewport width");
   assert.equal(await page.getByTestId("home-content").evaluate((element) => element.getBoundingClientRect().width), 1152, "desktop navigation content should use a centered max-w-6xl width");
-  assert.equal(await page.getByText("WorshipSync", { exact: true }).isVisible(), true, "desktop header should show the centered wordmark");
+  assert.equal(await page.getByRole("img", { name: "WorshipSync" }).isVisible(), true, "desktop header should show the branded lockup");
+  if (screenshotDirectory) {
+    await page.screenshot({ path: join(screenshotDirectory, "desktop-1440x900.png"), animations: "disabled" });
+  }
   const desktopCard = await page.getByRole("link", { name: "Resources", exact: true }).boundingBox();
-  assert.ok(desktopCard && desktopCard.height >= 88 && desktopCard.height <= 100, "desktop navigation cards should be approximately 88–100px tall");
+  assert.ok(desktopCard && desktopCard.height >= 96 && desktopCard.height <= 112, "desktop navigation cards should be approximately 96–112px tall");
+  const desktopIconWidth = await page.getByRole("link", { name: "Resources", exact: true }).locator("[data-testid=home-navigation-icon] svg").evaluate((element) => element.getBoundingClientRect().width);
+  assert.ok(desktopIconWidth >= 32 && desktopIconWidth <= 36, "desktop navigation icons should be approximately 32–36px");
   const adminSectionRadius = await page.getByRole("region", { name: "Church administration" }).evaluate((element) => getComputedStyle(element).borderTopLeftRadius);
   assert.ok(parseFloat(adminSectionRadius) >= 12, "major navigation sections should have rounded containers");
+  const adminHeadingSize = await page.getByRole("heading", { name: "Church administration" }).evaluate((element) => parseFloat(getComputedStyle(element).fontSize));
+  assert.ok(adminHeadingSize >= 20 && adminHeadingSize <= 22, "desktop section headings should stay around 20–22px");
   const controllerCards = page.getByRole("group", { name: "Controllers navigation" }).getByRole("link");
   assert.equal(await controllerCards.count(), 5, "all three configured controllers and both controller tools should stay together");
   const controllerRows = await controllerCards.evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().top));

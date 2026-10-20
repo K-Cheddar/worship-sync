@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import Button from "../components/Button/Button";
 import Icon from "../components/Icon/Icon";
+import WorshipSyncIcon from "../assets/WorshipSyncIconNoBg.png";
 import Modal from "../components/Modal/Modal";
 import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
 import HomeToolbarMenu from "../components/HomeToolbarMenu/HomeToolbarMenu";
@@ -54,6 +55,7 @@ import {
   type DisplayOutput,
 } from "../utils/displayOutputs";
 import { readHomeNavigationMetadata, writeHomeNavigationMetadata } from "./home/homeNavigationCache";
+import "./home/HomePage.css";
 import {
   HOME_NAVIGATION_GRID_CLASS,
   HOME_TILE_CLASS,
@@ -212,10 +214,13 @@ const HomeLockedFeatureCard = ({
     aria-label={`${title}. Sign in required.`}
   >
     <span className="flex min-w-0 flex-1 items-center gap-3">
-      <span aria-hidden className={`shrink-0 ${iconColorClass}`}>
-        <Icon svg={icon} size="lg" className={iconColorClass} svgClassName={iconColorClass} />
+      <span
+        aria-hidden
+        className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/[0.08] bg-slate-950/25 shadow-inner sm:h-14 sm:w-14 ${iconColorClass}`}
+      >
+        <Icon svg={icon} size="xl" className={iconColorClass} svgClassName={iconColorClass} />
       </span>
-      <span className="min-w-0 break-words text-base font-semibold leading-snug">{title}</span>
+      <span className="min-w-0 break-words text-[15px] font-semibold leading-snug tracking-[-0.01em] sm:text-[17px]">{title}</span>
     </span>
     <span className="shrink-0 rounded border border-gray-600 px-1.5 py-0.5 text-[10px] font-medium text-gray-300 sm:text-xs">
       Sign in
@@ -391,8 +396,8 @@ const Welcome = () => {
   const closeLockedFeaturePrompt = () => setLockedFeaturePrompt(null);
 
   return (
-    <main className="flex h-dvh flex-col overflow-y-auto bg-homepage-canvas text-white">
-      <header data-testid="home-toolbar" className="relative w-full shrink-0 border-b border-gray-700/80 bg-gray-950/15">
+    <main className="home-launcher-canvas flex h-dvh flex-col overflow-y-auto text-white">
+      <header data-testid="home-toolbar" className="relative w-full shrink-0 border-b border-white/[0.08] bg-slate-950/20 backdrop-blur-md">
         <div className="relative mx-auto flex w-full items-center justify-between gap-4 px-4 py-3 text-lg sm:px-6 lg:px-8">
           <div className="flex shrink-0 items-center gap-2">
             <HomeToolbarMenu extraMenuItems={installMenuItems} />
@@ -405,13 +410,20 @@ const Welcome = () => {
             ) : null}
             <UserSection />
           </div>
-          <span aria-hidden className="pointer-events-none absolute left-1/2 hidden -translate-x-1/2 select-none items-center text-sm font-semibold tracking-wide text-gray-200 lg:flex">
-            <span className="mr-1 text-orange-300">Worship</span>Sync
+          <span
+            role="img"
+            aria-label="WorshipSync"
+            className="pointer-events-none absolute left-1/2 hidden -translate-x-1/2 select-none items-center gap-2 lg:flex"
+          >
+            <img src={WorshipSyncIcon} alt="" className="h-6 w-6 object-contain" />
+            <span aria-hidden className="text-base font-semibold tracking-wide text-white">
+              Worship<span className="text-orange-400">Sync</span>
+            </span>
           </span>
         </div>
       </header>
 
-      <div data-testid="home-content" className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 pb-8 pt-5">
+      <div data-testid="home-content" className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 pb-8 pt-5 sm:px-5 lg:pt-6">
         {isGuest ? (
           <section
             className="w-full rounded-lg border border-orange-400/25 bg-orange-500/5 px-3 py-2.5"
@@ -495,11 +507,11 @@ const Welcome = () => {
                         key={`controller-loading-${index}`}
                         role={index === 0 ? "status" : undefined}
                         aria-label={index === 0 ? "Loading controller settings" : undefined}
-                        className={`${HOME_TILE_CLASS} animate-pulse border-gray-800 bg-gray-900/70`}
+                        className={`${HOME_TILE_CLASS} animate-pulse gap-3 border-slate-500/15 bg-slate-900/60`}
                       >
                         {index === 0 ? <span className="sr-only">Loading controller settings</span> : null}
-                        <span aria-hidden className="h-6 w-6 shrink-0 rounded bg-gray-700" />
-                        <span aria-hidden className="h-4 w-2/3 rounded bg-gray-700" />
+                        <span aria-hidden className="h-12 w-12 shrink-0 rounded-xl bg-slate-700/70 sm:h-14 sm:w-14" />
+                        <span aria-hidden className="h-4 w-2/3 rounded bg-slate-700/70" />
                       </div>
                     ))}
               {visibleSecondaryControllers.map((link) => (
@@ -524,10 +536,10 @@ const Welcome = () => {
         ) : null}
 
         {isLoggedIn && access === "full" ? (
-          <details data-testid="display-outputs-details" className="group w-full rounded-xl border border-gray-700/60 bg-gray-900/25 p-4 sm:p-5">
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-lg px-1 py-1.5 text-base font-semibold tracking-wide text-gray-200 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 sm:text-lg">
-              <span className="flex items-center gap-2">
-                <ScreenShare aria-hidden className="h-5 w-5 text-violet-300" />
+          <details data-testid="display-outputs-details" className="group w-full rounded-2xl border border-slate-400/15 bg-slate-900/35 p-4 shadow-[0_10px_26px_rgba(0,0,0,0.16)] sm:p-5 lg:p-6">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-xl px-2 py-2 text-lg font-semibold tracking-[-0.015em] text-slate-100 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 sm:text-xl">
+              <span className="flex items-center gap-3">
+                <ScreenShare aria-hidden className="h-6 w-6 text-violet-300" />
                 Display outputs
               </span>
               <span className="flex items-center gap-1 text-xs font-normal text-gray-400">
