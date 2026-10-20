@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import AvailabilityFormSendFlow from "./AvailabilityFormSendFlow";
 import { dispatchAvailabilityNotificationBatch, prepareAvailabilityNotificationBatch } from "../../../api/auth";
 import type { NotificationBatch, NotificationIntent, TeamIntakeForm, TeamRosterMember } from "../../../api/authTypes";
+import { CurrentMemberIdentityProvider } from "./CurrentUserMemberIndicator";
 
 jest.mock("../../../api/auth", () => ({
   dispatchAvailabilityNotificationBatch: jest.fn(),
@@ -93,6 +94,30 @@ it("opens one detailed confirmation after preparation and sends only after the f
   await waitFor(() => expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledWith("church-1", "batch-1", "approval-v1"));
   expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledTimes(1);
   expect(await screen.findByRole("status")).toHaveTextContent("Your messages were sent. Delivery updates may take a moment.");
+});
+
+it("marks the linked member in the recipient picker without changing the roster name", () => {
+  render(
+    <CurrentMemberIdentityProvider memberId={member.memberId}>
+      <AvailabilityFormSendFlow
+        {...emptyHistoryProps}
+        churchId="church-1"
+        form={form}
+        members={[member, secondMember]}
+        positions={[]}
+        teams={[]}
+        recipients={[]}
+        eligibilityByMemberId={{
+          [member.memberId]: { status: "enabled", eligible: true },
+          [secondMember.memberId]: { status: "enabled", eligible: true },
+        }}
+        onClose={jest.fn()}
+      />
+    </CurrentMemberIdentityProvider>,
+  );
+
+  expect(screen.getByRole("checkbox", { name: /Rae Kim.*You/ })).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "Sam Lee" })).toBeInTheDocument();
 });
 
 it("sends the reviewed batch only once after rapid confirmation clicks", async () => {

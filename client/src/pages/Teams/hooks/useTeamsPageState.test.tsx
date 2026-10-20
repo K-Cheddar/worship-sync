@@ -163,6 +163,89 @@ describe("useTeamsPageState bootstrap recovery", () => {
     unmount();
   });
 
+  it("reconciles linked, unlinked, and relinked self identity from the bootstrap", async () => {
+    mockGetTeamsBootstrap
+      .mockResolvedValueOnce({ ...emptyBootstrap, selfMemberId: "member-self" } as never)
+      .mockResolvedValueOnce({ ...emptyBootstrap, selfMemberId: null } as never)
+      .mockResolvedValueOnce({ ...emptyBootstrap, selfMemberId: "member-self-again" } as never);
+    const { result, unmount } = renderPageState();
+    await flushMicrotasks();
+    expect(result.current.selfMemberId).toBe("member-self");
+
+    await act(async () => result.current.reconcileTeamsProjection());
+    expect(result.current.selfMemberId).toBeNull();
+
+    await act(async () => result.current.reconcileTeamsProjection());
+    expect(result.current.selfMemberId).toBe("member-self-again");
+    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(3);
+    unmount();
+  });
+
+  it("fetches a post-link identity after an older bootstrap already started", async () => {
+    const olderBootstrap = deferred<typeof emptyBootstrap & { selfMemberId: string | null }>();
+    mockGetTeamsBootstrap
+      .mockReturnValueOnce(olderBootstrap.promise as never)
+      .mockResolvedValueOnce({ ...emptyBootstrap, selfMemberId: "member-self" } as never);
+    const { result, unmount } = renderPageState(undefined, undefined, {
+      sessionKind: "human",
+      userId: "user-1",
+    });
+    await waitFor(() => expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1));
+
+    let reconciliation: Promise<void> = Promise.resolve();
+    act(() => {
+      reconciliation = result.current.reconcileTeamsProjection();
+    });
+    await act(async () => {
+      olderBootstrap.resolve({ ...emptyBootstrap, selfMemberId: null });
+      await reconciliation;
+    });
+
+    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(2);
+    expect(result.current.selfMemberId).toBe("member-self");
+    unmount();
+  });
+
+  it("clears self identity immediately on church or account changes and ignores a stale bootstrap", async () => {
+    const oldChurchBootstrap = deferred<typeof emptyBootstrap & { selfMemberId: string }>();
+    mockGetTeamsBootstrap
+      .mockImplementationOnce(() => oldChurchBootstrap.promise as never)
+      .mockResolvedValueOnce({ ...emptyBootstrap, selfMemberId: "church-2-member" } as never)
+      .mockResolvedValue({ ...emptyBootstrap, selfMemberId: null } as never);
+    const contextOverrides: Record<string, unknown> = {
+      sessionKind: "human",
+      userId: "user-1",
+    };
+    const { result, rerender, unmount } = renderPageState(undefined, undefined, contextOverrides);
+    expect(result.current.selfMemberId).toBeNull();
+
+    churchId = "church-2";
+    act(() => rerender());
+    expect(result.current.selfMemberId).toBeNull();
+    await act(async () => oldChurchBootstrap.resolve({
+      ...emptyBootstrap,
+      selfMemberId: "stale-church-1-member",
+    }));
+    await waitFor(() => expect(result.current.selfMemberId).toBe("church-2-member"));
+    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(2);
+
+    const oldAccountBootstrap = deferred<typeof emptyBootstrap & { selfMemberId: string }>();
+    mockGetTeamsBootstrap.mockImplementationOnce(() => oldAccountBootstrap.promise as never);
+    contextOverrides.userId = "user-2";
+    act(() => rerender());
+    expect(result.current.selfMemberId).toBeNull();
+    contextOverrides.sessionKind = null;
+    contextOverrides.userId = "";
+    act(() => rerender());
+    expect(result.current.selfMemberId).toBeNull();
+    await act(async () => oldAccountBootstrap.resolve({
+      ...emptyBootstrap,
+      selfMemberId: "stale-user-2-member",
+    }));
+    expect(result.current.selfMemberId).toBeNull();
+    unmount();
+  });
+
   it("reconciles a removed sole-Team member and clears editability through the authoritative bootstrap", async () => {
     const kevin = {
       memberId: "kevin", churchId: "church-1", firstName: "Kevin", lastName: "Singer",

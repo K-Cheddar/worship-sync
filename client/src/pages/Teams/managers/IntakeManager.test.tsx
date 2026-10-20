@@ -8,6 +8,7 @@ import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { ToastProvider } from "../../../context/toastContext";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { TeamsNavigationGuardProvider } from "../TeamsNavigationGuardContext";
+import { CurrentMemberIdentityProvider } from "../components/CurrentUserMemberIndicator";
 import type {
   NotificationIntent,
   TeamIntakeForm,
@@ -104,6 +105,7 @@ const renderManager = ({
   members = [member],
   serviceTimeZone = "UTC",
   smsEligibilityByMemberId,
+  selfMemberId = null,
 }: {
   eligibilityStatus?: "no_mobile" | "consent_needed" | "enabled" | "opted_out";
   forms?: TeamIntakeForm[];
@@ -117,6 +119,7 @@ const renderManager = ({
   teams?: TeamRecord[];
   members?: TeamRosterMember[];
   serviceTimeZone?: string;
+  selfMemberId?: string | null;
   smsEligibilityByMemberId?: Record<string, { eligible: boolean; status?: "no_mobile" | "consent_needed" | "enabled" | "opted_out" }>;
 } = {}) => {
   mockServiceTimeZone = serviceTimeZone;
@@ -130,8 +133,9 @@ const renderManager = ({
         >}
       >
         <ToastProvider>
-          <TeamsNavigationGuardProvider>
-            <IntakeManager
+          <CurrentMemberIdentityProvider memberId={selfMemberId}>
+            <TeamsNavigationGuardProvider>
+              <IntakeManager
               availabilityOnly={availabilityOnly}
               managedTeamIds={managedTeamIds}
               forms={forms}
@@ -156,8 +160,9 @@ const renderManager = ({
                 },
               }}
               smsDeliveryAttempts={[]}
-            />
-          </TeamsNavigationGuardProvider>
+              />
+            </TeamsNavigationGuardProvider>
+          </CurrentMemberIdentityProvider>
         </ToastProvider>
       </GlobalInfoContext.Provider>
     </MemoryRouter>,
@@ -702,6 +707,17 @@ const submittedAvailability: TeamIntakeSubmission = {
   status: "new",
   submittedAt: "2026-10-03T12:00:00.000Z",
 };
+
+test("does not mark an unmatched intake submission by name", async () => {
+  const user = userEvent.setup();
+  renderManager({ submissions: [submittedAvailability], selfMemberId: member.memberId });
+  await openForm(user);
+
+  const submissionCard = screen.getByRole("button", {
+    name: "Expand submission from Rae Kim",
+  });
+  expect(within(submissionCard).queryByText("You")).not.toBeInTheDocument();
+});
 
 test.each([
   {

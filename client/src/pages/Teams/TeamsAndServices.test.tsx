@@ -619,6 +619,27 @@ const openVocalSlot = async (
 };
 
 describe("Teams", () => {
+  it("passes the authoritative bootstrap identity through the real Teams provider to member rows", async () => {
+    const self = {
+      memberId: "member-self",
+      churchId: "church-1",
+      firstName: "Rae",
+      lastName: "Kim",
+      positionIds: [],
+      blockoutDates: [],
+    };
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...baseBootstrap,
+      selfMemberId: self.memberId,
+      members: [self],
+    }));
+
+    renderTeams("/teams-and-services/members");
+    expect(await screen.findAllByRole("button", { name: /Create member/i })).not.toHaveLength(0);
+    expect(await screen.findByText("You")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Rae Kim/ })).toBeInTheDocument();
+  });
+
   it("overlays pending local schedule cells on incoming snapshots and keeps unrelated remote cells", () => {
     const incoming: TeamSchedule = {
       ...scheduleBootstrap.schedules[0],

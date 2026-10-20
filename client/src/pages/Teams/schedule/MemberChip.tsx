@@ -7,9 +7,11 @@ import {
   scheduleMemberAssignmentCountLabel,
 } from "../teamsUtils";
 import { WantsThisBadge } from "./WantsThisIndicator";
+import { MemberNameWithIndicator, useCurrentMemberId } from "../components/CurrentUserMemberIndicator";
 
 type MemberChipProps = {
   label: string;
+  memberId?: string;
   avatar?: ReactNode;
   subtitle?: string;
   issue?: string;
@@ -32,6 +34,7 @@ type MemberChipProps = {
 
 const MemberChip = ({
   label,
+  memberId,
   avatar,
   subtitle,
   issue,
@@ -49,6 +52,8 @@ const MemberChip = ({
   onToggleExpand,
   onSelect,
 }: MemberChipProps) => {
+  const selfMemberId = useCurrentMemberId();
+  const selfSuffix = memberId && memberId === selfMemberId ? ", You" : "";
   const assignmentCountLabel = scheduleMemberAssignmentCountLabel(assignmentCount);
   const lastServedLabel = lastServedDate
     ? `Last served ${formatPlainDateLabel(lastServedDate)}`
@@ -79,8 +84,8 @@ const MemberChip = ({
       role="group"
       aria-label={
         disabled && issue
-          ? `${label}, unavailable: ${issue}`
-          : `${label}, ${assignmentCountLabel}`
+          ? `${label}${selfSuffix}, unavailable: ${issue}`
+          : `${label}${selfSuffix}, ${assignmentCountLabel}`
       }
     >
       <div className="px-2 py-1.5">
@@ -97,8 +102,8 @@ const MemberChip = ({
               )}
               aria-label={
                 disabled && issue
-                  ? `${label}, unavailable: ${issue}`
-                  : `Assign ${label}`
+                  ? `${label}${selfSuffix}, unavailable: ${issue}`
+                  : `Assign ${label}${selfSuffix}`
               }
               onClick={() => {
                 if (disabled) return;
@@ -106,12 +111,22 @@ const MemberChip = ({
               }}
             >
               {avatar}
-              <span className="min-w-0 flex-1 truncate">{label}</span>
+              <MemberNameWithIndicator
+                name={label}
+                memberId={memberId}
+                className="flex-1"
+                nameClassName="text-inherit"
+              />
             </button>
           ) : (
             <span className="flex min-w-0 flex-1 items-center gap-2">
               {avatar}
-              <span className="min-w-0 flex-1 truncate">{label}</span>
+              <MemberNameWithIndicator
+                name={label}
+                memberId={memberId}
+                className="flex-1"
+                nameClassName="text-inherit"
+              />
             </span>
           )}
 

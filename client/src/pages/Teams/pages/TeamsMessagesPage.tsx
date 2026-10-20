@@ -12,6 +12,7 @@ import {
 } from "../../../api/auth";
 import type { NotificationBatch, NotificationIntent, NotificationIntentType, SmsDeliveryAttempt } from "../../../api/authTypes";
 import { useTeamsPage } from "../TeamsPageContext";
+import { MemberNameWithIndicator } from "../components/CurrentUserMemberIndicator";
 import AvailabilityBatchReview from "../components/AvailabilityBatchReview";
 import SmsConfirmationModal from "../components/SmsConfirmationModal";
 import { getAvailabilityRecipientRows } from "../availabilityRecipientSelection";
@@ -578,7 +579,7 @@ const TeamsMessagesPage = () => {
             <div className="divide-y divide-gray-800" role="list" aria-label="Volunteer recipients">
               {recipientRows.length ? recipientRows.map(({ member, eligible, reason }) => (
                 <div key={member.memberId} className="flex min-h-12 items-center gap-3 px-3 py-2.5" role="listitem">
-                  <Checkbox label={memberName(member)} checked={selectedMemberIds.includes(member.memberId)} disabled={loading || sending || !historyReady || !eligible} onCheckedChange={(checked) => toggleMember(member.memberId, checked)} className="flex-1" />
+                  <Checkbox label={<MemberNameWithIndicator name={memberName(member)} memberId={member.memberId} className="flex-1" />} checked={selectedMemberIds.includes(member.memberId)} disabled={loading || sending || !historyReady || !eligible} onCheckedChange={(checked) => toggleMember(member.memberId, checked)} className="flex-1" />
                   {!eligible ? <span className="shrink-0 text-xs text-amber-200">{reason || "Choose a form first"}</span> : null}
                 </div>
               )) : <p className="p-4 text-sm text-gray-400">No volunteers match these filters.</p>}
@@ -609,7 +610,16 @@ const TeamsMessagesPage = () => {
           const actionable = ["preview", "ready"].includes(intent.status) && intent.previewEligible !== false;
           return <article key={intent.intentId} className="space-y-2 rounded border border-gray-700 bg-gray-950/50 p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div><h3 className="font-medium text-white">{intentLabel(intent)} · {member ? memberName(member) : "Roster member"}</h3><p className="text-xs text-gray-400">{new Date(intent.createdAt).toLocaleString()} · {statusLabel[intent.status]}{intent.respondedAt ? " · responded" : " · waiting"}</p></div>
+              <div>
+                <h3 className="font-medium text-white">
+                  {intentLabel(intent)} ·{" "}
+                  <MemberNameWithIndicator
+                    name={member ? memberName(member) : "Roster member"}
+                    memberId={member?.memberId}
+                  />
+                </h3>
+                <p className="text-xs text-gray-400">{new Date(intent.createdAt).toLocaleString()} · {statusLabel[intent.status]}{intent.respondedAt ? " · responded" : " · waiting"}</p>
+              </div>
             </div>
             {intent.messagePreview ? <p className="rounded bg-gray-900 px-3 py-2 text-sm text-gray-200">{intent.messagePreview}</p> : null}
             {intent.previewError ? <p className="text-sm text-amber-200">Not ready to send: {intent.previewError}</p> : null}
@@ -623,6 +633,7 @@ const TeamsMessagesPage = () => {
       {individualSmsPreview ? <SmsConfirmationModal
         isOpen
         recipientName={individualSmsPreview.recipientName}
+        recipientMemberId={individualSmsPreview.memberId}
         phoneNumberSnapshot={individualSmsPreview.phoneNumberSnapshot}
         message={individualSmsPreview.message}
         segmentCount={individualSmsPreview.segmentCount}

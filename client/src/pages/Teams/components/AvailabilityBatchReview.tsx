@@ -1,5 +1,6 @@
 import type { NotificationBatch, NotificationBatchRecipient } from "../../../api/authTypes";
 import Button from "../../../components/Button/Button";
+import { MemberNameWithIndicator } from "./CurrentUserMemberIndicator";
 
 type AvailabilityBatchReviewProps = {
   batch: NotificationBatch;
@@ -92,7 +93,11 @@ const AvailabilityBatchReview = ({
     return (
       <li key={recipient.memberId} className="space-y-1 py-3">
         <div className="flex flex-wrap justify-between gap-2 text-sm">
-          <span className="font-medium text-white">{recipient.memberName}</span>
+          <MemberNameWithIndicator
+            name={recipient.memberName}
+            memberId={recipient.memberId}
+            className="font-medium text-white"
+          />
           <span className="text-gray-300">
             {phoneNumber}
             {showStatus ? ` · ${statusLabel}${attemptLabel ? ` · ${attemptLabel}` : ""}` : ""}
@@ -124,7 +129,11 @@ const AvailabilityBatchReview = ({
             <ul className="mt-2 divide-y divide-amber-900">
               {excludedRecipients.map((recipient) => (
                 <li key={recipient.memberId} className="py-2">
-                  <span className="font-medium">{recipient.memberName}</span>
+                  <MemberNameWithIndicator
+                    name={recipient.memberName}
+                    memberId={recipient.memberId}
+                    className="font-medium"
+                  />
                   {recipient.exclusionReason ? <span>: {plainExclusionReason(recipient.exclusionReason)}</span> : null}
                 </li>
               ))}

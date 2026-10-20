@@ -11,6 +11,10 @@ import {
 import { ChevronLeft, ChevronRight, Plus, Search, TriangleAlert, X } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import MemberAvatar from "../../../components/MemberAvatar/MemberAvatar";
+import {
+  MemberNameWithIndicator,
+  useCurrentMemberId,
+} from "../components/CurrentUserMemberIndicator";
 import Input from "../../../components/Input/Input";
 import { cn } from "@/utils/cnHelper";
 import {
@@ -57,6 +61,7 @@ const readPopoverSide = (node: Element | null): PickerPopoverSide | null => {
 export type ScheduleAssignmentSwapRecommendation = {
   swapId: string;
   candidateMemberId: string;
+  currentMemberId?: string;
   candidateLabel: string;
   currentMemberLabel: string;
   sourcePositionLabel: string;
@@ -90,11 +95,17 @@ const assignmentActionLabel: Record<MemberAssignmentAction, string> = {
 
 const OccupiedAssignmentActions = ({
   currentAssigneeLabel,
+  currentAssigneeMemberId,
+  currentAssigneeIsGuest,
+  currentAssigneeIsSelf,
   onSelect,
   onClearAssignment,
   onMoreOptions,
 }: {
   currentAssigneeLabel: string;
+  currentAssigneeMemberId?: string;
+  currentAssigneeIsGuest: boolean;
+  currentAssigneeIsSelf: boolean;
   onSelect: (action: MemberAssignmentAction) => void;
   onClearAssignment?: () => void;
   onMoreOptions: () => void;
@@ -102,13 +113,18 @@ const OccupiedAssignmentActions = ({
   <div className="p-1">
     <div
       className="border-b border-gray-700 px-2 py-1.5"
-      aria-label={`Current assignee, ${currentAssigneeLabel}`}
+      aria-label={`Current assignee, ${currentAssigneeLabel}${currentAssigneeIsSelf ? ", You" : ""}`}
     >
       <p className="text-[10px] font-semibold uppercase tracking-wide text-orange-300/90">
         Current assignee
       </p>
       <p className="mt-0.5 wrap-break-word text-sm font-semibold text-white">
-        {currentAssigneeLabel}
+        <MemberNameWithIndicator
+          name={currentAssigneeLabel}
+          memberId={currentAssigneeIsGuest ? undefined : currentAssigneeMemberId}
+          className="block"
+          nameClassName="wrap-break-word"
+        />
       </p>
     </div>
     <p className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
@@ -250,6 +266,7 @@ const ScheduleAssignmentPicker = memo(({
   pendingSubmenu,
   inputRef: externalInputRef,
 }: ScheduleAssignmentPickerProps) => {
+  const selfMemberId = useCurrentMemberId();
   const listboxId = useId();
   const internalInputRef = useRef<HTMLInputElement>(null);
   const inputRef = externalInputRef || internalInputRef;
@@ -276,6 +293,11 @@ const ScheduleAssignmentPicker = memo(({
   const [editingGuest, setEditingGuest] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const duplicateFirstNameKeys = duplicateFirstNames || emptyDuplicateFirstNames;
+  const currentAssigneeIsSelf = Boolean(
+    !currentAssigneeIsGuest &&
+      currentPrimaryMemberId &&
+      currentPrimaryMemberId === selfMemberId,
+  );
   const currentAssigneePresent =
     hasCurrentAssignee ?? Boolean(currentPrimaryMemberId);
 
@@ -697,7 +719,12 @@ const ScheduleAssignmentPicker = memo(({
               className="h-7 w-7"
             />
             <span className="min-w-0 flex-1">
-              <span className="block truncate font-medium">{memberLabel}</span>
+              <MemberNameWithIndicator
+                name={memberLabel}
+                memberId={row.member.memberId}
+                className="block"
+                nameClassName="font-medium"
+              />
               {row.warning ? (
                 <span className="mt-0.5 block truncate text-xs text-amber-200">
                   {row.warning}
@@ -738,7 +765,11 @@ const ScheduleAssignmentPicker = memo(({
             className="h-7 w-7"
           />
           <span className="min-w-0 flex-1">
-            <span className="block truncate">{memberLabel}</span>
+            <MemberNameWithIndicator
+              name={memberLabel}
+              memberId={row.member.memberId}
+              className="block"
+            />
             {row.warning ? (
               <span className="mt-0.5 block truncate text-xs font-normal text-amber-200">
                 {row.warning}
@@ -882,6 +913,9 @@ const ScheduleAssignmentPicker = memo(({
           {menuView === "occupiedActions" ? (
             <OccupiedAssignmentActions
               currentAssigneeLabel={currentAssigneeLabel}
+              currentAssigneeMemberId={currentPrimaryMemberId}
+              currentAssigneeIsGuest={currentAssigneeIsGuest}
+              currentAssigneeIsSelf={currentAssigneeIsSelf}
               onSelect={openMemberPickerForAction}
               onClearAssignment={onClearAssignment}
               onMoreOptions={openMoreOptions}
@@ -889,6 +923,7 @@ const ScheduleAssignmentPicker = memo(({
           ) : pendingSubmenu && menuView === "assignmentActions" ? (
             <MemberAssignmentSubmenu
               title={pendingSubmenu.title}
+              memberId={pendingSubmenu.memberId}
               issues={pendingSubmenu.issues}
               onBack={pendingSubmenu.onBack}
               onReplace={pendingSubmenu.onReplace}
@@ -901,6 +936,7 @@ const ScheduleAssignmentPicker = memo(({
             assignmentActionIssues ? (
             <MemberAssignmentSubmenu
               title={`Assign ${formatMemberLabel(activeSubmenuMember)}`}
+              memberId={activeSubmenuMember.memberId}
               issues={assignmentActionIssues}
               onBack={resetMenuView}
               onReplace={() => runAssignmentAction(activeSubmenuMemberId, "replace")}
@@ -1114,12 +1150,18 @@ const ScheduleAssignmentPicker = memo(({
                 </p>
                 <ol className="mt-2 list-decimal space-y-1 pl-4 text-xs text-gray-300">
                   <li>
-                    Move {activeSwapRecommendation.currentMemberLabel} from{" "}
+                    Move <MemberNameWithIndicator
+                      name={activeSwapRecommendation.currentMemberLabel}
+                      memberId={activeSwapRecommendation.currentMemberId}
+                    /> from{" "}
                     {activeSwapRecommendation.targetPositionLabel} to{" "}
                     {activeSwapRecommendation.sourcePositionLabel}
                   </li>
                   <li>
-                    Assign {activeSwapRecommendation.candidateLabel} to{" "}
+                    Assign <MemberNameWithIndicator
+                      name={activeSwapRecommendation.candidateLabel}
+                      memberId={activeSwapRecommendation.candidateMemberId}
+                    /> to{" "}
                     {activeSwapRecommendation.targetPositionLabel}
                   </li>
                 </ol>
@@ -1158,14 +1200,19 @@ const ScheduleAssignmentPicker = memo(({
                   {showCurrentAssigneeRow ? (
                     <div
                       className="mb-1 border-b border-gray-600 px-2 py-1.5"
-                      aria-label={`Current assignee, ${currentAssigneeLabel}`}
+                      aria-label={`Current assignee, ${currentAssigneeLabel}${currentAssigneeIsSelf ? ", You" : ""}`}
                     >
                       <p className="text-[10px] font-semibold uppercase tracking-wide text-orange-300/90">
                         Current assignee
                       </p>
                       <div className="mt-0.5 flex items-center gap-1.5">
                         <p className="wrap-break-word text-sm font-semibold text-white">
-                          {currentAssigneeLabel}
+                          <MemberNameWithIndicator
+                            name={currentAssigneeLabel}
+                            memberId={currentAssigneeIsGuest ? undefined : currentPrimaryMemberId}
+                            className="min-w-0"
+                            nameClassName="wrap-break-word"
+                          />
                         </p>
                         {currentAssigneeIsGuest ? (
                           <>
@@ -1219,7 +1266,11 @@ const ScheduleAssignmentPicker = memo(({
                           onRemoveShadow?.(shadow.memberId, shadow.kind);
                         }}
                       >
-                        Remove {shadowKindLabel(shadow.kind).toLowerCase()}: {shadow.label}
+                        Remove {shadowKindLabel(shadow.kind).toLowerCase()}: {" "}
+                        <MemberNameWithIndicator
+                          name={shadow.label}
+                          memberId={shadow.memberId}
+                        />
                       </Button>
                     ))
                     : null}
@@ -1321,7 +1372,11 @@ const ScheduleAssignmentPicker = memo(({
                           <span className="flex w-full min-w-0 items-center gap-1 text-sm font-medium text-gray-100">
                             <span className="shrink-0">Move</span>
                             <span className="min-w-0 truncate">
-                              {recommendation.currentMemberLabel}
+                              <MemberNameWithIndicator
+                                name={recommendation.currentMemberLabel}
+                                memberId={recommendation.currentMemberId}
+                                className="block"
+                              />
                             </span>
                             <span className="shrink-0">to</span>
                             <span className="min-w-0 truncate">
@@ -1331,7 +1386,11 @@ const ScheduleAssignmentPicker = memo(({
                           <span className="flex w-full min-w-0 items-center gap-1 text-xs text-gray-400">
                             <span className="shrink-0">Assign</span>
                             <span className="min-w-0 truncate">
-                              {recommendation.candidateLabel}
+                              <MemberNameWithIndicator
+                                name={recommendation.candidateLabel}
+                                memberId={recommendation.candidateMemberId}
+                                className="block"
+                              />
                             </span>
                             <span className="shrink-0">here</span>
                           </span>

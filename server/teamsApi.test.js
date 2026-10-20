@@ -17331,6 +17331,8 @@ test("team-owned entity mutations authorize source and target teams", async (t) 
     context: membershipReader,
   });
   assert.equal(readerBootstrap.statusCode, 200);
+  assert.equal(readerBootstrap.payload.selfMemberId, readerId);
+  assert.ok(readerBootstrap.payload.members.every((member) => member.userId === undefined));
   assert.deepEqual(readerBootstrap.payload.teams.map((item) => item.teamId), [worship.teamId]);
   assert.ok(readerBootstrap.payload.positions.some((item) => item.positionId === membershipPosition.positionId));
   assert.ok(readerBootstrap.payload.teamRoles.some((item) => item.roleId === membershipRole.roleId));
@@ -17846,6 +17848,7 @@ test("scoped managers can mutate one Team roster without editing shared member r
     memberIds: [...new Set([...(await getDoc(COLLECTIONS.teams, fixture.ids.worship)).memberIds, scopedOnlyId])],
   }, { merge: true });
   const scopedBootstrap = await callHandler(authHandlers.getTeamsBootstrap, { context: manager });
+  assert.equal(scopedBootstrap.payload.selfMemberId, null);
   const scopedMember = scopedBootstrap.payload.members.find(({ memberId }) => memberId === scopedOnlyId);
   assert.equal(scopedMember.email, undefined);
   assert.equal(scopedMember.phoneNumber, undefined);

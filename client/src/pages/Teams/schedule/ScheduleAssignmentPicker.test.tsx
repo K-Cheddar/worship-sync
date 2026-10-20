@@ -11,6 +11,7 @@ import type {
 } from "../../../api/authTypes";
 import type { MemberAssignmentActionIssues } from "./MemberAssignmentSubmenu";
 import ScheduleAssignmentPicker from "./ScheduleAssignmentPicker";
+import { CurrentMemberIdentityProvider } from "../components/CurrentUserMemberIndicator";
 
 jest.mock("../../../api/auth", () => ({ AuthApiError: class extends Error { isReachabilityError = true; }, getTeamsBootstrap: jest.fn(), recordMemberSmsConsent: jest.fn(), searchTeamRosterCandidates: jest.fn().mockResolvedValue({ candidates: [] }) }));
 const searchCandidates = jest.mocked(searchTeamRosterCandidates);
@@ -104,6 +105,7 @@ const renderPicker = ({
   onAssignmentAction,
   onClose = jest.fn(),
   onCreateMember,
+  selfMemberId = null,
 }: {
   currentPrimaryMemberId?: string;
   currentAssigneeLabel?: string;
@@ -120,27 +122,30 @@ const renderPicker = ({
   onAssignmentAction?: jest.Mock;
   onClose?: jest.Mock;
   onCreateMember?: jest.Mock;
+  selfMemberId?: string | null;
 } = {}) => {
-  render(
-    <PickerHarness
-      currentPrimaryMemberId={currentPrimaryMemberId}
-      currentAssigneeLabel={currentAssigneeLabel}
-      currentAssigneeIsGuest={currentAssigneeIsGuest}
-      hasCurrentAssignee={hasCurrentAssignee}
-      recentGuests={recentGuests}
-      editableGuestIds={editableGuestIds}
-      getGuestWarning={getGuestWarning}
-      onAssignGuest={onAssignGuest}
-      onEditGuest={onEditGuest}
-      onRemoveGuest={onRemoveGuest}
-      members={members}
-      getAssignmentActionIssues={getAssignmentActionIssues}
-      onAssignmentAction={onAssignmentAction}
-      onClose={onClose}
-      onCreateMember={onCreateMember}
-    />,
+  const view = render(
+    <CurrentMemberIdentityProvider memberId={selfMemberId}>
+      <PickerHarness
+        currentPrimaryMemberId={currentPrimaryMemberId}
+        currentAssigneeLabel={currentAssigneeLabel}
+        currentAssigneeIsGuest={currentAssigneeIsGuest}
+        hasCurrentAssignee={hasCurrentAssignee}
+        recentGuests={recentGuests}
+        editableGuestIds={editableGuestIds}
+        getGuestWarning={getGuestWarning}
+        onAssignGuest={onAssignGuest}
+        onEditGuest={onEditGuest}
+        onRemoveGuest={onRemoveGuest}
+        members={members}
+        getAssignmentActionIssues={getAssignmentActionIssues}
+        onAssignmentAction={onAssignmentAction}
+        onClose={onClose}
+        onCreateMember={onCreateMember}
+      />
+    </CurrentMemberIdentityProvider>,
   );
-  return { onAssignGuest, onEditGuest, onRemoveGuest, onClose };
+  return { onAssignGuest, onEditGuest, onRemoveGuest, onClose, unmount: view.unmount };
 };
 
 it("closes when the close button is pressed", () => {
@@ -354,6 +359,35 @@ describe("ScheduleAssignmentPicker occupied slots", () => {
     replace: "",
     shadow: "",
     reverseShadow: "",
+  });
+
+  it("marks the exact current assignee and hides the marker for a guest", () => {
+    const { unmount } = renderPicker({
+      currentPrimaryMemberId: "member-self",
+      currentAssigneeLabel: "Rae Kim",
+      hasCurrentAssignee: true,
+      selfMemberId: "member-self",
+    });
+    expect(screen.getByText("You")).toBeInTheDocument();
+
+    unmount();
+    renderPicker({
+      currentPrimaryMemberId: "member-self",
+      currentAssigneeLabel: "Rae Kim",
+      currentAssigneeIsGuest: true,
+      hasCurrentAssignee: true,
+      selfMemberId: "member-self",
+    });
+    expect(screen.queryByText("You")).not.toBeInTheDocument();
+  });
+
+  it("marks the matching member in the assignment picker", () => {
+    renderPicker({
+      members: [{ ...member, memberId: "member-self" }],
+      selfMemberId: "member-self",
+    });
+
+    expect(screen.getByRole("option", { name: /Taylor.*You/ })).toBeInTheDocument();
   });
 
   it("starts with focused actions instead of the full member list", () => {

@@ -8,6 +8,7 @@ import {
   type TeamRosterCandidate,
 } from "../../../api/auth";
 import type { TeamRosterMember } from "../../../api/authTypes";
+import { MemberNameWithIndicator } from "../components/CurrentUserMemberIndicator";
 import {
   formatUsPhoneInput,
   normalizeUsPhoneNumberForComparison,
@@ -355,7 +356,11 @@ const ScheduleQuickMemberForm = ({
                   disabled={pending}
                   onClick={() => void submit(member.memberId)}
                 >
-                  Use {member.firstName} {member.lastName}
+                  Use{" "}
+                  <MemberNameWithIndicator
+                    name={`${member.firstName} ${member.lastName}`.trim()}
+                    memberId={member.memberId}
+                  />
                 </Button>
               ))}
               <label className="flex items-start gap-2 text-xs text-gray-200">

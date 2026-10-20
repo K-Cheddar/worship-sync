@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/Popover";
 import type { ServiceEquipment, ServicePlanMicrophone } from "../../../types/servicePlan";
 import ScheduleFillBadge from "../schedule/ScheduleFillBadge";
+import { MemberNameWithIndicator, useCurrentMemberId } from "../components/CurrentUserMemberIndicator";
 import {
   summarizeNeededPositions,
   type TeamsAssignmentSummaryRow,
@@ -93,30 +94,40 @@ const rowIems = (
  */
 const ServingMemberName = ({
   memberName,
+  memberId,
   slotLabel,
   canNotify,
   heldMicrophones,
   heldIems,
 }: {
   memberName: string;
+  memberId?: string;
   slotLabel: string;
   canNotify: boolean | null;
   heldMicrophones: ServicePlanMicrophone[];
   heldIems: ServiceEquipment[];
-}) => (
+}) => {
+  const selfMemberId = useCurrentMemberId();
+  const selfSuffix = memberId && memberId === selfMemberId ? ", You" : "";
+  return (
   <Popover>
     <PopoverTrigger asChild>
       <Button
         type="button"
         variant="tertiary"
-        title={memberName}
-        aria-label={`Details for ${memberName}`}
+        title={`${memberName}${selfSuffix}`}
+        aria-label={`Details for ${memberName}${selfSuffix}`}
         padding="p-0"
         className="max-w-[55%] min-w-0 shrink-0 justify-start overflow-hidden text-xs font-medium text-gray-100 max-md:min-h-0 h-auto hover:bg-transparent"
       >
         {/* Truncate on an inner span: the Button is flex, so ellipsis on the
             button itself would clip the start when content is end-aligned. */}
-        <span className="block min-w-0 truncate text-left">{memberName}</span>
+        <MemberNameWithIndicator
+          name={memberName}
+          memberId={memberId}
+          className="block min-w-0 text-left"
+          nameClassName="text-xs font-medium text-gray-100"
+        />
       </Button>
     </PopoverTrigger>
     <PopoverContent
@@ -125,7 +136,12 @@ const ServingMemberName = ({
     >
       <div className="space-y-2 text-left">
         <p className="text-xs text-gray-400">{slotLabel}</p>
-        <p className="text-sm font-medium wrap-break-word">{memberName}</p>
+        <MemberNameWithIndicator
+          name={memberName}
+          memberId={memberId}
+          className="max-w-full"
+          nameClassName="whitespace-normal break-words text-sm font-medium"
+        />
         {/* Kept in the details popover rather than on the dense row: it is
             context for one person, not a state the operator scans for. */}
         {canNotify === false ? (
@@ -153,7 +169,8 @@ const ServingMemberName = ({
       </div>
     </PopoverContent>
   </Popover>
-);
+  );
+};
 
 /**
  * Read-only roster summary for the selected plan date: which team, which
@@ -340,6 +357,7 @@ const WhosServingPanel = ({
                               </span>
                               <ServingMemberName
                                 memberName={memberName}
+                                memberId={row.memberIsGuest ? undefined : row.memberId}
                                 slotLabel={row.slotLabel}
                                 canNotify={row.canNotify}
                                 heldMicrophones={heldMicrophones}

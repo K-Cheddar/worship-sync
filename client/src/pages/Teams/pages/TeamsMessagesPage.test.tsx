@@ -12,6 +12,7 @@ import {
   sendNotificationIntent,
 } from "../../../api/auth";
 import type { NotificationBatch } from "../../../api/authTypes";
+import { CurrentMemberIdentityProvider } from "../components/CurrentUserMemberIndicator";
 
 jest.mock("../TeamsPageContext", () => ({ useTeamsPage: jest.fn() }));
 jest.mock("../../../api/auth", () => ({
@@ -120,6 +121,32 @@ test("recent message SMS review shows the fresh server snapshot and Cancel does 
 
   expect(screen.queryByRole("dialog", { name: "Send this text message?" })).not.toBeInTheDocument();
   expect(mockSendIntent).not.toHaveBeenCalled();
+});
+
+test("marks the linked recipient and message-history member without changing message text", async () => {
+  const user = userEvent.setup();
+  mockGetIntents.mockResolvedValue({
+    success: true,
+    intents: [{
+      ...recentIntent,
+      messagePreview: "Church: please respond at https://example.test/a/private-token. Reply STOP to opt out.",
+    }],
+    nextCursor: "",
+    limit: 100,
+  });
+  render(
+    <CurrentMemberIdentityProvider memberId="member_1">
+      <TeamsMessagesPage />
+    </CurrentMemberIdentityProvider>,
+  );
+
+  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
+  await user.click(screen.getByRole("option", { name: /October availability/ }));
+  expect(await screen.findByRole("checkbox", { name: /Rae Rivera.*You/ })).toBeInTheDocument();
+  expect(await screen.findAllByText("You")).toHaveLength(2);
+  expect(screen.getByText("Church: please respond at https://example.test/a/private-token. Reply STOP to opt out.")).toBeInTheDocument();
+  await user.click(screen.getByRole("checkbox", { name: /Rae Rivera.*You/ }));
+  expect(screen.getByRole("button", { name: "Review and send 1 message" })).toBeEnabled();
 });
 
 test("recent message send uses the fresh preview approval version and refreshes history", async () => {

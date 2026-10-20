@@ -238,6 +238,7 @@ import {
 import { buildAutoFillPlan, type AutoFillEntry } from "./scheduleAutoFill";
 import ScheduleMembersPanel from "./ScheduleMembersPanel";
 import ScheduleMessagesPanel from "./ScheduleMessagesPanel";
+import { MemberNameWithIndicator } from "../components/CurrentUserMemberIndicator";
 import ScheduleInitialSmsSendFlow from "./ScheduleInitialSmsSendFlow";
 import {
   ScheduleAssignmentProvider,
@@ -5301,6 +5302,11 @@ const ScheduleTab = ({
       duplicateScheduleFirstNames,
     )
     : "This person";
+  const pendingMoveMember = pendingMoveAssignment?.memberId
+    ? scheduleDisplayMembers.find(
+      (item) => item.memberId === pendingMoveAssignment.memberId,
+    )
+    : undefined;
   const pendingAvailabilityMember = pendingAvailabilityConfirmation
     ? data.members.find(
       (item) => item.memberId === pendingAvailabilityConfirmation.memberId,
@@ -7449,6 +7455,7 @@ const ScheduleTab = ({
               {scheduleSmsPreview ? <SmsConfirmationModal
                 isOpen
                 recipientName={scheduleSmsPreview.recipientName}
+                recipientMemberId={scheduleSmsPreview.intent.memberId}
                 phoneNumberSnapshot={scheduleSmsPreview.phoneNumberSnapshot}
                 message={scheduleSmsPreview.message}
                 segmentCount={scheduleSmsPreview.segmentCount}
@@ -7614,7 +7621,10 @@ const ScheduleTab = ({
         {pendingMoveAssignment ? (
           <div className="space-y-4">
             <p className="text-sm text-gray-200">
-              Move {describeMemberName(pendingMoveAssignment.memberId)} from{" "}
+              Move <MemberNameWithIndicator
+                name={describeMemberName(pendingMoveAssignment.memberId)}
+                memberId={pendingMoveMember?.scheduleGuest ? undefined : pendingMoveMember?.memberId}
+              /> from{" "}
               {positionNameById.get(pendingMoveAssignment.sourcePositionSlotKey?.split("::")[0] || "") || "their current position"}{" "}
               to {positionNameById.get(pendingMoveAssignment.basePositionId) || "this position"}?
             </p>
@@ -7646,9 +7656,21 @@ const ScheduleTab = ({
       >
         <div className="space-y-4">
           <p className="text-sm text-gray-200">
-            {pendingAvailabilityConfirmationIsRecurring
-              ? `${pendingAvailabilityMemberLabel} is not available during this week of the month.`
-              : `${pendingAvailabilityMemberLabel} marked this date as blocked out.`}
+            {pendingAvailabilityConfirmationIsRecurring ? (
+              <>
+                <MemberNameWithIndicator
+                  name={pendingAvailabilityMemberLabel}
+                  memberId={pendingAvailabilityMember?.memberId}
+                /> is not available during this week of the month.
+              </>
+            ) : (
+              <>
+                <MemberNameWithIndicator
+                  name={pendingAvailabilityMemberLabel}
+                  memberId={pendingAvailabilityMember?.memberId}
+                /> marked this date as blocked out.
+              </>
+            )}
           </p>
           <p className="text-sm text-gray-400">
             Confirm that they are available before scheduling them.
@@ -7686,7 +7708,10 @@ const ScheduleTab = ({
       >
         <div className="space-y-4">
           <p className="text-sm text-gray-200">
-            {pendingCrossTeamConflictMemberLabel} has these overlapping schedule assignments:
+            <MemberNameWithIndicator
+              name={pendingCrossTeamConflictMemberLabel}
+              memberId={pendingCrossTeamConflictMember?.memberId}
+            /> has these overlapping schedule assignments:
           </p>
           {pendingCrossTeamConflict?.conflicts.length ? (
             <ul className="max-h-48 space-y-2 overflow-y-auto rounded border border-gray-700 p-3 text-sm text-gray-300">

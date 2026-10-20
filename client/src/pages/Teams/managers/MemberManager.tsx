@@ -56,6 +56,7 @@ import TeamsCrossSectionLink from "../components/TeamsCrossSectionLink";
 import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import EntityMultiSelect from "../EntityMultiSelect";
 import EntityRow from "../components/EntityRow";
+import { CurrentUserMemberIndicator } from "../components/CurrentUserMemberIndicator";
 import { MemberAssignmentsDetails } from "../components/MemberAssignmentsSummary";
 import MemberAvatar from "../../../components/MemberAvatar/MemberAvatar";
 import BlockoutDatesField from "../components/BlockoutDatesField";
@@ -180,6 +181,7 @@ type MemberManagerProps = {
   canManageMemberLifecycle?: boolean;
   canEditMember?: (member: TeamRosterMember) => boolean;
   onSaved: (member: TeamRosterMember, replaceId?: string) => void;
+  onIdentityChanged?: () => void;
   /** Applies rosters the server changed by joining this member to a team. */
   onTeamSaved: (team: TeamRecord) => void;
   onArchived: () => void;
@@ -198,6 +200,7 @@ const MemberManager = ({
   canManageMemberLifecycle = true,
   canEditMember: canEditMemberProp,
   onSaved,
+  onIdentityChanged,
   onTeamSaved,
   onArchived,
   onRemoved,
@@ -777,6 +780,7 @@ const MemberManager = ({
         current?.memberId === member.memberId ? next : current,
       );
       setShowAccountPicker(false);
+      onIdentityChanged?.();
       showToast(
         action === "link"
           ? targetUserId && targetUserId !== currentUserId
@@ -1358,6 +1362,7 @@ const MemberManager = ({
                   key={member.memberId}
                   compact
                   title={memberName(member)}
+                  headerBadge={<CurrentUserMemberIndicator memberId={member.memberId} />}
                   details={
                     <MemberAssignmentsDetails
                       assignments={assignments}
@@ -1475,7 +1480,10 @@ const MemberManager = ({
         }
       >
         <fieldset disabled={!canEditActiveMember} className="space-y-2 rounded-md border border-gray-700 bg-gray-950/40 p-3 pt-0">
-          <legend className="px-1 text-sm font-semibold">Member details</legend>
+          <legend className="px-1 text-sm font-semibold">
+            Member details{" "}
+            {editing ? <CurrentUserMemberIndicator memberId={editing.memberId} /> : null}
+          </legend>
           <div className="grid gap-3 sm:grid-cols-[minmax(0,0.5fr)_minmax(0,1fr)_minmax(0,1fr)]">
             <Input
               label="Title"

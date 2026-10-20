@@ -5,6 +5,10 @@ import Input from "../../../components/Input/Input";
 import MemberAvatar from "../../../components/MemberAvatar/MemberAvatar";
 import type { TeamRosterMember } from "../../../api/authTypes";
 import { memberName } from "../teamsUtils";
+import {
+  MemberNameWithIndicator,
+  useCurrentMemberId,
+} from "./CurrentUserMemberIndicator";
 
 export type TeamMemberSuggestion = Pick<
   TeamRosterMember,
@@ -53,6 +57,7 @@ const TeamMembersEditor = ({
   onManageMember,
   onCreateMember,
 }: TeamMembersEditorProps) => {
+  const selfMemberId = useCurrentMemberId();
   const headingId = useId();
   const suggestionsId = useId();
   const [showAllMembers, setShowAllMembers] = useState(false);
@@ -120,7 +125,12 @@ const TeamMembersEditor = ({
                     memberName={member ? name : ""}
                     className="h-8 w-8"
                   />
-                  <span className="truncate text-sm text-gray-200">{name}</span>
+                  <MemberNameWithIndicator
+                    name={name}
+                    memberId={member?.memberId}
+                    className="flex-1"
+                    nameClassName="text-sm text-gray-200"
+                  />
                 </span>
                 {canEditMembership ? (
                   <span className="flex shrink-0 items-center gap-1">
@@ -130,7 +140,7 @@ const TeamMembersEditor = ({
                         variant="secondary"
                         iconSize="sm"
                         className="min-h-9 max-md:min-h-11"
-                        aria-label={`Manage ${name}`}
+                        aria-label={`Manage ${name}${memberId === selfMemberId ? ", You" : ""}`}
                         onClick={() => onManageMember(member)}
                       >
                         Manage
@@ -141,7 +151,7 @@ const TeamMembersEditor = ({
                       variant="tertiary"
                       iconSize="sm"
                       className="min-h-9 max-md:min-h-11"
-                      aria-label={`Remove ${name} from team`}
+                      aria-label={`Remove ${name} from team${memberId === selfMemberId ? ", You" : ""}`}
                       onClick={() => onRemoveMember(memberId)}
                     >
                       Remove
@@ -204,7 +214,12 @@ const TeamMembersEditor = ({
                 <li key={candidate.memberId} className="flex min-w-0 items-center justify-between gap-2 py-1">
                   <span className="flex min-w-0 items-center gap-2.5">
                     <MemberAvatar profileImageUrl={candidate.profileImageUrl} memberName={name} />
-                    <span className="truncate text-sm text-gray-200">{name}</span>
+                    <MemberNameWithIndicator
+                      name={name}
+                      memberId={candidate.memberId}
+                      className="flex-1"
+                      nameClassName="text-sm text-gray-200"
+                    />
                   </span>
                   <Button
                     type="button"
@@ -212,7 +227,7 @@ const TeamMembersEditor = ({
                     svg={Plus}
                     iconSize="sm"
                     className="min-h-9 max-md:min-h-11"
-                    aria-label={`Add ${name} to team`}
+                    aria-label={`Add ${name} to team${candidate.memberId === selfMemberId ? ", You" : ""}`}
                     disabled={isAdding}
                     isLoading={addingMemberId === candidate.memberId}
                     onClick={() => onAddMember(candidate.memberId)}

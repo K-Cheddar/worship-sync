@@ -12,6 +12,7 @@ import {
 import {
   projectTeamsBootstrapForAccess,
   projectViewOnlySchedule,
+  resolveSelfMemberId,
 } from "./teamsBootstrapProjection.js";
 import { serializeAuthError } from "./authErrorResponse.js";
 import { isDeepStrictEqual } from "node:util";
@@ -5207,7 +5208,7 @@ export const createTeamsAuthHandlers = ({
     if (!access.viewAll && access.viewTeamIds.size === 0) {
       throw httpError(403, "Teams access required");
     }
-    return { access, canonical };
+    return { access, canonical, bootstrap };
   };
 
   const buildTeamsBootstrap = async (
@@ -15476,7 +15477,7 @@ export const createTeamsAuthHandlers = ({
     },
     async getTeamsBootstrap(req, res) {
       try {
-        const { access, canonical } = await resolveTeamsReadAccess(
+        const { access, canonical, bootstrap } = await resolveTeamsReadAccess(
           req,
           req.params.churchId,
         );
@@ -15485,6 +15486,16 @@ export const createTeamsAuthHandlers = ({
         // original full payload.
         const scheduleMode =
           req.query?.schedules === "summary" ? "summary" : "full";
+        const selfMemberId = bootstrap.sessionKind === "human"
+          ? resolveSelfMemberId({
+            churchId: req.params.churchId,
+            userId: getSessionActorUid(bootstrap),
+            members: canonical.members,
+            truncated: canonical.truncatedCollections.includes(
+              COLLECTIONS.teamRosterMembers,
+            ),
+          })
+          : null;
         return res.json({
           success: true,
           ...projectTeamsBootstrapForAccess({
@@ -15495,6 +15506,7 @@ export const createTeamsAuthHandlers = ({
             }),
             access,
           }),
+          selfMemberId,
         });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not load teams.");

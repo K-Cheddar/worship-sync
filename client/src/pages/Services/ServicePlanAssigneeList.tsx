@@ -29,6 +29,7 @@ import {
   type ServiceEquipment,
 } from "../../types/servicePlan";
 import { hasServicePlanAssigneeEquipment } from "./servicePlanAssigneeUtils";
+import { CurrentUserMemberIndicator } from "../Teams/components/CurrentUserMemberIndicator";
 
 export const createServicePlanAssignee = (
   overrides: Partial<ServicePlanAssignee> = {},
@@ -412,43 +413,53 @@ const ServicePlanAssigneeList = ({
               )}
             >
               {allowEdit ? (
-                <DebouncedAssigneeNameField
-                  label="Assigned to"
-                  // A template names standing groups, never this week's people
-                  // — "Audience", "Chorale", whoever always carries the mic.
-                  placeholder={structureOnly ? "Assignees" : "Assigned to"}
-                  value={assignee.name || ""}
-                  onCommit={(value) =>
-                    updateAssignee(
-                      assignee.id,
-                      { name: value },
-                      `assignee:${assignee.id}:name`,
-                    )
-                  }
-                  historyValues={
-                    structureOnly
-                      ? []
-                      : filterAssigneeSuggestions(
-                        assignedToHistoryValues,
-                        assignees,
+                <>
+                  <DebouncedAssigneeNameField
+                    label="Assigned to"
+                    // A template names standing groups, never this week's people
+                    // — "Audience", "Chorale", whoever always carries the mic.
+                    placeholder={structureOnly ? "Assignees" : "Assigned to"}
+                    value={assignee.name || ""}
+                    onCommit={(value) =>
+                      updateAssignee(
                         assignee.id,
+                        { name: value },
+                        `assignee:${assignee.id}:name`,
                       )
-                  }
-                  onRemoveHistoryValue={onRemoveAssignedToHistoryValue}
-                  isHistoryValueRemovable={isAssignedToHistoryValueRemovable}
-                />
+                    }
+                    historyValues={
+                      structureOnly
+                        ? []
+                        : filterAssigneeSuggestions(
+                          assignedToHistoryValues,
+                          assignees,
+                          assignee.id,
+                        )
+                    }
+                    onRemoveHistoryValue={onRemoveAssignedToHistoryValue}
+                    isHistoryValueRemovable={isAssignedToHistoryValueRemovable}
+                  />
+                  {!structureOnly ? (
+                    <CurrentUserMemberIndicator memberId={assignee.memberId} />
+                  ) : null}
+                </>
               ) : (
-                <span
-                  className={cn(
-                    "min-w-0 text-xs font-medium",
-                    allowEdit
-                      ? "max-w-36 truncate"
-                      : "max-w-full break-words whitespace-normal",
-                    isUnassigned ? "text-gray-400" : "text-gray-100",
-                  )}
-                >
-                  {label}
-                </span>
+                <>
+                  <span
+                    className={cn(
+                      "min-w-0 text-xs font-medium",
+                      allowEdit
+                        ? "max-w-36 truncate"
+                        : "max-w-full break-words whitespace-normal",
+                      isUnassigned ? "text-gray-400" : "text-gray-100",
+                    )}
+                  >
+                    {label}
+                  </span>
+                  {!structureOnly ? (
+                    <CurrentUserMemberIndicator memberId={assignee.memberId} />
+                  ) : null}
+                </>
               )}
 
               {!structureOnly && !isUnassigned ? (

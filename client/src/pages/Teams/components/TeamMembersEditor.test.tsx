@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import TeamMembersEditor, { type TeamMemberSuggestion } from "./TeamMembersEditor";
 import type { TeamRosterMember } from "../../../api/authTypes";
+import { CurrentMemberIdentityProvider } from "./CurrentUserMemberIndicator";
 
 const member = (memberId: string, firstName: string, lastName: string, extra: Partial<TeamRosterMember> = {}): TeamRosterMember => ({
   memberId,
@@ -49,6 +50,33 @@ it("sorts assigned members by display name and keeps every assigned ID visible",
   ]);
   expect(list).toHaveTextContent("Member details unavailable");
   expect(screen.getByRole("heading", { name: "Members · 4" })).toBeInTheDocument();
+});
+
+it("marks the linked assigned member without matching another member who has the same name", () => {
+  const linked = member("linked", "Rae", "Kim");
+  const sameName = member("same-name", "Rae", "Kim");
+  render(
+    <CurrentMemberIdentityProvider memberId="linked">
+      <TeamMembersEditor
+        memberIds={[linked.memberId]}
+        members={[linked, sameName]}
+        suggestions={[sameName]}
+        searchMode="scoped"
+        searchQuery="Rae"
+        onSearchQueryChange={jest.fn()}
+        canEditMembership
+        onAddMember={jest.fn()}
+        onRemoveMember={jest.fn()}
+      />
+    </CurrentMemberIdentityProvider>,
+  );
+
+  const assigned = screen.getByRole("list", { name: "Members on this team" });
+  const suggestions = screen.getByRole("list", { name: "Matching members to add" });
+  expect(within(assigned).getByText("You")).toBeInTheDocument();
+  expect(within(suggestions).queryByText("You")).not.toBeInTheDocument();
+  expect(within(assigned).getByRole("button", { name: "Remove Rae Kim from team, You" })).toBeInTheDocument();
+  expect(within(suggestions).getByRole("button", { name: "Add Rae Kim to team" })).toBeInTheDocument();
 });
 
 it("shows no directory entries until searching, then offers only active unassigned people inline", async () => {
