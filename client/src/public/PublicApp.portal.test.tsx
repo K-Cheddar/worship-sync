@@ -83,3 +83,33 @@ it.each([401, 403])("keeps unsaved time off and gives personal-link guidance whe
   expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue("Unsaved travel dates");
   expect(screen.queryByRole("button", { name: "Refresh page" })).not.toBeInTheDocument();
 });
+
+
+it.each([401, 403])("protects a conflicted draft through the public transport when refresh returns %s", async (status) => {
+  const user = userEvent.setup();
+  const normal = fetchMock.getMockImplementation()!;
+  let conflicted = false;
+  fetchMock.mockImplementation(async (path: string, options: RequestInit) => {
+    if (path.endsWith("/blockouts")) {
+      conflicted = true;
+      return { ok: false, status: 409, json: async () => ({ errorMessage: "Your time off changed elsewhere." }) };
+    }
+    if (conflicted && path.endsWith("/schedule")) {
+      return { ok: false, status, json: async () => ({ errorMessage: "Open your personal link to continue." }) };
+    }
+    return normal(path, options);
+  });
+  render(<PublicApp />);
+  await user.click(await screen.findByRole("button", { name: /Time off/i }));
+  await user.click(screen.getByRole("button", { name: /Add single day/i }));
+  await user.type(screen.getByRole("textbox", { name: /Notes/i }), "Preserved travel dates");
+  await user.click(screen.getByRole("button", { name: "Save time off" }));
+  expect(await screen.findByText("Open your personal link to continue.")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Refresh page" })).not.toBeInTheDocument();
+  expect(screen.queryByText("Review saved dates")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Discard changes" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Discard changes" }));
+  expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue("Preserved travel dates");
+  expect(screen.getByRole("button", { name: "Save time off" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Retry loading saved dates" })).toBeEnabled();
+});

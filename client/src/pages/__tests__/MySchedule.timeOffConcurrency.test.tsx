@@ -19,8 +19,9 @@ jest.mock("../../context/toastContext", () => ({ useToast: () => ({ showToast: m
 
 const deferred = <T,>() => {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((yes) => { resolve = yes; });
-  return { promise, resolve };
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
 };
 const dates = (notes: string, date = "2099-11-01") => [{ startDate: date, endDate: date, notes }];
 const member = (stamp: string, notes: string, date?: string): MyScheduleMember => ({
@@ -116,17 +117,23 @@ it("C: explicit discard adopts the refreshed dates and revision together", async
   expect(f.operations.saveBlockouts).toHaveBeenLastCalledWith(dates("New edit", "2099-12-02"), "revision-b");
 });
 
-it("retries a failed conflict refresh without losing the draft or advancing its revision", async () => {
-  const user = userEvent.setup(); const f = fixture(); render(page(f.operations));
+it.each(["human", "personal"] as const)("retries a failed %s conflict refresh without losing the draft or advancing its revision", async (mode) => {
+  const user = userEvent.setup(); const f = fixture(); render(page(f.operations, mode));
   await openEditor(user); await edit(user);
   f.setSaved(member("revision-b", "Administrator dates", "2099-12-02"));
   f.operations.load.mockRejectedValueOnce(new Error("Offline"));
   await user.click(screen.getByRole("button", { name: "Save time off" }));
   await screen.findByText(/Your saved information changed elsewhere/);
-  await waitFor(() => expect(mockToast).toHaveBeenCalledWith("Could not refresh saved dates. Your draft is kept. Try again.", "error"));
+  expect(await screen.findByText(/couldn.t load the latest saved dates/)).toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue("Volunteer draft");
+  expect(screen.queryByText("Review saved dates")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Discard changes" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Discard changes" }));
+  expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue("Volunteer draft");
+  expect(screen.getByRole("button", { name: "Save time off" })).toBeDisabled();
   const refresh = deferred<Awaited<ReturnType<MyScheduleOperations["load"]>>>();
   f.operations.load.mockReturnValueOnce(refresh.promise);
-  await user.click(screen.getByRole("button", { name: "Refresh saved dates" }));
+  await user.click(screen.getByRole("button", { name: "Retry loading saved dates" }));
   expect(screen.getByRole("button", { name: /Refreshing saved dates/i })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Discard changes" })).toBeDisabled();
   await act(async () => { refresh.resolve(snapshot(f.getSaved())); });
@@ -135,6 +142,9 @@ it("retries a failed conflict refresh without losing the draft or advancing its 
   expect(f.operations.saveBlockouts).toHaveBeenCalledTimes(1);
   await user.click(screen.getByRole("button", { name: "Discard changes" }));
   expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue("Administrator dates");
+  await edit(user, "Reconciled retry");
+  await user.click(screen.getByRole("button", { name: "Save time off" }));
+  expect(f.operations.saveBlockouts).toHaveBeenLastCalledWith(dates("Reconciled retry", "2099-12-02"), "revision-b");
 });
 
 it.each(["before", "after"])("D: a refresh resolving %s save completion cannot replace the confirmed baseline", async (order) => {
@@ -206,4 +216,127 @@ it("keeps a dirty draft through disconnect/reconnect and still submits its origi
     expect(f.operations.saveBlockouts).toHaveBeenLastCalledWith(dates("Volunteer draft"), "revision-a");
     expect(f.getSaved().updatedAt).toBe("revision-b");
   } finally { clock.mockRestore(); }
+});
+
+
+it("a superseded conflict refresh cannot override a newer success", async () => {
+  const user = userEvent.setup(); const f = fixture(); render(page(f.operations));
+  await openEditor(user); await edit(user);
+  f.setSaved(member("revision-b", "Administrator dates", "2099-12-02"));
+  const older = deferred<Awaited<ReturnType<MyScheduleOperations["load"]>>>();
+  const newer = deferred<Awaited<ReturnType<MyScheduleOperations["load"]>>>();
+  f.operations.load.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+  await user.click(screen.getByRole("button", { name: "Save time off" }));
+  await user.click(screen.getByRole("button", { name: "Accept all unanswered" }));
+  await waitFor(() => expect(f.operations.load).toHaveBeenCalledTimes(3));
+  await act(async () => { newer.resolve(snapshot(member("revision-c", "Newest dates", "2099-12-03"))); });
+  await act(async () => { older.resolve(snapshot(f.getSaved())); });
+  expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue("Volunteer draft");
+  expect(screen.getByRole("button", { name: "Save time off" })).toBeDisabled();
+  await user.click(screen.getByText("Review saved dates"));
+  expect(screen.getByText(/Newest dates/)).toBeInTheDocument();
+  expect(screen.queryByText(/Administrator dates/)).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Discard changes" }));
+  const value = "Newest dates";
+  expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue(value);
+});
+
+it("a superseded conflict refresh cannot override a newer failure", async () => {
+  const user = userEvent.setup(); const f = fixture(); render(page(f.operations));
+  await openEditor(user); await edit(user);
+  f.setSaved(member("revision-b", "Administrator dates", "2099-12-02"));
+  const older = deferred<Awaited<ReturnType<MyScheduleOperations["load"]>>>();
+  const newer = deferred<Awaited<ReturnType<MyScheduleOperations["load"]>>>();
+  f.operations.load.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+  await user.click(screen.getByRole("button", { name: "Save time off" }));
+  await user.click(screen.getByRole("button", { name: "Accept all unanswered" }));
+  await waitFor(() => expect(f.operations.load).toHaveBeenCalledTimes(3));
+  await act(async () => { newer.reject(new Error("Offline")); });
+  await act(async () => { older.resolve(snapshot(f.getSaved())); });
+  expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue("Volunteer draft");
+  expect(screen.getByRole("button", { name: "Save time off" })).toBeDisabled();
+  expect(screen.queryByText("Review saved dates")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Discard changes" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Discard changes" }));
+  const value = "Volunteer draft";
+  expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue(value);
+});
+
+it.each(["revision-a", ""])("does not authorize discard with an unproven revision %s", async (stamp) => {
+  const user = userEvent.setup(); const f = fixture(); render(page(f.operations));
+  await openEditor(user); await edit(user);
+  f.setSaved(member("revision-b", "Administrator dates"));
+  f.operations.load.mockResolvedValueOnce(snapshot(member(stamp, "Unverified dates")));
+  await user.click(screen.getByRole("button", { name: "Save time off" }));
+  await waitFor(() => expect(f.operations.load).toHaveBeenCalledTimes(2));
+  expect(screen.queryByText("Review saved dates")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Discard changes" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Retry loading saved dates" })).toBeEnabled();
+  expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue("Volunteer draft");
+});
+
+it.each([401, 403])("protects the draft and retains personal guidance when conflict refresh returns %s", async (status) => {
+  const user = userEvent.setup(); const f = fixture(); render(page(f.operations));
+  await openEditor(user); await edit(user);
+  f.setSaved(member("revision-b", "Administrator dates"));
+  f.operations.load.mockRejectedValueOnce(Object.assign(new Error("Open your personal link to continue."), { status }));
+  await user.click(screen.getByRole("button", { name: "Save time off" }));
+  expect(await screen.findByText(/Open your personal link to continue/)).toBeInTheDocument();
+  expect(screen.queryByText("Refresh page")).not.toBeInTheDocument();
+  expect(screen.queryByText("Review saved dates")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Discard changes" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Save time off" })).toBeDisabled();
+  expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue("Volunteer draft");
+});
+
+it("retires conflict recovery on an identity switch and unmount", async () => {
+  const user = userEvent.setup(); const first = fixture(); const second = fixture();
+  const { rerender, unmount } = render(page(first.operations));
+  await openEditor(user); await edit(user);
+  first.setSaved(member("revision-b", "Old administrator dates"));
+  const old = deferred<Awaited<ReturnType<MyScheduleOperations["load"]>>>();
+  first.operations.load.mockReturnValueOnce(old.promise);
+  await user.click(screen.getByRole("button", { name: "Save time off" }));
+  second.setSaved(member("revision-a", "New identity dates", "2099-12-04"));
+  rerender(page(second.operations, "personal", "church-b"));
+  await openEditor(user);
+  await act(async () => { old.resolve(snapshot(first.getSaved())); });
+  expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue("New identity dates");
+  expect(screen.queryByText(/Your saved information changed elsewhere/)).not.toBeInTheDocument();
+  await edit(user, "New draft");
+  second.setSaved(member("revision-b", "Second administrator dates"));
+  const pending = deferred<Awaited<ReturnType<MyScheduleOperations["load"]>>>();
+  second.operations.load.mockReturnValueOnce(pending.promise);
+  await user.click(screen.getByRole("button", { name: "Save time off" }));
+  unmount(); mockToast.mockClear();
+  await act(async () => { pending.reject(new Error("Offline")); });
+  expect(mockToast).not.toHaveBeenCalled();
+});
+
+
+it("does not treat an older timestamp as a newer authoritative snapshot", async () => {
+  const user = userEvent.setup(); const f = fixture();
+  f.setSaved(member("2026-10-20T15:00:00.000Z", "Original dates"));
+  render(page(f.operations)); await openEditor(user); await edit(user);
+  f.setSaved(member("2026-10-20T16:00:00.000Z", "Administrator dates"));
+  f.operations.load.mockResolvedValueOnce(snapshot(member("2026-10-20T14:00:00.000Z", "Older dates")));
+  await user.click(screen.getByRole("button", { name: "Save time off" }));
+  await waitFor(() => expect(f.operations.load).toHaveBeenCalledTimes(2));
+  expect(screen.queryByText("Review saved dates")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Discard changes" })).toBeDisabled();
+  expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue("Volunteer draft");
+});
+
+it.each(["missing member", "unsuccessful result"])("protects the draft when refresh returns %s", async (kind) => {
+  const user = userEvent.setup(); const f = fixture(); render(page(f.operations));
+  await openEditor(user); await edit(user);
+  f.setSaved(member("revision-b", "Administrator dates"));
+  const result = snapshot(f.getSaved());
+  if (kind === "missing member") result.member = null;
+  else result.success = false;
+  f.operations.load.mockResolvedValueOnce(result);
+  await user.click(screen.getByRole("button", { name: "Save time off" }));
+  expect(await screen.findByText(/couldn.t load the latest saved dates/)).toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue("Volunteer draft");
+  expect(screen.getByRole("button", { name: "Discard changes" })).toBeDisabled();
 });

@@ -24,6 +24,10 @@ import type { MyScheduleMember, MyScheduleOperations } from "./myScheduleOperati
  * interrupting for.
  */
 
+export type SavedDatesLoadState =
+  | { status: "pending" | "ready" }
+  | { status: "failed"; accessMessage?: string };
+
 type MyScheduleBlockoutsProps = {
   churchId: string;
   serviceTimeZone: string;
@@ -38,6 +42,7 @@ type MyScheduleBlockoutsProps = {
   onDirtyChange: (dirty: boolean) => void;
   /** Called when the record moved underneath this edit, to pick up the change. */
   onStale: () => Promise<boolean> | undefined;
+  savedDatesLoad: SavedDatesLoadState;
 };
 
 type BlockoutConflict = {
@@ -90,6 +95,7 @@ const MyScheduleBlockouts = ({
   onSaved,
   onDirtyChange,
   onStale,
+  savedDatesLoad,
   saveBlockouts,
 }: MyScheduleBlockoutsProps) => {
   const { showToast } = useToast();
@@ -111,8 +117,7 @@ const MyScheduleBlockouts = ({
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const [rejectedAsStale, setRejectedAsStale] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const refreshingRef = useRef(false);
+  const refreshing = savedDatesLoad.status === "pending";
   // BlockoutDatesField seeds its rows from `value` once, so re-seeding needs a
   // remount rather than a prop change.
   const [fieldKey, setFieldKey] = useState(0);
@@ -162,6 +167,14 @@ const MyScheduleBlockouts = ({
   const baselineSignature = signRanges(baseline.ranges);
   const isDirty = draftSignature !== baselineSignature;
   const hasConflict = rejectedAsStale || (isDirty && expectedUpdatedAt !== baseline.updatedAt);
+  // A successful HTTP response alone cannot recover a rejected baseline.
+  const savedRevisionTime = Date.parse(expectedUpdatedAt);
+  const baselineRevisionTime = Date.parse(baseline.updatedAt);
+  const revisionAdvanced = Number.isFinite(savedRevisionTime) && Number.isFinite(baselineRevisionTime)
+    ? savedRevisionTime > baselineRevisionTime
+    : Boolean(expectedUpdatedAt) && expectedUpdatedAt !== baseline.updatedAt;
+  const canReviewSavedDates = savedDatesLoad.status === "ready" && revisionAdvanced;
+  const refreshLabel = canReviewSavedDates ? "Refresh saved dates" : "Retry loading saved dates";
 
   /**
    * Adopt server state that arrived while this editor was mounted — a
@@ -183,7 +196,10 @@ const MyScheduleBlockouts = ({
     return () => onDirtyChange(false);
   }, [isDirty, onDirtyChange]);
 
-  const discard = () => seedDraft(blockoutDates, expectedUpdatedAt);
+  const discard = () => {
+    if (saving || refreshing || (hasConflict && !canReviewSavedDates)) return;
+    seedDraft(blockoutDates, expectedUpdatedAt);
+  };
 
   const handleDraftChange = (next: TeamBlockoutDateRange[]) => {
     // When past dates are hidden, preserve them in the draft while applying
@@ -191,17 +207,9 @@ const MyScheduleBlockouts = ({
     setDraft(showEnded ? next : [...draftEnded, ...next]);
   };
 
-  const refreshSavedDates = async () => {
-    if (refreshingRef.current) return;
-    refreshingRef.current = true;
-    setRefreshing(true);
-    try {
-      const refreshed = await onStale();
-      if (mounted.current && !refreshed) showToast("Could not refresh saved dates. Your draft is kept. Try again.", "error");
-    } finally {
-      refreshingRef.current = false;
-      if (mounted.current) setRefreshing(false);
-    }
+  const refreshSavedDates = () => {
+    if (refreshing) return;
+    void onStale();
   };
 
   const save = async () => {
@@ -279,17 +287,24 @@ const MyScheduleBlockouts = ({
 
           {hasConflict ? <div role="status" className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-100">
             <p>Your saved information changed elsewhere. Your unsaved dates are kept.</p>
-            <p>Review the saved dates, then discard your draft and reapply any changes you still need.</p>
-            <details>
-              <summary className="cursor-pointer underline">Review saved dates</summary>
-              {blockoutDates.length ? <ul className="mt-2 space-y-1">
-                {blockoutDates.map((range, index) => <li key={index}>
-                  {formatBlockoutDateRangeLabel(range)}{range.notes ? ` · ${range.notes}` : ""}
-                </li>)}
-              </ul> : <p className="mt-2">No saved dates.</p>}
-            </details>
+            {refreshing ? <p>Loading saved dates. Your unsaved dates are still here.</p> : null}
+            {!refreshing && !canReviewSavedDates ? <p>
+              Your unsaved dates are still here, but we couldn't load the latest saved dates. Try refreshing before deciding what to keep.
+            </p> : null}
+            {savedDatesLoad.status === "failed" && savedDatesLoad.accessMessage ? <p>{savedDatesLoad.accessMessage}</p> : null}
+            {canReviewSavedDates ? <>
+              <p>Review the saved dates, then discard your draft and reapply any changes you still need.</p>
+              <details>
+                <summary className="cursor-pointer underline">Review saved dates</summary>
+                {blockoutDates.length ? <ul className="mt-2 space-y-1">
+                  {blockoutDates.map((range, index) => <li key={index}>
+                    {formatBlockoutDateRangeLabel(range)}{range.notes ? ` · ${range.notes}` : ""}
+                  </li>)}
+                </ul> : <p className="mt-2">No saved dates.</p>}
+              </details>
+            </> : null}
             <Button type="button" variant="tertiary" disabled={refreshing} onClick={() => void refreshSavedDates()}>
-              {refreshing ? "Refreshing saved dates…" : "Refresh saved dates"}
+              {refreshing ? "Refreshing saved dates…" : refreshLabel}
             </Button>
           </div> : null}
 
@@ -354,7 +369,7 @@ const MyScheduleBlockouts = ({
               type="button"
               variant="tertiary"
               className="max-md:min-h-0"
-              disabled={(!isDirty && !hasConflict) || saving || refreshing}
+              disabled={(!isDirty && !hasConflict) || saving || refreshing || (hasConflict && !canReviewSavedDates)}
               onClick={discard}
             >
               Discard changes

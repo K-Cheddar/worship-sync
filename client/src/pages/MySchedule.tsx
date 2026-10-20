@@ -29,7 +29,7 @@ import SegmentedControl from "../components/SegmentedControl/SegmentedControl";
 import Select from "../components/Select/Select";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { useToast } from "../context/toastContext";
-import { showApiErrorToast } from "../utils/apiErrorToast";
+import { getApiErrorMessage, getApiErrorStatus, showApiErrorToast } from "../utils/apiErrorToast";
 import { useSyncOnReconnect } from "../hooks/useSyncOnReconnect";
 import {
   getMyTeamAssignments,
@@ -45,7 +45,7 @@ import type { TeamBlockoutDateRange } from "../api/authTypes";
 import {
   buildMyScheduleExportModelForOccurrences,
 } from "./buildMyScheduleExportModel";
-import MyScheduleBlockouts from "./MyScheduleBlockouts";
+import MyScheduleBlockouts, { type SavedDatesLoadState } from "./MyScheduleBlockouts";
 import MyScheduleAvailability from "./MyScheduleAvailability";
 import type { MyScheduleMember, MyScheduleOperations, PersonalScheduleAccess } from "./myScheduleOperations";
 import MyScheduleServicePlanPanel from "./MyScheduleServicePlanPanel";
@@ -772,6 +772,7 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
   );
   /** Precondition for the blockout write; see `updateMyBlockoutDates`. */
   const [memberUpdatedAt, setMemberUpdatedAt] = useState("");
+  const [savedDatesLoad, setSavedDatesLoad] = useState<SavedDatesLoadState>({ status: "pending" });
   const [showPast, setShowPast] = useState(false);
   const [query, setQuery] = useState("");
   const [teamFilter, setTeamFilter] = useState(ALL_TEAMS);
@@ -798,10 +799,16 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
     ({ showLoading }: { showLoading: boolean }) => {
       if (!churchId) return;
       const request = ++requestRef.current;
+      setSavedDatesLoad({ status: "pending" });
       if (showLoading) setStatus("loading");
       return operations.load()
         .then((result) => {
           if (!mountedRef.current || request !== requestRef.current) return false;
+          // Keep a mounted draft when access/member data becomes unavailable.
+          if (!result.success || (!showLoading && !result.member)) {
+            throw new Error("Could not refresh saved dates. Your draft is kept. Try again.");
+          }
+          setSavedDatesLoad({ status: "ready" });
           setOccurrences(result.occurrences || []);
           setServiceTimeZone(result.serviceTimeZone || "UTC");
           setHasMemberRecord(Boolean(result.member));
@@ -810,8 +817,13 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
           setStatus("ready");
           return true;
         })
-        .catch(() => {
+        .catch((error: unknown) => {
           if (!mountedRef.current || request !== requestRef.current) return false;
+          const status = getApiErrorStatus(error);
+          const accessMessage = status === 401 || status === 403
+            ? getApiErrorMessage(error, "Your access is no longer available. Ask an admin for help.")
+            : undefined;
+          setSavedDatesLoad({ status: "failed", accessMessage });
           // A background refresh that fails leaves the page as it is. Replacing
           // a working schedule with an error because a resume failed is worse
           // than showing data that is a few minutes old.
@@ -846,6 +858,7 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
   const handleBlockoutsSaved = useCallback((member: MyScheduleMember) => {
     // A load started before this commit may still contain the old dates/stamp.
     ++requestRef.current;
+    setSavedDatesLoad({ status: "ready" });
     setBlockoutDates(member?.blockoutDates || []);
     setMemberUpdatedAt(member?.updatedAt || "");
   }, []);
@@ -1173,6 +1186,7 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
               saveBlockouts={operations.saveBlockouts}
               onDirtyChange={handleTimeOffDirtyChange}
               onStale={refreshAfterConflict}
+              savedDatesLoad={savedDatesLoad}
             />
 
             {datedOccurrences.length > 0 ? (

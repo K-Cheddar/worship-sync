@@ -1,3 +1,134 @@
+# October 20: authoritative time-off conflict refresh correction
+
+Review scope: fix verification and affected recovery workflow on `in-progress`.
+This supersedes earlier claims below that failed conflict refresh was fully safe.
+It is not deployment or portal-activation authorization.
+
+## Findings
+
+Critical / High: none outstanding in the corrected recovery workflow.
+Root cause: `rejectedAsStale` blocked Save but did not establish snapshot validity.
+The editor cleared independent pending state after failed refresh, then offered
+Review and Discard against unchanged revision A props, allowing draft loss.
+Medium: live infrastructure, provider delivery and real-device pilot checks remain
+operational gates in [the pilot runbook](volunteer-portal-pilot.md).
+Low: strict build passes with existing chunk-size advice and a CSS URL warning
+from an unrelated javascript:alert(1) fixture; neither originates in this change.
+
+## Product authorization status
+
+Authorized by the owner's October 20 attached request and updated
+[feature contract](features/volunteer-my-schedule.md): preserve drafts, block unsafe
+Discard/Save, retry, authoritative comparison and personal-access guidance.
+No standalone release fragment: narrow correction to an inactive unreleased feature,
+per release-notes/README.md.
+
+## Before behavior
+
+A rejected draft survived refresh failure, but Discard could silently replace it
+with outdated A dates while the interface offered saved-date comparison.
+
+## After behavior
+
+MySchedule owns pending/ready/failed load status beside its monotonic request guard.
+Only the current request of a mounted identity can commit status or server data.
+Successful saves retire older loads and mark confirmed data ready. No second server
+snapshot is stored. The editor's separate pending state/ref and completion handler
+were removed; a superseded response cannot change recovery eligibility.
+
+The existing draft/baseline pair and rejection flag remain. Eligibility derives
+from parent ready status and a different nonempty revision; comparable timestamps
+must advance. Pending, failed, unchanged, missing or older revisions cannot expose
+comparison or enable Discard. Save remains blocked until deliberate resolution.
+Retry provides immediate pending feedback and disables duplicate activation.
+Successful retry preserves edits and exposes saved dates. Discard then adopts
+confirmed dates and revision together; the next edit submits that revision.
+Missing-member and unsuccessful background results preserve the mounted editor.
+HTTP 401/403 retains server guidance inline; real personal errors do not invoke
+the human Refresh page toast.
+
+## Behavior intentionally unchanged
+
+Draft revision ownership; Firestore transactions; 90-day credentials; accountless
+access; assignments/bulk responses; availability; SMS consent/STOP; notification
+approval/delivery; Draft/Published visibility; permissions; list/detail editor mount
+boundary. Drafts remain in mounted memory, not durable across reload/navigation.
+No activation, deployment or messages. The local source correction adds no generic
+sync framework and replaces competing child refresh ownership with parent status.
+
+## Open questions / assumptions
+
+None for this correction. Legacy opaque revisions permit equality comparison;
+ISO stamps use chronological advancement, matching server nextUpdatedAt.
+Live pilot execution remains separately authorized work.
+
+## Verification gaps and adversarial evidence
+
+Production composition: Pass for real PublicApp providers/personal fetch transport
+and the human Redux/router/global-context wrapper. Tests click Time off to mount
+the real editor. The built mobile HTTPS check uses the actual Express handlers and demo Firestore.
+
+| Invariant | Controlled sequence | Code boundary | Test evidence / result |
+| --- | --- | --- | --- |
+| Unverified data cannot discard work | A edit -> 409 -> failed load -> click Discard -> retry B -> discard/edit/save B | savedDatesLoad, canReviewSavedDates, discard, baseline | Human/personal retry cases. Pass. |
+| Superseded work cannot change eligibility | Hold conflict load; newer bulk load succeeds/fails; older success settles last | load requestRef guards status and snapshot | Two deferred supersession cases. Pass. |
+| Unproven success is not recovery | Same/missing/older stamp, missing member, success false | revisionAdvanced; load validation | Five negative cases. Pass. |
+| Old identity cannot leak recovery | Church A load -> church B with same member ID -> A resolves; next load rejects after unmount | keyed view, mounted/request guards | Deferred identity/unmount case plus original save-switch cases. Pass. |
+| Personal access errors protect drafts | Real public fetch: save 409 -> refresh 401/403 | volunteerRequest -> load -> inline accessMessage | PublicApp.portal preserves input, blocks Discard/Save, no human refresh action. Pass. |
+| Confirmed save wins over old load | Older load settles before/after confirmed save C | handleBlockoutsSaved/requestRef | Original deferred before/after regression retained. Pass. |
+
+Cross-boundary review traced identity, lifetime, persistence/publication, retry,
+input/decision and validate/use. Sibling search checked assignment/bulk refresh,
+availability and personal transport: only parent load/save writes saved-date props;
+availability owns a separate recipient list. Legacy revision handling is retained.
+Authorization/projection remain in server adapters and transaction checks.
+External provider creation/adoption/compensation: not applicable (no assets created
+or deleted by recovery).
+
+## Exact verification
+
+- Red/green: failed-refresh, unchanged/missing revision and access-guidance cases
+  failed before correction. Older-timestamp case failed before advancement check.
+- `npm.cmd test --prefix client -- --runInBand --runTestsByPath` with
+  MySchedule.timeOffConcurrency, MySchedule, PublicApp.portal, PublicApp:
+  **66 passed**, including **24 concurrency cases**.
+- Node 24, local demo Firestore at 127.0.0.1:8187: volunteerMutations.firestore,
+  volunteerOperations.firestore, volunteerPersonalAccess.firestore,
+  volunteerRecovery.firestore, volunteerPrivacy: **22 passed, zero skipped**.
+  Initial run without emulator skipped Firestore cases and does not count as their
+  verification. SDK metadata lookup warnings occurred; datastore work used the
+  configured local demo emulator.
+- `npm.cmd run type-check --prefix client`: passed.
+- `npm.cmd run build:strict --prefix client`: passed, including zero-warning
+  ESLint, Vite production build and PWA service worker. Build advisories noted above.
+  After the final button-label refinement, two reruns hit an environment access
+  error while esbuild loaded vite.config.ts, before application compilation.
+  Vite's runner loader could not use the existing __dirname configuration.
+  The normal strict build was retried outside the filesystem sandbox, with Sentry
+  uploads disabled: **passed with exit 0**, including ESLint, production assets
+  and PWA service worker. No build configuration was changed.
+- Node 24 `server/volunteerBrowser.firestore.test.js` with local emulator: **1 passed**. Built mobile HTTPS flow covers conflict review/discard/save, availability, privacy, revocation and verified recovery. The 390px screenshot was visually reviewed; no horizontal overflow, page errors or external requests. This preceded the final button-label copy refinement; final component suites and strict build were rerun.
+- Final `git diff --check`: passed.
+
+## Pattern / learning opportunities
+
+Keep snapshot validity in the owner that orders requests. Independent child pending
+state cannot certify which snapshot was received. No global policy needed.
+
+## Final readiness
+
+Ready for the correctness phase of a controlled pilot in an isolated environment.
+This workflow review found no remaining blocking correction. Live infrastructure,
+provider delivery and actual-device operational gates remain in the pilot runbook;
+this is not full-branch production readiness or permission to activate the portal.
+
+Review checklist: cross-boundary review, sibling search, legacy compatibility,
+identity/unmount tests, contract round trip, validate/use authority, retry-state
+ownership, owner retirement, authorization/projection, production composition: Yes.
+External side-effect adoption/compensation: Not applicable (no provider assets).
+
+---
+
 # Unified My Schedule: October 19 correctness review
 
 Review scope: the shared time-off workflow, related async ownership, accountless
