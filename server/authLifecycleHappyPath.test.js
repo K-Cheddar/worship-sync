@@ -580,6 +580,13 @@ test("church removal unlinks only that church and the account can rejoin on a ne
     assert.equal((await getDoc(COLLECTIONS.memberships, membershipId)).status, "active");
     assert.equal((await getDoc(COLLECTIONS.teamRosterMembers, memberAId)).userId, "");
     assert.equal((await getDoc(COLLECTIONS.teamRosterMembers, rejoinMember.memberId)).userId, userId);
+    const rejoinLinkEvents = await queryDocs(COLLECTIONS.securityEvents, [
+      { field: "churchId", value: admin.churchId },
+      { field: "memberId", value: rejoinMember.memberId },
+    ]);
+    assert.ok(rejoinLinkEvents.some((event) =>
+      event.type === "team_member_linked" && event.source === "invite",
+    ));
   } finally {
     setVerifyIdTokenForServerTests(null);
   }
@@ -628,6 +635,80 @@ test("accepting a roster invitation fails safely when an old roster link already
   } finally {
     setVerifyIdTokenForServerTests(null);
   }
+});
+
+test("a post-commit audit logger failure does not turn membership removal into a failed response", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const admin = await createAdminContext("remove_member_audit_logger_failure");
+  const userId = "remove_member_audit_logger_failure_target";
+  const email = "audit-target@example.com";
+  const membershipId = `${admin.churchId}_${userId}`;
+  await setDoc(COLLECTIONS.users, userId, { uid: userId, email });
+  await setDoc(COLLECTIONS.memberships, membershipId, {
+    membershipId,
+    churchId: admin.churchId,
+    userId,
+    role: "member",
+    status: "active",
+  });
+  const member = await seedRosterMemberForServerTests({
+    memberId: "remove_member_audit_logger_failure_member",
+    churchId: admin.churchId,
+    invitedAt: "pending-invite",
+  });
+  const linked = createRes();
+  await authHandlers.linkTeamRosterMember(
+    createReq({
+      params: { churchId: admin.churchId, memberId: member.memberId },
+      headers: admin.headers,
+      session: admin.session,
+      body: { userId },
+    }),
+    linked,
+  );
+  assert.equal(linked.statusCode, 200);
+
+  const request = createReq({
+    params: { churchId: admin.churchId, userId },
+    headers: admin.headers,
+    session: admin.session,
+  });
+  const originalConsoleLog = console.log;
+  let firstRemoval;
+  try {
+    console.log = () => {
+      throw new Error("simulated post-commit log sink failure");
+    };
+    firstRemoval = createRes();
+    await authHandlers.removeMember(request, firstRemoval);
+  } finally {
+    console.log = originalConsoleLog;
+  }
+
+  assert.equal(firstRemoval.statusCode, 200);
+  assert.equal(await getDoc(COLLECTIONS.memberships, membershipId), null);
+  const removedMember = await getDoc(COLLECTIONS.teamRosterMembers, member.memberId);
+  assert.equal(removedMember.userId, "");
+  assert.equal(removedMember.linkedAt, "");
+  const claimId = volunteerIdentityClaimId(admin.churchId, userId);
+  assert.equal(await getDoc(COLLECTIONS.teamVolunteerIdentityClaims, claimId), null);
+  const eventsAfterCommit = await queryDocs(COLLECTIONS.securityEvents, [
+    { field: "churchId", value: admin.churchId },
+    { field: "targetUserId", value: userId },
+  ]);
+  assert.equal(eventsAfterCommit.filter((event) => event.type === "member_removed").length, 1);
+  assert.equal(eventsAfterCommit.filter((event) => event.type === "team_member_account_links_cleared").length, 1);
+
+  const retry = createRes();
+  await authHandlers.removeMember(request, retry);
+  assert.equal(retry.statusCode, 404);
+  assert.equal(await getDoc(COLLECTIONS.memberships, membershipId), null);
+  const eventsAfterRetry = await queryDocs(COLLECTIONS.securityEvents, [
+    { field: "churchId", value: admin.churchId },
+    { field: "targetUserId", value: userId },
+  ]);
+  assert.equal(eventsAfterRetry.length, eventsAfterCommit.length);
+  assert.equal((await getDoc(COLLECTIONS.teamRosterMembers, member.memberId)).userId, "");
 });
 
 test("workstation create then redeem issues a credential", async (t) => {

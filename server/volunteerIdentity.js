@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 const conflictMessage =
-  "Your account is linked to more than one team member here. Ask a church administrator to correct the links before using My Schedule.";
+  "This account has conflicting roster links here. Ask a church administrator to correct the links, then try again.";
 
 export const volunteerIdentityClaimId = (churchId, userId) =>
   `volunteer_identity_${createHash("sha256")
@@ -86,6 +86,7 @@ export const createVolunteerIdentityOperations = ({
   deleteDoc,
   nowIso,
   httpError,
+  createSecurityEventRecord,
 }) => {
   const error = httpError || ((statusCode, message) =>
     Object.assign(new Error(message), { statusCode }));
@@ -109,6 +110,7 @@ export const createVolunteerIdentityOperations = ({
     userId,
     actorUid,
     source,
+    auditEvent = null,
     membershipIsBeingCreated = false,
     db = requireFirestore(),
     transaction = null,
@@ -223,14 +225,25 @@ export const createVolunteerIdentityOperations = ({
       source: String(source || "admin"),
       updatedAt: nowIso(),
     };
+    const auditEventRecord =
+      !alreadyLinked && auditEvent && createSecurityEventRecord
+        ? createSecurityEventRecord(auditEvent)
+        : null;
 
     return {
       member: { ...member, ...patch },
       changed: !alreadyLinked,
+      auditEvent: auditEventRecord,
       applyToTransaction: (tx = transaction) => {
         if (!tx) throw new Error("A Firestore transaction is required.");
         if (!alreadyLinked) tx.update(memberRef, patch);
         tx.set(claimRef, claimData, { merge: false });
+        if (auditEventRecord) {
+          tx.set(
+            db.collection(COLLECTIONS.securityEvents).doc(auditEventRecord.eventId),
+            auditEventRecord,
+          );
+        }
       },
       applyToStore: async () => {
         if (!alreadyLinked) {
@@ -244,6 +257,13 @@ export const createVolunteerIdentityOperations = ({
           claimData,
           { merge: false },
         );
+        if (auditEventRecord) {
+          await setDoc(
+            COLLECTIONS.securityEvents,
+            auditEventRecord.eventId,
+            auditEventRecord,
+          );
+        }
       },
     };
   };
@@ -288,6 +308,7 @@ export const createVolunteerIdentityOperations = ({
     memberId,
     actorUid,
     allowUnlinkOtherAccount = false,
+    auditEvent = null,
   }) => {
     const normalizedChurchId = String(churchId || "").trim();
     const normalizedMemberId = String(memberId || "").trim();
@@ -332,10 +353,20 @@ export const createVolunteerIdentityOperations = ({
         updatedAt,
         ...(actorUid ? { updatedByUid: actorUid } : {}),
       };
+      const auditEventRecord =
+        previousUserId && auditEvent && createSecurityEventRecord
+          ? createSecurityEventRecord({ ...auditEvent, previousUserId })
+          : null;
       if (transaction) {
         transaction.update(memberRef, patch);
         if (claim?.memberId === normalizedMemberId) {
           transaction.delete(claimRef);
+        }
+        if (auditEventRecord) {
+          transaction.set(
+            db.collection(COLLECTIONS.securityEvents).doc(auditEventRecord.eventId),
+            auditEventRecord,
+          );
         }
       } else {
         await setDoc(COLLECTIONS.teamRosterMembers, normalizedMemberId, patch, {
@@ -347,10 +378,18 @@ export const createVolunteerIdentityOperations = ({
             volunteerIdentityClaimId(normalizedChurchId, previousUserId),
           );
         }
+        if (auditEventRecord) {
+          await setDoc(
+            COLLECTIONS.securityEvents,
+            auditEventRecord.eventId,
+            auditEventRecord,
+          );
+        }
       }
       return {
         member: { ...member, ...patch },
         previousUserId,
+        auditEvent: auditEventRecord,
       };
     };
 
@@ -380,6 +419,115 @@ export const createVolunteerIdentityOperations = ({
           if (String(current?.userId || "") !== previousUserId) return null;
           return mutate(null);
         },
+      );
+      if (result) return result;
+    }
+  };
+
+  const deleteRosterMember = async ({ churchId, memberId, auditEvent = null }) => {
+    const normalizedChurchId = String(churchId || "").trim();
+    const normalizedMemberId = String(memberId || "").trim();
+    if (!normalizedChurchId || !normalizedMemberId) {
+      throw error(400, "Church and roster member are required.");
+    }
+    const db = requireFirestore();
+
+    const remove = async (transaction, expectedUserId) => {
+      const memberRef = db
+        ?.collection(COLLECTIONS.teamRosterMembers)
+        .doc(normalizedMemberId);
+      const memberSnapshot = transaction
+        ? await transaction.get(memberRef)
+        : null;
+      const member = transaction
+        ? readSnapshotData(memberSnapshot)
+        : await getDoc(COLLECTIONS.teamRosterMembers, normalizedMemberId);
+      if (!member || member.churchId !== normalizedChurchId) {
+        throw error(404, "Member not found.");
+      }
+
+      const userId = String(member.userId || "").trim();
+      if (expectedUserId !== undefined && userId !== expectedUserId) {
+        return null;
+      }
+      const claimRef = userId
+        ? db
+            ?.collection(COLLECTIONS.teamVolunteerIdentityClaims)
+            .doc(volunteerIdentityClaimId(normalizedChurchId, userId))
+        : null;
+      const claimSnapshot = transaction && claimRef
+        ? await transaction.get(claimRef)
+        : null;
+      const claim = transaction
+        ? readSnapshotData(claimSnapshot)
+        : userId
+          ? await getDoc(
+              COLLECTIONS.teamVolunteerIdentityClaims,
+              volunteerIdentityClaimId(normalizedChurchId, userId),
+            )
+          : null;
+      // The claim document reference is already scoped to this church/account.
+      // Its member target is the ownership check; stale metadata must not keep
+      // a deleted member's account claim from being released.
+      const matchingClaim = claim?.memberId === normalizedMemberId;
+      const auditEventRecord = auditEvent && createSecurityEventRecord
+        ? createSecurityEventRecord(auditEvent)
+        : null;
+
+      if (transaction) {
+        transaction.delete(memberRef);
+        if (matchingClaim) transaction.delete(claimRef);
+        if (auditEventRecord) {
+          transaction.set(
+            db.collection(COLLECTIONS.securityEvents).doc(auditEventRecord.eventId),
+            auditEventRecord,
+          );
+        }
+      } else {
+        await deleteDoc(COLLECTIONS.teamRosterMembers, normalizedMemberId);
+        if (matchingClaim) {
+          await deleteDoc(
+            COLLECTIONS.teamVolunteerIdentityClaims,
+            volunteerIdentityClaimId(normalizedChurchId, userId),
+          );
+        }
+        if (auditEventRecord) {
+          await setDoc(
+            COLLECTIONS.securityEvents,
+            auditEventRecord.eventId,
+            auditEventRecord,
+          );
+        }
+      }
+      return {
+        member,
+        removedClaim: Boolean(matchingClaim),
+        auditEvent: auditEventRecord,
+      };
+    };
+
+    if (db) {
+      return db.runTransaction((transaction) => remove(transaction));
+    }
+
+    // A link to a replacement member and permanent deletion must share the
+    // account lock as well as the member lock in the in-memory store.
+    for (;;) {
+      const initial = await getDoc(
+        COLLECTIONS.teamRosterMembers,
+        normalizedMemberId,
+      );
+      if (!initial || initial.churchId !== normalizedChurchId) {
+        throw error(404, "Member not found.");
+      }
+      const expectedUserId = String(initial.userId || "").trim();
+      const result = await withVolunteerIdentityMutationLocks(
+        volunteerAccountLockKeys(
+          normalizedChurchId,
+          expectedUserId,
+          normalizedMemberId,
+        ),
+        () => remove(null, expectedUserId),
       );
       if (result) return result;
     }
@@ -433,9 +581,10 @@ export const createVolunteerIdentityOperations = ({
       ]);
     }
 
-    // Firestore transactions allow at most 500 writes. The removal also writes
-    // the membership, church summary, and deterministic identity claim.
-    if ((linkedMembers || []).length > 497) {
+    // Firestore transactions allow at most 500 writes. Membership removal also
+    // writes the membership, church summary, deterministic claim, and up to two
+    // security events in the same transaction.
+    if ((linkedMembers || []).length > 495) {
       throw error(
         409,
         "This account has too many linked roster records to remove in one safe operation. Contact support for help.",
@@ -475,6 +624,7 @@ export const createVolunteerIdentityOperations = ({
     clearChurchAccountLinks,
     linkRosterMember,
     prepareRosterMemberLink,
+    deleteRosterMember,
     unlinkRosterMember,
   };
 };

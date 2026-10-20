@@ -77,7 +77,7 @@ A schedule follows **Virtual → Draft ↔ Published**.
 - Signed-in My Schedule resolves identity only from the authenticated account's roster link in the requested church. Names and email addresses are never used to find a roster record.
 - An account may link to one roster member per church. When existing links are ambiguous, My Schedule asks the volunteer to have a church administrator correct them; it never selects the first match.
 - Archived roster members do not expose My Schedule assignments and cannot use signed-in schedule responses or time-off changes. Existing schedule-specific response links remain available to eligible roster members and guests.
-- Manual linking, self-claiming, invitation acceptance, unlinking, and church removal preserve the one-link rule under concurrent requests. A linked account is not reassigned implicitly; an authorized unlink or correction is required.
+- Manual linking, self-claiming, invitation acceptance, unlinking, and church removal preserve the one-link rule under concurrent requests. A linked account is not reassigned implicitly; an authorized unlink or correction is required. If a roster-bound invitation conflicts with an existing link, invitation acceptance and church membership creation are rejected together. The volunteer must ask a church administrator to correct the links and then retry acceptance.
 - Removing church membership also clears that account's roster link and link metadata in that church. It retains roster records, assignments, blockouts, other church data, and historical schedules, and does not delete the authentication account or match another person by email.
 
 **Approval source:** Current product-owner request, 2026-10-19 (Phase 1A identity-integrity follow-up).

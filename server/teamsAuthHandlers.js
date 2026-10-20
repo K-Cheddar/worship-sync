@@ -210,6 +210,7 @@ export const createTeamsAuthHandlers = ({
   sendRosterMemberInvite,
   linkVolunteerRosterMember,
   unlinkVolunteerRosterMember,
+  deleteVolunteerRosterMember,
   logAuthEvent,
 }) => {
   const requireTeamsEdit = requireTeamsEditSession || requireAdminSession;
@@ -338,6 +339,17 @@ export const createTeamsAuthHandlers = ({
           }
         : {}),
     }));
+  };
+
+  const logCommittedSecurityEvent = (event) => {
+    if (!event || typeof logAuthEvent !== "function") return;
+    try {
+      logAuthEvent("log", event.type || "security_event", event);
+    } catch {
+      // Persisted identity audits are written with the identity transaction.
+      // A secondary process logger cannot make that committed action look like
+      // a failed request.
+    }
   };
 
   const buildPublicTokenRateLimitKey = (req, token) => {
@@ -6191,57 +6203,75 @@ export const createTeamsAuthHandlers = ({
       "scheduleId",
       churchId,
     );
-    await Promise.all(
-      schedules.map(async (schedule) => {
-        const assignments = schedule.assignments || {};
-        let changed = false;
-        const nextAssignments = {};
-        for (const [occurrenceId, row] of Object.entries(assignments)) {
-          const nextRow = {};
-          for (const [cellKey, cell] of Object.entries(row || {})) {
-            // Scrub every slot of the deleted position (e.g. "camera::0" and "camera::1").
-            const slot = parseScheduleSlotKey(cellKey);
-            if (kind === "position" && slot?.positionId === id) {
+    const db = requireFirestore();
+    const scrubAssignments = (assignments = {}) => {
+      let changed = false;
+      const nextAssignments = {};
+      for (const [occurrenceId, row] of Object.entries(assignments || {})) {
+        const nextRow = {};
+        for (const [cellKey, cell] of Object.entries(row || {})) {
+          // Scrub every slot of the deleted position (e.g. "camera::0" and "camera::1").
+          const slot = parseScheduleSlotKey(cellKey);
+          if (kind === "position" && slot?.positionId === id) {
+            changed = true;
+            continue;
+          }
+          if (kind === "member") {
+            // Remove the deleted member from both the primary slot and any
+            // shadow, and drop the cell only if nothing is left.
+            const normalized = normalizeScheduleAssignmentCell(cell);
+            const isPrimary = normalized.primaryMemberId === id;
+            const isShadow = normalized.shadows.some(
+              (shadow) => shadow.memberId === id,
+            );
+            if (isPrimary || isShadow) {
               changed = true;
+              const nextCell = serializeScheduleAssignmentCell({
+                primaryMemberId: isPrimary ? "" : normalized.primaryMemberId,
+                shadows: normalized.shadows.filter(
+                  (shadow) => shadow.memberId !== id,
+                ),
+              });
+              if (nextCell) nextRow[cellKey] = nextCell;
               continue;
             }
-            if (kind === "member") {
-              // Remove the deleted member from both the primary slot and any
-              // shadow, and drop the cell only if nothing is left.
-              const normalized = normalizeScheduleAssignmentCell(cell);
-              const isPrimary = normalized.primaryMemberId === id;
-              const isShadow = normalized.shadows.some(
-                (shadow) => shadow.memberId === id,
-              );
-              if (isPrimary || isShadow) {
-                changed = true;
-                const nextCell = serializeScheduleAssignmentCell({
-                  primaryMemberId: isPrimary ? "" : normalized.primaryMemberId,
-                  shadows: normalized.shadows.filter(
-                    (shadow) => shadow.memberId !== id,
-                  ),
-                });
-                if (nextCell) {
-                  nextRow[cellKey] = nextCell;
-                }
-                continue;
-              }
-            }
-            nextRow[cellKey] = cell;
           }
-          nextAssignments[occurrenceId] = nextRow;
+          nextRow[cellKey] = cell;
         }
-        if (!changed) return;
-        await setDoc(
-          COLLECTIONS.teamSchedules,
-          schedule.scheduleId,
-          {
-            assignments: nextAssignments,
-            ...touch,
-          },
-          { merge: true },
-        );
-      }),
+        nextAssignments[occurrenceId] = nextRow;
+      }
+      return { changed, nextAssignments };
+    };
+
+    const scrubSchedule = async (scheduleId, transaction = null) => {
+      const ref = db?.collection(COLLECTIONS.teamSchedules).doc(scheduleId);
+      const snapshot = transaction ? await transaction.get(ref) : null;
+      const current = transaction
+        ? snapshot.exists
+          ? { scheduleId: snapshot.id, ...snapshot.data() }
+          : null
+        : await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+      if (!current || current.churchId !== churchId) return;
+
+      const { changed, nextAssignments } = scrubAssignments(
+        current.assignments,
+      );
+      if (!changed) return;
+      const patch = { assignments: nextAssignments, ...touch };
+      if (transaction) transaction.update(ref, patch);
+      else await updateDocFields(COLLECTIONS.teamSchedules, scheduleId, patch);
+    };
+
+    await Promise.all(
+      schedules.map((schedule) =>
+        db?.runTransaction
+          ? db.runTransaction((transaction) =>
+              scrubSchedule(schedule.scheduleId, transaction),
+            )
+          : enqueueInMemoryScheduleSave(schedule.scheduleId, () =>
+              scrubSchedule(schedule.scheduleId),
+            ),
+      ),
     );
   };
 
@@ -6253,8 +6283,27 @@ export const createTeamsAuthHandlers = ({
       active: false,
       label: kind,
     });
-    await deleteDoc(config.collection, id);
+    let identityDeletion = null;
+    if (kind === "member") {
+      if (typeof deleteVolunteerRosterMember !== "function") {
+        throw new Error("Volunteer roster deletion is unavailable.");
+      }
+      identityDeletion = await deleteVolunteerRosterMember({
+        churchId,
+        memberId: id,
+        actorUid: adminUserId,
+        auditEvent: {
+          type: "team_roster_member_deleted",
+          churchId,
+          userId: adminUserId,
+          memberId: id,
+        },
+      });
+    } else {
+      await deleteDoc(config.collection, id);
+    }
     await cascadeTeamEntityDeletion({ kind, churchId, id, adminUserId });
+    return identityDeletion;
   };
 
   const getConcreteTeamServiceDate = (service) => {
@@ -16437,19 +16486,16 @@ export const createTeamsAuthHandlers = ({
           userId,
           actorUid: admin.user.uid,
           source: isSelf ? "self" : "admin",
-        });
-        if (link.changed) {
-          await addSecurityEvent({
+          auditEvent: {
             type: "team_member_linked",
             churchId: req.params.churchId,
-            // Who performed the link, so the audit trail names the actor rather
-            // than the subject.
             userId: admin.user.uid,
             linkedUserId: userId,
             memberId: req.params.memberId,
             source: isSelf ? "self" : "admin",
-          });
-        }
+          },
+        });
+        logCommittedSecurityEvent(link.auditEvent);
         return res.json({ success: true });
       } catch (error) {
         return sendTeamsJsonError(
@@ -16490,16 +16536,14 @@ export const createTeamsAuthHandlers = ({
           memberId: req.params.memberId,
           actorUid: admin.user.uid,
           allowUnlinkOtherAccount: canUnlinkOtherAccount,
-        });
-        if (result.previousUserId) {
-          await addSecurityEvent({
+          auditEvent: {
             type: "team_member_unlinked",
             churchId: req.params.churchId,
             userId: admin.user.uid,
             memberId: req.params.memberId,
-            previousUserId: result.previousUserId,
-          });
-        }
+          },
+        });
+        logCommittedSecurityEvent(result.auditEvent);
         return result.previousUserId
           ? res.json({ success: true })
           : res.json({ success: true, member: result.member });
@@ -18971,18 +19015,13 @@ export const createTeamsAuthHandlers = ({
           { label: "Member", active: false },
         );
         const admin = await requireTeamsEdit(req, req.params.churchId);
-        await deleteTeamEntity({
+        const deletion = await deleteTeamEntity({
           kind: "member",
           churchId: req.params.churchId,
           id: req.params.memberId,
           adminUserId: admin.user.uid,
         });
-        await addSecurityEvent({
-          type: "team_roster_member_deleted",
-          churchId: req.params.churchId,
-          userId: admin.user.uid,
-          memberId: req.params.memberId,
-        });
+        logCommittedSecurityEvent(deletion?.auditEvent);
         return res.json({ success: true });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not delete this member.");

@@ -1707,14 +1707,18 @@ const clearPendingInviteToken = async ({ churchId, inviteId, tokenHash }) => {
   }
 };
 
-const addSecurityEvent = async (event) => {
+const createSecurityEventRecord = (event) => {
   const eventId = createId("event");
-  const payload = {
+  return {
     eventId,
     createdAt: nowIso(),
     ...event,
   };
-  await setDoc(COLLECTIONS.securityEvents, eventId, payload);
+};
+
+const addSecurityEvent = async (event) => {
+  const payload = createSecurityEventRecord(event);
+  await setDoc(COLLECTIONS.securityEvents, payload.eventId, payload);
   logAuthEvent("log", event.type || "security_event", payload);
   return payload;
 };
@@ -4370,6 +4374,13 @@ const acceptInviteMembership = async ({ invite, user }) => {
               userId: user.uid,
               actorUid: user.uid,
               source: "invite",
+              auditEvent: {
+                type: "team_member_linked",
+                churchId,
+                userId: user.uid,
+                memberId: inviteData.memberId,
+                source: "invite",
+              },
               membershipIsBeingCreated: true,
               db,
               transaction,
@@ -4411,7 +4422,7 @@ const acceptInviteMembership = async ({ invite, user }) => {
         return {
           expired: false,
           acceptedInvite,
-          linkedMemberId: linkPlan?.changed ? inviteData.memberId : "",
+          auditEvents: linkPlan?.auditEvent ? [linkPlan.auditEvent] : [],
         };
       });
     } catch (error) {
@@ -4428,23 +4439,7 @@ const acceptInviteMembership = async ({ invite, user }) => {
     if (!acceptedInvite) {
       throw httpError(400, "This invite is not active");
     }
-    if (transactionResult.linkedMemberId) {
-      try {
-        await addSecurityEvent({
-          type: "team_member_linked",
-          churchId,
-          userId: user.uid,
-          memberId: transactionResult.linkedMemberId,
-          source: "invite",
-        });
-      } catch (error) {
-        logAuthEvent("warn", "team.roster.link.audit_failed", {
-          churchId,
-          memberId: transactionResult.linkedMemberId,
-          message: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
+    logCommittedSecurityEvents(transactionResult.auditEvents);
     return acceptedInvite;
   }
 
@@ -4521,6 +4516,13 @@ const acceptInviteMembership = async ({ invite, user }) => {
               userId: user.uid,
               actorUid: user.uid,
               source: "invite",
+              auditEvent: {
+                type: "team_member_linked",
+                churchId,
+                userId: user.uid,
+                memberId: latestInvite.memberId,
+                source: "invite",
+              },
               membershipIsBeingCreated: true,
             })
           : null;
@@ -4565,7 +4567,7 @@ const acceptInviteMembership = async ({ invite, user }) => {
         if (linkPlan) await linkPlan.applyToStore();
         return {
           acceptedInvite,
-          linkedMemberId: linkPlan?.changed ? latestInvite.memberId : "",
+          auditEvents: linkPlan?.auditEvent ? [linkPlan.auditEvent] : [],
         };
       }),
     );
@@ -4576,23 +4578,7 @@ const acceptInviteMembership = async ({ invite, user }) => {
     throw error;
   }
 
-  if (transactionResult.linkedMemberId) {
-    try {
-      await addSecurityEvent({
-        type: "team_member_linked",
-        churchId,
-        userId: user.uid,
-        memberId: transactionResult.linkedMemberId,
-        source: "invite",
-      });
-    } catch (error) {
-      logAuthEvent("warn", "team.roster.link.audit_failed", {
-        churchId,
-        memberId: transactionResult.linkedMemberId,
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
+  logCommittedSecurityEvents(transactionResult.auditEvents);
   return transactionResult.acceptedInvite;
 };
 
@@ -4605,11 +4591,33 @@ const volunteerIdentityOperations = createVolunteerIdentityOperations({
   deleteDoc,
   nowIso,
   httpError,
+  createSecurityEventRecord,
 });
 
 const removeChurchMembership = async ({ churchId, userId, actorUid }) => {
   const membershipId = membershipIdFor({ churchId, userId });
   const db = requireFirestore();
+  const buildAuditEvents = (memberIds) => [
+    createSecurityEventRecord({
+      type: "member_removed",
+      churchId,
+      userId: actorUid,
+      targetUserId: userId,
+    }),
+    ...(memberIds.length > 0
+      ? [
+          createSecurityEventRecord({
+            type: "team_member_account_links_cleared",
+            churchId,
+            userId: actorUid,
+            targetUserId: userId,
+            memberIds,
+            source: "church_membership_removal",
+          }),
+        ]
+      : []),
+  ];
+
   if (db) {
     return db.runTransaction(async (transaction) => {
       const membershipRef = db
@@ -4620,6 +4628,14 @@ const removeChurchMembership = async ({ churchId, userId, actorUid }) => {
       if (!membershipSnap.exists) {
         throw httpError(404, "Membership not found");
       }
+      const membership = membershipSnap.data();
+      if (
+        membership.churchId !== churchId ||
+        membership.userId !== userId ||
+        membership.status !== "active"
+      ) {
+        throw httpError(404, "Membership not found");
+      }
       const adminSnapshot = await transaction.get(
         db
           .collection(COLLECTIONS.memberships)
@@ -4627,6 +4643,13 @@ const removeChurchMembership = async ({ churchId, userId, actorUid }) => {
           .where("role", "==", "admin")
           .where("status", "==", "active"),
       );
+      const activeAdminCount = adminSnapshot.docs.length;
+      if (membership.role === "admin" && activeAdminCount <= 1) {
+        throw httpError(
+          400,
+          "Cannot remove the last admin for this church. Invite another admin first.",
+        );
+      }
       const { memberIds } = await volunteerIdentityOperations.clearChurchAccountLinks({
         churchId,
         userId,
@@ -4643,7 +4666,14 @@ const removeChurchMembership = async ({ churchId, userId, actorUid }) => {
         status:
           nextAdminCount > 0 ? CHURCH_STATUS_ACTIVE : CHURCH_STATUS_NEEDS_ADMIN,
       });
-      return { unlinkedMemberIds: memberIds };
+      const auditEvents = buildAuditEvents(memberIds);
+      auditEvents.forEach((event) => {
+        transaction.set(
+          db.collection(COLLECTIONS.securityEvents).doc(event.eventId),
+          event,
+        );
+      });
+      return { unlinkedMemberIds: memberIds, auditEvents };
     });
   } else {
     return withVolunteerIdentityMutationLocks(
@@ -4652,6 +4682,23 @@ const removeChurchMembership = async ({ churchId, userId, actorUid }) => {
         const membership = await getDoc(COLLECTIONS.memberships, membershipId);
         if (!membership) {
           throw httpError(404, "Membership not found");
+        }
+        if (
+          membership.churchId !== churchId ||
+          membership.userId !== userId ||
+          membership.status !== "active"
+        ) {
+          throw httpError(404, "Membership not found");
+        }
+        const membershipsBeforeRemoval = await listMembershipsForChurch(churchId);
+        const activeAdminCount = membershipsBeforeRemoval.filter(
+          (item) => item.role === "admin" && item.status === "active",
+        ).length;
+        if (membership.role === "admin" && activeAdminCount <= 1) {
+          throw httpError(
+            400,
+            "Cannot remove the last admin for this church. Invite another admin first.",
+          );
         }
         const { memberIds } = await volunteerIdentityOperations.clearChurchAccountLinks({
           churchId,
@@ -4673,9 +4720,25 @@ const removeChurchMembership = async ({ churchId, userId, actorUid }) => {
           },
           { merge: true },
         );
-        return { unlinkedMemberIds: memberIds };
+        const auditEvents = buildAuditEvents(memberIds);
+        for (const event of auditEvents) {
+          await setDoc(COLLECTIONS.securityEvents, event.eventId, event);
+        }
+        return { unlinkedMemberIds: memberIds, auditEvents };
       },
     );
+  }
+};
+
+const logCommittedSecurityEvents = (events = []) => {
+  for (const event of events) {
+    try {
+      logAuthEvent("log", event.type || "security_event", event);
+    } catch {
+      // The durable security event was committed with the authoritative
+      // mutation. A secondary process logger cannot turn that success into a
+      // failed API response.
+    }
   }
 };
 
@@ -6898,6 +6961,7 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
   requireTeamsEditForTeamSession,
   linkVolunteerRosterMember: volunteerIdentityOperations.linkRosterMember,
   unlinkVolunteerRosterMember: volunteerIdentityOperations.unlinkRosterMember,
+  deleteVolunteerRosterMember: volunteerIdentityOperations.deleteRosterMember,
   requireScheduleMicrophoneEditSession,
   requireTeamsViewSession,
   requireBroadTeamsViewSession,
@@ -9824,22 +9888,7 @@ export const authHandlers = {
         userId: targetUserId,
         actorUid: admin.user.uid,
       });
-      await addSecurityEvent({
-        type: "member_removed",
-        churchId: req.params.churchId,
-        userId: admin.user.uid,
-        targetUserId,
-      });
-      if (removal.unlinkedMemberIds.length > 0) {
-        await addSecurityEvent({
-          type: "team_member_account_links_cleared",
-          churchId: req.params.churchId,
-          userId: admin.user.uid,
-          targetUserId,
-          memberIds: removal.unlinkedMemberIds,
-          source: "church_membership_removal",
-        });
-      }
+      logCommittedSecurityEvents(removal.auditEvents);
       return res.json({ success: true });
     } catch (error) {
       return res.status(error.statusCode || 500).json(serializeAuthError(error, {

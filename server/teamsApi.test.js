@@ -55,6 +55,7 @@ import {
   createFakeSmsProvider,
   setSmsProviderForServerTests,
 } from "./smsProvider.js";
+import { volunteerIdentityClaimId } from "./volunteerIdentity.js";
 
 // Minimal stand-in for an SSE response: captures the `data:` frames the teams
 // broadcaster writes. Shares the same teamsSse.js singleton the handlers use.
@@ -10114,11 +10115,27 @@ test("unlinking a member clears the account link but keeps the member", async (t
 
   // Unlinking an already-unlinked member is a no-op, not an error, so the
   // action is safe to expose without extra state checks in the UI.
+  const noOpUnlink = await callHandler(authHandlers.unlinkTeamRosterMember, {
+    context,
+    params: { memberId },
+  });
+  assert.equal(noOpUnlink.statusCode, 200);
+  assert.equal((await callHandler(authHandlers.linkTeamRosterMember, {
+    context,
+    params: { memberId },
+  })).statusCode, 200);
   const unlinked = await callHandler(authHandlers.unlinkTeamRosterMember, {
     context,
     params: { memberId },
   });
   assert.equal(unlinked.statusCode, 200);
+  const unlinkEvents = await queryDocs(COLLECTIONS.securityEvents, [
+    { field: "churchId", value: context.churchId },
+    { field: "memberId", value: memberId },
+  ]);
+  assert.ok(unlinkEvents.some((event) =>
+    event.type === "team_member_unlinked" && event.previousUserId === "teams_api_admin_member_unlink",
+  ));
 
   const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
     context,
@@ -10271,6 +10288,123 @@ test("unlinking frees the account to claim a different member", async (t) => {
 
   // A wrong link must be correctable, or the mistake is permanent.
   assert.equal(relinked.statusCode, 200);
+});
+
+test("permanent roster deletion frees its claim for a replacement in that church only", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const userId = "member_delete_relink_account";
+  const contextA = await createAdminContext("member_delete_relink_a");
+  const contextB = await createAdminContext("member_delete_relink_b");
+  await Promise.all([contextA, contextB].map(({ churchId }) =>
+    setDoc(COLLECTIONS.memberships, `${churchId}_${userId}`, {
+      membershipId: `${churchId}_${userId}`,
+      churchId,
+      userId,
+      role: "member",
+      status: "active",
+    }),
+  ));
+  const createMember = async (context, firstName) =>
+    callHandler(authHandlers.createTeamRosterMember, {
+      context,
+      body: { firstName, lastName: "Replacement" },
+    });
+  const memberA = await createMember(contextA, "First");
+  const replacementA = await createMember(contextA, "Second");
+  const memberB = await createMember(contextB, "Other church");
+  const memberAId = memberA.payload.member.memberId;
+  const replacementAId = replacementA.payload.member.memberId;
+  const memberBId = memberB.payload.member.memberId;
+
+  assert.equal((await callHandler(authHandlers.linkTeamRosterMember, {
+    context: contextA,
+    params: { memberId: memberAId },
+    body: { userId },
+  })).statusCode, 200);
+  assert.equal((await callHandler(authHandlers.linkTeamRosterMember, {
+    context: contextB,
+    params: { memberId: memberBId },
+    body: { userId },
+  })).statusCode, 200);
+
+  const claimA = volunteerIdentityClaimId(contextA.churchId, userId);
+  const claimB = volunteerIdentityClaimId(contextB.churchId, userId);
+  const deleted = await callHandler(authHandlers.deleteTeamRosterMember, {
+    context: contextA,
+    params: { memberId: memberAId },
+  });
+  assert.equal(deleted.statusCode, 200);
+  assert.equal(await getDoc(COLLECTIONS.teamRosterMembers, memberAId), null);
+  const deletionEvents = await queryDocs(COLLECTIONS.securityEvents, [
+    { field: "churchId", value: contextA.churchId },
+    { field: "memberId", value: memberAId },
+  ]);
+  assert.ok(deletionEvents.some((event) => event.type === "team_roster_member_deleted"));
+  assert.equal(await getDoc(COLLECTIONS.teamVolunteerIdentityClaims, claimA), null);
+  assert.equal((await getDoc(COLLECTIONS.teamVolunteerIdentityClaims, claimB)).memberId, memberBId);
+  assert.equal((await getDoc(COLLECTIONS.teamRosterMembers, memberBId)).userId, userId);
+
+  const replacementLink = await callHandler(authHandlers.linkTeamRosterMember, {
+    context: contextA,
+    params: { memberId: replacementAId },
+    body: { userId },
+  });
+  assert.equal(replacementLink.statusCode, 200);
+  assert.equal((await getDoc(COLLECTIONS.teamRosterMembers, replacementAId)).userId, userId);
+  assert.equal((await getDoc(COLLECTIONS.teamVolunteerIdentityClaims, claimA)).memberId, replacementAId);
+  assert.equal((await getDoc(COLLECTIONS.teamVolunteerIdentityClaims, claimB)).memberId, memberBId);
+});
+
+test("simultaneous roster deletion and replacement linking leave one complete identity", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("member_delete_link_race");
+  const original = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Original", lastName: "Identity" },
+  });
+  const replacement = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Replacement", lastName: "Identity" },
+  });
+  const originalId = original.payload.member.memberId;
+  const replacementId = replacement.payload.member.memberId;
+  const userId = `teams_api_admin_member_delete_link_race`;
+  assert.equal((await callHandler(authHandlers.linkTeamRosterMember, {
+    context,
+    params: { memberId: originalId },
+  })).statusCode, 200);
+
+  const [deleted, attemptedLink] = await Promise.all([
+    callHandler(authHandlers.deleteTeamRosterMember, {
+      context,
+      params: { memberId: originalId },
+    }),
+    callHandler(authHandlers.linkTeamRosterMember, {
+      context,
+      params: { memberId: replacementId },
+    }),
+  ]);
+  assert.equal(deleted.statusCode, 200);
+  assert.ok([200, 409].includes(attemptedLink.statusCode));
+
+  const claimId = volunteerIdentityClaimId(context.churchId, userId);
+  const claimAfterRace = await getDoc(COLLECTIONS.teamVolunteerIdentityClaims, claimId);
+  const replacementAfterRace = await getDoc(COLLECTIONS.teamRosterMembers, replacementId);
+  assert.equal(await getDoc(COLLECTIONS.teamRosterMembers, originalId), null);
+  if (attemptedLink.statusCode === 200) {
+    assert.equal(replacementAfterRace.userId, userId);
+    assert.equal(claimAfterRace.memberId, replacementId);
+  } else {
+    assert.ok(!replacementAfterRace.userId);
+    assert.equal(claimAfterRace, null);
+    const retriedLink = await callHandler(authHandlers.linkTeamRosterMember, {
+      context,
+      params: { memberId: replacementId },
+    });
+    assert.equal(retriedLink.statusCode, 200);
+    assert.equal((await getDoc(COLLECTIONS.teamRosterMembers, replacementId)).userId, userId);
+    assert.equal((await getDoc(COLLECTIONS.teamVolunteerIdentityClaims, claimId)).memberId, replacementId);
+  }
 });
 
 test("linking to an account outside the church is refused", async (t) => {
@@ -10464,6 +10598,7 @@ test("an archived linked member exposes no My Schedule assignments or self-servi
   const context = await createAdminContext("archived_my_schedule");
   const assigned = await seedAssignedSchedule(context, "archived_my_schedule");
   const memberBefore = await getDoc(COLLECTIONS.teamRosterMembers, assigned.memberId);
+  const identityClaimId = volunteerIdentityClaimId(context.churchId, memberBefore.userId);
   await setDoc(
     COLLECTIONS.teamRosterMembers,
     assigned.memberId,
@@ -10516,6 +10651,32 @@ test("an archived linked member exposes no My Schedule assignments or self-servi
   assert.equal(
     (await getDoc(COLLECTIONS.teamRosterMembers, assigned.memberId)).archivedAt,
     "archived-for-test",
+  );
+  assert.equal(
+    (await getDoc(COLLECTIONS.teamVolunteerIdentityClaims, identityClaimId)).memberId,
+    assigned.memberId,
+    "archiving keeps the identity claim so restoring this roster member preserves its account link",
+  );
+
+  const restored = await callHandler(authHandlers.updateTeamRosterMember, {
+    context,
+    params: { memberId: assigned.memberId },
+    body: {
+      firstName: memberBefore.firstName,
+      lastName: memberBefore.lastName,
+      positionIds: memberBefore.positionIds,
+      blockoutDates: memberBefore.blockoutDates,
+      ...(memberBefore.email ? { email: memberBefore.email } : {}),
+      ...(memberBefore.phoneNumber ? { phoneNumber: memberBefore.phoneNumber } : {}),
+    },
+  });
+  assert.equal(restored.statusCode, 200);
+  assert.equal(restored.payload.member.archivedAt, null);
+  const restoredIdentity = await callHandler(authHandlers.getMyTeamAssignments, { context });
+  assert.equal(restoredIdentity.payload.member.memberId, assigned.memberId);
+  assert.equal(
+    (await getDoc(COLLECTIONS.teamVolunteerIdentityClaims, identityClaimId)).memberId,
+    assigned.memberId,
   );
 });
 

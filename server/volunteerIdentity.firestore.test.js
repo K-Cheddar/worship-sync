@@ -244,6 +244,13 @@ test("Firestore removal and a racing link cannot leave a partial identity", { sk
         .get()).exists,
       false,
     );
+    const removalEvents = await db
+      .collection("securityEvents")
+      .where("churchId", "==", churchId)
+      .where("targetUserId", "==", targetId)
+      .get();
+    assert.ok(removalEvents.docs.some((doc) => doc.get("type") === "member_removed"));
+    assert.ok(removalEvents.docs.some((doc) => doc.get("type") === "team_member_account_links_cleared"));
     const schedule = (await db.collection("teamSchedules").doc(`${churchId}_schedule`).get()).data();
     assert.deepEqual(schedule.assignments, { occurrence: { lead: memberId } });
     assert.deepEqual(schedule.responses, {
@@ -269,6 +276,149 @@ test("Firestore removal and a racing link cannot leave a partial identity", { sk
     }
     await db.collection("users").doc(adminId).delete().catch(() => {});
     await db.collection("users").doc(targetId).delete().catch(() => {});
+    await db.terminate();
+    await deleteApp(app);
+  }
+});
+
+test("Firestore permanent roster deletion releases only its church claim during a racing replacement link", { skip: !enabled }, async () => {
+  const app = initializeApp({ projectId: "demo-worshipsync" }, `identity-delete-${randomUUID()}`);
+  const db = getFirestore(app);
+  const suffix = randomUUID().replaceAll("-", "");
+  const churchA = `identity_delete_a_${suffix}`;
+  const churchB = `identity_delete_b_${suffix}`;
+  const userId = `identity_delete_user_${suffix}`;
+  const memberA = `${churchA}_old_member`;
+  const replacementA = `${churchA}_replacement_member`;
+  const memberB = `${churchB}_member`;
+  const scheduleA = `${churchA}_schedule`;
+  const scheduleB = `${churchB}_schedule`;
+  const auth = await import("../authService.js");
+  auth.setServerFirestoreForTests(db);
+
+  try {
+    await Promise.all([
+      db.collection("churches").doc(churchA).set({
+        churchId: churchA,
+        name: "Deletion Church A",
+        status: "active",
+        adminCount: 1,
+        contentDatabaseKey: `rtdb_${churchA}`,
+      }),
+      db.collection("churches").doc(churchB).set({
+        churchId: churchB,
+        name: "Deletion Church B",
+        status: "active",
+        adminCount: 1,
+        contentDatabaseKey: `rtdb_${churchB}`,
+      }),
+      db.collection("users").doc(userId).set({ uid: userId, email: `${userId}@example.test` }),
+      setMembership(db, { churchId: churchA, userId, role: "admin" }),
+      setMembership(db, { churchId: churchB, userId, role: "admin" }),
+      db.collection("teamRosterMembers").doc(memberA).set({
+        churchId: churchA,
+        memberId: memberA,
+        userId: "",
+        archivedAt: null,
+      }),
+      db.collection("teamRosterMembers").doc(replacementA).set({
+        churchId: churchA,
+        memberId: replacementA,
+        userId: "",
+        archivedAt: null,
+      }),
+      db.collection("teamRosterMembers").doc(memberB).set({
+        churchId: churchB,
+        memberId: memberB,
+        userId: "",
+        archivedAt: null,
+      }),
+      db.collection("teamSchedules").doc(scheduleA).set({
+        churchId: churchA,
+        scheduleId: scheduleA,
+        assignments: { occurrence: { "position::0": memberA } },
+        responses: { occurrence: { "position::0": { memberId: memberA, response: "accepted" } } },
+      }),
+      db.collection("teamSchedules").doc(scheduleB).set({
+        churchId: churchB,
+        scheduleId: scheduleB,
+        assignments: { occurrence: { "position::0": "other-member" } },
+        responses: { occurrence: { "position::0": { memberId: "other-member", response: "declined" } } },
+      }),
+    ]);
+
+    const linkedA = createRes();
+    const linkedB = createRes();
+    await Promise.all([
+      auth.authHandlers.linkTeamRosterMember(
+        createRequest({ churchId: churchA, userId, params: { memberId: memberA } }),
+        linkedA,
+      ),
+      auth.authHandlers.linkTeamRosterMember(
+        createRequest({ churchId: churchB, userId, params: { memberId: memberB } }),
+        linkedB,
+      ),
+    ]);
+    assert.equal(linkedA.statusCode, 200);
+    assert.equal(linkedB.statusCode, 200);
+
+    const deletion = createRes();
+    const replacementLink = createRes();
+    await Promise.all([
+      auth.authHandlers.deleteTeamRosterMember(
+        createRequest({ churchId: churchA, userId, params: { memberId: memberA } }),
+        deletion,
+      ),
+      auth.authHandlers.linkTeamRosterMember(
+        createRequest({ churchId: churchA, userId, params: { memberId: replacementA } }),
+        replacementLink,
+      ),
+    ]);
+    assert.equal(deletion.statusCode, 200);
+    assert.ok([200, 409].includes(replacementLink.statusCode));
+    if (replacementLink.statusCode === 409) {
+      const retriedLink = createRes();
+      await auth.authHandlers.linkTeamRosterMember(
+        createRequest({ churchId: churchA, userId, params: { memberId: replacementA } }),
+        retriedLink,
+      );
+      assert.equal(retriedLink.statusCode, 200);
+    }
+
+    assert.equal((await db.collection("teamRosterMembers").doc(memberA).get()).exists, false);
+    assert.equal(
+      (await db.collection("teamRosterMembers").doc(replacementA).get()).get("userId"),
+      userId,
+    );
+    assert.equal(
+      (await db.collection("teamVolunteerIdentityClaims").doc(volunteerIdentityClaimId(churchA, userId)).get()).get("memberId"),
+      replacementA,
+    );
+    assert.equal(
+      (await db.collection("teamVolunteerIdentityClaims").doc(volunteerIdentityClaimId(churchB, userId)).get()).get("memberId"),
+      memberB,
+    );
+    const savedA = (await db.collection("teamSchedules").doc(scheduleA).get()).data();
+    assert.deepEqual(savedA.assignments, { occurrence: {} });
+    assert.deepEqual(savedA.responses, {
+      occurrence: { "position::0": { memberId: memberA, response: "accepted" } },
+    });
+    const savedB = (await db.collection("teamSchedules").doc(scheduleB).get()).data();
+    assert.deepEqual(savedB.assignments, { occurrence: { "position::0": "other-member" } });
+    assert.deepEqual(savedB.responses, {
+      occurrence: { "position::0": { memberId: "other-member", response: "declined" } },
+    });
+  } finally {
+    auth.setServerFirestoreForTests(null);
+    for (const collection of ["churches", "memberships", "users", "teamRosterMembers", "teamVolunteerIdentityClaims", "teamSchedules", "securityEvents"]) {
+      const rows = await db
+        .collection(collection)
+        .where("churchId", "in", [churchA, churchB])
+        .get()
+        .catch(() => null);
+      if (rows) await Promise.all(rows.docs.map((doc) => doc.ref.delete()));
+    }
+    await db.collection("users").doc(userId).delete().catch(() => {});
     await db.terminate();
     await deleteApp(app);
   }
