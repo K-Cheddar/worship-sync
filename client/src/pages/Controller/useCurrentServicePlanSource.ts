@@ -28,6 +28,7 @@ import {
   listServicePlans,
 } from "../../api/auth";
 import {
+  beginServicePlanningPlanSelection,
   clearServicePlanningPlanOutline,
   clearServicePlanningPreview,
   markServicePlanningPlanPreviewFresh,
@@ -201,7 +202,17 @@ export const useCurrentServicePlanSource = () => {
     // outline and its identity checks prevent old-outline writes.
     planRef.current = null;
     setSelectedPlanSnapshot(null);
-    dispatch(clearServicePlanningPreview());
+    const pendingPlanKey = selectedPlanKeyRef.current;
+    if (pendingPlanKey) {
+      dispatch(
+        beginServicePlanningPlanSelection({
+          planKey: pendingPlanKey,
+          preservePreview: false,
+        }),
+      );
+    } else {
+      dispatch(clearServicePlanningPreview());
+    }
   }, [dispatch, selectedOutlineId]);
 
   const clearUnavailablePlan = useCallback(
@@ -372,9 +383,12 @@ export const useCurrentServicePlanSource = () => {
       // A saved-plan preview already associated with this plan is still
       // useful while a remounted Controller revalidates its authoritative
       // data. A different plan or URL preview must be cleared on selection.
-      if (servicePlanKey !== nextKey) {
-        dispatch(clearServicePlanningPreview());
-      }
+      dispatch(
+        beginServicePlanningPlanSelection({
+          planKey: nextKey,
+          preservePreview: servicePlanKey === nextKey,
+        }),
+      );
     }
     selectedPlanKeyRef.current = nextKey;
     setSelectedPlanKey(nextKey);
@@ -764,7 +778,16 @@ export const useCurrentServicePlanSource = () => {
       setSelectedPlanSnapshot(null);
       selectedPlanKeyRef.current = planKey || null;
       setIsLoading(Boolean(planKey));
-      dispatch(clearServicePlanningPreview());
+      if (planKey) {
+        dispatch(
+          beginServicePlanningPlanSelection({
+            planKey,
+            preservePreview: false,
+          }),
+        );
+      } else {
+        dispatch(clearServicePlanningPreview());
+      }
       setSelectedPlanKey(planKey || null);
     },
     [
@@ -799,7 +822,16 @@ export const useCurrentServicePlanSource = () => {
       selectedPlanKeyRef.current = hasSavedPlan ? nextPlanKey : null;
       setIsLoading(hasSavedPlan);
       setSelectedPlanKey(hasSavedPlan ? nextPlanKey : null);
-      dispatch(clearServicePlanningPreview());
+      if (hasSavedPlan && nextPlanKey) {
+        dispatch(
+          beginServicePlanningPlanSelection({
+            planKey: nextPlanKey,
+            preservePreview: false,
+          }),
+        );
+      } else {
+        dispatch(clearServicePlanningPreview());
+      }
     },
     [dispatch, occurrences, savedPlans, selectOccurrenceFromSchedule],
   );

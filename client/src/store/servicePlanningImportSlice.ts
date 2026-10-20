@@ -72,12 +72,10 @@ export type ServicePlanningImportState = {
   preview: ServicePlanningPreview | null;
   /** True when the selected saved plan has no successfully reconciled preview. */
   isPlanPreviewStale: boolean;
-  /**
-   * planKey when the current preview was built from the Teams ServicePlan
-   * rather than a pasted URL; null for a URL-sourced preview. A plan-sourced
-   * preview follows the plan live, so Refresh must re-read the plan instead of
-   * re-scraping `url` (which may be stale or belong to a different service).
-   */
+  /** Selected saved-plan source, including a pending unverified selection;
+   * null for a URL-sourced preview. A plan-sourced preview follows the plan
+   * live, so Refresh must re-read the plan instead of re-scraping `url` (which
+   * may be stale or belong to a different service). */
   servicePlanKey: string | null;
   /** Increments only when the operator explicitly loads a URL. Consumers use
    * this event counter to distinguish a new choice from a stored import that
@@ -213,6 +211,19 @@ export const servicePlanningImportSlice = createSlice({
       state.serviceOutline = action.payload.outline;
       state.preview = action.payload.outline.preview;
       state.servicePlanKey = action.payload.planKey;
+    },
+    /** Atomically records a saved-plan selection and blocks Sync until the
+     * hook has fetched and applied all required authoritative plan data. */
+    beginServicePlanningPlanSelection: (
+      state,
+      action: PayloadAction<{ planKey: string; preservePreview: boolean }>,
+    ) => {
+      if (!action.payload.preservePreview) {
+        state.serviceOutline = null;
+        state.preview = null;
+      }
+      state.servicePlanKey = action.payload.planKey;
+      state.isPlanPreviewStale = true;
     },
     markServicePlanningPlanPreviewStale: (
       state,
@@ -462,6 +473,7 @@ export const {
   setStoredServicePlanningOutlineIfIdle,
   setServicePlanningRestoredOutlineUnlessStale,
   setServicePlanningPlanOutline,
+  beginServicePlanningPlanSelection,
   markServicePlanningPlanPreviewStale,
   markServicePlanningPlanPreviewFresh,
   clearServicePlanningPlanOutline,

@@ -5,6 +5,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import servicePlanningImportReducer, {
+  beginServicePlanningPlanSelection,
   setServicePlanningFloatingWindowDismissed,
   setServicePlanningSyncActiveStep,
   setServicePlanningSyncPlanInfo,
@@ -1821,6 +1822,16 @@ describe("ServicePlanningSyncFloatingWindow", () => {
         }),
       },
     });
+    store.dispatch(
+      beginServicePlanningPlanSelection({
+        planKey: "service-1@2026-05-02",
+        preservePreview: false,
+      }),
+    );
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+      "service-1@2026-05-02",
+    );
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
     store.dispatch(setServicePlanningFloatingWindowDismissed(false));
     mockPlanSource.isPlanSourced = true;
     mockPlanSource.selectedPlanKey = "service-1@2026-05-02";
@@ -1839,7 +1850,8 @@ describe("ServicePlanningSyncFloatingWindow", () => {
         }],
       }],
     };
-    mockPlanSource.isPlanPreviewStale = true;
+    mockPlanSource.isPlanPreviewStale =
+      store.getState().servicePlanningImport.isPlanPreviewStale;
     mockPlanSource.refresh.mockResolvedValue("failed");
 
     renderWindow(store);

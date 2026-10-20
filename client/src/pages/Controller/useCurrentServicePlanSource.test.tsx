@@ -143,6 +143,7 @@ const undoableState = {
 };
 
 const dispatchedTypes: string[] = [];
+let afterPlanSelectionTransition: (() => void) | null = null;
 
 const makeStore = () =>
   configureStore({
@@ -154,7 +155,18 @@ const makeStore = () =>
       getDefaultMiddleware().concat(
         () => (next: (action: unknown) => unknown) => (action: unknown) => {
           dispatchedTypes.push((action as { type: string }).type);
-          return next(action);
+          const result = next(action);
+          const actionType = (action as { type?: unknown }).type;
+          if (
+            afterPlanSelectionTransition &&
+            (actionType === "servicePlanningImport/clearServicePlanningPreview" ||
+              actionType === "servicePlanningImport/beginServicePlanningPlanSelection")
+          ) {
+            const callback = afterPlanSelectionTransition;
+            afterPlanSelectionTransition = null;
+            callback();
+          }
+          return result;
         },
       ),
   });
@@ -293,6 +305,7 @@ describe("useCurrentServicePlanSource", () => {
     dispatchedTypes.length = 0;
     latestResult = null;
     mockLiveHandler = null;
+    afterPlanSelectionTransition = null;
     mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: planFixture });
     mockListServicePlans.mockResolvedValue({
       success: true,
@@ -398,6 +411,117 @@ describe("useCurrentServicePlanSource", () => {
       outlineFixture.preview,
     );
     expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
+  });
+
+  it("protects automatic plan selection from restoration before reconciliation starts", async () => {
+    let rejectAssignments!: (error: Error) => void;
+    mockGetServicePlanAssignments.mockReturnValueOnce(
+      new Promise((_, reject) => {
+        rejectAssignments = reject;
+      }),
+    );
+    const store = makeStore();
+    const storedOutline = {
+      ...outlineFixture,
+      sourceUrl: "https://example.com/legacy-outline",
+      planLabel: "Legacy outline",
+    };
+    let restorationAttempted = false;
+    afterPlanSelectionTransition = () => {
+      restorationAttempted = true;
+      store.dispatch(setStoredServicePlanningOutlineIfIdle(storedOutline));
+    };
+
+    renderHookWith(store, enabledGlobalInfo);
+
+    await waitFor(() => expect(latestResult?.isLoading).toBe(true));
+    expect(restorationAttempted).toBe(true);
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+      planFixture.planKey,
+    );
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
+    expect(store.getState().servicePlanningImport.serviceOutline).toBeNull();
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
+
+    await act(async () => {
+      rejectAssignments(new Error("assignments unavailable"));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(latestResult?.isLoading).toBe(false));
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
+    expect(store.getState().servicePlanningImport.serviceOutline).toBeNull();
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
+    expect(mockLoadPlanPreview).not.toHaveBeenCalled();
+
+    mockGetServicePlanAssignments.mockResolvedValueOnce({
+      success: true,
+      assignments: [],
+    });
+    let retryResult: unknown;
+    await act(async () => {
+      retryResult = await latestResult?.refresh();
+    });
+
+    expect(retryResult).toBe("updated");
+    expect(mockLoadPlanPreview).toHaveBeenCalledWith(planFixture, []);
+    expect(store.getState().servicePlanningImport.preview).toEqual(
+      outlineFixture.preview,
+    );
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
+  });
+
+  it("protects a manual plan selection from immediate stored-outline restoration", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+        planFixture.planKey,
+      ),
+    );
+    expect(store.getState().servicePlanningImport.preview).not.toBeNull();
+    expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey);
+
+    const nextPlanKey = "service-2@2026-08-01";
+    let rejectAssignments!: (error: Error) => void;
+    mockGetServicePlan.mockImplementation((_churchId, planKey) =>
+      Promise.resolve({
+        success: true,
+        servicePlan:
+          planKey === nextPlanKey
+            ? { ...planFixture, planKey, serviceId: "service-2", name: "Evening Service" }
+            : planFixture,
+      }),
+    );
+    mockGetServicePlanAssignments.mockImplementation((_churchId, planKey) =>
+      planKey === nextPlanKey
+        ? new Promise((_, reject) => {
+            rejectAssignments = reject;
+          })
+        : Promise.resolve({ success: true, assignments: [] }),
+    );
+
+    act(() => {
+      latestResult?.selectPlan(nextPlanKey);
+      store.dispatch(
+        setStoredServicePlanningOutlineIfIdle({
+          ...outlineFixture,
+          planLabel: "Legacy outline",
+        }),
+      );
+    });
+
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBe(nextPlanKey);
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
+    expect(store.getState().servicePlanningImport.serviceOutline).toBeNull();
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
+
+    await act(async () => {
+      rejectAssignments(new Error("assignments unavailable"));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(latestResult?.isLoading).toBe(false));
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
   });
 
   it("prefers the current occurrence over an old outline binding", async () => {

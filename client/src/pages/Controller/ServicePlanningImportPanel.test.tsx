@@ -6,7 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import ServicePlanningImportPanel from "./ServicePlanningImportPanel";
 import servicePlanningImportReducer, {
-  markServicePlanningPlanPreviewStale,
+  beginServicePlanningPlanSelection,
   setServicePlanningPlanOutline,
   setServicePlanningServiceOutline,
 } from "../../store/servicePlanningImportSlice";
@@ -164,7 +164,12 @@ describe("ServicePlanningImportPanel", () => {
       }) as any,
       planKey,
     }));
-    store.dispatch(markServicePlanningPlanPreviewStale(planKey));
+    store.dispatch(
+      beginServicePlanningPlanSelection({
+        planKey,
+        preservePreview: true,
+      }),
+    );
 
     render(
       <Provider store={store}>

@@ -4,6 +4,7 @@ import { configureStore } from "@reduxjs/toolkit";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import servicePlanningImportReducer, {
+  beginServicePlanningPlanSelection,
   cancelServicePlanningSync,
   markServicePlanningPlanPreviewStale,
   setServicePlanningPlanOutline,
@@ -236,7 +237,12 @@ describe("useServicePlanningSyncRunner", () => {
         undoable: () => undoableState,
       },
     });
-    store.dispatch(markServicePlanningPlanPreviewStale("service-1@2026-05-02"));
+    store.dispatch(
+      beginServicePlanningPlanSelection({
+        planKey: "service-1@2026-05-02",
+        preservePreview: false,
+      }),
+    );
     store.dispatch(
       setStoredServicePlanningOutlineIfIdle(serviceOutlineFixture as any),
     );
@@ -246,6 +252,9 @@ describe("useServicePlanningSyncRunner", () => {
       ),
     );
     expect(store.getState().servicePlanningImport.preview).toBeNull();
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+      "service-1@2026-05-02",
+    );
     expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
 
     render(
