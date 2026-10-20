@@ -390,6 +390,24 @@ describe("ScheduleAssignmentPicker occupied slots", () => {
     expect(screen.getByRole("option", { name: /Taylor.*You/ })).toBeInTheDocument();
   });
 
+  it("keeps a long self name truncated beside the badge in a compact option", () => {
+    const longMember = {
+      ...member,
+      memberId: "member-self",
+      firstName: "Alexandria Longfirstname With An Exceptionally Long Display Name",
+      lastName: "Morgan",
+    };
+    const name = longMember.firstName;
+
+    renderPicker({ members: [longMember], selfMemberId: longMember.memberId });
+
+    const option = screen.getByRole("option", { name: /Alexandria.*You/ });
+    const nameWithIndicator = within(option).getByTestId("member-name-with-indicator");
+    expect(nameWithIndicator).toHaveClass("inline-flex", "w-full", "min-w-0");
+    expect(within(nameWithIndicator).getByText(name)).toHaveClass("min-w-0", "truncate");
+    expect(within(nameWithIndicator).getByText("You")).toHaveClass("shrink-0", "whitespace-nowrap");
+  });
+
   it("starts with focused actions instead of the full member list", () => {
     renderPicker({
       currentPrimaryMemberId: "member-1",

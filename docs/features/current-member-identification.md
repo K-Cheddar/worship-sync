@@ -16,6 +16,7 @@ Help signed-in users recognize their own linked roster member across Teams and S
 - Return an ID only when exactly one active same-church roster record links to that UID and its member ID agrees with its canonical document ID. Return `null` for unlinked accounts, non-human sessions, duplicate or inconsistent links, and truncated roster data.
 - Preserve restricted member projections: never expose roster `userId` values to display a self indicator.
 - Render a compact muted cyan **You** label only when a displayed roster `memberId` exactly matches the authoritative `selfMemberId`.
+- In the Members roster, include **You** in the edit button's accessible name only for that exact linked member.
 - Keep names as display strings. Do not infer identity from names or contact details, and do not mark unmatched intake submissions or schedule guests.
 - Refresh identity with bootstrap reconciliation and clear it across church, account, and session changes.
 
@@ -39,6 +40,7 @@ Help signed-in users recognize their own linked roster member across Teams and S
 
 - **Question/problem:** A signed-in user cannot easily identify their linked roster entry throughout Teams and Services.
 - **Approved behavior:** Resolve the user's active roster member on the server and show a subtle **You** marker beside that exact member ID across authenticated roster surfaces.
+- **Accessibility:** The Members roster edit control includes **You** in its accessible name for that exact member; generic entity edit labels remain unchanged.
 - **Why:** Users need a consistent cue while managing members, schedules, forms, messages, and service assignments.
 - **Material alternative rejected:** Matching display names or exposing roster account-link identifiers to clients.
 - **Approval source/date:** Current user request dated 2026-10-19.

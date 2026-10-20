@@ -56,9 +56,11 @@ export const MemberNameWithIndicator = ({
   indicatorClassName?: string;
 }) => (
   <span
+    data-testid="member-name-with-indicator"
     className={cn(
-      "inline-flex min-w-0 max-w-full items-baseline gap-1.5",
+      "min-w-0 max-w-full items-baseline gap-1.5",
       className,
+      "inline-flex",
     )}
   >
     <span className={cn("min-w-0 truncate", nameClassName)}>{name}</span>

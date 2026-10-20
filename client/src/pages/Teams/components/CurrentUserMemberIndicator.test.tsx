@@ -40,4 +40,26 @@ describe("CurrentUserMemberIndicator", () => {
     expect(screen.getByText("Rae Kim")).toBeInTheDocument();
     expect(screen.queryByText("You")).not.toBeInTheDocument();
   });
+
+  it("keeps a long self name truncated beside its badge in a compact row", () => {
+    const name = "Alexandria Longlastname With An Exceptionally Long Display Name";
+
+    render(
+      <CurrentMemberIdentityProvider memberId="member-self">
+        <div className="w-24 min-w-0">
+          <MemberNameWithIndicator
+            name={name}
+            memberId="member-self"
+            className="block w-full"
+          />
+        </div>
+      </CurrentMemberIdentityProvider>,
+    );
+
+    const nameWithIndicator = screen.getByTestId("member-name-with-indicator");
+    expect(nameWithIndicator).toHaveClass("inline-flex", "w-full", "min-w-0");
+    expect(nameWithIndicator).not.toHaveClass("block");
+    expect(screen.getByText(name)).toHaveClass("min-w-0", "truncate");
+    expect(screen.getByText("You")).toHaveClass("shrink-0", "whitespace-nowrap");
+  });
 });

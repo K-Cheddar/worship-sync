@@ -265,6 +265,9 @@ describe("MemberManager member preferences", () => {
 
     const memberRow = screen.getByTestId("entity-row");
     expect(within(memberRow).getByText("You")).toBeInTheDocument();
+    expect(
+      within(memberRow).getByRole("button", { name: "Edit Rae Kim, You" }),
+    ).toBeInTheDocument();
     await openMember(user, /Rae Kim/);
     expect(screen.getAllByText("You")).toHaveLength(2);
     expect(screen.getByRole("group", { name: /Member details/ })).toBeInTheDocument();

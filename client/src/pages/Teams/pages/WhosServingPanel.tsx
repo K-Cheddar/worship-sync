@@ -125,7 +125,7 @@ const ServingMemberName = ({
         <MemberNameWithIndicator
           name={memberName}
           memberId={memberId}
-          className="block min-w-0 text-left"
+          className="w-full min-w-0 text-left"
           nameClassName="text-xs font-medium text-gray-100"
         />
       </Button>

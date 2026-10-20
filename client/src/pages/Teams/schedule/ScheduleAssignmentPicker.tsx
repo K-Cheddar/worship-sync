@@ -122,8 +122,8 @@ const OccupiedAssignmentActions = ({
         <MemberNameWithIndicator
           name={currentAssigneeLabel}
           memberId={currentAssigneeIsGuest ? undefined : currentAssigneeMemberId}
-          className="block"
-          nameClassName="wrap-break-word"
+          className="w-full"
+          nameClassName="whitespace-normal wrap-break-word"
         />
       </p>
     </div>
@@ -722,7 +722,7 @@ const ScheduleAssignmentPicker = memo(({
               <MemberNameWithIndicator
                 name={memberLabel}
                 memberId={row.member.memberId}
-                className="block"
+                className="w-full"
                 nameClassName="font-medium"
               />
               {row.warning ? (
@@ -768,7 +768,7 @@ const ScheduleAssignmentPicker = memo(({
             <MemberNameWithIndicator
               name={memberLabel}
               memberId={row.member.memberId}
-              className="block"
+              className="w-full"
             />
             {row.warning ? (
               <span className="mt-0.5 block truncate text-xs font-normal text-amber-200">
@@ -1211,7 +1211,7 @@ const ScheduleAssignmentPicker = memo(({
                             name={currentAssigneeLabel}
                             memberId={currentAssigneeIsGuest ? undefined : currentPrimaryMemberId}
                             className="min-w-0"
-                            nameClassName="wrap-break-word"
+                            nameClassName="whitespace-normal wrap-break-word"
                           />
                         </p>
                         {currentAssigneeIsGuest ? (
@@ -1375,7 +1375,7 @@ const ScheduleAssignmentPicker = memo(({
                               <MemberNameWithIndicator
                                 name={recommendation.currentMemberLabel}
                                 memberId={recommendation.currentMemberId}
-                                className="block"
+                                className="w-full"
                               />
                             </span>
                             <span className="shrink-0">to</span>
@@ -1389,7 +1389,7 @@ const ScheduleAssignmentPicker = memo(({
                               <MemberNameWithIndicator
                                 name={recommendation.candidateLabel}
                                 memberId={recommendation.candidateMemberId}
-                                className="block"
+                                className="w-full"
                               />
                             </span>
                             <span className="shrink-0">here</span>

@@ -56,7 +56,10 @@ import TeamsCrossSectionLink from "../components/TeamsCrossSectionLink";
 import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import EntityMultiSelect from "../EntityMultiSelect";
 import EntityRow from "../components/EntityRow";
-import { CurrentUserMemberIndicator } from "../components/CurrentUserMemberIndicator";
+import {
+  CurrentUserMemberIndicator,
+  useCurrentMemberId,
+} from "../components/CurrentUserMemberIndicator";
 import { MemberAssignmentsDetails } from "../components/MemberAssignmentsSummary";
 import MemberAvatar from "../../../components/MemberAvatar/MemberAvatar";
 import BlockoutDatesField from "../components/BlockoutDatesField";
@@ -209,6 +212,7 @@ const MemberManager = ({
   onSmsEligibilityRefresh,
 }: MemberManagerProps) => {
   const context = useContext(GlobalInfoContext);
+  const selfMemberId = useCurrentMemberId();
   const { showToast, removeToast } = useToast();
   const churchId = context?.churchId || "";
   const currentUserId = context?.userId || "";
@@ -1362,6 +1366,11 @@ const MemberManager = ({
                   key={member.memberId}
                   compact
                   title={memberName(member)}
+                  editButtonAriaLabel={
+                    member.memberId === selfMemberId
+                      ? `Edit ${memberName(member)}, You`
+                      : undefined
+                  }
                   headerBadge={<CurrentUserMemberIndicator memberId={member.memberId} />}
                   details={
                     <MemberAssignmentsDetails
