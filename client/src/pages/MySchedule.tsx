@@ -31,6 +31,7 @@ import { useToast } from "../context/toastContext";
 import { showApiErrorToast } from "../utils/apiErrorToast";
 import { useSyncOnReconnect } from "../hooks/useSyncOnReconnect";
 import {
+  acceptPendingMyAssignments,
   getMyTeamAssignments,
   respondToMyAssignment,
   type MyScheduleOccurrence,
@@ -739,26 +740,33 @@ const MySchedule = () => {
   }, []);
 
   const load = useCallback(
-    ({ showLoading }: { showLoading: boolean }) => {
-      if (!churchId) return;
+    ({
+      showLoading,
+      preserveBlockouts = false,
+    }: { showLoading: boolean; preserveBlockouts?: boolean }) => {
+      if (!churchId) return Promise.resolve(false);
       const request = ++requestRef.current;
       if (showLoading) setStatus("loading");
-      void getMyTeamAssignments(churchId)
+      return getMyTeamAssignments(churchId)
         .then((result) => {
-          if (!mountedRef.current || request !== requestRef.current) return;
+          if (!mountedRef.current || request !== requestRef.current) return false;
           setOccurrences(result.occurrences || []);
           setServiceTimeZone(result.serviceTimeZone || "UTC");
           setHasMemberRecord(Boolean(result.member));
-          setBlockoutDates(result.member?.blockoutDates || []);
-          setMemberUpdatedAt(result.member?.updatedAt || "");
+          if (!preserveBlockouts && !timeOffDirtyRef.current) {
+            setBlockoutDates(result.member?.blockoutDates || []);
+            setMemberUpdatedAt(result.member?.updatedAt || "");
+          }
           setStatus("ready");
+          return true;
         })
         .catch(() => {
-          if (!mountedRef.current || request !== requestRef.current) return;
+          if (!mountedRef.current || request !== requestRef.current) return false;
           // A background refresh that fails leaves the page as it is. Replacing
           // a working schedule with an error because a resume failed is worse
           // than showing data that is a few minutes old.
           if (showLoading) setStatus("error");
+          return false;
         });
     },
     [churchId],
@@ -801,6 +809,122 @@ const MySchedule = () => {
   }, [load]);
 
   const [respondingKey, setRespondingKey] = useState("");
+  const [acceptingPending, setAcceptingPending] = useState(false);
+  const [acceptPendingFeedback, setAcceptPendingFeedback] = useState("");
+  const acceptingPendingRef = useRef(false);
+
+  const pendingAssignmentCount = useMemo(() => {
+    const now = Date.now();
+    const seen = new Set<string>();
+    return occurrences.reduce((count, occurrence) => {
+      const startsAt = Date.parse(occurrence.startsAt);
+      if (!Number.isFinite(startsAt) || startsAt < now) return count;
+      return count + occurrence.serving.reduce((pending, person) => {
+        if (!person.isMe || !person.isPrimary ||
+            (person.response && person.response !== "pending")) return pending;
+        const key = `${person.scheduleId}\u0000${occurrence.occurrenceId}\u0000${person.columnKey}`;
+        if (seen.has(key)) return pending;
+        seen.add(key);
+        return pending + 1;
+      }, 0);
+    }, 0);
+  }, [occurrences]);
+
+  const acceptAllPending = useCallback(async () => {
+    if (!churchId || acceptingPendingRef.current) return;
+    acceptingPendingRef.current = true;
+    setAcceptingPending(true);
+    setAcceptPendingFeedback("");
+
+    const request = requestRef.current;
+    const totals = {
+      newlyAccepted: 0,
+      alreadyAccepted: 0,
+      alreadyDeclined: 0,
+      skipped: 0,
+      failedScheduleCount: 0,
+    };
+    let cursor: string | undefined;
+    let authorizationChanged = false;
+    let requestFailed = false;
+    const visitedCursors = new Set<string>();
+
+    try {
+      while (mountedRef.current && requestRef.current === request) {
+        const page = await acceptPendingMyAssignments(churchId, cursor);
+        if (!mountedRef.current || requestRef.current !== request) break;
+        totals.newlyAccepted += page.newlyAccepted;
+        totals.alreadyAccepted += page.alreadyAccepted;
+        totals.alreadyDeclined += page.alreadyDeclined;
+        totals.skipped += page.skipped;
+        totals.failedScheduleCount += page.failedScheduleCount;
+        authorizationChanged ||= page.authorizationChanged;
+        if (!page.hasMore || !page.nextCursor || page.authorizationChanged) break;
+        if (visitedCursors.has(page.nextCursor)) {
+          requestFailed = true;
+          break;
+        }
+        visitedCursors.add(page.nextCursor);
+        cursor = page.nextCursor;
+      }
+    } catch {
+      requestFailed = true;
+    } finally {
+      if (mountedRef.current && requestRef.current !== request) {
+        acceptingPendingRef.current = false;
+        setAcceptingPending(false);
+      }
+    }
+
+    if (!mountedRef.current || requestRef.current !== request) return;
+
+    const changedCount = totals.newlyAccepted;
+    const countLabel = `${changedCount} ${changedCount === 1 ? "assignment" : "assignments"}`;
+    const hasPartialResults = authorizationChanged || requestFailed ||
+      totals.skipped > 0 || totals.failedScheduleCount > 0;
+    const unchangedParts = [
+      totals.alreadyAccepted > 0
+        ? `${totals.alreadyAccepted} already accepted`
+        : "",
+      totals.alreadyDeclined > 0
+        ? `${totals.alreadyDeclined} declined and left unchanged`
+        : "",
+    ].filter(Boolean);
+    const unchangedSummary = unchangedParts.length
+      ? ` ${unchangedParts.join("; ")}.`
+      : "";
+
+    let feedback = "";
+    if (requestFailed) {
+      feedback = changedCount > 0
+        ? `Accepted ${countLabel}.${unchangedSummary} Could not confirm the remaining assignments. Refresh and try again.`
+        : `Could not confirm your responses.${unchangedSummary} Refresh and try again.`;
+    } else if (authorizationChanged) {
+      feedback = changedCount > 0
+        ? `Accepted ${countLabel}.${unchangedSummary} Your account access changed. Reload My Schedule before retrying.`
+        : `Your account access changed.${unchangedSummary} Reload My Schedule before retrying.`;
+    } else if (hasPartialResults) {
+      const skippedLabel = totals.skipped > 0
+        ? ` ${totals.skipped} assignment${totals.skipped === 1 ? " was" : "s were"} no longer eligible.`
+        : "";
+      const acceptedSummary = changedCount > 0 ? `Accepted ${countLabel}.` : "";
+      feedback = `${acceptedSummary}${skippedLabel}${unchangedSummary} Some assignments couldn't be processed. Retry to finish the rest.`.trim();
+    } else if (changedCount === 0 && unchangedParts.length === 0) {
+      feedback = "No unanswered assignments remained. Existing responses were unchanged.";
+    } else {
+      const accepted = changedCount > 0 ? `Accepted ${countLabel}.` : "No unanswered assignments remained.";
+      feedback = [accepted, unchangedParts.length ? `${unchangedParts.join("; ")}.` : ""].filter(Boolean).join(" ");
+    }
+    setAcceptPendingFeedback(feedback);
+    await load({
+      showLoading: false,
+      preserveBlockouts: timeOffDirtyRef.current,
+    });
+    if (mountedRef.current) {
+      acceptingPendingRef.current = false;
+      setAcceptingPending(false);
+    }
+  }, [churchId, load]);
 
   /**
    * Answer one assignment, applied optimistically so the tap feels immediate.
@@ -1074,6 +1198,39 @@ const MySchedule = () => {
 
         {status === "ready" && hasMemberRecord && !selected ? (
           <>
+            {pendingAssignmentCount > 0 ? (
+              <section className="flex flex-col gap-2 rounded-md border border-gray-700 p-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <h2 className="text-sm font-semibold">
+                    {pendingAssignmentCount} {pendingAssignmentCount === 1 ? "assignment needs" : "assignments need"} your response
+                  </h2>
+                  <p className="text-sm text-gray-300">
+                    Accepts unanswered assignments across your upcoming published schedules. Existing responses won't change.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="w-full shrink-0 sm:w-auto"
+                  disabled={acceptingPending}
+                  isLoading={acceptingPending}
+                  aria-busy={acceptingPending}
+                  onClick={() => void acceptAllPending()}
+                >
+                  {acceptingPending ? "Accepting…" : "Accept all pending"}
+                </Button>
+                {acceptingPending ? (
+                  <span className="sr-only" role="status" aria-live="polite">
+                    Accepting your pending assignments…
+                  </span>
+                ) : null}
+              </section>
+            ) : null}
+            {acceptPendingFeedback ? (
+              <p className="text-sm text-gray-300" role="status" aria-live="polite">
+                {acceptPendingFeedback}
+              </p>
+            ) : null}
             <MyScheduleBlockouts
               churchId={churchId}
               serviceTimeZone={serviceTimeZone}

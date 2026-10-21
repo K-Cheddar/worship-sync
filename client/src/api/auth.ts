@@ -2128,6 +2128,44 @@ export const respondToMyAssignment = async (
     { method: "POST", body: JSON.stringify(body) },
   );
 
+export type AcceptPendingAssignmentsResponse = {
+  success: boolean;
+  newlyAccepted: number;
+  alreadyAccepted: number;
+  alreadyDeclined: number;
+  skipped: number;
+  failedScheduleCount: number;
+  schedules: Array<{
+    scheduleId: string;
+    status: "updated" | "unchanged" | "skipped" | "failed";
+    newlyAccepted: number;
+    alreadyAccepted: number;
+    alreadyDeclined: number;
+    skipped: number;
+    errorCode?: string;
+  }>;
+  authorizationChanged: boolean;
+  hasMore: boolean;
+  nextCursor: string | null;
+};
+
+/**
+ * Accepts only unanswered upcoming assignments across all published schedules.
+ * The cursor pages server-discovered schedule groups; it never selects an
+ * owner, member, or schedule target for the operation.
+ */
+export const acceptPendingMyAssignments = async (
+  churchId: string,
+  afterScheduleId?: string | null,
+) =>
+  apiFetch<AcceptPendingAssignmentsResponse>(
+    `api/churches/${churchId}/my-assignments/accept-pending`,
+    {
+      method: "POST",
+      body: JSON.stringify(afterScheduleId ? { afterScheduleId } : {}),
+    },
+  );
+
 /**
  * Replaces the signed-in person's own blockout dates.
  *

@@ -7,6 +7,7 @@ import type { ContextType } from "react";
 import MySchedule from "../MySchedule";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import {
+  acceptPendingMyAssignments,
   getMyTeamAssignments,
   respondToMyAssignment,
   updateMyBlockoutDates,
@@ -14,6 +15,7 @@ import {
 import { usePublicServiceFlow } from "../../services/usePublicServiceFlow";
 
 jest.mock("../../api/auth", () => ({
+  acceptPendingMyAssignments: jest.fn(),
   getMyTeamAssignments: jest.fn(),
   updateMyBlockoutDates: jest.fn(),
   respondToMyAssignment: jest.fn(),
@@ -37,6 +39,7 @@ jest.mock("../../services/usePublicServiceFlow", () => ({
 }));
 
 const mockGetMyTeamAssignments = jest.mocked(getMyTeamAssignments);
+const mockAcceptPendingMyAssignments = jest.mocked(acceptPendingMyAssignments);
 const mockUpdateMyBlockoutDates = jest.mocked(updateMyBlockoutDates);
 const mockRespondToMyAssignment = jest.mocked(respondToMyAssignment);
 const mockUsePublicServiceFlow = jest.mocked(usePublicServiceFlow);
@@ -163,6 +166,154 @@ describe("MySchedule", () => {
     expect(screen.getByRole("button", { name: "By position" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Grid" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save as PDF" })).toBeInTheDocument();
+  });
+
+  describe("accept pending", () => {
+    const result = (overrides = {}) => ({
+      success: true,
+      newlyAccepted: 1,
+      alreadyAccepted: 1,
+      alreadyDeclined: 1,
+      skipped: 0,
+      failedScheduleCount: 0,
+      schedules: [],
+      authorizationChanged: false,
+      hasMore: false,
+      nextCursor: null,
+      ...overrides,
+    });
+
+    it("counts only upcoming primary pending assignments and waits for the server before refreshing", async () => {
+      const user = userEvent.setup();
+      const assigned = occurrence({
+        serving: [
+          me(),
+          me({ columnKey: "pos-director::1", response: "accepted" }),
+          me({ columnKey: "pos-director::2", response: "declined" }),
+          me({ columnKey: "pos-director::3", isPrimary: false }),
+        ],
+      });
+      const accepted = occurrence({
+        serving: [
+          me({ response: "accepted" }),
+          me({ columnKey: "pos-director::1", response: "accepted" }),
+          me({ columnKey: "pos-director::2", response: "declined" }),
+          me({ columnKey: "pos-director::3", isPrimary: false }),
+        ],
+      });
+      mockGetMyTeamAssignments
+        .mockResolvedValueOnce({
+          success: true,
+          member: { memberId: "m1", updatedAt: STAMP },
+          occurrences: [assigned],
+        } as unknown as Awaited<ReturnType<typeof getMyTeamAssignments>>)
+        .mockResolvedValueOnce({
+          success: true,
+          member: { memberId: "m1", updatedAt: STAMP },
+          occurrences: [accepted],
+        } as unknown as Awaited<ReturnType<typeof getMyTeamAssignments>>);
+      let resolveRequest: ((value: Awaited<ReturnType<typeof acceptPendingMyAssignments>>) => void) | undefined;
+      mockAcceptPendingMyAssignments.mockReturnValue(
+        new Promise((resolve) => { resolveRequest = resolve; }),
+      );
+      renderPage();
+
+      expect(await screen.findByText("1 assignment needs your response")).toBeInTheDocument();
+      const acceptAll = screen.getByRole("button", { name: /Accept all pending/i });
+      await user.click(acceptAll);
+
+      expect(acceptAll).toBeDisabled();
+      expect(screen.getByRole("status")).toHaveTextContent(/Accepting your pending assignments/i);
+      expect(mockGetMyTeamAssignments).toHaveBeenCalledTimes(1);
+      await openFirstService(user);
+      expect(screen.getByText("Needs your response")).toBeInTheDocument();
+      expect(screen.getAllByText("You accepted")).toHaveLength(1);
+
+      await act(async () => {
+        resolveRequest?.(result() as Awaited<ReturnType<typeof acceptPendingMyAssignments>>);
+      });
+
+      expect(await screen.findAllByText("You accepted")).toHaveLength(2);
+      expect(mockAcceptPendingMyAssignments).toHaveBeenCalledWith("church-1", undefined);
+    });
+
+    it("keeps the global action independent of search filters and summarizes partial completion", async () => {
+      const user = userEvent.setup();
+      respond([occurrence()]);
+      mockAcceptPendingMyAssignments.mockResolvedValue(result({
+        newlyAccepted: 1,
+        alreadyAccepted: 1,
+        alreadyDeclined: 1,
+        skipped: 1,
+        failedScheduleCount: 1,
+      }) as Awaited<ReturnType<typeof acceptPendingMyAssignments>>);
+      renderPage();
+
+      expect(await screen.findByText("1 assignment needs your response")).toBeInTheDocument();
+      await user.type(screen.getByLabelText(/Search/i), "not a service");
+      expect(screen.queryByRole("button", { name: /Open Sunday Gathering/i })).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: /Accept all pending/i }));
+
+      expect(mockAcceptPendingMyAssignments).toHaveBeenCalledWith("church-1", undefined);
+      expect(await screen.findByRole("status")).toHaveTextContent(/Some assignments couldn't be processed/i);
+      expect(screen.getByRole("status")).toHaveTextContent(/already accepted/i);
+      expect(screen.getByRole("status")).toHaveTextContent(/declined and left unchanged/i);
+      expect(screen.getByRole("status")).toHaveTextContent(/retry/i);
+    });
+
+    it("does not show the bulk action for past, answered, or shadow-only slots", async () => {
+      respond([
+        occurrence({
+          serving: [
+            me({ response: "accepted" }),
+            me({ columnKey: "shadow", isPrimary: false }),
+          ],
+        }),
+        occurrence({
+          occurrenceId: `service-1@${PAST}`,
+          startsAt: PAST,
+          date: PAST.slice(0, 10),
+        }),
+      ]);
+      renderPage();
+
+      await screen.findByRole("button", { name: /Open Sunday Gathering/i });
+      expect(screen.queryByRole("button", { name: /Accept all pending/i })).not.toBeInTheDocument();
+      expect(mockAcceptPendingMyAssignments).not.toHaveBeenCalled();
+    });
+
+    it("preserves an open time-off edit while refreshing assignments after acceptance", async () => {
+      const user = userEvent.setup();
+      const existing = { startDate: "2099-09-06", endDate: "2099-09-06", notes: "Existing" };
+      const serverUpdate = {
+        startDate: "2099-11-20",
+        endDate: "2099-11-20",
+        notes: "Added elsewhere",
+      };
+      mockGetMyTeamAssignments
+        .mockResolvedValueOnce({
+          success: true,
+          member: { memberId: "m1", updatedAt: STAMP, blockoutDates: [existing] },
+          occurrences: [occurrence()],
+        } as unknown as Awaited<ReturnType<typeof getMyTeamAssignments>>)
+        .mockResolvedValueOnce({
+          success: true,
+          member: { memberId: "m1", updatedAt: "newer", blockoutDates: [existing, serverUpdate] },
+          occurrences: [occurrence({ serving: [me({ response: "accepted" }), other()] })],
+        } as unknown as Awaited<ReturnType<typeof getMyTeamAssignments>>);
+      mockAcceptPendingMyAssignments.mockResolvedValue(result());
+      renderPage();
+
+      await user.click(await screen.findByRole("button", { name: /Time off/i }));
+      await user.click(screen.getByRole("button", { name: /Remove blockout/i }));
+      expect(screen.getByRole("button", { name: /Save time off/i })).toBeEnabled();
+
+      await user.click(screen.getByRole("button", { name: /Accept all pending/i }));
+
+      expect(await screen.findByText(/Accepted 1 assignment/i)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Save time off/i })).toBeEnabled();
+      expect(screen.queryByRole("button", { name: /Remove blockout/i })).not.toBeInTheDocument();
+    });
   });
 
   it("shows the public schedule table with the viewer highlighted", async () => {

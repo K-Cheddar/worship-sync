@@ -1454,7 +1454,12 @@ export const deleteDoc = async (collectionName, id) => {
 export const queryDocs = async (
   collectionName,
   filters = [],
-  { limit = 100 } = {},
+  {
+    limit = 100,
+    orderById = false,
+    startAfterId = "",
+    includeDocumentId = false,
+  } = {},
 ) => {
   authReadObserverForServerTests?.({
     type: "queryDocs",
@@ -1467,15 +1472,23 @@ export const queryDocs = async (
     for (const filter of filters) {
       query = query.where(filter.field, filter.op || "==", filter.value);
     }
+    if (orderById) {
+      query = query.orderBy(FieldPath.documentId());
+      if (startAfterId) query = query.startAfter(startAfterId);
+    }
     if (limit) {
       query = query.limit(limit);
     }
     const snapshot = await query.get();
-    return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    return snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+      ...(includeDocumentId ? { documentId: doc.id } : {}),
+    }));
   }
 
   const store = Array.from(collectionMap[collectionName].entries()).map(
-    ([id, value]) => ({ id, ...value }),
+    ([id, value]) => ({ id, ...value, ...(includeDocumentId ? { documentId: id } : {}) }),
   );
   return store
     .filter((item) =>
@@ -1494,6 +1507,13 @@ export const queryDocs = async (
         return false;
       }),
     )
+    .filter((item) =>
+      !startAfterId || !orderById ||
+      Buffer.compare(Buffer.from(item.id, "utf8"), Buffer.from(startAfterId, "utf8")) > 0,
+    )
+    .sort((left, right) => orderById
+      ? Buffer.compare(Buffer.from(left.id, "utf8"), Buffer.from(right.id, "utf8"))
+      : 0)
     .slice(0, limit || undefined);
 };
 
@@ -6922,12 +6942,33 @@ const scheduleAssignmentResponseDigest = async (
   armResponseDigestTimer(scheduleId);
 };
 
+let scheduleAssignmentResponseDigestForHandlers = scheduleAssignmentResponseDigest;
+
+export const setScheduleAssignmentResponseDigestForServerTests = (handler = null) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "setScheduleAssignmentResponseDigestForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  if (authRuntimeInfo.hasFirestore) {
+    throw new Error(
+      "setScheduleAssignmentResponseDigestForServerTests refuses to run while Firestore is configured",
+    );
+  }
+  if (handler !== null && typeof handler !== "function") {
+    throw new TypeError("The response digest test handler must be a function or null.");
+  }
+  scheduleAssignmentResponseDigestForHandlers =
+    handler || scheduleAssignmentResponseDigest;
+};
+
 const teamsAuthHandlers = createTeamsAuthHandlers({
   COLLECTIONS,
   scheduleIntakeSubmissionDigest,
   appendIntakeSubmissionToTransaction,
   persistTeamIntakeSubmission,
-  scheduleAssignmentResponseDigest,
+  scheduleAssignmentResponseDigest: (...args) =>
+    scheduleAssignmentResponseDigestForHandlers(...args),
   addSecurityEvent,
   // Shared so member contact addresses normalize identically to account
   // emails; divergence here would make linked/unlinked comparisons unreliable.

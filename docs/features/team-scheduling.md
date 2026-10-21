@@ -82,6 +82,14 @@ A schedule follows **Virtual → Draft ↔ Published**.
 
 **Approval source:** Current product-owner request, 2026-10-19 (Phase 1A identity-integrity follow-up).
 
+### Pending assignment responses
+
+- A signed-in volunteer can accept all unanswered assignments across their upcoming published schedules and Teams in one action. Eligibility is derived from the authenticated account, its single active roster link, current primary assignments, and persisted future occurrence times.
+- Bulk acceptance is pending-only at commit time. It preserves accepted and declined answers, including answers submitted concurrently from another device. A repeated request is safe; schedules commit independently and partial completion is reported for retry.
+- Only changed schedules emit the existing schedule update and queue the coalesced response digest. This action does not send per-assignment email or SMS. Existing individual schedule-response links retain their explicit Accept/Decline behavior.
+
+**Approval source:** Current product-owner request, 2026-10-20 (Volunteer Portal Phase 1B: Accept All Pending).
+
 ## Core data invariants
 
 1. Each logical occurrence has a canonical identity that survives start-time edits, its original recurrence date and current church-local date/start instant, service membership, and optional group identity.

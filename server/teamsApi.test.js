@@ -45,6 +45,7 @@ const {
   assertServerCsrf,
   recoverPendingIntakeSubmissionDigests,
   setIntakeDigestSchedulingFailureForServerTests,
+  setScheduleAssignmentResponseDigestForServerTests,
   setIntakeNotifyRecipientsForServerTests,
   setSendEmailForServerTests,
   setAuthReadObserverForServerTests,
@@ -11565,6 +11566,209 @@ test("responding records the answer and leaves the assignment in place", async (
   });
   const own = mine.payload.occurrences[0].serving.find((p) => p.isMe);
   assert.equal(own.response, "declined");
+});
+
+test("accept pending applies only upcoming primary slots across published schedules", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("accept_pending_scope");
+  const { memberId, scheduleId } = await seedAssignedSchedule(context, "accept_pending_scope");
+  const futureDate = calendarDaysFromToday(14);
+  const pastDate = calendarDaysFromToday(-14);
+  const futureOccurrence = `bulk-future@${futureDate}`;
+  const pastOccurrence = `bulk-past@${pastDate}`;
+  const secondScheduleId = `bulk-legacy-${scheduleId}`;
+  const draftScheduleId = `bulk-draft-${scheduleId}`;
+  const archivedScheduleId = `bulk-archived-${scheduleId}`;
+  const foreignScheduleId = `bulk-foreign-${scheduleId}`;
+  const secondTeam = await callHandler(authHandlers.createTeam, {
+    context,
+    body: { name: "Audio" },
+  });
+  const scheduleA = {
+    churchId: context.churchId,
+    scheduleId,
+    published: true,
+    updatedAt: "before-a",
+    occurrences: [
+      { occurrenceId: futureOccurrence, startsAt: `${futureDate}T15:00:00.000Z` },
+      { occurrenceId: pastOccurrence, startsAt: `${pastDate}T15:00:00.000Z` },
+    ],
+    assignments: {
+      [futureOccurrence]: {
+        pending: { primaryMemberId: memberId, shadows: [] },
+        accepted: memberId,
+        declined: { primaryMemberId: memberId },
+        shadowOnly: { primaryMemberId: "another-member", shadows: [memberId] },
+      },
+      [pastOccurrence]: { past: { primaryMemberId: memberId } },
+    },
+    responses: {
+      [futureOccurrence]: {
+        accepted: { memberId, response: "accepted", respondedAt: "accepted-at" },
+        declined: { memberId, response: "declined", respondedAt: "declined-at" },
+        otherMember: { memberId: "another-member", response: "declined", metadata: "keep" },
+      },
+    },
+  };
+  const scheduleB = {
+    churchId: context.churchId,
+    scheduleId: secondScheduleId,
+    teamId: secondTeam.payload.team.teamId,
+    // Missing publication state retains the legacy Published behavior.
+    occurrences: [{ occurrenceId: "legacy-future", startsAt: `${futureDate}T16:00:00.000Z` }],
+    assignments: { "legacy-future": { pending: { primaryMemberId: memberId } } },
+    responses: {},
+    updatedAt: "before-b",
+  };
+  const excludedSchedule = (id, overrides) => ({
+    churchId: context.churchId,
+    scheduleId: id,
+    occurrences: [{ occurrenceId: "future", startsAt: `${futureDate}T17:00:00.000Z` }],
+    assignments: { future: { pending: { primaryMemberId: memberId } } },
+    responses: {},
+    ...overrides,
+  });
+  await Promise.all([
+    setDoc(COLLECTIONS.teamSchedules, scheduleId, scheduleA),
+    setDoc(COLLECTIONS.teamSchedules, secondScheduleId, scheduleB),
+    setDoc(COLLECTIONS.teamSchedules, draftScheduleId, excludedSchedule(draftScheduleId, { published: false })),
+    setDoc(COLLECTIONS.teamSchedules, archivedScheduleId, excludedSchedule(archivedScheduleId, { published: true, archivedAt: "archived" })),
+    setDoc(COLLECTIONS.teamSchedules, foreignScheduleId, excludedSchedule(foreignScheduleId, { churchId: "other-church", published: true })),
+  ]);
+
+  const stream = createSseClient();
+  addTeamsSseClient(context.churchId, stream);
+  const digestSchedules = [];
+  setScheduleAssignmentResponseDigestForServerTests(async (changedScheduleId) => {
+    digestSchedules.push(changedScheduleId);
+  });
+  try {
+    const result = await callHandler(authHandlers.acceptPendingMyAssignments, {
+      context,
+      // Ownership and schedule values in the body are ignored.
+      body: { churchId: "other-church", memberId: "another-member", scheduleId: "other-schedule" },
+    });
+
+    assert.equal(result.statusCode, 200);
+    assert.equal(result.payload.success, true);
+    assert.equal(result.payload.newlyAccepted, 2);
+    assert.equal(result.payload.alreadyAccepted, 1);
+    assert.equal(result.payload.alreadyDeclined, 1);
+    assert.equal(result.payload.skipped, 0);
+    assert.equal(result.payload.schedules.length, 2);
+    assert.equal(result.payload.schedules.every((row) => row.status === "updated"), true);
+
+    const savedA = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+    const savedB = await getDoc(COLLECTIONS.teamSchedules, secondScheduleId);
+    assert.deepEqual(savedA.responses[futureOccurrence].accepted, {
+      memberId,
+      response: "accepted",
+      respondedAt: "accepted-at",
+    });
+    assert.deepEqual(savedA.responses[futureOccurrence].declined, {
+      memberId,
+      response: "declined",
+      respondedAt: "declined-at",
+    });
+    assert.deepEqual(savedA.responses[futureOccurrence].otherMember, {
+      memberId: "another-member",
+      response: "declined",
+      metadata: "keep",
+    });
+    assert.equal(savedA.responses[futureOccurrence].pending.response, "accepted");
+    assert.equal(savedA.responses[pastOccurrence], undefined);
+    assert.equal(savedA.responses[futureOccurrence].shadowOnly, undefined);
+    assert.equal(savedB.responses["legacy-future"].pending.response, "accepted");
+    assert.equal((await getDoc(COLLECTIONS.teamSchedules, draftScheduleId)).responses.future, undefined);
+    assert.equal((await getDoc(COLLECTIONS.teamSchedules, archivedScheduleId)).responses.future, undefined);
+    assert.equal((await getDoc(COLLECTIONS.teamSchedules, foreignScheduleId)).responses.future, undefined);
+    assert.notEqual(savedA.updatedAt, "before-a");
+    assert.notEqual(savedB.updatedAt, "before-b");
+    const changedEvents = stream.events().filter((event) => event.type === "schedule-updated");
+    assert.deepEqual(
+      changedEvents
+        .map((event) => event.schedule.scheduleId).sort(),
+      [scheduleId, secondScheduleId].sort(),
+    );
+    assert.deepEqual(digestSchedules.slice().sort(), [scheduleId, secondScheduleId].sort());
+
+    const retry = await callHandler(authHandlers.acceptPendingMyAssignments, { context });
+    assert.equal(retry.statusCode, 200);
+    assert.equal(retry.payload.newlyAccepted, 0);
+    assert.equal(retry.payload.schedules.length, 0);
+    assert.equal((await getDoc(COLLECTIONS.teamSchedules, scheduleId)).updatedAt, savedA.updatedAt);
+    assert.equal(stream.events().filter((event) => event.type === "schedule-updated").length, changedEvents.length);
+    assert.deepEqual(digestSchedules.slice().sort(), [scheduleId, secondScheduleId].sort());
+  } finally {
+    setScheduleAssignmentResponseDigestForServerTests(null);
+    removeTeamsSseClient(context.churchId, stream);
+  }
+});
+
+test("accept pending rejects missing, archived, and ambiguous volunteer identities", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+
+  const unlinkedContext = await createAdminContext("accept_pending_unlinked");
+  const unlinked = await seedAssignedSchedule(unlinkedContext, "accept_pending_unlinked", { link: false });
+  const unlinkedResponse = await callHandler(authHandlers.acceptPendingMyAssignments, {
+    context: unlinkedContext,
+    body: { memberId: unlinked.memberId },
+  });
+  assert.equal(unlinkedResponse.statusCode, 404);
+  assert.equal((await getDoc(COLLECTIONS.teamSchedules, unlinked.scheduleId)).responses?.[unlinked.occurrenceId]?.[unlinked.cellKey], undefined);
+
+  const archivedContext = await createAdminContext("accept_pending_archived");
+  const archived = await seedAssignedSchedule(archivedContext, "accept_pending_archived");
+  await setDoc(COLLECTIONS.teamRosterMembers, archived.memberId, { archivedAt: "archived" }, { merge: true });
+  const archivedResponse = await callHandler(authHandlers.acceptPendingMyAssignments, {
+    context: archivedContext,
+  });
+  assert.equal(archivedResponse.statusCode, 403);
+  assert.equal((await getDoc(COLLECTIONS.teamSchedules, archived.scheduleId)).responses?.[archived.occurrenceId]?.[archived.cellKey], undefined);
+
+  const ambiguousContext = await createHumanContext("accept_pending_ambiguous", {
+    userId: "accept_pending_ambiguous_user",
+  });
+  const ambiguous = await seedAssignedSchedule(ambiguousContext, "accept_pending_ambiguous");
+  const duplicateId = "accept_pending_ambiguous_duplicate";
+  await setDoc(COLLECTIONS.teamRosterMembers, duplicateId, {
+    memberId: duplicateId,
+    churchId: ambiguousContext.churchId,
+    userId: "accept_pending_ambiguous_user",
+    firstName: "Other",
+    lastName: "Link",
+  });
+  const ambiguousResponse = await callHandler(authHandlers.acceptPendingMyAssignments, {
+    context: ambiguousContext,
+  });
+  assert.equal(ambiguousResponse.statusCode, 409);
+  assert.match(ambiguousResponse.payload.errorMessage, /correct the links/i);
+  assert.equal((await getDoc(COLLECTIONS.teamSchedules, ambiguous.scheduleId)).responses?.[ambiguous.occurrenceId]?.[ambiguous.cellKey], undefined);
+});
+
+test("accept pending reports success when post-commit digest queuing fails", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("accept_pending_digest_failure");
+  const { scheduleId, occurrenceId, cellKey, memberId } = await seedAssignedSchedule(
+    context,
+    "accept_pending_digest_failure",
+  );
+  const previousError = console.error;
+  setScheduleAssignmentResponseDigestForServerTests(async () => {
+    throw new Error("Injected digest queue failure");
+  });
+  console.error = () => {};
+  try {
+    const result = await callHandler(authHandlers.acceptPendingMyAssignments, { context });
+    assert.equal(result.statusCode, 200);
+    assert.equal(result.payload.newlyAccepted, 1);
+    const saved = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+    assert.equal(saved.responses[occurrenceId][cellKey].response, "accepted");
+    assert.equal(saved.responses[occurrenceId][cellKey].memberId, memberId);
+  } finally {
+    console.error = previousError;
+    setScheduleAssignmentResponseDigestForServerTests(null);
+  }
 });
 
 test("responding refuses a slot the caller does not hold", async (t) => {

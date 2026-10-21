@@ -1560,6 +1560,10 @@ app.post(
   "/api/churches/:churchId/my-assignments/respond",
   authHandlers.respondToMyAssignment,
 );
+app.post(
+  "/api/churches/:churchId/my-assignments/accept-pending",
+  authHandlers.acceptPendingMyAssignments,
+);
 // Public and unauthenticated by design: volunteers often have no account, so a
 // signed single-purpose token is the only way they can answer at all.
 app.post(

@@ -11616,6 +11616,7 @@ export const createTeamsAuthHandlers = ({
     COLLECTIONS,
     requireFirestore,
     getDoc,
+    queryDocs,
     updateDocFields,
     nowIso,
     httpError,
@@ -11629,6 +11630,7 @@ export const createTeamsAuthHandlers = ({
   const {
     saveBlockouts: saveVolunteerBlockouts,
     writeAssignmentResponses,
+    acceptPendingAssignments: runAcceptPendingAssignments,
   } = volunteerOperations;
 
   return {
@@ -16328,6 +16330,90 @@ export const createTeamsAuthHandlers = ({
         return res.json({ success: true, response });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not save your response.");
+      }
+    },
+
+    /** Accept unanswered upcoming assignments across the volunteer's schedules. */
+    async acceptPendingMyAssignments(req, res) {
+      try {
+        await assertCsrf(req);
+        const { churchId, userId, member, hasArchivedLinkedMember } =
+          await resolveSignedInVolunteerIdentity(req);
+        if (!member) {
+          if (hasArchivedLinkedMember) {
+            throw httpError(
+              403,
+              "Your member record is archived. Ask an admin to restore it.",
+            );
+          }
+          throw httpError(
+            404,
+            "Your account is not linked to a team member. Ask an admin to link you.",
+          );
+        }
+
+        const afterScheduleId = normalizeShortText(req.body?.afterScheduleId, {
+          max: 200,
+        });
+        const result = await runAcceptPendingAssignments({
+          churchId,
+          memberId: member.memberId,
+          actorUid: userId,
+          afterScheduleId,
+        });
+
+        // Each schedule has already committed independently. Message previews,
+        // SSE invalidation, and the coalesced leader digest are best-effort
+        // follow-ups and cannot turn committed answers into a write failure.
+        for (const { scheduleId, schedule, acceptedTargets } of result.updatedSchedules) {
+          try {
+            if (acceptedTargets.length > 0) {
+              await saveNotificationEventIntents({
+                churchId,
+                schedule,
+                intentType: "assignment_confirmation",
+                entries: acceptedTargets.map(({ occurrenceId, cellKey }) => ({
+                  memberId: member.memberId,
+                  occurrenceId,
+                  cellKey,
+                })),
+              });
+            }
+          } catch (notificationError) {
+            console.error(
+              "Could not record assignment response message previews",
+              notificationError,
+            );
+          }
+          emitTeamsEvent(churchId, "schedule-updated", { schedule });
+          try {
+            await scheduleAssignmentResponseDigest(scheduleId);
+          } catch (notificationError) {
+            console.error(
+              "Could not queue assignment response digest",
+              notificationError,
+            );
+          }
+        }
+
+        return res.json({
+          success: true,
+          newlyAccepted: result.newlyAccepted,
+          alreadyAccepted: result.alreadyAccepted,
+          alreadyDeclined: result.alreadyDeclined,
+          skipped: result.skipped,
+          failedScheduleCount: result.failedScheduleCount,
+          schedules: result.schedules,
+          authorizationChanged: result.authorizationChanged,
+          hasMore: result.hasMore,
+          nextCursor: result.nextCursor,
+        });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not accept your pending assignments.",
+        );
       }
     },
 

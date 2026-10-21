@@ -2,22 +2,24 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { initializeApp, deleteApp } from "firebase-admin/app";
-import { getFirestore } from "firebase-admin/firestore";
+import { FieldPath, getFirestore } from "firebase-admin/firestore";
 import { createVolunteerOperations } from "./volunteerOperations.js";
 
 const enabled = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
 const httpError = (statusCode, message) => Object.assign(new Error(message), { statusCode });
 
-const fixture = async (run, { beforeCommit } = {}) => {
+const fixture = async (run, { beforeCommit, beforeCommitEveryAttempt = false } = {}) => {
   const app = initializeApp({ projectId: "demo-worshipsync" }, `volunteer-${randomUUID()}`);
   const db = getFirestore(app);
   const suffix = randomUUID().replaceAll("-", "");
   const COLLECTIONS = {
     teamSchedules: `volunteer_schedules_${suffix}`,
     teamRosterMembers: `volunteer_members_${suffix}`,
+    memberships: `volunteer_memberships_${suffix}`,
   };
   const memberRef = db.collection(COLLECTIONS.teamRosterMembers).doc("member");
   const scheduleRef = db.collection(COLLECTIONS.teamSchedules).doc("schedule");
+  const membershipRef = db.collection(COLLECTIONS.memberships).doc("church-a_account-a");
   const identity = { churchId: "church-a", memberId: "member", actorUid: "account-a" };
   const member = {
     ...identity,
@@ -42,6 +44,7 @@ const fixture = async (run, { beforeCommit } = {}) => {
     assignments: {
       occurrence: { primary: "member", second: "member", other: "another" },
     },
+    occurrences: [{ occurrenceId: "occurrence", startsAt: "2099-12-01T15:00:00.000Z" }],
     responses: { occurrence: { other: { memberId: "another", response: "accepted" } } },
   };
   let commitHookUsed = false;
@@ -49,9 +52,9 @@ const fixture = async (run, { beforeCommit } = {}) => {
     collection: (...args) => db.collection(...args),
     runTransaction: (callback) => db.runTransaction(async (transaction) => {
       const result = await callback(transaction);
-      if (beforeCommit && !commitHookUsed) {
+      if (beforeCommit && (beforeCommitEveryAttempt || !commitHookUsed)) {
         commitHookUsed = true;
-        await beforeCommit({ db, memberRef, scheduleRef });
+        await beforeCommit({ db, memberRef, scheduleRef, membershipRef });
       }
       return result;
     }),
@@ -63,6 +66,23 @@ const fixture = async (run, { beforeCommit } = {}) => {
       const snapshot = await db.collection(collection).doc(id).get();
       return snapshot.exists ? snapshot.data() : null;
     },
+    queryDocs: async (collection, filters = [], { limit = 0, orderById = false, startAfterId = "", includeDocumentId = false } = {}) => {
+      let query = db.collection(collection);
+      filters.forEach(({ field, value }) => {
+        query = query.where(field, "==", value);
+      });
+      if (orderById) {
+        query = query.orderBy(FieldPath.documentId());
+        if (startAfterId) query = query.startAfter(startAfterId);
+      }
+      if (limit > 0) query = query.limit(limit);
+      const snapshot = await query.get();
+      return snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+        ...(includeDocumentId ? { documentId: doc.id } : {}),
+      }));
+    },
     updateDocFields: (collection, id, fields) =>
       db.collection(collection).doc(id).update(fields),
     nowIso: () => new Date().toISOString(),
@@ -72,8 +92,12 @@ const fixture = async (run, { beforeCommit } = {}) => {
   });
 
   try {
-    await Promise.all([memberRef.set(member), scheduleRef.set(schedule)]);
-    await run({ app, db, COLLECTIONS, identity, member, schedule, memberRef, scheduleRef, operations });
+    await Promise.all([
+      memberRef.set(member),
+      scheduleRef.set(schedule),
+      membershipRef.set({ churchId: identity.churchId, userId: identity.actorUid, status: "active" }),
+    ]);
+    await run({ app, db, COLLECTIONS, identity, member, schedule, memberRef, scheduleRef, membershipRef, operations });
   } finally {
     await Promise.all(Object.values(COLLECTIONS).map((name) => db.recursiveDelete(db.collection(name))));
     await db.terminate();
@@ -191,3 +215,136 @@ test("Firestore time-off mutation rejects cross-church member identities", { ski
     blockoutDates: [],
   }), { statusCode: 404 });
 }));
+
+test("Firestore pending-only acceptance racing an explicit decline preserves the decline", { skip: !enabled }, async () => fixture(async ({ operations, identity, scheduleRef }) => {
+  const result = await operations.acceptPendingAssignments(identity);
+  const saved = (await scheduleRef.get()).data();
+
+  assert.equal(result.newlyAccepted, 0);
+  assert.equal(result.alreadyDeclined, 1);
+  assert.equal(saved.responses.occurrence.primary.response, "declined");
+  assert.equal(saved.responses.occurrence.primary.respondedAt, "decline-at-commit");
+}, {
+  beforeCommit: ({ scheduleRef }) => scheduleRef.update({
+    "responses.occurrence.primary": {
+      memberId: "member",
+      response: "declined",
+      respondedAt: "decline-at-commit",
+    },
+  }),
+}));
+
+test("Firestore pending-only acceptance racing an explicit acceptance keeps the original answer", { skip: !enabled }, async () => fixture(async ({ operations, identity, scheduleRef }) => {
+  const result = await operations.acceptPendingAssignments(identity);
+  const saved = (await scheduleRef.get()).data();
+
+  assert.equal(result.newlyAccepted, 0);
+  assert.equal(result.alreadyAccepted, 1);
+  assert.equal(saved.responses.occurrence.primary.respondedAt, "accept-at-commit");
+}, {
+  beforeCommit: ({ scheduleRef }) => scheduleRef.update({
+    "responses.occurrence.primary": {
+      memberId: "member",
+      response: "accepted",
+      respondedAt: "accept-at-commit",
+    },
+  }),
+}));
+
+test("two simultaneous Firestore accept-pending requests commit one acceptance", { skip: !enabled }, async () => fixture(async ({ operations, identity, scheduleRef }) => {
+  const results = await Promise.all([
+    operations.acceptPendingAssignments(identity),
+    operations.acceptPendingAssignments(identity),
+  ]);
+  const saved = (await scheduleRef.get()).data();
+
+  assert.equal(results.reduce((sum, result) => sum + result.newlyAccepted, 0), 1);
+  assert.equal(saved.responses.occurrence.primary.response, "accepted");
+  assert.equal(saved.responses.occurrence.primary.memberId, identity.memberId);
+}));
+
+test("Firestore pending-only acceptance skips a reassigned assignment", { skip: !enabled }, async () => fixture(async ({ operations, identity, scheduleRef }) => {
+  const result = await operations.acceptPendingAssignments(identity);
+  const saved = (await scheduleRef.get()).data();
+
+  assert.equal(result.newlyAccepted, 0);
+  assert.equal(result.skipped, 1);
+  assert.equal(saved.assignments.occurrence.primary, "replacement");
+  assert.equal(saved.responses.occurrence.primary, undefined);
+}, {
+  beforeCommit: ({ scheduleRef }) => scheduleRef.update({ "assignments.occurrence.primary": "replacement" }),
+}));
+
+test("Firestore pending-only acceptance skips a schedule unpublished before commit", { skip: !enabled }, async () => fixture(async ({ operations, identity, scheduleRef }) => {
+  const result = await operations.acceptPendingAssignments(identity);
+  const saved = (await scheduleRef.get()).data();
+
+  assert.equal(result.newlyAccepted, 0);
+  assert.equal(result.skipped, 1);
+  assert.equal(saved.published, false);
+  assert.equal(saved.updatedAt, "baseline");
+}, {
+  beforeCommit: ({ scheduleRef }) => scheduleRef.update({ published: false }),
+}));
+
+test("Firestore pending-only acceptance stops after member archival or account unlink", { skip: !enabled }, async (t) => {
+  await t.test("archival", { skip: !enabled }, () => fixture(async ({ operations, identity, memberRef, scheduleRef }) => {
+    const result = await operations.acceptPendingAssignments(identity);
+    assert.equal(result.newlyAccepted, 0);
+    assert.equal(result.authorizationChanged, true);
+    assert.equal((await scheduleRef.get()).data().responses.occurrence.primary, undefined);
+    assert.ok((await memberRef.get()).data().archivedAt);
+  }, { beforeCommit: ({ memberRef }) => memberRef.update({ archivedAt: "archive-at-commit" }) }));
+
+  await t.test("unlink", { skip: !enabled }, () => fixture(async ({ operations, identity, memberRef, scheduleRef }) => {
+    const result = await operations.acceptPendingAssignments(identity);
+    assert.equal(result.newlyAccepted, 0);
+    assert.equal(result.authorizationChanged, true);
+    assert.equal((await scheduleRef.get()).data().responses.occurrence.primary, undefined);
+    assert.equal((await memberRef.get()).data().userId, "another-account");
+  }, { beforeCommit: ({ memberRef }) => memberRef.update({ userId: "another-account" }) }));
+});
+
+test("Firestore pending-only acceptance rechecks church membership at commit", { skip: !enabled }, async () => fixture(async ({ operations, identity, membershipRef, scheduleRef }) => {
+  const result = await operations.acceptPendingAssignments(identity);
+  assert.equal(result.newlyAccepted, 0);
+  assert.equal(result.authorizationChanged, true);
+  assert.equal((await membershipRef.get()).exists, false);
+  assert.equal((await scheduleRef.get()).data().responses.occurrence.primary, undefined);
+}, {
+  beforeCommit: ({ membershipRef }) => membershipRef.delete(),
+}));
+
+test("Firestore schedule failure is isolated and a later retry processes only remaining pending work", { skip: !enabled }, async () => {
+  let keepContending = true;
+  await fixture(async ({ operations, identity, db, COLLECTIONS }) => {
+    const secondSchedule = {
+      churchId: identity.churchId,
+      scheduleId: "schedule-b",
+      published: true,
+      occurrences: [{ occurrenceId: "occurrence", startsAt: "2099-12-01T15:00:00.000Z" }],
+      assignments: { occurrence: { primary: "member" } },
+      responses: {},
+    };
+    await db.collection(COLLECTIONS.teamSchedules).doc("schedule-b").set(secondSchedule);
+    const first = await operations.acceptPendingAssignments(identity);
+
+    assert.equal(first.newlyAccepted, 1);
+    assert.equal(first.failedScheduleCount, 1);
+    assert.equal(first.schedules.find((row) => row.scheduleId === "schedule-b").status, "updated");
+    assert.equal((await db.collection(COLLECTIONS.teamSchedules).doc("schedule-b").get()).data().responses.occurrence.primary.response, "accepted");
+
+    keepContending = false;
+    const retry = await operations.acceptPendingAssignments(identity);
+    assert.equal(retry.newlyAccepted, 1);
+    assert.equal(retry.schedules.some((row) => row.scheduleId === "schedule-b"), false);
+    assert.equal((await db.collection(COLLECTIONS.teamSchedules).doc("schedule-b").get()).data().responses.occurrence.primary.response, "accepted");
+  }, {
+    beforeCommitEveryAttempt: true,
+    beforeCommit: async ({ scheduleRef }) => {
+      if (!keepContending) return;
+      const previous = (await scheduleRef.get()).data().updatedAt || "baseline";
+      await scheduleRef.update({ updatedAt: `${previous}!` });
+    },
+  });
+});

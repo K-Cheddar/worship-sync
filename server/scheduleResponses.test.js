@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   applyAssignmentResponses,
+  applyPendingAssignmentResponses,
   isVolunteerScheduleVisible,
   normalizeAssignmentResponse,
   normalizeScheduleResponses,
@@ -10,6 +11,102 @@ import {
   readAssignmentResponse,
   withAssignmentResponse,
 } from "./scheduleResponses.js";
+
+test("pending-only responses accept eligible primary slots without changing prior answers or unrelated records", () => {
+  const schedule = {
+    assignments: {
+      future: {
+        legacy: "m1",
+        structured: { primaryMemberId: "m1", shadows: ["m2"] },
+        accepted: "m1",
+        declined: "m1",
+        stale: "m1",
+        shadowOnly: { primaryMemberId: "m2", shadows: ["m1"] },
+      },
+    },
+    responses: {
+      future: {
+        legacy: { memberId: "m1", response: "pending", metadata: "keep current holder data" },
+        accepted: { memberId: "m1", response: "accepted", respondedAt: "accepted-at" },
+        declined: { memberId: "m1", response: "declined", respondedAt: "declined-at" },
+        stale: { memberId: "previous-holder", response: "declined", respondedAt: "old-at" },
+        otherMember: { memberId: "m2", response: "accepted", respondedAt: "other-at", extra: "preserve" },
+      },
+      unrelatedOccurrence: { slot: { memberId: "m9", response: "accepted", privateMetadata: "preserve" } },
+    },
+  };
+  const result = applyPendingAssignmentResponses(schedule, {
+    memberId: "m1",
+    targets: [
+      { occurrenceId: "future", cellKey: "legacy" },
+      { occurrenceId: "future", cellKey: "structured" },
+      { occurrenceId: "future", cellKey: "accepted" },
+      { occurrenceId: "future", cellKey: "declined" },
+      { occurrenceId: "future", cellKey: "stale" },
+      { occurrenceId: "future", cellKey: "shadowOnly" },
+    ],
+    respondedAt: "now",
+  });
+
+  assert.equal(result.newlyAccepted, 3);
+  assert.equal(result.alreadyAccepted, 1);
+  assert.equal(result.alreadyDeclined, 1);
+  assert.equal(result.skipped, 1);
+  assert.deepEqual(result.outcomes.map((item) => item.status), [
+    "accepted",
+    "accepted",
+    "already_accepted",
+    "already_declined",
+    "accepted",
+    "skipped",
+  ]);
+  assert.deepEqual(result.responses.future.accepted, schedule.responses.future.accepted);
+  assert.deepEqual(result.responses.future.declined, schedule.responses.future.declined);
+  assert.deepEqual(result.responses.future.otherMember, schedule.responses.future.otherMember);
+  assert.deepEqual(result.responses.unrelatedOccurrence, schedule.responses.unrelatedOccurrence);
+  assert.deepEqual(result.responses.future.stale, {
+    memberId: "m1",
+    response: "accepted",
+    respondedAt: "now",
+  });
+  assert.deepEqual(result.responses.future.legacy, {
+    memberId: "m1",
+    response: "accepted",
+    respondedAt: "now",
+    metadata: "keep current holder data",
+  });
+  assert.equal(schedule.responses.future.stale.memberId, "previous-holder");
+});
+
+test("a repeated pending-only response is a no-op and de-duplicates assignment identities", () => {
+  const schedule = {
+    assignments: { future: { slot: "m1" } },
+    responses: {},
+  };
+  const first = applyPendingAssignmentResponses(schedule, {
+    memberId: "m1",
+    targets: [
+      { occurrenceId: "future", cellKey: "slot" },
+      { occurrenceId: "future", cellKey: "slot" },
+    ],
+    respondedAt: "first-at",
+  });
+  const second = applyPendingAssignmentResponses(
+    { ...schedule, responses: first.responses },
+    {
+      memberId: "m1",
+      targets: [{ occurrenceId: "future", cellKey: "slot" }],
+      respondedAt: "second-at",
+    },
+  );
+
+  assert.equal(first.newlyAccepted, 1);
+  assert.equal(first.outcomes.length, 1);
+  assert.equal(second.newlyAccepted, 0);
+  assert.equal(second.changed, false);
+  assert.deepEqual(second.responses, first.responses);
+  assert.equal(second.responses.future.slot.respondedAt, "first-at");
+});
 
 test("volunteer schedule visibility excludes Draft and archived schedules but keeps legacy Published schedules", () => {
   assert.equal(isVolunteerScheduleVisible({ scheduleId: "draft", published: false }), false);
