@@ -9,9 +9,9 @@ import { test as diagnosticTest } from "./fixtures";
 export const test = diagnosticTest.extend<{}, { smokeContext: BrowserContext }>({
   smokeContext: [
     async ({ browser }, use, workerInfo) => {
-      const churchId = process.env.E2E_SMOKE_DISPOSABLE_CHURCH_ID?.trim();
+      const churchId = process.env.E2E_DEMO_CHURCH_ID?.trim();
       if (!churchId) {
-        throw new Error("Set E2E_SMOKE_DISPOSABLE_CHURCH_ID to an isolated disposable test church. Opening Schedules can persist reconciliation changes.");
+        throw new Error("Set E2E_DEMO_CHURCH_ID to the verified demo church. Smoke navigation is read-only; scheduling writes belong to the guarded scheduling suite.");
       }
       const options = workerInfo.project.use;
       const context = await browser.newContext({
@@ -27,7 +27,11 @@ export const test = diagnosticTest.extend<{}, { smokeContext: BrowserContext }>(
         const requestedChurch = new URL(route.request().url()).pathname.match(/\/api\/churches\/([^/]+)/)?.[1];
         if (!requestedChurch || decodeURIComponent(requestedChurch) !== churchId) {
           await route.abort("blockedbyclient");
-          throw new Error("Smoke request targeted a church other than E2E_SMOKE_DISPOSABLE_CHURCH_ID.");
+          throw new Error("Smoke request targeted a church other than E2E_DEMO_CHURCH_ID.");
+        }
+        if (!["GET", "HEAD", "OPTIONS"].includes(route.request().method())) {
+          await route.abort("blockedbyclient");
+          throw new Error(`Read-only smoke guard blocked ${route.request().method()} ${new URL(route.request().url()).pathname}`);
         }
         await route.fallback();
       });

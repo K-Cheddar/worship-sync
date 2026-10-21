@@ -139,6 +139,30 @@ const ownersForChurch = async (db, churchId) => {
   return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 };
 
+test("Firestore emulator deletes exact schedule claims atomically and regenerates twice", { skip: !emulatorEnabled }, async () => {
+  await withFirestore(async (db) => {
+    const event = occurrence("e2e", "2026-10-10T12:00:00.000Z");
+    const { context, teamId } = await createFixture(randomUUID(), [service("e2e", event.startsAt)]);
+    const body = periodBody(teamId, "2026-10-01", "2026-10-31", [event]);
+    for (let run = 0; run < 2; run++) {
+      const created = await callHandler(authHandlers.ensureTeamScheduleForPeriod, { context, body });
+      assert.equal(created.statusCode, 200, JSON.stringify(created.payload));
+      const scheduleId = created.payload.schedule.scheduleId;
+      const [claim] = await ownersForChurch(db, context.churchId);
+      const foreign = db.collection(COLLECTIONS.teamScheduleOccurrenceOwners).doc(`foreign-${randomUUID()}`);
+      await foreign.set({ ...claim, scheduleId: "unrelated-schedule" });
+      const before = (await foreign.get()).data();
+      const deleted = await callHandler(authHandlers.deleteTeamSchedule, { context, params: { scheduleId } });
+      assert.equal(deleted.statusCode, 200, JSON.stringify(deleted.payload));
+      assert.equal((await db.collection(COLLECTIONS.teamSchedules).doc(scheduleId).get()).exists, false);
+      assert.equal((await db.collection(COLLECTIONS.teamScheduleOccurrenceOwners).doc(claim.id).get()).exists, false);
+      assert.deepEqual((await foreign.get()).data(), before);
+      await foreign.delete();
+      assert.deepEqual(await ownersForChurch(db, context.churchId), []);
+    }
+  });
+});
+
 test("Firestore emulator gives overlapping service occurrences one owner and rejects conflicts atomically", { skip: !emulatorEnabled }, async () => {
   await withFirestore(async (db) => {
     const suffix = randomUUID();

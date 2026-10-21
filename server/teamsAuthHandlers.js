@@ -1602,6 +1602,8 @@ export const createTeamsAuthHandlers = ({
     }
 
     const lockIds = [
+      `team-schedules:${churchId}:${payload.teamId}`,
+      `team-schedules:${churchId}:${existingSchedule?.teamId || payload.teamId}`,
       `schedule:${churchId}:${scheduleId}`,
       ...[...occurrenceOwnershipEntries(payload.occurrences || [], timeZone).keys()]
         .map((logicalOccurrenceId) => `occurrence:${churchId}:${payload.teamId}:${logicalOccurrenceId}`),
@@ -6682,14 +6684,48 @@ export const createTeamsAuthHandlers = ({
     );
   };
 
-  const deleteTeamEntity = async ({ kind, churchId, id, adminUserId }) => {
+  const deleteTeamEntity = async ({ kind, churchId, id, adminUserId, expectedEntity }) => {
     const config = TEAM_ENTITY_CONFIG[kind];
     // Enforce church ownership before permanently removing. Allow deleting
     // archived entities too, so `active: false`.
-    await assertTeamEntityInChurch(kind, id, churchId, {
+    const expected = expectedEntity || await assertTeamEntityInChurch(kind, id, churchId, {
       active: false,
       label: kind,
     });
+    if (kind === "schedule") {
+      const db = requireFirestore();
+      const remove = async (transaction) => {
+        const ref = db?.collection(config.collection).doc(id);
+        const snapshot = transaction ? await transaction.get(ref) : null;
+        const current = transaction
+          ? (snapshot.exists ? snapshot.data() : null)
+          : await getDoc(config.collection, id);
+        if (!current || current.churchId !== churchId || current.teamId !== expected.teamId ||
+            current.createdAt !== expected.createdAt || current.updatedAt !== expected.updatedAt) {
+          throw httpError(409, "This schedule changed before deletion. Refresh before trying again.");
+        }
+        // Query the persisted claims, including stale entries no longer present
+        // in the occurrence list. Read all of them before the first write.
+        const claims = transaction
+          ? (await transaction.get(db.collection(COLLECTIONS.teamScheduleOccurrenceOwners)
+              .where("scheduleId", "==", id))).docs.map((doc) => ({ id: doc.id, data: doc.data(), ref: doc.ref }))
+          : (await queryDocs(COLLECTIONS.teamScheduleOccurrenceOwners, [{ field: "scheduleId", value: id }], { limit: 0 }))
+              .map((claim) => ({ id: claim.id, data: claim }));
+        for (const claim of claims) {
+          if (claim.data.churchId !== churchId || claim.data.teamId !== current.teamId || claim.data.scheduleId !== id) continue;
+          if (transaction) transaction.delete(claim.ref);
+          else await deleteDoc(COLLECTIONS.teamScheduleOccurrenceOwners, claim.id);
+        }
+        if (transaction) transaction.delete(ref);
+        else await deleteDoc(config.collection, id);
+      };
+      if (db) await db.runTransaction(remove);
+      else await enqueueInMemoryScheduleSave(id, () => withScheduleOccurrenceLocks([
+        `team-schedules:${churchId}:${expected.teamId}`,
+        `schedule:${churchId}:${id}`,
+      ], () => remove(null)));
+      return;
+    }
     await deleteDoc(config.collection, id);
     await cascadeTeamEntityDeletion({ kind, churchId, id, adminUserId });
   };
@@ -14877,6 +14913,7 @@ export const createTeamsAuthHandlers = ({
                   const updated = await enqueueInMemoryScheduleSave(
                     existing.scheduleId,
                     async () => withScheduleOccurrenceLocks([
+                      `team-schedules:${churchId}:${team.teamId}`,
                       `schedule:${churchId}:${existing.scheduleId}`,
                       ...[...new Set([
                         ...occurrenceOwnershipEntries(existing.occurrences || [], timeZone).keys(),
@@ -18943,6 +18980,7 @@ export const createTeamsAuthHandlers = ({
               const now = nowIso();
               const document = {
                 ...payload,
+                published: false,
                 scheduleId,
                 churchId,
                 archivedAt: null,
@@ -18968,6 +19006,7 @@ export const createTeamsAuthHandlers = ({
 
           const logicalIds = [...occurrenceOwnershipEntries(payload.occurrences, timeZone).keys()]
             .map((logicalOccurrenceId) => `occurrence:${churchId}:${payload.teamId}:${logicalOccurrenceId}`);
+          logicalIds.push(`team-schedules:${churchId}:${payload.teamId}`);
           return withGeneratedPeriodEnsureLock(generatedPeriodKey, () =>
             withScheduleOccurrenceLocks(logicalIds, async () => {
               const allSchedules = await listTeamCollectionForChurch(COLLECTIONS.teamSchedules, "scheduleId", churchId);
@@ -18999,6 +19038,7 @@ export const createTeamsAuthHandlers = ({
               const now = nowIso();
               const document = {
                 ...payload,
+                published: false,
                 scheduleId,
                 churchId,
                 archivedAt: null,
@@ -19497,6 +19537,7 @@ export const createTeamsAuthHandlers = ({
           churchId: req.params.churchId,
           id: req.params.scheduleId,
           adminUserId: admin.user.uid,
+          expectedEntity: existing,
         });
         await addSecurityEvent({
           type: "team_schedule_deleted",
