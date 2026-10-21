@@ -2170,8 +2170,8 @@ export const acceptPendingMyAssignments = async (
       body: JSON.stringify(afterScheduleId ? { afterScheduleId } : {}),
     },
   );
-export const acceptMyUnansweredAssignments = (churchId: string) => apiFetch<VolunteerBulkResult>(
-  `api/churches/${churchId}/my-assignments/accept-unanswered`, { method: "POST", body: "{}" },
+export const acceptMyUnansweredAssignments = (churchId: string, afterScheduleId?: string) => apiFetch<VolunteerBulkResult>(
+  `api/churches/${churchId}/my-assignments/accept-unanswered`, { method: "POST", body: JSON.stringify(afterScheduleId ? { afterScheduleId } : {}) },
 );
 export const getMyVolunteerAvailability = (churchId: string) => apiFetch<{ success: boolean; requests: VolunteerAvailabilityRequest[] }>(
   `api/churches/${churchId}/my-availability`,

@@ -170,7 +170,7 @@ export const createVolunteerPortalHandlers = ({
     }),
     getVolunteerPersonalSchedule: handle(async (req, res) => res.json(await getSchedule(await sessionIdentity(req)))),
     respondToVolunteerPersonalAssignment: handle(async (req, res) => res.json(await respond(await sessionIdentity(req, true), req.body))),
-    acceptVolunteerPersonalUnanswered: handle(async (req, res) => res.json(await acceptUnanswered(await sessionIdentity(req, true)))),
+    acceptVolunteerPersonalUnanswered: handle(async (req, res) => res.json(await acceptUnanswered(await sessionIdentity(req, true), req.body))),
     saveVolunteerPersonalBlockouts: handle(async (req, res) => res.json(await saveBlockouts(await sessionIdentity(req, true), req.body))),
     getVolunteerPersonalAvailability: handle(async (req, res) => res.json(await getAvailability(await sessionIdentity(req)))),
     submitVolunteerPersonalAvailability: handle(async (req, res) => res.json(await submitAvailability(await sessionIdentity(req, true), req.body))),

@@ -32,7 +32,7 @@ export const createVolunteerMutations = ({
 
   const writeAssignmentResponses = async ({
     churchId, scheduleId, memberId, targets, response, actorUid,
-    pendingOnly = false, authorize, actorId,
+    authorize, actorId,
   }) => {
     const db = requireFirestore();
     const mutate = async (transaction) => {
@@ -59,11 +59,10 @@ export const createVolunteerMutations = ({
         .flatMap(([occurrenceId, row]) => Object.keys(row || {})
           .map((cellKey) => ({ occurrenceId, cellKey })));
       const { responses, applied } = applyAssignmentResponses(schedule, {
-        memberId, targets: currentTargets, response, pendingOnly,
+        memberId, targets: currentTargets, response,
         respondedAt: nowIso(), readHolder: readAssignmentCellHolderId,
       });
       if (!applied) {
-        if (pendingOnly) return { schedule: { scheduleId, ...schedule }, applied: 0 };
         throw httpError(409, "This assignment changed. Your team lead will be in touch.");
       }
       const patch = {

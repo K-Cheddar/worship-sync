@@ -239,6 +239,55 @@ test("Firestore portal uses isolated cookies, CSRF and safe shared projections; 
     assert.doesNotMatch(JSON.stringify(loaded.payload), /PRIVATE|TEAMMATE-RESPONSE|PrivateSurname|_draft/);
     const account = res(); await authHandlers.getMyTeamAssignments(req(humanHeaders), account);
     assert.equal(account.payload.member, null);
+    // Exercise both HTTP identity adapters against the same real documents and
+    // force a second page. A coexisting admin session must not widen the cookie scope.
+    const bulkRefs = [];
+    for (let i = 0; i < 26; i++) {
+      const id = `${scheduleId}_bulk_${String(i).padStart(2, "0")}`;
+      const data = { ...schedule, scheduleId: id, responses: {
+        [occurrenceId]: { other: { memberId: `${memberId}_other`, response: "legacy-value", metadata: { retain: [1, 2] } } },
+        past: { own: { memberId, response: "pending", metadata: "preserve past" } },
+      }, occurrences: [...schedule.occurrences, { occurrenceId: "past", startsAt: "2000-01-01T00:00:00Z" }],
+      assignments: { ...schedule.assignments, past: { own: memberId } } };
+      await seed(COLLECTIONS.teamSchedules, id, data);
+      bulkRefs.push({ ref: db.collection(COLLECTIONS.teamSchedules).doc(id), data });
+    }
+    const runPages = async (handler, requestHeaders) => {
+      let cursor; const pages = [];
+      do {
+        const result = res(); await handler(req(requestHeaders, { afterScheduleId: cursor, memberId: "forged", churchId: "forged" }), result);
+        assert.equal(result.statusCode, 200, JSON.stringify(result.payload));
+        assert.equal(result.payload.failedScheduleCount, 0);
+        assert.ok(result.payload.schedules.length <= 25);
+        pages.push(result.payload); cursor = result.payload.hasMore ? result.payload.nextCursor : null;
+      } while (cursor);
+      return pages;
+    };
+    const personalPages = await runPages(authHandlers.acceptVolunteerPersonalUnanswered, headers);
+    assert.equal(personalPages.length, 2);
+    assert.equal(personalPages.reduce((n, row) => n + row.newlyAccepted, 0), 27);
+    const personalResponses = await Promise.all(bulkRefs.map(async ({ ref, data }) => {
+      const saved = (await ref.get()).data().responses;
+      assert.deepEqual(saved.past, data.responses.past);
+      assert.deepEqual(saved[occurrenceId].other, data.responses[occurrenceId].other);
+      assert.equal(saved[occurrenceId].own.response, "accepted");
+      return saved;
+    }));
+    assert.equal((await db.collection(COLLECTIONS.teamSchedules).doc(`${scheduleId}_draft`).get()).get(`responses.${occurrenceId}.own`), undefined);
+    await Promise.all(bulkRefs.map(({ ref, data }) => ref.set(data)));
+    await db.collection(COLLECTIONS.teamSchedules).doc(scheduleId).set(schedule);
+    const roster = db.collection(COLLECTIONS.teamRosterMembers).doc(memberId);
+    await roster.update({ userId: `portal_admin_${suffix}` });
+    const humanPages = await runPages(authHandlers.acceptPendingMyAssignments, humanHeaders);
+    assert.deepEqual(humanPages.map((row) => row.newlyAccepted), personalPages.map((row) => row.newlyAccepted));
+    for (const [index, { ref }] of bulkRefs.entries()) {
+      const saved = (await ref.get()).data().responses;
+      // Newly written response time is naturally later in the second HTTP run.
+      saved[occurrenceId].own.respondedAt = personalResponses[index][occurrenceId].own.respondedAt;
+      assert.deepEqual(saved, personalResponses[index]);
+    }
+    await roster.update({ userId: "" });
+
     const noCsrf = res(); await authHandlers.respondToVolunteerPersonalAssignment(req({ cookie, origin }, {
       scheduleId, occurrenceId, cellKey: "own", response: "accepted", memberId: "forged" }), noCsrf);
     assert.equal(noCsrf.statusCode, 403);

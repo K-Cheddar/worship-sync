@@ -21384,6 +21384,8 @@ test("accept all unanswered preserves answers, ignores forged identity and safel
   const context = await createAdminContext("volunteer_pending_bulk");
   const first = await seedAssignedSchedule(context, "volunteer_pending_bulk");
   const base = await getDoc(COLLECTIONS.teamSchedules, first.scheduleId);
+  base.occurrences = base.occurrences.map((row) => ({ ...row, startsAt: "2099-12-01T15:00:00Z" }));
+  await setDoc(COLLECTIONS.teamSchedules, first.scheduleId, { occurrences: base.occurrences }, { merge: true });
   const otherScheduleId = `${first.scheduleId}_second`;
   await setDoc(COLLECTIONS.teamSchedules, otherScheduleId, { ...base, scheduleId: otherScheduleId });
   const declinedKey = `${first.cellKey}_declined`;
@@ -21407,7 +21409,7 @@ test("accept all unanswered preserves answers, ignores forged identity and safel
   assert.equal(partial.payload.results.find((row) => row.scheduleId === otherScheduleId).success, false);
   const retry = await call();
   assert.equal(retry.payload.success, true);
-  assert.equal(retry.payload.results.find((row) => row.scheduleId === first.scheduleId).applied, 0);
+  assert.equal(retry.payload.results.some((row) => row.scheduleId === first.scheduleId), false);
   assert.equal(retry.payload.results.find((row) => row.scheduleId === otherScheduleId).applied, 1);
   const saved = await getDoc(COLLECTIONS.teamSchedules, first.scheduleId);
   assert.equal(saved.responses[first.occurrenceId][declinedKey].response, "declined");

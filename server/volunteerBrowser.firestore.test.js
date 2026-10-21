@@ -72,6 +72,10 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
     const scheduleId = `browser_schedule_${suffix}`;
     const ownSchedule = { churchId, teamId, scheduleId, occurrences: [{ occurrenceId, serviceId: "service", serviceIds: ["service"],
       name: "Sunday Gathering", startsAt: "2099-11-01T14:00:00.000Z" }], assignments: { [occurrenceId]: { "camera::0": memberId, "camera::1": expiredMemberId } } };
+    ownSchedule.occurrences.push({ occurrenceId: "past", serviceId: "past-service", serviceIds: ["past-service"], name: "Past gathering", startsAt: "2000-01-01T14:00:00.000Z" });
+    ownSchedule.assignments.past = { "camera::0": memberId };
+    ownSchedule.responses = { [occurrenceId]: { "camera::1": { memberId: expiredMemberId, response: "declined", custom: { preserve: ["original"] } } },
+      past: { "camera::0": { memberId, response: "pending", custom: "past response" } } };
     const scheduleRef = await seed(COLLECTIONS.teamSchedules, scheduleId, ownSchedule);
     await seed(COLLECTIONS.teamSchedules, `${scheduleId}_draft`, { ...ownSchedule, scheduleId: `${scheduleId}_draft`, published: false,
       occurrences: [{ occurrenceId: "secret", name: "PRIVATE-DRAFT", startsAt: "2099-11-02T14:00:00.000Z" }], assignments: { secret: { own: memberId } } });
@@ -161,6 +165,8 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
       await page.screenshot({ path: process.env.VOLUNTEER_BROWSER_SCREENSHOT, fullPage: true });
     }
     assert.equal((await scheduleRef.get()).data().responses[occurrenceId]["camera::0"].response, "accepted");
+    assert.deepEqual((await scheduleRef.get()).data().responses.past, ownSchedule.responses.past);
+    assert.deepEqual((await scheduleRef.get()).data().responses[occurrenceId]["camera::1"], ownSchedule.responses[occurrenceId]["camera::1"]);
     await page.getByRole("button", { name: "Discard changes" }).click();
     assert.equal(await page.getByRole("textbox", { name: /Notes/i }).inputValue(), "Administrator saved dates");
     await page.getByRole("button", { name: /Remove blockout/i }).click();

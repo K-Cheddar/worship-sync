@@ -229,6 +229,7 @@ export const createVolunteerOperations = ({
     churchId: rawChurchId,
     memberId: rawMemberId,
     actorUid: rawActorUid,
+    actorId,
     afterScheduleId: rawAfterScheduleId,
     authorize,
   }) => {
@@ -423,7 +424,7 @@ export const createVolunteerOperations = ({
           const patch = {
             responses: decision.responses,
             updatedAt: nowIso(),
-            ...(actorUid ? { updatedByUid: actorUid } : {}),
+            ...(actorUid || actorId ? { updatedByUid: actorUid || actorId } : {}),
           };
           if (transaction) transaction.update(scheduleRef, patch);
           else await updateDocFields(COLLECTIONS.teamSchedules, scheduleId, patch);

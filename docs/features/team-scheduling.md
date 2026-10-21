@@ -88,8 +88,10 @@ A schedule follows **Virtual → Draft ↔ Published**.
 - A signed-in volunteer can accept all unanswered assignments across their upcoming published schedules and Teams in one action. Eligibility is derived from the authenticated account, its single active roster link, current primary assignments, and persisted future occurrence times.
 - Bulk acceptance is pending-only at commit time. It preserves accepted and declined answers, including answers submitted concurrently from another device. A repeated request is safe; schedules commit independently and partial completion is reported for retry.
 - Only changed schedules emit the existing schedule update and queue the coalesced response digest. This action does not send per-assignment email or SMS. Existing individual schedule-response links retain their explicit Accept/Decline behavior.
+- Signed-in `Accept All Pending` and personal-link `Accept All Unanswered` use the same canonical operation, upcoming primary targets, commit-time publication/ownership checks, and preservation-oriented response helper. Unrelated response records and metadata are retained exactly. Discovery scans at most 100 schedules per request and processes at most 25 eligible schedule groups; both clients follow the returned cursor. Each personal schedule transaction revalidates the session's credential generation and current member authority. Revocation/replacement prevents later commits; already committed schedules survive and retries process remaining pending work only.
 
 **Approval source:** Current product-owner request, 2026-10-20 (Volunteer Portal Phase 1B: Accept All Pending).
+Shared identity parity and preservation clarified by the October 21, 2026 Shared Volunteer Bulk Response fix request.
 
 ## Core data invariants
 

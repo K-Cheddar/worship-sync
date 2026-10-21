@@ -9,7 +9,7 @@ import { createVolunteerOperations } from "./volunteerOperations.js";
 const enabled = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
 const httpError = (statusCode, message) => Object.assign(new Error(message), { statusCode });
 
-const fixture = async (run, { beforeCommit, beforeCommitEveryAttempt = false } = {}) => {
+const fixture = async (run, { beforeCommit, beforeCommitEveryAttempt = false, nowIso = () => new Date().toISOString() } = {}) => {
   const app = initializeApp({ projectId: "demo-worshipsync" }, `volunteer-${randomUUID()}`);
   const db = getFirestore(app);
   const suffix = randomUUID().replaceAll("-", "");
@@ -120,7 +120,7 @@ const fixture = async (run, { beforeCommit, beforeCommitEveryAttempt = false } =
     },
     updateDocFields: (collection, id, fields) =>
       db.collection(collection).doc(id).update(fields),
-    nowIso: () => new Date().toISOString(),
+    nowIso,
     httpError,
     enqueueSchedule: (_id, task) => task(),
     enqueueMember: (_id, task) => task(),
@@ -385,7 +385,7 @@ test("Firestore schedule failure is isolated and a later retry processes only re
 });
 
 
-test("personal bulk authority is rechecked in every independent schedule transaction", { skip: !enabled }, async () => fixture(async ({ db, COLLECTIONS, member, schedule, identity, scheduleRef }) => {
+for (const change of ["revoke", "replace"]) test(`personal bulk ${change} authority is rechecked in every independent schedule transaction`, { skip: !enabled }, async () => fixture(async ({ db, COLLECTIONS, member, schedule, identity, scheduleRef }) => {
   const secondRef = db.collection(COLLECTIONS.teamSchedules).doc("schedule-b");
   await secondRef.set({ ...schedule, scheduleId: "schedule-b" });
   const prefix = `bulk_access_${randomUUID()}`;
@@ -399,7 +399,8 @@ test("personal bulk authority is rechecked in every independent schedule transac
     let authorizations = 0;
     const store = { collection: (...args) => db.collection(...args), runTransaction: async (fn) => {
       const result = await db.runTransaction(fn);
-      if (!committed) { committed = true; await access.revoke(identity, "admin"); }
+      if (!committed) { committed = true; if (change === "revoke") await access.revoke(identity, "admin");
+        else await access.prepare(identity, { replace: true, actorUid: "admin", requestKey: "synthetic-bulk-replace-request" }); }
       return result;
     } };
     const operation = createVolunteerOperations({ COLLECTIONS, requireFirestore: () => store,
@@ -422,3 +423,56 @@ test("personal bulk authority is rechecked in every independent schedule transac
     assert.equal((await db.collection(COLLECTIONS.teamRosterMembers).doc(member.memberId).get()).get("userId"), identity.actorUid);
   } finally { await Promise.all(Object.values(collections).map((name) => db.recursiveDelete(db.collection(name)))); }
 }));
+
+for (const race of ["none", "decline", "reassignment", "draft", "failure"]) {
+  test(`Firestore human/personal bulk parity preserves exact records across ${race}`, { skip: !enabled }, async () => {
+    const outputs = [];
+    for (const personal of [false, true]) {
+      let contending = true;
+      await fixture(async ({ db, COLLECTIONS, operations, identity, schedule, scheduleRef }) => {
+        const unrelated = { memberId: "another", response: "legacy-unknown", custom: { keep: [1, "two"] } };
+        const responses = { occurrence: {
+          other: unrelated,
+          accepted: { memberId: "member", response: "accepted", custom: "accepted metadata" },
+          declined: { memberId: "member", response: "declined", custom: "declined metadata" },
+        }, old: { primary: { memberId: "member", response: "pending", custom: "past" } }, legacy: { untouched: { arbitrary: true } } };
+        await scheduleRef.set({ ...schedule, occurrences: [...schedule.occurrences,
+          { occurrenceId: "old", startsAt: "2000-01-01T00:00:00Z" }],
+          assignments: { occurrence: { ...schedule.assignments.occurrence, accepted: "member", declined: "member" }, old: { primary: "member" } }, responses });
+        await db.collection(COLLECTIONS.teamSchedules).doc("schedule-b").set({ ...schedule, scheduleId: "schedule-b" });
+        const draft = db.collection(COLLECTIONS.teamSchedules).doc("schedule-draft");
+        await draft.set({ ...schedule, scheduleId: draft.id, published: false });
+        const prefix = `parity_${randomUUID()}`;
+        const collections = Object.fromEntries(["access", "credentials", "sessions"].map((kind) => [kind, `${prefix}_${kind}`]));
+        const access = createVolunteerPersonalAccess({ db, memberCollection: COLLECTIONS.teamRosterMembers, collections,
+          secret: "synthetic-bulk-parity-secret-only" });
+        try {
+          const redeemed = personal ? await access.redeem((await access.prepare(identity)).token) : null;
+          const principal = personal ? { churchId: identity.churchId, memberId: identity.memberId,
+            authorize: async (transaction) => {
+              if (!await access.readSession(redeemed.session, transaction)) throw httpError(401, "Unavailable");
+            } } : identity;
+          const result = await operations.acceptPendingAssignments(principal);
+          const saved = (await scheduleRef.get()).data();
+          assert.deepEqual(saved.responses.occurrence.other, unrelated);
+          assert.deepEqual(saved.responses.occurrence.accepted, responses.occurrence.accepted);
+          assert.deepEqual(saved.responses.occurrence.declined, responses.occurrence.declined);
+          assert.deepEqual(saved.responses.old, responses.old);
+          assert.deepEqual(saved.responses.legacy, responses.legacy);
+          assert.deepEqual((await draft.get()).data().responses, schedule.responses);
+          assert.equal(saved.responses.occurrence.primary?.response, race === "decline" ? "declined" : race === "none" ? "accepted" : undefined);
+          contending = false;
+          const retry = await operations.acceptPendingAssignments(principal);
+          assert.equal(result.failedScheduleCount, race === "failure" ? 1 : 0);
+          assert.equal(retry.newlyAccepted, race === "failure" ? 1 : 0);
+          if (race !== "failure") assert.deepEqual((await scheduleRef.get()).data().responses, saved.responses);
+          outputs.push({ responses: saved.responses, outcomes: result.schedules, accepted: result.newlyAccepted });
+        } finally { await Promise.all(Object.values(collections).map((name) => db.recursiveDelete(db.collection(name)))); }
+      }, { nowIso: () => "2026-10-21T12:00:00.000Z", beforeCommitEveryAttempt: race === "failure", beforeCommit: race === "none" ? undefined : ({ scheduleRef }) =>
+        race === "failure" ? (contending ? scheduleRef.update({ updatedAt: randomUUID() }) : undefined) : scheduleRef.update(race === "decline" ? { "responses.occurrence.primary": { memberId: "member", response: "declined", custom: "concurrent decline" } }
+          : race === "reassignment" ? { "assignments.occurrence.primary": "another" } : { published: false }),
+      });
+    }
+    assert.deepEqual(outputs[0], outputs[1]);
+  });
+}

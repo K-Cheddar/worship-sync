@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { initializeApp, deleteApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
+import { createVolunteerOperations } from "./volunteerOperations.js";
 import { createVolunteerMutations } from "./volunteerMutations.js";
 import { createVolunteerPersonalAccess } from "./volunteerPersonalAccess.js";
 
@@ -12,7 +13,7 @@ const fixture = async (task) => {
   const app = initializeApp({ projectId: "demo-worshipsync" }, `volunteer-${randomUUID()}`);
   const db = getFirestore(app);
   const prefix = `volunteer_${randomUUID()}`;
-  const COLLECTIONS = { teamSchedules: `${prefix}_schedules`, teamRosterMembers: `${prefix}_members` };
+  const COLLECTIONS = { memberships: `${prefix}_memberships`, teamSchedules: `${prefix}_schedules`, teamRosterMembers: `${prefix}_members` };
   const memberRef = db.collection(COLLECTIONS.teamRosterMembers).doc("member");
   const scheduleRef = db.collection(COLLECTIONS.teamSchedules).doc("schedule");
   const identity = { churchId: "church-a", memberId: "member", actorUid: "account-a" };
@@ -21,7 +22,7 @@ const fixture = async (task) => {
     firstName: "Volunteer", qualifications: ["qualified"], blockoutDates: [],
   };
   const schedule = {
-    churchId: identity.churchId, scheduleId: "schedule", assignments: {
+    churchId: identity.churchId, scheduleId: "schedule", occurrences: [{ occurrenceId: "occurrence", startsAt: "2099-12-01T15:00:00Z" }], assignments: {
       occurrence: { primary: "member", other: "another", second: "member" },
     },
     responses: { occurrence: { other: { memberId: "another", response: "accepted", respondedAt: "before" } } },
@@ -34,9 +35,14 @@ const fixture = async (task) => {
   const operations = createVolunteerMutations({
     COLLECTIONS, requireFirestore: () => store, nowIso: () => new Date().toISOString(), httpError,
   });
+  const bulk = createVolunteerOperations({ COLLECTIONS, requireFirestore: () => store,
+    queryDocs: async () => [{ documentId: "schedule", ...(await scheduleRef.get()).data() }],
+    nowIso: () => new Date().toISOString(), httpError,
+  });
   try {
+    await db.collection(COLLECTIONS.memberships).doc("church-a_account-a").set({ churchId: identity.churchId, userId: identity.actorUid, status: "active" });
     await Promise.all([memberRef.set(member), scheduleRef.set(schedule)]);
-    await task({ db, COLLECTIONS, operations, identity, member, memberRef, scheduleRef,
+    await task({ db, COLLECTIONS, operations, bulk, identity, member, memberRef, scheduleRef,
       beforeTransaction: (fn) => { beforeTransaction = fn; } });
   } finally {
     await Promise.all(Object.values(COLLECTIONS).map((name) => db.recursiveDelete(db.collection(name))));
@@ -72,18 +78,18 @@ test("Firestore time off rechecks archive, account link and revision after reque
   assert.deepEqual((await memberRef.get()).data().qualifications, ["new"]);
 }));
 
-test("Firestore concurrent pending acceptance cannot overwrite a decline and retry does no work", { skip: !enabled }, async () => fixture(async ({ operations, identity, scheduleRef }) => {
+test("Firestore concurrent pending acceptance cannot overwrite a decline and retry does no work", { skip: !enabled }, async () => fixture(async ({ operations, bulk, identity, scheduleRef }) => {
   const common = { ...identity, scheduleId: "schedule" };
   await Promise.all([
-    operations.writeAssignmentResponses({ ...common, response: "accepted", pendingOnly: true }),
+    bulk.acceptPendingAssignments(identity),
     operations.writeAssignmentResponses({ ...common, response: "declined", targets: [{ occurrenceId: "occurrence", cellKey: "primary" }] }),
   ]);
   const saved = (await scheduleRef.get()).data();
   assert.equal(saved.responses.occurrence.primary.response, "declined");
   assert.equal(saved.responses.occurrence.second.response, "accepted");
   assert.equal(saved.responses.occurrence.other.response, "accepted");
-  const retry = await operations.writeAssignmentResponses({ ...common, response: "accepted", pendingOnly: true });
-  assert.equal(retry.applied, 0);
+  const retry = await bulk.acceptPendingAssignments(identity);
+  assert.equal(retry.newlyAccepted, 0);
 }));
 
 test("Firestore response rechecks unpublish and reassignment before commit and rejects cross-church identities", { skip: !enabled }, async () => fixture(async ({ operations, identity, scheduleRef, beforeTransaction }) => {

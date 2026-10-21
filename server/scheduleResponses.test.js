@@ -294,17 +294,16 @@ function describe_applyAssignmentResponses() {
     };
     const params = {
       memberId: "m1", response: "accepted", respondedAt: "now", readHolder,
-      pendingOnly: true,
       targets: [
         { occurrenceId: "svc@2026-09-06", cellKey: "cam::0" },
         { occurrenceId: "svc@2026-09-13", cellKey: "cam::0" },
         { occurrenceId: "removed", cellKey: "cam::0" },
       ],
     };
-    const result = applyAssignmentResponses(current, params);
-    assert.equal(result.applied, 1);
+    const result = applyPendingAssignmentResponses(current, params);
+    assert.equal(result.newlyAccepted, 1);
     assert.deepEqual(result.responses["svc@2026-09-06"]["cam::0"], current.responses["svc@2026-09-06"]["cam::0"]);
     assert.equal(result.responses["svc@2026-09-13"]["cam::0"].memberId, "m1");
-    assert.equal(applyAssignmentResponses({ ...current, responses: result.responses }, params).applied, 0);
+    assert.equal(applyPendingAssignmentResponses({ ...current, responses: result.responses }, params).newlyAccepted, 0);
   });
 }

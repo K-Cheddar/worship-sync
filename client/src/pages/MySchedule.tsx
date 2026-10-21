@@ -34,7 +34,6 @@ import { useSyncOnReconnect } from "../hooks/useSyncOnReconnect";
 import {
   acceptPendingMyAssignments,
   getMyTeamAssignments,
-  acceptMyUnansweredAssignments,
   getMyVolunteerAvailability,
   submitMyVolunteerAvailability,
   updateMyBlockoutDates,
@@ -758,7 +757,7 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
     load: () => getMyTeamAssignments(churchId),
     respond: (body) => respondToMyAssignment(churchId, body),
     saveBlockouts: (ranges, stamp) => updateMyBlockoutDates(churchId, ranges, stamp),
-    acceptUnanswered: () => acceptMyUnansweredAssignments(churchId),
+    acceptUnanswered: (cursor) => acceptPendingMyAssignments(churchId, cursor),
     availability: () => getMyVolunteerAvailability(churchId),
     submitAvailability: (recipientId, values) => submitMyVolunteerAvailability(churchId, recipientId, values),
   }), [access, churchId]);
@@ -916,6 +915,8 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
     }, 0);
   }, [occurrences]);
 
+  const acceptAllLabel = access ? "Accept all unanswered" : "Accept all pending";
+
   const acceptAllPending = useCallback(async () => {
     if (
       !churchId ||
@@ -944,7 +945,7 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
 
     try {
       while (isCurrentOperation()) {
-        const page = await acceptPendingMyAssignments(churchId, cursor);
+        const page = await operations.acceptUnanswered(cursor);
         if (!isCurrentOperation()) return;
         totals.newlyAccepted += page.newlyAccepted;
         totals.alreadyAccepted += page.alreadyAccepted;
@@ -988,9 +989,10 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
         ? `Accepted ${countLabel}.${unchangedSummary} Could not confirm the remaining assignments. Refresh and try again.`
         : `Could not confirm your responses.${unchangedSummary} Refresh and try again.`;
     } else if (authorizationChanged) {
+      const accessChanged = access ? "Your personal access changed." : "Your account access changed.";
       feedback = changedCount > 0
-        ? `Accepted ${countLabel}.${unchangedSummary} Your account access changed. Reload My Schedule before retrying.`
-        : `Your account access changed.${unchangedSummary} Reload My Schedule before retrying.`;
+        ? `Accepted ${countLabel}.${unchangedSummary} ${accessChanged} Reload My Schedule before retrying.`
+        : `${accessChanged}${unchangedSummary} Reload My Schedule before retrying.`;
     } else if (hasPartialResults) {
       const skippedLabel = totals.skipped > 0
         ? ` ${totals.skipped} assignment${totals.skipped === 1 ? " was" : "s were"} no longer eligible.`
@@ -1011,7 +1013,7 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
       acceptPendingOperationRef.current = null;
       setAcceptingPending(false);
     }
-  }, [churchId, load]);
+  }, [access, churchId, load, operations]);
 
   /**
    * Answer one assignment, applied optimistically so the tap feels immediate.
@@ -1058,24 +1060,6 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
     },
     [load, operations, selectedId, showToast],
   );
-
-  const [accepting, setAccepting] = useState(false);
-  const acceptingRef = useRef(false);
-  const unansweredCount = occurrences.reduce((count, occurrence) => count + occurrence.serving.filter(
-    (slot) => slot.isMe && slot.isPrimary && (!slot.response || slot.response === "pending"),
-  ).length, 0);
-  const acceptUnanswered = async () => {
-    if (acceptingRef.current) return;
-    acceptingRef.current = true; setAccepting(true);
-    try {
-      const result = await operations.acceptUnanswered();
-      if (!mountedRef.current) return;
-      if (!result.success) showToast("Some assignments could not be accepted. Your saved responses are kept. Try again.", "error");
-      load({ showLoading: false });
-    } catch (error) {
-      if (mountedRef.current) showApiErrorToast(showToast, error, "Could not accept your unanswered assignments.");
-    } finally { acceptingRef.current = false; if (mountedRef.current) setAccepting(false); }
-  };
 
   const datedOccurrences = useMemo(
     () => occurrences.filter(hasDatedStartsAt),
@@ -1301,13 +1285,13 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
                 ? undefined
                 : respondToAssignment
             }
-            respondingKey={accepting ? "__all__" : respondingKey}
+            respondingKey={acceptingPending ? "__all__" : respondingKey}
           />
         ) : null}
 
         {status === "ready" && hasMemberRecord && !selected ? (
           <>
-            {!access && pendingAssignmentCount > 0 ? (
+            {pendingAssignmentCount > 0 ? (
               <section className="flex flex-col gap-2 rounded-md border border-gray-700 p-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
                   <h2 className="text-sm font-semibold">
@@ -1326,7 +1310,7 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
                   aria-busy={acceptingPending}
                   onClick={() => void acceptAllPending()}
                 >
-                  {acceptingPending ? "Accepting…" : "Accept all pending"}
+                  {acceptingPending ? "Accepting…" : acceptAllLabel}
                 </Button>
                 {acceptingPending ? (
                   <span className="sr-only" role="status" aria-live="polite">
@@ -1340,12 +1324,6 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
                 {acceptPendingFeedback}
               </p>
             ) : null}
-            {access && unansweredCount > 0 ? <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="text-sm text-gray-300">{unansweredCount} unanswered {unansweredCount === 1 ? "assignment" : "assignments"}</p>
-              <Button variant="secondary" disabled={accepting} onClick={() => void acceptUnanswered()}>
-                {accepting ? "Accepting?" : "Accept all unanswered"}
-              </Button>
-            </div> : null}
             <MyScheduleAvailability operations={operations} />
             {access ? <a className="text-sm text-orange-300 underline" href={`/sms-opt-in/${encodeURIComponent(churchId)}`}>SMS preferences</a> : null}
             <MyScheduleBlockouts

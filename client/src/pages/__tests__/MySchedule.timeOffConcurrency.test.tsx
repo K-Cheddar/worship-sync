@@ -38,7 +38,7 @@ const fixture = () => {
   let saved = member("revision-a", "Original dates");
   const operations: jest.Mocked<MyScheduleOperations> = {
     load: jest.fn(async () => snapshot(saved)), respond: jest.fn<ReturnType<MyScheduleOperations["respond"]>, Parameters<MyScheduleOperations["respond"]>>().mockResolvedValue({ success: true }),
-    acceptUnanswered: jest.fn(async () => ({ success: true, results: [] })),
+    acceptUnanswered: jest.fn(async () => ({ success: true, newlyAccepted: 0, alreadyAccepted: 0, alreadyDeclined: 0, skipped: 0, failedScheduleCount: 0, schedules: [], authorizationChanged: false, hasMore: false, nextCursor: null })),
     availability: jest.fn(async () => ({ success: true, requests: [] })),
     submitAvailability: jest.fn<ReturnType<MyScheduleOperations["submitAvailability"]>, Parameters<MyScheduleOperations["submitAvailability"]>>().mockResolvedValue({ success: true }),
     saveBlockouts: jest.fn(async (ranges, revision) => {
@@ -54,12 +54,7 @@ const page = (operations: MyScheduleOperations, mode: Mode = "personal", churchI
   jest.mocked(auth.getMyTeamAssignments).mockImplementation(() => operations.load() as ReturnType<typeof auth.getMyTeamAssignments>);
   jest.mocked(auth.updateMyBlockoutDates).mockImplementation((_church, ranges, stamp) => operations.saveBlockouts(ranges, stamp) as ReturnType<typeof auth.updateMyBlockoutDates>);
   jest.mocked(auth.acceptMyUnansweredAssignments).mockImplementation(() => operations.acceptUnanswered());
-  jest.mocked(auth.acceptPendingMyAssignments).mockImplementation(async () => {
-    await operations.acceptUnanswered();
-    return { success: true, newlyAccepted: 0, alreadyAccepted: 0, alreadyDeclined: 0,
-      skipped: 0, failedScheduleCount: 0, schedules: [], authorizationChanged: false,
-      hasMore: false, nextCursor: null };
-  });
+  jest.mocked(auth.acceptPendingMyAssignments).mockImplementation((_church, cursor) => operations.acceptUnanswered(cursor || undefined));
   jest.mocked(auth.getMyVolunteerAvailability).mockImplementation(() => operations.availability());
   return <Provider store={store}><MemoryRouter><GlobalInfoContext.Provider value={{ churchId, userId: "member", role: "member" } as ContextType<typeof GlobalInfoContext>}>
     <MySchedule access={mode === "personal" ? { churchId, memberId: "member", operations } : undefined} />
@@ -81,7 +76,7 @@ it.each(["human", "personal"] as const)("A: bulk refresh cannot lend revision B 
   f.operations.acceptUnanswered.mockReturnValueOnce(bulk.promise);
   await user.click(screen.getByRole("button", { name: /Accept all (unanswered|pending)/ }));
   f.setSaved(member("revision-b", "Administrator dates", "2099-12-02"));
-  await act(async () => { bulk.resolve({ success: true, results: [] }); });
+  await act(async () => { bulk.resolve({ success: true, newlyAccepted: 0, alreadyAccepted: 0, alreadyDeclined: 0, skipped: 0, failedScheduleCount: 0, schedules: [], authorizationChanged: false, hasMore: false, nextCursor: null }); });
   await waitFor(() => expect(f.operations.load).toHaveBeenCalledTimes(2));
   expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue("Volunteer draft");
   await user.click(screen.getByRole("button", { name: "Save time off" }));
@@ -345,4 +340,36 @@ it.each(["missing member", "unsuccessful result"])("protects the draft when refr
   expect(await screen.findByText(/couldn.t load the latest saved dates/)).toBeInTheDocument();
   expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue("Volunteer draft");
   expect(screen.getByRole("button", { name: "Discard changes" })).toBeDisabled();
+});
+
+const bulkPage = (overrides: Partial<Awaited<ReturnType<MyScheduleOperations["acceptUnanswered"]>>> = {}) => ({
+  success: true, newlyAccepted: 0, alreadyAccepted: 0, alreadyDeclined: 0,
+  skipped: 0, failedScheduleCount: 0, schedules: [], authorizationChanged: false,
+  hasMore: false, nextCursor: null, ...overrides,
+});
+
+it.each(["human", "personal"] as const)("%s bulk follows bounded pages and retries partial completion", async (mode) => {
+  const user = userEvent.setup(); const f = fixture();
+  f.operations.acceptUnanswered.mockResolvedValueOnce(bulkPage({ newlyAccepted: 25, hasMore: true, nextCursor: "schedule-25" }))
+    .mockResolvedValueOnce(bulkPage({ newlyAccepted: 1, failedScheduleCount: 1 }))
+    .mockResolvedValueOnce(bulkPage({ newlyAccepted: 1 }));
+  render(page(f.operations, mode));
+  await user.click(await screen.findByRole("button", { name: /Accept all (pending|unanswered)/ }));
+  expect(await screen.findByText(/Accepted 26 assignments.*Retry to finish the rest/)).toBeInTheDocument();
+  expect(f.operations.acceptUnanswered).toHaveBeenNthCalledWith(1, undefined);
+  expect(f.operations.acceptUnanswered).toHaveBeenNthCalledWith(2, "schedule-25");
+  await waitFor(() => expect(screen.getByRole("button", { name: /Accept all (pending|unanswered)/ })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: /Accept all (pending|unanswered)/ }));
+  expect(await screen.findByText("Accepted 1 assignment.")).toBeInTheDocument();
+  expect(f.operations.acceptUnanswered).toHaveBeenNthCalledWith(3, undefined);
+});
+
+it("personal authority change stops page traversal after committed partial success", async () => {
+  const user = userEvent.setup(); const f = fixture();
+  f.operations.acceptUnanswered.mockResolvedValueOnce(bulkPage({ newlyAccepted: 1,
+    authorizationChanged: true, hasMore: true, nextCursor: "must-not-follow" }));
+  render(page(f.operations));
+  await user.click(await screen.findByRole("button", { name: "Accept all unanswered" }));
+  expect(await screen.findByText(/Accepted 1 assignment.*access changed/)).toBeInTheDocument();
+  expect(f.operations.acceptUnanswered).toHaveBeenCalledTimes(1);
 });

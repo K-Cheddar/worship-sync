@@ -140,19 +140,16 @@ export const pruneStaleResponses = (responses, readHolder) => {
  * not block the reader answering the rest.
  *
  * @param {{ assignments?: object, responses?: object }} schedule
- * @param {{ memberId: string, targets: Array<{occurrenceId: string, cellKey: string}>, response: string, respondedAt: string, readHolder: (cell: unknown) => string, pendingOnly?: boolean }} params
+ * @param {{ memberId: string, targets: Array<{occurrenceId: string, cellKey: string}>, response: string, respondedAt: string, readHolder: (cell: unknown) => string }} params
  * @returns {{ responses: object, applied: number }}
  */
 export const applyAssignmentResponses = (
   schedule,
-  { memberId, targets, response, respondedAt, readHolder, pendingOnly = false },
+  { memberId, targets, response, respondedAt, readHolder },
 ) => {
   const applicable = (targets || []).filter(
     ({ occurrenceId, cellKey }) =>
-      readHolder(schedule?.assignments?.[occurrenceId]?.[cellKey]) === memberId &&
-      (!pendingOnly || readAssignmentResponse(
-        schedule?.responses?.[occurrenceId]?.[cellKey], memberId,
-      ).response === "pending"),
+      readHolder(schedule?.assignments?.[occurrenceId]?.[cellKey]) === memberId,
   );
   let responses = schedule?.responses;
   applicable.forEach(({ occurrenceId, cellKey }) => {

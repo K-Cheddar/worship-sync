@@ -894,29 +894,62 @@ export const createTeamsAuthHandlers = ({
     return { success: true, response };
   };
 
-  const acceptUnansweredVolunteerAssignments = async (identity) => {
-    const schedules = await listTeamCollectionForChurch(
-      COLLECTIONS.teamSchedules, "scheduleId", identity.churchId,
-    );
-    const results = [];
-    for (const schedule of schedules) {
-      if (schedule.archivedAt || schedule.published === false ||
-          !listMemberSlotKeys(schedule, identity.memberId).length) continue;
+  const acceptUnansweredVolunteerAssignments = async (identity, body) => {
+    const { churchId } = identity;
+    const result = await runAcceptPendingAssignments({
+      ...identity,
+      afterScheduleId: normalizeShortText(body?.afterScheduleId, { max: 200 }),
+    });
+    // Each schedule has already committed independently. Message previews,
+    // SSE invalidation, and the coalesced leader digest are best-effort
+    // follow-ups and cannot turn committed answers into a write failure.
+    for (const { scheduleId, schedule, acceptedTargets } of result.updatedSchedules) {
       try {
-        const saved = await writeAssignmentResponses({
-          ...identity, scheduleId: schedule.scheduleId,
-          response: "accepted", pendingOnly: true,
-        });
-        if (saved.applied) await notifyAssignmentResponse(saved.schedule);
-        results.push({ scheduleId: schedule.scheduleId, success: true, applied: saved.applied });
-      } catch (error) {
-        results.push({ scheduleId: schedule.scheduleId, success: false,
-          status: error?.statusCode || error?.status || 500,
-          errorMessage: "Could not accept unanswered assignments on this schedule. Try again.",
-        });
+        if (acceptedTargets.length > 0) {
+          await saveNotificationEventIntents({
+            churchId,
+            schedule,
+            intentType: "assignment_confirmation",
+            entries: acceptedTargets.map(({ occurrenceId, cellKey }) => ({
+              memberId: identity.memberId,
+              occurrenceId,
+              cellKey,
+            })),
+          });
+        }
+      } catch (notificationError) {
+        console.error(
+          "Could not record assignment response message previews",
+          notificationError,
+        );
+      }
+      emitTeamsEvent(churchId, "schedule-updated", { schedule });
+      try {
+        await scheduleAssignmentResponseDigest(scheduleId);
+      } catch (notificationError) {
+        console.error(
+          "Could not queue assignment response digest",
+          notificationError,
+        );
       }
     }
-    return { success: results.every((result) => result.success), results };
+
+    return {
+      success: result.failedScheduleCount === 0,
+      results: result.schedules.map((row) => ({ scheduleId: row.scheduleId,
+        success: row.status !== "failed", applied: row.newlyAccepted,
+        ...(row.status === "failed" ? { errorMessage: "Could not accept unanswered assignments on this schedule. Try again." } : {}),
+      })),
+      newlyAccepted: result.newlyAccepted,
+      alreadyAccepted: result.alreadyAccepted,
+      alreadyDeclined: result.alreadyDeclined,
+      skipped: result.skipped,
+      failedScheduleCount: result.failedScheduleCount,
+      schedules: result.schedules,
+      authorizationChanged: result.authorizationChanged,
+      hasMore: result.hasMore,
+      nextCursor: result.nextCursor,
+    };
   };
 
   // Shared read boundary; the caller supplies a server-resolved identity.
@@ -17009,7 +17042,7 @@ export const createTeamsAuthHandlers = ({
         await assertCsrf(req);
         const identity = await resolveHumanVolunteer(req);
         if (!identity.memberId) throw httpError(404, "Your account is not linked to a team member yet.");
-        return res.json(await acceptUnansweredVolunteerAssignments(identity));
+        return res.json(await acceptUnansweredVolunteerAssignments(identity, req.body));
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not accept your unanswered assignments.");
       }
@@ -17045,62 +17078,9 @@ export const createTeamsAuthHandlers = ({
           );
         }
 
-        const afterScheduleId = normalizeShortText(req.body?.afterScheduleId, {
-          max: 200,
-        });
-        const result = await runAcceptPendingAssignments({
-          churchId,
-          memberId: member.memberId,
-          actorUid: userId,
-          afterScheduleId,
-        });
-
-        // Each schedule has already committed independently. Message previews,
-        // SSE invalidation, and the coalesced leader digest are best-effort
-        // follow-ups and cannot turn committed answers into a write failure.
-        for (const { scheduleId, schedule, acceptedTargets } of result.updatedSchedules) {
-          try {
-            if (acceptedTargets.length > 0) {
-              await saveNotificationEventIntents({
-                churchId,
-                schedule,
-                intentType: "assignment_confirmation",
-                entries: acceptedTargets.map(({ occurrenceId, cellKey }) => ({
-                  memberId: member.memberId,
-                  occurrenceId,
-                  cellKey,
-                })),
-              });
-            }
-          } catch (notificationError) {
-            console.error(
-              "Could not record assignment response message previews",
-              notificationError,
-            );
-          }
-          emitTeamsEvent(churchId, "schedule-updated", { schedule });
-          try {
-            await scheduleAssignmentResponseDigest(scheduleId);
-          } catch (notificationError) {
-            console.error(
-              "Could not queue assignment response digest",
-              notificationError,
-            );
-          }
-        }
-
-        return res.json({
-          success: true,
-          newlyAccepted: result.newlyAccepted,
-          alreadyAccepted: result.alreadyAccepted,
-          alreadyDeclined: result.alreadyDeclined,
-          skipped: result.skipped,
-          failedScheduleCount: result.failedScheduleCount,
-          schedules: result.schedules,
-          authorizationChanged: result.authorizationChanged,
-          hasMore: result.hasMore,
-          nextCursor: result.nextCursor,
-        });
+        return res.json(await acceptUnansweredVolunteerAssignments({
+          churchId, memberId: member.memberId, actorUid: userId,
+        }, req.body));
       } catch (error) {
         return sendTeamsJsonError(
           res,

@@ -22,7 +22,7 @@ beforeEach(() => {
       member: { memberId: "member", firstName: "Alex", lastName: "Volunteer", updatedAt: "stamp", blockoutDates: [] },
       occurrences: [{ ...assignment, serving: [{ ...slot, response: accepted ? "accepted" : "pending" }] }] };
     if (path.endsWith("/availability")) result = { success: true, requests: [] };
-    if (path.endsWith("/accept-unanswered")) { accepted = true; result = { success: true, results: [{ scheduleId: "schedule", success: true, applied: 1 }] }; }
+    if (path.endsWith("/accept-unanswered")) { accepted = true; result = { success: true, newlyAccepted: 1, alreadyAccepted: 0, alreadyDeclined: 0, skipped: 0, failedScheduleCount: 0, schedules: [], authorizationChanged: false, hasMore: false, nextCursor: null }; }
     if (path.endsWith("/recovery/start")) result = { success: true, challengeId: "challenge" };
     if (path.endsWith("/recovery/verify")) recovered = true;
     return { ok: true, status: 200, json: async () => result };
