@@ -97,7 +97,7 @@ describe("ChurchServiceTimeZoneGate", () => {
   });
 
   it.each(["authentication", "permission", "configuration"] as const)(
-    "does not show a %s refresh warning while a confirmed time zone is available",
+    "shows a non-blocking %s refresh notice with a confirmed time zone",
     (kind) => {
       mockTimeZoneValue.status = "ready";
       mockTimeZoneValue.timeZone = "America/New_York";
@@ -113,8 +113,9 @@ describe("ChurchServiceTimeZoneGate", () => {
       );
 
       expect(screen.getByText("Schedule editor")).toBeInTheDocument();
-      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+      expect(screen.getByRole("status")).toHaveTextContent(/confirmed church time zone is still available/i);
+      expect(screen.getByRole("status")).toHaveTextContent(/could not be checked|needs a valid sign-in|could not be read/i);
+      expect(Boolean(screen.queryByRole("button", { name: "Retry" }))).toBe(kind !== "configuration");
     },
   );
 });

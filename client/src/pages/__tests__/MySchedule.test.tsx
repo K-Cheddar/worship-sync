@@ -18,6 +18,7 @@ import {
   updateMyBlockoutDates,
 } from "../../api/auth";
 import { usePublicServiceFlow } from "../../services/usePublicServiceFlow";
+import { formatBlockoutDateRangeLabel } from "../Teams/teamsUtils";
 
 jest.mock("../../api/auth", () => ({
   acceptPendingMyAssignments: jest.fn(),
@@ -121,6 +122,32 @@ const deferred = <T,>() => {
     resolve: (value: T) => resolve?.(value),
     reject: (error: unknown) => reject?.(error),
   };
+};
+
+const futureCalendarDate = (daysAhead: number) => {
+  const date = new Date();
+  date.setHours(12, 0, 0, 0);
+  date.setDate(date.getDate() + daysAhead);
+  return date;
+};
+
+const calendarDayName = (date: Date) => {
+  const day = date.getDate();
+  const suffix = day % 100 >= 11 && day % 100 <= 13
+    ? "th"
+    : day % 10 === 1
+      ? "st"
+      : day % 10 === 2
+        ? "nd"
+        : day % 10 === 3
+          ? "rd"
+          : "th";
+  return `${date.toLocaleDateString("en-US", { weekday: "long" })}, ${date.toLocaleDateString("en-US", { month: "long" })} ${day}${suffix}, ${date.getFullYear()}`;
+};
+
+const selectCalendarDay = async (user: ReturnType<typeof userEvent.setup>, date: Date) => {
+  const calendar = screen.getByRole("dialog");
+  await user.click(within(calendar).getByRole("button", { name: calendarDayName(date) }));
 };
 
 // AppPageShell reads the scrollbar-width preference and renders the app menu,
@@ -269,6 +296,20 @@ describe("MySchedule", () => {
     expect(screen.getByRole("button", { name: "By position" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Grid" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save as PDF" })).toBeInTheDocument();
+  });
+
+  it("uses the compact Organize toggle and switches the actual My Schedule grouping", async () => {
+    const user = userEvent.setup();
+    respond([occurrence()]);
+    renderPage();
+
+    const organize = await screen.findByRole("group", { name: "Organize services" });
+    expect(within(organize).getByRole("button", { name: "By month" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("heading", { name: "September 2099" })).toBeInTheDocument();
+
+    await user.click(within(organize).getByRole("button", { name: "By service" }));
+    expect(within(organize).getByRole("button", { name: "By service" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("heading", { name: "Sunday Gathering" })).toBeInTheDocument();
   });
 
   describe("accept pending", () => {
@@ -935,6 +976,40 @@ describe("MySchedule", () => {
       ).toBeInTheDocument();
     });
 
+    it("keeps a dirty date and notes draft through collapse and reopen", async () => {
+      const user = userEvent.setup();
+      const date = futureCalendarDate(3);
+      const dateIso = [
+        date.getFullYear(),
+        String(date.getMonth() + 1).padStart(2, "0"),
+        String(date.getDate()).padStart(2, "0"),
+      ].join("-");
+      const dateValue = `${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")}/${date.getFullYear()}`;
+      respond([occurrence()], { memberId: "m1", updatedAt: STAMP, blockoutDates: [] });
+      renderPage();
+
+      await expandTimeOff(user);
+      await user.click(screen.getByRole("button", { name: "Add single day" }));
+      await user.click(screen.getByRole("textbox", { name: "Day you're away" }));
+      await selectCalendarDay(user, date);
+      await user.type(screen.getByRole("textbox", { name: /Notes/i }), "Draft trip");
+
+      await user.click(screen.getAllByRole("button", { name: /Time off/i })[0]);
+      expect(screen.queryByRole("textbox", { name: "Day you're away" })).not.toBeInTheDocument();
+      expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+
+      await user.click(screen.getAllByRole("button", { name: /Time off/i })[0]);
+      expect(screen.getByText(formatBlockoutDateRangeLabel({ startDate: dateIso, endDate: dateIso }))).toBeInTheDocument();
+      expect(screen.getByText("Draft trip")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", {
+        name: "Edit time off: " + formatBlockoutDateRangeLabel({ startDate: dateIso, endDate: dateIso }),
+      }));
+      expect(screen.getByRole("textbox", { name: "Day you're away" })).toHaveValue(dateValue);
+      expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue("Draft trip");
+      expect(screen.getByRole("button", { name: "Save time off" })).toBeEnabled();
+      expect(mockUpdateMyBlockoutDates).not.toHaveBeenCalled();
+    });
+
     // Blocking a date you are already on is allowed — refusing would leave the
     // owner believing the slot is covered. Both sides see the clash instead.
     it("flags a service the member is already scheduled for", async () => {
@@ -1082,22 +1157,180 @@ describe("MySchedule", () => {
       renderPage();
 
       await expandTimeOff(user);
-      expect(
-        screen.getByRole("button", { name: "Show 1 past date" }),
-      ).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Show past dates" })).toBeInTheDocument();
       expect(
         screen.getAllByRole("button", { name: /Remove blockout/i }),
       ).toHaveLength(1);
+      expect(screen.getByRole("button", { name: "Save time off" })).toBeDisabled();
 
-      await user.click(
-        screen.getByRole("button", { name: "Show 1 past date" }),
-      );
+      await user.click(screen.getByRole("button", { name: "Show past dates" }));
+      expect(screen.getByText("Jan 1, 2000 – Jan 5, 2000")).toBeInTheDocument();
       expect(
         screen.getAllByRole("button", { name: /Remove blockout/i }),
-      ).toHaveLength(2);
+      ).toHaveLength(1);
       expect(
         screen.getByRole("button", { name: "Hide past dates" }),
       ).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Save time off" })).toBeDisabled();
+      await user.click(screen.getByRole("button", { name: "Hide past dates" }));
+      expect(screen.queryByText("Jan 1, 2000 – Jan 5, 2000")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Save time off" })).toBeDisabled();
+    });
+
+    it.each([false, true])(
+      "keeps an edited single-day draft removable and preserves saved dates (history: %s)",
+      async (withHistory) => {
+        const user = userEvent.setup();
+        const saved = { startDate: "2099-11-20", endDate: "2099-11-20", notes: "Family trip" };
+        const history = { startDate: "2000-01-01", endDate: "2000-01-05", notes: "Old trip" };
+        const selectedDate = futureCalendarDate(3);
+        const selectedRange = {
+          startDate: `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, "0")}-${String(selectedDate.getDate()).padStart(2, "0")}`,
+          endDate: `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, "0")}-${String(selectedDate.getDate()).padStart(2, "0")}`,
+        };
+        const initialDates = withHistory ? [saved, history] : [saved];
+        respond([occurrence()], { memberId: "m1", updatedAt: STAMP, blockoutDates: initialDates });
+        mockUpdateMyBlockoutDates.mockResolvedValue({
+          success: true,
+          member: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: withHistory ? [history] : [] },
+        } as unknown as Awaited<ReturnType<typeof updateMyBlockoutDates>>);
+        renderPage();
+
+        await expandTimeOff(user);
+        await user.click(screen.getByRole("button", { name: "Add single day" }));
+
+        expect(screen.getByRole("textbox", { name: "Day you're away" })).toBeInTheDocument();
+        expect(screen.getByRole("alert")).toHaveTextContent(/complete or remove each unfinished date/i);
+        expect(screen.getByRole("button", { name: "Save time off" })).toBeDisabled();
+        expect(screen.getByRole("button", { name: /Remove blockout without dates/i })).toBeInTheDocument();
+
+        await user.click(screen.getByRole("textbox", { name: "Day you're away" }));
+        await selectCalendarDay(user, selectedDate);
+        await user.type(screen.getByRole("textbox", { name: /Notes/i }), "Draft trip");
+        const selectedLabel = formatBlockoutDateRangeLabel(selectedRange);
+        await user.click(screen.getByRole("button", { name: `Remove blockout ${selectedLabel}` }));
+
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Save time off" })).toBeDisabled();
+        expect(screen.getByRole("button", { name: /Edit time off: Nov 20, 2099/i })).toBeInTheDocument();
+
+        await user.click(screen.getByRole("button", { name: /Remove blockout.*Nov 20, 2099/i }));
+        await user.click(screen.getByRole("button", { name: "Save time off" }));
+        expect(mockUpdateMyBlockoutDates).toHaveBeenCalledWith(
+          "church-1",
+          withHistory ? [history] : [],
+          STAMP,
+        );
+      },
+    );
+
+    it("says there is no upcoming time off when only history remains", async () => {
+      respond([occurrence()], {
+        memberId: "m1",
+        blockoutDates: [{ startDate: "2000-01-01", endDate: "2000-01-05", notes: "Old trip" }],
+      });
+      renderPage();
+
+      expect(await screen.findByText("No upcoming time off")).toBeInTheDocument();
+    });
+
+    it("adds, edits and saves one single date without duplicating entries", async () => {
+      const user = userEvent.setup();
+      const existing = { startDate: "2099-11-20", endDate: "2099-11-20", notes: "Family trip" };
+      const firstDate = futureCalendarDate(3);
+      const editedDate = futureCalendarDate(4);
+      const toPlainDate = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+      const added = { startDate: toPlainDate(editedDate), endDate: toPlainDate(editedDate), notes: "Updated trip" };
+      respond([occurrence()], { memberId: "m1", updatedAt: STAMP, blockoutDates: [existing] });
+      mockUpdateMyBlockoutDates.mockResolvedValue({
+        success: true,
+        member: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: [existing, added] },
+      } as unknown as Awaited<ReturnType<typeof updateMyBlockoutDates>>);
+      renderPage();
+
+      await expandTimeOff(user);
+      await user.click(screen.getByRole("button", { name: "Add single day" }));
+      await user.click(screen.getByRole("textbox", { name: "Day you're away" }));
+      await selectCalendarDay(user, firstDate);
+
+      expect(screen.getByRole("textbox", { name: "Day you're away" })).toHaveValue(
+        `${String(firstDate.getMonth() + 1).padStart(2, "0")}/${String(firstDate.getDate()).padStart(2, "0")}/${firstDate.getFullYear()}`,
+      );
+      await user.click(screen.getByRole("textbox", { name: "Day you're away" }));
+      await selectCalendarDay(user, editedDate);
+      await user.type(screen.getByRole("textbox", { name: /Notes/i }), "Updated trip");
+      await user.click(screen.getByRole("button", { name: "Save time off" }));
+
+      expect(mockUpdateMyBlockoutDates).toHaveBeenCalledWith("church-1", [existing, added], STAMP);
+      expect(mockUpdateMyBlockoutDates.mock.calls[0][1]).toHaveLength(2);
+    });
+
+    it("edits a saved intake-form date range without changing its dates or duplicating it", async () => {
+      const user = userEvent.setup();
+      const imported = {
+        startDate: "2099-10-01",
+        endDate: "2099-10-05",
+        notes: "Imported from availability form",
+      };
+      const updated = { ...imported, notes: "Updated travel note" };
+      respond([occurrence()], { memberId: "m1", updatedAt: STAMP, blockoutDates: [imported] });
+      mockUpdateMyBlockoutDates.mockResolvedValue({
+        success: true,
+        member: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: [updated] },
+      } as unknown as Awaited<ReturnType<typeof updateMyBlockoutDates>>);
+      renderPage();
+
+      await expandTimeOff(user);
+      expect(screen.getByText(formatBlockoutDateRangeLabel(imported))).toBeInTheDocument();
+      expect(screen.getByText(imported.notes)).toBeInTheDocument();
+      await user.click(screen.getByRole("button", {
+        name: `Edit time off: ${formatBlockoutDateRangeLabel(imported)}`,
+      }));
+
+      expect(screen.getByRole("textbox", { name: "Dates you're away" })).toBeInTheDocument();
+      const notes = screen.getByRole("textbox", { name: /Notes/i });
+      expect(notes).toHaveValue(imported.notes);
+      await user.clear(notes);
+      await user.type(notes, updated.notes);
+      await user.click(screen.getByRole("button", { name: "Save time off" }));
+
+      expect(mockUpdateMyBlockoutDates).toHaveBeenCalledWith("church-1", [updated], STAMP);
+      expect(mockUpdateMyBlockoutDates.mock.calls[0][1]).toHaveLength(1);
+    });
+
+    it("keeps a partially completed date range visible and blocks saving until complete", async () => {
+      const user = userEvent.setup();
+      const start = futureCalendarDate(3);
+      const end = futureCalendarDate(5);
+      respond([occurrence()], { memberId: "m1", updatedAt: STAMP, blockoutDates: [] });
+      mockUpdateMyBlockoutDates.mockResolvedValue({
+        success: true,
+        member: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: [] },
+      } as unknown as Awaited<ReturnType<typeof updateMyBlockoutDates>>);
+      renderPage();
+
+      await expandTimeOff(user);
+      await user.click(screen.getByRole("button", { name: "Add date range" }));
+      await user.click(screen.getByRole("textbox", { name: "Dates you're away" }));
+      await selectCalendarDay(user, start);
+
+      expect(screen.getByRole("textbox", { name: "Dates you're away" })).toBeInTheDocument();
+      expect(screen.getByRole("alert")).toHaveTextContent(/complete or remove each unfinished date/i);
+      expect(screen.getByRole("button", { name: "Save time off" })).toBeDisabled();
+
+      if (!screen.queryByRole("dialog")) {
+        await user.click(screen.getByRole("button", { name: "Open date range calendar" }));
+      }
+      await selectCalendarDay(user, end);
+      expect(screen.getByRole("textbox", { name: "Dates you're away" })).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Save time off" })).toBeEnabled();
+      await user.click(screen.getByRole("button", { name: "Save time off" }));
+
+      const expectedDate = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+      expect(mockUpdateMyBlockoutDates).toHaveBeenCalledWith("church-1", [{
+        startDate: expectedDate(start), endDate: expectedDate(end),
+      }], STAMP);
     });
 
     // Time off is collapsed by default, so without this the page contradicts

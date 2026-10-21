@@ -106,6 +106,21 @@ try {
 
     const grid = cardLists.locator(":scope > li");
     assert.equal(await grid.count(), 6, "all assigned services should render");
+
+    const organize = page.getByRole("group", { name: "Organize services" });
+    const byMonth = organize.getByRole("button", { name: "By month" });
+    const byService = organize.getByRole("button", { name: "By service" });
+    assert.equal(await byMonth.getAttribute("aria-pressed"), "true",
+      "My Schedule should start grouped by month");
+    assert.ok(await page.getByRole("heading", { name: "January 2099", exact: true }).count(),
+      "month grouping should show the month heading");
+    await byService.click();
+    assert.equal(await byService.getAttribute("aria-pressed"), "true",
+      "the compact Organize toggle should select service grouping");
+    assert.ok(await page.getByRole("heading", { name: "Fixture Service 2", exact: true }).count(),
+      "service grouping should show service headings");
+    await byMonth.click();
+
     const cardRows = await grid.evaluateAll((items) => items.map((item) => {
       const box = item.getBoundingClientRect();
       return { x: Math.round(box.x), y: Math.round(box.y) };
@@ -122,6 +137,34 @@ try {
     const positionBox = await longPosition.boundingBox();
     assert.ok(positionBox && positionBox.height > 16,
       `long positions should wrap at ${viewport.width}px`);
+    const longCardBox = await grid.nth(2).locator("article").boundingBox();
+    assert.ok(longCardBox && positionBox && positionBox.width >= longCardBox.width - 32,
+      `long positions should use the card width at ${viewport.width}px`);
+
+    const acceptedCard = grid.nth(0);
+    const acceptedPosition = await acceptedCard.getByText("Camera - Stationary", { exact: true }).boundingBox();
+    const acceptedStatus = await acceptedCard.getByText("Accepted", { exact: true }).boundingBox();
+    const changeResponse = await acceptedCard.getByRole("button", { name: /Change your response/ }).boundingBox();
+    assert.ok(acceptedPosition && acceptedStatus && changeResponse);
+    assert.ok(acceptedStatus.y >= acceptedPosition.y + acceptedPosition.height - 1,
+      "accepted status should appear below the position");
+    const acceptedStatusCenter = acceptedStatus.y + acceptedStatus.height / 2;
+    const changeResponseCenter = changeResponse.y + changeResponse.height / 2;
+    assert.ok(Math.abs(changeResponseCenter - acceptedStatusCenter) <= 2,
+      "Change response should share the status row");
+    assert.ok(changeResponse.x > acceptedStatus.x,
+      "Change response should align to the right of the status");
+
+    const pendingCard = grid.nth(1);
+    const pendingPosition = await pendingCard.getByText("Camera - Stationary", { exact: true }).boundingBox();
+    const pendingAccept = await pendingCard.getByRole("button", { name: /Accept Camera - Stationary/i }).boundingBox();
+    const pendingDecline = await pendingCard.getByRole("button", { name: /Decline Camera - Stationary/i }).boundingBox();
+    assert.ok(pendingPosition && pendingAccept && pendingDecline);
+    assert.ok(pendingAccept.y >= pendingPosition.y + pendingPosition.height - 1,
+      "pending response buttons should appear below the position");
+    assert.ok(Math.abs(pendingAccept.y - pendingDecline.y) <= 2,
+      "Accept and Decline should share the response row");
+
     const acceptButton = page.getByRole("button", { name: /Accept Camera - Stationary/i }).first();
     const acceptBox = await acceptButton.boundingBox();
     assert.ok(acceptBox);

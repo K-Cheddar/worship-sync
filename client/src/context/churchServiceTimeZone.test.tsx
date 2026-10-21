@@ -173,6 +173,22 @@ describe("ChurchServiceTimeZoneProvider", () => {
     expect(mockGetChurchServiceTimeZone).toHaveBeenCalledTimes(3);
   });
 
+  it("keeps a same-scope confirmed value while surfacing an authorization refresh failure", async () => {
+    mockGetChurchServiceTimeZone
+      .mockResolvedValueOnce(serviceTimeZoneResult("America/New_York") as never)
+      .mockRejectedValueOnce(new AuthApiError("Forbidden", { status: 403 }));
+    const { result } = renderHook(() => useChurchServiceTimeZone(), { wrapper });
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    await act(async () => {
+      await expect(result.current.refresh()).rejects.toThrow("Forbidden");
+    });
+
+    expect(result.current.status).toBe("ready");
+    expect(result.current.timeZone).toBe("America/New_York");
+    expect(result.current.refreshIssue?.kind).toBe("permission");
+  });
+
   it("reopens the revision stream after a successful manual recovery", async () => {
     mockGetChurchServiceTimeZone
       .mockResolvedValueOnce(serviceTimeZoneResult("America/New_York") as never)
@@ -183,6 +199,8 @@ describe("ChurchServiceTimeZoneProvider", () => {
 
     act(() => streamConnections[0].handlers.onError({ kind: "authentication", status: 401 }));
     expect(result.current.refreshIssue?.kind).toBe("authentication");
+    expect(result.current.status).toBe("ready");
+    expect(result.current.timeZone).toBe("America/New_York");
     await act(async () => result.current.refresh());
 
     expect(streamConnections).toHaveLength(2);

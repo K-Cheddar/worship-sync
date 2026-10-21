@@ -86,6 +86,10 @@ import { isOccurrenceToday } from "../utils/teamScheduleOccurrences";
 
 const ALL_TEAMS = "__all_teams__";
 const ALL_SERVICES = "__all_services__";
+const MY_SCHEDULE_ORGANIZE_OPTIONS = [
+  { value: "byMonth" as const, label: "By month" },
+  { value: "byService" as const, label: "By service" },
+];
 
 type DetailTab = "schedule" | "servicePlan";
 
@@ -258,7 +262,7 @@ const RESPONSE_CHIP: Record<
   },
   declined: {
     label: "Declined",
-    className: "bg-red-800 text-white",
+    className: "bg-red-700 text-white",
     icon: X,
   },
 };
@@ -331,32 +335,71 @@ const AssignmentResponseRow = ({
   };
 
   return (
-    <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1">
-      <div className="flex min-w-0 flex-1 flex-col">
-        {slot.teamName ? (
-          <span
-            className="truncate text-[10px] font-medium leading-tight text-gray-400"
-            title={slot.teamName}
+    <div className="min-w-0">
+      {slot.teamName ? (
+        <span
+          className="block truncate text-[10px] font-medium leading-tight text-gray-400"
+          title={slot.teamName}
+        >
+          {slot.teamName}
+        </span>
+      ) : null}
+      <span
+        className="block min-w-0 whitespace-normal break-words text-[13px] font-medium leading-snug text-gray-100 sm:text-sm"
+        title={slot.positionName || role}
+      >
+        {slot.positionName || "Your assignment"}
+      </span>
+
+      <div className="mt-0.5 flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-0.5">
+        {answerStatus}
+        {responseAttempt?.status === "saving" ? (
+          <span role="status" className="ml-auto shrink-0 text-xs text-gray-300">Saving…</span>
+        ) : responseAttempt?.status === "checking" ? (
+          <span role="status" className="ml-auto shrink-0 text-xs text-gray-300">Checking saved response…</span>
+        ) : showChoices ? (
+          <div className="ml-auto flex shrink-0 gap-1.5">
+            <Button
+              type="button"
+              variant="none"
+              svg={Check}
+              iconSize="sm"
+              className="min-h-[44px] max-md:min-h-[44px] justify-center rounded-md bg-emerald-700 px-2.5 text-xs font-semibold text-white hover:bg-emerald-600 sm:min-h-[36px]"
+              disabled={disabled}
+              aria-label={`Accept ${role || "this assignment"}`}
+              onClick={() => choose("accepted")}
+            >
+              Accept
+            </Button>
+            <Button
+              type="button"
+              variant="none"
+              svg={X}
+              iconSize="sm"
+              className="min-h-[44px] max-md:min-h-[44px] justify-center rounded-md bg-red-700 px-2.5 text-xs font-semibold text-white hover:bg-red-600 sm:min-h-[36px]"
+              disabled={disabled}
+              aria-label={`Decline ${role || "this assignment"}`}
+              onClick={() => choose("declined")}
+            >
+              Decline
+            </Button>
+          </div>
+        ) : responseAttempt?.status !== "unverified" && answered && !isPast && onRespond ? (
+          <Button
+            type="button"
+            variant="textLink"
+            className="ml-auto inline-flex min-h-[44px] max-md:min-h-[44px] shrink-0 items-center px-1 py-1 text-xs text-gray-300 underline underline-offset-2 hover:text-white sm:min-h-[36px] sm:px-0 sm:py-0"
+            disabled={disabled}
+            aria-label={`Change your response for ${role || "this assignment"}`}
+            onClick={() => setChanging(true)}
           >
-            {slot.teamName}
-          </span>
+            Change response
+          </Button>
         ) : null}
-        <div className="flex min-w-0 flex-nowrap items-center gap-x-1.5">
-          <span
-            className="min-w-0 whitespace-normal break-words text-[13px] font-medium leading-snug text-gray-100 sm:text-sm"
-            title={slot.positionName || role}
-          >
-            {slot.positionName || "Your assignment"}
-          </span>
-          {answerStatus}
-        </div>
       </div>
-      {responseAttempt?.status === "saving" ? (
-        <span role="status" className="ml-auto shrink-0 text-xs text-gray-300">Saving…</span>
-      ) : responseAttempt?.status === "checking" ? (
-        <span role="status" className="ml-auto shrink-0 text-xs text-gray-300">Checking saved response…</span>
-      ) : responseAttempt?.status === "unverified" ? (
-        <div className="flex w-full flex-wrap items-center justify-between gap-x-2 gap-y-1 border-t border-gray-700/70 pt-1.5">
+
+      {responseAttempt?.status === "unverified" ? (
+        <div className="mt-1 flex w-full flex-wrap items-center justify-between gap-x-2 gap-y-1 border-t border-gray-700/70 pt-1.5">
           <p className="min-w-0 flex-1 text-xs text-amber-200" role="status" aria-live="polite">
             Couldn&apos;t confirm your response. You tried to {attemptedVerb} this assignment.
           </p>
@@ -374,44 +417,6 @@ const AssignmentResponseRow = ({
             Retry refresh
           </Button>
         </div>
-      ) : showChoices ? (
-        <div className="ml-auto flex shrink-0 gap-1.5">
-          <Button
-            type="button"
-            variant="none"
-            svg={Check}
-            iconSize="sm"
-            className="min-h-[44px] max-md:min-h-[44px] justify-center rounded-md bg-emerald-700 px-2.5 text-xs font-semibold text-white hover:bg-emerald-600 sm:min-h-[36px]"
-            disabled={disabled}
-            aria-label={`Accept ${role || "this assignment"}`}
-            onClick={() => choose("accepted")}
-          >
-            Accept
-          </Button>
-          <Button
-            type="button"
-            variant="none"
-            svg={X}
-            iconSize="sm"
-            className="min-h-[44px] max-md:min-h-[44px] justify-center rounded-md bg-red-800 px-2.5 text-xs font-semibold text-white hover:bg-red-700 sm:min-h-[36px]"
-            disabled={disabled}
-            aria-label={`Decline ${role || "this assignment"}`}
-            onClick={() => choose("declined")}
-          >
-            Decline
-          </Button>
-        </div>
-      ) : answered && !isPast && onRespond ? (
-        <Button
-          type="button"
-          variant="textLink"
-          className="ml-auto inline-flex min-h-[44px] max-md:min-h-[44px] shrink-0 items-center px-1 py-1 text-xs text-gray-300 underline underline-offset-2 hover:text-white sm:min-h-[36px] sm:px-0 sm:py-0"
-          disabled={disabled}
-          aria-label={`Change your response for ${role || "this assignment"}`}
-          onClick={() => setChanging(true)}
-        >
-          Change response
-        </Button>
       ) : null}
     </div>
   );
@@ -1526,20 +1531,24 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
             ) : null}
 
             {datedOccurrences.length > 0 ? (
-              <div className="grid items-end gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(16rem,1fr)_repeat(3,minmax(9rem,13rem))]">
+              <div className="flex flex-wrap items-end gap-2">
                 <Input
                   label="Search"
-                  className="min-w-0"
+                  className="w-full min-w-0 sm:w-auto sm:min-w-[16rem] sm:flex-1"
                   value={query}
                   placeholder="Song, position, person, or date"
                   onChange={(value) => setQuery(String(value))}
                 />
-                <Select
-                  label="Organize"
-                  value={organizeMode}
-                  options={[{ value: "byMonth", label: "By month" }, { value: "byService", label: "By service" }]}
-                  onChange={(value) => setOrganizeMode(value === "byService" ? "byService" : "byMonth")}
-                />
+                <div className="flex w-fit flex-col gap-1 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-1.5">
+                  <span className="px-0.5 text-xs font-semibold text-gray-200">Organize</span>
+                  <SegmentedControl
+                    ariaLabel="Organize services"
+                    variant="compact"
+                    value={organizeMode}
+                    onChange={setOrganizeMode}
+                    options={MY_SCHEDULE_ORGANIZE_OPTIONS}
+                  />
+                </div>
                 {serviceOptions.length > 2 ? (
                   <Select
                     label="Service"

@@ -1,13 +1,13 @@
 import { useContext, useEffect, useMemo, useState } from "react";
-import { ExternalLink, Image as ImageIcon, Link2, Search, Video } from "lucide-react";
+import { ExternalLink, Image as ImageIcon, Link2, PanelsTopLeft, Search, Video } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import Button from "../../components/Button/Button";
 import Checkbox from "../../components/Checkbox/Checkbox";
 import Input from "../../components/Input/Input";
 import MultiSelectSubsetTick from "../../components/MultiSelectSubsetTick/MultiSelectSubsetTick";
 import SelectAllButton from "../../components/SelectAllButton";
-import SegmentedControl from "../../components/SegmentedControl/SegmentedControl";
 import Spinner from "../../components/Spinner/Spinner";
+import ToolbarButton from "../Toolbar/ToolbarElements/ToolbarButton";
 import {
   Sheet,
   SheetContent,
@@ -108,9 +108,10 @@ const CanvaImportSheet = ({
   const [designLink, setDesignLink] = useState("");
   const [isOpeningLink, setIsOpeningLink] = useState(false);
   const [createDeckItem, setCreateDeckItem] = useState(true);
+  const [customItemName, setCustomItemName] = useState("");
   const [format, setFormat] = useState<"png" | "mp4">("png");
   const [mp4ImportMode, setMp4ImportMode] =
-    useState<CanvaMp4ImportMode>("combined");
+    useState<CanvaMp4ImportMode>("separate");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const isImportPending = false;
@@ -153,7 +154,9 @@ const CanvaImportSheet = ({
     setPages([]);
     setSelectedPages(new Set());
     setFormat("png");
+    setMp4ImportMode("separate");
     setCreateDeckItem(true);
+    setCustomItemName("");
     setDesignLink("");
     setError("");
     void getCanvaStatus(churchId)
@@ -217,14 +220,9 @@ const CanvaImportSheet = ({
       (_, index) => index + 1,
     );
     setPages(nextPages);
+    setSelectedPages(new Set(nextPages.slice(0, 25)));
+    setCustomItemName(design.title);
     const sourceMatchesDesign = initialSource?.designId === design.id;
-    setSelectedPages(
-      new Set(
-        sourceMatchesDesign && initialSource.pageNumbers.length
-          ? initialSource.pageNumbers
-          : [1],
-      ),
-    );
     if (sourceMatchesDesign) setFormat(initialSource.format);
   };
 
@@ -351,11 +349,16 @@ const CanvaImportSheet = ({
 
   const importSelected = async () => {
     if (isImportPending || !selectedDesign || selectedPages.size === 0) return;
+    if (createDeckItem && !customItemName.trim()) {
+      setError("Enter a name for the custom item.");
+      return;
+    }
     const design = selectedDesign;
     const importPages = [...selectedPages].sort((a, b) => a - b);
     const importFormat = format;
     const importMode = mp4ImportMode;
     const includeCustomItem = createDeckItem;
+    const itemName = customItemName.trim() || design.title;
     let customItemPages: MediaType[] = [];
     let mediaAtExecution: readonly MediaType[] = [];
     let cleanupRetryAssets: CanvaImportedAsset[] = [];
@@ -412,7 +415,7 @@ const CanvaImportSheet = ({
           const latestById = new Map(getLatestMedia().map((mediaItem) => [mediaItem.id, mediaItem]));
           const currentPages = customItemPages.map((page) => latestById.get(page.id)).filter((page): page is MediaType => Boolean(page));
           if (currentPages.length !== customItemPages.length) throw new Error("One or more imported pages are no longer in Media.");
-          const viewPath = await onCreateDeckItem(currentPages, design.title, { navigateToItem: false, idempotencyKey: customItemIdempotencyKey });
+          const viewPath = await onCreateDeckItem(currentPages, itemName, { navigateToItem: false, idempotencyKey: customItemIdempotencyKey });
           return viewPath;
         },
         ...(onUnprocessedAssetCleanup ? { cleanupRetry: retryCanvaCleanup } : {}),
@@ -458,7 +461,7 @@ const CanvaImportSheet = ({
             if (!pagesToUse.length || !onCreateDeckItem) return { customItemError: "No saved media is available to create the custom item." };
             customItemPages = pagesToUse;
             try {
-              const viewPath = await onCreateDeckItem(pagesToUse, design.title, { navigateToItem: false, idempotencyKey: customItemIdempotencyKey });
+              const viewPath = await onCreateDeckItem(pagesToUse, itemName, { navigateToItem: false, idempotencyKey: customItemIdempotencyKey });
               return typeof viewPath === "string" ? { viewPath } : {};
             } catch (customError) {
               return { customItemError: customError instanceof Error ? customError.message : "Try again." };
@@ -563,7 +566,9 @@ const CanvaImportSheet = ({
       setError(formatCanvaImportError(startError, format));
     }
   };
-  let selectedDesignStatus = "Select one or more pages.";
+  let selectedDesignStatus = pages.length > 25
+    ? `${selectedPages.size} of ${pages.length} pages selected (25 max per import).`
+    : `${selectedPages.size} of ${pages.length} pages selected.`;
   if (selectedDesign && requestedSource?.designId === selectedDesign.id) {
     selectedDesignStatus = isCanvaSourceCurrent(
       requestedSource,
@@ -892,27 +897,32 @@ const CanvaImportSheet = ({
                         <p className="text-xs font-medium text-gray-300">
                           MP4 import
                         </p>
-                        <SegmentedControl
-                          value={mp4ImportMode}
-                          onChange={(value) => {
-                            setMp4ImportMode(value);
-                          }}
-                          ariaLabel="MP4 import mode"
-                          variant="muted"
-                          fullWidth
-                          disabled={isImportPending}
-                          className="mt-1"
-                          options={[
-                            {
-                              value: "combined",
-                              label: "One combined video",
-                            },
-                            {
-                              value: "separate",
-                              label: "Separate video per page",
-                            },
-                          ]}
-                        />
+                        <div
+                          role="group"
+                          aria-label="MP4 import mode"
+                          className="mt-1 flex w-full items-center overflow-hidden rounded-md border border-gray-600"
+                        >
+                          <ToolbarButton
+                            svg={PanelsTopLeft}
+                            isActive={mp4ImportMode === "separate"}
+                            aria-pressed={mp4ImportMode === "separate"}
+                            disabled={isImportPending}
+                            className="min-w-0 flex-1 justify-center rounded-none first:rounded-l-md last:rounded-r-md"
+                            onClick={() => setMp4ImportMode("separate")}
+                          >
+                            Separate video per page
+                          </ToolbarButton>
+                          <ToolbarButton
+                            svg={Video}
+                            isActive={mp4ImportMode === "combined"}
+                            aria-pressed={mp4ImportMode === "combined"}
+                            disabled={isImportPending}
+                            className="min-w-0 flex-1 justify-center rounded-none first:rounded-l-md last:rounded-r-md"
+                            onClick={() => setMp4ImportMode("combined")}
+                          >
+                            One combined video
+                          </ToolbarButton>
+                        </div>
                         <p className="mt-1 text-xs text-gray-400">
                           {mp4ImportMode === "combined"
                             ? "Best for looping the whole presentation as one video."
@@ -935,6 +945,15 @@ const CanvaImportSheet = ({
                             setCreateDeckItem(checked === true)
                           }
                         />
+                        {createDeckItem ? (
+                          <Input
+                            label="Custom item name"
+                            value={customItemName}
+                            onChange={(value) => setCustomItemName(String(value))}
+                            disabled={isImportPending}
+                            className="mt-2"
+                          />
+                        ) : null}
                       </div>
                     ) : null}
                   </div>

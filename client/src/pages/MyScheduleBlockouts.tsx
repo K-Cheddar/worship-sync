@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { CalendarOff, ChevronDown, ChevronUp, TriangleAlert } from "lucide-react";
 import Button from "../components/Button/Button";
 import Icon from "../components/Icon/Icon";
-import BlockoutDatesField from "./Teams/components/BlockoutDatesField";
+import BlockoutDatesField, { isValidBlockoutDateRange } from "./Teams/components/BlockoutDatesField";
 import { findBlockoutRangeForDate, formatBlockoutDateRangeLabel } from "./Teams/teamsUtils";
 import { updateMyBlockoutDates, type MyScheduleOccurrence } from "../api/auth";
 import type { TeamBlockoutDateRange } from "../api/authTypes";
@@ -62,12 +62,12 @@ const formatConflictWhen = (occurrence: MyScheduleOccurrence, timeZone: string):
 };
 
 const summarizeEntries = (count: number) => {
-  if (count === 0) return "None added";
+  if (count === 0) return "No upcoming time off";
   return `${count} upcoming`;
 };
 
 const hasEnded = (range: TeamBlockoutDateRange, today: string) =>
-  (range.endDate || range.startDate) < today;
+  isValidBlockoutDateRange(range) && (range.endDate || range.startDate) < today;
 
 /**
  * Split off trips that are already over. They are still stored — the server
@@ -83,8 +83,9 @@ const partitionByEnded = (ranges: TeamBlockoutDateRange[], timeZone: string) => 
   };
 };
 
-/** Value identity for a range list, for comparing a draft against a baseline. */
-const signRanges = (ranges: TeamBlockoutDateRange[]) => JSON.stringify(ranges);
+/** Range order is presentational; compare contents without inventing dirty state on regroup. */
+const signRanges = (ranges: TeamBlockoutDateRange[]) =>
+  JSON.stringify(ranges.map((range) => JSON.stringify(range)).sort());
 
 const MyScheduleBlockouts = ({
   churchId,
@@ -103,17 +104,15 @@ const MyScheduleBlockouts = ({
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const conflictHeadingId = useId();
   const [open, setOpen] = useState(false);
-  const { current } = useMemo(
-    () => partitionByEnded(blockoutDates, serviceTimeZone),
-    [blockoutDates, serviceTimeZone],
-  );
   const [showEnded, setShowEnded] = useState(false);
   const [draft, setDraft] = useState<TeamBlockoutDateRange[]>(blockoutDates);
   const { ended: draftEnded, current: draftCurrent } = useMemo(
     () => partitionByEnded(draft, serviceTimeZone),
     [draft, serviceTimeZone],
   );
-  const editorRanges = showEnded ? draft : draftCurrent;
+  const editorRanges = draftCurrent;
+  const hasIncompleteDraft = draft.some((range) => !isValidBlockoutDateRange(range));
+  const earliestEditableDate = calendarDateInTimeZone(new Date(), serviceTimeZone);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const [rejectedAsStale, setRejectedAsStale] = useState(false);
@@ -202,9 +201,9 @@ const MyScheduleBlockouts = ({
   };
 
   const handleDraftChange = (next: TeamBlockoutDateRange[]) => {
-    // When past dates are hidden, preserve them in the draft while applying
-    // edits only to the entries shown in the field.
-    setDraft(showEnded ? next : [...draftEnded, ...next]);
+    // Historical entries are read-only and stay in the replacement payload,
+    // regardless of whether the reference list is currently expanded.
+    setDraft([...draftEnded, ...next]);
   };
 
   const refreshSavedDates = () => {
@@ -213,7 +212,7 @@ const MyScheduleBlockouts = ({
   };
 
   const save = async () => {
-    if (savingRef.current || hasConflict) return;
+    if (savingRef.current || hasConflict || hasIncompleteDraft) return;
     savingRef.current = true;
     setSaving(true);
     try {
@@ -224,10 +223,8 @@ const MyScheduleBlockouts = ({
         : updateMyBlockoutDates(churchId, draft, baseline.updatedAt));
       if (!mounted.current) return;
       const saved = result.member?.blockoutDates || [];
-      // Re-seed from the server so its normalization is what stays on screen: a
-      // single day collapsed to one date, a blank row dropped, history past the
-      // retention window pruned. Seeding also moves the baseline, so the save
-      // leaves the editor clean rather than looking edited again.
+      // Re-seed from the server so its normalization is what stays on screen.
+      // Seeding also moves the baseline, leaving the editor clean after save.
       seedDraft(saved, result.member.updatedAt || "");
       onSaved(result.member);
       showToast("Time off saved.", "success");
@@ -260,8 +257,13 @@ const MyScheduleBlockouts = ({
           <Icon svg={CalendarOff} size="sm" className="shrink-0 text-orange-300" />
           <span className="text-sm font-semibold text-gray-100">Time off</span>
           <span className="truncate text-xs text-gray-400">
-            {summarizeEntries(current.length)}
+            {summarizeEntries(draftCurrent.length)}
           </span>
+          {isDirty ? (
+            <span className="shrink-0 rounded-full border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-medium text-cyan-200">
+              Unsaved changes
+            </span>
+          ) : null}
           {conflicts.length > 0 ? (
             <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-amber-300">
               <Icon svg={TriangleAlert} size="xs" />
@@ -308,36 +310,51 @@ const MyScheduleBlockouts = ({
             </Button>
           </div> : null}
 
-          <fieldset disabled={saving}>
+          <fieldset disabled={saving} className="max-w-3xl">
             <BlockoutDatesField
-              key={`${fieldKey}-${showEnded ? "all" : "current"}`}
-              variant="admin"
+              key={fieldKey}
+              variant="volunteer"
               showNotes
-              emptyLabel="No upcoming dates added yet."
+              min={earliestEditableDate}
+              emptyLabel="No upcoming time off."
               value={editorRanges}
               onChange={handleDraftChange}
             />
           </fieldset>
 
+          {hasIncompleteDraft ? (
+            <p role="alert" className="max-w-3xl rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+              Complete or remove each unfinished date before saving.
+            </p>
+          ) : null}
+
           {draftEnded.length > 0 ? (
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-xs text-gray-500">
-                {showEnded
-                  ? "Past dates are shown for reference."
-                  : `${draftEnded.length} past ${draftEnded.length === 1 ? "date is" : "dates are"} hidden.`}
-              </p>
-              <Button
-                type="button"
-                variant="tertiary"
-                aria-expanded={showEnded}
-                className="h-auto min-h-0 px-0 py-0 text-xs text-gray-400 underline underline-offset-2 hover:text-gray-200"
-                onClick={() => setShowEnded((current) => !current)}
-              >
-                {showEnded
-                  ? "Hide past dates"
-                  : `Show ${draftEnded.length} past ${draftEnded.length === 1 ? "date" : "dates"}`}
-              </Button>
-            </div>
+            <section className="max-w-3xl space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-gray-500">
+                  {draftEnded.length} past {draftEnded.length === 1 ? "date" : "dates"} kept for reference.
+                </p>
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  aria-expanded={showEnded}
+                  className="h-auto min-h-[40px] px-1 py-1 text-xs text-gray-400 underline underline-offset-2 hover:text-gray-200 max-md:min-h-[44px]"
+                  onClick={() => setShowEnded((current) => !current)}
+                >
+                  {showEnded ? "Hide past dates" : "Show past dates"}
+                </Button>
+              </div>
+              {showEnded ? (
+                <ul className="space-y-1 rounded-lg border border-gray-700/70 bg-gray-950/25 p-2.5 text-sm text-gray-300">
+                  {draftEnded.map((range, index) => (
+                    <li key={`${range.startDate}-${range.endDate}-${index}`} className="break-words">
+                      {formatBlockoutDateRangeLabel(range)}
+                      {range.notes ? <span className="text-gray-400"> · {range.notes}</span> : null}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </section>
           ) : null}
 
           {conflicts.length > 0 ? (
@@ -378,7 +395,7 @@ const MyScheduleBlockouts = ({
               type="button"
               variant="cta"
               className="max-md:min-h-0"
-              disabled={!isDirty || saving || hasConflict}
+              disabled={!isDirty || hasIncompleteDraft || saving || hasConflict}
               onClick={save}
             >
               {saving ? "Saving…" : "Save time off"}

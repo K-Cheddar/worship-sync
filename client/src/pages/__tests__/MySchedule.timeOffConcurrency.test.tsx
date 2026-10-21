@@ -57,12 +57,19 @@ const page = (operations: MyScheduleOperations, mode: Mode = "personal", churchI
     <MySchedule access={mode === "personal" ? { churchId, memberId: "member", operations } : undefined} />
   </GlobalInfoContext.Provider></MemoryRouter></Provider>;
 };
+const openNotesEditor = async (user: ReturnType<typeof userEvent.setup>) => {
+  const existing = screen.queryByRole("textbox", { name: /Notes/i });
+  if (existing) return existing;
+  await user.click(screen.getAllByRole("button", { name: /Edit time off:/i })[0]);
+  return screen.getByRole("textbox", { name: /Notes/i });
+};
 const edit = async (user: ReturnType<typeof userEvent.setup>, notes = "Volunteer draft") => {
-  const input = screen.getByRole("textbox", { name: /Notes/i });
+  const input = await openNotesEditor(user);
   await user.clear(input); await user.type(input, notes);
 };
 const openEditor = async (user: ReturnType<typeof userEvent.setup>) => {
   await user.click(await screen.findByRole("button", { name: /Time off/i }));
+  await openNotesEditor(user);
 };
 beforeEach(() => { jest.clearAllMocks(); });
 
@@ -95,6 +102,7 @@ it("B: HTTP 409 keeps revision A and requires explicit conflict resolution befor
   await user.click(screen.getByRole("button", { name: "Save time off" }));
   expect(f.operations.saveBlockouts).toHaveBeenCalledTimes(1);
   await user.click(screen.getByRole("button", { name: "Discard changes" }));
+  await openNotesEditor(user);
   expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue("Administrator dates");
   await edit(user, "Reconciled dates");
   await user.click(screen.getByRole("button", { name: "Save time off" }));
@@ -139,6 +147,7 @@ it.each(["human", "personal"] as const)("retries a failed %s conflict refresh wi
   expect(screen.getByRole("button", { name: "Save time off" })).toBeDisabled();
   expect(f.operations.saveBlockouts).toHaveBeenCalledTimes(1);
   await user.click(screen.getByRole("button", { name: "Discard changes" }));
+  await openNotesEditor(user);
   expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue("Administrator dates");
   await edit(user, "Reconciled retry");
   await user.click(screen.getByRole("button", { name: "Save time off" }));
@@ -160,6 +169,7 @@ it.each(["before", "after"])("D: a refresh resolving %s save completion cannot r
   f.setSaved(confirmed);
   await act(async () => { save.resolve({ success: true, member: confirmed }); });
   if (order === "after") await act(async () => { refresh.resolve(snapshot(member("revision-a", "Original dates"))); });
+  await openNotesEditor(user);
   expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue("Normalized saved dates");
   expect(screen.getByRole("button", { name: "Save time off" })).toBeDisabled();
   await edit(user, "Next edit");
@@ -236,6 +246,7 @@ it("a superseded conflict refresh cannot override a newer success", async () => 
   expect(screen.queryByText(/Administrator dates/)).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Discard changes" }));
   const value = "Newest dates";
+  await openNotesEditor(user);
   expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue(value);
 });
 
@@ -257,6 +268,7 @@ it("a superseded conflict refresh cannot override a newer failure", async () => 
   expect(screen.getByRole("button", { name: "Discard changes" })).toBeDisabled();
   await user.click(screen.getByRole("button", { name: "Discard changes" }));
   const value = "Volunteer draft";
+  await openNotesEditor(user);
   expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue(value);
 });
 
