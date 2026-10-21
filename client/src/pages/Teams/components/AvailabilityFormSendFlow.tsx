@@ -38,6 +38,7 @@ const AvailabilityFormSendFlow = ({
   onBatchUpdated,
   privacySafe = false,
   onClose,
+  dialog = false,
 }: {
   churchId: string;
   form: TeamIntakeForm;
@@ -54,11 +55,13 @@ const AvailabilityFormSendFlow = ({
   onBatchUpdated?: (batch: NotificationBatch) => void;
   privacySafe?: boolean;
   onClose: () => void;
+  dialog?: boolean;
 }) => {
   const [deselectedIds, setDeselectedIds] = useState<Set<string>>(new Set());
   const [selectedRetryIds, setSelectedRetryIds] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const [teamFilter, setTeamFilter] = useState("");
+  const [recipientFilter, setRecipientFilter] = useState("all");
   const [busy, setBusy] = useState(false);
   const sendLockRef = useRef(false);
   const [reviewedBatchState, setReviewedBatchState] = useState<{
@@ -166,10 +169,13 @@ const AvailabilityFormSendFlow = ({
     if (hadPreparedReview) setNotice("Recipient eligibility changed. Review the messages again before sending.");
   }, [confirmOpen, recipientEligibilityIdentity, reviewedBatchState]);
   const query = search.trim().toLocaleLowerCase();
-  const visibleRows = rows.filter(({ member, memberTeamIds }) =>
-    (!teamFilter || memberTeamIds.has(teamFilter)) &&
-    (!query || memberName(member).toLocaleLowerCase().includes(query)),
-  );
+  const visibleRows = rows.filter((row) => {
+    const { member, memberTeamIds } = row;
+    return (!teamFilter || memberTeamIds.has(teamFilter)) &&
+    (!query || memberName(member).toLocaleLowerCase().includes(query)) &&
+    (recipientFilter !== "first" || (row.eligible && !row.previousDeliveryStatus)) &&
+    (recipientFilter !== "outstanding" || (row.recipient && !row.recipient.respondedAt && !row.recipient.revokedAt));
+  });
   const visibleEligibleIds = historyLoaded ? visibleRows.filter(({ eligible }) => eligible).map(({ member }) => member.memberId) : [];
   const selectedEligibleIds = rows.filter(({ member, eligible, previousDeliveryStatus }) =>
     eligible && (previousDeliveryStatus === "failed" ? selectedRetryIds.has(member.memberId) : !deselectedIds.has(member.memberId)),
@@ -321,13 +327,7 @@ const AvailabilityFormSendFlow = ({
 
   const toggleVisible = (checked: boolean) => updateRecipientSelection(visibleEligibleIds, checked);
 
-  return (
-    <section className="space-y-4 rounded-lg border border-sky-700 bg-gray-900/60 p-4" aria-labelledby="send-form-heading">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div><h2 id="send-form-heading" className="font-semibold text-white">Send form</h2><p className="text-sm text-gray-400">First-time recipients are selected automatically. Select a previous failure to retry it.</p></div>
-        <Button variant="textLink" disabled={busy} onClick={onClose}>Close</Button>
-      </div>
-      {historyLoaded ? <dl className="grid grid-cols-2 gap-2 rounded-lg border border-gray-700 bg-gray-950/40 p-3 text-sm sm:grid-cols-4 lg:grid-cols-8" aria-label="Recipient status summary">
+  const eligibilitySummary = (<dl className="grid grid-cols-2 gap-2 rounded-lg border border-gray-700 bg-gray-950/40 p-3 text-sm sm:grid-cols-4 lg:grid-cols-8" aria-label="Recipient status summary">
         <div><dt className="text-gray-400">Ready to send</dt><dd className="font-medium text-emerald-200">{statusCounts.ready}</dd></div>
         <div><dt className="text-gray-400">Consent needed</dt><dd className="text-gray-200">{statusCounts.consentNeeded}</dd></div>
         {!privacySafe ? <div><dt className="text-gray-400">Opted out</dt><dd className="text-gray-200">{statusCounts.optedOut}</dd></div> : null}
@@ -336,7 +336,16 @@ const AvailabilityFormSendFlow = ({
         <div><dt className="text-gray-400">Already responded</dt><dd className="text-gray-200">{statusCounts.responded}</dd></div>
         <div><dt className="text-gray-400">Failed previously</dt><dd className="text-amber-200">{statusCounts.failed}</dd></div>
         <div><dt className="text-gray-400">Needs a status check</dt><dd className="text-amber-200">{statusCounts.needsStatusCheck}</dd></div>
-      </dl> : null}
+      </dl>);
+  const recipientDiagnostics = dialog ? <details><summary className="cursor-pointer text-sm text-gray-400">Eligibility details</summary>{eligibilitySummary}</details> : eligibilitySummary;
+
+  const selection = (
+    <section className={dialog ? "space-y-4" : "space-y-4 rounded-lg border border-sky-700 bg-gray-900/60 p-4"} aria-labelledby="send-form-heading">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div><h2 id="send-form-heading" className="font-semibold text-white">{dialog ? "Select recipients" : "Send form"}</h2><p className="text-sm text-gray-400">First-time recipients are selected automatically. Select a previous failure to retry it.</p></div>
+        {!dialog ? <Button variant="textLink" disabled={busy} onClick={onClose}>Close</Button> : null}
+      </div>
+      {historyLoaded ? recipientDiagnostics : null}
       {!historyLoaded ? historyError ? (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-700/70 bg-amber-950/30 p-3 text-sm text-amber-100" role="alert">
           <span>{historyError}</span>
@@ -344,6 +353,7 @@ const AvailabilityFormSendFlow = ({
         </div>
       ) : <p role="status" className="text-sm text-gray-300">Loading consent and message history…</p> : null}
       <div className="grid gap-3 sm:grid-cols-2">
+        {dialog ? <Select label="Recipients" value={recipientFilter} onChange={setRecipientFilter} disabled={busy || !historyLoaded} options={[{ value: "all", label: "Specific members" }, { value: "first", label: "Eligible first-time recipients" }, { value: "outstanding", label: "Outstanding requests" }]} /> : null}
         <Select label="Team" value={teamFilter} onChange={setTeamFilter} options={teamOptions} disabled={busy || !historyLoaded} />
         <Input label="Search members" value={search} onChange={(value) => setSearch(String(value))} placeholder="Search by name" disabled={busy || !historyLoaded} />
       </div>
@@ -353,24 +363,39 @@ const AvailabilityFormSendFlow = ({
           <div className="flex items-center gap-3"><span aria-live="polite" className="text-sm text-gray-300">{selectedEligibleIds.length} selected</span><Button variant="textLink" disabled={busy || !historyLoaded || !selectedEligibleIds.length} onClick={() => updateRecipientSelection(selectedEligibleIds, false)}>Clear</Button></div>
         </div>
         <div className="divide-y divide-gray-800" role="list" aria-label="Form recipients">
-          {visibleRows.length ? visibleRows.map(({ member, eligible, reason, previousDeliveryStatus }) => <div key={member.memberId} className="flex min-h-12 items-center gap-3 px-3 py-2.5" role="listitem"><Checkbox label={<MemberNameWithIndicator name={memberName(member)} memberId={member.memberId} className="flex-1" />} checked={selectedEligibleIds.includes(member.memberId)} disabled={busy || !historyLoaded || !eligible} onCheckedChange={(checked) => updateRecipientSelection([member.memberId], checked === true)} className="flex-1" />{!eligible ? <span className="shrink-0 text-xs text-amber-200">{reason}</span> : <span className="shrink-0 text-xs text-emerald-200">{previousDeliveryStatus === "failed" ? "Previous send failed · select to retry" : "First message · ready"}</span>}</div>) : <p className="p-4 text-sm text-gray-400">No members match these filters.</p>}
+          {visibleRows.length ? visibleRows.map(({ member, eligible, reason, previousDeliveryStatus }) => <div key={member.memberId} className="flex min-h-12 items-center gap-3 px-3 py-2.5" role="listitem"><Checkbox label={<MemberNameWithIndicator name={memberName(member)} memberId={member.memberId} className="flex-1" />} checked={selectedEligibleIds.includes(member.memberId)} disabled={busy || !historyLoaded || !eligible} onCheckedChange={(checked) => updateRecipientSelection([member.memberId], checked === true)} className="flex-1" />{!eligible ? <span className="max-w-[50%] text-right text-xs text-amber-200">{reason}</span> : <span className="shrink-0 text-xs text-emerald-200">{previousDeliveryStatus === "failed" ? "Previous send failed · select to retry" : "First message · ready"}</span>}</div>) : <p className="p-4 text-sm text-gray-400">No members match these filters.</p>}
         </div>
       </div>
       <div className="flex flex-col gap-3 border-t border-gray-700 pt-4 sm:flex-row sm:items-center sm:justify-between"><p className="text-sm text-gray-400">{selectedEligibleIds.length ? `${selectedEligibleIds.length} of ${statusCounts.ready} eligible volunteer${statusCounts.ready === 1 ? "" : "s"} selected.` : "Select at least one eligible volunteer to continue."}</p><Button disabled={busy || !historyLoaded || !selectedEligibleIds.length} isLoading={busy} onClick={() => void reviewMessages()}>{busy ? "Preparing messages..." : `Review and send ${selectedEligibleIds.length} message${selectedEligibleIds.length === 1 ? "" : "s"}`}</Button></div>
+      {dialog ? <Button variant="secondary" disabled={busy} onClick={onClose}>Cancel</Button> : null}
       {error ? <p role="alert" className="text-sm text-red-200">{error}</p> : null}
       {notice ? <p role="status" className="text-sm text-sky-200">{notice}</p> : null}
       {reviewedBatch && batchHasProgress ? <AvailabilityBatchReview batch={reviewedBatch} formName={form.name} busy={busy || !historyLoaded} privacySafe={privacySafe} mode="status" /> : null}
-      <Modal isOpen={confirmOpen && Boolean(reviewedBatch) && historyLoaded} onClose={() => setConfirmOpen(false)} title="Review text messages" description="Check who will receive this form and read the personalized messages. Choose Send to send them." size="lg" busy={busy}>
+    </section>
+  );
+
+  const confirmation = <>
         {reviewedBatch ? <div className="space-y-4">
+          {dialog ? <p className="text-sm text-gray-300">{selectedEligibleIds.length} volunteers selected</p> : null}
           <AvailabilityBatchReview batch={reviewedBatch} formName={form.name} busy={busy} privacySafe={privacySafe} mode="confirmation" />
           <div className="flex flex-col-reverse justify-end gap-2 border-t border-gray-700 pt-4 sm:flex-row">
-            <Button variant="secondary" disabled={busy} onClick={() => setConfirmOpen(false)}>Cancel</Button>
+            <Button variant="secondary" disabled={busy} onClick={() => setConfirmOpen(false)}>{dialog ? "Back" : "Cancel"}</Button>
+            {dialog ? <Button variant="secondary" disabled={busy} onClick={onClose}>Cancel</Button> : null}
             {reviewedBatch.summary.eligible > 0 ? <Button disabled={busy || !historyLoaded} isLoading={busy} onClick={() => void sendBatch()}>Send {reviewedBatch.summary.eligible} message{reviewedBatch.summary.eligible === 1 ? "" : "s"}</Button> : null}
           </div>
         </div> : null}
+  </>;
+
+  if (dialog) return <Modal isOpen onClose={onClose} title={confirmOpen && reviewedBatch ? "Review text messages" : "Send requests"} size="lg" busy={busy}>
+    {confirmOpen && reviewedBatch && historyLoaded ? confirmation : selection}
+  </Modal>;
+
+  return <>{selection}
+      <Modal isOpen={confirmOpen && Boolean(reviewedBatch) && historyLoaded} onClose={() => setConfirmOpen(false)} title="Review text messages" description="Check who will receive this form and read the personalized messages. Choose Send to send them." size="lg" busy={busy}>
+        {confirmation}
       </Modal>
-    </section>
-  );
+    </>;
+
 };
 
 export default AvailabilityFormSendFlow;

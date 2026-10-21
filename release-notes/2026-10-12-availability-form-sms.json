@@ -3,5 +3,5 @@
   "date": "2026-10-12",
   "type": "improved",
   "title": "Availability form messages",
-  "description": "Review volunteers and their personalized text messages in one confirmation before sending. First-time volunteers are selected automatically, and failed messages require a deliberate retry."
+  "description": "Review recipient progress and availability responses in two focused tabs, with readable mobile responses and one dialog to select volunteers, review personalized text messages, and confirm sending."
 }

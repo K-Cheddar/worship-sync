@@ -78,6 +78,8 @@ import {
 import { getUpcomingAvailabilitySuggestions } from "../intakeAvailabilitySuggestion";
 import { buildTeamSchedulePeriod } from "../schedule/teamSchedulePeriod";
 import { loadAvailabilityNotificationHistory } from "../availabilityNotificationHistory";
+import AvailabilityFormWorkspace from "../components/AvailabilityFormWorkspace";
+import { getAvailabilityFormProgress } from "../availabilityFormProgress";
 import AvailabilityFormSendFlow from "../components/AvailabilityFormSendFlow";
 import { MemberNameWithIndicator } from "../components/CurrentUserMemberIndicator";
 import SmsConfirmationModal from "../components/SmsConfirmationModal";
@@ -99,7 +101,9 @@ type IntakeManagerProps = {
   managedTeamIds?: string[];
   suggestionTeamIds?: string[];
   availabilityResponses?: TeamAvailabilityResponse[];
-  onAvailabilityRefresh?: () => void;
+  onAvailabilityRefresh?: () => void | Promise<void>;
+  availabilityRefreshing?: boolean;
+  availabilityRefreshError?: string;
   forms: TeamIntakeForm[];
   displayForms?: TeamIntakeForm[];
   listHeader?: ReactNode;
@@ -238,6 +242,8 @@ const IntakeManager = ({
   suggestionTeamIds,
   availabilityResponses = [],
   onAvailabilityRefresh,
+  availabilityRefreshing = false,
+  availabilityRefreshError = "",
   forms,
   displayForms,
   listHeader,
@@ -289,6 +295,7 @@ const IntakeManager = ({
   const [showCreate, setShowCreate] = useState(false);
   const [showEditForm, setShowEditForm] = useState(false);
   const [showSendForm, setShowSendForm] = useState(false);
+  const [refreshingAvailability, setRefreshingAvailability] = useState(false);
   const [preserveSuggestedOccurrences, setPreserveSuggestedOccurrences] = useState(false);
   const [saving, setSaving] = useState(false);
   const [lastCreatedPublicUrl, setLastCreatedPublicUrl] = useState("");
@@ -898,7 +905,7 @@ const IntakeManager = ({
   }, [activeSelectedFormId, refreshFormMessageState]);
 
   const handleAvailabilityBatchUpdated = (batch: NotificationBatch) => {
-    if (batch.churchId !== churchIdRef.current || !batch.formId) return;
+    if (!messageStateMountedRef.current || batch.churchId !== churchIdRef.current || !batch.formId) return;
     batch.intakeRecipients?.forEach(onRecipientSaved);
     const hasOutcome = batch.summary.sent > 0 || batch.summary.failed > 0 || batch.summary.uncertain > 0 || (batch.summary.sending || 0) > 0;
     if (batch.status !== "prepared" || hasOutcome) refreshFormMessageState(batch.formId);
@@ -1051,23 +1058,26 @@ const IntakeManager = ({
     recipient: TeamIntakeRecipient,
     { copy = false } = {},
   ) => {
-    if (recipientActionKey || !canEdit) return;
+    if (recipientActionKey || !canEdit || recipient.revokedAt) return;
+    const requestedChurchId = churchId;
+    const isCurrent = () => messageStateMountedRef.current && churchIdRef.current === requestedChurchId && activeSelectedFormIdRef.current === recipient.formId;
     setRecipientActionKey(recipient.recipientId);
     try {
       const response = await getTeamIntakeRecipientLink(
-        churchId,
+        requestedChurchId,
         recipient.recipientId,
         { markCopied: copy },
       );
+      if (!isCurrent()) return;
       onRecipientSaved(response.recipient);
       if (copy) {
         await navigator.clipboard?.writeText(response.publicUrl);
-        showToast("Individual link copied.", "success");
+        if (isCurrent()) showToast("Individual link copied.", "success");
       } else {
         window.open(response.publicUrl, "_blank", "noopener,noreferrer");
       }
     } catch (error) {
-      showApiErrorToast(showToast, error, "Could not prepare this individual link.");
+      if (isCurrent()) showApiErrorToast(showToast, error, "Could not prepare this individual link.");
     } finally {
       setRecipientActionKey("");
     }
@@ -1143,16 +1153,19 @@ const IntakeManager = ({
 
   const revokeRecipient = async (recipient: TeamIntakeRecipient) => {
     if (!canEdit || recipientActionKey) return;
+    const requestedChurchId = churchId;
+    const isCurrent = () => messageStateMountedRef.current && churchIdRef.current === requestedChurchId && activeSelectedFormIdRef.current === recipient.formId;
     setRecipientActionKey(recipient.recipientId);
     try {
       const response = await revokeTeamIntakeRecipient(
-        churchId,
+        requestedChurchId,
         recipient.recipientId,
       );
+      if (!isCurrent()) return;
       onRecipientSaved(response.recipient);
       showToast("Individual request revoked.", "success");
     } catch (error) {
-      showApiErrorToast(showToast, error, "Could not revoke this request.");
+      if (isCurrent()) showApiErrorToast(showToast, error, "Could not revoke this request.");
     } finally {
       setRecipientActionKey("");
     }
@@ -1273,12 +1286,14 @@ const IntakeManager = ({
 
   const copyFormLink = async (form: TeamIntakeForm) => {
     if (!canEdit) return;
-    if (form.publicUrl) {
-      await copyPublicUrl(form.publicUrl);
-      return;
-    }
+    const requestedChurchId = churchId;
     try {
-      const response = await getTeamIntakeFormLink(churchId, form.formId);
+      if (form.publicUrl) {
+        await copyPublicUrl(form.publicUrl);
+        return;
+      }
+      const response = await getTeamIntakeFormLink(requestedChurchId, form.formId);
+      if (!messageStateMountedRef.current || churchIdRef.current !== requestedChurchId) return;
       onFormSaved(response.form);
       await copyPublicUrl(
         response.publicUrl || buildTeamIntakePublicUrl(response.publicToken),
@@ -2175,88 +2190,7 @@ const IntakeManager = ({
     );
   };
 
-  const renderAvailabilityTracking = () => {
-    if (!activeSelectedForm) return null;
-    const activeRecipients = selectedFormRecipients.filter((recipient) => !recipient.revokedAt);
-    const responded = activeRecipients.filter((recipient) => Boolean(recipient.respondedAt));
-    const outstandingCount = activeRecipients.length - responded.length;
-    const responseByRecipientId = new Map(
-      availabilityResponses
-        .filter((response) => response.formId === activeSelectedForm.formId)
-        .map((response) => [response.recipientId, response]),
-    );
-    const occurrences = activeSelectedForm.availabilityOccurrences || [];
-
-    return (
-      <section className="space-y-3" aria-labelledby="availability-response-heading">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h3 id="availability-response-heading" className="font-semibold text-white">Availability responses</h3>
-            <p className="mt-1 text-sm text-gray-300">
-              {activeRecipients.length} requested · {responded.length} responded · {outstandingCount} outstanding
-            </p>
-          </div>
-          <Button variant="textLink" disabled={recipientBusy || saving} onClick={onAvailabilityRefresh}>
-            Refresh status
-          </Button>
-        </div>
-        {activeRecipients.length === 0 ? (
-          <p className="rounded-md border border-gray-700 p-4 text-sm text-gray-300">No personalized requests yet. Select Team members below to create private links or prepare a text message.</p>
-        ) : (
-          <div className="overflow-x-auto rounded-md border border-gray-700">
-            <table className="min-w-full border-collapse text-left text-sm">
-              <thead className="bg-gray-900 text-xs text-gray-300">
-                <tr>
-                  <th scope="col" className="sticky left-0 min-w-44 bg-gray-900 px-3 py-2">Team member</th>
-                  <th scope="col" className="min-w-32 px-3 py-2">Response</th>
-                  {occurrences.map((occurrence) => (
-                    <th key={occurrence.occurrenceId} scope="col" className="min-w-36 px-3 py-2">
-                      {occurrence.name} · {occurrence.serviceDate
-                        ? formatPlainDateRangeLabel(occurrence.serviceDate, occurrence.serviceDate)
-                        : canCalculateServiceDates
-                          ? formatShortOccurrenceDate(occurrence.startsAt, serviceTimeZone)
-                          : "Date unavailable"}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-800">
-                {activeRecipients.map((recipient) => {
-                  const member = activeMembers.find((item) => item.memberId === recipient.memberId);
-                  const response = responseByRecipientId.get(recipient.recipientId);
-                  return (
-                    <tr key={recipient.recipientId}>
-                      <th scope="row" className="sticky left-0 bg-gray-950 px-3 py-2 font-medium text-white">
-                        <MemberNameWithIndicator
-                          name={memberName(member || null)}
-                          memberId={member?.memberId}
-                        />
-                      </th>
-                      <td className="px-3 py-2 text-gray-300">
-                        {recipient.respondedAt
-                          ? `Responded ${new Date(recipient.respondedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
-                          : "Waiting"}
-                      </td>
-                      {occurrences.map((occurrence) => {
-                        const value = response?.occurrenceAvailability[occurrence.occurrenceId];
-                        return (
-                          <td key={occurrence.occurrenceId} className="px-3 py-2 text-gray-300">
-                            {value === "available" ? "Available" : value === "unavailable" ? "Unavailable" : "No answer"}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-    );
-  };
-
-  const renderSubmissionsPanel = () => (
+  const renderSubmissionsPanel = (availabilityDetail = false) => (
     <>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
@@ -2325,7 +2259,7 @@ const IntakeManager = ({
           ) : null}
         </div>
       </div>
-      {activeSelectedForm?.active && showSendForm ? (
+      {!availabilityDetail && activeSelectedForm?.active && showSendForm ? (
         <AvailabilityFormSendFlow
           key={`${churchId}:${activeSelectedForm.formId}`}
           churchId={churchId}
@@ -2344,7 +2278,7 @@ const IntakeManager = ({
           onClose={() => setShowSendForm(false)}
         />
       ) : null}
-      {renderRecipientSection()}
+      {!availabilityDetail ? renderRecipientSection() : null}
       {allSubmissionBlockouts.length > 0 || allSubmissionNotes.length > 0 ? (
         <div className="rounded-md border border-gray-700 bg-gray-950/60 px-3 pb-3">
           {allSubmissionBlockouts.length > 0 ? (
@@ -2433,6 +2367,70 @@ const IntakeManager = ({
       </Modal>
     </>
   );
+
+  if (!showingEditForm && activeSelectedForm?.purpose === "team_availability") {
+    const rows = getAvailabilityFormProgress({
+      members: applicableMembers, positions, teams, recipients: selectedFormRecipients,
+      eligibilityByMemberId: smsEligibilityByMemberId, notificationIntents: formNotificationIntents,
+      smsDeliveryAttempts, form: activeSelectedForm, intentType: "availability_request",
+    }, availabilityResponses, selectedFormSubmissions);
+    const createPersonalLink = async (memberId: string) => {
+      if (!canEdit || recipientBusy || recipientActionKey) return;
+      const requestedChurchId = churchId;
+      const requestedFormId = activeSelectedForm.formId;
+      setRecipientBusy(true);
+      try {
+        const response = await createTeamIntakeRecipients(requestedChurchId, requestedFormId, [memberId]);
+        if (!messageStateMountedRef.current || churchIdRef.current !== requestedChurchId || activeSelectedFormIdRef.current !== requestedFormId) return;
+        response.recipients.forEach(onRecipientSaved);
+        showToast("Personal link created. Use the recipient menu to copy it.", "success");
+      } catch (error) {
+        if (churchIdRef.current === requestedChurchId && activeSelectedFormIdRef.current === requestedFormId) showApiErrorToast(showToast, error, "Could not create this personal link.");
+      } finally { setRecipientBusy(false); }
+    };
+    const refreshAvailability = async () => {
+      if (refreshingAvailability || availabilityRefreshing) return;
+      setRefreshingAvailability(true);
+      refreshFormMessageState(activeSelectedForm.formId);
+      try { await onAvailabilityRefresh?.(); }
+      catch (error) { showApiErrorToast(showToast, error, "Could not refresh availability. Try again."); }
+      finally { setRefreshingAvailability(false); }
+    };
+    return <div className={teamsManagerPageRootClassName}>
+      <AvailabilityFormWorkspace
+        key={`${churchId}:${activeSelectedForm.formId}`}
+        rows={rows}
+        canEdit={canEdit}
+        canCopyGeneralLink={canEdit && !availabilityOnly}
+        linkBusy={recipientBusy || Boolean(recipientActionKey)}
+        serviceTimeZone={serviceTimeZone}
+        sendOpen={showSendForm}
+        onSend={openSendForm}
+        onEdit={() => openFormEditor(activeSelectedForm)}
+        onBack={handlePanelBack}
+        onCopyGeneralLink={() => copyFormLink(activeSelectedForm)}
+        onRefresh={() => void refreshAvailability()}
+        refreshing={refreshingAvailability || availabilityRefreshing}
+        refreshError={availabilityRefreshError}
+        recipientActions={{
+          onCreateLink: (memberId) => void createPersonalLink(memberId),
+          onCopyLink: (recipient) => void getRecipientLink(recipient, { copy: true }),
+          onOpenLink: (recipient) => void getRecipientLink(recipient),
+          onRevoke: (recipient) => void revokeRecipient(recipient),
+        }}
+        sendFlowProps={{
+          churchId, form: activeSelectedForm, members, positions, teams, recipients: intakeRecipients,
+          eligibilityByMemberId: smsEligibilityByMemberId, notificationIntents: formNotificationIntents,
+          smsDeliveryAttempts, historyLoaded: messageHistoryFormId === activeSelectedForm.formId,
+          historyError: messageHistoryError?.formId === activeSelectedForm.formId ? messageHistoryError.message : "",
+          onRetryHistory: () => refreshFormMessageState(activeSelectedForm.formId),
+          privacySafe: availabilityOnly, onBatchUpdated: handleAvailabilityBatchUpdated,
+          onClose: () => setShowSendForm(false),
+        }}
+        submissionReview={!availabilityOnly && selectedFormSubmissions.length ? <details className="mt-5 border-t border-gray-700 pt-3"><summary className="cursor-pointer text-sm text-gray-300">Review intake submissions ({selectedFormSubmissions.length})</summary><div className="mt-4 space-y-3">{renderSubmissionsPanel(true)}</div></details> : null}
+      />
+    </div>;
+  }
 
   return (
     <div className={teamsManagerPageRootClassName}>
@@ -2571,7 +2569,7 @@ const IntakeManager = ({
                     </Button>
                   ) : null
                 }
-                canEdit={canEdit}
+                canEdit={canEdit || form.purpose === "team_availability"}
                 onTitleClick={() => {
                   if (selectedForm?.formId === form.formId) return;
                   requestDiscardAction(() => openFormSubmissions(form));
@@ -2598,26 +2596,7 @@ const IntakeManager = ({
         {showingEditForm
           ? renderEditForm()
           : activeSelectedForm
-            ? availabilityOnly
-              ? <div className="space-y-5">{renderAvailabilityTracking()}{renderRecipientSection()}{showSendForm && activeSelectedForm.active ? <AvailabilityFormSendFlow
-                  key={`${churchId}:${activeSelectedForm.formId}`}
-                  churchId={churchId}
-                  form={activeSelectedForm}
-                  members={members}
-                  positions={positions}
-                  teams={teams}
-                  recipients={intakeRecipients}
-                  eligibilityByMemberId={smsEligibilityByMemberId}
-                  notificationIntents={formNotificationIntents}
-                  smsDeliveryAttempts={smsDeliveryAttempts}
-                  historyLoaded={messageHistoryFormId === activeSelectedForm.formId}
-                  historyError={messageHistoryError?.formId === activeSelectedForm.formId ? messageHistoryError.message : ""}
-                  onRetryHistory={() => refreshFormMessageState(activeSelectedForm.formId)}
-                  privacySafe
-                  onBatchUpdated={handleAvailabilityBatchUpdated}
-                  onClose={() => setShowSendForm(false)}
-                /> : null}</div>
-              : renderSubmissionsPanel()
+            ? renderSubmissionsPanel()
             : null}
       </CreatePanel>
       {recipientSmsPreview ? <SmsConfirmationModal

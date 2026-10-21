@@ -112,6 +112,7 @@
     "test:e2e:modal-mobile-focus": "node e2e/run-browser-suite.mjs modal-mobile-focus.mjs",
     "test:e2e:schedule-quick-member": "node e2e/run-browser-suite.mjs schedule-quick-member.mjs",
     "test:e2e:service-plan-refresh": "node e2e/run-browser-suite.mjs service-plan-refresh.mjs",
+    "test:e2e:availability-workspace": "node e2e/run-browser-suite.mjs availability-workspace.mjs",
     "test:e2e:browser": "npm run test:e2e:responsive-navigation && npm run test:e2e:board-controller-mobile",
     "eject": "vite eject",
     "lint": "eslint src --ext .ts,.tsx,.js,.jsx",

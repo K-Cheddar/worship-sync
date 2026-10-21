@@ -12,6 +12,7 @@ const allowedSuites = new Set([
   "modal-mobile-focus.mjs",
   "schedule-quick-member.mjs",
   "service-plan-refresh.mjs",
+  "availability-workspace.mjs",
 ]);
 if (!allowedSuites.has(suite)) {
   throw new Error(`Unknown browser suite: ${suite || "(missing)"}`);
