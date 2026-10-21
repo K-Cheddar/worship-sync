@@ -15,7 +15,6 @@ import {
   getMyTeamAssignments,
   getMyVolunteerAvailability,
   respondToMyAssignment,
-  submitMyVolunteerAvailabilityOccurrence,
   updateMyBlockoutDates,
 } from "../../api/auth";
 import { usePublicServiceFlow } from "../../services/usePublicServiceFlow";
@@ -28,7 +27,6 @@ jest.mock("../../api/auth", () => ({
   acceptMyUnansweredAssignments: jest.fn(),
   getMyVolunteerAvailability: jest.fn().mockResolvedValue({ success: true, requests: [] }),
   submitMyVolunteerAvailability: jest.fn(),
-  submitMyVolunteerAvailabilityOccurrence: jest.fn(),
   // showApiErrorToast narrows with `instanceof`, so the error path needs a real
   // class here rather than an undefined export.
   AuthApiError: class AuthApiError extends Error {
@@ -53,7 +51,6 @@ const mockAcceptPendingMyAssignments = jest.mocked(acceptPendingMyAssignments);
 const mockUpdateMyBlockoutDates = jest.mocked(updateMyBlockoutDates);
 const mockRespondToMyAssignment = jest.mocked(respondToMyAssignment);
 const mockGetMyVolunteerAvailability = jest.mocked(getMyVolunteerAvailability);
-const mockSubmitMyVolunteerAvailabilityOccurrence = jest.mocked(submitMyVolunteerAvailabilityOccurrence);
 const mockUsePublicServiceFlow = jest.mocked(usePublicServiceFlow);
 
 /** Far future/past so these never drift buckets as the clock moves. */
@@ -166,7 +163,6 @@ it("retires pending bulk work when church changes with the same member and sched
         occurrences: [occurrence({ serving: [me({ response: "pending" })] })] }),
       respond: jest.fn(), saveBlockouts: jest.fn(),
       acceptUnanswered: jest.fn().mockReturnValue(pending),
-      availability: jest.fn().mockResolvedValue({ success: true, requests: [] }), submitAvailability: jest.fn(),
     },
   });
   const first = makeAccess("church-a");
@@ -1317,34 +1313,59 @@ describe("MySchedule", () => {
       expect(screen.queryByRole("heading", { name: "Sunday Gathering" })).not.toBeInTheDocument();
     });
 
-    it("shows availability-only services on the timeline and saves one occurrence", async () => {
+    it("shows only the volunteer's real assigned positions and teams", async () => {
       const user = userEvent.setup();
-      respond([]);
-      let savedAvailability: "available" | "unavailable" | undefined;
-      mockGetMyVolunteerAvailability.mockImplementation(async () => {
-        const availability: Record<string, "available" | "unavailable"> = savedAvailability
-          ? { "service-availability@2099-12-01": savedAvailability }
-          : {};
-        return { success: true, requests: [{
-          recipientId: "request-1", formId: "form-1", name: "December availability", responseDeadline: "2099-12-20",
-          availabilityMessage: "Please let us know", respondedAt: "", teamIds: ["team-media"], teamNames: ["Media"],
-          occurrences: [{ occurrenceId: "service-availability@2099-12-01", serviceId: "service-availability",
-            name: "December Gathering", startsAt: "2099-12-01T14:00:00.000Z", serviceDate: "2099-12-01" }],
-          availability,
-        }] };
+      const secondAssignment = me({
+        scheduleId: "sched-2",
+        teamId: "team-audio",
+        teamName: "Audio",
+        positionId: "pos-audio",
+        positionName: "Audio Engineer",
+        columnKey: "pos-audio::0",
       });
-      mockSubmitMyVolunteerAvailabilityOccurrence.mockImplementation(async (_churchId, _recipientId, _formId, _occurrenceId, value) => {
-        savedAvailability = value;
-        return { success: true, availability: value };
-      });
+      const unrelatedAssignment = other({ teamId: "team-worship", teamName: "Worship", positionName: "Singer" });
+      respond([occurrence({ serving: [me(), secondAssignment, unrelatedAssignment] })]);
       renderPage();
 
-      expect(await screen.findByRole("button", { name: /Open December Gathering/i })).toBeInTheDocument();
-      await user.click(screen.getByRole("button", { name: /Mark availability as available for December Gathering/i }));
-      expect(mockSubmitMyVolunteerAvailabilityOccurrence).toHaveBeenCalledWith(
-        "church-1", "request-1", "form-1", "service-availability@2099-12-01", "available",
+      expect(await screen.findByText("Media")).toHaveClass("text-[10px]");
+      expect(screen.getByText("Director")).toHaveClass("text-xs", "font-medium");
+      const assignmentCard = screen.getByRole("article");
+      expect(within(assignmentCard).getByText("Audio")).toHaveClass("text-[10px]");
+      expect(within(assignmentCard).getByText("Audio Engineer")).toBeInTheDocument();
+      expect(within(assignmentCard).queryByText("Singer")).not.toBeInTheDocument();
+      expect(within(assignmentCard).queryByText("Worship")).not.toBeInTheDocument();
+      expect(
+        within(assignmentCard).getAllByText(/^(Media|Director)$/)
+          .map((element) => element.textContent),
+      ).toEqual(["Media", "Director"]);
+      const openService = screen.getByRole("button", { name: /Open Sunday Gathering/i });
+      expect(openService).toHaveClass("flex-col", "w-full");
+      expect(screen.getByRole("list", { name: "My scheduled services" })).toHaveClass(
+        "grid-cols-[repeat(auto-fit,minmax(min(100%,18rem),1fr))]",
+        "max-w-[90rem]",
       );
-      expect(await screen.findByText("Available")).toBeInTheDocument();
+      expect(screen.getByText("6")).toHaveClass("text-[21px]");
+
+      mockRespondToMyAssignment.mockResolvedValue({
+        success: true,
+        response: "accepted",
+      } as unknown as Awaited<ReturnType<typeof respondToMyAssignment>>);
+      await user.click(screen.getByRole("button", { name: /Accept Audio Engineer . Audio/i }));
+      expect(mockRespondToMyAssignment).toHaveBeenCalledWith("church-1", {
+        scheduleId: "sched-2",
+        occurrenceId: `service-1@${FUTURE}`,
+        cellKey: "pos-audio::0",
+        response: "accepted",
+      });
+      expect(await screen.findByText("Accepted")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Accept Director . Media/i })).toBeInTheDocument();
+
+      const teamFilter = screen.getByRole("combobox", { name: /Team/i });
+      await user.click(teamFilter);
+      expect(screen.getByRole("option", { name: "Media" })).toBeInTheDocument();
+      expect(screen.getByRole("option", { name: "Audio" })).toBeInTheDocument();
+      expect(screen.queryByRole("option", { name: "Worship" })).not.toBeInTheDocument();
+      expect(mockGetMyVolunteerAvailability).not.toHaveBeenCalled();
     });
 
     it("shows an existing answer and still allows changing it", async () => {
@@ -1388,13 +1409,11 @@ describe("MySchedule", () => {
       renderPage();
 
       await openFirstService(user);
-      await user.click(
-        screen.getByRole("button", { name: /Decline Director . Media/i }),
-      );
+      await user.click(screen.getByRole("button", { name: /Decline Director . Media/i }));
 
       // The common failure is the slot moving to someone else, so the old
       // value is not the truth to go back to — the server is.
-      await screen.findByText("Needs your response");
+      await screen.findByRole("button", { name: /Accept Director . Media/i });
       expect(mockGetMyTeamAssignments).toHaveBeenCalledTimes(2);
     });
 
@@ -1406,6 +1425,7 @@ describe("MySchedule", () => {
           date: PAST.slice(0, 10),
           startsAt: PAST,
           name: "Old Service",
+        serving: [me({ response: "declined" }), other()],
         }),
       ]);
       renderPage();
@@ -1416,8 +1436,11 @@ describe("MySchedule", () => {
       await user.click(screen.getByRole("button", { name: /Open Old Service/i }));
 
       expect(
-        screen.queryByRole("button", { name: /^Accept/i }),
+        screen.queryByRole("button", { name: /^Accept Director/i }),
       ).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /^Decline Director/i })).not.toBeInTheDocument();
+      expect(screen.getByText("Declined")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Change your response/i })).not.toBeInTheDocument();
     });
   });
 

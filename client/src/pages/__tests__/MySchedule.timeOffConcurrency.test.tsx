@@ -11,8 +11,7 @@ import MySchedule from "../MySchedule";
 
 jest.mock("../../api/auth", () => ({
   acceptPendingMyAssignments: jest.fn(), getMyTeamAssignments: jest.fn(), updateMyBlockoutDates: jest.fn(), respondToMyAssignment: jest.fn(),
-  acceptMyUnansweredAssignments: jest.fn(), getMyVolunteerAvailability: jest.fn(), submitMyVolunteerAvailability: jest.fn(),
-  submitMyVolunteerAvailabilityOccurrence: jest.fn(),
+  acceptMyUnansweredAssignments: jest.fn(),
   AuthApiError: class extends Error {},
 }));
 const mockToast = jest.fn();
@@ -40,8 +39,6 @@ const fixture = () => {
   const operations: jest.Mocked<MyScheduleOperations> = {
     load: jest.fn(async () => snapshot(saved)), respond: jest.fn<ReturnType<MyScheduleOperations["respond"]>, Parameters<MyScheduleOperations["respond"]>>().mockResolvedValue({ success: true }),
     acceptUnanswered: jest.fn(async () => ({ success: true, newlyAccepted: 0, alreadyAccepted: 0, alreadyDeclined: 0, skipped: 0, failedScheduleCount: 0, schedules: [], authorizationChanged: false, hasMore: false, nextCursor: null })),
-    availability: jest.fn(async () => ({ success: true, requests: [] })),
-    submitAvailability: jest.fn<ReturnType<MyScheduleOperations["submitAvailability"]>, Parameters<MyScheduleOperations["submitAvailability"]>>().mockResolvedValue({ success: true }),
     saveBlockouts: jest.fn(async (ranges, revision) => {
       if (revision !== saved.updatedAt) throw Object.assign(new Error("Saved dates changed"), { status: 409 });
       saved = { ...saved, updatedAt: "revision-c", blockoutDates: ranges };
@@ -56,7 +53,6 @@ const page = (operations: MyScheduleOperations, mode: Mode = "personal", churchI
   jest.mocked(auth.updateMyBlockoutDates).mockImplementation((_church, ranges, stamp) => operations.saveBlockouts(ranges, stamp) as ReturnType<typeof auth.updateMyBlockoutDates>);
   jest.mocked(auth.acceptMyUnansweredAssignments).mockImplementation(() => operations.acceptUnanswered());
   jest.mocked(auth.acceptPendingMyAssignments).mockImplementation((_church, cursor) => operations.acceptUnanswered(cursor || undefined));
-  jest.mocked(auth.getMyVolunteerAvailability).mockImplementation(() => operations.availability());
   return <Provider store={store}><MemoryRouter><GlobalInfoContext.Provider value={{ churchId, userId: "member", role: "member" } as ContextType<typeof GlobalInfoContext>}>
     <MySchedule access={mode === "personal" ? { churchId, memberId: "member", operations } : undefined} />
   </GlobalInfoContext.Provider></MemoryRouter></Provider>;

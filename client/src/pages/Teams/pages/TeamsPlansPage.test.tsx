@@ -419,9 +419,20 @@ describe("TeamsPlansPage", () => {
     await user.click(screen.getByRole("button", { name: "Range preset: Upcoming" }));
     expect(screen.getByRole("button", { name: "Upcoming" })).toBeInTheDocument();
     expect(screen.queryByText("Add plan")).not.toBeInTheDocument();
-    expect(
-      (await screen.findAllByRole("button", { name: /Add plan for /i })).length,
-    ).toBeGreaterThan(0);
+    const planTiles = await screen.findAllByRole("button", { name: /Add plan for /i });
+    expect(planTiles.length).toBeGreaterThan(0);
+    expect(planTiles[0]).toHaveClass("flex-col", "w-full");
+    expect(screen.getAllByRole("article").length).toBe(planTiles.length);
+    const serviceDateLists = screen.getAllByRole("list", {
+      name: /Service occurrences for /,
+    });
+    expect(serviceDateLists.length).toBeGreaterThan(0);
+    serviceDateLists.forEach((list) => {
+      expect(list).toHaveClass(
+        "grid-cols-[repeat(auto-fit,minmax(min(100%,18rem),1fr))]",
+        "max-w-[90rem]",
+      );
+    });
     // Service names land on tiles in date order instead of separate section headers.
     expect(
       screen.getAllByText("Sabbath Service").length,
@@ -449,6 +460,16 @@ describe("TeamsPlansPage", () => {
     expect(screen.getByRole("heading", { name: "Easter Sunday" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "All services" })).toBeInTheDocument();
     expect(screen.getByRole("group", { name: /Organize services/i })).toBeInTheDocument();
+    const serviceDateLists = screen.getAllByRole("list", {
+      name: /Service occurrences for /,
+    });
+    expect(serviceDateLists.length).toBeGreaterThan(0);
+    serviceDateLists.forEach((list) => {
+      expect(list).toHaveClass(
+        "grid-cols-[repeat(auto-fit,minmax(min(100%,18rem),1fr))]",
+        "max-w-[90rem]",
+      );
+    });
   });
 
   it("scopes By service Apply template to that service", async () => {

@@ -45,10 +45,7 @@ export const personalScheduleAccess = (session: VolunteerSession): PersonalSched
   const operations: MyScheduleOperations = {
     load: () => request("schedule"), respond: (body) => request<{ success: boolean; response: "accepted" | "declined" }>("respond", body),
     saveBlockouts: (blockoutDates, expectedUpdatedAt) => request("blockouts", { blockoutDates, expectedUpdatedAt }),
-    acceptUnanswered: (afterScheduleId) => request("accept-unanswered", afterScheduleId ? { afterScheduleId } : {}), availability: () => request("availability"),
-    submitAvailability: (recipientId, formId, occurrenceId, availability) => request("availability", {
-      recipientId, formId, occurrenceId, availability,
-    }),
+    acceptUnanswered: (afterScheduleId) => request("accept-unanswered", afterScheduleId ? { afterScheduleId } : {}),
   };
   return { churchId: session.churchId, memberId: session.memberId, operations };
 };

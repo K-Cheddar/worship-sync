@@ -21488,69 +21488,6 @@ test("my availability uses current recipient scope without disclosing tokens or 
   assert.deepEqual((await callHandler(authHandlers.getMyVolunteerAvailability, { context })).payload.requests, []);
 });
 
-test("my availability saves one requested occurrence at a time and preserves concurrent map entries", async (t) => {
-  if (skipUnlessInMemoryAuth(t)) return;
-  const context = await createAdminContext("volunteer_occurrence_availability");
-  const assigned = await seedAssignedSchedule(context, "volunteer_occurrence_availability");
-  const formId = "volunteer_occurrence_availability_form";
-  const recipientId = "volunteer_occurrence_availability_recipient";
-  const submissionId = "volunteer_occurrence_availability_submission";
-  const secondOccurrenceId = "service@2099-12-06";
-  const historicalOccurrenceId = "historical@2099-10-01";
-  await setDoc(COLLECTIONS.teams, assigned.media.teamId, { memberIds: [assigned.memberId] }, { merge: true });
-  await setDoc(COLLECTIONS.teamRosterMembers, assigned.memberId, {
-    serviceAvailability: { [historicalOccurrenceId]: "available" },
-    notes: "Unrelated member field",
-  }, { merge: true });
-  await setDoc(COLLECTIONS.teamIntakeForms, formId, {
-    formId, churchId: context.churchId, name: "December availability", purpose: "team_availability",
-    teamIds: [assigned.media.teamId], active: true, enabledFields: ["availability"],
-    startDate: "2099-11-01", endDate: "2099-12-31",
-    availabilityOccurrences: [
-      { occurrenceId: assigned.occurrenceId, serviceId: "service", name: "Sunday", startsAt: "2099-11-08T14:00:00.000Z" },
-      { occurrenceId: secondOccurrenceId, serviceId: "service", name: "Second Sunday", startsAt: "2099-12-06T14:00:00.000Z" },
-    ],
-  });
-  await setDoc(COLLECTIONS.teamIntakeRecipients, recipientId, {
-    recipientId, formId, memberId: assigned.memberId, churchId: context.churchId,
-    submissionId, respondedAt: "previous-response", revokedAt: null,
-  });
-  await setDoc(COLLECTIONS.teamIntakeSubmissions, submissionId, {
-    submissionId, formId, churchId: context.churchId, appliedMemberId: assigned.memberId,
-    status: "applied", submittedAt: "previous-submission", answers: { notes: "Keep this answer" },
-    occurrenceAvailability: { [historicalOccurrenceId]: "available" },
-  });
-
-  const results = await Promise.all([
-    callHandler(authHandlers.submitMyVolunteerAvailability, { context, body: {
-      recipientId, formId, occurrenceId: assigned.occurrenceId, availability: "unavailable",
-      occurrenceAvailability: { forged: "available" },
-    } }),
-    callHandler(authHandlers.submitMyVolunteerAvailability, { context, body: {
-      recipientId, formId, occurrenceId: secondOccurrenceId, availability: "available",
-    } }),
-  ]);
-  assert.deepEqual(results.map((result) => result.statusCode), [200, 200]);
-  const member = await getDoc(COLLECTIONS.teamRosterMembers, assigned.memberId);
-  assert.deepEqual(member.serviceAvailability, {
-    [historicalOccurrenceId]: "available",
-    [assigned.occurrenceId]: "unavailable",
-    [secondOccurrenceId]: "available",
-  });
-  assert.equal(member.notes, "Unrelated member field");
-  const submission = await getDoc(COLLECTIONS.teamIntakeSubmissions, submissionId);
-  assert.deepEqual(submission.occurrenceAvailability, {
-    [historicalOccurrenceId]: "available",
-    [assigned.occurrenceId]: "unavailable",
-    [secondOccurrenceId]: "available",
-  });
-  assert.deepEqual(submission.answers, { notes: "Keep this answer" });
-  const recipient = await getDoc(COLLECTIONS.teamIntakeRecipients, recipientId);
-  assert.equal(recipient.submissionId, submissionId);
-  assert.ok(recipient.respondedAt);
-});
-
-
 test("quick member creation preserves equipment settings, roster membership and equipment assignments on reload", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("quick_member_equipment_regression");

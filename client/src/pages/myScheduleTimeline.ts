@@ -1,32 +1,16 @@
 import type { MyScheduleOccurrence } from "../api/auth";
-import type {
-  MyScheduleAvailabilityOccurrence,
-  VolunteerAvailabilityRequest,
-} from "./myScheduleOperations";
-
-export type TimelineAvailabilityRequest = Omit<
-  VolunteerAvailabilityRequest,
-  "occurrences" | "availability"
-> & {
-  occurrence: MyScheduleAvailabilityOccurrence;
-  response?: "available" | "unavailable";
-};
-
-export type MyScheduleTimelineOccurrence = MyScheduleOccurrence & {
-  availabilityRequests: TimelineAvailabilityRequest[];
-};
 
 export type MyScheduleMonthGroup = {
   key: string;
   label: string;
-  occurrences: MyScheduleTimelineOccurrence[];
+  occurrences: MyScheduleOccurrence[];
 };
 
 export type MyScheduleServiceGroup = {
   key: string;
   name: string;
   serviceIds: string[];
-  occurrences: MyScheduleTimelineOccurrence[];
+  occurrences: MyScheduleOccurrence[];
 };
 
 const isPlainDate = (value: unknown): value is string =>
@@ -53,71 +37,15 @@ const dateInTimeZone = (startsAt: string, timeZone: string): string => {
 };
 
 export const myScheduleOccurrenceDate = (
-  occurrence: Pick<MyScheduleOccurrence, "date" | "startsAt"> & {
-    availabilityRequests?: TimelineAvailabilityRequest[];
-  },
+  occurrence: Pick<MyScheduleOccurrence, "date" | "startsAt">,
   timeZone: string,
-): string => {
-  if (isPlainDate(occurrence.date)) return occurrence.date;
-  const formDate = occurrence.availabilityRequests?.find((request) =>
-    isPlainDate(request.occurrence.serviceDate),
-  )?.occurrence.serviceDate;
-  return formDate || dateInTimeZone(occurrence.startsAt, timeZone);
-};
-
-export const buildMyScheduleTimeline = (
-  assignedOccurrences: MyScheduleOccurrence[],
-  requests: VolunteerAvailabilityRequest[],
-  timeZone: string,
-): MyScheduleTimelineOccurrence[] => {
-  const byOccurrenceId = new Map<string, MyScheduleTimelineOccurrence>();
-
-  assignedOccurrences.forEach((occurrence) => {
-    byOccurrenceId.set(occurrence.occurrenceId, {
-      ...occurrence,
-      availabilityRequests: [],
-    });
-  });
-
-  requests.forEach((request) => {
-    request.occurrences.forEach((requestOccurrence) => {
-      let occurrence = byOccurrenceId.get(requestOccurrence.occurrenceId);
-      if (!occurrence) {
-        occurrence = {
-          occurrenceId: requestOccurrence.occurrenceId,
-          name: requestOccurrence.name || "Service",
-          serviceIds: [requestOccurrence.serviceId].filter(Boolean),
-          date: requestOccurrence.serviceDate || dateInTimeZone(requestOccurrence.startsAt, timeZone),
-          startsAt: requestOccurrence.startsAt,
-          serving: [],
-          plan: null,
-          availabilityRequests: [],
-        };
-        byOccurrenceId.set(requestOccurrence.occurrenceId, occurrence);
-      }
-      occurrence.availabilityRequests.push({
-        recipientId: request.recipientId,
-        formId: request.formId,
-        name: request.name,
-        responseDeadline: request.responseDeadline,
-        availabilityMessage: request.availabilityMessage,
-        respondedAt: request.respondedAt,
-        teamIds: request.teamIds,
-        teamNames: request.teamNames,
-        occurrence: requestOccurrence,
-        response: request.availability[requestOccurrence.occurrenceId],
-      });
-    });
-  });
-
-  return [...byOccurrenceId.values()].sort((left, right) =>
-    Date.parse(left.startsAt) - Date.parse(right.startsAt) ||
-    left.occurrenceId.localeCompare(right.occurrenceId),
-  );
-};
+): string =>
+  isPlainDate(occurrence.date)
+    ? occurrence.date
+    : dateInTimeZone(occurrence.startsAt, timeZone);
 
 export const groupMyScheduleByMonth = (
-  occurrences: MyScheduleTimelineOccurrence[],
+  occurrences: MyScheduleOccurrence[],
   timeZone: string,
 ): MyScheduleMonthGroup[] => {
   const groups = new Map<string, MyScheduleMonthGroup>();
@@ -152,7 +80,7 @@ export const myScheduleServiceGroupKey = (
 };
 
 export const groupMyScheduleByService = (
-  occurrences: MyScheduleTimelineOccurrence[],
+  occurrences: MyScheduleOccurrence[],
 ): MyScheduleServiceGroup[] => {
   const groups = new Map<string, MyScheduleServiceGroup>();
   occurrences.forEach((occurrence) => {

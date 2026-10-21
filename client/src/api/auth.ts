@@ -2179,18 +2179,6 @@ export const getMyVolunteerAvailability = (churchId: string) => apiFetch<{ succe
 export const submitMyVolunteerAvailability = (churchId: string, recipientId: string, occurrenceAvailability: VolunteerAvailabilityRequest["availability"]) => apiFetch<{ success: boolean }>(
   `api/churches/${churchId}/my-availability`, { method: "POST", body: JSON.stringify({ recipientId, occurrenceAvailability }) },
 );
-export const submitMyVolunteerAvailabilityOccurrence = (
-  churchId: string,
-  recipientId: string,
-  formId: string,
-  occurrenceId: string,
-  availability: "available" | "unavailable",
-) => apiFetch<{ success: boolean; availability: "available" | "unavailable" }>(
-  `api/churches/${churchId}/my-availability`, {
-    method: "POST",
-    body: JSON.stringify({ recipientId, formId, occurrenceId, availability }),
-  },
-);
 
 export const manageVolunteerPersonalAccess = (churchId: string, memberId: string,
   action: "status" | "prepare" | "replace" | "revoke" | "restore" | "verify-contact/start" | "verify-contact/complete", body: unknown = {}) => apiFetch<{
