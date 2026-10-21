@@ -37,7 +37,7 @@ const snapshot = (saved: MyScheduleMember): Awaited<ReturnType<MyScheduleOperati
 const fixture = () => {
   let saved = member("revision-a", "Original dates");
   const operations: jest.Mocked<MyScheduleOperations> = {
-    load: jest.fn(async () => snapshot(saved)), respond: jest.fn<ReturnType<MyScheduleOperations["respond"]>, Parameters<MyScheduleOperations["respond"]>>().mockResolvedValue({ success: true }),
+    load: jest.fn(async () => snapshot(saved)), respond: jest.fn<ReturnType<MyScheduleOperations["respond"]>, Parameters<MyScheduleOperations["respond"]>>().mockResolvedValue({ success: true, response: "accepted" }),
     acceptUnanswered: jest.fn(async () => ({ success: true, newlyAccepted: 0, alreadyAccepted: 0, alreadyDeclined: 0, skipped: 0, failedScheduleCount: 0, schedules: [], authorizationChanged: false, hasMore: false, nextCursor: null })),
     saveBlockouts: jest.fn(async (ranges, revision) => {
       if (revision !== saved.updatedAt) throw Object.assign(new Error("Saved dates changed"), { status: 409 });

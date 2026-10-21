@@ -421,7 +421,7 @@ describe("TeamsPlansPage", () => {
     expect(screen.queryByText("Add plan")).not.toBeInTheDocument();
     const planTiles = await screen.findAllByRole("button", { name: /Add plan for /i });
     expect(planTiles.length).toBeGreaterThan(0);
-    expect(planTiles[0]).toHaveClass("flex-col", "w-full");
+    expect(planTiles[0]).toHaveClass("items-center", "gap-2", "w-full");
     expect(screen.getAllByRole("article").length).toBe(planTiles.length);
     const serviceDateLists = screen.getAllByRole("list", {
       name: /Service occurrences for /,
@@ -429,7 +429,7 @@ describe("TeamsPlansPage", () => {
     expect(serviceDateLists.length).toBeGreaterThan(0);
     serviceDateLists.forEach((list) => {
       expect(list).toHaveClass(
-        "grid-cols-[repeat(auto-fit,minmax(min(100%,18rem),1fr))]",
+        "grid-cols-[repeat(auto-fill,minmax(min(100%,18rem),1fr))]",
         "max-w-[90rem]",
       );
     });
@@ -466,7 +466,7 @@ describe("TeamsPlansPage", () => {
     expect(serviceDateLists.length).toBeGreaterThan(0);
     serviceDateLists.forEach((list) => {
       expect(list).toHaveClass(
-        "grid-cols-[repeat(auto-fit,minmax(min(100%,18rem),1fr))]",
+        "grid-cols-[repeat(auto-fill,minmax(min(100%,18rem),1fr))]",
         "max-w-[90rem]",
       );
     });
@@ -595,9 +595,12 @@ describe("TeamsPlansPage", () => {
 
     renderPage();
 
-    expect(
-      await screen.findByRole("button", { name: /Open plan for /i }),
-    ).toBeInTheDocument();
+    const openPlan = await screen.findByRole("button", { name: /Open plan for /i });
+    expect(openPlan).toBeInTheDocument();
+    const planCard = screen.getAllByRole("article").find((article) =>
+      within(article).queryByRole("button", { name: /Open plan for /i }),
+    );
+    expect(planCard).toHaveClass("border-emerald-500/30");
   });
 
   it("opens a saved plan in read mode from the plan list", async () => {

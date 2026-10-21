@@ -11,7 +11,7 @@ export type VolunteerAvailabilityRequest = {
 export type VolunteerBulkResult = AcceptPendingAssignmentsResponse;
 export type MyScheduleOperations = {
   load: () => Promise<{ success: boolean; serviceTimeZone?: string; churchName?: string; member: MyScheduleMember | null; occurrences: MyScheduleOccurrence[] }>;
-  respond: (body: { scheduleId: string; occurrenceId: string; cellKey: string; response: "accepted" | "declined" }) => Promise<{ success?: boolean; response?: "accepted" | "declined" }>;
+  respond: (body: { scheduleId: string; occurrenceId: string; cellKey: string; response: "accepted" | "declined" }) => Promise<{ success: boolean; response: "accepted" | "declined" }>;
   saveBlockouts: (ranges: TeamRosterMember["blockoutDates"], expectedUpdatedAt: string) => Promise<{ success: boolean; member: MyScheduleMember }>;
   acceptUnanswered: (afterScheduleId?: string) => Promise<VolunteerBulkResult>;
 };

@@ -11,6 +11,7 @@ const allowedSuites = new Set([
   "board-controller-mobile.mjs",
   "modal-mobile-focus.mjs",
   "schedule-quick-member.mjs",
+  "my-schedule-service-cards.mjs",
   "service-plan-refresh.mjs",
 ]);
 if (!allowedSuites.has(suite)) {
