@@ -1,5 +1,6 @@
 import { type BrowserContext } from "@playwright/test";
 import { test as diagnosticTest } from "./fixtures";
+import { getE2EChurchId } from "./testChurch";
 
 /**
  * Keep one authenticated browser context for the smoke project. PouchDB's
@@ -9,10 +10,7 @@ import { test as diagnosticTest } from "./fixtures";
 export const test = diagnosticTest.extend<{}, { smokeContext: BrowserContext }>({
   smokeContext: [
     async ({ browser }, use, workerInfo) => {
-      const churchId = process.env.E2E_DEMO_CHURCH_ID?.trim();
-      if (!churchId) {
-        throw new Error("Set E2E_DEMO_CHURCH_ID to the verified demo church. Smoke navigation is read-only; scheduling writes belong to the guarded scheduling suite.");
-      }
+      const churchId = getE2EChurchId();
       const options = workerInfo.project.use;
       const context = await browser.newContext({
         baseURL: options.baseURL,
@@ -27,7 +25,7 @@ export const test = diagnosticTest.extend<{}, { smokeContext: BrowserContext }>(
         const requestedChurch = new URL(route.request().url()).pathname.match(/\/api\/churches\/([^/]+)/)?.[1];
         if (!requestedChurch || decodeURIComponent(requestedChurch) !== churchId) {
           await route.abort("blockedbyclient");
-          throw new Error("Smoke request targeted a church other than E2E_DEMO_CHURCH_ID.");
+          throw new Error(`Smoke request targeted a church other than the approved E2E church (${churchId}).`);
         }
         if (!["GET", "HEAD", "OPTIONS"].includes(route.request().method())) {
           await route.abort("blockedbyclient");

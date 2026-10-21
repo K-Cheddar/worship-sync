@@ -1,8 +1,9 @@
 import { test as diagnosticTest, expect } from "./fixtures";
 import type { Page } from "@playwright/test";
 import { SchedulingBackend, TEST_MEMBER_NAME } from "./schedulingBackend";
-import { assertSafeSchedule, schedulingMutationAllowed } from "./schedulingScope";
+import { assertSafeSchedule, assertSchedulingIdentity, assertSchedulingTeamPermission, schedulingMutationAllowed } from "./schedulingScope";
 import { allowedE2EAuthOrigins } from "./authOrigins";
+import { getE2EChurchId } from "./testChurch";
 
 export async function applicationApi(page: Page, method: string, args: unknown[]) {
   return page.evaluate(async ({ method, args }) => {
@@ -51,8 +52,7 @@ export class SchedulingFixture {
 
 export const test = diagnosticTest.extend<{ scheduling: SchedulingFixture }>({
   scheduling: async ({ page }, use, testInfo) => {
-    const churchId = process.env.E2E_DEMO_CHURCH_ID?.trim();
-    if (!churchId) throw new Error("Set E2E_DEMO_CHURCH_ID to the explicitly verified demo church ID.");
+    const churchId = getE2EChurchId();
     // Install safety before the app mounts. No anonymous default team is opened.
     const authOrigins = allowedE2EAuthOrigins(testInfo.project.use.baseURL!);
     const blocked: string[] = [];
@@ -68,12 +68,15 @@ export const test = diagnosticTest.extend<{ scheduling: SchedulingFixture }>({
       await route.fallback();
     });
     await page.goto("/#/home", { waitUntil: "domcontentloaded" });
-    const auth: any = await applicationApi(page, "getAuthBootstrap", [{}]);
-    if (auth.churchId !== churchId || auth.sessionKind !== "human" || !auth.user?.uid) throw new Error(`Saved demo identity did not match E2E_DEMO_CHURCH_ID=${churchId}; no fixtures changed`);
-    const backend = new SchedulingBackend(auth.user.uid);
-    if (auth.role !== "admin" && auth.permissions?.teams !== "edit" && auth.permissions?.teamScopes?.[backend.scope.teamId] !== "edit") {
-      throw new Error(`Saved account needs edit access to reserved team ${backend.scope.teamId}; no test records were changed`);
+    let auth: any;
+    try {
+      auth = await applicationApi(page, "getAuthBootstrap", [{}]);
+    } catch {
+      throw new Error("The saved authenticated server session could not be verified; it may be missing or expired. No scheduling fixtures were changed.");
     }
+    const userId = assertSchedulingIdentity(auth);
+    const backend = new SchedulingBackend(userId);
+    assertSchedulingTeamPermission(auth, backend.scope.teamId);
     const fixture = new SchedulingFixture(page, backend);
     await page.addInitScript(({ churchId, teamId }) => {
       localStorage.setItem(`teams:schedule-team-filter:${churchId}`, teamId);

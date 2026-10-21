@@ -9,7 +9,7 @@ The three scheduling workflows passed twice consecutively against the existing `
 | 1 | October 20, 10:37:32 PM | 81.231 s | 4 passed |
 | 2 | October 20, 10:38:54 PM | 77.049 s | 4 passed |
 
-Command: `E2E_DEMO_CHURCH_ID=demo npm run test:e2e:scheduling` (PowerShell environment syntax is documented in smoke-coverage.md). Logs: `.codex-scheduling-final-1.log`, `.codex-scheduling-final-2.log`. Local evidence is retained under `artifacts/scheduling-verification-run-1/`, `artifacts/scheduling-verification-run-2/`, and ignored `playwright/.fixtures/` manifests. These artifacts contain no authentication tokens.
+Historical command: `E2E_DEMO_CHURCH_ID=demo npm run test:e2e:scheduling`. The variable is now deprecated and is no longer needed; the suite uses built-in church `demo`. Logs: `.codex-scheduling-final-1.log`, `.codex-scheduling-final-2.log`. Local evidence is retained under `artifacts/scheduling-verification-run-1/`, `artifacts/scheduling-verification-run-2/`, and ignored `playwright/.fixtures/` manifests. These artifacts contain no authentication tokens.
 
 ## Exact records and cleanup
 

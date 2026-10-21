@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { chromium, devices } from "@playwright/test";
 import { SchedulingBackend } from "../e2e/schedulingBackend";
-import { assertSafeSchedule } from "../e2e/schedulingScope";
+import { assertSafeSchedule, assertSchedulingIdentity, assertSchedulingTeamPermission } from "../e2e/schedulingScope";
 import { getE2EAuthConfig, requireReusableSavedSession, validateSavedSession } from "../e2e/auth";
 import { allowedE2EAuthOrigins } from "../e2e/authOrigins";
 
@@ -19,7 +19,7 @@ try {
   console.log(JSON.stringify({ manifest: path, scope: backend.scope, schedules: (await backend.schedules()).map(doc => doc.scheduleId), claims: (await backend.claims()).map(doc => doc.id), services: (await backend.services()).filter(doc => backend.scope.serviceIds.includes(doc.id)).map(doc => doc.id) }, null, 2));
   if (args.includes("--cleanup") && manifest.status !== "cleaned") {
     const needsCleanup = await backend.verifyRecoveryLease();
-    if (needsCleanup && await backend.schedule()) {
+    if (needsCleanup) {
       // No password login, auth refresh, or email-generating fallback.
       const browser = await chromium.launch();
       try {
@@ -36,6 +36,19 @@ try {
           await route.continue();
         });
         await page.goto("/#/home");
+        let auth: any;
+        try {
+          auth = await page.evaluate(async () => {
+            const modulePath = "/src/api/auth.ts";
+            const api = await import(modulePath);
+            return api.getAuthBootstrap({});
+          });
+        } catch {
+          throw new Error("The saved authenticated server session could not be verified; it may be missing or expired. No recovery changes were made.");
+        }
+        const authenticatedUserId = assertSchedulingIdentity(auth);
+        if (authenticatedUserId !== backend.userId) throw new Error("The saved account does not match the user recorded in the recovery manifest; preserved all records.");
+        assertSchedulingTeamPermission(auth, backend.scope.teamId);
         await backend.cleanup(async () => {
           assertSafeSchedule(await backend.schedule(), backend.scope);
           await page.evaluate(async ({ churchId, scheduleId }) => {
@@ -46,8 +59,6 @@ try {
           }, backend.scope);
         });
       } finally { await browser.close(); }
-    } else if (needsCleanup) {
-      await backend.cleanup(async () => { throw new Error(`Unexpected schedule appeared: ${backend.scope.scheduleId}; preserved it`); });
     }
     console.log(`Cleanup verified for ${backend.scope.runId}; stable team, position and contact-free member retained.`);
   }

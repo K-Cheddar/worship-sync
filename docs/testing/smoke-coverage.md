@@ -2,17 +2,16 @@
 
 Use the existing demo account and saved authentication, with the local renderer/API running at `E2E_BASE_URL`:
 
-```powershell
-$env:E2E_DEMO_CHURCH_ID = 'demo' # Set the exact, independently verified church ID.
-npm.cmd run test:e2e:smoke
-npm.cmd run test:e2e:scheduling
+```bash
+npm run test:e2e:smoke
+npm run test:e2e:scheduling
 ```
 
-The saved account must match `E2E_TEST_EMAIL` and `playwright/.auth/worshipsync-user.json`. Neither command signs in with a password or requests verification email. Scheduling uses the existing setup project to validate/reuse the saved session, including guarded no-email recovery. RTDB custom-token sign-in is permitted only with the exact token observed from the trusted authenticated API. Traces remain disabled to protect reusable credentials.
+The E2E target is the built-in church `demo`; `E2E_DEMO_CHURCH_ID` is deprecated and is not needed. If supplied, it must equal `demo` or the test fails. The saved account must match `E2E_TEST_EMAIL` and `playwright/.auth/worshipsync-user.json`. Neither command signs in with a password or requests verification email. Scheduling uses the existing setup project to validate/reuse the saved session, including guarded no-email recovery, then confirms the authenticated server bootstrap belongs to `demo` and the account can edit the reserved E2E team before creating fixtures. RTDB custom-token sign-in is permitted only with the exact token observed from the trusted authenticated API. Traces remain disabled to protect reusable credentials.
 
 ## Smoke
 
-Smoke keeps one authenticated browser context across six navigation cases. Each page closes before the next case while synchronized IndexedDB/PouchDB data remains available. It requires `E2E_DEMO_CHURCH_ID`, rejects church-scoped API traffic for other churches, and blocks church-scoped mutations. Authentication POSTs, automatic session renewal, and MailSlurp traffic are blocked during smoke cases. A stale session fails visibly.
+Smoke keeps one authenticated browser context across six navigation cases. Each page closes before the next case while synchronized IndexedDB/PouchDB data remains available. It targets `demo`, rejects church-scoped API traffic for other churches, and blocks church-scoped mutations. Authentication POSTs, automatic session renewal, and MailSlurp traffic are blocked during smoke cases. A stale session fails visibly.
 
 | Area | Coverage |
 | --- | --- |
@@ -29,9 +28,9 @@ Forms, Messages, song editing, and deeper service-plan editing remain outside th
 
 ## Scheduling workflow
 
-The saved account needs **edit permission on the reserved E2E team**, or existing church-wide edit/admin permission. The suite fails before provisioning when access is missing. It never grants permissions or changes account membership. Setup and authoritative verification reuse the server's existing Firebase Admin configuration: `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`, and `FIREBASE_DATABASE_URL`. Never commit credentials or auth state.
+The saved account needs **edit permission on the reserved E2E team**, or existing church-wide edit/admin permission. The suite fails before provisioning when authentication, church identity, or access cannot be verified. It never grants permissions or changes account membership. Setup and authoritative verification reuse the server's existing Firebase Admin configuration: `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`, and `FIREBASE_DATABASE_URL`. These variables are required for scheduling, not smoke. Never commit credentials or auth state.
 
-The team ID defaults deterministically from the explicit church ID. `E2E_SCHEDULING_TEAM_ID` can select a provisioned team only if its exact ownership marker matches. For church `demo`:
+The team ID defaults deterministically from the built-in church ID. `E2E_SCHEDULING_TEAM_ID` can select a provisioned team only if its exact ownership marker matches. For church `demo`:
 
 | Record | ID |
 | --- | --- |

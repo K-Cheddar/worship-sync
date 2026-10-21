@@ -1,9 +1,42 @@
+import { isDeepStrictEqual } from "node:util";
+import { E2E_CHURCH_ID } from "./testChurch";
+
 export const SCHEDULING_OWNER = "scheduling-v1";
 export type SchedulingScope = {
   churchId: string; teamId: string; fixtureId: string; runId: string;
   positionId: string; memberId: string; serviceIds: string[]; scheduleId: string;
   startDate: string; endDate: string;
 };
+
+export function assertSchedulingIdentity(auth: any) {
+  if (auth?.sessionKind !== "human" || !auth.user?.uid) {
+    throw new Error("The saved authenticated server session is missing or expired; no scheduling fixtures were changed.");
+  }
+  if (auth.churchId !== E2E_CHURCH_ID) {
+    throw new Error(`The authenticated account belongs to church ${String(auth.churchId || "unknown")}; only church ${E2E_CHURCH_ID} is authorized for E2E scheduling.`);
+  }
+  return auth.user.uid as string;
+}
+
+export function assertSchedulingTeamPermission(auth: any, teamId: string) {
+  if (auth?.role !== "admin" && auth?.permissions?.teams !== "edit" && auth?.permissions?.teamScopes?.[teamId] !== "edit") {
+    throw new Error(`The authenticated account needs edit access to reserved E2E team ${teamId}; no scheduling fixtures were changed.`);
+  }
+}
+
+export function assertSchedulingRecoveryManifest(recovery: any, userId: string, scope: SchedulingScope) {
+  if (recovery?.scope?.churchId !== E2E_CHURCH_ID) {
+    throw new Error(`Recovery manifest church ID must be ${E2E_CHURCH_ID}; preserved all records`);
+  }
+  if (recovery.owner !== SCHEDULING_OWNER || recovery.userId !== userId ||
+      !/^[0-9a-f-]{36}$/.test(recovery.scope?.runId || "") ||
+      !isDeepStrictEqual({ ...recovery.scope, runId: "" }, { ...scope, runId: "" }) ||
+      !Number.isFinite(Date.parse(recovery.startedAt)) || !/^[0-9a-f]{64}$/.test(recovery.baselineHash || "") ||
+      !Array.isArray(recovery.events)) {
+    throw new Error("Recovery manifest identity or baseline is invalid; preserved all records");
+  }
+}
+
 export function assertOwnedRecord(record: any, scope: SchedulingScope, id: string, runOwned = false) {
   const marker = record?.e2eFixture;
   if (record?.churchId !== scope.churchId || record?.teamId !== scope.teamId ||

@@ -5,7 +5,8 @@ import { isDeepStrictEqual } from "node:util";
 import type { Firestore } from "firebase-admin/firestore";
 import type { Database } from "firebase-admin/database";
 import { getFirebaseAdminRuntime } from "../server/firebaseAdminRuntime.js";
-import { assertOwnedRecord, assertSafeSchedule, SCHEDULING_OWNER, type SchedulingScope } from "./schedulingScope";
+import { assertOwnedRecord, assertSafeSchedule, assertSchedulingRecoveryManifest, SCHEDULING_OWNER, type SchedulingScope } from "./schedulingScope";
+import { getE2EChurchId } from "./testChurch";
 
 const collections = ["teams", "teamPositions", "teamRosterMembers", "teamSchedules", "teamScheduleOccurrenceOwners"];
 export const TEST_TEAM_NAME = "WorshipSync E2E Scheduling";
@@ -33,9 +34,7 @@ export class SchedulingBackend {
   readonly userId: string;
 
   constructor(userId: string, recovery?: any) {
-    const churchId = process.env.E2E_DEMO_CHURCH_ID?.trim();
-    if (!churchId) throw new Error("Set E2E_DEMO_CHURCH_ID explicitly. No demo fixtures were changed.");
-    if (!/^[a-zA-Z0-9_-]+$/.test(churchId)) throw new Error("Invalid E2E_DEMO_CHURCH_ID");
+    const churchId = getE2EChurchId();
     const fixtureId = `e2e-scheduling-${hash(churchId).slice(0, 16)}`;
     const teamId = process.env.E2E_SCHEDULING_TEAM_ID?.trim() || fixtureId;
     this.scope = {
@@ -46,12 +45,7 @@ export class SchedulingBackend {
       scheduleId: `generated_${hash(`${churchId}\u0000${teamId}\u00002040-01-01\u00002040-01-31`)}`,
     };
     if (recovery) {
-      if (recovery.owner !== SCHEDULING_OWNER || recovery.userId !== userId ||
-          !/^[0-9a-f-]{36}$/.test(recovery.scope?.runId || "") ||
-          !isDeepStrictEqual({ ...recovery.scope, runId: "" }, { ...this.scope, runId: "" }) ||
-          !Number.isFinite(Date.parse(recovery.startedAt)) || !/^[0-9a-f]{64}$/.test(recovery.baselineHash || "")) {
-        throw new Error("Recovery manifest identity or baseline is invalid; preserved all records");
-      }
+      assertSchedulingRecoveryManifest(recovery, userId, this.scope);
       this.scope.runId = recovery.scope.runId;
       this.startedAt = recovery.startedAt;
       this.baselineHash = recovery.baselineHash;
