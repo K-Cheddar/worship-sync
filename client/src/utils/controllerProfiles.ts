@@ -225,6 +225,28 @@ export const DEFAULT_CONTROLLER_PROFILES: ControllerProfile[] = [
   },
 ];
 
+const LEGACY_HOME_CONTROLLER_NAMES: Record<
+  BuiltInControllerId,
+  readonly string[]
+> = {
+  [PRESENTATION_CONTROLLER_ID]: ["Presentation Controller"],
+  [OVERLAY_CONTROLLER_ID]: ["Graphics Operator", "Overlay Controller"],
+};
+
+/** Resolve retired built-in labels for Home without changing saved profile names. */
+export const resolveHomeControllerDisplayName = (
+  id: string,
+  name: string,
+): string => {
+  if (
+    !isBuiltInControllerId(id) ||
+    !LEGACY_HOME_CONTROLLER_NAMES[id].includes(name)
+  ) {
+    return name;
+  }
+  return DEFAULT_CONTROLLER_PROFILES.find((profile) => profile.id === id)?.name ?? name;
+};
+
 export const getDefaultControllerProfiles = (): ControllerProfile[] =>
   DEFAULT_CONTROLLER_PROFILES.map((profile) => ({
     ...profile,

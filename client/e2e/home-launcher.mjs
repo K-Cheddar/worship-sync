@@ -66,21 +66,23 @@ try {
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.goto("http://127.0.0.1:3116/e2e/home-launcher-entry.html#/home");
-  await page.getByRole("heading", { name: "Church management" }).waitFor();
+  await page.getByRole("heading", { name: "Management" }).waitFor();
 
   const getColumnCount = async (groupName) => page.getByRole("group", { name: groupName }).evaluate((element) =>
     getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).length,
   );
-  const mobileColumns = await getColumnCount("Church administration navigation");
+  const mobileColumns = await getColumnCount("Management navigation");
   const mobileScrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
   const mobileToolbarHeight = await page.getByTestId("home-toolbar").evaluate((element) => element.getBoundingClientRect().height);
   const mobileCard = await page.getByRole("link", { name: /^Resources\b/ }).boundingBox();
   assert.equal(mobileColumns, 2, "mobile launcher should use two columns");
   assert.equal(mobileScrollWidth, 390, "mobile launcher should not overflow horizontally");
   assert.ok(mobileToolbarHeight <= 48, "mobile Home toolbar should stay within its current compact height");
-  assert.ok(mobileCard && mobileCard.height >= 84, "mobile navigation cards should keep a comfortable touch height");
+  assert.ok(mobileCard && mobileCard.height >= 74, "mobile navigation cards should retain a comfortable minimum height while descriptions wrap");
   assert.equal(await page.getByRole("img", { name: "WorshipSync" }).count(), 0, "desktop brand lockup should stay out of the narrow mobile header");
-  assert.equal(await page.getByRole("group", { name: "Church administration navigation" }).getByRole("link").count(), 3);
+  assert.equal(await page.getByRole("group", { name: "Management navigation" }).getByRole("link").count(), 3);
+  assert.equal(await page.getByRole("link", { name: /^Administration\b/ }).getAttribute("href"), "#/account");
+  assert.equal(await page.getByRole("link", { name: /^Current Service\b/ }).getAttribute("href"), "#/current-service/view");
   assert.equal(await page.getByRole("link", { name: /^Text Master\b/ }).count(), 1);
   assert.equal(await page.getByRole("link", { name: /^Lobby Screens\b/ }).count(), 1);
   assert.equal(await page.getByRole("link", { name: /^Text Master\b/ }).locator("[data-testid=home-navigation-icon]").getAttribute("class").then((value) => value?.includes("text-orange-300")), true);
@@ -99,8 +101,8 @@ try {
   await descriptionsToggle.click();
   await page.getByText("Access shared files and church resources.").waitFor();
   assert.equal(await descriptionsToggle.isChecked(), true, "the mobile toggle should show descriptions immediately");
-  assert.equal(await getColumnCount("Church administration navigation"), 2, "descriptions should preserve the mobile two-column grid");
-  const mobileHeadingBounds = await page.getByRole("heading", { name: "Church management" }).boundingBox();
+  assert.equal(await getColumnCount("Management navigation"), 2, "descriptions should preserve the mobile two-column grid");
+  const mobileHeadingBounds = await page.getByRole("heading", { name: "Management" }).boundingBox();
   const mobileDescriptionBounds = await page.getByText("Manage resources, access, teams, and services.").boundingBox();
   assert.ok(mobileHeadingBounds && mobileDescriptionBounds && mobileDescriptionBounds.y >= mobileHeadingBounds.y + mobileHeadingBounds.height - 1, "section descriptions should wrap below the heading on mobile");
   await page.getByRole("region", { name: "Controllers" }).getByText("Present slides, songs, and scripture on your screens.").waitFor();
@@ -117,7 +119,7 @@ try {
     await page.screenshot({ path: join(screenshotDirectory, "mobile-display-outputs-collapsed-descriptions.png"), animations: "disabled" });
   }
   await page.reload();
-  await page.getByRole("heading", { name: "Church management" }).waitFor();
+  await page.getByRole("heading", { name: "Management" }).waitFor();
   assert.equal(await page.getByRole("switch", { name: "Show what each page does" }).isChecked(), true, "the saved preference should be restored after a browser reload");
   assert.equal(await page.getByText("Access shared files and church resources.").count(), 1, "the restored preference should apply on the first Home render");
 
@@ -127,12 +129,12 @@ try {
   page = await context.newPage();
   page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.goto("http://127.0.0.1:3116/e2e/home-launcher-entry.html#/home");
-  await page.getByRole("heading", { name: "Church management" }).waitFor();
+  await page.getByRole("heading", { name: "Management" }).waitFor();
 
   await page.setViewportSize({ width: 900, height: 900 });
-  assert.equal(await getColumnCount("Church administration navigation"), 3, "tablet launcher should use three columns");
+  assert.equal(await getColumnCount("Management navigation"), 3, "tablet launcher should use three columns");
   await page.setViewportSize({ width: 1440, height: 900 });
-  assert.equal(await getColumnCount("Church administration navigation"), 4, "desktop launcher should use four columns");
+  assert.equal(await getColumnCount("Management navigation"), 4, "desktop launcher should use four columns");
   assert.equal(await page.getByTestId("home-toolbar").evaluate((element) => element.getBoundingClientRect().width), 1440, "desktop toolbar should use the full viewport width");
   assert.equal(await page.getByTestId("home-content").evaluate((element) => element.getBoundingClientRect().width), 1152, "desktop navigation content should use a centered max-w-6xl width");
   assert.equal(await page.getByRole("img", { name: "WorshipSync" }).isVisible(), true, "desktop header should show the branded lockup");
@@ -143,7 +145,7 @@ try {
   assert.equal(launcherCanvasColor, "rgb(43, 53, 68)", "launcher canvas should retain the original slate-blue token");
   const launcherCanvasImage = await page.locator("main").evaluate((element) => getComputedStyle(element).backgroundImage);
   assert.equal(launcherCanvasImage, "none", "launcher should use the original flat canvas color without added gradients");
-  const adminSection = await page.getByRole("region", { name: "Church management" }).evaluate((element) => {
+  const adminSection = await page.getByRole("region", { name: "Management" }).evaluate((element) => {
     const style = getComputedStyle(element);
     return { classes: [...element.classList], backgroundColor: style.backgroundColor, backgroundImage: style.backgroundImage, boxShadow: style.boxShadow };
   });
@@ -196,7 +198,7 @@ try {
   assert.equal(await page.getByText("Manage resources, access, teams, and services.").count(), 0, "turning descriptions off should restore the compact view");
   await desktopDescriptionsToggle.click();
   await page.getByText("Manage resources, access, teams, and services.").waitFor();
-  const desktopHeadingBounds = await page.getByRole("heading", { name: "Church management" }).boundingBox();
+  const desktopHeadingBounds = await page.getByRole("heading", { name: "Management" }).boundingBox();
   const desktopDescriptionBounds = await page.getByText("Manage resources, access, teams, and services.").boundingBox();
   assert.ok(desktopHeadingBounds && desktopDescriptionBounds && Math.abs(desktopDescriptionBounds.y + desktopDescriptionBounds.height / 2 - desktopHeadingBounds.y - desktopHeadingBounds.height / 2) <= 8, "section descriptions should sit inline with the heading when desktop space allows");
   await page.getByRole("region", { name: "Controllers" }).getByText("Present slides, songs, and scripture on your screens.").waitFor();
@@ -208,7 +210,7 @@ try {
   await page.getByText("Links for room screens and streaming software.").waitFor();
   assert.equal(await desktopDescriptionsToggle.isChecked(), true, "desktop descriptions toggle should show descriptions immediately");
   assert.equal(await page.getByTestId("display-outputs-details").getAttribute("open"), null, "showing descriptions should keep Display outputs collapsed");
-  assert.equal(await getColumnCount("Church administration navigation"), 4, "desktop descriptions should preserve the four-column grid");
+  assert.equal(await getColumnCount("Management navigation"), 4, "desktop descriptions should preserve the four-column grid");
   assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= 1440, "desktop descriptions should not cause horizontal overflow");
   if (screenshotDirectory) {
     await page.screenshot({ path: join(screenshotDirectory, "desktop-1440x900-descriptions.png"), animations: "disabled" });
@@ -237,40 +239,40 @@ try {
   assert.ok(desktopCard && desktopCard.height >= 96 && desktopCard.height <= 112, "desktop navigation cards should be approximately 96–112px tall");
   const desktopIconWidth = await page.getByRole("link", { name: /^Resources\b/ }).locator("[data-testid=home-navigation-icon] svg").evaluate((element) => element.getBoundingClientRect().width);
   assert.ok(desktopIconWidth >= 32 && desktopIconWidth <= 36, "desktop navigation icons should be approximately 32–36px");
-  const adminSectionRadius = await page.getByRole("region", { name: "Church management" }).evaluate((element) => getComputedStyle(element).borderTopLeftRadius);
+  const adminSectionRadius = await page.getByRole("region", { name: "Management" }).evaluate((element) => getComputedStyle(element).borderTopLeftRadius);
   assert.ok(parseFloat(adminSectionRadius) >= 12, "major navigation sections should have rounded containers");
-  const adminHeadingSize = await page.getByRole("heading", { name: "Church management" }).evaluate((element) => parseFloat(getComputedStyle(element).fontSize));
+  const adminHeadingSize = await page.getByRole("heading", { name: "Management" }).evaluate((element) => parseFloat(getComputedStyle(element).fontSize));
   assert.ok(adminHeadingSize >= 20 && adminHeadingSize <= 22, "desktop section headings should stay around 20–22px");
   const controllerCards = page.getByRole("group", { name: "Controllers navigation" }).getByRole("link");
   assert.equal(await controllerCards.count(), 5, "all three configured controllers and both controller tools should stay together");
   const controllerRows = await controllerCards.evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().top));
   assert.ok(controllerRows[4] > controllerRows[3], "the fifth controller destination should wrap at the same card width");
   const sharedCardWidths = await Promise.all([
-    page.getByRole("group", { name: "Church administration navigation" }).getByRole("link").first().evaluate((element) => element.getBoundingClientRect().width),
+    page.getByRole("group", { name: "Management navigation" }).getByRole("link").first().evaluate((element) => element.getBoundingClientRect().width),
     page.getByRole("group", { name: "Personal and service tools navigation" }).getByRole("link").first().evaluate((element) => element.getBoundingClientRect().width),
     controllerCards.first().evaluate((element) => element.getBoundingClientRect().width),
   ]);
   assert.ok(sharedCardWidths.every((width) => Math.abs(width - sharedCardWidths[0]) < 0.5), "launcher sections should share card widths");
-  const firstRowHeights = await page.getByRole("group", { name: "Church administration navigation" }).getByRole("link").evaluateAll((elements) => elements.slice(0, 3).map((element) => element.getBoundingClientRect().height));
+  const firstRowHeights = await page.getByRole("group", { name: "Management navigation" }).getByRole("link").evaluateAll((elements) => elements.slice(0, 3).map((element) => element.getBoundingClientRect().height));
   assert.ok(firstRowHeights.every((height) => Math.abs(height - firstRowHeights[0]) < 0.5), "cards in a desktop row should remain equal height with descriptions shown");
   const desktopToolbarHeight = await page.getByTestId("home-toolbar").evaluate((element) => element.getBoundingClientRect().height);
   assert.ok(desktopToolbarHeight <= 56, "desktop Home toolbar should stay within its current height");
 
   await page.evaluate(() => { document.documentElement.style.fontSize = "80%"; });
-  assert.equal(await page.getByRole("group", { name: "Church administration navigation" }).evaluate((element) => getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).length), 4, "80% interface zoom should preserve the desktop grid");
+  assert.equal(await page.getByRole("group", { name: "Management navigation" }).evaluate((element) => getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).length), 4, "80% interface zoom should preserve the desktop grid");
   assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= 1440, "80% interface zoom should not create horizontal overflow");
   await page.evaluate(() => { document.documentElement.style.fontSize = "150%"; });
-  assert.equal(await page.getByRole("group", { name: "Church administration navigation" }).evaluate((element) => getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).length), 4, "150% interface zoom should preserve the desktop grid");
+  assert.equal(await page.getByRole("group", { name: "Management navigation" }).evaluate((element) => getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).length), 4, "150% interface zoom should preserve the desktop grid");
   assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= 1440, "150% interface zoom should not create horizontal overflow");
   await page.evaluate(() => { document.documentElement.style.fontSize = "100%"; });
 
   await page.setViewportSize({ width: 2560, height: 1000 });
-  assert.equal(await getColumnCount("Church administration navigation"), 4, "ultrawide launcher should remain four columns");
+  assert.equal(await getColumnCount("Management navigation"), 4, "ultrawide launcher should remain four columns");
   assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= 2560, "ultrawide launcher should remain centered without horizontal overflow");
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => { document.documentElement.style.fontSize = "125%"; });
-  assert.equal(await getColumnCount("Church administration navigation"), 2, "125% mobile interface zoom should preserve the two-column grid");
+  assert.equal(await getColumnCount("Management navigation"), 2, "125% mobile interface zoom should preserve the two-column grid");
   assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= 390, "125% mobile interface zoom should not create horizontal overflow");
   await page.evaluate(() => { document.documentElement.style.fontSize = "100%"; });
 
@@ -285,18 +287,47 @@ try {
   }
   await page.getByText("Display outputs").click();
   assert.notEqual(await details.getAttribute("open"), null, "display outputs should expand on request");
-  await page.getByRole("link", { name: /^Open Sanctuary\. Show full-screen projection content\./ }).waitFor();
-  const displayLink = page.getByRole("link", { name: /^Open Sanctuary\./ });
+  await page.getByText("Open these displays full-screen in your browser.").waitFor();
+  await page.getByText("Copy these links into OBS or other streaming software as browser sources.").waitFor();
+  assert.equal(await page.getByText("Show full-screen projection content.").count(), 0, "display cards should not show individual fullscreen descriptions");
+  assert.equal(await page.getByText("Use as a browser source in streaming software.").count(), 0, "display cards should not show repeated browser-source descriptions");
+  assert.equal(await page.getByText("Sanctuary", { exact: true }).count(), 2, "the visible projector card title should stay the configured name in both groups");
+  const displayLink = page.getByRole("link", { name: "Open Sanctuary fullscreen link" });
   assert.equal(await displayLink.getAttribute("href"), "#/projector?output=out_sanctuary");
-  assert.equal(await page.getByRole("link", { name: /^Open Sanctuary \(browser source\)\./ }).getAttribute("href"), "#/projector-full?output=out_sanctuary");
-  assert.equal(await page.getByRole("link", { name: /^Open Stream\./ }).getAttribute("href"), "#/stream?output=stream");
-  await page.getByRole("button", { name: "Copy Sanctuary link" }).click();
-  await page.getByRole("status").filter({ hasText: "Link copied for Sanctuary." }).waitFor();
-  assert.ok(await page.getByRole("button", { name: "Copied Sanctuary link" }).locator("svg").getAttribute("class").then((value) => value?.includes("lucide-check")));
+  assert.equal(await page.getByRole("link", { name: "Open Sanctuary browser source link" }).getAttribute("href"), "#/projector-full?output=out_sanctuary");
+  assert.equal(await page.getByRole("link", { name: "Open Stream browser source link" }).getAttribute("href"), "#/stream?output=stream");
+  assert.equal(await page.getByRole("link", { name: "Open Projector fullscreen link" }).getAttribute("href"), "#/projector?output=projector");
+  assert.equal(await page.getByRole("link", { name: "Open Projector browser source link" }).getAttribute("href"), "#/projector-full?output=projector");
+  assert.equal(await page.getByRole("button", { name: "Copy Projector fullscreen link" }).count(), 1);
+  assert.equal(await page.getByRole("button", { name: "Copy Projector browser source link" }).count(), 1);
+  await page.getByRole("button", { name: "Copy Sanctuary fullscreen link" }).click();
+  await page.getByRole("status").filter({ hasText: "Link copied for Sanctuary fullscreen." }).waitFor();
+  assert.ok(await page.getByRole("button", { name: "Copied Sanctuary fullscreen link" }).locator("svg").getAttribute("class").then((value) => value?.includes("lucide-check")));
   assert.match(await page.evaluate(() => navigator.clipboard.readText()), /#\/projector\?output=out_sanctuary$/);
-  await page.getByRole("button", { name: "Copy Sanctuary (browser source) link" }).click();
-  await page.getByRole("status").filter({ hasText: "Link copied for Sanctuary (browser source)." }).waitFor();
+  await page.getByRole("button", { name: "Copy Sanctuary browser source link" }).click();
+  await page.getByRole("status").filter({ hasText: "Link copied for Sanctuary browser source." }).waitFor();
   assert.match(await page.evaluate(() => navigator.clipboard.readText()), /#\/projector-full\?output=out_sanctuary$/);
+  await desktopDescriptionsToggle.click();
+  assert.equal(await page.getByText("Open these displays full-screen in your browser.").count(), 0, "turning descriptions off should hide the subgroup explanation");
+  assert.equal(await page.getByText("Copy these links into OBS or other streaming software as browser sources.").count(), 0, "turning descriptions off should hide the browser-source explanation");
+  assert.equal(await page.getByRole("heading", { name: "Fullscreen in the browser" }).isVisible(), true, "subgroup headings should stay visible when descriptions are off");
+  assert.equal(await page.getByRole("link", { name: "Open Projector browser source link" }).isVisible(), true, "display cards should stay visible when descriptions are off");
+  for (const { width, columns, expectedHeight } of [
+    { width: 390, columns: 2, expectedHeight: 74 },
+    { width: 900, columns: 3, expectedHeight: 82 },
+    { width: 1440, columns: 4, expectedHeight: 82 },
+  ]) {
+    await page.setViewportSize({ width, height: 900 });
+    assert.equal(
+      await getColumnCount("Fullscreen in the browser navigation"),
+      columns,
+      `fullscreen output cards should use ${columns} columns at ${width}px`,
+    );
+    const projectorCardHeight = await page.getByRole("link", { name: "Open Projector fullscreen link" }).evaluate((element) => element.parentElement?.getBoundingClientRect().height ?? 0);
+    assert.ok(Math.abs(projectorCardHeight - expectedHeight) <= 1, `output cards should match the ${expectedHeight}px homepage tile height at ${width}px (measured ${projectorCardHeight}px)`);
+    assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= width, `output cards should not overflow horizontally at ${width}px`);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
 
   await page.getByRole("link", { name: "Service Workspace" }).click();
   await page.getByText("Service workspace route").waitFor();

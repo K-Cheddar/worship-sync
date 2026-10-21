@@ -184,7 +184,7 @@ describe("Home", () => {
       expect(grid.className).not.toMatch(/(?:xl|2xl):grid-cols-5/);
     }
     for (const sectionName of [
-      "Church management",
+      "Management",
       "Personal and service tools",
       "Controllers",
     ]) {
@@ -197,18 +197,18 @@ describe("Home", () => {
         "sm:p-5",
       );
     }
-    expect(screen.getByRole("link", { name: /^Church administration\b/ })).toHaveAttribute("href", "/account");
+    expect(screen.getByRole("link", { name: /^Administration\b/ })).toHaveAttribute("href", "/account");
     expect(screen.queryByRole("heading", { name: "Church administration" })).not.toBeInTheDocument();
   });
 
   it("renders fixed launcher appearances from the shared map", () => {
     const cases: Array<readonly [keyof typeof PAGE_APPEARANCES, string]> = [
-      ["churchAdministration", "Church administration"],
+      ["churchAdministration", "Administration"],
       ["teamsAndServices", "Teams and Services"],
       ["resources", "Resources"],
       ["mySchedule", "My schedule"],
       ["serviceWorkspace", "Service Workspace"],
-      ["currentServiceViewer", "Current Service Viewer"],
+      ["currentServiceViewer", "Current Service"],
       ["boardModeration", "Board moderation"],
       ["creditsEditor", "Credits Editor"],
     ];
@@ -352,6 +352,79 @@ describe("Home", () => {
     expect(store.getState().controllerProfiles.isLoaded).toBe(false);
   });
 
+  it("resolves legacy built-in labels on Home without changing saved profiles", () => {
+    const profiles = getDefaultControllerProfiles().map((profile) =>
+      profile.id === "presentation"
+        ? { ...profile, name: "Presentation Controller" }
+        : profile.id === "overlay"
+          ? { ...profile, name: "Graphics Operator" }
+          : profile,
+    );
+    const { store } = render(
+      <MemoryRouter initialEntries={["/home"]}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+          <ControllerInfoContext.Provider value={createMockControllerContext() as any}>
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+      { profiles },
+    );
+
+    expect(screen.getByRole("link", { name: /^Presentation\b/ })).toHaveAttribute(
+      "href",
+      "/controller",
+    );
+    expect(screen.getByRole("link", { name: /^Overlays\b/ })).toHaveAttribute(
+      "href",
+      "/overlay-controller",
+    );
+    expect(screen.queryByText("Presentation Controller")).not.toBeInTheDocument();
+    expect(screen.queryByText("Graphics Operator")).not.toBeInTheDocument();
+    expect(store.getState().controllerProfiles.list.map(({ name }) => name)).toEqual([
+      "Presentation Controller",
+      "Graphics Operator",
+    ]);
+  });
+
+  it("resolves cached legacy built-in labels while preserving auxiliary names", () => {
+    localStorage.setItem("worshipsync.home-descriptions.v1", "true");
+    localStorage.setItem(
+      getHomeNavigationCacheKey("church-1"),
+      JSON.stringify({
+        version: 1,
+        updatedAt: Date.now(),
+        churchId: "church-1",
+        controllers: [
+          { id: "presentation", name: "Presentation Controller", icon: "presentation", iconColor: "orange", order: 0 },
+          { id: "overlay", name: "Overlay Controller", icon: "layers", iconColor: "purple", order: 1 },
+          { id: "ctrl_lobby", name: "Graphics Operator", icon: "monitor", iconColor: "cyan", order: 2 },
+        ],
+        displays: [],
+      }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/home"]}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+          <ControllerInfoContext.Provider value={createMockControllerContext() as any}>
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+      { profilesLoaded: false, displayOutputsLoaded: false },
+    );
+
+    expect(screen.getByText("Presentation", { exact: true })).toBeInTheDocument();
+    expect(screen.getByText("Overlays", { exact: true })).toBeInTheDocument();
+    expect(screen.getByText("Graphics Operator", { exact: true })).toBeInTheDocument();
+    expect(screen.queryByText("Presentation Controller")).not.toBeInTheDocument();
+    expect(screen.queryByText("Overlay Controller")).not.toBeInTheDocument();
+    expect(
+      readHomeNavigationMetadata("church-1")?.controllers.map(({ name }) => name),
+    ).toEqual(["Presentation", "Overlays", "Graphics Operator"]);
+  });
+
   it("shows the refreshed Presentation default from a legacy navigation cache immediately", () => {
     const oldDefault = "Build and run the main presentation. Arrange service items, edit slides, and send output to projector, monitor, and stream.";
     localStorage.setItem("worshipsync.home-descriptions.v1", "true");
@@ -485,6 +558,34 @@ describe("Home", () => {
     ]);
   });
 
+  it("omits disabled displays from the homepage output groups", async () => {
+    const user = userEvent.setup();
+    const outputs = getDefaultDisplayOutputs().map((output) =>
+      output.id === "monitor" ? { ...output, enabled: false } : output,
+    );
+    render(
+      <MemoryRouter initialEntries={["/home"]}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+          <ControllerInfoContext.Provider value={createMockControllerContext() as any}>
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+      { displayOutputs: outputs },
+    );
+
+    await user.click(screen.getByText("Display outputs"));
+    expect(
+      screen.queryByRole("link", { name: "Open Monitor fullscreen link" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Copy Monitor fullscreen link" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Open Projector fullscreen link" }),
+    ).toHaveAttribute("href", "/projector?output=projector");
+  });
+
   it("renders built-ins first, keeps saved additional order, and hides disabled controllers", () => {
     localStorage.setItem("worshipsync.home-descriptions.v1", "true");
     const lobby = {
@@ -543,6 +644,11 @@ describe("Home", () => {
         id: "out_sanctuary",
         name: "Sanctuary",
         order: 0,
+      }, {
+        ...getDefaultDisplayOutputs()[0],
+        id: "out_tvs",
+        name: "TVs",
+        order: 6,
       });
     render(
       <MemoryRouter initialEntries={["/home"]}>
@@ -565,15 +671,49 @@ describe("Home", () => {
     );
     await user.click(screen.getByText("Display outputs"));
     expect(screen.getByTestId("display-outputs-details")).toHaveAttribute("open", "");
-    expect(screen.getByRole("link", { name: /^Open Sanctuary\./ })).toHaveAttribute("href", "/projector?output=out_sanctuary");
-    expect(screen.getByRole("link", { name: /^Open Sanctuary \(browser source\)/ })).toHaveAttribute("href", "/projector-full?output=out_sanctuary");
-    expect(screen.getByRole("link", { name: /^Open Stream\./ })).toHaveAttribute("href", "/stream?output=stream");
-    await user.click(screen.getByRole("button", { name: "Copy Sanctuary link" }));
+    expect(screen.getByRole("heading", { name: "Fullscreen in the browser" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Browser sources (streaming)" })).toBeInTheDocument();
+    expect(screen.getByText("Open these displays full-screen in your browser.")).toBeInTheDocument();
+    expect(screen.getByText("Copy these links into OBS or other streaming software as browser sources.")).toBeInTheDocument();
+    expect(screen.getAllByText("Sanctuary", { exact: true })).toHaveLength(2);
+    expect(screen.queryByText("Show full-screen projection content.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Use as a browser source in streaming software.")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open Sanctuary fullscreen link" })).toHaveAttribute("href", "/projector?output=out_sanctuary");
+    expect(screen.getByRole("link", { name: "Open Sanctuary browser source link" })).toHaveAttribute("href", "/projector-full?output=out_sanctuary");
+    expect(screen.getByRole("link", { name: "Open TVs fullscreen link" })).toHaveAttribute("href", "/projector?output=out_tvs");
+    expect(screen.getByRole("link", { name: "Open TVs browser source link" })).toHaveAttribute("href", "/projector-full?output=out_tvs");
+    expect(screen.getByRole("link", { name: "Open Stream browser source link" })).toHaveAttribute("href", "/stream?output=stream");
+    expect(screen.getByRole("link", { name: "Open Monitor fullscreen link" })).toHaveAttribute("href", "/monitor?output=monitor");
+    expect(screen.getByRole("link", { name: "Open Board fullscreen link" })).toHaveAttribute("href", "/boards/display");
+    expect(screen.getByRole("link", { name: "Open Credits browser source link" })).toHaveAttribute("href", "/credits");
+    expect(screen.getByRole("link", { name: "Open Stream Info browser source link" })).toHaveAttribute("href", "/stream-info");
+
+    const descriptionsToggle = screen.getByRole("switch", { name: "Show what each page does" });
+    await user.click(descriptionsToggle);
+    expect(screen.queryByText("Open these displays full-screen in your browser.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Copy these links into OBS or other streaming software as browser sources.")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Fullscreen in the browser" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Browser sources (streaming)" })).toBeInTheDocument();
+    expect(screen.getAllByText("Sanctuary", { exact: true })).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Copy Sanctuary fullscreen link" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy Sanctuary browser source link" })).toBeInTheDocument();
+    await user.click(descriptionsToggle);
+
+    await user.click(screen.getByRole("button", { name: "Copy Sanctuary fullscreen link" }));
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining("#/projector?output=out_sanctuary"));
-    expect(await screen.findByRole("status")).toHaveTextContent("Link copied for Sanctuary.");
-    expect(screen.getByRole("button", { name: "Copied Sanctuary link" })).toHaveClass("text-emerald-300");
-    await user.click(screen.getByRole("button", { name: "Copy Sanctuary (browser source) link" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Link copied for Sanctuary fullscreen.");
+    expect(screen.getByRole("button", { name: "Copied Sanctuary fullscreen link" })).toHaveClass("text-emerald-300");
+    await user.click(screen.getByRole("button", { name: "Copy Sanctuary browser source link" }));
     expect(writeText).toHaveBeenLastCalledWith(expect.stringContaining("#/projector-full?output=out_sanctuary"));
+    const copyStatuses = await screen.findAllByRole("status");
+    expect(copyStatuses[copyStatuses.length - 1]).toHaveTextContent(
+      "Link copied for Sanctuary browser source.",
+    );
+    writeText.mockRejectedValueOnce(new Error("Clipboard unavailable"));
+    await user.click(screen.getByRole("button", { name: "Copied Sanctuary browser source link" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Couldn't copy the browser source link for Sanctuary.",
+    );
   });
 
   it("shows the compact launcher, preserves destinations, and keeps installation available", async () => {
@@ -732,7 +872,7 @@ describe("Home", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.queryByRole("heading", { name: "Church administration" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Management" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Resources/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Service Workspace/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Presentation/ })).not.toBeInTheDocument();
@@ -948,7 +1088,7 @@ describe("Home", () => {
       screen.queryByRole("link", { name: /Service Workspace/i }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: /Current Service Viewer/i }),
+      screen.getByRole("link", { name: /Current Service/i }),
     ).toHaveAttribute("href", "/current-service/view");
   });
 

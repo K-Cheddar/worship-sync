@@ -9,10 +9,10 @@ import { cn } from "../../utils/cnHelper";
 import { buildShareableHashRouterUrl } from "../../utils/environment";
 
 export const HOME_NAVIGATION_GRID_CLASS =
-  "grid auto-rows-fr grid-cols-2 gap-3 md:grid-cols-3 md:gap-4 lg:grid-cols-4";
+  "grid auto-rows-fr grid-cols-2 gap-2 md:grid-cols-3 md:gap-3 lg:grid-cols-4";
 
 export const HOME_TILE_CLASS =
-  "flex h-full min-h-[88px] max-md:min-h-[88px] min-w-0 w-full items-center rounded-2xl border border-gray-600 bg-gray-900 px-0 py-3 text-left text-white transition-colors duration-150 hover:border-gray-500 hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 active:translate-y-px md:min-h-[96px] lg:min-h-[100px]";
+  "flex h-full min-h-[74px] min-w-0 w-full items-center rounded-2xl border border-gray-600 bg-gray-900 px-0 py-0 text-left text-white transition-colors duration-150 hover:border-gray-500 hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 active:translate-y-px sm:min-h-[82px]";
 
 export const HOME_TILE_CONTENT_CLASS =
   "flex w-full min-w-0 items-center px-4";
@@ -99,7 +99,7 @@ export const HomeNavigationLink = ({
           <span className="block break-words text-[15px] font-semibold leading-snug tracking-[-0.01em] sm:text-[17px]">
             {title}
           </span>
-          <span className="mt-1 block break-words text-xs font-normal leading-snug text-gray-400">
+          <span className="mt-0.5 block break-words text-xs font-normal leading-snug text-gray-400">
             {description}
           </span>
         </span>
@@ -217,8 +217,7 @@ export const HomeNavigationSection = ({
 
 type HomeOutputLinkCardProps = {
   title: string;
-  description?: string;
-  showDescriptions?: boolean;
+  linkContext: "fullscreen" | "browser source";
   to: string | null;
   icon: LucideIcon;
   iconColorClass: string;
@@ -227,8 +226,7 @@ type HomeOutputLinkCardProps = {
 
 export const HomeOutputLinkCard = ({
   title,
-  description,
-  showDescriptions = false,
+  linkContext,
   to,
   icon,
   iconColorClass,
@@ -269,20 +267,9 @@ export const HomeOutputLinkCard = ({
       >
         <Icon svg={icon} size="xl" className={iconColorClass} svgClassName={iconColorClass} />
       </span>
-      {showDescriptions && description ? (
-        <span className="min-w-0 flex-1">
-          <span className="block break-words text-[15px] font-semibold leading-snug tracking-[-0.01em] sm:text-[17px]">
-            {title}
-          </span>
-          <span className="mt-1 block break-words text-xs font-normal leading-snug text-gray-400">
-            {description}
-          </span>
-        </span>
-      ) : (
-        <span className="min-w-0 flex-1 break-words text-[15px] font-semibold leading-snug tracking-[-0.01em] sm:text-[17px]">
-          {title}
-        </span>
-      )}
+      <span className="min-w-0 flex-1 break-words text-[15px] font-semibold leading-snug tracking-[-0.01em] sm:text-[17px]">
+        {title}
+      </span>
     </>
   );
 
@@ -298,7 +285,7 @@ export const HomeOutputLinkCard = ({
       {to && !pending ? (
         <Link
           to={to}
-          aria-label={`Open ${title}${showDescriptions && description ? `. ${description}` : ""}`}
+          aria-label={`Open ${title} ${linkContext} link`}
           className="relative z-0 flex min-w-0 flex-1 items-center gap-3 self-stretch rounded-l-2xl px-4 py-3 text-left transition-colors hover:bg-gray-800 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300"
         >
           {content}
@@ -314,8 +301,8 @@ export const HomeOutputLinkCard = ({
         disabled={disabled || copyState === "copying"}
         aria-label={
           copyState === "copied"
-            ? `Copied ${title} link`
-            : `Copy ${title} link`
+            ? `Copied ${title} ${linkContext} link`
+            : `Copy ${title} ${linkContext} link`
         }
         aria-busy={copyState === "copying"}
         isLoading={copyState === "copying"}
@@ -331,9 +318,9 @@ export const HomeOutputLinkCard = ({
         <span className="sr-only">{copyState === "copied" ? "Copied" : "Copy link"}</span>
       </Button>
       {copyState === "copied" ? (
-        <span role="status" className="sr-only">Link copied for {title}.</span>
+        <span role="status" className="sr-only">Link copied for {title} {linkContext}.</span>
       ) : copyState === "error" ? (
-        <span role="alert" className="sr-only">Couldn't copy the link for {title}.</span>
+        <span role="alert" className="sr-only">Couldn't copy the {linkContext} link for {title}.</span>
       ) : null}
     </div>
   );
