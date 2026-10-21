@@ -24,7 +24,8 @@ const VolunteerPortal = () => {
     let active = true;
     void openVolunteerSession().then((value) => { if (active) { setSession(value); setStatus("ready"); } }).catch((error: unknown) => {
       if (!active) return;
-      setStatus(error instanceof VolunteerApiError ? error.details.accessStatus || "invalid" : "error");
+      const retryable = !(error instanceof VolunteerApiError) || error.status === 429 || error.status >= 500;
+      setStatus(retryable ? "error" : error.details.accessStatus || "invalid");
     });
     return () => { active = false; mounted.current = false; controller.current?.abort(); };
   }, [retry]);
@@ -57,7 +58,7 @@ const VolunteerPortal = () => {
     try {
       await volunteerRequest("recovery/verify", { challengeId, code, completionKey: completionKey.current }, "", controller.current.signal);
       if (!mounted.current) return;
-      clearVolunteerIngress(); setRetry((value) => value + 1);
+      clearVolunteerIngress(); setStatus("loading"); setRetry((value) => value + 1);
     } catch { if (mounted.current) setMessage("Could not verify this code. Try again or request a new code."); }
     finally { if (mounted.current) setPending(false); }
   };
@@ -66,7 +67,7 @@ const VolunteerPortal = () => {
     <div className="flex w-full max-w-md flex-col gap-4 py-8">
       <h1 className="text-xl font-semibold">My Schedule</h1>
       {status === "loading" ? <p role="status">Opening your schedule…</p> : <>
-        {status === "error" ? <Button onClick={() => setRetry((value) => value + 1)}>Retry opening My Schedule</Button> : null}
+        {status === "error" ? <><p role="alert">Could not open My Schedule. Try again in a moment.</p><Button onClick={() => { setStatus("loading"); setRetry((value) => value + 1); }}>Retry opening My Schedule</Button></> : null}
         {status === "revoked" ? <p>Personal access has been turned off. Contact your church administrator.</p> : status !== "error" ? <>
           <p>{status === "expired" ? "Verify your identity to open your schedule." : "Open your personal link, or verify your contact information to recover access."}</p>
           {!readVolunteerIngress() ? <Input label="Email or mobile number" value={contact} onChange={(value) => { setContact(String(value)); requestKey.current = ""; }} /> : null}

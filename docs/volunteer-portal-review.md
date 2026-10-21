@@ -1,5 +1,7 @@
 # October 20: authoritative time-off conflict refresh correction
 
+> Historical implementation record. The October 21 standard-feature decision supersedes portal activation restrictions in this record. Personal access now has no feature gate; see [current contract](features/volunteer-my-schedule.md) and [deployment prerequisites](volunteer-portal-deployment.md).
+
 Review scope: fix verification and affected recovery workflow on `in-progress`.
 This supersedes earlier claims below that failed conflict refresh was fully safe.
 It is not deployment or portal-activation authorization.

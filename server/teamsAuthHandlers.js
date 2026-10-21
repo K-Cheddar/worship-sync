@@ -11513,34 +11513,28 @@ export const createTeamsAuthHandlers = ({
         );
       }
       const personalAccess = getVolunteerAccessStore();
-      let personalLink = null;
-      if (personalAccess) {
-        const identity = { churchId: intent.churchId, memberId: intent.memberId };
-        if (preparePersonalAccess) personalLink = await personalAccess.prepare(identity);
-        else if (responseUrlOverride) {
-          let url;
-          try { url = new URL(responseUrlOverride); } catch { throw httpError(409, "Prepare and review this schedule message again."); }
-          if (url.origin !== new URL(APP_BASE_URL).origin || url.pathname !== "/s") throw httpError(409, "Prepare and review this schedule message again.");
-          const validated = await personalAccess.validateCredential(url.hash.slice(1));
-          if (validated.status !== "active" || validated.identity.churchId !== identity.churchId || validated.identity.memberId !== identity.memberId) {
-            throw httpError(409, "Personal access changed or expired. Prepare and review this schedule message again.");
-          }
-          personalLink = { token: url.hash.slice(1), ...validated.identity };
-        } else personalLink = await personalAccess.current(identity);
-        if (!personalLink) throw httpError(409, "Prepare and review this schedule message again.");
-      }
+      let personalLink;
+      const identity = { churchId: intent.churchId, memberId: intent.memberId };
+      if (preparePersonalAccess) personalLink = await personalAccess.prepare(identity);
+      else if (responseUrlOverride) {
+        let url;
+        try { url = new URL(responseUrlOverride); } catch { throw httpError(409, "Prepare and review this schedule message again."); }
+        if (url.origin !== new URL(APP_BASE_URL).origin || url.pathname !== "/s") throw httpError(409, "Prepare and review this schedule message again.");
+        const validated = await personalAccess.validateCredential(url.hash.slice(1));
+        if (validated.status !== "active" || validated.identity.churchId !== identity.churchId || validated.identity.memberId !== identity.memberId) {
+          throw httpError(409, "Personal access changed or expired. Prepare and review this schedule message again.");
+        }
+        personalLink = { token: url.hash.slice(1), ...validated.identity };
+      } else personalLink = await personalAccess.current(identity);
+      if (!personalLink) throw httpError(409, "Prepare and review this schedule message again.");
       return {
         schedule,
         member,
         church,
         assignments: getScheduleMemberAssignments({ schedule, memberId: intent.memberId, positions }),
         serviceTimeZone: church.serviceTimeZone,
-        ...(personalLink ? { personalAccessExpiresAt: personalLink.expiresAt } : {}),
-        responseUrl: personalLink ? `${APP_BASE_URL}/s#${personalLink.token}` : buildAssignmentResponseUrl({
-          churchId: intent.churchId,
-          scheduleId: intent.sourceId,
-          memberId: intent.memberId,
-        }),
+        personalAccessExpiresAt: personalLink.expiresAt,
+        responseUrl: `${APP_BASE_URL}/s#${personalLink.token}`,
       };
     }
     const occurrence = (schedule.occurrences || []).find(
@@ -12497,18 +12491,20 @@ export const createTeamsAuthHandlers = ({
     acceptPendingAssignments: runAcceptPendingAssignments,
   } = volunteerOperations;
   const getVolunteerAccessStore = () => {
-    if (process.env.AUTH_VOLUNTEER_PORTAL_ENABLED !== "true") return null;
+    const secret = process.env.AUTH_VOLUNTEER_PORTAL_SECRET;
+    if (secret && secret === process.env.AUTH_SESSION_SECRET) {
+      throw httpError(503, "Personal access requires its own dedicated security secret.");
+    }
     const days = process.env.AUTH_VOLUNTEER_ACCESS_DAYS;
     return createVolunteerPersonalAccess({
       db: requireFirestore(), memberCollection: COLLECTIONS.teamRosterMembers,
-      secret: process.env.AUTH_VOLUNTEER_PORTAL_SECRET,
+      secret,
       ttlMs: days ? Number(days) * 24 * 60 * 60 * 1000 : DEFAULT_VOLUNTEER_ACCESS_TTL_MS,
     });
   };
 
   const getVolunteerRecoveryStore = () => {
     const access = getVolunteerAccessStore();
-    if (!access) return null;
     return createVolunteerRecovery({
       db: requireFirestore(), access, secret: process.env.AUTH_VOLUNTEER_PORTAL_SECRET,
       memberCollection: COLLECTIONS.teamRosterMembers, consentCollection: COLLECTIONS.smsConsents,

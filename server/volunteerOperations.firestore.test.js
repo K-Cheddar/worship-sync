@@ -183,9 +183,7 @@ test("Firestore human availability operation shares the recipient transaction an
 });
 
 test("Firestore portal uses isolated cookies, CSRF and safe shared projections; revocation blocks reads and writes", { skip: !enabled }, async () => {
-  const previousEnabled = process.env.AUTH_VOLUNTEER_PORTAL_ENABLED;
   const previousSecret = process.env.AUTH_VOLUNTEER_PORTAL_SECRET;
-  process.env.AUTH_VOLUNTEER_PORTAL_ENABLED = "true";
   process.env.AUTH_VOLUNTEER_PORTAL_SECRET = "synthetic-portal-integration-test-secret-only";
   const app = initializeApp({ projectId: "demo-worshipsync" }, `portal-api-${randomUUID()}`);
   const db = getFirestore(app); setServerFirestoreForTests(db);
@@ -219,6 +217,31 @@ test("Firestore portal uses isolated cookies, CSRF and safe shared projections; 
     await seed(COLLECTIONS.servicePlans, `${scheduleId}_plan`, { planId: `${scheduleId}_plan`, churchId, serviceId: "service",
       date: "2099-11-01", name: "Service plan", published: true, publicLinkToken: "PRIVATE-TEAM-TOKEN",
       sections: [{ name: "Welcome", elements: [{ title: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Welcome" }] }] }, notes: "PRIVATE-PLAN-NOTE" }] }] });
+    const configuredSecret = process.env.AUTH_VOLUNTEER_PORTAL_SECRET;
+    const previousHumanSecret = process.env.AUTH_SESSION_SECRET;
+    process.env.AUTH_SESSION_SECRET = "synthetic-shared-secret-must-be-rejected";
+    for (const invalid of [undefined, "short", process.env.AUTH_SESSION_SECRET]) {
+      if (invalid === undefined) delete process.env.AUTH_VOLUNTEER_PORTAL_SECRET;
+      else process.env.AUTH_VOLUNTEER_PORTAL_SECRET = invalid;
+      const failed = res(); await authHandlers.prepareVolunteerPersonalAccess(req(humanHeaders), failed);
+      assert.equal(failed.statusCode, 503);
+      assert.equal(failed.payload.url, undefined);
+      const publicFailure = res(); await authHandlers.getVolunteerPersonalSession(req(), publicFailure);
+      assert.equal(publicFailure.statusCode, 503);
+    }
+    if (previousHumanSecret === undefined) delete process.env.AUTH_SESSION_SECRET;
+    else process.env.AUTH_SESSION_SECRET = previousHumanSecret;
+    process.env.AUTH_VOLUNTEER_PORTAL_SECRET = configuredSecret;
+    for (const invalid of ["0", "not-a-number"]) {
+      process.env.AUTH_VOLUNTEER_ACCESS_DAYS = invalid;
+      const failed = res(); await authHandlers.prepareVolunteerPersonalAccess(req(humanHeaders), failed);
+      assert.equal(failed.statusCode, 503);
+    }
+    delete process.env.AUTH_VOLUNTEER_ACCESS_DAYS;
+    const status = res(); await authHandlers.getVolunteerPersonalAccessStatus(req(humanHeaders), status);
+    assert.equal(status.statusCode, 200);
+    assert.equal(status.payload.status, "none");
+    assert.equal(Object.hasOwn(status.payload, "enabled"), false);
     const prepared = res(); await authHandlers.prepareVolunteerPersonalAccess(req(humanHeaders), prepared);
     assert.equal(prepared.statusCode, 200, JSON.stringify(prepared.payload));
     const token = new URL(prepared.payload.url).hash.slice(1);
@@ -312,7 +335,6 @@ test("Firestore portal uses isolated cookies, CSRF and safe shared projections; 
     }
     await Promise.all(refs.map((ref) => ref.delete()));
     setServerFirestoreForTests(null); await db.terminate(); await deleteApp(app);
-    if (previousEnabled === undefined) delete process.env.AUTH_VOLUNTEER_PORTAL_ENABLED; else process.env.AUTH_VOLUNTEER_PORTAL_ENABLED = previousEnabled;
     if (previousSecret === undefined) delete process.env.AUTH_VOLUNTEER_PORTAL_SECRET; else process.env.AUTH_VOLUNTEER_PORTAL_SECRET = previousSecret;
   }
 });

@@ -26,7 +26,7 @@ const mockRecordMemberSmsConsent = jest.fn(async (..._args: unknown[]) => ({ suc
 jest.mock("../../../api/auth", () => ({
   AuthApiError: class MockAuthApiError extends Error {},
   archiveTeamRosterMember: jest.fn(),
-  manageVolunteerPersonalAccess: jest.fn().mockResolvedValue({ success: true, enabled: false }),
+  manageVolunteerPersonalAccess: jest.fn().mockResolvedValue({ success: true, status: "none" }),
   createTeamRosterMember: (...args: unknown[]) =>
     mockCreateTeamRosterMember(...args),
   deleteTeamRosterMember: jest.fn(),
@@ -1775,4 +1775,12 @@ describe("MemberManager admin-only linking controls", () => {
       screen.getByRole("button", { name: /This is me/i }),
     ).toBeInTheDocument();
   });
+});
+
+it("administrators can reach personal link management from the existing member editor", async () => {
+  const user = userEvent.setup();
+  renderManager({ role: "admin", data: buildData({ members: [worshipMember] }) });
+  await openMember(user, /Rae Kim/);
+  await user.click(await screen.findByText("Personal My Schedule access"));
+  expect(await screen.findByRole("button", { name: "Prepare personal link" })).toBeEnabled();
 });

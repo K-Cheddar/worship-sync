@@ -30,9 +30,11 @@ export const openVolunteerSession = async () => {
       clearVolunteerIngress(); return result;
     }).catch((error: unknown) => {
       redemption = undefined;
-      if (error instanceof VolunteerApiError && error.status !== 410) clearVolunteerIngress();
+      // A temporary failure (including a lost successful response) must
+      // retain the still-usable ingress in memory for an explicit retry.
+      if (error instanceof VolunteerApiError && [400, 401, 403, 404].includes(error.status)) clearVolunteerIngress();
       throw error;
-    });
+    }).finally(() => { redemption = undefined; });
     await redemption;
   }
   return volunteerRequest<VolunteerSession>("session");

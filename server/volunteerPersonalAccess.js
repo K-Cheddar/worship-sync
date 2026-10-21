@@ -5,7 +5,7 @@ const TOKEN_PATTERN = /^v_[A-Za-z0-9_-]{32}$/;
 const SESSION_PATTERN = /^vs_[A-Za-z0-9_-]{32}$/;
 const randomToken = (prefix) => `${prefix}${crypto.randomBytes(24).toString("base64url")}`;
 
-// Server-only credential storage. Route activation uses the explicit portal gate.
+// Server-only credential storage; missing security configuration fails closed.
 export const createVolunteerPersonalAccess = ({
   db, memberCollection, secret,
   collections = {
@@ -16,9 +16,9 @@ export const createVolunteerPersonalAccess = ({
   now = Date.now,
 }) => {
   if (!db || typeof secret !== "string" || secret.length < 32) {
-    throw new Error("Personal access requires Firestore and a dedicated secret of at least 32 characters.");
+    throw Object.assign(new Error("Personal access requires Firestore and a dedicated secret of at least 32 characters."), { status: 503 });
   }
-  if (!Number.isSafeInteger(ttlMs) || ttlMs <= 0) throw new Error("Invalid personal access lifetime.");
+  if (!Number.isSafeInteger(ttlMs) || ttlMs <= 0) throw Object.assign(new Error("Invalid personal access lifetime."), { status: 503 });
   const digest = (purpose, value) => crypto.createHmac("sha256", secret)
     .update(`worshipsync/volunteer/v1/${purpose}:${value}`).digest("hex");
   const encryptionKey = crypto.createHash("sha256").update(`volunteer-credential-envelope:${secret}`).digest();

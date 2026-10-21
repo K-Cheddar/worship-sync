@@ -13,7 +13,7 @@ const equal = (first, second) => {
   return a.length > 0 && a.length === b.length && crypto.timingSafeEqual(a, b);
 };
 
-// The explicit portal gate controls activation. This adapter owns
+// Personal access is standard functionality. This adapter owns
 // authentication/transport only, never schedule rules.
 export const createVolunteerPortalHandlers = ({
   getAccessStore, getRecoveryStore, appBaseUrl, httpError, requireAdminSession, assertCsrf,
@@ -24,11 +24,7 @@ export const createVolunteerPortalHandlers = ({
   const assertOrigin = (req) => {
     if (req.headers?.origin !== origin) throw httpError(403, "Open My Schedule and try again.");
   };
-  const storeForRequest = () => {
-    const store = getAccessStore();
-    if (!store) throw httpError(404, "Personal access is not available yet. Contact your church administrator.");
-    return store;
-  };
+  const storeForRequest = () => getAccessStore();
   const handle = (operation) => async (req, res) => {
     res.set({ "Cache-Control": "no-store", Pragma: "no-cache", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff", "X-Robots-Tag": "noindex, nofollow, noarchive" });
     try {
@@ -91,11 +87,10 @@ export const createVolunteerPortalHandlers = ({
     getVolunteerPersonalAccessStatus: handle(async (req, res) => {
       await requireAdminSession(req, req.params.churchId);
       const store = getAccessStore();
-      if (!store) return res.json({ success: true, enabled: false });
       const identity = { churchId: req.params.churchId, memberId: req.params.memberId };
       const state = await store.readState(identity);
       const active = await store.current(identity);
-      return res.json({ success: true, enabled: true,
+      return res.json({ success: true,
         status: state?.revokedAt ? "revoked" : active ? "active" : state?.credentialDigest ? "expired" : "none",
         ...(active ? { expiresAt: active.expiresAt } : {}),
       });

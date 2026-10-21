@@ -209,6 +209,7 @@ export const createNotificationIntentHandlers = ({
     queryDocs(collection, [{ field: "churchId", value: churchId }, ...filters], { limit });
 
   const redactPersonalizedLinks = (message) => redactVolunteerSecrets(normalize(message)
+    .replace(/(?:https?:\/\/[^\s]+)?\/s\/?#[^\s]+/gi, "[private response link]")
     .replace(/(?:https?:\/\/[^\s]+)?\/a\/[^\s?#]+/gi, "[private response link]")
     .replace(/(?:https?:\/\/[^\s]+)?\/(?:schedule-response|teams\/intake)\/[^\s?#]+/gi, "[private response link]"));
 

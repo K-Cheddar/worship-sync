@@ -113,3 +113,72 @@ it.each([401, 403])("protects a conflicted draft through the public transport wh
   expect(screen.getByRole("button", { name: "Save time off" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Retry loading saved dates" })).toBeEnabled();
 });
+
+it.each([429, 503])("retries first-link redemption after temporary HTTP %s without losing the link", async (status) => {
+  const user = userEvent.setup();
+  const token = "synthetic-retry-credential";
+  window.history.replaceState({}, "", `/s#${token}`); scrubVolunteerIngress();
+  const normal = fetchMock.getMockImplementation()!;
+  let interrupted = true;
+  fetchMock.mockImplementation(async (path: string, options: RequestInit) => {
+    if (path.endsWith("/redeem") && interrupted) { interrupted = false;
+      return { ok: false, status, json: async () => ({ errorMessage: "Temporary failure" }) };
+    }
+    return normal(path, options);
+  });
+  render(<PublicApp />);
+  await user.click(await screen.findByRole("button", { name: "Retry opening My Schedule" }));
+  expect(await screen.findByRole("button", { name: /Open Sunday Gathering/i })).toBeInTheDocument();
+  expect(window.location.hash).toBe("");
+  const redemptions = fetchMock.mock.calls.filter(([path]) => String(path).endsWith("/redeem"));
+  expect(redemptions).toHaveLength(2);
+  expect(redemptions.every(([, options]) => JSON.parse(options.body).token === token)).toBe(true);
+});
+
+it("retries initial schedule loading through the dedicated personal session", async () => {
+  const user = userEvent.setup();
+  const normal = fetchMock.getMockImplementation()!;
+  let interrupted = true;
+  fetchMock.mockImplementation(async (path: string, options: RequestInit) => {
+    if (path.endsWith("/schedule") && interrupted) { interrupted = false;
+      return { ok: false, status: 503, json: async () => ({}) };
+    }
+    return normal(path, options);
+  });
+  render(<PublicApp />);
+  await user.click(await screen.findByRole("button", { name: "Retry My Schedule" }));
+  expect(await screen.findByRole("button", { name: /Open Sunday Gathering/i })).toBeInTheDocument();
+  expect(fetchMock.mock.calls.every(([path]) => String(path).startsWith("/api/volunteer/"))).toBe(true);
+});
+
+it("keeps self-service available when the volunteer has no assignments", async () => {
+  const user = userEvent.setup();
+  const normal = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (path: string, options: RequestInit) => {
+    if (path.endsWith("/schedule")) return { ok: true, status: 200, json: async () => ({ success: true,
+      member: { memberId: "member", updatedAt: "stamp", blockoutDates: [] }, occurrences: [] }) };
+    if (path.endsWith("/availability")) return { ok: true, status: 200, json: async () => ({ success: true, requests: [{
+      recipientId: "request", name: "Next month", respondedAt: "", availability: {}, availabilityMessage: "",
+      occurrences: [{ occurrenceId: "future", name: "Future service", startsAt: "2099-12-01T14:00:00Z" }],
+    }] }) };
+    return normal(path, options);
+  });
+  render(<PublicApp />);
+  expect(await screen.findByText("You are not scheduled for anything coming up.")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /Time off/i }));
+  expect(screen.getByRole("button", { name: /Add single day/i })).toBeEnabled();
+  await user.click(screen.getByText("Availability requests (1)"));
+  expect(screen.getByRole("combobox", { name: /Future service/i })).toBeInTheDocument();
+});
+
+it("gives personal guidance if the member disappears between session and schedule reads", async () => {
+  const normal = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (path: string, options: RequestInit) => {
+    if (path.endsWith("/schedule")) return { ok: true, status: 200,
+      json: async () => ({ success: true, member: null, occurrences: [] }) };
+    return normal(path, options);
+  });
+  render(<PublicApp />);
+  expect(await screen.findByText(/Your volunteer record is no longer available/)).toBeInTheDocument();
+  expect(screen.queryByText(/Your account is not linked/)).not.toBeInTheDocument();
+});

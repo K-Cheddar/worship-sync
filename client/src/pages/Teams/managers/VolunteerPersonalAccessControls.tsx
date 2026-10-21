@@ -9,7 +9,7 @@ import { showApiErrorToast } from "../../../utils/apiErrorToast";
 
 const VolunteerPersonalAccessControls = ({ churchId, memberId }: { churchId: string; memberId: string }) => {
   const { showToast } = useToast();
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState("loading");
   const [url, setUrl] = useState("");
   const [pending, setPending] = useState(false);
   const [channel, setChannel] = useState("email");
@@ -25,8 +25,8 @@ const VolunteerPersonalAccessControls = ({ churchId, memberId }: { churchId: str
   useEffect(() => {
     mounted.current = true;
     void manageVolunteerPersonalAccess(churchId, memberId, "status").then((result) => {
-      if (mounted.current && result.enabled) setStatus(result.status || "none");
-    }).catch(() => {});
+      if (mounted.current) setStatus(result.status || "none");
+    }).catch(() => { if (mounted.current) setStatus("unavailable"); });
     return () => { mounted.current = false; };
   }, [churchId, memberId]);
   const act = async (action: Parameters<typeof manageVolunteerPersonalAccess>[2]) => {
@@ -50,35 +50,49 @@ const VolunteerPersonalAccessControls = ({ churchId, memberId }: { churchId: str
         sessionStorage.removeItem(replacementStorageKey);
         replacementKey.current = "";
       }
+      if (action === "prepare") setMessage("Personal link ready. Copy it to share with the volunteer.");
+      if (action === "replace") setMessage("Personal link replaced. Previous links and sessions no longer work.");
       if (result.url) { setUrl(result.url); setStatus("active"); }
-      if (action === "revoke") { setStatus("revoked"); setUrl(""); }
-      if (action === "restore") { setStatus("none"); setUrl(""); }
+      if (action === "revoke") { setStatus("revoked"); setUrl(""); setMessage("Personal access turned off."); }
+      if (action === "restore") { setStatus("none"); setUrl(""); setMessage("Personal access restored. Prepare a new link for the volunteer."); }
       if (result.challengeId) { setChallenge(result.challengeId); setMessage("Ask the volunteer for the code sent to their saved contact. Shared contacts and phone numbers without SMS consent are not eligible."); }
       if (action === "verify-contact/complete") { setChallenge(""); setCode(""); requestKey.current = ""; completionKey.current = ""; setMessage("Recovery contact verified."); }
     } catch (error) { if (mounted.current) showApiErrorToast(showToast, error, "Could not update personal access."); }
     finally { busy.current = false; if (mounted.current) setPending(false); }
   };
-  if (!status) return null;
-  return <details className="rounded-lg border border-gray-700 p-3">
+  const copyLink = async () => {
+    if (busy.current) return;
+    busy.current = true; setPending(true);
+    try {
+      await navigator.clipboard.writeText(url);
+      if (mounted.current) showToast("Personal link copied.");
+    } catch {
+      if (mounted.current) showToast("Couldn't copy the personal link. Copy the link above.", "error");
+    } finally { busy.current = false; if (mounted.current) setPending(false); }
+  };
+  const unavailable = pending || status === "loading" || status === "unavailable";
+  return <details data-sentry-block="true" className="rounded-lg border border-gray-700 p-3">
     <summary className="cursor-pointer font-semibold">Personal My Schedule access</summary>
     <div className="mt-3 flex flex-col gap-3">
+      {status === "unavailable" ? <p role="alert" className="text-sm">Personal access is unavailable. Check the server configuration, then reopen this member.</p> : null}
       <p className="text-sm text-gray-300">Status: {status}. Replacing or turning off access invalidates previous links and sessions. Preparing a link does not send a message.</p>
       <div className="flex flex-wrap gap-2">
-        {status === "revoked" ? <Button disabled={pending} onClick={() => void act("restore")}>Restore personal access</Button> : <>
-          <Button disabled={pending} onClick={() => void act("prepare")}>Prepare personal link</Button>
-          <Button variant="secondary" disabled={pending} onClick={() => void act("replace")}>Replace personal link</Button>
-          <Button variant="secondary" disabled={pending} onClick={() => void act("revoke")}>Turn off personal access</Button>
+        {status === "revoked" ? <Button disabled={unavailable} onClick={() => void act("restore")}>Restore personal access</Button> : <>
+          <Button disabled={unavailable} onClick={() => void act("prepare")}>Prepare personal link</Button>
+          <Button variant="secondary" disabled={unavailable} onClick={() => void act("replace")}>Replace personal link</Button>
+          <Button variant="secondary" disabled={unavailable} onClick={() => void act("revoke")}>Turn off personal access</Button>
         </>}
       </div>
-      {url ? <a className="break-all text-sm text-orange-300 underline" href={url} target="_blank" rel="noopener noreferrer">{url}</a> : null}
+      {url ? <><a className="break-all text-sm text-orange-300 underline" href={url} target="_blank" rel="noopener noreferrer">{url}</a>
+        <Button variant="secondary" disabled={pending} onClick={() => void copyLink()}>Copy personal link</Button></> : null}
       {status !== "revoked" ? <>
         <Select label="Recovery contact" value={channel} options={[{ value: "email", label: "Saved email" }, { value: "sms", label: "Saved mobile number" }]}
           onChange={(value) => { setChannel(value); setChallenge(""); requestKey.current = ""; completionKey.current = ""; }} />
         {challenge ? <>
           <Input label="Contact verification code" value={code} onChange={(value) => setCode(String(value))} />
-          <Button disabled={pending || !code} onClick={() => void act("verify-contact/complete")}>Verify recovery contact</Button>
-          <Button variant="secondary" disabled={pending} onClick={() => { setChallenge(""); requestKey.current = ""; completionKey.current = ""; }}>Request another code</Button>
-        </> : <Button variant="secondary" disabled={pending} onClick={() => void act("verify-contact/start")}>Send contact verification code</Button>}
+          <Button disabled={unavailable || !code} onClick={() => void act("verify-contact/complete")}>Verify recovery contact</Button>
+          <Button variant="secondary" disabled={unavailable} onClick={() => { setChallenge(""); requestKey.current = ""; completionKey.current = ""; }}>Request another code</Button>
+        </> : <Button variant="secondary" disabled={unavailable} onClick={() => void act("verify-contact/start")}>Send contact verification code</Button>}
       </> : null}
       {pending ? <p role="status" className="text-sm">Updating personal access…</p> : null}
       {message ? <p role="status" className="text-sm text-gray-300">{message}</p> : null}

@@ -1,5 +1,7 @@
 # Shared volunteer bulk response review
 
+> Historical implementation record. The October 21 standard-feature decision supersedes portal activation restrictions in this record. Personal access now has no feature gate; see [current contract](features/volunteer-my-schedule.md) and [deployment prerequisites](volunteer-portal-deployment.md).
+
 Scope: workflow review of the fix from `2dbb4e6` on `in-progress-2`, including both HTTP identities, shared bulk decisions, transaction authorization, post-commit effects, pagination, React lifetime and retry behavior. This is not a deployment or branch-wide production-readiness review.
 
 ## Findings

@@ -14,7 +14,7 @@ afterEach(() => { sessionStorage.clear(); });
 
 it("retains the replacement request after lost success and retires it only after confirmation", async () => {
   const api = jest.mocked(manageVolunteerPersonalAccess);
-  api.mockResolvedValueOnce({ success: true, enabled: true, status: "active" });
+  api.mockResolvedValueOnce({ success: true, status: "active" });
   jest.mocked(volunteerRequestKey).mockReturnValueOnce("replacement-request-one")
     .mockReturnValueOnce("unused-contact-completion-key").mockReturnValueOnce("replacement-request-two");
   const user = userEvent.setup();
@@ -39,7 +39,7 @@ it("retains the replacement request after lost success and retires it only after
 
 it("reuses the persisted non-secret operation ID after the editor reloads", async () => {
   const api = jest.mocked(manageVolunteerPersonalAccess);
-  api.mockResolvedValueOnce({ success: true, enabled: true, status: "active" });
+  api.mockResolvedValueOnce({ success: true, status: "active" });
   jest.mocked(volunteerRequestKey).mockReturnValueOnce("replacement-reload-key")
     .mockReturnValueOnce("first-completion-key").mockReturnValueOnce("second-completion-key");
   const user = userEvent.setup();
@@ -49,7 +49,7 @@ it("reuses the persisted non-secret operation ID after the editor reloads", asyn
   await user.click(screen.getByRole("button", { name: "Replace personal link" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Replace personal link" })).toBeEnabled());
   view.unmount();
-  api.mockResolvedValueOnce({ success: true, enabled: true, status: "active" });
+  api.mockResolvedValueOnce({ success: true, status: "active" });
   render(<VolunteerPersonalAccessControls churchId="church" memberId="member" />);
   await user.click(await screen.findByText("Personal My Schedule access"));
   api.mockResolvedValueOnce({ success: true });
@@ -66,7 +66,7 @@ it("reuses the persisted non-secret operation ID after the editor reloads", asyn
 
 it("does not send a replacement when its retry ID cannot be retained", async () => {
   const api = jest.mocked(manageVolunteerPersonalAccess);
-  api.mockResolvedValueOnce({ success: true, enabled: true, status: "active" });
+  api.mockResolvedValueOnce({ success: true, status: "active" });
   jest.mocked(volunteerRequestKey).mockReturnValueOnce("unsent-key").mockReturnValueOnce("retained-key")
     .mockReturnValueOnce("completion-key");
   const user = userEvent.setup();
@@ -81,4 +81,29 @@ it("does not send a replacement when its retry ID cannot be retained", async () 
     await user.click(screen.getByRole("button", { name: "Replace personal link" }));
     expect(api).toHaveBeenLastCalledWith("church", "member", "replace", expect.objectContaining({ requestKey: "retained-key" }));
   } finally { storage.mockRestore(); }
+});
+
+it("prepares and copies a reusable personal link without activation metadata", async () => {
+  const user = userEvent.setup();
+  const api = jest.mocked(manageVolunteerPersonalAccess);
+  api.mockResolvedValueOnce({ success: true, status: "none" })
+    .mockResolvedValueOnce({ success: true, url: "https://example.test/s#synthetic-personal" });
+  render(<VolunteerPersonalAccessControls churchId="church" memberId="member" />);
+  await user.click(screen.getByText("Personal My Schedule access"));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Prepare personal link" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "Prepare personal link" }));
+  await user.click(await screen.findByRole("button", { name: "Copy personal link" }));
+  expect(await navigator.clipboard.readText()).toBe("https://example.test/s#synthetic-personal");
+  expect(screen.getByRole("group"))
+    .toHaveAttribute("data-sentry-block", "true");
+  expect(api.mock.calls.map((call) => call[2])).toEqual(["status", "prepare"]);
+});
+
+it("keeps configuration failures visible instead of hiding administrator controls", async () => {
+  jest.mocked(manageVolunteerPersonalAccess).mockRejectedValueOnce(new Error("Missing security configuration"));
+  const user = userEvent.setup();
+  render(<VolunteerPersonalAccessControls churchId="church" memberId="member" />);
+  await user.click(screen.getByText("Personal My Schedule access"));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Check the server configuration");
+  expect(screen.getByRole("button", { name: "Prepare personal link" })).toBeDisabled();
 });

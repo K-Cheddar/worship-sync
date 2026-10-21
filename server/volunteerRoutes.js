@@ -27,7 +27,7 @@ export const registerVolunteerRoutes = (app, authHandlers) => {
     "/api/churches/:churchId/my-availability",
     authHandlers.submitMyVolunteerAvailability,
   );
-  // The handler gate defaults to disabled until the complete portal is verified.
+  // Personal access uses isolated sessions and the public bootstrap.
   app.use("/s", (_req, res, next) => {
     res.set({ "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" });
     next();

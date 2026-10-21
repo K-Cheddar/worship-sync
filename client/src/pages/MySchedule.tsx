@@ -763,7 +763,8 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
   }), [access, churchId]);
   /** Changes the unlinked message: an admin can fix this themselves. */
   const isChurchAdmin = !access && context?.role === "admin";
-  const churchName = access?.churchName || context?.churchName || "";
+  const [personalChurchName, setPersonalChurchName] = useState("");
+  const churchName = access?.churchName || personalChurchName || context?.churchName || "";
   const [occurrences, setOccurrences] = useState<MyScheduleOccurrence[]>([]);
   const [serviceTimeZone, setServiceTimeZone] = useState("UTC");
   const [hasMemberRecord, setHasMemberRecord] = useState(true);
@@ -781,6 +782,8 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
   const [status, setStatus] = useState<"loading" | "ready" | "error">(
     "loading",
   );
+
+  const [scheduleError, setScheduleError] = useState("");
 
   const mountedRef = useRef(true);
   /** Drops a response that a newer request has already superseded. */
@@ -819,6 +822,8 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
             throw new Error("Could not refresh saved dates. Your draft is kept. Try again.");
           }
           setSavedDatesLoad({ status: "ready" });
+          setScheduleError("");
+          if (access) setPersonalChurchName(result.churchName || "");
           setOccurrences(result.occurrences || []);
           setServiceTimeZone(result.serviceTimeZone || "UTC");
           setHasMemberRecord(Boolean(result.member));
@@ -836,6 +841,12 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
             ? getApiErrorMessage(error, "Your access is no longer available. Ask an admin for help.")
             : undefined;
           setSavedDatesLoad({ status: "failed", accessMessage });
+          const personalAccessMessage = access && accessMessage
+            ? "Could not confirm personal access. Open your personal link again, or ask your church administrator for help."
+            : accessMessage;
+          setScheduleError(personalAccessMessage || (showLoading
+            ? "Could not load your schedule. Try again."
+            : "Could not refresh your schedule. Try again."));
           // A background refresh that fails leaves the page as it is. Replacing
           // a working schedule with an error because a resume failed is worse
           // than showing data that is a few minutes old.
@@ -843,7 +854,7 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
           return null;
         });
     },
-    [churchId, operations],
+    [access, churchId, operations],
   );
 
   useEffect(() => {
@@ -1211,6 +1222,10 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
     teamFilter !== ALL_TEAMS ||
     serviceFilter !== ALL_SERVICES;
 
+  const unlinkedMessage = access
+    ? "Your volunteer record is no longer available. Open your personal link again, or contact your church administrator."
+    : "Your account is not linked to anyone on a team yet. Ask an admin to link you.";
+
   const copyLink = async (url: string, label: string) => {
     try {
       await navigator.clipboard?.writeText(url);
@@ -1235,10 +1250,13 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
           <p className="text-sm text-gray-300">Loading your schedule…</p>
         ) : null}
 
-        {status === "error" ? (
-          <p className="text-sm text-red-400">
-            Could not load your schedule. Refresh to try again.
-          </p>
+        {scheduleError ? (
+          <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-red-400">
+            <p>{scheduleError}</p>
+            <Button variant="secondary" disabled={savedDatesLoad.status === "pending"}
+              isLoading={savedDatesLoad.status === "pending"}
+              onClick={() => void load({ showLoading: status === "error" })}>Retry My Schedule</Button>
+          </div>
         ) : null}
 
         {status === "ready" && !hasMemberRecord ? (
@@ -1248,7 +1266,7 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
           <p className="text-sm text-gray-300">
             {isChurchAdmin
               ? "You are not on any team's roster yet. Link your account to a member in Teams → Members."
-              : "Your account is not linked to anyone on a team yet. Ask an admin to link you."}
+              : unlinkedMessage}
           </p>
         ) : null}
 

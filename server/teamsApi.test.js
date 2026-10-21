@@ -56,6 +56,7 @@ const {
   setSendEmailForServerTests,
   setAuthReadObserverForServerTests,
   setDoc,
+  setServerFirestoreForTests,
 } = await import("../authService.js");
 import { createAppSessionGuards } from "./appSessionGuards.js";
 import {
@@ -12863,6 +12864,25 @@ test("Phase 3B schedule messaging uses current Team ownership through production
 
 test("Phase 3C schedule SMS review uses current Team access and never sends", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
+  // Initial messages now require actual personal credential persistence. Keep
+  // this full authorization/review regression on the real emulator boundary.
+  if (!process.env.FIRESTORE_EMULATOR_HOST) { t.skip("Requires Firestore emulator for personal links"); return; }
+  const { initializeApp, deleteApp } = await import("firebase-admin/app");
+  const { getFirestore } = await import("firebase-admin/firestore");
+  const projectId = `demo-portal-sms-${Date.now().toString(36)}`;
+  const app = initializeApp({ projectId }, projectId);
+  const db = getFirestore(app);
+  const previousSecret = process.env.AUTH_VOLUNTEER_PORTAL_SECRET;
+  process.env.AUTH_VOLUNTEER_PORTAL_SECRET = "synthetic-schedule-review-portal-secret-only";
+  setServerFirestoreForTests(db);
+  t.after(async () => {
+    setServerFirestoreForTests(null);
+    if (previousSecret === undefined) delete process.env.AUTH_VOLUNTEER_PORTAL_SECRET;
+    else process.env.AUTH_VOLUNTEER_PORTAL_SECRET = previousSecret;
+    // This uniquely named emulator project contains only this synthetic fixture.
+    for (const collection of await db.listCollections()) await db.recursiveDelete(collection);
+    await db.terminate(); await deleteApp(app);
+  });
   const admin = await createAdminContext("phase3c");
   const assigned = await seedAssignedSchedule(admin, "phase3c", { link: false });
   const extraMembers = [
@@ -12988,13 +13008,15 @@ test("Phase 3C schedule SMS review uses current Team access and never sends", as
     assert.equal(prepared.payload.batch.recipients.length, 1);
     assert.equal(prepared.payload.batch.recipients[0].eligible, true);
     assert.equal(prepared.payload.batch.recipients[0].phoneNumberSnapshot, phoneNumber);
-    assert.match(prepared.payload.batch.recipients[0].message, /schedule-response\/[A-Za-z0-9_-]{10}/);
+    assert.match(prepared.payload.batch.recipients[0].message, /\/s#\[personal-access-redacted\]/);
     assert.equal(fake.calls.length, 0, "Preparing schedule messages makes no SMS provider call");
 
     const batchId = prepared.payload.batch.batchId;
     const intentId = prepared.payload.batch.recipients[0].intentId;
     const currentIntent = await getDoc("notificationIntents", intentId);
     assert.ok(currentIntent.approvalSnapshot, "the administrator-prepared batch initially has an approval snapshot");
+    assert.match(currentIntent.approvalSnapshot.responseUrl, /\/s#v_[A-Za-z0-9_-]{32}/);
+    assert.ok(currentIntent.message.includes(currentIntent.approvalSnapshot.responseUrl));
     await setDoc("notificationIntents", intentId, { approvalSnapshot: null }, { merge: true });
     const detail = await callHandler(authHandlers.getAvailabilityBatch, {
       context: manager,
@@ -13003,10 +13025,10 @@ test("Phase 3C schedule SMS review uses current Team access and never sends", as
     assert.equal(detail.statusCode, 200);
     assert.equal(detail.payload.privacySafe, true);
     assert.equal(detail.payload.batch.recipients[0].phoneNumberSnapshot, undefined);
-    assert.doesNotMatch(detail.payload.batch.recipients[0].message, /schedule-response\/[A-Za-z0-9_-]{10}/);
+    assert.doesNotMatch(detail.payload.batch.recipients[0].message, /\/s#v_[A-Za-z0-9_-]{32}/);
     assert.match(detail.payload.batch.recipients[0].message, /\[private response link\]/);
     assert.doesNotMatch(JSON.stringify(detail.payload.batch), /\+19545551333/);
-    assert.doesNotMatch(JSON.stringify(detail.payload.batch), /schedule-response\/[A-Za-z0-9_-]{10}/);
+    assert.doesNotMatch(JSON.stringify(detail.payload.batch), /\/s#v_[A-Za-z0-9_-]{32}/);
     const scopedPrepared = await callHandler(authHandlers.prepareScheduleInitialSmsBatch, {
       context: manager,
       params: { scheduleId: assigned.scheduleId },
@@ -13015,7 +13037,7 @@ test("Phase 3C schedule SMS review uses current Team access and never sends", as
     assert.equal(scopedPrepared.statusCode, 200, JSON.stringify(scopedPrepared.payload));
     assert.equal(scopedPrepared.payload.privacySafe, true);
     assert.equal(scopedPrepared.payload.batch.recipients[0].phoneNumberSnapshot, undefined);
-    assert.doesNotMatch(scopedPrepared.payload.batch.recipients[0].message, /schedule-response\/[A-Za-z0-9_-]{10}/);
+    assert.doesNotMatch(scopedPrepared.payload.batch.recipients[0].message, /\/s#v_[A-Za-z0-9_-]{32}/);
     const batchVersion = scopedPrepared.payload.batch.approvalVersion;
     assert.ok([403, 404].includes((await callHandler(authHandlers.getAvailabilityBatch, {
       context: unrelatedManager,

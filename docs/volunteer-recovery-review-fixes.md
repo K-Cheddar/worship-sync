@@ -40,7 +40,7 @@ First reproduce stale-proof and duplicate-link failures. Run recovery, contact-i
 
 ## Deployment procedure
 
-Deploy the updated contact writers to every server before activating coverage. Stop old server processes and upgrade any external/direct roster writers first. Keep `AUTH_VOLUNTEER_PORTAL_SECRET` consistent across those writers and recovery. The index is maintained even when the portal feature gate is disabled.
+Deploy the updated contact writers to every server before activating coverage. Stop old server processes and upgrade any external/direct roster writers first. Keep `AUTH_VOLUNTEER_PORTAL_SECRET` consistent across those writers and recovery. The index is maintained for standard personal access; there is no portal feature gate.
 
 For each church, run `node scripts/backfill-volunteer-contact-index.js --church=<churchId>` using the normal server Firestore configuration. The command disables indexed reads, backfills fresh transactional snapshots, then audits all records before enabling reads. It reports member, incomplete-row and collided-key counts without contact values. Collisions remain in the index and block recovery for that contact; administrators must resolve the roster ownership explicitly.
 

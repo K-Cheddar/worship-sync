@@ -2182,7 +2182,7 @@ export const submitMyVolunteerAvailability = (churchId: string, recipientId: str
 
 export const manageVolunteerPersonalAccess = (churchId: string, memberId: string,
   action: "status" | "prepare" | "replace" | "revoke" | "restore" | "verify-contact/start" | "verify-contact/complete", body: unknown = {}) => apiFetch<{
-    success: boolean; enabled?: boolean; status?: string; expiresAt?: number; url?: string; challengeId?: string;
+    success: boolean; status?: string; expiresAt?: number; url?: string; challengeId?: string;
   }>(`api/churches/${churchId}/team-roster-members/${memberId}/personal-access/${action}`,
     action === "status" ? {} : { method: "POST", body: JSON.stringify(body) });
 
