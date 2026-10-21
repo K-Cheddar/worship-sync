@@ -35,7 +35,7 @@ import {
   acceptPendingMyAssignments,
   getMyTeamAssignments,
   getMyVolunteerAvailability,
-  submitMyVolunteerAvailability,
+  submitMyVolunteerAvailabilityOccurrence,
   updateMyBlockoutDates,
   respondToMyAssignment,
   type MyScheduleOccurrence,
@@ -46,8 +46,16 @@ import {
   buildMyScheduleExportModelForOccurrences,
 } from "./buildMyScheduleExportModel";
 import MyScheduleBlockouts, { type SavedDatesLoadState } from "./MyScheduleBlockouts";
-import MyScheduleAvailability from "./MyScheduleAvailability";
 import type { MyScheduleMember, MyScheduleOperations, PersonalScheduleAccess } from "./myScheduleOperations";
+import {
+  buildMyScheduleTimeline,
+  groupMyScheduleByMonth,
+  groupMyScheduleByService,
+  myScheduleOccurrenceDate,
+  myScheduleServiceGroupKey,
+  type MyScheduleTimelineOccurrence,
+  type TimelineAvailabilityRequest,
+} from "./myScheduleTimeline";
 import MyScheduleServicePlanPanel from "./MyScheduleServicePlanPanel";
 import {
   findBlockoutRangeForDate,
@@ -77,9 +85,9 @@ import { isOccurrenceToday } from "../utils/teamScheduleOccurrences";
  * Schedule and service plan tabs reuse the public schedule table and public
  * service plan chrome.
  *
- * Members can change two things here, both via self-scoped writes: their own
- * time off, and accepting or declining an assignment. Emailed response links
- * arrive with the dispatch work and write through the same endpoint.
+ * Volunteers can change their own time off, assignment responses, and requested
+ * service availability through self-scoped writes. Emailed assignment response
+ * links keep using the same response endpoint.
  */
 
 const ALL_TEAMS = "__all_teams__";
@@ -135,10 +143,16 @@ const hasDatedStartsAt = (occurrence: MyScheduleOccurrence): boolean =>
   Number.isFinite(Date.parse(occurrence.startsAt));
 
 const getOccurrenceTileParts = (
-  occurrence: MyScheduleOccurrence,
+  occurrence: Pick<MyScheduleOccurrence, "date" | "startsAt"> & {
+    availabilityRequests?: TimelineAvailabilityRequest[];
+  },
   timeZone: string,
 ): OccurrenceTileParts => {
-  const date = new Date(occurrence.startsAt);
+  const calendarDate = myScheduleOccurrenceDate(occurrence, timeZone);
+  const savedDate = /^\d{4}-\d{2}-\d{2}$/.test(calendarDate)
+    ? new Date(`${calendarDate}T12:00:00.000Z`)
+    : null;
+  const date = savedDate || new Date(occurrence.startsAt);
   if (Number.isNaN(date.getTime())) {
     return {
       weekday: "—",
@@ -148,9 +162,10 @@ const getOccurrenceTileParts = (
       label: "Date not set",
     };
   }
-  const weekday = date.toLocaleString(undefined, { timeZone, weekday: "short" });
-  const month = date.toLocaleString(undefined, { timeZone, month: "short" });
-  const day = date.toLocaleString(undefined, { timeZone, day: "numeric" });
+  const calendarTimeZone = savedDate ? "UTC" : timeZone;
+  const weekday = date.toLocaleString(undefined, { timeZone: calendarTimeZone, weekday: "short" });
+  const month = date.toLocaleString(undefined, { timeZone: calendarTimeZone, month: "short" });
+  const day = date.toLocaleString(undefined, { timeZone: calendarTimeZone, day: "numeric" });
   const time = date.toLocaleString(undefined, {
     timeZone,
     hour: "numeric",
@@ -185,18 +200,17 @@ type AssignmentResponse = "pending" | "accepted" | "declined";
 
 const RESPONSE_CHIP: Record<
   Exclude<AssignmentResponse, "pending">,
-  { label: string; className: string }
+  { label: string; className: string; icon: typeof Check }
 > = {
   accepted: {
-    label: "You accepted",
-    className: "border-emerald-500/40 bg-emerald-500/10 text-emerald-200",
+    label: "Accepted",
+    className: "bg-emerald-500/10 text-emerald-200",
+    icon: Check,
   },
   declined: {
-    // Red, matching the grid's decline marker. Amber is taken here: it already
-    // means "blocked out" both on this page and on the owner's cells, and the
-    // same colour for two different facts is worse than a strong one.
-    label: "You declined",
-    className: "border-red-500/40 bg-red-500/10 text-red-200",
+    label: "Declined",
+    className: "bg-red-500/10 text-red-200",
+    icon: X,
   },
 };
 
@@ -215,10 +229,14 @@ const RESPONSE_CHIP: Record<
 const AssignmentResponseRow = ({
   slot,
   disabled,
+  isPast = false,
+  isSaving = false,
   onRespond,
 }: {
   slot: MyScheduleServing;
   disabled: boolean;
+  isPast?: boolean;
+  isSaving?: boolean;
   onRespond: (
     slot: MyScheduleServing,
     response: "accepted" | "declined",
@@ -229,9 +247,7 @@ const AssignmentResponseRow = ({
   const chip = answered ? RESPONSE_CHIP[response] : null;
   const role = [slot.positionName, slot.teamName].filter(Boolean).join(" · ");
   const [changing, setChanging] = useState(false);
-  // A fresh answer collapses the row back to its confirmed state rather than
-  // leaving the picker open over a decision already made.
-  const showChoices = !answered || changing;
+  const showChoices = (!answered && !isPast) || changing;
 
   const choose = (next: "accepted" | "declined") => {
     setChanging(false);
@@ -239,69 +255,150 @@ const AssignmentResponseRow = ({
   };
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-700/80 bg-gray-900/50 px-3 py-2">
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <span className="truncate text-sm font-medium text-orange-300">
-          {role || "Your slot"}
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-gray-950/45 px-2.5 py-2">
+      <div className="flex min-w-0 flex-col gap-1">
+        <span className="truncate text-sm font-semibold text-orange-200" title={role}>
+          {role || "Your assignment"}
         </span>
         {chip ? (
-          <span
-            className={cn(
-              "shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium",
-              chip.className,
-            )}
-          >
+          <span className={cn("inline-flex w-fit items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium", chip.className)}>
+            <Icon svg={chip.icon} size="xs" />
             {chip.label}
           </span>
         ) : (
-          <span className="shrink-0 text-xs text-gray-400">
-            Needs your response
+          <span className="text-xs text-gray-400">
+            {isPast ? "No response recorded" : "Needs your response"}
           </span>
         )}
       </div>
-      {showChoices ? (
-        <ButtonGroup className="shrink-0 border-gray-500" display="flex">
-          <ButtonGroupItem
+      {isSaving ? (
+        <span role="status" className="text-xs text-gray-300">Saving response…</span>
+      ) : showChoices ? (
+        <div className="flex w-full gap-2 sm:w-auto">
+          <Button
             type="button"
-            variant="primary"
-            iconSize="sm"
+            variant="none"
             svg={Check}
-            color="#6ee7b7"
-            className="max-md:min-h-0"
+            iconSize="sm"
+            className="min-h-10 flex-1 justify-center rounded-md bg-emerald-700 px-3 text-sm font-semibold text-white hover:bg-emerald-600 sm:flex-none"
             disabled={disabled}
-            isSelected={response === "accepted"}
             aria-label={`Accept ${role || "this assignment"}`}
             onClick={() => choose("accepted")}
           >
             Accept
-          </ButtonGroupItem>
-          <ButtonGroupItem
+          </Button>
+          <Button
             type="button"
-            variant="primary"
-            iconSize="sm"
+            variant="none"
             svg={X}
-            color="#fca5a5"
-            className="max-md:min-h-0"
+            iconSize="sm"
+            className="min-h-10 flex-1 justify-center rounded-md bg-red-800 px-3 text-sm font-semibold text-white hover:bg-red-700 sm:flex-none"
             disabled={disabled}
-            isSelected={response === "declined"}
             aria-label={`Decline ${role || "this assignment"}`}
             onClick={() => choose("declined")}
           >
             Decline
-          </ButtonGroupItem>
-        </ButtonGroup>
-      ) : (
+          </Button>
+        </div>
+      ) : answered && !isPast ? (
         <Button
           type="button"
-          variant="tertiary"
-          className="shrink-0 text-xs text-gray-300 underline underline-offset-2 hover:text-white max-md:min-h-0"
+          variant="textLink"
+          className="shrink-0 text-xs text-gray-300 underline underline-offset-2 hover:text-white"
           disabled={disabled}
           aria-label={`Change your response for ${role || "this assignment"}`}
           onClick={() => setChanging(true)}
         >
           Change response
         </Button>
+      ) : null}
+    </div>
+  );
+};
+
+const AvailabilityResponseRow = ({
+  request,
+  occurrenceId,
+  disabled,
+  isSaving,
+  onRespond,
+}: {
+  request: TimelineAvailabilityRequest;
+  occurrenceId: string;
+  disabled: boolean;
+  isSaving: boolean;
+  onRespond: (request: TimelineAvailabilityRequest, response: "available" | "unavailable") => void;
+}) => {
+  const [changing, setChanging] = useState(false);
+  const answered = Boolean(request.response);
+  const showChoices = !answered || changing;
+  const choose = (response: "available" | "unavailable") => {
+    setChanging(false);
+    onRespond(request, response);
+  };
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-gray-950/45 px-2.5 py-2">
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Availability requested</span>
+        <span className="truncate text-xs text-gray-300" title={request.availabilityMessage || request.name}>
+          {request.name}
+        </span>
+        {request.availabilityMessage ? (
+          <span className="line-clamp-2 text-xs text-gray-400">{request.availabilityMessage}</span>
+        ) : null}
+        {request.response ? (
+          <span className={cn(
+            "inline-flex w-fit items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium",
+            request.response === "available" ? "bg-emerald-500/10 text-emerald-200" : "bg-red-500/10 text-red-200",
+          )}>
+            <Icon svg={request.response === "available" ? Check : X} size="xs" />
+            {request.response === "available" ? "Available" : "Unavailable"}
+          </span>
+        ) : null}
+      </div>
+      {isSaving ? (
+        <span role="status" className="text-xs text-gray-300">Saving availability…</span>
+      ) : showChoices ? (
+        <div className="flex w-full gap-2 sm:w-auto">
+          <Button
+            type="button"
+            variant="none"
+            svg={Check}
+            iconSize="sm"
+            className="min-h-10 flex-1 justify-center rounded-md bg-emerald-700 px-3 text-sm font-semibold text-white hover:bg-emerald-600 sm:flex-none"
+            disabled={disabled}
+            aria-label={`Mark availability as available for ${request.occurrence.name}`}
+            onClick={() => choose("available")}
+          >
+            Available
+          </Button>
+          <Button
+            type="button"
+            variant="none"
+            svg={X}
+            iconSize="sm"
+            className="min-h-10 flex-1 justify-center rounded-md bg-red-800 px-3 text-sm font-semibold text-white hover:bg-red-700 sm:flex-none"
+            disabled={disabled}
+            aria-label={`Mark availability as unavailable for ${request.occurrence.name}`}
+            onClick={() => choose("unavailable")}
+          >
+            Unavailable
+          </Button>
+        </div>
+      ) : (
+        <Button
+          type="button"
+          variant="textLink"
+          className="shrink-0 text-xs text-gray-300 underline underline-offset-2 hover:text-white"
+          disabled={disabled}
+          aria-label={`Change availability for ${request.name}`}
+          onClick={() => setChanging(true)}
+        >
+          Change
+        </Button>
       )}
+      <span className="sr-only">Request for occurrence {occurrenceId}</span>
     </div>
   );
 };
@@ -349,13 +446,18 @@ const ShareViewActions = ({
 );
 
 type OccurrenceTileProps = {
-  occurrence: MyScheduleOccurrence;
+  occurrence: MyScheduleTimelineOccurrence;
   timeZone: string;
   isNextUpcoming: boolean;
   isPast: boolean;
   /** True when this date falls inside one of the member's own blockouts. */
   isBlockedOut: boolean;
   onOpen: () => void;
+  respondingKeys: Set<string>;
+  acceptingPending: boolean;
+  availabilityRespondingKeys: Set<string>;
+  onRespond: (occurrenceId: string, slot: MyScheduleServing, response: "accepted" | "declined") => void;
+  onAvailabilityRespond: (request: TimelineAvailabilityRequest, response: "available" | "unavailable") => void;
 };
 
 const OccurrenceTile = ({
@@ -365,13 +467,23 @@ const OccurrenceTile = ({
   isPast,
   isBlockedOut,
   onOpen,
+  respondingKeys,
+  acceptingPending,
+  availabilityRespondingKeys,
+  onRespond,
+  onAvailabilityRespond,
 }: OccurrenceTileProps) => {
   const tile = getOccurrenceTileParts(occurrence, timeZone);
   const serviceName = occurrenceServiceLabel(occurrence);
   const role = myRoleLabel(occurrence);
+  const primaryAssignments = occurrence.serving.filter((person) => person.isMe && person.isPrimary);
   const hasPlan = plansForOccurrence(occurrence).length > 0;
   const openLabel = `Open ${serviceName} on ${tile.label}`;
   const isToday = !isNextUpcoming && isOccurrenceToday(occurrence, timeZone);
+  const teams = [...new Set([
+    ...occurrence.serving.filter((person) => person.isMe).map((person) => person.teamName),
+    ...occurrence.availabilityRequests.flatMap((request) => request.teamNames),
+  ].filter(Boolean))];
 
   let markerAriaSuffix = "";
   if (isNextUpcoming) {
@@ -389,78 +501,101 @@ const OccurrenceTile = ({
 
   return (
     <li className="relative">
-      <ScheduleOccurrenceRibbon
-        isNextUpcoming={isNextUpcoming}
-        isToday={isToday}
-      />
-      <Button
-        type="button"
-        variant="tertiary"
-        aria-label={cn(
-          openLabel,
-          markerAriaSuffix,
-          isBlockedOut && ", blocked out",
-        )}
-        className={cn(
-          "h-auto w-full flex-col items-stretch gap-0 rounded-lg border px-2.5 py-2 font-normal",
-          hasPlan
-            ? "border-emerald-500/30 bg-gray-800/80 hover:border-emerald-400/45 hover:bg-gray-800"
-            : "border-gray-600/70 bg-gray-800/70 hover:border-orange-400/35 hover:bg-gray-800",
-          markerBorderClassName,
-          isPast && "opacity-55",
-        )}
-        onClick={onOpen}
-      >
-        <span className="flex w-full items-center justify-between gap-1">
-          <span
-            className={cn(
-              "text-[11px] font-semibold uppercase tracking-wide",
-              hasPlan ? "text-emerald-300/70" : "text-gray-400",
-            )}
-          >
-            {tile.weekday}
-          </span>
-          {hasPlan ? (
-            <Icon
-              svg={Check}
-              size="xs"
-              className="shrink-0 text-emerald-300"
-            />
-          ) : (
-            <span className="size-1.5 shrink-0 rounded-full bg-orange-400/45" />
+      <article className={cn(
+        "relative overflow-hidden rounded-lg border bg-gray-800/75",
+        hasPlan
+          ? "border-emerald-500/30"
+          : "border-gray-600/70",
+        markerBorderClassName,
+        isPast && "opacity-55",
+      )}>
+        <ScheduleOccurrenceRibbon
+          isNextUpcoming={isNextUpcoming}
+          isToday={isToday}
+        />
+        <Button
+          type="button"
+          variant="none"
+          aria-label={cn(
+            openLabel,
+            markerAriaSuffix,
+            isBlockedOut && ", blocked out",
           )}
-        </span>
-        <span className="mt-0.5 text-left text-lg font-semibold leading-none text-gray-100">
-          {tile.day}
-        </span>
-        <span className="mt-1 flex w-full items-center justify-between gap-1 text-left text-[11px] text-gray-400">
-          <span>{tile.month}</span>
-          {tile.time ? <span>{tile.time}</span> : null}
-        </span>
-        <span
-          className="mt-1 truncate text-left text-[11px] font-medium text-gray-300"
-          title={serviceName}
+          className="grid min-h-[104px] w-full grid-cols-[3.75rem_minmax(0,1fr)] items-start gap-3 rounded-none px-3 pb-3 pt-4 text-left hover:bg-white/[0.03] focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-orange-400"
+          onClick={onOpen}
         >
-          {serviceName}
-        </span>
-        {role ? (
-          <span
-            className="mt-0.5 truncate text-left text-[11px] text-orange-300/90"
-            title={role}
-          >
-            {role}
+          <time className="flex min-h-[76px] flex-col items-center justify-center rounded-md bg-gray-950/55 px-1.5 py-1 text-center">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">{tile.weekday}</span>
+            <span className="text-3xl font-bold leading-none text-gray-50">{tile.day}</span>
+            <span className="text-[11px] text-gray-400">{tile.month}</span>
+          </time>
+          <span className="flex min-w-0 flex-col gap-1 pt-1">
+            <span className="flex min-w-0 items-center gap-1.5">
+              {hasPlan ? (
+                <Icon svg={Check} size="xs" className="shrink-0 text-emerald-300" />
+              ) : (
+                <span className="size-1.5 shrink-0 rounded-full bg-orange-400/55" />
+              )}
+              <span className="truncate text-sm font-semibold text-gray-50" title={serviceName}>{serviceName}</span>
+            </span>
+            <span className="text-xs text-gray-400">
+              {tile.time || "Time not set"}
+            </span>
+            {teams.length ? (
+              <span className="truncate text-xs text-gray-300" title={teams.join(", ")}>
+                {teams.join(", ")}
+              </span>
+            ) : null}
+            {role && primaryAssignments.length === 0 ? (
+              <span className="truncate text-sm font-semibold text-orange-200" title={role}>{role}</span>
+            ) : null}
+            {isBlockedOut ? (
+              <span className="mt-0.5 flex items-center gap-1 text-xs font-medium text-amber-300">
+                <Icon svg={TriangleAlert} size="xs" className="shrink-0" />
+                <span>Blocked out</span>
+              </span>
+            ) : null}
           </span>
+        </Button>
+        {primaryAssignments.length > 0 || occurrence.availabilityRequests.length > 0 ? (
+          <div className="space-y-2 border-t border-gray-700/80 px-2.5 py-2.5">
+            {primaryAssignments.length > 0 ? (
+              <div className="space-y-1.5">
+                {primaryAssignments.map((slot) => {
+                  const key = `${slot.scheduleId}\u0000${occurrence.occurrenceId}\u0000${slot.columnKey}`;
+                  return (
+                    <AssignmentResponseRow
+                      key={key}
+                      slot={slot}
+                      disabled={acceptingPending || respondingKeys.has(key)}
+                      isPast={isPast}
+                      isSaving={respondingKeys.has(key)}
+                      onRespond={(selectedSlot, response) => onRespond(occurrence.occurrenceId, selectedSlot, response)}
+                    />
+                  );
+                })}
+              </div>
+            ) : null}
+            {occurrence.availabilityRequests.length > 0 ? (
+              <div className="space-y-1.5">
+                {occurrence.availabilityRequests.map((request) => {
+                  const key = `${request.recipientId}\u0000${occurrence.occurrenceId}`;
+                  return (
+                    <AvailabilityResponseRow
+                      key={`${request.formId}:${request.recipientId}`}
+                      request={request}
+                      occurrenceId={occurrence.occurrenceId}
+                      disabled={availabilityRespondingKeys.has(key)}
+                      isSaving={availabilityRespondingKeys.has(key)}
+                      onRespond={onAvailabilityRespond}
+                    />
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
         ) : null}
-        {/* Same wording the owner sees on the schedule grid, so the two
-            surfaces describe one fact the same way. Kept off the border, which
-            already carries plan and up-next meaning. */}
-        {isBlockedOut ? (
-          <span className="mt-1 flex items-center gap-1 text-left text-[11px] font-medium text-amber-300">
-            <Icon svg={TriangleAlert} size="xs" className="shrink-0" />
-            <span className="truncate">Blocked out</span>
-          </span>
-        ) : null}
-      </Button>
+      </article>
     </li>
   );
 };
@@ -484,7 +619,8 @@ type OccurrenceDetailProps = {
     slot: MyScheduleServing,
     response: "accepted" | "declined",
   ) => void;
-  respondingKey?: string;
+  respondingKeys?: Set<string>;
+  acceptingPending?: boolean;
 };
 
 const OccurrenceDetail = ({
@@ -501,7 +637,8 @@ const OccurrenceDetail = ({
   churchName = "",
   blockoutLabel = "",
   onRespond,
-  respondingKey = "",
+  respondingKeys = new Set<string>(),
+  acceptingPending = false,
 }: OccurrenceDetailProps) => {
   const [tab, setTab] = useState<DetailTab>("schedule");
   const [scheduleLayout, setScheduleLayout] =
@@ -659,14 +796,18 @@ const OccurrenceDetail = ({
             <div className="space-y-2">
               {occurrence.serving
                 .filter((person) => person.isMe && person.isPrimary)
-                .map((slot) => (
-                  <AssignmentResponseRow
-                    key={slot.columnKey}
-                    slot={slot}
-                    disabled={respondingKey === "__all__" || respondingKey === slot.columnKey}
-                    onRespond={onRespond}
-                  />
-                ))}
+                .map((slot) => {
+                  const key = `${slot.scheduleId}\u0000${occurrence.occurrenceId}\u0000${slot.columnKey}`;
+                  return (
+                    <AssignmentResponseRow
+                      key={key}
+                      slot={slot}
+                      disabled={acceptingPending || respondingKeys.has(key)}
+                      isSaving={respondingKeys.has(key)}
+                      onRespond={onRespond}
+                    />
+                  );
+                })}
             </div>
           ) : null}
         </header>
@@ -759,13 +900,17 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
     saveBlockouts: (ranges, stamp) => updateMyBlockoutDates(churchId, ranges, stamp),
     acceptUnanswered: (cursor) => acceptPendingMyAssignments(churchId, cursor),
     availability: () => getMyVolunteerAvailability(churchId),
-    submitAvailability: (recipientId, values) => submitMyVolunteerAvailability(churchId, recipientId, values),
+    submitAvailability: (recipientId, formId, occurrenceId, value) =>
+      submitMyVolunteerAvailabilityOccurrence(churchId, recipientId, formId, occurrenceId, value),
   }), [access, churchId]);
   /** Changes the unlinked message: an admin can fix this themselves. */
   const isChurchAdmin = !access && context?.role === "admin";
   const [personalChurchName, setPersonalChurchName] = useState("");
   const churchName = access?.churchName || personalChurchName || context?.churchName || "";
   const [occurrences, setOccurrences] = useState<MyScheduleOccurrence[]>([]);
+  const [availabilityRequests, setAvailabilityRequests] = useState<Awaited<ReturnType<MyScheduleOperations["availability"]>>["requests"]>([]);
+  const [availabilityError, setAvailabilityError] = useState("");
+  const [availabilityStatus, setAvailabilityStatus] = useState<"loading" | "ready" | "error">("loading");
   const [serviceTimeZone, setServiceTimeZone] = useState("UTC");
   const [hasMemberRecord, setHasMemberRecord] = useState(true);
   const [blockoutDates, setBlockoutDates] = useState<TeamBlockoutDateRange[]>(
@@ -775,6 +920,7 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
   const [memberUpdatedAt, setMemberUpdatedAt] = useState("");
   const [savedDatesLoad, setSavedDatesLoad] = useState<SavedDatesLoadState>({ status: "pending" });
   const [showPast, setShowPast] = useState(false);
+  const [organizeMode, setOrganizeMode] = useState<"byMonth" | "byService">("byMonth");
   const [query, setQuery] = useState("");
   const [teamFilter, setTeamFilter] = useState(ALL_TEAMS);
   const [serviceFilter, setServiceFilter] = useState(ALL_SERVICES);
@@ -788,6 +934,8 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
   const mountedRef = useRef(true);
   /** Drops a response that a newer request has already superseded. */
   const requestRef = useRef(0);
+  /** A later targeted availability refresh must beat an earlier page load. */
+  const availabilityRequestRef = useRef(0);
   /** Scope async UI work to the church active when it started. */
   const churchIdRef = useRef(churchId);
   churchIdRef.current = churchId;
@@ -795,6 +943,8 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
   const acceptPendingOperationRef = useRef<{ churchId: string } | null>(null);
   /** Set by the Time off editor; a refresh must never discard an open edit. */
   const timeOffDirtyRef = useRef(false);
+  const assignmentResponsesInFlightRef = useRef(new Set<string>());
+  const availabilityResponsesInFlightRef = useRef(new Set<string>());
 
   useEffect(() => {
     mountedRef.current = true;
@@ -812,50 +962,83 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
     }): Promise<MyScheduleMember | null> => {
       if (!churchId) return Promise.resolve(null);
       const request = ++requestRef.current;
+      const availabilityRequest = ++availabilityRequestRef.current;
       setSavedDatesLoad({ status: "pending" });
       if (showLoading) setStatus("loading");
-      return operations.load()
-        .then((result) => {
+      return Promise.allSettled([operations.load(), operations.availability()])
+        .then(([scheduleResult, availabilityResult]) => {
           if (!mountedRef.current || churchIdRef.current !== churchId || request !== requestRef.current) return null;
-          // Keep a mounted draft when access/member data becomes unavailable.
-          if (!result.success || (!showLoading && !result.member)) {
-            throw new Error("Could not refresh saved dates. Your draft is kept. Try again.");
+
+          let member: MyScheduleMember | null = null;
+          let scheduleFailure: unknown = null;
+          if (scheduleResult.status === "fulfilled" && scheduleResult.value.success && (showLoading || scheduleResult.value.member)) {
+            const result = scheduleResult.value;
+            member = result.member;
+            setSavedDatesLoad({ status: "ready" });
+            setScheduleError("");
+            if (access) setPersonalChurchName(result.churchName || "");
+            setOccurrences(result.occurrences || []);
+            setServiceTimeZone(result.serviceTimeZone || "UTC");
+            setHasMemberRecord(Boolean(result.member));
+            // The editor retains its own draft/baseline. New saved props expose
+            // conflicts without lending their revision to unsaved edits.
+            setBlockoutDates(result.member?.blockoutDates || []);
+            setMemberUpdatedAt(result.member?.updatedAt || "");
+            setStatus("ready");
+          } else {
+            scheduleFailure = scheduleResult.status === "rejected"
+              ? scheduleResult.reason
+              : new Error("Could not refresh saved dates. Your draft is kept. Try again.");
+            const failureStatus = getApiErrorStatus(scheduleFailure);
+            const accessMessage = failureStatus === 401 || failureStatus === 403
+              ? getApiErrorMessage(scheduleFailure, "Your access is no longer available. Ask an admin for help.")
+              : undefined;
+            const personalAccessMessage = access && accessMessage
+              ? "Could not confirm personal access. Open your personal link again, or ask your church administrator for help."
+              : accessMessage;
+            setSavedDatesLoad({ status: "failed", accessMessage });
+            setScheduleError(personalAccessMessage || (showLoading
+              ? "Could not load your schedule. Try again."
+              : "Could not refresh your schedule. Try again."));
+            if (showLoading) setStatus("error");
           }
-          setSavedDatesLoad({ status: "ready" });
-          setScheduleError("");
-          if (access) setPersonalChurchName(result.churchName || "");
-          setOccurrences(result.occurrences || []);
-          setServiceTimeZone(result.serviceTimeZone || "UTC");
-          setHasMemberRecord(Boolean(result.member));
-          // The editor retains its own draft/baseline. New saved props expose
-          // conflicts without lending their revision to unsaved edits.
-          setBlockoutDates(result.member?.blockoutDates || []);
-          setMemberUpdatedAt(result.member?.updatedAt || "");
-          setStatus("ready");
-          return result.member;
-        })
-        .catch((error: unknown) => {
-          if (!mountedRef.current || churchIdRef.current !== churchId || request !== requestRef.current) return null;
-          const status = getApiErrorStatus(error);
-          const accessMessage = status === 401 || status === 403
-            ? getApiErrorMessage(error, "Your access is no longer available. Ask an admin for help.")
-            : undefined;
-          setSavedDatesLoad({ status: "failed", accessMessage });
-          const personalAccessMessage = access && accessMessage
-            ? "Could not confirm personal access. Open your personal link again, or ask your church administrator for help."
-            : accessMessage;
-          setScheduleError(personalAccessMessage || (showLoading
-            ? "Could not load your schedule. Try again."
-            : "Could not refresh your schedule. Try again."));
-          // A background refresh that fails leaves the page as it is. Replacing
-          // a working schedule with an error because a resume failed is worse
-          // than showing data that is a few minutes old.
-          if (showLoading) setStatus("error");
-          return null;
+
+          if (availabilityRequest === availabilityRequestRef.current) {
+            if (availabilityResult.status === "fulfilled" && availabilityResult.value.success) {
+              setAvailabilityRequests(availabilityResult.value.requests || []);
+              setAvailabilityStatus("ready");
+              setAvailabilityError("");
+            } else {
+              setAvailabilityStatus("error");
+              setAvailabilityError("Could not load your availability requests.");
+            }
+          }
+          return member;
         });
     },
     [access, churchId, operations],
   );
+
+  const refreshAvailability = useCallback(async () => {
+    if (!churchId) return false;
+    const request = ++availabilityRequestRef.current;
+    const startedForChurch = churchId;
+    try {
+      const result = await operations.availability();
+      if (!mountedRef.current || churchIdRef.current !== startedForChurch || request !== availabilityRequestRef.current) return false;
+      if (!result.success) throw new Error("Availability was unavailable.");
+      setAvailabilityRequests(result.requests || []);
+      setAvailabilityStatus("ready");
+      setAvailabilityError("");
+      return true;
+    } catch {
+      if (mountedRef.current && churchIdRef.current === startedForChurch && request === availabilityRequestRef.current) {
+        setAvailabilityStatus("error");
+        setAvailabilityError("Could not refresh availability requests. Try again.");
+      }
+      return false;
+    }
+  }, [churchId, operations]);
 
   useEffect(() => {
     load({ showLoading: true });
@@ -896,7 +1079,8 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
     return load({ showLoading: false }).then(Boolean);
   }, [load]);
 
-  const [respondingKey, setRespondingKey] = useState("");
+  const [respondingKeys, setRespondingKeys] = useState<Set<string>>(new Set());
+  const [availabilityRespondingKeys, setAvailabilityRespondingKeys] = useState<Set<string>>(new Set());
   const [acceptingPending, setAcceptingPending] = useState(false);
   const [acceptPendingFeedback, setAcceptPendingFeedback] = useState("");
 
@@ -925,8 +1109,6 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
       }, 0);
     }, 0);
   }, [occurrences]);
-
-  const acceptAllLabel = access ? "Accept all unanswered" : "Accept all pending";
 
   const acceptAllPending = useCallback(async () => {
     if (
@@ -1029,23 +1211,24 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
   /**
    * Answer one assignment, applied optimistically so the tap feels immediate.
    *
-   * On any failure the page refetches rather than reverting locally: the common
-   * failure is a 409 because the slot moved to someone else, and in that case
-   * the old value is not the truth to go back to. The server message says what
-   * happened; the refetch makes the screen agree with it.
+   * A successful response echoes the value committed by the server. On failure
+   * the page refetches instead of reverting locally because a 409 often means
+   * the slot moved and the previous value is no longer authoritative.
    */
   const respondToAssignment = useCallback(
-    async (slot: MyScheduleServing, response: "accepted" | "declined") => {
-      if (!selectedId) return;
-      setRespondingKey(slot.columnKey);
+    async (occurrenceId: string, slot: MyScheduleServing, response: "accepted" | "declined") => {
+      const key = `${slot.scheduleId}\u0000${occurrenceId}\u0000${slot.columnKey}`;
+      if (assignmentResponsesInFlightRef.current.has(key)) return;
+      assignmentResponsesInFlightRef.current.add(key);
+      setRespondingKeys((current) => new Set(current).add(key));
       const apply = (value: MyScheduleServing["response"]) =>
         setOccurrences((current) =>
           current.map((occurrence) =>
-            occurrence.occurrenceId === selectedId
+            occurrence.occurrenceId === occurrenceId
               ? {
                 ...occurrence,
                 serving: occurrence.serving.map((person) =>
-                  person.isMe && person.columnKey === slot.columnKey
+                  person.isMe && person.isPrimary && person.scheduleId === slot.scheduleId && person.columnKey === slot.columnKey
                     ? { ...person, response: value }
                     : person,
                 ),
@@ -1055,26 +1238,70 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
         );
       apply(response);
       try {
-        await operations.respond({
+        const saved = await operations.respond({
           scheduleId: slot.scheduleId,
-          occurrenceId: selectedId,
+          occurrenceId,
           cellKey: slot.columnKey,
           response,
         });
+        if (saved?.response === "accepted" || saved?.response === "declined") apply(saved.response);
       } catch (error) {
         if (!mountedRef.current) return;
         showApiErrorToast(showToast, error, "Could not save your response.");
         load({ showLoading: false });
       } finally {
-        if (mountedRef.current) setRespondingKey("");
+        assignmentResponsesInFlightRef.current.delete(key);
+        if (mountedRef.current) setRespondingKeys((current) => {
+          const next = new Set(current);
+          next.delete(key);
+          return next;
+        });
       }
     },
-    [load, operations, selectedId, showToast],
+    [load, operations, showToast],
   );
 
+  const respondToAvailability = useCallback(async (
+    request: TimelineAvailabilityRequest,
+    response: "available" | "unavailable",
+  ) => {
+    const occurrenceId = request.occurrence.occurrenceId;
+    const key = `${request.recipientId}\u0000${occurrenceId}`;
+    if (availabilityResponsesInFlightRef.current.has(key)) return;
+    availabilityResponsesInFlightRef.current.add(key);
+    setAvailabilityRespondingKeys((current) => new Set(current).add(key));
+    try {
+      await operations.submitAvailability(request.recipientId, request.formId, occurrenceId, response);
+      if (mountedRef.current && churchIdRef.current === churchId) {
+        showToast("Availability saved.", "success");
+      }
+    } catch (error) {
+      if (mountedRef.current) showApiErrorToast(showToast, error, "Could not save your availability.");
+    } finally {
+      if (mountedRef.current) {
+        // Keep the row busy until the follow-up read resolves. This also
+        // restores the stored answer after an uncertain write without showing
+        // an optimistic value that the server may not have committed.
+        await refreshAvailability();
+      }
+      availabilityResponsesInFlightRef.current.delete(key);
+      if (mountedRef.current) {
+        setAvailabilityRespondingKeys((current) => {
+          const next = new Set(current);
+          next.delete(key);
+          return next;
+        });
+      }
+    }
+  }, [churchId, operations, refreshAvailability, showToast]);
+
+  const timelineOccurrences = useMemo(
+    () => buildMyScheduleTimeline(occurrences, availabilityRequests, serviceTimeZone),
+    [availabilityRequests, occurrences, serviceTimeZone],
+  );
   const datedOccurrences = useMemo(
-    () => occurrences.filter(hasDatedStartsAt),
-    [occurrences],
+    () => timelineOccurrences.filter(hasDatedStartsAt),
+    [timelineOccurrences],
   );
 
   /**
@@ -1089,16 +1316,17 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
   const blockoutLabelByOccurrence = useMemo(() => {
     const labels = new Map<string, string>();
     if (blockoutDates.length === 0) return labels;
-    occurrences.forEach((occurrence) => {
-      const range = findBlockoutRangeForDate(blockoutDates, occurrence.date);
+    timelineOccurrences.forEach((occurrence) => {
+      const date = myScheduleOccurrenceDate(occurrence, serviceTimeZone);
+      const range = findBlockoutRangeForDate(blockoutDates, date);
       if (range) {
         labels.set(occurrence.occurrenceId, formatBlockoutDateRangeLabel(range));
       }
     });
     return labels;
-  }, [blockoutDates, occurrences]);
+  }, [blockoutDates, serviceTimeZone, timelineOccurrences]);
 
-  /** Only the teams this person actually serves on are worth offering. */
+  /** Team choices cover both assigned services and availability requests. */
   const teamOptions = useMemo(() => {
     const names = new Map<string, string>();
     datedOccurrences.forEach((occurrence) =>
@@ -1106,6 +1334,9 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
         .filter((person) => person.isMe && person.teamId)
         .forEach((person) => names.set(person.teamId, person.teamName)),
     );
+    datedOccurrences.forEach((occurrence) => occurrence.availabilityRequests.forEach((request) => {
+      request.teamIds.forEach((teamId, index) => names.set(teamId, request.teamNames[index] || "Team"));
+    }));
     return [
       { value: ALL_TEAMS, label: "All teams" },
       ...[...names.entries()].map(([value, label]) => ({
@@ -1115,12 +1346,12 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
     ];
   }, [datedOccurrences]);
 
-  /** Service names from the schedule — same vocabulary as Plans / Schedule. */
+  /** Service options follow each occurrence's saved service identities. */
   const serviceOptions = useMemo(() => {
     const names = new Map<string, string>();
     datedOccurrences.forEach((occurrence) => {
       const label = occurrenceServiceLabel(occurrence);
-      const key = occurrence.serviceIds.slice().sort().join("|") || label;
+      const key = myScheduleServiceGroupKey(occurrence);
       if (!names.has(key)) names.set(key, label);
     });
     return [
@@ -1134,16 +1365,13 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
     return datedOccurrences.filter((occurrence) => {
       if (
         teamFilter !== ALL_TEAMS &&
-        !occurrence.serving.some(
-          (person) => person.isMe && person.teamId === teamFilter,
-        )
+        !occurrence.serving.some((person) => person.isMe && person.teamId === teamFilter) &&
+        !occurrence.availabilityRequests.some((request) => request.teamIds.includes(teamFilter))
       ) {
         return false;
       }
       if (serviceFilter !== ALL_SERVICES) {
-        const key =
-          occurrence.serviceIds.slice().sort().join("|") ||
-          occurrenceServiceLabel(occurrence);
+        const key = myScheduleServiceGroupKey(occurrence);
         if (key !== serviceFilter) return false;
       }
       if (!trimmed) return true;
@@ -1157,6 +1385,11 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
           person.name,
           person.positionName,
           person.teamName,
+        ]),
+        ...occurrence.availabilityRequests.flatMap((request) => [
+          request.name,
+          request.availabilityMessage,
+          ...request.teamNames,
         ]),
         ...plansForOccurrence(occurrence).flatMap((plan) => [
           plan.name,
@@ -1178,13 +1411,24 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
    */
   const { upcoming, past } = useMemo(() => {
     const now = Date.now();
-    const isPast = (occurrence: MyScheduleOccurrence) =>
+    const isPast = (occurrence: MyScheduleTimelineOccurrence) =>
       Date.parse(occurrence.startsAt) < now;
     return {
       upcoming: filtered.filter((item) => !isPast(item)),
       past: filtered.filter(isPast).reverse(),
     };
   }, [filtered]);
+
+  const upcomingMonthGroups = useMemo(
+    () => groupMyScheduleByMonth(upcoming, serviceTimeZone),
+    [serviceTimeZone, upcoming],
+  );
+  const pastMonthGroups = useMemo(
+    () => groupMyScheduleByMonth(past, serviceTimeZone),
+    [past, serviceTimeZone],
+  );
+  const upcomingServiceGroups = useMemo(() => groupMyScheduleByService(upcoming), [upcoming]);
+  const pastServiceGroups = useMemo(() => groupMyScheduleByService(past), [past]);
 
   const navigable = useMemo(
     () => [...upcoming, ...(showPast ? past : [])],
@@ -1239,6 +1483,32 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
+  const canShowTimeline = (status === "ready" && hasMemberRecord) || availabilityRequests.length > 0;
+  const canShowSelfService = status === "ready" && hasMemberRecord;
+  const renderTiles = (items: MyScheduleTimelineOccurrence[], isPast: boolean) => (
+    <ul
+      className="grid gap-2.5"
+      style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 22rem), min(100%, 23.75rem)))" }}
+    >
+      {items.map((occurrence) => (
+        <OccurrenceTile
+          key={occurrence.occurrenceId}
+          occurrence={occurrence}
+          timeZone={serviceTimeZone}
+          isNextUpcoming={!isPast && occurrence.occurrenceId === nextUpcomingId}
+          isPast={isPast}
+          isBlockedOut={blockoutLabelByOccurrence.has(occurrence.occurrenceId)}
+          respondingKeys={respondingKeys}
+          acceptingPending={acceptingPending}
+          availabilityRespondingKeys={availabilityRespondingKeys}
+          onRespond={respondToAssignment}
+          onAvailabilityRespond={respondToAvailability}
+          onOpen={() => setSelectedId(occurrence.occurrenceId)}
+        />
+      ))}
+    </ul>
+  );
+
   return (
     <AppPageShell
       title="My schedule"
@@ -1270,7 +1540,7 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
           </p>
         ) : null}
 
-        {status === "ready" && hasMemberRecord && selected ? (
+        {canShowTimeline && selected ? (
           <OccurrenceDetail
             occurrence={selected}
             timeZone={serviceTimeZone}
@@ -1296,76 +1566,49 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
             }
             // Past services have nothing left to answer, and offering the
             // buttons there would invite pointless writes.
-            onRespond={
-              past.some(
-                (item) => item.occurrenceId === selected.occurrenceId,
-              )
-                ? undefined
-                : respondToAssignment
-            }
-            respondingKey={acceptingPending ? "__all__" : respondingKey}
+            onRespond={past.some((item) => item.occurrenceId === selected.occurrenceId)
+              ? undefined
+              : (slot, response) => respondToAssignment(selected.occurrenceId, slot, response)}
+            respondingKeys={respondingKeys}
+            acceptingPending={acceptingPending}
           />
         ) : null}
 
-        {status === "ready" && hasMemberRecord && !selected ? (
+        {canShowTimeline && !selected ? (
           <>
-            {pendingAssignmentCount > 0 ? (
-              <section className="flex flex-col gap-2 rounded-md border border-gray-700 p-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <h2 className="text-sm font-semibold">
-                    {pendingAssignmentCount} {pendingAssignmentCount === 1 ? "assignment needs" : "assignments need"} your response
-                  </h2>
-                  <p className="text-sm text-gray-300">
-                    Accepts unanswered assignments across your upcoming published schedules. Existing responses won't change.
-                  </p>
-                </div>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="w-full shrink-0 sm:w-auto"
-                  disabled={acceptingPending}
-                  isLoading={acceptingPending}
-                  aria-busy={acceptingPending}
-                  onClick={() => void acceptAllPending()}
-                >
-                  {acceptingPending ? "Accepting…" : acceptAllLabel}
-                </Button>
-                {acceptingPending ? (
-                  <span className="sr-only" role="status" aria-live="polite">
-                    Accepting your pending assignments…
-                  </span>
-                ) : null}
-              </section>
+            {canShowSelfService ? (
+              <>
+                {access ? <a className="text-sm text-orange-300 underline" href={`/sms-opt-in/${encodeURIComponent(churchId)}`}>SMS preferences</a> : null}
+                <MyScheduleBlockouts
+                  key={churchId}
+                  churchId={churchId}
+                  serviceTimeZone={serviceTimeZone}
+                  blockoutDates={blockoutDates}
+                  expectedUpdatedAt={memberUpdatedAt}
+                  occurrences={occurrences}
+                  onSaved={handleBlockoutsSaved}
+                  saveBlockouts={operations.saveBlockouts}
+                  onDirtyChange={handleTimeOffDirtyChange}
+                  onStale={refreshAfterConflict}
+                  savedDatesLoad={savedDatesLoad}
+                />
+              </>
             ) : null}
-            {acceptPendingFeedback ? (
-              <p className="text-sm text-gray-300" role="status" aria-live="polite">
-                {acceptPendingFeedback}
-              </p>
-            ) : null}
-            <MyScheduleAvailability operations={operations} />
-            {access ? <a className="text-sm text-orange-300 underline" href={`/sms-opt-in/${encodeURIComponent(churchId)}`}>SMS preferences</a> : null}
-            <MyScheduleBlockouts
-              key={churchId}
-              churchId={churchId}
-              serviceTimeZone={serviceTimeZone}
-              blockoutDates={blockoutDates}
-              expectedUpdatedAt={memberUpdatedAt}
-              occurrences={occurrences}
-              onSaved={handleBlockoutsSaved}
-              saveBlockouts={operations.saveBlockouts}
-              onDirtyChange={handleTimeOffDirtyChange}
-              onStale={refreshAfterConflict}
-              savedDatesLoad={savedDatesLoad}
-            />
 
             {datedOccurrences.length > 0 ? (
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+              <div className="grid items-end gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(16rem,1fr)_repeat(3,minmax(9rem,13rem))]">
                 <Input
                   label="Search"
-                  className="flex-1"
+                  className="min-w-0"
                   value={query}
                   placeholder="Song, position, person, or date"
                   onChange={(value) => setQuery(String(value))}
+                />
+                <Select
+                  label="Organize"
+                  value={organizeMode}
+                  options={[{ value: "byMonth", label: "By month" }, { value: "byService", label: "By service" }]}
+                  onChange={(value) => setOrganizeMode(value === "byService" ? "byService" : "byMonth")}
                 />
                 {serviceOptions.length > 2 ? (
                   <Select
@@ -1386,9 +1629,50 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
               </div>
             ) : null}
 
+            {canShowSelfService && pendingAssignmentCount > 0 ? (
+              <section className="flex flex-col gap-2 rounded-md border border-gray-700 bg-gray-900/45 p-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <h2 className="text-sm font-semibold">
+                    You have {pendingAssignmentCount} {pendingAssignmentCount === 1 ? "assignment" : "assignments"} waiting for a response.
+                  </h2>
+                  <p className="text-xs text-gray-300">
+                    Accepts only assignments you haven&apos;t answered yet. You can change individual responses later.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="none"
+                  className="w-full shrink-0 justify-center rounded-md bg-emerald-700 px-3 text-sm font-semibold text-white hover:bg-emerald-600 sm:w-auto"
+                  disabled={acceptingPending}
+                  isLoading={acceptingPending}
+                  aria-busy={acceptingPending}
+                  onClick={() => void acceptAllPending()}
+                >
+                  {acceptingPending ? "Accepting…" : "Accept remaining assignments"}
+                </Button>
+              </section>
+            ) : null}
+            {acceptingPending ? (
+              <span className="sr-only" role="status" aria-live="polite">Accepting your pending assignments…</span>
+            ) : null}
+            {acceptPendingFeedback ? (
+              <p className="text-sm text-gray-300" role="status" aria-live="polite">{acceptPendingFeedback}</p>
+            ) : null}
+            {availabilityError ? (
+              <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-red-300">
+                <p>{availabilityError}</p>
+                <Button variant="secondary" disabled={availabilityStatus === "loading"}
+                  isLoading={availabilityStatus === "loading"} onClick={() => void refreshAvailability()}>
+                  Retry availability
+                </Button>
+              </div>
+            ) : null}
+
             {upcoming.length === 0 && past.length === 0 ? (
               <p className="text-sm text-gray-300">
-                {hasFilters
+                {availabilityError
+                  ? "Your availability requests could not be confirmed. Retry availability to check again."
+                  : hasFilters
                   ? "Nothing matches that search."
                   : "You are not scheduled for anything coming up."}
               </p>
@@ -1407,21 +1691,17 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
                 <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
                   Upcoming
                 </h2>
-                <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
-                  {upcoming.map((occurrence) => (
-                    <OccurrenceTile
-                      key={occurrence.occurrenceId}
-                      occurrence={occurrence}
-                      timeZone={serviceTimeZone}
-                      isNextUpcoming={occurrence.occurrenceId === nextUpcomingId}
-                      isPast={false}
-                      isBlockedOut={blockoutLabelByOccurrence.has(
-                        occurrence.occurrenceId,
-                      )}
-                      onOpen={() => setSelectedId(occurrence.occurrenceId)}
-                    />
-                  ))}
-                </ul>
+                {organizeMode === "byMonth" ? upcomingMonthGroups.map((month) => (
+                  <section key={month.key} className="mb-4 space-y-2">
+                    <h3 className="text-sm font-semibold text-gray-200">{month.label}</h3>
+                    {renderTiles(month.occurrences, false)}
+                  </section>
+                )) : upcomingServiceGroups.map((group) => (
+                  <section key={group.key} className="mb-4 space-y-2">
+                    <h3 className="text-sm font-semibold text-gray-200">{group.name}</h3>
+                    {renderTiles(group.occurrences, false)}
+                  </section>
+                ))}
               </section>
             ) : null}
 
@@ -1438,21 +1718,19 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
                     : `Show ${past.length} past ${past.length === 1 ? "service" : "services"}`}
                 </Button>
                 {showPast ? (
-                  <ul className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
-                    {past.map((occurrence) => (
-                      <OccurrenceTile
-                        key={occurrence.occurrenceId}
-                        occurrence={occurrence}
-                        timeZone={serviceTimeZone}
-                        isNextUpcoming={false}
-                        isPast
-                        isBlockedOut={blockoutLabelByOccurrence.has(
-                          occurrence.occurrenceId,
-                        )}
-                        onOpen={() => setSelectedId(occurrence.occurrenceId)}
-                      />
+                  <div className="mt-3 space-y-4">
+                    {organizeMode === "byMonth" ? pastMonthGroups.map((month) => (
+                      <section key={month.key} className="space-y-2">
+                        <h3 className="text-sm font-semibold text-gray-300">{month.label}</h3>
+                        {renderTiles(month.occurrences, true)}
+                      </section>
+                    )) : pastServiceGroups.map((group) => (
+                      <section key={group.key} className="space-y-2">
+                        <h3 className="text-sm font-semibold text-gray-300">{group.name}</h3>
+                        {renderTiles(group.occurrences, true)}
+                      </section>
                     ))}
-                  </ul>
+                  </div>
                 ) : null}
               </div>
             ) : null}

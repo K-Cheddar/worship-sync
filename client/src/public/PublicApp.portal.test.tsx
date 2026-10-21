@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import PublicApp from "./PublicApp";
 import { clearVolunteerIngress, scrubVolunteerIngress } from "./volunteerIngress";
@@ -12,16 +12,22 @@ const originalFetch = global.fetch;
 let fetchMock: jest.Mock;
 let accepted: boolean;
 let recovered: boolean;
+let assignmentResponse: "pending" | "accepted" | "declined";
 beforeEach(() => {
-  clearVolunteerIngress(); accepted = false; recovered = false;
+  clearVolunteerIngress(); accepted = false; recovered = false; assignmentResponse = "pending";
   window.history.replaceState({}, "", "/s");
-  fetchMock = jest.fn(async (path: string) => {
+  fetchMock = jest.fn(async (path: string, options: RequestInit = {}) => {
     let result: unknown = { success: true };
     if (path.endsWith("/session")) result = { success: true, csrfToken: "csrf", churchId: "church", memberId: "member", expiresAt: 9e12 };
     if (path.endsWith("/schedule")) result = { success: true, churchName: "Grace Chapel", serviceTimeZone: "America/New_York",
       member: { memberId: "member", firstName: "Alex", lastName: "Volunteer", updatedAt: "stamp", blockoutDates: [] },
-      occurrences: [{ ...assignment, serving: [{ ...slot, response: accepted ? "accepted" : "pending" }] }] };
-    if (path.endsWith("/availability")) result = { success: true, requests: [] };
+      occurrences: [{ ...assignment, serving: [{ ...slot, response: assignmentResponse === "pending" && accepted ? "accepted" : assignmentResponse }] }] };
+    if (path.endsWith("/availability") && options.method !== "POST") result = { success: true, requests: [] };
+    if (path.endsWith("/respond")) {
+      const body = JSON.parse(String(options.body || "{}"));
+      assignmentResponse = body.response;
+      result = { success: true, response: assignmentResponse };
+    }
     if (path.endsWith("/accept-unanswered")) { accepted = true; result = { success: true, newlyAccepted: 1, alreadyAccepted: 0, alreadyDeclined: 0, skipped: 0, failedScheduleCount: 0, schedules: [], authorizationChanged: false, hasMore: false, nextCursor: null }; }
     if (path.endsWith("/recovery/start")) result = { success: true, challengeId: "challenge" };
     if (path.endsWith("/recovery/verify")) recovered = true;
@@ -34,18 +40,28 @@ afterEach(() => { global.fetch = originalFetch; clearVolunteerIngress(); });
 it("opens the same My Schedule through the real public providers, including deferred time off and plan views", async () => {
   const user = userEvent.setup();
   render(<PublicApp />);
-  await screen.findByRole("button", { name: "Accept all unanswered" });
+  await screen.findByRole("button", { name: "Accept remaining assignments" });
   expect(screen.queryByRole("button", { name: "Open menu" })).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: /Time off/i }));
   expect(screen.getByRole("button", { name: /Add single day/i })).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Accept all unanswered" }));
-  await waitFor(() => expect(screen.queryByRole("button", { name: "Accept all unanswered" })).not.toBeInTheDocument());
   await user.click(screen.getByRole("button", { name: /Open Sunday Gathering/i }));
   await user.click(screen.getByRole("tab", { name: /Service plan/i }));
   expect(await screen.findByText("Welcome everyone")).toBeInTheDocument();
   expect(fetchMock.mock.calls.every(([path]) => String(path).startsWith("/api/volunteer/"))).toBe(true);
   const operationCalls = fetchMock.mock.calls.filter(([path]) => !String(path).endsWith("/session"));
   expect(operationCalls.every(([, options]) => options.credentials === "include" && options.cache === "no-store" && !options.headers.authorization)).toBe(true);
+});
+
+it("responds from a card before opening its service details", async () => {
+  const user = userEvent.setup();
+  render(<PublicApp />);
+  await user.click(await screen.findByRole("button", { name: /Accept Camera . Media/i }));
+  expect(await screen.findByText("Accepted")).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Sunday Gathering" })).not.toBeInTheDocument();
+  const responseCall = fetchMock.mock.calls.find(([path]) => String(path).endsWith("/respond"));
+  expect(JSON.parse(responseCall?.[1].body as string)).toEqual({
+    scheduleId: "schedule", occurrenceId: "service@2099-11-01", cellKey: "camera::0", response: "accepted",
+  });
 });
 
 it("cleans the fragment and completes expired-link verification before restoring the shared schedule", async () => {
@@ -154,21 +170,33 @@ it("retries initial schedule loading through the dedicated personal session", as
 it("keeps self-service available when the volunteer has no assignments", async () => {
   const user = userEvent.setup();
   const normal = fetchMock.getMockImplementation()!;
+  let availabilityResponse: "available" | "unavailable" | undefined;
   fetchMock.mockImplementation(async (path: string, options: RequestInit) => {
     if (path.endsWith("/schedule")) return { ok: true, status: 200, json: async () => ({ success: true,
       member: { memberId: "member", updatedAt: "stamp", blockoutDates: [] }, occurrences: [] }) };
+    if (path.endsWith("/availability") && options.method === "POST") {
+      const body = JSON.parse(String(options.body || "{}"));
+      availabilityResponse = body.availability;
+      return { ok: true, status: 200, json: async () => ({ success: true, availability: availabilityResponse }) };
+    }
     if (path.endsWith("/availability")) return { ok: true, status: 200, json: async () => ({ success: true, requests: [{
-      recipientId: "request", name: "Next month", respondedAt: "", availability: {}, availabilityMessage: "",
-      occurrences: [{ occurrenceId: "future", name: "Future service", startsAt: "2099-12-01T14:00:00Z" }],
+      recipientId: "request", formId: "form", name: "Next month", responseDeadline: "2099-11-30", respondedAt: "",
+      availability: availabilityResponse ? { future: availabilityResponse } : {}, availabilityMessage: "",
+      teamIds: ["team"], teamNames: ["Worship"],
+      occurrences: [{ occurrenceId: "future", serviceId: "future-service", name: "Future service", serviceDate: "2099-12-01", startsAt: "2099-12-01T14:00:00Z" }],
     }] }) };
     return normal(path, options);
   });
   render(<PublicApp />);
-  expect(await screen.findByText("You are not scheduled for anything coming up.")).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: /Open Future service/i })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: /Time off/i }));
   expect(screen.getByRole("button", { name: /Add single day/i })).toBeEnabled();
-  await user.click(screen.getByText("Availability requests (1)"));
-  expect(screen.getByRole("combobox", { name: /Future service/i })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /Mark availability as available for Future service/i }));
+  expect(await screen.findByText("Available")).toBeInTheDocument();
+  const availabilityCall = fetchMock.mock.calls.find(([path, options]) => String(path).endsWith("/availability") && options.method === "POST");
+  expect(JSON.parse(availabilityCall?.[1].body as string)).toEqual({
+    recipientId: "request", formId: "form", occurrenceId: "future", availability: "available",
+  });
 });
 
 it("gives personal guidance if the member disappears between session and schedule reads", async () => {

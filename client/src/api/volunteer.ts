@@ -43,10 +43,12 @@ export const openVolunteerSession = async () => {
 export const personalScheduleAccess = (session: VolunteerSession): PersonalScheduleAccess => {
   const request = <T>(path: string, body?: unknown) => volunteerRequest<T>(path, body, session.csrfToken);
   const operations: MyScheduleOperations = {
-    load: () => request("schedule"), respond: (body) => request("respond", body),
+    load: () => request("schedule"), respond: (body) => request<{ success: boolean; response: "accepted" | "declined" }>("respond", body),
     saveBlockouts: (blockoutDates, expectedUpdatedAt) => request("blockouts", { blockoutDates, expectedUpdatedAt }),
     acceptUnanswered: (afterScheduleId) => request("accept-unanswered", afterScheduleId ? { afterScheduleId } : {}), availability: () => request("availability"),
-    submitAvailability: (recipientId, occurrenceAvailability) => request("availability", { recipientId, occurrenceAvailability }),
+    submitAvailability: (recipientId, formId, occurrenceId, availability) => request("availability", {
+      recipientId, formId, occurrenceId, availability,
+    }),
   };
   return { churchId: session.churchId, memberId: session.memberId, operations };
 };

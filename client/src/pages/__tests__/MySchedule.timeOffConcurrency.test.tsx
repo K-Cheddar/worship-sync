@@ -12,6 +12,7 @@ import MySchedule from "../MySchedule";
 jest.mock("../../api/auth", () => ({
   acceptPendingMyAssignments: jest.fn(), getMyTeamAssignments: jest.fn(), updateMyBlockoutDates: jest.fn(), respondToMyAssignment: jest.fn(),
   acceptMyUnansweredAssignments: jest.fn(), getMyVolunteerAvailability: jest.fn(), submitMyVolunteerAvailability: jest.fn(),
+  submitMyVolunteerAvailabilityOccurrence: jest.fn(),
   AuthApiError: class extends Error {},
 }));
 const mockToast = jest.fn();
@@ -74,7 +75,7 @@ it.each(["human", "personal"] as const)("A: bulk refresh cannot lend revision B 
   await openEditor(user); await edit(user);
   const bulk = deferred<Awaited<ReturnType<MyScheduleOperations["acceptUnanswered"]>>>();
   f.operations.acceptUnanswered.mockReturnValueOnce(bulk.promise);
-  await user.click(screen.getByRole("button", { name: /Accept all (unanswered|pending)/ }));
+  await user.click(screen.getByRole("button", { name: /Accept remaining assignments/ }));
   f.setSaved(member("revision-b", "Administrator dates", "2099-12-02"));
   await act(async () => { bulk.resolve({ success: true, newlyAccepted: 0, alreadyAccepted: 0, alreadyDeclined: 0, skipped: 0, failedScheduleCount: 0, schedules: [], authorizationChanged: false, hasMore: false, nextCursor: null }); });
   await waitFor(() => expect(f.operations.load).toHaveBeenCalledTimes(2));
@@ -108,7 +109,7 @@ it("C: explicit discard adopts the refreshed dates and revision together", async
   const user = userEvent.setup(); const f = fixture(); render(page(f.operations));
   await openEditor(user); await edit(user);
   f.setSaved(member("revision-b", "Administrator dates", "2099-12-02"));
-  await user.click(screen.getByRole("button", { name: /Accept all (unanswered|pending)/ }));
+  await user.click(screen.getByRole("button", { name: /Accept remaining assignments/ }));
   await screen.findByText(/Your saved information changed elsewhere/);
   await user.click(screen.getByRole("button", { name: "Discard changes" }));
   expect(screen.getByRole("button", { name: "Save time off" })).toBeDisabled();
@@ -153,7 +154,7 @@ it.each(["before", "after"])("D: a refresh resolving %s save completion cannot r
   await openEditor(user); await edit(user);
   const refresh = deferred<Awaited<ReturnType<MyScheduleOperations["load"]>>>();
   f.operations.load.mockReturnValueOnce(refresh.promise);
-  await user.click(screen.getByRole("button", { name: /Accept all (unanswered|pending)/ }));
+  await user.click(screen.getByRole("button", { name: /Accept remaining assignments/ }));
   await waitFor(() => expect(f.operations.load).toHaveBeenCalledTimes(2));
   const save = deferred<Awaited<ReturnType<MyScheduleOperations["saveBlockouts"]>>>();
   f.operations.saveBlockouts.mockReturnValueOnce(save.promise);
@@ -228,7 +229,7 @@ it("a superseded conflict refresh cannot override a newer success", async () => 
   const newer = deferred<Awaited<ReturnType<MyScheduleOperations["load"]>>>();
   f.operations.load.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
   await user.click(screen.getByRole("button", { name: "Save time off" }));
-  await user.click(screen.getByRole("button", { name: /Accept all (unanswered|pending)/ }));
+  await user.click(screen.getByRole("button", { name: /Accept remaining assignments/ }));
   await waitFor(() => expect(f.operations.load).toHaveBeenCalledTimes(3));
   await act(async () => { newer.resolve(snapshot(member("revision-c", "Newest dates", "2099-12-03"))); });
   await act(async () => { older.resolve(snapshot(f.getSaved())); });
@@ -250,7 +251,7 @@ it("a superseded conflict refresh cannot override a newer failure", async () => 
   const newer = deferred<Awaited<ReturnType<MyScheduleOperations["load"]>>>();
   f.operations.load.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
   await user.click(screen.getByRole("button", { name: "Save time off" }));
-  await user.click(screen.getByRole("button", { name: /Accept all (unanswered|pending)/ }));
+  await user.click(screen.getByRole("button", { name: /Accept remaining assignments/ }));
   await waitFor(() => expect(f.operations.load).toHaveBeenCalledTimes(3));
   await act(async () => { newer.reject(new Error("Offline")); });
   await act(async () => { older.resolve(snapshot(f.getSaved())); });
@@ -354,12 +355,12 @@ it.each(["human", "personal"] as const)("%s bulk follows bounded pages and retri
     .mockResolvedValueOnce(bulkPage({ newlyAccepted: 1, failedScheduleCount: 1 }))
     .mockResolvedValueOnce(bulkPage({ newlyAccepted: 1 }));
   render(page(f.operations, mode));
-  await user.click(await screen.findByRole("button", { name: /Accept all (pending|unanswered)/ }));
+  await user.click(await screen.findByRole("button", { name: /Accept remaining assignments/ }));
   expect(await screen.findByText(/Accepted 26 assignments.*Retry to finish the rest/)).toBeInTheDocument();
   expect(f.operations.acceptUnanswered).toHaveBeenNthCalledWith(1, undefined);
   expect(f.operations.acceptUnanswered).toHaveBeenNthCalledWith(2, "schedule-25");
-  await waitFor(() => expect(screen.getByRole("button", { name: /Accept all (pending|unanswered)/ })).toBeEnabled());
-  await user.click(screen.getByRole("button", { name: /Accept all (pending|unanswered)/ }));
+  await waitFor(() => expect(screen.getByRole("button", { name: /Accept remaining assignments/ })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: /Accept remaining assignments/ }));
   expect(await screen.findByText("Accepted 1 assignment.")).toBeInTheDocument();
   expect(f.operations.acceptUnanswered).toHaveBeenNthCalledWith(3, undefined);
 });
@@ -369,7 +370,7 @@ it("personal authority change stops page traversal after committed partial succe
   f.operations.acceptUnanswered.mockResolvedValueOnce(bulkPage({ newlyAccepted: 1,
     authorizationChanged: true, hasMore: true, nextCursor: "must-not-follow" }));
   render(page(f.operations));
-  await user.click(await screen.findByRole("button", { name: "Accept all unanswered" }));
+  await user.click(await screen.findByRole("button", { name: "Accept remaining assignments" }));
   expect(await screen.findByText(/Accepted 1 assignment.*access changed/)).toBeInTheDocument();
   expect(f.operations.acceptUnanswered).toHaveBeenCalledTimes(1);
 });

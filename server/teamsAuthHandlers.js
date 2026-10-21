@@ -8529,15 +8529,16 @@ export const createTeamsAuthHandlers = ({
       throw httpError(404, "Request not found.");
     }
     assertTeamIntakeFormIsOpen(form);
+    let availabilityTeams = [];
     if (form.purpose === "team_availability") {
       const teamIds = teamAvailabilityFormTeamIds(form);
-      const teams = await Promise.all(
+      availabilityTeams = (await Promise.all(
         teamIds.map(async (teamId) => {
           const team = await getDoc(COLLECTIONS.teams, teamId);
           return team ? { ...team, teamId } : null;
         }),
-      );
-      if (!isMemberWithinTeamAvailabilityScope({ form, member, teams })) {
+      )).filter(Boolean);
+      if (!isMemberWithinTeamAvailabilityScope({ form, member, teams: availabilityTeams })) {
         throw httpError(404, "This request is no longer available.");
       }
     }
@@ -8545,6 +8546,7 @@ export const createTeamsAuthHandlers = ({
       recipient: { recipientId, ...recipient },
       form: { formId: recipient.formId, ...form },
       member: { memberId: recipient.memberId, ...member },
+      teams: availabilityTeams,
     };
   };
 
@@ -8591,16 +8593,24 @@ export const createTeamsAuthHandlers = ({
     const requests = [];
     for (const recipient of recipients) {
       try {
-        const { form, member, recipient: current } = await getVolunteerAvailabilityContext(
+        const { form, member, recipient: current, teams } = await getVolunteerAvailabilityContext(
           identity, recipient.recipientId || recipient.id,
         );
         const occurrenceIds = new Set((form.availabilityOccurrences || []).map((item) => item.occurrenceId));
+        const teamIds = teamAvailabilityFormTeamIds(form);
+        const teamById = new Map(teams.map((team) => [team.teamId, team]));
         requests.push({
           recipientId: current.recipientId, formId: form.formId, name: form.name,
           responseDeadline: form.responseDeadline || form.endDate || "",
           availabilityMessage: form.availabilityMessage || "",
+          teamIds,
+          teamNames: teamIds.map((teamId) => teamById.get(teamId)?.name || "Team"),
           occurrences: (form.availabilityOccurrences || []).map((item) => ({
-            occurrenceId: item.occurrenceId, name: item.name || "Service", startsAt: item.startsAt || "",
+            occurrenceId: item.occurrenceId,
+            serviceId: item.serviceId || "",
+            name: item.name || "Service",
+            startsAt: item.startsAt || "",
+            ...(item.serviceDate ? { serviceDate: item.serviceDate } : {}),
           })),
           availability: Object.fromEntries(Object.entries(member.serviceAvailability || {})
             .filter(([id]) => occurrenceIds.has(id))),
@@ -9341,7 +9351,219 @@ export const createTeamsAuthHandlers = ({
     return result;
   };
 
+  const volunteerAvailabilityMemberQueues = new Map();
+  const withVolunteerAvailabilityMemberLock = (memberKey, task) => {
+    const previous = volunteerAvailabilityMemberQueues.get(memberKey) || Promise.resolve();
+    const run = previous.then(task, task);
+    const settled = run.then(() => undefined, () => undefined);
+    volunteerAvailabilityMemberQueues.set(memberKey, settled);
+    void settled.finally(() => {
+      if (volunteerAvailabilityMemberQueues.get(memberKey) === settled) {
+        volunteerAvailabilityMemberQueues.delete(memberKey);
+      }
+    });
+    return run;
+  };
+
+  const submitVolunteerAvailabilityOccurrence = async (identity, body) => {
+    const recipientId = normalizeShortText(body?.recipientId, { max: 160 });
+    const formId = normalizeShortText(body?.formId, { max: 160 });
+    const occurrenceId = normalizeShortText(body?.occurrenceId, { max: 260 });
+    const availability = body?.availability;
+    if (!recipientId || !formId || !occurrenceId ||
+        !["available", "unavailable"].includes(availability)) {
+      throw httpError(400, "Choose whether you are available for this service.");
+    }
+
+    const db = requireFirestore?.();
+    const submittedAt = nowIso();
+    const submissionIdFor = (recipient) => recipient.submissionId ||
+      `teamIntakeSubmission_${hashValue(recipient.recipientId).slice(0, 32)}`;
+    const validateScope = async ({ form, member, teams }) => {
+      if (!form || form.churchId !== identity.churchId || form.archivedAt ||
+          form.formId !== formId || form.purpose !== "team_availability") {
+        throw httpError(404, "This availability request is no longer available.");
+      }
+      assertTeamIntakeFormIsOpen(form);
+      assertTeamIntakeFormResponseDeadline(form);
+      if (!normalizeTeamIntakeFields(undefined, form.enabledFields).includes("availability") ||
+          !(form.availabilityOccurrences || []).some((item) => item?.occurrenceId === occurrenceId)) {
+        throw httpError(404, "This availability request is no longer available.");
+      }
+      if (!isMemberWithinTeamAvailabilityScope({ form, member, teams })) {
+        throw httpError(404, "This availability request is no longer available.");
+      }
+    };
+    const buildSubmission = ({ existing, member, recipient }) => ({
+      ...(existing || {}),
+      submissionId: submissionIdFor(recipient),
+      formId,
+      churchId: identity.churchId,
+      status: "applied",
+      submittedAt: existing?.submittedAt || submittedAt,
+      occurrenceAvailability: {
+        ...(existing?.occurrenceAvailability || {}),
+        [occurrenceId]: availability,
+      },
+      appliedAt: submittedAt,
+      appliedByUid: `recipient:${recipient.recipientId}`,
+      appliedMemberId: member.memberId,
+      appliedMemberCreated: false,
+      reviewedAt: submittedAt,
+      reviewedByUid: `recipient:${recipient.recipientId}`,
+      updatedAt: submittedAt,
+      updatedByUid: `recipient:${recipient.recipientId}`,
+    });
+
+    let result;
+    if (db?.runTransaction) {
+      result = await db.runTransaction(async (transaction) => {
+        await identity.authorize?.(transaction);
+        const recipientRef = db.collection(COLLECTIONS.teamIntakeRecipients).doc(recipientId);
+        const recipientSnapshot = await transaction.get(recipientRef);
+        if (!recipientSnapshot.exists) throw httpError(404, "This availability request is no longer available.");
+        const recipient = { recipientId: recipientSnapshot.id, ...recipientSnapshot.data() };
+        if (recipient.revokedAt || recipient.churchId !== identity.churchId ||
+            recipient.memberId !== identity.memberId || recipient.formId !== formId) {
+          throw httpError(404, "This availability request is no longer available.");
+        }
+
+        const formRef = db.collection(COLLECTIONS.teamIntakeForms).doc(formId);
+        const memberRef = db.collection(COLLECTIONS.teamRosterMembers).doc(identity.memberId);
+        const [formSnapshot, memberSnapshot] = await Promise.all([
+          transaction.get(formRef),
+          transaction.get(memberRef),
+        ]);
+        if (!formSnapshot.exists || !memberSnapshot.exists) {
+          throw httpError(404, "This availability request is no longer available.");
+        }
+        const form = { formId: formSnapshot.id, ...formSnapshot.data() };
+        const member = { memberId: memberSnapshot.id, ...memberSnapshot.data() };
+        if (member.churchId !== identity.churchId || member.archivedAt ||
+            (identity.actorUid && member.userId !== identity.actorUid)) {
+          throw httpError(404, "This availability request is no longer available.");
+        }
+
+        const teamIds = teamAvailabilityFormTeamIds(form);
+        const teamSnapshots = await Promise.all(teamIds.map((teamId) =>
+          transaction.get(db.collection(COLLECTIONS.teams).doc(teamId)),
+        ));
+        const teams = teamSnapshots.flatMap((snapshot) => snapshot.exists
+          ? [{ ...snapshot.data(), teamId: snapshot.id }]
+          : []);
+        await validateScope({ form, member, teams });
+
+        const submissionId = submissionIdFor(recipient);
+        const submissionRef = db.collection(COLLECTIONS.teamIntakeSubmissions).doc(submissionId);
+        const submissionSnapshot = await transaction.get(submissionRef);
+        const existingSubmission = submissionSnapshot.exists
+          ? { submissionId: submissionSnapshot.id, ...submissionSnapshot.data() }
+          : null;
+        if (existingSubmission && (existingSubmission.churchId !== identity.churchId ||
+            existingSubmission.formId !== formId ||
+            (existingSubmission.appliedMemberId || existingSubmission.memberId || identity.memberId) !== identity.memberId)) {
+          throw httpError(404, "This availability request is no longer available.");
+        }
+
+        const alreadySaved = member.serviceAvailability?.[occurrenceId] === availability &&
+          existingSubmission?.occurrenceAvailability?.[occurrenceId] === availability &&
+          recipient.respondedAt && recipient.submissionId === submissionId;
+        if (alreadySaved) return { success: true, formId, submittedAt, changed: false };
+
+        const memberAvailability = {
+          ...(member.serviceAvailability || {}),
+          [occurrenceId]: availability,
+        };
+        const submission = buildSubmission({ existing: existingSubmission, member, recipient });
+        if (appendIntakeSubmissionToTransaction) {
+          appendIntakeSubmissionToTransaction({
+            transaction,
+            formRef,
+            formSnapshot,
+            submissionRef,
+            submission,
+          });
+        } else {
+          transaction.set(submissionRef, submission, { merge: false });
+        }
+        transaction.set(memberRef, {
+          serviceAvailability: memberAvailability,
+          updatedAt: submittedAt,
+          updatedByUid: `recipient:${recipient.recipientId}`,
+        }, { merge: true });
+        transaction.set(recipientRef, {
+          respondedAt: submittedAt,
+          submissionId,
+          updatedAt: submittedAt,
+          updatedByUid: `recipient:${recipient.recipientId}`,
+        }, { merge: true });
+        return { success: true, formId, submittedAt, changed: true };
+      });
+    } else {
+      const memberKey = `${identity.churchId}:${identity.memberId}`;
+      result = await withVolunteerAvailabilityMemberLock(memberKey, async () => {
+        await identity.authorize?.();
+        const recipient = await getDoc(COLLECTIONS.teamIntakeRecipients, recipientId);
+        if (!recipient || recipient.revokedAt || recipient.churchId !== identity.churchId ||
+            recipient.memberId !== identity.memberId || recipient.formId !== formId) {
+          throw httpError(404, "This availability request is no longer available.");
+        }
+        const { form, member, recipient: currentRecipient } = await getVolunteerAvailabilityContext(identity, recipientId);
+        const teams = await Promise.all(teamAvailabilityFormTeamIds(form).map(async (teamId) => {
+          const team = await getDoc(COLLECTIONS.teams, teamId);
+          return team ? { ...team, teamId } : null;
+        }));
+        await validateScope({ form, member, teams: teams.filter(Boolean) });
+        const submissionId = submissionIdFor(currentRecipient);
+        const existing = currentRecipient.submissionId
+          ? await getDoc(COLLECTIONS.teamIntakeSubmissions, submissionId)
+          : null;
+        if (existing && (existing.churchId !== identity.churchId || existing.formId !== formId ||
+            (existing.appliedMemberId || existing.memberId || identity.memberId) !== identity.memberId)) {
+          throw httpError(404, "This availability request is no longer available.");
+        }
+        const alreadySaved = member.serviceAvailability?.[occurrenceId] === availability &&
+          existing?.occurrenceAvailability?.[occurrenceId] === availability &&
+          currentRecipient.respondedAt && currentRecipient.submissionId === submissionId;
+        if (alreadySaved) return { success: true, formId, submittedAt, changed: false };
+
+        const submission = buildSubmission({ existing, member, recipient: currentRecipient });
+        if (persistTeamIntakeSubmission) {
+          await persistTeamIntakeSubmission(submission);
+        } else {
+          await setDoc(COLLECTIONS.teamIntakeSubmissions, submissionId, submission, { merge: true });
+        }
+        await identity.authorize?.();
+        await setDoc(COLLECTIONS.teamRosterMembers, identity.memberId, {
+          serviceAvailability: { ...(member.serviceAvailability || {}), [occurrenceId]: availability },
+          updatedAt: submittedAt,
+          updatedByUid: `recipient:${currentRecipient.recipientId}`,
+        }, { merge: true });
+        await setDoc(COLLECTIONS.teamIntakeRecipients, currentRecipient.recipientId, {
+          respondedAt: submittedAt,
+          submissionId,
+          updatedAt: submittedAt,
+          updatedByUid: `recipient:${currentRecipient.recipientId}`,
+        }, { merge: true });
+        return { success: true, formId, submittedAt, changed: true };
+      });
+    }
+
+    if (result.changed && scheduleIntakeSubmissionDigest) {
+      Promise.resolve(scheduleIntakeSubmissionDigest(result.formId, result.submittedAt)).catch((error) =>
+        logAuthEvent?.("warn", "intake.digest.schedule_failed", {
+          formId: result.formId,
+          errorName: error?.name || "Error",
+        }),
+      );
+    }
+    return { success: true, availability };
+  };
+
   const submitVolunteerAvailability = async (identity, body) => {
+    if (body?.occurrenceId !== undefined) {
+      return submitVolunteerAvailabilityOccurrence(identity, body);
+    }
     const recipientId = normalizeShortText(body?.recipientId, { max: 160 });
     if (!recipientId) throw httpError(404, "This availability request is no longer available.");
     const result = await submitTeamIntakeRecipient({ body: {

@@ -65,8 +65,9 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
   try {
     await seed(COLLECTIONS.churches, churchId, { churchId, name: "Browser Test Church", serviceTimeZone: "America/New_York" });
     const memberRef = await seed(COLLECTIONS.teamRosterMembers, memberId, {
-      churchId, memberId, firstName: "Alex", lastName: "Volunteer", updatedAt: "baseline", archivedAt: null,
+      churchId, memberId, userId: `browser-admin-${suffix}`, firstName: "Alex", lastName: "Volunteer", updatedAt: "baseline", archivedAt: null,
       blockoutDates: [{ startDate: "2099-11-01", endDate: "2099-11-01" }], notes: "PRIVATE-BROWSER-NOTE",
+      serviceAvailability: { "historical@2099-10-01": "available" },
     });
     const emptyMemberRef = await seed(COLLECTIONS.teamRosterMembers, emptyMemberId, {
       churchId, memberId: emptyMemberId, firstName: "Unscheduled", lastName: "Volunteer", updatedAt: "baseline", blockoutDates: [],
@@ -102,10 +103,18 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
     });
     const formId = `browser_form_${suffix}`;
     const recipientId = `browser_recipient_${suffix}`;
+    const submissionId = `browser_submission_${suffix}`;
     await seed(COLLECTIONS.teamIntakeForms, formId, { churchId, formId, name: "December availability", active: true,
-      purpose: "team_availability", teamIds: [teamId], enabledFields: ["availability"], startDate: "2099-12-01", endDate: "2099-12-31",
-      availabilityOccurrences: [{ occurrenceId: "service@2099-12-01", name: "December service", startsAt: "2099-12-01T14:00:00.000Z" }] });
-    await seed(COLLECTIONS.teamIntakeRecipients, recipientId, { churchId, formId, recipientId, memberId, revokedAt: null });
+      purpose: "team_availability", teamIds: [teamId], enabledFields: ["availability"], startDate: "2099-11-01", endDate: "2099-12-31",
+      availabilityOccurrences: [
+        { occurrenceId, serviceId: "service", name: "Sunday Gathering", serviceDate: "2099-11-01", startsAt: "2099-11-01T14:00:00.000Z" },
+        { occurrenceId: "service@2099-12-01", serviceId: "service", name: "December service", serviceDate: "2099-12-01", startsAt: "2099-12-01T14:00:00.000Z" },
+      ] });
+    await seed(COLLECTIONS.teamIntakeRecipients, recipientId, { churchId, formId, recipientId, memberId,
+      submissionId, respondedAt: "previous-response", revokedAt: null });
+    await seed(COLLECTIONS.teamIntakeSubmissions, submissionId, { churchId, formId, submissionId, memberId,
+      appliedMemberId: memberId, status: "applied", submittedAt: "previous-submission",
+      answers: { notes: "Keep this answer" }, occurrenceAvailability: { "historical@2099-10-01": "available" } });
     await seed(COLLECTIONS.teamIntakeRecipients, `${recipientId}_empty`, { churchId, formId,
       recipientId: `${recipientId}_empty`, memberId: emptyMemberId, revokedAt: null });
     // Prepare through the real administrator route, without activation config.
@@ -208,7 +217,7 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
     await page.getByRole("button", { name: "Retry My Schedule", exact: true }).waitFor();
     interruptSchedule = false;
     await page.getByRole("button", { name: "Retry My Schedule", exact: true }).click();
-    await page.getByRole("button", { name: "Accept all unanswered" }).waitFor();
+    await page.getByRole("button", { name: "Accept remaining assignments" }).waitFor();
     assert.equal(new URL(page.url()).hash, "");
     await page.getByRole("textbox", { name: /^Search/ }).fill("Evening");
     await page.getByRole("button", { name: /Open Evening Gathering/i }).waitFor();
@@ -271,14 +280,14 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
       const value = target[key]; return typeof value === "function" ? value.bind(target) : value;
     } }));
     const acceptedResponse = page.waitForResponse((response) => response.url().endsWith("/api/volunteer/accept-unanswered"));
-    await page.getByRole("button", { name: "Accept all unanswered" }).click();
+    await page.getByRole("button", { name: "Accept remaining assignments" }).click();
     const partial = await (await acceptedResponse).json();
     assert.equal(partial.newlyAccepted, 1);
     assert.equal(partial.failedScheduleCount, 1);
     await page.getByText(/Retry to finish the rest/).waitFor();
     const firstResponse = (await scheduleRef.get()).data().responses[occurrenceId]["camera::0"];
     const retryResponse = page.waitForResponse((response) => response.url().endsWith("/api/volunteer/accept-unanswered"));
-    await page.getByRole("button", { name: "Accept all unanswered", exact: true }).click();
+    await page.getByRole("button", { name: "Accept remaining assignments", exact: true }).click();
     const retried = await (await retryResponse).json();
     assert.equal(retried.newlyAccepted, 1); assert.equal(retried.failedScheduleCount, 0);
     assert.deepEqual((await scheduleRef.get()).data().responses[occurrenceId]["camera::0"], firstResponse);
@@ -301,14 +310,42 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
     await page.getByText("Time off saved.").waitFor();
     assert.deepEqual((await memberRef.get()).data().blockoutDates, []);
     assert.equal((await memberRef.get()).data().notes, "PRIVATE-BROWSER-NOTE");
-    await page.getByRole("button", { name: "Accept all unanswered" }).waitFor({ state: "detached" });
-    await page.getByText("Availability requests (1)").click();
-    await page.getByRole("combobox", { name: /December service/i }).click();
-    await page.getByRole("option", { name: "Unavailable", exact: true }).click();
-    await page.getByRole("button", { name: "Save availability" }).click();
-    await page.getByText("Availability saved.").waitFor();
-    assert.equal((await memberRef.get()).data().serviceAvailability["service@2099-12-01"], "unavailable");
-    await page.getByRole("button", { name: /Open Sunday Gathering/i }).click();
+    await page.getByRole("button", { name: "Accept remaining assignments" }).waitFor({ state: "detached" });
+    const firstOccurrenceSave = page.waitForResponse((response) => response.url().endsWith("/api/volunteer/availability"));
+    await page.getByRole("button", { name: "Mark availability as unavailable for Sunday Gathering" }).click();
+    assert.equal((await firstOccurrenceSave).status(), 200);
+    assert.equal((await memberRef.get()).data().serviceAvailability[occurrenceId], "unavailable");
+    assert.equal((await db.collection(COLLECTIONS.teamIntakeSubmissions).doc(submissionId).get()).data().occurrenceAvailability[occurrenceId], "unavailable");
+    const personalSession = await (await context.request.get(`${base}/api/volunteer/session`)).json();
+    const concurrentStatuses = await page.evaluate(async ({ csrfToken, recipientId: requestId, formId: requestFormId }) => {
+      const values = [
+        { occurrenceId: "service@2099-11-01", availability: "available" },
+        { occurrenceId: "service@2099-12-01", availability: "unavailable" },
+      ];
+      return Promise.all(values.map(async (value) => {
+        const response = await fetch("/api/volunteer/availability", { method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json", "x-volunteer-csrf": csrfToken },
+          body: JSON.stringify({ recipientId: requestId, formId: requestFormId, ...value }) });
+        return response.status;
+      }));
+    }, { csrfToken: personalSession.csrfToken, recipientId, formId });
+    assert.deepEqual(concurrentStatuses, [200, 200]);
+    const savedAvailability = (await memberRef.get()).data().serviceAvailability;
+    assert.equal(savedAvailability["service@2099-11-01"], "available");
+    assert.equal(savedAvailability["service@2099-12-01"], "unavailable");
+    assert.equal(savedAvailability["historical@2099-10-01"], "available");
+    const availabilitySubmission = (await db.collection(COLLECTIONS.teamIntakeSubmissions).doc(submissionId).get()).data();
+    assert.equal(availabilitySubmission.occurrenceAvailability["service@2099-11-01"], "available");
+    assert.equal(availabilitySubmission.occurrenceAvailability["service@2099-12-01"], "unavailable");
+    assert.equal(availabilitySubmission.occurrenceAvailability["historical@2099-10-01"], "available");
+    assert.deepEqual(availabilitySubmission.answers, { notes: "Keep this answer" });
+    const signedInPage = await adminContext.newPage();
+    await signedInPage.goto(`${base}/#/my-schedule`);
+    await signedInPage.getByRole("button", { name: /Open Sunday Gathering/i }).waitFor();
+    await signedInPage.getByRole("button", { name: /Change your response for Camera/ }).click();
+    await signedInPage.getByRole("button", { name: /Decline Camera/ }).click();
+    assert.equal((await scheduleRef.get()).get(`responses.${occurrenceId}.camera::0.response`), "declined");
+    await signedInPage.close();
     for (const response of ["Decline", "Accept"]) {
       await page.getByRole("button", { name: /^Change your response for Camera/ }).click();
       const savedResponse = page.waitForResponse((result) => result.url().endsWith("/api/volunteer/respond"));
@@ -316,6 +353,7 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
       assert.equal((await savedResponse).status(), 200);
       assert.equal((await scheduleRef.get()).get(`responses.${occurrenceId}.camera::0.response`), response === "Accept" ? "accepted" : "declined");
     }
+    await page.getByRole("button", { name: /Open Sunday Gathering/i }).click();
     await page.getByRole("button", { name: "Save as PDF", exact: true }).click();
     await page.getByRole("heading", { name: "PDF preview", exact: true }).waitFor();
     const downloaded = page.waitForEvent("download");
@@ -335,8 +373,8 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
     await secondScheduleRef.update({ assignments: {} });
     await scheduleRef.update({ assignments: { [occurrenceId]: { "camera::1": expiredMemberId }, past: { "camera::0": memberId } } });
     await page.reload();
-    await page.getByText("You are not scheduled for anything coming up.", { exact: true }).waitFor();
-    assert.equal(await page.getByRole("button", { name: /Open Sunday Gathering/i }).count(), 0);
+    await page.getByRole("button", { name: /Open Sunday Gathering/i }).waitFor();
+    assert.equal(await page.getByRole("button", { name: /Accept Camera/ }).count(), 0);
     assert.equal(await page.getByRole("button", { name: /Time off/i }).count(), 1);
     await scheduleRef.update({ assignments: ownSchedule.assignments });
     await secondScheduleRef.update({ assignments: { "evening@2099-12-03": { "vocals::0": memberId } } });
@@ -400,7 +438,7 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
       return route.fulfill({ response: committed });
     });
     await emptyPage.goto(`${base}/s#${emptyCredential.token}`);
-    await emptyPage.getByText("You are not scheduled for anything coming up.", { exact: true }).waitFor();
+    await emptyPage.getByRole("button", { name: /Open December service/i }).waitFor();
     await emptyPage.getByRole("button", { name: /Time off/i }).click();
     await emptyPage.getByRole("button", { name: /Add single day/i }).click();
     await emptyPage.getByRole("button", { name: "Open calendar", exact: true }).click();
@@ -424,15 +462,12 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
     await removedTimeOff;
     await emptyPage.getByText("Time off saved.", { exact: true }).last().waitFor();
     assert.deepEqual((await emptyMemberRef.get()).data().blockoutDates, []);
-    await emptyPage.getByText("Availability requests (1)", { exact: true }).click();
-    await emptyPage.getByRole("combobox", { name: /December service/i }).click();
-    await emptyPage.getByRole("option", { name: "Available", exact: true }).click();
-    await emptyPage.getByRole("button", { name: "Save availability", exact: true }).click();
+    await emptyPage.getByRole("button", { name: "Mark availability as available for December service" }).click();
     await emptyPage.getByText("Availability saved.", { exact: true }).waitFor();
     assert.equal((await emptyMemberRef.get()).data().serviceAvailability["service@2099-12-01"], "available");
     const returning = await emptyContext.newPage();
     await returning.goto(`${base}/s`);
-    await returning.getByText("You are not scheduled for anything coming up.", { exact: true }).waitFor();
+    await returning.getByRole("button", { name: /Open December service/i }).waitFor();
     await emptyMemberRef.update({ archivedAt: new Date().toISOString() });
     await returning.reload();
     await returning.getByRole("button", { name: "Verify identity", exact: true }).waitFor();
