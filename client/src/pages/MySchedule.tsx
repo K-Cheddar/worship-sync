@@ -729,6 +729,11 @@ const MySchedule = () => {
   const mountedRef = useRef(true);
   /** Drops a response that a newer request has already superseded. */
   const requestRef = useRef(0);
+  /** Scope async UI work to the church active when it started. */
+  const churchIdRef = useRef(churchId);
+  churchIdRef.current = churchId;
+  /** Bulk acceptance outlives ordinary assignment refreshes. */
+  const acceptPendingOperationRef = useRef<{ churchId: string } | null>(null);
   /** Set by the Time off editor; a refresh must never discard an open edit. */
   const timeOffDirtyRef = useRef(false);
 
@@ -736,6 +741,7 @@ const MySchedule = () => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      acceptPendingOperationRef.current = null;
     };
   }, []);
 
@@ -743,30 +749,46 @@ const MySchedule = () => {
     ({
       showLoading,
       preserveBlockouts = false,
-    }: { showLoading: boolean; preserveBlockouts?: boolean }) => {
-      if (!churchId) return Promise.resolve(false);
+      refreshBlockoutsWhileDirty = false,
+    }: {
+      showLoading: boolean;
+      preserveBlockouts?: boolean;
+      refreshBlockoutsWhileDirty?: boolean;
+    }): Promise<TeamRosterMember | null> => {
+      if (!churchId) return Promise.resolve(null);
       const request = ++requestRef.current;
       if (showLoading) setStatus("loading");
       return getMyTeamAssignments(churchId)
         .then((result) => {
-          if (!mountedRef.current || request !== requestRef.current) return false;
+          if (
+            !mountedRef.current ||
+            churchIdRef.current !== churchId ||
+            request !== requestRef.current
+          ) return null;
           setOccurrences(result.occurrences || []);
           setServiceTimeZone(result.serviceTimeZone || "UTC");
           setHasMemberRecord(Boolean(result.member));
-          if (!preserveBlockouts && !timeOffDirtyRef.current) {
+          if (
+            !preserveBlockouts &&
+            (!timeOffDirtyRef.current || refreshBlockoutsWhileDirty)
+          ) {
             setBlockoutDates(result.member?.blockoutDates || []);
             setMemberUpdatedAt(result.member?.updatedAt || "");
           }
           setStatus("ready");
-          return true;
+          return result.member;
         })
         .catch(() => {
-          if (!mountedRef.current || request !== requestRef.current) return false;
+          if (
+            !mountedRef.current ||
+            churchIdRef.current !== churchId ||
+            request !== requestRef.current
+          ) return null;
           // A background refresh that fails leaves the page as it is. Replacing
           // a working schedule with an error because a resume failed is worse
           // than showing data that is a few minutes old.
           if (showLoading) setStatus("error");
-          return false;
+          return null;
         });
     },
     [churchId],
@@ -794,9 +816,10 @@ const MySchedule = () => {
   }, []);
 
   const handleBlockoutsSaved = useCallback((member: TeamRosterMember) => {
+    if (churchIdRef.current !== churchId) return;
     setBlockoutDates(member?.blockoutDates || []);
     setMemberUpdatedAt(member?.updatedAt || "");
-  }, []);
+  }, [churchId]);
 
   /**
    * The save was rejected because the record moved. Pull the current state in
@@ -805,13 +828,21 @@ const MySchedule = () => {
    * stamp the server will accept.
    */
   const refreshAfterConflict = useCallback(() => {
-    load({ showLoading: false });
+    return load({ showLoading: false, refreshBlockoutsWhileDirty: true });
   }, [load]);
 
   const [respondingKey, setRespondingKey] = useState("");
   const [acceptingPending, setAcceptingPending] = useState(false);
   const [acceptPendingFeedback, setAcceptPendingFeedback] = useState("");
-  const acceptingPendingRef = useRef(false);
+
+  useEffect(() => {
+    const operation = acceptPendingOperationRef.current;
+    if (operation && operation.churchId !== churchId) {
+      acceptPendingOperationRef.current = null;
+      setAcceptingPending(false);
+      setAcceptPendingFeedback("");
+    }
+  }, [churchId]);
 
   const pendingAssignmentCount = useMemo(() => {
     const now = Date.now();
@@ -831,12 +862,19 @@ const MySchedule = () => {
   }, [occurrences]);
 
   const acceptAllPending = useCallback(async () => {
-    if (!churchId || acceptingPendingRef.current) return;
-    acceptingPendingRef.current = true;
+    if (
+      !churchId ||
+      acceptPendingOperationRef.current?.churchId === churchId
+    ) return;
+    const operation = { churchId };
+    acceptPendingOperationRef.current = operation;
     setAcceptingPending(true);
     setAcceptPendingFeedback("");
 
-    const request = requestRef.current;
+    const isCurrentOperation = () =>
+      mountedRef.current &&
+      churchIdRef.current === operation.churchId &&
+      acceptPendingOperationRef.current === operation;
     const totals = {
       newlyAccepted: 0,
       alreadyAccepted: 0,
@@ -850,9 +888,9 @@ const MySchedule = () => {
     const visitedCursors = new Set<string>();
 
     try {
-      while (mountedRef.current && requestRef.current === request) {
+      while (isCurrentOperation()) {
         const page = await acceptPendingMyAssignments(churchId, cursor);
-        if (!mountedRef.current || requestRef.current !== request) break;
+        if (!isCurrentOperation()) return;
         totals.newlyAccepted += page.newlyAccepted;
         totals.alreadyAccepted += page.alreadyAccepted;
         totals.alreadyDeclined += page.alreadyDeclined;
@@ -869,14 +907,9 @@ const MySchedule = () => {
       }
     } catch {
       requestFailed = true;
-    } finally {
-      if (mountedRef.current && requestRef.current !== request) {
-        acceptingPendingRef.current = false;
-        setAcceptingPending(false);
-      }
     }
 
-    if (!mountedRef.current || requestRef.current !== request) return;
+    if (!isCurrentOperation()) return;
 
     const changedCount = totals.newlyAccepted;
     const countLabel = `${changedCount} ${changedCount === 1 ? "assignment" : "assignments"}`;
@@ -920,8 +953,8 @@ const MySchedule = () => {
       showLoading: false,
       preserveBlockouts: timeOffDirtyRef.current,
     });
-    if (mountedRef.current) {
-      acceptingPendingRef.current = false;
+    if (isCurrentOperation()) {
+      acceptPendingOperationRef.current = null;
       setAcceptingPending(false);
     }
   }, [churchId, load]);
@@ -1232,6 +1265,7 @@ const MySchedule = () => {
               </p>
             ) : null}
             <MyScheduleBlockouts
+              key={churchId}
               churchId={churchId}
               serviceTimeZone={serviceTimeZone}
               blockoutDates={blockoutDates}

@@ -39,6 +39,8 @@ type BlockoutDatesFieldProps = {
   showNotes?: boolean;
   /** Muted message shown when there are no entries yet. */
   emptyLabel?: string;
+  /** Prevent edits while the owning form is saving. */
+  disabled?: boolean;
 };
 
 const makeId = () =>
@@ -82,6 +84,7 @@ const BlockoutDatesField = ({
   variant = "board-attendee",
   showNotes = false,
   emptyLabel,
+  disabled = false,
 }: BlockoutDatesFieldProps) => {
   const isBoard = variant === "board-attendee";
   const [items, setItems] = useState<BlockoutItem[]>(() => value.map(rangeToItem));
@@ -140,6 +143,7 @@ const BlockoutDatesField = ({
                 ariaLabel="Blockout type"
                 variant="muted"
                 value={item.mode}
+                disabled={disabled}
                 onChange={(mode) => setMode(item, mode)}
                 options={blockoutModeOptions}
                 className={isBoard ? "border-0" : undefined}
@@ -150,6 +154,7 @@ const BlockoutDatesField = ({
                 svg={X}
                 iconSize="sm"
                 padding="p-0"
+                disabled={disabled}
                 aria-label="Remove blockout"
                 className={cn(
                   "shrink-0 self-center",
@@ -165,6 +170,7 @@ const BlockoutDatesField = ({
               <DatePicker
                 label="Day you're away"
                 value={item.startDate}
+                disabled={disabled}
                 min={min}
                 max={max}
                 inputClassName={fieldClassName}
@@ -174,6 +180,7 @@ const BlockoutDatesField = ({
               <DateRangePicker
                 label="Dates you're away"
                 value={{ startDate: item.startDate, endDate: item.endDate }}
+                disabled={disabled}
                 min={min}
                 max={max}
                 inputClassName={fieldClassName}
@@ -189,6 +196,7 @@ const BlockoutDatesField = ({
                 hideLabel
                 placeholder="Notes (optional)"
                 value={item.notes}
+                disabled={disabled}
                 inputClassName={fieldClassName}
                 onChange={(notes) =>
                   updateItem(item.id, { notes: String(notes) })
@@ -203,6 +211,7 @@ const BlockoutDatesField = ({
             variant="secondary"
             svg={Plus}
             iconSize="sm"
+            disabled={disabled}
             onClick={() =>
               commit([
                 ...items,
@@ -216,6 +225,7 @@ const BlockoutDatesField = ({
             variant="secondary"
             svg={Plus}
             iconSize="sm"
+            disabled={disabled}
             onClick={() =>
               commit([
                 ...items,

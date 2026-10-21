@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { MemoryRouter } from "react-router-dom";
 import store from "../../store/store";
@@ -100,26 +100,42 @@ const respond = (
     occurrences,
   } as unknown as Awaited<ReturnType<typeof getMyTeamAssignments>>);
 
+const deferred = <T,>() => {
+  let resolve: ((value: T) => void) | undefined;
+  let reject: ((error: unknown) => void) | undefined;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return {
+    promise,
+    resolve: (value: T) => resolve?.(value),
+    reject: (error: unknown) => reject?.(error),
+  };
+};
+
 // AppPageShell reads the scrollbar-width preference and renders the app menu,
 // so the page needs the store and a router the way the real app provides them.
-const renderPage = (role = "member") =>
-  render(
-    <Provider store={store}>
-      <MemoryRouter>
-        <GlobalInfoContext.Provider
-          value={
-            {
-              churchId: "church-1",
-              churchName: "Northside",
-              role,
-            } as ContextType<typeof GlobalInfoContext>
-          }
-        >
-          <MySchedule />
-        </GlobalInfoContext.Provider>
-      </MemoryRouter>
-    </Provider>,
-  );
+const pageElement = (role = "member", churchId = "church-1") => (
+  <Provider store={store}>
+    <MemoryRouter>
+      <GlobalInfoContext.Provider
+        value={
+          {
+            churchId,
+            churchName: "Northside",
+            role,
+          } as ContextType<typeof GlobalInfoContext>
+        }
+      >
+        <MySchedule />
+      </GlobalInfoContext.Provider>
+    </MemoryRouter>
+  </Provider>
+);
+
+const renderPage = (role = "member", churchId = "church-1") =>
+  render(pageElement(role, churchId));
 
 const openFirstService = async (user: ReturnType<typeof userEvent.setup>) => {
   const tile = await screen.findByRole("button", {
@@ -235,6 +251,221 @@ describe("MySchedule", () => {
 
       expect(await screen.findAllByText("You accepted")).toHaveLength(2);
       expect(mockAcceptPendingMyAssignments).toHaveBeenCalledWith("church-1", undefined);
+    });
+
+    it("continues paging when a background refresh runs during acceptance", async () => {
+      jest.useFakeTimers({ doNotFake: ["performance"] });
+      const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+      const accepted = occurrence({ serving: [me({ response: "accepted" }), other()] });
+      mockGetMyTeamAssignments
+        .mockResolvedValueOnce({
+          success: true,
+          member: { memberId: "m1", updatedAt: STAMP },
+          occurrences: [occurrence()],
+        } as unknown as Awaited<ReturnType<typeof getMyTeamAssignments>>)
+        .mockResolvedValueOnce({
+          success: true,
+          member: { memberId: "m1", updatedAt: STAMP },
+          occurrences: [occurrence()],
+        } as unknown as Awaited<ReturnType<typeof getMyTeamAssignments>>)
+        .mockResolvedValueOnce({
+          success: true,
+          member: { memberId: "m1", updatedAt: STAMP },
+          occurrences: [accepted],
+        } as unknown as Awaited<ReturnType<typeof getMyTeamAssignments>>);
+      const firstPage = deferred<Awaited<ReturnType<typeof acceptPendingMyAssignments>>>();
+      const secondPage = deferred<Awaited<ReturnType<typeof acceptPendingMyAssignments>>>();
+      mockAcceptPendingMyAssignments
+        .mockReturnValueOnce(firstPage.promise)
+        .mockReturnValueOnce(secondPage.promise);
+      renderPage();
+
+      await screen.findByText("1 assignment needs your response");
+      await user.click(screen.getByRole("button", { name: /Accept all pending/i }));
+      expect(mockAcceptPendingMyAssignments).toHaveBeenCalledTimes(1);
+
+      const visibility = jest
+        .spyOn(document, "visibilityState", "get")
+        .mockReturnValue("hidden");
+      await act(async () => {
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      visibility.mockReturnValue("visible");
+      jest.advanceTimersByTime(60_000);
+      await act(async () => {
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      visibility.mockRestore();
+
+      expect(mockGetMyTeamAssignments).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole("button", { name: /Accepting/i })).toBeDisabled();
+
+      await act(async () => {
+        firstPage.resolve(result({
+          newlyAccepted: 1,
+          hasMore: true,
+          nextCursor: "schedule-2",
+        }) as Awaited<ReturnType<typeof acceptPendingMyAssignments>>);
+      });
+      expect(mockAcceptPendingMyAssignments).toHaveBeenNthCalledWith(
+        2,
+        "church-1",
+        "schedule-2",
+      );
+
+      await act(async () => {
+        secondPage.resolve(result({ newlyAccepted: 1 }) as Awaited<ReturnType<typeof acceptPendingMyAssignments>>);
+      });
+      expect(await screen.findByRole("status")).toHaveTextContent(
+        "Accepted 2 assignments.",
+      );
+      expect(mockGetMyTeamAssignments).toHaveBeenCalledTimes(3);
+      jest.useRealTimers();
+    });
+
+    it("retires old acceptance UI on a church switch without blocking the new church", async () => {
+      const user = userEvent.setup();
+      const churchARequest = deferred<Awaited<ReturnType<typeof acceptPendingMyAssignments>>>();
+      const churchBRequest = deferred<Awaited<ReturnType<typeof acceptPendingMyAssignments>>>();
+      const churchAAssignments = occurrence();
+      const churchBAssignments = occurrence({
+        occurrenceId: `church-b@${FUTURE}`,
+        name: "Church B Gathering",
+      });
+      const churchBAccepted = occurrence({
+        occurrenceId: `church-b@${FUTURE}`,
+        name: "Church B Gathering",
+        serving: [me({ response: "accepted" }), other()],
+      });
+      mockGetMyTeamAssignments
+        .mockResolvedValueOnce({
+          success: true,
+          member: { memberId: "m1", updatedAt: STAMP },
+          occurrences: [churchAAssignments],
+        } as unknown as Awaited<ReturnType<typeof getMyTeamAssignments>>)
+        .mockResolvedValueOnce({
+          success: true,
+          member: { memberId: "m2", updatedAt: STAMP },
+          occurrences: [churchBAssignments],
+        } as unknown as Awaited<ReturnType<typeof getMyTeamAssignments>>)
+        .mockResolvedValueOnce({
+          success: true,
+          member: { memberId: "m2", updatedAt: STAMP },
+          occurrences: [churchBAccepted],
+        } as unknown as Awaited<ReturnType<typeof getMyTeamAssignments>>);
+      mockAcceptPendingMyAssignments
+        .mockReturnValueOnce(churchARequest.promise)
+        .mockReturnValueOnce(churchBRequest.promise);
+      const view = renderPage();
+
+      await screen.findByText("1 assignment needs your response");
+      await user.click(screen.getByRole("button", { name: /Accept all pending/i }));
+      view.rerender(pageElement("member", "church-2"));
+
+      await screen.findByRole("button", { name: /Open Church B Gathering/i });
+      await user.click(screen.getByRole("button", { name: /Accept all pending/i }));
+      expect(mockAcceptPendingMyAssignments).toHaveBeenNthCalledWith(
+        2,
+        "church-2",
+        undefined,
+      );
+
+      await act(async () => {
+        churchARequest.resolve(result({ newlyAccepted: 99 }) as Awaited<ReturnType<typeof acceptPendingMyAssignments>>);
+      });
+      expect(screen.getByRole("status")).toHaveTextContent(/Accepting your pending assignments/i);
+      expect(screen.queryByText(/Accepted 99 assignments/)).not.toBeInTheDocument();
+
+      await act(async () => {
+        churchBRequest.resolve(result({ newlyAccepted: 1 }) as Awaited<ReturnType<typeof acceptPendingMyAssignments>>);
+      });
+
+      expect(await screen.findByRole("status")).toHaveTextContent(
+        "Accepted 1 assignment.",
+      );
+      await waitFor(() =>
+        expect(screen.queryByText(/Accepting your pending assignments/i)).not.toBeInTheDocument(),
+      );
+      expect(mockGetMyTeamAssignments).toHaveBeenCalledTimes(3);
+    });
+
+    it("keeps completed pages visible after a later page fails and retries from pending work", async () => {
+      const user = userEvent.setup();
+      const assigned = occurrence();
+      const accepted = occurrence({ serving: [me({ response: "accepted" }), other()] });
+      mockGetMyTeamAssignments
+        .mockResolvedValueOnce({
+          success: true,
+          member: { memberId: "m1", updatedAt: STAMP },
+          occurrences: [assigned],
+        } as unknown as Awaited<ReturnType<typeof getMyTeamAssignments>>)
+        .mockResolvedValueOnce({
+          success: true,
+          member: { memberId: "m1", updatedAt: STAMP },
+          occurrences: [assigned],
+        } as unknown as Awaited<ReturnType<typeof getMyTeamAssignments>>)
+        .mockResolvedValueOnce({
+          success: true,
+          member: { memberId: "m1", updatedAt: STAMP },
+          occurrences: [accepted],
+        } as unknown as Awaited<ReturnType<typeof getMyTeamAssignments>>);
+      mockAcceptPendingMyAssignments
+        .mockResolvedValueOnce(result({
+          newlyAccepted: 1,
+          hasMore: true,
+          nextCursor: "schedule-2",
+        }) as Awaited<ReturnType<typeof acceptPendingMyAssignments>>)
+        .mockRejectedValueOnce(new Error("network interrupted"))
+        .mockResolvedValueOnce(result({ newlyAccepted: 1 }) as Awaited<ReturnType<typeof acceptPendingMyAssignments>>);
+      renderPage();
+
+      await screen.findByText("1 assignment needs your response");
+      await user.click(screen.getByRole("button", { name: /Accept all pending/i }));
+      expect(await screen.findByRole("status")).toHaveTextContent(
+        /Accepted 1 assignment.*Could not confirm the remaining assignments/,
+      );
+      await waitFor(() =>
+        expect(screen.queryByText(/Accepting your pending assignments/i)).not.toBeInTheDocument(),
+      );
+      expect(mockAcceptPendingMyAssignments.mock.calls).toEqual([
+        ["church-1", undefined],
+        ["church-1", "schedule-2"],
+      ]);
+
+      await user.click(screen.getByRole("button", { name: /Accept all pending/i }));
+      expect(mockAcceptPendingMyAssignments).toHaveBeenNthCalledWith(
+        3,
+        "church-1",
+        undefined,
+      );
+      expect(await screen.findByRole("status")).toHaveTextContent(
+        "Accepted 1 assignment.",
+      );
+      await waitFor(() =>
+        expect(screen.queryByText(/Accepting your pending assignments/i)).not.toBeInTheDocument(),
+      );
+      expect(mockGetMyTeamAssignments).toHaveBeenCalledTimes(3);
+    });
+
+    it("does not request later pages after the page unmounts", async () => {
+      const user = userEvent.setup();
+      const firstPage = deferred<Awaited<ReturnType<typeof acceptPendingMyAssignments>>>();
+      respond([occurrence()]);
+      mockAcceptPendingMyAssignments.mockReturnValue(firstPage.promise);
+      const view = renderPage();
+
+      await screen.findByText("1 assignment needs your response");
+      await user.click(screen.getByRole("button", { name: /Accept all pending/i }));
+      view.unmount();
+
+      await act(async () => {
+        firstPage.resolve(result({
+          newlyAccepted: 1,
+          hasMore: true,
+          nextCursor: "schedule-2",
+        }) as Awaited<ReturnType<typeof acceptPendingMyAssignments>>);
+      });
+      expect(mockAcceptPendingMyAssignments).toHaveBeenCalledTimes(1);
     });
 
     it("keeps the global action independent of search filters and summarizes partial completion", async () => {
@@ -644,6 +875,34 @@ describe("MySchedule", () => {
       expect(screen.queryByText("1 conflict")).not.toBeInTheDocument();
     });
 
+    it("locks the Time Off draft while its save is pending", async () => {
+      const user = userEvent.setup();
+      const saveRequest = deferred<Awaited<ReturnType<typeof updateMyBlockoutDates>>>();
+      respond([occurrence()], {
+        memberId: "m1",
+        updatedAt: STAMP,
+        blockoutDates: [away],
+      });
+      mockUpdateMyBlockoutDates.mockReturnValue(saveRequest.promise);
+      renderPage();
+
+      await expandTimeOff(user);
+      await user.click(screen.getByRole("button", { name: /Remove blockout/i }));
+      await user.click(screen.getByRole("button", { name: /Save time off/i }));
+
+      expect(screen.getByRole("button", { name: /Add single day/i })).toBeDisabled();
+      expect(screen.getByRole("button", { name: /Add date range/i })).toBeDisabled();
+
+      await act(async () => {
+        saveRequest.resolve({
+          success: true,
+          member: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: [] },
+        } as unknown as Awaited<ReturnType<typeof updateMyBlockoutDates>>);
+      });
+      await screen.findByRole("button", { name: /^Save time off$/i });
+      expect(mockUpdateMyBlockoutDates).toHaveBeenCalledTimes(1);
+    });
+
     // A volunteer of several years would otherwise scroll past dozens of dead
     // trips to reach next summer. Hidden is not deleted: the entries go back to
     // the server untouched on the next save.
@@ -747,17 +1006,59 @@ describe("MySchedule", () => {
 
     // The write replaces the whole array, so a save built on a stale page would
     // silently discard whatever changed underneath it.
-    it("pulls in the current record when a save is rejected as stale", async () => {
+    it("keeps a dirty draft through a 409 and requires explicit reconciliation", async () => {
       const user = userEvent.setup();
-      respond([occurrence()], {
-        memberId: "m1",
-        updatedAt: STAMP,
-        blockoutDates: [away],
-      });
+      const otherDraftDate = {
+        startDate: "2099-10-01",
+        endDate: "2099-10-05",
+      };
+      const adminDate = {
+        startDate: "2099-11-20",
+        endDate: "2099-11-20",
+        notes: "Added by your team lead",
+      };
+      const latestStamp = "2099-02-01T00:00:00.000Z";
+      const savedStamp = "2099-03-01T00:00:00.000Z";
+      mockGetMyTeamAssignments
+        .mockResolvedValueOnce({
+          success: true,
+          member: {
+            memberId: "m1",
+            updatedAt: STAMP,
+            blockoutDates: [away, otherDraftDate],
+          },
+          occurrences: [occurrence()],
+        } as unknown as Awaited<ReturnType<typeof getMyTeamAssignments>>)
+        .mockResolvedValueOnce({
+          success: true,
+          member: {
+            memberId: "m1",
+            updatedAt: latestStamp,
+            blockoutDates: [away, otherDraftDate, adminDate],
+          },
+          occurrences: [occurrence()],
+        } as unknown as Awaited<ReturnType<typeof getMyTeamAssignments>>);
       const conflict = Object.assign(new Error("Your time off changed"), {
         status: 409,
       });
-      mockUpdateMyBlockoutDates.mockRejectedValue(conflict);
+      mockUpdateMyBlockoutDates
+        .mockRejectedValueOnce(conflict)
+        .mockResolvedValueOnce({
+          success: true,
+          member: {
+            memberId: "m1",
+            updatedAt: savedStamp,
+            blockoutDates: [otherDraftDate],
+          },
+        } as unknown as Awaited<ReturnType<typeof updateMyBlockoutDates>>)
+        .mockResolvedValueOnce({
+          success: true,
+          member: {
+            memberId: "m1",
+            updatedAt: "2099-04-01T00:00:00.000Z",
+            blockoutDates: [],
+          },
+        } as unknown as Awaited<ReturnType<typeof updateMyBlockoutDates>>);
       renderPage();
 
       await expandTimeOff(user);
@@ -765,6 +1066,7 @@ describe("MySchedule", () => {
         screen.getAllByRole("button", { name: /Remove blockout/i })[0],
       );
       await user.click(screen.getByRole("button", { name: /Save time off/i }));
+      await screen.findByRole("alert");
 
       // Refetched so the reader is comparing against what is actually stored.
       expect(mockGetMyTeamAssignments).toHaveBeenCalledTimes(2);
@@ -772,7 +1074,37 @@ describe("MySchedule", () => {
       // trade one kind of loss for another.
       expect(
         screen.getByRole("button", { name: /Save time off/i }),
-      ).toBeEnabled();
+      ).toBeDisabled();
+
+      const conflictPanel = await screen.findByRole("alert");
+      expect(within(conflictPanel).getByText(/Added by your team lead/)).toBeInTheDocument();
+      expect(screen.getAllByRole("button", { name: /Remove blockout/i })).toHaveLength(1);
+
+      await user.click(
+        screen.getByRole("button", { name: /Keep my draft and replace current dates/i }),
+      );
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: /Save time off/i })).toBeEnabled(),
+      );
+      await user.click(screen.getByRole("button", { name: /Save time off/i }));
+      await screen.findByRole("button", { name: /^Save time off$/i });
+      expect(mockUpdateMyBlockoutDates).toHaveBeenNthCalledWith(
+        2,
+        "church-1",
+        [otherDraftDate],
+        latestStamp,
+      );
+      expect(screen.getByRole("button", { name: /Save time off/i })).toBeDisabled();
+
+      await user.click(screen.getByRole("button", { name: /Remove blockout/i }));
+      await user.click(screen.getByRole("button", { name: /Save time off/i }));
+      await screen.findByRole("button", { name: /^Save time off$/i });
+      expect(mockUpdateMyBlockoutDates).toHaveBeenNthCalledWith(
+        3,
+        "church-1",
+        [],
+        savedStamp,
+      );
     });
 
     it("offers time off even when nothing is scheduled yet", async () => {
