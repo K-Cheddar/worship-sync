@@ -1,19 +1,20 @@
 import crypto from "node:crypto";
-import { normalizeUsPhoneNumber, smsConsentIdForChurchPhone } from "./smsConsent.js";
+import { smsConsentIdForChurchPhone } from "./smsConsent.js";
 import { resolveSmsMemberEligibility } from "./smsEligibility.js";
 import { encryptTeamIntakeRecipientToken, decryptTeamIntakeRecipientToken } from "./teamIntakeRecipientToken.js";
+import { createVolunteerContactIndex, normalizeVolunteerContact } from "./volunteerContactIndex.js";
 
 const HOUR = 60 * 60 * 1000;
 const CODE_TTL = 10 * 60 * 1000;
-const normalizeContact = (channel, value) => channel === "sms"
-  ? normalizeUsPhoneNumber(value)
-  : String(value || "").trim().toLowerCase();
+const normalizeContact = normalizeVolunteerContact;
 
 export const createVolunteerRecovery = ({
   db, access, secret, memberCollection, consentCollection,
   sendCode, now = Date.now,
+  contactIndexCoverageCollection,
   collections = { proofs: "volunteerContactProofs", challenges: "volunteerRecoveryChallenges", limits: "volunteerRecoveryLimits" },
 }) => {
+  const contactIndex = createVolunteerContactIndex({ db, secret, memberCollection, coverageCollection: contactIndexCoverageCollection });
   const hash = (kind, value) => crypto.createHmac("sha256", secret)
     .update(`volunteer-recovery/v1/${kind}:${value}`).digest("hex");
   const envelopeSecret = hash("envelope", "completion");
@@ -36,13 +37,7 @@ export const createVolunteerRecovery = ({
     if (state?.revokedAt) return null;
     const address = normalizeContact(channel, channel === "sms" ? member.phoneNumber : member.email);
     if (!address || (channel === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address))) return null;
-    // Read the church roster to also detect legacy formatted phone duplicates.
-    const query = db.collection(memberCollection).where("churchId", "==", identity.churchId).limit(5000);
-    const snapshot = transaction ? await transaction.get(query) : await query.get();
-    if (snapshot.size >= 5000 || snapshot.docs.filter((row) => {
-      const candidate = row.data();
-      return !candidate.archivedAt && normalizeContact(channel, channel === "sms" ? candidate.phoneNumber : candidate.email) === address;
-    }).length !== 1) return null;
+    if (!await contactIndex.hasUniqueOwner(identity, channel, address, transaction)) return null;
     if (channel === "sms") {
       const consent = await read(transaction, db.collection(consentCollection).doc(smsConsentIdForChurchPhone(identity.churchId, address)));
       if (!resolveSmsMemberEligibility({ member, churchId: identity.churchId, consent }).eligible) return null;
@@ -56,7 +51,7 @@ export const createVolunteerRecovery = ({
     return { ...identity, channel, address, contactHash: addressHash, contactVersion, generation: state?.generation || 0 };
   };
 
-  const candidateFor = async ({ token, contact, enrollment }) => {
+  const candidateFor = async ({ token, contact, enrollment }, transaction = null) => {
     if (enrollment) return { identity: enrollment.identity, channel: enrollment.channel, purpose: "enrollment", actorUid: enrollment.actorUid };
     if (token) {
       const result = await access.validateCredential(token);
@@ -69,23 +64,43 @@ export const createVolunteerRecovery = ({
     const channel = String(contact || "").includes("@") ? "email" : "sms";
     const address = normalizeContact(channel, contact);
     if (!address) return null;
-    const proofs = await db.collection(collections.proofs).where("contactHash", "==", contactHash(channel, address)).limit(2).get();
-    // A lost-link request never selects between churches or members.
-    if (proofs.size !== 1) return null;
-    const proof = proofs.docs[0].data();
-    return { identity: { churchId: proof.churchId, memberId: proof.memberId }, channel, purpose: "recovery" };
+    const addressHash = contactHash(channel, address);
+    const query = db.collection(collections.proofs).where("contactHash", "==", addressHash).limit(100);
+    const identities = new Map();
+    let cursor;
+    do {
+      const page = cursor ? query.startAfter(cursor) : query;
+      const proofs = transaction ? await transaction.get(page) : await page.get();
+      for (const row of proofs.docs) {
+        const proof = row.data();
+        if (!proof.verifiedAt || proof.channel !== channel) continue;
+        const identity = { churchId: proof.churchId, memberId: proof.memberId };
+        const identityKey = JSON.stringify([identity.churchId, identity.memberId]);
+        if (identities.has(identityKey)) continue;
+        const current = await eligible(identity, channel, transaction);
+        if (!current || current.contactHash !== addressHash || current.contactVersion !== proof.contactVersion) continue;
+        identities.set(identityKey, identity);
+        // A lost-link request never selects between eligible churches or members.
+        if (identities.size > 1) return null;
+      }
+      cursor = proofs.size === 100 ? proofs.docs.at(-1) : null;
+    } while (cursor);
+    if (identities.size !== 1) return null;
+    return { identity: [...identities.values()][0], channel, purpose: "recovery" };
   };
 
   const start = async ({ token, contact, requestKey, clientIp, enrollment }) => {
     if (!/^[A-Za-z0-9_-]{32,64}$/.test(String(requestKey || ""))) throw new Error("Invalid recovery request key.");
     const id = hash("request", requestKey);
     const challengeRef = document("challenges", id);
-    const candidate = await candidateFor({ token, contact, enrollment });
+    const candidate = token || enrollment ? await candidateFor({ token, contact, enrollment }) : null;
     const code = String(crypto.randomInt(100000, 1000000));
     const result = await db.runTransaction(async (transaction) => {
       const previous = await read(transaction, challengeRef);
       if (previous) return { challengeId: id };
-      const current = candidate ? await eligible(candidate.identity, candidate.channel, transaction, candidate.purpose !== "enrollment") : null;
+      // Resolve lost-link ambiguity in the same snapshot as challenge creation.
+      const selected = token || enrollment ? candidate : await candidateFor({ contact }, transaction);
+      const current = selected ? await eligible(selected.identity, selected.channel, transaction, selected.purpose !== "enrollment") : null;
       const budgetKeys = [["ip", clientIp || "unknown", 20]];
       if (current) budgetKeys.push(["contact", current.contactHash, 5],
         ["member", JSON.stringify([current.churchId, current.memberId]), 5], ["church", current.churchId, 200]);
@@ -107,21 +122,21 @@ export const createVolunteerRecovery = ({
       }
       const active = Boolean(current && allowed);
       transaction.create(challengeRef, {
-        active, purpose: candidate?.purpose || "recovery", createdAt: now(), expiresAt: now() + CODE_TTL,
+        active, purpose: selected?.purpose || "recovery", createdAt: now(), expiresAt: now() + CODE_TTL,
         attempts: 0, consumedAt: null, delivery: active ? "pending" : "unavailable",
         ...(active ? { churchId: current.churchId, memberId: current.memberId,
           channel: current.channel, contactHash: current.contactHash, contactVersion: current.contactVersion,
-          generation: current.generation, actorUid: candidate.actorUid || "",
+          generation: current.generation, actorUid: selected.actorUid || "",
           codeHash: hash("code", `${id}:${code}`) } : {}),
       });
-      return { challengeId: id, ...(active ? { delivery: current } : {}) };
+      return { challengeId: id, ...(active ? { delivery: current, purpose: selected.purpose } : {}) };
     });
     if (result.delivery) {
       // Reserve before provider work; an interrupted/uncertain request never
       // sends again when the same request key is retried.
       let delivery = "sent";
       try {
-        const latest = await eligible(result.delivery, result.delivery.channel, null, candidate.purpose !== "enrollment");
+        const latest = await eligible(result.delivery, result.delivery.channel, null, result.purpose !== "enrollment");
         if (!latest || latest.contactHash !== result.delivery.contactHash || latest.contactVersion !== result.delivery.contactVersion) {
           delivery = "failed";
         } else await sendCode({ ...latest, code, challengeId: id });

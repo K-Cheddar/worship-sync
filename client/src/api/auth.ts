@@ -1133,13 +1133,16 @@ export const listChurchMembers = async (churchId: string) =>
     `api/churches/${churchId}/members`,
   );
 
+export type ChurchServiceTimeZoneResponse = {
+  success: boolean;
+  serviceTimeZone: string;
+  isConfigured: boolean;
+  serviceTimeZoneRevision: string;
+  legacyTimeZoneSuggestion?: string | null;
+};
+
 export const getChurchServiceTimeZone = async (churchId: string) =>
-  apiFetch<{
-    success: boolean;
-    serviceTimeZone: string;
-    isConfigured: boolean;
-    legacyTimeZoneSuggestion?: string | null;
-  }>(
+  apiFetch<ChurchServiceTimeZoneResponse>(
     `api/churches/${churchId}/service-time-zone`,
     { method: "GET", cache: "no-store" },
     getDisplayToken() ? { "x-display-token": getDisplayToken() } : undefined,
@@ -1149,11 +1152,7 @@ export const updateChurchServiceTimeZone = async (
   churchId: string,
   serviceTimeZone: string,
 ) =>
-  apiFetch<{
-    success: boolean;
-    serviceTimeZone: string;
-    isConfigured: boolean;
-  }>(
+  apiFetch<ChurchServiceTimeZoneResponse>(
     `api/churches/${churchId}/service-time-zone`,
     { method: "POST", body: JSON.stringify({ serviceTimeZone }) },
   );

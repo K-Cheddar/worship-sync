@@ -1415,6 +1415,10 @@ app.get(
   "/api/churches/:churchId/service-time-zone",
   authHandlers.getChurchServiceTimeZone,
 );
+app.get(
+  "/api/churches/:churchId/service-time-zone/stream",
+  authHandlers.streamChurchServiceTimeZone,
+);
 app.post(
   "/api/churches/:churchId/service-time-zone",
   authHandlers.updateChurchServiceTimeZone,

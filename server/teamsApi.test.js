@@ -22,7 +22,13 @@ import { isPublicSharePathname } from "../client/src/utils/publicSharePathRedire
 import { buildTeamSchedulePeriod } from "../client/src/pages/Teams/schedule/teamSchedulePeriod.ts";
 import { generateScheduleOccurrences } from "../client/src/utils/teamScheduleOccurrences.ts";
 
-import { addTeamsSseClient, removeTeamsSseClient } from "../server/teamsSse.js";
+import {
+  addChurchServiceTimeZoneSseClient,
+  addTeamsSseClient,
+  emitChurchServiceTimeZoneInvalidation,
+  removeChurchServiceTimeZoneSseClient,
+  removeTeamsSseClient,
+} from "../server/teamsSse.js";
 import {
   addServiceFlowSseClient,
   removeServiceFlowSseClient,
@@ -69,6 +75,62 @@ const createSseClient = () => {
       return writes
         .filter((line) => line.startsWith("data: "))
         .map((line) => JSON.parse(line.slice("data: ".length).trim()));
+    },
+  };
+};
+
+const callStreamHandler = async (
+  handler,
+  { context, churchId = context.churchId, closeOnListener = false },
+) => {
+  let closeHandler;
+  const writes = [];
+  const headers = {};
+  const req = createReq({
+    params: { churchId },
+    headers: context.headers,
+    session: context.session,
+  });
+  req.on = (event, callback) => {
+    if (event === "close") {
+      closeHandler = callback;
+      if (closeOnListener) queueMicrotask(callback);
+    }
+    return req;
+  };
+  const res = {
+    statusCode: 200,
+    payload: null,
+    setHeader(name, value) {
+      headers[name] = value;
+      return this;
+    },
+    flushHeaders() {
+      this.headersFlushed = true;
+    },
+    write(chunk) {
+      writes.push(String(chunk));
+      return true;
+    },
+    end() {
+      this.ended = true;
+    },
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+    json(payload) {
+      this.payload = payload;
+      return this;
+    },
+  };
+  await handler(req, res);
+  return {
+    headers,
+    res,
+    writes,
+    close() {
+      closeHandler?.();
     },
   };
 };
@@ -2051,6 +2113,104 @@ test("church service timezone is stored separately from Chat browser hints", asy
   assert.equal(invalid.statusCode, 400);
 });
 
+test("church service timezone returns a stable revision and emits only on a changed setting", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("church_service_timezone_revision");
+  await setDoc(COLLECTIONS.churches, context.churchId, {
+    churchId: context.churchId,
+    name: "Timezone Revision Church",
+  });
+  const teamsClient = createSseClient();
+  const timeZoneClient = createSseClient();
+  addTeamsSseClient(context.churchId, teamsClient);
+  addChurchServiceTimeZoneSseClient(context.churchId, timeZoneClient);
+
+  try {
+    const firstRead = await callHandler(authHandlers.getChurchServiceTimeZone, {
+      context,
+      params: { churchId: context.churchId },
+    });
+    const secondRead = await callHandler(authHandlers.getChurchServiceTimeZone, {
+      context,
+      params: { churchId: context.churchId },
+    });
+    assert.equal(firstRead.payload.serviceTimeZoneRevision, secondRead.payload.serviceTimeZoneRevision);
+
+    const firstSave = await callHandler(authHandlers.updateChurchServiceTimeZone, {
+      context,
+      params: { churchId: context.churchId },
+      body: { serviceTimeZone: "America/New_York" },
+    });
+    const firstRevision = firstSave.payload.serviceTimeZoneRevision;
+    assert.equal(typeof firstRevision, "string");
+    assert.notEqual(firstRevision, firstRead.payload.serviceTimeZoneRevision);
+    assert.equal((await getDoc(COLLECTIONS.churches, context.churchId)).serviceTimeZoneRevision, firstRevision);
+    const readAfterSave = await callHandler(authHandlers.getChurchServiceTimeZone, {
+      context,
+      params: { churchId: context.churchId },
+    });
+    assert.equal(readAfterSave.payload.serviceTimeZoneRevision, firstRevision);
+
+    const sameSave = await callHandler(authHandlers.updateChurchServiceTimeZone, {
+      context,
+      params: { churchId: context.churchId },
+      body: { serviceTimeZone: "America/New_York" },
+    });
+    assert.equal(sameSave.payload.serviceTimeZoneRevision, firstRevision);
+
+    const secondSave = await callHandler(authHandlers.updateChurchServiceTimeZone, {
+      context,
+      params: { churchId: context.churchId },
+      body: { serviceTimeZone: "America/Chicago" },
+    });
+    assert.notEqual(secondSave.payload.serviceTimeZoneRevision, firstRevision);
+    assert.equal(timeZoneClient.events().length, 2);
+    assert.equal(timeZoneClient.events()[0].serviceTimeZoneRevision, firstRevision);
+    assert.equal("serviceTimeZone" in timeZoneClient.events()[0], false);
+    assert.equal(JSON.stringify(timeZoneClient.events()).includes("America/New_York"), false);
+    assert.deepEqual(teamsClient.events(), []);
+  } finally {
+    removeTeamsSseClient(context.churchId, teamsClient);
+    removeChurchServiceTimeZoneSseClient(context.churchId, timeZoneClient);
+  }
+});
+
+test("concurrent church service timezone saves emit the final persisted revision last", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("timezone_revision_concurrent_saves");
+  const client = createSseClient();
+  addChurchServiceTimeZoneSseClient(context.churchId, client);
+
+  try {
+    const saves = await Promise.all([
+      callHandler(authHandlers.updateChurchServiceTimeZone, {
+        context,
+        params: { churchId: context.churchId },
+        body: { serviceTimeZone: "America/New_York" },
+      }),
+      callHandler(authHandlers.updateChurchServiceTimeZone, {
+        context,
+        params: { churchId: context.churchId },
+        body: { serviceTimeZone: "America/Chicago" },
+      }),
+    ]);
+    assert.deepEqual(saves.map((save) => save.statusCode), [200, 200]);
+    const savedChurch = await getDoc(COLLECTIONS.churches, context.churchId);
+    const events = client.events();
+    assert.equal(events.length, 2);
+    assert.equal(
+      events.at(-1).serviceTimeZoneRevision,
+      savedChurch.serviceTimeZoneRevision,
+    );
+    assert.equal(
+      events.at(-1).serviceTimeZone,
+      undefined,
+    );
+  } finally {
+    removeChurchServiceTimeZoneSseClient(context.churchId, client);
+  }
+});
+
 test("service timezone read grants only the requested permission axis", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const owner = await createAdminContext("timezone_permission_matrix");
@@ -2105,7 +2265,12 @@ test("paired workstations read timezone without expanding Teams or Services edit
   const request = (churchId = context.churchId) => createReq({ headers: { "x-workstation-token": redeemed.payload.credential }, params: { churchId } });
   const read = createRes();
   await authHandlers.getChurchServiceTimeZone(request(), read);
-  assert.deepEqual(read.payload, { success: true, serviceTimeZone: "UTC", isConfigured: true });
+  assert.deepEqual(read.payload, {
+    success: true,
+    serviceTimeZone: "UTC",
+    isConfigured: true,
+    serviceTimeZoneRevision: "legacy",
+  });
   const other = createRes();
   await authHandlers.getChurchServiceTimeZone(request("other-church"), other);
   assert.equal(other.statusCode, 403);
@@ -2135,7 +2300,12 @@ test("paired displays read only their church timezone through credential bootstr
     assert.equal(bootstrap.churchId, context.churchId);
     const read = createRes();
     await authHandlers.getChurchServiceTimeZone(request(), read);
-    assert.deepEqual(read.payload, { success: true, serviceTimeZone: "America/New_York", isConfigured: true });
+    assert.deepEqual(read.payload, {
+      success: true,
+      serviceTimeZone: "America/New_York",
+      isConfigured: true,
+      serviceTimeZoneRevision: "legacy",
+    });
     const other = createRes();
     await authHandlers.getChurchServiceTimeZone(request("another-church"), other);
     assert.equal(other.statusCode, 403);
@@ -2154,6 +2324,144 @@ test("paired displays read only their church timezone through credential bootstr
     assert.equal(revoked.statusCode, 401);
     await setDoc(COLLECTIONS.churches, context.churchId, { serviceTimeZone: "America/New_York" }, { merge: true });
   }
+});
+
+test("church service timezone stream snapshots revisions for authorized readers", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const owner = await createAdminContext("timezone_stream_owner");
+  const servicesReader = await createHumanContext("timezone_stream_services", {
+    churchId: owner.churchId,
+    role: "member",
+    appAccess: "full",
+    permissions: { services: "view", teams: "none" },
+  });
+  const teamsReader = await createHumanContext("timezone_stream_teams", {
+    churchId: owner.churchId,
+    role: "member",
+    appAccess: "full",
+    permissions: { services: "none", teams: "view" },
+  });
+  const controllerReader = await createHumanContext("timezone_stream_controller", {
+    churchId: owner.churchId,
+    role: "member",
+    appAccess: "view",
+    permissions: { services: "none", teams: "none" },
+  });
+  const deniedReader = await createHumanContext("timezone_stream_denied", {
+    churchId: owner.churchId,
+    role: "member",
+    appAccess: "none",
+    permissions: { services: "none", teams: "none" },
+  });
+  await setDoc(COLLECTIONS.churches, owner.churchId, {
+    serviceTimeZoneRevision: "revision-stream-test",
+  }, { merge: true });
+
+  for (const context of [owner, servicesReader, teamsReader, controllerReader]) {
+    const stream = await callStreamHandler(authHandlers.streamChurchServiceTimeZone, { context });
+    assert.equal(stream.headers["Content-Type"], "text/event-stream");
+    assert.equal(stream.headers["Cache-Control"], "no-cache");
+    const events = stream.writes
+      .filter((write) => write.startsWith("data: "))
+      .map((write) => JSON.parse(write.slice("data: ".length).trim()));
+    assert.deepEqual(events, [{
+      type: "service-time-zone-revision",
+      churchId: owner.churchId,
+      serviceTimeZoneRevision: "revision-stream-test",
+    }]);
+    assert.equal("serviceTimeZone" in events[0], false);
+    emitChurchServiceTimeZoneInvalidation(owner.churchId, "revision-stream-event");
+    const eventFrame = stream.writes
+      .filter((write) => write.startsWith("data: "))
+      .map((write) => JSON.parse(write.slice("data: ".length).trim()))[1];
+    assert.deepEqual(eventFrame, {
+      type: "service-time-zone-revision",
+      churchId: owner.churchId,
+      serviceTimeZoneRevision: "revision-stream-event",
+    });
+    const writesBeforeClose = stream.writes.length;
+    stream.close();
+    emitChurchServiceTimeZoneInvalidation(owner.churchId, "revision-after-close");
+    assert.equal(stream.writes.length, writesBeforeClose);
+  }
+
+  const denied = await callStreamHandler(authHandlers.streamChurchServiceTimeZone, {
+    context: deniedReader,
+  });
+  assert.equal(denied.res.statusCode, 403);
+  assert.equal(denied.writes.length, 0);
+
+  const crossChurch = await callStreamHandler(authHandlers.streamChurchServiceTimeZone, {
+    context: owner,
+    churchId: "another-church",
+  });
+  assert.equal(crossChurch.res.statusCode, 403);
+  assert.equal(crossChurch.writes.length, 0);
+
+  const disconnectedDuringOpen = await callStreamHandler(
+    authHandlers.streamChurchServiceTimeZone,
+    { context: owner, closeOnListener: true },
+  );
+  assert.equal(disconnectedDuringOpen.res.ended, true);
+  assert.equal(disconnectedDuringOpen.writes.length, 0);
+  const writesAfterDisconnect = disconnectedDuringOpen.writes.length;
+  emitChurchServiceTimeZoneInvalidation(owner.churchId, "revision-after-disconnect");
+  assert.equal(disconnectedDuringOpen.writes.length, writesAfterDisconnect);
+});
+
+test("church service timezone stream rejects cross-church and revoked displays", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("timezone_stream_devices");
+  const workstationPairing = await callHandler(authHandlers.createWorkstationPairing, {
+    context,
+    body: { label: "Timezone stream workstation", appAccess: "full" },
+  });
+  const workstationRedemption = createRes();
+  await authHandlers.redeemWorkstationPairing(
+    createReq({ body: { token: workstationPairing.payload.pairing.token } }),
+    workstationRedemption,
+  );
+  const workstation = {
+    churchId: context.churchId,
+    headers: { "x-workstation-token": workstationRedemption.payload.credential },
+    session: createSession(),
+  };
+  const workstationStream = await callStreamHandler(
+    authHandlers.streamChurchServiceTimeZone,
+    { context: workstation },
+  );
+  assert.equal(workstationStream.res.statusCode, 200);
+  workstationStream.close();
+
+  const displayPairing = await callHandler(authHandlers.createDisplayPairing, {
+    context,
+    body: { label: "Timezone stream display", surfaceType: "monitor" },
+  });
+  const displayRedemption = createRes();
+  await authHandlers.redeemDisplayPairing(
+    createReq({ body: { token: displayPairing.payload.pairing.token } }),
+    displayRedemption,
+  );
+  const display = {
+    churchId: context.churchId,
+    headers: { "x-display-token": displayRedemption.payload.credential },
+    session: createSession(),
+  };
+  const displayStream = await callStreamHandler(
+    authHandlers.streamChurchServiceTimeZone,
+    { context: display },
+  );
+  assert.equal(displayStream.res.statusCode, 200);
+  displayStream.close();
+
+  await setDoc(COLLECTIONS.displayDevices, displayRedemption.payload.device.deviceId, {
+    revokedAt: new Date().toISOString(),
+  }, { merge: true });
+  const revoked = await callStreamHandler(authHandlers.streamChurchServiceTimeZone, {
+    context: display,
+  });
+  assert.equal(revoked.res.statusCode, 401);
+  assert.equal(revoked.writes.length, 0);
 });
 
 test("Services edit can change service plans without receiving Teams data", async (t) => {
@@ -10517,6 +10825,27 @@ test("my assignments is empty rather than an error when nothing is claimed", asy
   assert.equal(res.statusCode, 200);
   assert.equal(res.payload.member, null);
   assert.deepEqual(res.payload.occurrences, []);
+});
+
+test("My Schedule rejects duplicate active account links across every self operation", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("my_schedule_duplicate_links");
+  const first = await callHandler(authHandlers.createTeamRosterMember, { context, body: { firstName: "First", lastName: "Member" } });
+  const memberId = first.payload.member.memberId;
+  await callHandler(authHandlers.linkTeamRosterMember, { context, params: { memberId } });
+  const linked = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+  await setDoc(COLLECTIONS.teamRosterMembers, `${memberId}_duplicate`, { ...linked, memberId: `${memberId}_duplicate` });
+  for (const name of ["getMyTeamAssignments", "getMyVolunteerAvailability", "submitMyVolunteerAvailability",
+    "acceptMyUnansweredAssignments", "respondToMyAssignment", "updateMyBlockoutDates"]) {
+    const result = await callHandler(authHandlers[name], { context, body: { blockoutDates: [], expectedUpdatedAt: linked.updatedAt } });
+    assert.equal(result.statusCode, 409, name);
+    assert.match(result.payload.errorMessage, /account.*link|link.*account/i);
+  }
+  assert.deepEqual(await getDoc(COLLECTIONS.teamRosterMembers, memberId), linked);
+  await setDoc(COLLECTIONS.teamRosterMembers, `${memberId}_duplicate`, { archivedAt: "archived" }, { merge: true });
+  const resolved = await callHandler(authHandlers.getMyTeamAssignments, { context });
+  assert.equal(resolved.statusCode, 200);
+  assert.equal(resolved.payload.member.memberId, memberId);
 });
 
 test("my assignments refuses a church the session does not belong to", async (t) => {

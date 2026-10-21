@@ -6,17 +6,96 @@ process.env.RESEND_API_KEY = "";
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { initializeApp, deleteApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 const { authHandlers, COLLECTIONS, seedActiveHumanBearerForServerTests,
-  setServerFirestoreForTests } = await import("../authService.js");
+  setServerFirestoreForTests, setDoc } = await import("../authService.js");
+import { createVolunteerContactIndex } from "./volunteerContactIndex.js";
 const enabled = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
 const response = () => ({
   statusCode: 200, payload: null,
   status(code) { this.statusCode = code; return this; },
   json(payload) { this.payload = payload; return this; },
   set() { return this; }, clearCookie() { return this; },
+});
+
+test("Firestore roster entry points maintain indexed contact ownership on create, edit, archive and church moves", { skip: !enabled }, async () => {
+  const previousSecret = process.env.AUTH_VOLUNTEER_PORTAL_SECRET;
+  const secret = "synthetic-roster-writer-index-secret-only";
+  process.env.AUTH_VOLUNTEER_PORTAL_SECRET = secret;
+  const suffix = randomUUID();
+  const app = initializeApp({ projectId: "demo-worshipsync" }, suffix);
+  const db = getFirestore(app); setServerFirestoreForTests(db);
+  const churchId = `index_writer_${suffix}`;
+  const coverageCollection = `index_coverage_${suffix}`;
+  const index = createVolunteerContactIndex({ db, memberCollection: COLLECTIONS.teamRosterMembers, coverageCollection, secret });
+  const session = { destroy(callback) { callback?.(); } };
+  const req = (headers = {}, body = {}, memberId) => ({ headers, body, params: { churchId, memberId }, session });
+  let memberId;
+  try {
+    const { humanApiToken } = await seedActiveHumanBearerForServerTests({ req: req(), userId: `index_user_${suffix}`,
+      email: `${suffix}@example.test`, churchId, role: "admin" });
+    const headers = { authorization: `Bearer ${humanApiToken}` };
+    const me = response(); await authHandlers.getAuthMe(req(headers), me);
+    headers["x-csrf-token"] = me.payload.csrfToken;
+    await index.backfillChurch(churchId);
+    const created = response();
+    await authHandlers.createTeamRosterMember(req(headers, { firstName: "Indexed", lastName: "Member", email: "first@example.test", phoneNumber: "2125550123" }), created);
+    assert.equal(created.statusCode, 200, JSON.stringify(created.payload));
+    memberId = created.payload.member.memberId;
+    const identity = { churchId, memberId };
+    assert.equal(await index.hasUniqueOwner(identity, "email", "first@example.test"), true);
+    const updated = response();
+    // Explicit teamMemberships exercises the separate nested-map persistence path.
+    await authHandlers.updateTeamRosterMember(req(headers, { firstName: "Indexed", lastName: "Member", email: "second@example.test", teamMemberships: {} }, memberId), updated);
+    assert.equal(updated.statusCode, 200, JSON.stringify(updated.payload));
+    assert.equal(await index.hasUniqueOwner(identity, "email", "first@example.test"), false);
+    assert.equal(await index.hasUniqueOwner(identity, "email", "second@example.test"), true);
+    const team = response(); await authHandlers.createTeam(req(headers, { name: "Index import team", memberIds: [] }), team);
+    assert.equal(team.statusCode, 200, JSON.stringify(team.payload));
+    const destinationTeamId = team.payload.team.teamId;
+    const csv = `First Name,Last Name,Email,WorshipSync Member ID\nIndexed,Member,imported@example.test,${memberId}\nNew,Member,new@example.test,\n`;
+    const inspected = response(); await authHandlers.inspectPortableImport(req(headers, { type: "members", csv }), inspected);
+    const mapping = inspected.payload.mapping;
+    const preview = response(); await authHandlers.previewPortableImport(req(headers, { type: "members", csv, mapping, destinationTeamId }), preview);
+    assert.equal(preview.statusCode, 200, JSON.stringify(preview.payload));
+    const committed = response(); await authHandlers.commitPortableImport(req(headers, {
+      type: "members", previewToken: preview.payload.previewToken,
+      previewCsvHash: createHash("sha256").update(csv).digest("hex"), mapping, destinationTeamId,
+      approvedRows: preview.payload.rows.map(({ row, action, matchedId, record, expectedStateHash }) => ({ row, action, recordId: matchedId || undefined, record, expectedStateHash })),
+    }), committed);
+    assert.equal(committed.statusCode, 200, JSON.stringify(committed.payload));
+    assert.equal(committed.payload.summary.updated, 1, JSON.stringify(committed.payload));
+    assert.equal(committed.payload.summary.created, 1, JSON.stringify(committed.payload));
+    assert.equal(await index.hasUniqueOwner(identity, "email", "second@example.test"), false);
+    assert.equal(await index.hasUniqueOwner(identity, "email", "imported@example.test"), true);
+    const newId = committed.payload.results.find((row) => row.status === "created").id;
+    assert.equal(await index.hasUniqueOwner({ churchId, memberId: newId }, "email", "new@example.test"), true);
+    // Return to the contact used by the archive/move assertions below.
+    await setDoc(COLLECTIONS.teamRosterMembers, memberId, { email: "second@example.test" }, { merge: true });
+    const archived = response(); await authHandlers.archiveTeamRosterMember(req(headers, {}, memberId), archived);
+    assert.equal(archived.statusCode, 200, JSON.stringify(archived.payload));
+    assert.equal(await index.hasUniqueOwner(identity, "email", "second@example.test"), false);
+    await setDoc(COLLECTIONS.teamRosterMembers, memberId, { archivedAt: null }, { merge: true });
+    assert.equal(await index.hasUniqueOwner(identity, "email", "second@example.test"), true);
+    await setDoc(COLLECTIONS.teamRosterMembers, memberId, { churchId: `${churchId}_moved` }, { merge: true });
+    assert.equal(await index.hasUniqueOwner(identity, "email", "second@example.test"), false);
+    // Indexed query still has exactly one owner in the original church: no
+    // stale ownership keys survive the move alongside the new keys.
+    await setDoc(COLLECTIONS.teamRosterMembers, `${memberId}_replacement`, { churchId, memberId: `${memberId}_replacement`, email: "second@example.test" });
+    assert.equal(await index.hasUniqueOwner({ churchId, memberId: `${memberId}_replacement` }, "email", "second@example.test"), true);
+  } finally {
+    if (memberId) await Promise.all([memberId, `${memberId}_replacement`].map((id) => db.collection(COLLECTIONS.teamRosterMembers).doc(id).delete()));
+    for (const name of [COLLECTIONS.teamRosterMembers, COLLECTIONS.teams, COLLECTIONS.portableImportCreates]) {
+      const rows = await db.collection(name).where("churchId", "==", churchId).get();
+      await Promise.all(rows.docs.map((row) => row.ref.delete()));
+    }
+    await db.recursiveDelete(db.collection(coverageCollection));
+    setServerFirestoreForTests(null); await db.terminate(); await deleteApp(app);
+    if (previousSecret === undefined) delete process.env.AUTH_VOLUNTEER_PORTAL_SECRET;
+    else process.env.AUTH_VOLUNTEER_PORTAL_SECRET = previousSecret;
+  }
 });
 
 test("Firestore human availability operation shares the recipient transaction and preserves unrelated fields", { skip: !enabled }, async () => {
@@ -76,6 +155,17 @@ test("Firestore human availability operation shares the recipient transaction an
     assert.deepEqual(member.serviceAvailability, { elsewhere: "unavailable", own: "unavailable" });
     assert.deepEqual(member.positionIds, ["position"]);
     assert.equal(member.notes, "private");
+    const duplicateRef = db.collection(COLLECTIONS.teamRosterMembers).doc(`${memberId}_duplicate`);
+    refs.push(duplicateRef);
+    await duplicateRef.set({ ...member, memberId: duplicateRef.id });
+    for (const handler of [authHandlers.getMyTeamAssignments, authHandlers.updateMyBlockoutDates]) {
+      const ambiguous = response();
+      await handler(request(headers, { blockoutDates: [], expectedUpdatedAt: member.updatedAt }), ambiguous);
+      assert.equal(ambiguous.statusCode, 409, JSON.stringify(ambiguous.payload));
+      assert.match(ambiguous.payload.errorMessage, /account.*link|link.*account/i);
+    }
+    assert.deepEqual((await refs[1].get()).data(), member);
+    await duplicateRef.delete();
     await refs[4].update({ revokedAt: "revoked" });
     const revoked = response();
     await authHandlers.submitMyVolunteerAvailability(request(headers, {

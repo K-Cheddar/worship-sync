@@ -75,6 +75,7 @@ const parseEventStream = async (
 export const connectAuthenticatedSse = (
   path: string,
   handlers: AuthenticatedSseHandlers,
+  extraHeaders?: Record<string, string>,
 ) => {
   let disposed = false;
   let retryCount = 0;
@@ -105,7 +106,7 @@ export const connectAuthenticatedSse = (
         method: "GET",
         headers: { Accept: "text/event-stream" },
         signal: controller.signal,
-      });
+      }, extraHeaders);
     } catch {
       if (disposed || controller.signal.aborted) return;
       handlers.onError({ kind: "network" });

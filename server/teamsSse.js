@@ -12,6 +12,24 @@
 // connected to another — that would need a shared pub/sub (e.g. Redis).
 
 const teamsSseClients = new Map();
+const churchServiceTimeZoneSseClients = new Map();
+
+const addClient = (clientsByChurch, churchId, res) => {
+  if (!churchId || !res) return;
+  const clients = clientsByChurch.get(churchId);
+  if (clients) {
+    clients.add(res);
+    return;
+  }
+  clientsByChurch.set(churchId, new Set([res]));
+};
+
+const removeClient = (clientsByChurch, churchId, res) => {
+  const clients = clientsByChurch.get(churchId);
+  if (!clients) return;
+  clients.delete(res);
+  if (clients.size === 0) clientsByChurch.delete(churchId);
+};
 
 export const addTeamsSseClient = (churchId, res) => {
   if (!churchId) return;
@@ -24,12 +42,37 @@ export const addTeamsSseClient = (churchId, res) => {
 };
 
 export const removeTeamsSseClient = (churchId, res) => {
-  const clients = teamsSseClients.get(churchId);
-  if (!clients) return;
-  clients.delete(res);
-  if (clients.size === 0) {
-    teamsSseClients.delete(churchId);
-  }
+  removeClient(teamsSseClients, churchId, res);
+};
+
+export const addChurchServiceTimeZoneSseClient = (churchId, res) => {
+  addClient(churchServiceTimeZoneSseClients, churchId, res);
+};
+
+export const removeChurchServiceTimeZoneSseClient = (churchId, res) => {
+  removeClient(churchServiceTimeZoneSseClients, churchId, res);
+};
+
+export const emitChurchServiceTimeZoneInvalidation = (
+  churchId,
+  serviceTimeZoneRevision,
+) => {
+  const clients = churchServiceTimeZoneSseClients.get(churchId);
+  if (!clients?.size || typeof serviceTimeZoneRevision !== "string") return;
+
+  const event = JSON.stringify({
+    type: "service-time-zone-revision",
+    churchId,
+    serviceTimeZoneRevision,
+  });
+
+  clients.forEach((client) => {
+    try {
+      client.write(`data: ${event}\n\n`);
+    } catch (error) {
+      console.error("Could not write church service timezone SSE event:", error);
+    }
+  });
 };
 
 export const emitTeamsEvent = (churchId, type, payload = {}) => {

@@ -3,6 +3,7 @@ import { createVolunteerMutations } from "./volunteerMutations.js";
 import { createVolunteerPersonalAccess, DEFAULT_VOLUNTEER_ACCESS_TTL_MS } from "./volunteerPersonalAccess.js";
 import { createVolunteerPortalHandlers } from "./volunteerPortalHandlers.js";
 import { createVolunteerRecovery } from "./volunteerRecovery.js";
+import { volunteerContactIndexFields } from "./volunteerContactIndex.js";
 import { sendSmsConsentVerificationCode } from "./smsConsent.js";
 import {
   resolveEffectiveTeamAccess,
@@ -16,7 +17,12 @@ import {
 } from "./teamsBootstrapProjection.js";
 import { serializeAuthError } from "./authErrorResponse.js";
 import { isDeepStrictEqual } from "node:util";
-import { emitTeamsEvent } from "./teamsSse.js";
+import {
+  addChurchServiceTimeZoneSseClient,
+  emitChurchServiceTimeZoneInvalidation,
+  emitTeamsEvent,
+  removeChurchServiceTimeZoneSseClient,
+} from "./teamsSse.js";
 import {
   addServiceFlowSseClient,
   emitServiceFlowUpdated,
@@ -107,6 +113,26 @@ import {
 const APP_BASE_URL =
   process.env.AUTH_APP_BASE_URL?.replace(/\/$/, "") ||
   "https://www.worshipsync.net";
+
+const churchServiceTimeZoneWriteQueues = new Map();
+const withChurchServiceTimeZoneWriteLock = async (churchId, operation) => {
+  const previous =
+    churchServiceTimeZoneWriteQueues.get(churchId) || Promise.resolve();
+  let release;
+  const current = new Promise((resolve) => {
+    release = resolve;
+  });
+  churchServiceTimeZoneWriteQueues.set(churchId, current);
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (churchServiceTimeZoneWriteQueues.get(churchId) === current) {
+      churchServiceTimeZoneWriteQueues.delete(churchId);
+    }
+  }
+};
 
 // Separate secret from the intake link: the two grant different things, so a
 // leak of one must not mint the other.
@@ -723,11 +749,19 @@ export const createTeamsAuthHandlers = ({
     if (churchId !== req.params.churchId) throw httpError(403, "Access required");
     const actorUid = session.user?.uid;
     if (!actorUid) throw httpError(401, "Authentication required");
+    const truncatedCollections = [];
     const members = await listTeamCollectionForChurch(
       COLLECTIONS.teamRosterMembers, "memberId", churchId,
+      { truncatedCollections },
     );
-    const member = members.find((row) => row.userId === actorUid && !row.archivedAt);
-    return { churchId, actorUid, memberId: member?.memberId || "" };
+    const memberId = resolveSelfMemberId({
+      churchId, userId: actorUid, members,
+      truncated: truncatedCollections.includes(COLLECTIONS.teamRosterMembers),
+    });
+    if (!memberId && (truncatedCollections.length || members.some((row) => row.userId === actorUid && !row.archivedAt))) {
+      throw httpError(409, "Your account's team member link could not be resolved. Ask an administrator to check your account links.");
+    }
+    return { churchId, actorUid, memberId: memberId || "" };
   };
 
   const projectVolunteerMember = (member, access) => access === "personal" ? {
@@ -6253,6 +6287,8 @@ export const createTeamsAuthHandlers = ({
             createdByUid: adminUserId,
           }),
     };
+    if (kind === "member" && !id && portableCreateKey) Object.assign(doc,
+      volunteerContactIndexFields({ ...existing, ...doc }, process.env.AUTH_VOLUNTEER_PORTAL_SECRET));
     if (!id && portableCreateKey) {
       const ledgerId = crypto.createHash("sha256")
         .update(`${churchId}\u0000${kind}\u0000${portableCreateKey}`)
@@ -8990,7 +9026,10 @@ export const createTeamsAuthHandlers = ({
           .doc(submissionId),
         submission,
       });
-      transaction.set(memberRef, memberPatch, { merge: true });
+      transaction.set(memberRef, {
+        ...memberPatch,
+        ...volunteerContactIndexFields({ ...member, ...memberPatch }, process.env.AUTH_VOLUNTEER_PORTAL_SECRET),
+      }, { merge: true });
       for (const teamSnapshot of availabilityOnly ? [] : teamSnapshots) {
         if (!teamSnapshot.exists) continue;
         const team = teamSnapshot.data();
@@ -12071,7 +12110,8 @@ export const createTeamsAuthHandlers = ({
         if (requestedTeamIds.some((teamId) => !teams.some((team) => team.teamId === teamId && team.churchId === churchId))) throw stale();
         if (activeTeamIds.some((teamId) => !teams.some((team) => team.teamId === teamId && !team.archivedAt))) throw stale();
         const now = nowIso();
-        const memberDoc = { ...payload, memberId, churchId, updatedAt: now, updatedByUid: adminUserId };
+        const memberDoc = { ...payload, memberId, churchId, updatedAt: now, updatedByUid: adminUserId,
+          ...volunteerContactIndexFields({ ...existing, ...payload, churchId }, process.env.AUTH_VOLUNTEER_PORTAL_SECRET) };
         transaction.set(memberRef, memberDoc, { merge: true });
         const writeTeams = teams.filter((team) => desired.has(team.teamId) && !(team.memberIds || []).includes(memberId));
         if (writeTeams.length >= 499)
@@ -12275,6 +12315,47 @@ export const createTeamsAuthHandlers = ({
           htmlBody: `<p>${textBody}</p>`, idempotencyKey: `volunteer-verification:${challengeId}` });
       },
     });
+  };
+
+  const authorizeChurchServiceTimeZoneRead = async (req, churchId) => {
+    let bootstrap = await resolveRequestBootstrap(req);
+    if (!bootstrap?.authenticated) {
+      throw httpError(401, "Authentication required");
+    }
+    if (bootstrap.churchId !== churchId) {
+      throw httpError(403, "Church access required");
+    }
+    if (bootstrap.sessionKind === "display") {
+      // Presentation configuration only; this grants no workspace or edit access.
+      return { controllerOnlyRead: true };
+    }
+
+    try {
+      await requireServicesWorkspaceView(req, churchId);
+      return { controllerOnlyRead: false };
+    } catch (error) {
+      if (error?.statusCode !== 403) throw error;
+    }
+
+    try {
+      await requireTeamsView(req, churchId);
+      return { controllerOnlyRead: false };
+    } catch (error) {
+      if (error?.statusCode !== 403) throw error;
+      if (bootstrap.sessionKind !== "workstation") {
+        bootstrap = await requireHumanSession(req);
+        const controllerAccess =
+          bootstrap.controllerAccess ?? bootstrap.appAccess ?? "view";
+        if (
+          bootstrap.churchId !== churchId ||
+          bootstrap.role !== "member" ||
+          !["full", "music", "view"].includes(controllerAccess)
+        ) {
+          throw error;
+        }
+      }
+      return { controllerOnlyRead: true };
+    }
   };
 
   return {
@@ -16779,30 +16860,14 @@ export const createTeamsAuthHandlers = ({
     async updateMyBlockoutDates(req, res) {
       try {
         await assertCsrf(req);
-        const session = await requireHumanSession(req);
-        if (session.churchId !== req.params.churchId) {
-          throw httpError(403, "Access required");
-        }
-        const userId = session.user?.uid;
-        if (!userId) {
-          throw httpError(401, "Authentication required");
-        }
-
-        const members = await listTeamCollectionForChurch(
-          COLLECTIONS.teamRosterMembers,
-          "memberId",
-          req.params.churchId,
-        );
-        const member = members.find((row) => row.userId === userId);
-        if (!member) {
+        const identity = await resolveHumanVolunteer(req);
+        if (!identity.memberId) {
           throw httpError(
             404,
             "Your account is not linked to a team member yet.",
           );
         }
-        return res.json(await saveVolunteerBlockouts({
-          churchId: session.churchId, actorUid: userId, memberId: member.memberId,
-        }, req.body));
+        return res.json(await saveVolunteerBlockouts(identity, req.body));
       } catch (error) {
         return sendTeamsJsonError(
           res,
@@ -19565,40 +19630,8 @@ export const createTeamsAuthHandlers = ({
     async getChurchServiceTimeZone(req, res) {
       try {
         const churchId = req.params.churchId;
-        let controllerOnlyRead = false;
-        const bootstrap = await resolveRequestBootstrap(req);
-        if (!bootstrap?.authenticated) throw httpError(401, "Authentication required");
-        if (bootstrap.churchId !== churchId) {
-          throw httpError(403, "Church access required");
-        }
-        if (bootstrap.sessionKind === "display") {
-          // Presentation configuration only; this grants no workspace or edit access.
-          controllerOnlyRead = true;
-        } else {
-          try {
-            await requireServicesWorkspaceView(req, churchId);
-          } catch (error) {
-            if (error?.statusCode !== 403) throw error;
-            try {
-              await requireTeamsView(req, churchId);
-            } catch (teamsError) {
-              if (teamsError?.statusCode !== 403) throw teamsError;
-              if (bootstrap.sessionKind !== "workstation") {
-                const bootstrap = await requireHumanSession(req);
-                const controllerAccess =
-                  bootstrap.controllerAccess ?? bootstrap.appAccess ?? "view";
-                if (
-                  bootstrap.churchId !== churchId ||
-                  bootstrap.role !== "member" ||
-                  !["full", "music", "view"].includes(controllerAccess)
-                ) {
-                  throw teamsError;
-                }
-              }
-              controllerOnlyRead = true;
-            }
-          }
-        }
+        const { controllerOnlyRead } =
+          await authorizeChurchServiceTimeZoneRead(req, churchId);
         const church = await getDoc(COLLECTIONS.churches, churchId);
         if (!church) throw httpError(404, "Church settings were not found.");
         const isConfigured = isValidPortableTimeZone(church.serviceTimeZone);
@@ -19615,6 +19648,11 @@ export const createTeamsAuthHandlers = ({
           success: true,
           serviceTimeZone,
           isConfigured,
+          serviceTimeZoneRevision:
+            typeof church.serviceTimeZoneRevision === "string" &&
+            church.serviceTimeZoneRevision
+              ? church.serviceTimeZoneRevision
+              : "legacy",
           ...(controllerOnlyRead ? {} : { legacyTimeZoneSuggestion }),
         });
       } catch (error) {
@@ -19622,6 +19660,84 @@ export const createTeamsAuthHandlers = ({
           res,
           error,
           "Could not load the church service timezone.",
+        );
+      }
+    },
+
+    async streamChurchServiceTimeZone(req, res) {
+      const churchId = req.params.churchId;
+      let subscriber = null;
+      let heartbeat = null;
+      let snapshotSent = false;
+      let pendingEvents = [];
+      let streamStarted = false;
+      let closed = false;
+      const cleanup = () => {
+        if (closed) return;
+        closed = true;
+        if (heartbeat) clearInterval(heartbeat);
+        if (subscriber) {
+          removeChurchServiceTimeZoneSseClient(churchId, subscriber);
+        }
+      };
+
+      try {
+        await authorizeChurchServiceTimeZoneRead(req, churchId);
+        const existingChurch = await getDoc(COLLECTIONS.churches, churchId);
+        if (!existingChurch) throw httpError(404, "Church settings were not found.");
+
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+        res.flushHeaders?.();
+        streamStarted = true;
+
+        // Buffer invalidations until the snapshot is written. This registers
+        // before the authoritative read without allowing an update during the
+        // read to be delivered before a stale snapshot.
+        subscriber = {
+          write(chunk) {
+            if (snapshotSent) return res.write(chunk);
+            pendingEvents.push(chunk);
+            return true;
+          },
+        };
+        addChurchServiceTimeZoneSseClient(churchId, subscriber);
+        req.on("close", () => {
+          cleanup();
+          res.end();
+        });
+
+        const church = await getDoc(COLLECTIONS.churches, churchId);
+        if (closed) return;
+        if (!church) throw httpError(404, "Church settings were not found.");
+        const serviceTimeZoneRevision =
+          typeof church.serviceTimeZoneRevision === "string" &&
+          church.serviceTimeZoneRevision
+            ? church.serviceTimeZoneRevision
+            : "legacy";
+        res.write(`data: ${JSON.stringify({
+          type: "service-time-zone-revision",
+          churchId,
+          serviceTimeZoneRevision,
+        })}\n\n`);
+        snapshotSent = true;
+        pendingEvents.forEach((event) => res.write(event));
+        pendingEvents = [];
+
+        heartbeat = setInterval(() => {
+          res.write(": keep-alive\n\n");
+        }, 25000);
+      } catch (error) {
+        cleanup();
+        if (streamStarted) {
+          res.end();
+          return;
+        }
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not open the church service timezone stream.",
         );
       }
     },
@@ -19635,13 +19751,37 @@ export const createTeamsAuthHandlers = ({
         if (!isValidPortableTimeZone(serviceTimeZone)) {
           throw httpError(400, "Choose a valid IANA timezone.");
         }
-        const church = await getDoc(COLLECTIONS.churches, churchId);
-        if (!church) throw httpError(404, "Church settings were not found.");
-        await updateDocFields(COLLECTIONS.churches, churchId, {
+        const serviceTimeZoneRevision = await withChurchServiceTimeZoneWriteLock(
+          churchId,
+          async () => {
+            // A second check keeps a permission or device revocation that
+            // occurs while this write waits from authorizing a later mutation.
+            await requireServicesEdit(req, churchId);
+            const church = await getDoc(COLLECTIONS.churches, churchId);
+            if (!church) throw httpError(404, "Church settings were not found.");
+            let revision =
+              typeof church.serviceTimeZoneRevision === "string" &&
+              church.serviceTimeZoneRevision
+                ? church.serviceTimeZoneRevision
+                : "legacy";
+            if (church.serviceTimeZone !== serviceTimeZone) {
+              revision = crypto.randomUUID();
+              await updateDocFields(COLLECTIONS.churches, churchId, {
+                serviceTimeZone,
+                serviceTimeZoneRevision: revision,
+              });
+              invalidateChurchServiceTimeZone(churchId);
+              emitChurchServiceTimeZoneInvalidation(churchId, revision);
+            }
+            return revision;
+          },
+        );
+        return res.json({
+          success: true,
           serviceTimeZone,
+          isConfigured: true,
+          serviceTimeZoneRevision,
         });
-        invalidateChurchServiceTimeZone(churchId);
-        return res.json({ success: true, serviceTimeZone, isConfigured: true });
       } catch (error) {
         return sendTeamsJsonError(
           res,
