@@ -15,3 +15,10 @@ export const formatUsPhoneInput = (value: string) => {
   if (digits.length <= 6) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
   return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
 };
+
+/** Return a comparison key matching the server's supported U.S. number rules. */
+export const normalizeUsPhoneNumberForComparison = (value: string | null | undefined) => {
+  const digits = String(value || "").replace(/\D/g, "");
+  const national = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+  return /^[2-9]\d{2}[2-9]\d{6}$/.test(national) ? national : "";
+};

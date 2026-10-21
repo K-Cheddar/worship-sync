@@ -3,6 +3,7 @@ import Button from "../../../components/Button/Button";
 import Drawer from "../../../components/Drawer/Drawer";
 import { scheduleMemberName } from "../teamsUtils";
 import ScheduleReplacementInvitationForm, { type ScheduleReplacementVacancy } from "./ScheduleReplacementInvitationForm";
+import { MemberNameWithIndicator } from "../components/CurrentUserMemberIndicator";
 
 type ScheduleMessageCounts = {
   requested: number;
@@ -132,7 +133,12 @@ const ScheduleMessagesPanel = ({
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <p className="text-sm text-gray-100">
-                    {label} · {member ? scheduleMemberName(member, duplicateFirstNames) : "Roster member"}
+                    {label} ·{" "}
+                    <MemberNameWithIndicator
+                      name={member ? scheduleMemberName(member, duplicateFirstNames) : "Roster member"}
+                      memberId={intent.memberId}
+                      nameClassName="text-sm text-gray-100"
+                    />
                   </p>
                   <p className="text-xs text-gray-400">
                     {deliveryStatusLabel(intent)} · Volunteer: {assignmentResponse}

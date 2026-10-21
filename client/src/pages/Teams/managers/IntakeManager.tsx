@@ -79,6 +79,7 @@ import { getUpcomingAvailabilitySuggestions } from "../intakeAvailabilitySuggest
 import { buildTeamSchedulePeriod } from "../schedule/teamSchedulePeriod";
 import { loadAvailabilityNotificationHistory } from "../availabilityNotificationHistory";
 import AvailabilityFormSendFlow from "../components/AvailabilityFormSendFlow";
+import { MemberNameWithIndicator } from "../components/CurrentUserMemberIndicator";
 import SmsConfirmationModal from "../components/SmsConfirmationModal";
 import { cn } from "@/utils/cnHelper";
 import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
@@ -1460,7 +1461,13 @@ const IntakeManager = ({
           </span>
           <span className="shrink-0 text-xs text-gray-400">
             {submission.status === "applied" && linkedMember
-              ? `${submission.appliedMemberCreated ? "Created" : "Linked to"} ${memberName(linkedMember)}`
+              ? <>
+                  {submission.appliedMemberCreated ? "Created " : "Linked to "}
+                  <MemberNameWithIndicator
+                    name={memberName(linkedMember)}
+                    memberId={linkedMember.memberId}
+                  />
+                </>
               : submission.status}
           </span>
           <span className="hidden shrink-0 text-xs text-gray-500 sm:inline">
@@ -1480,7 +1487,11 @@ const IntakeManager = ({
               </p>
               {suggestedMember && canLinkSubmission ? (
                 <p className="mt-1 text-xs text-emerald-200">
-                  Suggested match: {memberName(suggestedMember)}
+                  Suggested match:{" "}
+                  <MemberNameWithIndicator
+                    name={memberName(suggestedMember)}
+                    memberId={suggestedMember.memberId}
+                  />
                 </p>
               ) : null}
             </div>
@@ -1582,8 +1593,14 @@ const IntakeManager = ({
                         }))
                       }
                       options={activeMembers.map((member) => ({
-                        label: memberName(member),
+                        label: (
+                          <MemberNameWithIndicator
+                            name={memberName(member)}
+                            memberId={member.memberId}
+                          />
+                        ),
                         value: member.memberId,
+                        textValue: memberName(member),
                       }))}
                     />
                     <Button
@@ -2066,7 +2083,12 @@ const IntakeManager = ({
                   className="flex flex-col gap-2 rounded border border-gray-700/70 px-2 py-2 sm:flex-row sm:items-center sm:justify-between"
                 >
                   <Checkbox
-                    label={memberName(member)}
+                    label={
+                      <MemberNameWithIndicator
+                        name={memberName(member)}
+                        memberId={member.memberId}
+                      />
+                    }
                     checked={recipientMemberIds.has(member.memberId)}
                     onCheckedChange={(checked) =>
                       toggleMember(member.memberId, checked)
@@ -2205,7 +2227,10 @@ const IntakeManager = ({
                   return (
                     <tr key={recipient.recipientId}>
                       <th scope="row" className="sticky left-0 bg-gray-950 px-3 py-2 font-medium text-white">
-                        {memberName(member || null)}
+                        <MemberNameWithIndicator
+                          name={memberName(member || null)}
+                          memberId={member?.memberId}
+                        />
                       </th>
                       <td className="px-3 py-2 text-gray-300">
                         {recipient.respondedAt
@@ -2377,7 +2402,12 @@ const IntakeManager = ({
           </p>
           <ul className="list-disc space-y-1 pl-5 text-gray-300">
             {exactMatchTargets.map(({ submission, member }) => (
-              <li key={submission.submissionId}>{memberName(member)}</li>
+              <li key={submission.submissionId}>
+                <MemberNameWithIndicator
+                  name={memberName(member)}
+                  memberId={member.memberId}
+                />
+              </li>
             ))}
           </ul>
           <p>Linked submissions move to Processed.</p>
@@ -2593,6 +2623,7 @@ const IntakeManager = ({
       {recipientSmsPreview ? <SmsConfirmationModal
         isOpen
         recipientName={recipientSmsPreview.recipientName}
+        recipientMemberId={recipientSmsPreview.recipient?.memberId}
         phoneNumberSnapshot={recipientSmsPreview.phoneNumberSnapshot}
         message={recipientSmsPreview.message}
         segmentCount={recipientSmsPreview.segmentCount}

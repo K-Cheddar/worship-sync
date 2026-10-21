@@ -8,6 +8,7 @@ import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { ToastProvider } from "../../../context/toastContext";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { TeamsNavigationGuardProvider } from "../TeamsNavigationGuardContext";
+import { CurrentMemberIdentityProvider } from "../components/CurrentUserMemberIndicator";
 import type {
   NotificationIntent,
   TeamIntakeForm,
@@ -104,6 +105,7 @@ const renderManager = ({
   members = [member],
   serviceTimeZone = "UTC",
   smsEligibilityByMemberId,
+  selfMemberId = null,
 }: {
   eligibilityStatus?: "no_mobile" | "consent_needed" | "enabled" | "opted_out";
   forms?: TeamIntakeForm[];
@@ -117,6 +119,7 @@ const renderManager = ({
   teams?: TeamRecord[];
   members?: TeamRosterMember[];
   serviceTimeZone?: string;
+  selfMemberId?: string | null;
   smsEligibilityByMemberId?: Record<string, { eligible: boolean; status?: "no_mobile" | "consent_needed" | "enabled" | "opted_out" }>;
 } = {}) => {
   mockServiceTimeZone = serviceTimeZone;
@@ -130,8 +133,9 @@ const renderManager = ({
         >}
       >
         <ToastProvider>
-          <TeamsNavigationGuardProvider>
-            <IntakeManager
+          <CurrentMemberIdentityProvider memberId={selfMemberId}>
+            <TeamsNavigationGuardProvider>
+              <IntakeManager
               availabilityOnly={availabilityOnly}
               managedTeamIds={managedTeamIds}
               forms={forms}
@@ -156,8 +160,9 @@ const renderManager = ({
                 },
               }}
               smsDeliveryAttempts={[]}
-            />
-          </TeamsNavigationGuardProvider>
+              />
+            </TeamsNavigationGuardProvider>
+          </CurrentMemberIdentityProvider>
         </ToastProvider>
       </GlobalInfoContext.Provider>
     </MemoryRouter>,
@@ -703,6 +708,17 @@ const submittedAvailability: TeamIntakeSubmission = {
   submittedAt: "2026-10-03T12:00:00.000Z",
 };
 
+test("does not mark an unmatched intake submission by name", async () => {
+  const user = userEvent.setup();
+  renderManager({ submissions: [submittedAvailability], selfMemberId: member.memberId });
+  await openForm(user);
+
+  const submissionCard = screen.getByRole("button", {
+    name: "Expand submission from Rae Kim",
+  });
+  expect(within(submissionCard).queryByText("You")).not.toBeInTheDocument();
+});
+
 test.each([
   {
     issuedBy: "recipient",
@@ -771,6 +787,8 @@ test.each([
 
 test("closed future availability coverage opens for review without creating another form", async () => {
   const user = userEvent.setup();
+  const serviceDate = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const startsAt = `${serviceDate}T14:00:00.000Z`;
   const upcoming = {
     id: "upcoming-service",
     serviceId: "upcoming-service",
@@ -778,7 +796,7 @@ test("closed future availability coverage opens for review without creating anot
     name: "Sunday service",
     timerType: "countdown" as const,
     reccurence: "one_time" as const,
-    dateTimeISO: "2026-10-18T14:00:00.000Z",
+    dateTimeISO: startsAt,
     positionRequirements: [{ positionId: "vocal", count: 1 }],
   };
   const closedForm = {
@@ -788,11 +806,11 @@ test("closed future availability coverage opens for review without creating anot
     enabledFields: ["availability" as const],
     availabilityServices: [{ serviceId: upcoming.serviceId, name: upcoming.name }],
     availabilityOccurrences: [{
-      occurrenceId: "upcoming-service@2026-10-18",
+      occurrenceId: `upcoming-service@${serviceDate}`,
       serviceId: upcoming.serviceId,
       name: upcoming.name,
-      serviceDate: "2026-10-18",
-      startsAt: upcoming.dateTimeISO,
+      serviceDate,
+      startsAt,
     }],
   } as TeamIntakeForm;
   renderManager({

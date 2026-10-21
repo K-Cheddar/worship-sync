@@ -26,8 +26,12 @@ const HomeToolbarMenu = ({
 }: HomeToolbarMenuProps = {}) => {
   const { pathname } = useLocation();
   const hideHomeMenuItem = pathname === "/home";
-  const { loginState, exitGuestMode } = useContext(GlobalInfoContext) || {};
+  const { loginState, sessionKind, exitGuestMode } = useContext(GlobalInfoContext) || {};
   const isGuest = loginState === "guest";
+  const mayOpenHomeDirectly = isGuest || (
+    loginState === "success" &&
+    (sessionKind === "human" || sessionKind === "workstation")
+  );
   const {
     aboutChangelogMenuItems,
     aboutChangelogModals,
@@ -43,9 +47,9 @@ const HomeToolbarMenu = ({
           Home
         </div>
       ),
-      to: isGuest ? "/home" : "/",
+      to: mayOpenHomeDirectly ? "/home" : "/",
     };
-  }, [isGuest]);
+  }, [mayOpenHomeDirectly]);
 
   const exitDemoMenuItem = useMemo((): MenuItemType | null => {
     if (!isGuest) {

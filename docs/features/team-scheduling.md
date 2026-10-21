@@ -46,6 +46,7 @@ A schedule follows **Virtual → Draft ↔ Published**.
 
 - At most one active schedule owns a given team and logical occurrence. Different teams may schedule the same occurrence.
 - Concurrent schedule creation and edits must preserve unique ownership and avoid lost updates.
+- Deleting a schedule releases only occurrence claims that still reference its exact church, team, and schedule ID. Deletion and concurrent generation preserve any replacement owner's claims, allowing the same period to be generated again. Deleting a team continues to preserve its schedules.
 - Schedules with different occurrences may have overlapping date ranges.
 - Reuse an applicable saved schedule where possible; do not make a duplicate merely because a period was opened from a different view.
 - Adding an ad-hoc service automatically adds its occurrence to the applicable existing period schedule and preserves its assignments.
@@ -116,7 +117,9 @@ A schedule follows **Virtual → Draft ↔ Published**.
 
 ## Product decisions
 
-Review-correction guarantees (product-owner request, 2026-10-15): schedule metadata edits preserve persisted fields outside the validated editable payload, including responses, public links, publication and sending history. Superseded shadow retries cannot restore removed assignments or overwrite newer choices. Imported occurrences acquire the same exclusive ownership protection as schedule creation; absent standalone group IDs compare as null while genuine group conflicts remain blocked. Browser smoke validation uses disposable test-church data because opening Schedules can persist automatic reconciliation. These corrections do not enable messaging or change publication behavior.
+Review-correction guarantees (product-owner request, 2026-10-15): schedule metadata edits preserve persisted fields outside the validated editable payload, including responses, public links, publication and sending history. Superseded shadow retries cannot restore removed assignments or overwrite newer choices. Imported occurrences acquire the same exclusive ownership protection as schedule creation; absent standalone group IDs compare as null while genuine group conflicts remain blocked. These corrections do not enable messaging or change publication behavior.
+
+Repeatable scheduling verification (product-owner requests, 2026-10-20): browser tests always target built-in church `demo`; `E2E_DEMO_CHURCH_ID` is deprecated and only accepted when its value is `demo`. Before scheduling fixtures are provisioned or recovered, the saved authenticated server session must identify `demo` and have edit access to the reserved test-owned team. Smoke does not open Scheduling and blocks church-scoped mutations. A separate workflow suite exercises virtual viewing, first-edit Draft persistence, real reconciliation, deletion, and regeneration with exact ownership manifests and authoritative cleanup. Existing unowned demo records are preserved; neither suite enables publication or messaging. New generated schedules explicitly persist `published: false`; existing schedules retain their publication metadata. See [browser test configuration and cleanup](../testing/smoke-coverage.md).
 
 Phase 3B (product-owner request, 2026-10-12): administrators and church-wide Teams editors retain schedule messaging access. Current editors of the persisted schedule's Team may inspect its message history, review and explicitly send individual SMS, and prepare/resolve replacement invitations. Read-only or unrelated-Team access does not grant these actions. Authorization is repeated immediately before dispatch; an old approval is not a permission grant. Combined occurrence identity does not combine Team permissions. Scoped operators cannot manage messaging for legacy schedules with inconsistent assignment position ownership; administrators can review those records. Existing identities, email sending, personalized responses, manual confirmation, consent and uncertain-send safeguards remain intact. This phase changes neither publication nor bulk/background sending. See the [endpoint audit and next-step plan](../team-schedule-messaging-phase-3b.md).
 
@@ -150,3 +153,20 @@ These references locate current code, not additional product requirements.
 
 The current schedule document is persisted in the teamSchedules collection. Its occurrence list is referenced by assignments, responses, guests, microphone and IEM allocations, and additional position slots. Availability forms and service plans keep their own occurrence references/keys. The Phase 1 report maps those relationships and the compatibility risks of changing them.
 
+
+
+### Quick member creation from schedule cells
+
+**Approval source:** Product-owner request, 2026-10-18.
+
+- The normal primary-assignment picker offers Add new member alongside Add guest. Typed names prefill the compact form; first and last names are required, and mobile phone and email are optional.
+- Quick creation assigns the selected team and position through the roster API's existing membership synchronization. Scheduling never reconstructs a whole-team settings update. Existing equipment flags survive omitted-field updates; explicit true/false still enable/disable them.
+- Team-scoped candidate lookup exposes safe names/avatars only. Operators explicitly select an existing member or confirm that a matching name represents a different person. Selecting an existing person uses roster membership and team-profile APIs and preserves unrelated member data.
+- If a creation response is lost or the server reports an uncertain failure, refresh the authorized roster before permitting another create; on-team matches also require an explicit existing/distinct-person decision.
+- Creation and assignment are separate durable steps. A failed create preserves the draft; a failed assignment retains the saved member and retries using its ID. Church, team, period, schedule selection and slot changes invalidate old UI callbacks.
+- Saving a phone number never records consent, sends a message, creates an account or issues an invitation. Administrators may separately record already-obtained consent using the existing consent modal, only after current server eligibility confirms consent is needed. STOP restrictions remain enforced.
+
+Regression coverage: ScheduleAssignmentPicker.test.tsx, TeamsAndServices.test.tsx, server/teamsApi.test.js, and the scheduling quick-member browser suite.
+
+
+Unified workspace Phase 1 (product-owner request, 2026-10-19): establish a pure Team/date-range read model across saved owners and generated occurrences, preserving saved occurrence keys, staffing overrides, custom services and unsafe legacy rows. Summary-only owners remain explicitly unhydrated, never empty staffing. This phase extracts stable period logic but preserves existing selection/editing, overlap review, publication, permissions and communication. Unified grid integration and owner-aware mutations are deferred. See the [Phase 1 implementation and integration boundaries](../unified-scheduling-workspace-phase-1.md).

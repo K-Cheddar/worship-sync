@@ -20,17 +20,29 @@ const kindLabel: Record<ServicePlanImportChangeKind, string> = {
   added: "Added",
   removed: "Removed",
   updated: "Updated",
+  moved: "Moved",
+  legacy_match: "Moved",
+  linked: "Linked",
 };
 
 const kindClassName: Record<ServicePlanImportChangeKind, string> = {
   added: "bg-emerald-400/10 text-emerald-200",
   removed: "bg-red-400/10 text-red-200",
   updated: "bg-cyan-400/10 text-cyan-200",
+  moved: "bg-violet-400/10 text-violet-200",
+  legacy_match: "bg-amber-400/10 text-amber-100",
+  linked: "bg-indigo-400/10 text-indigo-200",
 };
 
 /** Item type changes still apply with the import; omit them from the review UI. */
 const visibleFields = (change: ServicePlanImportSummary["changes"][number]) =>
   change.fields.filter((field) => field.label !== "Item type");
+
+const checkboxLabel = (change: ServicePlanImportSummary["changes"][number]) => {
+  if (change.kind === "legacy_match") return `Confirm match for ${change.itemName}`;
+  if (change.kind === "linked") return `Link ${change.itemName} to the import source`;
+  return `${change.kind === "moved" ? "Move" : "Update"} ${change.itemName}`;
+};
 
 const getInitialReviewWindowGeometry = () => {
   // The desktop workspace gives the preview column roughly one third of the
@@ -49,12 +61,16 @@ const ServicePlanImportReviewWindow = ({
   onApply,
   onClose,
 }: ServicePlanImportReviewWindowProps) => {
-  const changeKeys = useMemo(
-    () => summary.changes.map(servicePlanImportChangeKey),
+  const bulkChangeKeys = useMemo(
+    () => summary.changes
+      .filter((change) => change.kind !== "legacy_match")
+      .map(servicePlanImportChangeKey),
     [summary.changes],
   );
   const [selectedChangeKeys, setSelectedChangeKeys] = useState<Set<string>>(
-    () => new Set(changeKeys),
+    () => new Set(summary.changes
+      .filter((change) => change.kind !== "legacy_match")
+      .map(servicePlanImportChangeKey)),
   );
   const selectedChanges = summary.changes.filter((change) =>
     selectedChangeKeys.has(servicePlanImportChangeKey(change)),
@@ -67,6 +83,15 @@ const ServicePlanImportReviewWindow = ({
       : "",
     selectedChanges.filter((change) => change.kind === "updated").length
       ? `${selectedChanges.filter((change) => change.kind === "updated").length} updated`
+      : "",
+    selectedChanges.filter((change) => change.kind === "moved").length
+      ? `${selectedChanges.filter((change) => change.kind === "moved").length} moved`
+      : "",
+    selectedChanges.filter((change) => change.kind === "legacy_match").length
+      ? `${selectedChanges.filter((change) => change.kind === "legacy_match").length} match confirmed`
+      : "",
+    selectedChanges.filter((change) => change.kind === "linked").length
+      ? `${selectedChanges.filter((change) => change.kind === "linked").length} linked`
       : "",
     selectedChanges.filter((change) => change.kind === "removed").length
       ? `${selectedChanges.filter((change) => change.kind === "removed").length} removed`
@@ -108,7 +133,9 @@ const ServicePlanImportReviewWindow = ({
           <p className="font-medium">
             {changeCount
               ? `${changeCount} ${changeCount === 1 ? "change" : "changes"} ready to apply`
-              : "No selected updates found"}
+              : summary.changes.some((change) => change.kind === "legacy_match")
+                ? "Confirm any suggested legacy matches to apply them"
+                : "No selected updates found"}
           </p>
           <p className="mt-1 text-xs text-gray-400">
             {summaryParts.length
@@ -122,20 +149,24 @@ const ServicePlanImportReviewWindow = ({
             <div className="space-y-3">
               <Checkbox
                 label="Select all updates"
-                checked={selectedChangeKeys.size === changeKeys.length}
-                onCheckedChange={(checked) => setSelected(changeKeys, checked)}
+                checked={bulkChangeKeys.length > 0 && bulkChangeKeys.every((key) => selectedChangeKeys.has(key))}
+                onCheckedChange={(checked) => setSelected(bulkChangeKeys, checked)}
+                disabled={!bulkChangeKeys.length}
                 className="border-b border-gray-700 pb-3"
               />
               <ul className="space-y-3" aria-label="Service Planning changes">
                 {changesBySection.map((sectionChanges) => {
-                  const sectionChangeKeys = sectionChanges.map(servicePlanImportChangeKey);
+                  const sectionChangeKeys = sectionChanges
+                    .filter((change) => change.kind !== "legacy_match")
+                    .map(servicePlanImportChangeKey);
                   const sectionName = sectionChanges[0]?.sectionName || "Untitled section";
                   return (
                     <li key={sectionChanges[0]?.sectionId} className="rounded-lg border border-gray-700 bg-gray-900/70">
                       <Checkbox
                         label={sectionName}
-                        checked={sectionChangeKeys.every((key) => selectedChangeKeys.has(key))}
+                        checked={sectionChangeKeys.length > 0 && sectionChangeKeys.every((key) => selectedChangeKeys.has(key))}
                         onCheckedChange={(checked) => setSelected(sectionChangeKeys, checked)}
+                        disabled={!sectionChangeKeys.length}
                         className="border-b border-gray-700 px-3 py-2"
                         labelClassName="font-medium"
                       />
@@ -147,7 +178,7 @@ const ServicePlanImportReviewWindow = ({
                             <li key={changeKey} className="rounded-md border border-gray-700/80 bg-gray-950/40 px-3 py-2">
                               <div className="flex items-start gap-2">
                                 <Checkbox
-                                  label={`Update ${change.itemName}`}
+                                  label={checkboxLabel(change)}
                                   checked={selectedChangeKeys.has(changeKey)}
                                   onCheckedChange={(checked) => setSelected([changeKey], checked)}
                                   className="pt-0.5"
@@ -159,10 +190,17 @@ const ServicePlanImportReviewWindow = ({
                                     kindClassName[change.kind],
                                   )}
                                 >
-                                  {kindLabel[change.kind]}
+                                  {change.kind === "legacy_match" && change.fromSectionId === change.sectionId
+                                    ? "Review match"
+                                    : kindLabel[change.kind]}
                                 </span>
                                 <div className="min-w-0 flex-1">
                                   <p className="truncate font-medium text-gray-100">{change.itemName}</p>
+                                  {change.kind === "moved" || change.kind === "legacy_match" ? (
+                                    <p className="mt-1 text-xs text-violet-200">
+                                      {change.fromSectionName || "Previous section"} → {change.sectionName}
+                                    </p>
+                                  ) : null}
                                   {fields.length ? (
                                     <div className="mt-2 grid grid-cols-1 gap-2 border-t border-gray-700/80 pt-2 sm:grid-cols-2">
                                       {fields.map((field) => (

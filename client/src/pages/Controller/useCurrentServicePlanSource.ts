@@ -18,6 +18,7 @@ import {
   useState,
 } from "react";
 import _ from "lodash";
+import { useStore } from "react-redux";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector } from "../../hooks";
@@ -47,19 +48,53 @@ import {
 import { getServicePlanKey } from "../../utils/servicePlanKeys";
 import { toTeamService } from "../Teams/teamsUtils";
 import { useCurrentServiceOccurrence } from "./useCurrentServiceOccurrence";
-import type { ServicePlan, ServicePlanSummary } from "../../types/servicePlan";
-import type { ServicePlanningTeamAssignment } from "../../types/servicePlanningImport";
+import type {
+  ServicePlan,
+  ServicePlanParticipantOverlayProjection,
+  ServicePlanSummary,
+} from "../../types/servicePlan";
+import type {
+  ServicePlanningPreview,
+  ServicePlanningTeamAssignment,
+} from "../../types/servicePlanningImport";
 import type { PublicServiceFlowSnapshot } from "../../services/serviceFlowTypes";
 import {
   chooseControllerServicePlanKey,
   sortControllerServicePlans,
 } from "./controllerServicePlanSelection";
 import { useActiveControllerId } from "../../context/activeController";
+import type { RootState } from "../../store/store";
+
+const failedParticipantOverlayProjection =
+  (): ServicePlanParticipantOverlayProjection => ({
+    status: "failed",
+    elements: [],
+  });
+
+const participantOverlayProjectionMatchesPlan = (
+  plan: ServicePlan,
+  projection: ServicePlanParticipantOverlayProjection,
+): boolean =>
+  projection.status !== "ready" ||
+  projection.planRevision === undefined ||
+  projection.planRevision === (plan.revision ?? 0);
+
+const participantOverlayProjectionForPlan = (
+  plan: ServicePlan,
+  projection: ServicePlanParticipantOverlayProjection | undefined,
+): ServicePlanParticipantOverlayProjection => {
+  const resolvedProjection = projection ?? failedParticipantOverlayProjection();
+  if (!participantOverlayProjectionMatchesPlan(plan, resolvedProjection)) {
+    return failedParticipantOverlayProjection();
+  }
+  return resolvedProjection;
+};
 
 type ReconciliationResult = "updated" | "unchanged" | "failed" | "superseded";
 
 export const useCurrentServicePlanSource = () => {
   const dispatch = useDispatch();
+  const store = useStore<RootState>();
   const activeControllerId = useActiveControllerId();
   const { canViewServices, canViewTeams, canUseTeamsLiveSync, churchId, loginState } =
     useContext(GlobalInfoContext) || {};
@@ -101,6 +136,9 @@ export const useCurrentServicePlanSource = () => {
   const [selectedPlanKey, setSelectedPlanKey] = useState<string | null>(null);
   const [isLoadingPlans, setIsLoadingPlans] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isRefreshingParticipants, setIsRefreshingParticipants] = useState(false);
+  const [isParticipantOverlayUnsafe, setIsParticipantOverlayUnsafe] = useState(false);
   const [plansError, setPlansError] = useState<string | null>(null);
   const [plansLoaded, setPlansLoaded] = useState(false);
   const [selectedPlanSnapshot, setSelectedPlanSnapshot] =
@@ -111,6 +149,16 @@ export const useCurrentServicePlanSource = () => {
   currentPreviewRef.current = currentPreview;
   const selectedPlanKeyRef = useRef<string | null>(null);
   const generationRef = useRef(0);
+  const participantRequestIdRef = useRef(0);
+  const participantRefreshRef = useRef<{
+    churchId: string;
+    controllerId: string;
+    outlineId: string | undefined;
+    planKey: string;
+    generation: number;
+    refreshAgain: boolean;
+    promise: Promise<void>;
+  } | null>(null);
   const reconciliationInFlightRef = useRef<{
     controllerId: string;
     churchId: string;
@@ -173,6 +221,7 @@ export const useCurrentServicePlanSource = () => {
     return () => {
       isMountedRef.current = false;
       generationRef.current += 1;
+      participantRequestIdRef.current += 1;
       reconciliationInFlightRef.current = null;
     };
   }, []);
@@ -181,6 +230,7 @@ export const useCurrentServicePlanSource = () => {
     if (previousControllerIdRef.current === activeControllerId) return;
     previousControllerIdRef.current = activeControllerId;
     generationRef.current += 1;
+    participantRequestIdRef.current += 1;
     reconciliationInFlightRef.current = null;
     manualSelectionRef.current = false;
     returnOccurrenceToCurrent();
@@ -189,6 +239,10 @@ export const useCurrentServicePlanSource = () => {
     setSelectedPlanSnapshot(null);
     selectedPlanKeyRef.current = null;
     setSelectedPlanKey(null);
+    setIsLoading(false);
+    setIsRefreshing(false);
+    setIsRefreshingParticipants(false);
+    setIsParticipantOverlayUnsafe(false);
     dispatch(clearServicePlanningPreview());
   }, [activeControllerId, dispatch, returnOccurrenceToCurrent]);
 
@@ -196,12 +250,16 @@ export const useCurrentServicePlanSource = () => {
     if (previousOutlineIdRef.current === selectedOutlineId) return;
     previousOutlineIdRef.current = selectedOutlineId;
     generationRef.current += 1;
+    participantRequestIdRef.current += 1;
     reconciliationInFlightRef.current = null;
     // Keep the selected occurrence, plan, and manual-session state. The
     // selected plan reconciliation below will rebuild the preview for the new
     // outline and its identity checks prevent old-outline writes.
     planRef.current = null;
     setSelectedPlanSnapshot(null);
+    setIsRefreshing(false);
+    setIsRefreshingParticipants(false);
+    setIsParticipantOverlayUnsafe(false);
     const pendingPlanKey = selectedPlanKeyRef.current;
     if (pendingPlanKey) {
       dispatch(
@@ -219,6 +277,7 @@ export const useCurrentServicePlanSource = () => {
     (planKey: string) => {
       if (selectedPlanKeyRef.current !== planKey) return;
       generationRef.current += 1;
+      participantRequestIdRef.current += 1;
       // Missing detail/refresh results should leave an explicit empty choice;
       // silently choosing another service's plan is unsafe. Preserve whether
       // the operator was already in a manual override so a deleted automatic
@@ -231,6 +290,9 @@ export const useCurrentServicePlanSource = () => {
         current.filter((candidate) => candidate.planKey !== planKey),
       );
       setIsLoading(false);
+      setIsRefreshing(false);
+      setIsRefreshingParticipants(false);
+      setIsParticipantOverlayUnsafe(false);
       dispatch(clearServicePlanningPlanOutline());
     },
     [dispatch],
@@ -294,6 +356,7 @@ export const useCurrentServicePlanSource = () => {
   useEffect(() => {
     if (!isEnabled) {
       generationRef.current += 1;
+      participantRequestIdRef.current += 1;
       planListRequestIdRef.current += 1;
       planListActiveRequestIdRef.current = null;
       manualSelectionRef.current = false;
@@ -304,6 +367,9 @@ export const useCurrentServicePlanSource = () => {
       setPlansLoaded(false);
       setSelectedPlanKey(null);
       setIsLoading(false);
+      setIsRefreshing(false);
+      setIsRefreshingParticipants(false);
+      setIsParticipantOverlayUnsafe(false);
       dispatch(clearServicePlanningPlanOutline());
       returnOccurrenceToCurrent();
       automaticSelectionContextRef.current = undefined;
@@ -324,12 +390,16 @@ export const useCurrentServicePlanSource = () => {
     if (!hasUrlSourcedPreview) return;
     currentVisitUrlSelectionRef.current = true;
     generationRef.current += 1;
+    participantRequestIdRef.current += 1;
     manualSelectionRef.current = false;
     planRef.current = null;
     setSelectedPlanSnapshot(null);
     selectedPlanKeyRef.current = null;
     setSelectedPlanKey(null);
     setIsLoading(false);
+    setIsRefreshing(false);
+    setIsRefreshingParticipants(false);
+    setIsParticipantOverlayUnsafe(false);
   }, [hasUrlSourcedPreview, urlSelectionRevision]);
 
   // A refresh can remove a plan without an SSE removal event (for example,
@@ -391,6 +461,8 @@ export const useCurrentServicePlanSource = () => {
       );
     }
     selectedPlanKeyRef.current = nextKey;
+    setIsLoading(Boolean(nextKey));
+    setIsRefreshing(false);
     setSelectedPlanKey(nextKey);
   }, [
     activeControllerId,
@@ -413,9 +485,14 @@ export const useCurrentServicePlanSource = () => {
     async (
       plan: ServicePlan,
       assignments: ServicePlanningTeamAssignment[],
+      participantOverlay: ServicePlanParticipantOverlayProjection,
       shouldApply: () => boolean = () => true,
     ) => {
-      const outline = await loadPlanPreviewRef.current(plan, assignments);
+      const outline = await loadPlanPreviewRef.current(
+        plan,
+        assignments,
+        participantOverlay,
+      );
       if (!shouldApply()) return null;
       dispatch(
         setServicePlanningPlanOutline({ outline, planKey: plan.planKey }),
@@ -423,6 +500,45 @@ export const useCurrentServicePlanSource = () => {
       return outline;
     },
     [dispatch],
+  );
+  const invalidateNativeParticipantPreview = useCallback(
+    (planKey: string) => {
+      const current = store.getState().servicePlanningImport;
+      const outline = current.serviceOutline;
+      const nativeSummary = outline?.preview.nativeOverlaySummary;
+      if (
+        current.servicePlanKey !== planKey ||
+        !outline ||
+        !nativeSummary
+      ) {
+        return;
+      }
+
+      const reason =
+        "Plan participants changed. Refresh the plan before syncing.";
+      const preview: ServicePlanningPreview = {
+        ...outline.preview,
+        nativeOverlaySummary: {
+          ...nativeSummary,
+          status: "failed",
+          assignedParticipantCount: null,
+        },
+        overlayPlan: outline.preview.overlayPlan.map((item) => ({
+          ...item,
+          action: "skip" as const,
+          placementOnly: undefined,
+          patch: { ...item.patch, name: "", title: "" },
+          reason,
+        })),
+      };
+      dispatch(
+        setServicePlanningPlanOutline({
+          outline: { ...outline, preview },
+          planKey,
+        }),
+      );
+    },
+    [dispatch, store],
   );
 
   type ReconciliationOptions = {
@@ -457,8 +573,11 @@ export const useCurrentServicePlanSource = () => {
       }
 
       const generation = ++generationRef.current;
+      const participantRequestId = ++participantRequestIdRef.current;
+      setIsRefreshingParticipants(false);
       if (planKeyAtStart) {
-        setIsLoading(true);
+        setIsRefreshing(planRef.current?.planKey === planKeyAtStart);
+        setIsLoading(planRef.current?.planKey !== planKeyAtStart);
         // Treat the cached preview as untrusted until every required read and
         // the preview rebuild complete. All sync entry points use this shared
         // Redux gate, including routes without this hook's local loading state.
@@ -571,6 +690,7 @@ export const useCurrentServicePlanSource = () => {
                 ? "The assignment response was unsuccessful or incomplete."
                 : assignmentsResult?.error,
             );
+            setIsParticipantOverlayUnsafe(true);
             dispatch(markServicePlanningPlanPreviewStale(planKeyAtStart));
             return "failed";
           }
@@ -603,13 +723,27 @@ export const useCurrentServicePlanSource = () => {
           const previousPlan = planRef.current;
           const previousPreview = currentPreviewRef.current;
           planRef.current = plan;
-          if (snapshotResult?.ok) {
+          if (
+            snapshotResult?.ok &&
+            participantRequestId === participantRequestIdRef.current
+          ) {
             setSelectedPlanSnapshot(snapshotResult.snapshot);
           }
+          if (participantRequestId !== participantRequestIdRef.current) return "superseded";
+          const participantOverlay = participantOverlayProjectionForPlan(
+            plan,
+            assignmentsResult?.ok
+              ? assignmentsResult.result.participantOverlay
+              : undefined,
+          );
+          setIsParticipantOverlayUnsafe(participantOverlay.status === "failed");
           const appliedOutline = await applyPlan(
             plan,
-            assignmentsResult.result.assignments,
-            isCurrentRequest,
+            assignmentsResult?.ok ? assignmentsResult.result.assignments : [],
+            participantOverlay,
+            () =>
+              isCurrentRequest() &&
+              participantRequestId === participantRequestIdRef.current,
           );
           if (!appliedOutline || !isCurrentRequest()) return "superseded";
           dispatch(markServicePlanningPlanPreviewFresh(planKeyAtStart));
@@ -634,6 +768,7 @@ export const useCurrentServicePlanSource = () => {
             isMountedRef.current
           ) {
             setIsLoading(false);
+            setIsRefreshing(false);
           }
         }
       })().finally(() => {
@@ -661,6 +796,153 @@ export const useCurrentServicePlanSource = () => {
       return request;
     },
     [activeControllerId, applyPlan, churchId, clearUnavailablePlan, dispatch, isEnabled, selectedOutlineId],
+  );
+
+  const refreshScheduleParticipants = useCallback(
+    async (planKey: string, waitForPlanRead?: Promise<unknown>) => {
+      const churchIdAtStart = churchId;
+      const controllerIdAtStart = activeControllerId;
+      const outlineIdAtStart = selectedOutlineId;
+      const generationAtStart = generationRef.current;
+      if (!isEnabled || !churchIdAtStart || !planKey) return;
+
+      const existing = participantRefreshRef.current;
+      if (
+        existing &&
+        existing.churchId === churchIdAtStart &&
+        existing.controllerId === controllerIdAtStart &&
+        existing.outlineId === outlineIdAtStart &&
+        existing.planKey === planKey &&
+        existing.generation === generationAtStart
+      ) {
+        // Keep one read active for a burst of schedule events, then take one
+        // follow-up snapshot if another event arrives while it is in flight.
+        existing.refreshAgain = true;
+        return existing.promise;
+      }
+
+      const participantRequestId = ++participantRequestIdRef.current;
+      const isCurrentRequest = () =>
+        participantRequestId === participantRequestIdRef.current &&
+        generationAtStart === generationRef.current &&
+        activeControllerIdRef.current === controllerIdAtStart &&
+        selectedOutlineIdRef.current === outlineIdAtStart &&
+        selectedPlanKeyRef.current === planKey &&
+        churchIdRef.current === churchIdAtStart &&
+        isEnabledRef.current &&
+        isMountedRef.current;
+
+      setIsRefreshingParticipants(true);
+      setIsParticipantOverlayUnsafe(true);
+      const flight = {
+        churchId: churchIdAtStart,
+        controllerId: controllerIdAtStart,
+        outlineId: outlineIdAtStart,
+        planKey,
+        generation: generationAtStart,
+        refreshAgain: false,
+        promise: Promise.resolve(),
+      };
+      participantRefreshRef.current = flight;
+      const request = (async () => {
+        let planRead = waitForPlanRead;
+        let refreshAgain = false;
+        do {
+          refreshAgain = false;
+          if (planRead) await planRead;
+          planRead = undefined;
+          if (!isCurrentRequest()) return;
+          // Events received while a plan-detail request was settling are all
+          // covered by the participant read that starts next.
+          flight.refreshAgain = false;
+
+          const assignmentsPromise = getServicePlanAssignments(churchIdAtStart, planKey)
+            .then((result) => ({ ok: true as const, result }))
+            .catch((error: unknown) => ({ ok: false as const, error }));
+          const viewerSnapshotPromise = getServicePlanViewer(churchIdAtStart, planKey)
+            .then((result) => ({ ok: true as const, snapshot: result.snapshot }))
+            .catch((error: unknown) => ({ ok: false as const, error }));
+          const [assignmentsResult, snapshotResult] = await Promise.all([
+            assignmentsPromise,
+            viewerSnapshotPromise,
+          ]);
+          if (!isCurrentRequest()) return;
+          if (flight.refreshAgain) {
+            flight.refreshAgain = false;
+            refreshAgain = true;
+            continue;
+          }
+
+          const plan = planRef.current;
+          if (!plan || plan.planKey !== planKey) return;
+          if (!assignmentsResult.ok) {
+            setIsParticipantOverlayUnsafe(true);
+            invalidateNativeParticipantPreview(planKey);
+            return;
+          }
+          if (
+            assignmentsResult.result.participantOverlay &&
+            !participantOverlayProjectionMatchesPlan(
+              plan,
+              assignmentsResult.result.participantOverlay,
+            )
+          ) {
+            // Assignment projection belongs to a newer saved-plan revision.
+            // Re-read plan details and participants together before applying it.
+            setIsParticipantOverlayUnsafe(true);
+            invalidateNativeParticipantPreview(planKey);
+            void reconcileSelectedPlan({});
+            return;
+          }
+
+          const participantOverlay = participantOverlayProjectionForPlan(
+            plan,
+            assignmentsResult.result.participantOverlay,
+          );
+          const overlayUnsafe = participantOverlay.status === "failed";
+          setIsParticipantOverlayUnsafe(overlayUnsafe);
+          if (overlayUnsafe) invalidateNativeParticipantPreview(planKey);
+          if (snapshotResult.ok) setSelectedPlanSnapshot(snapshotResult.snapshot);
+
+          await applyPlan(
+            plan,
+            assignmentsResult.result.assignments,
+            participantOverlay,
+            () => isCurrentRequest() && planRef.current === plan,
+          );
+          if (flight.refreshAgain) {
+            flight.refreshAgain = false;
+            refreshAgain = true;
+          }
+        } while (refreshAgain && isCurrentRequest());
+      })().catch(() => {
+        if (isCurrentRequest()) {
+          setIsParticipantOverlayUnsafe(true);
+          invalidateNativeParticipantPreview(planKey);
+        }
+      }).finally(() => {
+        if (participantRefreshRef.current === flight) {
+          participantRefreshRef.current = null;
+        }
+        if (
+          participantRequestId === participantRequestIdRef.current &&
+          isMountedRef.current
+        ) {
+          setIsRefreshingParticipants(false);
+        }
+      });
+      flight.promise = request;
+      await request;
+    },
+    [
+      activeControllerId,
+      applyPlan,
+      churchId,
+      invalidateNativeParticipantPreview,
+      isEnabled,
+      reconcileSelectedPlan,
+      selectedOutlineId,
+    ],
   );
 
   /**
@@ -774,10 +1056,14 @@ export const useCurrentServicePlanSource = () => {
         void persistManualPlanBinding(selectedPlanSummary);
       }
       generationRef.current += 1;
+      participantRequestIdRef.current += 1;
       planRef.current = null;
       setSelectedPlanSnapshot(null);
       selectedPlanKeyRef.current = planKey || null;
       setIsLoading(Boolean(planKey));
+      setIsRefreshing(false);
+      setIsRefreshingParticipants(false);
+      setIsParticipantOverlayUnsafe(false);
       if (planKey) {
         dispatch(
           beginServicePlanningPlanSelection({
@@ -812,6 +1098,7 @@ export const useCurrentServicePlanSource = () => {
       // Selecting an occurrence always restores occurrence/plan alignment;
       // the plan may still be explicitly empty when no saved plan exists.
       generationRef.current += 1;
+      participantRequestIdRef.current += 1;
       planRef.current = null;
       setSelectedPlanSnapshot(null);
       selectOccurrenceFromSchedule(occurrenceId);
@@ -821,6 +1108,9 @@ export const useCurrentServicePlanSource = () => {
       );
       selectedPlanKeyRef.current = hasSavedPlan ? nextPlanKey : null;
       setIsLoading(hasSavedPlan);
+      setIsRefreshing(false);
+      setIsRefreshingParticipants(false);
+      setIsParticipantOverlayUnsafe(false);
       setSelectedPlanKey(hasSavedPlan ? nextPlanKey : null);
       if (hasSavedPlan && nextPlanKey) {
         dispatch(
@@ -840,12 +1130,16 @@ export const useCurrentServicePlanSource = () => {
     manualSelectionRef.current = false;
     currentVisitUrlSelectionRef.current = false;
     generationRef.current += 1;
+    participantRequestIdRef.current += 1;
     planRef.current = null;
     setSelectedPlanSnapshot(null);
     automaticSelectionContextRef.current = undefined;
     selectedPlanKeyRef.current = null;
     setSelectedPlanKey(null);
     setIsLoading(false);
+    setIsRefreshing(false);
+    setIsRefreshingParticipants(false);
+    setIsParticipantOverlayUnsafe(false);
     dispatch(clearServicePlanningPreview());
     returnOccurrenceToCurrent();
   }, [dispatch, returnOccurrenceToCurrent]);
@@ -889,41 +1183,29 @@ export const useCurrentServicePlanSource = () => {
       }
 
       if (event.type === "schedule-updated" || event.type === "schedule-removed") {
-        if (
-          !churchId ||
-          !planRef.current ||
-          selectedPlanKeyRef.current !== planRef.current.planKey
-        ) return;
+        const planKeyAtStart = selectedPlanKeyRef.current;
+        if (!churchId || !planKeyAtStart) return;
+        const existing = reconciliationInFlightRef.current;
+        const selectedPlanReadInFlight = Boolean(
+          existing &&
+            existing.controllerId === activeControllerId &&
+            existing.churchId === churchId &&
+            existing.selectedOutlineId === selectedOutlineId &&
+            existing.planKey === planKeyAtStart &&
+            existing.generation === generationRef.current,
+        );
         const plan = planRef.current;
-        const currentReconciliation = reconciliationInFlightRef.current;
-        const supersedesCurrentRefresh =
-          currentReconciliation?.planKey === plan.planKey &&
-          currentReconciliation.generation === generationRef.current;
-        const generation = ++generationRef.current;
-        if (supersedesCurrentRefresh) setIsLoading(false);
-        void getServicePlanViewer(churchId, plan.planKey)
-          .then((result) => {
-            if (
-              generation === generationRef.current &&
-              planRef.current === plan &&
-              selectedPlanKeyRef.current === plan.planKey
-            ) {
-              setSelectedPlanSnapshot(result.snapshot);
-            }
-          })
-          .catch(() => undefined);
-        void getServicePlanAssignments(churchId, plan.planKey)
-          .then((result) => {
-            return applyPlan(
-              plan,
-              result.assignments,
-              () =>
-                generation === generationRef.current &&
-                planRef.current === plan &&
-                selectedPlanKeyRef.current === plan.planKey,
-            );
-          })
-          .catch(() => undefined);
+        if (plan?.planKey !== planKeyAtStart && !selectedPlanReadInFlight) {
+          // The plan has not loaded for this selection yet. Its initial detail
+          // read also loads assignments, and starts after this event.
+          void reconcileSelectedPlan({});
+          return;
+        }
+        invalidateNativeParticipantPreview(planKeyAtStart);
+        void refreshScheduleParticipants(
+          planKeyAtStart,
+          selectedPlanReadInFlight ? existing?.promise : undefined,
+        );
         return;
       }
 
@@ -939,12 +1221,15 @@ export const useCurrentServicePlanSource = () => {
       });
     },
     [
-      applyPlan,
+      activeControllerId,
       churchId,
       clearUnavailablePlan,
       isEnabled,
+      invalidateNativeParticipantPreview,
+      refreshScheduleParticipants,
       refreshPlans,
       reconcileSelectedPlan,
+      selectedOutlineId,
     ],
   );
 
@@ -990,6 +1275,9 @@ export const useCurrentServicePlanSource = () => {
     isEnabled,
     isLoading,
     isPlanPreviewStale,
+    isRefreshing,
+    isRefreshingParticipants,
+    isParticipantOverlayUnsafe,
     isLoadingPlans,
     plansError,
     isPlanSourced: Boolean(servicePlanKey),

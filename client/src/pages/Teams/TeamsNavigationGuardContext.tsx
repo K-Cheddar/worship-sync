@@ -8,13 +8,13 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import {
-  resolvePath,
-  useLocation,
-  useNavigate,
-} from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import Button from "../../components/Button/Button";
 import Modal from "../../components/Modal/Modal";
+import {
+  PendingRouteNavigationProvider,
+  usePendingRouteNavigation,
+} from "../../hooks/usePendingRouteNavigation";
 
 type PendingNavigation = {
   to: string;
@@ -24,10 +24,6 @@ type PendingNavigation = {
 
 type PendingAction = {
   action: () => void;
-};
-
-type PendingTeamsNavigation = {
-  pathname: string;
 };
 
 type TeamsNavigationGuardContextValue = {
@@ -43,17 +39,12 @@ type NavigationOptions = {
 
 const TeamsNavigationGuardContext =
   createContext<TeamsNavigationGuardContextValue | null>(null);
-const PendingTeamsNavigationContext = createContext<{
-  pathname: string | null;
-  clear: () => void;
-} | null>(null);
 
-export const TeamsNavigationGuardProvider = ({
+const TeamsNavigationGuardContent = ({
   children,
 }: {
   children: ReactNode;
 }) => {
-  const navigate = useNavigate();
   const location = useLocation();
   const [dirtySources, setDirtySources] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -61,8 +52,7 @@ export const TeamsNavigationGuardProvider = ({
   const hasUnsavedChanges = dirtySources.size > 0;
   const [pendingNavigation, setPendingNavigation] =
     useState<PendingNavigation | null>(null);
-  const [pendingTeamsNavigation, setPendingTeamsNavigation] =
-    useState<PendingTeamsNavigation | null>(null);
+  const pendingRoute = usePendingRouteNavigation();
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [pendingHistoryDelta, setPendingHistoryDelta] = useState<number | null>(null);
   const historyIndexRef = useRef<number | null>(null);
@@ -72,46 +62,10 @@ export const TeamsNavigationGuardProvider = ({
     pendingNavigation || pendingAction || pendingHistoryDelta !== null,
   );
 
-  const setTeamsNavigationTarget = useCallback((to: string | null) => {
-    if (!to) {
-      setPendingTeamsNavigation(null);
-      return;
-    }
-    const pathname = resolvePath(to, location.pathname).pathname;
-    if (
-      pathname !== "/teams-and-services" &&
-      !pathname.startsWith("/teams-and-services/")
-    ) {
-      setPendingTeamsNavigation(null);
-      return;
-    }
-    setPendingTeamsNavigation({ pathname });
-  }, [location.pathname]);
-
   const navigateTo = useCallback((to: string, options: NavigationOptions = {}) => {
-    setTeamsNavigationTarget(to);
-    navigate(to, { state: options.state });
+    pendingRoute.request(to, { state: options.state });
     options.onNavigated?.();
-  }, [navigate, setTeamsNavigationTarget]);
-
-  useEffect(() => {
-    const clearPendingNavigationOnPop = () => {
-      setPendingTeamsNavigation(null);
-    };
-    window.addEventListener("popstate", clearPendingNavigationOnPop);
-    return () => {
-      window.removeEventListener("popstate", clearPendingNavigationOnPop);
-    };
-  }, []);
-
-  const clearPendingTeamsNavigation = useCallback(
-    () => setPendingTeamsNavigation(null),
-    [],
-  );
-  const pendingTeamsNavigationValue = useMemo(() => ({
-    pathname: pendingTeamsNavigation?.pathname ?? null,
-    clear: clearPendingTeamsNavigation,
-  }), [clearPendingTeamsNavigation, pendingTeamsNavigation]);
+  }, [pendingRoute]);
 
   const setDirtySource = useCallback((sourceId: string, isDirty: boolean) => {
     setDirtySources((current) => {
@@ -181,12 +135,12 @@ export const TeamsNavigationGuardProvider = ({
 
   const requestNavigation = useCallback((to: string, options: NavigationOptions = {}) => {
     if (hasUnsavedChanges) {
-      setTeamsNavigationTarget(null);
+      pendingRoute.clear();
       setPendingNavigation({ to, ...options });
       return;
     }
     navigateTo(to, options);
-  }, [hasUnsavedChanges, navigateTo, setTeamsNavigationTarget]);
+  }, [hasUnsavedChanges, navigateTo, pendingRoute]);
 
   const requestDiscardAction = useCallback((action: () => void) => {
     if (hasUnsavedChanges) {
@@ -222,55 +176,55 @@ export const TeamsNavigationGuardProvider = ({
   );
 
   return (
-    <TeamsNavigationGuardContext.Provider
-      value={navigationGuardValue}
-    >
-      <PendingTeamsNavigationContext.Provider value={pendingTeamsNavigationValue}>
-        {children}
-        <Modal
-          isOpen={hasPendingConfirmation}
-          onClose={() => {
-            setPendingNavigation(null);
-            setPendingAction(null);
-            setPendingHistoryDelta(null);
-          }}
-          title="Unsaved changes"
-          size="sm"
-          contentPadding="px-4 pb-4 pt-0"
-          showCloseButton={false}
-        >
-          <p className="mb-6 text-sm text-gray-200">
-            You have unsaved changes. Do you want to discard them and leave?
-          </p>
-          <div className="flex justify-end gap-3">
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setPendingNavigation(null);
-                setPendingAction(null);
-                setPendingHistoryDelta(null);
-              }}
-            >
-              Stay
-            </Button>
-            <Button variant="destructive" onClick={discardAndNavigate}>
-              Discard changes
-            </Button>
-          </div>
-        </Modal>
-      </PendingTeamsNavigationContext.Provider>
+    <TeamsNavigationGuardContext.Provider value={navigationGuardValue}>
+      {children}
+      <Modal
+        isOpen={hasPendingConfirmation}
+        onClose={() => {
+          setPendingNavigation(null);
+          setPendingAction(null);
+          setPendingHistoryDelta(null);
+        }}
+        title="Unsaved changes"
+        size="sm"
+        contentPadding="px-4 pb-4 pt-0"
+        showCloseButton={false}
+      >
+        <p className="mb-6 text-sm text-gray-200">
+          You have unsaved changes. Do you want to discard them and leave?
+        </p>
+        <div className="flex justify-end gap-3">
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setPendingNavigation(null);
+              setPendingAction(null);
+              setPendingHistoryDelta(null);
+            }}
+          >
+            Stay
+          </Button>
+          <Button variant="destructive" onClick={discardAndNavigate}>
+            Discard changes
+          </Button>
+        </div>
+      </Modal>
     </TeamsNavigationGuardContext.Provider>
   );
 };
 
+export const TeamsNavigationGuardProvider = ({
+  children,
+}: {
+  children: ReactNode;
+}) => (
+  <PendingRouteNavigationProvider>
+    <TeamsNavigationGuardContent>{children}</TeamsNavigationGuardContent>
+  </PendingRouteNavigationProvider>
+);
+
 export const usePendingTeamsNavigation = () => {
-  const context = useContext(PendingTeamsNavigationContext);
-  if (!context) {
-    throw new Error(
-      "usePendingTeamsNavigation must be used within TeamsNavigationGuardProvider.",
-    );
-  }
-  return context;
+  return usePendingRouteNavigation();
 };
 
 export const useTeamsNavigationGuard = () => {

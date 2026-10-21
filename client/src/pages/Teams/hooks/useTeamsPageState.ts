@@ -21,6 +21,7 @@ import {
   autosaveIndicatorSlice,
 } from "../../../store/autosaveIndicatorSlice";
 import { resolveChurchToolbarLogoUrls } from "../../../utils/churchBranding";
+import { normalizeUsPhoneNumberForComparison } from "../../../utils/phoneNumber";
 import { teamsDataKeys } from "../teamsConstants";
 import type { TeamsData, TeamsDataKey, TeamsScheduleDrafts } from "../types";
 import {
@@ -122,6 +123,13 @@ export const useTeamsPageState = (
   const { showToast } = useToast();
   const dispatch = useDispatch();
   const churchId = context?.churchId || "";
+  const identityScopeKey = [
+    churchId,
+    context?.sessionKind || "",
+    context?.sessionKind === "human" ? context.userId : "",
+  ].join(":");
+  const identityScopeRef = useRef(identityScopeKey);
+  identityScopeRef.current = identityScopeKey;
   const canViewTeams = Boolean(context?.canViewTeams);
   const canEditTeams = Boolean(context?.canEditTeams);
   const canEditTeam = useCallback(
@@ -142,6 +150,23 @@ export const useTeamsPageState = (
   const [data, setData] = useState<TeamsData>(emptyData);
   const [loading, setLoading] = useState(true);
   const [membershipAccessGranted, setMembershipAccessGranted] = useState(false);
+  const [selfMemberIdentity, setSelfMemberIdentity] = useState<{
+    scopeKey: string;
+    memberId: string | null;
+  }>({ scopeKey: identityScopeKey, memberId: null });
+  const selfMemberId = selfMemberIdentity.scopeKey === identityScopeKey
+    ? selfMemberIdentity.memberId
+    : null;
+  const updateSelfMemberIdentity = useCallback((memberId: string | null | undefined) => {
+    const normalizedMemberId = typeof memberId === "string" && memberId
+      ? memberId
+      : null;
+    setSelfMemberIdentity((current) =>
+      current.scopeKey === identityScopeKey && current.memberId === normalizedMemberId
+        ? current
+        : { scopeKey: identityScopeKey, memberId: normalizedMemberId },
+    );
+  }, [identityScopeKey]);
   const [accessDenied, setAccessDenied] = useState(false);
   const [editableMemberIds, setEditableMemberIds] = useState<Set<string>>(
     () => new Set(),
@@ -190,6 +215,7 @@ export const useTeamsPageState = (
   // `refresh`'s own dedupe (which keys off refreshInFlightRef + bootstrapLoadRef).
   const backgroundRefreshInFlightRef = useRef(false);
   const backgroundRefreshPromiseRef = useRef<Promise<void> | null>(null);
+  const smsEligibilityRefreshVersionsRef = useRef(new Map<string, number>());
   // Cleared on unmount so a background request that resolves after the page is gone
   // doesn't apply state (mirrors refresh's isCancelled guard).
   const isMountedRef = useRef(true);
@@ -459,6 +485,7 @@ export const useTeamsPageState = (
     accessDeniedRef.current = true;
     setAccessDenied(true);
     setMembershipAccessGranted(false);
+    updateSelfMemberIdentity(null);
     setEditableMemberIds(new Set());
     dataRef.current = emptyData;
     setData(emptyData);
@@ -466,7 +493,7 @@ export const useTeamsPageState = (
     setSelectedScheduleId("");
     selectedScheduleIdRef.current = "";
     setScheduleHydrationRequestId("");
-  }, []);
+  }, [updateSelfMemberIdentity]);
 
   /**
    * Re-applies retained hydration over a freshly fetched schedule list. Fresh
@@ -499,6 +526,7 @@ export const useTeamsPageState = (
   // await it (and resolve `loading` off its result) instead of firing a
   // duplicate request.
   const bootstrapLoadRef = useRef<Promise<void> | null>(null);
+  const bootstrapLoadScopeRef = useRef("");
   // Warn at most once per session if the server reports a truncated (capped) view.
   const truncationWarnedRef = useRef(false);
 
@@ -517,6 +545,7 @@ export const useTeamsPageState = (
       // clear loading and the re-run would bail without doing anything.
       if (refreshInFlightRef.current) {
         const pending = bootstrapLoadRef.current;
+        const pendingScope = bootstrapLoadScopeRef.current;
         try {
           if (pending) await pending;
         } catch {
@@ -525,7 +554,11 @@ export const useTeamsPageState = (
         } finally {
           if (!isCancelled()) setLoading(false);
         }
-        return;
+        if (
+          isCancelled() ||
+          identityScopeRef.current !== identityScopeKey ||
+          pendingScope === identityScopeKey
+        ) return;
       }
 
       refreshInFlightRef.current = true;
@@ -535,10 +568,14 @@ export const useTeamsPageState = (
       // guarded by comparing against the latest churchId instead.
       const load = (async () => {
         const response = await getTeamsBootstrap(churchId);
-        if (churchIdRef.current !== churchId) return;
+        if (
+          churchIdRef.current !== churchId ||
+          identityScopeRef.current !== identityScopeKey
+        ) return;
         accessDeniedRef.current = false;
         setAccessDenied(false);
         setMembershipAccessGranted(true);
+        updateSelfMemberIdentity(response.selfMemberId);
         setEditableMemberIds(new Set(response.editableMemberIds || []));
         const nextData = buildTeamsDataFromBootstrap(response);
         nextData.schedules = withRetainedHydration(nextData.schedules);
@@ -566,22 +603,37 @@ export const useTeamsPageState = (
         }
       })();
       bootstrapLoadRef.current = load;
+      bootstrapLoadScopeRef.current = identityScopeKey;
 
       try {
         await load;
       } catch (error) {
-        if (getApiErrorStatus(error) === 403 && churchIdRef.current === churchId) {
+        if (
+          getApiErrorStatus(error) === 403 &&
+          churchIdRef.current === churchId &&
+          identityScopeRef.current === identityScopeKey
+        ) {
           denyTeamsAccess();
         } else if (!isCancelled()) {
           showApiErrorToast(showToast, error, "Could not load teams.");
         }
       } finally {
-        refreshInFlightRef.current = false;
-        bootstrapLoadRef.current = null;
+        if (bootstrapLoadRef.current === load) {
+          refreshInFlightRef.current = false;
+          bootstrapLoadRef.current = null;
+          bootstrapLoadScopeRef.current = "";
+        }
         if (!isCancelled()) setLoading(false);
       }
     },
-    [churchId, denyTeamsAccess, showToast, withRetainedHydration],
+    [
+      churchId,
+      denyTeamsAccess,
+      identityScopeKey,
+      showToast,
+      updateSelfMemberIdentity,
+      withRetainedHydration,
+    ],
   );
 
   useEffect(() => {
@@ -773,6 +825,7 @@ export const useTeamsPageState = (
     accessDeniedRef.current = false;
     setAccessDenied(false);
     setMembershipAccessGranted(true);
+    updateSelfMemberIdentity(response.selfMemberId);
     setEditableMemberIds(new Set(response.editableMemberIds || []));
     const nextData = buildTeamsDataFromBootstrap(response);
     nextData.schedules = withRetainedHydration(nextData.schedules);
@@ -799,14 +852,18 @@ export const useTeamsPageState = (
       selectedScheduleIdRef.current = nextSelectedScheduleId;
       writeSelectedScheduleId(churchId, nextSelectedScheduleId);
     }
-  }, [churchId, withRetainedHydration]);
+  }, [churchId, updateSelfMemberIdentity, withRetainedHydration]);
 
   const loadTeamsProjection = useCallback(async (ignoreLocalEditCooldown: boolean) => {
     const response = await getTeamsBootstrap(churchId);
-    if (!isMountedRef.current || churchIdRef.current !== churchId) return;
+    if (
+      !isMountedRef.current ||
+      churchIdRef.current !== churchId ||
+      identityScopeRef.current !== identityScopeKey
+    ) return;
     if (!ignoreLocalEditCooldown && isLocalEditCoolingDown()) return;
     applyTeamsProjection(response);
-  }, [applyTeamsProjection, churchId, isLocalEditCoolingDown]);
+  }, [applyTeamsProjection, churchId, identityScopeKey, isLocalEditCoolingDown]);
 
   // Silent background bootstrap used for SSE reconnect recovery and as a
   // bounded stale-on-focus fallback. Unlike `refresh`, it never toggles
@@ -822,7 +879,11 @@ export const useTeamsPageState = (
     try {
       await load;
     } catch (error) {
-      if (getApiErrorStatus(error) === 403 && churchIdRef.current === churchId) {
+      if (
+        getApiErrorStatus(error) === 403 &&
+        churchIdRef.current === churchId &&
+        identityScopeRef.current === identityScopeKey
+      ) {
         denyTeamsAccess();
         return;
       }
@@ -831,7 +892,7 @@ export const useTeamsPageState = (
       backgroundRefreshInFlightRef.current = false;
       backgroundRefreshPromiseRef.current = null;
     }
-  }, [churchId, denyTeamsAccess, isLocalEditCoolingDown, loadTeamsProjection]);
+  }, [churchId, denyTeamsAccess, identityScopeKey, isLocalEditCoolingDown, loadTeamsProjection]);
 
   // Authorization changes caused by roster mutations require a fresh server
   // projection even during the ordinary local-edit cooldown. Wait out older
@@ -853,7 +914,11 @@ export const useTeamsPageState = (
     try {
       await load;
     } catch (error) {
-      if (getApiErrorStatus(error) === 403 && churchIdRef.current === churchId) {
+      if (
+        getApiErrorStatus(error) === 403 &&
+        churchIdRef.current === churchId &&
+        identityScopeRef.current === identityScopeKey
+      ) {
         denyTeamsAccess();
         return;
       }
@@ -862,7 +927,77 @@ export const useTeamsPageState = (
       backgroundRefreshInFlightRef.current = false;
       backgroundRefreshPromiseRef.current = null;
     }
-  }, [churchId, denyTeamsAccess, loadTeamsProjection]);
+  }, [churchId, denyTeamsAccess, identityScopeKey, loadTeamsProjection]);
+
+  const refreshMemberSmsEligibility = useCallback(async (
+    memberId: string,
+    expectedPhoneNumber: string,
+    previousPhoneNumber: string,
+  ) => {
+    const churchIdAtStart = churchId;
+    if (!churchIdAtStart || accessDeniedRef.current) {
+      throw new Error("Teams access is unavailable.");
+    }
+    const requestKey = `${churchIdAtStart}:${memberId}`;
+    const requestVersion = (smsEligibilityRefreshVersionsRef.current.get(requestKey) || 0) + 1;
+    smsEligibilityRefreshVersionsRef.current.set(requestKey, requestVersion);
+    const expectedPhone = normalizeUsPhoneNumberForComparison(expectedPhoneNumber);
+    const previousPhone = normalizeUsPhoneNumberForComparison(previousPhoneNumber);
+
+    // A bootstrap that began before the member save can contain the old phone
+    // and eligibility. Let it settle, then fetch a fresh server projection.
+    await Promise.allSettled([
+      refreshInFlightRef.current ? bootstrapLoadRef.current : null,
+      backgroundRefreshPromiseRef.current,
+    ].filter((pending): pending is Promise<void> => Boolean(pending)));
+    if (
+      !isMountedRef.current ||
+      churchIdRef.current !== churchIdAtStart ||
+      smsEligibilityRefreshVersionsRef.current.get(requestKey) !== requestVersion
+    ) return;
+
+    const response = await getTeamsBootstrap(churchIdAtStart);
+    if (
+      !isMountedRef.current ||
+      churchIdRef.current !== churchIdAtStart ||
+      smsEligibilityRefreshVersionsRef.current.get(requestKey) !== requestVersion
+    ) return;
+
+    const serverMember = response.members?.find((member) => member.memberId === memberId);
+    if (
+      !serverMember ||
+      normalizeUsPhoneNumberForComparison(serverMember.phoneNumber) !== expectedPhone
+    ) throw new Error("The member's phone number changed before text message status loaded.");
+
+    const eligibility = response.smsEligibilityByMemberId?.[memberId];
+    if (!eligibility) throw new Error("The server did not return text message eligibility.");
+    if (normalizeUsPhoneNumberForComparison(eligibility.phoneNumber) !== expectedPhone) {
+      throw new Error("The server returned text message status for a different phone number.");
+    }
+    applyingRemoteRef.current = true;
+    try {
+      setData((current) => {
+        const currentMember = current.members.find((member) => member.memberId === memberId);
+        if (!currentMember) return current;
+
+        const currentPhone = normalizeUsPhoneNumberForComparison(currentMember.phoneNumber);
+        if (currentPhone !== expectedPhone && currentPhone !== previousPhone) return current;
+
+        return {
+          ...current,
+          members: sortTeamsDataKey("members", current.members.map((member) => member.memberId === memberId
+            ? { ...member, phoneNumber: serverMember.phoneNumber }
+            : member)),
+          smsEligibilityByMemberId: {
+            ...current.smsEligibilityByMemberId,
+            [memberId]: eligibility,
+          },
+        };
+      });
+    } finally {
+      applyingRemoteRef.current = false;
+    }
+  }, [churchId]);
 
   // Merge server-hydrated schedules over their summaries in place, keeping list
   // order stable so the picker and grid don't reshuffle when hydration lands.
@@ -1290,6 +1425,7 @@ export const useTeamsPageState = (
 
   return useMemo(() => ({
     churchId,
+    selfMemberId,
     loading,
     accessDenied,
     hasTeamsWorkspaceAccess,
@@ -1318,6 +1454,7 @@ export const useTeamsPageState = (
     trackTeamsSave,
     refresh,
     reconcileTeamsProjection,
+    refreshMemberSmsEligibility,
     updateSelectedScheduleId,
     updateScheduleDraft,
     flushScheduleDraft,
@@ -1326,6 +1463,7 @@ export const useTeamsPageState = (
     churchName,
   }), [
     churchId,
+    selfMemberId,
     loading,
     accessDenied,
     hasTeamsWorkspaceAccess,
@@ -1352,6 +1490,7 @@ export const useTeamsPageState = (
     trackTeamsSave,
     refresh,
     reconcileTeamsProjection,
+    refreshMemberSmsEligibility,
     updateSelectedScheduleId,
     updateScheduleDraft,
     flushScheduleDraft,

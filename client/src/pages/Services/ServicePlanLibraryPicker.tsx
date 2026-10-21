@@ -8,7 +8,7 @@ import {
   resetCreateItem,
   setCreateItem,
 } from "../../store/createItemSlice";
-import type { ItemState, ServiceItem } from "../../types";
+import type { ItemState } from "../../types";
 import type { ServicePlanSongReference } from "../../types/servicePlan";
 import { libraryServicePlanSongRef } from "../../integrations/servicePlanning/formatSongTitleWithKey";
 import { useServicePlanSongLibrary } from "./useServicePlanSongLibrary";
@@ -80,7 +80,7 @@ const ServicePlanLibraryPicker = ({
     onClose();
   };
 
-  const handleAttachSong = (item: ServiceItem) => {
+  const handleAttachSong = (item: Parameters<typeof libraryServicePlanSongRef>[0]) => {
     onSelectSong(libraryServicePlanSongRef(item));
     resetAndClose();
   };
@@ -137,6 +137,9 @@ const ServicePlanLibraryPicker = ({
               title=""
               onCancel={() => setShowCreateSong(false)}
               onCreated={handleCreated}
+              onSelectExistingSong={(song) => handleAttachSong(
+                allSongDocs.find(doc => doc._id === song._id) ?? song,
+              )}
               drawerPortalContainer={createSongSurfaceRef.current}
             />
           </div>

@@ -1,4 +1,5 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -67,6 +68,10 @@ describe("ChatWindow", () => {
       configurable: true,
       value: jest.fn(),
     });
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
   it("keeps week navigation in the options menu", async () => {
@@ -198,6 +203,56 @@ describe("ChatWindow", () => {
     expect(
       screen.getByRole("button", { name: "New messages" }),
     ).toBeInTheDocument();
+  });
+
+  it("does not mark background chat read until it is visible and focused again", async () => {
+    jest.spyOn(document, "hasFocus").mockReturnValue(true);
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "visible",
+    });
+    const markReadThrough = jest.fn();
+    mockedUseChat.mockReturnValue({ ...baseChat, markReadThrough });
+    const view = render(<ChatWindow />);
+
+    act(() => window.dispatchEvent(new Event("blur")));
+    const incomingMessage: ChatMessage = {
+      messageId: "background-message",
+      clientMessageId: "client-background-message",
+      churchId: "church-1",
+      dayKey: "2026-03-08",
+      authorId: "actor-2",
+      authorName: "Alex",
+      authorSessionKind: "human",
+      text: "Arrived while WorshipSync was in the background",
+      createdAt: Date.parse("2026-03-08T12:00:00.000Z"),
+      reactions: [],
+    };
+    mockedUseChat.mockReturnValue({
+      ...baseChat,
+      messages: [incomingMessage],
+      markReadThrough,
+    });
+    view.rerender(<ChatWindow />);
+
+    expect(markReadThrough).not.toHaveBeenCalled();
+
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "hidden",
+    });
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    act(() => window.dispatchEvent(new Event("focus")));
+    expect(markReadThrough).not.toHaveBeenCalled();
+
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "visible",
+    });
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    await waitFor(() =>
+      expect(markReadThrough).toHaveBeenCalledWith(incomingMessage.createdAt),
+    );
   });
 
   it("shows a blocking retry state when context failed to load", () => {

@@ -283,4 +283,28 @@ function describe_applyAssignmentResponses() {
 
     assert.equal(result.applied, 0);
   });
+
+  test("pending-only acceptance preserves persisted answers and skips removed slots", () => {
+    const current = {
+      ...schedule,
+      responses: {
+        "svc@2026-09-06": { "cam::0": { memberId: "m1", response: "declined", respondedAt: "later" } },
+        "svc@2026-09-13": { "cam::0": { memberId: "old-holder", response: "accepted" } },
+      },
+    };
+    const params = {
+      memberId: "m1", response: "accepted", respondedAt: "now", readHolder,
+      pendingOnly: true,
+      targets: [
+        { occurrenceId: "svc@2026-09-06", cellKey: "cam::0" },
+        { occurrenceId: "svc@2026-09-13", cellKey: "cam::0" },
+        { occurrenceId: "removed", cellKey: "cam::0" },
+      ],
+    };
+    const result = applyAssignmentResponses(current, params);
+    assert.equal(result.applied, 1);
+    assert.deepEqual(result.responses["svc@2026-09-06"]["cam::0"], current.responses["svc@2026-09-06"]["cam::0"]);
+    assert.equal(result.responses["svc@2026-09-13"]["cam::0"].memberId, "m1");
+    assert.equal(applyAssignmentResponses({ ...current, responses: result.responses }, params).applied, 0);
+  });
 }

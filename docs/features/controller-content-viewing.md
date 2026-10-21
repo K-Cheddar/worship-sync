@@ -20,6 +20,7 @@ An operator opens a saved Service Plan in the Presentation Controller, then sele
 - Resolve library songs and custom documents by their saved IDs. A display title is not a substitute when an ID exists.
 - Library songs open the existing song-details drawer with their lyrics, arrangements, and saved details. Pending songs with lyrics open the existing plain-lyrics drawer.
 - Scripture references use the Controller's existing Bible route parameters and openBibleAtLocation behavior to select the saved book, chapter, verse range, and translation.
+- Scripture attachment labels visibly include the structured translation when defined. Preserve labels that already include that translation; rebuild missing or stale labels from the structured passage without changing saved documents or navigation. Authorized by the current user request, 2026-10-18.
 - Custom documents open the established read-only slide preview, including slide backgrounds, text, and formatting.
 - Other supported resources continue to use ContentPreviewDialog and its existing resource handling.
 - Filtered Items offers **View details** for songs and custom items in their applicable filters, including **All Items**. Add to outline and Delete retain their existing behavior.

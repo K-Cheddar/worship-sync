@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider, useLocation } from "react-router-dom";
 import AccountSidebarNav from "./AccountSidebarNav";
+import { PendingRouteNavigationProvider } from "../../../hooks/usePendingRouteNavigation";
 
 const CurrentPath = () => {
   const { pathname } = useLocation();
@@ -15,10 +16,12 @@ it("keeps all seven administration pages available by one desktop sidebar click"
       {
         path: "/account/*",
         element: (
-          <>
-            <AccountSidebarNav />
-            <CurrentPath />
-          </>
+          <PendingRouteNavigationProvider>
+            <>
+              <AccountSidebarNav />
+              <CurrentPath />
+            </>
+          </PendingRouteNavigationProvider>
         ),
       },
     ],

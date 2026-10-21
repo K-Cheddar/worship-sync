@@ -177,11 +177,11 @@ test("Firestore removal and a racing link cannot leave a partial identity", { sk
       db.collection("teamRosterMembers").doc(memberId).set({
         churchId,
         memberId,
-        userId: "",
+        userId: targetId,
         firstName: "Target",
         archivedAt: null,
         invitedAt: "invite-a",
-        linkedAt: "",
+        linkedAt: "linked-a",
         blockoutDates: [{ startDate: "2099-01-01", endDate: "2099-01-02" }],
       }),
       db.collection("teamRosterMembers").doc(memberBId).set({

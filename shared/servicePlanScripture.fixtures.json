@@ -1,0 +1,26 @@
+[
+  {
+    "reference": { "label": "Psalm 100:1–5", "book": "Psalms", "chapter": "100", "verseRange": "1–5", "version": "niv" },
+    "title": "Psalms 100:1–5 NIV"
+  },
+  {
+    "reference": { "label": "John 3:16 (NKJV)", "book": "John", "chapter": "3", "verseRange": "16", "version": "NKJV" },
+    "title": "John 3:16 (NKJV)"
+  },
+  {
+    "reference": { "label": "John 3:16 (NIV)", "book": "John", "chapter": "3", "verseRange": "16", "version": "kjv" },
+    "title": "John 3:16 KJV"
+  },
+  {
+    "reference": { "label": "Psalm 23", "book": "Psalms", "chapter": "23", "verseRange": "", "version": "" },
+    "title": "Psalm 23"
+  },
+  {
+    "reference": { "label": "", "book": "Romans", "chapter": "8", "verseRange": "1-2", "version": "NIV" },
+    "title": "Romans 8:1-2 NIV"
+  },
+  {
+    "reference": { "label": "John 3:16 nkjv", "book": "John", "chapter": "3", "verseRange": "16", "version": "nkjv" },
+    "title": "John 3:16 NKJV"
+  }
+]

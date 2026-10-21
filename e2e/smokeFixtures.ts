@@ -1,5 +1,6 @@
 import { type BrowserContext } from "@playwright/test";
 import { test as diagnosticTest } from "./fixtures";
+import { getE2EChurchId } from "./testChurch";
 
 /**
  * Keep one authenticated browser context for the smoke project. PouchDB's
@@ -9,10 +10,7 @@ import { test as diagnosticTest } from "./fixtures";
 export const test = diagnosticTest.extend<{}, { smokeContext: BrowserContext }>({
   smokeContext: [
     async ({ browser }, use, workerInfo) => {
-      const churchId = process.env.E2E_SMOKE_DISPOSABLE_CHURCH_ID?.trim();
-      if (!churchId) {
-        throw new Error("Set E2E_SMOKE_DISPOSABLE_CHURCH_ID to an isolated disposable test church. Opening Schedules can persist reconciliation changes.");
-      }
+      const churchId = getE2EChurchId();
       const options = workerInfo.project.use;
       const context = await browser.newContext({
         baseURL: options.baseURL,
@@ -27,7 +25,11 @@ export const test = diagnosticTest.extend<{}, { smokeContext: BrowserContext }>(
         const requestedChurch = new URL(route.request().url()).pathname.match(/\/api\/churches\/([^/]+)/)?.[1];
         if (!requestedChurch || decodeURIComponent(requestedChurch) !== churchId) {
           await route.abort("blockedbyclient");
-          throw new Error("Smoke request targeted a church other than E2E_SMOKE_DISPOSABLE_CHURCH_ID.");
+          throw new Error(`Smoke request targeted a church other than the approved E2E church (${churchId}).`);
+        }
+        if (!["GET", "HEAD", "OPTIONS"].includes(route.request().method())) {
+          await route.abort("blockedbyclient");
+          throw new Error(`Read-only smoke guard blocked ${route.request().method()} ${new URL(route.request().url()).pathname}`);
         }
         await route.fallback();
       });
@@ -42,7 +44,15 @@ export const test = diagnosticTest.extend<{}, { smokeContext: BrowserContext }>(
     { scope: "worker" },
   ],
   context: async ({ smokeContext }, use) => {
-    await use(smokeContext);
+    try {
+      await use(smokeContext);
+    } finally {
+      // The context is worker-scoped, so Playwright's page fixture cannot
+      // retire its page by disposing the context after each test. Close pages
+      // here so route subscriptions and component effects unmount before the
+      // next smoke case starts.
+      for (const page of smokeContext.pages()) await page.close();
+    }
   },
 });
 

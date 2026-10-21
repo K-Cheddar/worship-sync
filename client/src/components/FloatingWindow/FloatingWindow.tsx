@@ -57,6 +57,8 @@ interface FloatingWindowProps {
   children: React.ReactNode;
   onClose: () => void;
   onCloseRequested?: () => void;
+  /** Reports whether the floating window content is fully open and visible. */
+  onContentVisibilityChange?: (isVisible: boolean) => void;
   defaultPosition?: { x: number; y: number };
   defaultWidth?: number;
   defaultHeight?: number;
@@ -98,6 +100,7 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
       children,
       onClose,
       onCloseRequested,
+      onContentVisibilityChange,
       defaultPosition,
       defaultWidth = 400,
       defaultHeight = 300,
@@ -220,6 +223,13 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
     const phaseRef = useRef(phase);
     phaseRef.current = phase;
     const animTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const transitionToPhase = useCallback(
+      (nextPhase: AnimPhase) => {
+        onContentVisibilityChange?.(nextPhase === "open");
+        setPhase(nextPhase);
+      },
+      [onContentVisibilityChange],
+    );
 
     useEffect(() => {
       if (!overlayPortalContainer) return;
@@ -246,28 +256,31 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
     // the CSS transition from the compressed state plays.
     useLayoutEffect(() => {
       if (phase !== "opening") return;
-      const raf = requestAnimationFrame(() => setPhase("open"));
+      const raf = requestAnimationFrame(() => transitionToPhase("open"));
       return () => cancelAnimationFrame(raf);
-    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [phase, transitionToPhase]);
 
     const handleMinimize = useCallback(() => {
       clearAnimTimer();
       const current = phaseRef.current;
       if (current === "minimized" || current === "minimizing") {
         // Restore: show content collapsed first (instant), then expand
-        setPhase("restoring");
+        transitionToPhase("restoring");
         // One frame at the collapsed position so CSS transition fires
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
-            setPhase("open");
+            transitionToPhase("open");
           });
         });
       } else {
         setMinimizedY(window.innerHeight - TITLE_BAR_HEIGHT);
-        setPhase("minimizing");
-        animTimerRef.current = setTimeout(() => setPhase("minimized"), ANIM_MS);
+        transitionToPhase("minimizing");
+        animTimerRef.current = setTimeout(
+          () => transitionToPhase("minimized"),
+          ANIM_MS,
+        );
       }
-    }, []);
+    }, [transitionToPhase]);
 
     const focusWindow = useCallback(() => {
       raiseWindow();
@@ -279,9 +292,9 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
     const handleClose = useCallback(() => {
       clearAnimTimer();
       onCloseRequested?.();
-      setPhase("closing");
+      transitionToPhase("closing");
       animTimerRef.current = setTimeout(() => onClose(), ANIM_MS);
-    }, [onClose, onCloseRequested]);
+    }, [onClose, onCloseRequested, transitionToPhase]);
 
     useEffect(() => () => clearAnimTimer(), []);
 

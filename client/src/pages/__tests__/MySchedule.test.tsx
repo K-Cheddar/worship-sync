@@ -1,10 +1,14 @@
+/* eslint-disable testing-library/no-node-access -- Compare the decorative icon SVG directly to verify its identity. */
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { MemoryRouter } from "react-router-dom";
 import store from "../../store/store";
 import userEvent from "@testing-library/user-event";
 import type { ContextType } from "react";
+import { PAGE_APPEARANCES } from "../pageAppearances";
+import { getLucideIconInnerMarkup } from "../../test/lucideIconTestUtils";
 import MySchedule from "../MySchedule";
+import type { PersonalScheduleAccess } from "../myScheduleOperations";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import {
   acceptPendingMyAssignments,
@@ -19,6 +23,9 @@ jest.mock("../../api/auth", () => ({
   getMyTeamAssignments: jest.fn(),
   updateMyBlockoutDates: jest.fn(),
   respondToMyAssignment: jest.fn(),
+  acceptMyUnansweredAssignments: jest.fn(),
+  getMyVolunteerAvailability: jest.fn().mockResolvedValue({ success: true, requests: [] }),
+  submitMyVolunteerAvailability: jest.fn(),
   // showApiErrorToast narrows with `instanceof`, so the error path needs a real
   // class here rather than an undefined export.
   AuthApiError: class AuthApiError extends Error {
@@ -144,6 +151,33 @@ const openFirstService = async (user: ReturnType<typeof userEvent.setup>) => {
   await user.click(tile);
 };
 
+it("retires pending bulk work when church changes with the same member and schedule IDs", async () => {
+  const user = userEvent.setup();
+  let finish!: (value: { success: boolean; results: [] }) => void;
+  const pending = new Promise<{ success: boolean; results: [] }>((resolve) => { finish = resolve; });
+  const makeAccess = (churchId: string): PersonalScheduleAccess => ({
+    churchId, memberId: "m1", operations: {
+      load: jest.fn().mockResolvedValue({ success: true, member: { memberId: "m1", updatedAt: STAMP },
+        occurrences: [occurrence({ serving: [me({ response: "pending" })] })] }),
+      respond: jest.fn(), saveBlockouts: jest.fn(),
+      acceptUnanswered: jest.fn().mockReturnValue(pending),
+      availability: jest.fn().mockResolvedValue({ success: true, requests: [] }), submitAvailability: jest.fn(),
+    },
+  });
+  const first = makeAccess("church-a");
+  const second = makeAccess("church-b");
+  const view = (access: PersonalScheduleAccess) => <Provider store={store}><MemoryRouter><MySchedule access={access} /></MemoryRouter></Provider>;
+  const { rerender } = render(view(first));
+  await user.click(await screen.findByRole("button", { name: "Accept all unanswered" }));
+  expect(screen.getByRole("button", { name: /Accepting/i })).toBeDisabled();
+  rerender(view(second));
+  expect(await screen.findByRole("button", { name: "Accept all unanswered" })).toBeEnabled();
+  await act(async () => { finish({ success: true, results: [] }); });
+  expect(first.operations.load).toHaveBeenCalledTimes(1);
+  expect(second.operations.load).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("button", { name: "Accept all unanswered" })).toBeEnabled();
+});
+
 describe("MySchedule", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -155,6 +189,20 @@ describe("MySchedule", () => {
       revoked: false,
       refresh: jest.fn(),
     });
+  });
+
+  it("uses the shared schedule identity in its page header", () => {
+    respond([]);
+    renderPage();
+
+    const title = screen.getByRole("heading", { name: "My schedule" });
+    const titleIcon = title.querySelector("svg");
+    expect(titleIcon?.innerHTML).toBe(
+      getLucideIconInnerMarkup(PAGE_APPEARANCES.mySchedule.icon),
+    );
+    expect(titleIcon?.parentElement).toHaveClass(
+      PAGE_APPEARANCES.mySchedule.iconColorClass,
+    );
   });
 
   it("lists services as tiles with role and opens a detail view", async () => {
@@ -542,7 +590,8 @@ describe("MySchedule", () => {
       await user.click(screen.getByRole("button", { name: /Accept all pending/i }));
 
       expect(await screen.findByText(/Accepted 1 assignment/i)).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /Save time off/i })).toBeEnabled();
+      expect(screen.getByRole("button", { name: /Save time off/i })).toBeDisabled();
+      expect(screen.getByText(/Your saved information changed elsewhere/)).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: /Remove blockout/i })).not.toBeInTheDocument();
     });
   });
@@ -591,6 +640,47 @@ describe("MySchedule", () => {
 
     expect(screen.getByText("Great Is Thy Faithfulness")).toBeInTheDocument();
     expect(screen.getByText("Worship")).toBeInTheDocument();
+  });
+
+  it("lets a volunteer choose each saved plan for one combined service occurrence", async () => {
+    const user = userEvent.setup();
+    const plans = [
+      {
+        planId: "plan-worship",
+        serviceId: "worship",
+        name: "Worship plan",
+        published: false,
+        sections: [{ name: "Songs", elements: [{ type: "song", title: "First service song", startTime: "", durationSeconds: 180 }] }],
+      },
+      {
+        planId: "plan-evening",
+        serviceId: "evening",
+        name: "Evening plan",
+        published: true,
+        publicUrls: { team: "https://example.test/#/services/evening-token" },
+        sections: [{ name: "Response", elements: [{ type: "song", title: "Second service song", startTime: "", durationSeconds: 210 }] }],
+      },
+    ];
+    respond([occurrence({
+      occurrenceId: "group:combined@2099-09-06",
+      serviceIds: ["worship", "evening"],
+      plans,
+      plan: plans[0],
+    })]);
+    renderPage();
+
+    expect((await screen.findAllByRole("button", { name: /Open Sunday Gathering/i })).length).toBe(1);
+    await openFirstService(user);
+    await user.click(screen.getByRole("tab", { name: /^Service plan$/i }));
+    expect(screen.getByText("First service song")).toBeInTheDocument();
+    expect(mockUsePublicServiceFlow).toHaveBeenLastCalledWith("");
+
+    await user.click(screen.getByRole("combobox", { name: /Service plan/i }));
+    await user.click(within(await screen.findByRole("listbox")).getByRole("option", { name: "Evening plan" }));
+
+    expect(screen.getByText("Second service song")).toBeInTheDocument();
+    expect(screen.queryByText("First service song")).not.toBeInTheDocument();
+    expect(mockUsePublicServiceFlow).toHaveBeenLastCalledWith("evening-token");
   });
 
   it("offers view and copy for a published public service plan", async () => {
@@ -1076,35 +1166,8 @@ describe("MySchedule", () => {
         screen.getByRole("button", { name: /Save time off/i }),
       ).toBeDisabled();
 
-      const conflictPanel = await screen.findByRole("alert");
-      expect(within(conflictPanel).getByText(/Added by your team lead/)).toBeInTheDocument();
-      expect(screen.getAllByRole("button", { name: /Remove blockout/i })).toHaveLength(1);
+      expect(screen.getByText(/Your unsaved dates are kept/)).toBeInTheDocument();
 
-      await user.click(
-        screen.getByRole("button", { name: /Keep my draft and replace current dates/i }),
-      );
-      await waitFor(() =>
-        expect(screen.getByRole("button", { name: /Save time off/i })).toBeEnabled(),
-      );
-      await user.click(screen.getByRole("button", { name: /Save time off/i }));
-      await screen.findByRole("button", { name: /^Save time off$/i });
-      expect(mockUpdateMyBlockoutDates).toHaveBeenNthCalledWith(
-        2,
-        "church-1",
-        [otherDraftDate],
-        latestStamp,
-      );
-      expect(screen.getByRole("button", { name: /Save time off/i })).toBeDisabled();
-
-      await user.click(screen.getByRole("button", { name: /Remove blockout/i }));
-      await user.click(screen.getByRole("button", { name: /Save time off/i }));
-      await screen.findByRole("button", { name: /^Save time off$/i });
-      expect(mockUpdateMyBlockoutDates).toHaveBeenNthCalledWith(
-        3,
-        "church-1",
-        [],
-        savedStamp,
-      );
     });
 
     it("offers time off even when nothing is scheduled yet", async () => {

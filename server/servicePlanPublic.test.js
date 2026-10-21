@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import scriptureFixtures from "../shared/servicePlanScripture.fixtures.json" with { type: "json" };
 import {
   buildPublicServicePlanSnapshot,
   publicServingMemberIdsForPlan,
@@ -373,12 +374,39 @@ test("public service plan snapshot exposes sanitized song and scripture labels",
   assert.deepEqual(snapshot.service.sections[0].items[0].resources, [
     { type: "song", title: "Great Are You Lord" },
     { type: "song", title: "Unlinked Song" },
-    { type: "scripture", title: "Psalm 100:1–5" },
+    { type: "scripture", title: "Psalm 100:1–5 NIV" },
   ]);
   assert.equal(snapshot.service.sections[0].items[0].songs, undefined);
   assert.equal(snapshot.service.sections[0].items[0].scriptureRefs, undefined);
   assert.equal(JSON.stringify(snapshot).includes("private-song"), false);
   assert.equal(JSON.stringify(snapshot).includes("private lyrics"), false);
+});
+
+test("scripture display matches the client fixtures for legacy and explicit references", () => {
+  const references = scriptureFixtures.map(({ reference }) => reference);
+  const elements = [
+    ...references.map((scriptureRef, index) => ({ id: `single-${index}`, scriptureRef })),
+    { id: "multiple", scriptureRefs: references },
+    ...["scripture", "scriptureRef", "flat"].map((shape) => ({
+      id: shape,
+      resources: references.map((reference, index) => ({
+        id: `${shape}-${index}`,
+        type: "scripture",
+        title: reference.label,
+        data: shape === "flat" ? reference : { [shape]: reference },
+      })),
+    })),
+  ];
+  const testPlan = { ...plan, sections: [{ id: "main", elements }] };
+  const saved = JSON.stringify(testPlan);
+  const snapshot = buildPublicServicePlanSnapshot({ plan: testPlan });
+  const titles = scriptureFixtures.map(({ title }) => title);
+  assert.deepEqual(snapshot.service.sections[0].items.map((item) => item.resources.map((r) => r.title)), [
+    ...titles.map((title) => [title]), titles, titles, titles, titles,
+  ]);
+  const general = buildPublicServicePlanSnapshot({ plan: testPlan, viewMode: "general", shareId: "general-share" });
+  assert.deepEqual(general.service.sections[0].items[references.length].scriptureRefs, titles);
+  assert.equal(JSON.stringify(testPlan), saved);
 });
 
 test("public service plan snapshot exposes sanitized non-song resources", () => {
@@ -498,7 +526,7 @@ test("public resource details preserve rich-text notes in the shared snapshot sh
   assert.deepEqual(publicResources.find((resource) => resource.type === "generic").richTextContent, richText);
   assert.deepEqual(publicResources.map(({ type, title }) => [type, title]), [
     ["song", "Opening song"],
-    ["scripture", "Psalm 100"],
+    ["scripture", "Psalms 100 NIV"],
     ["text", "Service notes"],
     ["generic", "Other resource"],
     ["url", "Schedule"],
@@ -538,7 +566,7 @@ test("detailed public snapshot combines legacy and new content without duplicate
   const resources = snapshot.service.sections[0].items[0].resources;
   assert.deepEqual(resources.map(({ type, title }) => [type, title]), [
     ["song", "Opening Song"],
-    ["scripture", "Psalm 100"],
+    ["scripture", "Psalms 100 NIV"],
     ["youtube", "Sermon video"],
     ["audio", "Reference audio"],
     ["document", "Service notes"],

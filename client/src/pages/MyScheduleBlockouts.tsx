@@ -3,12 +3,13 @@ import { CalendarOff, ChevronDown, ChevronUp, TriangleAlert } from "lucide-react
 import Button from "../components/Button/Button";
 import Icon from "../components/Icon/Icon";
 import BlockoutDatesField from "./Teams/components/BlockoutDatesField";
-import { findBlockoutRangeForDate } from "./Teams/teamsUtils";
+import { findBlockoutRangeForDate, formatBlockoutDateRangeLabel } from "./Teams/teamsUtils";
 import { updateMyBlockoutDates, type MyScheduleOccurrence } from "../api/auth";
-import type { TeamBlockoutDateRange, TeamRosterMember } from "../api/authTypes";
+import type { TeamBlockoutDateRange } from "../api/authTypes";
 import { getApiErrorStatus, showApiErrorToast } from "../utils/apiErrorToast";
 import { useToast } from "../context/toastContext";
 import { calendarDateInTimeZone } from "../utils/teamScheduleOccurrences";
+import type { MyScheduleMember, MyScheduleOperations } from "./myScheduleOperations";
 
 /**
  * A volunteer's own time off, on the one Teams surface they can reach.
@@ -23,19 +24,25 @@ import { calendarDateInTimeZone } from "../utils/teamScheduleOccurrences";
  * interrupting for.
  */
 
+export type SavedDatesLoadState =
+  | { status: "pending" | "ready" }
+  | { status: "failed"; accessMessage?: string };
+
 type MyScheduleBlockoutsProps = {
   churchId: string;
   serviceTimeZone: string;
   blockoutDates: TeamBlockoutDateRange[];
-  /** `updatedAt` of the record this edit started from; the write precondition. */
+  /** Latest saved revision. A dirty draft retains its own baseline revision. */
   expectedUpdatedAt: string;
   /** Used to spot dates the member is already scheduled for. */
   occurrences: MyScheduleOccurrence[];
-  onSaved: (member: TeamRosterMember) => void;
+  onSaved: (member: MyScheduleMember) => void;
+  saveBlockouts?: MyScheduleOperations["saveBlockouts"];
   /** Lets the page skip a background refresh while an edit is open. */
   onDirtyChange: (dirty: boolean) => void;
-  /** Fetches the latest member record even while this editor has a draft. */
-  onStale: () => Promise<TeamRosterMember | null>;
+  /** Called when the record moved underneath this edit, to pick up the change. */
+  onStale: () => Promise<boolean> | undefined;
+  savedDatesLoad: SavedDatesLoadState;
 };
 
 type BlockoutConflict = {
@@ -88,11 +95,12 @@ const MyScheduleBlockouts = ({
   onSaved,
   onDirtyChange,
   onStale,
+  savedDatesLoad,
+  saveBlockouts,
 }: MyScheduleBlockoutsProps) => {
   const { showToast } = useToast();
-  const mountedRef = useRef(true);
-  const churchIdRef = useRef(churchId);
-  churchIdRef.current = churchId;
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const conflictHeadingId = useId();
   const [open, setOpen] = useState(false);
   const { current } = useMemo(
@@ -107,6 +115,9 @@ const MyScheduleBlockouts = ({
   );
   const editorRanges = showEnded ? draft : draftCurrent;
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const [rejectedAsStale, setRejectedAsStale] = useState(false);
+  const refreshing = savedDatesLoad.status === "pending";
   // BlockoutDatesField seeds its rows from `value` once, so re-seeding needs a
   // remount rather than a prop change.
   const [fieldKey, setFieldKey] = useState(0);
@@ -119,33 +130,16 @@ const MyScheduleBlockouts = ({
    * saving it would push the older dates back over the newer ones with a
    * freshly refreshed write stamp the server has no reason to reject.
    */
-  const [baseline, setBaseline] = useState(() => signRanges(blockoutDates));
-  const [baselineUpdatedAt, setBaselineUpdatedAt] = useState(expectedUpdatedAt);
-  const [hasConflict, setHasConflict] = useState(false);
-  const [conflictRefreshState, setConflictRefreshState] = useState<
-    "idle" | "loading" | "failed"
-  >("idle");
-  const [acknowledgedConflictRevision, setAcknowledgedConflictRevision] =
-    useState<string | null>(null);
+  const [baseline, setBaseline] = useState(() => ({
+    ranges: blockoutDates, updatedAt: expectedUpdatedAt,
+  }));
 
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-
-  const seedDraft = useCallback((
-    ranges: TeamBlockoutDateRange[],
-    updatedAt = expectedUpdatedAt,
-  ) => {
+  const seedDraft = useCallback((ranges: TeamBlockoutDateRange[], updatedAt: string) => {
     setDraft(ranges);
-    setBaseline(signRanges(ranges));
-    setBaselineUpdatedAt(updatedAt);
-    setHasConflict(false);
-    setAcknowledgedConflictRevision(null);
+    setBaseline({ ranges, updatedAt });
+    setRejectedAsStale(false);
     setFieldKey((key) => key + 1);
-  }, [expectedUpdatedAt]);
+  }, []);
 
   /**
    * Services the member is on that fall inside a drafted blockout. Computed
@@ -170,14 +164,17 @@ const MyScheduleBlockouts = ({
 
   const draftSignature = signRanges(draft);
   const serverSignature = signRanges(blockoutDates);
-  const isDirty = draftSignature !== baseline;
-  const unresolvedConflict = hasConflict &&
-    acknowledgedConflictRevision !== expectedUpdatedAt;
-  const cannotSave =
-    !isDirty ||
-    saving ||
-    conflictRefreshState !== "idle" ||
-    unresolvedConflict;
+  const baselineSignature = signRanges(baseline.ranges);
+  const isDirty = draftSignature !== baselineSignature;
+  const hasConflict = rejectedAsStale || (isDirty && expectedUpdatedAt !== baseline.updatedAt);
+  // A successful HTTP response alone cannot recover a rejected baseline.
+  const savedRevisionTime = Date.parse(expectedUpdatedAt);
+  const baselineRevisionTime = Date.parse(baseline.updatedAt);
+  const revisionAdvanced = Number.isFinite(savedRevisionTime) && Number.isFinite(baselineRevisionTime)
+    ? savedRevisionTime > baselineRevisionTime
+    : Boolean(expectedUpdatedAt) && expectedUpdatedAt !== baseline.updatedAt;
+  const canReviewSavedDates = savedDatesLoad.status === "ready" && revisionAdvanced;
+  const refreshLabel = canReviewSavedDates ? "Refresh saved dates" : "Retry loading saved dates";
 
   /**
    * Adopt server state that arrived while this editor was mounted — a
@@ -187,21 +184,10 @@ const MyScheduleBlockouts = ({
    * is how stale dates get written back.
    */
   useEffect(() => {
-    if (draftSignature !== baseline) return;
-    if (
-      serverSignature === baseline &&
-      expectedUpdatedAt === baselineUpdatedAt
-    ) return;
+    if (saving || rejectedAsStale || isDirty) return;
+    if (serverSignature === baselineSignature && expectedUpdatedAt === baseline.updatedAt) return;
     seedDraft(blockoutDates, expectedUpdatedAt);
-  }, [
-    baseline,
-    baselineUpdatedAt,
-    blockoutDates,
-    draftSignature,
-    expectedUpdatedAt,
-    seedDraft,
-    serverSignature,
-  ]);
+  }, [baseline.updatedAt, baselineSignature, blockoutDates, expectedUpdatedAt, isDirty, rejectedAsStale, saving, seedDraft, serverSignature]);
 
   // Reported up so a background refresh cannot replace an open edit. Cleared on
   // unmount, or leaving the list view would pin the page as permanently dirty.
@@ -210,7 +196,10 @@ const MyScheduleBlockouts = ({
     return () => onDirtyChange(false);
   }, [isDirty, onDirtyChange]);
 
-  const discard = () => seedDraft(blockoutDates);
+  const discard = () => {
+    if (saving || refreshing || (hasConflict && !canReviewSavedDates)) return;
+    seedDraft(blockoutDates, expectedUpdatedAt);
+  };
 
   const handleDraftChange = (next: TeamBlockoutDateRange[]) => {
     // When past dates are hidden, preserve them in the draft while applying
@@ -218,61 +207,43 @@ const MyScheduleBlockouts = ({
     setDraft(showEnded ? next : [...draftEnded, ...next]);
   };
 
+  const refreshSavedDates = () => {
+    if (refreshing) return;
+    void onStale();
+  };
+
   const save = async () => {
-    const saveChurchId = churchId;
+    if (savingRef.current || hasConflict) return;
+    savingRef.current = true;
     setSaving(true);
     try {
       // Entries hidden from the editor are sent back untouched. Editing what is
       // actionable must not amount to deleting the rest.
-      const result = await updateMyBlockoutDates(
-        churchId,
-        draft,
-        expectedUpdatedAt,
-      );
-      if (!mountedRef.current || churchIdRef.current !== saveChurchId) return;
+      const result = await (saveBlockouts
+        ? saveBlockouts(draft, baseline.updatedAt)
+        : updateMyBlockoutDates(churchId, draft, baseline.updatedAt));
+      if (!mounted.current) return;
       const saved = result.member?.blockoutDates || [];
       // Re-seed from the server so its normalization is what stays on screen: a
       // single day collapsed to one date, a blank row dropped, history past the
       // retention window pruned. Seeding also moves the baseline, so the save
       // leaves the editor clean rather than looking edited again.
-      seedDraft(saved, result.member?.updatedAt || expectedUpdatedAt);
+      seedDraft(saved, result.member.updatedAt || "");
       onSaved(result.member);
       showToast("Time off saved.", "success");
     } catch (error) {
+      if (!mounted.current) return;
       // 409: the record moved under this edit. Pull the change in so the reader
       // is comparing against what is actually stored, but keep their draft —
       // discarding an edit to report a conflict trades one loss for another.
       if (getApiErrorStatus(error) === 409) {
-        setConflictRefreshState("loading");
-        setAcknowledgedConflictRevision(null);
-        const latestMember = await onStale();
-        if (!mountedRef.current || churchIdRef.current !== saveChurchId) return;
-        if (latestMember) {
-          setHasConflict(true);
-          setConflictRefreshState("idle");
-        } else {
-          setConflictRefreshState("failed");
-        }
+        setRejectedAsStale(true);
+        void refreshSavedDates();
       }
-      if (!mountedRef.current || churchIdRef.current !== saveChurchId) return;
       showApiErrorToast(showToast, error, "Could not save your time off.");
     } finally {
-      if (mountedRef.current && churchIdRef.current === saveChurchId) {
-        setSaving(false);
-      }
-    }
-  };
-
-  const refreshConflict = async () => {
-    const refreshChurchId = churchId;
-    setConflictRefreshState("loading");
-    const latestMember = await onStale();
-    if (!mountedRef.current || churchIdRef.current !== refreshChurchId) return;
-    if (latestMember) {
-      setHasConflict(true);
-      setConflictRefreshState("idle");
-    } else {
-      setConflictRefreshState("failed");
+      savingRef.current = false;
+      if (mounted.current) setSaving(false);
     }
   };
 
@@ -314,94 +285,39 @@ const MyScheduleBlockouts = ({
             the schedule.
           </p>
 
-          <BlockoutDatesField
-            key={`${fieldKey}-${showEnded ? "all" : "current"}`}
-            variant="admin"
-            showNotes
-            emptyLabel="No upcoming dates added yet."
-            disabled={saving}
-            value={editorRanges}
-            onChange={handleDraftChange}
-          />
+          {hasConflict ? <div role="alert" className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-100">
+            <p>Your saved information changed elsewhere. Your unsaved dates are kept.</p>
+            {refreshing ? <p>Loading saved dates. Your unsaved dates are still here.</p> : null}
+            {!refreshing && !canReviewSavedDates ? <p>
+              Your unsaved dates are still here, but we couldn't load the latest saved dates. Try refreshing before deciding what to keep.
+            </p> : null}
+            {savedDatesLoad.status === "failed" && savedDatesLoad.accessMessage ? <p>{savedDatesLoad.accessMessage}</p> : null}
+            {canReviewSavedDates ? <>
+              <p>Review the saved dates, then discard your draft and reapply any changes you still need.</p>
+              <details>
+                <summary className="cursor-pointer underline">Review saved dates</summary>
+                {blockoutDates.length ? <ul className="mt-2 space-y-1">
+                  {blockoutDates.map((range, index) => <li key={index}>
+                    {formatBlockoutDateRangeLabel(range)}{range.notes ? ` · ${range.notes}` : ""}
+                  </li>)}
+                </ul> : <p className="mt-2">No saved dates.</p>}
+              </details>
+            </> : null}
+            <Button type="button" variant="tertiary" disabled={refreshing} onClick={() => void refreshSavedDates()}>
+              {refreshing ? "Refreshing saved dates…" : refreshLabel}
+            </Button>
+          </div> : null}
 
-          {hasConflict || conflictRefreshState === "failed" ? (
-            <div
-              className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3"
-              role="alert"
-            >
-              <p className="text-sm font-medium text-amber-100">
-                Time off changed while you were editing.
-              </p>
-              <p className="mt-1 text-xs text-amber-100/80">
-                {hasConflict
-                  ? "Your draft is still here. Compare it with the latest saved dates before saving."
-                  : "Your draft is still here, but the latest saved dates could not be loaded."}
-              </p>
-              {hasConflict && blockoutDates.length > 0 ? (
-                <ul
-                  aria-label="Latest saved time off"
-                  className="mt-2 space-y-1 text-xs text-amber-50"
-                >
-                  {blockoutDates.map((range, index) => (
-                    <li key={`${range.startDate}-${range.endDate}-${index}`}>
-                      {range.startDate === range.endDate
-                        ? range.startDate
-                        : `${range.startDate} to ${range.endDate}`}
-                      {range.notes ? ` · ${range.notes}` : ""}
-                    </li>
-                  ))}
-                </ul>
-              ) : hasConflict ? (
-                <p className="mt-2 text-xs text-amber-50">
-                  No dates are currently saved.
-                </p>
-              ) : null}
-              {conflictRefreshState === "failed" ? (
-                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-xs text-amber-100/80">
-                    Could not load the latest dates. Try again before saving.
-                  </p>
-                  <Button
-                    type="button"
-                    variant="tertiary"
-                    disabled={saving}
-                    onClick={() => void refreshConflict()}
-                  >
-                    Retry loading dates
-                  </Button>
-                </div>
-              ) : null}
-              {unresolvedConflict && conflictRefreshState === "idle" ? (
-                <div className="mt-2 flex flex-wrap justify-end gap-2">
-                  <Button
-                    type="button"
-                    variant="tertiary"
-                    onClick={() => seedDraft(blockoutDates, expectedUpdatedAt)}
-                  >
-                    Use latest dates
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={() =>
-                      setAcknowledgedConflictRevision(expectedUpdatedAt)
-                    }
-                  >
-                    Keep my draft and replace current dates
-                  </Button>
-                </div>
-              ) : null}
-              {!unresolvedConflict && acknowledgedConflictRevision !== null ? (
-                <p className="mt-2 text-xs text-amber-100/80">
-                  Your draft will replace the latest saved dates when you save.
-                </p>
-              ) : null}
-            </div>
-          ) : conflictRefreshState === "loading" ? (
-            <p className="text-sm text-gray-300" role="status" aria-live="polite">
-              Loading the latest saved dates...
-            </p>
-          ) : null}
+          <fieldset disabled={saving}>
+            <BlockoutDatesField
+              key={`${fieldKey}-${showEnded ? "all" : "current"}`}
+              variant="admin"
+              showNotes
+              emptyLabel="No upcoming dates added yet."
+              value={editorRanges}
+              onChange={handleDraftChange}
+            />
+          </fieldset>
 
           {draftEnded.length > 0 ? (
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -453,7 +369,7 @@ const MyScheduleBlockouts = ({
               type="button"
               variant="tertiary"
               className="max-md:min-h-0"
-              disabled={!isDirty || saving}
+              disabled={(!isDirty && !hasConflict) || saving || refreshing || (hasConflict && !canReviewSavedDates)}
               onClick={discard}
             >
               Discard changes
@@ -462,7 +378,7 @@ const MyScheduleBlockouts = ({
               type="button"
               variant="cta"
               className="max-md:min-h-0"
-              disabled={cannotSave}
+              disabled={!isDirty || saving || hasConflict}
               onClick={save}
             >
               {saving ? "Saving…" : "Save time off"}

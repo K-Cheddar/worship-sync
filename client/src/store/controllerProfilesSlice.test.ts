@@ -9,8 +9,11 @@ import reducer, {
   setControllerProfileDefaultSends,
   setControllerProfileDescription,
   setControllerProfileEnabled,
+  setControllerProfileAppearance,
+  setControllerProfileHomeIcon,
   setControllerProfileOutputs,
   setControllerProfilesFromRemote,
+  setControllerProfilesForChurch,
 } from "./controllerProfilesSlice";
 import {
   OVERLAY_CONTROLLER_ID,
@@ -57,6 +60,16 @@ describe("setControllerProfilesFromRemote", () => {
       PRESENTATION_CONTROLLER_ID,
       OVERLAY_CONTROLLER_ID,
     ]);
+  });
+});
+
+describe("church scoped profile snapshots", () => {
+  it("records which church owns the authoritative registry snapshot", () => {
+    const store = createStore();
+    store.dispatch(setControllerProfilesForChurch({ churchId: "church-2", data: [] }));
+    expect(store.getState().controllerProfiles.syncedChurchId).toBe("church-2");
+    store.dispatch(setControllerProfilesFromRemote([]));
+    expect(store.getState().controllerProfiles.syncedChurchId).toBeNull();
   });
 });
 
@@ -110,6 +123,37 @@ describe("editing a controller", () => {
     expect(profilesOf(store).find((p) => p.id === id)!.description).toBe(
       "Drive the lobby TVs.",
     );
+  });
+
+  it("saves an icon and curated icon color on the controller profile", () => {
+    const store = createStore();
+    store.dispatch(addControllerProfile({ name: "Lobby" }));
+    const id = auxIdOf(store);
+    store.dispatch(
+      setControllerProfileAppearance({ id, icon: "camera", iconColor: "teal" }),
+    );
+    expect(profilesOf(store).find((p) => p.id === id)).toMatchObject({
+      icon: "camera",
+      iconColor: "teal",
+    });
+  });
+
+  it("saves a rich icon and custom color without overwriting legacy appearance", () => {
+    const store = createStore();
+    store.dispatch(addControllerProfile({ name: "Lobby" }));
+    const id = auxIdOf(store);
+    const before = profilesOf(store).find((p) => p.id === id)!;
+
+    store.dispatch(setControllerProfileHomeIcon({
+      id,
+      icon: { source: "tabler", name: "device-desktop", color: "#12abef" },
+    }));
+
+    expect(profilesOf(store).find((p) => p.id === id)).toMatchObject({
+      icon: before.icon,
+      iconColor: before.iconColor,
+      homeIcon: { source: "tabler", name: "device-desktop", color: "#12abef" },
+    });
   });
 
   it("clears a home description back to the type default", () => {

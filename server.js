@@ -1,4 +1,5 @@
 import "./instrument.js";
+import { registerVolunteerRoutes } from "./server/volunteerRoutes.js";
 import { setupExpressErrorHandler } from "@sentry/node";
 import express from "express";
 import cors from "cors";
@@ -1414,6 +1415,10 @@ app.get(
   "/api/churches/:churchId/service-time-zone",
   authHandlers.getChurchServiceTimeZone,
 );
+app.get(
+  "/api/churches/:churchId/service-time-zone/stream",
+  authHandlers.streamChurchServiceTimeZone,
+);
 app.post(
   "/api/churches/:churchId/service-time-zone",
   authHandlers.updateChurchServiceTimeZone,
@@ -1544,26 +1549,8 @@ app.delete(
   "/api/churches/:churchId/teams/:teamId/roster/:memberId",
   authHandlers.removeTeamRosterMember,
 );
-app.get(
-  "/api/churches/:churchId/my-team-assignments",
-  authHandlers.getMyTeamAssignments,
-);
-// Self-scoped: resolves the member from the session, not a :memberId, so a
-// schedule-only volunteer can maintain their own availability without any
-// teams permission.
-app.post(
-  "/api/churches/:churchId/my-blockout-dates",
-  authHandlers.updateMyBlockoutDates,
-);
-// Also self-scoped: the slot must be held by the session's own member.
-app.post(
-  "/api/churches/:churchId/my-assignments/respond",
-  authHandlers.respondToMyAssignment,
-);
-app.post(
-  "/api/churches/:churchId/my-assignments/accept-pending",
-  authHandlers.acceptPendingMyAssignments,
-);
+registerVolunteerRoutes(app, authHandlers);
+app.post("/api/churches/:churchId/my-assignments/accept-pending", authHandlers.acceptPendingMyAssignments);
 // Public and unauthenticated by design: volunteers often have no account, so a
 // signed single-purpose token is the only way they can answer at all.
 app.post(

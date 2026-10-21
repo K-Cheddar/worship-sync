@@ -1,4 +1,5 @@
 import type { DBItem } from "../types";
+import { resolveResourceFileType } from "./resourceFileType";
 import type {
   ChurchResource,
   ResourceLibraryEntry,
@@ -28,6 +29,13 @@ export const buildChurchResourceLibraryEntries = ({
 
 export const resourceEntryName = (entry: ResourceLibraryEntry): string =>
   entry.source === "church-resource" ? entry.resource.name : entry.audio.fileName;
+
+export const resourceEntryFileVisual = (entry: ResourceLibraryEntry) => {
+  if (entry.source === "song-audio") return resolveResourceFileType({ fileName: entry.audio.fileName, mimeType: entry.audio.contentType, kind: "audio" });
+  const resource = entry.resource;
+  if (resource.sourceType === "external") return resolveResourceFileType({ ...resource.external, mimeType: resource.external.mimeType, name: resource.name, kind: resource.kind, external: true });
+  return resolveResourceFileType({ fileName: resource.storage.fileName, mimeType: resource.storage.contentType, name: resource.name, kind: resource.kind });
+};
 
 export const resourceEntryContentType = (
   entry: ResourceLibraryEntry,

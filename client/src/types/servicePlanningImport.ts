@@ -2,6 +2,12 @@ import type { ParsedBibleRef } from "../integrations/servicePlanning/parseBibleR
 import type { ServicePlanningMappedRow } from "../integrations/servicePlanning/mapServicePlanningToOverlays";
 import type { ServiceItem } from "../types";
 
+export type NativeServicePlanOverlaySummary = {
+  status: "ready" | "restricted" | "failed";
+  selectedItemCount: number;
+  assignedParticipantCount: number | null;
+};
+
 export type OutlineItemCandidate = {
   sectionName: string;
   headingName: string | null;
@@ -73,6 +79,10 @@ export type OverlaySyncPlanItem = {
   personIndex: number;
   rawNameToken: string;
   action: "update" | "clone" | "create" | "skip";
+  /** Native plan matches never choose arbitrarily between duplicate event labels. */
+  duplicateExactMatchesAreAmbiguous?: boolean;
+  /** Role-resolution detail shown before the operator synchronizes. */
+  resolutionNotice?: string;
   placementOnly?: boolean;
   targetOverlayId?: string;
   targetOverlayName?: string;
@@ -102,4 +112,6 @@ export type ServicePlanningPreview = {
   outlineCandidates: OutlineItemCandidate[];
   lineItems: ServicePlanningLineItem[];
   teamAssignments: ServicePlanningTeamAssignment[];
+  /** Present only for previews built from saved native service plans. */
+  nativeOverlaySummary?: NativeServicePlanOverlaySummary;
 };

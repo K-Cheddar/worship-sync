@@ -32,6 +32,10 @@ import {
 } from "./scheduleUtils";
 import type { ServicePlanMicrophone } from "../../../types/servicePlan";
 import MemberAvatar from "../../../components/MemberAvatar/MemberAvatar";
+import {
+  MemberNameWithIndicator,
+  useCurrentMemberId,
+} from "../components/CurrentUserMemberIndicator";
 import type { ServiceEquipment } from "../../../types/servicePlan";
 
 type ScheduleGridCellProps = {
@@ -105,11 +109,17 @@ const ScheduleGridCell = memo(({
   iemLoading,
   iemUnavailable,
 }: ScheduleGridCellProps) => {
+  const selfMemberId = useCurrentMemberId();
   const handlersRef = useContext(ScheduleAssignmentContext);
   const assignedMemberId = getCellPrimaryMemberId(assignmentCell);
   const shadowAssignments = getCellShadowAssignments(assignmentCell);
   const assignedMember = allMembers.find(
     (item) => item.memberId === assignedMemberId,
+  );
+  const assignedMemberIsSelf = Boolean(
+    assignedMember &&
+      !assignedMember.scheduleGuest &&
+      assignedMember.memberId === selfMemberId,
   );
 
   const cellLabel = useMemo(
@@ -195,7 +205,7 @@ const ScheduleGridCell = memo(({
             aria-haspopup="listbox"
             aria-expanded={isActiveSlot}
             aria-label={cn(
-              `${cellLabel}, ${displayLabel}`,
+              `${cellLabel}, ${displayLabel}${assignedMemberIsSelf ? ", You" : ""}`,
               availabilityConflictLabel && `, ${availabilityConflictLabel}`,
             )}
             title={availabilityConflictLabel || undefined}
@@ -230,7 +240,12 @@ const ScheduleGridCell = memo(({
                   aria-hidden
                 />
               ) : null}
-              <span className={scheduleAssignmentLabelClassName}>{displayLabel}</span>
+              <MemberNameWithIndicator
+                name={displayLabel}
+                memberId={assignedMember?.scheduleGuest ? undefined : assignedMember?.memberId}
+                className="min-w-0 flex-1"
+                nameClassName={scheduleAssignmentLabelClassName}
+              />
               {assignedMember?.scheduleGuest ? (
                 <span
                   className="shrink-0 rounded-full border border-violet-400/40 bg-violet-500/15 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-violet-200"
@@ -291,6 +306,7 @@ const ScheduleGridCell = memo(({
                   positionId={positionId}
                   shadow={shadow}
                   memberName={scheduleMemberName(member, duplicateFirstNames)}
+                  memberId={member?.scheduleGuest ? undefined : shadow.memberId}
                   canEdit={canEdit}
                 />
               );

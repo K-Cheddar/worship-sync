@@ -3,6 +3,7 @@ import { useStore } from "react-redux";
 import { useDispatch, useSelector } from "../hooks";
 import { getServicePlanningImportDataFromUrl } from "../containers/Overlays/eventParser";
 import { servicePlanToImportData } from "../integrations/servicePlanning/servicePlanToImportData";
+import { mapNativeServicePlanParticipants } from "../integrations/servicePlanning/mapNativeServicePlanParticipants";
 import type { ServicePlanningMappedRow } from "../integrations/servicePlanning/mapServicePlanningToOverlays";
 import {
   buildServicePlanningPreview,
@@ -43,7 +44,10 @@ import type {
   ServicePlanningTeamAssignment,
 } from "../types/servicePlanningImport";
 import type { ServiceOutline } from "../types/importedPlan";
-import type { ServicePlan } from "../types/servicePlan";
+import type {
+  ServicePlan,
+  ServicePlanParticipantOverlayProjection,
+} from "../types/servicePlan";
 import {
   executeServicePlanningOutlineSyncStep as executeOutlineSyncUtilityStep,
   insertServicePlanningOutlineCandidates,
@@ -223,6 +227,10 @@ export const useServicePlanningImport = () => {
     async (
       plan: Pick<ServicePlan, "name" | "sections" | "sourceImport"> & Partial<Pick<ServicePlan, "planKey">>,
       teamAssignments: ServicePlanningTeamAssignment[],
+      participantOverlay: ServicePlanParticipantOverlayProjection = {
+        status: "failed",
+        elements: [],
+      },
     ): Promise<ServiceOutline> => {
       // A saved WorshipSync plan is native data. Build its controller model
       // even when the optional URL importer is disabled or its settings have
@@ -273,6 +281,11 @@ export const useServicePlanningImport = () => {
           (resource): resource is ChurchResource => Boolean(resource),
         ),
       );
+      const nativeOverlayMapping = mapNativeServicePlanParticipants({
+        sections: plan.sections,
+        importData,
+        participantOverlay,
+      });
       const state = store.getState();
       const songLibrary = selectSongLibrary(state).songs;
       const customDocumentLibrary = state.allDocs.allFreeFormDocs
@@ -286,6 +299,8 @@ export const useServicePlanningImport = () => {
         customDocumentLibrary,
         activeOutlineList: state.undoable.present.itemList.list,
         teamAssignments,
+        nativeOverlayCandidates: nativeOverlayMapping.overlayCandidates,
+        nativeOverlaySummary: nativeOverlayMapping.summary,
       });
 
       return {
@@ -744,6 +759,10 @@ export const useServicePlanningImport = () => {
         step.patch.event,
         list,
         excludedIds,
+        {
+          duplicateExactMatchesAreAmbiguous:
+            step.duplicateExactMatchesAreAmbiguous === true,
+        },
       );
       if (resolution.kind === "ambiguous") {
         return skipStep(

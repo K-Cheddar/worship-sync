@@ -608,6 +608,8 @@ export const onlyHydratedSchedules = (
 
 export type TeamsBootstrap = {
   editableMemberIds?: string[];
+  /** Authenticated human's unique active roster link; null when unavailable. */
+  selfMemberId?: string | null;
   success: boolean;
   members: TeamRosterMember[];
   positions: TeamPosition[];

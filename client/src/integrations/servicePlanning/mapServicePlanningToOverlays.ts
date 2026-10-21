@@ -21,11 +21,15 @@ export type ServicePlanningCandidate = {
   personIndex: number;
   rawNameToken: string;
   patch: ServicePlanningFieldPatch;
+  skipReason?: string;
+  resolutionNotice?: string;
 };
 
 export type ServicePlanningMappedRow = {
   source: EventData;
-  rule: ServicePlanningElementRule;
+  rule?: ServicePlanningElementRule;
+  /** Native rows use exact event identity and reject duplicate exact labels. */
+  sourceKind?: "native";
   matchKey: string;
   candidates: ServicePlanningCandidate[];
 };

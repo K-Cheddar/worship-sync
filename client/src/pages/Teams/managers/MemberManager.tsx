@@ -10,12 +10,14 @@ import SearchableSelect from "../../../components/SearchableSelect";
 import TextArea from "../../../components/TextArea/TextArea";
 import DeleteModal from "../../../components/Modal/DeleteModal";
 import RecordSmsConsentModal from "./RecordSmsConsentModal";
+import VolunteerPersonalAccessControls from "./VolunteerPersonalAccessControls";
 import DatePicker from "@/components/ui/DatePicker";
 import BirthDateField from "../components/BirthDateField";
 import { getBirthDateValidationError } from "../../../utils/birthDate";
 import {
   formatUsPhoneInput,
   formatUsPhoneNumber,
+  normalizeUsPhoneNumberForComparison,
 } from "../../../utils/phoneNumber";
 import { buildShareablePublicPathUrl } from "../../../utils/environment";
 import FormActionButtons from "../components/FormActionButtons";
@@ -54,6 +56,10 @@ import TeamsCrossSectionLink from "../components/TeamsCrossSectionLink";
 import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import EntityMultiSelect from "../EntityMultiSelect";
 import EntityRow from "../components/EntityRow";
+import {
+  CurrentUserMemberIndicator,
+  useCurrentMemberId,
+} from "../components/CurrentUserMemberIndicator";
 import { MemberAssignmentsDetails } from "../components/MemberAssignmentsSummary";
 import MemberAvatar from "../../../components/MemberAvatar/MemberAvatar";
 import BlockoutDatesField from "../components/BlockoutDatesField";
@@ -178,12 +184,14 @@ type MemberManagerProps = {
   canManageMemberLifecycle?: boolean;
   canEditMember?: (member: TeamRosterMember) => boolean;
   onSaved: (member: TeamRosterMember, replaceId?: string) => void;
+  onIdentityChanged?: () => void;
   /** Applies rosters the server changed by joining this member to a team. */
   onTeamSaved: (team: TeamRecord) => void;
   onArchived: () => void;
   onRemoved: (memberId: string) => void;
   onImported?: () => void | Promise<void>;
   onSmsConsentRecorded?: () => Promise<void> | void;
+  onSmsEligibilityRefresh?: (memberId: string, phoneNumber: string, previousPhoneNumber: string) => Promise<void>;
 };
 
 const MemberManager = ({
@@ -195,13 +203,16 @@ const MemberManager = ({
   canManageMemberLifecycle = true,
   canEditMember: canEditMemberProp,
   onSaved,
+  onIdentityChanged,
   onTeamSaved,
   onArchived,
   onRemoved,
   onImported,
   onSmsConsentRecorded,
+  onSmsEligibilityRefresh,
 }: MemberManagerProps) => {
   const context = useContext(GlobalInfoContext);
+  const selfMemberId = useCurrentMemberId();
   const { showToast, removeToast } = useToast();
   const churchId = context?.churchId || "";
   const currentUserId = context?.userId || "";
@@ -219,6 +230,58 @@ const MemberManager = ({
    * receive account-linking authority.
    */
   const isChurchAdmin = context?.role === "admin";
+  const [smsEligibilityRefreshState, setSmsEligibilityRefreshState] = useState<Record<string, {
+    churchId: string;
+    phoneNumber: string;
+    previousPhoneNumber: string;
+    status: "checking" | "error";
+  }>>({});
+  const smsEligibilityRefreshVersionsRef = useRef(new Map<string, number>());
+  const refreshSmsEligibility = useCallback(async (member: TeamRosterMember, previousPhoneNumber: string) => {
+    if (!onSmsEligibilityRefresh) return;
+    const requestKey = `${churchId}:${member.memberId}`;
+    const version = (smsEligibilityRefreshVersionsRef.current.get(requestKey) || 0) + 1;
+    smsEligibilityRefreshVersionsRef.current.set(requestKey, version);
+    const phoneNumber = member.phoneNumber || "";
+    setSmsEligibilityRefreshState((current) => ({
+      ...current,
+      [requestKey]: { churchId, phoneNumber, previousPhoneNumber, status: "checking" },
+    }));
+    try {
+      await onSmsEligibilityRefresh(member.memberId, phoneNumber, previousPhoneNumber);
+      if (smsEligibilityRefreshVersionsRef.current.get(requestKey) === version) {
+        setSmsEligibilityRefreshState((current) => {
+          const next = { ...current };
+          delete next[requestKey];
+          return next;
+        });
+      }
+    } catch {
+      if (smsEligibilityRefreshVersionsRef.current.get(requestKey) === version) {
+        setSmsEligibilityRefreshState((current) => ({
+          ...current,
+          [requestKey]: { churchId, phoneNumber, previousPhoneNumber, status: "error" },
+        }));
+      }
+    }
+  }, [churchId, onSmsEligibilityRefresh]);
+  const getCurrentSmsEligibility = (member: TeamRosterMember) => {
+    const eligibility = data.smsEligibilityByMemberId?.[member.memberId];
+    if (
+      !eligibility ||
+      normalizeUsPhoneNumberForComparison(eligibility.phoneNumber) !==
+        normalizeUsPhoneNumberForComparison(member.phoneNumber)
+    ) return undefined;
+    return eligibility;
+  };
+  const hasUnresolvedSmsEligibilityRefresh = (member: TeamRosterMember) => {
+    const refreshState = smsEligibilityRefreshState[`${churchId}:${member.memberId}`];
+    return Boolean(
+      refreshState?.churchId === churchId &&
+      normalizeUsPhoneNumberForComparison(refreshState.phoneNumber) ===
+        normalizeUsPhoneNumberForComparison(member.phoneNumber),
+    );
+  };
   const [isUpdatingLink, setIsUpdatingLink] = useState(false);
   const [isInviting, setIsInviting] = useState(false);
   const [churchAccounts, setChurchAccounts] = useState<ChurchMemberRow[]>([]);
@@ -721,6 +784,7 @@ const MemberManager = ({
         current?.memberId === member.memberId ? next : current,
       );
       setShowAccountPicker(false);
+      onIdentityChanged?.();
       showToast(
         action === "link"
           ? targetUserId && targetUserId !== currentUserId
@@ -913,6 +977,12 @@ const MemberManager = ({
         // the member update has committed, even if the optional image upload
         // failed.
         onSaved(finalMember, wasEditing.memberId);
+      }
+      if (
+        normalizeUsPhoneNumberForComparison(wasEditing?.phoneNumber) !==
+        normalizeUsPhoneNumberForComparison(finalMember.phoneNumber)
+      ) {
+        void refreshSmsEligibility(finalMember, wasEditing?.phoneNumber || "");
       }
       // The server reconciles `team.memberIds` from the teams (and positions)
       // this save asked for. Apply the rosters it changed now so the Teams tab
@@ -1299,6 +1369,12 @@ const MemberManager = ({
                   key={member.memberId}
                   compact
                   title={memberName(member)}
+                  editButtonAriaLabel={
+                    member.memberId === selfMemberId
+                      ? `Edit ${memberName(member)}, You`
+                      : undefined
+                  }
+                  headerBadge={<CurrentUserMemberIndicator memberId={member.memberId} />}
                   details={
                     <MemberAssignmentsDetails
                       assignments={assignments}
@@ -1341,7 +1417,8 @@ const MemberManager = ({
                     ...(isChurchAdmin &&
                       canEditActiveMember &&
                       !editing.archivedAt &&
-                      data.smsEligibilityByMemberId?.[editing.memberId]?.status === "consent_needed" &&
+                      !hasUnresolvedSmsEligibilityRefresh(editing) &&
+                      getCurrentSmsEligibility(editing)?.status === "consent_needed" &&
                       isValidSmsPhone(editing.phoneNumber)
                       ? [{ text: "Record text message consent", onClick: () => setRecordingSmsConsentFor(editing) }]
                       : []),
@@ -1415,7 +1492,10 @@ const MemberManager = ({
         }
       >
         <fieldset disabled={!canEditActiveMember} className="space-y-2 rounded-md border border-gray-700 bg-gray-950/40 p-3 pt-0">
-          <legend className="px-1 text-sm font-semibold">Member details</legend>
+          <legend className="px-1 text-sm font-semibold">
+            Member details{" "}
+            {editing ? <CurrentUserMemberIndicator memberId={editing.memberId} /> : null}
+          </legend>
           <div className="grid gap-3 sm:grid-cols-[minmax(0,0.5fr)_minmax(0,1fr)_minmax(0,1fr)]">
             <Input
               label="Title"
@@ -1477,11 +1557,36 @@ const MemberManager = ({
               }))
             }
           />
-          {editing && data.smsEligibilityByMemberId?.[editing.memberId] ? (
-            <p role="status" className="text-xs text-gray-300">
-              Text message status: {smsEligibilityLabel(data.smsEligibilityByMemberId[editing.memberId].status)}
-            </p>
-          ) : null}
+          {editing ? (() => {
+            const refreshState = smsEligibilityRefreshState[`${churchId}:${editing.memberId}`];
+            const refreshStateMatches = refreshState?.churchId === churchId &&
+              normalizeUsPhoneNumberForComparison(refreshState.phoneNumber) ===
+                normalizeUsPhoneNumberForComparison(editing.phoneNumber);
+            const eligibility = getCurrentSmsEligibility(editing);
+            if (refreshStateMatches && refreshState?.status === "checking") {
+              return <p role="status" className="text-xs text-gray-300">Checking text message status…</p>;
+            }
+            if (refreshStateMatches && refreshState?.status === "error") {
+              return (
+                <div className="flex items-center gap-2 text-xs text-amber-200" role="alert">
+                  <span>Could not check text message status.</span>
+                  <Button variant="tertiary" padding="p-0" onClick={() => void refreshSmsEligibility(editing, refreshState.previousPhoneNumber)}>
+                    Try again
+                  </Button>
+                </div>
+              );
+            }
+            if (!eligibility) {
+              return refreshStateMatches
+                ? <p role="status" className="text-xs text-gray-300">Checking text message status…</p>
+                : null;
+            }
+            return (
+              <p role="status" className="text-xs text-gray-300">
+                Text message status: {smsEligibilityLabel(eligibility.status)}
+              </p>
+            );
+          })() : null}
           {/* Account link. Separate from the email above on purpose: an address is
             a contact detail, the link is an identity, and one never implies the
             other. Only shown for saved members — there is nothing to link yet
@@ -2199,6 +2304,7 @@ const MemberManager = ({
           }
         />
         <TextArea label="Notes" value={draft.notes || ""} textareaClassName="min-h-24" onChange={(notes) => setDraft((d) => ({ ...d, notes }))} />
+        {isChurchAdmin && editing && !editing.archivedAt ? <VolunteerPersonalAccessControls key={`${churchId}:${editing.memberId}`} churchId={churchId} memberId={editing.memberId} /> : null}
       </CreatePanel>
       <DeleteModal
         isOpen={Boolean(deleting)}

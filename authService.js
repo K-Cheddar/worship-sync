@@ -2,6 +2,7 @@ import "dotenv/config";
 import { serializeAuthError } from "./server/authErrorResponse.js";
 import { buildSharedDataWriteClaims } from "./server/sharedDataAuthClaims.js";
 import crypto from "node:crypto";
+import { changesVolunteerContactOwnership, volunteerContactIndexFields } from "./server/volunteerContactIndex.js";
 import { FieldPath, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { Resend } from "resend";
 import {
@@ -1332,13 +1333,22 @@ export const setDoc = async (
   { merge = false } = {},
 ) => {
   const db = requireFirestore();
+  const indexContact = collectionName === COLLECTIONS.teamRosterMembers
+    && process.env.AUTH_VOLUNTEER_PORTAL_SECRET && (!merge || changesVolunteerContactOwnership(data));
   if (db) {
-    await db.collection(collectionName).doc(id).set(data, { merge });
+    const ref = db.collection(collectionName).doc(id);
+    if (indexContact) {
+      await db.runTransaction(async (transaction) => {
+        const current = merge ? (await transaction.get(ref)).data() || {} : {};
+        transaction.set(ref, { ...data, ...volunteerContactIndexFields({ ...current, ...data }, process.env.AUTH_VOLUNTEER_PORTAL_SECRET) }, { merge });
+      });
+    } else await ref.set(data, { merge });
     return;
   }
   const store = collectionMap[collectionName];
   const current = store.get(id) || {};
-  store.set(id, merge ? { ...current, ...data } : { ...data });
+  const next = merge ? { ...current, ...data } : { ...data };
+  store.set(id, indexContact ? { ...next, ...volunteerContactIndexFields(next, process.env.AUTH_VOLUNTEER_PORTAL_SECRET) } : next);
 };
 
 /**
@@ -1359,15 +1369,25 @@ const updateDocFields = async (
   { transaction = null } = {},
 ) => {
   const db = requireFirestore();
+  const indexContact = collectionName === COLLECTIONS.teamRosterMembers
+    && process.env.AUTH_VOLUNTEER_PORTAL_SECRET && changesVolunteerContactOwnership(data);
   if (db) {
     const ref = db.collection(collectionName).doc(id);
-    if (transaction) transaction.update(ref, data);
+    if (indexContact) {
+      const write = async (tx) => {
+        const current = (await tx.get(ref)).data() || {};
+        tx.update(ref, { ...data, ...volunteerContactIndexFields({ ...current, ...data }, process.env.AUTH_VOLUNTEER_PORTAL_SECRET) });
+      };
+      if (transaction) await write(transaction);
+      else await db.runTransaction(write);
+    } else if (transaction) transaction.update(ref, data);
     else await ref.update(data);
     return;
   }
   const store = collectionMap[collectionName];
   const current = store.get(id) || {};
-  store.set(id, { ...current, ...data });
+  const next = { ...current, ...data };
+  store.set(id, indexContact ? { ...next, ...volunteerContactIndexFields(next, process.env.AUTH_VOLUNTEER_PORTAL_SECRET) } : next);
 };
 
 /**
@@ -1404,6 +1424,8 @@ const updateDocMapKeys = async (
     return;
   }
   const db = requireFirestore();
+  const indexContact = collectionName === COLLECTIONS.teamRosterMembers
+    && process.env.AUTH_VOLUNTEER_PORTAL_SECRET && changesVolunteerContactOwnership(fields);
   if (db) {
     const args = [];
     setEntries.forEach(([key, value]) =>
@@ -1415,9 +1437,18 @@ const updateDocMapKeys = async (
     removePaths.forEach((path) =>
       args.push(new FieldPath(field, ...path), FieldValue.delete()),
     );
-    fieldEntries.forEach(([key, value]) => args.push(key, value));
+    fieldEntries.filter(([key]) => !indexContact || !["volunteerContactKeys", "volunteerContactKeyId"].includes(key))
+      .forEach(([key, value]) => args.push(key, value));
     const ref = db.collection(collectionName).doc(id);
-    if (transaction) transaction.update(ref, ...args);
+    if (indexContact) {
+      const write = async (tx) => {
+        const current = (await tx.get(ref)).data() || {};
+        const indexed = volunteerContactIndexFields({ ...current, ...fields }, process.env.AUTH_VOLUNTEER_PORTAL_SECRET);
+        tx.update(ref, ...args, ...Object.entries(indexed).flat());
+      };
+      if (transaction) await write(transaction);
+      else await db.runTransaction(write);
+    } else if (transaction) transaction.update(ref, ...args);
     else await ref.update(...args);
     return;
   }
@@ -1439,7 +1470,8 @@ const updateDocMapKeys = async (
     }
     if (path.length) delete cursor[path[path.length - 1]];
   });
-  store.set(id, { ...current, ...fields, [field]: nextMap });
+  const next = { ...current, ...fields, [field]: nextMap };
+  store.set(id, indexContact ? { ...next, ...volunteerContactIndexFields(next, process.env.AUTH_VOLUNTEER_PORTAL_SECRET) } : next);
 };
 
 export const deleteDoc = async (collectionName, id) => {

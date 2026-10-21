@@ -10,6 +10,12 @@ import { setDisplayToken, setWorkstationToken } from "../utils/authStorage";
 import { setServerTimeOffset } from "../utils/serverTime";
 import { createServiceTime } from "../test/fixtures";
 
+const mockConnectAuthenticatedSse = jest.fn();
+jest.mock("../utils/authenticatedSse", () => ({
+  connectAuthenticatedSse: (...args: unknown[]) =>
+    mockConnectAuthenticatedSse(...args),
+}));
+
 jest.mock("firebase/database", () => ({
   ...jest.requireActual("firebase/database"),
   ref: jest.fn((_db, path) => path),
@@ -24,26 +30,51 @@ describe("paired output countdown production composition", () => {
   let configured = true;
   let zone = "America/New_York";
   let rejected = false;
+  let revision = "revision-test";
+  let streamConnections: Array<{
+    path: string;
+    handlers: { onMessage: (message: string) => void };
+    extraHeaders?: Record<string, string>;
+  }>;
   beforeEach(() => {
-    jest.useFakeTimers();
-    configured = true; zone = "America/New_York"; rejected = false;
+    configured = true; zone = "America/New_York"; rejected = false; revision = "revision-test";
+    streamConnections = [];
     localStorage.clear();
     setDisplayToken("paired-display-credential");
     global.fetch = fetchMock;
-    fetchMock.mockReset().mockImplementation(async () => ({
-      ok: !rejected, status: rejected ? 401 : 200,
-      json: async () => rejected ? { error: "Authentication required" } : { success: true, serviceTimeZone: zone, isConfigured: configured },
-    }));
+    mockConnectAuthenticatedSse.mockReset().mockImplementation((
+      path: string,
+      handlers: { onMessage: (message: string) => void },
+      extraHeaders?: Record<string, string>,
+    ) => {
+      streamConnections.push({ path, handlers, extraHeaders });
+      return jest.fn();
+    });
+    fetchMock.mockReset().mockImplementation(async () => {
+      const payload = rejected
+        ? { error: "Server unavailable" }
+        : {
+            success: true,
+            serviceTimeZone: configured ? zone : "UTC",
+            isConfigured: configured,
+            serviceTimeZoneRevision: revision,
+          };
+      return new Response(JSON.stringify(payload), {
+        status: rejected ? 503 : 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
     jest.mocked(onValue).mockImplementation((_ref, callback) => {
       if (typeof callback === "function") callback({ val: () => [service] } as never);
       return jest.fn();
     });
   });
   afterEach(() => {
-    cleanup(); setServerTimeOffset(0); localStorage.clear(); global.fetch = originalFetch; jest.useRealTimers();
+    cleanup(); setServerTimeOffset(0); localStorage.clear(); global.fetch = originalFetch; jest.restoreAllMocks();
   });
   const mount = (sessionKind: "human" | "workstation" | "display", surface: string) => {
-    const store = configureStore({ reducer: () => ({ undoable: { present: { serviceTimes: { list: sessionKind === "display" ? [] : [service], isInitialized: sessionKind !== "display" } } } }) });
+    const initialState = { undoable: { present: { serviceTimes: { list: sessionKind === "display" ? [] : [service], isInitialized: sessionKind !== "display" } } } };
+    const store = configureStore({ reducer: (state = initialState) => state });
     const value = createMockGlobalContext({ churchId: "church-a", sessionKind, loginState: "success" });
     return render(<Provider store={store}>
       <GlobalInfoContext.Provider value={value as React.ContextType<typeof GlobalInfoContext>}>
@@ -57,7 +88,7 @@ describe("paired output countdown production composition", () => {
     ["2026-07-12T13:00:00Z", "2026-07-12T14:00:00Z"],
     ["2026-01-11T14:00:00Z", "2026-01-11T15:00:00Z"],
   ])("resolves weekly 10:00 New York consistently from %s to %s", async (now, target) => {
-    jest.setSystemTime(new Date(now).getTime() - 30_000);
+    jest.spyOn(Date, "now").mockReturnValue(Date.parse(now) - 30_000);
     setServerTimeOffset(30_000);
     for (const [kind, surface] of [["human", "controller"], ["workstation", "workstation"], ["display", "monitor"], ["display", "projector"], ["display", "stream"]] as const) {
       setDisplayToken(kind === "display" ? "paired-display-credential" : "");
@@ -68,25 +99,52 @@ describe("paired output countdown production composition", () => {
       expect(new Date(target).getTime() - (Date.now() + 30_000)).toBe(3_600_000);
       view.unmount();
     }
-    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("api/churches/church-a/service-time-zone"), expect.objectContaining({
-      headers: expect.objectContaining({ "x-display-token": "paired-display-credential" }),
-    }));
+    expect(mockConnectAuthenticatedSse).toHaveBeenCalledWith(
+      "api/churches/church-a/service-time-zone/stream",
+      expect.any(Object),
+      { "x-display-token": "paired-display-credential" },
+    );
     expect(onValue).toHaveBeenCalledWith("churches/church-a/data/services", expect.any(Function));
   });
-  it("recovers on reconnect, keeps the last confirmed zone on refresh failure, and adopts changed settings", async () => {
-    jest.setSystemTime(new Date("2026-07-12T13:00:00Z"));
+  it("adopts revision events, retains the last zone after a read failure, and recovers on the next change", async () => {
+    jest.spyOn(Date, "now").mockReturnValue(Date.parse("2026-07-12T13:00:00Z"));
     configured = false;
     mount("display", "monitor");
-    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     expect(screen.getByRole("status")).toHaveTextContent("--:--");
+
     configured = true;
-    await act(async () => { window.dispatchEvent(new Event("online")); });
+    revision = "revision-new-york";
+    await act(async () => {
+      streamConnections[0].handlers.onMessage(JSON.stringify({
+        type: "service-time-zone-revision",
+        churchId: "church-a",
+        serviceTimeZoneRevision: revision,
+      }));
+    });
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/^(?:1:00:00|59:59)$/));
+
     rejected = true;
-    await act(async () => { await jest.advanceTimersByTimeAsync(60_000); });
-    expect(screen.getByRole("status")).toHaveTextContent(/^(?:59:00|58:59)$/);
+    revision = "revision-failed-read";
+    await act(async () => {
+      streamConnections[0].handlers.onMessage(JSON.stringify({
+        type: "service-time-zone-revision",
+        churchId: "church-a",
+        serviceTimeZoneRevision: revision,
+      }));
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("1:00:00");
+
     rejected = false; zone = "America/Chicago";
-    await act(async () => { window.dispatchEvent(new Event("online")); });
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/^(?:1:59:00|1:58:59)$/));
+    revision = "revision-chicago";
+    await act(async () => {
+      streamConnections[0].handlers.onMessage(JSON.stringify({
+        type: "service-time-zone-revision",
+        churchId: "church-a",
+        serviceTimeZoneRevision: revision,
+      }));
+    });
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("2:00:00"));
   });
 });

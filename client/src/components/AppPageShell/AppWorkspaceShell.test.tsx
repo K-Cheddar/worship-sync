@@ -1,3 +1,4 @@
+/* eslint-disable testing-library/no-node-access -- Compare the decorative icon SVG directly to verify its identity. */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { Users } from "lucide-react";
@@ -113,4 +114,22 @@ it("supports a compact toolbar without hiding the page title from desktop", () =
   const toolbar = screen.getByTestId("app-workspace-toolbar");
   expect(toolbar).toHaveClass("h-[48px]", "min-h-[48px]", "lg:grid-cols-[1fr_auto_1fr]");
   expect(screen.getByTestId("app-workspace-title")).toHaveClass("hidden", "lg:flex");
+});
+
+it("uses the configured icon color", () => {
+  render(<MemoryRouter><AppWorkspaceShell title="Teams and Services" icon={Users} iconColorClass="text-cyan-300">
+    <div>Workspace</div>
+  </AppWorkspaceShell></MemoryRouter>);
+
+  const titleIcon = screen.getByTestId("app-workspace-title").querySelector("svg");
+  expect(titleIcon?.parentElement).toHaveClass("text-cyan-300");
+});
+
+it("keeps its legacy orange icon color when omitted", () => {
+  render(<MemoryRouter><AppWorkspaceShell title="Teams and Services" icon={Users}>
+    <div>Workspace</div>
+  </AppWorkspaceShell></MemoryRouter>);
+
+  const titleIcon = screen.getByTestId("app-workspace-title").querySelector("svg");
+  expect(titleIcon?.parentElement).toHaveClass("text-orange-400");
 });

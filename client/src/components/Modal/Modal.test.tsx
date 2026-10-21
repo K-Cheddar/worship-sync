@@ -23,6 +23,7 @@ test("traps keyboard focus, dismisses with Escape and restores the opener", asyn
   const user = userEvent.setup();
   render(<DialogExample />);
   const trigger = screen.getByRole("button", { name: "Open review" });
+  const triggerFocus = jest.spyOn(trigger, "focus");
   await user.click(trigger);
   expect(screen.getByRole("dialog", { name: "Review" })).toHaveAccessibleDescription("Review this action.");
   expect(screen.getByRole("button", { name: "Close modal" })).toHaveFocus();
@@ -33,6 +34,7 @@ test("traps keyboard focus, dismisses with Escape and restores the opener", asyn
   await user.keyboard("{Escape}");
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   await waitFor(() => expect(trigger).toHaveFocus());
+  expect(triggerFocus).toHaveBeenLastCalledWith({ preventScroll: true });
 });
 
 test("restores the opener when a close-focus callback observes the event", async () => {
@@ -126,6 +128,35 @@ test("only the upper confirmation dismisses on Escape", async () => {
   await user.keyboard("{Escape}");
   expect(screen.queryByRole("dialog", { name: "Delete item?" })).not.toBeInTheDocument();
   expect(screen.getByRole("dialog", { name: "Editor" })).toBeInTheDocument();
+});
+
+test("confirming a nested deletion closes only its confirmation and restores focus in the parent", async () => {
+  const user = userEvent.setup();
+  const Nested = () => {
+    const [open, setOpen] = useState(false);
+    return <>
+      <Modal isOpen title="Media Library" onClose={jest.fn()} size="full">
+        <button type="button" onClick={() => setOpen(true)}>Delete media</button>
+      </Modal>
+      <ConfirmDialog
+        open={open}
+        title="Delete media?"
+        description="This removes the selected media."
+        confirmLabel="Delete"
+        onConfirm={() => setOpen(false)}
+        onCancel={() => setOpen(false)}
+      />
+    </>;
+  };
+  render(<Nested />);
+
+  const parent = screen.getByRole("dialog", { name: "Media Library" });
+  await user.click(screen.getByRole("button", { name: "Delete media" }));
+  await user.click(screen.getByRole("button", { name: /^Delete$/ }));
+
+  expect(screen.queryByRole("dialog", { name: "Delete media?" })).not.toBeInTheDocument();
+  expect(parent).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Delete media" })).toHaveFocus();
 });
 
 test("page dialogs own nested select portals above the floating-window dock", async () => {
