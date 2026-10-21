@@ -24,6 +24,7 @@ import {
   serializeControllerProfiles,
   getControllerProfileDescription,
   getDefaultControllerProfileDescription,
+  resolveHomeControllerDisplayName,
 } from "./controllerProfiles";
 
 const profile = (
@@ -94,6 +95,33 @@ describe("defaults", () => {
     expect(isBuiltInControllerId(PRESENTATION_CONTROLLER_ID)).toBe(true);
     expect(isBuiltInControllerId(OVERLAY_CONTROLLER_ID)).toBe(true);
     expect(isBuiltInControllerId("ctrl_1")).toBe(false);
+  });
+
+  it("keeps current built-in home names and resolves only known legacy labels", () => {
+    const defaults = getDefaultControllerProfiles();
+    expect(defaults.map(({ name }) => name)).toEqual([
+      "Presentation",
+      "Overlays",
+    ]);
+
+    expect(
+      resolveHomeControllerDisplayName("presentation", "Presentation Controller"),
+    ).toBe("Presentation");
+    expect(
+      resolveHomeControllerDisplayName("overlay", "Graphics Operator"),
+    ).toBe("Overlays");
+    expect(
+      resolveHomeControllerDisplayName("overlay", "Overlay Controller"),
+    ).toBe("Overlays");
+    expect(resolveHomeControllerDisplayName("presentation", "Text Master")).toBe(
+      "Text Master",
+    );
+    expect(resolveHomeControllerDisplayName("overlay", "Graphics Lead")).toBe(
+      "Graphics Lead",
+    );
+    expect(
+      resolveHomeControllerDisplayName("ctrl_lobby", "Overlay Controller"),
+    ).toBe("Overlay Controller");
   });
 });
 

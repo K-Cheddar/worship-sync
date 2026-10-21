@@ -97,6 +97,29 @@ describe("home navigation metadata cache", () => {
     });
   });
 
+  it("resolves legacy built-in names in cached Home navigation and preserves custom names", () => {
+    const normalized = normalizeHomeNavigationMetadata(
+      {
+        ...metadata,
+        version: 1,
+        updatedAt: 1000,
+        controllers: [
+          { id: "presentation", name: "Presentation Controller", icon: "presentation", iconColor: "orange", order: 0 },
+          { id: "overlay", name: "Graphics Operator", icon: "layers", iconColor: "purple", order: 1 },
+          { id: "ctrl_lobby", name: "Overlay Controller", icon: "monitor", iconColor: "cyan", order: 2 },
+        ],
+      },
+      "church-1",
+      1001,
+    );
+
+    expect(normalized?.controllers.map(({ name }) => name)).toEqual([
+      "Presentation",
+      "Overlays",
+      "Overlay Controller",
+    ]);
+  });
+
   it("round trips controller descriptions without rejecting older v1 entries", () => {
     const description = "Operate the room display.";
     const withDescription = {

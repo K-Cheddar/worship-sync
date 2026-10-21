@@ -99,7 +99,7 @@ try {
       method: request.method(),
     }));
     await page.goto(`http://127.0.0.1:3117/e2e/home-navigation-entry.html${query}#/home`);
-    await page.getByRole("heading", { name: "Church management" }).waitFor();
+    await page.getByRole("heading", { name: "Management" }).waitFor();
     return { context, page, pageErrors, requests };
   };
 
@@ -116,7 +116,7 @@ try {
   });
 
   const routeCases = [
-    { link: "Church administration", route: "Church administration route" },
+    { link: "Administration", route: "Church administration route" },
     { link: "Teams and Services", route: "Teams and Services route" },
     { link: "Service Workspace", route: "Service Workspace route" },
     { link: "Text Master", route: "Presentation Controller route" },
@@ -126,11 +126,11 @@ try {
 
   // Recreate the old / route handoff in the browser to observe AppEntry itself.
   // Authenticated AppEntry renders Navigate without page content for one route commit.
-  await page.getByRole("link", { name: /^Church administration(?:\s|$)/ }).click();
+  await page.getByRole("link", { name: /^Administration(?:\s|$)/ }).click();
   await page.getByTestId("fixture-route").filter({ hasText: "Church administration route" }).waitFor();
   const baselineObservationIndex = await page.evaluate(() => window.__homeRouteObservations?.length ?? 0);
   await page.evaluate(() => { window.location.hash = "#/"; });
-  await page.getByRole("heading", { name: "Church management" }).waitFor();
+  await page.getByRole("heading", { name: "Management" }).waitFor();
   const baselineTrace = await page.evaluate((start) => ({
     routes: (window.__homeRouteObservations ?? []).slice(start),
     frames: (window.__homeRouteFrames ?? []).slice(-100),
@@ -156,7 +156,7 @@ try {
     const requestStart = requests.length;
     await page.getByRole("button", { name: "Open menu" }).click();
     await page.getByRole("menuitem", { name: /^Home$/ }).click();
-    await page.getByRole("heading", { name: "Church management" }).waitFor();
+    await page.getByRole("heading", { name: "Management" }).waitFor();
     await page.waitForTimeout(80);
     const result = await page.evaluate((start) => {
       const routes = (window.__homeRouteObservations ?? []).slice(start.observationIndex);
@@ -201,7 +201,7 @@ try {
   await delayedPage.getByTestId("fixture-route").filter({ hasText: "Service Workspace route" }).waitFor();
   await delayedPage.getByRole("button", { name: "Open menu" }).click();
   await delayedPage.getByRole("menuitem", { name: /^Home$/ }).click();
-  await delayedPage.getByRole("heading", { name: "Church management" }).waitFor();
+  await delayedPage.getByRole("heading", { name: "Management" }).waitFor();
   await delayedPage.getByText("Text Master", { exact: true }).waitFor();
   assert.equal(await delayedPage.getByText("Presentation Operator", { exact: true }).count(), 0, "cached labels should remain until the delayed live snapshot resolves");
   const homeNode = await delayedPage.evaluate(() => {
@@ -224,7 +224,7 @@ try {
     await fixture.page.getByTestId("fixture-route").filter({ hasText: route }).waitFor();
     await fixture.page.getByRole("button", { name: "Open menu" }).click();
     await fixture.page.getByRole("menuitem", { name: /^Home$/ }).click();
-    await fixture.page.getByRole("heading", { name: "Church management" }).waitFor();
+    await fixture.page.getByRole("heading", { name: "Management" }).waitFor();
     assert.equal(await fixture.page.evaluate(() => window.location.hash), "#/home", `${session} should remain on the Home route`);
     assert.equal(fixture.pageErrors.length, 0, `${session} browser fixture raised: ${fixture.pageErrors.join("; ")}`);
     await fixture.context.close();

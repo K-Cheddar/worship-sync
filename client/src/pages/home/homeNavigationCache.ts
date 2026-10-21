@@ -7,6 +7,7 @@ import {
 import {
   getControllerProfilesInNavigationOrder,
   getControllerProfileTypeForId,
+  resolveHomeControllerDisplayName,
   sanitizeControllerProfileDescription,
   type ControllerProfileType,
 } from "../../utils/controllerProfiles";
@@ -109,7 +110,7 @@ const normalizeController = (raw: unknown): CachedControllerNavigation | null =>
   const customDescription = descriptionIsDefault ? "" : description;
   return {
     id,
-    name,
+    name: resolveHomeControllerDisplayName(id, name),
     icon: normalizeControllerIcon(entry.icon, type),
     iconColor: normalizeControllerIconColor(entry.iconColor, type, order),
     ...(customDescription ? { description: customDescription } : {}),
