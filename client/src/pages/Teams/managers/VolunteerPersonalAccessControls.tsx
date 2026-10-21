@@ -20,6 +20,8 @@ const VolunteerPersonalAccessControls = ({ churchId, memberId }: { churchId: str
   const busy = useRef(false);
   const requestKey = useRef("");
   const completionKey = useRef("");
+  const replacementKey = useRef("");
+  const replacementStorageKey = JSON.stringify(["worshipsync.pendingVolunteerReplacement", churchId, memberId]);
   useEffect(() => {
     mounted.current = true;
     void manageVolunteerPersonalAccess(churchId, memberId, "status").then((result) => {
@@ -32,11 +34,22 @@ const VolunteerPersonalAccessControls = ({ churchId, memberId }: { churchId: str
     busy.current = true; setPending(true); setMessage("");
     try {
       if (action === "verify-contact/start" && !requestKey.current) requestKey.current = volunteerRequestKey();
+      if (action === "replace" && !replacementKey.current) {
+        // Persist only the non-secret operation ID before sending. A reload
+        // after a lost HTTP response must retry the same durable operation.
+        const pendingKey = sessionStorage.getItem(replacementStorageKey) || volunteerRequestKey();
+        sessionStorage.setItem(replacementStorageKey, pendingKey);
+        replacementKey.current = pendingKey;
+      }
       if (!completionKey.current) completionKey.current = volunteerRequestKey();
       const result = await manageVolunteerPersonalAccess(churchId, memberId, action, {
-        channel, requestKey: requestKey.current, challengeId: challenge, code, completionKey: completionKey.current,
+        channel, requestKey: action === "replace" ? replacementKey.current : requestKey.current, challengeId: challenge, code, completionKey: completionKey.current,
       });
       if (!mounted.current) return;
+      if (["prepare", "replace", "revoke", "restore"].includes(action)) {
+        sessionStorage.removeItem(replacementStorageKey);
+        replacementKey.current = "";
+      }
       if (result.url) { setUrl(result.url); setStatus("active"); }
       if (action === "revoke") { setStatus("revoked"); setUrl(""); }
       if (action === "restore") { setStatus("none"); setUrl(""); }

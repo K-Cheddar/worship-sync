@@ -16,3 +16,15 @@ test("personal access telemetry drops complete request events, including OTP req
   assert.equal(filterVolunteerTelemetry({ request: { url: "https://example.test/api/volunteer/recovery/verify", data: { code: "123456" } } }), null);
   assert.equal(filterVolunteerTelemetry({ request: { url: "https://example.test/api/churches/a/team-roster-members/b/personal-access/prepare" } }), null);
 });
+
+test("encrypted credential envelopes never enter nested telemetry", () => {
+  assert.equal(redactVolunteerSecrets({ nested: { credentialEnvelope: "v2.synthetic.ciphertext" } }).nested.credentialEnvelope,
+    "[personal-access-redacted]");
+});
+
+test("serialized encrypted envelopes are redacted before structured fields are available", () => {
+  const envelope = `v2.${"n".repeat(16)}.${"t".repeat(22)}.${"c".repeat(46)}`;
+  const logged = redactVolunteerSecrets(JSON.stringify({ credentialEnvelope: envelope }));
+  assert.ok(!logged.includes(envelope));
+  assert.match(logged, /personal-access-redacted/);
+});

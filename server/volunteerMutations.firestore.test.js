@@ -158,3 +158,28 @@ test("Firestore delayed personal time-off save rechecks revocation before commit
     await Promise.all(Object.values(collections).map((name) => db.recursiveDelete(db.collection(name))));
   }
 }));
+
+
+test("an HTTP-authorized personal response is rejected after revocation before the response transaction", { skip: !enabled }, async () => fixture(async ({ db, COLLECTIONS, operations, identity, scheduleRef, beforeTransaction }) => {
+  const prefix = `response_access_${randomUUID()}`;
+  const collections = Object.fromEntries(["access", "credentials", "sessions"].map((kind) => [kind, `${prefix}_${kind}`]));
+  const access = createVolunteerPersonalAccess({ db, memberCollection: COLLECTIONS.teamRosterMembers, collections,
+    secret: "synthetic-response-transaction-revocation-secret" });
+  let proceed; let entered;
+  const paused = new Promise((resolve) => { entered = resolve; });
+  const resumed = new Promise((resolve) => { proceed = resolve; });
+  try {
+    const prepared = await access.prepare(identity); const session = await access.redeem(prepared.token);
+    assert.ok(await access.readSession(session.session));
+    beforeTransaction(async () => { entered(); await resumed; });
+    const pending = operations.writeAssignmentResponses({ churchId: identity.churchId, memberId: identity.memberId,
+      scheduleId: "schedule", response: "accepted", targets: [{ occurrenceId: "occurrence", cellKey: "primary" }],
+      authorize: async (transaction) => {
+        if (!await access.readSession(session.session, transaction)) throw httpError(401, "Unavailable");
+      },
+    });
+    const rejected = assert.rejects(pending, { status: 401 });
+    await paused; await access.revoke(identity, "admin"); proceed(); await rejected;
+    assert.equal((await scheduleRef.get()).get("responses.occurrence.primary"), undefined);
+  } finally { proceed(); await Promise.all(Object.values(collections).map((name) => db.recursiveDelete(db.collection(name)))); }
+}));

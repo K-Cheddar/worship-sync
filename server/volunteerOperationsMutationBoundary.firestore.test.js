@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { initializeApp, deleteApp } from "firebase-admin/app";
 import { FieldPath, getFirestore } from "firebase-admin/firestore";
+import { createVolunteerPersonalAccess } from "./volunteerPersonalAccess.js";
 import { createVolunteerOperations } from "./volunteerOperations.js";
 
 const enabled = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
@@ -382,3 +383,42 @@ test("Firestore schedule failure is isolated and a later retry processes only re
     },
   });
 });
+
+
+test("personal bulk authority is rechecked in every independent schedule transaction", { skip: !enabled }, async () => fixture(async ({ db, COLLECTIONS, member, schedule, identity, scheduleRef }) => {
+  const secondRef = db.collection(COLLECTIONS.teamSchedules).doc("schedule-b");
+  await secondRef.set({ ...schedule, scheduleId: "schedule-b" });
+  const prefix = `bulk_access_${randomUUID()}`;
+  const collections = Object.fromEntries(["access", "credentials", "sessions"].map((kind) => [kind, `${prefix}_${kind}`]));
+  const access = createVolunteerPersonalAccess({ db, memberCollection: COLLECTIONS.teamRosterMembers, collections,
+    secret: "synthetic-personal-bulk-transaction-secret" });
+  try {
+    const prepared = await access.prepare(identity);
+    const redeemed = await access.redeem(prepared.token);
+    let committed = false;
+    let authorizations = 0;
+    const store = { collection: (...args) => db.collection(...args), runTransaction: async (fn) => {
+      const result = await db.runTransaction(fn);
+      if (!committed) { committed = true; await access.revoke(identity, "admin"); }
+      return result;
+    } };
+    const operation = createVolunteerOperations({ COLLECTIONS, requireFirestore: () => store,
+      nowIso: () => new Date().toISOString(), httpError,
+      queryDocs: async (name) => (await db.collection(name).where("churchId", "==", identity.churchId)
+        .orderBy(FieldPath.documentId()).get()).docs.map((row) => ({ id: row.id, documentId: row.id, ...row.data() })),
+    });
+    assert.ok(await access.readSession(redeemed.session));
+    const result = await operation.acceptPendingAssignments({ ...identity, actorUid: undefined,
+      authorize: async (transaction) => {
+        authorizations++;
+        if (!await access.readSession(redeemed.session, transaction)) throw httpError(401, "Unavailable");
+      },
+    });
+    assert.equal(result.newlyAccepted, 1);
+    assert.equal(result.authorizationChanged, true);
+    assert.equal(authorizations, 2);
+    assert.equal((await scheduleRef.get()).get("responses.occurrence.primary.response"), "accepted");
+    assert.equal((await secondRef.get()).get("responses.occurrence.primary"), undefined);
+    assert.equal((await db.collection(COLLECTIONS.teamRosterMembers).doc(member.memberId).get()).get("userId"), identity.actorUid);
+  } finally { await Promise.all(Object.values(collections).map((name) => db.recursiveDelete(db.collection(name)))); }
+}));

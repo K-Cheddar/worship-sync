@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { isLinkPreviewCrawler } from "./publicShareMeta.js";
 
 export const VOLUNTEER_SESSION_COOKIE = "__Host-worshipsync-volunteer";
 const cookieValue = (req) => {
@@ -29,8 +30,12 @@ export const createVolunteerPortalHandlers = ({
     return store;
   };
   const handle = (operation) => async (req, res) => {
-    res.set({ "Cache-Control": "no-store", Pragma: "no-cache", "Referrer-Policy": "no-referrer" });
-    try { return await operation(req, res); } catch (error) {
+    res.set({ "Cache-Control": "no-store", Pragma: "no-cache", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff", "X-Robots-Tag": "noindex, nofollow, noarchive" });
+    try {
+      await enforceRateLimit({ scope: "volunteer-http", key: getClientIp(req),
+        limit: 120, windowMs: 60 * 1000, blockMs: 60 * 1000 });
+      return await operation(req, res);
+    } catch (error) {
       const status = error?.status || error?.statusCode || 500;
       return res.status(status).json({ success: false,
         errorMessage: status >= 500 ? "Could not open My Schedule. Try again in a moment." : error.message,
@@ -53,7 +58,8 @@ export const createVolunteerPortalHandlers = ({
     }
     return {
       churchId: session.churchId, memberId: session.memberId,
-      access: "personal", actorId: `volunteer:${session.memberId}`,
+      accessType: session.accessType, generation: session.generation, credentialDigest: session.credentialDigest,
+      expiresAt: session.expiresAt, access: "personal", actorId: `volunteer:${session.memberId}`,
       // Read the credential generation in the same transaction as each write.
       authorize: async (transaction) => {
         const current = await store.readSession(cookie, transaction);
@@ -71,7 +77,7 @@ export const createVolunteerPortalHandlers = ({
     const actorUid = admin.user.uid;
     let result;
     if (action === "prepare" || action === "replace") {
-      const prepared = await store.prepare(identity, { replace: action === "replace", actorUid });
+      const prepared = await store.prepare(identity, { replace: action === "replace", actorUid, requestKey: req.body?.requestKey });
       result = { url: `${appBaseUrl}/s#${prepared.token}`, expiresAt: prepared.expiresAt };
     } else {
       await store[action](identity, actorUid);
@@ -143,6 +149,10 @@ export const createVolunteerPortalHandlers = ({
       assertOrigin(req);
       await enforceRateLimit({ scope: "volunteer-link-redemption", key: getClientIp(req),
         limit: 30, windowMs: 10 * 60 * 1000, blockMs: 10 * 60 * 1000 });
+      if (isLinkPreviewCrawler(req.headers?.["user-agent"] || "") ||
+          /prefetch|preview/i.test(`${req.headers?.purpose || ""} ${req.headers?.["sec-purpose"] || ""}`)) {
+        throw httpError(403, "Open your personal link in a browser to continue.");
+      }
       const result = await store.redeem(String(req.body?.token || ""));
       if (result.status !== "active") {
         const status = { expired: 410, revoked: 403, invalid: 404 }[result.status] || 404;

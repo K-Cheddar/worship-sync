@@ -230,6 +230,7 @@ export const createVolunteerOperations = ({
     memberId: rawMemberId,
     actorUid: rawActorUid,
     afterScheduleId: rawAfterScheduleId,
+    authorize,
   }) => {
     const churchId = String(rawChurchId || "").trim();
     const memberId = String(rawMemberId || "").trim();
@@ -304,6 +305,11 @@ export const createVolunteerOperations = ({
 
     const processGroup = async ({ scheduleId, targets }) => {
       const mutate = async (transaction) => {
+        if (authorize) {
+          try { await authorize(transaction); } catch {
+            throw identityChanged(401, "Personal access is no longer available.");
+          }
+        }
         const scheduleRef = db?.collection(COLLECTIONS.teamSchedules).doc(scheduleId);
         const memberRef = db?.collection(COLLECTIONS.teamRosterMembers).doc(memberId);
         const membershipId = `${churchId}_${actorUid}`;

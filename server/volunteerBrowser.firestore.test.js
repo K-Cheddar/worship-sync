@@ -106,11 +106,43 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
     });
     const page = await context.newPage();
     const errors = []; page.on("pageerror", (error) => errors.push(error.message));
+    const consoleMessages = []; page.on("console", (message) => consoleMessages.push(message.text()));
+    // Read each real response before delivering it to the page, so navigation
+    // cannot retire the DevTools response body before the privacy assertion.
+    await context.route(`${base}/api/volunteer/**`, async (route) => {
+      const response = await route.fetch();
+      const text = await response.text();
+      assert.ok(!text.includes(valid.token), "Bearer must not be echoed in a volunteer response");
+      assert.match(response.headers()["cache-control"], /no-store/);
+      await route.fulfill({ response, body: text });
+    });
+    page.on("request", (request) => {
+      assert.ok(!request.url().includes(valid.token));
+      assert.ok(!String(request.headers().referer || "").includes(valid.token));
+    });
     const first = await page.goto(`${base}/s#${valid.token}`);
     assert.equal(first.headers()["referrer-policy"], "no-referrer");
     assert.match(first.headers()["cache-control"], /no-store/);
     await page.getByRole("button", { name: "Accept all unanswered" }).waitFor();
     assert.equal(new URL(page.url()).hash, "");
+    assert.equal(await page.evaluate(async (token) => {
+      if ([JSON.stringify(localStorage), JSON.stringify(sessionStorage)].some((value) => value.includes(token))) return true;
+      for (const name of await caches.keys()) {
+        const cache = await caches.open(name);
+        for (const request of await cache.keys()) {
+          if (request.url.includes(token) || (await (await cache.match(request)).text()).includes(token)) return true;
+        }
+      }
+      for (const info of await indexedDB.databases()) {
+        const database = await new Promise((resolve) => { const open = indexedDB.open(info.name); open.onsuccess = () => resolve(open.result); });
+        for (const name of database.objectStoreNames) {
+          const records = await new Promise((resolve) => { const read = database.transaction(name).objectStore(name).getAll(); read.onsuccess = () => resolve(read.result); });
+          if (JSON.stringify(records).includes(token)) { database.close(); return true; }
+        }
+        database.close();
+      }
+      return false;
+    }, valid.token), false);
     assert.equal(await page.getByText("PRIVATE-DRAFT").count(), 0);
     await page.getByRole("button", { name: /Time off/i }).click();
     await page.getByRole("textbox", { name: /Notes/i }).fill("Volunteer unsaved dates");
@@ -158,6 +190,9 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
     await access.revoke({ churchId, memberId }, "fixture-admin");
     await page.reload();
     await page.getByRole("button", { name: "Verify identity" }).waitFor();
+    await page.goto(`${base}/s#${valid.token}`);
+    await page.getByText("Personal access has been turned off. Contact your church administrator.").waitFor();
+    assert.equal(new URL(page.url()).hash, "");
     await page.goto(`${base}/s#${expired.token}`);
     const recoveryResponse = page.waitForResponse((response) => response.url().endsWith("/api/volunteer/recovery/start"));
     await page.getByRole("button", { name: "Verify identity" }).click();
@@ -171,6 +206,10 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
     assert.equal((await (await verifiedResponse).json()).success, true, "The real recovery handler must accept the delivered code.");
     await page.getByRole("button", { name: /Open Sunday Gathering/i }).waitFor();
     assert.equal(unexpectedRequests.length, 0, `Unexpected external requests: ${unexpectedRequests.join(", ")}`);
+    assert.ok(!consoleMessages.some((text) => text.includes(valid.token)));
+    await page.goto(`${base}/s#invalid-synthetic-link`);
+    await page.getByRole("button", { name: "Verify identity" }).waitFor();
+    assert.equal(new URL(page.url()).hash, "");
     assert.deepEqual(errors, []);
     await context.close();
   } finally {
