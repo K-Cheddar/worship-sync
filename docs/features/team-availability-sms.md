@@ -4,7 +4,7 @@
 
 **Approval source:** Current task request dated 2026-10-13; duplicate-send decision confirmed by the product owner in this conversation on 2026-10-12.
 
-**Last reviewed:** 2026-10-13
+**Last reviewed:** 2026-10-21
 
 ## Purpose
 
@@ -12,7 +12,9 @@ Let an authorized church administrator or team editor prepare and send a monthly
 
 ## Operator workflow
 
-From the selected active availability form, the operator opens **Send form**, reviews automatically selected eligible volunteers and the reasons others cannot receive a message, and optionally adjusts the selection with team and name filters. **Review and send** prepares the batch and opens one confirmation with the form name, eligible volunteer count, allowed phone numbers, and expandable personalized text messages. The operator must choose **Send** in that confirmation to send; Cancel returns to selection. Results remain visible in the form workflow.
+Existing `team_availability` forms open a full-width workspace with **Recipients** and **Responses** tabs. **Recipients** reviews current in-scope volunteers without a second checkbox list; personal links, revocation and history live in row menus. **Responses** uses the persisted recipient-linked answers, with a scrollable desktop matrix and expandable mobile rows. Administrators retain submission processing under a collapsed section. General links are available in the header menu only to users authorized for that endpoint.
+
+From the selected active availability form, **Send requests** opens one dialog. The operator reviews automatically selected first-time volunteers and optionally adjusts selection using team, name and recipient filters. **Review and send** prepares the batch and replaces selection with the exact message review in that same dialog. Only the final **Send** sends. **Back** preserves selection; **Cancel** closes without sending. Results remain visible in the dialog and refreshed recipient history. Other intake types and advanced Messages workflows retain their existing presentation.
 
 ## Expected behavior
 
@@ -49,6 +51,11 @@ From the selected active availability form, the operator opens **Send form**, re
 | Shared phone number | Review identifies the common destination and still shows each member's separate private message. | `AvailabilityBatchReview.test.tsx`; server recipient and response-link tests in `teamsApi.test.js` | Confirmed by current request; implemented |
 
 ## Product decisions
+
+- **Question/problem:** How should availability form management expose recipient progress, responses and sending?
+- **Approved behavior:** Two tabs, one primary Send requests action, one selection/review dialog, and progressive disclosure through form and recipient menus. Prepared messages and newly created links alone do not establish a sent invitation. Copied personal links establish sharing; delivery claims require persisted provider evidence. Team-scoped users retain the restricted response projection and cannot obtain general form links.
+- **Approval source/date:** Current availability UX redesign request, 2026-10-21; existing authorization contract for general form links.
+- **Unchanged boundaries:** Consent/STOP, duplicate-send blocks, explicit definitive-failure retries, uncertainty handling, approval snapshots, message content, private links, form editing and My Schedule credentials.
 
 - **Question/problem:** Should a form request whose SMS was already confirmed sent be selectable for another manual send?
 - **Approved behavior:** Keep the existing duplicate-send block; show the member as already sent and prevent reselection.

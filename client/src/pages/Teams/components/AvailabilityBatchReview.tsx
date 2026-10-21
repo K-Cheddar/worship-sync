@@ -105,7 +105,7 @@ const AvailabilityBatchReview = ({
         </div>
         {sharedDestinationCount > 1 ? <p className="text-xs text-sky-200">Shared phone number · each volunteer gets a separate private message.</p> : null}
         {recipient.segmentCount > 1 ? <p className="text-xs text-gray-300">This longer message counts as {recipient.segmentCount} texts.</p> : null}
-        {recipient.message ? <details className="rounded bg-gray-950 px-3 py-2 text-sm text-gray-200"><summary className="cursor-pointer">View message</summary><p className="mt-2 whitespace-pre-wrap break-words">{recipient.message}</p></details> : null}
+        {recipient.message ? <details className="rounded bg-gray-950 px-3 py-2 text-sm text-gray-200"><summary className="cursor-pointer">View message</summary><p className="mt-2 whitespace-pre-wrap break-words">{recipient.message}</p><p className="mt-2 text-xs text-gray-400">{recipient.message.length} characters · {recipient.segmentCount} text segment{recipient.segmentCount === 1 ? "" : "s"}</p></details> : null}
         {!recipient.eligible && recipient.exclusionReason ? <p className="text-sm text-amber-200">Not included: {plainExclusionReason(recipient.exclusionReason)}</p> : null}
         {!recipient.eligible && recipient.status === "failed" && !recipient.exclusionReason ? <p className="text-sm text-amber-200">This message failed. Review message history before preparing a retry.</p> : null}
         {!recipient.eligible && (recipient.status === "unknown" || recipient.attemptOutcome === "unknown") ? <p className="text-sm text-amber-200">We couldn't confirm whether this text was sent. Check message history before trying again.</p> : null}
@@ -148,7 +148,7 @@ const AvailabilityBatchReview = ({
             </ul>
           </section>
         ) : <p role="status" className="rounded border border-amber-700 bg-amber-950/30 p-3 text-amber-100">No volunteers are ready to receive a text message. Review the reasons above.</p>}
-        <p className="text-xs text-gray-400">Choose Send to send these text messages. Cancel to return to recipient selection and review again.</p>
+        <p className="text-xs text-gray-400">Choose Send only after reviewing these text messages.</p>
       </div>
     );
   }

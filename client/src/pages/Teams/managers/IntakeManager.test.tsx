@@ -11,6 +11,7 @@ import { TeamsNavigationGuardProvider } from "../TeamsNavigationGuardContext";
 import { CurrentMemberIdentityProvider } from "../components/CurrentUserMemberIndicator";
 import type {
   NotificationIntent,
+  TeamAvailabilityResponse,
   TeamIntakeForm,
   TeamIntakeRecipient,
   TeamIntakeSubmission,
@@ -22,6 +23,7 @@ import type {
 } from "../../../api/authTypes";
 import {
   createTeamIntakeForm,
+  createTeamIntakeRecipients,
   dispatchAvailabilityNotificationBatch,
   getNotificationIntents,
   getTeamIntakeSmsAttempts,
@@ -93,6 +95,9 @@ const recipient: TeamIntakeRecipient = {
 
 const renderManager = ({
   eligibilityStatus = "consent_needed",
+  canEdit = true,
+  availabilityResponses = [],
+  onAvailabilityRefresh,
   forms = [form],
   services = [],
   positions = [],
@@ -107,6 +112,9 @@ const renderManager = ({
   smsEligibilityByMemberId,
   selfMemberId = null,
 }: {
+  canEdit?: boolean;
+  availabilityResponses?: TeamAvailabilityResponse[];
+  onAvailabilityRefresh?: () => void | Promise<void>;
   eligibilityStatus?: "no_mobile" | "consent_needed" | "enabled" | "opted_out";
   forms?: TeamIntakeForm[];
   services?: TeamService[];
@@ -146,7 +154,9 @@ const renderManager = ({
               members={members}
               positions={positions}
               teams={teams}
-              canEdit
+              canEdit={canEdit}
+              availabilityResponses={availabilityResponses}
+              onAvailabilityRefresh={onAvailabilityRefresh}
               onFormSaved={jest.fn()}
               onSubmissionSaved={jest.fn()}
               onMemberSaved={jest.fn()}
@@ -181,6 +191,115 @@ beforeEach(() => {
 
 afterEach(() => {
   jest.useRealTimers();
+});
+
+const workspaceForm: TeamIntakeForm = {
+  ...form, purpose: "team_availability", enabledFields: ["availability"], publicUrl: "https://example.test/general",
+  availabilityOccurrences: [{ occurrenceId: "sunday", serviceId: "service", name: "Sunday", serviceDate: "2026-10-18", startsAt: "2026-10-18T10:00:00Z" }],
+};
+
+test("availability workspace opens recipients first, searches, and shows canonical responses on both layouts", async () => {
+  const user = userEvent.setup();
+  renderManager({ forms: [workspaceForm], intakeRecipients: [{ ...recipient, respondedAt: "2026-10-01T10:00:00Z" }], availabilityResponses: [{ formId: form.formId, recipientId: recipient.recipientId, memberId: member.memberId, respondedAt: "2026-10-01T10:00:00Z", submittedAt: "2026-10-01T10:00:00Z", occurrenceAvailability: { sunday: "available" } }] });
+  await openForm(user);
+  expect(screen.getAllByRole("tab")).toHaveLength(2);
+  expect(screen.getByRole("tab", { name: "Recipients" })).toHaveAttribute("data-state", "active");
+  expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+  expect(screen.queryByText("Individual links and text messages")).not.toBeInTheDocument();
+  expect(screen.getByText(/Responded: 1 of 1/)).toBeInTheDocument();
+  await user.click(screen.getByRole("combobox", { name: /Request status/ }));
+  await user.click(screen.getByRole("option", { name: "Not requested" }));
+  expect(screen.getByText("No volunteers match these filters.")).toBeInTheDocument();
+  await user.click(screen.getByRole("combobox", { name: /Request status/ }));
+  await user.click(screen.getByRole("option", { name: "All statuses" }));
+  await user.type(screen.getByRole("textbox", { name: /Search members/ }), "missing");
+  expect(screen.getByText("No volunteers match these filters.")).toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: "Responses" }));
+  expect(screen.getByText("1 of 1 responded · 0 awaiting responses")).toBeInTheDocument();
+  expect(within(screen.getByRole("table", { name: "Availability response matrix" })).getByText("Available")).toBeInTheDocument();
+  const mobile = screen.getByLabelText("Volunteer responses");
+  const card = within(mobile).getByRole("group");
+  await user.click(within(card).getByText("Rae Kim"));
+  expect(card).toHaveAttribute("open");
+  expect(within(mobile).getByText("Available")).toBeInTheDocument();
+  await user.click(screen.getByRole("combobox", { name: /Response status/ }));
+  await user.click(screen.getByRole("option", { name: "Unanswered" }));
+  expect(screen.getByText("No volunteers match these filters.")).toBeInTheDocument();
+  await user.click(screen.getByRole("combobox", { name: /Response status/ }));
+  await user.click(screen.getByRole("option", { name: "Incomplete responses" }));
+  expect(screen.getByText("No volunteers match these filters.")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "All forms" }));
+  expect(screen.getByRole("button", { name: `Edit ${form.name}` })).toBeInTheDocument();
+});
+
+test("availability row and header menus keep private and general links separate", async () => {
+  const user = userEvent.setup();
+  mockGetRecipientLink.mockResolvedValue({ recipient, publicUrl: "https://example.test/private" });
+  renderManager({ forms: [workspaceForm] });
+  const writeText = jest.spyOn(navigator.clipboard, "writeText");
+  await openForm(user);
+  await user.click(screen.getByRole("button", { name: "Actions for Rae Kim" }));
+  await user.click(screen.getByRole("menuitem", { name: "Copy personal availability link" }));
+  await waitFor(() => expect(writeText).toHaveBeenCalledWith("https://example.test/private"));
+  expect(mockGetRecipientLink).toHaveBeenCalledWith("church-1", recipient.recipientId, { markCopied: true });
+  await user.click(screen.getByRole("button", { name: "More form actions" }));
+  await user.click(screen.getByRole("menuitem", { name: "Copy general form link" }));
+  await waitFor(() => expect(writeText).toHaveBeenCalledWith(workspaceForm.publicUrl));
+});
+
+test("personal link creation does not send and uses only the selected member", async () => {
+  const user = userEvent.setup();
+  jest.mocked(createTeamIntakeRecipients).mockResolvedValue({ success: true, recipients: [recipient] });
+  renderManager({ forms: [workspaceForm], intakeRecipients: [] });
+  await openForm(user);
+  await user.click(screen.getByRole("button", { name: "Actions for Rae Kim" }));
+  await user.click(screen.getByRole("menuitem", { name: "Create personal link" }));
+  await waitFor(() => expect(createTeamIntakeRecipients).toHaveBeenCalledWith("church-1", form.formId, [member.memberId]));
+  expect(mockSendIntent).not.toHaveBeenCalled();
+  expect(dispatchAvailabilityNotificationBatch).not.toHaveBeenCalled();
+});
+
+test("read-only availability hides mutations and keeps other teams out of recipient scope", async () => {
+  const user = userEvent.setup();
+  renderManager({ forms: [workspaceForm], canEdit: false, members: [member, { ...member, memberId: "outside", firstName: "Outside", teamMemberships: { other: { teamId: "other" } } }] });
+  await openForm(user);
+  expect(screen.queryByRole("button", { name: "Send requests" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "More form actions" })).not.toBeInTheDocument();
+  expect(screen.queryByText("Outside Kim")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Actions for Rae Kim" }));
+  expect(screen.queryByRole("menuitem", { name: /Copy|Create|Revoke|Open personal/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("menuitem", { name: "View request and delivery history" })).toBeInTheDocument();
+});
+
+test("availability Send requests opens one dialog and cancel sends nothing", async () => {
+  const user = userEvent.setup();
+  renderManager({ forms: [workspaceForm], eligibilityStatus: "enabled" });
+  await openForm(user);
+  await user.click(screen.getByRole("button", { name: "Send requests" }));
+  const dialog = screen.getByRole("dialog", { name: "Send requests" });
+  expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  expect(within(dialog).getByRole("checkbox", { name: "Rae Kim" })).toBeInTheDocument();
+  await user.click(within(dialog).getByRole("button", { name: "Close modal" }));
+  expect(dispatchAvailabilityNotificationBatch).not.toHaveBeenCalled();
+  expect(prepareAvailabilityNotificationBatch).not.toHaveBeenCalled();
+});
+
+test("a personal link result cannot copy or update a different selected form", async () => {
+  const user = userEvent.setup();
+  let resolveLink!: (value: { recipient: TeamIntakeRecipient; publicUrl: string }) => void;
+  mockGetRecipientLink.mockImplementationOnce(() => new Promise((resolve) => { resolveLink = resolve; }));
+  const { onRecipientSaved } = renderManager({ forms: [workspaceForm, { ...workspaceForm, formId: "other-form", name: "December availability" }] });
+  const writeText = jest.spyOn(navigator.clipboard, "writeText");
+  await openForm(user);
+  await user.click(screen.getByRole("button", { name: "Actions for Rae Kim" }));
+  await user.click(screen.getByRole("menuitem", { name: "Copy personal availability link" }));
+  expect(screen.getByRole("status")).toHaveTextContent("Updating personal link");
+  await user.click(screen.getByRole("button", { name: "All forms" }));
+  await user.click(screen.getByRole("button", { name: "Edit December availability" }));
+  await act(async () => resolveLink({ recipient, publicUrl: "https://example.test/old-private" }));
+  expect(writeText).not.toHaveBeenCalled();
+  expect(onRecipientSaved).not.toHaveBeenCalled();
+  expect(screen.getByRole("heading", { name: /December availability/ })).toBeInTheDocument();
 });
 
 test("late form history failures do not publish an error toast after Forms unmounts", async () => {
@@ -241,11 +360,12 @@ test("availability-only manager hides member intake and consent details", async 
 
   await openForm(user);
 
-  expect(screen.getByText("Availability responses")).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Recipients" })).toHaveAttribute("data-state", "active");
+  expect(screen.getByRole("tab", { name: "Responses" })).toBeInTheDocument();
   expect(screen.queryByText("Not eligible to receive text messages")).not.toBeInTheDocument();
   expect(screen.queryByText(/Text message consent needed|This phone number opted out|No mobile number/)).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Send text message" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Send form" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Send requests" })).toBeInTheDocument();
 
   await user.click(screen.getByRole("button", { name: "Edit" }));
   expect(screen.queryByRole("group", { name: "Fields to include" })).not.toBeInTheDocument();
@@ -334,9 +454,9 @@ test("saved availability forms stay readable and keep their dates when the churc
   });
 
   await openForm(user);
-  expect(screen.getByRole("heading", { name: availabilityForm.name })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: new RegExp(`${availabilityForm.name}.*Open`) })).toBeInTheDocument();
   expect(screen.getByText(/October 01, 2026 – October 31, 2026/)).toBeInTheDocument();
-  expect(screen.getByText(/1 availability dates/)).toBeInTheDocument();
+  expect(screen.getByText(/1 service dates/)).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Edit" }));
   expect(screen.getByRole("note")).toHaveTextContent(/review this form and edit its wording/i);
   expect(screen.getByText("Load the church time zone before choosing service dates.")).toBeInTheDocument();

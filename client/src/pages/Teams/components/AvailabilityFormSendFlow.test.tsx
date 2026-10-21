@@ -74,6 +74,44 @@ const emptyHistoryProps = {
 
 beforeEach(() => jest.clearAllMocks());
 
+it("keeps selection through dialog filters and Back, and sends only from the reviewed step", async () => {
+  const user = userEvent.setup();
+  jest.mocked(prepareAvailabilityNotificationBatch).mockResolvedValue({ success: true, batch });
+  jest.mocked(dispatchAvailabilityNotificationBatch).mockResolvedValue({ success: true, batch: { ...batch, status: "sent" } });
+  render(<AvailabilityFormSendFlow {...emptyHistoryProps} dialog churchId="church-1" form={form} members={[member, secondMember]} positions={[]} teams={[]} recipients={[]} eligibilityByMemberId={{ [member.memberId]: { eligible: true }, [secondMember.memberId]: { eligible: true } }} onClose={jest.fn()} />);
+  await user.click(screen.getByRole("checkbox", { name: "Sam Lee" }));
+  await user.click(screen.getByRole("combobox", { name: /Recipients:/ }));
+  await user.click(screen.getByRole("option", { name: "Eligible first-time recipients" }));
+  expect(screen.getByRole("checkbox", { name: "Sam Lee" })).not.toBeChecked();
+  await user.type(screen.getByRole("textbox", { name: /Search members/ }), "Rae");
+  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
+  const review = await screen.findByRole("dialog", { name: "Review text messages" });
+  expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  expect(within(review).queryByRole("checkbox")).not.toBeInTheDocument();
+  expect(dispatchAvailabilityNotificationBatch).not.toHaveBeenCalled();
+  await user.click(within(review).getByText("View message"));
+  expect(within(review).getByText(batch.recipients[0].message!)).toBeInTheDocument();
+  await user.click(within(review).getByRole("button", { name: "Back" }));
+  expect(screen.getByRole("textbox", { name: /Search members/ })).toHaveValue("Rae");
+  expect(screen.getByRole("checkbox", { name: "Rae Kim" })).toBeChecked();
+  await user.clear(screen.getByRole("textbox", { name: /Search members/ }));
+  expect(screen.getByRole("checkbox", { name: "Sam Lee" })).not.toBeChecked();
+  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
+  await user.click(within(await screen.findByRole("dialog", { name: "Review text messages" })).getByRole("button", { name: "Send 1 message" }));
+  await waitFor(() => expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledWith("church-1", batch.batchId, batch.approvalVersion));
+});
+
+it("cancels a prepared dialog without dispatching", async () => {
+  const user = userEvent.setup();
+  const onClose = jest.fn();
+  jest.mocked(prepareAvailabilityNotificationBatch).mockResolvedValue({ success: true, batch });
+  render(<AvailabilityFormSendFlow {...emptyHistoryProps} dialog churchId="church-1" form={form} members={[member]} positions={[]} teams={[]} recipients={[]} eligibilityByMemberId={{ [member.memberId]: { eligible: true } }} onClose={onClose} />);
+  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
+  await user.click(within(await screen.findByRole("dialog", { name: "Review text messages" })).getByRole("button", { name: "Cancel" }));
+  expect(onClose).toHaveBeenCalledTimes(1);
+  expect(dispatchAvailabilityNotificationBatch).not.toHaveBeenCalled();
+});
+
 it("opens one detailed confirmation after preparation and sends only after the final action", async () => {
   const user = userEvent.setup();
   jest.mocked(prepareAvailabilityNotificationBatch).mockResolvedValue({ success: true, batch });
