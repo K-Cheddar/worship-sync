@@ -16,6 +16,6 @@ Loading and errors, storage quota, search/category filtering, signed URLs and pr
 
 ## Implementation and verification
 
-Resources owns transformations and action state. Only the active responsive layout mounts. Shared owner-aware controls handle menus, focus, and confirmation. The list changes at 768px of available content width, with a viewport fallback when ResizeObserver is unavailable.
+Resources owns transformations and action state. Only the active responsive layout mounts. Shared owner-aware controls handle menus, focus, and confirmation. The list changes at 768px of available content width, with a viewport fallback when ResizeObserver is unavailable. The Resources desktop table and compact mobile list now provide the shared presentation shell and loading rows used by Messages history and Forms volunteers; each page retains its own data, filters, details, and actions.
 
 Focused Jest tests cover resolver metadata precedence, icon/upload consistency, mobile sorting/navigation, permissions, pending download feedback, selection/confirmation/conflicts, and loading/error/empty states. The browser fixture uses the actual Resources page and workspace shell with API/DB boundary fixtures and checks responsive widths, themes, filename wrapping, overflow, keyboard menus, and touch targets.

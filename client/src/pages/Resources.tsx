@@ -56,10 +56,19 @@ import ResourceFileIcon from "../components/ResourceFileIcon";
 import ResourcePreview, { createLibraryPreview } from "../components/ResourcePreview";
 import { entryKey, entrySize, entrySource, entryUpdatedAt, errorMessage, formatDate, formatEntrySize, typeLabel } from "../utils/resourceLibraryPresentation";
 import type { ResourceSortKey, SortDirection } from "../utils/resourceLibraryPresentation";
-import ResourceMobileList, { ResourceMobileControls, ResourceMobileSkeleton } from "../components/ResourceMobileList";
-import { useResourceCompactLayout } from "../hooks/useResourceCompactLayout";
+import ResourceMobileList, { ResourceMobileControls } from "../components/ResourceMobileList";
+import { useResponsiveTableLayout } from "../hooks/useResponsiveTableLayout";
+import ResponsiveDataTable, { ResponsiveDataTableSkeleton } from "../components/ResponsiveDataTable";
 
 type ResourceFilter = "all" | "document" | "image" | "audio";
+const resourceSkeletonColumns = [
+  { label: "", widthClassName: "w-12" },
+  { label: "Name", widthClassName: "w-[34%]" },
+  { label: "Type", widthClassName: "w-[10%]" },
+  { label: "Size", widthClassName: "w-[12%]" },
+  { label: "Updated", widthClassName: "w-[16%]" },
+  { label: "Source", widthClassName: "w-[24%]" },
+];
 
 const ResourcesPage = () => {
   const { churchId, churchName, access } = useContext(GlobalInfoContext) || {};
@@ -67,7 +76,7 @@ const ResourcesPage = () => {
   const dispatch = useDispatch();
   const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
   const scrollbarWidth = useSelector((state) => state.undoable.present.preferences.scrollbarWidth);
-  const { containerRef, compact } = useResourceCompactLayout();
+  const { containerRef, compact } = useResponsiveTableLayout();
   const [mobileSelecting, setMobileSelecting] = useState(false);
   const [previewAction, setPreviewAction] = useState<"rename" | undefined>();
   const [resources, setResources] = useState<ChurchResource[]>([]);
@@ -347,16 +356,14 @@ const ResourcesPage = () => {
             {loadErrors.map((loadError) => <div key={loadError} className="mx-4 mt-3 rounded border border-red-700/60 bg-red-950/20 p-3 text-sm text-red-200" role="alert">{loadError}</div>)}
             {error ? <div className="mx-4 mt-3 rounded border border-red-700/60 bg-red-950/20 p-3 text-sm text-red-200" role="alert">{error}</div> : null}
             {compact ? <ResourceMobileControls sortKey={sortKey} sortDirection={sortDirection} onSort={(key, direction) => { setSortKey(key); setSortDirection(direction); }} canSelect={canEdit && selectableEntries.length > 0} selecting={canEdit && mobileSelecting} onSelect={() => setMobileSelecting(true)} onSelectAll={toggleAllResourceSelection} allSelected={allSelectableEntriesSelected} selectedCount={selectedEntries.length} onDeleteSelected={requestDeleteSelected} onCancel={() => { setMobileSelecting(false); setSelectedResourceKeys(new Set()); }} /> : null}
-            {loading ? compact ? <ResourceMobileSkeleton /> : <ResourceTableSkeleton /> : null}
+            {loading ? <ResponsiveDataTableSkeleton label="Resource list loading" loadingLabel="Loading resources" compact={compact} columns={resourceSkeletonColumns} selectionColumn className="flex-1 pb-4" /> : null}
             {!loading && !loadErrors.length && !entries.length ? <div className="p-8 text-center text-sm text-gray-400"><FileText className="mx-auto mb-2 size-8 text-gray-600" aria-hidden />No resources match this view.</div> : null}
-            {!loading && sortedEntries.length ? compact ? (
-              <ResourceMobileList entries={sortedEntries} churchId={churchId || ""} canEdit={canEdit} selecting={mobileSelecting} selectedKeys={selectedResourceKeys} recentKeys={recentlyUploadedKeys} previewKey={selectedKey} onToggle={toggleResourceSelection} onPreview={(entry) => { setPreviewAction(undefined); setSelectedKey(entryKey(entry)); }} onRename={(entry) => { setPreviewAction("rename"); setSelectedKey(entryKey(entry)); }} onDelete={(entry) => void requestDelete(entry)} />
-            ) : (
-              <div className="min-h-0 flex-1 overflow-auto pb-4">
-                <div className="rounded border border-gray-700">
-                  <table className="w-full min-w-[48rem] table-fixed text-left text-sm">
-                    <caption className="sr-only">Resources</caption>
-                    <thead className="sticky top-0 z-10 bg-gray-950 text-xs uppercase tracking-wide text-gray-400 shadow-sm shadow-black/20">
+            {!loading && sortedEntries.length ? <ResponsiveDataTable
+              label="Resources"
+              compact={compact}
+              className="flex-1 pb-4"
+              mobileRows={() => <ResourceMobileList entries={sortedEntries} churchId={churchId || ""} canEdit={canEdit} selecting={mobileSelecting} selectedKeys={selectedResourceKeys} recentKeys={recentlyUploadedKeys} previewKey={selectedKey} onToggle={toggleResourceSelection} onPreview={(entry) => { setPreviewAction(undefined); setSelectedKey(entryKey(entry)); }} onRename={(entry) => { setPreviewAction("rename"); setSelectedKey(entryKey(entry)); }} onDelete={(entry) => void requestDelete(entry)} />}
+              desktopHeader={
                       <tr>
                         <th scope="col" className="w-12 px-4 py-1.5">
                           <Checkbox
@@ -385,8 +392,9 @@ const ResourcesPage = () => {
                           </th>
                         ))}
                       </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-700">
+              }
+              desktopRows={() =>
+                <>
                       {sortedEntries.map((entry) => {
                         const key = entryKey(entry);
                         const selected = selectedKey === key;
@@ -438,11 +446,9 @@ const ResourcesPage = () => {
                           </tr>
                         );
                       })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            ) : null}
+                </>
+              }
+            /> : null}
             {selectedEntry && churchId ? (
               <ResourcePreview initialAction={previewAction} churchId={churchId} entry={selectedEntry} onRename={renameResource} onDelete={requestDelete} canEdit={canEdit} onClose={() => setSelectedKey(null)} sourceCache={sourceCache} navigation={previewIndex >= 0 ? {
                 index: previewIndex,
@@ -477,42 +483,6 @@ const ResourcesPage = () => {
   );
 };
 
-export const ResourceTableSkeleton = () => (
-  <div className="min-h-0 flex-1 overflow-auto pb-4" role="region" aria-label="Loading resources" aria-busy="true">
-    <span className="sr-only" role="status">Loading resources...</span>
-    <div className="rounded border border-gray-700">
-      <table className="w-full min-w-[48rem] table-fixed text-left text-sm" aria-label="Resource list loading">
-        <caption className="sr-only">Resources</caption>
-        <thead className="sticky top-0 z-10 bg-gray-950 text-xs uppercase tracking-wide text-gray-400 shadow-sm shadow-black/20">
-          <tr>
-            <th scope="col" className="w-12 px-4 py-1.5"><div className="size-5 animate-pulse rounded border border-gray-700 bg-gray-800" /></th>
-            <th scope="col" className="w-[34%] px-4 py-1.5">Name</th>
-            <th scope="col" className="w-[10%] px-4 py-1.5">Type</th>
-            <th scope="col" className="w-[12%] px-4 py-1.5">Size</th>
-            <th scope="col" className="w-[16%] px-4 py-1.5">Updated</th>
-            <th scope="col" className="w-[24%] px-4 py-1.5">Source</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-700">
-          {Array.from({ length: 5 }, (_, index) => (
-            <tr key={index} className="bg-gray-900/40">
-              <td className="px-4 py-1.5"><div className="size-5 animate-pulse rounded border border-gray-700 bg-gray-800" /></td>
-              <td className="max-w-0 px-4 py-1.5">
-                <div className="flex w-full min-w-0 items-center gap-2">
-                  <div className="size-4 shrink-0 animate-pulse rounded bg-gray-700" />
-                  <div className={`h-4 animate-pulse rounded bg-gray-700 ${index % 2 ? "w-2/3" : "w-4/5"}`} />
-                </div>
-              </td>
-              <td className="px-4 py-1.5"><div className="h-4 w-10 animate-pulse rounded bg-gray-800" /></td>
-              <td className="px-4 py-1.5"><div className="h-4 w-12 animate-pulse rounded bg-gray-800" /></td>
-              <td className="px-4 py-1.5"><div className="h-4 w-20 animate-pulse rounded bg-gray-800" /></td>
-              <td className="max-w-0 px-4 py-1.5"><div className="h-4 w-3/4 animate-pulse rounded bg-gray-800" /></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  </div>
-);
+export const ResourceTableSkeleton = () => <ResponsiveDataTableSkeleton label="Resource list loading" loadingLabel="Loading resources" compact={false} columns={resourceSkeletonColumns} selectionColumn className="flex-1 pb-4" />;
 
 export default ResourcesPage;

@@ -14383,6 +14383,74 @@ test("availability SMS batch fences first invitations and allows reviewed resend
   }
 });
 
+test("custom volunteer messages send through existing SMS eligibility and administrator authorization", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const admin = await createAdminContext("custom_volunteer_messages");
+  const { memberIds } = await seedTeam(admin, {
+    teamName: "Worship", members: [{ firstName: "Custom", lastName: "Recipient" }],
+  });
+  const memberId = memberIds.Custom;
+  const phoneNumber = "+19545551339";
+  await setDoc("teamRosterMembers", memberId, { phoneNumber }, { merge: true });
+  await seedSmsConsentForServerTests({ churchId: admin.churchId, phoneNumber, status: "opted_in" });
+  await setDoc("churchMessagingConfigs", admin.churchId, {
+    churchId: admin.churchId, provider: "twilio", providerAccountId: "AC_test",
+    messagingServiceId: "MG_test", registrationStatus: "approved", enabled: true,
+  }, { merge: false });
+  const viewer = await createHumanContext("custom_volunteer_messages_viewer", {
+    churchId: admin.churchId, role: "member", appAccess: "view", permissions: { teams: "view" },
+  });
+  const previousCallback = process.env.TWILIO_STATUS_CALLBACK_URL;
+  const previousToken = process.env.TWILIO_AUTH_TOKEN;
+  process.env.TWILIO_STATUS_CALLBACK_URL = "https://worshipsync.net/api/webhooks/twilio/sms-status?configured=1";
+  process.env.TWILIO_AUTH_TOKEN = "fake-signing-secret";
+  const fake = createFakeSmsProvider();
+  setSmsProviderForServerTests(fake);
+  const prepare = (context, message, requestKey) => callHandler(authHandlers.prepareCustomBatch, {
+    context, body: { memberIds: [memberId], message, requestKey },
+  });
+  const dispatch = (context, batch, confirmed = true) => callHandler(authHandlers.dispatchAvailabilityBatch, {
+    context, params: { batchId: batch.batchId },
+    body: { confirmed, approvalVersion: batch.approvalVersion },
+  });
+  try {
+    const firstPrepared = await prepare(admin, "Practice Friday.", "custom-operation-one");
+    assert.equal(firstPrepared.statusCode, 200, JSON.stringify(firstPrepared.payload));
+    assert.equal(firstPrepared.payload.batch.summary.eligible, 1);
+    assert.equal(firstPrepared.payload.enabled, undefined);
+    assert.equal(fake.calls.length, 0, "review and preparation never contact the provider");
+
+    const unconfirmed = await dispatch(admin, firstPrepared.payload.batch, false);
+    assert.equal(unconfirmed.statusCode, 400);
+    const denied = await dispatch(viewer, firstPrepared.payload.batch);
+    assert.equal(denied.statusCode, 403);
+    assert.equal(fake.calls.length, 0);
+
+    const sent = await dispatch(admin, firstPrepared.payload.batch);
+    assert.equal(sent.statusCode, 200, JSON.stringify(sent.payload));
+    assert.equal(sent.payload.batch.summary.sent, 1);
+    assert.equal(fake.calls.length, 1);
+    assert.equal(fake.calls[0].to, phoneNumber);
+    assert.equal(fake.calls[0].body, "Practice Friday. Reply STOP to opt out.");
+    await dispatch(admin, firstPrepared.payload.batch);
+    assert.equal(fake.calls.length, 1, "replaying the approved operation cannot send twice");
+
+    const secondPrepared = await prepare(admin, "Practice next Friday.", "custom-operation-two");
+    assert.equal(secondPrepared.statusCode, 200, JSON.stringify(secondPrepared.payload));
+    assert.notEqual(secondPrepared.payload.batch.batchId, firstPrepared.payload.batch.batchId);
+    const secondSend = await dispatch(admin, secondPrepared.payload.batch);
+    assert.equal(secondSend.statusCode, 200, JSON.stringify(secondSend.payload));
+    assert.equal(fake.calls.length, 2, "a deliberately reviewed new operation creates a new send");
+    const history = await callHandler(authHandlers.listMessageHistory, { context: admin });
+    assert.equal(history.statusCode, 200);
+    assert.equal(history.payload.entries.filter((entry) => entry.messageType === "custom_message").length, 2);
+  } finally {
+    setSmsProviderForServerTests(null);
+    if (previousCallback === undefined) delete process.env.TWILIO_STATUS_CALLBACK_URL; else process.env.TWILIO_STATUS_CALLBACK_URL = previousCallback;
+    if (previousToken === undefined) delete process.env.TWILIO_AUTH_TOKEN; else process.env.TWILIO_AUTH_TOKEN = previousToken;
+  }
+});
+
 test("individual intake SMS records one shared notification attempt and blocks duplicate accepted sends", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("individual_intake_sms");

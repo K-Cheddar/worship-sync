@@ -1,8 +1,10 @@
-import { useState } from "react";
-import { Check, ChevronDown, CircleMinus, MoreHorizontal, X } from "lucide-react";
+import { Fragment, useState } from "react";
+import { Check, ChevronDown, CircleMinus, MoreHorizontal, UserRound, X } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 import Select from "../../../components/Select/Select";
+import ResponsiveDataTable, { ResponsiveDataTableSkeleton } from "../../../components/ResponsiveDataTable";
+import { useResponsiveTableLayout } from "../../../hooks/useResponsiveTableLayout";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -62,6 +64,7 @@ type Props = {
   canEdit: boolean;
   busy: boolean;
   historyLoaded: boolean;
+  historyError: string;
   serviceTimeZone: string;
   onCreateLink: (memberId: string) => void;
   onCopyLink: (recipient: TeamIntakeRecipient) => void;
@@ -79,6 +82,7 @@ const AvailabilityVolunteersList = ({
   canEdit,
   busy,
   historyLoaded,
+  historyError,
   serviceTimeZone,
   onCreateLink,
   onCopyLink,
@@ -88,6 +92,7 @@ const AvailabilityVolunteersList = ({
   onHistory,
   onViewAvailability,
 }: Props) => {
+  const { containerRef, compact } = useResponsiveTableLayout();
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const [teamId, setTeamId] = useState("");
@@ -163,8 +168,44 @@ const AvailabilityVolunteersList = ({
   const toggleDetails = (memberId: string) =>
     setExpandedMemberId((current) => current === memberId ? "" : memberId);
 
+  const requestStatusContent = (row: AvailabilityProgressRow) => <>
+    {!historyLoaded && !["Responded", "Revoked"].includes(row.status) ? <span aria-hidden="true" className="inline-block h-3 w-24 animate-pulse rounded bg-white/10 align-middle" /> : <span className={`text-xs ${requestTone[row.status] || "text-gray-300"}`}>{requestStatusLabel(row)}</span>}
+    {!historyLoaded ? <span aria-hidden="true" className="ml-2 inline-block h-3 w-16 animate-pulse rounded bg-white/10 align-middle" /> : row.delivery !== "—" ? <span className={`ml-2 text-xs ${deliveryTone(row.delivery)}`}>{row.delivery}</span> : null}
+  </>;
+
+  const actionsFor = (row: AvailabilityProgressRow) => {
+    const { member, recipient } = row;
+    const name = memberName(member);
+    return <DropdownMenu>
+      <DropdownMenuTrigger asChild><Button variant="tertiary" svg={MoreHorizontal} aria-label={`Actions for ${name}`} disabled={busy} className="min-h-[44px] min-w-[44px]" /></DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {canEdit && recipient && !recipient.revokedAt ? <>
+          {form.active && historyLoaded && row.hasPreviousRequest ? <DropdownMenuItem onSelect={() => onResendLink(member.memberId)}>Resend link</DropdownMenuItem> : null}
+          <DropdownMenuItem onSelect={() => onCopyLink(recipient)}>Copy personal availability link</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => onOpenLink(recipient)}>Open personal form</DropdownMenuItem>
+          <DropdownMenuItem variant="destructive" onSelect={() => onRevoke(recipient)}>Revoke request</DropdownMenuItem>
+        </> : null}
+        {canEdit && (!recipient || recipient.revokedAt) ? <DropdownMenuItem onSelect={() => onCreateLink(member.memberId)}>{recipient?.revokedAt ? "Create new personal link" : "Create personal link"}</DropdownMenuItem> : null}
+        <DropdownMenuItem onSelect={() => onHistory(member.memberId)}>View request and delivery history</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>;
+  };
+
+  const detailsFor = (row: AvailabilityProgressRow) => {
+    const name = memberName(row.member);
+    const answerSummary = summarizeAvailabilityAnswers(row.occurrenceAvailability, occurrences.map((occurrence) => occurrence.occurrenceId));
+    return <div id={`availability-${row.member.memberId}`} role="region" aria-label={`${name} availability details`}>
+      <p className="mb-2 text-sm font-medium text-white">{name} — Responded · {answerSummary.answered} of {answerSummary.total} answered</p>
+      <dl className="max-h-[40vh] divide-y divide-gray-800 overflow-y-auto">{occurrences.map((occurrence) => {
+        const answer = row.occurrenceAvailability[occurrence.occurrenceId];
+        return <div key={occurrence.occurrenceId} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 py-2.5"><dt className="min-w-0 text-sm text-gray-200"><span>{dateLabel(occurrence)}</span><span className="ml-2 text-gray-400">{occurrence.name}</span></dt><dd className={`flex items-center gap-1.5 text-sm ${availabilityTone(answer)}`}>{answer === "available" ? <Check size={15} aria-hidden="true" /> : null}{answer === "unavailable" ? <X size={15} aria-hidden="true" /> : null}{!answer ? <CircleMinus size={15} aria-hidden="true" /> : null}{availabilityLabel(answer)}</dd></div>;
+      })}</dl>
+    </div>;
+  };
+
   return (
     <section
+      ref={containerRef}
       className="mt-4 min-w-0 space-y-3"
       aria-label="Volunteers"
       aria-busy={!historyLoaded}
@@ -228,156 +269,52 @@ const AvailabilityVolunteersList = ({
         />
       </div>
 
-      <div className="max-h-[58vh] overflow-y-auto divide-y divide-gray-800" role="table" aria-label="Availability volunteers">
-        <div
-          className="sr-only sm:not-sr-only sm:sticky sm:top-0 sm:z-10 sm:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)_3rem] sm:gap-3 sm:bg-gray-900 sm:py-1 sm:text-xs sm:text-gray-400 sm:grid"
-          role="row"
-        >
-          <span role="columnheader">Volunteer</span>
-          <span role="columnheader">Request status</span>
-          <span role="columnheader">Availability</span>
-          <span role="columnheader">Actions</span>
-        </div>
-        {pageRows.map((row) => {
-          const { member, recipient } = row;
-          const name = memberName(member);
+      {!historyLoaded && !historyError && !rows.length ? <ResponsiveDataTableSkeleton
+        label="Availability volunteers"
+        loadingLabel="Loading volunteers"
+        compact={compact}
+        className="max-h-[58vh]"
+        minWidthClassName="min-w-[40rem]"
+        columns={[
+          { label: "Volunteer", widthClassName: "w-[35%]" },
+          { label: "Request status", widthClassName: "w-[30%]" },
+          { label: "Availability", widthClassName: "w-[25%]" },
+          { label: "Actions", widthClassName: "w-[10%]" },
+        ]}
+      /> : <ResponsiveDataTable
+        label="Availability volunteers"
+        compact={compact}
+        className="max-h-[58vh]"
+        minWidthClassName="min-w-[40rem]"
+        desktopHeader={<tr><th scope="col" className="w-[35%] px-4 py-1.5">Volunteer</th><th scope="col" className="w-[30%] px-4 py-1.5">Request status</th><th scope="col" className="w-[25%] px-4 py-1.5">Availability</th><th scope="col" className="w-[10%] px-4 py-1.5">Actions</th></tr>}
+        desktopRows={() => <>{pageRows.map((row) => {
+          const name = memberName(row.member);
           const canExpand = row.status === "Responded" && row.hasResponseDetails && occurrences.length > 0;
-          const expanded = expandedMemberId === member.memberId && canExpand;
-          const answerSummary = canExpand
-            ? summarizeAvailabilityAnswers(
-                row.occurrenceAvailability,
-                occurrences.map((occurrence) => occurrence.occurrenceId),
-              )
-            : null;
-          return (
-            <div key={member.memberId} role="rowgroup" className="py-1">
-              <div
-                role="row"
-                className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)_3rem]"
-              >
-                <div role="cell" className="min-w-0 text-sm">
-                  {canExpand ? (
-                    <button
-                      type="button"
-                      aria-label={`${expanded ? "Hide" : "View"} availability for ${name}`}
-                      aria-expanded={expanded}
-                      onClick={() => toggleDetails(member.memberId)}
-                      className="flex max-w-full items-center gap-2 rounded text-left font-medium text-white hover:text-cyan-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
-                    >
-                      <MemberNameWithIndicator name={name} memberId={member.memberId} />
-                      <ChevronDown size={15} aria-hidden="true" className={`shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`} />
-                    </button>
-                  ) : (
-                    <MemberNameWithIndicator
-                      name={name}
-                      memberId={member.memberId}
-                      className="font-medium text-white"
-                    />
-                  )}
-                </div>
-
-                <div role="cell" className="col-start-1 row-start-2 min-w-0 sm:col-auto sm:row-auto">
-                  {!historyLoaded && !["Responded", "Revoked"].includes(row.status) ? (
-                    <span aria-hidden="true" className="inline-block h-3 w-24 animate-pulse rounded bg-white/10 align-middle" />
-                  ) : (
-                    <span className={`text-xs ${requestTone[row.status] || "text-gray-300"}`}>
-                      {requestStatusLabel(row)}
-                    </span>
-                  )}
-                  {!historyLoaded ? (
-                    <span aria-hidden="true" className="ml-2 inline-block h-3 w-16 animate-pulse rounded bg-white/10 align-middle" />
-                  ) : row.delivery !== "—" ? (
-                    <span className={`ml-2 text-xs ${deliveryTone(row.delivery)}`}>
-                      {row.delivery}
-                    </span>
-                  ) : null}
-                </div>
-
-                <div role="cell" className="col-start-2 row-start-2 text-right text-xs text-gray-300 sm:col-start-auto sm:row-start-auto sm:text-left">
-                  <span>{availabilitySummary(row)}</span>
-                </div>
-
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="tertiary"
-                      svg={MoreHorizontal}
-                      aria-label={`Actions for ${name}`}
-                      disabled={busy}
-                      className="col-start-2 row-start-1 sm:col-auto sm:row-auto"
-                    />
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    {canEdit && recipient && !recipient.revokedAt ? (
-                      <>
-                        {form.active && historyLoaded && row.hasPreviousRequest ? (
-                          <DropdownMenuItem onSelect={() => onResendLink(member.memberId)}>
-                            Resend link
-                          </DropdownMenuItem>
-                        ) : null}
-                        <DropdownMenuItem onSelect={() => onCopyLink(recipient)}>
-                          Copy personal availability link
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onSelect={() => onOpenLink(recipient)}>
-                          Open personal form
-                        </DropdownMenuItem>
-                        <DropdownMenuItem variant="destructive" onSelect={() => onRevoke(recipient)}>
-                          Revoke request
-                        </DropdownMenuItem>
-                      </>
-                    ) : null}
-                    {canEdit && (!recipient || recipient.revokedAt) ? (
-                      <DropdownMenuItem onSelect={() => onCreateLink(member.memberId)}>
-                        {recipient?.revokedAt ? "Create new personal link" : "Create personal link"}
-                      </DropdownMenuItem>
-                    ) : null}
-                    <DropdownMenuItem onSelect={() => onHistory(member.memberId)}>
-                      View request and delivery history
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-
-              {expanded && answerSummary ? (
-                <div
-                  id={`availability-${member.memberId}`}
-                  className="mt-3 border-t border-gray-800 pt-3 sm:ml-4"
-                  role="region"
-                  aria-label={`${name} availability details`}
-                >
-                  <p className="mb-2 text-sm font-medium text-white">
-                    {name} — Responded · {answerSummary.answered} of {answerSummary.total} answered
-                  </p>
-                  <dl className="max-h-[40vh] divide-y divide-gray-800 overflow-y-auto">
-                    {occurrences.map((occurrence) => {
-                      const answer = row.occurrenceAvailability[occurrence.occurrenceId];
-                      return (
-                        <div key={occurrence.occurrenceId} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 py-2.5">
-                          <dt className="min-w-0 text-sm text-gray-200">
-                            <span>{dateLabel(occurrence)}</span>
-                            <span className="ml-2 text-gray-400">{occurrence.name}</span>
-                          </dt>
-                          <dd className={`flex items-center gap-1.5 text-sm ${availabilityTone(answer)}`}>
-                            {answer === "available" ? <Check size={15} aria-hidden="true" /> : null}
-                            {answer === "unavailable" ? <X size={15} aria-hidden="true" /> : null}
-                            {!answer ? <CircleMinus size={15} aria-hidden="true" /> : null}
-                            {availabilityLabel(answer)}
-                          </dd>
-                        </div>
-                      );
-                    })}
-                  </dl>
-                </div>
-              ) : null}
+          const expanded = expandedMemberId === row.member.memberId && canExpand;
+          return <Fragment key={row.member.memberId}>
+            <tr className="bg-gray-900/40 hover:bg-cyan-500/5">
+              <td className="max-w-0 px-4 py-1.5 font-semibold text-white">{canExpand ? <button type="button" aria-label={`${expanded ? "Hide" : "View"} availability for ${name}`} aria-expanded={expanded} onClick={() => toggleDetails(row.member.memberId)} className="flex max-w-full items-center gap-2 text-left hover:text-cyan-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"><MemberNameWithIndicator name={name} memberId={row.member.memberId} /><ChevronDown size={15} aria-hidden="true" className={`shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`} /></button> : <MemberNameWithIndicator name={name} memberId={row.member.memberId} />}</td>
+              <td className="px-4 py-1.5">{requestStatusContent(row)}</td>
+              <td className="px-4 py-1.5 text-gray-300">{availabilitySummary(row)}</td>
+              <td className="px-4 py-1.5">{actionsFor(row)}</td>
+            </tr>
+            {expanded ? <tr><td colSpan={4} className="bg-gray-950/40 px-4 py-3">{detailsFor(row)}</td></tr> : null}
+          </Fragment>;
+        })}{!pageRows.length ? <tr><td colSpan={4} className="px-4 py-6 text-sm text-gray-400">No volunteers match these filters.</td></tr> : null}</>}
+        mobileRows={() => <>{pageRows.map((row) => {
+          const name = memberName(row.member);
+          const canExpand = row.status === "Responded" && row.hasResponseDetails && occurrences.length > 0;
+          const expanded = expandedMemberId === row.member.memberId && canExpand;
+          return <li key={row.member.memberId} className="px-2 py-0 hover:bg-cyan-500/5">
+            <div className="flex min-h-[44px] items-center gap-2">
+              <UserRound className="size-5 shrink-0 text-cyan-300" aria-hidden="true" />
+              <div className="min-w-0 flex-1">{canExpand ? <button type="button" aria-label={`${expanded ? "Hide" : "View"} availability for ${name}`} aria-expanded={expanded} onClick={() => toggleDetails(row.member.memberId)} className="flex min-h-[44px] w-full min-w-0 items-center gap-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"><span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold text-white"><MemberNameWithIndicator name={name} memberId={row.member.memberId} /></span><span className="block truncate text-xs text-gray-400">{requestStatusContent(row)} · {availabilitySummary(row)}</span></span><ChevronDown size={15} aria-hidden="true" className={`shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`} /></button> : <div className="py-1"><span className="block truncate text-sm font-semibold text-white"><MemberNameWithIndicator name={name} memberId={row.member.memberId} /></span><span className="block truncate text-xs text-gray-400">{requestStatusContent(row)} · {availabilitySummary(row)}</span></div>}</div>
+              {actionsFor(row)}
             </div>
-          );
-        })}
-        {!pageRows.length ? (
-          <div className="py-6 text-xs text-gray-400" role="row">
-            <span role="cell">No volunteers match these filters.</span>
-          </div>
-        ) : null}
-      </div>
+            {expanded ? <div className="border-t border-gray-700 py-3">{detailsFor(row)}</div> : null}
+          </li>;
+        })}{!pageRows.length ? <li className="px-3 py-6 text-sm text-gray-400">No volunteers match these filters.</li> : null}</>}
+      />}
 
       {pageCount > 1 ? (
         <div className="flex items-center justify-between gap-3">

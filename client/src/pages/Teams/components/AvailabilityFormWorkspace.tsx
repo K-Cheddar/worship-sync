@@ -276,6 +276,7 @@ const AvailabilityFormWorkspace = ({
         canEdit={canEdit}
         busy={linkBusy}
         historyLoaded={historyLoaded}
+        historyError={historyError}
         serviceTimeZone={serviceTimeZone}
         {...recipientActions}
         onResendLink={openResend}

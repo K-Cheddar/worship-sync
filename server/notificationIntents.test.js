@@ -27,7 +27,6 @@ const createHarness = ({
   authorizeScheduleActor,
   authorizeCustomMember,
   authorizeMessagingHistory,
-  customSmsReady = false,
   scheduleBulkDispatchReady = false,
   assertCsrf,
   authorizeAvailabilityForm,
@@ -168,7 +167,6 @@ const createHarness = ({
     requireTeamsEdit: requireTeamsEdit || (async () => ({ user: { uid: "admin_a" } })),
     ...(authorizeCustomMember ? { authorizeCustomMember } : {}),
     ...(authorizeMessagingHistory ? { authorizeMessagingHistory } : {}),
-    customSmsReady,
     ...(authorizeSchedule ? { authorizeSchedule } : {}),
     authorizeScheduleActor: authorizeScheduleActor || (async ({ churchId: targetChurchId, scheduleId }) => ({
       admin: { user: { uid: "admin_a" } },
@@ -325,7 +323,7 @@ const createHarness = ({
 
 for (const firestore of [false, true]) {
   test(`custom message uses reviewed intents and a separate durable operation (${firestore ? "transaction fake" : "memory"})`, async () => {
-    const h = createHarness({ firestore, customSmsReady: true });
+    const h = createHarness({ firestore });
     const prepare = async (requestKey) => {
       const res = h.makeResponse();
       await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
@@ -355,7 +353,7 @@ for (const firestore of [false, true]) {
   });
 }
 
-test("custom message production gate blocks provider calls and foreign or archived members", async () => {
+test("custom message preparation needs no feature switch and rejects foreign or archived members", async () => {
   const h = createHarness();
   const prepare = async (memberId) => {
     const res = h.makeResponse();
@@ -364,10 +362,10 @@ test("custom message production gate blocks provider calls and foreign or archiv
     } }, res);
     return res;
   };
-  const batch = (await prepare(h.member.memberId)).payload.batch;
-  const gated = await h.dispatch(batch.batchId);
-  assert.equal(gated.statusCode, 503);
-  assert.equal((await h.send(batch.intentIds[0])).statusCode, 503);
+  const prepared = await prepare(h.member.memberId);
+  assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
+  assert.equal(prepared.payload.enabled, undefined);
+  assert.equal(prepared.payload.batch.summary.eligible, 1);
   assert.equal(h.providerCalls, 0);
   h.storeFor("teamRosterMembers").set("foreign", { memberId: "foreign", churchId: "other", phoneNumber: h.phoneNumber });
   assert.equal((await prepare("foreign")).statusCode, 403);
@@ -375,8 +373,52 @@ test("custom message production gate blocks provider calls and foreign or archiv
   assert.equal((await prepare("archived")).statusCode, 403);
 });
 
+test("custom direct send requires explicit confirmation and accepts an approved operation", async () => {
+  const h = createHarness();
+  const prepared = h.makeResponse();
+  await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+    memberIds: [h.member.memberId], message: "Practice Friday.", requestKey: "direct-reviewed-send",
+  } }, prepared);
+  assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
+  const intentId = prepared.payload.batch.intentIds[0];
+  const intent = await h.getDoc("notificationIntents", intentId);
+  const unconfirmed = h.makeResponse();
+  await h.handler.sendIntent({ params: { churchId: h.churchId, intentId }, body: {
+    approvalVersion: intent.approvalSnapshot.approvalVersion,
+  } }, unconfirmed);
+  assert.equal(unconfirmed.statusCode, 400);
+  assert.equal(h.providerCalls, 0);
+  const sent = await h.send(intentId);
+  assert.equal(sent.statusCode, 200, sent.payload?.errorMessage);
+  assert.equal(h.providerCalls, 1);
+  assert.equal((await h.send(intentId)).statusCode, 409);
+  assert.equal(h.providerCalls, 1);
+});
+
+for (const firestore of [false, true]) {
+  test(`custom dispatch refuses an expired approval without reaching the provider (${firestore ? "transaction fake" : "memory"})`, async () => {
+    const h = createHarness({ firestore });
+    const prepared = h.makeResponse();
+    await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+      memberIds: [h.member.memberId], message: "Practice Friday.", requestKey: `expired-${firestore}`,
+    } }, prepared);
+    assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
+    const intentId = prepared.payload.batch.intentIds[0];
+    const intent = await h.getDoc("notificationIntents", intentId);
+    intent.approvalSnapshot.expiresAt = Date.now() - 1;
+    h.storeFor("notificationIntents").set(intentId, intent);
+    const result = await h.dispatch(prepared.payload.batch.batchId);
+    assert.equal(result.statusCode, 200, result.payload?.errorMessage);
+    assert.equal(h.providerCalls, 0);
+    const latestIntent = await h.getDoc("notificationIntents", intentId);
+    assert.equal(latestIntent.status, "preview");
+    assert.equal(latestIntent.approvalSnapshot, null);
+    assert.equal(result.payload.batch.summary.eligible, 0);
+  });
+}
+
 test("custom message provider uncertainty fences replay of the same operation", async () => {
-  const h = createHarness({ customSmsReady: true, providerSend: async () => {
+  const h = createHarness({ providerSend: async () => {
     throw new Error("provider timeout");
   } });
   const prepared = h.makeResponse();
@@ -392,8 +434,48 @@ test("custom message provider uncertainty fences replay of the same operation", 
   assert.equal(h.providerCalls, 1);
 });
 
+for (const firestore of [false, true]) {
+  test(`custom message allows a deliberate new batch after a definitive failure (${firestore ? "transaction fake" : "memory"})`, async () => {
+    let rejectFirstAttempt = true;
+    const h = createHarness({ firestore, providerSend: async () => {
+      if (rejectFirstAttempt) {
+        rejectFirstAttempt = false;
+        throw Object.assign(new Error("The SMS provider rejected this number."), { definitiveRejection: true, code: "21614" });
+      }
+      return { providerMessageId: "SM_custom_retry", status: "accepted" };
+    } });
+    const prepare = async (requestKey) => {
+      const response = h.makeResponse();
+      await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+        memberIds: [h.member.memberId], message: "Practice Friday.", requestKey,
+      } }, response);
+      assert.equal(response.statusCode, 200, response.payload?.errorMessage);
+      return response.payload.batch;
+    };
+    const failedBatch = await prepare("custom-definitive-failure");
+    const failed = await h.dispatch(failedBatch.batchId);
+    assert.equal(failed.statusCode, 200, failed.payload?.errorMessage);
+    assert.equal(failed.payload.batch.summary.failed, 1);
+    assert.equal(h.providerCalls, 1);
+
+    const retryBatch = await prepare("custom-deliberate-retry");
+    assert.notEqual(retryBatch.batchId, failedBatch.batchId);
+    assert.equal(retryBatch.summary.eligible, 1);
+    const sent = await h.dispatch(retryBatch.batchId);
+    assert.equal(sent.statusCode, 200, sent.payload?.errorMessage);
+    assert.equal(sent.payload.batch.summary.sent, 1);
+    assert.equal(h.providerCalls, 2);
+
+    const history = h.makeResponse();
+    await h.handler.listMessageHistory({ params: { churchId: h.churchId }, query: {} }, history);
+    const customEntries = history.payload.entries.filter((entry) => entry.messageType === "custom_message");
+    assert.equal(customEntries.length, 2);
+    assert.deepEqual(new Set(customEntries.map((entry) => entry.status)), new Set(["failed", "accepted"]));
+  });
+}
+
 test("custom review excludes members without consent or after STOP and sends nothing", async () => {
-  const h = createHarness({ customSmsReady: true });
+  const h = createHarness();
   const consentId = smsConsentIdForChurchPhone(h.churchId, h.phoneNumber);
   h.storeFor("smsConsents").delete(consentId);
   const prepare = async (key) => {
@@ -406,16 +488,46 @@ test("custom review excludes members without consent or after STOP and sends not
   const withoutConsent = await prepare("missing-consent");
   assert.equal(withoutConsent.statusCode, 200, withoutConsent.payload?.errorMessage);
   assert.equal(withoutConsent.payload.batch.summary.eligible, 0);
+  assert.equal(withoutConsent.payload.batch.recipients[0].exclusionReason, "SMS consent is needed for this phone number.");
   h.storeFor("smsConsents").set(consentId, { consentId, churchId: h.churchId, phoneNumber: h.phoneNumber,
     status: "opted_out", optedOutAt: new Date().toISOString() });
   const optedOut = await prepare("opted-out");
   assert.equal(optedOut.statusCode, 200, optedOut.payload?.errorMessage);
   assert.equal(optedOut.payload.batch.summary.eligible, 0);
+  assert.equal(optedOut.payload.batch.recipients[0].exclusionReason, "This phone number has opted out of SMS.");
+  h.storeFor("teamRosterMembers").set("invalid_phone", {
+    memberId: "invalid_phone", churchId: h.churchId, firstName: "Invalid", lastName: "Number", phoneNumber: "not a phone",
+  });
+  const invalidNumber = h.makeResponse();
+  await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+    memberIds: ["invalid_phone"], message: "Practice Friday.", requestKey: "invalid-number",
+  } }, invalidNumber);
+  assert.equal(invalidNumber.statusCode, 200, invalidNumber.payload?.errorMessage);
+  assert.equal(invalidNumber.payload.batch.summary.eligible, 0);
+  assert.equal(invalidNumber.payload.batch.recipients[0].exclusionReason, "This volunteer does not have a valid mobile number.");
   assert.equal(h.providerCalls, 0);
 });
 
+test("custom dispatch rechecks church SMS configuration and returns an actionable reason", async () => {
+  const h = createHarness();
+  const prepared = h.makeResponse();
+  await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+    memberIds: [h.member.memberId], message: "Practice Friday.", requestKey: "configuration-changed",
+  } }, prepared);
+  assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
+  assert.equal(prepared.payload.batch.summary.eligible, 1);
+  const config = h.storeFor("churchMessagingConfigs").get(h.churchId);
+  h.storeFor("churchMessagingConfigs").set(h.churchId, { ...config, enabled: false });
+  const blocked = await h.dispatch(prepared.payload.batch.batchId);
+  assert.equal(blocked.statusCode, 200, blocked.payload?.errorMessage);
+  assert.equal(h.providerCalls, 0);
+  assert.equal(blocked.payload.batch.summary.eligible, 0);
+  assert.equal(blocked.payload.batch.summary.excluded, 1);
+  assert.match(blocked.payload.batch.recipients[0].exclusionReason, /SMS messaging must be enabled and fully configured/);
+});
+
 test("custom review keeps two roster identities sharing one consented phone", async () => {
-  const h = createHarness({ customSmsReady: true });
+  const h = createHarness();
   const res = h.makeResponse();
   await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
     memberIds: [h.member.memberId, "member_b"], message: "Practice Friday.", requestKey: "shared-phone",
@@ -428,7 +540,7 @@ test("custom review keeps two roster identities sharing one consented phone", as
 });
 
 test("unified history redacts form links while showing authorized custom content", async () => {
-  const h = createHarness({ customSmsReady: true });
+  const h = createHarness();
   const form = await h.preview();
   assert.equal(form.res.statusCode, 200, form.res.payload?.errorMessage);
   const custom = h.makeResponse();
@@ -447,7 +559,7 @@ test("unified history redacts form links while showing authorized custom content
 
 test("scoped history does not reveal another operator's custom message", async () => {
   let actorUid = "admin_a";
-  const h = createHarness({ customSmsReady: true,
+  const h = createHarness({
     authorizeCustomMember: async () => ({ admin: { user: { uid: actorUid } }, scoped: true }),
     authorizeMessagingHistory: async () => ({ admin: { user: { uid: actorUid } }, scoped: true }),
   });
@@ -2015,6 +2127,82 @@ test("Firestore emulator fences competing client sends with one provider request
     assert.equal(attempts.size, 1);
   } finally {
     releaseProvider?.();
+    await deleteApp(app);
+  }
+});
+
+test("Firestore emulator fences competing custom batch dispatches with one provider request", { skip: !firestoreEmulatorAvailable }, async () => {
+  await clearFirestoreEmulator();
+  const app = initializeApp({ projectId: firestoreEmulatorProjectId }, `custom-batch-race-${randomUUID()}`);
+  const db = getFirestore(app);
+  let signalProviderStarted;
+  let releaseProvider;
+  const providerStarted = new Promise((resolve) => { signalProviderStarted = resolve; });
+  const providerGate = new Promise((resolve) => { releaseProvider = resolve; });
+  try {
+    const h = createHarness({
+      firestoreDb: db,
+      providerSend: async () => {
+        signalProviderStarted();
+        await providerGate;
+        return { providerMessageId: "SM_custom_batch_race", status: "accepted" };
+      },
+    });
+    await h.seedFirestore();
+    const prepared = h.makeResponse();
+    await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+      memberIds: [h.member.memberId], message: "Practice Friday.", requestKey: "emulator-custom-race",
+    } }, prepared);
+    assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
+    const batchId = prepared.payload.batch.batchId;
+    const dispatches = [h.dispatch(batchId), h.dispatch(batchId)];
+    const fastest = await Promise.race(dispatches.map((promise) => promise.then((result) => ({ result }))));
+    if (fastest.result.statusCode !== 409) await providerStarted;
+    releaseProvider();
+    const results = await Promise.all(dispatches);
+    assert.equal(h.providerCalls, 1);
+    assert.ok(results.some((result) => result.statusCode === 409));
+    const batch = await db.collection("notificationBatches").doc(batchId).get();
+    assert.equal(batch.data().status, "sent");
+    const attempts = await db.collection("smsDeliveryAttempts").where("batchId", "==", batchId).get();
+    assert.equal(attempts.size, 1);
+  } finally {
+    releaseProvider?.();
+    await deleteApp(app);
+  }
+});
+
+test("Firestore emulator retains an uncertain custom attempt and never replays it", { skip: !firestoreEmulatorAvailable }, async () => {
+  await clearFirestoreEmulator();
+  const app = initializeApp({ projectId: firestoreEmulatorProjectId }, `custom-batch-recovery-${randomUUID()}`);
+  const db = getFirestore(app);
+  try {
+    const h = createHarness({
+      firestoreDb: db,
+      providerSend: async () => { throw Object.assign(new Error("Provider response timed out."), { code: "ETIMEDOUT" }); },
+    });
+    await h.seedFirestore();
+    const prepared = h.makeResponse();
+    await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+      memberIds: [h.member.memberId], message: "Practice Friday.", requestKey: "emulator-custom-unknown",
+    } }, prepared);
+    assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
+    const batchId = prepared.payload.batch.batchId;
+    const first = await h.dispatch(batchId);
+    assert.equal(first.statusCode, 200, first.payload?.errorMessage);
+    assert.equal(first.payload.batch.summary.uncertain, 1);
+    const status = h.makeResponse();
+    await h.handler.getAvailabilityBatch({ params: { churchId: h.churchId, batchId } }, status);
+    assert.equal(status.statusCode, 200, status.payload?.errorMessage);
+    assert.equal(status.payload.batch.summary.uncertain, 1);
+    assert.equal((await h.dispatch(batchId)).statusCode, 200);
+    assert.equal(h.providerCalls, 1);
+    const attempts = await db.collection("smsDeliveryAttempts").where("batchId", "==", batchId).get();
+    assert.equal(attempts.size, 1);
+    const history = h.makeResponse();
+    await h.handler.listMessageHistory({ params: { churchId: h.churchId }, query: {} }, history);
+    assert.equal(history.payload.entries.find((entry) => entry.historyId === batchId).status, "unconfirmed");
+  } finally {
     await deleteApp(app);
   }
 });

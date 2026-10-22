@@ -1,5 +1,5 @@
 import { act, render, screen } from "@testing-library/react";
-import { useResourceCompactLayout } from "./useResourceCompactLayout";
+import { useResponsiveTableLayout } from "./useResponsiveTableLayout";
 
 it("switches one layout at the content boundary and disconnects on unmount", () => {
   const originalObserver = global.ResizeObserver;
@@ -10,7 +10,7 @@ it("switches one layout at the content boundary and disconnects on unmount", () 
     return { observe: jest.fn(), disconnect, unobserve: jest.fn() };
   }) as unknown as typeof ResizeObserver;
   const Fixture = () => {
-    const { containerRef, compact } = useResourceCompactLayout();
+    const { containerRef, compact } = useResponsiveTableLayout();
     return <section ref={containerRef}>{compact ? <span>Compact list</span> : <span>Table</span>}</section>;
   };
   try {

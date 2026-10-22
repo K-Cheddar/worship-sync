@@ -243,7 +243,7 @@ const HomeLockedFeatureCard = ({
     component="button"
     type="button"
     onClick={onSelect}
-    className={`${HOME_TILE_CLASS} cursor-pointer justify-between gap-2`}
+    className={`${HOME_TILE_CLASS} cursor-pointer`}
     wrap
     aria-label={
       showDescriptions && description
@@ -251,36 +251,30 @@ const HomeLockedFeatureCard = ({
         : `${title}. Sign in required.`
     }
   >
-    <span className={`${HOME_TILE_CONTENT_CLASS} justify-between gap-2`}>
-      <span className="flex min-w-0 flex-1 items-center gap-3">
-        <span
-          aria-hidden
-          className={`${HOME_TILE_ICON_CLASS} ${iconColorClass}`}
-        >
-          <Icon
-            svg={icon}
-            size="xl"
-            className={iconColorClass}
-            svgClassName={iconColorClass}
-          />
+    <span className={`${HOME_TILE_CONTENT_CLASS} gap-3 py-3 whitespace-normal`}>
+      <span
+        aria-hidden
+        className={`${HOME_TILE_ICON_CLASS} ${iconColorClass}`}
+      >
+        <Icon
+          svg={icon}
+          size="xl"
+          className={iconColorClass}
+          svgClassName={iconColorClass}
+        />
+      </span>
+      <span className="flex min-w-0 flex-1 flex-col items-start">
+        <span className="block break-words text-[15px] font-semibold leading-snug tracking-[-0.01em] sm:text-[17px]">
+          {title}
         </span>
         {showDescriptions && description ? (
-          <span className="min-w-0 flex-1">
-            <span className="block break-words text-[15px] font-semibold leading-snug tracking-[-0.01em] sm:text-[17px]">
-              {title}
-            </span>
-            <span className="mt-0.5 block break-words text-xs font-normal leading-snug text-gray-400">
-              {description}
-            </span>
+          <span className="mt-0.5 block break-words text-xs font-normal leading-snug text-gray-400">
+            {description}
           </span>
-        ) : (
-          <span className="min-w-0 break-words text-[15px] font-semibold leading-snug tracking-[-0.01em] sm:text-[17px]">
-            {title}
-          </span>
-        )}
-      </span>
-      <span className="shrink-0 rounded border border-gray-600 px-1.5 py-0.5 text-[10px] font-medium text-gray-300 sm:text-xs">
-        Sign in
+        ) : null}
+        <span className="mt-2 inline-flex shrink-0 items-center whitespace-nowrap rounded-full bg-gray-700/70 px-2 py-0.5 text-[10px] font-medium leading-4 text-gray-300">
+          Sign in
+        </span>
       </span>
     </span>
   </Button>

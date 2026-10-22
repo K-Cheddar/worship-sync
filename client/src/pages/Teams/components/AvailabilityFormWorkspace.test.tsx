@@ -153,6 +153,19 @@ beforeEach(() => {
   window.localStorage.clear();
 });
 
+it("shows the volunteer list and actions in the compact layout", async () => {
+  const originalMatchMedia = window.matchMedia;
+  window.matchMedia = jest.fn().mockImplementation((query: string) => ({ matches: query === "(max-width: 767px)", media: query, addEventListener: jest.fn(), removeEventListener: jest.fn() }));
+  try {
+    render(<Harness />);
+    const list = screen.getByRole("list", { name: "Availability volunteers" });
+    expect(within(list).getByText("Rae Kim")).toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: "Availability volunteers" })).not.toBeInTheDocument();
+    await userEvent.setup().click(within(list).getByRole("button", { name: "Actions for Rae Kim" }));
+    expect(screen.getByRole("menuitem", { name: "Resend link" })).toBeInTheDocument();
+  } finally { window.matchMedia = originalMatchMedia; }
+});
+
 it("opens the shared review flow with only the chosen previously sent volunteer selected", async () => {
   const user = userEvent.setup();
   jest.mocked(prepareAvailabilityNotificationBatch).mockResolvedValue({ success: true, batch: reviewedBatch });

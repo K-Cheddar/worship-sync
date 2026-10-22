@@ -331,8 +331,53 @@ try {
 
   await page.getByRole("link", { name: "Service Workspace" }).click();
   await page.getByText("Service workspace route").waitFor();
+
+  await page.goto("http://127.0.0.1:3116/e2e/home-launcher-entry.html?guest=true#/home");
+  const guestCards = page.getByRole("group", { name: "Guest navigation" }).getByRole("button");
+  await guestCards.first().waitFor();
+  assert.equal(await guestCards.count(), 5);
+  for (const width of [1284, 390, 900, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const fontSize of ["100%", "125%"]) {
+      await page.evaluate((value) => { document.documentElement.style.fontSize = value; }, fontSize);
+      for (const descriptions of [true, false]) {
+        const toggle = page.getByRole("switch", { name: "Show what each page does" });
+        if (await toggle.isChecked() !== descriptions) await toggle.click();
+        const overflow = await guestCards.evaluateAll((cards) => cards.flatMap((card) => {
+          const bounds = card.getBoundingClientRect();
+          const walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT);
+          const overflowing = [];
+          while (walker.nextNode()) {
+            if (!walker.currentNode.textContent.trim()) continue;
+            const range = document.createRange();
+            range.selectNodeContents(walker.currentNode);
+            if ([...range.getClientRects()].some((rect) => rect.left < bounds.left - 1 || rect.right > bounds.right + 1 || rect.top < bounds.top - 1 || rect.bottom > bounds.bottom + 1)) {
+              overflowing.push(walker.currentNode.textContent);
+            }
+          }
+          return overflowing;
+        }));
+        if (screenshotDirectory && fontSize === "100%" && descriptions) {
+          await page.getByRole("region", { name: "Available after sign in" }).screenshot({ path: join(screenshotDirectory, `guest-${width}px.png`), animations: "disabled" });
+        }
+        assert.deepEqual(overflow, [], `guest card text must stay inside cards at ${width}px, ${fontSize} zoom, descriptions=${descriptions}`);
+        assert.equal(await guestCards.evaluateAll((cards) => cards.every((card) => {
+          const badge = [...card.querySelectorAll("span")].find((span) => span.childElementCount === 0 && span.textContent.trim() === "Sign in");
+          if (!badge || !badge.previousElementSibling) return false;
+          const style = getComputedStyle(badge);
+          const bounds = badge.getBoundingClientRect();
+          return style.borderTopWidth === "0px" && style.backgroundColor !== "rgba(0, 0, 0, 0)"
+            && parseFloat(style.borderTopLeftRadius) >= bounds.height / 2
+            && bounds.top >= badge.previousElementSibling.getBoundingClientRect().bottom;
+        })), true, "Sign in should be a filled pill badge below the text, without a button border or overlapping text");
+      }
+    }
+  }
+  await guestCards.first().click();
+  await page.getByRole("dialog", { name: "Sign in required" }).waitFor();
+  assert.equal(await page.getByRole("dialog").getByRole("link", { name: "Sign in", exact: true }).getAttribute("href"), "#/login");
   assert.deepEqual(pageErrors, [], "home launcher should not produce browser errors");
-  console.log("PASS home launcher browser smoke: responsive grids, stable toolbar, navigation, collapsed outputs, and copied output URL");
+  console.log("PASS home launcher browser smoke: responsive grids, guest card wrapping and sign-in prompt, stable toolbar, navigation, collapsed outputs, and copied output URL");
   await context.close();
 } finally {
   if (browser) await browser.close();

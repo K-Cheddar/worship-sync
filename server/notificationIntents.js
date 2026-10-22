@@ -49,8 +49,6 @@ export const NOTIFICATION_PREVIEW_TTL_MS = 10 * 60 * 1000;
 // The explicit environment switch stays off by default. Segment pacing is
 // mandatory so a future activation cannot inherit an unverified send rate.
 export const SCHEDULE_BULK_DISPATCH_READY = resolveScheduleSmsDispatchConfig().enabled;
-export const CUSTOM_VOLUNTEER_SMS_READY = false;
-
 // This foundation has no automatic send path. Keep this server-side kill
 // switch hard-disabled until a separately reviewed product change authorizes it.
 export const AUTOMATIC_NOTIFICATION_SENDS_DISABLED = true;
@@ -168,7 +166,6 @@ export const createNotificationIntentHandlers = ({
   setDoc,
   automaticSendsDisabled = AUTOMATIC_NOTIFICATION_SENDS_DISABLED,
   scheduleBulkDispatchReady = SCHEDULE_BULK_DISPATCH_READY,
-  customSmsReady = CUSTOM_VOLUNTEER_SMS_READY,
   scheduleSmsDispatchConfig = resolveScheduleSmsDispatchConfig(),
   logger = console,
 }) => {
@@ -568,7 +565,9 @@ export const createNotificationIntentHandlers = ({
       throw httpError(409, "This notification type does not match an intake request.");
     }
     const normalizedConfig = normalizeChurchMessagingConfig(config, churchId);
-    if (normalizedConfig?.churchId !== churchId || !isChurchMessagingReady(normalizedConfig)) throw httpError(503, "Church SMS messaging is not configured and enabled.");
+    if (normalizedConfig?.churchId !== churchId || !isChurchMessagingReady(normalizedConfig)) {
+      throw httpError(503, "SMS messaging must be enabled and fully configured for this church. Update the church SMS settings, then review the message again.");
+    }
     const eligibility = resolveSmsMemberEligibility({ member, churchId, consent: null });
     const consent = eligibility.phoneNumber
       ? records
@@ -1115,7 +1114,6 @@ export const createNotificationIntentHandlers = ({
       const intentId = normalize(req.params.intentId);
       const currentIntent = await getDoc(COLLECTIONS.notificationIntents, intentId);
       if (!currentIntent || currentIntent.churchId !== churchId) throw httpError(404, "Message preview not found.");
-      if (currentIntent.intentType === "custom_message" && !customSmsReady) throw httpError(503, "Custom volunteer texts are not enabled for this church yet.");
       const readBackgroundApproval = async () => {
         if (!backgroundContext || !isScheduleBulkDispatchReady()) throw httpError(503, "Bulk schedule SMS is not ready for dispatch.");
         const batch = await getBatchForChurch(backgroundContext.batchId, churchId);
@@ -1579,7 +1577,7 @@ export const createNotificationIntentHandlers = ({
       const attempt = intent?.attemptId ? await getDoc(COLLECTIONS.smsDeliveryAttempts, intent.attemptId) : null;
       const snapshot = intent?.approvalSnapshot;
       const ready = Boolean(intent && ["preview", "ready"].includes(intent.status) &&
-        snapshot?.approvalVersion && Number(snapshot.expiresAt) > Date.now());
+        snapshot?.approvalVersion && Number(snapshot.expiresAt) > Date.now() && !row.exclusionReason);
       return {
         memberId: row.memberId, memberName: row.memberName,
         maskedPhoneNumber: snapshot?.phoneLast4 ? `••• ••• ${snapshot.phoneLast4}` : row.maskedPhoneNumber || "",
@@ -1600,7 +1598,8 @@ export const createNotificationIntentHandlers = ({
       recipients, approvalVersion: batch.reviewVersion || "",
       summary: {
         selected: recipients.length, eligible,
-        excluded: recipients.filter((row) => row.status === "excluded").length,
+        excluded: recipients.filter((row) => row.status === "excluded" ||
+          (row.exclusionReason && ["preview", "ready"].includes(row.status))).length,
         totalSegments: recipients.filter((row) => row.eligible).reduce((total, row) => total + row.segmentCount, 0),
         sent: recipients.filter((row) => row.status === "sent").length,
         delivered: recipients.filter((row) => row.attemptStatus === "delivered").length,
@@ -1656,8 +1655,13 @@ export const createNotificationIntentHandlers = ({
         if (!current) await setDoc(COLLECTIONS.notificationBatches, batchId, next, { merge: false });
         return next;
       });
-      if (batch.status !== "preparing") return res.json({ success: true, batch: await customBatchDetail(batch), enabled: customSmsReady });
+      if (batch.status !== "preparing") return res.json({ success: true, batch: await customBatchDetail(batch) });
       const rows = [];
+      const exclusionReasons = {
+        no_mobile: "This volunteer does not have a valid mobile number.",
+        consent_needed: "SMS consent is needed for this phone number.",
+        opted_out: "This phone number has opted out of SMS.",
+      };
       for (const member of members) {
         const id = intentIdFor(hashValue, churchId, `${batchId}|${member.memberId}`);
         const existing = await getDoc(COLLECTIONS.notificationIntents, id);
@@ -1675,7 +1679,7 @@ export const createNotificationIntentHandlers = ({
         const reviewed = await prepareIntentReview({ intentId: id, ...saved });
         rows.push({ memberId: member.memberId, memberName: [member.firstName, member.lastName].filter(Boolean).join(" ") || "Volunteer",
           intentId: reviewed.eligible ? id : "", status: reviewed.eligible ? "preview" : "excluded",
-          exclusionReason: reviewed.eligible ? "" : "Not eligible for SMS.",
+          exclusionReason: reviewed.eligible ? "" : exclusionReasons[reviewed.validated.eligibilityStatus] || "This volunteer is not currently eligible for SMS.",
           maskedPhoneNumber: reviewed.validated.phoneNumber ? `••• ••• ${reviewed.validated.phoneNumber.slice(-4)}` : "",
           segmentCount: measureSmsMessage(message).segmentCount, approvalVersion: reviewed.approvalVersion });
       }
@@ -1699,7 +1703,7 @@ export const createNotificationIntentHandlers = ({
         await setDoc(COLLECTIONS.notificationBatches, batchId, updated, { merge: false });
         return updated;
       });
-      return res.json({ success: true, batch: await customBatchDetail(finalized), enabled: customSmsReady });
+      return res.json({ success: true, batch: await customBatchDetail(finalized) });
     } catch (error) {
       return res.status(error.statusCode || 500).json({ success: false, errorMessage: safeErrorMessage(error, "Could not prepare this message.") });
     }
@@ -2669,7 +2673,7 @@ export const createNotificationIntentHandlers = ({
       const batch = await getBatchForChurch(normalize(req.params.batchId), churchId);
       if (batch.intentType === "custom_message") {
         await authorizeCustomBatch(req, batch);
-        return res.json({ success: true, batch: await customBatchDetail(batch), enabled: customSmsReady });
+        return res.json({ success: true, batch: await customBatchDetail(batch) });
       }
       if (batch.intentType === "schedule_initial_notification" && batch.scheduleId) {
         const access = await authorizeScheduleSource(req, churchId, batch.scheduleId);
@@ -2800,7 +2804,6 @@ export const createNotificationIntentHandlers = ({
       const batchId = normalize(req.params.batchId);
       const existingBatch = await getBatchForChurch(batchId, churchId);
       if (existingBatch.intentType === "custom_message") {
-        if (!customSmsReady) throw httpError(503, "Custom volunteer texts are not enabled for this church yet.");
         const access = await authorizeCustomBatch(req, existingBatch);
         if (req.body?.confirmed !== true) throw httpError(400, "Review this message before sending.");
         const claim = (current) => {

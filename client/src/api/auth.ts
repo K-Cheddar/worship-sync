@@ -1473,7 +1473,7 @@ export const getMessageHistory = async (churchId: string, cursor = "") =>
 
 export const prepareCustomMessage = async (churchId: string, body: {
   memberIds: string[]; message: string; requestKey: string;
-}) => apiFetch<{ success: boolean; batch: NotificationBatch; enabled: boolean }>(
+}) => apiFetch<{ success: boolean; batch: NotificationBatch }>(
   `api/churches/${churchId}/notification-batches/custom/prepare`,
   { method: "POST", body: JSON.stringify(body) },
 );
@@ -1621,7 +1621,7 @@ export const getAvailabilityNotificationBatch = async (
   churchId: string,
   batchId: string,
 ) =>
-  apiFetch<{ success: boolean; batch: NotificationBatch; enabled?: boolean }>(
+  apiFetch<{ success: boolean; batch: NotificationBatch }>(
     `api/churches/${churchId}/notification-batches/${encodeURIComponent(batchId)}`,
   );
 

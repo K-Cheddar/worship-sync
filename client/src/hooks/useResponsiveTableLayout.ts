@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useMediaQuery } from "./useMediaQuery";
 
-/** Observe the actual list owner: navigation chrome can narrow a tablet viewport. */
-export const useResourceCompactLayout = () => {
-  const containerRef = useRef<HTMLElement>(null);
+/** Use available content width so sidebars do not force a cramped desktop table. */
+export const useResponsiveTableLayout = <T extends HTMLElement = HTMLElement>() => {
+  const containerRef = useRef<T>(null);
   const narrowViewport = useMediaQuery("(max-width: 767px)");
   const [containerWidth, setContainerWidth] = useState<number | null>(null);
   useEffect(() => {

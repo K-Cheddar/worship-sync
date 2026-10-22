@@ -102,7 +102,7 @@ const ResourceMobileList = ({ entries, churchId, canEdit, selecting, selectedKey
   onRename: (entry: ResourceLibraryEntry) => void;
   onDelete: (entry: ResourceLibraryEntry) => void;
 }) => (
-  <ul aria-label="Resources" className="min-h-0 flex-1 divide-y divide-gray-700 overflow-y-auto overflow-x-hidden pb-4">
+  <>
     {entries.map((entry) => {
       const key = entryKey(entry);
       const visual = resourceEntryFileVisual(entry);
@@ -119,12 +119,7 @@ const ResourceMobileList = ({ entries, churchId, canEdit, selecting, selectedKey
         <ResourceRowMenu entry={entry} churchId={churchId} canEdit={canEdit} onPreview={() => onPreview(entry)} onRename={() => onRename(entry)} onDelete={() => onDelete(entry)} />
       </li>;
     })}
-  </ul>
+  </>
 );
-
-export const ResourceMobileSkeleton = () => <div role="region" aria-label="Loading resources" aria-busy="true" className="min-h-0 flex-1 overflow-hidden">
-  <span className="sr-only" role="status">Loading resources...</span>
-  {Array.from({ length: 5 }, (_, index) => <div key={index} aria-hidden="true" className="flex items-center gap-3 border-b border-gray-700 px-3 py-0"><div className="size-[44px] shrink-0 animate-pulse rounded-lg bg-gray-800" /><div className="min-w-0 flex-1 space-y-2"><div className="h-4 w-4/5 animate-pulse rounded bg-gray-700" /><div className="h-3 w-2/3 animate-pulse rounded bg-gray-800" /></div></div>)}
-</div>;
 
 export default ResourceMobileList;
