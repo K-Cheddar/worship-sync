@@ -1,5 +1,40 @@
 # Availability forms UX workflow review
 
+## Legacy rendering repair review (2026-10-21)
+
+### Findings
+Critical: None. High: None. Medium: None. Low: None remaining in this repair.
+
+Confirmed cause: IntakeManager selected the workspace only when purpose was team_availability. The supported legacy suggestion branch defaults to general_intake and preserves extra fields; older records may omit purpose altogether. A read-only, field-projected query scoped to churchId demo confirmed an October Availability record with missing purpose, general-intake fields including availability, three service selections and six saved occurrences. A separate October record has explicit team_availability. No documents were written.
+
+Actual runtime check: ports 3000 and 5000 belong to the client/server in worship-sync-2, on in-progress-2 at merge 2212b260, which contains 13e4b30. That source contains both the redesigned workspace and the purpose-only gate. The missing-purpose record reproduces the old interface even with that redesign present; changing a cache does not correct its classification. No connected browser session was available to inspect the user's loaded client state; direct module retrieval was unavailable because Windows could not check the development certificate's revocation status. No TLS validation was disabled. The repair remains on the requested in-progress branch in worship-sync; the running other-worktree process has not been restarted or changed.
+
+### Product authorization status
+Authorized by the current legacy-availability repair request. The new predicate is for presentation only: explicit team_availability, or resolved availability field plus persisted service selections/occurrences. Names do not participate. Existing editor purpose checks and server/team-scoped authorization remain unchanged. No purpose migration, data mutation on opening, new API, source of truth, resend rule, or broader general-intake permission was introduced.
+
+### Open questions / assumptions
+None. Public general-intake submissions remain progressively accessible through the existing submission cards and processing actions in Responses. Matrix counts are labeled personal-link responses for legacy/general intake so they do not imply name-based matching of public submissions. General forms without enabled service-date availability retain the old intake experience.
+
+### Verification gaps
+Workflow scope only; no required verification remains. Optional: authenticated interactive inspection of the user's running browser was unavailable. The Forms route regression tests mount the real TeamsFormsPage and IntakeManager under representative router/global identity/toast/navigation contexts; the browser fixture now follows that same selection path rather than directly mounting AvailabilityFormWorkspace.
+
+| Invariant | Scenario / code evidence | Executed evidence | Result |
+| --- | --- | --- | --- |
+| Legacy records reach workspace | Select general_intake, missing purpose with explicit fields, or missing purpose/fields through /teams-and-services/forms | All three new route tests failed with the original purpose-only gate restored temporarily, then passed with the fix | Pass |
+| Ordinary intake remains ordinary | Availability disabled despite saved services, or no service-date coverage; names alone do not classify | intakeFormFields.test.ts negative cases and onboarding route test | Pass |
+| Legacy capabilities survive | Open legacy editor, retain fields/wording/email and general_intake semantics; process public submission and update member/team | Route tests exercise save payload, public submission card, matching and original processing callbacks | Pass |
+| Links and approval remain separate | Copy public link and private member link; prepare without dispatch; only reviewed Send dispatches | Real page/manager route test plus shared send-flow, selection, history, batch action and Messages suites | Pass |
+| Personal responses stay canonical | Refresh recipient-linked submission; derive missing date snapshot without a write | Legacy response refresh and service-selection-only route tests; existing progress tests | Pass |
+| Responsive deferred UI | Select general-intake form on desktop and missing-purpose form on mobile, switch tabs, expand answers, open/cancel one dialog | test:e2e:availability-workspace at 1280px and 375px; screenshots inspected; no browser errors or page overflow | Pass |
+
+Executed: 12 Jest suites, 166 tests passed using --runInBand --silent: intakeFormFields, intakeAvailabilitySuggestion, IntakeManager, TeamsFormsPage.workspace, TeamsFormsPage, TeamsMessagesPage, AvailabilityFormSendFlow, AvailabilityBatchReview, availabilityFormProgress, availabilityRecipientSelection, availabilityNotificationHistory and availabilityBatchActions. Final type-check, lint:check, build:strict, browser suite and git diff --check passed. The normal strict build used approved execution outside the Windows sandbox and retained existing CSS/chunk-size warnings. No server or provider protocol changed and no real SMS was sent.
+
+### Pattern / learning opportunities
+The original standalone workspace browser fixture could not expose an entry-point classification defect. It now opens a saved legacy record through the real Forms page and row-selection path. The production correction is fewer than forty lines; the larger diff supplies the requested workflow regression coverage rather than a new subsystem.
+
+### Final readiness
+Ready for this workflow scope. The checklist below remains satisfied; this repair adds no new async state owner, durable mutation, schema or external resource lifecycle. The running dev process still uses the other worktree and needs the updated source to show the fix there.
+
 ## Findings
 Critical: None. High: None. Medium: None. Low: None remaining.
 

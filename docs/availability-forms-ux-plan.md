@@ -1,5 +1,17 @@
 # Availability forms workspace plan
 
+## Legacy classification correction (2026-10-21)
+
+Goal / Before / After: the purpose-only detail gate skips general_intake and purpose-less records with service-date availability. Use the workspace for explicit team_availability forms, or forms with a resolved availability field and saved occurrences or service selections. Names do not determine classification. Ordinary onboarding without service-date coverage keeps its existing view.
+
+Product Decision Check: the current repair request authorizes a presentation change only. Preserve stored purpose, general-intake editing, additional fields, matching, public links, submission processing, permissions and SMS rules. General submissions remain in the Responses tab. Service-selection-only legacy records need a derived date view without writing a new snapshot.
+
+Architecture / affected surfaces: TeamsAndServices forms route mounts TeamsFormsPage, which passes administrator forms to IntakeManager. Row selection preserves the original record; its purpose-only detail gate causes this defect. The suggestion generator's supported general-scope branch defaults to general_intake and keeps template fields. Scoped team editors intentionally receive only server-authorized team_availability forms; do not broaden that authorization filter.
+
+Implementation / risks: reuse resolveIntakeFormFields for a shared presentation predicate. Leave editor/server purpose checks unchanged. Generate missing display occurrences from existing service selections/time zone without persisting that projection. Do not bind public submissions to roster members by name.
+
+Verification: real Forms route selection with explicit general_intake, omitted purpose/fields, extra fields and submissions, plus onboarding negatives; public/private links, editing, member processing, response tracking and final SMS review. Run classification, suggestion, sending/history and affected UI suites, TypeScript, lint, strict build, browser checks and diff review. No consequential open questions.
+
 ## Goal
 Two tabs, one primary action, and progressive disclosure for existing availability forms.
 
