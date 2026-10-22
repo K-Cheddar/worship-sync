@@ -11,7 +11,7 @@ export const getAvailabilityFormProgress = (
 ) =>
   getAvailabilityRecipientRows(input).map((row) => {
     const { recipient, previousDeliveryStatus } = row;
-    const response = responses.find(
+    const response = recipient?.revokedAt ? undefined : responses.find(
       (item) =>
         item.formId === input.form?.formId &&
         item.recipientId === recipient?.recipientId &&
@@ -19,14 +19,16 @@ export const getAvailabilityFormProgress = (
         Boolean(recipient?.respondedAt) &&
         item.respondedAt === recipient?.respondedAt,
     );
-    const submission = recipient?.submissionId
+    const submission = !recipient?.revokedAt && recipient?.submissionId
       ? submissions.find(
           (item) =>
             item.formId === input.form?.formId &&
             item.submissionId === recipient.submissionId,
         )
       : undefined;
-    const responded = Boolean(recipient?.respondedAt || response || submission);
+    const responded = Boolean(
+      !recipient?.revokedAt && (recipient?.respondedAt || response || submission),
+    );
     const requested =
       !recipient?.revokedAt &&
       (Boolean(recipient?.linkCopiedAt) ||
@@ -76,6 +78,7 @@ export const getAvailabilityFormProgress = (
       responded,
       status,
       delivery,
+      hasResponseDetails: Boolean(response || submission),
       occurrenceAvailability:
         response?.occurrenceAvailability ||
         submission?.occurrenceAvailability ||
@@ -86,3 +89,21 @@ export const getAvailabilityFormProgress = (
 export type AvailabilityProgressRow = ReturnType<
   typeof getAvailabilityFormProgress
 >[number];
+
+export const summarizeAvailabilityAnswers = (
+  answers: Record<string, "available" | "unavailable">,
+  occurrenceIds: string[],
+) => {
+  const available = occurrenceIds.filter(
+    (occurrenceId) => answers[occurrenceId] === "available",
+  ).length;
+  const unavailable = occurrenceIds.filter(
+    (occurrenceId) => answers[occurrenceId] === "unavailable",
+  ).length;
+  return {
+    available,
+    unavailable,
+    answered: available + unavailable,
+    total: occurrenceIds.length,
+  };
+};

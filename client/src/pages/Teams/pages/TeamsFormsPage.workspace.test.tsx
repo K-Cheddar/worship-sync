@@ -194,7 +194,7 @@ function Harness({
   );
 }
 
-test("administrator Forms refresh displays recipient-linked answers through the real page composition", async () => {
+test("administrator Forms shows one volunteer list and expands the current linked response", async () => {
   const user = userEvent.setup();
   render(<Harness />);
   await user.click(
@@ -206,19 +206,23 @@ test("administrator Forms refresh displays recipient-linked answers through the 
   expect(within(progress).getByText("Not invited")).toBeInTheDocument();
   expect(within(progress).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "0");
   expect(screen.getByRole("button", { name: "Send requests" })).toHaveAttribute("data-variant", "presentCta");
-  await user.type(screen.getByRole("textbox", { name: /Search members/ }), "nobody");
+  expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+  const volunteers = screen.getByRole("region", { name: "Volunteers" });
+  expect(within(volunteers).getByRole("table", { name: "Availability volunteers" })).toBeInTheDocument();
+  await user.type(within(volunteers).getByRole("textbox", { name: /Search volunteers/ }), "nobody");
   expect(within(progress).getByRole("progressbar")).toHaveAttribute("aria-valuetext", "0 of 1 responded");
   expect(within(progress).getByRole("button", { name: "Refresh status" })).toBeInTheDocument();
-  await user.click(screen.getByRole("tab", { name: "Responses" }));
-  expect(screen.getByText(/No responses received yet/)).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Refresh status" }));
-  expect(
-    await screen.findByText("1 of 1 responded · 0 awaiting responses"),
-  ).toBeInTheDocument();
-  expect(
-    within(screen.getByRole("table")).getByText("Unavailable"),
-  ).toBeInTheDocument();
-  expect(within(progress).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "100");
+  await waitFor(() => expect(within(progress).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "100"));
+  expect(screen.queryByText(/1 of 1 responded ·/)).not.toBeInTheDocument();
+  await user.clear(within(volunteers).getByRole("textbox", { name: /Search volunteers/ }));
+  expect(screen.getByText("1 of 1 answered")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "View availability for Jane Smith" }));
+  expect(within(screen.getByRole("region", { name: "Jane Smith availability details" })).getByText("Unavailable")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "View availability by date" }));
+  const comparison = screen.getByRole("dialog", { name: "Availability by date" });
+  expect(within(comparison).getAllByText("Unavailable", { exact: true }).length).toBeGreaterThan(0);
+  expect(within(comparison).getByText("Show full response matrix")).toBeInTheDocument();
 });
 
 test("zero-recipient progress is valid and invitation counts stay unknown until history loads", async () => {
@@ -267,14 +271,12 @@ test("scoped Forms refresh uses restricted response data and exposes no general-
   expect(
     screen.queryByRole("button", { name: "More form actions" }),
   ).not.toBeInTheDocument();
-  await user.click(screen.getByRole("tab", { name: "Responses" }));
-  expect(screen.getByText(/No responses received yet/)).toBeInTheDocument();
+  expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Volunteers" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Refresh status" }));
-  await waitFor(() =>
-    expect(
-      within(screen.getByRole("table")).getByText("Available"),
-    ).toBeInTheDocument(),
-  );
+  await screen.findByText("1 of 1 answered");
+  await user.click(screen.getByRole("button", { name: "View availability for Jane Smith" }));
+  expect(screen.getByText("Available")).toBeInTheDocument();
   expect(getTeamAvailabilityManagementData).toHaveBeenCalledWith("church");
 });
 
@@ -338,12 +340,9 @@ test.each([
       .mockResolvedValue({ success: true, form: record });
     render(<Harness formRecord={record} />);
     await openOctober(user);
-    expect(screen.getAllByRole("tab")).toHaveLength(2);
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
     expect(screen.getByText(/6 service dates/)).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Recipients" })).toHaveAttribute(
-      "data-state",
-      "active",
-    );
+    expect(screen.getByRole("region", { name: "Volunteers" })).toBeInTheDocument();
     expect(
       screen.queryByText("Individual links and text messages"),
     ).not.toBeInTheDocument();
@@ -384,11 +383,11 @@ test.each([
         }),
       ),
     );
-    await screen.findByRole("tab", { name: "Recipients" });
+    await screen.findByRole("region", { name: "Volunteers" });
   },
 );
 
-test("legacy Responses keeps public submissions, matching and member updates alongside personal tracking", async () => {
+test("legacy availability keeps unlinked public submissions separate from volunteer responses", async () => {
   setServerTimeOffset(new Date("2026-10-01T12:00:00Z").getTime() - Date.now());
   const user = userEvent.setup();
   const publicSubmission: TeamIntakeSubmission = {
@@ -420,10 +419,9 @@ test("legacy Responses keeps public submissions, matching and member updates alo
     />,
   );
   await openOctober(user);
-  await user.click(screen.getByRole("tab", { name: "Responses" }));
-  expect(
-    screen.getByRole("table", { name: "Availability response matrix" }),
-  ).toBeInTheDocument();
+  expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Volunteers" })).toBeInTheDocument();
+  expect(within(screen.getByRole("region", { name: "Volunteers" })).getByText("Not invited")).toBeInTheDocument();
   await user.click(screen.getByText("Review intake submissions (1)"));
   await user.click(
     screen.getByRole("button", { name: "Expand submission from Jane Smith" }),
@@ -589,19 +587,15 @@ test("an onboarding form with no service-date availability retains the ordinary 
   expect(screen.getByRole("button", { name: "Send form" })).toBeInTheDocument();
 });
 
-test("legacy personal response tracking refreshes from the recipient-linked submission", async () => {
+test("legacy personal response tracking expands only the recipient-linked submission", async () => {
   setServerTimeOffset(new Date("2026-10-01T12:00:00Z").getTime() - Date.now());
   const user = userEvent.setup();
   render(<Harness formRecord={legacyOctober} />);
   await openOctober(user);
-  await user.click(screen.getByRole("tab", { name: "Responses" }));
   await user.click(screen.getByRole("button", { name: "Refresh status" }));
-  expect(
-    await within(screen.getByRole("table")).findByText("Unavailable"),
-  ).toBeInTheDocument();
-  expect(
-    screen.getByText(/Personal-link responses: 1 of 1 responded/),
-  ).toBeInTheDocument();
+  await user.click(await screen.findByRole("button", { name: "View availability for Jane Smith" }));
+  expect(screen.getByText("Unavailable")).toBeInTheDocument();
+  expect(screen.queryByText(/Personal-link responses:/)).not.toBeInTheDocument();
 });
 
 test("legacy service-selection-only forms derive readable service dates without writing a snapshot", async () => {
@@ -631,10 +625,8 @@ test("legacy service-selection-only forms derive readable service dates without 
   );
   await openOctober(user);
   expect(screen.getByText(/1 service dates/)).toBeInTheDocument();
-  await user.click(screen.getByRole("tab", { name: "Responses" }));
-  expect(
-    within(screen.getByRole("table")).getByText("October 04, 2026"),
-  ).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "View availability by date" }));
+  expect(screen.getByText("October 04, 2026")).toBeInTheDocument();
   expect(record.availabilityOccurrences).toEqual([]);
   expect(record.purpose).toBeUndefined();
   expect(updateTeamIntakeForm).not.toHaveBeenCalled();
