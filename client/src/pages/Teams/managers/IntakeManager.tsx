@@ -65,6 +65,7 @@ import {
   ALL_INTAKE_FORM_FIELDS,
   INTAKE_FORM_FIELD_OPTIONS,
   resolveIntakeFormFields,
+  isAvailabilityFocusedForm,
 } from "../intakeFormFields";
 import { emptyData } from "../teamsConstants";
 import {
@@ -2368,7 +2369,21 @@ const IntakeManager = ({
     </>
   );
 
-  if (!showingEditForm && activeSelectedForm?.purpose === "team_availability") {
+  if (!showingEditForm && activeSelectedForm && isAvailabilityFocusedForm(activeSelectedForm)) {
+    // Legacy forms can store service selections without an occurrence snapshot.
+    // This read projection does not change their purpose or saved fields.
+    const workspaceForm = activeSelectedForm.availabilityOccurrences?.length || !canCalculateServiceDates
+      ? activeSelectedForm
+      : {
+          ...activeSelectedForm,
+          availabilityOccurrences: generateScheduleOccurrences({
+            services,
+            serviceIds: (activeSelectedForm.availabilityServices || []).map(({ serviceId }) => serviceId),
+            startDate: activeSelectedForm.startDate,
+            endDate: activeSelectedForm.endDate,
+            timeZone: serviceTimeZone,
+          }),
+        };
     const rows = getAvailabilityFormProgress({
       members: applicableMembers, positions, teams, recipients: selectedFormRecipients,
       eligibilityByMemberId: smsEligibilityByMemberId, notificationIntents: formNotificationIntents,
@@ -2419,7 +2434,7 @@ const IntakeManager = ({
           onRevoke: (recipient) => void revokeRecipient(recipient),
         }}
         sendFlowProps={{
-          churchId, form: activeSelectedForm, members, positions, teams, recipients: intakeRecipients,
+          churchId, form: workspaceForm, members, positions, teams, recipients: intakeRecipients,
           eligibilityByMemberId: smsEligibilityByMemberId, notificationIntents: formNotificationIntents,
           smsDeliveryAttempts, historyLoaded: messageHistoryFormId === activeSelectedForm.formId,
           historyError: messageHistoryError?.formId === activeSelectedForm.formId ? messageHistoryError.message : "",
@@ -2569,7 +2584,7 @@ const IntakeManager = ({
                     </Button>
                   ) : null
                 }
-                canEdit={canEdit || form.purpose === "team_availability"}
+                canEdit={canEdit || isAvailabilityFocusedForm(form)}
                 onTitleClick={() => {
                   if (selectedForm?.formId === form.formId) return;
                   requestDiscardAction(() => openFormSubmissions(form));

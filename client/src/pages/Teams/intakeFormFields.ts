@@ -53,3 +53,9 @@ export const resolveIntakeFormFields = (
         ),
       )]
     : LEGACY_INTAKE_FORM_FIELDS;
+
+/** Presentation only: legacy availability forms keep their general-intake purpose and editor. */
+export const isAvailabilityFocusedForm = (form: TeamIntakeForm): boolean =>
+  form.purpose === "team_availability" ||
+  (resolveIntakeFormFields(form).includes("availability") &&
+    Boolean(form.availabilityOccurrences?.length || form.availabilityServices?.length));

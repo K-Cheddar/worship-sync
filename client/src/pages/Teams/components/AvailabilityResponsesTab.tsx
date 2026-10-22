@@ -64,6 +64,7 @@ const AvailabilityResponsesTab = ({
   return (
     <section className="space-y-4" aria-label="Availability responses">
       <p className="text-sm text-gray-300">
+        {form.purpose !== "team_availability" ? "Personal-link responses: " : ""}
         {responded} of {rows.length} responded · {rows.length - responded}{" "}
         awaiting responses
       </p>
@@ -87,8 +88,9 @@ const AvailabilityResponsesTab = ({
       </div>
       {!responded ? (
         <p className="text-sm text-gray-400">
-          No responses received yet. Volunteers’ answers will appear here after
-          they submit.
+          {form.purpose === "team_availability"
+            ? "No responses received yet. Volunteers’ answers will appear here after they submit."
+            : "No personal-link responses received yet."}
         </p>
       ) : null}
       {!visible.length ? (

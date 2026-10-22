@@ -22,7 +22,20 @@ await mkdir(screenshots, { recursive: true });
 const options = {
   configFile: false,
   root,
-  plugins: [react()],
+  plugins: [
+    {
+      name: "availability-forms-route-context",
+      enforce: "pre",
+      load(id) {
+        if (
+          id.replaceAll("\\", "/").endsWith("/pages/Teams/TeamsPageContext.tsx")
+        ) {
+          return "export const useTeamsPage = () => globalThis.__availabilityFixtureTeams;";
+        }
+      },
+    },
+    react(),
+  ],
   resolve: { alias: { "@": resolve(root, "src") } },
   build: {
     outDir,
@@ -43,9 +56,20 @@ try {
     const page = await browser.newPage({ viewport: { width, height: 800 } });
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
-    await page.goto(
-      "http://127.0.0.1:3126/e2e/availability-workspace-fixture.html",
+    // History reads remain HTTP calls through the real API client; no real SMS or writes.
+    await page.route("**/api/**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ success: true, intents: [], attempts: [] }),
+      }),
     );
+    await page.goto(
+      `http://127.0.0.1:3126/e2e/availability-workspace-fixture.html${width < 640 ? "?missingPurpose" : ""}`,
+    );
+    await page
+      .getByRole("button", { name: "Edit October Availability", exact: true })
+      .click();
     await page.getByRole("tab", { name: "Recipients", exact: true }).waitFor();
     assert.equal(await page.getByRole("tab").count(), 2);
     assert.equal(await page.getByRole("checkbox").count(), 0);
