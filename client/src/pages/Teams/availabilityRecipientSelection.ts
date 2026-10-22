@@ -10,6 +10,8 @@ import type {
   TeamRosterMember,
 } from "../../api/authTypes";
 
+export type AvailabilityAudienceType = "first" | "reminder" | "specific";
+
 export const getAvailabilityRecipientRows = ({
   members,
   positions,
@@ -20,6 +22,7 @@ export const getAvailabilityRecipientRows = ({
   smsDeliveryAttempts = [],
   form,
   intentType,
+  audienceType = intentType === "availability_reminder" ? "reminder" : "specific",
 }: {
   members: TeamRosterMember[];
   positions: TeamPosition[];
@@ -30,16 +33,17 @@ export const getAvailabilityRecipientRows = ({
   smsDeliveryAttempts?: SmsDeliveryAttempt[];
   form: TeamIntakeForm | undefined;
   intentType: Extract<NotificationIntentType, "availability_request" | "availability_reminder">;
+  audienceType?: AvailabilityAudienceType;
 }) => {
   const positionTeamById = new Map(positions.map((position) => [position.positionId, position.teamId]));
   const formTeamIds = new Set(form?.teamIds || []);
-  const requestIntentByRecipientId = new Map<string, NotificationIntent>();
+  const requestIntentsByRecipientId = new Map<string, NotificationIntent[]>();
   notificationIntents.forEach((intent) => {
     if (intent.formId !== form?.formId || intent.intentType !== "availability_request" || !intent.recipientId) return;
-    const current = requestIntentByRecipientId.get(intent.recipientId);
-    if (!current || (intent.updatedAt || intent.createdAt) > (current.updatedAt || current.createdAt)) {
-      requestIntentByRecipientId.set(intent.recipientId, intent);
-    }
+    requestIntentsByRecipientId.set(intent.recipientId, [
+      ...(requestIntentsByRecipientId.get(intent.recipientId) || []),
+      intent,
+    ]);
   });
   const requestAttemptsByRecipientId = new Map<string, SmsDeliveryAttempt[]>();
   smsDeliveryAttempts.forEach((attempt) => {
@@ -64,46 +68,66 @@ export const getAvailabilityRecipientRows = ({
       status: member.phoneNumber ? "consent_needed" : "no_mobile",
       eligible: false,
     };
+    const requestIntents = requestIntentsByRecipientId.get(recipient?.recipientId || "") || [];
+    const requestAttempts = requestAttemptsByRecipientId.get(recipient?.recipientId || "") || [];
+    const intentById = new Map(requestIntents.map((intent) => [intent.intentId, intent]));
+    const linkedAttempts = new Map<string, SmsDeliveryAttempt>();
+    requestAttempts.forEach((attempt) => {
+      if (attempt.notificationIntentId) linkedAttempts.set(attempt.notificationIntentId, attempt);
+    });
+    const requestActivities = requestIntents.map((intent) => {
+      const attempt = linkedAttempts.get(intent.intentId) ||
+        requestAttempts.find((item) => item.attemptId === intent.attemptId) ||
+        (requestIntents.length === 1 ? requestAttempts.find((item) => !item.notificationIntentId) : undefined);
+      const accepted = intent.status === "sent" || Boolean(intent.sentAt) ||
+        ["accepted", "sent", "delivered", "undelivered"].includes(attempt?.status || "") ||
+        attempt?.outcome === "confirmed";
+      const uncertain = ["sending", "unknown"].includes(intent.status) ||
+        attempt?.outcome === "unknown" || attempt?.status === "pending" ||
+        (attempt?.status === "failed" && !attempt.outcome) ||
+        (intent.status === "failed" && !["failed", "not_sent"].includes(intent.attemptOutcome || attempt?.outcome || ""));
+      const failed = intent.status === "failed" && ["failed", "not_sent"].includes(intent.attemptOutcome || attempt?.outcome || "");
+      const status = accepted ? "sent" : uncertain ? "uncertain" : failed ? "failed" : intent.status === "suppressed" ? "handled" : "";
+      return {
+        status,
+        at: intent.createdAt || intent.updatedAt || "",
+        sentAt: accepted ? intent.sentAt || attempt?.acceptedAt || attempt?.sentAt || attempt?.createdAt || intent.updatedAt || intent.createdAt || "" : "",
+      };
+    }).filter(({ status }) => status);
+    requestAttempts.filter((attempt) => !attempt.notificationIntentId || !intentById.has(attempt.notificationIntentId))
+      .forEach((attempt) => {
+        const accepted = ["accepted", "sent", "delivered", "undelivered"].includes(attempt.status) || attempt.outcome === "confirmed";
+        const uncertain = attempt.outcome === "unknown" || attempt.status === "pending" ||
+          (attempt.status === "failed" && !attempt.outcome);
+        const failed = ["failed", "not_sent"].includes(attempt.outcome || "");
+        const status = accepted ? "sent" : uncertain ? "uncertain" : failed ? "failed" : "";
+        if (status) requestActivities.push({
+          status,
+          at: attempt.createdAt || attempt.updatedAt || "",
+          sentAt: accepted ? attempt.acceptedAt || attempt.sentAt || attempt.createdAt || attempt.updatedAt || "" : "",
+        });
+      });
+    requestActivities.sort((left, right) => right.at.localeCompare(left.at));
+    const previousDeliveryStatus = requestActivities[0]?.status || "";
+    const hasPreviousRequest = requestActivities.length > 0;
+    const lastSentAt = requestActivities.filter(({ status }) => status === "sent")
+      .map(({ sentAt }) => sentAt).filter(Boolean).sort().at(-1) || "";
+    const hasAcceptedRequest = requestActivities.some(({ status }) => status === "sent");
     let reason = "";
-    let previousDeliveryStatus: "sent" | "uncertain" | "failed" | "handled" | "" = "";
-    if (intentType === "availability_request" && recipient) {
-      const intent = requestIntentByRecipientId.get(recipient.recipientId);
-      const attempts = requestAttemptsByRecipientId.get(recipient.recipientId) || [];
-      const providerAccepted = intent?.status === "sent" || attempts.some((attempt) =>
-        ["accepted", "sent", "delivered", "undelivered"].includes(attempt.status) ||
-        attempt.outcome === "confirmed",
-      );
-      const hasDefinitiveFailure = attempts.some((attempt) =>
-        attempt.outcome === "not_sent" || attempt.outcome === "failed",
-      );
-      const deliveryUncertain = ["sending", "unknown"].includes(intent?.status || "") || attempts.some((attempt) =>
-        attempt.outcome === "unknown" || attempt.status === "pending" ||
-        (attempt.status === "failed" && !attempt.outcome),
-      ) || (intent?.status === "failed" && !hasDefinitiveFailure);
-      const hasRetryableFailure = hasDefinitiveFailure;
-      if (providerAccepted) previousDeliveryStatus = "sent";
-      else if (deliveryUncertain) previousDeliveryStatus = "uncertain";
-      else if (intent?.status === "suppressed") previousDeliveryStatus = "handled";
-      else if (hasRetryableFailure) previousDeliveryStatus = "failed";
-    }
     if (!form) {
       reason = "Choose a form first";
     } else if (recipient?.revokedAt) {
       reason = "Response link revoked";
-    } else if (recipient?.respondedAt) {
+    } else if (recipient?.respondedAt && !(audienceType === "specific" && intentType === "availability_request")) {
       reason = "Already responded";
     } else if (formTeamIds.size && ![...formTeamIds].some((id) => memberTeamIds.has(id))) {
       reason = "Outside this form’s team scope";
-    } else if (previousDeliveryStatus === "sent") {
-      reason = "Already sent";
-    } else if (previousDeliveryStatus === "uncertain") {
-      reason = "We couldn't confirm whether this text was sent. Check message history before trying again.";
-    } else if (previousDeliveryStatus === "handled" && eligibility.status === "opted_out") {
-      reason = "This phone number opted out";
-    } else if (previousDeliveryStatus === "handled") {
-      reason = "This form request was already handled.";
     } else if (intentType === "availability_reminder" && !recipient) {
       reason = "No response link";
+    } else if (intentType === "availability_reminder" && !hasAcceptedRequest) {
+      reason = previousDeliveryStatus === "uncertain"
+        ? "The previous request outcome is uncertain. Check message history before preparing a reminder."
+        : "No previously sent request exists";
     } else if (!eligibility.eligible) {
       reason = !eligibility.status
         ? "Not eligible to receive text messages"
@@ -121,6 +145,9 @@ export const getAvailabilityRecipientRows = ({
       eligible: Boolean(form) && !reason,
       reason,
       previousDeliveryStatus,
+      hasPreviousRequest,
+      hasAcceptedRequest,
+      previousSentAt: lastSentAt,
     };
   });
 };

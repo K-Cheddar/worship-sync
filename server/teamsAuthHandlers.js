@@ -11013,6 +11013,7 @@ export const createTeamsAuthHandlers = ({
     member,
     actorUid,
     teams,
+    allowResponded = false,
   }) => {
     const recipientId = createTeamIntakeRecipientId(
       form.formId,
@@ -11046,7 +11047,7 @@ export const createTeamsAuthHandlers = ({
           reason: "revoked",
           form: validatedForm,
         };
-      if (existing?.respondedAt)
+      if (existing?.respondedAt && !allowResponded)
         return {
           recipient: existing,
           token: "",
@@ -11262,6 +11263,7 @@ export const createTeamsAuthHandlers = ({
     formId,
     memberIds,
     purpose,
+    audienceType = "",
     actorUid,
   }) => {
     const form = await getDoc(COLLECTIONS.teamIntakeForms, formId);
@@ -11335,6 +11337,7 @@ export const createTeamsAuthHandlers = ({
           member,
           actorUid,
           teams,
+          allowResponded: audienceType === "specific",
         });
         recipient = ensured.recipient;
         token = ensured.token;
@@ -11367,7 +11370,7 @@ export const createTeamsAuthHandlers = ({
         });
         continue;
       }
-      if (recipient?.respondedAt) {
+      if (recipient?.respondedAt && !(purpose === "availability_request" && audienceType === "specific")) {
         results.push({
           memberId,
           recipientId,
@@ -11460,7 +11463,7 @@ export const createTeamsAuthHandlers = ({
     assertTeamIntakeFormResponseDeadline(form);
     if (recipient.revokedAt)
       throw httpError(409, "This intake request was revoked.");
-    if (recipient.respondedAt)
+    if (recipient.respondedAt && intent.audienceType !== "specific")
       throw httpError(409, "This volunteer has already responded.");
     if (
       !hasPersonalizedIntakeResponseFields(

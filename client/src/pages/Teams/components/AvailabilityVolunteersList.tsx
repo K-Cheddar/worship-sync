@@ -67,6 +67,7 @@ type Props = {
   onCopyLink: (recipient: TeamIntakeRecipient) => void;
   onOpenLink: (recipient: TeamIntakeRecipient) => void;
   onRevoke: (recipient: TeamIntakeRecipient) => void;
+  onResendLink: (memberId: string) => void;
   onHistory: (memberId: string) => void;
   onViewAvailability: () => void;
 };
@@ -83,6 +84,7 @@ const AvailabilityVolunteersList = ({
   onCopyLink,
   onOpenLink,
   onRevoke,
+  onResendLink,
   onHistory,
   onViewAvailability,
 }: Props) => {
@@ -309,6 +311,11 @@ const AvailabilityVolunteersList = ({
                   <DropdownMenuContent align="end">
                     {canEdit && recipient && !recipient.revokedAt ? (
                       <>
+                        {form.active && historyLoaded && row.hasPreviousRequest ? (
+                          <DropdownMenuItem onSelect={() => onResendLink(member.memberId)}>
+                            Resend link
+                          </DropdownMenuItem>
+                        ) : null}
                         <DropdownMenuItem onSelect={() => onCopyLink(recipient)}>
                           Copy personal availability link
                         </DropdownMenuItem>

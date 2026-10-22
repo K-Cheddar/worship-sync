@@ -102,7 +102,7 @@ test.each([
   ["failed", "unknown", "Unconfirmed · check history"],
   ["failed", "not_sent", "Failed · retry available"],
 ] as const)(
-  "represents persisted %s / %s evidence without permitting resend",
+  "describes persisted %s / %s evidence while preserving explicit resend eligibility",
   (status, outcome, delivery) => {
     const [row] = getAvailabilityFormProgress(
       {
@@ -115,7 +115,7 @@ test.each([
       [],
     );
     expect(row.delivery).toBe(delivery);
-    expect(row.eligible).toBe(delivery === "Failed · retry available");
+    expect(row.eligible).toBe(true);
   },
 );
 

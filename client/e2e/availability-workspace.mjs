@@ -154,6 +154,7 @@ try {
     assert(sendBounds.y + sendBounds.height <= reviewBounds.y + reviewBounds.height, "Send remains inside the dialog viewport");
     await page.screenshot({ path: resolve(screenshots, `review-${width}.png`), fullPage: true });
     await page.getByRole("button", { name: "Back", exact: true }).click();
+    await page.getByRole("button", { name: "Change recipients", exact: true }).click();
     assert.equal(await page.getByRole("checkbox", { name: "John Davis", exact: true }).isChecked(), true);
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
     assert.equal(await page.getByRole("dialog").count(), 0);

@@ -1959,6 +1959,60 @@ describe("useCurrentServicePlanSource", () => {
     );
   });
 
+  it("keeps the latest manually selected binding when earlier persistence settles last", async () => {
+    const store = makeStore();
+    const database = {};
+    const firstWrite = createDeferred<void>();
+    const secondWrite = createDeferred<void>();
+    mockPersistItemListServicePlanBinding
+      .mockReturnValueOnce(firstWrite.promise)
+      .mockReturnValueOnce(secondWrite.promise);
+    renderHookWith(store, enabledGlobalInfo, { db: database });
+    await waitFor(() => expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey));
+
+    act(() => {
+      latestResult?.selectPlan("service-2@2026-08-01");
+      latestResult?.selectPlan(planFixture.planKey);
+    });
+    await waitFor(() => expect(mockPersistItemListServicePlanBinding).toHaveBeenCalledTimes(2));
+    expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey);
+
+    await act(async () => { secondWrite.resolve(undefined); });
+    await waitFor(() => expect(store.getState().servicePlanningImport.outlinePlanBinding?.planKey).toBe(planFixture.planKey));
+    await act(async () => { firstWrite.resolve(undefined); });
+
+    expect(store.getState().servicePlanningImport.outlinePlanBinding?.planKey).toBe(planFixture.planKey);
+    expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey);
+  });
+
+  it("persists reselecting the current binding after an earlier selection is queued", async () => {
+    const store = makeStore();
+    store.dispatch(setServicePlanningOutlinePlanBinding({
+      planKey: planFixture.planKey,
+      planName: planFixture.name,
+      linkedAt: "2026-08-01T08:00:00.000Z",
+    }));
+    const database = {};
+    const firstWrite = createDeferred<void>();
+    const secondWrite = createDeferred<void>();
+    mockPersistItemListServicePlanBinding
+      .mockReturnValueOnce(firstWrite.promise)
+      .mockReturnValueOnce(secondWrite.promise);
+    renderHookWith(store, enabledGlobalInfo, { db: database });
+    await waitFor(() => expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey));
+
+    act(() => latestResult?.selectPlan("service-2@2026-08-01"));
+    await waitFor(() => expect(mockPersistItemListServicePlanBinding).toHaveBeenCalledTimes(1));
+    act(() => latestResult?.selectPlan(planFixture.planKey));
+    await waitFor(() => expect(mockPersistItemListServicePlanBinding).toHaveBeenCalledTimes(2));
+
+    await act(async () => { secondWrite.resolve(undefined); });
+    await waitFor(() => expect(store.getState().servicePlanningImport.outlinePlanBinding?.planKey).toBe(planFixture.planKey));
+    await act(async () => { firstWrite.resolve(undefined); });
+
+    expect(store.getState().servicePlanningImport.outlinePlanBinding?.planKey).toBe(planFixture.planKey);
+  });
+
   it("does not persist a binding for the automatic default selection on load", async () => {
     const store = makeStore();
     renderHookWith(store, enabledGlobalInfo, { db: {} });

@@ -73,6 +73,7 @@ const AvailabilityFormWorkspace = ({
   submissionReview,
 }: Props) => {
   const [historyMemberId, setHistoryMemberId] = useState("");
+  const [resendMemberId, setResendMemberId] = useState("");
   const [copying, setCopying] = useState(false);
   const [comparisonOpen, setComparisonOpen] = useState(false);
   const {
@@ -98,6 +99,18 @@ const AvailabilityFormWorkspace = ({
   const completion = rows.length
     ? Math.round((responded / rows.length) * 100)
     : 0;
+  const openNewSend = () => {
+    setResendMemberId("");
+    onSend();
+  };
+  const openResend = (memberId: string) => {
+    setResendMemberId(memberId);
+    onSend();
+  };
+  const closeSend = () => {
+    setResendMemberId("");
+    sendFlowProps.onClose();
+  };
   const intents = notificationIntents.filter(
     (intent) =>
       historyRecipient &&
@@ -143,7 +156,7 @@ const AvailabilityFormWorkspace = ({
         </div>
         {canEdit ? (
           <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <Button variant="cta" disabled={!form.active} onClick={onSend}>
+            <Button variant="cta" disabled={!form.active} onClick={openNewSend}>
               Send requests
             </Button>
             <Button
@@ -265,6 +278,7 @@ const AvailabilityFormWorkspace = ({
         historyLoaded={historyLoaded}
         serviceTimeZone={serviceTimeZone}
         {...recipientActions}
+        onResendLink={openResend}
         onHistory={setHistoryMemberId}
         onViewAvailability={() => setComparisonOpen(true)}
       />
@@ -282,7 +296,13 @@ const AvailabilityFormWorkspace = ({
         onClose={() => setComparisonOpen(false)}
       />
       {sendOpen && canEdit && form.active ? (
-        <AvailabilityFormSendFlow {...sendFlowProps} dialog />
+        <AvailabilityFormSendFlow
+          {...sendFlowProps}
+          dialog
+          initialAudience={resendMemberId ? "specific" : "first"}
+          initialMemberIds={resendMemberId ? [resendMemberId] : []}
+          onClose={closeSend}
+        />
       ) : null}
       <Modal
         isOpen={Boolean(historyRow)}

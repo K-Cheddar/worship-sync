@@ -269,6 +269,38 @@ describe("MySchedule", () => {
     expect(screen.queryAllByTestId("my-schedule-loading-card")).toHaveLength(0);
   });
 
+  it.each(["human account", "personal link"])(
+    "uses the church calendar date at UTC midnight for a %s schedule",
+    async (accessType) => {
+      const midnightOccurrence = occurrence({
+        occurrenceId: "service-1@2098-12-31",
+        date: "2098-12-31",
+        startsAt: "2099-01-01T00:30:00.000Z",
+      });
+      const schedule = {
+        success: true,
+        serviceTimeZone: "America/New_York",
+        member: { memberId: "m1", updatedAt: STAMP },
+        occurrences: [midnightOccurrence],
+      };
+      if (accessType === "human account") {
+        mockGetMyTeamAssignments.mockResolvedValue(schedule as never);
+        renderPage();
+      } else {
+        renderPersonalPage({
+          load: jest.fn().mockResolvedValue(schedule),
+          respond: jest.fn(),
+          saveBlockouts: jest.fn(),
+          acceptUnanswered: jest.fn(),
+        } as unknown as MyScheduleOperations);
+      }
+
+      expect(await screen.findByRole("button", {
+        name: /Open Sunday Gathering on .*Dec 31/i,
+      })).toBeInTheDocument();
+    },
+  );
+
   it("lists services as tiles with role and opens a detail view", async () => {
     const user = userEvent.setup();
     respond([occurrence()]);

@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-22-availability-resend",
+  "date": "2026-10-22",
+  "type": "improved",
+  "title": "Resend availability links with a review",
+  "description": "Availability forms now let administrators send a fresh copy of a personal response link after reviewing the recipient, message and delivery history."
+}

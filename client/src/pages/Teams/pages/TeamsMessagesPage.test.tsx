@@ -39,6 +39,7 @@ const batch: NotificationBatch = {
   churchId: "church_1",
   formId: "form_1",
   intentType: "availability_request",
+  audienceType: "specific",
   reminderRound: 0,
   status: "prepared",
   selectedMemberIds: ["member_1"],
@@ -121,6 +122,20 @@ test("recent message SMS review shows the fresh server snapshot and Cancel does 
 
   expect(screen.queryByRole("dialog", { name: "Send this text message?" })).not.toBeInTheDocument();
   expect(mockSendIntent).not.toHaveBeenCalled();
+});
+
+test("keeps the saved batch recovery pointer when the initial status lookup is unavailable", async () => {
+  const user = userEvent.setup();
+  const storageKey = "worshipsync:last-notification-batch:church_1:form_1";
+  window.localStorage.setItem(storageKey, "batch_1");
+  mockGetBatch.mockRejectedValueOnce(new Error("Temporary status outage"));
+  render(<TeamsMessagesPage />);
+
+  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
+  await user.click(screen.getByRole("option", { name: /October availability/ }));
+  await waitFor(() => expect(mockGetBatch).toHaveBeenCalledWith("church_1", "batch_1"));
+
+  expect(window.localStorage.getItem(storageKey)).toBe("batch_1");
 });
 
 test("marks the linked recipient and message-history member without changing message text", async () => {

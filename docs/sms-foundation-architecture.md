@@ -83,12 +83,16 @@ Persisted identities remain unchanged:
 
 - Batch ID: hash of `churchId|notification-batch|requestKey`; repeating a reserved key with another source/type/selection is rejected.
 - Intent ID: hash of `churchId|notification-intent|idempotencyKey`.
-- Availability initial key: `availability_request|formId|recipientId`; reminder adds reminder round.
+- Availability first-invitation key remains `availability_request|formId|recipientId` to preserve legacy draft supersession; reminder adds reminder round. An explicitly reviewed specific-volunteer resend includes its new batch ID, creating one durable intent for that operation.
 - Schedule drafts use event/schedule/occurrence/cell/member identity. They are not suitable as the canonical identity of a schedule-wide member message.
 - Consent: church + normalized phone. Shared numbers retain separate member messages/private links under the approved availability contract.
 - Ledger: recipient/event/subject/occurrence; phone-based collisions do not control SMS claims. Do not change its identity or use it to merge members' secure messages.
 
 Authorization must be applied at selection, preview/history projection, approval and immediately before dispatch using current source ownership and all affected teams. Future adapters must resolve authorized form/schedule scope using established permission helpers. A background runner would need an explicitly defined operator authority snapshot/recheck policy; possession of a persisted approved batch does not grant unrelated-team access.
+
+## Availability form resend identities
+
+A provider-accepted or uncertain attempt permanently fences another claim on that same notification intent. The availability contract permits an administrator-approved resend by reserving a new specific-recipient batch and deriving a separate idempotency key from that batch. The original intent, attempt, provider evidence and callback correlation remain intact. First invitations continue to use their stable per-recipient identity and are never auto-selected after any prior request attempt. Reminders continue to use the existing monotonically increasing reminder round. Consent, STOP, current roster/form authorization, recipient validity, approval snapshots and per-intent claim transactions still run for each new send.
 
 ## Dispatch and recovery options — design only
 

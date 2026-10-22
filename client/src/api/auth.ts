@@ -1535,6 +1535,7 @@ export const prepareAvailabilityNotificationBatch = async (
       NotificationIntentType,
       "availability_request" | "availability_reminder"
     >;
+    audienceType?: "first" | "reminder" | "specific";
     formId: string;
     memberIds: string[];
     requestKey: string;

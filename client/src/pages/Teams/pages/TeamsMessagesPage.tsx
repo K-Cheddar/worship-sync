@@ -46,6 +46,7 @@ const TeamsMessagesPage = () => {
   const churchIdRef = useRef(churchId);
   churchIdRef.current = churchId;
   const [intentType, setIntentType] = useState<Extract<NotificationIntentType, "availability_request" | "availability_reminder">>("availability_request");
+  const audienceType = intentType === "availability_reminder" ? "reminder" as const : "specific" as const;
   const [formId, setFormId] = useState("");
   const formIdRef = useRef(formId);
   formIdRef.current = formId;
@@ -109,8 +110,9 @@ const TeamsMessagesPage = () => {
       smsDeliveryAttempts: attempts,
       form: selectedForm,
       intentType,
+      audienceType,
     });
-  }, [attempts, forms, formId, intentType, intents, members, pageData.intakeRecipients, pageData.positions, pageData.smsEligibilityByMemberId, pageData.teams]);
+  }, [attempts, audienceType, forms, formId, intentType, intents, members, pageData.intakeRecipients, pageData.positions, pageData.smsEligibilityByMemberId, pageData.teams]);
   const query = memberSearch.trim().toLocaleLowerCase();
   const recipientRows = allRecipientRows.filter(({ member, memberTeamIds }) =>
       (!teamFilter || memberTeamIds.has(teamFilter)) &&
@@ -148,7 +150,7 @@ const TeamsMessagesPage = () => {
     batchReviewIdentity.contextIdentity === batchContextIdentity &&
     batchReviewIdentity.selectionIdentity === selectionIdentity &&
     batchReviewIdentity.recipientEligibilityIdentity === recipientEligibilityIdentity);
-  const reviewedBatch = activeBatch?.churchId === churchId && activeBatch.formId === formId && activeBatch.intentType === intentType ? activeBatch : null;
+  const reviewedBatch = activeBatch?.churchId === churchId && activeBatch.formId === formId && activeBatch.intentType === intentType && (activeBatch.audienceType || "first") === audienceType ? activeBatch : null;
   const showBatchStatus = Boolean(reviewedBatch && (
     reviewedBatch.status !== "prepared" || reviewedBatch.summary.sent > 0 || reviewedBatch.summary.delivered > 0 ||
     reviewedBatch.summary.failed > 0 || reviewedBatch.summary.uncertain > 0 || (reviewedBatch.summary.sending || 0) > 0
@@ -188,17 +190,17 @@ const TeamsMessagesPage = () => {
     if (savedBatchId) {
       getAvailabilityNotificationBatch(churchId, savedBatchId)
         .then((response) => {
-          if (active && response.batch.formId === formId && response.batch.intentType === intentType) {
+          if (active && response.batch.formId === formId && response.batch.intentType === intentType && (response.batch.audienceType || "first") === audienceType) {
             setSelectedMemberIds(response.batch.selectedMemberIds);
             setActiveBatch(response.batch);
             setBatchReviewIdentity(null);
           }
         })
-        .catch(() => { if (active) window.localStorage.removeItem(`worshipsync:last-notification-batch:${churchId}:${formId}`); });
+        .catch(() => { /* Keep the saved batch id so a later visit can retry the status lookup. */ });
     }
     didRestoreInitialBatchRef.current = true;
     return () => { active = false; };
-  }, [churchId, canEditTeams, formId, intentType]);
+  }, [audienceType, churchId, canEditTeams, formId, intentType]);
 
   const refreshIntents = async () => {
     const requestedChurch = churchId;
@@ -283,6 +285,7 @@ const TeamsMessagesPage = () => {
         churchId: ownerChurch,
         formId: reviewedFormId,
         intentType: reviewedIntentType,
+        audienceType,
         memberIds: reviewedMemberIds,
       });
       if (
@@ -309,7 +312,7 @@ const TeamsMessagesPage = () => {
   };
 
   const confirmBatch = async () => {
-    if (!batchReviewIsCurrent || !activeBatch || activeBatch.churchId !== churchId || activeBatch.formId !== formId || activeBatch.intentType !== intentType || sending || loading || batchSendLockRef.current) return;
+    if (!batchReviewIsCurrent || !activeBatch || activeBatch.churchId !== churchId || activeBatch.formId !== formId || activeBatch.intentType !== intentType || (activeBatch.audienceType || "first") !== audienceType || sending || loading || batchSendLockRef.current) return;
     batchSendLockRef.current = true;
     const ownerChurch = churchId;
     const ownerFormId = formId;

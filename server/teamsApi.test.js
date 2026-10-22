@@ -14288,7 +14288,7 @@ test("individual intake recipient creation validates the full set before writing
   );
 });
 
-test("availability SMS batch uses the composed auth handlers and preserves accepted-send protection", async (t) => {
+test("availability SMS batch fences first invitations and allows reviewed resends through composed auth handlers", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("foundation_sms_batch");
   const { teamId, memberIds } = await seedTeam(context, {
@@ -14314,8 +14314,10 @@ test("availability SMS batch uses the composed auth handlers and preserves accep
   const previousToken = process.env.TWILIO_AUTH_TOKEN;
   process.env.TWILIO_STATUS_CALLBACK_URL = "https://worshipsync.net/api/webhooks/twilio/sms-status?configured=1";
   process.env.TWILIO_AUTH_TOKEN = "fake-signing-secret";
+  let providerSendCount = 0;
   const fake = createFakeSmsProvider({ sendMessage: async ({ statusCallbackUrl }) => {
-    const params = { MessageSid: "SM_foundation_batch", MessageStatus: "delivered", To: phoneNumber, AccountSid: "AC_test" };
+    const providerMessageId = `SM_foundation_batch_${++providerSendCount}`;
+    const params = { MessageSid: providerMessageId, MessageStatus: "delivered", To: phoneNumber, AccountSid: "AC_test" };
     const url = new URL(statusCallbackUrl);
     const response = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(payload) { this.payload = payload; return this; } };
     await authHandlers.handleSmsStatusWebhook({
@@ -14324,7 +14326,7 @@ test("availability SMS batch uses the composed auth handlers and preserves accep
     }, response);
     assert.equal(response.statusCode, 200);
     assert.equal(response.payload.updated, true);
-    return { providerMessageId: "SM_foundation_batch", status: "accepted" };
+    return { providerMessageId, status: "accepted" };
   } });
   setSmsProviderForServerTests(fake);
   try {
@@ -14352,8 +14354,28 @@ test("availability SMS batch uses the composed auth handlers and preserves accep
     await setDoc("smsDeliveryAttempts", intent.attemptId, { status: "undelivered" }, { merge: true });
     const again = await callHandler(authHandlers.prepareAvailabilityBatch, { context, body: { ...body, requestKey: "new_request" } });
     assert.equal(again.payload.batch.summary.eligible, 0);
-    assert.equal(again.payload.batch.recipients[0].status, "sent");
+    assert.equal(again.payload.batch.recipients[0].status, "excluded");
+    assert.equal(again.payload.batch.recipients[0].previousDeliveryStatus, "accepted");
     assert.equal(fake.calls.length, 1);
+
+    const recipientId = intent.recipientId;
+    const recipient = await getDoc("teamIntakeRecipients", recipientId);
+    await setDoc("teamIntakeRecipients", recipientId, { ...recipient, respondedAt: new Date().toISOString() }, { merge: false });
+    const resend = await callHandler(authHandlers.prepareAvailabilityBatch, {
+      context,
+      body: { ...body, audienceType: "specific", requestKey: "specific_resend" },
+    });
+    assert.equal(resend.statusCode, 200, JSON.stringify(resend.payload));
+    assert.equal(resend.payload.batch.summary.eligible, 1);
+    assert.notEqual(resend.payload.batch.intentIds[0], batch.intentIds[0]);
+    const resent = await callHandler(authHandlers.dispatchAvailabilityBatch, {
+      context,
+      params: { batchId: resend.payload.batch.batchId },
+      body: { confirmed: true, approvalVersion: resend.payload.batch.approvalVersion },
+    });
+    assert.equal(resent.statusCode, 200, JSON.stringify(resent.payload));
+    assert.equal(resent.payload.batch.summary.sent, 1);
+    assert.equal(fake.calls.length, 2);
   } finally {
     setSmsProviderForServerTests(null);
     if (previousCallback === undefined) delete process.env.TWILIO_STATUS_CALLBACK_URL; else process.env.TWILIO_STATUS_CALLBACK_URL = previousCallback;

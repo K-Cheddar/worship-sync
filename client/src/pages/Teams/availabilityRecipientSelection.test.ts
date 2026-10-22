@@ -43,7 +43,7 @@ it("reports SMS, scope, revoked, and responded exclusions without making them se
     { recipientId: "r1", churchId: "church-1", formId: form.formId, memberId: "responded", createdAt: "2026-09-01", respondedAt: "2026-09-20" },
     { recipientId: "r2", churchId: "church-1", formId: form.formId, memberId: "revoked", createdAt: "2026-09-01", revokedAt: "2026-09-20" },
   ];
-  const rows = getAvailabilityRecipientRows({ members, positions: [], teams: [], recipients, eligibilityByMemberId, form, intentType: "availability_request" });
+  const rows = getAvailabilityRecipientRows({ members, positions: [], teams: [], recipients, eligibilityByMemberId, form, intentType: "availability_request", audienceType: "first" });
 
   expect(rows.map(({ member: item, eligible, reason }) => [item.memberId, eligible, reason])).toEqual([
     ["eligible", true, ""],
@@ -70,7 +70,7 @@ it.each([
   expect(rows[0]).toMatchObject({ eligible: false, reason });
 });
 
-it("keeps only unsent eligible members selectable and exposes retryable and uncertain history", () => {
+it("keeps prior messages available for deliberate selection and exposes their history", () => {
   const members = [
     member("ready", { teamMemberships: { worship: { teamId: "worship" } } }),
     member("sent", { teamMemberships: { worship: { teamId: "worship" } } }),
@@ -107,19 +107,20 @@ it("keeps only unsent eligible members selectable and exposes retryable and unce
     }],
     form,
     intentType: "availability_request",
+    audienceType: "specific",
   });
 
   expect(rows.map(({ member: item, eligible, reason, previousDeliveryStatus }) => [item.memberId, eligible, reason, previousDeliveryStatus])).toEqual([
     ["ready", true, "", ""],
-    ["sent", false, "Already sent", "sent"],
+    ["sent", true, "", "sent"],
     ["failed", true, "", "failed"],
-    ["uncertain", false, "We couldn't confirm whether this text was sent. Check message history before trying again.", "uncertain"],
-    ["responded", false, "Already responded", ""],
+    ["uncertain", true, "", "uncertain"],
+    ["responded", true, "", ""],
     ["outside", false, "Outside this form’s team scope", ""],
   ]);
 });
 
-it("uses a completed delivery attempt to keep a legacy sent request out of the picker", () => {
+it("recognizes a completed legacy delivery so it is excluded from first invitations", () => {
   const row = getAvailabilityRecipientRows({
     members: [member("one", { teamMemberships: { worship: { teamId: "worship" } } })],
     positions: [],
@@ -129,12 +130,13 @@ it("uses a completed delivery attempt to keep a legacy sent request out of the p
     smsDeliveryAttempts: [{ attemptId: "attempt-one", churchId: form.churchId, recipientType: "team_intake", recipientId: "recipient-one", memberId: "one", provider: "twilio", purpose: "initial", status: "delivered", outcome: "confirmed", createdAt: "2026-09-01", updatedAt: "2026-09-01" }],
     form,
     intentType: "availability_request",
+    audienceType: "first",
   });
 
-  expect(row[0]).toMatchObject({ eligible: false, reason: "Already sent", previousDeliveryStatus: "sent" });
+  expect(row[0]).toMatchObject({ eligible: true, hasPreviousRequest: true, previousDeliveryStatus: "sent" });
 });
 
-it("keeps an accepted but undelivered provider attempt blocked from duplicate sends", () => {
+it("makes an accepted but undelivered provider attempt available for an explicit resend", () => {
   const memberId = "one";
   const recipientId = "recipient-one";
   const intent: NotificationIntent = {
@@ -156,9 +158,10 @@ it("keeps an accepted but undelivered provider attempt blocked from duplicate se
     }],
     form,
     intentType: "availability_request",
+    audienceType: "specific",
   });
 
-  expect(rows[0]).toMatchObject({ eligible: false, reason: "Already sent", previousDeliveryStatus: "sent" });
+  expect(rows[0]).toMatchObject({ eligible: true, previousDeliveryStatus: "sent", hasPreviousRequest: true });
 });
 
 it("treats a failed attempt with no outcome as uncertain even when its intent is failed", () => {
@@ -183,11 +186,39 @@ it("treats a failed attempt with no outcome as uncertain even when its intent is
     }],
     form,
     intentType: "availability_request",
+    audienceType: "specific",
   });
 
   expect(rows[0]).toMatchObject({
-    eligible: false,
-    reason: "We couldn't confirm whether this text was sent. Check message history before trying again.",
+    eligible: true,
+    reason: "",
     previousDeliveryStatus: "uncertain",
   });
+});
+
+it("allows reminders only for previously sent nonresponders", () => {
+  const memberId = "one";
+  const recipientId = "recipient-one";
+  const base = {
+    members: [member(memberId, { teamMemberships: { worship: { teamId: "worship" } } })],
+    positions: [],
+    teams: [],
+    recipients: [{ recipientId, churchId: form.churchId, formId: form.formId, memberId, createdAt: "2026-09-01" }],
+    eligibilityByMemberId: { [memberId]: { status: "enabled" as const, eligible: true } },
+    notificationIntents: [{
+      intentId: "intent-one", churchId: form.churchId, formId: form.formId, recipientId, memberId,
+      intentType: "availability_request" as const, sourceType: "team_intake_recipient" as const, sourceId: recipientId,
+      sourceVersion: "", occurrenceId: "", channel: "sms" as const, message: "", status: "sent" as const,
+      createdAt: "2026-09-01T00:00:00.000Z", updatedAt: "2026-09-01T00:00:00.000Z", sentAt: "2026-09-02T00:00:00.000Z",
+    }],
+    form,
+    intentType: "availability_reminder" as const,
+  };
+  const waiting = getAvailabilityRecipientRows(base)[0];
+  const responded = getAvailabilityRecipientRows({
+    ...base,
+    recipients: [{ ...base.recipients[0], respondedAt: "2026-09-03T00:00:00.000Z" }],
+  })[0];
+  expect(waiting).toMatchObject({ eligible: true, hasAcceptedRequest: true, previousSentAt: "2026-09-02T00:00:00.000Z" });
+  expect(responded).toMatchObject({ eligible: false, reason: "Already responded" });
 });

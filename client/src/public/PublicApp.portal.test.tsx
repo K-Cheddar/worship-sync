@@ -93,6 +93,7 @@ it.each([401, 403])("keeps unsaved time off and gives personal-link guidance whe
   render(<PublicApp />);
   await user.click(await screen.findByRole("button", { name: /Time off/i }));
   await user.click(screen.getByRole("button", { name: /Add single day/i }));
+  await user.type(screen.getByLabelText("Day you're away"), "2099-11-02");
   await user.type(screen.getByRole("textbox", { name: /Notes/i }), "Unsaved travel dates");
   await user.click(screen.getByRole("button", { name: "Save time off" }));
   expect(await screen.findByText("Open your personal link to continue.")).toBeInTheDocument();
@@ -118,6 +119,7 @@ it.each([401, 403])("protects a conflicted draft through the public transport wh
   render(<PublicApp />);
   await user.click(await screen.findByRole("button", { name: /Time off/i }));
   await user.click(screen.getByRole("button", { name: /Add single day/i }));
+  await user.type(screen.getByLabelText("Day you're away"), "2099-11-02");
   await user.type(screen.getByRole("textbox", { name: /Notes/i }), "Preserved travel dates");
   await user.click(screen.getByRole("button", { name: "Save time off" }));
   expect(await screen.findByText("Open your personal link to continue.")).toBeInTheDocument();
@@ -167,36 +169,18 @@ it("retries initial schedule loading through the dedicated personal session", as
   expect(fetchMock.mock.calls.every(([path]) => String(path).startsWith("/api/volunteer/"))).toBe(true);
 });
 
-it("keeps self-service available when the volunteer has no assignments", async () => {
+it("keeps time-off self-service available when the volunteer has no assignments", async () => {
   const user = userEvent.setup();
   const normal = fetchMock.getMockImplementation()!;
-  let availabilityResponse: "available" | "unavailable" | undefined;
   fetchMock.mockImplementation(async (path: string, options: RequestInit) => {
     if (path.endsWith("/schedule")) return { ok: true, status: 200, json: async () => ({ success: true,
       member: { memberId: "member", updatedAt: "stamp", blockoutDates: [] }, occurrences: [] }) };
-    if (path.endsWith("/availability") && options.method === "POST") {
-      const body = JSON.parse(String(options.body || "{}"));
-      availabilityResponse = body.availability;
-      return { ok: true, status: 200, json: async () => ({ success: true, availability: availabilityResponse }) };
-    }
-    if (path.endsWith("/availability")) return { ok: true, status: 200, json: async () => ({ success: true, requests: [{
-      recipientId: "request", formId: "form", name: "Next month", responseDeadline: "2099-11-30", respondedAt: "",
-      availability: availabilityResponse ? { future: availabilityResponse } : {}, availabilityMessage: "",
-      teamIds: ["team"], teamNames: ["Worship"],
-      occurrences: [{ occurrenceId: "future", serviceId: "future-service", name: "Future service", serviceDate: "2099-12-01", startsAt: "2099-12-01T14:00:00Z" }],
-    }] }) };
     return normal(path, options);
   });
   render(<PublicApp />);
-  expect(await screen.findByRole("button", { name: /Open Future service/i })).toBeInTheDocument();
+  expect(await screen.findByText("You are not scheduled for anything coming up.")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: /Time off/i }));
   expect(screen.getByRole("button", { name: /Add single day/i })).toBeEnabled();
-  await user.click(screen.getByRole("button", { name: /Mark availability as available for Future service/i }));
-  expect(await screen.findByText("Available")).toBeInTheDocument();
-  const availabilityCall = fetchMock.mock.calls.find(([path, options]) => String(path).endsWith("/availability") && options.method === "POST");
-  expect(JSON.parse(availabilityCall?.[1].body as string)).toEqual({
-    recipientId: "request", formId: "form", occurrenceId: "future", availability: "available",
-  });
 });
 
 it("gives personal guidance if the member disappears between session and schedule reads", async () => {

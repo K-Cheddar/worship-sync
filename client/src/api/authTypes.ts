@@ -865,7 +865,9 @@ export type NotificationBatchRecipient = {
   message?: string;
   approvalVersion?: string;
   phoneNumberSnapshot?: string;
-  previousDeliveryStatus?: "first_send" | "failed" | "accepted" | "uncertain" | "handled";
+  previousDeliveryStatus?: "first_send" | "failed" | "accepted" | "sent" | "uncertain" | "handled";
+  previousSentAt?: string;
+  respondedAt?: string;
   exclusionKind?: "" | "guest" | "archived" | "unlinked" | "team_mismatch";
   assignments?: ScheduleSmsAssignment[];
   sourceFingerprint?: string;
@@ -902,6 +904,7 @@ export type NotificationBatch = {
   formId?: string;
   scheduleId?: string;
   intentType: Extract<NotificationIntentType, "availability_request" | "availability_reminder"> | "schedule_initial_notification";
+  audienceType?: "first" | "reminder" | "specific";
   reminderRound?: number;
   status: "preparing" | "prepared" | "approved" | "dispatching" | "complete" | "partial" | "paused" | "sent" | "superseded";
   selectedMemberIds: string[];
@@ -952,6 +955,7 @@ export type SmsDeliveryAttempt = {
   recipientId: string;
   /** Present on new attempts; legacy records are scoped by recipient lookup. */
   formId?: string;
+  notificationIntentId?: string;
   memberId: string;
   provider: string;
   purpose: "initial" | "reminder" | NotificationIntentType;
@@ -961,6 +965,8 @@ export type SmsDeliveryAttempt = {
   failureMessage?: string;
   createdAt: string;
   updatedAt: string;
+  acceptedAt?: string;
+  sentAt?: string;
 };
 
 export type TeamIntakeBlockoutRange = {

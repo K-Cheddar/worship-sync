@@ -532,6 +532,8 @@ test("legacy workspace keeps general and personal links distinct and requires fi
   const selection = await screen.findByRole("dialog", {
     name: "Send requests",
   });
+  expect(within(selection).getByText("1 selected")).toBeInTheDocument();
+  await user.click(within(selection).getByRole("button", { name: "Change recipients" }));
   expect(
     await within(selection).findByRole("checkbox", { name: "Jane Smith" }),
   ).toBeChecked();

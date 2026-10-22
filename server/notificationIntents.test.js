@@ -178,7 +178,7 @@ const createHarness = ({
     getSmsConsentForChurchPhone: async (id, phone) => id === churchId && phone === phoneNumber
       ? getDoc("smsConsents", smsConsentIdForChurchPhone(id, phone))
       : null,
-    prepareAvailabilityNotificationRecipients: async ({ memberIds, purpose }) => {
+    prepareAvailabilityNotificationRecipients: async ({ memberIds, purpose, audienceType }) => {
       const currentForm = storeFor("teamIntakeForms").get(form.formId);
       return {
         form: currentForm,
@@ -188,7 +188,7 @@ const createHarness = ({
             ? "Volunteer is outside this form's team scope."
             : currentRecipient?.revokedAt
               ? "Request was revoked."
-              : currentRecipient?.respondedAt
+              : currentRecipient?.respondedAt && !(purpose === "availability_request" && audienceType === "specific")
                 ? "Availability response already received."
                 : purpose === "availability_reminder" && !currentRecipient
                   ? "No individual intake request exists."
@@ -537,22 +537,41 @@ test("a prepared batch is scoped to its selected form and recipients, and hides 
   assert.equal(intent.batchId, batch.batchId);
 });
 
-test("a confirmed availability request cannot be selected for a duplicate send", async () => {
+test("an intentional availability resend gets a new identity while retries preserve each send", async () => {
   const h = createHarness();
   const { batch: firstBatch } = await h.preview();
   const firstSend = await h.dispatch(firstBatch.batchId);
   assert.equal(firstSend.statusCode, 200);
   assert.equal(firstSend.payload.batch.summary.sent, 1);
   assert.equal(h.providerCalls, 1);
+  const firstIntent = await h.getDoc("notificationIntents", firstBatch.intentIds[0]);
 
-  const { batch: secondBatch } = await h.preview();
-  assert.equal(secondBatch.summary.eligible, 0);
-  assert.equal(secondBatch.summary.alreadySent, 1);
-  assert.equal(secondBatch.recipients[0].status, "sent");
-  assert.match(secondBatch.recipients[0].exclusionReason, /already sent/i);
+  const { batch: secondBatch } = await h.preview({ audienceType: "specific" });
+  assert.equal(secondBatch.summary.eligible, 1);
+  assert.notEqual(secondBatch.intentIds[0], firstBatch.intentIds[0]);
+  const secondIntent = await h.getDoc("notificationIntents", secondBatch.intentIds[0]);
+  assert.notEqual(secondIntent.idempotencyKey, firstIntent.idempotencyKey);
+  assert.equal(secondIntent.message, firstIntent.message);
+
   const secondSend = await h.dispatch(secondBatch.batchId);
   assert.equal(secondSend.statusCode, 200);
-  assert.equal(h.providerCalls, 1);
+  assert.equal(h.providerCalls, 2);
+  assert.equal((await h.getDoc("notificationIntents", firstBatch.intentIds[0])).status, "sent");
+  assert.equal((await h.getDoc("notificationIntents", secondBatch.intentIds[0])).status, "sent");
+  const replay = await h.dispatch(secondBatch.batchId);
+  assert.equal(replay.statusCode, 409);
+  assert.equal(h.providerCalls, 2);
+});
+
+test("retrying preparation with the same batch key adopts the same intent", async () => {
+  const h = createHarness();
+  const first = await h.preview({ audienceType: "specific", requestKey: "same-operation" });
+  const retry = await h.preview({ audienceType: "specific", requestKey: "same-operation" });
+  assert.equal(retry.res.statusCode, 200);
+  assert.equal(retry.batch.batchId, first.batch.batchId);
+  assert.deepEqual(retry.batch.intentIds, first.batch.intentIds);
+  assert.equal(h.storeFor("notificationIntents").size, 1);
+  assert.equal(h.providerCalls, 0);
 });
 
 test("forms with editable non-availability fields prepare form-response messages", async () => {
@@ -580,6 +599,9 @@ test("form reminders use reminder wording and remain scoped to the current form 
     availabilityOccurrences: [],
   };
   h.storeFor("teamIntakeForms").set(form.formId, form);
+  const initial = await h.preview();
+  assert.equal(initial.batch.summary.eligible, 1);
+  await h.dispatch(initial.batch.batchId);
   const { res, batch } = await h.preview({ intentType: "availability_reminder" });
   assert.equal(res.statusCode, 200);
   assert.equal(batch.reminderRound, 1);
@@ -587,7 +609,7 @@ test("form reminders use reminder wording and remain scoped to the current form 
   assert.equal(batch.recipients[0].segmentCount, 1);
   assert.equal(measureSmsMessage(batch.recipients[0].message).segmentCount, 1);
   assert.match(batch.recipients[0].message, /\/a\/secure-token/);
-  assert.equal(h.providerCalls, 0);
+  assert.equal(h.providerCalls, 1);
 });
 
 test("batch preparation rejects forms without any editable personalized response fields before reserving a batch", async () => {
@@ -744,13 +766,15 @@ test("church-wide form history keeps former recipients while scoped editors lose
 
 test("a response after reminder preparation blocks dispatch and keeps request history", async () => {
   const h = createHarness();
+  const initial = await h.preview();
+  await h.dispatch(initial.batch.batchId);
   const { batch, intent } = await h.preview({ intentType: "availability_reminder" });
   h.storeFor("teamIntakeRecipients").set(h.recipient.recipientId, {
     ...h.recipient, respondedAt: "2026-09-25T12:01:00.000Z", submissionId: "submission_a",
   });
   const dispatch = await h.dispatch(batch.batchId);
   assert.equal(dispatch.statusCode, 200);
-  assert.equal(h.providerCalls, 0);
+  assert.equal(h.providerCalls, 1);
   assert.equal(h.storeFor("notificationIntents").get(intent.intentId).status, "preview");
   assert.match(dispatch.payload.batch.recipients[0].exclusionReason, /already responded/i);
 });
@@ -863,11 +887,13 @@ test("opt-out and changed source records block dispatch after preview", async ()
   assert.equal(h.providerCalls, 0);
 
   const changedSource = createHarness();
+  const initial = await changedSource.preview();
+  await changedSource.dispatch(initial.batch.batchId);
   const { intent: second } = await changedSource.preview({ intentType: "availability_reminder" });
   changedSource.storeFor("teamIntakeForms").set(changedSource.form.formId, { ...changedSource.form, active: false });
   const changed = await changedSource.send(second.intentId);
   assert.equal(changed.statusCode, 409);
-  assert.equal(changedSource.providerCalls, 0);
+  assert.equal(changedSource.providerCalls, 1);
 });
 
 test("permission is checked again immediately before the provider send", async () => {

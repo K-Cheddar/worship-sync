@@ -109,9 +109,6 @@ export const useCurrentServicePlanSource = () => {
   const itemListLoading = useSelector(
     (state) => state.undoable.present.itemList.isLoading,
   );
-  const outlinePlanBinding = useSelector(
-    (state) => state.servicePlanningImport.outlinePlanBinding,
-  );
   const servicePlanKey = useSelector(
     (state) => state.servicePlanningImport.servicePlanKey,
   );
@@ -183,6 +180,7 @@ export const useCurrentServicePlanSource = () => {
   const currentVisitUrlSelectionRef = useRef(false);
   const selectedOutlineIdRef = useRef<string | undefined>(selectedOutlineId);
   const activeControllerIdRef = useRef(activeControllerId);
+  const manualBindingSequenceRef = useRef(0);
   const previousControllerIdRef = useRef(activeControllerId);
   const previousOutlineIdRef = useRef<string | undefined>(selectedOutlineId);
   const automaticSelectionContextRef = useRef<string | undefined>(undefined);
@@ -955,12 +953,11 @@ export const useCurrentServicePlanSource = () => {
    * never writes a new binding merely because the occurrence changed.
    */
   const persistManualPlanBinding = useCallback(
-    async (plan: Pick<ServicePlan, "planKey" | "name">) => {
+    async (plan: Pick<ServicePlan, "planKey" | "name">, sequence: number) => {
       if (
         !manualSelectionRef.current ||
         !db ||
-        !selectedOutlineId ||
-        outlinePlanBinding?.planKey === plan.planKey
+        !selectedOutlineId
       ) {
         return;
       }
@@ -975,7 +972,8 @@ export const useCurrentServicePlanSource = () => {
         await persistItemListServicePlanBinding(db, selectedOutlineIdAtStart, binding);
         if (
           activeControllerIdRef.current !== controllerIdAtStart ||
-          selectedOutlineIdRef.current !== selectedOutlineIdAtStart
+          selectedOutlineIdRef.current !== selectedOutlineIdAtStart ||
+          manualBindingSequenceRef.current !== sequence
         ) {
           return;
         }
@@ -988,7 +986,6 @@ export const useCurrentServicePlanSource = () => {
       activeControllerId,
       db,
       dispatch,
-      outlinePlanBinding?.planKey,
       selectedOutlineId,
     ],
   );
@@ -1052,8 +1049,9 @@ export const useCurrentServicePlanSource = () => {
       const selectedPlanSummary = savedPlans.find(
         (plan) => plan.planKey === planKey,
       );
+      const bindingSequence = ++manualBindingSequenceRef.current;
       if (selectedPlanSummary) {
-        void persistManualPlanBinding(selectedPlanSummary);
+        void persistManualPlanBinding(selectedPlanSummary, bindingSequence);
       }
       generationRef.current += 1;
       participantRequestIdRef.current += 1;

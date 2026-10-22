@@ -3,6 +3,7 @@ import {
   prepareAvailabilityNotificationBatch,
 } from "../../api/auth";
 import type { NotificationBatch, NotificationIntentType } from "../../api/authTypes";
+import type { AvailabilityAudienceType } from "./availabilityRecipientSelection";
 
 const requestKey = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
@@ -11,14 +12,16 @@ export const prepareAvailabilityBatchForMembers = async ({
   churchId,
   formId,
   intentType,
+  audienceType = intentType === "availability_reminder" ? "reminder" : "specific",
   memberIds,
 }: {
   churchId: string;
   formId: string;
   intentType: Extract<NotificationIntentType, "availability_request" | "availability_reminder">;
+  audienceType: AvailabilityAudienceType;
   memberIds: string[];
 }) => {
-  const requestKeyStorageKey = `worshipsync:pending-notification-request:${churchId}:${formId}:${intentType}`;
+  const requestKeyStorageKey = `worshipsync:pending-notification-request:${churchId}:${formId}:${intentType}:${audienceType}`;
   const memberSelection = [...new Set(memberIds)].sort();
   const selectionSignature = JSON.stringify(memberSelection);
   let storedRequest: { selectionSignature: string; requestKey: string } | null = null;
@@ -36,6 +39,7 @@ export const prepareAvailabilityBatchForMembers = async ({
   window.localStorage.setItem(requestKeyStorageKey, JSON.stringify({ selectionSignature, requestKey: batchRequestKey }));
   const response = await prepareAvailabilityNotificationBatch(churchId, {
     intentType,
+    audienceType,
     formId,
     memberIds: memberSelection,
     requestKey: batchRequestKey,
