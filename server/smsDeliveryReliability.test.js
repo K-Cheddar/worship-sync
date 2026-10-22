@@ -8,8 +8,8 @@ import { normalizeTwilioStatus, validateTwilioWebhookSignature, twilioStatusCall
 const deferred = () => { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; };
 const copy = (value) => value ? structuredClone(value) : null;
 const fixture = (transactional) => {
-  const intent = { intentId: "i", churchId: "c", memberId: "m", recipientId: "r", sourceId: "r", batchId: "b", attemptId: "a", status: "sending", sendStartedAt: "2020-01-01", approvedByUid: "operator" };
-  const attempt = { attemptId: "a", churchId: "c", memberId: "m", recipientId: "r", sourceId: "r", notificationIntentId: "i", phoneNumberSnapshot: "+14155550123", providerAccountId: "AC1", callbackToken: "a".repeat(64), status: "pending" };
+  const intent = { intentId: "i", churchId: "c", memberId: "m", recipientId: "r", sourceId: "r", batchId: "b", attemptId: "a", status: "sending", sendStartedAt: "2020-01-01", approvedByUid: "operator", approvalSnapshot: { approvalVersion: "approval-v1", expiresAt: Date.now() + 60_000 } };
+  const attempt = { attemptId: "a", churchId: "c", memberId: "m", recipientId: "r", sourceId: "r", notificationIntentId: "i", phoneNumberSnapshot: "+14155550123", providerAccountId: "AC1", callbackToken: "a".repeat(64), status: "pending", providerCallStarted: true };
   const docs = new Map([["notificationIntents/i", copy(intent)], ["smsDeliveryAttempts/a", copy(attempt)]]);
   const versions = new Map();
   const hooks = { beforeCommit: null, beforeWrite: null, retries: 0 };
@@ -87,6 +87,36 @@ for (const transactional of [false, true]) {
     assert.equal((await h.callback("delivered")).payload.updated, false);
     await h.accepted();
     assert.equal(h.docs.get("smsDeliveryAttempts/a").status, "delivered");
+  });
+  test(`recovery marks an explicitly never-started attempt not sent and keeps valid approval (${mode})`, async () => {
+    const h = fixture(transactional);
+    h.put("smsDeliveryAttempts/a", { ...h.attempt, providerCallStarted: false });
+    await h.recovery();
+    const recoveredIntent = h.docs.get("notificationIntents/i");
+    const recoveredAttempt = h.docs.get("smsDeliveryAttempts/a");
+    assert.equal(recoveredIntent.status, "preview");
+    assert.equal(recoveredIntent.outcome, "not_sent");
+    assert.equal(recoveredIntent.approvalSnapshot.approvalVersion, "approval-v1");
+    assert.equal(recoveredAttempt.status, "failed");
+    assert.equal(recoveredAttempt.outcome, "not_sent");
+  });
+  test(`recovery of a missing attempt record is safely not sent (${mode})`, async () => {
+    const h = fixture(transactional);
+    h.docs.delete("smsDeliveryAttempts/a");
+    await h.recovery();
+    const recoveredIntent = h.docs.get("notificationIntents/i");
+    assert.equal(recoveredIntent.status, "preview");
+    assert.equal(recoveredIntent.outcome, "not_sent");
+    assert.equal(recoveredIntent.approvalSnapshot.approvalVersion, "approval-v1");
+  });
+  test(`legacy attempt without a provider-start marker stays uncertain (${mode})`, async () => {
+    const h = fixture(transactional);
+    const legacyAttempt = { ...h.attempt };
+    delete legacyAttempt.providerCallStarted;
+    h.put("smsDeliveryAttempts/a", legacyAttempt);
+    await h.recovery();
+    assert.equal(h.docs.get("notificationIntents/i").status, "unknown");
+    assert.equal(h.docs.get("smsDeliveryAttempts/a").outcome, "unknown");
   });
   test(`wrong owners, SID and correlation cannot mutate state (${mode})`, async () => {
     const h = fixture(transactional);

@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { redactVolunteerSecrets } from "./volunteerPrivacy.js";
 import {
   approveReviewedScheduleBatch,
@@ -68,6 +68,11 @@ const safeErrorMessage = (error, fallback) => {
   if (!value || /https?:\/\/|(?:^|\/)\/?(?:a|schedule-response|teams\/intake)\//i.test(value)) return fallback;
   return value.slice(0, 300);
 };
+const safeClientErrorMessage = (error, fallback, knownServiceErrors = []) =>
+  (Number.isInteger(error?.statusCode) && error.statusCode >= 400 && error.statusCode < 500) ||
+  (error?.statusCode === 503 && [SMS_MESSAGING_UNAVAILABLE_ERROR, ...knownServiceErrors].includes(error.message))
+    ? safeErrorMessage(error, fallback)
+    : fallback;
 const safeProviderFailureMessage = (error, fallback) => {
   const value = normalize(error?.message || error?.details?.message || error?.response?.data?.message);
   if (!value) return fallback;
@@ -86,6 +91,31 @@ const safeIntentSendFailureMessage = (error, fallback, knownServiceErrors = []) 
     ? safeErrorMessage(error, fallback)
     : fallback;
 const publicAttempt = ({ callbackToken: _callbackToken, ...attempt }) => attempt;
+const keyedFingerprintFor = (value) => createHmac("sha256", process.env.AUTH_SESSION_SECRET || "dev-auth-secret")
+  .update(JSON.stringify(value)).digest("hex");
+const destinationFingerprintFor = (phoneNumber) => keyedFingerprintFor({ phoneNumber: String(phoneNumber || "") });
+const approvalBindingFingerprintFor = (intent, validated, authorizationFingerprint, authorizedByUid = "") => keyedFingerprintFor({
+  churchId: intent.churchId,
+  sourceType: intent.sourceType,
+  authorizedByUid,
+  memberId: intent.memberId,
+  recipientId: intent.recipientId || "",
+  intentType: intent.intentType,
+  // A custom message's source fingerprint contains its per-send batch ID.
+  // The stable fields below bind the recipient review across fresh batches.
+  sourceFingerprint: intent.sourceType === "custom_message" ? "" : validated.sourceFingerprint,
+  authorizationFingerprint,
+  phoneNumber: validated.phoneNumber || "",
+  eligibilityStatus: validated.eligibilityStatus || "",
+  consent: {
+    status: validated.consent?.status || "",
+    verifiedAt: validated.consent?.verifiedAt || "",
+    consentedAt: validated.consent?.consentedAt || "",
+    optedOutAt: validated.consent?.optedOutAt || "",
+  },
+  message: validated.message,
+  segmentCount: measureSmsMessage(validated.message).segmentCount,
+});
 const intentIdFor = (hashValue, churchId, idempotencyKey) =>
   hashValue(`${churchId}|notification-intent|${idempotencyKey}`);
 const scheduleInitialBatchIdFor = (hashValue, churchId, scheduleId) =>
@@ -666,7 +696,7 @@ export const createNotificationIntentHandlers = ({
     segmentCount: measureSmsMessage(validated.message).segmentCount,
   }));
 
-  const prepareIntentReview = async (intent, { authorizationFingerprint = "" } = {}) => {
+  const prepareIntentReview = async (intent, { authorizationFingerprint = "", authorizedByUid = "" } = {}) => {
     const prior = intent.approvalSnapshot;
     const stillFresh = prior && Number(prior.expiresAt || 0) > Date.now();
     const validated = await validateIntent(intent, {
@@ -681,6 +711,7 @@ export const createNotificationIntentHandlers = ({
     const snapshot = approvalVersion ? {
       approvalVersion,
       sourceFingerprint: validated.sourceFingerprint,
+      approvalBindingFingerprint: approvalBindingFingerprintFor(intent, validated, authorizationFingerprint, authorizedByUid),
       phoneHash: hashValue(validated.phoneNumber),
       phoneNumberSnapshot: validated.phoneNumber,
       phoneLast4: String(validated.phoneNumber || "").slice(-4),
@@ -907,6 +938,21 @@ export const createNotificationIntentHandlers = ({
           }
         }
       }
+      const recoveredAuthorized = await Promise.all(authorized.map(async (intent) => {
+        if (intent.intentType !== "custom_message" || !intent.batchId) return intent;
+        const batch = await getDoc(COLLECTIONS.notificationBatches, intent.batchId);
+        if (!batch || batch.churchId !== churchId || batch.intentType !== "custom_message") return intent;
+        return recoverCustomIntentForRead(batch, intent);
+      }));
+      authorized.splice(0, authorized.length, ...recoveredAuthorized);
+      for (const batchId of new Set(authorized
+        .filter((intent) => intent.intentType === "custom_message")
+        .map((intent) => intent.batchId).filter(Boolean))) {
+        const batch = await getDoc(COLLECTIONS.notificationBatches, batchId);
+        if (batch?.churchId === churchId && batch.intentType === "custom_message") {
+          await recoverStaleCustomBatchStatus(batch);
+        }
+      }
       const attempts = await loadAttemptsForIntents(churchId, authorized);
       const groups = new Map();
       for (const intent of authorized) {
@@ -1061,7 +1107,11 @@ export const createNotificationIntentHandlers = ({
           serviceTimeZone: churchSnap.exists ? churchSnap.data()?.serviceTimeZone || "UTC" : "UTC",
         };
         const previousAttempt = current.attemptId ? await transaction.get(db.collection(COLLECTIONS.smsDeliveryAttempts).doc(current.attemptId)) : null;
-        if (previousAttempt?.exists && (hasConfirmedSmsEvidence(previousAttempt.data()) || previousAttempt.data().outcome === "unknown")) throw httpError(409, "This send has a confirmed or uncertain provider outcome.");
+        const priorAttempt = previousAttempt?.exists ? previousAttempt.data() : null;
+        if (priorAttempt && (hasConfirmedSmsEvidence(priorAttempt) || priorAttempt.outcome === "unknown" ||
+            (priorAttempt.providerCallStarted !== false && !["failed", "not_sent"].includes(priorAttempt.outcome)))) {
+          throw httpError(409, "This send has a confirmed or uncertain provider outcome.");
+        }
         const result = await claim(current, records);
         if (result.invalidated) {
           transaction.set(intentRef, { status: "preview", approvalSnapshot: null, updatedAt: nowIso() }, { merge: true });
@@ -1076,7 +1126,8 @@ export const createNotificationIntentHandlers = ({
           batchId: current.batchId || "", reminderRound: current.reminderRound || 0,
           sourceId: current.sourceId, intentType: current.intentType,
           phoneNumberSnapshot: result.validated.phoneNumber, provider: result.validated.config.provider,
-          purpose: current.intentType, status: "pending", createdAt: nowIso(), updatedAt: nowIso(),
+          purpose: current.intentType, status: "pending", providerCallStarted: false,
+          createdAt: nowIso(), updatedAt: nowIso(),
         };
         transaction.set(intentRef, result.next, { merge: true });
         transaction.create(db.collection(COLLECTIONS.smsDeliveryAttempts).doc(attemptId), attempt);
@@ -1088,7 +1139,10 @@ export const createNotificationIntentHandlers = ({
     const result = await withSmsDeliveryLock(getDoc, `${churchId}|${intentId}`, async () => {
       const current = await getDoc(COLLECTIONS.notificationIntents, intentId);
       const previousAttempt = current?.attemptId ? await getDoc(COLLECTIONS.smsDeliveryAttempts, current.attemptId) : null;
-      if (hasConfirmedSmsEvidence(previousAttempt) || previousAttempt?.outcome === "unknown") throw httpError(409, "This send has a confirmed or uncertain provider outcome.");
+      if (previousAttempt && (hasConfirmedSmsEvidence(previousAttempt) || previousAttempt.outcome === "unknown" ||
+          (previousAttempt.providerCallStarted !== false && !["failed", "not_sent"].includes(previousAttempt.outcome)))) {
+        throw httpError(409, "This send has a confirmed or uncertain provider outcome.");
+      }
       const result = await claim(current);
       if (result.invalidated) {
         await setDoc(COLLECTIONS.notificationIntents, intentId, { status: "preview", approvalSnapshot: null, updatedAt: nowIso() }, { merge: true });
@@ -1103,7 +1157,8 @@ export const createNotificationIntentHandlers = ({
         batchId: current.batchId || "", reminderRound: current.reminderRound || 0,
         sourceId: current.sourceId, intentType: current.intentType,
         phoneNumberSnapshot: result.validated.phoneNumber, provider: result.validated.config.provider,
-        purpose: current.intentType, status: "pending", createdAt: nowIso(), updatedAt: nowIso(),
+        purpose: current.intentType, status: "pending", providerCallStarted: false,
+        createdAt: nowIso(), updatedAt: nowIso(),
       };
       await setDoc(COLLECTIONS.notificationIntents, intentId, result.next, { merge: true });
       await setDoc(COLLECTIONS.smsDeliveryAttempts, attemptId, attempt, { merge: false });
@@ -1111,6 +1166,41 @@ export const createNotificationIntentHandlers = ({
     });
     if (result.invalidated) throw httpError(result.statusCode, result.errorMessage);
     return result;
+  };
+
+  const markProviderCallStarted = async ({ churchId, intentId, attemptId, approvalVersion }) => {
+    const db = requireFirestore();
+    const makePatch = (intent, attempt) => {
+      if (!intent || intent.churchId !== churchId || intent.status !== "sending" ||
+          intent.attemptId !== attemptId || intent.approvalSnapshot?.approvalVersion !== approvalVersion ||
+          intent.providerAcceptedAttemptId || !attempt || attempt.churchId !== churchId ||
+          attempt.notificationIntentId !== intentId || attempt.attemptId !== attemptId ||
+          attempt.providerCallStarted !== false || hasConfirmedSmsEvidence(attempt) || attempt.outcome === "unknown") {
+        throw httpError(409, "This send claim changed before contacting the provider. Review delivery history.");
+      }
+      return { providerCallStarted: true, providerCallStartedAt: nowIso(), updatedAt: nowIso() };
+    };
+    if (db) return db.runTransaction(async (transaction) => {
+      const intentRef = db.collection(COLLECTIONS.notificationIntents).doc(intentId);
+      const attemptRef = db.collection(COLLECTIONS.smsDeliveryAttempts).doc(attemptId);
+      const [intentSnapshot, attemptSnapshot] = await Promise.all([
+        transaction.get(intentRef), transaction.get(attemptRef),
+      ]);
+      const intent = intentSnapshot.exists ? { intentId: intentSnapshot.id, ...intentSnapshot.data() } : null;
+      const attempt = attemptSnapshot.exists ? { attemptId: attemptSnapshot.id, ...attemptSnapshot.data() } : null;
+      const patch = makePatch(intent, attempt);
+      transaction.set(attemptRef, patch, { merge: true });
+      return patch;
+    });
+    return withSmsDeliveryLock(getDoc, `${churchId}|${intentId}`, async () => {
+      const [intent, attempt] = await Promise.all([
+        getDoc(COLLECTIONS.notificationIntents, intentId),
+        getDoc(COLLECTIONS.smsDeliveryAttempts, attemptId),
+      ]);
+      const patch = makePatch(intent, attempt);
+      await setDoc(COLLECTIONS.smsDeliveryAttempts, attemptId, patch, { merge: true });
+      return patch;
+    });
   };
 
   const sendIntentOperation = async ({
@@ -1185,6 +1275,7 @@ export const createNotificationIntentHandlers = ({
       }, { merge: true });
       const latestClaim = await getDoc(COLLECTIONS.notificationIntents, intentId);
       if (!latestClaim || latestClaim.churchId !== churchId || latestClaim.attemptId !== attemptId ||
+          latestClaim.status !== "sending" || latestClaim.approvalSnapshot?.approvalVersion !== approvalVersion ||
           (latestClaim.providerAcceptedAttemptId && latestClaim.providerAcceptedAttemptId !== attemptId)) {
         throw httpError(409, "This send claim changed or a prior attempt was accepted. Review delivery history.");
       }
@@ -1197,6 +1288,7 @@ export const createNotificationIntentHandlers = ({
       }
       const statusCallbackUrl = callback?.toString();
       let result;
+      await markProviderCallStarted({ churchId, intentId, attemptId, approvalVersion });
       providerCallStarted = true;
       try {
         result = await provider.sendMessage({ to: finalCheck.phoneNumber, body: finalCheck.message, statusCallbackUrl });
@@ -1598,10 +1690,47 @@ export const createNotificationIntentHandlers = ({
     return access;
   };
 
+  const recoverCustomIntentForRead = async (batch, intent) => {
+    if (!intent || intent.churchId !== batch.churchId || intent.batchId !== batch.batchId ||
+        intent.sourceType !== "custom_message" || intent.intentType !== "custom_message") return intent;
+    if ((intent.status === "sending" && isStaleSending(intent)) || intent.status === "unknown") {
+      return markUnknownAfterInterruption(intent);
+    }
+    return intent;
+  };
+
+  const recoverStaleCustomBatchStatus = async (batch) => {
+    const isStaleDispatch = (current) => current?.intentType === "custom_message" &&
+      current.churchId === batch.churchId && current.batchId === batch.batchId &&
+      current.status === "dispatching" && isStaleSending({ sendStartedAt: current.dispatchStartedAt });
+    if (!isStaleDispatch(batch)) return batch;
+    const recover = (current) => isStaleDispatch(current)
+      ? { ...current, status: "partial", dispatchInterruptedAt: nowIso(), updatedAt: nowIso() }
+      : current;
+    const db = requireFirestore();
+    if (db) return db.runTransaction(async (transaction) => {
+      const ref = db.collection(COLLECTIONS.notificationBatches).doc(batch.batchId);
+      const snapshot = await transaction.get(ref);
+      const current = snapshot.exists ? { batchId: snapshot.id, ...snapshot.data() } : null;
+      const next = recover(current);
+      if (next !== current) transaction.set(ref, next, { merge: false });
+      return next;
+    });
+    return runMemoryClaim(batch.batchId, async () => {
+      const current = await getBatchForChurch(batch.batchId, batch.churchId);
+      const next = recover(current);
+      if (next !== current) await setDoc(COLLECTIONS.notificationBatches, batch.batchId, next, { merge: false });
+      return next;
+    });
+  };
+
   const customBatchDetail = async (batch) => {
-    const intents = await Promise.all((batch.intentIds || []).map((id) => getDoc(COLLECTIONS.notificationIntents, id)));
+    const loadedIntents = await Promise.all((batch.intentIds || []).map((id) => getDoc(COLLECTIONS.notificationIntents, id)));
+    const intents = await Promise.all(loadedIntents.map((intent) => recoverCustomIntentForRead(batch, intent)));
+    const detailBatch = await recoverStaleCustomBatchStatus(batch);
+    const intentById = new Map(intents.map((intent) => [intent?.intentId, intent]));
     const recipients = await Promise.all((batch.recipients || []).map(async (row) => {
-      const intent = intents.find((item) => item?.intentId === row.intentId);
+      const intent = intentById.get(row.intentId);
       const attempt = intent?.attemptId ? await getDoc(COLLECTIONS.smsDeliveryAttempts, intent.attemptId) : null;
       const snapshot = intent?.approvalSnapshot;
       const ready = Boolean(intent && ["preview", "ready"].includes(intent.status) &&
@@ -1609,6 +1738,8 @@ export const createNotificationIntentHandlers = ({
       return {
         memberId: row.memberId, memberName: row.memberName,
         maskedPhoneNumber: snapshot?.phoneLast4 ? `••• ••• ${snapshot.phoneLast4}` : row.maskedPhoneNumber || "",
+        destinationFingerprint: snapshot?.phoneNumberSnapshot ? destinationFingerprintFor(snapshot.phoneNumberSnapshot) : "",
+        approvalBindingFingerprint: snapshot?.approvalBindingFingerprint || "",
         eligible: ready, exclusionReason: row.exclusionReason || (intent && !ready &&
           ["preview", "ready"].includes(intent.status) ? "This review expired. Prepare a new message." : ""),
         intentId: row.intentId || "", status: intent?.status || row.status || "excluded",
@@ -1619,11 +1750,11 @@ export const createNotificationIntentHandlers = ({
     }));
     const eligible = recipients.filter((row) => row.eligible).length;
     return {
-      batchId: batch.batchId, churchId: batch.churchId, intentType: "custom_message",
-      status: batch.status, createdAt: batch.createdAt, confirmedAt: batch.confirmedAt || "",
-      selectedMemberIds: batch.selectedMemberIds, message: batch.message,
-      intentIds: batch.intentIds || [],
-      recipients, approvalVersion: batch.reviewVersion || "",
+      batchId: detailBatch.batchId, churchId: detailBatch.churchId, intentType: "custom_message",
+      status: detailBatch.status, createdAt: detailBatch.createdAt, confirmedAt: detailBatch.confirmedAt || "",
+      selectedMemberIds: detailBatch.selectedMemberIds, message: detailBatch.message,
+      intentIds: detailBatch.intentIds || [],
+      recipients, approvalVersion: detailBatch.reviewVersion || "",
       summary: {
         selected: recipients.length, eligible,
         excluded: recipients.filter((row) => row.status === "excluded" ||
@@ -1641,7 +1772,8 @@ export const createNotificationIntentHandlers = ({
     try {
       await assertCsrf(req);
       const churchId = normalize(req.params.churchId);
-      const memberIds = [...new Set((Array.isArray(req.body?.memberIds) ? req.body.memberIds : []).map(normalize).filter(Boolean))].slice(0, 500);
+      const memberIds = [...new Set((Array.isArray(req.body?.memberIds) ? req.body.memberIds : []).map(normalize).filter(Boolean))];
+      if (memberIds.length > 500) throw httpError(400, "Select 500 or fewer volunteers, then try again.");
       const text = normalize(req.body?.message);
       const message = /\bReply STOP to opt out\.?$/i.test(text) ? text : `${text} Reply STOP to opt out.`;
       const requestKey = normalize(req.body?.requestKey);
@@ -1708,6 +1840,7 @@ export const createNotificationIntentHandlers = ({
         const saved = await getDoc(COLLECTIONS.notificationIntents, id);
         const reviewed = await prepareIntentReview({ intentId: id, ...saved }, {
           authorizationFingerprint: accessFingerprintFor(accessByMemberId.get(member.memberId)),
+          authorizedByUid: actorUid,
         });
         rows.push({ memberId: member.memberId, memberName: [member.firstName, member.lastName].filter(Boolean).join(" ") || "Volunteer",
           intentId: reviewed.eligible ? id : "", status: reviewed.eligible ? "preview" : "excluded",
@@ -1739,7 +1872,7 @@ export const createNotificationIntentHandlers = ({
     } catch (error) {
       return res.status(error.statusCode || 500).json({
         success: false,
-        errorMessage: safeErrorMessage(error, "Could not prepare this message."),
+        errorMessage: safeClientErrorMessage(error, "Could not prepare this message."),
         ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       });
     }
@@ -2539,7 +2672,8 @@ export const createNotificationIntentHandlers = ({
       }
       const audienceType = normalizeAvailabilityAudience(requestedAudience, intentType);
       const formId = normalize(req.body?.formId);
-      const memberIds = [...new Set((Array.isArray(req.body?.memberIds) ? req.body.memberIds : []).map(normalize).filter(Boolean))].slice(0, 500);
+      const memberIds = [...new Set((Array.isArray(req.body?.memberIds) ? req.body.memberIds : []).map(normalize).filter(Boolean))];
+      if (memberIds.length > 500) throw httpError(400, "Select 500 or fewer volunteers, then try again.");
       const requestKey = normalize(req.body?.requestKey).slice(0, 120);
       if (!formId || !requestKey || !memberIds.length) throw httpError(400, "Choose a form, at least one volunteer, and a batch request key.");
       const access = await authorizeForm(req, churchId, formId);
@@ -2878,10 +3012,17 @@ export const createNotificationIntentHandlers = ({
           },
         });
         const dispatchedIntents = await Promise.all((nextBatch.intentIds || []).map((id) => getDoc(COLLECTIONS.notificationIntents, id)));
+        const dispatchedAttempts = await Promise.all(dispatchedIntents.map((intent) => intent?.attemptId
+          ? getDoc(COLLECTIONS.smsDeliveryAttempts, intent.attemptId) : null));
         const approvedVersionByIntentId = new Map((batch.recipients || []).map((row) => [row.intentId, row.approvalVersion]));
-        const noProviderAttemptStarted = dispatchedIntents.length > 0 && dispatchedIntents.every((intent) =>
-          intent && ["preview", "ready"].includes(intent.status) && !intent.attemptId && !intent.providerAcceptedAttemptId &&
-          intent.approvalSnapshot?.approvalVersion === approvedVersionByIntentId.get(intent.intentId));
+        const noProviderAttemptStarted = dispatchedIntents.length > 0 && dispatchedIntents.every((intent, index) => {
+          const retainsApprovedReview = intent && ["preview", "ready"].includes(intent.status) &&
+            !intent.providerAcceptedAttemptId &&
+            intent.approvalSnapshot?.approvalVersion === approvedVersionByIntentId.get(intent.intentId);
+          const noProviderCall = !intent?.attemptId ||
+            (dispatchedAttempts[index]?.providerCallStarted === false && dispatchedAttempts[index]?.outcome === "not_sent");
+          return Boolean(retainsApprovedReview && noProviderCall);
+        });
         const preflightFailure = (nextBatch.lastDispatchResults || []).find((result) =>
           result.outcome === "not_sent" && (result.errorMessage || result.error));
         if (noProviderAttemptStarted && preflightFailure) {
@@ -2896,7 +3037,7 @@ export const createNotificationIntentHandlers = ({
             recipients: (nextBatch.recipients || []).map((row) => {
               if (!unstartedIntentIds.has(row.intentId)) return row;
               const { exclusionReason: _dispatchError, ...recipient } = row;
-              return { ...recipient, status: "preview" };
+              return { ...recipient, status: "preview", exclusionReason: "" };
             }),
             updatedAt: nowIso(),
           };

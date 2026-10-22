@@ -656,6 +656,9 @@ export const executeReviewedNotificationBatch = async ({
     const intent = candidate?.churchId === batch.churchId && candidate?.batchId === batch.batchId && matchesSource(candidate) ? candidate : null;
     const errorMessage = errorByIntentId.get(row.intentId) || "";
     const currentSnapshot = intent?.approvalSnapshot;
+    const exclusionReason = errorMessage || (!currentSnapshot && ["preview", "ready"].includes(intent?.status)
+      ? "This message needs a fresh preview."
+      : row.exclusionReason);
     return {
       ...row,
       status: intent?.status || row.status,
@@ -663,7 +666,7 @@ export const executeReviewedNotificationBatch = async ({
       outcome: intent?.outcome || "",
       approvalVersion: currentSnapshot?.approvalVersion || "",
       eligible: Boolean(currentSnapshot?.approvalVersion && Number(currentSnapshot.expiresAt) > Date.now() && ["preview", "ready"].includes(intent?.status)),
-      exclusionReason: errorMessage || (!currentSnapshot && ["preview", "ready"].includes(intent?.status) ? "This message needs a fresh preview." : row.exclusionReason),
+      ...(exclusionReason === undefined ? {} : { exclusionReason }),
       ...(/opted out/i.test(errorMessage) ? { eligibilityStatus: "opted_out" } : {}),
     };
   }));

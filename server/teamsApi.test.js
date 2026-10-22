@@ -14279,6 +14279,14 @@ test("individual intake recipient creation validates the full set before writing
   });
   assert.equal(failed.statusCode, 400);
 
+  const oversized = await callHandler(authHandlers.createTeamIntakeRecipients, {
+    context,
+    params: { formId },
+    body: { memberIds: Array.from({ length: 501 }, (_, index) => `member-${index + 1}`) },
+  });
+  assert.equal(oversized.statusCode, 400);
+  assert.equal(oversized.payload.errorMessage, "Choose 500 or fewer members, then try again.");
+
   const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
     context,
   });

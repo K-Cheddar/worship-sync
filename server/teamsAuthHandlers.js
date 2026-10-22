@@ -11307,6 +11307,10 @@ export const createTeamsAuthHandlers = ({
     // explicit scope when notification recipients are materialized.
     assertTeamIntakeFormIsOpen(form);
     assertTeamIntakeFormResponseDeadline(form);
+    const selectedMemberIds = normalizeIdArray(memberIds);
+    if (selectedMemberIds.length > 500) {
+      throw httpError(400, "Select 500 or fewer volunteers, then try again.");
+    }
     const enabledFields = normalizeTeamIntakeFields(
       undefined,
       form.enabledFields,
@@ -11337,7 +11341,7 @@ export const createTeamsAuthHandlers = ({
       getChurchById(churchId),
     ]);
     const results = [];
-    for (const memberId of [...new Set(memberIds)].slice(0, 500)) {
+    for (const memberId of selectedMemberIds) {
       const member = members.find((item) => item.memberId === memberId);
       if (!member || member.archivedAt) {
         results.push({
@@ -17620,7 +17624,10 @@ export const createTeamsAuthHandlers = ({
           form,
         );
         assertTeamIntakeFormIsOpen(form);
-        const memberIds = normalizeIdArray(req.body?.memberIds).slice(0, 500);
+        const memberIds = normalizeIdArray(req.body?.memberIds);
+        if (memberIds.length > 500) {
+          throw httpError(400, "Choose 500 or fewer members, then try again.");
+        }
         if (memberIds.length === 0) {
           throw httpError(400, "Choose at least one member.");
         }

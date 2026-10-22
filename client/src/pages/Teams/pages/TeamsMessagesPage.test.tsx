@@ -23,8 +23,8 @@ const batch = {
   selectedMemberIds: ["m1", "m2"], intentIds: ["i1", "i2"], approvalVersion: "review-v1",
   message: "Practice Friday. Reply STOP to opt out.",
   recipients: [
-    { memberId: "m1", memberName: "Alex Lane", maskedPhoneNumber: "••• ••• 0101", eligible: true, status: "preview", segmentCount: 1 },
-    { memberId: "m2", memberName: "Blair Rivera", maskedPhoneNumber: "••• ••• 0102", eligible: true, status: "preview", segmentCount: 1 },
+    { memberId: "m1", memberName: "Alex Lane", maskedPhoneNumber: "••• ••• 0101", destinationFingerprint: "destination-m1-v1", approvalBindingFingerprint: "binding-m1-v1", eligible: true, status: "preview", segmentCount: 1 },
+    { memberId: "m2", memberName: "Blair Rivera", maskedPhoneNumber: "••• ••• 0102", destinationFingerprint: "destination-m2-v1", approvalBindingFingerprint: "binding-m2-v1", eligible: true, status: "preview", segmentCount: 1 },
   ],
   summary: { eligible: 2, excluded: 0, totalSegments: 2 },
 };
@@ -305,6 +305,125 @@ it("requires confirmation when single-recipient destination details change durin
   expect(dispatchAvailabilityNotificationBatch).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "Send message" }));
   expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledWith("church", "b1", "changed-v1");
+});
+
+it("requires confirmation when a renewed single-recipient destination changes but keeps the same last four digits", async () => {
+  const firstBatch = {
+    ...batch, batchId: "b1", selectedMemberIds: ["m1"], intentIds: ["i1"], approvalVersion: "expired-v1",
+    recipients: [{ ...batch.recipients[0], destinationFingerprint: "destination-original" }],
+    summary: { ...batch.summary, eligible: 1, excluded: 0, totalSegments: 1 },
+  };
+  const freshBatch = {
+    ...firstBatch, batchId: "b2", approvalVersion: "fresh-v2",
+    recipients: [{ ...firstBatch.recipients[0], destinationFingerprint: "destination-changed", approvalBindingFingerprint: "binding-changed" }],
+  };
+  const sentBatch = { ...freshBatch, status: "sent" as const };
+  jest.mocked(prepareCustomMessage)
+    .mockResolvedValueOnce({ success: true, batch: firstBatch as never })
+    .mockResolvedValueOnce({ success: true, batch: freshBatch as never });
+  jest.mocked(getAvailabilityNotificationBatch).mockResolvedValueOnce({ success: true, batch: firstBatch as never });
+  jest.mocked(dispatchAvailabilityNotificationBatch)
+    .mockRejectedValueOnce(Object.assign(new Error("Review expired."), { status: 409 }))
+    .mockResolvedValueOnce({ success: true, batch: sentBatch as never });
+
+  const user = userEvent.setup();
+  renderForAdmin();
+  await user.click(screen.getByRole("button", { name: "+ New message" }));
+  await user.click(screen.getByRole("checkbox", { name: "Alex Lane" }));
+  await user.type(screen.getByRole("textbox", { name: /Message:/ }), "Practice Friday.");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+
+  expect(await screen.findByRole("dialog", { name: "Review updated message" })).toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveTextContent("A volunteer’s phone number changed. Review and confirm before sending.");
+  expect(screen.getByText(/0101/, { selector: "p" })).toBeInTheDocument();
+  expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledTimes(2));
+  expect(dispatchAvailabilityNotificationBatch).toHaveBeenLastCalledWith("church", "b2", "fresh-v2");
+});
+
+it("requires confirmation when bulk approval renewal changes a same-suffix destination", async () => {
+  const firstBatch = {
+    ...batch,
+    recipients: [
+      { ...batch.recipients[0], destinationFingerprint: "destination-m1-v1" },
+      { ...batch.recipients[1], destinationFingerprint: "destination-m2-v1" },
+    ],
+  };
+  const freshBatch = {
+    ...firstBatch, batchId: "b2", approvalVersion: "fresh-bulk-v2",
+    recipients: [
+      { ...firstBatch.recipients[0], destinationFingerprint: "destination-m1-changed", approvalBindingFingerprint: "binding-m1-changed" },
+      firstBatch.recipients[1],
+    ],
+  };
+  const sentBatch = { ...freshBatch, status: "sent" as const };
+  jest.mocked(prepareCustomMessage)
+    .mockResolvedValueOnce({ success: true, batch: firstBatch as never })
+    .mockResolvedValueOnce({ success: true, batch: freshBatch as never });
+  jest.mocked(getAvailabilityNotificationBatch).mockResolvedValueOnce({ success: true, batch: firstBatch as never });
+  jest.mocked(dispatchAvailabilityNotificationBatch)
+    .mockRejectedValueOnce(Object.assign(new Error("Review expired."), { status: 409 }))
+    .mockResolvedValueOnce({ success: true, batch: sentBatch as never });
+
+  const user = userEvent.setup();
+  renderForAdmin();
+  await user.click(screen.getByRole("button", { name: "+ New message" }));
+  await user.click(screen.getByRole("button", { name: "Teams" }));
+  await user.click(screen.getByRole("menuitemcheckbox", { name: "Praise Team" }));
+  await user.click(screen.getByRole("menuitemcheckbox", { name: "Tech Team" }));
+  await user.keyboard("{Escape}");
+  await user.type(screen.getByRole("textbox", { name: /Message:/ }), "Practice Friday.");
+  await user.click(screen.getByRole("button", { name: "Send to 2 volunteers" }));
+  await user.click(await screen.findByRole("button", { name: "Send 2 messages" }));
+
+  expect(await screen.findByRole("dialog", { name: "Confirm message" })).toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveTextContent("A volunteer’s phone number changed. Review and confirm before sending.");
+  expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole("button", { name: "Send 2 messages" }));
+  await waitFor(() => expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledTimes(2));
+  expect(dispatchAvailabilityNotificationBatch).toHaveBeenLastCalledWith("church", "b2", "fresh-bulk-v2");
+});
+
+it("keeps the editable message and all 501 selected recipients after the server rejects an oversized audience", async () => {
+  const oversizedMembers = Array.from({ length: 501 }, (_, index) => ({
+    memberId: `large-${index + 1}`,
+    churchId: "church",
+    firstName: `Volunteer${index + 1}`,
+    lastName: "Roster",
+    phoneNumber: `+1555555${String(index + 1).padStart(4, "0")}`,
+  }));
+  const oversizedIds = oversizedMembers.map((member) => member.memberId);
+  jest.mocked(useTeamsPage).mockReturnValue({
+    churchId: "church", canEditTeams: true, canEditTeam: () => true,
+    pageData: {
+      members: oversizedMembers,
+      positions: [],
+      teams: [{ teamId: "large-team", name: "Large Team", memberIds: oversizedIds }],
+      smsEligibilityByMemberId: Object.fromEntries(oversizedIds.map((id) => [id, { eligible: true }])),
+    },
+  } as unknown as ReturnType<typeof useTeamsPage>);
+  jest.mocked(prepareCustomMessage).mockRejectedValueOnce(
+    Object.assign(new Error("Select 500 or fewer volunteers, then try again."), { status: 400 }),
+  );
+
+  const user = userEvent.setup();
+  renderForAdmin();
+  await user.click(screen.getByRole("button", { name: "+ New message" }));
+  await user.click(screen.getByRole("button", { name: "Teams" }));
+  await user.click(screen.getByRole("menuitemcheckbox", { name: "Large Team" }));
+  await user.keyboard("{Escape}");
+  await user.type(screen.getByRole("textbox", { name: /Message:/ }), "Practice Friday.");
+  await user.click(screen.getByRole("button", { name: "Send to 501 volunteers" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("Select 500 or fewer volunteers, then try again.");
+  expect(screen.getByRole("textbox", { name: /Message:/ })).toHaveValue("Practice Friday.");
+  expect(screen.getByText("501 selected · 501 eligible · 0 excluded")).toBeInTheDocument();
+  expect(prepareCustomMessage).toHaveBeenCalledTimes(1);
+  expect(jest.mocked(prepareCustomMessage).mock.calls[0][1]).toEqual(expect.objectContaining({ message: "Practice Friday." }));
+  expect(jest.mocked(prepareCustomMessage).mock.calls[0][1].memberIds).toHaveLength(501);
+  expect(new Set(jest.mocked(prepareCustomMessage).mock.calls[0][1].memberIds)).toEqual(new Set(oversizedIds));
+  expect(dispatchAvailabilityNotificationBatch).not.toHaveBeenCalled();
 });
 
 it("requires confirmation when the prepared single-recipient segment estimate changes", async () => {

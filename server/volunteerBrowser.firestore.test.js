@@ -296,7 +296,14 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
     assert.deepEqual((await scheduleRef.get()).data().responses[occurrenceId]["camera::0"], firstResponse);
     setServerFirestoreForTests(db);
     await page.getByText(/Your saved information changed elsewhere/).waitFor();
-    assert.equal(await page.getByRole("textbox", { name: /Notes/i }).inputValue(), "Volunteer unsaved dates");
+    const notesInput = page.getByPlaceholder("Notes (optional)");
+    if (await notesInput.count() === 0) {
+      // A refresh may return the row to its summary view; the draft should
+      // still be visible there and editable when the volunteer reopens it.
+      await page.getByText("Volunteer unsaved dates", { exact: true }).waitFor();
+      await page.getByRole("button", { name: /Edit time off/i }).click();
+    }
+    assert.equal(await page.getByPlaceholder("Notes (optional)").inputValue(), "Volunteer unsaved dates");
     assert.equal(await page.getByRole("button", { name: /Save time off/i }).isDisabled(), true);
     await page.getByText("Review saved dates").click();
     await page.getByText(/Administrator saved dates/).waitFor();
@@ -307,7 +314,9 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
     assert.deepEqual((await scheduleRef.get()).data().responses.past, ownSchedule.responses.past);
     assert.deepEqual((await scheduleRef.get()).data().responses[occurrenceId]["camera::1"], ownSchedule.responses[occurrenceId]["camera::1"]);
     await page.getByRole("button", { name: "Discard changes" }).click();
-    assert.equal(await page.getByRole("textbox", { name: /Notes/i }).inputValue(), "Administrator saved dates");
+    await page.getByText("Administrator saved dates", { exact: true }).waitFor();
+    await page.getByRole("button", { name: /Edit time off/i }).click();
+    assert.equal(await page.getByPlaceholder("Notes (optional)").inputValue(), "Administrator saved dates");
     await page.getByRole("button", { name: /Remove blockout/i }).click();
     await page.getByRole("button", { name: /Save time off/i }).click();
     await page.getByText("Time off saved.").waitFor();

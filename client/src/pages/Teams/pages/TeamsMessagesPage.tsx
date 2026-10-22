@@ -43,7 +43,13 @@ const reviewRecipientStatus = (row: NotificationBatch["recipients"][number]) => 
 };
 const newKey = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 type EditableMessageDraft = { message: string; memberIds: string[] };
-type RecipientPresentation = { memberId: string; memberName: string; maskedPhoneNumber: string };
+type RecipientPresentation = {
+  memberId: string;
+  memberName: string;
+  maskedPhoneNumber: string;
+  destinationFingerprint?: string;
+  approvalBindingFingerprint?: string;
+};
 type ComposerSnapshot = { message: string; memberIds: string[]; segmentCount: number; recipients: RecipientPresentation[] };
 type ReviewMode = "bulk" | "changed_single";
 
@@ -78,9 +84,22 @@ const matchesComposerSnapshot = (batch: NotificationBatch, snapshot: ComposerSna
   return batch.recipients.every((recipient) => {
     const shown = expected.get(recipient.memberId);
     return Boolean(shown && recipient.eligible && recipient.segmentCount === snapshot.segmentCount && recipient.memberName === shown.memberName &&
-      recipient.maskedPhoneNumber === shown.maskedPhoneNumber);
+      recipient.maskedPhoneNumber === shown.maskedPhoneNumber &&
+      (shown.destinationFingerprint === undefined || Boolean(shown.destinationFingerprint &&
+        recipient.destinationFingerprint === shown.destinationFingerprint)) &&
+      (shown.approvalBindingFingerprint === undefined || Boolean(shown.approvalBindingFingerprint &&
+        recipient.approvalBindingFingerprint === shown.approvalBindingFingerprint)));
   });
 };
+
+const bindComposerDestinations = (snapshot: ComposerSnapshot, batch: NotificationBatch): ComposerSnapshot => ({
+  ...snapshot,
+  recipients: snapshot.recipients.map((recipient) => ({
+    ...recipient,
+    destinationFingerprint: batch.recipients.find((row) => row.memberId === recipient.memberId)?.destinationFingerprint || "",
+    approvalBindingFingerprint: batch.recipients.find((row) => row.memberId === recipient.memberId)?.approvalBindingFingerprint || "",
+  })),
+});
 
 const matchesReviewSnapshot = (left: NotificationBatch, right: NotificationBatch) => {
   if (left.message !== right.message || !sameIds(left.selectedMemberIds, right.selectedMemberIds) ||
@@ -90,9 +109,22 @@ const matchesReviewSnapshot = (left: NotificationBatch, right: NotificationBatch
   return left.recipients.every((recipient) => {
     const current = rightRecipients.get(recipient.memberId);
     return Boolean(current && recipient.memberName === current.memberName &&
-      recipient.maskedPhoneNumber === current.maskedPhoneNumber && recipient.eligible === current.eligible &&
+      recipient.maskedPhoneNumber === current.maskedPhoneNumber &&
+      recipient.destinationFingerprint === current.destinationFingerprint &&
+      recipient.approvalBindingFingerprint === current.approvalBindingFingerprint &&
+      (!recipient.eligible || Boolean(recipient.destinationFingerprint)) && recipient.eligible === current.eligible &&
+      (!recipient.eligible || Boolean(recipient.approvalBindingFingerprint)) &&
       recipient.exclusionReason === current.exclusionReason && recipient.segmentCount === current.segmentCount);
   });
+};
+
+const destinationsChanged = (
+  left: { memberId: string; destinationFingerprint?: string }[],
+  right: { memberId: string; destinationFingerprint?: string }[],
+) => {
+  const rightByMemberId = new Map(right.map((recipient) => [recipient.memberId, recipient.destinationFingerprint]));
+  return left.some((recipient) => rightByMemberId.has(recipient.memberId) &&
+    rightByMemberId.get(recipient.memberId) !== recipient.destinationFingerprint);
 };
 
 const hasUnresolvedDelivery = (entry: MessageHistoryEntry) => entry.messageType === "custom_message" &&
@@ -287,7 +319,8 @@ const TeamsMessagesPageView = ({ draftStorageKey }: { draftStorageKey: string })
         const latest = (await getAvailabilityNotificationBatch(owner, batch.batchId)).batch;
         if (!activeRef.current || churchRef.current !== owner) return;
         const definitelyNotStarted = latest.status === "prepared" && latest.recipients.every((row) =>
-          !["sending", "sent", "failed", "unknown"].includes(row.status) && !row.attemptStatus && row.attemptOutcome !== "unknown");
+          !["sending", "sent", "failed", "unknown"].includes(row.status) &&
+          (!row.attemptStatus || row.attemptOutcome === "not_sent") && row.attemptOutcome !== "unknown");
         if (definitelyNotStarted && getApiErrorStatus(caught) === 409 && allowFreshApproval) {
           const fresh = (await prepareCustomMessage(owner, {
             memberIds: expectation.kind === "composer" ? expectation.snapshot.memberIds : expectation.snapshot.selectedMemberIds,
@@ -305,7 +338,9 @@ const TeamsMessagesPageView = ({ draftStorageKey }: { draftStorageKey: string })
           setReview(fresh);
           setReviewMode(expectation.kind === "composer" ? "changed_single" : reviewMode || "bulk");
           setOpen(true);
-          setError("The message or recipient details changed. Review the updated information before sending.");
+          setError(destinationsChanged(expectation.snapshot.recipients, fresh.recipients)
+            ? "A volunteer’s phone number changed. Review and confirm before sending."
+            : "The message or recipient details changed. Review the updated information before sending.");
           return;
         }
         if (definitelyNotStarted) {
@@ -343,7 +378,7 @@ const TeamsMessagesPageView = ({ draftStorageKey }: { draftStorageKey: string })
       const prepared = (await prepareCustomMessage(owner, { memberIds: snapshot.memberIds, message: draftMessage, requestKey: newKey() })).batch;
       if (!activeRef.current || churchRef.current !== owner) return;
       if (snapshot.memberIds.length === 1 && matchesComposerSnapshot(prepared, snapshot)) {
-        await dispatchPreparedBatch(prepared, { kind: "composer", snapshot, draftMessage });
+        await dispatchPreparedBatch(prepared, { kind: "composer", snapshot: bindComposerDestinations(snapshot, prepared), draftMessage });
       } else {
         setReview(prepared);
         setReviewMode(snapshot.memberIds.length === 1 ? "changed_single" : "bulk");

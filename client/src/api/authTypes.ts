@@ -857,6 +857,10 @@ export type NotificationBatchRecipient = {
   eligibilityStatus?: SmsMemberEligibilityStatus | "";
   eligible: boolean;
   exclusionReason?: string;
+  /** Server-keyed identity for approval renewal comparisons; never a phone number. */
+  destinationFingerprint?: string;
+  /** Server-keyed binding for the reviewed destination, consent, authorization and message estimate. */
+  approvalBindingFingerprint?: string;
   intentId?: string;
   status: NotificationIntentStatus | "excluded";
   attemptId?: string;

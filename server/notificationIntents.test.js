@@ -7,6 +7,7 @@ import {
   AUTOMATIC_NOTIFICATION_SENDS_DISABLED,
   createNotificationIntentHandlers,
   createNotificationIntent,
+  NOTIFICATION_SEND_STALE_AFTER_MS,
   NOTIFICATION_INTENT_TYPES,
 } from "./notificationIntents.js";
 import { createSmsStatusWebhookHandler } from "./smsStatusWebhook.js";
@@ -16,12 +17,13 @@ import {
   getScheduleAssignedMemberIds,
   getScheduleMemberAssignments,
 } from "./scheduleInitialSms.js";
-import { approveReviewedScheduleBatch } from "./notificationBatches.js";
+import { approveReviewedScheduleBatch, executeReviewedNotificationBatch } from "./notificationBatches.js";
 
 const createHarness = ({
   providerSend,
   firestore = false,
   firestoreDb = null,
+  sharedCollections = null,
   requireTeamsEdit,
   authorizeSchedule,
   authorizeScheduleActor,
@@ -37,7 +39,7 @@ const createHarness = ({
   resolveScheduleNotificationContext,
   logger = { info() {}, warn() {}, error() {} },
 } = {}) => {
-  const collections = new Map();
+  const collections = sharedCollections || new Map();
   const storeFor = (collection) => {
     if (!collections.has(collection)) collections.set(collection, new Map());
     return collections.get(collection);
@@ -162,7 +164,14 @@ const createHarness = ({
     hashValue,
     httpError: (statusCode, message) => Object.assign(new Error(message), { statusCode }),
     nowIso,
-    queryDocs: async (collection, filters = []) => [...storeFor(collection).values()].filter((item) => filters.every((filter) => filter.op === "in" ? filter.value.includes(item[filter.field]) : item[filter.field] === filter.value)),
+    queryDocs: async (collection, filters = [], options = {}) => {
+      const rows = firestoreDb
+        ? (await firestoreDb.collection(collection).get()).docs.map((snapshot) => ({ id: snapshot.id, ...snapshot.data() }))
+        : [...storeFor(collection).values()];
+      const matched = rows.filter((item) => filters.every((filter) => filter.op === "in"
+        ? filter.value.includes(item[filter.field]) : item[filter.field] === filter.value));
+      return options.limit ? matched.slice(0, options.limit) : matched;
+    },
     requireFirestore: () => firestoreDb || (firestore ? db : null),
     requireTeamsEdit: requireTeamsEdit || (async () => ({ user: { uid: "admin_a" } })),
     ...(authorizeCustomMember ? { authorizeCustomMember } : {}),
@@ -321,6 +330,32 @@ const createHarness = ({
   return { collections, storeFor, getDoc, db, handler, makeResponse, preview, send, dispatch, abandon, seedFirestore, schedule, form, recipient, member, phoneNumber, churchId, get providerCalls() { return providerCalls; } };
 };
 
+test("reviewed batch persistence omits a missing optional exclusion reason", async () => {
+  let intent = {
+    intentId: "intent-legacy", churchId: "church_a", batchId: "batch-legacy", sourceType: "custom_message",
+    intentType: "custom_message", memberId: "member_a", status: "preview",
+    approvalSnapshot: { approvalVersion: "approval-v1", expiresAt: Date.now() + 60_000 },
+  };
+  const batch = {
+    batchId: "batch-legacy", churchId: "church_a", intentIds: [intent.intentId],
+    recipients: [{ memberId: "member_a", intentId: intent.intentId, status: "preview", approvalVersion: "approval-v1", segmentCount: 1 }],
+  };
+  const result = await executeReviewedNotificationBatch({
+    batch,
+    getIntent: async () => intent,
+    matchesSource: (current) => current.sourceType === "custom_message",
+    isStaleSending: () => false,
+    markUnknownAfterInterruption: async (current) => current,
+    sendReviewedIntent: async () => {
+      intent = { ...intent, status: "sent", outcome: "confirmed" };
+      return { success: true };
+    },
+    nowIso: () => new Date().toISOString(),
+  });
+  assert.equal(Object.hasOwn(result.recipients[0], "exclusionReason"), false);
+  assert.doesNotThrow(() => JSON.stringify(result));
+});
+
 for (const firestore of [false, true]) {
   test(`custom message uses reviewed intents and a separate durable operation (${firestore ? "transaction fake" : "memory"})`, async () => {
     const h = createHarness({ firestore });
@@ -336,6 +371,9 @@ for (const firestore of [false, true]) {
     assert.equal(h.providerCalls, 0);
     assert.equal(first.message, "Practice Friday. Reply STOP to opt out.");
     assert.equal(first.summary.eligible, 1);
+    assert.match(first.recipients[0].destinationFingerprint, /^[a-f0-9]{64}$/);
+    assert.match(first.recipients[0].approvalBindingFingerprint, /^[a-f0-9]{64}$/);
+    assert.equal(JSON.stringify(first).includes(h.phoneNumber), false);
     assert.equal((await prepare("operation-one")).batchId, first.batchId);
     const sent = await h.dispatch(first.batchId);
     assert.equal(sent.statusCode, 200, sent.payload?.errorMessage);
@@ -344,7 +382,16 @@ for (const firestore of [false, true]) {
     assert.equal(h.providerCalls, 1);
     const second = await prepare("operation-two");
     assert.notEqual(second.batchId, first.batchId);
+    assert.equal(second.recipients[0].destinationFingerprint, first.recipients[0].destinationFingerprint);
+    assert.equal(second.recipients[0].approvalBindingFingerprint, first.recipients[0].approvalBindingFingerprint);
     assert.equal((await h.dispatch(second.batchId)).statusCode, 200);
+    assert.equal(h.providerCalls, 2);
+    const consentId = smsConsentIdForChurchPhone(h.churchId, h.phoneNumber);
+    const currentConsent = h.storeFor("smsConsents").get(consentId);
+    h.storeFor("smsConsents").set(consentId, { ...currentConsent, consentedAt: "2026-10-22T12:00:00.000Z" });
+    const consentChanged = await prepare("operation-three");
+    assert.equal(consentChanged.recipients[0].destinationFingerprint, second.recipients[0].destinationFingerprint);
+    assert.notEqual(consentChanged.recipients[0].approvalBindingFingerprint, second.recipients[0].approvalBindingFingerprint);
     assert.equal(h.providerCalls, 2);
     const history = h.makeResponse();
     await h.handler.listMessageHistory({ params: { churchId: h.churchId }, query: {} }, history);
@@ -398,7 +445,20 @@ test("custom direct send requires explicit confirmation and accepts an approved 
 test("custom batch pre-provider failure is reported as not sent and the same approval can recover", async () => {
   let failAuthorizationAtCall = 0;
   let authorizationCalls = 0;
+  const assertFirestoreSerializable = (value, path = "notification batch") => {
+    if (value === undefined) throw new TypeError(`${path} must not contain undefined`);
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => assertFirestoreSerializable(item, `${path}[${index}]`));
+    } else if (value && typeof value === "object") {
+      for (const [key, item] of Object.entries(value)) {
+        assertFirestoreSerializable(item, `${path}.${key}`);
+      }
+    }
+  };
   const h = createHarness({
+    beforeSetDoc: (collection, _id, data) => {
+      if (collection === "notificationBatches") assertFirestoreSerializable(data);
+    },
     authorizeCustomMember: async () => {
       authorizationCalls += 1;
       if (failAuthorizationAtCall && authorizationCalls === failAuthorizationAtCall) {
@@ -414,6 +474,7 @@ test("custom batch pre-provider failure is reported as not sent and the same app
   assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
   const batchId = prepared.payload.batch.batchId;
   const intentId = prepared.payload.batch.intentIds[0];
+  const approvalVersion = prepared.payload.batch.recipients[0].approvalVersion;
   authorizationCalls = 0;
   failAuthorizationAtCall = 2; // Batch authorization succeeds; per-intent authorization fails before claim.
 
@@ -428,14 +489,78 @@ test("custom batch pre-provider failure is reported as not sent and the same app
   assert.equal(untouchedIntent.attemptId, undefined);
   const retryableBatch = await h.getDoc("notificationBatches", batchId);
   assert.equal(retryableBatch.status, "prepared");
+  assert.equal(retryableBatch.reviewVersion, prepared.payload.batch.approvalVersion);
+  assert.equal(retryableBatch.recipients[0].approvalVersion, approvalVersion);
+  assert.equal((await h.getDoc("notificationIntents", intentId)).approvalSnapshot.approvalVersion, approvalVersion);
 
   failAuthorizationAtCall = 0;
   const recovered = await h.dispatch(batchId);
   assert.equal(recovered.statusCode, 200, recovered.payload?.errorMessage);
   assert.equal(recovered.payload.batch.summary.sent, 1);
   assert.equal(h.providerCalls, 1);
+  const sentIntent = await h.getDoc("notificationIntents", intentId);
+  assert.equal(sentIntent.status, "sent");
+  assert.equal(sentIntent.approvalSnapshot.approvalVersion, approvalVersion);
+  const sentBatch = await h.getDoc("notificationBatches", batchId);
+  assert.equal(sentBatch.status, "sent");
+  assert.equal(sentBatch.recipients[0].approvalVersion, approvalVersion);
+  const ownedAttempt = await h.getDoc("smsDeliveryAttempts", sentIntent.attemptId);
+  assert.equal(ownedAttempt.notificationIntentId, intentId);
+  assert.equal(ownedAttempt.batchId, batchId);
+  assert.equal(ownedAttempt.providerCallStarted, true);
+  assert.equal(ownedAttempt.outcome, "confirmed");
   assert.equal((await h.dispatch(batchId)).statusCode, 409);
   assert.equal(h.providerCalls, 1, "a completed approval replay does not duplicate the provider request");
+});
+
+test("custom message accepts 500 unique recipients after deduplicating IDs", async () => {
+  const h = createHarness();
+  const memberIds = Array.from({ length: 500 }, (_, index) => `bulk-member-${index + 1}`);
+  for (const [index, memberId] of memberIds.entries()) {
+    h.storeFor("teamRosterMembers").set(memberId, {
+      ...h.member, memberId, firstName: `Volunteer${index + 1}`, phoneNumber: h.phoneNumber,
+    });
+  }
+  const prepared = h.makeResponse();
+  await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+    memberIds: [...memberIds, memberIds[0], memberIds[499]],
+    message: "Practice Friday.", requestKey: "exact-500-unique-members",
+  } }, prepared);
+  assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
+  assert.equal(prepared.payload.batch.selectedMemberIds.length, 500);
+  assert.equal(prepared.payload.batch.recipients.length, 500);
+  assert.equal(prepared.payload.batch.summary.eligible, 500);
+  assert.equal(h.storeFor("notificationIntents").size, 500);
+  assert.equal(h.providerCalls, 0);
+});
+
+test("custom message rejects 501 unique recipients before reserving a batch or intents", async () => {
+  const h = createHarness();
+  const memberIds = Array.from({ length: 501 }, (_, index) => `too-many-${index + 1}`);
+  const rejected = h.makeResponse();
+  await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+    memberIds, message: "Practice Friday.", requestKey: "reject-501-members",
+  } }, rejected);
+  assert.equal(rejected.statusCode, 400);
+  assert.equal(rejected.payload.errorMessage, "Select 500 or fewer volunteers, then try again.");
+  assert.equal(h.storeFor("notificationBatches").size, 0);
+  assert.equal(h.storeFor("notificationIntents").size, 0);
+  assert.equal(h.providerCalls, 0);
+});
+
+test("availability SMS preparation rejects an oversized selected audience before reserving a batch", async () => {
+  const h = createHarness();
+  const rejected = h.makeResponse();
+  await h.handler.prepareAvailabilityBatch({ params: { churchId: h.churchId }, body: {
+    intentType: "availability_request", formId: h.form.formId,
+    memberIds: Array.from({ length: 501 }, (_, index) => `availability-${index + 1}`),
+    requestKey: "reject-large-availability-audience",
+  } }, rejected);
+  assert.equal(rejected.statusCode, 400);
+  assert.equal(rejected.payload.errorMessage, "Select 500 or fewer volunteers, then try again.");
+  assert.equal(h.storeFor("notificationBatches").size, 0);
+  assert.equal(h.storeFor("notificationIntents").size, 0);
+  assert.equal(h.providerCalls, 0);
 });
 
 test("custom batch authorization exceptions are not exposed as delivery explanations", async () => {
@@ -499,6 +624,31 @@ test("custom message provider uncertainty fences replay of the same operation", 
   assert.equal((await h.dispatch(prepared.payload.batch.batchId)).statusCode, 200);
   assert.equal(h.providerCalls, 1);
 });
+
+for (const firestore of [false, true]) {
+  test(`legacy pending attempt without a start marker cannot be resent (${firestore ? "transaction fake" : "memory"})`, async () => {
+    const h = createHarness({ firestore });
+    const { intent } = await h.preview();
+    const legacyAttemptId = "legacy-pending-attempt";
+    h.storeFor("notificationIntents").set(intent.intentId, {
+      ...intent, status: "failed", attemptId: legacyAttemptId,
+    });
+    h.storeFor("smsDeliveryAttempts").set(legacyAttemptId, {
+      attemptId: legacyAttemptId,
+      churchId: h.churchId,
+      notificationIntentId: intent.intentId,
+      memberId: intent.memberId,
+      recipientId: intent.recipientId,
+      sourceId: intent.sourceId,
+      formId: intent.formId,
+      intentType: intent.intentType,
+      status: "pending",
+    });
+    const result = await h.send(intent.intentId);
+    assert.equal(result.statusCode, 409);
+    assert.equal(h.providerCalls, 0);
+  });
+}
 
 for (const firestore of [false, true]) {
   test(`custom message allows a deliberate new batch after a definitive failure (${firestore ? "transaction fake" : "memory"})`, async () => {
@@ -793,7 +943,9 @@ for (const firestore of [false, true]) {
     const result = await h.send(intent.intentId);
     assert.equal(result.statusCode, 403);
     assert.equal(h.providerCalls, 0);
-    assert.equal(h.storeFor("notificationIntents").get(intent.intentId).status, "failed");
+    assert.equal(h.storeFor("notificationIntents").get(intent.intentId).status, "preview");
+    assert.equal(h.storeFor("notificationIntents").get(intent.intentId).outcome, "not_sent");
+    assert.ok(h.storeFor("notificationIntents").get(intent.intentId).approvalSnapshot.approvalVersion);
     assert.equal([...h.storeFor("smsDeliveryAttempts").values()][0].outcome, "not_sent");
   });
 
@@ -2157,6 +2309,83 @@ const clearFirestoreEmulator = async () => {
   assert.equal(response.status, 200, "Firestore emulator database was cleared before the integration case");
 };
 
+for (const mode of ["memory restart", "Firestore emulator restart"]) {
+  const useFirestore = mode.startsWith("Firestore");
+  test(`custom SMS interruption is recovered from history and batch status (${mode})`, { skip: useFirestore && !firestoreEmulatorAvailable }, async () => {
+    if (useFirestore) await clearFirestoreEmulator();
+    const app = useFirestore ? initializeApp({ projectId: firestoreEmulatorProjectId }, `custom-interruption-${randomUUID()}`) : null;
+    const db = app ? getFirestore(app) : null;
+    let signalProviderStarted;
+    const providerStarted = new Promise((resolve) => { signalProviderStarted = resolve; });
+    const providerGate = new Promise(() => {}); // Simulate a process that never records the provider result.
+    let firstProcess;
+    try {
+      firstProcess = createHarness({
+        ...(db ? { firestoreDb: db } : {}),
+        providerSend: async () => {
+          signalProviderStarted();
+          await providerGate;
+          return { providerMessageId: "SM_unreachable", status: "accepted" };
+        },
+      });
+      if (db) await firstProcess.seedFirestore();
+      const prepared = firstProcess.makeResponse();
+      await firstProcess.handler.prepareCustomBatch({ params: { churchId: firstProcess.churchId }, body: {
+        memberIds: [firstProcess.member.memberId], message: "Practice Friday.", requestKey: `interrupted-${mode}`,
+      } }, prepared);
+      assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
+      const batchId = prepared.payload.batch.batchId;
+      const intentId = prepared.payload.batch.intentIds[0];
+
+      void firstProcess.dispatch(batchId);
+      await providerStarted;
+      const inFlightIntent = await firstProcess.getDoc("notificationIntents", intentId);
+      const inFlightAttempt = await firstProcess.getDoc("smsDeliveryAttempts", inFlightIntent.attemptId);
+      assert.equal(inFlightIntent.status, "sending");
+      assert.equal(inFlightAttempt.providerCallStarted, true);
+      assert.equal(firstProcess.providerCalls, 1);
+
+      const staleAt = new Date(Date.now() - NOTIFICATION_SEND_STALE_AFTER_MS - 1_000).toISOString();
+      if (db) {
+        await Promise.all([
+          db.collection("notificationIntents").doc(intentId).set({ sendStartedAt: staleAt }, { merge: true }),
+          db.collection("notificationBatches").doc(batchId).set({ dispatchStartedAt: staleAt }, { merge: true }),
+        ]);
+      } else {
+        firstProcess.storeFor("notificationIntents").set(intentId, { ...inFlightIntent, sendStartedAt: staleAt });
+        const savedBatch = await firstProcess.getDoc("notificationBatches", batchId);
+        firstProcess.storeFor("notificationBatches").set(batchId, { ...savedBatch, dispatchStartedAt: staleAt });
+      }
+
+      const restarted = createHarness({
+        ...(db ? { firestoreDb: db } : { sharedCollections: firstProcess.collections }),
+        providerSend: async () => { throw new Error("A read after restart must not resend an uncertain message."); },
+      });
+      const history = restarted.makeResponse();
+      await restarted.handler.listMessageHistory({ params: { churchId: restarted.churchId }, query: {} }, history);
+      assert.equal(history.statusCode, 200, history.payload?.errorMessage);
+      const entry = history.payload.entries.find((row) => row.historyId === batchId);
+      assert.equal(entry.status, "unconfirmed");
+      assert.equal(entry.recipients[0].status, "unknown");
+      assert.equal(entry.recipients[0].outcome, "unknown");
+      assert.equal((await restarted.getDoc("notificationIntents", intentId)).status, "unknown");
+      assert.equal((await restarted.getDoc("smsDeliveryAttempts", inFlightIntent.attemptId)).outcome, "unknown");
+      assert.equal((await restarted.getDoc("notificationBatches", batchId)).status, "partial");
+
+      const detail = restarted.makeResponse();
+      await restarted.handler.getAvailabilityBatch({ params: { churchId: restarted.churchId, batchId } }, detail);
+      assert.equal(detail.statusCode, 200, detail.payload?.errorMessage);
+      assert.equal(detail.payload.batch.status, "partial");
+      assert.equal(detail.payload.batch.recipients[0].status, "unknown");
+      assert.equal(detail.payload.batch.recipients[0].attemptOutcome, "unknown");
+      assert.equal(firstProcess.providerCalls, 1);
+      assert.equal(restarted.providerCalls, 0);
+    } finally {
+      if (app) await deleteApp(app);
+    }
+  });
+}
+
 test("Firestore emulator fences competing client sends with one provider request", { skip: !firestoreEmulatorAvailable }, async () => {
   await clearFirestoreEmulator();
   const projectId = firestoreEmulatorProjectId;
@@ -2300,6 +2529,7 @@ test("Firestore emulator persists a pre-provider custom failure as retryable and
     assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
     const batchId = prepared.payload.batch.batchId;
     const intentId = prepared.payload.batch.intentIds[0];
+    const approvalVersion = prepared.payload.batch.recipients[0].approvalVersion;
     authorizationCalls = 0;
     failAuthorizationAtCall = 2;
 
@@ -2311,18 +2541,34 @@ test("Firestore emulator persists a pre-provider custom failure as retryable and
     const savedBatch = await db.collection("notificationBatches").doc(batchId).get();
     const savedIntent = await db.collection("notificationIntents").doc(intentId).get();
     assert.equal(savedBatch.data().status, "prepared");
+    assert.equal(savedBatch.data().reviewVersion, prepared.payload.batch.approvalVersion);
+    assert.equal(savedBatch.data().recipients[0].approvalVersion, approvalVersion);
     assert.equal(savedIntent.data().status, "preview");
     assert.equal(savedIntent.data().attemptId, undefined);
+    assert.equal(savedIntent.data().approvalSnapshot.approvalVersion, approvalVersion);
+    assert.equal((await db.collection("smsDeliveryAttempts").where("batchId", "==", batchId).get()).size, 0);
 
     failAuthorizationAtCall = 0;
     const recovered = await h.dispatch(batchId);
     assert.equal(recovered.statusCode, 200, recovered.payload?.errorMessage);
     assert.equal(recovered.payload.batch.summary.sent, 1);
     assert.equal(h.providerCalls, 1);
+    const sentBatch = await db.collection("notificationBatches").doc(batchId).get();
+    const sentIntent = await db.collection("notificationIntents").doc(intentId).get();
+    assert.equal(sentBatch.data().status, "sent");
+    assert.equal(sentBatch.data().recipients[0].approvalVersion, approvalVersion);
+    assert.equal(sentIntent.data().status, "sent");
+    assert.equal(sentIntent.data().approvalSnapshot.approvalVersion, approvalVersion);
+    assert.equal(sentIntent.data().batchId, batchId);
+    assert.ok(sentIntent.data().attemptId);
     assert.equal((await h.dispatch(batchId)).statusCode, 409);
     assert.equal(h.providerCalls, 1);
     const attempts = await db.collection("smsDeliveryAttempts").where("batchId", "==", batchId).get();
     assert.equal(attempts.size, 1);
+    assert.equal(attempts.docs[0].data().notificationIntentId, intentId);
+    assert.equal(attempts.docs[0].data().attemptId, sentIntent.data().attemptId);
+    assert.equal(attempts.docs[0].data().providerCallStarted, true);
+    assert.equal(attempts.docs[0].data().outcome, "confirmed");
   } finally {
     await deleteApp(app);
   }
