@@ -4574,6 +4574,38 @@ export const createTeamsAuthHandlers = ({
       await collectMemberTeamIds(member, churchId),
     );
 
+  const requireCustomMessageMemberEdit = async (req, churchId, member) => {
+    if (!member || member.churchId !== churchId) {
+      throw httpError(404, "Volunteer not found.");
+    }
+    try {
+      return { admin: await requireTeamsEdit(req, churchId), scoped: false };
+    } catch {
+      const teamIds = await collectMemberTeamIds(member, churchId);
+      for (const teamId of teamIds) {
+        try {
+          return { admin: await requireTeamsEditForTeam(req, churchId, teamId), scoped: true };
+        } catch { /* Try another current Team. */ }
+      }
+      throw httpError(403, "Team management access is required for this volunteer.");
+    }
+  };
+
+  const requireMessagingHistoryAccess = async (req, churchId) => {
+    try {
+      return { admin: await requireTeamsEdit(req, churchId), scoped: false };
+    } catch {
+      const teams = await queryDocs(COLLECTIONS.teams, [{ field: "churchId", value: churchId }], { limit: 500 });
+      for (const team of teams) {
+        if (team.archivedAt) continue;
+        try {
+          return { admin: await requireTeamsEditForTeam(req, churchId, team.teamId || team.id), scoped: true };
+        } catch { /* Try another current Team. */ }
+      }
+      throw httpError(403, "Team management access is required for message history.");
+    }
+  };
+
   // A combined occurrence does not change the schedule's Team ownership.
   // Legacy mixed/unknown position ownership cannot grant a scoped operator
   // access to a whole-schedule response link or message history.
@@ -12582,6 +12614,8 @@ export const createTeamsAuthHandlers = ({
     resolveScheduleNotificationContext,
     requireTeamScheduleNotificationEdit,
     requireTeamAvailabilityFormEdit,
+    requireCustomMessageMemberEdit,
+    requireMessagingHistoryAccess,
     isAvailabilityRecipientInFormScope,
     async exportPortableData(req, res) {
       try {

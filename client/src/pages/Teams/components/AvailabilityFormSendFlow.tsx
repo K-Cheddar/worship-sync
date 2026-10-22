@@ -17,7 +17,7 @@ import type {
   TeamRecord,
   TeamRosterMember,
 } from "../../../api/authTypes";
-import { getAvailabilityNotificationBatch } from "../../../api/auth";
+import { abandonPreparedAvailabilityBatch, getAvailabilityNotificationBatch } from "../../../api/auth";
 import AvailabilityBatchReview from "./AvailabilityBatchReview";
 import { MemberNameWithIndicator } from "./CurrentUserMemberIndicator";
 import { getAvailabilityRecipientRows, type AvailabilityAudienceType } from "../availabilityRecipientSelection";
@@ -41,7 +41,7 @@ const AvailabilityFormSendFlow = ({
   privacySafe = false,
   onClose,
   dialog = false,
-  initialAudience = "first",
+  initialAudience = "not_contacted",
   initialMemberIds = [],
 }: {
   churchId: string;
@@ -65,9 +65,9 @@ const AvailabilityFormSendFlow = ({
 }) => {
   const [audienceType, setAudienceType] = useState<AvailabilityAudienceType>(initialAudience);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[] | null>(
-    initialMemberIds.length ? [...initialMemberIds] : initialAudience === "first" ? null : [],
+    initialMemberIds.length ? [...initialMemberIds] : initialAudience === "not_contacted" ? null : [],
   );
-  const [showRecipients, setShowRecipients] = useState(dialog ? initialAudience !== "first" : true);
+  const [showRecipients, setShowRecipients] = useState(dialog ? initialAudience !== "not_contacted" : true);
   const [showSelectedOnly, setShowSelectedOnly] = useState(false);
   const [search, setSearch] = useState("");
   const [teamFilter, setTeamFilter] = useState("");
@@ -83,10 +83,13 @@ const AvailabilityFormSendFlow = ({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [dispatchOutcomeUncertain, setDispatchOutcomeUncertain] = useState(false);
+  const [uncertainResendAcknowledged, setUncertainResendAcknowledged] = useState(false);
   const [recoveryBatchId, setRecoveryBatchId] = useState<string | null>(null);
   const recoveryBatchIdRef = useRef<string | null>(null);
   recoveryBatchIdRef.current = recoveryBatchId;
   const statusCheckLockRef = useRef(false);
+  const ignoreNextEligibilityChangeRef = useRef(false);
+  const restoredBatchContextRef = useRef("");
 
   useEffect(() => {
     if (!historyLoaded) setConfirmOpen(false);
@@ -120,6 +123,8 @@ const AvailabilityFormSendFlow = ({
   const onBatchUpdatedRef = useRef(onBatchUpdated);
   onBatchUpdatedRef.current = onBatchUpdated;
   const pendingDispatchStorageKey = `worshipsync:pending-notification-dispatch:${churchId}:${form.formId}`;
+  const lastBatchStorageKey = `worshipsync:last-notification-batch:${churchId}:${form.formId}`;
+  const normalizeAudience = (value: string): AvailabilityAudienceType => value === "first" ? "not_contacted" : value === "reminder" ? "nonresponders" : value === "specific" ? "specific" : value as AvailabilityAudienceType;
 
   const storePendingDispatch = (batchId: string) => {
     recoveryBatchIdRef.current = batchId;
@@ -149,7 +154,7 @@ const AvailabilityFormSendFlow = ({
     if (previousContextRef.current === contextIdentity) return;
     previousContextRef.current = contextIdentity;
     previousFormReviewRef.current = formReviewIdentity;
-    setSelectedMemberIds(audienceType === "first" ? null : []);
+    setSelectedMemberIds(audienceType === "not_contacted" ? null : []);
     setReviewedBatchState(null);
     setConfirmOpen(false);
     setDispatchOutcomeUncertain(false);
@@ -167,34 +172,79 @@ const AvailabilityFormSendFlow = ({
   }, [formReviewIdentity]);
 
   useEffect(() => {
+    if (restoredBatchContextRef.current === contextIdentity) return;
     let active = true;
     let savedBatchId = "";
-    try { savedBatchId = window.localStorage.getItem(pendingDispatchStorageKey) || ""; } catch { /* No durable browser storage. */ }
-    if (!savedBatchId) return () => { active = false; };
+    try { savedBatchId = window.localStorage.getItem(pendingDispatchStorageKey) || window.localStorage.getItem(lastBatchStorageKey) || ""; } catch { /* No durable browser storage. */ }
+    if (!savedBatchId && !historyLoaded) return () => { active = false; };
+    if (!savedBatchId) {
+      const candidateIntent = notificationIntents
+        .filter((intent) => intent.formId === form.formId && intent.batchId && ["preview", "ready"].includes(intent.status))
+        .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")))[0];
+      savedBatchId = candidateIntent?.batchId || "";
+    }
+    if (!savedBatchId) {
+      restoredBatchContextRef.current = contextIdentity;
+      return () => { active = false; };
+    }
     setRecoveryBatchId(savedBatchId);
     recoveryBatchIdRef.current = savedBatchId;
     setDispatchOutcomeUncertain(true);
     getAvailabilityNotificationBatch(churchId, savedBatchId).then(({ batch }) => {
       if (!active || currentContextRef.current !== contextIdentity || currentFormReviewRef.current !== formReviewIdentity) return;
       if (batch.churchId !== churchId || batch.formId !== form.formId || batch.intentType === "schedule_initial_notification") return;
-      const restoredAudience = batch.audienceType || (batch.intentType === "availability_reminder" ? "reminder" : "first");
+      if (batch.status === "abandoned") {
+        clearPendingDispatchRef.current(savedBatchId);
+        try {
+          if (window.localStorage.getItem(lastBatchStorageKey) === savedBatchId) window.localStorage.removeItem(lastBatchStorageKey);
+        } catch { /* The batch is server-side abandoned even if browser storage is unavailable. */ }
+        setDispatchOutcomeUncertain(false);
+        setRecoveryBatchId(null);
+        recoveryBatchIdRef.current = null;
+        restoredBatchContextRef.current = contextIdentity;
+        return;
+      }
+      const restoredAudience = normalizeAudience(batch.audienceType || (batch.intentType === "availability_reminder" ? "reminder" : "first"));
+      ignoreNextEligibilityChangeRef.current = true;
       setAudienceType(restoredAudience);
       setSelectedMemberIds(batch.selectedMemberIds);
+      const restoredRows = getAvailabilityRecipientRows({
+        members: members.filter((member) => !member.archivedAt).sort((a, b) => memberName(a).localeCompare(memberName(b))), positions, teams, recipients, eligibilityByMemberId,
+        notificationIntents, smsDeliveryAttempts, form, intentType: "availability_request", audienceType: restoredAudience,
+      });
+      const restoredSelection = restoredRows
+        .filter(({ member, eligible }) => eligible && batch.selectedMemberIds.includes(member.memberId))
+        .map(({ member }) => member.memberId);
       setReviewedBatchState({
         batch,
         formIdentity: formReviewIdentity,
         recipientEligibilityIdentity: currentRecipientEligibilityRef.current,
-        selectionIdentity: JSON.stringify([restoredAudience, batch.selectedMemberIds]),
+        selectionIdentity: JSON.stringify([restoredAudience, restoredSelection]),
       });
       onBatchUpdatedRef.current?.(batch);
-      if (!["prepared", "dispatching"].includes(batch.status)) clearPendingDispatchRef.current(savedBatchId);
+      if (batch.status === "prepared") {
+        setDispatchOutcomeUncertain(false);
+        if (batch.summary.eligible > 0) {
+          setConfirmOpen(true);
+          setNotice("Your reviewed messages are ready. Nothing was sent yet.");
+        } else {
+          setConfirmOpen(false);
+          setNotice("This prepared message needs a fresh review because no recipients are currently eligible.");
+        }
+      } else if (batch.status === "dispatching") {
+        setDispatchOutcomeUncertain(true);
+      } else {
+        clearPendingDispatchRef.current(savedBatchId);
+      }
+      restoredBatchContextRef.current = contextIdentity;
     }).catch(() => {
       if (active && currentContextRef.current === contextIdentity && currentFormReviewRef.current === formReviewIdentity) {
         setError("Delivery status is still unknown. Check the batch status before preparing another message.");
+        restoredBatchContextRef.current = contextIdentity;
       }
     });
     return () => { active = false; };
-  }, [churchId, contextIdentity, form.formId, formReviewIdentity, pendingDispatchStorageKey]);
+  }, [churchId, contextIdentity, eligibilityByMemberId, form, form.formId, formReviewIdentity, historyLoaded, lastBatchStorageKey, members, notificationIntents, pendingDispatchStorageKey, positions, recipients, smsDeliveryAttempts, teams]);
 
   const invalidateReview = () => {
     if (dispatchOutcomeUncertain) return;
@@ -239,6 +289,10 @@ const AvailabilityFormSendFlow = ({
   useEffect(() => {
     if (previousRecipientEligibilityRef.current === recipientEligibilityIdentity) return;
     previousRecipientEligibilityRef.current = recipientEligibilityIdentity;
+    if (ignoreNextEligibilityChangeRef.current) {
+      ignoreNextEligibilityChangeRef.current = false;
+      return;
+    }
     const hadPreparedReview = reviewedBatchState?.batch.status === "prepared" &&
       !reviewedBatchState.batch.summary.sent && !reviewedBatchState.batch.summary.failed && !reviewedBatchState.batch.summary.uncertain;
     setReviewedBatchState((current) => current?.batch.status === "prepared" ? null : current);
@@ -247,8 +301,8 @@ const AvailabilityFormSendFlow = ({
   }, [confirmOpen, recipientEligibilityIdentity, reviewedBatchState]);
   const query = search.trim().toLocaleLowerCase();
   const audienceRows = rows.filter((row) => {
-    if (audienceType === "first") return !row.hasPreviousRequest;
-    if (audienceType === "reminder") return row.hasAcceptedRequest;
+    if (audienceType === "not_contacted") return !row.hasAcceptedRequest && !row.hasUncertainRequest;
+    if (audienceType === "nonresponders") return !row.recipient?.respondedAt && !row.hasUncertainRequest;
     return true;
   });
   const filteredRows = audienceRows.filter((row) => {
@@ -257,7 +311,7 @@ const AvailabilityFormSendFlow = ({
     (!query || memberName(member).toLocaleLowerCase().includes(query));
   });
   const defaultFirstSelectedIds = rows
-    .filter(({ eligible, hasPreviousRequest }) => eligible && !hasPreviousRequest)
+    .filter(({ eligible, hasAcceptedRequest, hasUncertainRequest }) => eligible && !hasAcceptedRequest && !hasUncertainRequest)
     .map(({ member }) => member.memberId);
   const effectiveSelectedMemberIds = selectedMemberIds === null ? defaultFirstSelectedIds : selectedMemberIds;
   const visibleRows = showSelectedOnly
@@ -278,9 +332,9 @@ const AvailabilityFormSendFlow = ({
     reviewedBatchState.batch.status !== "prepared" || reviewedBatchState.batch.summary.sent > 0 ||
     reviewedBatchState.batch.summary.failed > 0 || reviewedBatchState.batch.summary.uncertain > 0
   )) || dispatchOutcomeUncertain;
-  const intentType = audienceType === "reminder" ? "availability_reminder" : "availability_request";
+  const intentType = "availability_request" as const;
   const reviewedBatch = activeBatch?.formId === form.formId && activeBatch.churchId === churchId &&
-    activeBatch.intentType === intentType && (activeBatch.audienceType || "first") === audienceType &&
+    ["availability_request", "availability_reminder"].includes(activeBatch.intentType) && normalizeAudience(activeBatch.audienceType || "first") === audienceType &&
     reviewedBatchState?.formIdentity === formReviewIdentity &&
     (batchIdentityMatches || batchHasProgress) ? activeBatch : null;
   const visibleSelectionCount = visibleEligibleIds.filter((id) => selectedEligibleIds.includes(id)).length;
@@ -298,8 +352,18 @@ const AvailabilityFormSendFlow = ({
   const changeAudience = (nextAudience: AvailabilityAudienceType) => {
     if (dispatchOutcomeUncertain || audienceType === nextAudience) return;
     setAudienceType(nextAudience);
-    setSelectedMemberIds(nextAudience === "first" ? null : nextAudience === "specific" ? [...initialMemberIds] : []);
-    setShowRecipients(nextAudience !== "first");
+    const nextRows = getAvailabilityRecipientRows({
+      members: activeMembers, positions, teams, recipients, eligibilityByMemberId,
+      notificationIntents, smsDeliveryAttempts, form, intentType: "availability_request", audienceType: nextAudience,
+    });
+    const nextEligibleIds = nextRows.filter(({ eligible, recipient, hasAcceptedRequest, hasUncertainRequest }) =>
+      eligible && (nextAudience === "not_contacted"
+        ? !hasAcceptedRequest && !hasUncertainRequest
+        : nextAudience === "nonresponders" ? !recipient?.respondedAt && !hasUncertainRequest : true),
+    ).map(({ member }) => member.memberId);
+    setSelectedMemberIds(nextAudience === "specific" ? [...initialMemberIds] : nextEligibleIds);
+    setShowRecipients(nextAudience !== "not_contacted");
+    setUncertainResendAcknowledged(false);
     setShowSelectedOnly(false);
     invalidateReview();
   };
@@ -312,10 +376,10 @@ const AvailabilityFormSendFlow = ({
   ];
   if (privacySafe) teamOptions[0].label = "All managed Teams";
   const statusRows = rows.filter(({ reason }) => reason !== "Outside this form’s team scope");
-  const firstEligibleCount = rows.filter(({ eligible, hasPreviousRequest }) => eligible && !hasPreviousRequest).length;
-  const reminderEligibleCount = rows.filter(({ eligible, hasAcceptedRequest }) => eligible && hasAcceptedRequest).length;
+  const firstEligibleCount = rows.filter(({ eligible, hasAcceptedRequest, hasUncertainRequest }) => eligible && !hasAcceptedRequest && !hasUncertainRequest).length;
+  const reminderEligibleCount = rows.filter(({ eligible, recipient, hasUncertainRequest }) => eligible && !recipient?.respondedAt && !hasUncertainRequest).length;
   const statusCounts = {
-    ready: audienceType === "first" ? firstEligibleCount : audienceType === "reminder" ? reminderEligibleCount : rows.filter(({ eligible }) => eligible).length,
+    ready: audienceType === "not_contacted" ? firstEligibleCount : audienceType === "nonresponders" ? reminderEligibleCount : rows.filter(({ eligible }) => eligible).length,
     consentNeeded: statusRows.filter(({ eligibility }) => eligibility.status === "consent_needed").length,
     optedOut: statusRows.filter(({ eligibility }) => eligibility.status === "opted_out").length,
     missingPhone: statusRows.filter(({ eligibility }) => eligibility.status === "no_mobile").length,
@@ -357,7 +421,13 @@ const AvailabilityFormSendFlow = ({
         recipientEligibilityIdentity: requestedRecipientEligibilityIdentity,
         selectionIdentity: requestedSelectionIdentity,
       });
-      setConfirmOpen(true);
+      if (batch.summary.eligible > 0) {
+        setUncertainResendAcknowledged(false);
+        setConfirmOpen(true);
+      } else {
+        setConfirmOpen(false);
+        setNotice("No selected volunteers are eligible for this message. Review the eligibility details and update your selection.");
+      }
     } catch (caught) {
       if (currentContextRef.current === requestedContext) {
         setError(caught instanceof Error ? caught.message : "Could not prepare form messages.");
@@ -369,6 +439,7 @@ const AvailabilityFormSendFlow = ({
 
   const sendBatch = async () => {
     if (!historyLoaded || dispatchOutcomeUncertain || !reviewedBatch || reviewedBatch.summary.eligible === 0 || reviewedBatch.formId !== form.formId || reviewedBatch.churchId !== churchId || busy || sendLockRef.current) return;
+    if (reviewedBatch.recipients.some(({ eligible, previousDeliveryStatus }) => eligible && previousDeliveryStatus === "uncertain") && !uncertainResendAcknowledged) return;
     sendLockRef.current = true;
     const requestedContext = contextIdentity;
     const requestedChurchId = churchId;
@@ -380,7 +451,10 @@ const AvailabilityFormSendFlow = ({
     setBusy(true);
     setError("");
     try {
-      const response = await dispatchReviewedAvailabilityBatch(requestedChurchId, batchToSend);
+      const acknowledgedIds = uncertainResendAcknowledged
+        ? batchToSend.recipients.filter((row) => row.eligible && row.previousDeliveryStatus === "uncertain").map((row) => row.memberId)
+        : [];
+      const response = await dispatchReviewedAvailabilityBatch(requestedChurchId, batchToSend, acknowledgedIds);
       if (currentContextRef.current !== requestedContext || currentFormReviewRef.current !== requestedFormIdentity) return;
       onBatchUpdated?.(response.batch);
       setReviewedBatchState({
@@ -390,6 +464,7 @@ const AvailabilityFormSendFlow = ({
         selectionIdentity: requestedSelectionIdentity,
       });
       setConfirmOpen(false);
+      setUncertainResendAcknowledged(false);
       setNotice("");
       if (["prepared", "dispatching"].includes(response.batch.status)) {
         storePendingDispatch(batchToSend.batchId);
@@ -400,14 +475,13 @@ const AvailabilityFormSendFlow = ({
       const ownsCurrentReview = currentContextRef.current === requestedContext &&
         currentFormReviewRef.current === requestedFormIdentity;
       if (ownsCurrentReview) {
-        setConfirmOpen(false);
         setReviewedBatchState({
           batch: batchToSend,
           formIdentity: requestedFormIdentity,
           recipientEligibilityIdentity: requestedRecipientEligibilityIdentity,
           selectionIdentity: requestedSelectionIdentity,
         });
-        setError("We couldn't confirm whether these texts were sent. Check the batch status before preparing another message.");
+        setError("We couldn't confirm the send result. Checking the saved message status now.");
       }
       try {
         const latest = await getAvailabilityNotificationBatch(requestedChurchId, batchToSend.batchId);
@@ -419,15 +493,30 @@ const AvailabilityFormSendFlow = ({
             recipientEligibilityIdentity: requestedRecipientEligibilityIdentity,
             selectionIdentity: requestedSelectionIdentity,
           });
-          if (["prepared", "dispatching"].includes(latest.batch.status)) {
+          if (latest.batch.status === "prepared") {
+            clearPendingDispatch(batchToSend.batchId);
+            setDispatchOutcomeUncertain(false);
+            setConfirmOpen(true);
+            setError("No message was sent. Your reviewed messages are still ready; try Send again. If your session expired, sign in again first.");
+          } else if (latest.batch.status === "dispatching") {
             storePendingDispatch(batchToSend.batchId);
+            setConfirmOpen(false);
+            setError("We couldn't confirm whether these messages were sent. Check message status before starting a new message.");
           } else {
             clearPendingDispatch(batchToSend.batchId);
-            setError("");
+            setConfirmOpen(false);
+            setError(latest.batch.summary.uncertain > 0
+              ? "We couldn't confirm whether some messages were sent. Check message status before starting a new message."
+              : latest.batch.summary.sent > 0
+                ? "Some messages were accepted by the provider. Delivery updates are shown separately."
+                : "This message operation is complete. Review the results below.");
           }
         }
       } catch {
-        // Keep both the reviewed batch and its durable recovery marker.
+        if (ownsCurrentReview && currentContextRef.current === requestedContext && currentFormReviewRef.current === requestedFormIdentity) {
+          setConfirmOpen(false);
+          setError("We couldn't check whether these messages were sent. Check the saved message status before trying again.");
+        }
       }
     } finally {
       sendLockRef.current = false;
@@ -450,19 +539,48 @@ const AvailabilityFormSendFlow = ({
         setError("That batch does not belong to this availability form.");
         return;
       }
-      const restoredAudience = latest.batch.audienceType || (latest.batch.intentType === "availability_reminder" ? "reminder" : "first");
+      if (latest.batch.status === "abandoned") {
+        clearPendingDispatch(batchId);
+        try {
+          if (window.localStorage.getItem(lastBatchStorageKey) === batchId) window.localStorage.removeItem(lastBatchStorageKey);
+        } catch { /* The batch is server-side abandoned. */ }
+        setReviewedBatchState(null);
+        setConfirmOpen(false);
+        setDispatchOutcomeUncertain(false);
+        setNotice("This unsent review was discarded. No message was sent.");
+        return;
+      }
+      const restoredAudience = normalizeAudience(latest.batch.audienceType || (latest.batch.intentType === "availability_reminder" ? "reminder" : "first"));
+      ignoreNextEligibilityChangeRef.current = true;
       setAudienceType(restoredAudience);
       setSelectedMemberIds(latest.batch.selectedMemberIds);
+      const restoredRows = getAvailabilityRecipientRows({
+        members: members.filter((member) => !member.archivedAt).sort((a, b) => memberName(a).localeCompare(memberName(b))), positions, teams, recipients, eligibilityByMemberId,
+        notificationIntents, smsDeliveryAttempts, form, intentType: "availability_request", audienceType: restoredAudience,
+      });
+      const restoredSelection = restoredRows
+        .filter(({ member, eligible }) => eligible && latest.batch.selectedMemberIds.includes(member.memberId))
+        .map(({ member }) => member.memberId);
       setReviewedBatchState({
         batch: latest.batch,
         formIdentity: requestedFormIdentity,
         recipientEligibilityIdentity: currentRecipientEligibilityRef.current,
-        selectionIdentity: JSON.stringify([restoredAudience, latest.batch.selectedMemberIds]),
+        selectionIdentity: JSON.stringify([restoredAudience, restoredSelection]),
       });
       onBatchUpdated?.(latest.batch);
-      if (["prepared", "dispatching"].includes(latest.batch.status)) {
+      if (latest.batch.status === "prepared") {
+        clearPendingDispatch(batchId);
+        setDispatchOutcomeUncertain(false);
+        if (latest.batch.summary.eligible > 0) {
+          setConfirmOpen(true);
+          setNotice("This message was prepared but not sent. Review it and send when ready.");
+        } else {
+          setConfirmOpen(false);
+          setNotice("No recipients are currently eligible. Update your selection and review the message again.");
+        }
+      } else if (latest.batch.status === "dispatching") {
         storePendingDispatch(batchId);
-        setNotice("The batch has no confirmed final outcome yet. Check again before preparing another message.");
+        setNotice("We couldn't confirm whether this message was sent. Check its status before starting a new message.");
       } else {
         clearPendingDispatch(batchId);
         setNotice("");
@@ -477,10 +595,34 @@ const AvailabilityFormSendFlow = ({
     }
   };
 
+  const abandonPreparedReview = async () => {
+    const batch = reviewedBatchState?.batch;
+    if (!batch || batch.status !== "prepared" || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await abandonPreparedAvailabilityBatch(churchId, batch.batchId);
+      if (currentContextRef.current !== contextIdentity || currentFormReviewRef.current !== formReviewIdentity) return;
+      clearPendingDispatch(batch.batchId);
+      try {
+        if (window.localStorage.getItem(lastBatchStorageKey) === batch.batchId) window.localStorage.removeItem(lastBatchStorageKey);
+      } catch { /* Server-side abandonment still prevents this batch from sending. */ }
+      setReviewedBatchState(null);
+      setConfirmOpen(false);
+      setUncertainResendAcknowledged(false);
+      onBatchUpdated?.(result.batch);
+      setNotice("Unsent review discarded. No message was sent. You can prepare a new review.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not discard this unsent review.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const toggleVisible = (checked: boolean) => updateRecipientSelection(visibleEligibleIds, checked);
 
-  const excludedRows = rows.filter((row) => !row.eligible || (audienceType === "first" && row.hasPreviousRequest) ||
-    (audienceType === "reminder" && !row.hasAcceptedRequest));
+  const excludedRows = rows.filter((row) => !row.eligible || (audienceType === "not_contacted" && (row.hasAcceptedRequest || row.hasUncertainRequest)) ||
+    (audienceType === "nonresponders" && (Boolean(row.recipient?.respondedAt) || row.hasUncertainRequest)));
   const eligibilitySummary = (<dl className="grid grid-cols-2 gap-2 rounded-lg border border-gray-700 bg-gray-950/40 p-3 text-sm sm:grid-cols-4 lg:grid-cols-8" aria-label="Recipient status summary">
         <div><dt className="text-gray-400">Ready to send</dt><dd className="font-medium text-emerald-200">{statusCounts.ready}</dd></div>
         <div><dt className="text-gray-400">Consent needed</dt><dd className="text-gray-200">{statusCounts.consentNeeded}</dd></div>
@@ -504,16 +646,16 @@ const AvailabilityFormSendFlow = ({
   </div>;
 
   const hiddenSelectedCount = Math.max(0, selectedEligibleIds.length - visibleEligibleIds.filter((id) => selectedEligibleIds.includes(id)).length);
-  const audienceLabel = audienceType === "first" ? "First invitations" : audienceType === "reminder" ? "Remind nonresponders" : "Specific volunteers";
-  const audienceDescription = audienceType === "first"
-    ? "Send availability requests to volunteers who haven’t received a text yet."
-    : audienceType === "reminder"
-      ? "Follow up with volunteers who received a request but haven’t responded."
-      : "Choose exactly who should receive a message. Previously contacted volunteers stay unselected until you choose them.";
-  const emptyMessage = audienceType === "first"
-    ? "No first invitations are ready to send. Choose Specific volunteers to review previous messages."
-    : audienceType === "reminder"
-      ? "No invited volunteers are waiting for a response."
+  const audienceLabel = audienceType === "not_contacted" ? "Not yet contacted" : audienceType === "nonresponders" ? "Haven't responded" : "Choose people";
+  const audienceDescription = audienceType === "not_contacted"
+    ? "Select volunteers who have not received a confirmed message for this form."
+    : audienceType === "nonresponders"
+      ? "Select volunteers who have not submitted availability, including people previously contacted."
+      : "Choose specific volunteers, including people previously contacted or already responded.";
+  const emptyMessage = audienceType === "not_contacted"
+    ? "No volunteers are ready for a first message. Choose people to review a new message for someone already contacted."
+    : audienceType === "nonresponders"
+      ? "No eligible volunteers are waiting to respond."
       : "No volunteers are eligible to receive a text right now.";
   const selection = (
     <section className={dialog ? "min-h-0 flex-1 space-y-3 overflow-y-auto px-4 pb-4 pt-3" : "space-y-4 rounded-lg border border-sky-700 bg-gray-900/60 p-4"} aria-labelledby="send-form-heading">
@@ -530,16 +672,21 @@ const AvailabilityFormSendFlow = ({
       <fieldset className="space-y-2">
         <legend className="text-sm font-medium text-white">Audience</legend>
         <RadioGroup aria-label="Message audience" value={audienceType} onValueChange={(value) => changeAudience(value as AvailabilityAudienceType)} className="grid gap-2">
-          <RadioButton optionValue="first" label="First invitations" hideLabelColon helperText="Send availability requests to volunteers who haven’t received a text yet." className="w-full justify-between rounded-md border border-gray-700 bg-gray-950/40 p-3" labelClassName="text-white" helperTextClassName="text-gray-400" disabled={busy || dispatchOutcomeUncertain || !historyLoaded} />
-          <RadioButton optionValue="reminder" label="Remind nonresponders" hideLabelColon helperText="Follow up with volunteers who received a request but haven’t responded." className="w-full justify-between rounded-md border border-gray-700 bg-gray-950/40 p-3" labelClassName="text-white" helperTextClassName="text-gray-400" disabled={busy || dispatchOutcomeUncertain || !historyLoaded} />
-          <RadioButton optionValue="specific" label="Specific volunteers" hideLabelColon helperText="Choose each volunteer. Previously contacted people stay unselected until you choose them." className="w-full justify-between rounded-md border border-gray-700 bg-gray-950/40 p-3" labelClassName="text-white" helperTextClassName="text-gray-400" disabled={busy || dispatchOutcomeUncertain || !historyLoaded} />
+          <RadioButton optionValue="not_contacted" label="Not yet contacted" hideLabelColon helperText="Select volunteers who have not received a confirmed message for this form." className="w-full justify-between rounded-md border border-gray-700 bg-gray-950/40 p-3" labelClassName="text-white" helperTextClassName="text-gray-400" disabled={busy || dispatchOutcomeUncertain || !historyLoaded} />
+          <RadioButton optionValue="nonresponders" label="Haven't responded" hideLabelColon helperText="Include volunteers who were contacted before but have not submitted availability." className="w-full justify-between rounded-md border border-gray-700 bg-gray-950/40 p-3" labelClassName="text-white" helperTextClassName="text-gray-400" disabled={busy || dispatchOutcomeUncertain || !historyLoaded} />
+          <RadioButton optionValue="specific" label="Choose people" hideLabelColon helperText="Choose anyone eligible, including previously contacted or already responded volunteers." className="w-full justify-between rounded-md border border-gray-700 bg-gray-950/40 p-3" labelClassName="text-white" helperTextClassName="text-gray-400" disabled={busy || dispatchOutcomeUncertain || !historyLoaded} />
         </RadioGroup>
       </fieldset>
       {historyLoaded ? <div className="rounded-md border border-gray-700 bg-gray-950/40 px-3 py-2">
         <p className="text-base font-semibold text-white">{selectedEligibleIds.length} selected</p>
         <p className="text-xs text-gray-300">{statusCounts.ready} ready to send · {excludedRows.length} excluded for eligibility, response, or message history</p>
       </div> : null}
-      {audienceType === "first" ? <Button variant="textLink" disabled={busy || dispatchOutcomeUncertain || !historyLoaded} onClick={() => { setShowRecipients((current) => !current); setShowSelectedOnly(false); }}>
+      {reviewedBatch?.status === "prepared" && reviewedBatch.summary.eligible === 0 ? <div role="status" className="space-y-2 rounded border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100">
+        <p>No selected volunteers can receive this message right now. Update your selection or refresh eligibility.</p>
+        <ul className="space-y-1">{reviewedBatch.recipients.filter(({ eligible }) => !eligible).map((recipient) => <li key={recipient.memberId}>{recipient.memberName}: {recipient.exclusionReason || "Not eligible for this message."}</li>)}</ul>
+        <Button variant="textLink" disabled={busy} onClick={onRetryHistory}>Refresh eligibility</Button>
+      </div> : null}
+      {audienceType === "not_contacted" ? <Button variant="textLink" disabled={busy || dispatchOutcomeUncertain || !historyLoaded} onClick={() => { setShowRecipients((current) => !current); setShowSelectedOnly(false); }}>
         {showRecipients ? "Hide recipients" : "Change recipients"}
       </Button> : null}
       {showRecipients ? (
@@ -578,7 +725,7 @@ const AvailabilityFormSendFlow = ({
             </> : <p role="status" className="p-4 text-sm text-gray-300">{filteredRows.length ? emptyMessage : "No volunteers match these filters."}</p>}
           </div>
         </div>
-      ) : audienceType === "first" && statusCounts.ready === 0 ? <p role="status" className="rounded-md border border-gray-700 bg-gray-950/40 p-3 text-sm text-gray-300">{emptyMessage}</p> : null}
+      ) : audienceType === "not_contacted" && statusCounts.ready === 0 ? <p role="status" className="rounded-md border border-gray-700 bg-gray-950/40 p-3 text-sm text-gray-300">{emptyMessage}</p> : null}
       {historyLoaded && excludedRows.length ? recipientDiagnostics : null}
       {!dialog ? selectionFooter : null}
       {error ? <p role="alert" className="text-sm text-red-200">{error}</p> : null}
@@ -590,13 +737,14 @@ const AvailabilityFormSendFlow = ({
 
   const reviewContent = reviewedBatch ? <div className="space-y-3">
     {dialog ? <p className="text-sm text-gray-300">{selectedEligibleIds.length} volunteers selected</p> : null}
-    <AvailabilityBatchReview batch={reviewedBatch} formName={form.name} busy={busy} privacySafe={privacySafe} mode="confirmation" />
+    {error ? <p role="alert" className="text-sm text-red-200">{error}</p> : null}
+    <AvailabilityBatchReview batch={reviewedBatch} formName={form.name} busy={busy} privacySafe={privacySafe} mode="confirmation" uncertainResendAcknowledged={uncertainResendAcknowledged} onUncertainResendAcknowledgedChange={setUncertainResendAcknowledged} onAbandonPrepared={() => void abandonPreparedReview()} />
   </div> : null;
   const reviewFooter = <div className={dialog ? "flex shrink-0 items-center justify-between gap-2 border-t border-gray-700 bg-gray-800 px-4 py-3" : "mt-4 flex flex-col-reverse justify-end gap-2 border-t border-gray-700 pt-4 sm:flex-row"}>
     <Button variant={dialog ? "tertiary" : "secondary"} disabled={busy} onClick={() => setConfirmOpen(false)}>{dialog ? "Back" : "Cancel"}</Button>
     <div className="flex items-center gap-2">
       {dialog ? <Button variant="tertiary" disabled={busy} onClick={onClose}>Cancel</Button> : null}
-      {reviewedBatch && reviewedBatch.summary.eligible > 0 ? <Button variant={dialog ? "cta" : "primary"} disabled={busy || dispatchOutcomeUncertain || !historyLoaded} isLoading={busy} onClick={() => void sendBatch()}>Send {reviewedBatch.summary.eligible} message{reviewedBatch.summary.eligible === 1 ? "" : "s"}</Button> : null}
+      {reviewedBatch && reviewedBatch.summary.eligible > 0 ? <Button variant={dialog ? "cta" : "primary"} disabled={busy || dispatchOutcomeUncertain || !historyLoaded || (reviewedBatch.recipients.some(({ eligible, previousDeliveryStatus }) => eligible && previousDeliveryStatus === "uncertain") && !uncertainResendAcknowledged)} isLoading={busy} onClick={() => void sendBatch()}>Send {reviewedBatch.summary.eligible} message{reviewedBatch.summary.eligible === 1 ? "" : "s"}</Button> : null}
     </div>
   </div>;
   const confirmation = <>{reviewContent}{reviewFooter}</>;

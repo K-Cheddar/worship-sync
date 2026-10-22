@@ -32,6 +32,7 @@ export const NOTIFICATION_INTENT_TYPES = Object.freeze([
   "schedule_change",
   "replacement_request",
   "schedule_initial_notification",
+  "custom_message",
 ]);
 
 export const NOTIFICATION_INTENT_STATUSES = Object.freeze([
@@ -48,12 +49,19 @@ export const NOTIFICATION_PREVIEW_TTL_MS = 10 * 60 * 1000;
 // The explicit environment switch stays off by default. Segment pacing is
 // mandatory so a future activation cannot inherit an unverified send rate.
 export const SCHEDULE_BULK_DISPATCH_READY = resolveScheduleSmsDispatchConfig().enabled;
+export const CUSTOM_VOLUNTEER_SMS_READY = false;
 
 // This foundation has no automatic send path. Keep this server-side kill
 // switch hard-disabled until a separately reviewed product change authorizes it.
 export const AUTOMATIC_NOTIFICATION_SENDS_DISABLED = true;
 
 const normalize = (value) => String(value ?? "").trim();
+const normalizeAvailabilityAudience = (audienceType, intentType = "") => {
+  if (["not_contacted", "first"].includes(normalize(audienceType))) return "not_contacted";
+  if (["nonresponders", "reminder"].includes(normalize(audienceType))) return "nonresponders";
+  if (normalize(audienceType) === "specific") return "specific";
+  return intentType === "availability_reminder" ? "nonresponders" : "not_contacted";
+};
 const safeErrorMessage = (error, fallback) => {
   const value = normalize(error?.message);
   if (!value || /https?:\/\/|(?:^|\/)\/?(?:a|schedule-response|teams\/intake)\//i.test(value)) return fallback;
@@ -141,6 +149,8 @@ export const createNotificationIntentHandlers = ({
   queryDocs,
   requireFirestore,
   requireTeamsEdit,
+  authorizeCustomMember = async (req, churchId) => ({ admin: await requireTeamsEdit(req, churchId), scoped: false }),
+  authorizeMessagingHistory = async (req, churchId) => ({ admin: await requireTeamsEdit(req, churchId), scoped: false }),
   authorizeSchedule = async (req, churchId) => ({ admin: await requireTeamsEdit(req, churchId), scoped: false }),
   authorizeScheduleActor = async () => { throw httpError(403, "Schedule management access is no longer available."); },
   authorizeAvailabilityForm = async () => {
@@ -158,6 +168,7 @@ export const createNotificationIntentHandlers = ({
   setDoc,
   automaticSendsDisabled = AUTOMATIC_NOTIFICATION_SENDS_DISABLED,
   scheduleBulkDispatchReady = SCHEDULE_BULK_DISPATCH_READY,
+  customSmsReady = CUSTOM_VOLUNTEER_SMS_READY,
   scheduleSmsDispatchConfig = resolveScheduleSmsDispatchConfig(),
   logger = console,
 }) => {
@@ -244,6 +255,17 @@ export const createNotificationIntentHandlers = ({
 
   const authorizeIntent = async (req, churchId, intent) => {
     if (!intent || intent.churchId !== churchId) throw httpError(404, "Message preview not found.");
+    if (intent.sourceType === "custom_message" && intent.intentType === "custom_message") {
+      const member = await getDoc(COLLECTIONS.teamRosterMembers, intent.memberId);
+      if (!member || member.churchId !== churchId) throw httpError(404, "Message preview not found.");
+      const access = await authorizeCustomMember(req, churchId, member);
+      const batch = await getDoc(COLLECTIONS.notificationBatches, intent.batchId);
+      if (!batch || batch.churchId !== churchId || batch.intentType !== "custom_message" ||
+          (access.scoped && batch.createdByUid !== access.admin?.user?.uid)) {
+        throw httpError(404, "Message preview not found.");
+      }
+      return access;
+    }
     if (intent.sourceType === "team_schedule") {
       return authorizeScheduleSource(req, churchId, intent.sourceId, intent.cellKey);
     }
@@ -391,7 +413,7 @@ export const createNotificationIntentHandlers = ({
     if (!intent || !NOTIFICATION_INTENT_TYPES.includes(intent.intentType)) {
       throw httpError(404, "Message preview not found.");
     }
-    if (!["team_schedule", "team_intake_recipient"].includes(intent.sourceType)) {
+    if (!["team_schedule", "team_intake_recipient", "custom_message"].includes(intent.sourceType)) {
       throw httpError(409, "The source for this message is not supported.");
     }
     const churchId = normalize(intent.churchId);
@@ -402,7 +424,20 @@ export const createNotificationIntentHandlers = ({
     let church = records?.church || null;
     let config = records?.config || null;
     let sourceContext = {};
-    if (intent.sourceType === "team_schedule") {
+    if (intent.sourceType === "custom_message") {
+      if (intent.intentType !== "custom_message" || !intent.batchId || intent.sourceId !== intent.batchId) {
+        throw httpError(409, "This message is no longer available.");
+      }
+      const batch = records?.batch || await getDoc(COLLECTIONS.notificationBatches, intent.batchId);
+      if (!batch || batch.churchId !== churchId || batch.intentType !== "custom_message" ||
+          !batch.selectedMemberIds?.includes(intent.memberId) || batch.message !== intent.message ||
+          batch.status === "abandoned") throw httpError(409, "This message review changed.");
+      member = member || await getDoc(COLLECTIONS.teamRosterMembers, intent.memberId);
+      church = church || await getDoc(COLLECTIONS.churches, churchId);
+      config = config || await getDoc(COLLECTIONS.churchMessagingConfigs, churchId);
+      if (!church) throw httpError(409, "This church is no longer available.");
+      sourceContext.batch = batch;
+    } else if (intent.sourceType === "team_schedule") {
       if (records) {
         schedule = records.schedule;
         if (intent.intentType === "schedule_initial_notification") {
@@ -454,14 +489,30 @@ export const createNotificationIntentHandlers = ({
       ) {
         throw httpError(409, "This individual intake request is no longer available.");
       }
-      if (recipient.respondedAt && intent.audienceType !== "specific") throw httpError(409, "This volunteer has already responded.");
-      if (intent.audienceType === "first" || (intent.intentType === "availability_reminder" && intent.audienceType === "reminder")) {
+      const audienceType = normalizeAvailabilityAudience(intent.audienceType, intent.intentType);
+      if (recipient.respondedAt && audienceType !== "specific") {
+        throw httpError(409, "This volunteer has already responded.");
+      }
+      if (form.purpose === "team_availability" && !(await isAvailabilityRecipientInFormScope({
+        churchId,
+        formId: form.formId,
+        recipientId: recipient.recipientId || intent.recipientId || intent.sourceId,
+        memberId: intent.memberId,
+      }))) {
+        throw httpError(409, "This volunteer is no longer part of this form's teams.");
+      }
+      if (audienceType === "not_contacted" || audienceType === "nonresponders" || intent.intentType === "availability_reminder") {
         const priorRequest = await getAvailabilityRequestHistory({
           churchId, formId: form.formId, recipientId: recipient.recipientId,
           excludeIntentId: intent.intentId,
         });
-        if (intent.audienceType === "first" && priorRequest.hasPriorAttempt) {
-          throw httpError(409, "A previous request exists. Choose Specific volunteers to send another message.");
+        if (audienceType === "not_contacted" && (priorRequest.hasAcceptedRequest || priorRequest.hasUncertainRequest)) {
+          throw httpError(409, priorRequest.hasUncertainRequest
+            ? "We couldn't confirm whether a previous message was sent. Review this volunteer before sending a new message."
+            : "This volunteer has already received a message. Review the recipients again.");
+        }
+        if ((audienceType === "nonresponders" || intent.intentType === "availability_reminder") && priorRequest.hasUncertainRequest) {
+          throw httpError(409, "We couldn't confirm whether a previous message was sent. Check message history before sending a reminder.");
         }
         if (intent.intentType === "availability_reminder" && !priorRequest.hasAcceptedRequest) {
           throw httpError(409, "A previously sent request is required before sending a reminder.");
@@ -513,7 +564,7 @@ export const createNotificationIntentHandlers = ({
         sourceContext = { ...sourceContext, ...candidate };
         }
       }
-    } else if (!["availability_request", "availability_reminder"].includes(intent.intentType)) {
+    } else if (intent.sourceType === "team_intake_recipient" && !["availability_request", "availability_reminder"].includes(intent.intentType)) {
       throw httpError(409, "This notification type does not match an intake request.");
     }
     const normalizedConfig = normalizeChurchMessagingConfig(config, churchId);
@@ -533,7 +584,9 @@ export const createNotificationIntentHandlers = ({
       };
       throw httpError(400, messages[finalEligibility.status]);
     }
-    const currentMessage = intent.sourceType === "team_intake_recipient"
+    const currentMessage = intent.sourceType === "custom_message"
+      ? sourceContext.batch.message
+      : intent.sourceType === "team_intake_recipient"
       ? buildTeamIntakeSms({ churchName: church?.name, formName: form.name, publicUrl: responseUrlOverride || sourceContext.publicUrl, intentType: intent.intentType, collectsAvailability: intakeFormCollectsServiceAvailability(form.enabledFields, form.availabilityOccurrences) }).body
       : intent.intentType === "schedule_initial_notification"
         ? buildScheduleInitialSmsMessage({ churchName: church?.name, assignments: sourceContext.assignments, responseUrl: responseUrlOverride || sourceContext.responseUrl, timeZone: sourceContext.serviceTimeZone, schedule })
@@ -544,7 +597,9 @@ export const createNotificationIntentHandlers = ({
     const cell = schedule?.assignments?.[intent.occurrenceId]?.[intent.cellKey];
     const holderId = typeof cell === "string" ? cell : cell?.primaryMemberId || "";
     const positionName = normalize(sourceContext.positionName);
-    const sourceMaterial = intent.sourceType === "team_intake_recipient"
+    const sourceMaterial = intent.sourceType === "custom_message"
+      ? { batchId: intent.batchId, message: sourceContext.batch.message, memberId: intent.memberId }
+      : intent.sourceType === "team_intake_recipient"
       ? {
           formId: form.formId, name: form.name, startDate: form.startDate, endDate: form.endDate,
           responseDeadline: form.responseDeadline || form.endDate, teamIds: form.teamIds || [],
@@ -807,6 +862,76 @@ export const createNotificationIntentHandlers = ({
     }
   };
 
+  const listMessageHistory = async (req, res) => {
+    try {
+      const churchId = normalize(req.params.churchId);
+      await authorizeMessagingHistory(req, churchId);
+      const limit = Math.max(1, Math.min(100, Number.parseInt(req.query?.limit, 10) || 50));
+      const page = await listIntentPage({ churchId, filters: [], limit, cursor: normalize(req.query?.cursor) });
+      const authorized = [];
+      for (const intent of page.intents || []) {
+        try {
+          await authorizeIntent(req, churchId, intent);
+          if (intent.intentType === "custom_message" &&
+              ["preparing", "prepared", "abandoned"].includes((await getDoc(COLLECTIONS.notificationBatches, intent.batchId))?.status)) continue;
+          authorized.push(intent);
+        } catch (error) {
+          if (![403, 404].includes(error.statusCode)) throw error;
+        }
+      }
+      const seenIntentIds = new Set(authorized.map((intent) => intent.intentId));
+      for (const batchId of new Set(authorized.map((intent) => intent.batchId).filter(Boolean))) {
+        const batchIntents = await queryDocs(COLLECTIONS.notificationIntents, [
+          { field: "churchId", value: churchId }, { field: "batchId", value: batchId },
+        ], { limit: 500 });
+        for (const intent of batchIntents) {
+          const id = intent.intentId || intent.id;
+          if (seenIntentIds.has(id)) continue;
+          try {
+            await authorizeIntent(req, churchId, intent);
+            authorized.push({ intentId: id, ...intent });
+            seenIntentIds.add(id);
+          } catch (error) {
+            if (![403, 404].includes(error.statusCode)) throw error;
+          }
+        }
+      }
+      const attempts = await loadAttemptsForIntents(churchId, authorized);
+      const groups = new Map();
+      for (const intent of authorized) {
+        const groupId = intent.batchId || intent.intentId;
+        if (!groups.has(groupId)) groups.set(groupId, {
+          historyId: groupId, messageType: intent.intentType, createdAt: intent.createdAt,
+          summary: intent.intentType === "custom_message" ? intent.message : safeIntentProjection(intent).messagePreview,
+          recipients: [],
+        });
+        const group = groups.get(groupId);
+        const member = await getDoc(COLLECTIONS.teamRosterMembers, intent.memberId);
+        const attempt = attempts.get(intent.intentId);
+        group.recipients.push({
+          memberId: intent.memberId,
+          memberName: member && member.churchId === churchId
+            ? [member.firstName, member.lastName].filter(Boolean).join(" ") || "Volunteer" : "Volunteer",
+          status: intent.status, deliveryStatus: attempt?.status || "",
+          outcome: attempt?.outcome || "",
+          failureMessage: attempt?.failureMessage ? redactPersonalizedLinks(String(attempt.failureMessage)).slice(0, 300) : "",
+        });
+      }
+      const entries = [...groups.values()].map((group) => ({
+        ...group, recipientCount: group.recipients.length,
+        status: group.recipients.some((row) => row.status === "unknown" || row.outcome === "unknown") ? "unconfirmed"
+          : group.recipients.some((row) => row.status === "failed" || ["failed", "undelivered"].includes(row.deliveryStatus)) ? "failed"
+            : group.recipients.every((row) => row.deliveryStatus === "delivered") ? "delivered"
+              : group.recipients.every((row) => row.status === "sent") ? "accepted"
+                : group.recipients.some((row) => row.status === "sending") ? "sending" : "not_sent",
+      }));
+      return res.json({ success: true, entries, nextCursor: page.nextCursor });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({ success: false,
+        errorMessage: safeErrorMessage(error, "Could not load message history.") });
+    }
+  };
+
   const getIntentPreview = async (req, res) => {
     try {
       await assertCsrf(req);
@@ -846,6 +971,12 @@ export const createNotificationIntentHandlers = ({
     const callbackToken = randomBytes(32).toString("hex");
     const claim = async (current, records = null) => {
       if (!current || current.churchId !== churchId) throw httpError(404, "Message preview not found.");
+      if (["team_intake_recipient", "custom_message"].includes(current.sourceType) && current.batchId) {
+        const batch = records && Object.hasOwn(records, "batch")
+          ? records.batch
+          : await getDoc(COLLECTIONS.notificationBatches, current.batchId);
+        if (batch?.status === "abandoned") throw httpError(409, "This unsent review was discarded. Prepare a new message before sending.");
+      }
       if (current.providerAcceptedAttemptId) throw httpError(409, "This message was already accepted by the provider.");
       if (current.status === "unknown" || current.status === "sending") throw httpError(409, "This send has an uncertain or active provider outcome. Review delivery history before retrying.");
       if (["sent", "suppressed"].includes(current.status)) throw httpError(409, "This message has already been handled.");
@@ -874,16 +1005,19 @@ export const createNotificationIntentHandlers = ({
         const current = snapshot.exists ? { intentId: snapshot.id, ...snapshot.data() } : null;
         if (!current || current.churchId !== churchId) throw httpError(404, "Message preview not found.");
         const isIntake = current.sourceType === "team_intake_recipient";
-        const scheduleRef = isIntake ? null : db.collection(COLLECTIONS.teamSchedules).doc(current.sourceId);
+        const isCustom = current.sourceType === "custom_message";
+        const scheduleRef = isIntake || isCustom ? null : db.collection(COLLECTIONS.teamSchedules).doc(current.sourceId);
         const formRef = isIntake ? db.collection(COLLECTIONS.teamIntakeForms).doc(current.formId) : null;
         const recipientRef = isIntake ? db.collection(COLLECTIONS.teamIntakeRecipients).doc(current.recipientId || current.sourceId) : null;
+        const batchRef = (isIntake || isCustom) && current.batchId ? db.collection(COLLECTIONS.notificationBatches).doc(current.batchId) : null;
         const memberRef = db.collection(COLLECTIONS.teamRosterMembers).doc(current.memberId);
         const churchRef = db.collection(COLLECTIONS.churches).doc(churchId);
         const configRef = db.collection(COLLECTIONS.churchMessagingConfigs).doc(churchId);
-        const [scheduleSnap, formSnap, recipientSnap, memberSnap, churchSnap, configSnap] = await Promise.all([
+        const [scheduleSnap, formSnap, recipientSnap, batchSnap, memberSnap, churchSnap, configSnap] = await Promise.all([
           scheduleRef ? transaction.get(scheduleRef) : Promise.resolve(null),
           formRef ? transaction.get(formRef) : Promise.resolve(null),
           recipientRef ? transaction.get(recipientRef) : Promise.resolve(null),
+          batchRef ? transaction.get(batchRef) : Promise.resolve(null),
           transaction.get(memberRef), transaction.get(churchRef), transaction.get(configRef),
         ]);
         const schedule = scheduleSnap?.exists ? { scheduleId: scheduleSnap.id, ...scheduleSnap.data() } : null;
@@ -905,6 +1039,7 @@ export const createNotificationIntentHandlers = ({
           schedule,
           form: formSnap?.exists ? { formId: formSnap.id, ...formSnap.data() } : null,
           recipient: recipientSnap?.exists ? { recipientId: recipientSnap.id, ...recipientSnap.data() } : null,
+          batch: batchSnap?.exists ? { batchId: batchSnap.id, ...batchSnap.data() } : null,
           member,
           church: churchSnap.exists ? { churchId: churchSnap.id, ...churchSnap.data() } : null,
           config: configSnap.exists ? { churchId: configSnap.id, ...configSnap.data() } : null,
@@ -980,6 +1115,7 @@ export const createNotificationIntentHandlers = ({
       const intentId = normalize(req.params.intentId);
       const currentIntent = await getDoc(COLLECTIONS.notificationIntents, intentId);
       if (!currentIntent || currentIntent.churchId !== churchId) throw httpError(404, "Message preview not found.");
+      if (currentIntent.intentType === "custom_message" && !customSmsReady) throw httpError(503, "Custom volunteer texts are not enabled for this church yet.");
       const readBackgroundApproval = async () => {
         if (!backgroundContext || !isScheduleBulkDispatchReady()) throw httpError(503, "Bulk schedule SMS is not ready for dispatch.");
         const batch = await getBatchForChurch(backgroundContext.batchId, churchId);
@@ -1420,6 +1556,153 @@ export const createNotificationIntentHandlers = ({
     const batch = await getDoc(COLLECTIONS.notificationBatches, batchId);
     if (!batch || batch.churchId !== churchId) throw httpError(404, "Message batch not found.");
     return batch;
+  };
+
+  const authorizeCustomBatch = async (req, batch) => {
+    if (batch.intentType !== "custom_message" || !Array.isArray(batch.selectedMemberIds)) {
+      throw httpError(404, "Message not found.");
+    }
+    let access = null;
+    for (const memberId of batch.selectedMemberIds) {
+      const member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+      if (!member || member.churchId !== batch.churchId) throw httpError(404, "Message not found.");
+      access = await authorizeCustomMember(req, batch.churchId, member);
+      if (access.scoped && access.admin?.user?.uid !== batch.createdByUid) throw httpError(404, "Message not found.");
+    }
+    return access;
+  };
+
+  const customBatchDetail = async (batch) => {
+    const intents = await Promise.all((batch.intentIds || []).map((id) => getDoc(COLLECTIONS.notificationIntents, id)));
+    const recipients = await Promise.all((batch.recipients || []).map(async (row) => {
+      const intent = intents.find((item) => item?.intentId === row.intentId);
+      const attempt = intent?.attemptId ? await getDoc(COLLECTIONS.smsDeliveryAttempts, intent.attemptId) : null;
+      const snapshot = intent?.approvalSnapshot;
+      const ready = Boolean(intent && ["preview", "ready"].includes(intent.status) &&
+        snapshot?.approvalVersion && Number(snapshot.expiresAt) > Date.now());
+      return {
+        memberId: row.memberId, memberName: row.memberName,
+        maskedPhoneNumber: snapshot?.phoneLast4 ? `••• ••• ${snapshot.phoneLast4}` : row.maskedPhoneNumber || "",
+        eligible: ready, exclusionReason: row.exclusionReason || (intent && !ready &&
+          ["preview", "ready"].includes(intent.status) ? "This review expired. Prepare a new message." : ""),
+        intentId: row.intentId || "", status: intent?.status || row.status || "excluded",
+        attemptStatus: attempt?.status || "", attemptOutcome: attempt?.outcome || "",
+        segmentCount: snapshot?.segmentCount || row.segmentCount || 0,
+        approvalVersion: snapshot?.approvalVersion || "",
+      };
+    }));
+    const eligible = recipients.filter((row) => row.eligible).length;
+    return {
+      batchId: batch.batchId, churchId: batch.churchId, intentType: "custom_message",
+      status: batch.status, createdAt: batch.createdAt, confirmedAt: batch.confirmedAt || "",
+      selectedMemberIds: batch.selectedMemberIds, message: batch.message,
+      intentIds: batch.intentIds || [],
+      recipients, approvalVersion: batch.reviewVersion || "",
+      summary: {
+        selected: recipients.length, eligible,
+        excluded: recipients.filter((row) => row.status === "excluded").length,
+        totalSegments: recipients.filter((row) => row.eligible).reduce((total, row) => total + row.segmentCount, 0),
+        sent: recipients.filter((row) => row.status === "sent").length,
+        delivered: recipients.filter((row) => row.attemptStatus === "delivered").length,
+        failed: recipients.filter((row) => row.status === "failed" || row.attemptStatus === "undelivered").length,
+        uncertain: recipients.filter((row) => row.status === "unknown" || row.attemptOutcome === "unknown").length,
+      },
+    };
+  };
+
+  const prepareCustomBatch = async (req, res) => {
+    try {
+      await assertCsrf(req);
+      const churchId = normalize(req.params.churchId);
+      const memberIds = [...new Set((Array.isArray(req.body?.memberIds) ? req.body.memberIds : []).map(normalize).filter(Boolean))].slice(0, 500);
+      const text = normalize(req.body?.message);
+      const message = /\bReply STOP to opt out\.?$/i.test(text) ? text : `${text} Reply STOP to opt out.`;
+      const requestKey = normalize(req.body?.requestKey);
+      if (!requestKey || requestKey.length > 120 || !memberIds.length || !text || text.length > 1500 || message.length > 1600) {
+        throw httpError(400, "Choose volunteers and write a message of up to 1,500 characters.");
+      }
+      const members = await Promise.all(memberIds.map((id) => getDoc(COLLECTIONS.teamRosterMembers, id)));
+      let actorUid = "";
+      for (const member of members) {
+        if (!member || member.churchId !== churchId || member.archivedAt) throw httpError(403, "A selected volunteer is no longer available.");
+        const access = await authorizeCustomMember(req, churchId, member);
+        if (actorUid && actorUid !== access.admin?.user?.uid) throw httpError(403, "Team management access changed.");
+        actorUid = access.admin?.user?.uid || "";
+      }
+      const batchId = hashValue(`${churchId}|custom-message|${requestKey}`);
+      const db = requireFirestore();
+      const reserve = (current) => {
+        if (current) {
+          if (current.churchId !== churchId || current.intentType !== "custom_message" || current.message !== message ||
+              JSON.stringify(current.selectedMemberIds) !== JSON.stringify(memberIds) || current.createdByUid !== actorUid) {
+            throw httpError(409, "This message request was already used for different content or recipients.");
+          }
+          return current;
+        }
+        return { batchId, churchId, intentType: "custom_message", sourceType: "custom_message",
+          status: "preparing", selectedMemberIds: memberIds, message, recipients: [], intentIds: [],
+          createdByUid: actorUid, createdAt: nowIso(), updatedAt: nowIso() };
+      };
+      const batch = db ? await db.runTransaction(async (transaction) => {
+        const ref = db.collection(COLLECTIONS.notificationBatches).doc(batchId);
+        const snapshot = await transaction.get(ref);
+        const current = snapshot.exists ? { batchId: snapshot.id, ...snapshot.data() } : null;
+        const next = reserve(current);
+        if (!current) transaction.create(ref, next);
+        return next;
+      }) : await runMemoryClaim(batchId, async () => {
+        const current = await getDoc(COLLECTIONS.notificationBatches, batchId);
+        const next = reserve(current);
+        if (!current) await setDoc(COLLECTIONS.notificationBatches, batchId, next, { merge: false });
+        return next;
+      });
+      if (batch.status !== "preparing") return res.json({ success: true, batch: await customBatchDetail(batch), enabled: customSmsReady });
+      const rows = [];
+      for (const member of members) {
+        const id = intentIdFor(hashValue, churchId, `${batchId}|${member.memberId}`);
+        const existing = await getDoc(COLLECTIONS.notificationIntents, id);
+        if (!existing) {
+          const intent = createNotificationIntent({ churchId, intentType: "custom_message", sourceType: "custom_message",
+            sourceId: batchId, memberId: member.memberId, batchId, idempotencyKey: `${batchId}|${member.memberId}`,
+            message, now: nowIso() });
+          if (db) await db.runTransaction(async (transaction) => {
+            const ref = db.collection(COLLECTIONS.notificationIntents).doc(id);
+            if (!(await transaction.get(ref)).exists) transaction.create(ref, { intentId: id, ...intent });
+          });
+          else await mutateIntent(churchId, id, (current) => current ? null : { intentId: id, ...intent });
+        }
+        const saved = await getDoc(COLLECTIONS.notificationIntents, id);
+        const reviewed = await prepareIntentReview({ intentId: id, ...saved });
+        rows.push({ memberId: member.memberId, memberName: [member.firstName, member.lastName].filter(Boolean).join(" ") || "Volunteer",
+          intentId: reviewed.eligible ? id : "", status: reviewed.eligible ? "preview" : "excluded",
+          exclusionReason: reviewed.eligible ? "" : "Not eligible for SMS.",
+          maskedPhoneNumber: reviewed.validated.phoneNumber ? `••• ••• ${reviewed.validated.phoneNumber.slice(-4)}` : "",
+          segmentCount: measureSmsMessage(message).segmentCount, approvalVersion: reviewed.approvalVersion });
+      }
+      for (const member of members) await authorizeCustomMember(req, churchId, member);
+      const updated = { ...batch, status: "prepared", recipients: rows,
+        intentIds: rows.map((row) => row.intentId).filter(Boolean),
+        reviewVersion: notificationBatchReviewVersion(hashValue, { batchId, selectedMemberIds: memberIds, recipients: rows }),
+        preparedAt: nowIso(), updatedAt: nowIso() };
+      const finalized = db ? await db.runTransaction(async (transaction) => {
+        const ref = db.collection(COLLECTIONS.notificationBatches).doc(batchId);
+        const snapshot = await transaction.get(ref);
+        const current = snapshot.exists ? { batchId: snapshot.id, ...snapshot.data() } : null;
+        if (!current || current.churchId !== churchId || current.message !== message) throw httpError(409, "This message review changed.");
+        if (current.status !== "preparing") return current;
+        transaction.set(ref, updated, { merge: false });
+        return updated;
+      }) : await runMemoryClaim(batchId, async () => {
+        const current = await getBatchForChurch(batchId, churchId);
+        if (current.message !== message) throw httpError(409, "This message review changed.");
+        if (current.status !== "preparing") return current;
+        await setDoc(COLLECTIONS.notificationBatches, batchId, updated, { merge: false });
+        return updated;
+      });
+      return res.json({ success: true, batch: await customBatchDetail(finalized), enabled: customSmsReady });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({ success: false, errorMessage: safeErrorMessage(error, "Could not prepare this message.") });
+    }
   };
 
   const formatBatchDetail = async (batch, { exposeMessages = true, privacySafe = false } = {}) => {
@@ -2081,8 +2364,8 @@ export const createNotificationIntentHandlers = ({
 
   const reserveAvailabilityBatch = async ({ churchId, formId, intentType, audienceType, batchId, actorUid, selectedMemberIds }) => {
     const db = requireFirestore();
-    const createBatch = (form, round) => ({
-      batchId, churchId, formId, intentType, audienceType, reminderRound: round,
+    const createBatch = () => ({
+      batchId, churchId, formId, intentType, audienceType, reminderRound: 0,
       status: "preparing", selectedMemberIds, recipients: [], intentIds: [],
       createdAt: nowIso(), createdByUid: actorUid, updatedAt: nowIso(),
     });
@@ -2096,7 +2379,7 @@ export const createNotificationIntentHandlers = ({
         if (batchSnapshot.exists) {
           const existing = { batchId: batchSnapshot.id, ...batchSnapshot.data() };
           if (existing.churchId !== churchId || existing.formId !== formId || existing.intentType !== intentType ||
-              (existing.audienceType || (intentType === "availability_reminder" ? "reminder" : "first")) !== audienceType) {
+              normalizeAvailabilityAudience(existing.audienceType, existing.intentType) !== audienceType) {
             throw httpError(409, "This batch key was already used for a different request.");
           }
           if (JSON.stringify(existing.selectedMemberIds || []) !== JSON.stringify(selectedMemberIds)) throw httpError(409, "This batch key was already used with a different recipient selection.");
@@ -2109,10 +2392,8 @@ export const createNotificationIntentHandlers = ({
         if (!hasPersonalizedIntakeResponseFields(form.enabledFields, form.availabilityOccurrences)) {
           throw httpError(409, "This intake form has no response fields for an existing volunteer.");
         }
-        const round = intentType === "availability_reminder" ? Number(form.reminderRound || 0) + 1 : 0;
-        const batch = createBatch(form, round);
+        const batch = createBatch();
         transaction.create(batchRef, batch);
-        if (round) transaction.set(db.collection(COLLECTIONS.teamIntakeForms).doc(formId), { reminderRound: round }, { merge: true });
         return batch;
       });
     }
@@ -2120,23 +2401,21 @@ export const createNotificationIntentHandlers = ({
       const existing = await getDoc(COLLECTIONS.notificationBatches, batchId);
       if (existing) {
         if (existing.churchId !== churchId || existing.formId !== formId || existing.intentType !== intentType ||
-            (existing.audienceType || (intentType === "availability_reminder" ? "reminder" : "first")) !== audienceType) throw httpError(409, "This batch key was already used for a different request.");
+            normalizeAvailabilityAudience(existing.audienceType, existing.intentType) !== audienceType) throw httpError(409, "This batch key was already used for a different request.");
         if (JSON.stringify(existing.selectedMemberIds || []) !== JSON.stringify(selectedMemberIds)) throw httpError(409, "This batch key was already used with a different recipient selection.");
         return existing;
       }
       const form = await getDoc(COLLECTIONS.teamIntakeForms, formId);
       if (!form || form.churchId !== churchId || form.archivedAt || !form.active || formResponseDeadlinePassed(form)) throw httpError(409, "This intake form is closed or its response deadline has passed.");
       if (!hasPersonalizedIntakeResponseFields(form.enabledFields, form.availabilityOccurrences)) throw httpError(409, "This intake form has no response fields for an existing volunteer.");
-      const round = intentType === "availability_reminder" ? Number(form.reminderRound || 0) + 1 : 0;
-      const batch = createBatch(form, round);
+      const batch = createBatch();
       await setDoc(COLLECTIONS.notificationBatches, batchId, batch, { merge: false });
-      if (round) await setDoc(COLLECTIONS.teamIntakeForms, formId, { reminderRound: round }, { merge: true });
       return batch;
     });
   };
 
   const getAvailabilityRequestHistory = async ({ churchId, formId, recipientId, excludeIntentId = "" }) => {
-    if (!recipientId) return { status: "", lastSentAt: "", hasPriorAttempt: false, hasAcceptedRequest: false };
+    if (!recipientId) return { status: "", lastSentAt: "", hasPriorAttempt: false, hasAcceptedRequest: false, hasUncertainRequest: false };
     const [intents, attempts] = await Promise.all([
       queryDocs(COLLECTIONS.notificationIntents, [
         { field: "churchId", value: churchId },
@@ -2149,7 +2428,7 @@ export const createNotificationIntentHandlers = ({
       ], { limit: 1000 }),
     ]);
     const requestIntents = intents.filter((intent) =>
-      intent.intentType === "availability_request" &&
+      ["availability_request", "availability_reminder"].includes(intent.intentType) &&
       intent.churchId === churchId &&
       intent.formId === formId &&
       intent.recipientId === recipientId &&
@@ -2158,7 +2437,7 @@ export const createNotificationIntentHandlers = ({
     const requestIntentIds = new Set(requestIntents.map((intent) => intent.intentId || intent.id));
     const requestAttempts = attempts.filter((attempt) =>
       (!attempt.formId || attempt.formId === formId) &&
-      ["initial", "availability_request"].includes(attempt.purpose) &&
+      ["initial", "availability_request", "availability_reminder", "reminder"].includes(attempt.purpose) &&
       (!attempt.notificationIntentId || requestIntentIds.has(attempt.notificationIntentId)),
     );
     const attemptByIntentId = new Map(requestAttempts
@@ -2194,12 +2473,14 @@ export const createNotificationIntentHandlers = ({
     const relevant = entries.filter((entry) => entry.status).sort((left, right) =>
       String(right.at).localeCompare(String(left.at)),
     );
+    const hasUncertainRequest = entries.some((entry) => entry.status === "uncertain");
     return {
-      status: relevant[0]?.status || "",
+      status: hasUncertainRequest ? "uncertain" : relevant[0]?.status || "",
       lastSentAt: entries.filter((entry) => entry.status === "accepted")
         .map((entry) => entry.sentAt).filter(Boolean).sort().at(-1) || "",
       hasPriorAttempt: relevant.length > 0,
       hasAcceptedRequest: entries.some((entry) => entry.status === "accepted"),
+      hasUncertainRequest,
     };
   };
 
@@ -2210,12 +2491,13 @@ export const createNotificationIntentHandlers = ({
       if (automaticSendsDisabled !== true) throw httpError(403, "Automatic notification sends are disabled by the server.");
       const intentType = normalize(req.body?.intentType);
       if (!["availability_request", "availability_reminder"].includes(intentType)) throw httpError(400, "Choose a form request or reminder.");
-      const defaultAudience = intentType === "availability_reminder" ? "reminder" : "first";
-      const audienceType = normalize(req.body?.audienceType) || defaultAudience;
-      if (!["first", "reminder", "specific"].includes(audienceType) ||
-          (intentType === "availability_reminder" ? audienceType !== "reminder" : audienceType === "reminder")) {
+      const defaultAudience = intentType === "availability_reminder" ? "nonresponders" : "not_contacted";
+      const requestedAudience = normalize(req.body?.audienceType) || defaultAudience;
+      if (!["not_contacted", "nonresponders", "specific", "first", "reminder"].includes(requestedAudience) ||
+          (intentType === "availability_reminder" && !["nonresponders", "reminder"].includes(requestedAudience))) {
         throw httpError(400, "Choose a valid audience for this message.");
       }
+      const audienceType = normalizeAvailabilityAudience(requestedAudience, intentType);
       const formId = normalize(req.body?.formId);
       const memberIds = [...new Set((Array.isArray(req.body?.memberIds) ? req.body.memberIds : []).map(normalize).filter(Boolean))].slice(0, 500);
       const requestKey = normalize(req.body?.requestKey).slice(0, 120);
@@ -2239,7 +2521,7 @@ export const createNotificationIntentHandlers = ({
       for (const result of prepared.results) {
         const member = result.member || {};
         const requestHistory = historyByRecipientId.get(result.recipientId) || {
-          status: "", lastSentAt: "", hasPriorAttempt: false, hasAcceptedRequest: false,
+          status: "", lastSentAt: "", hasPriorAttempt: false, hasAcceptedRequest: false, hasUncertainRequest: false,
         };
         const row = {
           memberId: result.memberId,
@@ -2254,38 +2536,26 @@ export const createNotificationIntentHandlers = ({
           previousSentAt: requestHistory.lastSentAt,
           respondedAt: result.recipient?.respondedAt || "",
         };
-        if (result.eligible && audienceType === "first" && requestHistory.hasPriorAttempt) {
+        if (result.eligible && audienceType === "nonresponders" && requestHistory.hasUncertainRequest) {
           row.status = "excluded";
-          row.exclusionReason = "A previous request exists. Choose Specific volunteers to send another message.";
+          row.exclusionReason = "We couldn't confirm whether a previous message was sent. Check message status before preparing a reminder.";
           rows.push(row);
           continue;
         }
-        if (result.eligible && intentType === "availability_reminder" && !requestHistory.hasAcceptedRequest) {
+        if (result.eligible && audienceType === "not_contacted" && (requestHistory.hasAcceptedRequest || requestHistory.hasUncertainRequest)) {
           row.status = "excluded";
-          row.exclusionReason = requestHistory.status === "uncertain"
-            ? "The previous request outcome is uncertain. Check message history before preparing a reminder."
-            : "No previously sent request exists for this volunteer.";
+          row.exclusionReason = requestHistory.hasUncertainRequest
+            ? "We couldn't confirm whether a previous message was sent. Check message status before choosing a new message."
+            : "This volunteer has already received a message. Choose them specifically to send another.";
           rows.push(row);
           continue;
         }
         if (result.eligible) {
-          if (intentType === "availability_reminder" && batch.reminderRound > 1) {
-            const priorKey = `availability_reminder|${formId}|${result.recipientId}|${batch.reminderRound - 1}`;
-            const priorIntent = await getDoc(COLLECTIONS.notificationIntents, intentIdFor(hashValue, churchId, priorKey));
-            if (priorIntent && ["preview", "ready", "sending", "unknown"].includes(priorIntent.status)) {
-              row.status = "excluded";
-              row.exclusionReason = priorIntent.status === "unknown"
-                ? "A prior reminder has an uncertain provider outcome."
-                : "A previous reminder round is still unresolved.";
-              rows.push(row);
-              continue;
-            }
-          }
-          const key = intentType === "availability_request"
-            ? audienceType === "specific"
-              ? "availability_request|" + formId + "|" + result.recipientId + "|" + batchId
-              : "availability_request|" + formId + "|" + result.recipientId
-            : `availability_reminder|${formId}|${result.recipientId}|${batch.reminderRound}`;
+          // A durable batch is one deliberate operation. Repeating the same
+          // request key returns this batch; a new review gets a new batch id.
+          // Historical reminder identities remain readable, but no round
+          // number participates in identity for newly prepared messages.
+          const key = `${intentType}|${formId}|${result.recipientId}|${batchId}`;
           const id = intentIdFor(hashValue, churchId, key);
           const existing = await getDoc(COLLECTIONS.notificationIntents, id);
           if (existing?.batchId === batchId) {
@@ -2337,7 +2607,7 @@ export const createNotificationIntentHandlers = ({
             }
           } else if (existing) {
             row.status = existing.status;
-            row.exclusionReason = existing.status === "sent" ? "This request was already sent." : existing.status === "unknown" ? "A previous send has an uncertain provider outcome." : existing.status === "sending" ? "A previous send is in progress." : "A prior message for this request already exists.";
+            row.exclusionReason = existing.status === "sent" ? "This message was already sent." : existing.status === "unknown" ? "We couldn't confirm whether this message was sent. Check message status before choosing a new message." : existing.status === "sending" ? "This message is already being sent." : "A previous message operation already exists.";
           } else {
             const message = buildTeamIntakeSms({
               churchName: result.churchName,
@@ -2397,6 +2667,10 @@ export const createNotificationIntentHandlers = ({
     try {
       const churchId = normalize(req.params.churchId);
       const batch = await getBatchForChurch(normalize(req.params.batchId), churchId);
+      if (batch.intentType === "custom_message") {
+        await authorizeCustomBatch(req, batch);
+        return res.json({ success: true, batch: await customBatchDetail(batch), enabled: customSmsReady });
+      }
       if (batch.intentType === "schedule_initial_notification" && batch.scheduleId) {
         const access = await authorizeScheduleSource(req, churchId, batch.scheduleId);
         if (batch.sourceType !== "team_schedule" || batch.event !== "initial") throw httpError(404, "Message batch not found.");
@@ -2454,12 +2728,117 @@ export const createNotificationIntentHandlers = ({
     }
   };
 
+  const abandonAvailabilityBatch = async (req, res) => {
+    try {
+      await assertCsrf(req);
+      const churchId = normalize(req.params.churchId);
+      const batchId = normalize(req.params.batchId);
+      const existing = await getBatchForChurch(batchId, churchId);
+      if (!existing.formId || existing.intentType === "schedule_initial_notification") throw httpError(404, "Message batch not found.");
+      const access = await authorizeForm(req, churchId, existing.formId);
+      const actorUid = access.admin?.user?.uid || "";
+      const assertNeverStarted = (batch, intents) => {
+        const summary = batch?.summary || {};
+        const hasSummaryActivity = [summary.sent, summary.delivered, summary.failed, summary.uncertain, summary.sending]
+          .some((count) => Number(count || 0) > 0);
+        const hasRecipientActivity = (batch?.recipients || []).some((row) =>
+          row.attemptId || ["sending", "sent", "delivered", "failed", "unknown"].includes(row.status) || row.attemptOutcome === "unknown",
+        );
+        const intentsAreUnsent = intents.every((intent) => intent && intent.churchId === churchId &&
+          intent.batchId === batchId && ["preview", "ready"].includes(intent.status) &&
+          !intent.attemptId && !intent.providerAcceptedAttemptId);
+        if (batch?.status !== "prepared" || batch.dispatchStartedAt || hasSummaryActivity || hasRecipientActivity || !intentsAreUnsent) {
+          throw httpError(409, "This message may have started sending and can't be discarded. Check its delivery status.");
+        }
+      };
+      const abandon = (batch) => ({
+        ...batch,
+        status: "abandoned",
+        abandonedByUid: actorUid,
+        abandonedAt: nowIso(),
+        updatedAt: nowIso(),
+      });
+      const db = requireFirestore();
+      let batch;
+      if (db) {
+        batch = await db.runTransaction(async (transaction) => {
+          const ref = db.collection(COLLECTIONS.notificationBatches).doc(batchId);
+          const snapshot = await transaction.get(ref);
+          const current = snapshot.exists ? { batchId: snapshot.id, ...snapshot.data() } : null;
+          if (!current || current.churchId !== churchId || current.formId !== existing.formId) throw httpError(404, "Message batch not found.");
+          const intentSnapshots = await Promise.all((current.intentIds || []).map((intentId) =>
+            transaction.get(db.collection(COLLECTIONS.notificationIntents).doc(intentId)),
+          ));
+          const intents = intentSnapshots.map((intentSnapshot) => intentSnapshot.exists
+            ? { intentId: intentSnapshot.id, ...intentSnapshot.data() }
+            : null);
+          assertNeverStarted(current, intents);
+          const next = abandon(current);
+          transaction.set(ref, next, { merge: false });
+          return next;
+        });
+      } else {
+        batch = await runMemoryClaim(batchId, async () => {
+          const current = await getBatchForChurch(batchId, churchId);
+          const intents = await Promise.all((current.intentIds || []).map((intentId) => getDoc(COLLECTIONS.notificationIntents, intentId)));
+          assertNeverStarted(current, intents);
+          const next = abandon(current);
+          await setDoc(COLLECTIONS.notificationBatches, batchId, next, { merge: false });
+          return next;
+        });
+      }
+      return res.json({ success: true, batch: await formatBatchDetail(batch, { privacySafe: access.scoped }) });
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({ success: false, errorMessage: safeErrorMessage(error, "Could not discard this unsent review."), ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}) });
+    }
+  };
+
   const dispatchAvailabilityBatch = async (req, res) => {
     try {
       await assertCsrf(req);
       const churchId = normalize(req.params.churchId);
       const batchId = normalize(req.params.batchId);
       const existingBatch = await getBatchForChurch(batchId, churchId);
+      if (existingBatch.intentType === "custom_message") {
+        if (!customSmsReady) throw httpError(503, "Custom volunteer texts are not enabled for this church yet.");
+        const access = await authorizeCustomBatch(req, existingBatch);
+        if (req.body?.confirmed !== true) throw httpError(400, "Review this message before sending.");
+        const claim = (current) => {
+          if (!current || current.intentType !== "custom_message" || current.createdByUid !== existingBatch.createdByUid) {
+            throw httpError(404, "Message not found.");
+          }
+          return claimReviewedNotificationBatch({ current, churchId,
+            approvalVersion: normalize(req.body?.approvalVersion), actorUid: access.admin.user.uid,
+            now: nowIso(), isStaleSending, httpError });
+        };
+        const db = requireFirestore();
+        const batch = db ? await db.runTransaction(async (transaction) => {
+          const ref = db.collection(COLLECTIONS.notificationBatches).doc(batchId);
+          const snapshot = await transaction.get(ref);
+          const next = claim(snapshot.exists ? { batchId: snapshot.id, ...snapshot.data() } : null);
+          transaction.set(ref, next, { merge: false });
+          return next;
+        }) : await runMemoryClaim(batchId, async () => {
+          const next = claim(await getBatchForChurch(batchId, churchId));
+          await setDoc(COLLECTIONS.notificationBatches, batchId, next, { merge: false });
+          return next;
+        });
+        const nextBatch = await executeReviewedNotificationBatch({
+          batch, getIntent: (id) => getDoc(COLLECTIONS.notificationIntents, id),
+          matchesSource: (intent) => intent.sourceType === "custom_message" &&
+            intent.sourceId === batchId && intent.intentType === "custom_message",
+          isStaleSending, markUnknownAfterInterruption, nowIso,
+          sendReviewedIntent: async ({ intentId, approvalVersion }) => {
+            const sendRes = { statusCode: 200, status(code) { this.statusCode = code; return this; },
+              json(payload) { this.payload = payload; return this; } };
+            await sendIntent({ ...req, params: { ...req.params, churchId, intentId },
+              body: { confirmed: true, approvalVersion } }, sendRes);
+            return sendRes.payload;
+          },
+        });
+        await setDoc(COLLECTIONS.notificationBatches, batchId, nextBatch, { merge: true });
+        return res.json({ success: true, batch: await customBatchDetail(nextBatch) });
+      }
       if (existingBatch.intentType === "schedule_initial_notification" && existingBatch.scheduleId) {
         const access = await authorizeScheduleSource(req, churchId, existingBatch.scheduleId);
         if (existingBatch.sourceType !== "team_schedule" || existingBatch.event !== "initial") throw httpError(404, "Message batch not found.");
@@ -2564,11 +2943,67 @@ export const createNotificationIntentHandlers = ({
       const admin = access.admin;
       if (req.body?.confirmed !== true) throw httpError(400, "Confirm this exact message batch before sending.");
       const requestedApprovalVersion = normalize(req.body?.approvalVersion);
+      const acknowledgedUncertainMemberIds = [...new Set((Array.isArray(req.body?.acknowledgedUncertainMemberIds)
+        ? req.body.acknowledgedUncertainMemberIds : []).map(normalize).filter(Boolean))].sort();
+      const reviewedEligibleRows = [];
+      for (const row of existingBatch.recipients || []) {
+        if (!row.recipientId || !row.intentId || !(row.eligible === true || ["preview", "ready"].includes(row.status))) continue;
+        const currentIntent = await getDoc(COLLECTIONS.notificationIntents, row.intentId);
+        if (currentIntent?.churchId === churchId && currentIntent?.batchId === batchId &&
+            currentIntent?.formId === existingBatch.formId && currentIntent?.recipientId === row.recipientId &&
+            currentIntent?.memberId === row.memberId && currentIntent?.sourceType === "team_intake_recipient" &&
+            currentIntent?.intentType === existingBatch.intentType && ["preview", "ready"].includes(currentIntent?.status)) {
+          reviewedEligibleRows.push(row);
+        }
+      }
+      const uncertaintyChecks = await Promise.all(reviewedEligibleRows
+        .map(async (row) => ({
+          memberId: row.memberId,
+          uncertain: (await getAvailabilityRequestHistory({
+            churchId,
+            formId: existingBatch.formId,
+            recipientId: row.recipientId,
+          })).hasUncertainRequest,
+        })));
+      const uncertainMemberIds = [...new Set([
+        ...uncertaintyChecks.filter((row) => row.uncertain).map((row) => row.memberId),
+        ...reviewedEligibleRows
+          .filter((row) => row.previousDeliveryStatus === "uncertain")
+          .map((row) => row.memberId),
+      ])].sort();
+      const reminderBatch = normalizeAvailabilityAudience(existingBatch.audienceType, existingBatch.intentType) === "nonresponders";
+      if ((reminderBatch && uncertainMemberIds.length > 0) ||
+          uncertainMemberIds.some((id) => !acknowledgedUncertainMemberIds.includes(id)) ||
+          acknowledgedUncertainMemberIds.some((id) => !uncertainMemberIds.includes(id))) {
+        const newlyUncertain = new Set(uncertaintyChecks
+          .filter((row) => row.uncertain && (existingBatch.recipients || []).find((recipient) => recipient.memberId === row.memberId)?.previousDeliveryStatus !== "uncertain")
+          .map((row) => row.memberId));
+        if (newlyUncertain.size) {
+          const refreshedRecipients = (existingBatch.recipients || []).map((row) => newlyUncertain.has(row.memberId)
+            ? { ...row, previousDeliveryStatus: "uncertain" }
+            : row);
+          const refreshedBatch = {
+            ...existingBatch,
+            recipients: refreshedRecipients,
+            reviewVersion: notificationBatchReviewVersion(hashValue, {
+              batchId,
+              selectedMemberIds: existingBatch.selectedMemberIds || [],
+              recipients: refreshedRecipients,
+            }),
+            updatedAt: nowIso(),
+          };
+          await setDoc(COLLECTIONS.notificationBatches, batchId, refreshedBatch, { merge: true });
+        }
+        throw httpError(409, reminderBatch
+          ? "We couldn't confirm whether a previous message was sent. Check message history before sending a reminder."
+          : "Review the delivery warning and confirm before sending a new message to someone whose previous send is unconfirmed.");
+      }
       const db = requireFirestore();
       let batch;
       const claim = (current) => claimReviewedNotificationBatch({
         current, churchId, approvalVersion: requestedApprovalVersion,
         actorUid: admin.user.uid, now: nowIso(), isStaleSending, httpError,
+        acknowledgedUncertainMemberIds,
       });
       if (db) {
         batch = await db.runTransaction(async (transaction) => {
@@ -2597,6 +3032,27 @@ export const createNotificationIntentHandlers = ({
         sendReviewedIntent: async ({ intentId, approvalVersion }) => {
           // Compatibility adapter: retain the current authenticated manual-send
           // entry point while the batch executor stays independent of Express.
+          const reviewedIntent = await getDoc(COLLECTIONS.notificationIntents, intentId);
+          if (reviewedIntent?.sourceType === "team_intake_recipient" &&
+              ["availability_request", "availability_reminder"].includes(reviewedIntent.intentType)) {
+            const requestHistory = await getAvailabilityRequestHistory({
+              churchId,
+              formId: batch.formId,
+              recipientId: reviewedIntent.recipientId,
+            });
+            const acknowledgment = batch.uncertainOutcomeAcknowledgment;
+            const hasAcknowledgedRisk = acknowledgment?.reviewVersion === batch.reviewVersion &&
+              acknowledgment.memberIds?.includes(reviewedIntent.memberId);
+            const isReminder = normalizeAvailabilityAudience(batch.audienceType, batch.intentType) === "nonresponders" || reviewedIntent.intentType === "availability_reminder";
+            if (requestHistory.hasUncertainRequest && (isReminder || !hasAcknowledgedRisk)) {
+              return {
+                success: false,
+                errorMessage: isReminder
+                  ? "We couldn't confirm whether a previous message was sent. Check message history before sending a reminder."
+                  : "A previous message outcome became unconfirmed. Review this volunteer before sending again.",
+              };
+            }
+          }
           const sendRes = {
             statusCode: 200,
             status(code) { this.statusCode = code; return this; },
@@ -2720,6 +3176,7 @@ export const createNotificationIntentHandlers = ({
 
   return {
     listIntents,
+    listMessageHistory,
     getIntentPreview,
     sendIntent,
     sendTeamIntakeIntent,
@@ -2727,9 +3184,11 @@ export const createNotificationIntentHandlers = ({
     prepareReplacementInvitation,
     resolveReplacementInvitation,
     prepareAvailabilityBatch,
+    prepareCustomBatch,
     getScheduleInitialSmsRecipients,
     prepareScheduleInitialSmsBatch,
     getAvailabilityBatch,
+    abandonAvailabilityBatch,
     dispatchAvailabilityBatch,
     startScheduleBatchDispatcher,
     stopScheduleBatchDispatcher,

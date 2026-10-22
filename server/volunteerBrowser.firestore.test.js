@@ -260,6 +260,7 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
     }, valid.token), false);
     assert.equal(await page.getByText("PRIVATE-DRAFT").count(), 0);
     await page.getByRole("button", { name: /Time off/i }).click();
+    await page.getByRole("button", { name: /Edit time off/i }).click();
     await page.getByRole("textbox", { name: /Notes/i }).fill("Volunteer unsaved dates");
     await memberRef.update({ updatedAt: "admin-revision-b", blockoutDates: [{
       startDate: "2099-11-02", endDate: "2099-11-02", notes: "Administrator saved dates",

@@ -43,7 +43,7 @@ it("reports SMS, scope, revoked, and responded exclusions without making them se
     { recipientId: "r1", churchId: "church-1", formId: form.formId, memberId: "responded", createdAt: "2026-09-01", respondedAt: "2026-09-20" },
     { recipientId: "r2", churchId: "church-1", formId: form.formId, memberId: "revoked", createdAt: "2026-09-01", revokedAt: "2026-09-20" },
   ];
-  const rows = getAvailabilityRecipientRows({ members, positions: [], teams: [], recipients, eligibilityByMemberId, form, intentType: "availability_request", audienceType: "first" });
+  const rows = getAvailabilityRecipientRows({ members, positions: [], teams: [], recipients, eligibilityByMemberId, form, intentType: "availability_request", audienceType: "not_contacted" });
 
   expect(rows.map(({ member: item, eligible, reason }) => [item.memberId, eligible, reason])).toEqual([
     ["eligible", true, ""],
@@ -120,7 +120,7 @@ it("keeps prior messages available for deliberate selection and exposes their hi
   ]);
 });
 
-it("recognizes a completed legacy delivery so it is excluded from first invitations", () => {
+it("recognizes a completed legacy delivery so it is excluded from the default audience", () => {
   const row = getAvailabilityRecipientRows({
     members: [member("one", { teamMemberships: { worship: { teamId: "worship" } } })],
     positions: [],
@@ -130,10 +130,34 @@ it("recognizes a completed legacy delivery so it is excluded from first invitati
     smsDeliveryAttempts: [{ attemptId: "attempt-one", churchId: form.churchId, recipientType: "team_intake", recipientId: "recipient-one", memberId: "one", provider: "twilio", purpose: "initial", status: "delivered", outcome: "confirmed", createdAt: "2026-09-01", updatedAt: "2026-09-01" }],
     form,
     intentType: "availability_request",
-    audienceType: "first",
+    audienceType: "not_contacted",
   });
 
-  expect(row[0]).toMatchObject({ eligible: true, hasPreviousRequest: true, previousDeliveryStatus: "sent" });
+  expect(row[0]).toMatchObject({ eligible: true, hasPreviousRequest: true, hasAcceptedRequest: true, previousDeliveryStatus: "sent" });
+});
+
+it("keeps definitively failed sends in the default not-yet-contacted audience", () => {
+  const rows = getAvailabilityRecipientRows({
+    members: [member("one", { teamMemberships: { worship: { teamId: "worship" } } })],
+    positions: [],
+    teams: [],
+    recipients: [{ recipientId: "recipient-one", churchId: form.churchId, formId: form.formId, memberId: "one", createdAt: "2026-09-01" }],
+    eligibilityByMemberId: { one: { status: "enabled", eligible: true } },
+    notificationIntents: [{
+      intentId: "failed-intent", churchId: form.churchId, formId: form.formId, recipientId: "recipient-one", memberId: "one",
+      intentType: "availability_request", sourceType: "team_intake_recipient", sourceId: "recipient-one", sourceVersion: "",
+      occurrenceId: "", channel: "sms", message: "", status: "failed", attemptOutcome: "failed", createdAt: "2026-09-01", updatedAt: "2026-09-01",
+    }],
+    smsDeliveryAttempts: [{
+      attemptId: "failed-attempt", churchId: form.churchId, recipientType: "notification_intent", recipientId: "recipient-one",
+      memberId: "one", formId: form.formId, provider: "twilio", purpose: "availability_request", status: "failed",
+      outcome: "failed", createdAt: "2026-09-01", updatedAt: "2026-09-01",
+    }],
+    form,
+    intentType: "availability_request",
+    audienceType: "not_contacted",
+  });
+  expect(rows[0]).toMatchObject({ eligible: true, hasAcceptedRequest: false, hasUncertainRequest: false, previousDeliveryStatus: "failed" });
 });
 
 it("makes an accepted but undelivered provider attempt available for an explicit resend", () => {
@@ -221,4 +245,41 @@ it("allows reminders only for previously sent nonresponders", () => {
   })[0];
   expect(waiting).toMatchObject({ eligible: true, hasAcceptedRequest: true, previousSentAt: "2026-09-02T00:00:00.000Z" });
   expect(responded).toMatchObject({ eligible: false, reason: "Already responded" });
+});
+
+it("blocks a reminder when a newer resend is uncertain, even if an older request was accepted", () => {
+  const memberId = "one";
+  const recipientId = "recipient-one";
+  const row = getAvailabilityRecipientRows({
+    members: [member(memberId)],
+    positions: [],
+    teams: [],
+    recipients: [{ recipientId, churchId: form.churchId, formId: form.formId, memberId, createdAt: "2026-09-01" }],
+    eligibilityByMemberId: { [memberId]: { status: "enabled", eligible: true } },
+    notificationIntents: [
+      {
+        intentId: "accepted-request", churchId: form.churchId, formId: form.formId, recipientId, memberId,
+        intentType: "availability_request", sourceType: "team_intake_recipient", sourceId: recipientId,
+        sourceVersion: "", occurrenceId: "", channel: "sms", message: "", status: "sent",
+        createdAt: "2026-09-01T00:00:00.000Z", updatedAt: "2026-09-01T00:00:00.000Z",
+      },
+      {
+        intentId: "uncertain-resend", churchId: form.churchId, formId: form.formId, recipientId, memberId,
+        intentType: "availability_request", sourceType: "team_intake_recipient", sourceId: recipientId,
+        sourceVersion: "", occurrenceId: "", channel: "sms", message: "", status: "unknown",
+        createdAt: "2026-09-02T00:00:00.000Z", updatedAt: "2026-09-02T00:00:00.000Z",
+      },
+    ],
+    form,
+    intentType: "availability_reminder",
+    audienceType: "nonresponders",
+  })[0];
+
+  expect(row).toMatchObject({
+    eligible: false,
+    hasAcceptedRequest: true,
+    hasUncertainRequest: true,
+    previousDeliveryStatus: "uncertain",
+    reason: "We couldn't confirm whether a previous message was sent. Check message history before sending a reminder.",
+  });
 });

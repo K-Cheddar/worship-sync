@@ -220,10 +220,23 @@ const CanvaImportSheet = ({
       (_, index) => index + 1,
     );
     setPages(nextPages);
-    setSelectedPages(new Set(nextPages.slice(0, 25)));
-    setCustomItemName(design.title);
     const sourceMatchesDesign = initialSource?.designId === design.id;
-    if (sourceMatchesDesign) setFormat(initialSource.format);
+    setSelectedPages(new Set(
+      sourceMatchesDesign && initialSource.pageNumbers.length
+        ? initialSource.pageNumbers
+        : [1],
+    ));
+    setCustomItemName(design.title);
+    if (sourceMatchesDesign) {
+      setFormat(initialSource.format);
+      if (initialSource.format === "mp4") {
+        // Keep an existing multi-page combined video in combined mode when it
+        // is refreshed. New imports and single-page videos default to separate.
+        setMp4ImportMode(
+          initialSource.pageNumbers.length > 1 ? "combined" : "separate",
+        );
+      }
+    }
   };
 
   const openDesignFromLink = async () => {
@@ -890,7 +903,7 @@ const CanvaImportSheet = ({
                     <p className="mt-2 text-xs text-gray-400">
                       {format === "png"
                         ? "PNG pages are still images. Use Media screen share for live Canva Present animations."
-                        : "MP4 bakes motion into one video. You advance in WorshipSync by playing the clip, not Canva Present."}
+                        : "MP4 bakes motion into video clips. By default, each selected page becomes its own video."}
                     </p>
                     {format === "mp4" ? (
                       <div className="mt-3">
@@ -925,8 +938,8 @@ const CanvaImportSheet = ({
                         </div>
                         <p className="mt-1 text-xs text-gray-400">
                           {mp4ImportMode === "combined"
-                            ? "Best for looping the whole presentation as one video."
-                            : "Import each page separately so you can choose when to show it."}
+                            ? "Play the selected pages together as one video."
+                            : "Keep pages as individual videos so you can choose when to show each one."}
                         </p>
                       </div>
                     ) : null}

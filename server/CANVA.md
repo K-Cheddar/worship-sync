@@ -34,10 +34,17 @@ Recommended weekly flow:
 5. For multi-page PNG imports, keep **Create a custom item with one slide per
    page** enabled when you want one outline item you can advance in WorshipSync.
 
+MP4 imports default to a separate video for each selected page. Choose **One
+combined video** when you want the selected pages sequenced into a single clip.
+When refreshing an existing multi-page combined video, WorshipSync keeps the
+combined mode so the saved item is refreshed as one video.
+
 Animations tradeoff:
 
 - **PNG** — no live motion; advance slides in WorshipSync.
-- **MP4** — motion is baked into one clip; not Canva Present click-through.
+- **MP4** — motion is baked into video clips; each page is its own clip by
+  default, or selected pages can be combined into one clip. It is not Canva
+  Present click-through.
 - **Live Canva Present** (full animations + click-through) — open Present in
   Canva, then use Media **Add screen or window**, share that screen/window, and
   **Send** it to the chosen local display (or create a **live input item** and

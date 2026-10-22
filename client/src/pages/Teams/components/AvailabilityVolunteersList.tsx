@@ -145,14 +145,9 @@ const AvailabilityVolunteersList = ({
   };
 
   const requestStatusLabel = (row: AvailabilityProgressRow) => {
-    if (!historyLoaded && !["Responded", "Revoked"].includes(row.status))
-      return "Checking history…";
     if (row.status === "Not requested") return "Not invited";
     return row.status;
   };
-
-  const deliveryLabel = (delivery: string) =>
-    historyLoaded ? delivery : "Checking delivery…";
 
   const statusFilterOptions = [
     { value: "", label: "All statuses" },
@@ -282,15 +277,19 @@ const AvailabilityVolunteersList = ({
                 </div>
 
                 <div role="cell" className="col-start-1 row-start-2 min-w-0 sm:col-auto sm:row-auto">
-                  <span className={`text-xs ${requestTone[row.status] || "text-gray-300"}`}>
-                    {requestStatusLabel(row)}
-                  </span>
-                  {row.delivery !== "—" ? (
-                    <span className={`ml-2 text-xs ${deliveryTone(row.delivery)}`}>
-                      {deliveryLabel(row.delivery)}
+                  {!historyLoaded && !["Responded", "Revoked"].includes(row.status) ? (
+                    <span aria-hidden="true" className="inline-block h-3 w-24 animate-pulse rounded bg-white/10 align-middle" />
+                  ) : (
+                    <span className={`text-xs ${requestTone[row.status] || "text-gray-300"}`}>
+                      {requestStatusLabel(row)}
                     </span>
-                  ) : !historyLoaded ? (
-                    <span className="ml-2 text-xs text-gray-400">Checking delivery…</span>
+                  )}
+                  {!historyLoaded ? (
+                    <span aria-hidden="true" className="ml-2 inline-block h-3 w-16 animate-pulse rounded bg-white/10 align-middle" />
+                  ) : row.delivery !== "—" ? (
+                    <span className={`ml-2 text-xs ${deliveryTone(row.delivery)}`}>
+                      {row.delivery}
+                    </span>
                   ) : null}
                 </div>
 

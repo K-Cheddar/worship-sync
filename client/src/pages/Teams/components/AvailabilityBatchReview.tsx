@@ -1,5 +1,6 @@
 import type { NotificationBatch, NotificationBatchRecipient } from "../../../api/authTypes";
 import Button from "../../../components/Button/Button";
+import Checkbox from "../../../components/Checkbox/Checkbox";
 import { MemberNameWithIndicator } from "./CurrentUserMemberIndicator";
 
 type AvailabilityBatchReviewProps = {
@@ -9,8 +10,11 @@ type AvailabilityBatchReviewProps = {
   privacySafe?: boolean;
   readinessMessage?: string;
   outcomeUncertain?: boolean;
+  uncertainResendAcknowledged?: boolean;
+  onUncertainResendAcknowledgedChange?: (acknowledged: boolean) => void;
   mode?: "panel" | "status" | "confirmation";
   onConfirm?: () => void;
+  onAbandonPrepared?: () => void;
 };
 
 const recipientStatusLabel = (recipient: NotificationBatchRecipient, batchStatus: NotificationBatch["status"]) => {
@@ -23,9 +27,9 @@ const recipientStatusLabel = (recipient: NotificationBatchRecipient, batchStatus
 };
 
 const audienceLabel = (audienceType: NotificationBatch["audienceType"], intentType: NotificationBatch["intentType"]) => {
-  if (intentType === "availability_reminder" || audienceType === "reminder") return "Remind nonresponders";
-  if (audienceType === "specific") return "Specific volunteers";
-  return "First invitations";
+  if (intentType === "availability_reminder" || audienceType === "reminder" || audienceType === "nonresponders") return "Haven't responded";
+  if (audienceType === "specific") return "Choose people";
+  return "Not yet contacted";
 };
 
 const previousMessageLabel = (recipient: NotificationBatchRecipient) => {
@@ -33,7 +37,7 @@ const previousMessageLabel = (recipient: NotificationBatchRecipient) => {
   if (recipient.previousDeliveryStatus === "accepted" || recipient.previousDeliveryStatus === "sent") {
     return `Previously sent${sentAt ? ` on ${sentAt}` : ""}${recipient.respondedAt ? "; already responded" : ""}.`;
   }
-  if (recipient.previousDeliveryStatus === "uncertain") return "A previous send is unconfirmed. Check message history before proceeding.";
+  if (recipient.previousDeliveryStatus === "uncertain") return "We couldn't confirm whether a previous message was sent.";
   if (recipient.previousDeliveryStatus === "failed") return "A previous send failed. This is a new message.";
   return recipient.respondedAt ? "Already responded to this form. You chose to send another message." : "";
 };
@@ -66,8 +70,11 @@ const AvailabilityBatchReview = ({
   privacySafe = false,
   readinessMessage = "",
   outcomeUncertain = false,
+  uncertainResendAcknowledged = false,
+  onUncertainResendAcknowledgedChange,
   mode = "panel",
   onConfirm,
+  onAbandonPrepared,
 }: AvailabilityBatchReviewProps) => {
   const canSend = mode === "panel" && ["prepared", "partial"].includes(batch.status) && batch.recipients.some(({ eligible }) => eligible);
   const destinationCounts = new Map<string, number>();
@@ -75,6 +82,12 @@ const AvailabilityBatchReview = ({
     if (phoneNumberSnapshot) destinationCounts.set(phoneNumberSnapshot, (destinationCounts.get(phoneNumberSnapshot) || 0) + 1);
   });
   const excludedRecipients = batch.recipients.filter(({ eligible }) => !eligible);
+  const uncertainResendRecipients = batch.recipients.filter(({ eligible, previousDeliveryStatus }) => eligible && previousDeliveryStatus === "uncertain");
+  const canAbandonPrepared = batch.status === "prepared" &&
+    !batch.summary.sent && !batch.summary.delivered && !batch.summary.failed && !batch.summary.uncertain && !(batch.summary.sending || 0) &&
+    !batch.dispatchStartedAt && batch.recipients.every((recipient) =>
+      !recipient.attemptId && !["sending", "sent", "failed", "unknown"].includes(recipient.status),
+    );
   const preparedBatchProgressMessage = batch.summary.sent || batch.summary.delivered
     ? `${batch.summary.sent} message${batch.summary.sent === 1 ? " has" : "s have"} already been sent. Delivery updates are shown separately.`
     : batch.summary.failed || batch.summary.uncertain
@@ -130,7 +143,7 @@ const AvailabilityBatchReview = ({
         {sharedDestinationCount > 1 ? <p className="text-xs text-sky-200">Shared phone number · each volunteer gets a separate private message.</p> : null}
         {(showStatus || mode === "confirmation") && previousMessageLabel(recipient) ? <p className="text-xs text-amber-200">{previousMessageLabel(recipient)}</p> : null}
         {recipient.segmentCount > 1 ? <p className="text-xs text-gray-300">This longer message counts as {recipient.segmentCount} texts.</p> : null}
-        {recipient.message ? <details open={mode === "confirmation" && batch.summary.eligible === 1} className="rounded bg-gray-950 px-3 py-2 text-sm text-gray-200"><summary className="cursor-pointer">View message</summary><p className="mt-2 whitespace-pre-wrap break-words">{recipient.message}</p><p className="mt-2 text-xs text-gray-400">{recipient.message.length} characters · {recipient.segmentCount} text segment{recipient.segmentCount === 1 ? "" : "s"}</p></details> : null}
+        {recipient.message ? <details open={mode === "confirmation" && batch.summary.eligible === 1} className="rounded bg-gray-950 px-3 py-2 text-sm text-gray-200"><summary className="cursor-pointer">View message</summary><p className="mt-2 whitespace-pre-wrap break-words">{recipient.message}</p><p className="mt-2 text-xs text-gray-400">{recipient.message.length} characters · {recipient.segmentCount} text message{recipient.segmentCount === 1 ? "" : "s"}</p></details> : null}
         {!recipient.eligible && recipient.exclusionReason ? <p className="text-sm text-amber-200">Not included: {plainExclusionReason(recipient.exclusionReason)}</p> : null}
         {!recipient.eligible && recipient.status === "failed" && !recipient.exclusionReason ? <p className="text-sm text-amber-200">This message failed. Review message history before preparing a retry.</p> : null}
         {!recipient.eligible && (recipient.status === "unknown" || recipient.attemptOutcome === "unknown") ? <p className="text-sm text-amber-200">We couldn't confirm whether this text was sent. Check message history before trying again.</p> : null}
@@ -166,6 +179,18 @@ const AvailabilityBatchReview = ({
             </ul></details>
           </div>
         ) : null}
+        {uncertainResendRecipients.length ? (
+          <div role="alert" className="space-y-2 rounded border border-amber-700 bg-amber-950/30 p-3 text-amber-100">
+            <p className="font-medium">We couldn't confirm whether a previous message was sent to {uncertainResendRecipients.length === 1 ? "this volunteer" : "these volunteers"}.</p>
+            <p className="text-xs">Sending now could result in an extra text. Check status first, or confirm that you want to send a new message.</p>
+            <Checkbox
+              checked={uncertainResendAcknowledged}
+              disabled={busy}
+              onCheckedChange={(checked) => onUncertainResendAcknowledgedChange?.(checked === true)}
+              label="I understand they might receive another text. Send a new message anyway."
+            />
+          </div>
+        ) : null}
         {eligibleRecipients.length ? (
           <section aria-label="Messages to send">
             <h3 className="font-medium text-white">Messages to send ({eligibleRecipients.length})</h3>
@@ -175,6 +200,7 @@ const AvailabilityBatchReview = ({
           </section>
         ) : <p role="status" className="rounded border border-amber-700 bg-amber-950/30 p-3 text-amber-100">No volunteers are ready to receive a text message. Review the reasons above.</p>}
         <p className="text-xs text-gray-400">Choose Send only after reviewing these text messages.</p>
+        {onAbandonPrepared && canAbandonPrepared ? <Button variant="textLink" disabled={busy} onClick={onAbandonPrepared}>Discard this unsent review</Button> : null}
       </div>
     );
   }

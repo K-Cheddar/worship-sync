@@ -87,7 +87,7 @@ export const teamsNavSections: TeamsNavSection[] = [
     path: "/teams-and-services/messages",
     routePath: "messages",
     label: "Messages",
-    description: "Preview and manually send volunteer SMS.",
+    description: "Write volunteer texts and review message history.",
     icon: MessageSquareText,
     domain: "teams",
   },
@@ -156,8 +156,8 @@ export const getAvailableTeamsNavSections = ({
     ? teamsNavSections
         .filter((section) =>
           hasBroadTeamsReadAccess ||
-          (section.routePath !== "messages" &&
-            (section.routePath !== "forms" || canManageTeamAvailability)),
+          ((section.routePath !== "messages" && section.routePath !== "forms") ||
+            canManageTeamAvailability),
         )
         .map((section) =>
           section.routePath === "forms" &&

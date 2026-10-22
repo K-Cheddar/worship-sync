@@ -12,13 +12,29 @@ export const notificationBatchReviewVersion = (hashValue, batch) => hashValue(JS
 // Call only inside the datastore transaction (or fallback-store lock).
 export const claimReviewedNotificationBatch = ({
   current, churchId, approvalVersion, actorUid, now, isStaleSending, httpError,
+  acknowledgedUncertainMemberIds = [],
 }) => {
   if (!current || current.churchId !== churchId) throw httpError(404, "Message batch not found.");
   if (!approvalVersion || approvalVersion !== current.reviewVersion) throw httpError(409, "This batch preview changed or expired. Review the current batch and confirm again.");
   if (current.status === "dispatching" && !isStaleSending({ sendStartedAt: current.dispatchStartedAt })) throw httpError(409, "This message batch is already being sent.");
   const recoverableStatus = current.status === "dispatching" ? "partial" : current.status;
   if (!["prepared", "partial"].includes(recoverableStatus)) throw httpError(409, "This message batch has already been completed.");
-  return { ...current, status: "dispatching", approvedByUid: actorUid, confirmedAt: now, dispatchStartedAt: now, updatedAt: now };
+  return {
+    ...current,
+    status: "dispatching",
+    approvedByUid: actorUid,
+    confirmedAt: now,
+    dispatchStartedAt: now,
+    ...(acknowledgedUncertainMemberIds.length ? {
+      uncertainOutcomeAcknowledgment: {
+        memberIds: [...acknowledgedUncertainMemberIds],
+        actorUid,
+        acknowledgedAt: now,
+        reviewVersion: approvalVersion,
+      },
+    } : {}),
+    updatedAt: now,
+  };
 };
 
 export const approveReviewedScheduleBatch = ({

@@ -3,671 +3,203 @@ import Modal from "../../../components/Modal/Modal";
 import Button from "../../../components/Button/Button";
 import Checkbox from "../../../components/Checkbox/Checkbox";
 import Input from "../../../components/Input/Input";
-import Select from "../../../components/Select/Select";
-import {
-  getAvailabilityNotificationBatch,
-  getNotificationIntentPreview,
-  getNotificationIntents,
-  sendNotificationIntent,
-} from "../../../api/auth";
-import type { NotificationBatch, NotificationIntent, NotificationIntentType, SmsDeliveryAttempt } from "../../../api/authTypes";
+import { dispatchAvailabilityNotificationBatch, getAvailabilityNotificationBatch, getMessageHistory, prepareCustomMessage, type MessageHistoryEntry } from "../../../api/auth";
+import type { NotificationBatch } from "../../../api/authTypes";
 import { useTeamsPage } from "../TeamsPageContext";
-import { MemberNameWithIndicator } from "../components/CurrentUserMemberIndicator";
-import AvailabilityBatchReview from "../components/AvailabilityBatchReview";
-import SmsConfirmationModal from "../components/SmsConfirmationModal";
-import { getAvailabilityRecipientRows } from "../availabilityRecipientSelection";
-import { dispatchReviewedAvailabilityBatch, prepareAvailabilityBatchForMembers } from "../availabilityBatchActions";
-import { loadAvailabilityNotificationHistory } from "../availabilityNotificationHistory";
+import { measureMessage } from "../smsEstimate";
 
 const memberName = (member: { firstName?: string; lastName?: string }) =>
   [member.firstName, member.lastName].filter(Boolean).join(" ") || "Volunteer";
-
-const intentLabel = (intent: NotificationIntent) => {
-  if (intent.intentType === "availability_request") return "Form response request";
-  if (intent.intentType === "availability_reminder") return `Form reminder${intent.reminderRound ? ` · round ${intent.reminderRound}` : ""}`;
-  if (intent.intentType === "assignment_notification") return "Assignment notification";
-  if (intent.intentType === "assignment_confirmation") return "Assignment response";
-  if (intent.intentType === "schedule_change") return "Schedule change";
-  return "Replacement invitation";
+const typeLabel: Record<string, string> = {
+  custom_message: "Custom message", availability_request: "Availability request", availability_reminder: "Form reminder",
+  schedule_initial_notification: "Schedule notification", assignment_notification: "Assignment notification",
+  assignment_confirmation: "Assignment response", schedule_change: "Schedule change", replacement_request: "Replacement invitation",
 };
-
-const statusLabel: Record<NotificationIntent["status"], string> = {
-  preview: "Ready to review",
-  ready: "Ready",
-  sending: "Sending",
-  sent: "Sent",
-  failed: "Failed · review before retry",
-  unknown: "Could not confirm whether sent · check message history",
-  suppressed: "Not sent",
+const statusLabel = (status: MessageHistoryEntry["status"]) => ({ accepted: "Accepted by provider", delivered: "Delivered",
+  failed: "Failed", unconfirmed: "Unconfirmed", sending: "Sending", not_sent: "Not sent" })[status];
+const recipientStatus = (row: MessageHistoryEntry["recipients"][number]) => {
+  if (row.deliveryStatus === "delivered") return "Delivered";
+  if (["failed", "undelivered"].includes(row.deliveryStatus) || row.status === "failed") return "Failed";
+  if (row.outcome === "unknown" || row.status === "unknown") return "Unconfirmed";
+  if (["accepted", "sent"].includes(row.deliveryStatus) || row.status === "sent") return "Accepted by provider";
+  return row.status === "sending" ? "Sending" : "Not sent";
 };
+const newKey = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 const TeamsMessagesPage = () => {
-  const { churchId, pageData, canEditTeams } = useTeamsPage();
-  const churchIdRef = useRef(churchId);
-  churchIdRef.current = churchId;
-  const [intentType, setIntentType] = useState<Extract<NotificationIntentType, "availability_request" | "availability_reminder">>("availability_request");
-  const audienceType = intentType === "availability_reminder" ? "reminder" as const : "specific" as const;
-  const [formId, setFormId] = useState("");
-  const formIdRef = useRef(formId);
-  formIdRef.current = formId;
-  const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
-  const [teamFilter, setTeamFilter] = useState("");
+  const { churchId, pageData, canEditTeams, canEditTeam } = useTeamsPage();
+  const [entries, setEntries] = useState<MessageHistoryEntry[]>([]);
+  const [cursor, setCursor] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [historyError, setHistoryError] = useState("");
+  const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [expanded, setExpanded] = useState("");
+  const [open, setOpen] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]);
   const [memberSearch, setMemberSearch] = useState("");
-  const [activeBatch, setActiveBatch] = useState<NotificationBatch | null>(null);
-  const activeBatchRef = useRef<NotificationBatch | null>(activeBatch);
-  activeBatchRef.current = activeBatch;
-  const [batchReviewIdentity, setBatchReviewIdentity] = useState<{
-    contextIdentity: string;
-    selectionIdentity: string;
-    recipientEligibilityIdentity: string;
-  } | null>(null);
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [intents, setIntents] = useState<NotificationIntent[]>([]);
-  const [attempts, setAttempts] = useState<SmsDeliveryAttempt[]>([]);
-  const [historyLoadedForFormId, setHistoryLoadedForFormId] = useState("");
-  const [historyLoadError, setHistoryLoadError] = useState("");
-  const [nextCursor, setNextCursor] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [preparingBatch, setPreparingBatch] = useState(false);
-  const [sending, setSending] = useState(false);
-  const [individualSmsPreview, setIndividualSmsPreview] = useState<{
-    churchId: string;
-    formId: string;
-    intentType: typeof intentType;
-    memberId: string;
-    intentId: string;
-    approvalVersion: string;
-    recipientName: string;
-    phoneNumberSnapshot: string;
-    message: string;
-    segmentCount: number;
-  } | null>(null);
-  const individualSmsSendLockRef = useRef(false);
-  const batchSendLockRef = useRef(false);
+  const [message, setMessage] = useState("");
+  const [review, setReview] = useState<NotificationBatch | null>(null);
+  const [sendEnabled, setSendEnabled] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const didRestoreInitialBatchRef = useRef(false);
-  const batchPreparationSequenceRef = useRef(0);
+  const [recoverableId, setRecoverableId] = useState("");
+  const sendLock = useRef(false);
+  const churchRef = useRef(churchId);
+  churchRef.current = churchId;
 
-  const forms = useMemo(() => pageData.intakeForms.filter((form) => !form.archivedAt), [pageData.intakeForms]);
-  const members = useMemo(
-    () => [...pageData.members].filter((member) => !member.archivedAt).sort((a, b) => memberName(a).localeCompare(memberName(b))),
-    [pageData.members],
-  );
-  const teamOptions = useMemo(() => [
-    { value: "", label: "All teams" },
-    ...pageData.teams.filter((team) => !team.archivedAt).map((team) => ({ value: team.teamId, label: team.name })),
-  ], [pageData.teams]);
-  const allRecipientRows = useMemo(() => {
-    const selectedForm = forms.find((form) => form.formId === formId);
-    return getAvailabilityRecipientRows({
-      members,
-      positions: pageData.positions,
-      teams: pageData.teams,
-      recipients: pageData.intakeRecipients,
-      eligibilityByMemberId: pageData.smsEligibilityByMemberId,
-      notificationIntents: intents,
-      smsDeliveryAttempts: attempts,
-      form: selectedForm,
-      intentType,
-      audienceType,
-    });
-  }, [attempts, audienceType, forms, formId, intentType, intents, members, pageData.intakeRecipients, pageData.positions, pageData.smsEligibilityByMemberId, pageData.teams]);
-  const query = memberSearch.trim().toLocaleLowerCase();
-  const recipientRows = allRecipientRows.filter(({ member, memberTeamIds }) =>
-      (!teamFilter || memberTeamIds.has(teamFilter)) &&
-      (!query || memberName(member).toLocaleLowerCase().includes(query)),
-    );
-  const visibleEligibleIds = recipientRows.filter((row) => row.eligible).map(({ member }) => member.memberId);
-  const historyReady = Boolean(formId) && historyLoadedForFormId === formId;
-  const selectableVisibleIds = historyReady ? visibleEligibleIds : [];
-  const selectedVisibleCount = selectableVisibleIds.filter((id) => selectedMemberIds.includes(id)).length;
-  const allVisibleSelected = selectableVisibleIds.length > 0 && selectedVisibleCount === selectableVisibleIds.length;
-  const someVisibleSelected = selectedVisibleCount > 0 && !allVisibleSelected;
-  const selectedEligibleIds = historyReady ? allRecipientRows.filter(({ member, eligible }) => eligible && selectedMemberIds.includes(member.memberId)).map(({ member }) => member.memberId) : [];
-  const batchContextIdentity = `${churchId}:${formId}:${intentType}`;
-  const selectionIdentity = JSON.stringify(selectedEligibleIds);
-  const recipientEligibilityIdentity = JSON.stringify(allRecipientRows.map(({ member, memberTeamIds, recipient, eligibility, eligible, reason, previousDeliveryStatus }) => [
-    member.memberId,
-    memberName(member),
-    member.phoneNumber || "",
-    [...memberTeamIds].sort(),
-    eligibility.status,
-    eligibility.eligible,
-    eligible,
-    reason,
-    recipient?.respondedAt || "",
-    recipient?.revokedAt || "",
-    previousDeliveryStatus,
-  ]));
-  const currentBatchContextRef = useRef(batchContextIdentity);
-  currentBatchContextRef.current = batchContextIdentity;
-  const currentSelectionIdentityRef = useRef(selectionIdentity);
-  currentSelectionIdentityRef.current = selectionIdentity;
-  const currentRecipientEligibilityIdentityRef = useRef(recipientEligibilityIdentity);
-  currentRecipientEligibilityIdentityRef.current = recipientEligibilityIdentity;
-  const batchReviewIsCurrent = Boolean(activeBatch && batchReviewIdentity &&
-    batchReviewIdentity.contextIdentity === batchContextIdentity &&
-    batchReviewIdentity.selectionIdentity === selectionIdentity &&
-    batchReviewIdentity.recipientEligibilityIdentity === recipientEligibilityIdentity);
-  const reviewedBatch = activeBatch?.churchId === churchId && activeBatch.formId === formId && activeBatch.intentType === intentType && (activeBatch.audienceType || "first") === audienceType ? activeBatch : null;
-  const showBatchStatus = Boolean(reviewedBatch && (
-    reviewedBatch.status !== "prepared" || reviewedBatch.summary.sent > 0 || reviewedBatch.summary.delivered > 0 ||
-    reviewedBatch.summary.failed > 0 || reviewedBatch.summary.uncertain > 0 || (reviewedBatch.summary.sending || 0) > 0
-  ));
+  const teamIdsByMember = useMemo(() => {
+    const positionTeams = new Map(pageData.positions.map((position) => [position.positionId, position.teamId]));
+    return new Map(pageData.members.map((member) => [member.memberId, new Set([
+      ...Object.keys(member.teamMemberships || {}),
+      ...(member.positionIds || []).map((id) => positionTeams.get(id)).filter((id): id is string => Boolean(id)),
+      ...pageData.teams.filter((team) => (team.memberIds || []).includes(member.memberId)).map((team) => team.teamId),
+    ])]));
+  }, [pageData.members, pageData.positions, pageData.teams]);
+  const teams = pageData.teams.filter((team) => !team.archivedAt && (canEditTeams || canEditTeam(team.teamId)));
+  const members = pageData.members.filter((member) => !member.archivedAt &&
+    (canEditTeams || [...(teamIdsByMember.get(member.memberId) || [])].some(canEditTeam)))
+    .sort((a, b) => memberName(a).localeCompare(memberName(b)));
+  const shownMembers = members.filter((member) => memberName(member).toLowerCase().includes(memberSearch.trim().toLowerCase()));
+  const selectedSet = new Set(selected);
+  const hiddenCount = selected.filter((id) => !shownMembers.some((member) => member.memberId === id)).length;
+  const finalText = message.trim() ? /\bReply STOP to opt out\.?$/i.test(message.trim())
+    ? message.trim() : `${message.trim()} Reply STOP to opt out.` : "";
+  const estimate = measureMessage(finalText);
 
+  const refresh = async (older = "") => {
+    const owner = churchId;
+    setLoading(true);
+    setHistoryError("");
+    try {
+      const response = await getMessageHistory(owner, older);
+      if (churchRef.current !== owner) return;
+      setEntries((current) => older ? [...current, ...response.entries.filter((item) => !current.some((old) => old.historyId === item.historyId))] : response.entries);
+      setCursor(response.nextCursor);
+    } catch (caught) {
+      if (churchRef.current === owner) setHistoryError(caught instanceof Error ? caught.message : "Could not load message history.");
+    } finally {
+      if (churchRef.current === owner) setLoading(false);
+    }
+  };
   useEffect(() => {
-    if (!batchReviewIdentity || batchReviewIsCurrent) return;
-    setBatchReviewIdentity(null);
-    setConfirmOpen(false);
-    setNotice("Review details changed. Prepare the messages again before sending.");
-  }, [batchReviewIdentity, batchReviewIsCurrent]);
+    setEntries([]);
+    setCursor("");
+    setReview(null);
+    setOpen(false);
+    setRecoverableId(window.localStorage.getItem(`worshipsync:last-custom-message:${churchId}`) || "");
+    void refresh();
+    // The church is the owner of loaded history and unsent reviews.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [churchId]);
 
-  useEffect(() => {
-    batchPreparationSequenceRef.current += 1;
-    setLoading(false);
-    setPreparingBatch(false);
-    let active = true;
-    setIntents([]);
-    setAttempts([]);
-    setHistoryLoadedForFormId("");
-    setHistoryLoadError("");
-    setNextCursor("");
-    setActiveBatch(null);
-    setBatchReviewIdentity(null);
-    setConfirmOpen(false);
-    setIndividualSmsPreview(null);
-    if (!churchId || !canEditTeams || !formId) return () => { active = false; };
-    setLoading(true);
-    loadAvailabilityNotificationHistory(churchId, formId)
-      .then((history) => { if (active) { setIntents(history.intents); setAttempts(history.attempts); setNextCursor(""); setHistoryLoadedForFormId(formId); setHistoryLoadError(""); } })
-      .catch((caught) => { if (active) { const message = caught instanceof Error ? caught.message : "Could not load message history."; setHistoryLoadError(message); } })
-      .finally(() => { if (active) setLoading(false); });
-    if (!churchId || !canEditTeams || !formId) return () => { active = false; };
-    const savedBatchId = !didRestoreInitialBatchRef.current
-      ? window.localStorage.getItem(`worshipsync:last-notification-batch:${churchId}:${formId}`)
-      : null;
-    if (savedBatchId) {
-      getAvailabilityNotificationBatch(churchId, savedBatchId)
-        .then((response) => {
-          if (active && response.batch.formId === formId && response.batch.intentType === intentType && (response.batch.audienceType || "first") === audienceType) {
-            setSelectedMemberIds(response.batch.selectedMemberIds);
-            setActiveBatch(response.batch);
-            setBatchReviewIdentity(null);
-          }
-        })
-        .catch(() => { /* Keep the saved batch id so a later visit can retry the status lookup. */ });
-    }
-    didRestoreInitialBatchRef.current = true;
-    return () => { active = false; };
-  }, [audienceType, churchId, canEditTeams, formId, intentType]);
-
-  const refreshIntents = async () => {
-    const requestedChurch = churchId;
-    const requestedFormId = formId;
-    if (!requestedFormId) return;
-    setHistoryLoadedForFormId("");
-    setHistoryLoadError("");
-    try {
-      const history = await loadAvailabilityNotificationHistory(requestedChurch, requestedFormId);
-      if (churchIdRef.current === requestedChurch && formIdRef.current === requestedFormId) {
-        setIntents(history.intents);
-        setAttempts(history.attempts);
-        setNextCursor("");
-        setHistoryLoadedForFormId(requestedFormId);
-      }
-    } catch (caught) {
-      if (churchIdRef.current === requestedChurch && formIdRef.current === requestedFormId) {
-        setHistoryLoadError(caught instanceof Error ? caught.message : "Could not refresh message history.");
-      }
-      throw caught;
-    }
+  const changeSelection = (ids: string[], checked: boolean) => {
+    setSelected((current) => checked ? [...new Set([...current, ...ids])] : current.filter((id) => !ids.includes(id)));
+    setReview(null);
   };
-
-  const loadOlderIntents = async () => {
-    if (!nextCursor || loading || sending) return;
-    const requestedChurch = churchId;
-    setLoading(true);
-    try {
-      const response = await getNotificationIntents(requestedChurch, { formId, cursor: nextCursor });
-      if (churchIdRef.current === requestedChurch) {
-        setIntents((current) => [...current, ...response.intents]);
-        setNextCursor(response.nextCursor || "");
-      }
-    } catch (caught) {
-      if (churchIdRef.current === requestedChurch) setError(caught instanceof Error ? caught.message : "Could not load older message history.");
-    } finally {
-      if (churchIdRef.current === requestedChurch) setLoading(false);
-    }
-  };
-
-  const invalidateReview = (message = "Review details changed. Review the messages again before sending.") => {
-    const hadReview = Boolean(activeBatch || confirmOpen);
-    setActiveBatch((current) => current?.status === "prepared" ? null : current);
-    setBatchReviewIdentity(null);
-    setConfirmOpen(false);
-    setNotice(hadReview ? message : "");
-  };
-
-  const updateSelectedMemberIds = (nextIds: string[]) => {
-    const next = [...new Set(nextIds)];
-    if (next.length === selectedMemberIds.length && next.every((id) => selectedMemberIds.includes(id))) return;
-    setSelectedMemberIds(next);
-    invalidateReview("Recipients changed. Review the messages again before sending.");
-  };
-
-  const toggleMember = (memberId: string, checked: boolean) => {
-    updateSelectedMemberIds(checked ? [...selectedMemberIds, memberId] : selectedMemberIds.filter((id) => id !== memberId));
-  };
-
-  const toggleVisibleMembers = (checked: boolean) => {
-    updateSelectedMemberIds(checked
-      ? [...selectedMemberIds, ...selectableVisibleIds]
-      : selectedMemberIds.filter((id) => !selectableVisibleIds.includes(id)));
-  };
-
-  const makePreview = async () => {
-    if (!historyReady || !formId || selectedEligibleIds.length === 0 || loading || sending) return;
-    const ownerChurch = churchId;
-    const requestedContextIdentity = batchContextIdentity;
-    const requestedSelectionIdentity = selectionIdentity;
-    const requestedRecipientEligibilityIdentity = recipientEligibilityIdentity;
-    const requestedPreparationSequence = ++batchPreparationSequenceRef.current;
+  const prepare = async () => {
+    if (busy || !selected.length || !message.trim()) return;
+    const owner = churchId;
+    setBusy(true);
     setError("");
-    setNotice("");
-    setLoading(true);
-    setPreparingBatch(true);
     try {
-      const reviewedFormId = formId;
-      const reviewedIntentType = intentType;
-      const reviewedMemberIds = [...selectedEligibleIds];
-      const batch = await prepareAvailabilityBatchForMembers({
-        churchId: ownerChurch,
-        formId: reviewedFormId,
-        intentType: reviewedIntentType,
-        audienceType,
-        memberIds: reviewedMemberIds,
-      });
-      if (
-        churchIdRef.current !== ownerChurch ||
-        currentBatchContextRef.current !== requestedContextIdentity ||
-        currentSelectionIdentityRef.current !== requestedSelectionIdentity ||
-        currentRecipientEligibilityIdentityRef.current !== requestedRecipientEligibilityIdentity
-      ) return;
-      setActiveBatch(batch);
-      setBatchReviewIdentity({
-        contextIdentity: requestedContextIdentity,
-        selectionIdentity: requestedSelectionIdentity,
-        recipientEligibilityIdentity: requestedRecipientEligibilityIdentity,
-      });
-      setConfirmOpen(true);
+      const response = await prepareCustomMessage(owner, { memberIds: selected, message, requestKey: newKey() });
+      if (churchRef.current !== owner) return;
+      setReview(response.batch);
+      setSendEnabled(response.enabled);
+      window.localStorage.setItem(`worshipsync:last-custom-message:${owner}`, response.batch.batchId);
+      setRecoverableId(response.batch.batchId);
     } catch (caught) {
-      if (churchIdRef.current === ownerChurch && currentBatchContextRef.current === requestedContextIdentity) setError(caught instanceof Error ? caught.message : "Could not prepare the message batch.");
+      if (churchRef.current === owner) setError(caught instanceof Error ? caught.message : "Could not prepare this message.");
     } finally {
-      if (batchPreparationSequenceRef.current === requestedPreparationSequence) {
-        setLoading(false);
-        setPreparingBatch(false);
-      }
+      if (churchRef.current === owner) setBusy(false);
     }
   };
-
-  const confirmBatch = async () => {
-    if (!batchReviewIsCurrent || !activeBatch || activeBatch.churchId !== churchId || activeBatch.formId !== formId || activeBatch.intentType !== intentType || (activeBatch.audienceType || "first") !== audienceType || sending || loading || batchSendLockRef.current) return;
-    batchSendLockRef.current = true;
-    const ownerChurch = churchId;
-    const ownerFormId = formId;
-    setConfirmOpen(false);
-    setBatchReviewIdentity(null);
-    setSending(true);
+  const send = async () => {
+    if (!review || busy || sendLock.current || !sendEnabled || !review.summary.eligible) return;
+    const owner = churchId;
+    const batch = review;
+    sendLock.current = true;
+    setBusy(true);
     setError("");
-    setNotice("Sending messages...");
     try {
-      const response = await dispatchReviewedAvailabilityBatch(ownerChurch, activeBatch);
-      if (churchIdRef.current !== ownerChurch || formIdRef.current !== ownerFormId || currentBatchContextRef.current !== `${ownerChurch}:${ownerFormId}:${activeBatch.intentType}`) return;
-      setActiveBatch(response.batch);
-      const resolvedMemberIds = new Set(response.batch.recipients
-        .filter((recipient) => ["sent", "failed", "unknown"].includes(recipient.status) || recipient.attemptOutcome === "unknown")
-        .map((recipient) => recipient.memberId));
-      setSelectedMemberIds((current) => current.filter((memberId) => !resolvedMemberIds.has(memberId)));
-      await refreshIntents();
-      setNotice("");
+      const response = await dispatchAvailabilityNotificationBatch(owner, batch.batchId, batch.approvalVersion);
+      if (churchRef.current !== owner) return;
+      setReview(response.batch);
+      setOpen(false);
+      window.localStorage.removeItem(`worshipsync:last-custom-message:${owner}`);
+      setRecoverableId("");
+      setNotice("Message sending finished. Check delivery status below.");
+      void refresh();
     } catch (caught) {
-      if (churchIdRef.current === ownerChurch && formIdRef.current === ownerFormId) {
-        setError(caught instanceof Error ? caught.message : "We couldn't confirm whether these messages were sent. Check message history before trying again.");
-        try {
-          const latest = await getAvailabilityNotificationBatch(ownerChurch, activeBatch.batchId);
-          if (churchIdRef.current === ownerChurch && formIdRef.current === ownerFormId) setActiveBatch(latest.batch);
-        } catch { /* Keep the stored batch id so the operator can refresh it. */ }
-      }
-    } finally {
-      batchSendLockRef.current = false;
-      setSending(false);
-    }
-  };
-
-  const sendIndividual = async (intent: NotificationIntent) => {
-    if (sending || loading || individualSmsPreview) return;
-    const ownerChurch = churchId;
-    const ownerFormId = formId;
-    const ownerIntentType = intentType;
-    setError("");
-    setSending(true);
-    try {
-      const prepared = await getNotificationIntentPreview(ownerChurch, intent.intentId);
-      if (churchIdRef.current !== ownerChurch || currentBatchContextRef.current !== `${ownerChurch}:${ownerFormId}:${ownerIntentType}`) return;
-      if (!prepared.preview.eligible) {
-        setError("This volunteer can't receive a text message right now. Check the form, phone number, and consent.");
-        await refreshIntents();
-        return;
-      }
-      const member = members.find((item) => item.memberId === intent.memberId);
-      setIndividualSmsPreview({
-        churchId: ownerChurch,
-        formId: ownerFormId,
-        intentType: ownerIntentType,
-        memberId: intent.memberId,
-        intentId: prepared.preview.intentId,
-        approvalVersion: prepared.preview.approvalVersion,
-        recipientName: member ? memberName(member) : "Volunteer",
-        phoneNumberSnapshot: prepared.preview.phoneNumberSnapshot,
-        message: prepared.preview.message,
-        segmentCount: prepared.preview.segmentCount,
-      });
-    } catch (caught) {
-      if (churchIdRef.current === ownerChurch) setError(caught instanceof Error ? caught.message : "Could not send this message.");
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const refreshRelatedBatch = async (
-    relatedBatch: NotificationBatch | null,
-    ownerChurch: string,
-    ownerFormId: string,
-    ownerIntentType: typeof intentType,
-    intentId: string,
-  ) => {
-    if (!relatedBatch || !relatedBatch.intentIds.includes(intentId)) return true;
-    setActiveBatch((current) => current?.batchId === relatedBatch.batchId ? null : current);
-    try {
-      const latest = await getAvailabilityNotificationBatch(ownerChurch, relatedBatch.batchId);
-      const currentBatch = activeBatchRef.current;
-      if (
-        currentBatchContextRef.current === `${ownerChurch}:${ownerFormId}:${ownerIntentType}` &&
-        (!currentBatch || currentBatch.batchId === relatedBatch.batchId)
-      ) setActiveBatch(latest.batch);
-      return true;
-    } catch {
-      return false;
-    }
-  };
-
-  const sendIndividualPreview = async () => {
-    const preview = individualSmsPreview;
-    if (!preview || individualSmsSendLockRef.current) return;
-    if (churchIdRef.current !== preview.churchId || currentBatchContextRef.current !== `${preview.churchId}:${preview.formId}:${preview.intentType}`) {
-      setIndividualSmsPreview(null);
-      return;
-    }
-    individualSmsSendLockRef.current = true;
-    const ownerChurch = preview.churchId;
-    const ownerFormId = preview.formId;
-    const ownerContextIdentity = `${ownerChurch}:${ownerFormId}:${preview.intentType}`;
-    const relatedBatch = activeBatch?.churchId === ownerChurch && activeBatch.formId === ownerFormId && activeBatch.intentIds.includes(preview.intentId)
-      ? activeBatch
-      : null;
-    setIndividualSmsPreview(null);
-    setSending(true);
-    setError("");
-    setNotice("");
-    let sendFeedback = "";
-    let sendOutcome: "accepted" | "rejected" | "unknown" = "unknown";
-    try {
+      if (churchRef.current !== owner) return;
+      setError("Could not confirm the send result. Checking saved message status.");
       try {
-        const response = await sendNotificationIntent(ownerChurch, preview.intentId, preview.approvalVersion);
-        if (currentBatchContextRef.current !== ownerContextIdentity) return;
-        setSelectedMemberIds((current) => current.filter((memberId) => memberId !== preview.memberId));
-        if (response.success) {
-          setIntents((current) => current.map((intent) => intent.intentId === preview.intentId
-            ? response.intent || { ...intent, status: "sent" }
-            : intent));
-          sendOutcome = "accepted";
-          sendFeedback = "Your text message was sent. Delivery updates may take a moment.";
-        } else if (response.outcome === "failed") {
-          sendOutcome = "rejected";
-          sendFeedback = response.errorMessage || "This text message wasn't sent. Review message history before preparing a retry.";
-        } else {
-          setIntents((current) => current.map((intent) => intent.intentId === preview.intentId
-            ? { ...intent, status: "unknown" }
-            : intent));
-          sendFeedback = "We couldn't confirm whether this text was sent. Check message history before trying again.";
+        const response = await getAvailabilityNotificationBatch(owner, batch.batchId);
+        if (churchRef.current === owner) {
+          setReview(response.batch);
+          setError(response.batch.status === "prepared" ? "No send was recorded. Review and try again."
+            : "The send result is uncertain. Check message history before starting another message.");
         }
-      } catch (caught) {
-        if (currentBatchContextRef.current !== ownerContextIdentity) return;
-        setSelectedMemberIds((current) => current.filter((memberId) => memberId !== preview.memberId));
-        const errorRecord = caught instanceof Error
-          ? caught as Error & { status?: number; details?: unknown }
-          : null;
-        const errorDetails = errorRecord?.details && typeof errorRecord.details === "object"
-          ? errorRecord.details as { outcome?: unknown; errorMessage?: unknown }
-          : null;
-        const definiteRejection = errorDetails?.outcome === "failed" ||
-          (errorDetails?.outcome !== "unknown" && typeof errorRecord?.status === "number" &&
-            errorRecord.status >= 400 && errorRecord.status < 500 && errorRecord.status !== 409);
-        const uncertainOutcome = !definiteRejection;
-        sendOutcome = uncertainOutcome ? "unknown" : "rejected";
-        if (errorDetails?.outcome === "failed") {
-          setIntents((current) => current.map((intent) => intent.intentId === preview.intentId
-            ? { ...intent, status: "failed", attemptOutcome: "failed" }
-            : intent));
-        } else if (uncertainOutcome) {
-          setIntents((current) => current.map((intent) => intent.intentId === preview.intentId
-            ? { ...intent, status: "unknown" }
-            : intent));
-        }
-        if (uncertainOutcome) {
-          sendFeedback = "We couldn't confirm whether this text was sent. Check message history before trying again.";
-        } else if (typeof errorDetails?.errorMessage === "string") {
-          sendFeedback = errorDetails.errorMessage;
-        } else {
-          sendFeedback = errorRecord?.message || "This text message wasn't sent. Review message history before preparing a retry.";
-        }
-      }
-
-      if (currentBatchContextRef.current !== ownerContextIdentity) return;
-      if (sendOutcome === "accepted") setNotice(sendFeedback);
-      else setError(sendFeedback);
-
-      const [historyRefresh, batchRefresh] = await Promise.allSettled([
-        refreshIntents(),
-        refreshRelatedBatch(relatedBatch, ownerChurch, ownerFormId, preview.intentType, preview.intentId),
-      ]);
-      if (currentBatchContextRef.current !== ownerContextIdentity) return;
-
-      const historyRefreshFailed = historyRefresh.status === "rejected";
-      const batchRefreshFailed = batchRefresh.status === "rejected" ||
-        (batchRefresh.status === "fulfilled" && !batchRefresh.value);
-      if (historyRefreshFailed || batchRefreshFailed) {
-        let refreshFeedback: string;
-        if (historyRefreshFailed && batchRefreshFailed) {
-          refreshFeedback = "Message history and batch status couldn't be refreshed. Refresh the page to check both.";
-        } else if (historyRefreshFailed) {
-          refreshFeedback = "Message history couldn't be refreshed. Try refreshing it.";
-        } else {
-          refreshFeedback = "Batch status couldn't be refreshed. Refresh the page to check it.";
-        }
-
-        if (sendOutcome === "accepted" && historyRefreshFailed && !batchRefreshFailed) {
-          setNotice("Your text message was sent, but we couldn't refresh message history. Try refreshing it.");
-        } else if (sendOutcome === "accepted" && historyRefreshFailed && batchRefreshFailed) {
-          setNotice("Your text message was sent. We couldn't refresh message history or batch status. Refresh the page to check both.");
-        } else if (sendOutcome === "unknown" && historyRefreshFailed) {
-          setError(batchRefreshFailed
-            ? "We couldn't confirm whether this text was sent, and message history and batch status couldn't be refreshed. Refresh the page before deciding whether to try again."
-            : "We couldn't confirm whether this text was sent, and message history couldn't be refreshed. Try refreshing it before deciding whether to try again.");
-        } else if (sendOutcome === "accepted") {
-          setNotice(`${sendFeedback} ${refreshFeedback}`);
-        } else {
-          setError(`${sendFeedback} ${refreshFeedback}`);
-        }
+      } catch {
+        if (churchRef.current === owner) setError(caught instanceof Error ? caught.message : "Could not check message status.");
       }
     } finally {
-      individualSmsSendLockRef.current = false;
-      setSending(false);
+      sendLock.current = false;
+      if (churchRef.current === owner) setBusy(false);
     }
   };
 
-  const cancelIndividualPreview = () => {
-    if (individualSmsSendLockRef.current) return;
-    setIndividualSmsPreview(null);
-  };
+  const filtered = entries.filter((entry) => (!typeFilter || entry.messageType === typeFilter) &&
+    (!statusFilter || entry.status === statusFilter) &&
+    (!search.trim() || `${entry.summary} ${entry.recipients.map((row) => row.memberName).join(" ")}`.toLowerCase().includes(search.trim().toLowerCase())));
 
-  if (!canEditTeams) {
-    return <div className="p-6 text-sm text-gray-300">Teams edit permission is required to prepare or send volunteer messages.</div>;
-  }
-
-  return (
-    <main data-mobile-header-scroll-owner="page" className="mx-auto w-full max-w-5xl space-y-5 overflow-y-auto p-4 sm:p-6" aria-labelledby="teams-messages-heading">
-      <header className="space-y-1">
-        <h1 id="teams-messages-heading" className="text-xl font-semibold text-white">Volunteer messages</h1>
-        <p className="text-sm text-gray-300">Review the selected volunteers and messages before sending. Schedule changes only create drafts.</p>
-      </header>
-
-      <section className="space-y-5 rounded-xl border border-gray-700 bg-gray-900/40 p-4 shadow-sm sm:p-6" aria-labelledby="availability-preview-heading">
-        <div>
-          <h2 id="availability-preview-heading" className="font-semibold text-white">Intake form text messages</h2>
-          <p className="mt-1 text-sm text-gray-400">Requests use the selected intake form and each volunteer’s existing secure response link.</p>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Select label="Message" value={intentType} disabled={loading || sending} onChange={(value) => {
-            const nextType = value as typeof intentType;
-            if (nextType === intentType) return;
-            setIntentType(nextType);
-            invalidateReview("Message type changed. Review the messages again before sending.");
-          }} options={[
-            { value: "availability_request", label: "Request form responses" },
-            { value: "availability_reminder", label: "Remind nonresponders" },
-          ]} />
-          <Select label="Intake form" value={formId} disabled={loading || sending} onChange={(value) => {
-            if (value === formId) return;
-            setFormId(value);
-            setSelectedMemberIds([]);
-            invalidateReview("Form changed. Choose recipients and review the messages again.");
-          }} options={forms.map((form) => ({
-            value: form.formId,
-            label: `${form.name} · ${form.startDate}–${form.endDate}${form.active ? "" : " · closed"}`,
-          }))} />
-        </div>
-        <div className="space-y-3 border-t border-gray-700 pt-4" aria-labelledby="recipients-heading">
-          <div>
-            <h3 id="recipients-heading" className="font-semibold text-white">Recipients</h3>
-            <p className="mt-1 text-sm text-gray-400">Choose who should receive this message. Selections stay selected when you change filters.</p>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Select label="Team" value={teamFilter} disabled={loading || sending} onChange={setTeamFilter} options={teamOptions} />
-            <Input label="Search volunteers" value={memberSearch} onChange={(value) => setMemberSearch(String(value))} placeholder="Search by name" disabled={loading || sending} />
-          </div>
-          <div className="max-h-80 touch-pan-y overflow-y-auto overscroll-contain rounded-lg border border-gray-700 bg-gray-950/50">
-            <div className="sticky top-0 z-10 flex flex-col gap-2 border-b border-gray-700 bg-gray-900 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-center gap-3">
-                <Checkbox aria-label={`Select all ${selectableVisibleIds.length} eligible shown`} checked={allVisibleSelected ? true : someVisibleSelected ? "indeterminate" : false} disabled={loading || sending || !historyReady || !selectableVisibleIds.length} onCheckedChange={(checked) => toggleVisibleMembers(checked === true)} />
-                <span className="text-sm text-gray-200">Select all {selectableVisibleIds.length} eligible shown</span>
-                <span className="text-xs text-gray-400">{recipientRows.length} shown</span>
-              </div>
-              <div className="flex items-center justify-between gap-3 sm:justify-end">
-                <span className="text-sm text-gray-300" aria-live="polite">{selectedMemberIds.length} selected</span>
-                <Button variant="textLink" disabled={loading || sending || !selectedMemberIds.length} onClick={() => updateSelectedMemberIds([])}>Clear</Button>
-              </div>
-            </div>
-            <div className="divide-y divide-gray-800" role="list" aria-label="Volunteer recipients">
-              {recipientRows.length ? recipientRows.map(({ member, eligible, reason }) => (
-                <div key={member.memberId} className="flex min-h-12 items-center gap-3 px-3 py-2.5" role="listitem">
-                  <Checkbox label={<MemberNameWithIndicator name={memberName(member)} memberId={member.memberId} className="flex-1" />} checked={selectedMemberIds.includes(member.memberId)} disabled={loading || sending || !historyReady || !eligible} onCheckedChange={(checked) => toggleMember(member.memberId, checked)} className="flex-1" />
-                  {!eligible ? <span className="shrink-0 text-xs text-amber-200">{reason || "Choose a form first"}</span> : null}
-                </div>
-              )) : <p className="p-4 text-sm text-gray-400">No volunteers match these filters.</p>}
-            </div>
-          </div>
-        </div>
-        <div className="flex flex-col gap-3 border-t border-gray-700 pt-4 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-sm text-gray-400">{!formId ? "Choose an intake form to review messages." : selectedEligibleIds.length ? `${selectedEligibleIds.length} eligible volunteer${selectedEligibleIds.length === 1 ? "" : "s"} selected.` : "Select at least one eligible volunteer to continue."}</p>
-          <Button disabled={loading || sending || !historyReady || !formId || selectedEligibleIds.length === 0} isLoading={preparingBatch} onClick={() => void makePreview()}>{preparingBatch ? "Preparing messages..." : `Review and send ${selectedEligibleIds.length} message${selectedEligibleIds.length === 1 ? "" : "s"}`}</Button>
-        </div>
-        {formId && !historyReady ? historyLoadError ? <div role="alert" className="flex flex-wrap items-center justify-between gap-3 text-sm text-amber-100"><span>Could not verify consent and message history: {historyLoadError}</span><Button variant="secondary" disabled={loading || sending} onClick={() => void refreshIntents().catch(() => undefined)}>Retry status check</Button></div> : <p role="status" className="text-sm text-gray-400">Loading consent and message history before recipient selection.</p> : null}
-        {error ? <p role="alert" className="text-sm text-red-200">{error}</p> : null}
-        {notice ? <p role="status" className="text-sm text-sky-200">{notice}</p> : null}
-      </section>
-
-      {showBatchStatus && reviewedBatch ? <AvailabilityBatchReview batch={reviewedBatch} formName={forms.find(({ formId: id }) => id === formId)?.name || "Intake form"} busy={sending || loading} mode="status" /> : null}
-
-      <section className="space-y-3" aria-labelledby="preview-list-heading">
-        <div className="flex items-center justify-between gap-3">
-          <h2 id="preview-list-heading" className="font-semibold text-white">{formId ? "Recent messages" : "Message history"}</h2>
-          {formId ? <Button variant="textLink" disabled={loading || sending} onClick={() => { void refreshIntents().catch(() => undefined); }}>Refresh</Button> : null}
-        </div>
-        {!formId ? <p className="text-sm text-gray-400">Choose an intake form to load its bounded message history.</p> : null}
-        {loading && !intents.length ? <p className="text-sm text-gray-400">Loading form message history…</p> : null}
-        {historyReady && !intents.length && !loading ? <p className="rounded border border-gray-700 p-4 text-sm text-gray-400">No volunteer messages for this form yet.</p> : null}
-        {intents.map((intent) => {
-          const member = members.find((item) => item.memberId === intent.memberId);
-          const actionable = ["preview", "ready"].includes(intent.status) && intent.previewEligible !== false;
-          return <article key={intent.intentId} className="space-y-2 rounded border border-gray-700 bg-gray-950/50 p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h3 className="font-medium text-white">
-                  {intentLabel(intent)} ·{" "}
-                  <MemberNameWithIndicator
-                    name={member ? memberName(member) : "Roster member"}
-                    memberId={member?.memberId}
-                  />
-                </h3>
-                <p className="text-xs text-gray-400">{new Date(intent.createdAt).toLocaleString()} · {statusLabel[intent.status]}{intent.respondedAt ? " · responded" : " · waiting"}</p>
-              </div>
-            </div>
-            {intent.messagePreview ? <p className="rounded bg-gray-900 px-3 py-2 text-sm text-gray-200">{intent.messagePreview}</p> : null}
-            {intent.previewError ? <p className="text-sm text-amber-200">Not ready to send: {intent.previewError}</p> : null}
-            {intent.attemptId ? <p className="text-xs text-gray-400">Delivery: {intent.attemptStatus === "pending" ? "Waiting for delivery confirmation" : intent.attemptStatus === "accepted" || intent.attemptStatus === "sent" ? "Sent · Waiting for delivery confirmation" : intent.attemptStatus === "delivered" ? "Delivered" : intent.attemptStatus === "undelivered" ? "Delivery failed" : intent.attemptOutcome === "unknown" ? "Could not confirm whether this was sent" : intent.attemptStatus || "Waiting for delivery confirmation"}</p> : null}
-            {actionable ? <div className="flex items-center justify-between gap-3 border-t border-gray-800 pt-2"><p className="text-xs text-gray-500">Advanced action for this saved message.</p><Button variant="textLink" disabled={sending || loading || Boolean(individualSmsPreview)} isLoading={sending} onClick={() => void sendIndividual(intent)}>Send individually</Button></div> : null}
-          </article>;
-        })}
-        {nextCursor ? <Button variant="secondary" disabled={loading || sending} isLoading={loading} onClick={() => void loadOlderIntents()}>Load older history</Button> : null}
-      </section>
-
-      {individualSmsPreview ? <SmsConfirmationModal
-        isOpen
-        recipientName={individualSmsPreview.recipientName}
-        recipientMemberId={individualSmsPreview.memberId}
-        phoneNumberSnapshot={individualSmsPreview.phoneNumberSnapshot}
-        message={individualSmsPreview.message}
-        segmentCount={individualSmsPreview.segmentCount}
-        busy={sending}
-        onCancel={cancelIndividualPreview}
-        onSend={() => void sendIndividualPreview()}
-      /> : null}
-
-      <Modal
-        isOpen={confirmOpen && Boolean(reviewedBatch) && batchReviewIsCurrent && historyReady}
-        onClose={() => setConfirmOpen(false)}
-        title="Review text messages"
-        description="Check who will receive these messages and read each personalized message. Choose Send to send them."
-        size="lg"
-        busy={sending}
-      >
-        {reviewedBatch ? <div className="space-y-4">
-          <AvailabilityBatchReview
-            batch={reviewedBatch}
-            formName={forms.find(({ formId: id }) => id === formId)?.name || "Intake form"}
-            busy={sending}
-            mode="confirmation"
-          />
-          <div className="flex flex-col-reverse justify-end gap-2 border-t border-gray-700 pt-4 sm:flex-row">
-            <Button variant="secondary" disabled={sending} onClick={() => setConfirmOpen(false)}>Cancel</Button>
-            {reviewedBatch.summary.eligible > 0 ? <Button disabled={sending || !batchReviewIsCurrent} isLoading={sending} onClick={() => void confirmBatch()}>Send {reviewedBatch.summary.eligible} message{reviewedBatch.summary.eligible === 1 ? "" : "s"}</Button> : null}
-          </div>
-        </div> : null}
-      </Modal>
-    </main>
-  );
+  return <main data-mobile-header-scroll-owner="page" className="mx-auto w-full max-w-5xl space-y-5 overflow-y-auto p-4 sm:p-6" aria-labelledby="messages-heading">
+    <header className="flex flex-wrap items-start justify-between gap-3"><div><h1 id="messages-heading" className="text-xl font-semibold text-white">Messages</h1>
+      <p className="text-sm text-gray-300">Send text messages to your volunteers.</p></div>
+      <Button disabled={!canEditTeams && !teams.length} onClick={() => { setSelected([]); setMessage(""); setReview(null); setError(""); setOpen(true); }}>+ New message</Button></header>
+    {notice ? <p role="status" className="text-sm text-sky-200">{notice}</p> : null}
+    {recoverableId ? <div className="flex flex-wrap items-center justify-between gap-2 rounded border border-gray-700 p-3 text-sm text-gray-200"><span>An earlier message review may still need attention.</span><Button variant="textLink" onClick={() => {
+      const owner = churchId;
+      setBusy(true);
+      void getAvailabilityNotificationBatch(owner, recoverableId).then((response) => {
+        if (churchRef.current !== owner) return;
+        setReview(response.batch);
+        setSendEnabled(Boolean(response.enabled));
+        setOpen(true);
+      }).catch((caught) => { if (churchRef.current === owner) setHistoryError(caught instanceof Error ? caught.message : "Could not restore this message."); })
+        .finally(() => { if (churchRef.current === owner) setBusy(false); });
+    }}>Review saved message</Button></div> : null}
+    <section className="space-y-3" aria-labelledby="history-heading"><div className="flex justify-between"><h2 id="history-heading" className="font-semibold text-white">Message history</h2>
+      <Button variant="textLink" disabled={loading} onClick={() => void refresh()}>Refresh</Button></div>
+      <div className="grid gap-2 sm:grid-cols-3"><Input label="Search messages" value={search} onChange={(value) => setSearch(String(value))} placeholder="Search messages or volunteers" />
+        <label className="text-sm text-gray-300">Type<select aria-label="Message type" value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)} className="mt-1 w-full rounded border border-gray-600 bg-gray-900 p-2 text-white"><option value="">All types</option>{Object.entries(typeLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label className="text-sm text-gray-300">Status<select aria-label="Message status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="mt-1 w-full rounded border border-gray-600 bg-gray-900 p-2 text-white"><option value="">All statuses</option>{["accepted", "delivered", "failed", "unconfirmed", "sending", "not_sent"].map((value) => <option key={value} value={value}>{statusLabel(value as MessageHistoryEntry["status"])}</option>)}</select></label></div>
+      {historyError ? <p role="alert" className="text-sm text-amber-200">{historyError} <Button variant="textLink" onClick={() => void refresh()}>Try again</Button></p> : null}
+      {loading && !entries.length ? <p role="status" className="text-sm text-gray-400">Loading message history…</p> : null}
+      {!loading && !filtered.length ? <p className="rounded border border-gray-700 p-4 text-sm text-gray-400">No messages match these filters.</p> : null}
+      <div className="space-y-2">{filtered.map((entry) => <article key={entry.historyId} className="rounded-lg border border-gray-700 bg-gray-900/50 p-3"><button type="button" className="flex w-full flex-wrap items-center justify-between gap-2 text-left" aria-expanded={expanded === entry.historyId} onClick={() => setExpanded(expanded === entry.historyId ? "" : entry.historyId)}>
+        <span className="min-w-0 flex-1"><span className="block truncate font-medium text-white">{entry.summary || typeLabel[entry.messageType] || "Message"}</span><span className="text-xs text-gray-400">{typeLabel[entry.messageType] || "Message"} · {new Date(entry.createdAt).toLocaleDateString()} · {entry.recipientCount} recipient{entry.recipientCount === 1 ? "" : "s"}</span></span><span className="text-xs text-gray-200">{statusLabel(entry.status)}</span></button>
+        {expanded === entry.historyId ? <div className="mt-3 space-y-2 border-t border-gray-700 pt-3 text-sm">{entry.recipients.map((row) => <div key={row.memberId} className="flex flex-wrap justify-between gap-2 text-gray-300"><span>{row.memberName}</span><span>{recipientStatus(row)}{row.failureMessage ? ` · ${row.failureMessage}` : ""}</span></div>)}</div> : null}</article>)}</div>
+      {cursor ? <Button variant="secondary" disabled={loading} isLoading={loading} onClick={() => void refresh(cursor)}>Load older messages</Button> : null}</section>
+    <Modal isOpen={open} onClose={() => { if (!busy) setOpen(false); }} busy={busy} title={review ? "Review message" : "New message"} description="Choose volunteers, write a text, and review it before sending." size="lg"><div className="space-y-4 text-gray-200">
+      {!review ? <><div><h3 className="font-medium text-white">Recipients</h3><p className="text-xs text-gray-400">Choose people, teams, or all eligible volunteers.</p></div>
+        <div className="flex flex-wrap gap-2"><Button variant="secondary" disabled={busy} onClick={() => changeSelection(members.filter((member) => pageData.smsEligibilityByMemberId?.[member.memberId]?.eligible).map((member) => member.memberId), true)}>Select all eligible</Button><Button variant="textLink" disabled={busy || !selected.length} onClick={() => changeSelection(selected, false)}>Clear selection</Button></div>
+        {teams.length ? <div className="flex flex-wrap gap-3" aria-label="Teams">{teams.map((team) => { const ids = members.filter((member) => teamIdsByMember.get(member.memberId)?.has(team.teamId)).map((member) => member.memberId); return <Checkbox key={team.teamId} label={team.name} checked={ids.length > 0 && ids.every((id) => selectedSet.has(id))} disabled={busy || !ids.length} onCheckedChange={(checked) => changeSelection(ids, checked === true)} />; })}</div> : null}
+        <Input label="Search volunteers" value={memberSearch} onChange={(value) => setMemberSearch(String(value))} placeholder="Search by name" />
+        <div role="list" aria-label="Volunteers" className="max-h-48 overflow-y-auto rounded border border-gray-700 divide-y divide-gray-700">{shownMembers.map((member) => <div role="listitem" key={member.memberId} className="flex items-center justify-between gap-2 px-3 py-2"><Checkbox label={memberName(member)} checked={selectedSet.has(member.memberId)} disabled={busy} onCheckedChange={(checked) => changeSelection([member.memberId], checked === true)} />{!pageData.smsEligibilityByMemberId?.[member.memberId]?.eligible ? <span className="text-xs text-amber-200">Not eligible</span> : null}</div>)}</div>
+        <p aria-live="polite" className="text-xs text-gray-300">{selected.length} selected{hiddenCount ? ` · ${hiddenCount} hidden by search` : ""}</p>
+        <label className="block space-y-1 text-sm">Message<textarea aria-label="Message" className="min-h-28 w-full rounded border border-gray-600 bg-gray-950 p-3 text-white" value={message} maxLength={1500} disabled={busy} onChange={(event) => setMessage(event.target.value)} placeholder="Reminder: Praise Team practice is Friday at 6 PM." /></label>
+        <p className="text-xs text-gray-400">{[...message].length} characters · about {estimate.segmentCount} SMS segment{estimate.segmentCount === 1 ? "" : "s"}. {estimate.segmentCount > 1 ? "Long texts may arrive in several parts. " : ""}The final text includes Reply STOP to opt out.</p><p className="text-xs text-gray-400">Replies are not monitored in Messages.</p>
+        <div className="flex justify-end gap-2"><Button variant="secondary" disabled={busy} onClick={() => setOpen(false)}>Cancel</Button><Button disabled={busy || !selected.length || !message.trim()} isLoading={busy} onClick={() => void prepare()}>Review message</Button></div></> : <>
+        <p className="text-sm">{review.summary.eligible} eligible · {review.summary.excluded} excluded · about {review.summary.totalSegments} SMS segments</p><div className="rounded border border-gray-700 bg-gray-950 p-3 text-sm whitespace-pre-wrap">{review.message}</div>
+        <div className="max-h-48 space-y-1 overflow-y-auto text-sm">{review.recipients.map((row) => <div key={row.memberId} className="flex justify-between gap-2"><span>{row.memberName} {row.maskedPhoneNumber}</span><span>{row.eligible ? "Ready" : row.exclusionReason || "Not eligible"}</span></div>)}</div>
+        {!sendEnabled ? <p role="status" className="text-sm text-amber-200">Custom volunteer texts are awaiting SMS campaign and consent approval. Sending is disabled.</p> : null}
+        <div className="flex justify-end gap-2"><Button variant="secondary" disabled={busy} onClick={() => setReview(null)}>Back</Button><Button variant="secondary" disabled={busy} onClick={() => setOpen(false)}>Cancel</Button><Button disabled={busy || !sendEnabled || !review.summary.eligible} isLoading={busy} onClick={() => void send()}>Send {review.summary.eligible} messages</Button></div></>}
+      {error ? <p role="alert" className="text-sm text-red-200">{error}</p> : null}</div></Modal>
+  </main>;
 };
 
 export default TeamsMessagesPage;

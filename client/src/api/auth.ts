@@ -41,6 +41,8 @@ import type {
   MemberNotifications,
   NotificationIntent,
   NotificationIntentType,
+  NotificationIntentStatus,
+  SmsDeliveryAttemptStatus,
   NotificationBatch,
   ScheduleInitialSmsRecipient,
   ScheduleInitialSmsBatchHistoryEntry,
@@ -1447,6 +1449,35 @@ export const getNotificationIntents = async (
   );
 };
 
+export type MessageHistoryEntry = {
+  historyId: string;
+  messageType: NotificationIntentType;
+  createdAt: string;
+  summary: string;
+  recipientCount: number;
+  status: "accepted" | "delivered" | "failed" | "unconfirmed" | "sending" | "not_sent";
+  recipients: {
+    memberId: string;
+    memberName: string;
+    status: NotificationIntentStatus;
+    deliveryStatus: SmsDeliveryAttemptStatus | "";
+    outcome: string;
+    failureMessage: string;
+  }[];
+};
+
+export const getMessageHistory = async (churchId: string, cursor = "") =>
+  apiFetch<{ success: boolean; entries: MessageHistoryEntry[]; nextCursor: string }>(
+    `api/churches/${churchId}/message-history${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+  );
+
+export const prepareCustomMessage = async (churchId: string, body: {
+  memberIds: string[]; message: string; requestKey: string;
+}) => apiFetch<{ success: boolean; batch: NotificationBatch; enabled: boolean }>(
+  `api/churches/${churchId}/notification-batches/custom/prepare`,
+  { method: "POST", body: JSON.stringify(body) },
+);
+
 export const getNotificationIntentPreview = async (
   churchId: string,
   intentId: string,
@@ -1535,7 +1566,7 @@ export const prepareAvailabilityNotificationBatch = async (
       NotificationIntentType,
       "availability_request" | "availability_reminder"
     >;
-    audienceType?: "first" | "reminder" | "specific";
+      audienceType?: "not_contacted" | "nonresponders" | "specific" | "first" | "reminder";
     formId: string;
     memberIds: string[];
     requestKey: string;
@@ -1590,7 +1621,7 @@ export const getAvailabilityNotificationBatch = async (
   churchId: string,
   batchId: string,
 ) =>
-  apiFetch<{ success: boolean; batch: NotificationBatch }>(
+  apiFetch<{ success: boolean; batch: NotificationBatch; enabled?: boolean }>(
     `api/churches/${churchId}/notification-batches/${encodeURIComponent(batchId)}`,
   );
 
@@ -1598,13 +1629,23 @@ export const dispatchAvailabilityNotificationBatch = async (
   churchId: string,
   batchId: string,
   approvalVersion: string,
+  acknowledgedUncertainMemberIds: string[] = [],
 ) =>
   apiFetch<{ success: boolean; batch: NotificationBatch }>(
     `api/churches/${churchId}/notification-batches/${encodeURIComponent(batchId)}/dispatch`,
     {
       method: "POST",
-      body: JSON.stringify({ confirmed: true, approvalVersion }),
+        body: JSON.stringify({ confirmed: true, approvalVersion, acknowledgedUncertainMemberIds }),
     },
+  );
+
+export const abandonPreparedAvailabilityBatch = async (
+  churchId: string,
+  batchId: string,
+) =>
+  apiFetch<{ success: boolean; batch: NotificationBatch }>(
+    `api/churches/${churchId}/notification-batches/${encodeURIComponent(batchId)}/abandon`,
+    { method: "POST", body: JSON.stringify({}) },
   );
 
 export const sendNotificationIntent = async (

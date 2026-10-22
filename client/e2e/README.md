@@ -1,5 +1,7 @@
 # Schedules performance browser check
 
+From the repository root, `npm run test:e2e:all` includes all authenticated Playwright and standalone client browser suites, including this performance check. See [aggregate test commands](../../docs/testing/aggregate-test-commands.md) for the complete inventory and reporting behavior.
+
 ## Focused responsive browser suites
 
 From `client/`, run either suite with `npm run test:e2e:responsive-navigation` or `npm run test:e2e:board-controller-mobile`; run both sequentially with `npm run test:e2e:browser`. These checks use the existing root Playwright dependency and require Node.js 24, dependencies installed with `npm ci` at the repository root and `npm ci --prefix client`, plus the Playwright Chromium browser. Install Chromium with `npx playwright install chromium` (Linux CI also needs `--with-deps`). The suites start local Vite fixtures on ports 3108 and 3112, use synthetic data, and do not require a live church or credentials. Keep those ports free while the checks run.

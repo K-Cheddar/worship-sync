@@ -162,13 +162,13 @@ it("opens the shared review flow with only the chosen previously sent volunteer 
   await user.click(screen.getByRole("menuitem", { name: "Resend link" }));
 
   const dialog = screen.getByRole("dialog", { name: "Send requests" });
-  expect(within(dialog).getByRole("radio", { name: "Specific volunteers" })).toBeChecked();
+  expect(within(dialog).getByRole("radio", { name: "Choose people" })).toBeChecked();
   expect(within(dialog).getAllByText("1 selected").length).toBeGreaterThan(0);
   expect(within(dialog).getByRole("checkbox", { name: "Rae Kim" })).toBeChecked();
 
   await user.click(within(dialog).getByRole("button", { name: "Continue to review" }));
   const review = await screen.findByRole("dialog", { name: "Review text messages" });
-  expect(within(review).getByText("Specific volunteers")).toBeInTheDocument();
+  expect(within(review).getByText("Choose people")).toBeInTheDocument();
   expect(within(review).getByText(/Previously sent on/)).toBeInTheDocument();
   expect(within(review).getByText(reviewedBatch.recipients[0].message!)).toBeInTheDocument();
   expect(prepareAvailabilityNotificationBatch).toHaveBeenCalledWith(form.churchId, expect.objectContaining({

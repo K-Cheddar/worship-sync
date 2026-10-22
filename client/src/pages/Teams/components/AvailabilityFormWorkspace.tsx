@@ -246,7 +246,7 @@ const AvailabilityFormWorkspace = ({
         <p className="mt-1.5 text-xs text-gray-400" aria-live="polite">
           {responded} of {rows.length} responded
           {refreshing ? " · Refreshing…" : ""}
-          {!historyLoaded ? " · Checking request history…" : ""}
+          {!historyLoaded ? <span aria-hidden="true" className="ml-2 inline-block h-3 w-28 animate-pulse rounded bg-white/10 align-middle" /> : null}
         </p>
       </section>
       {refreshError ? (
@@ -299,7 +299,7 @@ const AvailabilityFormWorkspace = ({
         <AvailabilityFormSendFlow
           {...sendFlowProps}
           dialog
-          initialAudience={resendMemberId ? "specific" : "first"}
+          initialAudience={resendMemberId ? "specific" : "not_contacted"}
           initialMemberIds={resendMemberId ? [resendMemberId] : []}
           onClose={closeSend}
         />

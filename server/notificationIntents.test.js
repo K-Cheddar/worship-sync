@@ -25,7 +25,11 @@ const createHarness = ({
   requireTeamsEdit,
   authorizeSchedule,
   authorizeScheduleActor,
+  authorizeCustomMember,
+  authorizeMessagingHistory,
+  customSmsReady = false,
   scheduleBulkDispatchReady = false,
+  assertCsrf,
   authorizeAvailabilityForm,
   isAvailabilityRecipientInFormScope,
   validateReplacementCandidate,
@@ -149,7 +153,7 @@ const createHarness = ({
     churchMessagingConfigs: "churchMessagingConfigs", smsConsents: "smsConsents",
     teamPositions: "teamPositions",
     },
-    assertCsrf: async () => undefined,
+    assertCsrf: assertCsrf || (async () => undefined),
     createId: (prefix) => `${prefix}_${++nextId}`,
     getDoc,
     deleteDoc: async (collection, id) => {
@@ -162,6 +166,9 @@ const createHarness = ({
     queryDocs: async (collection, filters = []) => [...storeFor(collection).values()].filter((item) => filters.every((filter) => filter.op === "in" ? filter.value.includes(item[filter.field]) : item[filter.field] === filter.value)),
     requireFirestore: () => firestoreDb || (firestore ? db : null),
     requireTeamsEdit: requireTeamsEdit || (async () => ({ user: { uid: "admin_a" } })),
+    ...(authorizeCustomMember ? { authorizeCustomMember } : {}),
+    ...(authorizeMessagingHistory ? { authorizeMessagingHistory } : {}),
+    customSmsReady,
     ...(authorizeSchedule ? { authorizeSchedule } : {}),
     authorizeScheduleActor: authorizeScheduleActor || (async ({ churchId: targetChurchId, scheduleId }) => ({
       admin: { user: { uid: "admin_a" } },
@@ -296,10 +303,15 @@ const createHarness = ({
     await handler.sendIntent({ params: { churchId: targetChurchId, intentId }, body: { confirmed: true, approvalVersion: intent?.approvalSnapshot?.approvalVersion || "" } }, res);
     return res;
   };
-  const dispatch = async (batchId, confirmed = true) => {
+  const dispatch = async (batchId, confirmed = true, acknowledgedUncertainMemberIds = []) => {
     const res = makeResponse();
     const batch = await getDoc("notificationBatches", batchId);
-    await handler.dispatchAvailabilityBatch({ params: { churchId, batchId }, body: { confirmed, approvalVersion: batch?.reviewVersion || "" } }, res);
+    await handler.dispatchAvailabilityBatch({ params: { churchId, batchId }, body: { confirmed, approvalVersion: batch?.reviewVersion || "", acknowledgedUncertainMemberIds } }, res);
+    return res;
+  };
+  const abandon = async (batchId) => {
+    const res = makeResponse();
+    await handler.abandonAvailabilityBatch({ params: { churchId, batchId }, body: {} }, res);
     return res;
   };
   const seedFirestore = async () => {
@@ -308,8 +320,149 @@ const createHarness = ({
       for (const [id, data] of rows) await firestoreDb.collection(collection).doc(id).set(data);
     }
   };
-  return { collections, storeFor, getDoc, db, handler, makeResponse, preview, send, dispatch, seedFirestore, schedule, form, recipient, member, phoneNumber, churchId, get providerCalls() { return providerCalls; } };
+  return { collections, storeFor, getDoc, db, handler, makeResponse, preview, send, dispatch, abandon, seedFirestore, schedule, form, recipient, member, phoneNumber, churchId, get providerCalls() { return providerCalls; } };
 };
+
+for (const firestore of [false, true]) {
+  test(`custom message uses reviewed intents and a separate durable operation (${firestore ? "transaction fake" : "memory"})`, async () => {
+    const h = createHarness({ firestore, customSmsReady: true });
+    const prepare = async (requestKey) => {
+      const res = h.makeResponse();
+      await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+        memberIds: [h.member.memberId], message: "Practice Friday.", requestKey,
+      } }, res);
+      assert.equal(res.statusCode, 200, res.payload?.errorMessage);
+      return res.payload.batch;
+    };
+    const first = await prepare("operation-one");
+    assert.equal(h.providerCalls, 0);
+    assert.equal(first.message, "Practice Friday. Reply STOP to opt out.");
+    assert.equal(first.summary.eligible, 1);
+    assert.equal((await prepare("operation-one")).batchId, first.batchId);
+    const sent = await h.dispatch(first.batchId);
+    assert.equal(sent.statusCode, 200, sent.payload?.errorMessage);
+    assert.equal(h.providerCalls, 1);
+    assert.equal((await h.dispatch(first.batchId)).statusCode, 409);
+    assert.equal(h.providerCalls, 1);
+    const second = await prepare("operation-two");
+    assert.notEqual(second.batchId, first.batchId);
+    assert.equal((await h.dispatch(second.batchId)).statusCode, 200);
+    assert.equal(h.providerCalls, 2);
+    const history = h.makeResponse();
+    await h.handler.listMessageHistory({ params: { churchId: h.churchId }, query: {} }, history);
+    assert.equal(history.statusCode, 200, history.payload?.errorMessage);
+    assert.equal(history.payload.entries.filter((entry) => entry.messageType === "custom_message").length, 2);
+  });
+}
+
+test("custom message production gate blocks provider calls and foreign or archived members", async () => {
+  const h = createHarness();
+  const prepare = async (memberId) => {
+    const res = h.makeResponse();
+    await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+      memberIds: [memberId], message: "Practice Friday.", requestKey: randomUUID(),
+    } }, res);
+    return res;
+  };
+  const batch = (await prepare(h.member.memberId)).payload.batch;
+  const gated = await h.dispatch(batch.batchId);
+  assert.equal(gated.statusCode, 503);
+  assert.equal((await h.send(batch.intentIds[0])).statusCode, 503);
+  assert.equal(h.providerCalls, 0);
+  h.storeFor("teamRosterMembers").set("foreign", { memberId: "foreign", churchId: "other", phoneNumber: h.phoneNumber });
+  assert.equal((await prepare("foreign")).statusCode, 403);
+  h.storeFor("teamRosterMembers").set("archived", { memberId: "archived", churchId: h.churchId, archivedAt: "now", phoneNumber: h.phoneNumber });
+  assert.equal((await prepare("archived")).statusCode, 403);
+});
+
+test("custom message provider uncertainty fences replay of the same operation", async () => {
+  const h = createHarness({ customSmsReady: true, providerSend: async () => {
+    throw new Error("provider timeout");
+  } });
+  const prepared = h.makeResponse();
+  await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+    memberIds: [h.member.memberId], message: "Practice Friday.", requestKey: "unknown-outcome",
+  } }, prepared);
+  assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
+  const first = await h.dispatch(prepared.payload.batch.batchId);
+  assert.equal(first.statusCode, 200);
+  assert.equal(h.providerCalls, 1);
+  assert.equal(first.payload.batch.summary.uncertain, 1);
+  assert.equal((await h.dispatch(prepared.payload.batch.batchId)).statusCode, 200);
+  assert.equal(h.providerCalls, 1);
+});
+
+test("custom review excludes members without consent or after STOP and sends nothing", async () => {
+  const h = createHarness({ customSmsReady: true });
+  const consentId = smsConsentIdForChurchPhone(h.churchId, h.phoneNumber);
+  h.storeFor("smsConsents").delete(consentId);
+  const prepare = async (key) => {
+    const res = h.makeResponse();
+    await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+      memberIds: [h.member.memberId], message: "Practice Friday.", requestKey: key,
+    } }, res);
+    return res;
+  };
+  const withoutConsent = await prepare("missing-consent");
+  assert.equal(withoutConsent.statusCode, 200, withoutConsent.payload?.errorMessage);
+  assert.equal(withoutConsent.payload.batch.summary.eligible, 0);
+  h.storeFor("smsConsents").set(consentId, { consentId, churchId: h.churchId, phoneNumber: h.phoneNumber,
+    status: "opted_out", optedOutAt: new Date().toISOString() });
+  const optedOut = await prepare("opted-out");
+  assert.equal(optedOut.statusCode, 200, optedOut.payload?.errorMessage);
+  assert.equal(optedOut.payload.batch.summary.eligible, 0);
+  assert.equal(h.providerCalls, 0);
+});
+
+test("custom review keeps two roster identities sharing one consented phone", async () => {
+  const h = createHarness({ customSmsReady: true });
+  const res = h.makeResponse();
+  await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+    memberIds: [h.member.memberId, "member_b"], message: "Practice Friday.", requestKey: "shared-phone",
+  } }, res);
+  assert.equal(res.statusCode, 200, res.payload?.errorMessage);
+  assert.equal(res.payload.batch.summary.eligible, 2);
+  assert.equal(new Set(res.payload.batch.intentIds).size, 2);
+  assert.equal((await h.dispatch(res.payload.batch.batchId)).statusCode, 200);
+  assert.equal(h.providerCalls, 2);
+});
+
+test("unified history redacts form links while showing authorized custom content", async () => {
+  const h = createHarness({ customSmsReady: true });
+  const form = await h.preview();
+  assert.equal(form.res.statusCode, 200, form.res.payload?.errorMessage);
+  const custom = h.makeResponse();
+  await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+    memberIds: [h.member.memberId], message: "Practice Friday.", requestKey: "history-custom",
+  } }, custom);
+  assert.equal(custom.statusCode, 200, custom.payload?.errorMessage);
+  await h.dispatch(custom.payload.batch.batchId);
+  const response = h.makeResponse();
+  await h.handler.listMessageHistory({ params: { churchId: h.churchId }, query: {} }, response);
+  assert.equal(response.statusCode, 200, response.payload?.errorMessage);
+  const entries = response.payload.entries;
+  assert.equal(entries.find((entry) => entry.messageType === "custom_message")?.summary, "Practice Friday. Reply STOP to opt out.");
+  assert.doesNotMatch(JSON.stringify(entries.find((entry) => entry.messageType === "availability_request")), /secure-token/);
+});
+
+test("scoped history does not reveal another operator's custom message", async () => {
+  let actorUid = "admin_a";
+  const h = createHarness({ customSmsReady: true,
+    authorizeCustomMember: async () => ({ admin: { user: { uid: actorUid } }, scoped: true }),
+    authorizeMessagingHistory: async () => ({ admin: { user: { uid: actorUid } }, scoped: true }),
+  });
+  const prepared = h.makeResponse();
+  await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+    memberIds: [h.member.memberId], message: "Private practice note.", requestKey: "scoped-note",
+  } }, prepared);
+  assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
+  assert.equal((await h.dispatch(prepared.payload.batch.batchId)).statusCode, 200);
+  actorUid = "other_editor";
+  const history = h.makeResponse();
+  await h.handler.listMessageHistory({ params: { churchId: h.churchId }, query: {} }, history);
+  assert.equal(history.statusCode, 200, history.payload?.errorMessage);
+  assert.equal(history.payload.entries.length, 0);
+});
 
 for (const firestore of [false, true]) {
   test(`grouped schedule SMS is one reviewed intent per current roster member and remains gated (${firestore ? "transaction fake" : "memory"})`, async () => {
@@ -500,6 +653,14 @@ test("availability preview is church-scoped and does not call the provider", asy
   assert.equal(h.providerCalls, 0);
 });
 
+test("availability preparation rejects an unknown audience instead of silently defaulting", async () => {
+  const h = createHarness();
+  const { res, batch } = await h.preview({ audienceType: "unknown" });
+  assert.equal(res.statusCode, 400);
+  assert.equal(batch, undefined);
+  assert.equal(h.storeFor("notificationBatches").size, 0);
+});
+
 test("a prepared batch is scoped to its selected form and recipients, and hides tokens from history", async () => {
   const h = createHarness();
   h.storeFor("teamIntakeRecipients").set(h.recipient.recipientId, {
@@ -535,6 +696,38 @@ test("a prepared batch is scoped to its selected form and recipients, and hides 
   assert.equal(history.payload.intents[0].message, undefined);
   assert.doesNotMatch(history.payload.intents[0].messagePreview, /secure-token/);
   assert.equal(intent.batchId, batch.batchId);
+});
+
+test("an unsent prepared batch can be abandoned and cannot be sent afterward", async () => {
+  const h = createHarness();
+  const { batch } = await h.preview({ audienceType: "specific", requestKey: "abandon-prepared-batch" });
+
+  const abandoned = await h.abandon(batch.batchId);
+  assert.equal(abandoned.statusCode, 200, JSON.stringify(abandoned.payload));
+  assert.equal(abandoned.payload.batch.status, "abandoned");
+  assert.equal((await h.getDoc("notificationBatches", batch.batchId)).status, "abandoned");
+  assert.equal(h.providerCalls, 0);
+
+  const batchDispatch = await h.dispatch(batch.batchId);
+  assert.equal(batchDispatch.statusCode, 409);
+  assert.equal(h.providerCalls, 0);
+
+  const intentDispatch = await h.send(batch.intentIds[0]);
+  assert.equal(intentDispatch.statusCode, 409);
+  assert.match(intentDispatch.payload.errorMessage, /review was discarded/i);
+  assert.equal(h.providerCalls, 0);
+});
+
+test("a batch cannot be abandoned after a send has started", async () => {
+  const h = createHarness();
+  const { batch } = await h.preview({ requestKey: "do-not-abandon-sent-batch" });
+  const dispatched = await h.dispatch(batch.batchId);
+  assert.equal(dispatched.statusCode, 200);
+
+  const abandoned = await h.abandon(batch.batchId);
+  assert.equal(abandoned.statusCode, 409);
+  assert.equal((await h.getDoc("notificationBatches", batch.batchId)).status, "sent");
+  assert.equal(h.providerCalls, 1);
 });
 
 test("an intentional availability resend gets a new identity while retries preserve each send", async () => {
@@ -574,6 +767,150 @@ test("retrying preparation with the same batch key adopts the same intent", asyn
   assert.equal(h.providerCalls, 0);
 });
 
+test("CSRF rejection happens before batch dispatch and the same prepared operation can be retried", async () => {
+  let rejectCsrf = false;
+  const h = createHarness({ assertCsrf: async () => {
+    if (rejectCsrf) throw Object.assign(new Error("Could not verify this request."), {
+      statusCode: 403,
+      code: "AUTH_CSRF_MISMATCH",
+    });
+  } });
+  const { batch } = await h.preview({ audienceType: "specific", requestKey: "csrf-recovery-operation" });
+  rejectCsrf = true;
+  const rejected = await h.dispatch(batch.batchId);
+  assert.equal(rejected.statusCode, 403);
+  assert.equal(rejected.payload.code, "AUTH_CSRF_MISMATCH");
+  assert.equal((await h.getDoc("notificationBatches", batch.batchId)).status, "prepared");
+  assert.equal((await h.getDoc("notificationIntents", batch.intentIds[0])).status, "preview");
+  assert.equal(h.storeFor("smsDeliveryAttempts").size, 0);
+  assert.equal(h.providerCalls, 0);
+
+  rejectCsrf = false;
+  const retried = await h.dispatch(batch.batchId);
+  assert.equal(retried.statusCode, 200);
+  assert.equal(retried.payload.batch.batchId, batch.batchId);
+  assert.equal(retried.payload.batch.intentIds[0], batch.intentIds[0]);
+  assert.equal(h.providerCalls, 1);
+});
+
+test("a new message after an uncertain result requires explicit duplicate-risk acknowledgment", async () => {
+  let providerAttempt = 0;
+  const h = createHarness({ providerSend: async () => {
+    providerAttempt += 1;
+    if (providerAttempt === 1) throw Object.assign(new Error("Provider timed out."), { code: "ETIMEDOUT" });
+    return { providerMessageId: "SM_second_operation", status: "accepted" };
+  } });
+  const first = (await h.preview()).batch;
+  const uncertain = await h.dispatch(first.batchId);
+  assert.equal(uncertain.statusCode, 200);
+  assert.equal(uncertain.payload.batch.summary.uncertain, 1);
+  assert.equal(h.providerCalls, 1);
+
+  const second = (await h.preview({ audienceType: "specific", requestKey: "deliberate-unknown-resend" })).batch;
+  assert.equal(second.summary.eligible, 1);
+  assert.equal(second.recipients[0].previousDeliveryStatus, "uncertain");
+  const unacknowledged = await h.dispatch(second.batchId);
+  assert.equal(unacknowledged.statusCode, 409);
+  assert.equal(h.providerCalls, 1);
+  assert.equal((await h.getDoc("notificationBatches", second.batchId)).status, "prepared");
+
+  const acknowledged = await h.dispatch(second.batchId, true, [h.member.memberId]);
+  assert.equal(acknowledged.statusCode, 200);
+  assert.equal(acknowledged.payload.batch.summary.sent, 1);
+  const savedAcknowledgment = await h.getDoc("notificationBatches", second.batchId);
+  assert.deepEqual(savedAcknowledgment.uncertainOutcomeAcknowledgment.memberIds, [h.member.memberId]);
+  assert.equal(savedAcknowledgment.uncertainOutcomeAcknowledgment.actorUid, "admin_a");
+  assert.equal(h.providerCalls, 2);
+
+  await h.dispatch(first.batchId);
+  assert.equal(h.providerCalls, 2, "replaying the unknown operation must never invoke the provider again");
+  assert.equal((await h.getDoc("notificationIntents", first.intentIds[0])).status, "unknown");
+});
+
+test("a newly uncertain earlier send is rechecked after the batch claim", async () => {
+  let h;
+  let injected = false;
+  h = createHarness({ beforeSetDoc: async (collection, _id, data) => {
+    if (injected || collection !== "notificationBatches" || data.status !== "dispatching") return;
+    injected = true;
+    h.storeFor("notificationIntents").set("late_unknown_intent", {
+      intentId: "late_unknown_intent",
+      churchId: h.churchId,
+      formId: h.form.formId,
+      recipientId: h.recipient.recipientId,
+      memberId: h.member.memberId,
+      sourceType: "team_intake_recipient",
+      sourceId: h.recipient.recipientId,
+      intentType: "availability_request",
+      status: "unknown",
+      batchId: "earlier_batch",
+      createdAt: "2026-09-01T00:00:00.000Z",
+    });
+  } });
+
+  const { batch } = await h.preview({ audienceType: "specific", requestKey: "uncertain-race-operation" });
+  const firstDispatch = await h.dispatch(batch.batchId);
+  assert.equal(injected, true);
+  assert.equal(firstDispatch.statusCode, 200);
+  assert.equal(h.providerCalls, 0, "the send must be stopped when earlier delivery becomes uncertain after preflight");
+  assert.match(firstDispatch.payload.batch.recipients[0].exclusionReason, /became unconfirmed/i);
+
+  const refreshed = await h.dispatch(batch.batchId);
+  assert.equal(refreshed.statusCode, 409);
+  assert.equal(h.providerCalls, 0);
+  const acknowledged = await h.dispatch(batch.batchId, true, [h.member.memberId]);
+  assert.equal(acknowledged.statusCode, 200);
+  assert.equal(acknowledged.payload.batch.summary.sent, 1);
+  assert.equal(h.providerCalls, 1);
+});
+
+test("an uncertain resend blocks a reminder despite an older accepted request", async () => {
+  let providerAttempt = 0;
+  const h = createHarness({ providerSend: async () => {
+    providerAttempt += 1;
+    if (providerAttempt === 2) throw Object.assign(new Error("Provider timed out."), { code: "ETIMEDOUT" });
+    return { providerMessageId: `SM_${providerAttempt}`, status: "accepted" };
+  } });
+
+  const initialRequest = (await h.preview({ requestKey: "accepted-initial-request" })).batch;
+  assert.equal((await h.dispatch(initialRequest.batchId)).payload.batch.summary.sent, 1);
+
+  const reminderReview = (await h.preview({
+    intentType: "availability_reminder",
+    audienceType: "nonresponders",
+    requestKey: "reminder-reviewed-before-uncertain-resend",
+  })).batch;
+  assert.equal(reminderReview.summary.eligible, 1);
+
+  const uncertainResend = (await h.preview({
+    audienceType: "specific",
+    requestKey: "newer-uncertain-resend",
+  })).batch;
+  assert.equal((await h.dispatch(uncertainResend.batchId)).payload.batch.summary.uncertain, 1);
+  assert.equal(h.providerCalls, 2);
+
+  const blockedDispatch = await h.dispatch(reminderReview.batchId);
+  assert.equal(blockedDispatch.statusCode, 409);
+  assert.match(blockedDispatch.payload.errorMessage, /before sending a reminder/i);
+  assert.equal(h.providerCalls, 2);
+  assert.equal((await h.getDoc("notificationBatches", reminderReview.batchId)).status, "prepared");
+
+  const nextReminder = await h.preview({
+    intentType: "availability_reminder",
+    audienceType: "nonresponders",
+    requestKey: "reminder-after-uncertain-resend",
+  });
+  assert.equal(nextReminder.batch.summary.eligible, 0);
+  assert.equal(nextReminder.batch.summary.excluded, 1);
+  assert.match(nextReminder.batch.recipients[0].exclusionReason, /before preparing a reminder/i);
+  assert.equal(h.providerCalls, 2);
+
+  const directSend = await h.send(reminderReview.intentIds[0]);
+  assert.equal(directSend.statusCode, 409);
+  assert.match(directSend.payload.errorMessage, /before sending a reminder/i);
+  assert.equal(h.providerCalls, 2);
+});
+
 test("forms with editable non-availability fields prepare form-response messages", async () => {
   const h = createHarness();
   const form = {
@@ -604,7 +941,8 @@ test("form reminders use reminder wording and remain scoped to the current form 
   await h.dispatch(initial.batch.batchId);
   const { res, batch } = await h.preview({ intentType: "availability_reminder" });
   assert.equal(res.statusCode, 200);
-  assert.equal(batch.reminderRound, 1);
+  assert.equal(batch.reminderRound, 0);
+  assert.equal(h.storeFor("teamIntakeForms").get(h.form.formId).reminderRound, undefined);
   assert.equal(batch.recipients[0].message, "First Church: Reminder: Please complete the October availability form: https://www.worshipsync.net/a/secure-token Reply STOP to opt out.");
   assert.equal(batch.recipients[0].segmentCount, 1);
   assert.equal(measureSmsMessage(batch.recipients[0].message).segmentCount, 1);
@@ -798,18 +1136,19 @@ test("bulk dispatch requires confirmation, sends exactly one selected batch, and
   assert.equal(completed.summary.awaitingDispatch, 0);
 });
 
-test("a newly prepared batch supersedes its prior draft and cannot dispatch through the old batch identity", async () => {
+test("a new operation does not overwrite an abandoned prepared batch", async () => {
   const h = createHarness();
   const oldBatch = (await h.preview()).batch;
-  const newBatch = (await h.preview()).batch;
+  const newBatch = (await h.preview({ audienceType: "specific" })).batch;
   assert.notEqual(oldBatch.batchId, newBatch.batchId);
-  assert.equal(h.storeFor("notificationBatches").get(oldBatch.batchId).status, "superseded");
-  const staleDispatch = await h.dispatch(oldBatch.batchId);
-  assert.equal(staleDispatch.statusCode, 409);
-  assert.equal(h.providerCalls, 0);
+  assert.notEqual(oldBatch.intentIds[0], newBatch.intentIds[0]);
+  assert.equal(h.storeFor("notificationBatches").get(oldBatch.batchId).status, "prepared");
+  const oldDispatch = await h.dispatch(oldBatch.batchId);
+  assert.equal(oldDispatch.statusCode, 200);
+  assert.equal(h.providerCalls, 1);
   const currentDispatch = await h.dispatch(newBatch.batchId);
   assert.equal(currentDispatch.statusCode, 200);
-  assert.equal(h.providerCalls, 1);
+  assert.equal(h.providerCalls, 2);
 });
 
 test("a concurrent approval makes one provider call and stores one attempt", async () => {
@@ -999,6 +1338,7 @@ test("shared intents cover every requested volunteer notification event", () => 
     "availability_request", "availability_reminder", "assignment_notification",
     "assignment_confirmation", "schedule_change", "replacement_request",
     "schedule_initial_notification",
+    "custom_message",
   ]);
   for (const intentType of NOTIFICATION_INTENT_TYPES) {
     assert.equal(createNotificationIntent({

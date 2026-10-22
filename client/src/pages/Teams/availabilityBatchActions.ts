@@ -12,7 +12,7 @@ export const prepareAvailabilityBatchForMembers = async ({
   churchId,
   formId,
   intentType,
-  audienceType = intentType === "availability_reminder" ? "reminder" : "specific",
+  audienceType = intentType === "availability_reminder" ? "nonresponders" : "specific",
   memberIds,
 }: {
   churchId: string;
@@ -53,4 +53,7 @@ export const prepareAvailabilityBatchForMembers = async ({
 export const dispatchReviewedAvailabilityBatch = (
   churchId: string,
   batch: NotificationBatch,
-) => dispatchAvailabilityNotificationBatch(churchId, batch.batchId, batch.approvalVersion);
+  acknowledgedUncertainMemberIds: string[] = [],
+) => acknowledgedUncertainMemberIds.length
+  ? dispatchAvailabilityNotificationBatch(churchId, batch.batchId, batch.approvalVersion, acknowledgedUncertainMemberIds)
+  : dispatchAvailabilityNotificationBatch(churchId, batch.batchId, batch.approvalVersion);

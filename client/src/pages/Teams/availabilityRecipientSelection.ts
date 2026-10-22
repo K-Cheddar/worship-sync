@@ -10,7 +10,7 @@ import type {
   TeamRosterMember,
 } from "../../api/authTypes";
 
-export type AvailabilityAudienceType = "first" | "reminder" | "specific";
+export type AvailabilityAudienceType = "not_contacted" | "nonresponders" | "specific";
 
 export const getAvailabilityRecipientRows = ({
   members,
@@ -22,7 +22,7 @@ export const getAvailabilityRecipientRows = ({
   smsDeliveryAttempts = [],
   form,
   intentType,
-  audienceType = intentType === "availability_reminder" ? "reminder" : "specific",
+  audienceType = intentType === "availability_reminder" ? "nonresponders" : "specific",
 }: {
   members: TeamRosterMember[];
   positions: TeamPosition[];
@@ -39,7 +39,7 @@ export const getAvailabilityRecipientRows = ({
   const formTeamIds = new Set(form?.teamIds || []);
   const requestIntentsByRecipientId = new Map<string, NotificationIntent[]>();
   notificationIntents.forEach((intent) => {
-    if (intent.formId !== form?.formId || intent.intentType !== "availability_request" || !intent.recipientId) return;
+    if (intent.formId !== form?.formId || !["availability_request", "availability_reminder"].includes(intent.intentType) || !intent.recipientId) return;
     requestIntentsByRecipientId.set(intent.recipientId, [
       ...(requestIntentsByRecipientId.get(intent.recipientId) || []),
       intent,
@@ -49,7 +49,7 @@ export const getAvailabilityRecipientRows = ({
   smsDeliveryAttempts.forEach((attempt) => {
     if (
       (attempt.formId && attempt.formId !== form?.formId) ||
-      !["initial", "availability_request"].includes(attempt.purpose) ||
+      !["initial", "availability_request", "availability_reminder", "reminder"].includes(attempt.purpose) ||
       !attempt.recipientId
     ) return;
     requestAttemptsByRecipientId.set(attempt.recipientId, [
@@ -108,26 +108,25 @@ export const getAvailabilityRecipientRows = ({
         });
       });
     requestActivities.sort((left, right) => right.at.localeCompare(left.at));
-    const previousDeliveryStatus = requestActivities[0]?.status || "";
+    const previousDeliveryStatus = requestActivities.some(({ status }) => status === "uncertain")
+      ? "uncertain"
+      : requestActivities[0]?.status || "";
     const hasPreviousRequest = requestActivities.length > 0;
     const lastSentAt = requestActivities.filter(({ status }) => status === "sent")
       .map(({ sentAt }) => sentAt).filter(Boolean).sort().at(-1) || "";
     const hasAcceptedRequest = requestActivities.some(({ status }) => status === "sent");
+    const hasUncertainRequest = requestActivities.some(({ status }) => status === "uncertain");
     let reason = "";
     if (!form) {
       reason = "Choose a form first";
     } else if (recipient?.revokedAt) {
       reason = "Response link revoked";
-    } else if (recipient?.respondedAt && !(audienceType === "specific" && intentType === "availability_request")) {
+    } else if (recipient?.respondedAt && audienceType !== "specific") {
       reason = "Already responded";
+    } else if (audienceType === "nonresponders" && hasUncertainRequest) {
+      reason = "We couldn't confirm whether a previous message was sent. Check message history before sending a reminder.";
     } else if (formTeamIds.size && ![...formTeamIds].some((id) => memberTeamIds.has(id))) {
       reason = "Outside this form’s team scope";
-    } else if (intentType === "availability_reminder" && !recipient) {
-      reason = "No response link";
-    } else if (intentType === "availability_reminder" && !hasAcceptedRequest) {
-      reason = previousDeliveryStatus === "uncertain"
-        ? "The previous request outcome is uncertain. Check message history before preparing a reminder."
-        : "No previously sent request exists";
     } else if (!eligibility.eligible) {
       reason = !eligibility.status
         ? "Not eligible to receive text messages"
@@ -147,6 +146,7 @@ export const getAvailabilityRecipientRows = ({
       previousDeliveryStatus,
       hasPreviousRequest,
       hasAcceptedRequest,
+      hasUncertainRequest,
       previousSentAt: lastSentAt,
     };
   });

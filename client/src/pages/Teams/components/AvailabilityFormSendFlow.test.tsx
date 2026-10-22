@@ -1,11 +1,12 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import AvailabilityFormSendFlow from "./AvailabilityFormSendFlow";
-import { dispatchAvailabilityNotificationBatch, getAvailabilityNotificationBatch, prepareAvailabilityNotificationBatch } from "../../../api/auth";
+import { abandonPreparedAvailabilityBatch, dispatchAvailabilityNotificationBatch, getAvailabilityNotificationBatch, prepareAvailabilityNotificationBatch } from "../../../api/auth";
 import type { NotificationBatch, NotificationIntent, TeamIntakeForm, TeamRosterMember } from "../../../api/authTypes";
 import { CurrentMemberIdentityProvider } from "./CurrentUserMemberIndicator";
 
 jest.mock("../../../api/auth", () => ({
+  abandonPreparedAvailabilityBatch: jest.fn(),
   dispatchAvailabilityNotificationBatch: jest.fn(),
   getAvailabilityNotificationBatch: jest.fn(),
   prepareAvailabilityNotificationBatch: jest.fn(),
@@ -111,8 +112,8 @@ it("keeps eligibility details collapsed and blocked recipients unselectable in t
   await user.click(screen.getByText(/Eligibility details/));
   expect(screen.getByText(/Text message consent needed/)).toBeVisible();
   await user.click(screen.getByText(/Eligibility details/));
-  expect(screen.getByRole("radio", { name: "First invitations" })).toBeChecked();
-  expect(screen.getByRole("radio", { name: "Specific volunteers" })).toBeEnabled();
+  expect(screen.getByRole("radio", { name: "Not yet contacted" })).toBeChecked();
+  expect(screen.getByRole("radio", { name: "Choose people" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Continue to review" })).toBeEnabled();
   expect(prepareAvailabilityNotificationBatch).not.toHaveBeenCalled();
   expect(dispatchAvailabilityNotificationBatch).not.toHaveBeenCalled();
@@ -450,7 +451,7 @@ it("keeps recipient selection when team and name filters change", async () => {
   expect(screen.getAllByText("2 selected").length).toBeGreaterThan(0);
 });
 
-it("keeps previous messages out of the default selection and makes them explicit in Specific volunteers", async () => {
+it("keeps previously contacted and responded volunteers out of the default selection", async () => {
   const user = userEvent.setup();
   const worshipMemberships = { worship: { teamId: "worship" } };
   const sentMember = { ...secondMember, memberId: "member-sent", firstName: "Alex", teamMemberships: worshipMemberships };
@@ -472,14 +473,14 @@ it("keeps previous messages out of the default selection and makes them explicit
   expect(screen.getByRole("checkbox", { name: "Rae Kim" })).toBeChecked();
   expect(screen.queryByRole("checkbox", { name: "Alex Lee" })).not.toBeInTheDocument();
   expect(screen.queryByRole("checkbox", { name: "Casey Lee" })).not.toBeInTheDocument();
-  await user.click(screen.getByRole("radio", { name: "Specific volunteers" }));
+  await user.click(screen.getByRole("radio", { name: "Choose people" }));
   expect(screen.getByRole("checkbox", { name: "Alex Lee" })).not.toBeChecked();
   expect(screen.getByRole("checkbox", { name: "Casey Lee" })).not.toBeChecked();
   expect(screen.getByText(/Previously sent/)).toBeInTheDocument();
   expect(screen.getByText(/Already responded/)).toBeInTheDocument();
 });
 
-it("leaves previous failures unchecked until the operator selects them for retry", async () => {
+it("includes definitive previous failures in the default selection so they can be retried", async () => {
   const user = userEvent.setup();
   const failedMember = { ...secondMember, memberId: "member-failed", teamMemberships: member.teamMemberships };
   const failedRecipient = { recipientId: "recipient-failed", churchId: "church-1", formId: form.formId, memberId: failedMember.memberId, createdAt: "2026-09-01" };
@@ -500,17 +501,14 @@ it("leaves previous failures unchecked until the operator selects them for retry
   }} notificationIntents={[failedIntent]} smsDeliveryAttempts={[failedAttempt]} onClose={jest.fn()} />);
 
   expect(screen.getByRole("checkbox", { name: "Rae Kim" })).toBeChecked();
-  expect(screen.queryByRole("checkbox", { name: "Sam Lee" })).not.toBeInTheDocument();
-  await user.click(screen.getByRole("radio", { name: "Specific volunteers" }));
-  await user.click(screen.getByRole("checkbox", { name: "Rae Kim" }));
+  expect(screen.getByRole("checkbox", { name: "Sam Lee" })).toBeChecked();
+  await user.click(screen.getByRole("radio", { name: "Choose people" }));
+  expect(screen.getByRole("checkbox", { name: "Rae Kim" })).not.toBeChecked();
   expect(screen.getByRole("checkbox", { name: "Sam Lee" })).not.toBeChecked();
   expect(screen.getByRole("checkbox", { name: "Sam Lee" })).toBeEnabled();
   expect(screen.getByText(/Previous send failed/)).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Review and send 1 message" })).toBeEnabled();
-
   await user.click(screen.getByRole("checkbox", { name: "Sam Lee" }));
-  expect(screen.getByRole("checkbox", { name: "Sam Lee" })).toBeChecked();
-  expect(screen.getByRole("button", { name: "Review and send 2 messages" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Review and send 1 message" })).toBeEnabled();
 });
 
 it("does not expose recipient selection before full history loads", () => {
@@ -609,7 +607,7 @@ it("keeps the batch identity and blocks another dispatch when sending and status
   const confirmation = await screen.findByRole("dialog", { name: "Review text messages" });
   await user.click(within(confirmation).getByRole("button", { name: "Send 1 message" }));
 
-  expect(await screen.findByText(/couldn't confirm whether these texts were sent/i)).toBeInTheDocument();
+  expect(await screen.findByText(/couldn't check whether these messages were sent/i)).toBeInTheDocument();
   expect(window.localStorage.getItem("worshipsync:pending-notification-dispatch:church-1:form-1")).toBe("batch-1");
   expect(screen.getByRole("button", { name: "Check batch status" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Continue to review" })).toBeDisabled();
@@ -624,6 +622,54 @@ it("keeps the batch identity and blocks another dispatch when sending and status
   expect(await screen.findByText(/Failed/)).toBeInTheDocument();
   expect(window.localStorage.getItem("worshipsync:pending-notification-dispatch:church-1:form-1")).toBeNull();
   expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledTimes(1);
+});
+
+it("reopens a verified prepared batch after a failed request so it can be retried", async () => {
+  const user = userEvent.setup();
+  jest.mocked(prepareAvailabilityNotificationBatch).mockResolvedValue({ success: true, batch });
+  jest.mocked(dispatchAvailabilityNotificationBatch)
+    .mockRejectedValueOnce(new Error("Connection interrupted"))
+    .mockResolvedValueOnce({ success: true, batch: { ...batch, status: "sent" } });
+  jest.mocked(getAvailabilityNotificationBatch).mockResolvedValue({ success: true, batch });
+  render(<AvailabilityFormSendFlow
+    {...emptyHistoryProps} dialog churchId="church-1" form={form} members={[member]} positions={[]} teams={[]} recipients={[]}
+    eligibilityByMemberId={{ [member.memberId]: { status: "enabled", eligible: true } }} onClose={jest.fn()}
+  />);
+
+  await user.click(screen.getByRole("button", { name: "Continue to review" }));
+  let confirmation = await screen.findByRole("dialog", { name: "Review text messages" });
+  await user.click(within(confirmation).getByRole("button", { name: "Send 1 message" }));
+  expect(await within(confirmation).findByText(/No message was sent/i)).toBeInTheDocument();
+  expect(within(confirmation).getByRole("button", { name: "Send 1 message" })).toBeEnabled();
+  await user.click(within(confirmation).getByRole("button", { name: "Send 1 message" }));
+  expect(await screen.findByText(/Your messages were sent/i)).toBeInTheDocument();
+  expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledTimes(2);
+});
+
+it("lets an admin discard a verified prepared batch without retrying", async () => {
+  const user = userEvent.setup();
+  jest.mocked(prepareAvailabilityNotificationBatch).mockResolvedValue({ success: true, batch });
+  jest.mocked(dispatchAvailabilityNotificationBatch).mockRejectedValue(new Error("Connection interrupted"));
+  jest.mocked(getAvailabilityNotificationBatch).mockResolvedValue({ success: true, batch });
+  jest.mocked(abandonPreparedAvailabilityBatch).mockResolvedValue({ success: true, batch: { ...batch, status: "abandoned" } });
+  render(<AvailabilityFormSendFlow
+    {...emptyHistoryProps} dialog churchId="church-1" form={form} members={[member]} positions={[]} teams={[]} recipients={[]}
+    eligibilityByMemberId={{ [member.memberId]: { status: "enabled", eligible: true } }} onClose={jest.fn()}
+  />);
+
+  await user.click(screen.getByRole("button", { name: "Continue to review" }));
+  const confirmation = await screen.findByRole("dialog", { name: "Review text messages" });
+  await user.click(within(confirmation).getByRole("button", { name: "Send 1 message" }));
+  expect(await within(confirmation).findByText(/No message was sent/i)).toBeInTheDocument();
+  expect(within(confirmation).getByRole("button", { name: "Discard this unsent review" })).toBeEnabled();
+
+  await user.click(within(confirmation).getByRole("button", { name: "Discard this unsent review" }));
+  expect(abandonPreparedAvailabilityBatch).toHaveBeenCalledWith("church-1", batch.batchId);
+  expect(await screen.findByText(/Unsent review discarded\. No message was sent/i)).toBeInTheDocument();
+  expect(window.localStorage.getItem("worshipsync:pending-notification-dispatch:church-1:form-1")).toBeNull();
+  expect(window.localStorage.getItem("worshipsync:last-notification-batch:church-1:form-1")).toBeNull();
+  expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("button", { name: "Continue to review" })).toBeEnabled();
 });
 
 it("shows an authoritative unknown recipient outcome without claiming success or offering same-batch send", async () => {

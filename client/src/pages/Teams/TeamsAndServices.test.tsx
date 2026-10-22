@@ -1003,7 +1003,7 @@ describe("Teams", () => {
     expect(screen.getByRole("status", { name: "Loading messages" })).toBeInTheDocument();
 
     await act(async () => lazyRouteTestControl.delayedImports[0]());
-    expect(await screen.findByRole("heading", { name: "Volunteer messages" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Messages" })).toBeInTheDocument();
     expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1);
   });
 

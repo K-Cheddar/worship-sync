@@ -801,7 +801,8 @@ export type NotificationIntentType =
   | "assignment_confirmation"
   | "schedule_change"
   | "replacement_request"
-  | "schedule_initial_notification";
+  | "schedule_initial_notification"
+  | "custom_message";
 
 export type NotificationIntentStatus =
   | "preview"
@@ -816,7 +817,7 @@ export type NotificationIntent = {
   intentId: string;
   churchId: string;
   intentType: NotificationIntentType;
-  sourceType: "team_schedule" | "team_intake_recipient";
+  sourceType: "team_schedule" | "team_intake_recipient" | "custom_message";
   sourceId: string;
   sourceVersion: string;
   memberId: string;
@@ -903,16 +904,19 @@ export type NotificationBatch = {
   churchId: string;
   formId?: string;
   scheduleId?: string;
-  intentType: Extract<NotificationIntentType, "availability_request" | "availability_reminder"> | "schedule_initial_notification";
-  audienceType?: "first" | "reminder" | "specific";
+  intentType: Extract<NotificationIntentType, "availability_request" | "availability_reminder"> | "schedule_initial_notification" | "custom_message";
+  audienceType?: "not_contacted" | "nonresponders" | "specific" | "first" | "reminder";
   reminderRound?: number;
-  status: "preparing" | "prepared" | "approved" | "dispatching" | "complete" | "partial" | "paused" | "sent" | "superseded";
+  status: "preparing" | "prepared" | "approved" | "dispatching" | "complete" | "partial" | "paused" | "sent" | "superseded" | "abandoned";
   selectedMemberIds: string[];
   recipients: NotificationBatchRecipient[];
   /** Persisted form recipients for the selected batch members, without token secrets. */
   intakeRecipients?: TeamIntakeRecipient[];
   intentIds: string[];
   approvalVersion: string;
+  message?: string;
+  dispatchStartedAt?: string;
+  abandonedAt?: string;
   summary: {
     requested: number;
     selected: number;

@@ -1,5 +1,7 @@
 ﻿# WorshipSync browser coverage
 
+For the root aggregate commands, full suite inventory, prerequisites, authentication safeguards, and consolidated logs, see [Aggregate test commands](aggregate-test-commands.md).
+
 Use the existing demo account and saved authentication, with the local renderer/API running at `E2E_BASE_URL`:
 
 ```bash

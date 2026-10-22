@@ -152,15 +152,18 @@ test("opens a design from a pasted Canva link when the church account can access
   ).toHaveAttribute("data-state", "active");
   expect(
     screen.getByRole("checkbox", {
-      name: "Create a custom item with the imported video",
+      name: "Create a custom item with one slide per page",
     }),
   ).toBeInTheDocument();
   expect(
     screen.getByRole("group", { name: "MP4 import mode" }),
   ).toBeInTheDocument();
-  await user.click(
+  expect(
     screen.getByRole("button", { name: "Separate video per page" }),
-  );
+  ).toHaveAttribute("aria-pressed", "true");
+  expect(
+    screen.getByRole("button", { name: "One combined video" }),
+  ).toHaveAttribute("aria-pressed", "false");
   expect(
     screen.getByRole("checkbox", {
       name: "Create a custom item with one slide per page",
@@ -422,6 +425,9 @@ test("refreshes an existing Canva video through the awaited callback", async () 
   await user.click(
     await screen.findByRole("button", { name: /Sunday Welcome/ }),
   );
+  expect(
+    screen.getByRole("button", { name: "One combined video" }),
+  ).toHaveAttribute("aria-pressed", "true");
   await user.click(screen.getByRole("button", { name: "Refresh selected" }));
 
   await waitFor(() => {
@@ -745,6 +751,12 @@ test("creates a one-slide custom item for an imported Canva video", async () => 
   );
   await user.click(screen.getByRole("button", { name: /Page 2/i }));
   await user.click(screen.getByRole("tab", { name: /MP4 video/i }));
+  await user.click(screen.getByRole("button", { name: "One combined video" }));
+  expect(
+    screen.getByRole("checkbox", {
+      name: "Create a custom item with the imported video",
+    }),
+  ).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: /Import selected/i }));
 
   await waitFor(() => {
@@ -845,9 +857,9 @@ test("creates one custom-item slide per imported Canva video page", async () => 
   );
   await user.click(screen.getByRole("button", { name: /Page 2/i }));
   await user.click(screen.getByRole("tab", { name: /MP4 video/i }));
-  await user.click(
+  expect(
     screen.getByRole("button", { name: "Separate video per page" }),
-  );
+  ).toHaveAttribute("aria-pressed", "true");
   await user.click(screen.getByRole("button", { name: /Import selected/i }));
 
   await waitFor(() => {

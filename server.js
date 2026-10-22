@@ -1427,6 +1427,10 @@ app.get(
   "/api/churches/:churchId/notification-intents",
   authHandlers.listIntents,
 );
+app.get(
+  "/api/churches/:churchId/message-history",
+  authHandlers.listMessageHistory,
+);
 app.post(
   "/api/churches/:churchId/notification-intents/:intentId/preview",
   authHandlers.getIntentPreview,
@@ -1438,6 +1442,10 @@ app.post(
 app.post(
   "/api/churches/:churchId/notification-batches/prepare",
   authHandlers.prepareAvailabilityBatch,
+);
+app.post(
+  "/api/churches/:churchId/notification-batches/custom/prepare",
+  authHandlers.prepareCustomBatch,
 );
 app.get(
   "/api/churches/:churchId/team-schedules/:scheduleId/initial-sms-recipients",
@@ -1454,6 +1462,10 @@ app.get(
 app.post(
   "/api/churches/:churchId/notification-batches/:batchId/dispatch",
   authHandlers.dispatchAvailabilityBatch,
+);
+app.post(
+  "/api/churches/:churchId/notification-batches/:batchId/abandon",
+  authHandlers.abandonAvailabilityBatch,
 );
 app.post(
   "/api/churches/:churchId/notification-intents/replacement-invitation",

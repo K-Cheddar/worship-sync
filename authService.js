@@ -7107,6 +7107,10 @@ const notificationIntentHandlers = createNotificationIntentHandlers({
   queryDocs,
   requireFirestore,
   requireTeamsEdit: requireTeamsEditSession,
+  authorizeCustomMember: (...args) =>
+    teamsAuthHandlers.requireCustomMessageMemberEdit(...args),
+  authorizeMessagingHistory: (...args) =>
+    teamsAuthHandlers.requireMessagingHistoryAccess(...args),
   authorizeSchedule: (...args) =>
     teamsAuthHandlers.requireTeamScheduleNotificationEdit(...args),
   authorizeScheduleActor: (...args) =>
