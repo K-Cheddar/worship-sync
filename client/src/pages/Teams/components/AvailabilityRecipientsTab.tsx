@@ -14,6 +14,19 @@ import type { AvailabilityProgressRow } from "../availabilityFormProgress";
 import { memberName } from "../teamsUtils";
 import { MemberNameWithIndicator } from "./CurrentUserMemberIndicator";
 
+const requestTone: Record<string, string> = {
+  Responded: "font-medium text-emerald-300",
+  "Awaiting response": "text-gray-200",
+  "Not requested": "text-gray-400",
+  Revoked: "text-rose-300",
+};
+const deliveryTone = (delivery: string) => {
+  if (/Failed|Unconfirmed|Undelivered/.test(delivery)) return "text-amber-300";
+  if (delivery === "Delivered") return "text-emerald-300";
+  if (delivery === "Sent") return "text-sky-300";
+  return "text-gray-400";
+};
+
 type Props = {
   rows: AvailabilityProgressRow[];
   teams: TeamRecord[];
@@ -50,28 +63,30 @@ const AvailabilityRecipientsTab = ({
       (!status || row.status === status) &&
       (!teamId || row.memberTeamIds.has(teamId)),
   );
-  const responded = rows.filter((row) => row.status === "Responded").length;
   return (
     <section
-      className="space-y-4"
+      className="space-y-3"
       aria-label="Recipient progress"
       aria-busy={!historyLoaded}
     >
-      <p className="text-sm text-gray-300" aria-live="polite">
-        Responded: {responded} of {rows.length}
-        {historyLoaded
-          ? ` · Awaiting responses: ${rows.filter((row) => row.status === "Awaiting response").length} · Not yet invited: ${rows.filter((row) => ["Not requested", "Revoked"].includes(row.status)).length}`
-          : " · Checking request history…"}
-      </p>
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div
+        className="grid grid-cols-2 gap-2 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)]"
+        aria-label="Recipient filters"
+      >
         <Input
+          className="col-span-2 sm:col-span-1"
           label="Search members"
+          labelStyle="compactLight"
+          labelFontSize="text-xs"
           value={search}
           onChange={(value) => setSearch(String(value))}
           placeholder="Search by name"
         />
         <Select
           label="Request status"
+          size="sm"
+          labelFontSize="text-xs"
+          labelClassName="font-medium text-gray-400"
           value={status}
           onChange={setStatus}
           options={[
@@ -86,6 +101,9 @@ const AvailabilityRecipientsTab = ({
         />
         <Select
           label="Team"
+          size="sm"
+          labelFontSize="text-xs"
+          labelClassName="font-medium text-gray-400"
           value={teamId}
           onChange={setTeamId}
           options={[
@@ -96,9 +114,9 @@ const AvailabilityRecipientsTab = ({
           ]}
         />
       </div>
-      <div className="divide-y divide-gray-800">
+      <div className="max-h-[55vh] overflow-y-auto divide-y divide-gray-800">
         <div
-          className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_3rem] gap-3 py-2 text-xs text-gray-400 sm:grid"
+          className="sticky top-0 z-10 hidden bg-gray-900 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_3rem] gap-3 py-2 text-xs text-gray-400 sm:grid"
           aria-hidden
         >
           <span>Member</span>
@@ -110,20 +128,24 @@ const AvailabilityRecipientsTab = ({
           ({ member, recipient, status: requestStatus, delivery }) => (
             <div
               key={member.memberId}
-              className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_3rem]"
+              className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0.5 py-2 text-sm sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_3rem]"
             >
               <MemberNameWithIndicator
                 name={memberName(member)}
                 memberId={member.memberId}
                 className="font-medium text-white"
               />
-              <span className="col-start-1 text-gray-300 sm:col-auto">
+              <span
+                className={`col-start-1 text-sm sm:col-auto ${requestTone[requestStatus] || "text-gray-300"}`}
+              >
                 {historyLoaded ||
                 ["Responded", "Revoked"].includes(requestStatus)
                   ? requestStatus
                   : "Checking history…"}
               </span>
-              <span className="col-start-1 text-xs text-gray-400 sm:col-auto sm:text-sm">
+              <span
+                className={`col-start-1 text-xs sm:col-auto ${deliveryTone(delivery)}`}
+              >
                 {historyLoaded ? delivery : "Checking delivery…"}
               </span>
               <DropdownMenu>

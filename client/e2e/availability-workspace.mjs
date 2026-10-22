@@ -53,17 +53,35 @@ const server = await preview({
 const browser = await chromium.launch({ headless: true });
 try {
   for (const width of [1280, 375]) {
-    const page = await browser.newPage({ viewport: { width, height: 800 } });
+    const page = await browser.newPage({ viewport: { width, height: width < 640 ? 640 : 800 } });
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
-    // History reads remain HTTP calls through the real API client; no real SMS or writes.
-    await page.route("**/api/**", (route) =>
-      route.fulfill({
+    let dispatches = 0;
+    // Exercise the real API client against reviewed fixtures; never contact a message provider.
+    await page.route("**/api/**", (route) => {
+      const url = route.request().url();
+      if (url.endsWith("/dispatch")) dispatches += 1;
+      const memberIds = url.endsWith("/prepare") ? route.request().postDataJSON().memberIds : [];
+      const eligible = Math.max(0, memberIds.length - 1);
+      const recipients = memberIds.map((memberId, index) => ({
+        memberId, memberName: memberId === "member-1" ? "John Davis" : `Volunteer ${memberId}`,
+        eligible: index < eligible, status: index < eligible ? "ready" : "excluded",
+        intentId: `intent-${memberId}`, segmentCount: index < eligible ? 1 : 0,
+        phoneNumberSnapshot: index < 2 ? "+12025550123" : "+12025550124",
+        message: index < eligible ? `Please share your availability: https://example.test/private/${memberId}` : "",
+        exclusionReason: index < eligible ? "" : "SMS consent is needed",
+      }));
+      return route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ success: true, intents: [], attempts: [] }),
-      }),
-    );
+        body: JSON.stringify(url.endsWith("/prepare") ? { success: true, batch: {
+          batchId: "batch", churchId: "church", formId: "form", intentType: "availability_request", reminderRound: 0,
+          status: "prepared", selectedMemberIds: memberIds, intentIds: recipients.map((recipient) => recipient.intentId),
+          approvalVersion: "review-v1", recipients,
+          summary: { selected: memberIds.length, requested: memberIds.length, eligible, excluded: 1, totalSegments: eligible, sent: 0, delivered: 0, failed: 0, uncertain: 0, awaitingDispatch: eligible },
+        } } : { success: true, intents: [], attempts: [] }),
+      });
+    });
     await page.goto(
       `http://127.0.0.1:3126/e2e/availability-workspace-fixture.html${width < 640 ? "?missingPurpose" : ""}`,
     );
@@ -73,6 +91,8 @@ try {
     await page.getByRole("tab", { name: "Recipients", exact: true }).waitFor();
     assert.equal(await page.getByRole("tab").count(), 2);
     assert.equal(await page.getByRole("checkbox").count(), 0);
+    assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuetext"), "1 of 30 responded");
+    assert.equal(await page.getByRole("button", { name: "Send requests", exact: true }).getAttribute("data-variant"), "presentCta");
     await page.screenshot({
       path: resolve(screenshots, `recipients-${width}.png`),
       fullPage: true,
@@ -88,6 +108,9 @@ try {
     } else {
       assert.equal(await page.getByRole("table").isVisible(), true);
     }
+    assert.equal(await page.getByRole("tab", { name: "Responses", exact: true }).getAttribute("aria-selected"), "true");
+    assert.equal(await page.getByRole("tab", { name: "Recipients", exact: true }).getAttribute("aria-selected"), "false");
+    await page.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished.catch(() => undefined))));
     assert(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= window.innerWidth,
@@ -116,8 +139,25 @@ try {
       path: resolve(screenshots, `send-${width}.png`),
       fullPage: true,
     });
+    const continueButton = page.getByRole("button", { name: "Continue to review", exact: true });
+    const selectionBounds = await page.getByRole("dialog").boundingBox();
+    const continueBounds = await continueButton.boundingBox();
+    assert(continueBounds.y + continueBounds.height <= selectionBounds.y + selectionBounds.height, "Continue remains inside the dialog viewport");
+    await continueButton.click();
+    await page.getByRole("dialog", { name: "Review text messages", exact: true }).waitFor();
+    const sendButton = page.getByRole("button", { name: "Send 28 messages", exact: true });
+    await sendButton.waitFor();
+    await page.getByText("View message", { exact: true }).first().click();
+    await page.getByText("Please share your availability: https://example.test/private/member-1", { exact: true }).waitFor();
+    const reviewBounds = await page.getByRole("dialog").boundingBox();
+    const sendBounds = await sendButton.boundingBox();
+    assert(sendBounds.y + sendBounds.height <= reviewBounds.y + reviewBounds.height, "Send remains inside the dialog viewport");
+    await page.screenshot({ path: resolve(screenshots, `review-${width}.png`), fullPage: true });
+    await page.getByRole("button", { name: "Back", exact: true }).click();
+    assert.equal(await page.getByRole("checkbox", { name: "John Davis", exact: true }).isChecked(), true);
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
     assert.equal(await page.getByRole("dialog").count(), 0);
+    assert.equal(dispatches, 0);
     assert.deepEqual(errors, []);
     await page.close();
   }

@@ -105,7 +105,7 @@ const AvailabilityBatchReview = ({
         </div>
         {sharedDestinationCount > 1 ? <p className="text-xs text-sky-200">Shared phone number · each volunteer gets a separate private message.</p> : null}
         {recipient.segmentCount > 1 ? <p className="text-xs text-gray-300">This longer message counts as {recipient.segmentCount} texts.</p> : null}
-        {recipient.message ? <details className="rounded bg-gray-950 px-3 py-2 text-sm text-gray-200"><summary className="cursor-pointer">View message</summary><p className="mt-2 whitespace-pre-wrap break-words">{recipient.message}</p><p className="mt-2 text-xs text-gray-400">{recipient.message.length} characters · {recipient.segmentCount} text segment{recipient.segmentCount === 1 ? "" : "s"}</p></details> : null}
+        {recipient.message ? <details open={mode === "confirmation" && batch.summary.eligible === 1} className="rounded bg-gray-950 px-3 py-2 text-sm text-gray-200"><summary className="cursor-pointer">View message</summary><p className="mt-2 whitespace-pre-wrap break-words">{recipient.message}</p><p className="mt-2 text-xs text-gray-400">{recipient.message.length} characters · {recipient.segmentCount} text segment{recipient.segmentCount === 1 ? "" : "s"}</p></details> : null}
         {!recipient.eligible && recipient.exclusionReason ? <p className="text-sm text-amber-200">Not included: {plainExclusionReason(recipient.exclusionReason)}</p> : null}
         {!recipient.eligible && recipient.status === "failed" && !recipient.exclusionReason ? <p className="text-sm text-amber-200">This message failed. Review message history before preparing a retry.</p> : null}
         {!recipient.eligible && (recipient.status === "unknown" || recipient.attemptOutcome === "unknown") ? <p className="text-sm text-amber-200">We couldn't confirm whether this text was sent. Check message history before trying again.</p> : null}
@@ -126,7 +126,7 @@ const AvailabilityBatchReview = ({
         {excludedRecipients.length ? (
           <div role="alert" className="rounded border border-amber-700 bg-amber-950/30 p-3 text-amber-100">
             <p className="font-medium">{excludedRecipients.length} selected volunteer{excludedRecipients.length === 1 ? " won't" : "s won't"} receive a new message.</p>
-            <ul className="mt-2 divide-y divide-amber-900">
+            <details className="mt-2"><summary className="cursor-pointer text-xs">View excluded volunteers</summary><ul className="mt-2 max-h-40 divide-y divide-amber-900 overflow-y-auto">
               {excludedRecipients.map((recipient) => (
                 <li key={recipient.memberId} className="py-2">
                   <MemberNameWithIndicator
@@ -137,7 +137,7 @@ const AvailabilityBatchReview = ({
                   {recipient.exclusionReason ? <span>: {plainExclusionReason(recipient.exclusionReason)}</span> : null}
                 </li>
               ))}
-            </ul>
+            </ul></details>
           </div>
         ) : null}
         {eligibleRecipients.length ? (

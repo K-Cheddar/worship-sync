@@ -1,5 +1,15 @@
 # Availability forms workspace plan
 
+## Visual and send-flow refinement (2026-10-21)
+
+Goal / Before / After: retain the current Forms route and legacy classification, but replace the weak tab-local progress line with three compact callouts and one completion bar directly below the header. Integrate refresh there, use existing CTA and line-tab styles, tighten roster rows/filters and bound list height. Give the existing send dialog an explicit two-step indicator, a concise selection step and a clear footer. Exact message content remains confined to reviewed messages.
+
+Product Decision Check: the current visual-polish request authorizes these presentation and interaction refinements. Existing team-availability SMS contract, source records, eligibility, automatic first-time selection, explicit definitive-failure retries, uncertainty/accepted-send blocks, consent, approval versions, permissions and links remain unchanged. No new Forms architecture, persistence, delivery policy or data source.
+
+Implementation / affected surfaces: compose existing Workspace, RecipientsTab, ResponsesTab, FormSendFlow and BatchReview. Use Button cta and canonical line tabs; shared primitives and default advanced Messages behavior stay stable. Summary derives from the same unfiltered progress rows, never filtered results. History-dependent counts remain unknown until full history loads. Keep diagnostics collapsed and individual exclusion explanations available progressively without making blocked rows selectable.
+
+Risks / verification: counts during loading/error, zero recipients, refresh, switching tabs, preserved selection across filters/Back, excluded final review recipients, and small-screen footer visibility. Test these through the real Forms page plus existing focused send/eligibility/history/approval suites; inspect actual-route browser screenshots on desktop/mobile. Run TypeScript, lint, strict build and diff check, then code-review. No unresolved product question.
+
 ## Legacy classification correction (2026-10-21)
 
 Goal / Before / After: the purpose-only detail gate skips general_intake and purpose-less records with service-date availability. Use the workspace for explicit team_availability forms, or forms with a resolved availability field and saved occurrences or service selections. Names do not determine classification. Ordinary onboarding without service-date coverage keeps its existing view.

@@ -13,6 +13,8 @@ import {
   TabsContent,
   TabsList,
   TabsTrigger,
+  lineTabsListShellClassName,
+  lineTabsTriggerClassName,
 } from "../../../components/ui/tabs";
 import type { AvailabilityProgressRow } from "../availabilityFormProgress";
 import { formatPlainDateRangeLabel, memberName } from "../teamsUtils";
@@ -93,6 +95,16 @@ const AvailabilityFormWorkspace = ({
     (row) => row.member.memberId === historyMemberId,
   );
   const historyRecipient = historyRow?.recipient;
+  const responded = rows.filter((row) => row.status === "Responded").length;
+  const awaiting = rows.filter(
+    (row) => row.status === "Awaiting response",
+  ).length;
+  const notInvited = rows.filter((row) =>
+    ["Not requested", "Revoked"].includes(row.status),
+  ).length;
+  const completion = rows.length
+    ? Math.round((responded / rows.length) * 100)
+    : 0;
   const intents = notificationIntents.filter(
     (intent) =>
       historyRecipient &&
@@ -138,7 +150,7 @@ const AvailabilityFormWorkspace = ({
         </div>
         {canEdit ? (
           <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <Button disabled={!form.active} onClick={onSend}>
+            <Button variant="cta" disabled={!form.active} onClick={onSend}>
               Send requests
             </Button>
             <Button
@@ -176,21 +188,61 @@ const AvailabilityFormWorkspace = ({
           </div>
         ) : null}
       </header>
-      <div className="mt-4 flex items-center gap-3">
-        <Button
-          variant="textLink"
-          disabled={refreshing}
-          isLoading={refreshing}
-          onClick={onRefresh}
+      <section
+        className="mt-4 rounded-md bg-gray-950/50 px-3 py-3"
+        aria-label="Response progress"
+        aria-busy={refreshing || !historyLoaded}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <dl className="grid flex-1 grid-cols-3 gap-3 sm:max-w-lg sm:gap-8">
+            <div>
+              <dt className="text-xs text-gray-400">Responded</dt>
+              <dd className="mt-1 text-xl font-semibold tabular-nums text-emerald-300">
+                {responded}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-gray-400">Awaiting response</dt>
+              <dd className="mt-1 text-xl font-semibold tabular-nums text-white">
+                {historyLoaded ? awaiting : "—"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-gray-400">Not invited</dt>
+              <dd className="mt-1 text-xl font-semibold tabular-nums text-gray-200">
+                {historyLoaded ? notInvited : "—"}
+              </dd>
+            </div>
+          </dl>
+          <Button
+            variant="textLink"
+            disabled={refreshing}
+            isLoading={refreshing}
+            onClick={onRefresh}
+          >
+            Refresh status
+          </Button>
+        </div>
+        <div
+          className="mt-3 h-2 overflow-hidden rounded-full bg-gray-700"
+          role="progressbar"
+          aria-label="Availability response completion"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={completion}
+          aria-valuetext={`${responded} of ${rows.length} responded`}
         >
-          Refresh status
-        </Button>
-        {refreshing ? (
-          <span role="status" className="text-sm text-gray-400">
-            Refreshing responses…
-          </span>
-        ) : null}
-      </div>
+          <div
+            className="h-full rounded-full bg-cyan-500 transition-[width] motion-reduce:transition-none"
+            style={{ width: `${completion}%` }}
+          />
+        </div>
+        <p className="mt-1.5 text-xs text-gray-400" aria-live="polite">
+          {responded} of {rows.length} responded
+          {refreshing ? " · Refreshing…" : ""}
+          {!historyLoaded ? " · Checking request history…" : ""}
+        </p>
+      </section>
       {refreshError ? (
         <p role="alert" className="mt-2 text-sm text-red-200">
           {refreshError}
@@ -208,9 +260,17 @@ const AvailabilityFormWorkspace = ({
         </div>
       ) : null}
       <Tabs defaultValue="recipients" className="mt-3 min-h-0 min-w-0">
-        <TabsList variant="navigation" aria-label="Availability form details">
-          <TabsTrigger value="recipients">Recipients</TabsTrigger>
-          <TabsTrigger value="responses">Responses</TabsTrigger>
+        <TabsList
+          variant="line"
+          className={`${lineTabsListShellClassName} h-11! min-h-11 shrink-0 sm:max-w-md`}
+          aria-label="Availability form details"
+        >
+          <TabsTrigger value="recipients" className={lineTabsTriggerClassName}>
+            Recipients
+          </TabsTrigger>
+          <TabsTrigger value="responses" className={lineTabsTriggerClassName}>
+            Responses
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="recipients" className="pt-4">
           <AvailabilityRecipientsTab
@@ -293,8 +353,7 @@ const AvailabilityFormWorkspace = ({
                       {intent.intentType === "availability_reminder"
                         ? "Reminder"
                         : "Request"}{" "}
-                      ·{" "}
-                      {intentStatusLabels[intent.status]}
+                      · {intentStatusLabels[intent.status]}
                     </li>
                   ))}
                 </ul>
@@ -302,7 +361,8 @@ const AvailabilityFormWorkspace = ({
                   {attempts.map((attempt) => (
                     <li key={attempt.attemptId}>
                       {new Date(attempt.createdAt).toLocaleString()} · Delivery:{" "}
-                      {attempt.outcome === "unknown" || (attempt.status === "failed" && !attempt.outcome)
+                      {attempt.outcome === "unknown" ||
+                      (attempt.status === "failed" && !attempt.outcome)
                         ? "Unconfirmed · check history before retrying"
                         : deliveryStatusLabels[attempt.status]}
                     </li>
