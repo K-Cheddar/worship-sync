@@ -88,28 +88,17 @@ try {
     await page
       .getByRole("button", { name: "Edit October Availability", exact: true })
       .click();
-    await page.getByRole("tab", { name: "Recipients", exact: true }).waitFor();
-    assert.equal(await page.getByRole("tab").count(), 2);
+    await page.getByRole("region", { name: "Volunteers", exact: true }).waitFor();
+    assert.equal(await page.getByRole("tab").count(), 0);
     assert.equal(await page.getByRole("checkbox").count(), 0);
     assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuetext"), "1 of 30 responded");
     assert.equal(await page.getByRole("button", { name: "Send requests", exact: true }).getAttribute("data-variant"), "presentCta");
     await page.screenshot({
-      path: resolve(screenshots, `recipients-${width}.png`),
+      path: resolve(screenshots, `volunteers-${width}.png`),
       fullPage: true,
     });
-    await page.getByRole("tab", { name: "Responses", exact: true }).click();
-    if (width < 640) {
-      assert.equal(await page.getByRole("table").isVisible(), false);
-      await page.locator("summary").filter({ hasText: "Jane Smith" }).click();
-      await page
-        .getByLabel("Volunteer responses")
-        .getByText("Unavailable", { exact: true })
-        .waitFor();
-    } else {
-      assert.equal(await page.getByRole("table").isVisible(), true);
-    }
-    assert.equal(await page.getByRole("tab", { name: "Responses", exact: true }).getAttribute("aria-selected"), "true");
-    assert.equal(await page.getByRole("tab", { name: "Recipients", exact: true }).getAttribute("aria-selected"), "false");
+    await page.getByRole("button", { name: "View availability for Jane Smith", exact: true }).click();
+    await page.getByRole("region", { name: "Jane Smith availability details" }).getByText("No answer", { exact: true }).waitFor();
     await page.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished.catch(() => undefined))));
     assert(
       await page.evaluate(
@@ -118,9 +107,20 @@ try {
       `Page overflows at ${width}px`,
     );
     await page.screenshot({
-      path: resolve(screenshots, `responses-${width}.png`),
+      path: resolve(screenshots, `answers-${width}.png`),
       fullPage: true,
     });
+    await page.getByRole("button", { name: "View availability by date", exact: true }).click();
+    const comparison = page.getByRole("dialog", { name: "Availability by date", exact: true });
+    await comparison.waitFor();
+    await comparison.getByRole("combobox", { name: /Service date/ }).click();
+    await page.getByRole("option", { name: /October 11, 2026/ }).click();
+    await comparison.getByRole("listitem", { name: "Jane Smith: Unavailable", exact: true }).waitFor();
+    await page.screenshot({
+      path: resolve(screenshots, `comparison-${width}.png`),
+      fullPage: true,
+    });
+    await comparison.getByRole("button", { name: "Close modal", exact: true }).click();
     await page
       .getByRole("button", { name: "Send requests", exact: true })
       .click();

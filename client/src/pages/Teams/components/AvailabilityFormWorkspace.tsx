@@ -8,18 +8,10 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../../../components/ui/DropdownMenu";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-  lineTabsListShellClassName,
-  lineTabsTriggerClassName,
-} from "../../../components/ui/tabs";
 import type { AvailabilityProgressRow } from "../availabilityFormProgress";
 import { formatPlainDateRangeLabel, memberName } from "../teamsUtils";
-import AvailabilityRecipientsTab from "./AvailabilityRecipientsTab";
-import AvailabilityResponsesTab from "./AvailabilityResponsesTab";
+import AvailabilityVolunteersList from "./AvailabilityVolunteersList";
+import AvailabilityDateComparison from "./AvailabilityDateComparison";
 import AvailabilityFormSendFlow from "./AvailabilityFormSendFlow";
 
 const intentStatusLabels = {
@@ -44,7 +36,7 @@ type Props = {
   rows: AvailabilityProgressRow[];
   sendFlowProps: ComponentProps<typeof AvailabilityFormSendFlow>;
   recipientActions: Pick<
-    ComponentProps<typeof AvailabilityRecipientsTab>,
+    ComponentProps<typeof AvailabilityVolunteersList>,
     "onCreateLink" | "onCopyLink" | "onOpenLink" | "onRevoke"
   >;
   canEdit: boolean;
@@ -82,6 +74,7 @@ const AvailabilityFormWorkspace = ({
 }: Props) => {
   const [historyMemberId, setHistoryMemberId] = useState("");
   const [copying, setCopying] = useState(false);
+  const [comparisonOpen, setComparisonOpen] = useState(false);
   const {
     form,
     teams,
@@ -259,43 +252,35 @@ const AvailabilityFormWorkspace = ({
           </Button>
         </div>
       ) : null}
-      <Tabs defaultValue="recipients" className="mt-3 min-h-0 min-w-0">
-        <TabsList
-          variant="line"
-          className={`${lineTabsListShellClassName} h-11! min-h-11 shrink-0 sm:max-w-md`}
-          aria-label="Availability form details"
-        >
-          <TabsTrigger value="recipients" className={lineTabsTriggerClassName}>
-            Recipients
-          </TabsTrigger>
-          <TabsTrigger value="responses" className={lineTabsTriggerClassName}>
-            Responses
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="recipients" className="pt-4">
-          <AvailabilityRecipientsTab
-            rows={rows}
-            teams={teams.filter(
-              (team) =>
-                !(form.teamIds || []).length ||
-                form.teamIds?.includes(team.teamId),
-            )}
-            canEdit={canEdit}
-            busy={linkBusy}
-            historyLoaded={historyLoaded}
-            {...recipientActions}
-            onHistory={setHistoryMemberId}
-          />
-        </TabsContent>
-        <TabsContent value="responses" className="min-w-0 pt-4">
-          <AvailabilityResponsesTab
-            rows={rows.filter((row) => !row.recipient?.revokedAt)}
-            form={form}
-            serviceTimeZone={serviceTimeZone}
-          />
-          {submissionReview}
-        </TabsContent>
-      </Tabs>
+      <AvailabilityVolunteersList
+        rows={rows}
+        form={form}
+        teams={teams.filter(
+          (team) =>
+            !(form.teamIds || []).length ||
+            form.teamIds?.includes(team.teamId),
+        )}
+        canEdit={canEdit}
+        busy={linkBusy}
+        historyLoaded={historyLoaded}
+        serviceTimeZone={serviceTimeZone}
+        {...recipientActions}
+        onHistory={setHistoryMemberId}
+        onViewAvailability={() => setComparisonOpen(true)}
+      />
+      {submissionReview}
+      <AvailabilityDateComparison
+        rows={rows}
+        form={form}
+        teams={teams.filter(
+          (team) =>
+            !(form.teamIds || []).length ||
+            form.teamIds?.includes(team.teamId),
+        )}
+        serviceTimeZone={serviceTimeZone}
+        isOpen={comparisonOpen}
+        onClose={() => setComparisonOpen(false)}
+      />
       {sendOpen && canEdit && form.active ? (
         <AvailabilityFormSendFlow {...sendFlowProps} dialog />
       ) : null}

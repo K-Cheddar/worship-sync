@@ -6,7 +6,10 @@ import type {
   TeamIntakeSubmission,
   TeamRosterMember,
 } from "../../api/authTypes";
-import { getAvailabilityFormProgress } from "./availabilityFormProgress";
+import {
+  getAvailabilityFormProgress,
+  summarizeAvailabilityAnswers,
+} from "./availabilityFormProgress";
 
 const form: TeamIntakeForm = {
   formId: "form",
@@ -161,6 +164,8 @@ test("revocation stays visible and unrelated form submissions cannot become answ
     [],
   );
   expect(row.status).toBe("Revoked");
+  expect(row.hasResponseDetails).toBe(false);
+  expect(row.occurrenceAvailability).toEqual({});
 });
 
 test("recreating a revoked link cannot reuse a stale response projection", () => {
@@ -170,5 +175,46 @@ test("recreating a revoked link cannot reuse a stale response projection", () =>
     occurrenceAvailability: { sunday: "available" },
   }], []);
   expect(row.responded).toBe(false);
+  expect(row.hasResponseDetails).toBe(false);
   expect(row.occurrenceAvailability).toEqual({});
+});
+
+test("a replacement request cannot inherit an earlier response and current timestamps select updated answers", () => {
+  const oldResponse = {
+    formId: form.formId,
+    memberId: member.memberId,
+    recipientId: recipient.recipientId,
+    respondedAt: recipient.createdAt,
+    submittedAt: recipient.createdAt,
+    occurrenceAvailability: { sunday: "available" as const },
+  };
+  const replacement = { ...recipient, respondedAt: null, submissionId: null };
+  const [notResponded] = getAvailabilityFormProgress(
+    { ...input, recipients: [replacement] },
+    [oldResponse],
+    [],
+  );
+  expect(notResponded.status).toBe("Not requested");
+  expect(notResponded.occurrenceAvailability).toEqual({});
+
+  const currentResponse = {
+    ...oldResponse,
+    respondedAt: "2026-10-02T00:00:00Z",
+    occurrenceAvailability: { sunday: "unavailable" as const },
+  };
+  const [updated] = getAvailabilityFormProgress(
+    { ...input, recipients: [{ ...replacement, respondedAt: currentResponse.respondedAt }] },
+    [oldResponse, currentResponse],
+    [],
+  );
+  expect(updated.occurrenceAvailability).toEqual({ sunday: "unavailable" });
+});
+
+test("availability summaries count only explicit available and unavailable answers", () => {
+  expect(
+    summarizeAvailabilityAnswers(
+      { one: "available", two: "unavailable" },
+      ["one", "two", "three"],
+    ),
+  ).toEqual({ available: 1, unavailable: 1, answered: 2, total: 3 });
 });

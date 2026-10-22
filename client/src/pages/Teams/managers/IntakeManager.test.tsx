@@ -198,38 +198,123 @@ const workspaceForm: TeamIntakeForm = {
   availabilityOccurrences: [{ occurrenceId: "sunday", serviceId: "service", name: "Sunday", serviceDate: "2026-10-18", startsAt: "2026-10-18T10:00:00Z" }],
 };
 
-test("availability workspace opens recipients first, searches, and shows canonical responses on both layouts", async () => {
+test("availability workspace shows one searchable volunteer list and inline answers", async () => {
   const user = userEvent.setup();
   renderManager({ forms: [workspaceForm], intakeRecipients: [{ ...recipient, respondedAt: "2026-10-01T10:00:00Z" }], availabilityResponses: [{ formId: form.formId, recipientId: recipient.recipientId, memberId: member.memberId, respondedAt: "2026-10-01T10:00:00Z", submittedAt: "2026-10-01T10:00:00Z", occurrenceAvailability: { sunday: "available" } }] });
   await openForm(user);
-  expect(screen.getAllByRole("tab")).toHaveLength(2);
-  expect(screen.getByRole("tab", { name: "Recipients" })).toHaveAttribute("data-state", "active");
+  expect(screen.queryByRole("tab")).not.toBeInTheDocument();
   expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
   expect(screen.queryByText("Individual links and text messages")).not.toBeInTheDocument();
   expect(screen.getByRole("progressbar", { name: "Availability response completion" })).toHaveAttribute("aria-valuetext", "1 of 1 responded");
-  await user.click(screen.getByRole("combobox", { name: /Request status/ }));
-  await user.click(screen.getByRole("option", { name: "Not requested" }));
+  const volunteers = screen.getByRole("region", { name: "Volunteers" });
+  await user.click(within(volunteers).getByRole("combobox", { name: /Response\/request status/ }));
+  await user.click(screen.getByRole("option", { name: "Not invited" }));
   expect(screen.getByText("No volunteers match these filters.")).toBeInTheDocument();
-  await user.click(screen.getByRole("combobox", { name: /Request status/ }));
+  await user.click(within(volunteers).getByRole("combobox", { name: /Response\/request status/ }));
   await user.click(screen.getByRole("option", { name: "All statuses" }));
-  await user.type(screen.getByRole("textbox", { name: /Search members/ }), "missing");
+  await user.type(within(volunteers).getByRole("textbox", { name: /Search volunteers/ }), "missing");
   expect(screen.getByText("No volunteers match these filters.")).toBeInTheDocument();
-  await user.click(screen.getByRole("tab", { name: "Responses" }));
-  expect(screen.getByText("1 of 1 responded · 0 awaiting responses")).toBeInTheDocument();
-  expect(within(screen.getByRole("table", { name: "Availability response matrix" })).getByText("Available")).toBeInTheDocument();
-  const mobile = screen.getByLabelText("Volunteer responses");
-  const card = within(mobile).getByRole("group");
-  await user.click(within(card).getByText("Rae Kim"));
-  expect(card).toHaveAttribute("open");
-  expect(within(mobile).getByText("Available")).toBeInTheDocument();
-  await user.click(screen.getByRole("combobox", { name: /Response status/ }));
-  await user.click(screen.getByRole("option", { name: "Unanswered" }));
-  expect(screen.getByText("No volunteers match these filters.")).toBeInTheDocument();
-  await user.click(screen.getByRole("combobox", { name: /Response status/ }));
-  await user.click(screen.getByRole("option", { name: "Incomplete responses" }));
-  expect(screen.getByText("No volunteers match these filters.")).toBeInTheDocument();
+  await user.clear(within(volunteers).getByRole("textbox", { name: /Search volunteers/ }));
+  await user.click(screen.getByRole("button", { name: "View availability for Rae Kim" }));
+  expect(within(screen.getByRole("region", { name: "Rae Kim availability details" })).getByText("Available")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "View availability by date" }));
+  const comparison = screen.getByRole("dialog", { name: "Availability by date" });
+  expect(within(comparison).getAllByText("Available", { exact: true }).length).toBeGreaterThan(0);
+  await user.click(within(comparison).getByRole("combobox", { name: /^Team:/ }));
+  expect(screen.getByRole("option", { name: "All teams" })).toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  await user.click(within(comparison).getByRole("button", { name: "Close modal" }));
   await user.click(screen.getByRole("button", { name: "All forms" }));
   expect(screen.getByRole("button", { name: `Edit ${form.name}` })).toBeInTheDocument();
+});
+
+test("volunteer status, team and incomplete-answer filters keep missing responses distinct", async () => {
+  const user = userEvent.setup();
+  const incomplete = {
+    ...member,
+    memberId: "member-2",
+    firstName: "Incomplete",
+    lastName: "Volunteer",
+  };
+  const uninvited = {
+    ...member,
+    memberId: "member-3",
+    firstName: "Uninvited",
+    lastName: "Volunteer",
+    teamMemberships: { "team-2": { teamId: "team-2" } },
+  };
+  const multiTeamForm = { ...workspaceForm, teamIds: ["team-1", "team-2"] };
+  const secondRecipient = { ...recipient, recipientId: "recipient-2", memberId: incomplete.memberId, respondedAt: "2026-10-02T10:00:00Z" };
+  const answeredAt = "2026-10-01T10:00:00Z";
+  renderManager({
+    forms: [multiTeamForm],
+    members: [member, incomplete, uninvited],
+    teams: [
+      { teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: [member.memberId, incomplete.memberId] },
+      { teamId: "team-2", churchId: "church-1", name: "Media", memberIds: [uninvited.memberId] },
+    ],
+    intakeRecipients: [
+      { ...recipient, respondedAt: answeredAt },
+      secondRecipient,
+    ],
+    availabilityResponses: [
+      { formId: form.formId, recipientId: recipient.recipientId, memberId: member.memberId, respondedAt: answeredAt, submittedAt: answeredAt, occurrenceAvailability: { sunday: "available" } },
+      { formId: form.formId, recipientId: secondRecipient.recipientId, memberId: incomplete.memberId, respondedAt: secondRecipient.respondedAt!, submittedAt: secondRecipient.respondedAt!, occurrenceAvailability: {} },
+    ],
+  });
+  await openForm(user);
+  const volunteers = screen.getByRole("region", { name: "Volunteers" });
+  const statusFilter = within(volunteers).getByRole("combobox", { name: /Response\/request status/ });
+  await user.click(statusFilter);
+  await user.click(screen.getByRole("option", { name: "Incomplete responses" }));
+  expect(screen.getByText("Incomplete Volunteer")).toBeInTheDocument();
+  expect(screen.queryByText("Uninvited Volunteer")).not.toBeInTheDocument();
+  expect(screen.getByText("0 of 1 answered")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "View availability for Incomplete Volunteer" }));
+  expect(screen.getByText("No answer")).toBeInTheDocument();
+
+  await user.click(statusFilter);
+  await user.click(screen.getByRole("option", { name: "Not invited" }));
+  await user.click(within(volunteers).getByRole("combobox", { name: /^Team:/ }));
+  await user.click(screen.getByRole("option", { name: "Media" }));
+  expect(screen.getByText("Uninvited Volunteer")).toBeInTheDocument();
+  expect(screen.queryByText("Incomplete Volunteer")).not.toBeInTheDocument();
+  expect(screen.getByText("—")).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "View availability by date" }));
+  const comparison = screen.getByRole("dialog", { name: "Availability by date" });
+  await user.click(within(comparison).getByRole("combobox", { name: /^Team:/ }));
+  await user.click(screen.getByRole("option", { name: "Media" }));
+  expect(within(comparison).getByRole("listitem", { name: "Uninvited Volunteer: No response" })).toBeInTheDocument();
+  expect(within(comparison).queryByRole("listitem", { name: "Incomplete Volunteer: No answer" })).not.toBeInTheDocument();
+});
+
+test("large volunteer lists paginate without dropping roster members", async () => {
+  const user = userEvent.setup();
+  const roster = Array.from({ length: 51 }, (_, index) => ({
+    ...member,
+    memberId: `bulk-${index}`,
+    firstName: `Volunteer${index}`,
+    lastName: "Roster",
+  }));
+  renderManager({
+    forms: [workspaceForm],
+    members: roster,
+    intakeRecipients: [],
+    teams: [{
+      teamId: "team-1",
+      churchId: "church-1",
+      name: "Worship",
+      memberIds: roster.map((row) => row.memberId),
+    }],
+  });
+  await openForm(user);
+  expect(screen.getByText("Page 1 of 2 · 51 volunteers")).toBeInTheDocument();
+  expect(screen.getByText("Volunteer0 Roster")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Next" }));
+  expect(screen.getByText("Page 2 of 2 · 51 volunteers")).toBeInTheDocument();
+  expect(screen.getByText("Volunteer50 Roster")).toBeInTheDocument();
+  expect(screen.queryByText("Volunteer0 Roster")).not.toBeInTheDocument();
 });
 
 test("availability row and header menus keep private and general links separate", async () => {
@@ -360,8 +445,8 @@ test("availability-only manager hides member intake and consent details", async 
 
   await openForm(user);
 
-  expect(screen.getByRole("tab", { name: "Recipients" })).toHaveAttribute("data-state", "active");
-  expect(screen.getByRole("tab", { name: "Responses" })).toBeInTheDocument();
+  expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Volunteers" })).toBeInTheDocument();
   expect(screen.queryByText("Not eligible to receive text messages")).not.toBeInTheDocument();
   expect(screen.queryByText(/Text message consent needed|This phone number opted out|No mobile number/)).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Send text message" })).not.toBeInTheDocument();
