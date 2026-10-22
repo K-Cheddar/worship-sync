@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import ChurchServiceTimeZoneGate from "./ChurchServiceTimeZoneGate";
+import userEvent from "@testing-library/user-event";
+import ChurchServiceTimeZoneGate, { ChurchServiceTimeZoneNotice } from "./ChurchServiceTimeZoneGate";
 
 const mockTimeZoneValue = {
   status: "error" as "loading" | "ready" | "error",
@@ -24,7 +25,8 @@ describe("ChurchServiceTimeZoneGate", () => {
     mockTimeZoneValue.refresh.mockClear();
   });
 
-  it("blocks date-dependent children when no church time zone has loaded", () => {
+  it("blocks date-dependent children when no church time zone has loaded", async () => {
+    const user = userEvent.setup();
     render(
       <MemoryRouter>
         <ChurchServiceTimeZoneGate area="Schedules">
@@ -37,6 +39,19 @@ describe("ChurchServiceTimeZoneGate", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/date-based Schedules actions are unavailable/i);
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Open Service setup" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(mockTimeZoneValue.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows children without a notice after a successful initial load", () => {
+    mockTimeZoneValue.status = "ready";
+    mockTimeZoneValue.timeZone = "America/New_York";
+    mockTimeZoneValue.isConfigured = true;
+    mockTimeZoneValue.refreshIssue = null;
+    render(<ChurchServiceTimeZoneGate area="Schedules"><p>Schedule editor</p></ChurchServiceTimeZoneGate>);
+    expect(screen.getByText("Schedule editor")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("keeps children available without a warning after a transient failure with a confirmed church time zone", () => {
@@ -97,7 +112,7 @@ describe("ChurchServiceTimeZoneGate", () => {
   });
 
   it.each(["authentication", "permission", "configuration"] as const)(
-    "shows a non-blocking %s refresh notice with a confirmed time zone",
+    "does not show a %s refresh notice with a confirmed time zone",
     (kind) => {
       mockTimeZoneValue.status = "ready";
       mockTimeZoneValue.timeZone = "America/New_York";
@@ -106,6 +121,7 @@ describe("ChurchServiceTimeZoneGate", () => {
 
       render(
         <MemoryRouter>
+          <ChurchServiceTimeZoneNotice area="Availability Forms" />
           <ChurchServiceTimeZoneGate area="Schedules">
             <p>Schedule editor</p>
           </ChurchServiceTimeZoneGate>
@@ -113,9 +129,9 @@ describe("ChurchServiceTimeZoneGate", () => {
       );
 
       expect(screen.getByText("Schedule editor")).toBeInTheDocument();
-      expect(screen.getByRole("status")).toHaveTextContent(/confirmed church time zone is still available/i);
-      expect(screen.getByRole("status")).toHaveTextContent(/could not be checked|needs a valid sign-in|could not be read/i);
-      expect(Boolean(screen.queryByRole("button", { name: "Retry" }))).toBe(kind !== "configuration");
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
     },
   );
 });

@@ -1250,8 +1250,10 @@ describe("MySchedule", () => {
 
       await expandTimeOff(user);
       await user.click(screen.getByRole("button", { name: "Add single day" }));
+      expect(screen.getByRole("button", { name: /^Time off/i })).toHaveTextContent("1 upcoming");
       await user.click(screen.getByRole("textbox", { name: "Day you're away" }));
       await selectCalendarDay(user, firstDate);
+      expect(screen.getByRole("button", { name: /^Time off/i })).toHaveTextContent("2 upcoming");
 
       expect(screen.getByRole("textbox", { name: "Day you're away" })).toHaveValue(
         `${String(firstDate.getMonth() + 1).padStart(2, "0")}/${String(firstDate.getDate()).padStart(2, "0")}/${firstDate.getFullYear()}`,
@@ -1318,6 +1320,13 @@ describe("MySchedule", () => {
       expect(screen.getByRole("alert")).toHaveTextContent(/complete or remove each unfinished date/i);
       expect(screen.getByRole("button", { name: "Save time off" })).toBeDisabled();
 
+      await user.keyboard("{Escape}");
+      await user.click(screen.getByRole("button", { name: /^Time off/i }));
+      expect(screen.getByRole("button", { name: /^Time off/i })).toHaveTextContent("No upcoming time off");
+      expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: /^Time off/i }));
+      expect(screen.getByRole("textbox", { name: "Dates you're away" })).toBeInTheDocument();
+
       if (!screen.queryByRole("dialog")) {
         await user.click(screen.getByRole("button", { name: "Open date range calendar" }));
       }
@@ -1325,6 +1334,7 @@ describe("MySchedule", () => {
       expect(screen.getByRole("textbox", { name: "Dates you're away" })).toBeInTheDocument();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Save time off" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: /^Time off/i })).toHaveTextContent("1 upcoming");
       await user.click(screen.getByRole("button", { name: "Save time off" }));
 
       const expectedDate = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;

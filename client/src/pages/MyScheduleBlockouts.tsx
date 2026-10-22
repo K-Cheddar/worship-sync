@@ -111,6 +111,7 @@ const MyScheduleBlockouts = ({
     [draft, serviceTimeZone],
   );
   const editorRanges = draftCurrent;
+  const upcomingCount = draftCurrent.filter(isValidBlockoutDateRange).length;
   const hasIncompleteDraft = draft.some((range) => !isValidBlockoutDateRange(range));
   const earliestEditableDate = calendarDateInTimeZone(new Date(), serviceTimeZone);
   const [saving, setSaving] = useState(false);
@@ -257,7 +258,7 @@ const MyScheduleBlockouts = ({
           <Icon svg={CalendarOff} size="sm" className="shrink-0 text-orange-300" />
           <span className="text-sm font-semibold text-gray-100">Time off</span>
           <span className="truncate text-xs text-gray-400">
-            {summarizeEntries(draftCurrent.length)}
+            {summarizeEntries(upcomingCount)}
           </span>
           {isDirty ? (
             <span className="shrink-0 rounded-full border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-medium text-cyan-200">

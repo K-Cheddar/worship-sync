@@ -1,4 +1,6 @@
-import { act, render, renderHook, waitFor } from "@testing-library/react";
+import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+import ChurchServiceTimeZoneGate from "../pages/Teams/components/ChurchServiceTimeZoneGate";
 import type { PropsWithChildren } from "react";
 import { AuthApiError, getChurchServiceTimeZone } from "../api/auth";
 import { setDisplayToken } from "../utils/authStorage";
@@ -206,6 +208,18 @@ describe("ChurchServiceTimeZoneProvider", () => {
     expect(streamConnections).toHaveLength(2);
     expect(mockGetChurchServiceTimeZone).toHaveBeenCalledTimes(2);
     expect(result.current.refreshIssue).toBeNull();
+  });
+
+  it.each([401, 403, 400])("keeps the actual gate quiet after a background HTTP %s failure", async (status) => {
+    mockGetChurchServiceTimeZone.mockResolvedValueOnce(serviceTimeZoneResult("America/New_York") as never);
+    render(<MemoryRouter><ChurchServiceTimeZoneGate area="Schedules"><p>Schedule editor</p></ChurchServiceTimeZoneGate></MemoryRouter>, { wrapper });
+    expect(await screen.findByText("Schedule editor")).toBeInTheDocument();
+    mockGetChurchServiceTimeZone.mockRejectedValueOnce(new AuthApiError("Refresh failed", { status }));
+    emitRevision("revision-2");
+    await waitFor(() => expect(mockGetChurchServiceTimeZone).toHaveBeenCalledTimes(2));
+    expect(screen.getByText("Schedule editor")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
   it("does not expose a prior device value and ignores its late response", async () => {

@@ -233,7 +233,7 @@ const AvailabilityVolunteersList = ({
 
       <div className="max-h-[58vh] overflow-y-auto divide-y divide-gray-800" role="table" aria-label="Availability volunteers">
         <div
-          className="sr-only sm:not-sr-only sm:sticky sm:top-0 sm:z-10 sm:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)_3rem] sm:gap-3 sm:bg-gray-900 sm:py-2 sm:text-xs sm:text-gray-400 sm:grid"
+          className="sr-only sm:not-sr-only sm:sticky sm:top-0 sm:z-10 sm:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)_3rem] sm:gap-3 sm:bg-gray-900 sm:py-1 sm:text-xs sm:text-gray-400 sm:grid"
           role="row"
         >
           <span role="columnheader">Volunteer</span>
@@ -253,12 +253,12 @@ const AvailabilityVolunteersList = ({
               )
             : null;
           return (
-            <div key={member.memberId} role="rowgroup" className="py-2">
+            <div key={member.memberId} role="rowgroup" className="py-1">
               <div
                 role="row"
                 className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)_3rem]"
               >
-                <div role="cell" className="min-w-0">
+                <div role="cell" className="min-w-0 text-sm">
                   {canExpand ? (
                     <button
                       type="button"
@@ -280,7 +280,7 @@ const AvailabilityVolunteersList = ({
                 </div>
 
                 <div role="cell" className="col-start-1 row-start-2 min-w-0 sm:col-auto sm:row-auto">
-                  <span className={`text-sm ${requestTone[row.status] || "text-gray-300"}`}>
+                  <span className={`text-xs ${requestTone[row.status] || "text-gray-300"}`}>
                     {requestStatusLabel(row)}
                   </span>
                   {row.delivery !== "—" ? (
@@ -292,7 +292,7 @@ const AvailabilityVolunteersList = ({
                   ) : null}
                 </div>
 
-                <div role="cell" className="col-start-2 row-start-2 text-right text-sm text-gray-300 sm:col-start-auto sm:row-start-auto sm:text-left">
+                <div role="cell" className="col-start-2 row-start-2 text-right text-xs text-gray-300 sm:col-start-auto sm:row-start-auto sm:text-left">
                   <span>{availabilitySummary(row)}</span>
                 </div>
 
@@ -367,7 +367,7 @@ const AvailabilityVolunteersList = ({
           );
         })}
         {!pageRows.length ? (
-          <div className="py-6 text-sm text-gray-400" role="row">
+          <div className="py-6 text-xs text-gray-400" role="row">
             <span role="cell">No volunteers match these filters.</span>
           </div>
         ) : null}

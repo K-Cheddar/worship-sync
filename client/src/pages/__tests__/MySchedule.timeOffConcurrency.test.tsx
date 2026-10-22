@@ -68,10 +68,62 @@ const edit = async (user: ReturnType<typeof userEvent.setup>, notes = "Volunteer
   await user.clear(input); await user.type(input, notes);
 };
 const openEditor = async (user: ReturnType<typeof userEvent.setup>) => {
-  await user.click(await screen.findByRole("button", { name: /Time off/i }));
+  await user.click(await screen.findByRole("button", { name: /^Time off/i }));
   await openNotesEditor(user);
 };
 beforeEach(() => { jest.clearAllMocks(); });
+
+it.each([
+  ["human", "Add single day", false],
+  ["human", "Add date range", true],
+  ["personal", "Add single day", true],
+  ["personal", "Add date range", false],
+] as const)("summarizes valid dates while preserving unfinished %s drafts (%s, saved: %s)", async (mode, addLabel, withSaved) => {
+  const user = userEvent.setup();
+  const f = fixture();
+  if (!withSaved) f.setSaved({ ...f.getSaved(), blockoutDates: [] });
+  render(page(f.operations, mode));
+  const summary = withSaved ? "1 upcoming" : "No upcoming time off";
+  await user.click(await screen.findByRole("button", { name: /^Time off/i }));
+  await user.click(screen.getByRole("button", { name: addLabel }));
+  const dateLabel = addLabel === "Add single day" ? "Day you're away" : "Dates you're away";
+  expect(screen.getByRole("textbox", { name: dateLabel })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Save time off" })).toBeDisabled();
+  await user.type(screen.getByRole("textbox", { name: /Notes/i }), "Unfinished trip");
+
+  await user.click(screen.getByRole("button", { name: /^Time off/i }));
+  expect(screen.getByRole("button", { name: /^Time off/i })).toHaveTextContent(summary);
+  expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /^Time off/i }));
+  expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue("Unfinished trip");
+  expect(screen.getByRole("textbox", { name: /Day you're away|Dates you're away/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Save time off" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: /Remove blockout without dates/i }));
+  expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: addLabel }));
+  await user.click(screen.getByRole("button", { name: "Discard changes" }));
+  expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Remove blockout without dates/i })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /^Time off/i })).toHaveTextContent(summary);
+  expect(f.operations.saveBlockouts).not.toHaveBeenCalled();
+});
+
+it.each(["human", "personal"] as const)("counts ongoing %s time off using the church date", async (mode) => {
+  // UTC has moved to January 2, but this church is still on January 1.
+  jest.useFakeTimers({ now: new Date("2099-01-02T01:00:00Z") });
+  try {
+    const f = fixture();
+    f.operations.load.mockResolvedValue({ ...snapshot({ ...f.getSaved(), blockoutDates: [
+      { startDate: "2098-12-01", endDate: "2098-12-31" },
+      { startDate: "2098-12-31", endDate: "2099-01-01" },
+      { startDate: "2099-01-03", endDate: "2099-01-03" },
+    ] }), serviceTimeZone: "America/Los_Angeles" });
+    render(page(f.operations, mode));
+    expect(await screen.findByRole("button", { name: /^Time off/i })).toHaveTextContent("2 upcoming");
+  } finally {
+    jest.useRealTimers();
+  }
+});
 
 it.each(["human", "personal"] as const)("A: bulk refresh cannot lend revision B to a dirty %s draft", async (mode) => {
   const user = userEvent.setup(); const f = fixture(); render(page(f.operations, mode));
