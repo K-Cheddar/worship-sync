@@ -54,6 +54,9 @@ export const SCHEDULE_BULK_DISPATCH_READY = resolveScheduleSmsDispatchConfig().e
 export const AUTOMATIC_NOTIFICATION_SENDS_DISABLED = true;
 
 const normalize = (value) => String(value ?? "").trim();
+const SMS_MESSAGING_UNAVAILABLE_ERROR = "SMS messaging must be enabled and fully configured for this church. Update the church SMS settings, then review the message again.";
+const SCHEDULE_SMS_NOT_READY_ERROR = "Bulk schedule SMS is not ready for dispatch.";
+const SCHEDULE_SMS_DISABLED_ERROR = "Bulk schedule SMS is disabled until safe background dispatch and restart recovery are ready.";
 const normalizeAvailabilityAudience = (audienceType, intentType = "") => {
   if (["not_contacted", "first"].includes(normalize(audienceType))) return "not_contacted";
   if (["nonresponders", "reminder"].includes(normalize(audienceType))) return "nonresponders";
@@ -72,6 +75,16 @@ const safeProviderFailureMessage = (error, fallback) => {
     .replace(/https?:\/\/[^\s"'<>]+/gi, "[URL]")
     .slice(0, 500);
 };
+const safeIntentSendFailureMessage = (error, fallback, knownServiceErrors = []) =>
+  (Number.isInteger(error?.statusCode) && error.statusCode >= 400 && error.statusCode < 500) ||
+  (error?.statusCode === 503 && [
+    SMS_MESSAGING_UNAVAILABLE_ERROR,
+    SCHEDULE_SMS_NOT_READY_ERROR,
+    SCHEDULE_SMS_DISABLED_ERROR,
+    ...knownServiceErrors,
+  ].includes(error.message))
+    ? safeErrorMessage(error, fallback)
+    : fallback;
 const publicAttempt = ({ callbackToken: _callbackToken, ...attempt }) => attempt;
 const intentIdFor = (hashValue, churchId, idempotencyKey) =>
   hashValue(`${churchId}|notification-intent|${idempotencyKey}`);
@@ -172,7 +185,6 @@ export const createNotificationIntentHandlers = ({
   const reconcileDelivery = createSmsDeliveryReconciler({ COLLECTIONS, getDoc, setDoc, requireFirestore, nowIso });
   const isScheduleBulkDispatchReady = () => Boolean(scheduleBulkDispatchReady && requireFirestore());
   const memoryClaims = new Map();
-  const backgroundScheduleRequests = new WeakMap();
   let scheduleBatchDispatcher = null;
   const runMemoryClaim = (id, task) => {
     const previous = memoryClaims.get(id) || Promise.resolve();
@@ -566,7 +578,7 @@ export const createNotificationIntentHandlers = ({
     }
     const normalizedConfig = normalizeChurchMessagingConfig(config, churchId);
     if (normalizedConfig?.churchId !== churchId || !isChurchMessagingReady(normalizedConfig)) {
-      throw httpError(503, "SMS messaging must be enabled and fully configured for this church. Update the church SMS settings, then review the message again.");
+      throw httpError(503, SMS_MESSAGING_UNAVAILABLE_ERROR);
     }
     const eligibility = resolveSmsMemberEligibility({ member, churchId, consent: null });
     const consent = eligibility.phoneNumber
@@ -1101,21 +1113,23 @@ export const createNotificationIntentHandlers = ({
     return result;
   };
 
-  const sendIntent = async (req, res) => {
+  const sendIntentOperation = async ({
+    req = null, res, churchId: requestedChurchId, intentId: requestedIntentId,
+    confirmed, approvalVersion, csrfValidated = false, backgroundContext = null,
+  }) => {
     let attemptId = "";
     let intent = null;
     let providerCallStarted = false;
     let scopedAccess = false;
     let confirmedResult = null;
     try {
-      const backgroundContext = backgroundScheduleRequests.get(req) || null;
-      if (!backgroundContext) await assertCsrf(req);
-      const churchId = normalize(req.params.churchId);
-      const intentId = normalize(req.params.intentId);
+      if (!backgroundContext && !csrfValidated) await assertCsrf(req);
+      const churchId = normalize(requestedChurchId);
+      const intentId = normalize(requestedIntentId);
       const currentIntent = await getDoc(COLLECTIONS.notificationIntents, intentId);
       if (!currentIntent || currentIntent.churchId !== churchId) throw httpError(404, "Message preview not found.");
       const readBackgroundApproval = async () => {
-        if (!backgroundContext || !isScheduleBulkDispatchReady()) throw httpError(503, "Bulk schedule SMS is not ready for dispatch.");
+        if (!backgroundContext || !isScheduleBulkDispatchReady()) throw httpError(503, SCHEDULE_SMS_NOT_READY_ERROR);
         const batch = await getBatchForChurch(backgroundContext.batchId, churchId);
         if (!ownsScheduleBatchLease(batch, backgroundContext.ownership) || batch.status !== "dispatching") {
           throw httpError(409, "This schedule dispatcher no longer owns the batch.");
@@ -1137,16 +1151,16 @@ export const createNotificationIntentHandlers = ({
       const authorizationFingerprint = accessFingerprintFor(access);
       const actorUid = backgroundApproval?.batch.approval.actorUid || access.admin?.user?.uid;
       if (currentIntent.intentType === "schedule_initial_notification" && !backgroundContext) {
-        throw httpError(503, "Bulk schedule SMS is disabled until safe background dispatch and restart recovery are ready.");
+        throw httpError(503, SCHEDULE_SMS_DISABLED_ERROR);
       }
-      if (req.body?.confirmed !== true || !normalize(req.body?.approvalVersion)) throw httpError(400, "Review and confirm this exact SMS before sending.");
-      if (backgroundApproval && normalize(req.body.approvalVersion) !== backgroundApproval.recipient.approvalVersion) {
+      if (confirmed !== true || !normalize(approvalVersion)) throw httpError(400, "Review and confirm this exact SMS before sending.");
+      if (backgroundApproval && normalize(approvalVersion) !== backgroundApproval.recipient.approvalVersion) {
         throw httpError(409, "This approved message no longer matches its saved review.");
       }
       attemptId = createId("smsAttempt");
       const claimed = await claimIntent({
         intentId, churchId, actorUid, attemptId,
-        approvalVersion: normalize(req.body.approvalVersion), authorizationFingerprint,
+        approvalVersion: normalize(approvalVersion), authorizationFingerprint,
         allowExpiredReview: Boolean(backgroundContext),
       });
       intent = claimed.next;
@@ -1250,30 +1264,41 @@ export const createNotificationIntentHandlers = ({
             status: providerCallStarted ? "pending" : "failed",
             outcome: providerCallStarted ? "unknown" : "not_sent",
             failureCode: String(error?.code || "dispatch_interrupted").slice(0, 80),
-            failureMessage: safeErrorMessage(error, "The provider outcome could not be confirmed."),
+            failureMessage: safeIntentSendFailureMessage(error, "Could not send this message."),
           },
         }).catch(() => {});
       }
-      const errorMessage = safeErrorMessage(error, "Could not send this message.");
+      const errorMessage = safeIntentSendFailureMessage(error, "Could not send this message.");
       const scopedErrorMessage = scopedAccess && /consent|opted out|mobile number|phone number/i.test(errorMessage)
         ? "This volunteer is not currently eligible for SMS."
         : errorMessage;
-      return res.status(error.statusCode || 500).json({ success: false, errorMessage: scopedErrorMessage, ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}) });
+      const outcome = confirmedResult ? "confirmed" : providerCallStarted ? "unknown" : "not_sent";
+      return res.status(error.statusCode || 500).json({ success: false, outcome, errorMessage: scopedErrorMessage, ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}) });
     }
   };
 
+  const sendIntent = (req, res) => sendIntentOperation({
+    req, res,
+    churchId: req.params.churchId,
+    intentId: req.params.intentId,
+    confirmed: req.body?.confirmed,
+    approvalVersion: req.body?.approvalVersion,
+  });
+
   const sendApprovedScheduleIntent = async ({ batch, ownership, recipient }) => {
-    const req = {
-      params: { churchId: batch.churchId, intentId: recipient.intentId },
-      body: { confirmed: true, approvalVersion: recipient.approvalVersion },
-    };
-    backgroundScheduleRequests.set(req, { batchId: batch.batchId, ownership });
     const response = {
       statusCode: 200,
       status(code) { this.statusCode = code; return this; },
       json(payload) { this.payload = payload; return this; },
     };
-    await sendIntent(req, response);
+    await sendIntentOperation({
+      res: response,
+      churchId: batch.churchId,
+      intentId: recipient.intentId,
+      confirmed: true,
+      approvalVersion: recipient.approvalVersion,
+      backgroundContext: { batchId: batch.batchId, ownership },
+    });
     return { ...(response.payload || {}), statusCode: response.statusCode };
   };
 
@@ -1388,7 +1413,10 @@ export const createNotificationIntentHandlers = ({
         status(code) { res.status(code); return this; },
         json(payload) { return res.json({ ...payload, ...(payload.success ? { attempt: payload.attempt } : {}) }); },
       };
-      return sendIntent({ ...req, params: { ...req.params, churchId, intentId: intent.intentId }, body: { confirmed: true, approvalVersion: req.body.approvalVersion } }, attemptResponse);
+      return sendIntentOperation({
+        req, res: attemptResponse, churchId, intentId: intent.intentId,
+        confirmed: true, approvalVersion: req.body.approvalVersion, csrfValidated: true,
+      });
     } catch (error) {
       return res.status(error.statusCode || 500).json({ success: false, errorMessage: safeErrorMessage(error, "Could not send this individual intake message."), ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}) });
     }
@@ -1622,11 +1650,13 @@ export const createNotificationIntentHandlers = ({
       }
       const members = await Promise.all(memberIds.map((id) => getDoc(COLLECTIONS.teamRosterMembers, id)));
       let actorUid = "";
+      const accessByMemberId = new Map();
       for (const member of members) {
         if (!member || member.churchId !== churchId || member.archivedAt) throw httpError(403, "A selected volunteer is no longer available.");
         const access = await authorizeCustomMember(req, churchId, member);
         if (actorUid && actorUid !== access.admin?.user?.uid) throw httpError(403, "Team management access changed.");
         actorUid = access.admin?.user?.uid || "";
+        accessByMemberId.set(member.memberId, access);
       }
       const batchId = hashValue(`${churchId}|custom-message|${requestKey}`);
       const db = requireFirestore();
@@ -1676,7 +1706,9 @@ export const createNotificationIntentHandlers = ({
           else await mutateIntent(churchId, id, (current) => current ? null : { intentId: id, ...intent });
         }
         const saved = await getDoc(COLLECTIONS.notificationIntents, id);
-        const reviewed = await prepareIntentReview({ intentId: id, ...saved });
+        const reviewed = await prepareIntentReview({ intentId: id, ...saved }, {
+          authorizationFingerprint: accessFingerprintFor(accessByMemberId.get(member.memberId)),
+        });
         rows.push({ memberId: member.memberId, memberName: [member.firstName, member.lastName].filter(Boolean).join(" ") || "Volunteer",
           intentId: reviewed.eligible ? id : "", status: reviewed.eligible ? "preview" : "excluded",
           exclusionReason: reviewed.eligible ? "" : exclusionReasons[reviewed.validated.eligibilityStatus] || "This volunteer is not currently eligible for SMS.",
@@ -1705,7 +1737,11 @@ export const createNotificationIntentHandlers = ({
       });
       return res.json({ success: true, batch: await customBatchDetail(finalized) });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({ success: false, errorMessage: safeErrorMessage(error, "Could not prepare this message.") });
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        errorMessage: safeErrorMessage(error, "Could not prepare this message."),
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
+      });
     }
   };
 
@@ -2826,7 +2862,7 @@ export const createNotificationIntentHandlers = ({
           await setDoc(COLLECTIONS.notificationBatches, batchId, next, { merge: false });
           return next;
         });
-        const nextBatch = await executeReviewedNotificationBatch({
+        let nextBatch = await executeReviewedNotificationBatch({
           batch, getIntent: (id) => getDoc(COLLECTIONS.notificationIntents, id),
           matchesSource: (intent) => intent.sourceType === "custom_message" &&
             intent.sourceId === batchId && intent.intentType === "custom_message",
@@ -2834,11 +2870,43 @@ export const createNotificationIntentHandlers = ({
           sendReviewedIntent: async ({ intentId, approvalVersion }) => {
             const sendRes = { statusCode: 200, status(code) { this.statusCode = code; return this; },
               json(payload) { this.payload = payload; return this; } };
-            await sendIntent({ ...req, params: { ...req.params, churchId, intentId },
-              body: { confirmed: true, approvalVersion } }, sendRes);
-            return sendRes.payload;
+            await sendIntentOperation({
+              req, res: sendRes, churchId, intentId,
+              confirmed: true, approvalVersion, csrfValidated: true,
+            });
+            return { ...(sendRes.payload || {}), statusCode: sendRes.statusCode };
           },
         });
+        const dispatchedIntents = await Promise.all((nextBatch.intentIds || []).map((id) => getDoc(COLLECTIONS.notificationIntents, id)));
+        const approvedVersionByIntentId = new Map((batch.recipients || []).map((row) => [row.intentId, row.approvalVersion]));
+        const noProviderAttemptStarted = dispatchedIntents.length > 0 && dispatchedIntents.every((intent) =>
+          intent && ["preview", "ready"].includes(intent.status) && !intent.attemptId && !intent.providerAcceptedAttemptId &&
+          intent.approvalSnapshot?.approvalVersion === approvedVersionByIntentId.get(intent.intentId));
+        const preflightFailure = (nextBatch.lastDispatchResults || []).find((result) =>
+          result.outcome === "not_sent" && (result.errorMessage || result.error));
+        if (noProviderAttemptStarted && preflightFailure) {
+          const statusCode = Number.isInteger(preflightFailure.statusCode) ? preflightFailure.statusCode : 409;
+          const safeReason = preflightFailure.statusCode >= 500
+            ? "Could not send this message."
+            : preflightFailure.errorMessage || preflightFailure.error;
+          const unstartedIntentIds = new Set(dispatchedIntents.map((intent) => intent.intentId));
+          nextBatch = {
+            ...nextBatch,
+            status: "prepared",
+            recipients: (nextBatch.recipients || []).map((row) => {
+              if (!unstartedIntentIds.has(row.intentId)) return row;
+              const { exclusionReason: _dispatchError, ...recipient } = row;
+              return { ...recipient, status: "preview" };
+            }),
+            updatedAt: nowIso(),
+          };
+          await setDoc(COLLECTIONS.notificationBatches, batchId, nextBatch, { merge: false });
+          return res.status(statusCode).json({
+            success: false,
+            outcome: "not_sent",
+            errorMessage: safeReason || "Could not send this message.",
+          });
+        }
         await setDoc(COLLECTIONS.notificationBatches, batchId, nextBatch, { merge: true });
         return res.json({ success: true, batch: await customBatchDetail(nextBatch) });
       }
@@ -3061,14 +3129,19 @@ export const createNotificationIntentHandlers = ({
             status(code) { this.statusCode = code; return this; },
             json(payload) { this.payload = payload; return this; },
           };
-          await sendIntent({ ...req, params: { ...req.params, churchId, intentId }, body: { confirmed: true, approvalVersion } }, sendRes);
+          await sendIntentOperation({
+            req, res: sendRes, churchId, intentId,
+            confirmed: true, approvalVersion, csrfValidated: true,
+          });
           return sendRes.payload;
         },
       });
       await setDoc(COLLECTIONS.notificationBatches, batchId, nextBatch, { merge: true });
       return res.json({ success: true, batch: await formatBatchDetail(nextBatch, { privacySafe: access.scoped }) });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({ success: false, errorMessage: safeErrorMessage(error, "Could not send this message batch."), ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}) });
+      return res.status(error.statusCode || 500).json({ success: false,
+        errorMessage: safeIntentSendFailureMessage(error, "Could not send this message batch.", [scheduleSmsDispatchConfig.readinessMessage]),
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}) });
     }
   };
 

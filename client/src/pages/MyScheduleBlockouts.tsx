@@ -113,6 +113,7 @@ const MyScheduleBlockouts = ({
   const editorRanges = draftCurrent;
   const upcomingCount = draftCurrent.filter(isValidBlockoutDateRange).length;
   const hasIncompleteDraft = draft.some((range) => !isValidBlockoutDateRange(range));
+  const [hasOpenEditor, setHasOpenEditor] = useState(false);
   const earliestEditableDate = calendarDateInTimeZone(new Date(), serviceTimeZone);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
@@ -138,6 +139,7 @@ const MyScheduleBlockouts = ({
     setDraft(ranges);
     setBaseline({ ranges, updatedAt });
     setRejectedAsStale(false);
+    setHasOpenEditor(false);
     setFieldKey((key) => key + 1);
   }, []);
 
@@ -184,17 +186,21 @@ const MyScheduleBlockouts = ({
    * is how stale dates get written back.
    */
   useEffect(() => {
-    if (saving || rejectedAsStale || isDirty) return;
+    if (saving || rejectedAsStale || isDirty || hasOpenEditor) return;
     if (serverSignature === baselineSignature && expectedUpdatedAt === baseline.updatedAt) return;
     seedDraft(blockoutDates, expectedUpdatedAt);
-  }, [baseline.updatedAt, baselineSignature, blockoutDates, expectedUpdatedAt, isDirty, rejectedAsStale, saving, seedDraft, serverSignature]);
+  }, [baseline.updatedAt, baselineSignature, blockoutDates, expectedUpdatedAt, hasOpenEditor, isDirty, rejectedAsStale, saving, seedDraft, serverSignature]);
 
   // Reported up so a background refresh cannot replace an open edit. Cleared on
   // unmount, or leaving the list view would pin the page as permanently dirty.
   useEffect(() => {
-    onDirtyChange(isDirty);
+    onDirtyChange(isDirty || hasOpenEditor);
     return () => onDirtyChange(false);
-  }, [isDirty, onDirtyChange]);
+  }, [hasOpenEditor, isDirty, onDirtyChange]);
+
+  useEffect(() => {
+    if (!open) setHasOpenEditor(false);
+  }, [open]);
 
   const discard = () => {
     if (saving || refreshing || (hasConflict && !canReviewSavedDates)) return;
@@ -316,6 +322,7 @@ const MyScheduleBlockouts = ({
               key={fieldKey}
               variant="volunteer"
               showNotes
+              onEditingChange={setHasOpenEditor}
               min={earliestEditableDate}
               emptyLabel="No upcoming time off."
               value={editorRanges}

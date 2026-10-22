@@ -15,6 +15,7 @@ process.env.RESEND_API_KEY = "";
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import express from "express";
 import twilio from "twilio";
 import { createHash } from "node:crypto";
 import { smsConsentIdForChurchPhone } from "./smsConsent.js";
@@ -14448,6 +14449,80 @@ test("custom volunteer messages send through existing SMS eligibility and admini
     setSmsProviderForServerTests(null);
     if (previousCallback === undefined) delete process.env.TWILIO_STATUS_CALLBACK_URL; else process.env.TWILIO_STATUS_CALLBACK_URL = previousCallback;
     if (previousToken === undefined) delete process.env.TWILIO_AUTH_TOKEN; else process.env.TWILIO_AUTH_TOKEN = previousToken;
+  }
+});
+
+test("custom SMS batch dispatch keeps the authenticated HTTP request and rejects invalid CSRF", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const admin = await createAdminContext("custom_message_http_dispatch");
+  const { memberIds } = await seedTeam(admin, {
+    teamName: "Worship", members: [{ firstName: "Http", lastName: "Recipient" }],
+  });
+  const memberId = memberIds.Http;
+  const phoneNumber = "+19545551341";
+  await setDoc("teamRosterMembers", memberId, { phoneNumber }, { merge: true });
+  await seedSmsConsentForServerTests({ churchId: admin.churchId, phoneNumber, status: "opted_in" });
+  await setDoc("churchMessagingConfigs", admin.churchId, {
+    churchId: admin.churchId, provider: "twilio", providerAccountId: "AC_test",
+    messagingServiceId: "MG_test", registrationStatus: "approved", enabled: true,
+  }, { merge: false });
+
+  const fake = createFakeSmsProvider();
+  setSmsProviderForServerTests(fake);
+  const app = express();
+  app.use(express.json());
+  app.post("/api/churches/:churchId/notification-batches/:batchId/dispatch", authHandlers.dispatchAvailabilityBatch);
+  const server = app.listen(0, "127.0.0.1");
+  try {
+    await new Promise((resolve, reject) => {
+      server.once("listening", resolve);
+      server.once("error", reject);
+    });
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const endpoint = `http://127.0.0.1:${address.port}/api/churches/${admin.churchId}/notification-batches`;
+    const prepared = await callHandler(authHandlers.prepareCustomBatch, {
+      context: admin,
+      body: { memberIds: [memberId], message: "Practice Friday.", requestKey: "http-custom-dispatch" },
+    });
+    assert.equal(prepared.statusCode, 200, JSON.stringify(prepared.payload));
+    assert.equal(fake.calls.length, 0, "preparing the approval does not contact the provider");
+
+    const sendHttp = async (csrfToken) => fetch(`${endpoint}/${prepared.payload.batch.batchId}/dispatch`, {
+      method: "POST",
+      headers: {
+        ...Object.fromEntries(Object.entries(admin.headers).filter(([name]) => name !== "x-csrf-token")),
+        ...(csrfToken === null ? {} : { "x-csrf-token": csrfToken }),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ confirmed: true, approvalVersion: prepared.payload.batch.approvalVersion }),
+    });
+
+    const missingCsrf = await sendHttp(null);
+    assert.equal(missingCsrf.status, 403);
+    assert.equal((await missingCsrf.json()).code, "AUTH_CSRF_MISMATCH");
+    const invalidCsrf = await sendHttp("invalid-csrf-token");
+    assert.equal(invalidCsrf.status, 403);
+    assert.equal((await invalidCsrf.json()).code, "AUTH_CSRF_MISMATCH");
+    assert.equal(fake.calls.length, 0, "invalid CSRF requests are rejected before dispatch");
+
+    const sent = await sendHttp(admin.headers["x-csrf-token"]);
+    const sentPayload = await sent.json();
+    assert.equal(sent.status, 200, JSON.stringify(sentPayload));
+    assert.equal(sentPayload.batch.summary.sent, 1);
+    assert.equal(sentPayload.batch.recipients[0].status, "sent");
+    assert.equal(fake.calls.length, 1, `the valid authenticated HTTP request reaches the provider once: ${JSON.stringify(sentPayload)}`);
+    assert.equal(fake.calls[0].to, phoneNumber);
+    assert.equal(fake.calls[0].body, "Practice Friday. Reply STOP to opt out.");
+
+    const replayed = await sendHttp(admin.headers["x-csrf-token"]);
+    assert.equal(replayed.status, 409);
+    assert.equal(fake.calls.length, 1, "replaying the approved operation does not call the provider again");
+  } finally {
+    setSmsProviderForServerTests(null);
+    if (server.listening) {
+      await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
   }
 });
 

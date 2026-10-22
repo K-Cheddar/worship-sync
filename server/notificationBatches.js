@@ -642,7 +642,13 @@ export const executeReviewedNotificationBatch = async ({
     }
     const response = await sendReviewedIntent({ intentId, approvalVersion: batchRecipient.approvalVersion });
     const refreshed = await getIntent(intentId);
-    results.push({ intentId, status: refreshed?.status || "failed", outcome: refreshed?.outcome || (response?.success ? "confirmed" : ""), errorMessage: response?.errorMessage || "" });
+    results.push({
+      intentId,
+      status: refreshed?.status || "failed",
+      outcome: refreshed?.outcome || response?.outcome || (response?.success ? "confirmed" : ""),
+      errorMessage: response?.errorMessage || "",
+      ...(Number.isInteger(response?.statusCode) ? { statusCode: response.statusCode } : {}),
+    });
   }
   const errorByIntentId = new Map(results.filter((row) => row.errorMessage).map((row) => [row.intentId, row.errorMessage]));
   const refreshedRecipients = await Promise.all((batch.recipients || []).map(async (row) => {

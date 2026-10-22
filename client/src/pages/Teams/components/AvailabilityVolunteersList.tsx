@@ -177,7 +177,7 @@ const AvailabilityVolunteersList = ({
     const { member, recipient } = row;
     const name = memberName(member);
     return <DropdownMenu>
-      <DropdownMenuTrigger asChild><Button variant="tertiary" svg={MoreHorizontal} aria-label={`Actions for ${name}`} disabled={busy} className="min-h-[44px] min-w-[44px]" /></DropdownMenuTrigger>
+      <DropdownMenuTrigger asChild><Button variant="tertiary" svg={MoreHorizontal} iconSize="sm" padding="p-0" aria-label={`Actions for ${name}`} disabled={busy} className={compact ? "min-h-[44px] min-w-[44px]" : "min-h-6 min-w-6"} /></DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         {canEdit && recipient && !recipient.revokedAt ? <>
           {form.active && historyLoaded && row.hasPreviousRequest ? <DropdownMenuItem onSelect={() => onResendLink(member.memberId)}>Resend link</DropdownMenuItem> : null}
@@ -296,7 +296,7 @@ const AvailabilityVolunteersList = ({
               <td className="max-w-0 px-4 py-1.5 font-semibold text-white">{canExpand ? <button type="button" aria-label={`${expanded ? "Hide" : "View"} availability for ${name}`} aria-expanded={expanded} onClick={() => toggleDetails(row.member.memberId)} className="flex max-w-full items-center gap-2 text-left hover:text-cyan-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"><MemberNameWithIndicator name={name} memberId={row.member.memberId} /><ChevronDown size={15} aria-hidden="true" className={`shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`} /></button> : <MemberNameWithIndicator name={name} memberId={row.member.memberId} />}</td>
               <td className="px-4 py-1.5">{requestStatusContent(row)}</td>
               <td className="px-4 py-1.5 text-gray-300">{availabilitySummary(row)}</td>
-              <td className="px-4 py-1.5">{actionsFor(row)}</td>
+              <td className="px-4 py-1">{actionsFor(row)}</td>
             </tr>
             {expanded ? <tr><td colSpan={4} className="bg-gray-950/40 px-4 py-3">{detailsFor(row)}</td></tr> : null}
           </Fragment>;

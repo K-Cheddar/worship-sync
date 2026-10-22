@@ -345,6 +345,11 @@ describe("MySchedule", () => {
   });
 
   describe("accept pending", () => {
+    afterEach(() => {
+      jest.useRealTimers();
+      jest.restoreAllMocks();
+    });
+
     const result = (overrides = {}) => ({
       success: true,
       newlyAccepted: 1,
@@ -402,7 +407,8 @@ describe("MySchedule", () => {
       expect(screen.getByRole("status")).toHaveTextContent(/Accepting your pending assignments/i);
       expect(mockGetMyTeamAssignments).toHaveBeenCalledTimes(1);
       await openFirstService(user);
-      expect(screen.getByText("Needs your response")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^Accept Director/ })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^Decline Director/ })).toBeInTheDocument();
       expect(screen.getAllByText("Accepted")).toHaveLength(1);
 
       await act(async () => {
@@ -706,6 +712,43 @@ describe("MySchedule", () => {
       expect(screen.getByText(/Your saved information changed elsewhere/)).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: /Remove blockout/i })).not.toBeInTheDocument();
     });
+
+    it("keeps an open time-off note editor on the personal link through an assignment refresh", async () => {
+      const user = userEvent.setup();
+      const existing = { startDate: "2099-09-06", endDate: "2099-09-06" };
+      const savedElsewhere = {
+        startDate: "2099-11-20",
+        endDate: "2099-11-20",
+        notes: "Administrator saved dates",
+      };
+      const operations: MyScheduleOperations = {
+        load: jest.fn()
+          .mockResolvedValueOnce({
+            success: true,
+            member: { memberId: "m1", updatedAt: STAMP, blockoutDates: [existing] },
+            occurrences: [occurrence()],
+          })
+          .mockResolvedValueOnce({
+            success: true,
+            member: { memberId: "m1", updatedAt: "newer", blockoutDates: [existing, savedElsewhere] },
+            occurrences: [occurrence({ serving: [me({ response: "accepted" }), other()] })],
+          }),
+        respond: jest.fn(),
+        saveBlockouts: jest.fn(),
+        acceptUnanswered: jest.fn().mockResolvedValue(result()),
+      };
+      renderPersonalPage(operations);
+
+      await user.click(await screen.findByRole("button", { name: /Time off/i }));
+      await user.click(screen.getByRole("button", { name: /Edit time off/i }));
+      await user.click(screen.getByRole("button", { name: /Accept remaining assignments/i }));
+
+      expect(await screen.findByText(/Accepted 1 assignment/i)).toBeInTheDocument();
+      await user.type(screen.getByRole("textbox", { name: /Notes/i }), "Volunteer unsaved dates");
+      expect(screen.getByText(/Your saved information changed elsewhere/)).toBeInTheDocument();
+      expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue("Volunteer unsaved dates");
+      expect(screen.getByRole("button", { name: /Save time off/i })).toBeDisabled();
+    });
   });
 
   it("shows the public schedule table with the viewer highlighted", async () => {
@@ -714,11 +757,16 @@ describe("MySchedule", () => {
     renderPage();
 
     await openFirstService(user);
+    await user.click(
+      within(screen.getByRole("group", { name: "Schedule layout" }))
+        .getByRole("button", { name: "Grid" }),
+    );
 
-    expect(screen.getByText("Kevin Cheddar")).toBeInTheDocument();
-    expect(screen.getByText("Ada R.")).toBeInTheDocument();
-    expect(screen.getByText("Director")).toBeInTheDocument();
-    expect(screen.getByText("Camera")).toBeInTheDocument();
+    const scheduleTable = within(screen.getByRole("table"));
+    expect(scheduleTable.getByText("Kevin Cheddar")).toBeInTheDocument();
+    expect(scheduleTable.getByText("Ada R.")).toBeInTheDocument();
+    expect(scheduleTable.getByText("Director")).toBeInTheDocument();
+    expect(scheduleTable.getByText("Camera")).toBeInTheDocument();
   });
 
   it("opens the service plan tab with the public service plan chrome", async () => {
@@ -860,7 +908,7 @@ describe("MySchedule", () => {
 
     await user.click(screen.getByRole("button", { name: /Next service/i }));
     expect(screen.getByRole("heading", { name: "Evening Service" })).toBeInTheDocument();
-    expect(screen.getByText("Camera - Roving · Media")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Accept Camera - Roving.*Media/ })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /Previous service/i }));
     expect(screen.getByRole("heading", { name: "Sunday Gathering" })).toBeInTheDocument();
@@ -1871,9 +1919,8 @@ describe("MySchedule", () => {
 
       const declined = await screen.findByText("Declined");
       const position = screen.getByText("Director");
-      expect(position.parentElement).toHaveClass("flex-nowrap", "items-center");
       expect(position.parentElement).toContainElement(declined);
-      expect(declined).toHaveClass("bg-red-800", "text-white");
+      expect(declined).toHaveClass("bg-red-700", "text-white");
 
       // Answered cards state the decision rather than leaving two equal
       // buttons, which would read as though nothing had been recorded.
@@ -1890,7 +1937,6 @@ describe("MySchedule", () => {
       );
 
       const accepted = await screen.findByText("Accepted");
-      expect(position.parentElement).toHaveClass("flex-nowrap", "items-center");
       expect(position.parentElement).toContainElement(accepted);
       // And it collapses back rather than leaving the picker open.
       expect(

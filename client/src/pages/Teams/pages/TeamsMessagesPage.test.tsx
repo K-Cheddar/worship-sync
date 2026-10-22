@@ -246,6 +246,46 @@ it("keeps the editable draft after an authenticated send rejection", async () =>
   expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledTimes(1);
 });
 
+it("reprepares and recovers after a dispatch fails before any provider request", async () => {
+  const singleBatch = {
+    ...batch,
+    selectedMemberIds: ["m1"], intentIds: ["i1"], approvalVersion: "single-v1",
+    recipients: [batch.recipients[0]],
+    summary: { ...batch.summary, eligible: 1, excluded: 0, totalSegments: 1 },
+  };
+  const freshBatch = {
+    ...singleBatch, batchId: "b2", intentIds: ["i2"], approvalVersion: "fresh-v2",
+  };
+  const sentBatch = {
+    ...freshBatch, status: "sent",
+    recipients: [{ ...freshBatch.recipients[0], status: "sent", eligible: false }],
+    summary: { ...freshBatch.summary, sent: 1, delivered: 0, failed: 0, uncertain: 0 },
+  };
+  jest.mocked(prepareCustomMessage)
+    .mockResolvedValueOnce({ success: true, batch: singleBatch as never })
+    .mockResolvedValueOnce({ success: true, batch: freshBatch as never });
+  jest.mocked(getAvailabilityNotificationBatch).mockResolvedValueOnce({ success: true, batch: singleBatch as never });
+  jest.mocked(dispatchAvailabilityNotificationBatch)
+    .mockRejectedValueOnce(Object.assign(new Error("Could not send this message."), { status: 500 }))
+    .mockResolvedValueOnce({ success: true, batch: sentBatch as never });
+
+  const user = userEvent.setup();
+  renderForAdmin();
+  await user.click(screen.getByRole("button", { name: "+ New message" }));
+  await user.click(screen.getByRole("checkbox", { name: "Alex Lane" }));
+  await user.type(screen.getByRole("textbox", { name: /Message:/ }), "Practice Friday.");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("No message was sent. Your draft is saved. Choose Send again to prepare a fresh review.");
+  expect(screen.getByRole("textbox", { name: /Message:/ })).toHaveValue("Practice Friday.");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledTimes(2));
+  expect(prepareCustomMessage).toHaveBeenCalledTimes(2);
+  expect(prepareCustomMessage).toHaveBeenLastCalledWith("church", expect.objectContaining({ memberIds: ["m1"], message: "Practice Friday." }));
+  expect(dispatchAvailabilityNotificationBatch).toHaveBeenNthCalledWith(1, "church", "b1", "single-v1");
+  expect(dispatchAvailabilityNotificationBatch).toHaveBeenNthCalledWith(2, "church", "b2", "fresh-v2");
+});
+
 it("requires confirmation when single-recipient destination details change during preparation", async () => {
   const changedBatch = {
     ...batch,

@@ -39,6 +39,8 @@ type BlockoutDatesFieldProps = {
   variant?: "admin" | "board-attendee" | "volunteer";
   /** Show an optional free-form notes input per entry (admin roster editing). */
   showNotes?: boolean;
+  /** Keep the owning editor from replacing a row while it is being edited. */
+  onEditingChange?: (editing: boolean) => void;
   /** Muted message shown when there are no entries yet. */
   emptyLabel?: string;
   /** Prevent edits while the owning form is saving. */
@@ -99,6 +101,7 @@ const BlockoutDatesField = ({
   fieldClassName,
   variant = "board-attendee",
   showNotes = false,
+  onEditingChange,
   emptyLabel,
   disabled = false,
 }: BlockoutDatesFieldProps) => {
@@ -108,6 +111,10 @@ const BlockoutDatesField = ({
   const [editingId, setEditingId] = useState<string | null>(() => {
     return items.find((item) => !isValidBlockoutDateRange(itemToRange(item, showNotes)))?.id || null;
   });
+  const changeEditingId = (id: string | null) => {
+    setEditingId(id);
+    onEditingChange?.(id !== null);
+  };
 
   const commit = (next: BlockoutItem[]) => {
     setItems(next);
@@ -134,7 +141,7 @@ const BlockoutDatesField = ({
     const next = items.filter((other) => other.id !== item.id);
     commit(next);
     if (isVolunteer && editingId === item.id) {
-      setEditingId(next.find((other) => !isValidBlockoutDateRange(itemToRange(other, showNotes)))?.id || null);
+      changeEditingId(next.find((other) => !isValidBlockoutDateRange(itemToRange(other, showNotes)))?.id || null);
     }
   };
 
@@ -190,7 +197,7 @@ const BlockoutDatesField = ({
                     disabled={disabled}
                     aria-label={`Edit time off: ${isValidBlockoutDateRange(itemToRange(item, showNotes)) ? formatBlockoutDateRangeLabel(itemToRange(item, showNotes)) : "choose dates"}`}
                     className="min-h-[40px] px-2 text-xs max-md:min-h-[44px]"
-                    onClick={() => setEditingId(item.id)}
+                    onClick={() => changeEditingId(item.id)}
                   >
                     Edit
                   </Button>
@@ -291,7 +298,7 @@ const BlockoutDatesField = ({
             onClick={() => {
               const item = { id: makeId(), mode: "single" as const, startDate: "", endDate: "", notes: "" };
               commit([...items, item]);
-              if (isVolunteer) setEditingId(item.id);
+              if (isVolunteer) changeEditingId(item.id);
             }}
           >
             Add single day
@@ -304,7 +311,7 @@ const BlockoutDatesField = ({
             onClick={() => {
               const item = { id: makeId(), mode: "range" as const, startDate: "", endDate: "", notes: "" };
               commit([...items, item]);
-              if (isVolunteer) setEditingId(item.id);
+              if (isVolunteer) changeEditingId(item.id);
             }}
           >
             Add date range

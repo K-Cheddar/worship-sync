@@ -395,6 +395,72 @@ test("custom direct send requires explicit confirmation and accepts an approved 
   assert.equal(h.providerCalls, 1);
 });
 
+test("custom batch pre-provider failure is reported as not sent and the same approval can recover", async () => {
+  let failAuthorizationAtCall = 0;
+  let authorizationCalls = 0;
+  const h = createHarness({
+    authorizeCustomMember: async () => {
+      authorizationCalls += 1;
+      if (failAuthorizationAtCall && authorizationCalls === failAuthorizationAtCall) {
+        throw new TypeError("Cannot read properties of undefined (reading 'x-csrf-token')");
+      }
+      return { admin: { user: { uid: "admin_a" } }, scoped: false };
+    },
+  });
+  const prepared = h.makeResponse();
+  await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+    memberIds: [h.member.memberId], message: "Practice Friday.", requestKey: "pre-provider-recovery",
+  } }, prepared);
+  assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
+  const batchId = prepared.payload.batch.batchId;
+  const intentId = prepared.payload.batch.intentIds[0];
+  authorizationCalls = 0;
+  failAuthorizationAtCall = 2; // Batch authorization succeeds; per-intent authorization fails before claim.
+
+  const failed = await h.dispatch(batchId);
+  assert.equal(failed.statusCode, 500);
+  assert.equal(failed.payload.outcome, "not_sent");
+  assert.equal(failed.payload.errorMessage, "Could not send this message.");
+  assert.doesNotMatch(failed.payload.errorMessage, /Cannot read properties/);
+  assert.equal(h.providerCalls, 0);
+  const untouchedIntent = await h.getDoc("notificationIntents", intentId);
+  assert.equal(untouchedIntent.status, "preview");
+  assert.equal(untouchedIntent.attemptId, undefined);
+  const retryableBatch = await h.getDoc("notificationBatches", batchId);
+  assert.equal(retryableBatch.status, "prepared");
+
+  failAuthorizationAtCall = 0;
+  const recovered = await h.dispatch(batchId);
+  assert.equal(recovered.statusCode, 200, recovered.payload?.errorMessage);
+  assert.equal(recovered.payload.batch.summary.sent, 1);
+  assert.equal(h.providerCalls, 1);
+  assert.equal((await h.dispatch(batchId)).statusCode, 409);
+  assert.equal(h.providerCalls, 1, "a completed approval replay does not duplicate the provider request");
+});
+
+test("custom batch authorization exceptions are not exposed as delivery explanations", async () => {
+  let failAuthorization = false;
+  const h = createHarness({
+    authorizeCustomMember: async () => {
+      if (failAuthorization) throw new TypeError("Cannot read properties of undefined (reading 'x-csrf-token')");
+      return { admin: { user: { uid: "admin_a" } }, scoped: false };
+    },
+  });
+  const prepared = h.makeResponse();
+  await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+    memberIds: [h.member.memberId], message: "Practice Friday.", requestKey: "safe-batch-error",
+  } }, prepared);
+  assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
+  failAuthorization = true;
+
+  const failed = await h.dispatch(prepared.payload.batch.batchId);
+  assert.equal(failed.statusCode, 500);
+  assert.equal(failed.payload.errorMessage, "Could not send this message batch.");
+  assert.doesNotMatch(failed.payload.errorMessage, /Cannot read properties/);
+  assert.equal((await h.getDoc("notificationBatches", prepared.payload.batch.batchId)).status, "prepared");
+  assert.equal(h.providerCalls, 0);
+});
+
 for (const firestore of [false, true]) {
   test(`custom dispatch refuses an expired approval without reaching the provider (${firestore ? "transaction fake" : "memory"})`, async () => {
     const h = createHarness({ firestore });
@@ -519,7 +585,7 @@ test("custom dispatch rechecks church SMS configuration and returns an actionabl
   const config = h.storeFor("churchMessagingConfigs").get(h.churchId);
   h.storeFor("churchMessagingConfigs").set(h.churchId, { ...config, enabled: false });
   const blocked = await h.dispatch(prepared.payload.batch.batchId);
-  assert.equal(blocked.statusCode, 200, blocked.payload?.errorMessage);
+  assert.equal(blocked.statusCode, 200, JSON.stringify(blocked.payload));
   assert.equal(h.providerCalls, 0);
   assert.equal(blocked.payload.batch.summary.eligible, 0);
   assert.equal(blocked.payload.batch.summary.excluded, 1);
@@ -568,7 +634,9 @@ test("scoped history does not reveal another operator's custom message", async (
     memberIds: [h.member.memberId], message: "Private practice note.", requestKey: "scoped-note",
   } }, prepared);
   assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
-  assert.equal((await h.dispatch(prepared.payload.batch.batchId)).statusCode, 200);
+  const dispatched = await h.dispatch(prepared.payload.batch.batchId);
+  assert.equal(dispatched.statusCode, 200, JSON.stringify(dispatched.payload));
+  assert.equal(h.providerCalls, 1, "the approved scoped administrator's current authorization matches the review");
   actorUid = "other_editor";
   const history = h.makeResponse();
   await h.handler.listMessageHistory({ params: { churchId: h.churchId }, query: {} }, history);
@@ -2202,6 +2270,59 @@ test("Firestore emulator retains an uncertain custom attempt and never replays i
     const history = h.makeResponse();
     await h.handler.listMessageHistory({ params: { churchId: h.churchId }, query: {} }, history);
     assert.equal(history.payload.entries.find((entry) => entry.historyId === batchId).status, "unconfirmed");
+  } finally {
+    await deleteApp(app);
+  }
+});
+
+test("Firestore emulator persists a pre-provider custom failure as retryable and not sent", { skip: !firestoreEmulatorAvailable }, async () => {
+  await clearFirestoreEmulator();
+  const app = initializeApp({ projectId: firestoreEmulatorProjectId }, `custom-batch-preflight-${randomUUID()}`);
+  const db = getFirestore(app);
+  let failAuthorizationAtCall = 0;
+  let authorizationCalls = 0;
+  try {
+    const h = createHarness({
+      firestoreDb: db,
+      authorizeCustomMember: async () => {
+        authorizationCalls += 1;
+        if (failAuthorizationAtCall && authorizationCalls === failAuthorizationAtCall) {
+          throw new TypeError("Cannot read properties of undefined (reading 'x-csrf-token')");
+        }
+        return { admin: { user: { uid: "admin_a" } }, scoped: false };
+      },
+    });
+    await h.seedFirestore();
+    const prepared = h.makeResponse();
+    await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+      memberIds: [h.member.memberId], message: "Practice Friday.", requestKey: "emulator-pre-provider-recovery",
+    } }, prepared);
+    assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
+    const batchId = prepared.payload.batch.batchId;
+    const intentId = prepared.payload.batch.intentIds[0];
+    authorizationCalls = 0;
+    failAuthorizationAtCall = 2;
+
+    const failed = await h.dispatch(batchId);
+    assert.equal(failed.statusCode, 500);
+    assert.equal(failed.payload.outcome, "not_sent");
+    assert.equal(failed.payload.errorMessage, "Could not send this message.");
+    assert.equal(h.providerCalls, 0);
+    const savedBatch = await db.collection("notificationBatches").doc(batchId).get();
+    const savedIntent = await db.collection("notificationIntents").doc(intentId).get();
+    assert.equal(savedBatch.data().status, "prepared");
+    assert.equal(savedIntent.data().status, "preview");
+    assert.equal(savedIntent.data().attemptId, undefined);
+
+    failAuthorizationAtCall = 0;
+    const recovered = await h.dispatch(batchId);
+    assert.equal(recovered.statusCode, 200, recovered.payload?.errorMessage);
+    assert.equal(recovered.payload.batch.summary.sent, 1);
+    assert.equal(h.providerCalls, 1);
+    assert.equal((await h.dispatch(batchId)).statusCode, 409);
+    assert.equal(h.providerCalls, 1);
+    const attempts = await db.collection("smsDeliveryAttempts").where("batchId", "==", batchId).get();
+    assert.equal(attempts.size, 1);
   } finally {
     await deleteApp(app);
   }
