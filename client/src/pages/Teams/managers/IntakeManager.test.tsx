@@ -206,7 +206,7 @@ test("availability workspace opens recipients first, searches, and shows canonic
   expect(screen.getByRole("tab", { name: "Recipients" })).toHaveAttribute("data-state", "active");
   expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
   expect(screen.queryByText("Individual links and text messages")).not.toBeInTheDocument();
-  expect(screen.getByText(/Responded: 1 of 1/)).toBeInTheDocument();
+  expect(screen.getByRole("progressbar", { name: "Availability response completion" })).toHaveAttribute("aria-valuetext", "1 of 1 responded");
   await user.click(screen.getByRole("combobox", { name: /Request status/ }));
   await user.click(screen.getByRole("option", { name: "Not requested" }));
   expect(screen.getByText("No volunteers match these filters.")).toBeInTheDocument();

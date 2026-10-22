@@ -74,6 +74,44 @@ const emptyHistoryProps = {
 
 beforeEach(() => jest.clearAllMocks());
 
+it("keeps eligibility details collapsed and blocked recipients unselectable in the guided dialog", async () => {
+  const user = userEvent.setup();
+  render(<AvailabilityFormSendFlow {...emptyHistoryProps} dialog churchId="church-1" form={form} members={[member, secondMember]} positions={[]} teams={[]} recipients={[]} eligibilityByMemberId={{ [member.memberId]: { eligible: true }, [secondMember.memberId]: { eligible: false, status: "consent_needed" } }} onClose={jest.fn()} />);
+  expect(screen.getByText("1. Select recipients")).toHaveAttribute("aria-current", "step");
+  expect(screen.getByRole("checkbox", { name: "Rae Kim" })).toBeChecked();
+  expect(screen.queryByRole("checkbox", { name: "Sam Lee" })).not.toBeInTheDocument();
+  expect(screen.getByText(/Text message consent needed/)).not.toBeVisible();
+  await user.click(screen.getByText(/Eligibility details/));
+  expect(screen.getByText(/Text message consent needed/)).toBeVisible();
+  await user.click(screen.getByText(/Eligibility details/));
+  await user.click(screen.getByRole("combobox", { name: /Recipients:/ }));
+  await user.click(screen.getByRole("option", { name: "Specific members" }));
+  expect(screen.getByRole("checkbox", { name: "Sam Lee" })).toBeDisabled();
+  expect(screen.getByRole("checkbox", { name: "Rae Kim" })).toBeChecked();
+  expect(screen.getByRole("button", { name: "Continue to review" })).toBeEnabled();
+  expect(prepareAvailabilityNotificationBatch).not.toHaveBeenCalled();
+  expect(dispatchAvailabilityNotificationBatch).not.toHaveBeenCalled();
+});
+
+it("reviews the exact message and sends the server's eligible count after exclusions", async () => {
+  const user = userEvent.setup();
+  const reviewed = { ...batch, selectedMemberIds: [member.memberId, secondMember.memberId], summary: { ...batch.summary, selected: 2, requested: 2, excluded: 1 }, recipients: [...batch.recipients, { memberId: secondMember.memberId, memberName: "Sam Lee", eligible: false, status: "excluded" as const, segmentCount: 0, exclusionReason: "SMS consent is needed" }] };
+  jest.mocked(prepareAvailabilityNotificationBatch).mockResolvedValue({ success: true, batch: reviewed });
+  render(<AvailabilityFormSendFlow {...emptyHistoryProps} dialog churchId="church-1" form={form} members={[member, secondMember]} positions={[]} teams={[]} recipients={[]} eligibilityByMemberId={{ [member.memberId]: { eligible: true }, [secondMember.memberId]: { eligible: true } }} onClose={jest.fn()} />);
+  expect(screen.queryByText(batch.recipients[0].message!)).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Continue to review" }));
+  const review = await screen.findByRole("dialog", { name: "Review text messages" });
+  expect(within(review).getByText("2. Review and send")).toHaveAttribute("aria-current", "step");
+  expect(within(review).getByText("2 volunteers selected")).toBeInTheDocument();
+  expect(within(review).getByText(batch.recipients[0].message!)).toBeVisible();
+  expect(within(review).getByRole("button", { name: "Send 1 message" })).toBeEnabled();
+  expect(within(review).queryByRole("button", { name: "Send 2 messages" })).not.toBeInTheDocument();
+  expect(dispatchAvailabilityNotificationBatch).not.toHaveBeenCalled();
+  await user.click(within(review).getByRole("button", { name: "Back" }));
+  expect(screen.queryByText(batch.recipients[0].message!)).not.toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "Sam Lee" })).toBeChecked();
+});
+
 it("keeps selection through dialog filters and Back, and sends only from the reviewed step", async () => {
   const user = userEvent.setup();
   jest.mocked(prepareAvailabilityNotificationBatch).mockResolvedValue({ success: true, batch });
@@ -84,7 +122,7 @@ it("keeps selection through dialog filters and Back, and sends only from the rev
   await user.click(screen.getByRole("option", { name: "Eligible first-time recipients" }));
   expect(screen.getByRole("checkbox", { name: "Sam Lee" })).not.toBeChecked();
   await user.type(screen.getByRole("textbox", { name: /Search members/ }), "Rae");
-  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
+  await user.click(screen.getByRole("button", { name: "Continue to review" }));
   const review = await screen.findByRole("dialog", { name: "Review text messages" });
   expect(screen.getAllByRole("dialog")).toHaveLength(1);
   expect(within(review).queryByRole("checkbox")).not.toBeInTheDocument();
@@ -96,7 +134,7 @@ it("keeps selection through dialog filters and Back, and sends only from the rev
   expect(screen.getByRole("checkbox", { name: "Rae Kim" })).toBeChecked();
   await user.clear(screen.getByRole("textbox", { name: /Search members/ }));
   expect(screen.getByRole("checkbox", { name: "Sam Lee" })).not.toBeChecked();
-  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
+  await user.click(screen.getByRole("button", { name: "Continue to review" }));
   await user.click(within(await screen.findByRole("dialog", { name: "Review text messages" })).getByRole("button", { name: "Send 1 message" }));
   await waitFor(() => expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledWith("church-1", batch.batchId, batch.approvalVersion));
 });
@@ -106,7 +144,7 @@ it("cancels a prepared dialog without dispatching", async () => {
   const onClose = jest.fn();
   jest.mocked(prepareAvailabilityNotificationBatch).mockResolvedValue({ success: true, batch });
   render(<AvailabilityFormSendFlow {...emptyHistoryProps} dialog churchId="church-1" form={form} members={[member]} positions={[]} teams={[]} recipients={[]} eligibilityByMemberId={{ [member.memberId]: { eligible: true } }} onClose={onClose} />);
-  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
+  await user.click(screen.getByRole("button", { name: "Continue to review" }));
   await user.click(within(await screen.findByRole("dialog", { name: "Review text messages" })).getByRole("button", { name: "Cancel" }));
   expect(onClose).toHaveBeenCalledTimes(1);
   expect(dispatchAvailabilityNotificationBatch).not.toHaveBeenCalled();

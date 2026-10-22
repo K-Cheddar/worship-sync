@@ -1,5 +1,27 @@
 # Availability forms UX workflow review
 
+## Visual and send-flow refinement review (2026-10-21)
+
+### Findings and product authorization
+
+No blocking or outstanding findings. The current visual-polish request authorizes the compact summary, clearer tabs, dense roster and guided dialog. The existing workspace and shared Button, Tabs, Modal, Select and menu primitives are reused. The browser review exposed a collapsed auto-height tab strip under the real page's flex constraints; an explicit local strip height fixes it without changing shared tabs. No new subsystem or persisted state was added. The production diff is presentation and composition; most additional lines supply accessible summary markup and regression coverage.
+
+### Workflow and boundary review
+
+TeamsFormsPage still supplies the original authorized records to IntakeManager and the selected workspace. Counts use the same unfiltered progress rows as the roster; pending history does not invent invitation counts, and zero recipients produce valid zero progress. Legacy classification, public submissions and processing remain unchanged. Changing the dialog's initial audience filter affects visible rows only: automatic first-time selection and explicit definitive-failure selection remain authoritative.
+
+Traced selection -> prepare -> server-reviewed batch -> approval version -> explicit dispatch -> result/history. The new Continue and Send buttons call the existing guarded operations. Entity/eligibility/selection identities, stale-review invalidation, send lock, pending controls, consent/STOP and accepted/uncertain resend blocks are unchanged. Back retains selection; Cancel sends nothing. Exact previews appear only in review, while results use a concise status and existing history. Server exclusions remain visible in review, with individual explanations progressively exposed, and final Send uses the server-eligible count. Private links, shared-phone warnings, segment counts, permission projections and advanced Messages remain covered by existing suites.
+
+Identity, lifetime, persistence/publication and durable retry boundaries retain their existing owners and checks; this refinement adds no asynchronous operation, schema change, external resource, synchronization or destructive action. Modal's owner-aware portal/focus implementation and explicit container semantics remain unchanged. The actual page and deferred dialog are exercised with representative provider/HTTP fixtures, rather than mounting the workspace alone. Browser actions use intercepted fixture requests; no real SMS or database write occurs.
+
+### Verification and readiness
+
+Twelve focused Jest suites passed: **169 tests** covering IntakeManager, TeamsFormsPage.workspace, TeamsFormsPage, TeamsMessagesPage, AvailabilityFormSendFlow, AvailabilityBatchReview, availabilityFormProgress, availabilityRecipientSelection, availabilityNotificationHistory, availabilityBatchActions, intakeFormFields and intakeAvailabilitySuggestion. New coverage includes unfiltered summary/refresh, zero-recipient pending history, collapsed eligibility diagnostics, disabled blocked recipients, review-only exact preview, server exclusions and eligible final count. Existing tests retain explicit retries, uncertainty/acceptance blocks, stale review and duplicate-send protections.
+
+TypeScript and build:strict (including lint:check with zero warnings) passed. The strict build used the normal Vite loader outside the Windows sandbox and retained existing asset/chunk warnings. Actual Forms route browser coverage passes at 1280x800 and 375x640 with 30 persisted-style recipients, general-intake/missing-purpose forms, both tabs, expanded responses, selection, reviewed messages, Back and Cancel. Inspected screenshots confirm clear active tabs, no horizontal page overflow and visible Continue/Send footers. No browser errors or dispatch calls. git diff --check passed. Scope is this workflow, not release-wide verification or deployment.
+
+Ready for the requested refinement; no remaining UI follow-ups. No separate release note: this polishes the existing unreleased availability-workspace concept without changing its product story, per release-notes/README.md.
+
 ## Legacy rendering repair review (2026-10-21)
 
 ### Findings

@@ -37,7 +37,7 @@ const form: TeamIntakeForm = {
     name: "Sunday worship",
   })),
 };
-const members = ["Jane Smith", "John Davis", "Mary Wilson"].map(
+const members = ["Jane Smith", "John Davis", "Mary Wilson", ...Array.from({ length: 27 }, (_, index) => `Volunteer ${index + 4}`)].map(
   (name, index) => ({
     memberId: `member-${index}`,
     churchId: "church",

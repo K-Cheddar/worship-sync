@@ -20,6 +20,7 @@ import {
   dispatchAvailabilityNotificationBatch,
   updateTeamIntakeForm,
   getTeamAvailabilityManagementData,
+  getNotificationIntents,
 } from "../../../api/auth";
 import { useTeamsPage } from "../TeamsPageContext";
 import TeamsFormsPage from "./TeamsFormsPage";
@@ -118,11 +119,13 @@ function Harness({
   formRecord = form,
   initialSubmissions = [],
   services = [],
+  emptyRoster = false,
 }: {
   scoped?: boolean;
   formRecord?: TeamIntakeForm;
   initialSubmissions?: TeamIntakeSubmission[];
   services?: TeamService[];
+  emptyRoster?: boolean;
 }) {
   const [submitted, setSubmitted] = useState(false);
   jest.mocked(useTeamsPage).mockReturnValue({
@@ -139,7 +142,7 @@ function Harness({
       ...emptyData,
       services,
       teams: [team],
-      members: [member],
+      members: emptyRoster ? [] : [member],
       intakeForms: [formRecord],
       smsEligibilityByMemberId: {
         member: { status: "enabled", eligible: true },
@@ -197,6 +200,15 @@ test("administrator Forms refresh displays recipient-linked answers through the 
   await user.click(
     screen.getByRole("button", { name: "Edit November availability" }),
   );
+  const progress = screen.getByRole("region", { name: "Response progress" });
+  expect(within(progress).getByText("Responded")).toBeInTheDocument();
+  expect(within(progress).getByText("Awaiting response")).toBeInTheDocument();
+  expect(within(progress).getByText("Not invited")).toBeInTheDocument();
+  expect(within(progress).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "0");
+  expect(screen.getByRole("button", { name: "Send requests" })).toHaveAttribute("data-variant", "presentCta");
+  await user.type(screen.getByRole("textbox", { name: /Search members/ }), "nobody");
+  expect(within(progress).getByRole("progressbar")).toHaveAttribute("aria-valuetext", "0 of 1 responded");
+  expect(within(progress).getByRole("button", { name: "Refresh status" })).toBeInTheDocument();
   await user.click(screen.getByRole("tab", { name: "Responses" }));
   expect(screen.getByText(/No responses received yet/)).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Refresh status" }));
@@ -206,6 +218,18 @@ test("administrator Forms refresh displays recipient-linked answers through the 
   expect(
     within(screen.getByRole("table")).getByText("Unavailable"),
   ).toBeInTheDocument();
+  expect(within(progress).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "100");
+});
+
+test("zero-recipient progress is valid and invitation counts stay unknown until history loads", async () => {
+  const user = userEvent.setup();
+  jest.mocked(getNotificationIntents).mockImplementationOnce(() => new Promise(() => {}));
+  render(<Harness emptyRoster />);
+  await user.click(screen.getByRole("button", { name: "Edit November availability" }));
+  const progress = screen.getByRole("region", { name: "Response progress" });
+  expect(within(progress).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "0");
+  expect(within(progress).getByRole("progressbar")).toHaveAttribute("aria-valuetext", "0 of 0 responded");
+  expect(within(progress).getAllByRole("definition").map((item) => item.textContent)).toEqual(["0", "—", "—"]);
 });
 
 test("scoped Forms refresh uses restricted response data and exposes no general-link action", async () => {
@@ -515,7 +539,7 @@ test("legacy workspace keeps general and personal links distinct and requires fi
   ).toBeChecked();
   await user.click(
     within(selection).getByRole("button", {
-      name: "Review and send 1 message",
+      name: "Continue to review",
     }),
   );
   const review = await screen.findByRole("dialog", {
