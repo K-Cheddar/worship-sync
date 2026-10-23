@@ -101,7 +101,10 @@ import CreditsSettingsDrawer from "../../containers/Credits/CreditsSettingsDrawe
 import { CreditsPreviewSkeleton } from "../../containers/Credits/CreditsEditorSkeleton";
 import { useGenerateCreditsFromOverlays } from "../../hooks/useGenerateCreditsFromOverlays";
 import { setOverlayCreditsSettingsDrawerOpen } from "../../store/preferencesSlice";
-import { setServicePlanningFloatingWindowDismissed, setServicePlanningServiceOutline } from "../../store/servicePlanningImportSlice";
+import {
+  setServicePlanningFloatingWindowDismissed,
+  setServicePlanningRestoredOutlineUnlessStale,
+} from "../../store/servicePlanningImportSlice";
 import ServicePlanningSyncFloatingWindow from "../Controller/ServicePlanningSyncFloatingWindow";
 import GeneratedCreditsFloatingWindow from "./GeneratedCreditsFloatingWindow";
 import { useAboutChangelogMenu } from "../../hooks/useAboutChangelogMenu";
@@ -370,7 +373,11 @@ const CreditsEditor = ({
         const overlaysIds = response?.overlays || [];
         const formattedOverlays = await getOverlaysByIds(db, overlaysIds);
         dispatch(initiateOverlayList(formattedOverlays));
-        dispatch(setServicePlanningServiceOutline(response?.serviceOutline ?? null));
+        dispatch(
+          setServicePlanningRestoredOutlineUnlessStale(
+            response?.serviceOutline ?? null,
+          ),
+        );
       } catch (e) {
         console.error(e);
       }

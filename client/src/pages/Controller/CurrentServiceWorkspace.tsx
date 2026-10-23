@@ -62,6 +62,7 @@ import {
   type TeamsAssignmentSummaryRow,
 } from "../Teams/pages/teamsAssignmentsSummary";
 import WhosServingPanel from "../Teams/pages/WhosServingPanel";
+import { CurrentMemberIdentityProvider } from "../Teams/components/CurrentUserMemberIndicator";
 import {
   buildPlanToScheduleNavigationState,
   persistTeamsReturnTo,
@@ -386,24 +387,28 @@ const ServingPanel = ({
   assignmentTeams,
   microphones,
   assignmentsStatus,
+  selfMemberId,
   onOpenSchedule,
 }: {
   assignmentTeams: ReturnType<typeof groupAssignmentSummaryByTeam>;
   microphones: ServicePlanMicrophone[];
   assignmentsStatus: AssignmentsStatus;
+  selfMemberId: string | null;
   onOpenSchedule: (args: {
     scheduleId: string;
     slot?: { occurrenceId: string; columnKey: string };
   }) => void;
 }) => (
   <div className="scrollbar-variable flex h-full min-h-0 flex-col gap-2 overflow-y-auto">
-    <WhosServingPanel
-      assignmentTeams={assignmentTeams}
-      onOpenSchedule={onOpenSchedule}
-      microphones={microphones}
-      assignmentsStatus={assignmentsStatus}
-      showHeading={false}
-    />
+    <CurrentMemberIdentityProvider memberId={selfMemberId}>
+      <WhosServingPanel
+        assignmentTeams={assignmentTeams}
+        onOpenSchedule={onOpenSchedule}
+        microphones={microphones}
+        assignmentsStatus={assignmentsStatus}
+        showHeading={false}
+      />
+    </CurrentMemberIdentityProvider>
   </div>
 );
 
@@ -419,6 +424,7 @@ type PreviewPanelProps = {
   assignmentTeams: ReturnType<typeof groupAssignmentSummaryByTeam>;
   microphones: ServicePlanMicrophone[];
   assignmentsStatus: AssignmentsStatus;
+  selfMemberId: string | null;
   onOpenSchedule: (args: {
     scheduleId: string;
     slot?: { occurrenceId: string; columnKey: string };
@@ -448,6 +454,7 @@ const PreviewPanelContent = ({
   assignmentTeams,
   microphones,
   assignmentsStatus,
+  selfMemberId,
   onOpenSchedule,
   outputs,
   selectedOutputIds,
@@ -504,6 +511,7 @@ const PreviewPanelContent = ({
           assignmentTeams={assignmentTeams}
           microphones={microphones}
           assignmentsStatus={assignmentsStatus}
+          selfMemberId={selfMemberId}
           onOpenSchedule={onOpenSchedule}
         />
       </div>
@@ -599,6 +607,8 @@ const CurrentServiceWorkspace = () => {
     currentServiceWorkspace,
     firebaseDb,
     loginState,
+    sessionKind,
+    userId,
     sharedDataReady,
   } = useContext(GlobalInfoContext) || {};
   const { setIsMobile } = useContext(ControllerInfoContext) || {};
@@ -623,6 +633,18 @@ const CurrentServiceWorkspace = () => {
   const [rolePositions, setRolePositions] = useState<TeamPosition[]>([]);
   const [roleTeams, setRoleTeams] = useState<TeamRecord[]>([]);
   const [roleMembers, setRoleMembers] = useState<TeamRosterMember[]>([]);
+  const identityScopeKey = [
+    churchId || "",
+    sessionKind || "",
+    sessionKind === "human" ? userId || "" : "",
+  ].join(":");
+  const [roleSelfMemberIdentity, setRoleSelfMemberIdentity] = useState<{
+    scopeKey: string;
+    memberId: string | null;
+  }>({ scopeKey: identityScopeKey, memberId: null });
+  const selfMemberId = roleSelfMemberIdentity.scopeKey === identityScopeKey
+    ? roleSelfMemberIdentity.memberId
+    : null;
   /**
    * Schedules exactly as the bootstrap sent them, summaries included. The
    * hydration effect below fills in the ones covering the open occurrence;
@@ -638,7 +660,9 @@ const CurrentServiceWorkspace = () => {
   const roleDataRequestIdRef = useRef(0);
   const roleDataInFlightRef = useRef<Promise<void> | null>(null);
   const roleDataInFlightChurchIdRef = useRef<string | undefined>(undefined);
+  const roleDataInFlightIdentityScopeRef = useRef("");
   const roleDataChurchIdRef = useRef<string | undefined>(churchId);
+  const roleDataIdentityScopeRef = useRef(identityScopeKey);
   const roleDataEnabledRef = useRef(false);
   const roleDataMountedRef = useRef(false);
   const hasReceivedLiveConnectionRef = useRef(false);
@@ -749,7 +773,16 @@ const CurrentServiceWorkspace = () => {
     churchId && teamAvailable && loginState !== "guest",
   );
   roleDataChurchIdRef.current = churchId;
+  roleDataIdentityScopeRef.current = identityScopeKey;
   roleDataEnabledRef.current = canLoadRoleData;
+
+  useEffect(() => {
+    roleDataRequestIdRef.current += 1;
+    roleDataInFlightRef.current = null;
+    roleDataInFlightChurchIdRef.current = undefined;
+    roleDataInFlightIdentityScopeRef.current = "";
+    setRoleSelfMemberIdentity({ scopeKey: identityScopeKey, memberId: null });
+  }, [identityScopeKey]);
 
   useEffect(() => {
     roleDataMountedRef.current = true;
@@ -758,6 +791,7 @@ const CurrentServiceWorkspace = () => {
       roleDataRequestIdRef.current += 1;
       roleDataInFlightRef.current = null;
       roleDataInFlightChurchIdRef.current = undefined;
+      roleDataInFlightIdentityScopeRef.current = "";
     };
   }, []);
 
@@ -799,7 +833,8 @@ const CurrentServiceWorkspace = () => {
       const existing = roleDataInFlightRef.current;
       if (
         existing &&
-        roleDataInFlightChurchIdRef.current === churchIdAtStart
+        roleDataInFlightChurchIdRef.current === churchIdAtStart &&
+        roleDataInFlightIdentityScopeRef.current === identityScopeKey
       ) {
         return existing;
       }
@@ -808,10 +843,12 @@ const CurrentServiceWorkspace = () => {
       const requestId = ++roleDataRequestIdRef.current;
       roleDataChurchIdRef.current = churchIdAtStart;
       roleDataInFlightChurchIdRef.current = churchIdAtStart;
+      roleDataInFlightIdentityScopeRef.current = identityScopeKey;
       roleScheduleOverridesRef.current.clear();
       const isCurrentRequest = () =>
         requestId === roleDataRequestIdRef.current &&
         roleDataChurchIdRef.current === churchIdAtStart &&
+        roleDataIdentityScopeRef.current === identityScopeKey &&
         roleDataEnabledRef.current &&
         roleDataMountedRef.current;
 
@@ -820,6 +857,10 @@ const CurrentServiceWorkspace = () => {
         try {
           const bootstrap = await getTeamsBootstrap(churchIdAtStart);
           if (!isCurrentRequest()) return;
+          setRoleSelfMemberIdentity({
+            scopeKey: identityScopeKey,
+            memberId: bootstrap.selfMemberId || null,
+          });
           setRolePositions(bootstrap.positions || []);
           setRoleTeams(bootstrap.teams || []);
           setRoleMembers(bootstrap.members || []);
@@ -843,12 +884,13 @@ const CurrentServiceWorkspace = () => {
         if (roleDataInFlightRef.current === request) {
           roleDataInFlightRef.current = null;
           roleDataInFlightChurchIdRef.current = undefined;
+          roleDataInFlightIdentityScopeRef.current = "";
         }
       });
       roleDataInFlightRef.current = request;
       return request;
     },
-    [canLoadRoleData, churchId],
+    [canLoadRoleData, churchId, identityScopeKey],
   );
 
   useEffect(() => {
@@ -856,7 +898,9 @@ const CurrentServiceWorkspace = () => {
       roleDataRequestIdRef.current += 1;
       roleDataInFlightRef.current = null;
       roleDataInFlightChurchIdRef.current = undefined;
+      roleDataInFlightIdentityScopeRef.current = "";
       roleScheduleOverridesRef.current.clear();
+      setRoleSelfMemberIdentity({ scopeKey: identityScopeKey, memberId: null });
       setRolePositions([]);
       setRoleTeams([]);
       setRoleMembers([]);
@@ -864,7 +908,7 @@ const CurrentServiceWorkspace = () => {
       return;
     }
     void loadRoleData({ preserveOnFailure: false });
-  }, [canLoadRoleData, loadRoleData]);
+  }, [canLoadRoleData, identityScopeKey, loadRoleData]);
 
   const applyTeamsStreamEvent = useCallback(
     (event: TeamsStreamEvent) => {
@@ -1285,44 +1329,47 @@ const CurrentServiceWorkspace = () => {
       assignmentTeams={assignmentTeams}
       microphones={microphones}
       assignmentsStatus={assignmentsStatus}
+      selfMemberId={selfMemberId}
       onOpenSchedule={openSchedule}
     />
   );
 
   const planEditor = (
-    <ServicePlanEditor
-      service={service}
-      occurrence={occurrence}
-      onPlanTimingChange={setTimingPlan}
-      members={roleMembers}
-      positions={rolePositions}
-      teams={roleTeams}
-      scheduledEquipmentHolders={
-        canLoadRoleData ? scheduledEquipmentHolders : undefined
-      }
-      scheduledEquipmentStatus={
-        canLoadRoleData ? assignmentsStatus : "unavailable"
-      }
-      teamEquipment={
-        canLoadRoleData
-          ? {
-              rows: assignmentRows,
-              assignmentsStatus,
-              savingMicrophoneSlot,
-              savingIemSlot,
-              onMicrophoneChange: (row, microphoneIds) => {
-                void saveScheduledMicrophones(row, microphoneIds);
-              },
-              onIemChange: (row, iemIds) => {
-                void saveScheduledIems(row, iemIds);
-              },
-            }
-          : undefined
-      }
-      canEdit={Boolean(canEditServices ?? canEditTeams)}
-      showSummary={false}
-      occurrenceSwitcher={occurrenceSwitcher}
-    />
+    <CurrentMemberIdentityProvider memberId={selfMemberId}>
+      <ServicePlanEditor
+        service={service}
+        occurrence={occurrence}
+        onPlanTimingChange={setTimingPlan}
+        members={roleMembers}
+        positions={rolePositions}
+        teams={roleTeams}
+        scheduledEquipmentHolders={
+          canLoadRoleData ? scheduledEquipmentHolders : undefined
+        }
+        scheduledEquipmentStatus={
+          canLoadRoleData ? assignmentsStatus : "unavailable"
+        }
+        teamEquipment={
+          canLoadRoleData
+            ? {
+                rows: assignmentRows,
+                assignmentsStatus,
+                savingMicrophoneSlot,
+                savingIemSlot,
+                onMicrophoneChange: (row, microphoneIds) => {
+                  void saveScheduledMicrophones(row, microphoneIds);
+                },
+                onIemChange: (row, iemIds) => {
+                  void saveScheduledIems(row, iemIds);
+                },
+              }
+            : undefined
+        }
+        canEdit={Boolean(canEditServices ?? canEditTeams)}
+        showSummary={false}
+        occurrenceSwitcher={occurrenceSwitcher}
+      />
+    </CurrentMemberIdentityProvider>
   );
 
   return (
@@ -1505,6 +1552,7 @@ const CurrentServiceWorkspace = () => {
                 assignmentTeams={assignmentTeams}
                 microphones={microphones}
                 assignmentsStatus={assignmentsStatus}
+                selfMemberId={selfMemberId}
                 onOpenSchedule={openSchedule}
                 outputs={displayOutputs}
                 selectedOutputIds={selectedOutputIds}

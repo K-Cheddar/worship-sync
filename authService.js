@@ -2,6 +2,7 @@ import "dotenv/config";
 import { serializeAuthError } from "./server/authErrorResponse.js";
 import { buildSharedDataWriteClaims } from "./server/sharedDataAuthClaims.js";
 import crypto from "node:crypto";
+import { changesVolunteerContactOwnership, volunteerContactIndexFields } from "./server/volunteerContactIndex.js";
 import { FieldPath, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { Resend } from "resend";
 import {
@@ -54,6 +55,11 @@ import {
   listEditableTeamScopeIds,
 } from "./server/inviteAcceptedAccessSummary.js";
 import { selectInviteAcceptedAdminRecipients } from "./server/inviteAcceptedNotifyRecipients.js";
+import {
+  createVolunteerIdentityOperations,
+  withVolunteerIdentityMutationLocks,
+  volunteerAccountLockKeys,
+} from "./server/volunteerIdentity.js";
 import {
   collectDigestSubmitterNames,
   decideDigestAction,
@@ -178,6 +184,7 @@ export const COLLECTIONS = {
   displayPairings: "displayPairings",
   displayDevices: "displayDevices",
   teamRosterMembers: "teamRosterMembers",
+  teamVolunteerIdentityClaims: "teamVolunteerIdentityClaims",
   teamPositions: "teamPositions",
   teams: "teams",
   teamRoles: "teamRoles",
@@ -571,6 +578,7 @@ const memoryState = {
   displayPairings: new Map(),
   displayDevices: new Map(),
   teamRosterMembers: new Map(),
+  teamVolunteerIdentityClaims: new Map(),
   teamPositions: new Map(),
   teams: new Map(),
   teamRoles: new Map(),
@@ -674,6 +682,7 @@ const collectionMap = {
   [COLLECTIONS.displayPairings]: memoryState.displayPairings,
   [COLLECTIONS.displayDevices]: memoryState.displayDevices,
   [COLLECTIONS.teamRosterMembers]: memoryState.teamRosterMembers,
+  [COLLECTIONS.teamVolunteerIdentityClaims]: memoryState.teamVolunteerIdentityClaims,
   [COLLECTIONS.teamPositions]: memoryState.teamPositions,
   [COLLECTIONS.teams]: memoryState.teams,
   [COLLECTIONS.teamRoles]: memoryState.teamRoles,
@@ -1324,13 +1333,22 @@ export const setDoc = async (
   { merge = false } = {},
 ) => {
   const db = requireFirestore();
+  const indexContact = collectionName === COLLECTIONS.teamRosterMembers
+    && process.env.AUTH_VOLUNTEER_PORTAL_SECRET && (!merge || changesVolunteerContactOwnership(data));
   if (db) {
-    await db.collection(collectionName).doc(id).set(data, { merge });
+    const ref = db.collection(collectionName).doc(id);
+    if (indexContact) {
+      await db.runTransaction(async (transaction) => {
+        const current = merge ? (await transaction.get(ref)).data() || {} : {};
+        transaction.set(ref, { ...data, ...volunteerContactIndexFields({ ...current, ...data }, process.env.AUTH_VOLUNTEER_PORTAL_SECRET) }, { merge });
+      });
+    } else await ref.set(data, { merge });
     return;
   }
   const store = collectionMap[collectionName];
   const current = store.get(id) || {};
-  store.set(id, merge ? { ...current, ...data } : { ...data });
+  const next = merge ? { ...current, ...data } : { ...data };
+  store.set(id, indexContact ? { ...next, ...volunteerContactIndexFields(next, process.env.AUTH_VOLUNTEER_PORTAL_SECRET) } : next);
 };
 
 /**
@@ -1351,15 +1369,25 @@ const updateDocFields = async (
   { transaction = null } = {},
 ) => {
   const db = requireFirestore();
+  const indexContact = collectionName === COLLECTIONS.teamRosterMembers
+    && process.env.AUTH_VOLUNTEER_PORTAL_SECRET && changesVolunteerContactOwnership(data);
   if (db) {
     const ref = db.collection(collectionName).doc(id);
-    if (transaction) transaction.update(ref, data);
+    if (indexContact) {
+      const write = async (tx) => {
+        const current = (await tx.get(ref)).data() || {};
+        tx.update(ref, { ...data, ...volunteerContactIndexFields({ ...current, ...data }, process.env.AUTH_VOLUNTEER_PORTAL_SECRET) });
+      };
+      if (transaction) await write(transaction);
+      else await db.runTransaction(write);
+    } else if (transaction) transaction.update(ref, data);
     else await ref.update(data);
     return;
   }
   const store = collectionMap[collectionName];
   const current = store.get(id) || {};
-  store.set(id, { ...current, ...data });
+  const next = { ...current, ...data };
+  store.set(id, indexContact ? { ...next, ...volunteerContactIndexFields(next, process.env.AUTH_VOLUNTEER_PORTAL_SECRET) } : next);
 };
 
 /**
@@ -1396,6 +1424,8 @@ const updateDocMapKeys = async (
     return;
   }
   const db = requireFirestore();
+  const indexContact = collectionName === COLLECTIONS.teamRosterMembers
+    && process.env.AUTH_VOLUNTEER_PORTAL_SECRET && changesVolunteerContactOwnership(fields);
   if (db) {
     const args = [];
     setEntries.forEach(([key, value]) =>
@@ -1407,9 +1437,18 @@ const updateDocMapKeys = async (
     removePaths.forEach((path) =>
       args.push(new FieldPath(field, ...path), FieldValue.delete()),
     );
-    fieldEntries.forEach(([key, value]) => args.push(key, value));
+    fieldEntries.filter(([key]) => !indexContact || !["volunteerContactKeys", "volunteerContactKeyId"].includes(key))
+      .forEach(([key, value]) => args.push(key, value));
     const ref = db.collection(collectionName).doc(id);
-    if (transaction) transaction.update(ref, ...args);
+    if (indexContact) {
+      const write = async (tx) => {
+        const current = (await tx.get(ref)).data() || {};
+        const indexed = volunteerContactIndexFields({ ...current, ...fields }, process.env.AUTH_VOLUNTEER_PORTAL_SECRET);
+        tx.update(ref, ...args, ...Object.entries(indexed).flat());
+      };
+      if (transaction) await write(transaction);
+      else await db.runTransaction(write);
+    } else if (transaction) transaction.update(ref, ...args);
     else await ref.update(...args);
     return;
   }
@@ -1431,7 +1470,8 @@ const updateDocMapKeys = async (
     }
     if (path.length) delete cursor[path[path.length - 1]];
   });
-  store.set(id, { ...current, ...fields, [field]: nextMap });
+  const next = { ...current, ...fields, [field]: nextMap };
+  store.set(id, indexContact ? { ...next, ...volunteerContactIndexFields(next, process.env.AUTH_VOLUNTEER_PORTAL_SECRET) } : next);
 };
 
 export const deleteDoc = async (collectionName, id) => {
@@ -1446,7 +1486,12 @@ export const deleteDoc = async (collectionName, id) => {
 export const queryDocs = async (
   collectionName,
   filters = [],
-  { limit = 100 } = {},
+  {
+    limit = 100,
+    orderById = false,
+    startAfterId = "",
+    includeDocumentId = false,
+  } = {},
 ) => {
   authReadObserverForServerTests?.({
     type: "queryDocs",
@@ -1459,15 +1504,23 @@ export const queryDocs = async (
     for (const filter of filters) {
       query = query.where(filter.field, filter.op || "==", filter.value);
     }
+    if (orderById) {
+      query = query.orderBy(FieldPath.documentId());
+      if (startAfterId) query = query.startAfter(startAfterId);
+    }
     if (limit) {
       query = query.limit(limit);
     }
     const snapshot = await query.get();
-    return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    return snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+      ...(includeDocumentId ? { documentId: doc.id } : {}),
+    }));
   }
 
   const store = Array.from(collectionMap[collectionName].entries()).map(
-    ([id, value]) => ({ id, ...value }),
+    ([id, value]) => ({ id, ...value, ...(includeDocumentId ? { documentId: id } : {}) }),
   );
   return store
     .filter((item) =>
@@ -1486,6 +1539,13 @@ export const queryDocs = async (
         return false;
       }),
     )
+    .filter((item) =>
+      !startAfterId || !orderById ||
+      Buffer.compare(Buffer.from(item.id, "utf8"), Buffer.from(startAfterId, "utf8")) > 0,
+    )
+    .sort((left, right) => orderById
+      ? Buffer.compare(Buffer.from(left.id, "utf8"), Buffer.from(right.id, "utf8"))
+      : 0)
     .slice(0, limit || undefined);
 };
 
@@ -1699,14 +1759,18 @@ const clearPendingInviteToken = async ({ churchId, inviteId, tokenHash }) => {
   }
 };
 
-const addSecurityEvent = async (event) => {
+const createSecurityEventRecord = (event) => {
   const eventId = createId("event");
-  const payload = {
+  return {
     eventId,
     createdAt: nowIso(),
     ...event,
   };
-  await setDoc(COLLECTIONS.securityEvents, eventId, payload);
+};
+
+const addSecurityEvent = async (event) => {
+  const payload = createSecurityEventRecord(event);
+  await setDoc(COLLECTIONS.securityEvents, payload.eventId, payload);
   logAuthEvent("log", event.type || "security_event", payload);
   return payload;
 };
@@ -4259,116 +4323,166 @@ const acceptInviteMembership = async ({ invite, user }) => {
   const membershipId = membershipIdFor({ churchId, userId: user.uid });
   const db = requireFirestore();
 
-  if (db) {
-    const transactionResult = await db.runTransaction(async (transaction) => {
-      const inviteRef = db.collection(COLLECTIONS.invites).doc(invite.inviteId);
-      const membershipRef = db
-        .collection(COLLECTIONS.memberships)
-        .doc(membershipId);
-      const churchRef = db.collection(COLLECTIONS.churches).doc(churchId);
-
-      const inviteSnap = await transaction.get(inviteRef);
-      if (!inviteSnap.exists) {
-        throw httpError(404, "Invite not found");
-      }
-      const inviteData = inviteSnap.data();
-      if (inviteData.churchId !== churchId) {
-        throw httpError(404, "Invite not found");
-      }
-      if (inviteData.status !== "pending") {
-        if (inviteData.status === "revoked") {
-          throw httpError(400, "This invite was revoked.");
-        }
-        throw httpError(400, "This invite is not active");
-      }
-      if (new Date(inviteData.expiresAt).getTime() < Date.now()) {
-        transaction.update(inviteRef, { status: "expired" });
-        return { expired: true };
-      }
-
-      const acceptedControllerAccess = normalizeControllerAccess(
-        inviteData.controllerAccess ?? inviteData.appAccess,
-        "view",
-      );
-      const acceptedInvite = {
-        ...invite,
-        ...inviteData,
-        inviteId: invite.inviteId,
+  const recordLinkConflict = async (memberId) => {
+    try {
+      await addSecurityEvent({
+        type: "team_member_link_conflict",
         churchId,
-        role: inviteData.role,
-        controllerAccess: acceptedControllerAccess,
-        appAccess: legacyAppAccessForController(acceptedControllerAccess),
-        permissions: normalizeMembershipPermissions(
-          inviteData.permissions,
-          inviteData.role,
-        ),
-        createdAt: inviteData.createdAt || nowIso(),
-        createdByUid: inviteData.createdByUid,
-      };
-
-      const userActiveMembershipsSnap = await transaction.get(
-        db
-          .collection(COLLECTIONS.memberships)
-          .where("userId", "==", user.uid)
-          .where("status", "==", "active"),
-      );
-      const inviteMembershipConflict = getInviteMembershipConflict({
         userId: user.uid,
-        invitedChurchId: churchId,
-        activeMemberships: userActiveMembershipsSnap.docs.map((d) => ({
-          userId: d.get("userId"),
-          churchId: d.get("churchId"),
-          status: d.get("status"),
-        })),
+        memberId,
+        source: "invite",
       });
-      if (inviteMembershipConflict) {
-        throw httpError(
-          inviteMembershipConflict.statusCode,
-          inviteMembershipConflict.message,
-        );
-      }
+    } catch (auditError) {
+      logAuthEvent("warn", "team.roster.link-conflict.audit_failed", {
+        churchId,
+        memberId,
+        message: auditError instanceof Error ? auditError.message : String(auditError),
+      });
+    }
+  };
 
-      const adminSnapshot = await transaction.get(
-        db
+  if (db) {
+    let transactionResult;
+    try {
+      transactionResult = await db.runTransaction(async (transaction) => {
+        const inviteRef = db.collection(COLLECTIONS.invites).doc(invite.inviteId);
+        const membershipRef = db
           .collection(COLLECTIONS.memberships)
-          .where("churchId", "==", churchId)
-          .where("role", "==", "admin")
-          .where("status", "==", "active"),
-      );
+          .doc(membershipId);
+        const churchRef = db.collection(COLLECTIONS.churches).doc(churchId);
 
-      transaction.set(
-        membershipRef,
-        {
-          membershipId,
+        const inviteSnap = await transaction.get(inviteRef);
+        if (!inviteSnap.exists) {
+          throw httpError(404, "Invite not found");
+        }
+        const inviteData = inviteSnap.data();
+        if (inviteData.churchId !== churchId) {
+          throw httpError(404, "Invite not found");
+        }
+        if (inviteData.status !== "pending") {
+          if (inviteData.status === "revoked") {
+            throw httpError(400, "This invite was revoked.");
+          }
+          throw httpError(400, "This invite is not active");
+        }
+        if (new Date(inviteData.expiresAt).getTime() < Date.now()) {
+          transaction.update(inviteRef, { status: "expired" });
+          return { expired: true };
+        }
+
+        const acceptedControllerAccess = normalizeControllerAccess(
+          inviteData.controllerAccess ?? inviteData.appAccess,
+          "view",
+        );
+        const acceptedInvite = {
+          ...invite,
+          ...inviteData,
+          inviteId: invite.inviteId,
           churchId,
-          userId: user.uid,
-          role: acceptedInvite.role,
-          controllerAccess: acceptedInvite.controllerAccess,
-          appAccess: acceptedInvite.appAccess,
-          permissions: acceptedInvite.permissions,
-          status: "active",
-          createdAt: acceptedInvite.createdAt,
-          createdByUid: acceptedInvite.createdByUid,
-        },
-        { merge: true },
-      );
+          role: inviteData.role,
+          controllerAccess: acceptedControllerAccess,
+          appAccess: legacyAppAccessForController(acceptedControllerAccess),
+          permissions: normalizeMembershipPermissions(
+            inviteData.permissions,
+            inviteData.role,
+          ),
+          createdAt: inviteData.createdAt || nowIso(),
+          createdByUid: inviteData.createdByUid,
+        };
 
-      const nextAdminCount =
-        adminSnapshot.docs.some((doc) => doc.id === membershipId) ||
-        acceptedInvite.role !== "admin"
-          ? adminSnapshot.size
-          : adminSnapshot.size + 1;
-      transaction.update(churchRef, {
-        adminCount: nextAdminCount,
-        status:
-          nextAdminCount > 0 ? CHURCH_STATUS_ACTIVE : CHURCH_STATUS_NEEDS_ADMIN,
+        const userActiveMembershipsSnap = await transaction.get(
+          db
+            .collection(COLLECTIONS.memberships)
+            .where("userId", "==", user.uid)
+            .where("status", "==", "active"),
+        );
+        const inviteMembershipConflict = getInviteMembershipConflict({
+          userId: user.uid,
+          invitedChurchId: churchId,
+          activeMemberships: userActiveMembershipsSnap.docs.map((d) => ({
+            userId: d.get("userId"),
+            churchId: d.get("churchId"),
+            status: d.get("status"),
+          })),
+        });
+        if (inviteMembershipConflict) {
+          throw httpError(
+            inviteMembershipConflict.statusCode,
+            inviteMembershipConflict.message,
+          );
+        }
+
+        const adminSnapshot = await transaction.get(
+          db
+            .collection(COLLECTIONS.memberships)
+            .where("churchId", "==", churchId)
+            .where("role", "==", "admin")
+            .where("status", "==", "active"),
+        );
+        const linkPlan = inviteData.memberId
+          ? await volunteerIdentityOperations.prepareRosterMemberLink({
+              churchId,
+              memberId: inviteData.memberId,
+              userId: user.uid,
+              actorUid: user.uid,
+              source: "invite",
+              auditEvent: {
+                type: "team_member_linked",
+                churchId,
+                userId: user.uid,
+                memberId: inviteData.memberId,
+                source: "invite",
+              },
+              membershipIsBeingCreated: true,
+              db,
+              transaction,
+            })
+          : null;
+
+        transaction.set(
+          membershipRef,
+          {
+            membershipId,
+            churchId,
+            userId: user.uid,
+            role: acceptedInvite.role,
+            controllerAccess: acceptedInvite.controllerAccess,
+            appAccess: acceptedInvite.appAccess,
+            permissions: acceptedInvite.permissions,
+            status: "active",
+            createdAt: acceptedInvite.createdAt,
+            createdByUid: acceptedInvite.createdByUid,
+          },
+          { merge: true },
+        );
+
+        const nextAdminCount =
+          adminSnapshot.docs.some((doc) => doc.id === membershipId) ||
+          acceptedInvite.role !== "admin"
+            ? adminSnapshot.size
+            : adminSnapshot.size + 1;
+        transaction.update(churchRef, {
+          adminCount: nextAdminCount,
+          status:
+            nextAdminCount > 0 ? CHURCH_STATUS_ACTIVE : CHURCH_STATUS_NEEDS_ADMIN,
+        });
+        transaction.update(inviteRef, {
+          status: "accepted",
+          acceptedAt: nowIso(),
+        });
+        if (linkPlan) linkPlan.applyToTransaction(transaction);
+        return {
+          expired: false,
+          acceptedInvite,
+          auditEvents: linkPlan?.auditEvent ? [linkPlan.auditEvent] : [],
+        };
       });
-      transaction.update(inviteRef, {
-        status: "accepted",
-        acceptedAt: nowIso(),
-      });
-      return { expired: false, acceptedInvite };
-    });
+    } catch (error) {
+      if (error.code === "VOLUNTEER_IDENTITY_CONFLICT" && invite.memberId) {
+        await recordLinkConflict(invite.memberId);
+      }
+      throw error;
+    }
 
     if (transactionResult?.expired) {
       throw httpError(400, "This invite has expired");
@@ -4377,186 +4491,201 @@ const acceptInviteMembership = async ({ invite, user }) => {
     if (!acceptedInvite) {
       throw httpError(400, "This invite is not active");
     }
-    await linkInvitedRosterMember({ invite: acceptedInvite, user });
+    logCommittedSecurityEvents(transactionResult.auditEvents);
     return acceptedInvite;
   }
 
-  const acceptedInvite = await withInviteMutationLock(invite.inviteId, async () => {
-    const latestInvite = await getDoc(COLLECTIONS.invites, invite.inviteId);
-    if (
-      !latestInvite ||
-      latestInvite.churchId !== churchId ||
-      latestInvite.status !== "pending"
-    ) {
-      if (latestInvite?.status === "revoked") {
-        throw httpError(400, "This invite was revoked.");
-      }
-      throw httpError(400, "This invite is not active");
-    }
-    if (new Date(latestInvite.expiresAt).getTime() < Date.now()) {
-      await setDoc(
-        COLLECTIONS.invites,
-        invite.inviteId,
-        { status: "expired" },
-        { merge: true },
-      );
-      throw httpError(400, "This invite has expired");
-    }
-
-    const acceptedControllerAccess = normalizeControllerAccess(
-      latestInvite.controllerAccess ?? latestInvite.appAccess,
-      "view",
-    );
-    const acceptedInvite = {
-      ...invite,
-      ...latestInvite,
-      inviteId: invite.inviteId,
-      churchId,
-      role: latestInvite.role,
-      controllerAccess: acceptedControllerAccess,
-      appAccess: legacyAppAccessForController(acceptedControllerAccess),
-      permissions: normalizeMembershipPermissions(
-        latestInvite.permissions,
-        latestInvite.role,
-      ),
-      createdAt: latestInvite.createdAt || nowIso(),
-      createdByUid: latestInvite.createdByUid,
-    };
-
-    const activeRows = await queryDocs(
-      COLLECTIONS.memberships,
-      [
-        { field: "userId", value: user.uid },
-        { field: "status", value: "active" },
-      ],
-      { limit: 25 },
-    );
-    const inviteMembershipConflict = getInviteMembershipConflict({
-      userId: user.uid,
-      invitedChurchId: churchId,
-      activeMemberships: activeRows,
-    });
-    if (inviteMembershipConflict) {
-      throw httpError(
-        inviteMembershipConflict.statusCode,
-        inviteMembershipConflict.message,
-      );
-    }
-
-    await setDoc(
-      COLLECTIONS.memberships,
-      membershipId,
-      {
-        membershipId,
-        churchId,
-        userId: user.uid,
-        role: acceptedInvite.role,
-        controllerAccess: acceptedInvite.controllerAccess,
-        appAccess: acceptedInvite.appAccess,
-        permissions: acceptedInvite.permissions,
-        status: "active",
-        createdAt: acceptedInvite.createdAt,
-        createdByUid: acceptedInvite.createdByUid,
-      },
-      { merge: true },
-    );
-    const memberships = await listMembershipsForChurch(churchId);
-    const adminCount = memberships.filter(
-      (item) => item.role === "admin" && item.status === "active",
-    ).length;
-    await setDoc(
-      COLLECTIONS.churches,
-      churchId,
-      {
-        adminCount,
-        status:
-          adminCount > 0 ? CHURCH_STATUS_ACTIVE : CHURCH_STATUS_NEEDS_ADMIN,
-      },
-      { merge: true },
-    );
-    await setDoc(
-      COLLECTIONS.invites,
-      invite.inviteId,
-      { status: "accepted", acceptedAt: nowIso() },
-      { merge: true },
-    );
-    return acceptedInvite;
-  });
-
-  await linkInvitedRosterMember({ invite: acceptedInvite, user });
-  return acceptedInvite;
-};
-
-/**
- * Attaches a roster member record to the account that accepted its invite.
- *
- * This is one of only two paths that may establish the link (the other is a
- * logged-in intake submission). Both carry a certain identity. We never infer a
- * link from a matching email address: addresses are legitimately shared — a
- * parent covering two teen volunteers — so matching would attach someone to the
- * wrong schedule.
- *
- * Runs after membership is committed rather than inside the transaction: the
- * link only routes notifications, while membership is what grants access. A
- * failure here must never block someone from joining their church, so it is
- * logged and left for an admin to resolve.
- */
-const linkInvitedRosterMember = async ({ invite, user }) => {
-  const memberId = String(invite?.memberId || "").trim();
-  if (!memberId) return;
-
+  let transactionResult;
   try {
-    const member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
-    if (!member) return;
-    // Guard against an invite pointing at another church's roster.
-    if (member.churchId !== invite.churchId) return;
-    if (member.userId === user.uid) return;
-    if (member.userId) {
-      // Already claimed by someone else. Never reassign silently — an admin
-      // must unlink first, or two people would share one schedule identity.
-      await addSecurityEvent({
-        type: "team_member_link_conflict",
-        churchId: invite.churchId,
-        userId: user.uid,
-        memberId,
-        existingUserId: member.userId,
-      });
-      return;
-    }
+    transactionResult = await withVolunteerIdentityMutationLocks(
+      volunteerAccountLockKeys(churchId, user.uid, invite.memberId),
+      () => withInviteMutationLock(invite.inviteId, async () => {
+        const latestInvite = await getDoc(COLLECTIONS.invites, invite.inviteId);
+        if (
+          !latestInvite ||
+          latestInvite.churchId !== churchId ||
+          latestInvite.status !== "pending"
+        ) {
+          if (latestInvite?.status === "revoked") {
+            throw httpError(400, "This invite was revoked.");
+          }
+          throw httpError(400, "This invite is not active");
+        }
+        if (new Date(latestInvite.expiresAt).getTime() < Date.now()) {
+          await setDoc(
+            COLLECTIONS.invites,
+            invite.inviteId,
+            { status: "expired" },
+            { merge: true },
+          );
+          throw httpError(400, "This invite has expired");
+        }
 
-    await setDoc(
-      COLLECTIONS.teamRosterMembers,
-      memberId,
-      {
-        userId: user.uid,
-        linkedAt: nowIso(),
-        updatedAt: nowIso(),
-      },
-      { merge: true },
+        const acceptedControllerAccess = normalizeControllerAccess(
+          latestInvite.controllerAccess ?? latestInvite.appAccess,
+          "view",
+        );
+        const acceptedInvite = {
+          ...invite,
+          ...latestInvite,
+          inviteId: invite.inviteId,
+          churchId,
+          role: latestInvite.role,
+          controllerAccess: acceptedControllerAccess,
+          appAccess: legacyAppAccessForController(acceptedControllerAccess),
+          permissions: normalizeMembershipPermissions(
+            latestInvite.permissions,
+            latestInvite.role,
+          ),
+          createdAt: latestInvite.createdAt || nowIso(),
+          createdByUid: latestInvite.createdByUid,
+        };
+
+        const activeRows = await queryDocs(
+          COLLECTIONS.memberships,
+          [
+            { field: "userId", value: user.uid },
+            { field: "status", value: "active" },
+          ],
+          { limit: 25 },
+        );
+        const inviteMembershipConflict = getInviteMembershipConflict({
+          userId: user.uid,
+          invitedChurchId: churchId,
+          activeMemberships: activeRows,
+        });
+        if (inviteMembershipConflict) {
+          throw httpError(
+            inviteMembershipConflict.statusCode,
+            inviteMembershipConflict.message,
+          );
+        }
+
+        const linkPlan = latestInvite.memberId
+          ? await volunteerIdentityOperations.prepareRosterMemberLink({
+              churchId,
+              memberId: latestInvite.memberId,
+              userId: user.uid,
+              actorUid: user.uid,
+              source: "invite",
+              auditEvent: {
+                type: "team_member_linked",
+                churchId,
+                userId: user.uid,
+                memberId: latestInvite.memberId,
+                source: "invite",
+              },
+              membershipIsBeingCreated: true,
+            })
+          : null;
+
+        await setDoc(
+          COLLECTIONS.memberships,
+          membershipId,
+          {
+            membershipId,
+            churchId,
+            userId: user.uid,
+            role: acceptedInvite.role,
+            controllerAccess: acceptedInvite.controllerAccess,
+            appAccess: acceptedInvite.appAccess,
+            permissions: acceptedInvite.permissions,
+            status: "active",
+            createdAt: acceptedInvite.createdAt,
+            createdByUid: acceptedInvite.createdByUid,
+          },
+          { merge: true },
+        );
+        const memberships = await listMembershipsForChurch(churchId);
+        const adminCount = memberships.filter(
+          (item) => item.role === "admin" && item.status === "active",
+        ).length;
+        await setDoc(
+          COLLECTIONS.churches,
+          churchId,
+          {
+            adminCount,
+            status:
+              adminCount > 0 ? CHURCH_STATUS_ACTIVE : CHURCH_STATUS_NEEDS_ADMIN,
+          },
+          { merge: true },
+        );
+        await setDoc(
+          COLLECTIONS.invites,
+          invite.inviteId,
+          { status: "accepted", acceptedAt: nowIso() },
+          { merge: true },
+        );
+        if (linkPlan) await linkPlan.applyToStore();
+        return {
+          acceptedInvite,
+          auditEvents: linkPlan?.auditEvent ? [linkPlan.auditEvent] : [],
+        };
+      }),
     );
-    await addSecurityEvent({
-      type: "team_member_linked",
-      churchId: invite.churchId,
-      userId: user.uid,
-      memberId,
-      source: "invite",
-    });
   } catch (error) {
-    console.error("Failed to link roster member to accepted invite:", error);
+    if (error.code === "VOLUNTEER_IDENTITY_CONFLICT" && invite.memberId) {
+      await recordLinkConflict(invite.memberId);
+    }
+    throw error;
   }
+
+  logCommittedSecurityEvents(transactionResult.auditEvents);
+  return transactionResult.acceptedInvite;
 };
 
-const removeChurchMembership = async ({ churchId, userId }) => {
+const volunteerIdentityOperations = createVolunteerIdentityOperations({
+  COLLECTIONS,
+  requireFirestore,
+  getDoc,
+  queryDocs,
+  setDoc,
+  deleteDoc,
+  nowIso,
+  httpError,
+  createSecurityEventRecord,
+});
+
+const removeChurchMembership = async ({ churchId, userId, actorUid }) => {
   const membershipId = membershipIdFor({ churchId, userId });
   const db = requireFirestore();
+  const buildAuditEvents = (memberIds) => [
+    createSecurityEventRecord({
+      type: "member_removed",
+      churchId,
+      userId: actorUid,
+      targetUserId: userId,
+    }),
+    ...(memberIds.length > 0
+      ? [
+          createSecurityEventRecord({
+            type: "team_member_account_links_cleared",
+            churchId,
+            userId: actorUid,
+            targetUserId: userId,
+            memberIds,
+            source: "church_membership_removal",
+          }),
+        ]
+      : []),
+  ];
+
   if (db) {
-    await db.runTransaction(async (transaction) => {
+    return db.runTransaction(async (transaction) => {
       const membershipRef = db
         .collection(COLLECTIONS.memberships)
         .doc(membershipId);
       const churchRef = db.collection(COLLECTIONS.churches).doc(churchId);
       const membershipSnap = await transaction.get(membershipRef);
       if (!membershipSnap.exists) {
+        throw httpError(404, "Membership not found");
+      }
+      const membership = membershipSnap.data();
+      if (
+        membership.churchId !== churchId ||
+        membership.userId !== userId ||
+        membership.status !== "active"
+      ) {
         throw httpError(404, "Membership not found");
       }
       const adminSnapshot = await transaction.get(
@@ -4566,6 +4695,19 @@ const removeChurchMembership = async ({ churchId, userId }) => {
           .where("role", "==", "admin")
           .where("status", "==", "active"),
       );
+      const activeAdminCount = adminSnapshot.docs.length;
+      if (membership.role === "admin" && activeAdminCount <= 1) {
+        throw httpError(
+          400,
+          "Cannot remove the last admin for this church. Invite another admin first.",
+        );
+      }
+      const { memberIds } = await volunteerIdentityOperations.clearChurchAccountLinks({
+        churchId,
+        userId,
+        actorUid,
+        transaction,
+      });
       transaction.delete(membershipRef);
       const nextAdminCount = Math.max(
         0,
@@ -4576,27 +4718,79 @@ const removeChurchMembership = async ({ churchId, userId }) => {
         status:
           nextAdminCount > 0 ? CHURCH_STATUS_ACTIVE : CHURCH_STATUS_NEEDS_ADMIN,
       });
+      const auditEvents = buildAuditEvents(memberIds);
+      auditEvents.forEach((event) => {
+        transaction.set(
+          db.collection(COLLECTIONS.securityEvents).doc(event.eventId),
+          event,
+        );
+      });
+      return { unlinkedMemberIds: memberIds, auditEvents };
     });
   } else {
-    const membership = await getDoc(COLLECTIONS.memberships, membershipId);
-    if (!membership) {
-      throw httpError(404, "Membership not found");
-    }
-    await deleteDoc(COLLECTIONS.memberships, membershipId);
-    const memberships = await listMembershipsForChurch(churchId);
-    const adminCount = memberships.filter(
-      (item) => item.role === "admin" && item.status === "active",
-    ).length;
-    await setDoc(
-      COLLECTIONS.churches,
-      churchId,
-      {
-        adminCount,
-        status:
-          adminCount > 0 ? CHURCH_STATUS_ACTIVE : CHURCH_STATUS_NEEDS_ADMIN,
+    return withVolunteerIdentityMutationLocks(
+      volunteerAccountLockKeys(churchId, userId),
+      async () => {
+        const membership = await getDoc(COLLECTIONS.memberships, membershipId);
+        if (!membership) {
+          throw httpError(404, "Membership not found");
+        }
+        if (
+          membership.churchId !== churchId ||
+          membership.userId !== userId ||
+          membership.status !== "active"
+        ) {
+          throw httpError(404, "Membership not found");
+        }
+        const membershipsBeforeRemoval = await listMembershipsForChurch(churchId);
+        const activeAdminCount = membershipsBeforeRemoval.filter(
+          (item) => item.role === "admin" && item.status === "active",
+        ).length;
+        if (membership.role === "admin" && activeAdminCount <= 1) {
+          throw httpError(
+            400,
+            "Cannot remove the last admin for this church. Invite another admin first.",
+          );
+        }
+        const { memberIds } = await volunteerIdentityOperations.clearChurchAccountLinks({
+          churchId,
+          userId,
+          actorUid,
+        });
+        await deleteDoc(COLLECTIONS.memberships, membershipId);
+        const memberships = await listMembershipsForChurch(churchId);
+        const adminCount = memberships.filter(
+          (item) => item.role === "admin" && item.status === "active",
+        ).length;
+        await setDoc(
+          COLLECTIONS.churches,
+          churchId,
+          {
+            adminCount,
+            status:
+              adminCount > 0 ? CHURCH_STATUS_ACTIVE : CHURCH_STATUS_NEEDS_ADMIN,
+          },
+          { merge: true },
+        );
+        const auditEvents = buildAuditEvents(memberIds);
+        for (const event of auditEvents) {
+          await setDoc(COLLECTIONS.securityEvents, event.eventId, event);
+        }
+        return { unlinkedMemberIds: memberIds, auditEvents };
       },
-      { merge: true },
     );
+  }
+};
+
+const logCommittedSecurityEvents = (events = []) => {
+  for (const event of events) {
+    try {
+      logAuthEvent("log", event.type || "security_event", event);
+    } catch {
+      // The durable security event was committed with the authoritative
+      // mutation. A secondary process logger cannot turn that success into a
+      // failed API response.
+    }
   }
 };
 
@@ -6780,12 +6974,33 @@ const scheduleAssignmentResponseDigest = async (
   armResponseDigestTimer(scheduleId);
 };
 
+let scheduleAssignmentResponseDigestForHandlers = scheduleAssignmentResponseDigest;
+
+export const setScheduleAssignmentResponseDigestForServerTests = (handler = null) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "setScheduleAssignmentResponseDigestForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  if (authRuntimeInfo.hasFirestore) {
+    throw new Error(
+      "setScheduleAssignmentResponseDigestForServerTests refuses to run while Firestore is configured",
+    );
+  }
+  if (handler !== null && typeof handler !== "function") {
+    throw new TypeError("The response digest test handler must be a function or null.");
+  }
+  scheduleAssignmentResponseDigestForHandlers =
+    handler || scheduleAssignmentResponseDigest;
+};
+
 const teamsAuthHandlers = createTeamsAuthHandlers({
   COLLECTIONS,
   scheduleIntakeSubmissionDigest,
   appendIntakeSubmissionToTransaction,
   persistTeamIntakeSubmission,
-  scheduleAssignmentResponseDigest,
+  scheduleAssignmentResponseDigest: (...args) =>
+    scheduleAssignmentResponseDigestForHandlers(...args),
   addSecurityEvent,
   // Shared so member contact addresses normalize identically to account
   // emails; divergence here would make linked/unlinked comparisons unreliable.
@@ -6817,6 +7032,9 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
   requireServicePlansViewSession,
   requireTeamsEditSession,
   requireTeamsEditForTeamSession,
+  linkVolunteerRosterMember: volunteerIdentityOperations.linkRosterMember,
+  unlinkVolunteerRosterMember: volunteerIdentityOperations.unlinkRosterMember,
+  deleteVolunteerRosterMember: volunteerIdentityOperations.deleteRosterMember,
   requireScheduleMicrophoneEditSession,
   requireTeamsViewSession,
   requireBroadTeamsViewSession,
@@ -6889,6 +7107,10 @@ const notificationIntentHandlers = createNotificationIntentHandlers({
   queryDocs,
   requireFirestore,
   requireTeamsEdit: requireTeamsEditSession,
+  authorizeCustomMember: (...args) =>
+    teamsAuthHandlers.requireCustomMessageMemberEdit(...args),
+  authorizeMessagingHistory: (...args) =>
+    teamsAuthHandlers.requireMessagingHistoryAccess(...args),
   authorizeSchedule: (...args) =>
     teamsAuthHandlers.requireTeamScheduleNotificationEdit(...args),
   authorizeScheduleActor: (...args) =>
@@ -9738,16 +9960,12 @@ export const authHandlers = {
           );
         }
       }
-      await removeChurchMembership({
+      const removal = await removeChurchMembership({
         churchId: req.params.churchId,
         userId: targetUserId,
+        actorUid: admin.user.uid,
       });
-      await addSecurityEvent({
-        type: "member_removed",
-        churchId: req.params.churchId,
-        userId: admin.user.uid,
-        targetUserId,
-      });
+      logCommittedSecurityEvents(removal.auditEvents);
       return res.json({ success: true });
     } catch (error) {
       return res.status(error.statusCode || 500).json(serializeAuthError(error, {

@@ -5,6 +5,10 @@ import Button from "../../../components/Button/Button";
 import type { TeamScheduleShadowAssignment } from "../../../api/authTypes";
 import { shadowKindLabel } from "../teamsUtils";
 import { ScheduleAssignmentContext } from "./ScheduleAssignmentContext";
+import {
+  MemberNameWithIndicator,
+  useCurrentMemberId,
+} from "../components/CurrentUserMemberIndicator";
 
 type ScheduleShadowChipProps = {
   occurrenceId: string;
@@ -12,6 +16,7 @@ type ScheduleShadowChipProps = {
   positionId: string;
   shadow: TeamScheduleShadowAssignment;
   memberName: string;
+  memberId?: string;
   canEdit: boolean;
   className?: string;
 };
@@ -28,11 +33,14 @@ const ScheduleShadowChip = ({
   positionId,
   shadow,
   memberName,
+  memberId,
   canEdit,
   className,
 }: ScheduleShadowChipProps) => {
+  const selfMemberId = useCurrentMemberId();
   const handlersRef = useContext(ScheduleAssignmentContext);
   const label = `${shadowKindLabel(shadow.kind)}: ${memberName}`;
+  const accessibleLabel = `${label}${memberId && memberId === selfMemberId ? ", You" : ""}`;
 
   const handleRemove = () => {
     void handlersRef?.current?.commitShadowAssignment({
@@ -52,7 +60,16 @@ const ScheduleShadowChip = ({
         className,
       )}
     >
-      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <span className="flex min-w-0 flex-1 items-baseline gap-1">
+        <span className="shrink-0">{shadowKindLabel(shadow.kind)}:</span>
+        <MemberNameWithIndicator
+          name={memberName}
+          memberId={memberId}
+          className="min-w-0 flex-1"
+          nameClassName="text-xs text-amber-50"
+          indicatorClassName="bg-cyan-300/10 text-cyan-200"
+        />
+      </span>
       {canEdit ? (
         <Button
           type="button"
@@ -61,7 +78,7 @@ const ScheduleShadowChip = ({
           iconSize="sm"
           padding="p-0.5"
           data-schedule-shadow-remove
-          aria-label={`Remove ${label}`}
+          aria-label={`Remove ${accessibleLabel}`}
           className="shrink-0 rounded text-amber-200/80 hover:bg-amber-400/20 hover:text-amber-50"
           onClick={handleRemove}
         />

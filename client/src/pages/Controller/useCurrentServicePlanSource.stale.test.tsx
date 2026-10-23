@@ -1,0 +1,2205 @@
+import React from "react";
+import { Provider } from "react-redux";
+import { configureStore } from "@reduxjs/toolkit";
+import { render, waitFor, act } from "@testing-library/react";
+import servicePlanningImportReducer, {
+  markServicePlanningUrlSelection,
+  setServicePlanningOutlinePlanBinding,
+  setServicePlanningServiceOutline,
+  setStoredServicePlanningOutlineIfIdle,
+} from "../../store/servicePlanningImportSlice";
+import itemListsReducer, { initiateItemLists } from "../../store/itemListsSlice";
+import controllerProfilesReducer, {
+  setControllerProfilesFromRemote,
+} from "../../store/controllerProfilesSlice";
+import { GlobalInfoContext } from "../../context/globalInfo";
+import { ControllerInfoContext } from "../../context/controllerInfo";
+import ActiveControllerContext from "../../context/activeController";
+import { ActiveControllerProvider } from "../../context/activeController";
+import { useCurrentServicePlanSource } from "./useCurrentServicePlanSource";
+
+const mockOccurrence = {
+  occurrenceId: "occurrence-1",
+  serviceId: "service-1",
+  name: "Sabbath Service",
+  startsAt: "2026-08-01T10:00:00.000Z",
+};
+const mockOtherOccurrence = {
+  occurrenceId: "occurrence-2",
+  serviceId: "service-2",
+  name: "Evening Service",
+  startsAt: "2026-08-01T18:00:00.000Z",
+};
+
+const mockGetServicePlan = jest.fn();
+const mockGetServicePlanAssignments = jest.fn();
+const mockGetServicePlanViewer = jest.fn();
+const mockListServicePlans = jest.fn();
+const mockLoadPlanPreview = jest.fn();
+const mockPersistItemListServicePlanBinding = jest.fn();
+let mockLiveHandler: ((event: unknown) => void) | null = null;
+let mockServicePlanningEnabled = true;
+
+jest.mock("../../api/auth", () => ({
+  getServicePlan: (...args: unknown[]) => mockGetServicePlan(...args),
+  getServicePlanAssignments: (...args: unknown[]) =>
+    mockGetServicePlanAssignments(...args),
+  getServicePlanViewer: (...args: unknown[]) => mockGetServicePlanViewer(...args),
+  listServicePlans: (...args: unknown[]) => mockListServicePlans(...args),
+}));
+
+jest.mock("../../context/churchServiceTimeZone", () => ({
+  useChurchServiceTimeZone: () => ({
+    status: "ready",
+    timeZone: "UTC",
+    isConfigured: true,
+    legacyTimeZoneSuggestion: null,
+    refresh: jest.fn(),
+  }),
+}));
+
+jest.mock("../../utils/itemListImports", () => ({
+  persistItemListServicePlanBinding: (...args: unknown[]) =>
+    mockPersistItemListServicePlanBinding(...args),
+}));
+
+jest.mock("../../hooks/useServicePlanningImport", () => ({
+  useServicePlanningImport: () => ({
+    loadPlanPreview: mockLoadPlanPreview,
+    isServicePlanningEnabled: mockServicePlanningEnabled,
+  }),
+}));
+
+jest.mock("../Teams/hooks/useTeamsLiveSync", () => ({
+  ...jest.requireActual("../Teams/hooks/useTeamsLiveSync"),
+  useTeamsLiveSync: (churchId: string | null, onMessage: (e: unknown) => void, enabled: boolean) => {
+    mockLiveHandler = churchId && enabled ? onMessage : null;
+  },
+}));
+
+// Occurrence selection has its own coverage in currentServiceWorkspaceUtils.test.ts
+// and useCurrentServiceOccurrence.test.tsx.
+jest.mock("./currentServiceWorkspaceUtils", () => ({
+  listCurrentServiceOccurrences: () => [mockOccurrence, mockOtherOccurrence],
+  pickCurrentServiceOccurrence: () => mockOccurrence,
+}));
+
+jest.mock("../Teams/pages/teamsAssignmentsSummary", () => ({
+  // The bootstrap fixture below ships fully-hydrated schedules, so on-demand
+  // hydration has nothing to fetch â€” see hydrateOccurrenceSchedules.test.ts.
+  getUnhydratedOccurrenceScheduleIds: () => [],
+  getOccurrenceAssignmentSummary: () => [
+    {
+      teamId: "team-1",
+      teamName: "Band",
+      scheduleId: "schedule-1",
+      occurrenceId: "occurrence-1",
+      positionId: "position-1",
+      positionName: "Keys",
+      columnKey: "position-1::0",
+      slotLabel: "Keys",
+      memberName: "Dana Robinson",
+    },
+  ],
+}));
+
+const planFixture = {
+  planId: "plan-1",
+  churchId: "church-1",
+  planKey: "service-1@2026-08-01",
+  serviceId: "service-1",
+  date: "2026-08-01",
+  name: "Sabbath Service",
+  sections: [],
+};
+
+const outlineFixture = {
+  source: "servicePlanning" as const,
+  loadedAt: "2026-08-01T09:00:00.000Z",
+  sourceUrl: "",
+  planLabel: "Sabbath Service",
+  preview: {
+    overlayCandidates: [],
+    overlayPlan: [],
+    outlineCandidates: [],
+    lineItems: [],
+    teamAssignments: [],
+  },
+};
+
+// Stable reference: a fresh object per dispatch would churn every derived memo
+// downstream, which is not how the real serviceTimes slice behaves.
+const undoableState = {
+  present: {
+    serviceTimes: { list: [] },
+    itemLists: {
+      currentLists: [{ _id: "outline-1", name: "Sunday AM" }],
+      selectedList: { _id: "outline-1", name: "Sunday AM" },
+      activeList: { _id: "outline-1", name: "Sunday AM" },
+      isInitialized: true,
+    },
+    itemList: { isLoading: false, list: [] },
+  },
+};
+
+const dispatchedTypes: string[] = [];
+let afterPlanSelectionTransition: (() => void) | null = null;
+
+const makeStore = () =>
+  configureStore({
+    reducer: {
+      servicePlanningImport: servicePlanningImportReducer,
+      undoable: () => undoableState,
+    },
+    middleware: (getDefaultMiddleware) =>
+      getDefaultMiddleware().concat(
+        () => (next: (action: unknown) => unknown) => (action: unknown) => {
+          dispatchedTypes.push((action as { type: string }).type);
+          const result = next(action);
+          const actionType = (action as { type?: unknown }).type;
+          if (
+            afterPlanSelectionTransition &&
+            (actionType === "servicePlanningImport/clearServicePlanningPreview" ||
+              actionType === "servicePlanningImport/beginServicePlanningPlanSelection")
+          ) {
+            const callback = afterPlanSelectionTransition;
+            afterPlanSelectionTransition = null;
+            callback();
+          }
+          return result;
+        },
+      ),
+  });
+
+const AUX_CONTROLLER_ID = "ctrl_lobby";
+const PRESENTATION_CONTROLLER_ID = "presentation";
+
+type ControllerAwareUndoableState = {
+  present: Omit<typeof undoableState.present, "itemLists"> & {
+    itemLists: ReturnType<typeof itemListsReducer>;
+  };
+};
+
+const makeControllerAwareStore = () => {
+  const store = configureStore({
+    reducer: {
+      servicePlanningImport: servicePlanningImportReducer,
+      controllerProfiles: controllerProfilesReducer,
+      undoable: (
+        state: ControllerAwareUndoableState = {
+          present: {
+            ...undoableState.present,
+            itemLists: itemListsReducer(undefined, { type: "@@init" }),
+          },
+        },
+        action: Parameters<typeof itemListsReducer>[1],
+      ): ControllerAwareUndoableState => ({
+        present: {
+          ...state.present,
+          itemLists: itemListsReducer(state.present.itemLists, action),
+        },
+      }),
+    },
+  });
+  store.dispatch(
+    setControllerProfilesFromRemote([
+      {
+        id: AUX_CONTROLLER_ID,
+        type: "aux-presentation",
+        name: "Lobby",
+        description: "",
+        order: 2,
+        enabled: true,
+        outputIds: [],
+        outputsConfigured: true,
+        defaultSendOutputIds: [],
+        outlineScope: AUX_CONTROLLER_ID,
+      },
+    ]),
+  );
+  store.dispatch(
+    initiateItemLists([
+      { _id: "presentation-outline", name: "Sunday AM" },
+      {
+        _id: "aux-outline",
+        name: "Lobby",
+        controllerScope: AUX_CONTROLLER_ID,
+      },
+    ]),
+  );
+  return store;
+};
+
+type Result = ReturnType<typeof useCurrentServicePlanSource>;
+
+const Harness = ({ onResult }: { onResult: (result: Result) => void }) => {
+  onResult(useCurrentServicePlanSource());
+  return null;
+};
+
+const ControllerScopedHook = ({
+  profileId,
+  globalInfo,
+  controllerInfo,
+  onResult,
+}: {
+  profileId: string;
+  globalInfo: Record<string, unknown>;
+  controllerInfo: Record<string, unknown>;
+  onResult: (result: Result) => void;
+}) => (
+  <ActiveControllerProvider profileId={profileId}>
+    <GlobalInfoContext.Provider value={globalInfo as never}>
+      <ControllerInfoContext.Provider value={controllerInfo as never}>
+        <Harness onResult={onResult} />
+      </ControllerInfoContext.Provider>
+    </GlobalInfoContext.Provider>
+  </ActiveControllerProvider>
+);
+
+/** Latest hook result, refreshed on every render of the harness. */
+let latestResult: Result | null = null;
+
+const renderHookWith = (
+  store: ReturnType<typeof makeStore>,
+  globalInfo: Record<string, unknown>,
+  controllerInfo: Record<string, unknown> = {},
+  activeControllerId = "presentation",
+) => {
+  return render(
+    <Provider store={store}>
+      <ActiveControllerContext.Provider value={activeControllerId}>
+        <GlobalInfoContext.Provider value={globalInfo as never}>
+          <ControllerInfoContext.Provider value={controllerInfo as never}>
+            <Harness
+              onResult={(result) => {
+                latestResult = result;
+              }}
+            />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </ActiveControllerContext.Provider>
+    </Provider>,
+  );
+};
+
+const enabledGlobalInfo = {
+  churchId: "church-1",
+  canViewServices: true,
+  canViewTeams: true,
+  canUseTeamsLiveSync: true,
+  loginState: "success",
+};
+
+const setVisibility = (visibility: DocumentVisibilityState) => {
+  Object.defineProperty(document, "visibilityState", {
+    configurable: true,
+    get: () => visibility,
+  });
+};
+
+describe("useCurrentServicePlanSource", () => {
+  beforeEach(() => {
+    mockServicePlanningEnabled = true;
+    jest.clearAllMocks();
+    dispatchedTypes.length = 0;
+    latestResult = null;
+    mockLiveHandler = null;
+    afterPlanSelectionTransition = null;
+    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: planFixture });
+    mockListServicePlans.mockResolvedValue({
+      success: true,
+      servicePlans: [
+        {
+          planKey: planFixture.planKey,
+          serviceId: planFixture.serviceId,
+          date: planFixture.date,
+          name: planFixture.name,
+        },
+        {
+          planKey: "service-2@2026-08-01",
+          serviceId: "service-2",
+          date: "2026-08-01",
+          name: "Evening Service",
+        },
+      ],
+    });
+    mockGetServicePlanAssignments.mockResolvedValue({
+      success: true,
+      assignments: [{ teamName: "Band", role: "Keys", name: "Dana Robinson" }],
+    });
+    mockGetServicePlanViewer.mockResolvedValue({
+      success: true,
+      plan: planFixture,
+      snapshot: null,
+    });
+    mockLoadPlanPreview.mockResolvedValue(outlineFixture);
+  });
+
+  it("loads native saved plans when the external Service Planning integration is disabled", async () => {
+    mockServicePlanningEnabled = false;
+    mockListServicePlans.mockResolvedValue({ success: true, servicePlans: [planFixture] });
+    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: planFixture });
+    mockGetServicePlanAssignments.mockResolvedValue({ success: true, assignments: [] });
+    mockLoadPlanPreview.mockResolvedValue({ source: "servicePlanning", sections: [] });
+
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(latestResult?.selectedPlanDetails?.planKey).toBe(planFixture.planKey));
+    expect(mockListServicePlans).toHaveBeenCalledWith("church-1");
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("loads the current service's plan and marks the preview plan-sourced", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+        "service-1@2026-08-01",
+      ),
+    );
+    expect(mockGetServicePlan).toHaveBeenCalledWith(
+      "church-1",
+      "service-1@2026-08-01",
+    );
+    expect(store.getState().servicePlanningImport.preview).toEqual(
+      outlineFixture.preview,
+    );
+  });
+
+  it("keeps a failed first saved-plan load protected from stored restoration until retry succeeds", async () => {
+    mockGetServicePlanAssignments.mockRejectedValueOnce(
+      new Error("assignments temporarily unavailable"),
+    );
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+
+    await waitFor(() => {
+      expect([
+        latestResult?.selectedPlanKey,
+        latestResult?.isLoading,
+        store.getState().servicePlanningImport.isPlanPreviewStale,
+      ]).toEqual([planFixture.planKey, false, true]);
+    });
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
+    expect(mockLoadPlanPreview).not.toHaveBeenCalled();
+
+    act(() => {
+      store.dispatch(setStoredServicePlanningOutlineIfIdle({
+        ...outlineFixture,
+        sourceUrl: "https://example.com/legacy-outline",
+      }));
+    });
+    expect(store.getState().servicePlanningImport.serviceOutline).toBeNull();
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
+
+    let retryResult: unknown;
+    await act(async () => {
+      retryResult = await latestResult?.refresh();
+    });
+
+    expect(retryResult).toBe("updated");
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+      planFixture.planKey,
+    );
+    expect(store.getState().servicePlanningImport.preview).toEqual(
+      outlineFixture.preview,
+    );
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
+  });
+
+  it("protects automatic plan selection from restoration before reconciliation starts", async () => {
+    let rejectAssignments!: (error: Error) => void;
+    mockGetServicePlanAssignments.mockReturnValueOnce(
+      new Promise((_, reject) => {
+        rejectAssignments = reject;
+      }),
+    );
+    const store = makeStore();
+    const storedOutline = {
+      ...outlineFixture,
+      sourceUrl: "https://example.com/legacy-outline",
+      planLabel: "Legacy outline",
+    };
+    let restorationAttempted = false;
+    afterPlanSelectionTransition = () => {
+      restorationAttempted = true;
+      store.dispatch(setStoredServicePlanningOutlineIfIdle(storedOutline));
+    };
+
+    renderHookWith(store, enabledGlobalInfo);
+
+    await waitFor(() => expect(latestResult?.isLoading).toBe(true));
+    expect(restorationAttempted).toBe(true);
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+      planFixture.planKey,
+    );
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
+    expect(store.getState().servicePlanningImport.serviceOutline).toBeNull();
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
+
+    await act(async () => {
+      rejectAssignments(new Error("assignments unavailable"));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(latestResult?.isLoading).toBe(false));
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
+    expect(store.getState().servicePlanningImport.serviceOutline).toBeNull();
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
+    expect(mockLoadPlanPreview).not.toHaveBeenCalled();
+
+    mockGetServicePlanAssignments.mockResolvedValueOnce({
+      success: true,
+      assignments: [],
+    });
+    let retryResult: unknown;
+    await act(async () => {
+      retryResult = await latestResult?.refresh();
+    });
+
+    expect(retryResult).toBe("updated");
+    expect(mockLoadPlanPreview).toHaveBeenCalledWith(planFixture, [], expect.any(Object));
+    expect(store.getState().servicePlanningImport.preview).toEqual(
+      outlineFixture.preview,
+    );
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
+  });
+
+  it("protects a manual plan selection from immediate stored-outline restoration", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+        planFixture.planKey,
+      ),
+    );
+    expect(store.getState().servicePlanningImport.preview).not.toBeNull();
+    expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey);
+
+    const nextPlanKey = "service-2@2026-08-01";
+    let rejectAssignments!: (error: Error) => void;
+    mockGetServicePlan.mockImplementation((_churchId, planKey) =>
+      Promise.resolve({
+        success: true,
+        servicePlan:
+          planKey === nextPlanKey
+            ? { ...planFixture, planKey, serviceId: "service-2", name: "Evening Service" }
+            : planFixture,
+      }),
+    );
+    mockGetServicePlanAssignments.mockImplementation((_churchId, planKey) =>
+      planKey === nextPlanKey
+        ? new Promise((_, reject) => {
+            rejectAssignments = reject;
+          })
+        : Promise.resolve({ success: true, assignments: [] }),
+    );
+
+    act(() => {
+      latestResult?.selectPlan(nextPlanKey);
+      store.dispatch(
+        setStoredServicePlanningOutlineIfIdle({
+          ...outlineFixture,
+          planLabel: "Legacy outline",
+        }),
+      );
+    });
+
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBe(nextPlanKey);
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
+    expect(store.getState().servicePlanningImport.serviceOutline).toBeNull();
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
+
+    await act(async () => {
+      rejectAssignments(new Error("assignments unavailable"));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(latestResult?.isLoading).toBe(false));
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
+  });
+
+  it("prefers the current occurrence over an old outline binding", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        ...planFixture,
+        planKey: "service-2@2026-08-01",
+        serviceId: "service-2",
+        name: "Evening Service",
+      },
+    });
+    const store = makeStore();
+    store.dispatch(
+      setServicePlanningOutlinePlanBinding({
+        planKey: "service-2@2026-08-01",
+        planName: "Evening Service",
+        linkedAt: "2026-07-30T12:00:00.000Z",
+      }),
+    );
+
+    renderHookWith(store, enabledGlobalInfo);
+
+    await waitFor(() =>
+      expect(mockGetServicePlan).toHaveBeenCalledWith(
+        "church-1",
+        "service-1@2026-08-01",
+      ),
+    );
+    expect(latestResult?.selectedPlanKey).toBe("service-1@2026-08-01");
+  });
+
+  it("leaves the selection empty when the current occurrence has no plan", async () => {
+    mockListServicePlans.mockResolvedValueOnce({
+      success: true,
+      servicePlans: [
+        {
+          planKey: "service-2@2026-08-01",
+          serviceId: "service-2",
+          date: "2026-08-01",
+          name: "Evening Service",
+        },
+      ],
+    });
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+
+    await waitFor(() => expect(latestResult?.selectedPlanKey).toBeNull());
+    expect(mockGetServicePlan).not.toHaveBeenCalled();
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
+  });
+
+  it("persists a manually selected plan before its detail request finishes", async () => {
+    const store = makeStore();
+    const db = {};
+    renderHookWith(store, enabledGlobalInfo, { db });
+
+    await waitFor(() =>
+      expect(latestResult?.selectedPlanKey).toBe("service-1@2026-08-01"),
+    );
+    mockGetServicePlan.mockImplementation(
+      () => new Promise(() => undefined),
+    );
+
+    act(() => {
+      latestResult?.selectPlan("service-2@2026-08-01");
+    });
+
+    await waitFor(() => expect(latestResult?.isLoading).toBe(true));
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
+
+    await waitFor(() =>
+      expect(mockPersistItemListServicePlanBinding).toHaveBeenCalledWith(
+        db,
+        "outline-1",
+        expect.objectContaining({
+          planKey: "service-2@2026-08-01",
+          planName: "Evening Service",
+        }),
+      ),
+    );
+  });
+
+  it("does not publish a late binding after the selected outline changes", async () => {
+    mockGetServicePlan.mockImplementation(
+      (_churchId: string, planKey: string) =>
+        Promise.resolve({
+          success: true,
+          servicePlan:
+            planKey === "service-2@2026-08-01"
+              ? {
+                ...planFixture,
+                planKey,
+                serviceId: "service-2",
+                name: "Evening Service",
+              }
+              : planFixture,
+        }),
+    );
+    const resolveBindings: Array<() => void> = [];
+    mockPersistItemListServicePlanBinding.mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveBindings.push(resolve);
+      }),
+    );
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+        undoable: (
+          state: typeof undoableState = undoableState,
+          action: { type?: string },
+        ): typeof undoableState =>
+          action.type === "SWITCH_OUTLINE"
+            ? {
+              ...state,
+              present: {
+                ...state.present,
+                itemLists: {
+                  ...state.present.itemLists,
+                  selectedList: { _id: "outline-2", name: "Evening" },
+                },
+              },
+            }
+            : state,
+      },
+    });
+    renderHookWith(store, enabledGlobalInfo, { db: {} });
+
+    await waitFor(() =>
+      expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey),
+    );
+    act(() => {
+      latestResult?.selectPlan("service-2@2026-08-01");
+    });
+    await waitFor(() =>
+      expect(mockPersistItemListServicePlanBinding).toHaveBeenCalledWith(
+        {},
+        "outline-1",
+        expect.objectContaining({ planKey: "service-2@2026-08-01" }),
+      ),
+    );
+
+    act(() => {
+      store.dispatch({ type: "SWITCH_OUTLINE" });
+    });
+    await waitFor(() =>
+      expect(store.getState().undoable.present.itemLists.selectedList?._id).toBe(
+        "outline-2",
+      ),
+    );
+    await act(async () => {
+      resolveBindings.forEach((resolve) => resolve());
+    });
+
+    expect(store.getState().servicePlanningImport.outlinePlanBinding).toBeNull();
+  });
+
+  it("does not carry late plan detail or binding results across controllers", async () => {
+    const store = makeControllerAwareStore();
+    let resolveOldPlan:
+      | ((value: { success: true; servicePlan: typeof planFixture }) => void)
+      | undefined;
+    let resolveOldBinding: (() => void) | undefined;
+    const oldControllerPlan = {
+      ...planFixture,
+      planKey: "service-2@2026-08-01",
+      serviceId: "service-2",
+      name: "Evening Service",
+    };
+    mockGetServicePlan.mockImplementation(
+      (_churchId: string, planKey: string) => {
+        if (planKey === oldControllerPlan.planKey) {
+          return new Promise<{ success: true; servicePlan: typeof oldControllerPlan }>((resolve) => {
+            resolveOldPlan = resolve;
+          });
+        }
+        return Promise.resolve({ success: true, servicePlan: planFixture });
+      },
+    );
+    mockPersistItemListServicePlanBinding.mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveOldBinding = resolve;
+      }),
+    );
+
+    const view = render(
+      <Provider store={store}>
+        <ControllerScopedHook
+          profileId={AUX_CONTROLLER_ID}
+          globalInfo={enabledGlobalInfo}
+          controllerInfo={{ db: {} }}
+          onResult={(result) => {
+            latestResult = result;
+          }}
+        />
+      </Provider>,
+    );
+
+    await waitFor(() =>
+      expect(store.getState().undoable.present.itemLists.selectedList?._id).toBe(
+        "aux-outline",
+      ),
+    );
+    await waitFor(() =>
+      expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey),
+    );
+
+    act(() => {
+      latestResult?.selectPlan(oldControllerPlan.planKey);
+    });
+    await waitFor(() =>
+      expect(mockPersistItemListServicePlanBinding).toHaveBeenCalledWith(
+        {},
+        "aux-outline",
+        expect.objectContaining({ planKey: oldControllerPlan.planKey }),
+      ),
+    );
+
+    view.rerender(
+      <Provider store={store}>
+        <ControllerScopedHook
+          profileId={PRESENTATION_CONTROLLER_ID}
+          globalInfo={enabledGlobalInfo}
+          controllerInfo={{ db: {} }}
+          onResult={(result) => {
+            latestResult = result;
+          }}
+        />
+      </Provider>,
+    );
+
+    await waitFor(() =>
+      expect(store.getState().undoable.present.itemLists.selectedList?._id).toBe(
+        "presentation-outline",
+      ),
+    );
+    await waitFor(() =>
+      expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey),
+    );
+    await waitFor(() =>
+      expect(mockLoadPlanPreview).toHaveBeenCalledWith(
+        planFixture,
+        expect.anything(),
+       expect.any(Object),
+),
+    );
+
+    await act(async () => {
+      resolveOldPlan?.({ success: true, servicePlan: oldControllerPlan });
+      resolveOldBinding?.();
+    });
+
+    const loadedPlanKeys = mockLoadPlanPreview.mock.calls.map(
+      ([plan]) => (plan as { planKey: string }).planKey,
+    );
+    expect(loadedPlanKeys).not.toContain(oldControllerPlan.planKey);
+    expect(
+      store.getState().servicePlanningImport.outlinePlanBinding,
+    ).toBeNull();
+    expect(dispatchedTypes).not.toContain(
+      setServicePlanningOutlinePlanBinding.type,
+    );
+  });
+
+  it("loads the selected plan's scoped assignments", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalled());
+    expect(mockLoadPlanPreview).toHaveBeenCalledWith(planFixture, [
+      { teamName: "Band", role: "Keys", name: "Dana Robinson" },
+    ], expect.any(Object));
+  });
+
+  it("leaves the pasted URL untouched so Import still looks unused", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalled());
+    expect(store.getState().servicePlanningImport.url).toBe("");
+  });
+
+  it("refetches a plan after its ID-only live change notification", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+
+    const editedPlan = { ...planFixture, name: "Sabbath Service (revised)" };
+    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: editedPlan });
+    await act(async () => {
+      mockLiveHandler?.({
+        type: "service-plan-updated",
+        planKey: editedPlan.planKey,
+      });
+    });
+
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(2));
+    expect(mockLoadPlanPreview).toHaveBeenLastCalledWith(
+      editedPlan,
+      expect.anything(),
+     expect.any(Object),
+);
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(2);
+  });
+
+  it("loads newly created plans into the saved plans list from an unrelated update", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+
+    const newPlan = {
+      planKey: "service-3@2026-08-08",
+      serviceId: "service-3",
+      date: "2026-08-08",
+      name: "New Evening Service",
+    };
+    mockListServicePlans.mockResolvedValue({
+      success: true,
+      servicePlans: [newPlan],
+    });
+    await act(async () => {
+      mockLiveHandler?.({
+        type: "service-plan-updated",
+        planKey: newPlan.planKey,
+      });
+    });
+
+    await waitFor(() => expect(latestResult?.savedPlans).toContainEqual(newPlan));
+    expect(latestResult?.savedPlans).toContainEqual({
+      planKey: planFixture.planKey,
+      serviceId: planFixture.serviceId,
+      date: planFixture.date,
+      name: planFixture.name,
+    });
+    expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey);
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(1);
+    expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1);
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+      planFixture.planKey,
+    );
+  });
+
+  it("refreshes an unselected plan summary without interrupting the selected preview", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+
+    const updatedPlan = {
+      planKey: "service-2@2026-08-01",
+      serviceId: "service-2",
+      date: "2026-08-01",
+      name: "Evening Service (revised)",
+    };
+    mockListServicePlans.mockResolvedValue({
+      success: true,
+      servicePlans: [updatedPlan],
+    });
+    await act(async () => {
+      mockLiveHandler?.({
+        type: "service-plan-updated",
+        planKey: updatedPlan.planKey,
+      });
+    });
+
+    await waitFor(() => expect(latestResult?.savedPlans).toContainEqual(updatedPlan));
+    expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey);
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(1);
+    expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1);
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+      planFixture.planKey,
+    );
+  });
+
+  it("refreshes saved summaries for a plan change outside the selected service", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+
+    const planListCalls = mockListServicePlans.mock.calls.length;
+    await act(async () => {
+      mockLiveHandler?.({
+        type: "service-plan-updated",
+        planKey: "service-9@2026-08-01",
+      });
+    });
+
+    await waitFor(() =>
+      expect(mockListServicePlans).toHaveBeenCalledTimes(planListCalls + 1),
+    );
+    expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1);
+  });
+
+  it("replaces a URL preview carried into the Controller with the current saved plan", async () => {
+    const store = makeStore();
+    const urlOutline = {
+      ...outlineFixture,
+      sourceUrl: "https://example.com/plan",
+      planLabel: "Pasted plan",
+    };
+    store.dispatch(setServicePlanningServiceOutline(urlOutline));
+
+    renderHookWith(store, enabledGlobalInfo);
+
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+        planFixture.planKey,
+      ),
+    );
+    expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey);
+    expect(store.getState().servicePlanningImport.serviceOutline).toEqual(
+      outlineFixture,
+    );
+  });
+
+  it("replaces a stored imported outline restored while the Controller is loading", async () => {
+    let resolvePlans!: (value: {
+      success: true;
+      servicePlans: Array<{
+        planKey: string;
+        serviceId: string;
+        date: string;
+        name: string;
+      }>;
+    }) => void;
+    mockListServicePlans.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePlans = resolve;
+        }),
+    );
+    const store = makeStore();
+    const storedOutline = {
+      ...outlineFixture,
+      sourceUrl: "https://example.com/stored-plan",
+      planLabel: "Stored imported plan",
+    };
+
+    renderHookWith(store, enabledGlobalInfo);
+    await act(async () => {
+      store.dispatch(setStoredServicePlanningOutlineIfIdle(storedOutline));
+      resolvePlans({
+        success: true,
+        servicePlans: [
+          {
+            planKey: planFixture.planKey,
+            serviceId: planFixture.serviceId,
+            date: planFixture.date,
+            name: planFixture.name,
+          },
+        ],
+      });
+    });
+
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+        planFixture.planKey,
+      ),
+    );
+    expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey);
+    expect(store.getState().servicePlanningImport.serviceOutline).toEqual(
+      outlineFixture,
+    );
+  });
+
+  it("keeps a URL preview imported during this Controller visit when the target binding changes", async () => {
+    const store = makeStore();
+    const urlOutline = {
+      ...outlineFixture,
+      sourceUrl: "https://example.com/plan",
+      planLabel: "Pasted plan",
+    };
+
+    renderHookWith(store, enabledGlobalInfo);
+
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      store.dispatch(setServicePlanningServiceOutline(urlOutline));
+      store.dispatch(markServicePlanningUrlSelection());
+    });
+    await waitFor(() => expect(latestResult?.selectedPlanKey).toBeNull());
+
+    await act(async () => {
+      store.dispatch(
+        setServicePlanningOutlinePlanBinding({
+          planKey: "service-2@2026-08-01",
+          planName: "Evening Service",
+          linkedAt: "2026-07-30T12:00:00.000Z",
+        }),
+      );
+    });
+
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(1);
+    expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1);
+    expect(store.getState().servicePlanningImport.serviceOutline).toEqual(
+      urlOutline,
+    );
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBeNull();
+  });
+
+  it("keeps an explicit manual plan selected when its binding is cleared", async () => {
+    mockGetServicePlan.mockImplementation(
+      (_churchId: string, planKey: string) =>
+        Promise.resolve({
+          success: true,
+          servicePlan:
+            planKey === "service-2@2026-08-01"
+              ? {
+                ...planFixture,
+                planKey,
+                serviceId: "service-2",
+                name: "Evening Service",
+              }
+              : planFixture,
+        }),
+    );
+    const store = makeStore();
+    store.dispatch(
+      setServicePlanningOutlinePlanBinding({
+        planKey: "service-2@2026-08-01",
+        planName: "Evening Service",
+        linkedAt: "2026-07-30T12:00:00.000Z",
+      }),
+    );
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() =>
+      expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey),
+    );
+
+    act(() => {
+      latestResult?.selectPlan("service-2@2026-08-01");
+      store.dispatch(setServicePlanningOutlinePlanBinding(null));
+    });
+
+    expect(latestResult?.selectedPlanKey).toBe("service-2@2026-08-01");
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(2);
+  });
+
+  it("does nothing without Services view access", async () => {
+    const store = makeStore();
+    renderHookWith(store, { ...enabledGlobalInfo, canViewServices: false });
+
+    await waitFor(() => expect(mockLiveHandler).toBeNull());
+    expect(mockGetServicePlan).not.toHaveBeenCalled();
+  });
+
+  it("loads Service Plans without Teams-only bootstrap or live sync for a workstation", async () => {
+    const store = makeStore();
+    renderHookWith(store, { ...enabledGlobalInfo, canViewTeams: false });
+
+    await waitFor(() =>
+      expect(mockGetServicePlan).toHaveBeenCalledWith(
+        "church-1",
+        "service-1@2026-08-01",
+      ),
+    );
+
+    expect(mockGetServicePlanAssignments).toHaveBeenCalledWith(
+      "church-1",
+      "service-1@2026-08-01",
+    );
+    expect(mockLiveHandler).toBeNull();
+  });
+
+  it("loads existing Services data without full Teams live sync for scoped access", async () => {
+    const store = makeStore();
+    renderHookWith(store, { ...enabledGlobalInfo, canUseTeamsLiveSync: false });
+    await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalled());
+    expect(mockLiveHandler).toBeNull();
+  });
+
+  it("does nothing for a guest session", async () => {
+    const store = makeStore();
+    renderHookWith(store, { ...enabledGlobalInfo, loginState: "guest" });
+
+    await waitFor(() => expect(mockLiveHandler).toBeNull());
+    expect(mockGetServicePlan).not.toHaveBeenCalled();
+  });
+
+  it("keeps a new saved plan untrusted until its assignments load, then accepts an empty list", async () => {
+    let rejectAssignments!: (error: Error) => void;
+    mockGetServicePlanAssignments.mockReturnValueOnce(
+      new Promise((_, reject) => {
+        rejectAssignments = reject;
+      }),
+    );
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+
+    await waitFor(() => expect(latestResult?.isLoading).toBe(true));
+    await act(async () => {
+      rejectAssignments(new Error("assignments unavailable"));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(latestResult?.isLoading).toBe(false));
+
+    expect(mockGetServicePlan).toHaveBeenCalledWith("church-1", planFixture.planKey);
+    expect(mockLoadPlanPreview).not.toHaveBeenCalled();
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
+    expect(latestResult?.isPlanPreviewStale).toBe(true);
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
+
+    mockGetServicePlanAssignments.mockResolvedValueOnce({
+      success: true,
+      assignments: [],
+    });
+    let retryResult: unknown;
+    await act(async () => {
+      retryResult = await latestResult?.refresh();
+    });
+
+    expect(retryResult).toBe("updated");
+    expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1);
+    expect(mockLoadPlanPreview).toHaveBeenCalledWith(planFixture, [], expect.any(Object));
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+      planFixture.planKey,
+    );
+    expect(latestResult?.isPlanPreviewStale).toBe(false);
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
+  });
+
+  // The whole point of this feature: the plan follows Services automatically,
+  // but nothing reaches the live outline or overlays without an operator press.
+  it("never writes to the live item list or overlays", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalled());
+
+    await act(async () => {
+      mockLiveHandler?.({
+        type: "service-plan-updated",
+        planKey: planFixture.planKey,
+      });
+    });
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(2));
+
+    const nonPreviewDispatches = dispatchedTypes.filter(
+      (type) => !type.startsWith("servicePlanningImport/"),
+    );
+    expect(nonPreviewDispatches).toEqual([]);
+  });
+
+  it("clears the plan preview when switching to a service with no plan", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+        "service-1@2026-08-01",
+      ),
+    );
+
+    // The next service has no plan saved yet.
+    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: null });
+    await act(async () => {
+      latestResult?.selectPlan("service-2@2026-08-01");
+    });
+    await waitFor(() =>
+      expect(mockGetServicePlan).toHaveBeenLastCalledWith(
+        "church-1",
+        "service-2@2026-08-01",
+      ),
+    );
+
+    // Showing service 1 plan while the picker says service 2 would let an
+    // operator sync overlays/outline for the wrong service.
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBeNull(),
+    );
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
+  });
+
+  it("persists the outline binding immediately when the operator picks a plan, without a Sync", async () => {
+    const store = makeStore();
+    const db = {};
+    renderHookWith(store, enabledGlobalInfo, { db });
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+        "service-1@2026-08-01",
+      ),
+    );
+    mockPersistItemListServicePlanBinding.mockResolvedValue(undefined);
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        ...planFixture,
+        planKey: "service-2@2026-08-01",
+        serviceId: "service-2",
+        name: "Evening Service",
+      },
+    });
+
+    await act(async () => {
+      latestResult?.selectPlan("service-2@2026-08-01");
+    });
+
+    await waitFor(() =>
+      expect(mockPersistItemListServicePlanBinding).toHaveBeenCalledWith(
+        db,
+        "outline-1",
+        expect.objectContaining({
+          planKey: "service-2@2026-08-01",
+          planName: "Evening Service",
+        }),
+      ),
+    );
+    expect(store.getState().servicePlanningImport.outlinePlanBinding).toEqual(
+      expect.objectContaining({ planKey: "service-2@2026-08-01" }),
+    );
+  });
+
+  it("does not persist a binding for the automatic default selection on load", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo, { db: {} });
+
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+        "service-1@2026-08-01",
+      ),
+    );
+
+    expect(mockPersistItemListServicePlanBinding).not.toHaveBeenCalled();
+    expect(
+      store.getState().servicePlanningImport.outlinePlanBinding,
+    ).toBeNull();
+  });
+
+  it("clears a selected plan and preview when Refresh finds it was deleted", async () => {
+    mockListServicePlans.mockResolvedValue({
+      success: true,
+      servicePlans: [
+        {
+          planKey: planFixture.planKey,
+          serviceId: planFixture.serviceId,
+          date: planFixture.date,
+          name: planFixture.name,
+        },
+      ],
+    });
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+        planFixture.planKey,
+      ),
+    );
+    mockGetServicePlan.mockResolvedValueOnce({ success: true, servicePlan: null });
+
+    await act(async () => {
+      await latestResult?.refresh();
+    });
+
+    await waitFor(() => expect(latestResult?.selectedPlanKey).toBeNull());
+    expect(latestResult?.savedPlans).toEqual([]);
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBeNull();
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
+    // Refresh is an authoritative reconciliation: it reloads the summary list
+    // as well as the selected plan and its assignments.
+    expect(mockListServicePlans).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not silently switch services when a list refresh drops the automatic selection", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+        planFixture.planKey,
+      ),
+    );
+    mockListServicePlans.mockResolvedValue({
+      success: true,
+      servicePlans: [
+        {
+          planKey: "service-2@2026-08-01",
+          serviceId: "service-2",
+          date: "2026-08-01",
+          name: "Evening Service",
+        },
+      ],
+    });
+
+    await act(async () => {
+      await latestResult?.refreshPlans();
+    });
+
+    await waitFor(() => expect(latestResult?.selectedPlanKey).toBeNull());
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBeNull();
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(1);
+  });
+
+  it("reconciles a pinned selection when a plan-list refresh no longer contains it", async () => {
+    const secondPlan = {
+      ...planFixture,
+      planId: "plan-2",
+      planKey: "service-2@2026-08-01",
+      serviceId: "service-2",
+      name: "Evening Service",
+    };
+    mockGetServicePlan.mockImplementation(
+      (_churchId: string, planKey: string) =>
+        Promise.resolve({
+          success: true,
+          servicePlan:
+            planKey === secondPlan.planKey ? secondPlan : planFixture,
+        }),
+    );
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+        planFixture.planKey,
+      ),
+    );
+    act(() => latestResult?.selectPlan(secondPlan.planKey));
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+        secondPlan.planKey,
+      ),
+    );
+    mockListServicePlans.mockResolvedValue({
+      success: true,
+      servicePlans: [
+        {
+          planKey: planFixture.planKey,
+          serviceId: planFixture.serviceId,
+          date: planFixture.date,
+          name: planFixture.name,
+        },
+      ],
+    });
+
+    await act(async () => {
+      await latestResult?.refreshPlans();
+    });
+
+    await waitFor(() => expect(latestResult?.selectedPlanKey).toBeNull());
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBeNull();
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
+  });
+
+  it("ignores a slow refresh after the operator selects another plan", async () => {
+    const secondPlan = {
+      ...planFixture,
+      planId: "plan-2",
+      planKey: "service-2@2026-08-01",
+      serviceId: "service-2",
+      name: "Evening Service",
+    };
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+        planFixture.planKey,
+      ),
+    );
+
+    let resolveRefresh!: (value: { success: true; servicePlan: typeof planFixture }) => void;
+    const slowRefresh = new Promise<{ success: true; servicePlan: typeof planFixture }>(
+      (resolve) => {
+        resolveRefresh = resolve;
+      },
+    );
+    mockGetServicePlan.mockImplementation(
+      (_churchId: string, planKey: string) =>
+        planKey === secondPlan.planKey
+          ? Promise.resolve({ success: true, servicePlan: secondPlan })
+          : slowRefresh,
+    );
+    let refreshPromise: Promise<unknown> | undefined;
+    act(() => {
+      refreshPromise = latestResult?.refresh();
+    });
+    act(() => latestResult?.selectPlan(secondPlan.planKey));
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+        secondPlan.planKey,
+      ),
+    );
+
+    await act(async () => {
+      resolveRefresh({
+        success: true,
+        servicePlan: { ...planFixture, name: "Stale refreshed plan" },
+      });
+      await refreshPromise;
+    });
+
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+      secondPlan.planKey,
+    );
+    expect(latestResult?.selectedPlanKey).toBe(secondPlan.planKey);
+  });
+
+  it("ignores an assignment failure from a request superseded by a plan switch", async () => {
+    const secondPlan = {
+      ...planFixture,
+      planId: "plan-2",
+      planKey: "service-2@2026-08-01",
+      serviceId: "service-2",
+      name: "Evening Service",
+    };
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+        planFixture.planKey,
+      ),
+    );
+
+    let rejectFirstAssignments!: (error: Error) => void;
+    mockGetServicePlan.mockImplementation((_churchId: string, planKey: string) =>
+      Promise.resolve({
+        success: true,
+        servicePlan: planKey === secondPlan.planKey ? secondPlan : planFixture,
+      }),
+    );
+    mockGetServicePlanAssignments.mockImplementation(
+      (_churchId: string, planKey: string) =>
+        planKey === planFixture.planKey
+          ? new Promise((_, reject) => {
+              rejectFirstAssignments = reject;
+            })
+          : Promise.resolve({
+              success: true,
+              assignments: [
+                { teamName: "Choir", role: "Lead", name: "Alex Kim" },
+              ],
+            }),
+    );
+    let oldRefresh: Promise<unknown> | undefined;
+    act(() => {
+      oldRefresh = latestResult?.refresh();
+    });
+    await waitFor(() =>
+      expect(mockGetServicePlanAssignments).toHaveBeenCalledTimes(2),
+    );
+
+    act(() => latestResult?.selectPlan(secondPlan.planKey));
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+        secondPlan.planKey,
+      ),
+    );
+    expect(latestResult?.isPlanPreviewStale).toBe(false);
+
+    await act(async () => {
+      rejectFirstAssignments(new Error("old plan assignments unavailable"));
+      await oldRefresh;
+    });
+
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+      secondPlan.planKey,
+    );
+    expect(latestResult?.isPlanPreviewStale).toBe(false);
+    expect(store.getState().servicePlanningImport.preview).toEqual(
+      outlineFixture.preview,
+    );
+  });
+
+  it("keeps selected-plan reconciliation alive for an unrelated plan event", async () => {
+    const secondPlan = {
+      ...planFixture,
+      planId: "plan-2",
+      planKey: "service-2@2026-08-01",
+      serviceId: "service-2",
+      name: "Evening Service",
+    };
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+
+    let resolveRefresh!: (value: { success: true; servicePlan: typeof planFixture }) => void;
+    const slowRefresh = new Promise<{ success: true; servicePlan: typeof planFixture }>(
+      (resolve) => {
+        resolveRefresh = resolve;
+      },
+    );
+    mockGetServicePlan.mockReturnValue(slowRefresh);
+    let refreshPromise: Promise<unknown> | undefined;
+    act(() => {
+      refreshPromise = latestResult?.refresh();
+    });
+
+    act(() => {
+      mockLiveHandler?.({
+        type: "service-plan-updated",
+        servicePlan: secondPlan,
+      });
+    });
+
+    await act(async () => {
+      resolveRefresh({
+        success: true,
+        servicePlan: { ...planFixture, name: "Selected plan refreshed" },
+      });
+      await refreshPromise;
+    });
+
+    expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey);
+    expect(mockLoadPlanPreview).toHaveBeenLastCalledWith(
+      { ...planFixture, name: "Selected plan refreshed" },
+      expect.any(Array),
+     expect.any(Object),
+);
+  });
+
+  it("keeps selected-plan reconciliation alive for an unrelated plan removal", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+
+    let resolveRefresh!: (value: { success: true; servicePlan: typeof planFixture }) => void;
+    const slowRefresh = new Promise<{ success: true; servicePlan: typeof planFixture }>(
+      (resolve) => {
+        resolveRefresh = resolve;
+      },
+    );
+    mockGetServicePlan.mockReturnValue(slowRefresh);
+    let refreshPromise: Promise<unknown> | undefined;
+    act(() => {
+      refreshPromise = latestResult?.refresh();
+    });
+
+    act(() => {
+      mockLiveHandler?.({
+        type: "service-plan-removed",
+        planKey: "unrelated-plan@2026-08-02",
+      });
+    });
+
+    await act(async () => {
+      resolveRefresh({
+        success: true,
+        servicePlan: { ...planFixture, name: "Selected plan refreshed" },
+      });
+      await refreshPromise;
+    });
+
+    expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey);
+    expect(mockLoadPlanPreview).toHaveBeenLastCalledWith(
+      { ...planFixture, name: "Selected plan refreshed" },
+      expect.any(Array),
+     expect.any(Object),
+);
+  });
+
+  it("recovers changed plan details and assignments after a long hidden period", async () => {
+    let nowMs = Date.parse("2026-08-01T09:00:00.000Z");
+    jest.spyOn(Date, "now").mockImplementation(() => nowMs);
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+
+    const refreshedPlan = { ...planFixture, name: "Sabbath Service (revised)" };
+    const refreshedAssignments = [
+      { teamName: "Band", role: "Keys", name: "Alex Morgan" },
+    ];
+    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: refreshedPlan });
+    mockGetServicePlanAssignments.mockResolvedValue({
+      success: true,
+      assignments: refreshedAssignments,
+    });
+
+    act(() => {
+      setVisibility("hidden");
+      document.dispatchEvent(new Event("visibilitychange"));
+      nowMs += 10_001;
+      setVisibility("visible");
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(2));
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(2);
+    expect(mockGetServicePlanAssignments).toHaveBeenCalledTimes(2);
+    expect(mockListServicePlans).toHaveBeenCalledTimes(2);
+    expect(mockLoadPlanPreview).toHaveBeenLastCalledWith(
+      refreshedPlan,
+      refreshedAssignments,
+     expect.any(Object),
+);
+  });
+
+  it("does not reconcile when a hidden period is shorter than the threshold", async () => {
+    let nowMs = Date.parse("2026-08-01T09:00:00.000Z");
+    jest.spyOn(Date, "now").mockImplementation(() => nowMs);
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      setVisibility("hidden");
+      document.dispatchEvent(new Event("visibilitychange"));
+      nowMs += 9_999;
+      setVisibility("visible");
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(1);
+    expect(mockGetServicePlanAssignments).toHaveBeenCalledTimes(1);
+    expect(mockListServicePlans).toHaveBeenCalledTimes(1);
+  });
+
+  it("reconciles the selected plan and assignments after network recovery", async () => {
+    let nowMs = Date.parse("2026-08-01T09:00:00.000Z");
+    jest.spyOn(Date, "now").mockImplementation(() => nowMs);
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+
+    const refreshedAssignments = [
+      { teamName: "Band", role: "Keys", name: "Offline recovery" },
+    ];
+    mockGetServicePlanAssignments.mockResolvedValue({
+      success: true,
+      assignments: refreshedAssignments,
+    });
+    act(() => {
+      window.dispatchEvent(new Event("offline"));
+      nowMs += 10_001;
+      window.dispatchEvent(new Event("online"));
+    });
+
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(2));
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(2);
+    expect(mockGetServicePlanAssignments).toHaveBeenCalledTimes(2);
+    expect(mockListServicePlans).toHaveBeenCalledTimes(2);
+    expect(mockLoadPlanPreview).toHaveBeenLastCalledWith(
+      planFixture,
+      refreshedAssignments,
+     expect.any(Object),
+);
+  });
+
+  it("ignores the initial SSE connection but reconciles a later connection", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+
+    await act(async () => {
+      mockLiveHandler?.({ type: "connected" });
+    });
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(1);
+    expect(mockGetServicePlanAssignments).toHaveBeenCalledTimes(1);
+    expect(mockListServicePlans).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      mockLiveHandler?.({ type: "connected" });
+    });
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(2));
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(2);
+    expect(mockGetServicePlanAssignments).toHaveBeenCalledTimes(2);
+    expect(mockListServicePlans).toHaveBeenCalledTimes(2);
+  });
+
+  it("collapses visibility, online, and SSE reconnect signals into one refresh", async () => {
+    let nowMs = Date.parse("2026-08-01T09:00:00.000Z");
+    jest.spyOn(Date, "now").mockImplementation(() => nowMs);
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+    // Mark the first connected message as the initial connection.
+    act(() => mockLiveHandler?.({ type: "connected" }));
+
+    act(() => {
+      setVisibility("hidden");
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("offline"));
+      nowMs += 10_001;
+      setVisibility("visible");
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("online"));
+      mockLiveHandler?.({ type: "connected" });
+    });
+
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(2));
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(2);
+    expect(mockGetServicePlanAssignments).toHaveBeenCalledTimes(2);
+    expect(mockListServicePlans).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses the refreshed list to clear a plan removed while asleep", async () => {
+    const remainingPlan = {
+      planKey: "service-3@2026-08-01",
+      serviceId: "service-3",
+      date: "2026-08-01",
+      name: "Newly Added Service",
+    };
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+
+    mockListServicePlans.mockResolvedValue({ success: true, servicePlans: [remainingPlan] });
+    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: null });
+    mockGetServicePlanAssignments.mockRejectedValueOnce(
+      new Error("assignments unavailable"),
+    );
+    await act(async () => {
+      await latestResult?.refresh();
+    });
+
+    await waitFor(() => expect(latestResult?.selectedPlanKey).toBeNull());
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
+    expect(latestResult?.savedPlans).toEqual([remainingPlan]);
+  });
+
+  it("keeps the last preview blocked until required plan and assignment reads finish", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+    const displayedPreview = store.getState().servicePlanningImport.preview;
+    let resolveAssignments!: (value: { success: true; assignments: [] }) => void;
+    mockGetServicePlan.mockResolvedValueOnce({
+      success: true,
+      servicePlan: { ...planFixture, name: "Refreshed service" },
+    });
+    mockGetServicePlanAssignments.mockReturnValueOnce(
+      new Promise((resolve) => { resolveAssignments = resolve; }),
+    );
+
+    let refreshPromise!: Promise<unknown>;
+    act(() => {
+      refreshPromise = latestResult!.refresh();
+    });
+    await waitFor(() =>
+      expect(mockGetServicePlanAssignments).toHaveBeenCalledTimes(2),
+    );
+
+    expect(latestResult?.isPlanPreviewStale).toBe(true);
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
+    expect(store.getState().servicePlanningImport.preview).toEqual(
+      displayedPreview,
+    );
+
+    await act(async () => {
+      resolveAssignments({ success: true, assignments: [] });
+      await refreshPromise;
+    });
+
+    expect(latestResult?.isPlanPreviewStale).toBe(false);
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
+  });
+
+  it("keeps the displayed plan and assignments when background reconciliation fails", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+    const displayedPreview = store.getState().servicePlanningImport.preview;
+    mockGetServicePlan.mockRejectedValue(new Error("temporarily unavailable"));
+    let refreshResult: unknown;
+
+    await act(async () => {
+      refreshResult = await latestResult?.refresh();
+    });
+
+    expect(refreshResult).toBe("failed");
+    expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1);
+    expect(store.getState().servicePlanningImport.preview).toEqual(
+      displayedPreview,
+    );
+    expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey);
+    expect(latestResult?.isPlanPreviewStale).toBe(true);
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
+  });
+
+  it("keeps a failed live plan update visible but blocks it until a successful refresh", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+    const displayedPreview = store.getState().servicePlanningImport.preview;
+    let rejectPlanRequest!: (error: Error) => void;
+    mockGetServicePlan.mockReturnValueOnce(
+      new Promise((_, reject) => {
+        rejectPlanRequest = reject;
+      }),
+    );
+
+    let liveRefreshPromise: Promise<unknown> | undefined;
+    act(() => {
+      mockLiveHandler?.({
+        type: "service-plan-updated",
+        planKey: planFixture.planKey,
+      });
+      liveRefreshPromise = latestResult?.refresh();
+    });
+
+    expect(latestResult?.isRefreshing).toBe(true);
+    await act(async () => {
+      rejectPlanRequest(new Error("temporarily unavailable"));
+      await liveRefreshPromise;
+    });
+    await waitFor(() => expect(latestResult?.isLoading).toBe(false));
+
+    expect(store.getState().servicePlanningImport.preview).toEqual(
+      displayedPreview,
+    );
+    expect(latestResult?.isPlanPreviewStale).toBe(true);
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
+
+    let refreshResult: unknown;
+    await act(async () => {
+      refreshResult = await latestResult?.refresh();
+    });
+
+    expect(refreshResult).toBe("unchanged");
+    expect(latestResult?.isPlanPreviewStale).toBe(false);
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
+    expect(store.getState().servicePlanningImport.preview).toEqual(
+      displayedPreview,
+    );
+  });
+
+  it("keeps a failed plan preview stale across schedule updates until plan refresh succeeds", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+    expect(latestResult?.isPlanPreviewStale).toBe(false);
+    const displayedPreview = store.getState().servicePlanningImport.preview;
+    mockGetServicePlan.mockRejectedValueOnce(new Error("temporarily unavailable"));
+
+    await act(async () => {
+      await latestResult?.refresh();
+    });
+
+    expect(latestResult?.isPlanPreviewStale).toBe(true);
+    expect(store.getState().servicePlanningImport.preview).toEqual(displayedPreview);
+
+    const scheduleAssignments = [
+      { teamName: "Band", role: "Keys", name: "Updated Volunteer" },
+    ];
+    mockGetServicePlanAssignments.mockResolvedValueOnce({
+      success: true,
+      assignments: scheduleAssignments,
+    });
+    act(() => {
+      mockLiveHandler?.({
+        type: "schedule-updated",
+        schedule: { scheduleId: "schedule-1" },
+      });
+    });
+
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(2));
+    expect(mockLoadPlanPreview).toHaveBeenLastCalledWith(
+      planFixture,
+      scheduleAssignments,
+     expect.any(Object),
+);
+    expect(store.getState().servicePlanningImport.preview).not.toBeNull();
+    expect(latestResult?.isPlanPreviewStale).toBe(true);
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      await latestResult?.refresh();
+    });
+
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(3);
+    expect(latestResult?.isPlanPreviewStale).toBe(false);
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
+  });
+
+  it("still applies schedule-only assignment updates to a trusted plan preview", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+    const scheduleAssignments = [
+      { teamName: "Choir", role: "Lead", name: "Current Volunteer" },
+    ];
+    const updatedOutline = { ...outlineFixture, planLabel: "Schedule refreshed" };
+    mockGetServicePlanAssignments.mockResolvedValueOnce({
+      success: true,
+      assignments: scheduleAssignments,
+    });
+    mockLoadPlanPreview.mockResolvedValueOnce(updatedOutline);
+
+    act(() => {
+      mockLiveHandler?.({ type: "schedule-removed", scheduleId: "schedule-1" });
+    });
+
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(2));
+
+    expect(mockLoadPlanPreview).toHaveBeenLastCalledWith(
+      planFixture,
+      scheduleAssignments,
+     expect.any(Object),
+);
+    expect(store.getState().servicePlanningImport.serviceOutline).toEqual(
+      updatedOutline,
+    );
+    expect(latestResult?.isPlanPreviewStale).toBe(false);
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
+  });
+
+  it("keeps a superseded refresh stale but ends loading after a schedule-only update", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+
+    let resolveRefreshAssignments!: (value: { success: true; assignments: [] }) => void;
+    mockGetServicePlan.mockResolvedValueOnce({
+      success: true,
+      servicePlan: { ...planFixture, name: "Updated while offline" },
+    });
+    mockGetServicePlanAssignments.mockReturnValueOnce(
+      new Promise((resolve) => { resolveRefreshAssignments = resolve; }),
+    );
+    let refreshPromise!: Promise<unknown>;
+    act(() => {
+      refreshPromise = latestResult!.refresh();
+    });
+    await waitFor(() =>
+      expect(mockGetServicePlanAssignments).toHaveBeenCalledTimes(2),
+    );
+
+    const scheduleAssignments = [
+      { teamName: "Band", role: "Keys", name: "Schedule volunteer" },
+    ];
+    const scheduleOutline = { ...outlineFixture, planLabel: "Schedule assignments applied" };
+    mockGetServicePlanAssignments.mockResolvedValueOnce({
+      success: true,
+      assignments: scheduleAssignments,
+    });
+    mockLoadPlanPreview.mockResolvedValueOnce(scheduleOutline);
+    act(() => {
+      mockLiveHandler?.({ type: "schedule-updated", scheduleId: "schedule-1" });
+    });
+
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.preview).toEqual(
+        scheduleOutline.preview,
+      ),
+    );
+    expect(latestResult?.isPlanPreviewStale).toBe(true);
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
+    expect(latestResult?.isLoading).toBe(false);
+
+    await act(async () => {
+      resolveRefreshAssignments({ success: true, assignments: [] });
+      await refreshPromise;
+    });
+    expect(store.getState().servicePlanningImport.preview).toEqual(
+      scheduleOutline.preview,
+    );
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
+  });
+
+  it("keeps a failed assignment refresh stale when the plan source hook remounts", async () => {
+    const store = makeStore();
+    const { unmount: unmountFirstView } = renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+        planFixture.planKey,
+      ),
+    );
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.preview).not.toBeNull(),
+    );
+    await waitFor(() => expect(latestResult?.isLoading).toBe(false));
+    const displayedPreview = store.getState().servicePlanningImport.preview;
+    expect(displayedPreview).not.toBeNull();
+    expect(latestResult?.isPlanPreviewStale).toBe(false);
+
+    mockGetServicePlanAssignments.mockRejectedValueOnce(
+      new Error("assignments temporarily unavailable"),
+    );
+    let refreshResult: unknown;
+    await act(async () => {
+      refreshResult = await latestResult?.refresh();
+    });
+    expect(refreshResult).toBe("failed");
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
+    expect(store.getState().servicePlanningImport.preview).toEqual(displayedPreview);
+
+    unmountFirstView();
+    let rejectRemountAssignments!: (error: Error) => void;
+    mockGetServicePlanAssignments.mockReturnValueOnce(
+      new Promise((_, reject) => {
+        rejectRemountAssignments = reject;
+      }),
+    );
+    const { unmount: unmountRemountedView } = renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockGetServicePlanAssignments).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(latestResult?.isLoading).toBe(true));
+    expect(latestResult?.isPlanPreviewStale).toBe(true);
+    await act(async () => {
+      rejectRemountAssignments(new Error("assignments still unavailable"));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(latestResult?.isLoading).toBe(false));
+    expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1);
+    expect(store.getState().servicePlanningImport.preview).toEqual(displayedPreview);
+    expect(latestResult?.isPlanPreviewStale).toBe(true);
+    unmountRemountedView();
+  });
+
+  it("reports an updated plan when manual refresh fetches changed plan data", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+    const updatedPlan = { ...planFixture, name: "Updated Sabbath Service" };
+    mockGetServicePlan.mockResolvedValueOnce({ success: true, servicePlan: updatedPlan });
+    mockLoadPlanPreview.mockResolvedValueOnce({
+      ...outlineFixture,
+      planLabel: "Updated Sabbath Service",
+    });
+
+    let refreshResult: unknown;
+    await act(async () => {
+      refreshResult = await latestResult?.refresh();
+    });
+
+    expect(refreshResult).toBe("updated");
+    expect(latestResult?.selectedPlanDetails?.name).toBe(
+      "Updated Sabbath Service",
+    );
+  });
+
+  it("keeps the displayed assignments when background assignment reconciliation fails", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+    const displayedPreview = store.getState().servicePlanningImport.preview;
+    mockListServicePlans.mockResolvedValue({
+      success: true,
+      servicePlans: [
+        {
+          planKey: "service-2@2026-08-01",
+          serviceId: "service-2",
+          date: "2026-08-01",
+          name: "Evening Service",
+        },
+      ],
+    });
+    mockGetServicePlanAssignments.mockRejectedValue(
+      new Error("assignments temporarily unavailable"),
+    );
+
+    await act(async () => {
+      await latestResult?.refresh();
+    });
+
+    expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1);
+    expect(store.getState().servicePlanningImport.preview).toEqual(
+      displayedPreview,
+    );
+    expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey);
+    expect(latestResult?.savedPlans).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ planKey: planFixture.planKey }),
+      ]),
+    );
+    expect(
+      (latestResult as (Result & { isPlanPreviewStale?: boolean }) | null)
+        ?.isPlanPreviewStale,
+    ).toBe(true);
+  });
+
+  it("switches to another occurrence when the operator overrides it", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      latestResult?.selectPlan("service-2@2026-08-01");
+    });
+
+    await waitFor(() =>
+      expect(mockGetServicePlan).toHaveBeenLastCalledWith(
+        "church-1",
+        "service-2@2026-08-01",
+      ),
+    );
+    expect(latestResult?.selectedOccurrenceId).toBe(
+      mockOtherOccurrence.occurrenceId,
+    );
+    expect(latestResult?.occurrence?.serviceId).toBe("service-2");
+    expect(latestResult?.isManualSelection).toBe(true);
+  });
+
+  it("keeps an unmatched manual plan separate from the automatic occurrence", async () => {
+    const outsidePlanKey = "service-3@2026-08-01";
+    mockListServicePlans.mockResolvedValueOnce({
+      success: true,
+      servicePlans: [
+        {
+          planKey: planFixture.planKey,
+          serviceId: planFixture.serviceId,
+          date: planFixture.date,
+          name: planFixture.name,
+        },
+        {
+          planKey: outsidePlanKey,
+          serviceId: "service-3",
+          date: "2026-08-01",
+          name: "Outside Window Service",
+        },
+      ],
+    });
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey));
+
+    act(() => latestResult?.selectPlan(outsidePlanKey));
+
+    await waitFor(() =>
+      expect(latestResult?.selectedPlanKey).toBe(outsidePlanKey),
+    );
+    expect(latestResult?.selectedOccurrenceId).toBeNull();
+    expect(latestResult?.occurrence).toBeNull();
+    expect(latestResult?.isManualSelection).toBe(true);
+  });
+
+  it("resets manual context when the active Controller changes", async () => {
+    const store = makeStore();
+    const view = renderHookWith(store, enabledGlobalInfo, {}, "controller-a");
+    await waitFor(() => expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey));
+
+    act(() => latestResult?.selectPlan("service-2@2026-08-01"));
+    await waitFor(() =>
+      expect(latestResult?.selectedOccurrenceId).toBe(
+        mockOtherOccurrence.occurrenceId,
+      ),
+    );
+    await waitFor(() =>
+      expect(latestResult?.isManualSelection).toBe(true),
+    );
+
+    view.rerender(
+      <Provider store={store}>
+        <ActiveControllerContext.Provider value="controller-b">
+          <GlobalInfoContext.Provider value={enabledGlobalInfo as never}>
+            <ControllerInfoContext.Provider value={{} as never}>
+              <Harness
+                onResult={(result) => {
+                  latestResult = result;
+                }}
+              />
+            </ControllerInfoContext.Provider>
+          </GlobalInfoContext.Provider>
+        </ActiveControllerContext.Provider>
+      </Provider>,
+    );
+
+    await waitFor(() =>
+      expect(latestResult?.selectedOccurrenceId).toBeNull(),
+    );
+    await waitFor(() =>
+      expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey),
+    );
+    await waitFor(() =>
+      expect(latestResult?.isManualSelection).toBe(false),
+    );
+    expect(latestResult?.occurrence?.serviceId).toBe("service-1");
+  });
+
+  it("returns a manually selected occurrence to the current service", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey));
+
+    const otherOccurrence = latestResult?.occurrences.find(
+      (candidate) => candidate.occurrenceId === mockOtherOccurrence.occurrenceId,
+    );
+    act(() => latestResult?.selectOccurrence(otherOccurrence?.occurrenceId ?? ""));
+
+    await waitFor(() =>
+      expect(latestResult?.selectedOccurrenceId).toBe(mockOtherOccurrence.occurrenceId),
+    );
+    await waitFor(() =>
+      expect(latestResult?.selectedPlanKey).toBe("service-2@2026-08-01"),
+    );
+    expect(latestResult?.isManualSelection).toBe(true);
+
+    act(() => latestResult?.returnToCurrentService());
+
+    await waitFor(() => expect(latestResult?.selectedOccurrenceId).toBeNull());
+    await waitFor(() =>
+      expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey),
+    );
+    expect(latestResult?.occurrence?.serviceId).toBe("service-1");
+    expect(latestResult?.isManualSelection).toBe(false);
+  });
+});

@@ -8,6 +8,7 @@ import {
   prepareScheduleInitialSmsBatch,
 } from "../../../api/auth";
 import ScheduleInitialSmsSendFlow from "./ScheduleInitialSmsSendFlow";
+import { CurrentMemberIdentityProvider } from "../components/CurrentUserMemberIndicator";
 
 jest.mock("../../../api/auth", () => ({
   getScheduleInitialSmsRecipients: jest.fn(),
@@ -87,15 +88,20 @@ const preparedBatch: NotificationBatch = {
   summary: { requested: 2, selected: 2, eligible: 2, awaitingDispatch: 2, alreadySent: 0, excluded: 0, totalSegments: 3, sent: 0, delivered: 0, failed: 0, uncertain: 0, optedOut: 0 },
 };
 
-const renderFlow = (currentSchedule = schedule({})) => render(
-  <ScheduleInitialSmsSendFlow
-    churchId="church-1"
-    schedule={currentSchedule}
-    scheduleName="October schedule"
-    teamName="Worship Team"
-    timeZone="America/New_York"
-    onClose={jest.fn()}
-  />,
+const renderFlow = (
+  currentSchedule = schedule({}),
+  selfMemberId: string | null = null,
+) => render(
+  <CurrentMemberIdentityProvider memberId={selfMemberId}>
+    <ScheduleInitialSmsSendFlow
+      churchId="church-1"
+      schedule={currentSchedule}
+      scheduleName="October schedule"
+      teamName="Worship Team"
+      timeZone="America/New_York"
+      onClose={jest.fn()}
+    />
+  </CurrentMemberIdentityProvider>,
 );
 
 describe("ScheduleInitialSmsSendFlow", () => {
@@ -108,6 +114,24 @@ describe("ScheduleInitialSmsSendFlow", () => {
     ]));
     mockedPrepareBatch.mockResolvedValue({ success: true, batch: preparedBatch, privacySafe: true });
     mockedGetBatch.mockResolvedValue({ success: true, batch: preparedBatch });
+  });
+
+  it("marks the matching SMS recipient while keeping the reviewed SMS name unchanged", async () => {
+    const user = userEvent.setup();
+    renderFlow(schedule({}), "alice");
+
+    const aliceCheckbox = await screen.findByRole("checkbox", { name: /Alice Able.*You/ });
+    expect(aliceCheckbox).toBeChecked();
+    const bobCheckbox = screen.getByRole("checkbox", { name: "Bob Baker" });
+    expect(bobCheckbox).not.toBeChecked();
+    await user.click(bobCheckbox);
+
+    await user.click(screen.getByRole("button", { name: "Review 2 messages" }));
+    await waitFor(() => expect(mockedPrepareBatch).toHaveBeenCalledWith("church-1", "schedule-1", ["alice", "bob"]));
+    expect(await screen.findAllByText(/Messages are ready to review/)).toHaveLength(2);
+    await user.click(screen.getAllByText("View message")[0]);
+    expect(screen.getByText("Alice, you are assigned for Sunday Service. Reply here: [private response link] STOP to opt out.")).toBeInTheDocument();
+    expect(screen.queryByText("Alice, You are assigned for Sunday Service.")).not.toBeInTheDocument();
   });
 
   it("recovers an approved batch from the server and polls progress while the panel is open", async () => {

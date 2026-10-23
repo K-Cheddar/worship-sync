@@ -77,17 +77,10 @@ import {
   formatSchedulePeriodName,
   type SchedulePeriodPreset,
 } from "./schedulePeriodUtils";
-import {
-  buildTeamSchedulePeriod,
-  findInitialTeamSchedulePeriod,
-} from "./teamSchedulePeriod";
+import { useScheduleWorkspacePeriod } from "./useScheduleWorkspacePeriod";
 import { useScheduleNotificationHistory } from "./useScheduleNotificationHistory";
 import RangeSelector from "../components/RangeSelector";
-import {
-  resolveRangePreset,
-  shiftRange,
-  useRangeSelection,
-} from "../rangeSelection";
+import { shiftRange } from "../rangeSelection";
 import {
   createTeamRosterMember,
   getTeamScheduleDetail,
@@ -95,7 +88,10 @@ import {
   getTeamSchedulePublicLink,
   getServicePlanMicrophones,
   getServiceEquipment,
-  updateTeam,
+  addTeamRosterMemberToTeam,
+  getTeamRosterMemberProfile,
+  updateTeamRosterMemberProfile,
+  getTeamsBootstrap,
   updateTeamSchedule,
   updateTeamScheduleAssignment,
   updateTeamScheduleAssignmentsBatch,
@@ -122,6 +118,8 @@ import ScheduleBrowserDialog from "./ScheduleBrowserDialog";
 import ScheduleOverlapPicker from "./ScheduleOverlapPicker";
 import PortableDataImportDialog from "../../../components/PortableDataTransfer/PortableDataImportDialog";
 import { createScheduleCsvMenuItems } from "./scheduleCsvActions";
+import ScheduleMemberConsentFollowup from "./ScheduleMemberConsentFollowup";
+import type { ScheduleQuickMemberDraft, ScheduleQuickMemberResult } from "./ScheduleQuickMemberForm";
 import SmsConfirmationModal from "../components/SmsConfirmationModal";
 import {
   ALL_TEAMS_SCHEDULE_FILTER,
@@ -240,6 +238,7 @@ import {
 import { buildAutoFillPlan, type AutoFillEntry } from "./scheduleAutoFill";
 import ScheduleMembersPanel from "./ScheduleMembersPanel";
 import ScheduleMessagesPanel from "./ScheduleMessagesPanel";
+import { MemberNameWithIndicator } from "../components/CurrentUserMemberIndicator";
 import ScheduleInitialSmsSendFlow from "./ScheduleInitialSmsSendFlow";
 import {
   ScheduleAssignmentProvider,
@@ -544,61 +543,21 @@ const ScheduleTab = ({
   }, [activeTeams, editableTeamIds, scheduleTeamFilter]);
   const workspaceTeamId = (scheduleTeamFilter || defaultTeamId) ?? "";
   const activeServices = useMemo(() => data.services.filter(isActive), [data.services]);
-  const { initialTeamPeriodResult, periodReferenceTime } = useMemo(() => {
-    const referenceTime = serverDate();
-    return {
-      initialTeamPeriodResult: findInitialTeamSchedulePeriod({
-        services: activeServices,
-        positions: data.positions,
-        teamId: workspaceTeamId,
-        schedules: data.schedules,
-        now: referenceTime,
-        timeZone: serviceTimeZone,
-      }),
-      periodReferenceTime: referenceTime,
-    };
-  },
-    [activeServices, data.positions, data.schedules, serviceTimeZone, workspaceTeamId],
-  );
-  const initialPeriodRange = useMemo(() => ({
-    start: initialTeamPeriodResult.start,
-    end: initialTeamPeriodResult.end,
-  }), [initialTeamPeriodResult.end, initialTeamPeriodResult.start]);
-  const resolveSchedulePresetRange = useCallback(
-    (
-      preset: Exclude<SchedulePeriodPreset, "upcoming" | "custom">,
-      referenceTime: Date,
-    ) => resolveRangePreset(preset, referenceTime),
-    [],
-  );
   const {
-    preset: periodPreset,
-    range: periodRange,
-    selectPreset: selectRangePreset,
-    selectCustomRange,
-    setSelection: setPeriodSelection,
-  } = useRangeSelection({
-    now: periodReferenceTime,
-    initialPreset: initialTeamPeriodResult.preset,
-    initialRange: initialPeriodRange,
-    resolvePresetRange: resolveSchedulePresetRange,
-    resolveUpcomingRange: () => initialPeriodRange,
+    periodPreset, periodRange, selectRangePreset, selectCustomRange, setPeriodSelection,
+    markExplicitPeriodSelection, teamPeriod, periodServiceIds, generatedPeriodOccurrences,
+  } = useScheduleWorkspacePeriod({
+    services: activeServices,
+    positions: data.positions,
+    schedules: data.schedules,
+    teamId: workspaceTeamId,
+    timeZone: serviceTimeZone,
   });
   const [periodScheduleSelection, setPeriodScheduleSelection] = useState<{
     scope: string;
     scheduleId: string;
   } | null>(null);
   const periodSelectionScope = `${workspaceTeamId}:${periodPreset}:${periodRange.start}:${periodRange.end}`;
-  const hasExplicitPeriodSelectionRef = useRef(false);
-  const periodTeamIdRef = useRef(workspaceTeamId);
-  useEffect(() => {
-    if (periodTeamIdRef.current !== workspaceTeamId) {
-      periodTeamIdRef.current = workspaceTeamId;
-      hasExplicitPeriodSelectionRef.current = false;
-    }
-    if (hasExplicitPeriodSelectionRef.current) return;
-    setPeriodSelection(initialTeamPeriodResult.preset, initialPeriodRange);
-  }, [initialPeriodRange, initialTeamPeriodResult.preset, setPeriodSelection, workspaceTeamId]);
   const canEdit = viewingSavedSchedule
     ? canEditSelectedSchedule
     : Boolean(
@@ -606,22 +565,6 @@ const ScheduleTab = ({
       (!editableTeamIds && canEditSelectedSchedule),
     );
   const persistedPeriodRange = periodRange;
-  const teamPeriod = useMemo(
-    () => buildTeamSchedulePeriod({
-      services: activeServices,
-      positions: data.positions,
-      teamId: workspaceTeamId,
-      startDate: persistedPeriodRange.start,
-      endDate: persistedPeriodRange.end,
-      timeZone: serviceTimeZone,
-    }),
-    [activeServices, data.positions, persistedPeriodRange.end, persistedPeriodRange.start, serviceTimeZone, workspaceTeamId],
-  );
-  const periodServiceIds = teamPeriod.serviceIds;
-  const generatedPeriodOccurrences = useMemo(
-    () => filterOccurrencesToRange(teamPeriod.occurrences, periodRange, serviceTimeZone),
-    [periodRange, serviceTimeZone, teamPeriod.occurrences],
-  );
   const operatorSelectedPeriodScheduleId = periodScheduleSelection?.scope === periodSelectionScope
     ? periodScheduleSelection.scheduleId
     : undefined;
@@ -1150,13 +1093,13 @@ const ScheduleTab = ({
   );
 
   const selectPeriodPreset = (preset: SchedulePeriodPreset) => {
-    hasExplicitPeriodSelectionRef.current = true;
+    markExplicitPeriodSelection();
     setPeriodScheduleSelection(null);
     selectRangePreset(preset);
     setViewingSavedSchedule(false);
   };
   const shiftPeriod = (direction: -1 | 1) => {
-    hasExplicitPeriodSelectionRef.current = true;
+    markExplicitPeriodSelection();
     setPeriodScheduleSelection(null);
     setPeriodSelection("custom", shiftRange(periodPreset, displayedPeriodRange, direction));
     setViewingSavedSchedule(false);
@@ -1780,6 +1723,17 @@ const ScheduleTab = ({
     writeScheduleOrganizeMode(mode);
   }, []);
   const [activeSlot, setActiveSlot] = useState<ScheduleFocusedCell | null>(null);
+  const quickMemberContextScope = JSON.stringify([churchId, workspaceTeamId, periodSelectionScope,
+    viewingSavedSchedule ? selectedScheduleRecord?.scheduleId : operatorSelectedPeriodScheduleId]);
+  const quickMemberScope = JSON.stringify([quickMemberContextScope, activeSlot?.occurrenceId, activeSlot?.columnKey]);
+  const quickMemberOwnerRef = useRef({ scope: quickMemberScope });
+  useLayoutEffect(() => {
+    if (quickMemberOwnerRef.current.scope !== quickMemberScope) {
+      quickMemberOwnerRef.current = { scope: quickMemberScope };
+    }
+  }, [quickMemberScope]);
+  const [consentMember, setConsentMember] = useState<{ scope: string; member: TeamRosterMember } | null>(null);
+
   // The standard grid flow supports replacing, shadowing, and clearing slots.
   const [slotPickerMode, setSlotPickerMode] = useState<"assign" | "replace">(
     "assign",
@@ -2518,7 +2472,7 @@ const ScheduleTab = ({
 
   useTeamsRestoreOnMount({
     onSchedulePeriodRestore: (restore) => {
-      hasExplicitPeriodSelectionRef.current = true;
+      markExplicitPeriodSelection();
       setViewingSavedSchedule(false);
       updateScheduleTeamFilter(restore.teamId);
       setPeriodSelection("custom", { start: restore.startDate, end: restore.endDate });
@@ -4200,64 +4154,79 @@ const ScheduleTab = ({
     }
   };
 
-  // Create a brand-new roster member straight from a schedule cell: make the
-  // person, add them to this team (so they're eligible), then assign them to the
-  // cell. Keeps the scheduler in flow instead of bouncing to the Members tab.
+  // Roster creation already joins the position's team. Never send a whole-team
+  // settings update here. The picker retains the returned member after a later
+  // assignment failure, so retry cannot create another person.
   const createMemberForCell = async ({
-    serviceId,
-    cellKey,
-    basePositionId,
-    firstName,
-    lastName,
-  }: {
+    serviceId, cellKey, basePositionId, firstName, lastName, phoneNumber, email, existingMemberId,
+  }: ScheduleQuickMemberDraft & {
     serviceId: string;
     cellKey: string;
     basePositionId: string;
-    firstName: string;
-    lastName: string;
-  }) => {
-    if (!canEdit) return;
-    if (!selectedSchedule || !selectedTeam) return;
-    const trimmedFirst = firstName.trim();
-    if (!trimmedFirst) return;
+    existingMemberId?: string;
+  }): Promise<ScheduleQuickMemberResult> => {
+    if (!canEdit || !selectedSchedule || !selectedTeam) throw new Error("Choose an editable schedule before adding a member.");
+    const owner = quickMemberOwnerRef.current;
+    const isCurrent = () => scheduleTabMountedRef.current && quickMemberOwnerRef.current === owner;
+    const assertCurrent = () => { if (!isCurrent()) throw new Error("The schedule changed. Select the member from the roster to continue."); };
     const occurrence = scheduleOccurrences.find((item) => item.occurrenceId === serviceId);
-    const serviceDate = occurrence ? getOccurrenceDate(occurrence, serviceTimeZone) : "";
+    if (!occurrence) throw new Error("This service is no longer available.");
+    const serviceDate = getOccurrenceDate(occurrence, serviceTimeZone);
+    const schedule = await ensureActiveSchedule(selectedSchedule);
+    assertCurrent();
+    if (!schedule) throw new Error("Could not prepare this schedule. Try again.");
+    let member: TeamRosterMember;
+    const knownMember = existingMemberId ? data.members.find((item) => item.memberId === existingMemberId) : undefined;
+    if (knownMember && selectedTeam.memberIds.includes(knownMember.memberId) && knownMember.positionIds.includes(basePositionId)) {
+      member = knownMember;
+    } else if (existingMemberId) {
+      // Both APIs are team-scoped; the profile patch carries only this team's
+      // existing eligibility plus the selected position, leaving other data alone.
+      const added = await addTeamRosterMemberToTeam(churchId, selectedTeam.teamId, existingMemberId);
+      assertCurrent();
+      onTeamSaved(added.team);
+      const profile = await getTeamRosterMemberProfile(churchId, selectedTeam.teamId, existingMemberId);
+      assertCurrent();
+      if (!profile.teamProfile.positionIds.includes(basePositionId)) {
+        await updateTeamRosterMemberProfile(churchId, selectedTeam.teamId, existingMemberId, {
+          positionIds: [...profile.teamProfile.positionIds, basePositionId],
+        });
+        assertCurrent();
+      }
+      const refreshed = await getTeamsBootstrap(churchId);
+      assertCurrent();
+      const saved = refreshed.members.find((item) => item.memberId === existingMemberId);
+      if (!saved) throw new Error("The member could not be refreshed. Try again.");
+      member = saved;
+      const team = refreshed.teams.find((item) => item.teamId === selectedTeam.teamId);
+      if (team) onTeamSaved(team);
+    } else {
+      const response = await createTeamRosterMember(churchId, {
+        firstName: firstName.trim(), lastName: lastName.trim(),
+        ...(phoneNumber ? { phoneNumber } : {}), ...(email ? { email } : {}),
+        positionIds: [basePositionId], blockoutDates: [],
+      });
+      assertCurrent();
+      member = response.member;
+      response.teams?.forEach((team) => onTeamSaved(team));
+    }
+    onMemberSaved(member);
+    if (!existingMemberId && isChurchAdmin && member.phoneNumber) setConsentMember({ scope: quickMemberContextScope, member });
     try {
-      const schedule = await ensureActiveSchedule();
-      if (!schedule) return;
-      const { member } = await createTeamRosterMember(churchId, {
-        firstName: trimmedFirst,
-        lastName: lastName.trim(),
-        positionIds: [basePositionId],
-        blockoutDates: [],
+      const response = await enqueueAssignmentSave(schedule.scheduleId, () => {
+        assertCurrent();
+        return updateTeamScheduleAssignment(churchId, schedule.scheduleId, {
+          serviceId, positionSlotKey: cellKey, memberId: member.memberId, serviceDate,
+        });
       });
-      const teamResponse = await updateTeam(churchId, selectedTeam.teamId, {
-        name: selectedTeam.name,
-        description: selectedTeam.description,
-        icon: selectedTeam.icon,
-        memberIds: [...selectedTeam.memberIds, member.memberId],
-        baseMemberIds: selectedTeam.memberIds,
-      });
-      await enqueueAssignmentSave(schedule.scheduleId, async () => {
-        const response = await updateTeamScheduleAssignment(
-          churchId,
-          schedule.scheduleId,
-          {
-            serviceId,
-            positionSlotKey: cellKey,
-            memberId: member.memberId,
-            serviceDate,
-          },
-        );
-        onScheduleSaved(response.schedule);
-      });
-      // Pull the new member + team membership into the page data so the roster,
-      // member panel, and cell label all reflect the addition.
-      onMemberSaved(member);
-      onTeamSaved(teamResponse.team);
+      assertCurrent();
+      // Merge through the existing pending-cell reconciliation boundary.
+      publishScheduleSnapshot(response.schedule, ["assignments"]);
       clearActiveSlot();
+      return { member };
     } catch (error) {
-      showApiErrorToast(showToast, error, "Could not add this member.");
+      assertCurrent();
+      return { member, assignmentError: error instanceof Error ? error.message : "Could not save the assignment." };
     }
   };
 
@@ -5019,18 +4988,14 @@ const ScheduleTab = ({
     setPendingCellAssignment(null);
   };
 
-  const handleActiveSlotCreateMember = async (member: {
-    firstName: string;
-    lastName: string;
-  }) => {
-    if (!canEdit) return;
-    if (!activeSlot || !activeSlotMeta) return;
-    await createMemberForCell({
+  const handleActiveSlotCreateMember = async (member: ScheduleQuickMemberDraft, existingMemberId?: string) => {
+    if (!canEdit || !activeSlot || !activeSlotMeta) throw new Error("Select an editable schedule cell first.");
+    return createMemberForCell({
       serviceId: activeSlot.occurrenceId,
       cellKey: activeSlot.columnKey,
       basePositionId: activeSlotMeta.positionId,
-      firstName: member.firstName,
-      lastName: member.lastName,
+      ...member,
+      existingMemberId,
     });
   };
 
@@ -5337,6 +5302,11 @@ const ScheduleTab = ({
       duplicateScheduleFirstNames,
     )
     : "This person";
+  const pendingMoveMember = pendingMoveAssignment?.memberId
+    ? scheduleDisplayMembers.find(
+      (item) => item.memberId === pendingMoveAssignment.memberId,
+    )
+    : undefined;
   const pendingAvailabilityMember = pendingAvailabilityConfirmation
     ? data.members.find(
       (item) => item.memberId === pendingAvailabilityConfirmation.memberId,
@@ -6227,7 +6197,7 @@ const ScheduleTab = ({
       writeScheduleTeamFilter(churchId, schedule.teamId);
     }
     if (schedule.startDate && schedule.endDate) {
-      hasExplicitPeriodSelectionRef.current = true;
+      markExplicitPeriodSelection();
       setPeriodSelection("custom", { start: schedule.startDate, end: schedule.endDate });
     }
     setViewingSavedSchedule(true);
@@ -6435,6 +6405,10 @@ const ScheduleTab = ({
 
   return (
     <div className={scheduleTabRootClassName}>
+      {consentMember?.scope === quickMemberContextScope && isChurchAdmin ? (
+        <ScheduleMemberConsentFollowup key={consentMember.member.memberId} churchId={churchId} member={consentMember.member}
+          onClose={() => setConsentMember(null)} />
+      ) : null}
       {isChurchAdmin ? (
         <PortableDataImportDialog
           open={scheduleImportOpen}
@@ -6496,7 +6470,7 @@ const ScheduleTab = ({
                   schedules={periodScheduleChoices}
                   selectedScheduleId={selectedScheduleRecord.scheduleId}
                   onSelect={(scheduleId) => {
-                    hasExplicitPeriodSelectionRef.current = true;
+                    markExplicitPeriodSelection();
                     setPeriodScheduleSelection({ scope: periodSelectionScope, scheduleId });
                     setViewingSavedSchedule(false);
                     setSelectedScheduleId(scheduleId, !scheduleId.startsWith("virtual:"));
@@ -6508,7 +6482,7 @@ const ScheduleTab = ({
                 range={displayedPeriodRange}
                 onPresetChange={selectPeriodPreset}
                 onCustomRangeChange={(range) => {
-                  hasExplicitPeriodSelectionRef.current = true;
+                  markExplicitPeriodSelection();
                   setPeriodScheduleSelection(null);
                   selectCustomRange(range);
                   setViewingSavedSchedule(false);
@@ -7326,6 +7300,10 @@ const ScheduleTab = ({
                     </div>
                   </div>
                   <ScheduleAssignmentPicker
+                    key={quickMemberScope}
+                    churchId={churchId}
+                    teamId={selectedTeam?.teamId || ""}
+                    teamName={selectedTeam?.name || ""}
                     open={Boolean(canEdit && activeSlot && activeSlotMeta && pickerAnchorEl)}
                     anchorEl={pickerAnchorEl}
                     label={`${activeSlotMeta?.occurrenceName || ""} ${activeSlotMeta?.positionLabel || ""}`}
@@ -7477,6 +7455,7 @@ const ScheduleTab = ({
               {scheduleSmsPreview ? <SmsConfirmationModal
                 isOpen
                 recipientName={scheduleSmsPreview.recipientName}
+                recipientMemberId={scheduleSmsPreview.intent.memberId}
                 phoneNumberSnapshot={scheduleSmsPreview.phoneNumberSnapshot}
                 message={scheduleSmsPreview.message}
                 segmentCount={scheduleSmsPreview.segmentCount}
@@ -7642,7 +7621,10 @@ const ScheduleTab = ({
         {pendingMoveAssignment ? (
           <div className="space-y-4">
             <p className="text-sm text-gray-200">
-              Move {describeMemberName(pendingMoveAssignment.memberId)} from{" "}
+              Move <MemberNameWithIndicator
+                name={describeMemberName(pendingMoveAssignment.memberId)}
+                memberId={pendingMoveMember?.scheduleGuest ? undefined : pendingMoveMember?.memberId}
+              /> from{" "}
               {positionNameById.get(pendingMoveAssignment.sourcePositionSlotKey?.split("::")[0] || "") || "their current position"}{" "}
               to {positionNameById.get(pendingMoveAssignment.basePositionId) || "this position"}?
             </p>
@@ -7674,9 +7656,21 @@ const ScheduleTab = ({
       >
         <div className="space-y-4">
           <p className="text-sm text-gray-200">
-            {pendingAvailabilityConfirmationIsRecurring
-              ? `${pendingAvailabilityMemberLabel} is not available during this week of the month.`
-              : `${pendingAvailabilityMemberLabel} marked this date as blocked out.`}
+            {pendingAvailabilityConfirmationIsRecurring ? (
+              <>
+                <MemberNameWithIndicator
+                  name={pendingAvailabilityMemberLabel}
+                  memberId={pendingAvailabilityMember?.memberId}
+                /> is not available during this week of the month.
+              </>
+            ) : (
+              <>
+                <MemberNameWithIndicator
+                  name={pendingAvailabilityMemberLabel}
+                  memberId={pendingAvailabilityMember?.memberId}
+                /> marked this date as blocked out.
+              </>
+            )}
           </p>
           <p className="text-sm text-gray-400">
             Confirm that they are available before scheduling them.
@@ -7714,7 +7708,10 @@ const ScheduleTab = ({
       >
         <div className="space-y-4">
           <p className="text-sm text-gray-200">
-            {pendingCrossTeamConflictMemberLabel} has these overlapping schedule assignments:
+            <MemberNameWithIndicator
+              name={pendingCrossTeamConflictMemberLabel}
+              memberId={pendingCrossTeamConflictMember?.memberId}
+            /> has these overlapping schedule assignments:
           </p>
           {pendingCrossTeamConflict?.conflicts.length ? (
             <ul className="max-h-48 space-y-2 overflow-y-auto rounded border border-gray-700 p-3 text-sm text-gray-300">

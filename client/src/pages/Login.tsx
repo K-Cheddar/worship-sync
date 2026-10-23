@@ -5,7 +5,6 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   type FormEvent,
@@ -22,6 +21,7 @@ import HostedDesktopBrowserLogin from "./HostedDesktopBrowserLogin";
 import PasswordStrengthIndicator from "../components/PasswordStrengthIndicator/PasswordStrengthIndicator";
 import VerificationCodeInput from "../components/VerificationCodeInput/VerificationCodeInput";
 import {
+  AuthApiError,
   completeDesktopAuth,
   getDesktopAuthStatus,
   getEmailCodeHint,
@@ -80,6 +80,37 @@ type DesktopBrowserFlowStatus = "idle" | "loading";
 const RESEND_COOLDOWN_SEC = 60;
 const HOSTED_DESKTOP_SSO_SESSION_KEY = "ws-hosted-desktop-sso";
 
+type HostedDesktopHandoff = {
+  desktopAuthId: string;
+  provider: DesktopAuthProvider;
+};
+
+// Reads never consume a handoff: Firebase redirects reload the whole page.
+const readHostedDesktopHandoff = (
+  searchParams = new URLSearchParams(),
+): HostedDesktopHandoff | null => {
+  try {
+    const fromUrl = searchParams.has("desktopAuthId");
+    const candidate: { desktopAuthId?: unknown; provider?: unknown } | null = fromUrl
+      ? Object.fromEntries(searchParams)
+      : JSON.parse(sessionStorage.getItem(HOSTED_DESKTOP_SSO_SESSION_KEY) || "null");
+    const desktopAuthId =
+      typeof candidate?.desktopAuthId === "string" ? candidate.desktopAuthId.trim() : "";
+    const provider =
+      typeof candidate?.provider === "string" ? candidate.provider.trim().toLowerCase() : "";
+    if (
+      desktopAuthId &&
+      (provider === "google" || provider === "microsoft") &&
+      !isDesktopBrokerAuthCompleted(desktopAuthId)
+    ) {
+      return { desktopAuthId, provider };
+    }
+  } catch {
+    // Ignore invalid or unavailable session storage.
+  }
+  return null;
+};
+
 const FORGOT_PASSWORD_EMAIL_HELPER =
   "If an account exists for that email, you will receive a reset link shortly.";
 
@@ -110,6 +141,7 @@ const LastUsedBadge = ({ show }: { show: boolean }) => {
 
 /** Shared only while requests are active, to dedupe overlapping submissions. */
 const emailCodeVerificationInFlight = new Set<string>();
+const desktopBrowserHandoffsInFlight = new Map<string, Promise<boolean>>();
 const getEmailCodeAttemptKey = (pendingAuthId: string, digits: string) =>
   JSON.stringify([pendingAuthId, digits]);
 
@@ -164,76 +196,36 @@ const Login = () => {
     getPendingProviderRedirectState(),
   );
   const isElectronRuntime = isElectron();
-  const { desktopAuthId: desktopBrowserAuthId, provider: desktopBrowserProvider } =
-    useMemo(() => {
-      const idFromUrl = String(searchParams.get("desktopAuthId") || "").trim();
-      if (idFromUrl && isDesktopBrokerAuthCompleted(idFromUrl)) {
-        return {
-          desktopAuthId: "",
-          provider: null as DesktopAuthProvider | null,
-        };
-      }
-      const rawProv = String(searchParams.get("provider") || "")
-        .trim()
-        .toLowerCase();
-      const provFromUrl =
-        rawProv === "google" || rawProv === "microsoft"
-          ? (rawProv as DesktopAuthProvider)
-          : null;
-      if (idFromUrl && provFromUrl) {
-        try {
-          sessionStorage.setItem(
-            HOSTED_DESKTOP_SSO_SESSION_KEY,
-            JSON.stringify({
-              desktopAuthId: idFromUrl,
-              provider: provFromUrl,
-            }),
-          );
-        } catch {
-          // ignore storage failures (private mode, quota)
-        }
-        return { desktopAuthId: idFromUrl, provider: provFromUrl };
-      }
-      try {
-        const raw = sessionStorage.getItem(HOSTED_DESKTOP_SSO_SESSION_KEY);
-        if (raw) {
-          // One-time recovery after redirect; do not allow stale handoff to persist.
-          sessionStorage.removeItem(HOSTED_DESKTOP_SSO_SESSION_KEY);
-          const parsed = JSON.parse(raw) as {
-            desktopAuthId?: unknown;
-            provider?: unknown;
-          };
-          const storedId =
-            typeof parsed.desktopAuthId === "string"
-              ? parsed.desktopAuthId.trim()
-              : "";
-          const storedProvRaw =
-            typeof parsed.provider === "string"
-              ? parsed.provider.trim().toLowerCase()
-              : "";
-          const storedProv =
-            storedProvRaw === "google" || storedProvRaw === "microsoft"
-              ? (storedProvRaw as DesktopAuthProvider)
-              : null;
-          if (storedId && storedProv && !isDesktopBrokerAuthCompleted(storedId)) {
-            return { desktopAuthId: storedId, provider: storedProv };
-          }
-        }
-      } catch {
-        // ignore invalid persisted payload
-      }
-      return {
-        desktopAuthId: "",
-        provider: null as DesktopAuthProvider | null,
-      };
-    }, [searchParams]);
+  const [hostedDesktopHandoff, setHostedDesktopHandoff] =
+    useState<HostedDesktopHandoff | null>(() =>
+      isElectronRuntime ? null : readHostedDesktopHandoff(searchParams),
+    );
+  const hostedDesktopHandoffRef = useRef(hostedDesktopHandoff);
+  const desktopBrowserAuthId = hostedDesktopHandoff?.desktopAuthId || "";
+  const desktopBrowserProvider = hostedDesktopHandoff?.provider || null;
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     if (isElectronRuntime || mode !== "signIn") {
       return;
     }
     if (!searchParams.has("desktopAuthId") && !searchParams.has("provider")) {
       return;
+    }
+    const handoff = readHostedDesktopHandoff(searchParams);
+    if (handoff) {
+      try {
+        sessionStorage.setItem(HOSTED_DESKTOP_SSO_SESSION_KEY, JSON.stringify(handoff));
+      } catch {
+        // Keep the in-memory handoff when storage is unavailable.
+      }
+    }
+    if (
+      hostedDesktopHandoffRef.current?.desktopAuthId !== handoff?.desktopAuthId ||
+      hostedDesktopHandoffRef.current?.provider !== handoff?.provider
+    ) {
+      hostedDesktopHandoffRef.current = handoff;
+      setHostedDesktopHandoff(handoff);
+      setDesktopBrowserFlowStatus("idle");
     }
     setSearchParams(
       (prev) => {
@@ -291,7 +283,7 @@ const Login = () => {
   const hasExplicitAuthFlowRef = useRef(false);
   const isMountedRef = useRef(false);
   const desktopAuthPollInFlightRef = useRef(false);
-  const desktopBrowserAutoStartRef = useRef(false);
+  const desktopBrowserAutoStartRef = useRef("");
   const providerRedirectCompletionStartedRef = useRef(false);
 
   const openVerificationCodeStep = useCallback(
@@ -754,10 +746,49 @@ const Login = () => {
     if (
       !context?.authenticateHumanWithFirebase ||
       !desktopBrowserProvider ||
-      !desktopBrowserAuthId
+      !desktopBrowserAuthId ||
+      isDesktopBrokerAuthCompleted(desktopBrowserAuthId)
     ) {
       return;
     }
+    const isCurrentHandoff = () =>
+      isMountedRef.current &&
+      hostedDesktopHandoffRef.current?.desktopAuthId === desktopBrowserAuthId;
+    const clearStoredHandoff = () => {
+      if (readHostedDesktopHandoff()?.desktopAuthId === desktopBrowserAuthId) {
+        try {
+          sessionStorage.removeItem(HOSTED_DESKTOP_SSO_SESSION_KEY);
+        } catch {
+          // Ignore unavailable session storage.
+        }
+      }
+    };
+    if (!isCurrentHandoff()) return;
+    const showCompletion = () => {
+      setDesktopSsoCompleteFlash(desktopBrowserProvider);
+      window.location.replace(getDesktopSsoCompleteReplaceHref());
+    };
+    const existingAttempt = desktopBrowserHandoffsInFlight.get(desktopBrowserAuthId);
+    if (existingAttempt) {
+      setDesktopBrowserFlowStatus("loading");
+      const terminalRequest = await existingAttempt;
+      if (!isCurrentHandoff()) return;
+      if (isDesktopBrokerAuthCompleted(desktopBrowserAuthId)) showCompletion();
+      else {
+        if (terminalRequest) {
+          hostedDesktopHandoffRef.current = null;
+          setHostedDesktopHandoff(null);
+        }
+        setDesktopBrowserFlowStatus("idle");
+      }
+      return;
+    }
+    let finishAttempt!: (terminalRequest: boolean) => void;
+    desktopBrowserHandoffsInFlight.set(desktopBrowserAuthId,
+      new Promise<boolean>((resolve) => { finishAttempt = resolve; }),
+    );
+    let completingHandoff = false;
+    let terminalRequest = false;
     setDesktopBrowserFlowStatus("loading");
     setInfoBanner("");
     setLocalAuthError("");
@@ -767,6 +798,7 @@ const Login = () => {
         method: desktopBrowserProvider,
         interaction: "redirect",
       });
+      if (!isCurrentHandoff()) return;
       if (authResult.status === "redirect-started") {
         setInfoBanner("Taking you to your account to finish sign-in…");
         return;
@@ -781,19 +813,34 @@ const Login = () => {
         return;
       }
       const idToken = await authResult.user.getIdToken(true);
+      if (!isCurrentHandoff()) return;
+      completingHandoff = true;
       await completeDesktopAuth({
         desktopAuthId: desktopBrowserAuthId,
         idToken,
       });
+      clearStoredHandoff();
       markDesktopBrokerAuthCompleted(desktopBrowserAuthId);
-      try {
-        sessionStorage.removeItem("ws-hosted-desktop-sso");
-      } catch {
-        // ignore
-      }
-      setDesktopSsoCompleteFlash(desktopBrowserProvider);
-      window.location.replace(getDesktopSsoCompleteReplaceHref());
+      if (!isCurrentHandoff()) return;
+      showCompletion();
     } catch (error) {
+      // The existing protocol identifies expiration by message, not an error code.
+      const isTerminalRequest =
+        completingHandoff && error instanceof AuthApiError && (
+          (error.status === 404 && error.message ===
+            "This desktop sign-in request was not found. Start again in WorshipSync.") ||
+          (error.status === 409 && error.message ===
+            "This desktop sign-in request is already in use. Start again in WorshipSync.") ||
+          (error.status === 400 && error.message ===
+            "This desktop sign-in request expired. Start again in WorshipSync.")
+        );
+      terminalRequest = isTerminalRequest;
+      if (isTerminalRequest) clearStoredHandoff();
+      if (!isCurrentHandoff()) return;
+      if (isTerminalRequest) {
+        hostedDesktopHandoffRef.current = null;
+        setHostedDesktopHandoff(null);
+      }
       setDesktopBrowserFlowStatus("idle");
       setInfoBanner("");
       setLocalAuthError(
@@ -803,6 +850,9 @@ const Login = () => {
             })
           : "Could not finish browser sign-in. Try again.",
       );
+    } finally {
+      desktopBrowserHandoffsInFlight.delete(desktopBrowserAuthId);
+      finishAttempt(terminalRequest);
     }
   }, [context, desktopBrowserAuthId, desktopBrowserProvider]);
 
@@ -841,12 +891,15 @@ const Login = () => {
   }, [isElectronRuntime, mode, pendingDesktopAuth, pollDesktopAuthStatus]);
 
   useEffect(() => {
-    if (!isHostedDesktopBrowserFlow || desktopBrowserAutoStartRef.current) {
+    if (
+      !isHostedDesktopBrowserFlow ||
+      desktopBrowserAutoStartRef.current === desktopBrowserAuthId
+    ) {
       return;
     }
-    desktopBrowserAutoStartRef.current = true;
+    desktopBrowserAutoStartRef.current = desktopBrowserAuthId;
     void handleHostedDesktopBrowserCompletion();
-  }, [handleHostedDesktopBrowserCompletion, isHostedDesktopBrowserFlow]);
+  }, [desktopBrowserAuthId, handleHostedDesktopBrowserCompletion, isHostedDesktopBrowserFlow]);
 
   const handleSignIn = async () => {
     setInfoBanner("");

@@ -38,6 +38,7 @@ const TeamsFormsPage = () => {
     canEditTeam,
     canManageTeamAvailability,
     serviceTimeZone,
+    refresh,
   } = useTeamsPage();
   const scopedAvailabilityOnly = !canEditTeams && canManageTeamAvailability;
   const managedTeamIds = useMemo(
@@ -169,6 +170,8 @@ const TeamsFormsPage = () => {
         suggestionTeamIds={suggestionTeamIds}
         availabilityResponses={availabilityResponses}
         onAvailabilityRefresh={refreshScopedData}
+        availabilityRefreshing={scopedLoading}
+        availabilityRefreshError={scopedError}
         forms={availabilityForms}
         displayForms={serviceTimeZone
           ? filterFormsByDateRange(availabilityForms.filter((form) =>
@@ -213,6 +216,7 @@ const TeamsFormsPage = () => {
 
   return (
     <IntakeManager
+      onAvailabilityRefresh={refresh}
       forms={pageData.intakeForms}
       suggestionTeamIds={suggestionTeamIds}
       displayForms={visibleForms}

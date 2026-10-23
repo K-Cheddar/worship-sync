@@ -7,6 +7,7 @@ import {
 import type { TeamScheduleShadowKind } from "../../../api/authTypes";
 import type { PendingCellAssignment } from "../types";
 import type { MemberAssignmentActionIssues } from "./MemberAssignmentSubmenu";
+import type { ScheduleQuickMemberResult } from "./ScheduleQuickMemberForm";
 import type { ScheduleFocusedCell } from "./scheduleUtils";
 
 type MemberAssignmentAction = "replace" | TeamScheduleShadowKind;
@@ -65,7 +66,7 @@ export type ScheduleAssignmentHandlers = {
     basePositionId: string;
     firstName: string;
     lastName: string;
-  }) => Promise<void>;
+  }) => Promise<ScheduleQuickMemberResult>;
   addAdditionalPosition: (args: { serviceId: string; positionId: string }) => Promise<void>;
   requestRemoveAdditionalPosition: (args: { serviceId: string; cellKey: string }) => void;
   activateSlot: (cell: ScheduleFocusedCell, anchorEl: HTMLElement) => void;

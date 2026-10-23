@@ -111,7 +111,7 @@ describe("available Teams and Services sections", () => {
       label: "Availability",
       description: "Collect service-date availability from your team.",
     });
-    expect(sections.some(({ routePath }) => routePath === "messages")).toBe(false);
+    expect(sections.some(({ routePath }) => routePath === "messages")).toBe(true);
     expect(sections.some(({ routePath }) => routePath === "services")).toBe(false);
   });
 

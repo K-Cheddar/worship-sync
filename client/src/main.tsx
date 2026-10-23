@@ -15,10 +15,20 @@ import {
   normalizeBootstrapPathname,
   type BootstrapFailureStage,
 } from "./utils/bootstrapRecovery";
+import { isVolunteerPortalPath, scrubVolunteerIngress } from "./public/volunteerIngress";
 
-initConsoleLogForwarder();
+scrubVolunteerIngress();
+const isVolunteerPortal = isVolunteerPortalPath(window.location.pathname);
+if (isVolunteerPortal) {
+  // A second personal link can be a same-document fragment navigation. Restart
+  // the public bootstrap so its credential replaces the previous identity.
+  window.addEventListener("hashchange", () => {
+    if (window.location.hash) window.location.reload();
+  });
+}
+if (!isVolunteerPortal) initConsoleLogForwarder();
 
-if (import.meta.env.PROD) {
+if (import.meta.env.PROD && !isVolunteerPortal) {
   Sentry.init({
     dsn: "https://91c81677b775b6e269ae52b678fb0e53@o4509856644333568.ingest.us.sentry.io/4509860218863616",
     // Setting this option to true will send default PII data to Sentry.

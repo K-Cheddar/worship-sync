@@ -25,6 +25,8 @@ import Icon from "../../components/Icon/Icon";
 import ContentPreviewDialog from "../../components/ContentPreview/ContentPreviewDialog";
 import { createSongAudioPreview } from "../../components/ContentPreview/contentPreview";
 import Input from "../../components/Input/Input";
+import Checkbox from "../../components/Checkbox/Checkbox";
+import DebouncedInput from "../../components/DebouncedInput/DebouncedInput";
 import RichTextEditor from "../../components/RichTextEditor/RichTextEditor";
 import ServiceFlowRichText from "../../components/ServiceFlowRichText/ServiceFlowRichText";
 import SongAudioPlayer from "../../components/SongAudioPlayer/SongAudioPlayer";
@@ -220,6 +222,23 @@ const ServicePlanContentPanel = ({
     [displayResources],
   );
   const itemLabel = richTextToPlainText(element.title).trim() || "Untitled item";
+  const participantOverlay = element.participantOverlay ?? {};
+  const participantOverlayEnabled = participantOverlay.enabled === true;
+
+  const updateParticipantOverlay = (
+    changes: Partial<NonNullable<ServicePlanElement["participantOverlay"]>>,
+  ) => {
+    const enabled = changes.enabled ?? participantOverlayEnabled;
+    const eventLabel = changes.eventLabel ?? participantOverlay.eventLabel ?? "";
+    const next = {
+      ...(enabled ? { enabled: true } : {}),
+      ...(eventLabel.trim() ? { eventLabel: eventLabel.trim() } : {}),
+    };
+    onUpdate({
+      participantOverlay:
+        Object.keys(next).length > 0 ? next : undefined,
+    });
+  };
   const audioSongs = useMemo(
     () => allSongDocs.filter((song) => Boolean(song.songAudio)),
     [allSongDocs],
@@ -683,6 +702,43 @@ const ServicePlanContentPanel = ({
 
   return (
     <div className="space-y-4" aria-label={`Content for ${itemLabel}`}>
+      <section className="space-y-2" aria-label="Participant overlay settings">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+          Participant overlay
+        </h3>
+        {allowEdit ? (
+          <Checkbox
+            checked={participantOverlayEnabled}
+            onCheckedChange={(enabled) =>
+              updateParticipantOverlay({ enabled })
+            }
+            label="Include assigned people in overlay sync"
+          />
+        ) : (
+          <p className="text-sm text-gray-300">
+            {participantOverlayEnabled ? "Included in overlay sync" : "Not included in overlay sync"}
+          </p>
+        )}
+        {participantOverlayEnabled ? (
+          allowEdit ? (
+            <DebouncedInput
+              label="Event label (optional)"
+              value={participantOverlay.eventLabel ?? ""}
+              onChange={(eventLabel) =>
+                updateParticipantOverlay({ eventLabel })
+              }
+              placeholder={itemLabel}
+              maxLength={120}
+              helperText={`Leave blank to use “${itemLabel}”.`}
+            />
+          ) : (
+            <p className="text-xs text-gray-400">
+              Event: {participantOverlay.eventLabel?.trim() || itemLabel}
+            </p>
+          )
+        ) : null}
+      </section>
+
       {allowEdit && displayResources.length > 1 ? (
         <section className="space-y-2" aria-label="Presentation attachment order">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Presentation order</h3>

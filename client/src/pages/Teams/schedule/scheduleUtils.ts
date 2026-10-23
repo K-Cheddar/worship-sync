@@ -9,6 +9,13 @@ import {
   scheduleMemberName,
   shadowKindLabel,
 } from "../teamsUtils";
+export {
+  scheduleTodayBorderClassName,
+  scheduleTodayHeaderHighlightClassName,
+  scheduleOccurrenceHeaderHighlightClassName,
+  scheduleUpNextBorderClassName,
+  scheduleUpNextHeaderHighlightClassName,
+} from "../../../components/ServiceOccurrenceCard/priorityStyles";
 
 export const serviceHeaderRowTone = "bg-orange-500/15";
 export const scheduleGridTopBorderClassName = "border-t-gray-800";
@@ -17,27 +24,6 @@ export const scheduleGridLeftBorderClassName =
   "border-l-2 border-l-cyan-900/50";
 export const scheduleGridRightBorderClassName =
   "border-r-2 border-r-cyan-900/50";
-/** Shared up-next accent — badge, board card, and header highlights stay in lockstep. */
-export const scheduleUpNextBorderClassName = "border-orange-400";
-export const scheduleUpNextHeaderHighlightClassName =
-  "border-b border-b-orange-400";
-/** Shared today accent — distinct from up-next so same-day (but not next) stands out. */
-export const scheduleTodayBorderClassName = "border-sky-400";
-export const scheduleTodayHeaderHighlightClassName =
-  "border-b border-b-sky-400";
-
-/** Up next wins over Today when both apply; otherwise Today for same-day services. */
-export const scheduleOccurrenceHeaderHighlightClassName = ({
-  isNextUpcoming,
-  isToday,
-}: {
-  isNextUpcoming: boolean;
-  isToday: boolean;
-}) => {
-  if (isNextUpcoming) return scheduleUpNextHeaderHighlightClassName;
-  if (isToday) return scheduleTodayHeaderHighlightClassName;
-  return undefined;
-};
 export const scheduleServiceHeaderTopBorderClassName = "border-t-orange-900/40";
 export const scheduleServiceHeaderBottomBorderClassName =
   "border-b-orange-900/40";

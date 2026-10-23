@@ -1,5 +1,13 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import {
+  getDefaultControllerIcon,
+  getDefaultControllerIconColor,
+  normalizeControllerIcon,
+  normalizeControllerIconColor,
+  type ControllerIconColor,
+  type ControllerIconId,
+} from "../utils/controllerAppearance";
+import {
   ControllerProfile,
   createControllerProfileId,
   getDefaultControllerProfiles,
@@ -9,16 +17,20 @@ import {
   sanitizeControllerProfileDescription,
   sanitizeControllerProfileName,
 } from "../utils/controllerProfiles";
+import { normalizeEntityIcon, type EntityIcon } from "../components/icons/iconTypes";
 
 type ControllerProfilesState = {
   list: ControllerProfile[];
   /** False until the church registry has been read once (local edits stay local). */
   isLoaded: boolean;
+  /** Church whose Firebase snapshot currently populates this registry. */
+  syncedChurchId?: string | null;
 };
 
 const initialState: ControllerProfilesState = {
   list: getDefaultControllerProfiles(),
   isLoaded: false,
+  syncedChurchId: null,
 };
 
 const reindex = (list: ControllerProfile[]) =>
@@ -44,6 +56,15 @@ export const controllerProfilesSlice = createSlice({
     ) => {
       state.list = normalizeControllerProfiles(action.payload);
       state.isLoaded = true;
+      state.syncedChurchId = null;
+    },
+    setControllerProfilesForChurch: (
+      state,
+      action: PayloadAction<{ churchId: string; data: unknown }>,
+    ) => {
+      state.list = normalizeControllerProfiles(action.payload.data);
+      state.isLoaded = true;
+      state.syncedChurchId = action.payload.churchId;
     },
     addControllerProfile: {
       reducer: (
@@ -68,6 +89,11 @@ export const controllerProfilesSlice = createSlice({
             name,
             description: "",
             order: state.list.length,
+            icon: getDefaultControllerIcon("aux-presentation"),
+            iconColor: getDefaultControllerIconColor(
+              "aux-presentation",
+              state.list.length,
+            ),
             enabled: true,
             outputIds,
             // A brand-new controller drives nothing until an operator picks its
@@ -113,6 +139,38 @@ export const controllerProfilesSlice = createSlice({
       );
       if (description === profile.description) return;
       profile.description = description;
+    },
+    setControllerProfileAppearance: (
+      state,
+      action: PayloadAction<{
+        id: string;
+        icon: ControllerIconId;
+        iconColor: ControllerIconColor;
+      }>,
+    ) => {
+      const profile = state.list.find((p) => p.id === action.payload.id);
+      if (!profile) return;
+      const icon = normalizeControllerIcon(action.payload.icon, profile.type);
+      const iconColor = normalizeControllerIconColor(
+        action.payload.iconColor,
+        profile.type,
+        profile.order,
+      );
+      profile.icon = icon;
+      profile.iconColor = iconColor;
+    },
+    setControllerProfileHomeIcon: (
+      state,
+      action: PayloadAction<{ id: string; icon: EntityIcon | "" }>,
+    ) => {
+      const profile = state.list.find((p) => p.id === action.payload.id);
+      if (!profile) return;
+      if (action.payload.icon === "") {
+        delete profile.homeIcon;
+        return;
+      }
+      const homeIcon = normalizeEntityIcon(action.payload.icon);
+      if (homeIcon) profile.homeIcon = homeIcon;
     },
     setControllerProfileEnabled: (
       state,
@@ -201,11 +259,18 @@ export const selectControllerProfilesLoaded = (state: {
   controllerProfiles?: ControllerProfilesState;
 }): boolean => state?.controllerProfiles?.isLoaded ?? false;
 
+export const selectControllerProfilesChurchId = (state: {
+  controllerProfiles?: ControllerProfilesState;
+}): string | null => state?.controllerProfiles?.syncedChurchId ?? null;
+
 export const {
   setControllerProfilesFromRemote,
+  setControllerProfilesForChurch,
   addControllerProfile,
   renameControllerProfile,
   setControllerProfileDescription,
+  setControllerProfileAppearance,
+  setControllerProfileHomeIcon,
   setControllerProfileEnabled,
   setControllerProfileOutputs,
   setControllerProfileDefaultSends,

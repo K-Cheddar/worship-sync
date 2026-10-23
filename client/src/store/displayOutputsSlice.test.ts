@@ -6,6 +6,7 @@ import reducer, {
   setBoardTakeoverOutputId,
   setDisplayOutputEnabled,
   setDisplayOutputSource,
+  setDisplayOutputsForChurch,
   setDisplayOutputsFromRemote,
   seedDisplayOutputSettings,
 } from "./displayOutputsSlice";
@@ -79,6 +80,18 @@ describe("setDisplayOutputsFromRemote", () => {
     const state = reducer(initial(), setDisplayOutputsFromRemote(null));
     expect(state.list.map((o) => o.id)).toEqual(BUILT_IN_IDS);
     expect(state.isLoaded).toBe(true);
+  });
+});
+
+describe("church scoped display snapshots", () => {
+  it("records which church owns the authoritative registry snapshot", () => {
+    let state = reducer(
+      initial(),
+      setDisplayOutputsForChurch({ churchId: "church-2", data: null }),
+    );
+    expect(state.syncedChurchId).toBe("church-2");
+    state = reducer(state, setDisplayOutputsFromRemote(null));
+    expect(state.syncedChurchId).toBeNull();
   });
 });
 

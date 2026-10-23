@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { ReactNode } from "react";
 import {
   ArrowLeft,
   CalendarDays,
@@ -19,6 +20,11 @@ import {
   X,
 } from "lucide-react";
 import AppPageShell from "../components/AppPageShell/AppPageShell";
+import ServiceOccurrenceCard, {
+  getServiceOccurrenceCardDateParts,
+  SERVICE_OCCURRENCE_GRID_CLASS_NAME,
+} from "../components/ServiceOccurrenceCard/ServiceOccurrenceCard";
+import { PAGE_APPEARANCES } from "./pageAppearances";
 import Button from "../components/Button/Button";
 import ButtonGroup from "../components/Button/ButtonGroup";
 import ButtonGroupItem from "../components/Button/ButtonGroupItem";
@@ -28,32 +34,36 @@ import SegmentedControl from "../components/SegmentedControl/SegmentedControl";
 import Select from "../components/Select/Select";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { useToast } from "../context/toastContext";
-import { showApiErrorToast } from "../utils/apiErrorToast";
+import { getApiErrorMessage, getApiErrorStatus, showApiErrorToast } from "../utils/apiErrorToast";
 import { useSyncOnReconnect } from "../hooks/useSyncOnReconnect";
 import {
+  acceptPendingMyAssignments,
   getMyTeamAssignments,
+  updateMyBlockoutDates,
   respondToMyAssignment,
   type MyScheduleOccurrence,
   type MyScheduleServing,
 } from "../api/auth";
-import type { TeamBlockoutDateRange, TeamRosterMember } from "../api/authTypes";
+import type { TeamBlockoutDateRange } from "../api/authTypes";
 import {
   buildMyScheduleExportModelForOccurrences,
 } from "./buildMyScheduleExportModel";
-import MyScheduleBlockouts from "./MyScheduleBlockouts";
+import MyScheduleBlockouts, { type SavedDatesLoadState } from "./MyScheduleBlockouts";
+import type { MyScheduleMember, MyScheduleOperations, PersonalScheduleAccess } from "./myScheduleOperations";
+import {
+  groupMyScheduleByMonth,
+  groupMyScheduleByService,
+  myScheduleOccurrenceDate,
+  myScheduleServiceGroupKey,
+} from "./myScheduleTimeline";
 import MyScheduleServicePlanPanel from "./MyScheduleServicePlanPanel";
 import {
   findBlockoutRangeForDate,
   formatBlockoutDateRangeLabel,
 } from "./Teams/teamsUtils";
 import ScheduleExportTable from "./Teams/schedule/ScheduleExportTable";
-import ScheduleOccurrenceRibbon from "./Teams/schedule/ScheduleOccurrenceRibbon";
 import SchedulePdfExportButton from "./Teams/schedule/SchedulePdfExportButton";
 import type { ScheduleExportLayout } from "./Teams/schedule/scheduleExportPdf";
-import {
-  scheduleTodayBorderClassName,
-  scheduleUpNextBorderClassName,
-} from "./Teams/schedule/scheduleUtils";
 import { cn } from "@/utils/cnHelper";
 import { isOccurrenceToday } from "../utils/teamScheduleOccurrences";
 
@@ -70,15 +80,25 @@ import { isOccurrenceToday } from "../utils/teamScheduleOccurrences";
  * Schedule and service plan tabs reuse the public schedule table and public
  * service plan chrome.
  *
- * Members can change two things here, both via self-scoped writes: their own
- * time off, and accepting or declining an assignment. Emailed response links
- * arrive with the dispatch work and write through the same endpoint.
+ * Volunteers can change their own time off and assignment responses through
+ * self-scoped writes. Emailed assignment response links use the same endpoint.
  */
 
 const ALL_TEAMS = "__all_teams__";
 const ALL_SERVICES = "__all_services__";
+const MY_SCHEDULE_ORGANIZE_OPTIONS = [
+  { value: "byMonth" as const, label: "By month" },
+  { value: "byService" as const, label: "By service" },
+];
 
 type DetailTab = "schedule" | "servicePlan";
+
+const plansForOccurrence = (occurrence: MyScheduleOccurrence) =>
+  occurrence.plans?.length
+    ? occurrence.plans
+    : occurrence.plan
+      ? [occurrence.plan]
+      : [];
 
 const SCHEDULE_LAYOUT_OPTIONS: {
   value: ScheduleExportLayout;
@@ -88,14 +108,6 @@ const SCHEDULE_LAYOUT_OPTIONS: {
     { value: "transpose", label: "By position" },
     { value: "grid", label: "Grid" },
   ];
-
-type OccurrenceTileParts = {
-  weekday: string;
-  month: string;
-  day: string;
-  time: string;
-  label: string;
-};
 
 const formatWhen = (startsAt: string, timeZone: string): string => {
   if (!startsAt) return "Date not set";
@@ -120,42 +132,112 @@ const formatWhen = (startsAt: string, timeZone: string): string => {
 const hasDatedStartsAt = (occurrence: MyScheduleOccurrence): boolean =>
   Number.isFinite(Date.parse(occurrence.startsAt));
 
-const getOccurrenceTileParts = (
-  occurrence: MyScheduleOccurrence,
-  timeZone: string,
-): OccurrenceTileParts => {
-  const date = new Date(occurrence.startsAt);
-  if (Number.isNaN(date.getTime())) {
-    return {
-      weekday: "—",
-      month: "",
-      day: "?",
-      time: "",
-      label: "Date not set",
-    };
-  }
-  const weekday = date.toLocaleString(undefined, { timeZone, weekday: "short" });
-  const month = date.toLocaleString(undefined, { timeZone, month: "short" });
-  const day = date.toLocaleString(undefined, { timeZone, day: "numeric" });
-  const time = date.toLocaleString(undefined, {
-    timeZone,
-    hour: "numeric",
-    minute: "2-digit",
-  });
-  return {
-    weekday,
-    month,
-    day,
-    time,
-    label: `${weekday} · ${month} ${day} · ${time}`,
-  };
-};
-
 const occurrenceServiceLabel = (occurrence: MyScheduleOccurrence): string => {
   const name = String(occurrence.name || "").trim();
   if (name) return name;
   return "Service";
 };
+
+const LoadingPlaceholder = ({ className }: { className: string }) => (
+  <span
+    aria-hidden="true"
+    className={cn("block animate-pulse rounded bg-gray-700/70", className)}
+  />
+);
+
+const MyScheduleLoadingSkeleton = ({ showSmsPreferences }: { showSmsPreferences: boolean }) => (
+  <div
+    role="status"
+    aria-label="Loading your schedule"
+    aria-busy="true"
+    className="flex w-full flex-col gap-4"
+  >
+    {showSmsPreferences ? (
+      <div aria-hidden="true" className="h-5">
+        <LoadingPlaceholder className="h-4 w-28 rounded-sm" />
+      </div>
+    ) : null}
+
+    <section aria-hidden="true" className="rounded-xl border border-gray-700/80 bg-gray-900/40">
+      <div className="flex min-h-10 items-center justify-between gap-3 px-3 py-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <LoadingPlaceholder className="size-4 shrink-0" />
+          <LoadingPlaceholder className="h-4 w-16" />
+          <LoadingPlaceholder className="h-3 w-20" />
+        </div>
+        <LoadingPlaceholder className="size-4 shrink-0" />
+      </div>
+    </section>
+
+    <div
+      aria-hidden="true"
+      className="grid items-end gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(16rem,1fr)_repeat(3,minmax(9rem,13rem))]"
+    >
+      {Array.from({ length: 4 }, (_, index) => (
+        <div key={index} className="flex min-w-0 flex-col gap-1.5">
+          <LoadingPlaceholder className="h-3 w-14" />
+          <LoadingPlaceholder className="h-10 w-full rounded-md border border-gray-700 bg-gray-900/60" />
+        </div>
+      ))}
+    </div>
+
+    <section
+      aria-hidden="true"
+      className="flex flex-col gap-2 rounded-md border border-gray-700 bg-gray-900/45 p-3 sm:flex-row sm:items-center sm:justify-between"
+    >
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <LoadingPlaceholder className="h-4 w-56 max-w-full" />
+        <LoadingPlaceholder className="h-3 w-72 max-w-full" />
+      </div>
+      <LoadingPlaceholder className="h-9 w-full rounded-md sm:w-52" />
+    </section>
+
+    <section aria-hidden="true">
+      <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Upcoming</h2>
+      <section className="mb-4 space-y-2">
+        <LoadingPlaceholder className="h-4 w-24" />
+        <ul className={cn(SERVICE_OCCURRENCE_GRID_CLASS_NAME, "pt-3")}>
+          {Array.from({ length: 3 }, (_, index) => (
+            <li key={index} className="relative min-w-0">
+              <article data-testid="my-schedule-loading-card" className="overflow-hidden rounded-lg border border-gray-600/70 bg-gray-800/70">
+                <div className="flex min-h-[56px] items-center gap-2 px-2.5 py-2">
+                  <div className="relative flex w-[44px] shrink-0 flex-col items-center justify-center gap-px">
+                    <LoadingPlaceholder className="h-2.5 w-6" />
+                    <LoadingPlaceholder className="h-5 w-5" />
+                    <LoadingPlaceholder className="h-2.5 w-8" />
+                    <span aria-hidden="true" className="absolute inset-y-0 right-0 w-px bg-gray-700/80" />
+                  </div>
+                  <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
+                    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <LoadingPlaceholder className="h-3.5 w-2/3 max-w-48" />
+                      <LoadingPlaceholder className="h-3 w-12" />
+                    </div>
+                    <LoadingPlaceholder className="size-2 shrink-0 rounded-full" />
+                  </div>
+                </div>
+                <div className="border-t border-gray-700/80 px-2.5 py-2 sm:px-3">
+                  <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1">
+                    <div className="flex min-w-0 flex-col">
+                      <LoadingPlaceholder className="h-2.5 w-12" />
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        <LoadingPlaceholder className="h-3.5 w-24" />
+                        <LoadingPlaceholder className="h-3 w-14 shrink-0 rounded-full" />
+                      </div>
+                    </div>
+                    <div className="ml-auto flex shrink-0 gap-1.5">
+                      <LoadingPlaceholder className="h-9 w-16 rounded-md" />
+                      <LoadingPlaceholder className="h-9 w-16 rounded-md" />
+                    </div>
+                  </div>
+                </div>
+              </article>
+            </li>
+          ))}
+        </ul>
+      </section>
+    </section>
+  </div>
+);
 
 const myRoleLabel = (occurrence: MyScheduleOccurrence): string => {
   const myRoles = occurrence.serving.filter((person) => person.isMe);
@@ -171,20 +253,28 @@ type AssignmentResponse = "pending" | "accepted" | "declined";
 
 const RESPONSE_CHIP: Record<
   Exclude<AssignmentResponse, "pending">,
-  { label: string; className: string }
+  { label: string; className: string; icon: typeof Check }
 > = {
   accepted: {
-    label: "You accepted",
-    className: "border-emerald-500/40 bg-emerald-500/10 text-emerald-200",
+    label: "Accepted",
+    className: "bg-emerald-500/10 text-emerald-200",
+    icon: Check,
   },
   declined: {
-    // Red, matching the grid's decline marker. Amber is taken here: it already
-    // means "blocked out" both on this page and on the owner's cells, and the
-    // same colour for two different facts is worse than a strong one.
-    label: "You declined",
-    className: "border-red-500/40 bg-red-500/10 text-red-200",
+    label: "Declined",
+    className: "bg-red-700 text-white",
+    icon: X,
   },
 };
+
+type AssignmentResponseAttempt = {
+  response: "accepted" | "declined";
+  status: "saving" | "checking" | "unverified";
+};
+
+type MyScheduleLoadResult =
+  | { status: "applied"; member: MyScheduleMember | null; occurrences: MyScheduleOccurrence[] }
+  | { status: "failed" | "stale" };
 
 /**
  * Accept / decline for one slot this person holds.
@@ -201,93 +291,133 @@ const RESPONSE_CHIP: Record<
 const AssignmentResponseRow = ({
   slot,
   disabled,
+  isPast = false,
+  responseAttempt,
   onRespond,
+  onRetryResponse,
 }: {
   slot: MyScheduleServing;
   disabled: boolean;
-  onRespond: (
+  isPast?: boolean;
+  responseAttempt?: AssignmentResponseAttempt;
+  onRespond?: (
     slot: MyScheduleServing,
     response: "accepted" | "declined",
-  ) => void;
+  ) => Promise<boolean>;
+  onRetryResponse?: () => Promise<boolean>;
 }) => {
   const response: AssignmentResponse = slot.response || "pending";
   const answered = response !== "pending";
   const chip = answered ? RESPONSE_CHIP[response] : null;
   const role = [slot.positionName, slot.teamName].filter(Boolean).join(" · ");
   const [changing, setChanging] = useState(false);
-  // A fresh answer collapses the row back to its confirmed state rather than
-  // leaving the picker open over a decision already made.
-  const showChoices = !answered || changing;
+  const showChoices = Boolean(onRespond) && slot.isPrimary && ((!answered && !isPast) || changing);
+  const attemptedVerb = responseAttempt?.response === "accepted" ? "accept" : "decline";
 
-  const choose = (next: "accepted" | "declined") => {
-    setChanging(false);
-    onRespond(slot, next);
+  let answerStatus: ReactNode = null;
+  if (slot.isPrimary && chip) {
+    answerStatus = (
+      <span className={cn("inline-flex w-fit shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium", chip.className)}>
+        <Icon svg={chip.icon} size="xs" />
+        {chip.label}
+      </span>
+    );
+  } else if (slot.isPrimary && isPast) {
+    answerStatus = <span className="shrink-0 text-[11px] text-gray-400">No response recorded</span>;
+  } else if (!slot.isPrimary) {
+    answerStatus = <span className="shrink-0 text-[11px] text-gray-400">Shadow assignment</span>;
+  }
+
+  const choose = async (next: "accepted" | "declined") => {
+    if (!onRespond) return;
+    setChanging(true);
+    if (await onRespond(slot, next)) setChanging(false);
   };
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-700/80 bg-gray-900/50 px-3 py-2">
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <span className="truncate text-sm font-medium text-orange-300">
-          {role || "Your slot"}
-        </span>
-        {chip ? (
-          <span
-            className={cn(
-              "shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium",
-              chip.className,
-            )}
-          >
-            {chip.label}
-          </span>
-        ) : (
-          <span className="shrink-0 text-xs text-gray-400">
-            Needs your response
-          </span>
-        )}
-      </div>
-      {showChoices ? (
-        <ButtonGroup className="shrink-0 border-gray-500" display="flex">
-          <ButtonGroupItem
-            type="button"
-            variant="primary"
-            iconSize="sm"
-            svg={Check}
-            color="#6ee7b7"
-            className="max-md:min-h-0"
-            disabled={disabled}
-            isSelected={response === "accepted"}
-            aria-label={`Accept ${role || "this assignment"}`}
-            onClick={() => choose("accepted")}
-          >
-            Accept
-          </ButtonGroupItem>
-          <ButtonGroupItem
-            type="button"
-            variant="primary"
-            iconSize="sm"
-            svg={X}
-            color="#fca5a5"
-            className="max-md:min-h-0"
-            disabled={disabled}
-            isSelected={response === "declined"}
-            aria-label={`Decline ${role || "this assignment"}`}
-            onClick={() => choose("declined")}
-          >
-            Decline
-          </ButtonGroupItem>
-        </ButtonGroup>
-      ) : (
-        <Button
-          type="button"
-          variant="tertiary"
-          className="shrink-0 text-xs text-gray-300 underline underline-offset-2 hover:text-white max-md:min-h-0"
-          disabled={disabled}
-          aria-label={`Change your response for ${role || "this assignment"}`}
-          onClick={() => setChanging(true)}
+    <div className="min-w-0">
+      {slot.teamName ? (
+        <span
+          className="block truncate text-[10px] font-medium leading-tight text-gray-400"
+          title={slot.teamName}
         >
-          Change response
-        </Button>
-      )}
+          {slot.teamName}
+        </span>
+      ) : null}
+      <span
+        className="block min-w-0 whitespace-normal break-words text-[13px] font-medium leading-snug text-gray-100 sm:text-sm"
+        title={slot.positionName || role}
+      >
+        {slot.positionName || "Your assignment"}
+      </span>
+
+      <div className="mt-0.5 flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-0.5">
+        {answerStatus}
+        {responseAttempt?.status === "saving" ? (
+          <span role="status" className="ml-auto shrink-0 text-xs text-gray-300">Saving…</span>
+        ) : responseAttempt?.status === "checking" ? (
+          <span role="status" className="ml-auto shrink-0 text-xs text-gray-300">Checking saved response…</span>
+        ) : showChoices ? (
+          <div className="ml-auto flex shrink-0 gap-1.5">
+            <Button
+              type="button"
+              variant="none"
+              svg={Check}
+              iconSize="sm"
+              className="min-h-[44px] max-md:min-h-[44px] justify-center rounded-md bg-emerald-700 px-2.5 text-xs font-semibold text-white hover:bg-emerald-600 sm:min-h-[36px]"
+              disabled={disabled}
+              aria-label={`Accept ${role || "this assignment"}`}
+              onClick={() => choose("accepted")}
+            >
+              Accept
+            </Button>
+            <Button
+              type="button"
+              variant="none"
+              svg={X}
+              iconSize="sm"
+              className="min-h-[44px] max-md:min-h-[44px] justify-center rounded-md bg-red-700 px-2.5 text-xs font-semibold text-white hover:bg-red-600 sm:min-h-[36px]"
+              disabled={disabled}
+              aria-label={`Decline ${role || "this assignment"}`}
+              onClick={() => choose("declined")}
+            >
+              Decline
+            </Button>
+          </div>
+        ) : responseAttempt?.status !== "unverified" && answered && !isPast && onRespond ? (
+          <Button
+            type="button"
+            variant="textLink"
+            className="ml-auto inline-flex min-h-[44px] max-md:min-h-[44px] shrink-0 items-center px-1 py-1 text-xs text-gray-300 underline underline-offset-2 hover:text-white sm:min-h-[36px] sm:px-0 sm:py-0"
+            disabled={disabled}
+            aria-label={`Change your response for ${role || "this assignment"}`}
+            onClick={() => setChanging(true)}
+          >
+            Change response
+          </Button>
+        ) : null}
+      </div>
+
+      {responseAttempt?.status === "unverified" ? (
+        <div className="mt-1 flex w-full flex-wrap items-center justify-between gap-x-2 gap-y-1 border-t border-gray-700/70 pt-1.5">
+          <p className="min-w-0 flex-1 text-xs text-amber-200" role="status" aria-live="polite">
+            Couldn&apos;t confirm your response. You tried to {attemptedVerb} this assignment.
+          </p>
+          <Button
+            type="button"
+            variant="textLink"
+            className="ml-auto inline-flex min-h-[44px] max-md:min-h-[44px] shrink-0 items-center px-1 py-1 text-xs text-amber-200 underline underline-offset-2 hover:text-white sm:min-h-[36px] sm:py-0"
+            disabled={disabled}
+            aria-label={`Retry refresh for your response to ${role || "this assignment"}`}
+            onClick={async () => {
+              const confirmed = await onRetryResponse?.();
+              if (confirmed) setChanging(false);
+            }}
+          >
+            Retry refresh
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 };
@@ -342,6 +472,10 @@ type OccurrenceTileProps = {
   /** True when this date falls inside one of the member's own blockouts. */
   isBlockedOut: boolean;
   onOpen: () => void;
+  responseAttempts: Map<string, AssignmentResponseAttempt>;
+  acceptingPending: boolean;
+  onRespond: (occurrenceId: string, slot: MyScheduleServing, response: "accepted" | "declined") => Promise<boolean>;
+  onRetryResponse: (occurrenceId: string, slot: MyScheduleServing) => Promise<boolean>;
 };
 
 const OccurrenceTile = ({
@@ -351,103 +485,70 @@ const OccurrenceTile = ({
   isPast,
   isBlockedOut,
   onOpen,
+  responseAttempts,
+  acceptingPending,
+  onRespond,
+  onRetryResponse,
 }: OccurrenceTileProps) => {
-  const tile = getOccurrenceTileParts(occurrence, timeZone);
   const serviceName = occurrenceServiceLabel(occurrence);
-  const role = myRoleLabel(occurrence);
-  const hasPlan = Boolean(occurrence.plan);
+  const myAssignments = occurrence.serving.filter((person) => person.isMe);
+  const hasPlan = plansForOccurrence(occurrence).length > 0;
+  const calendarDate = myScheduleOccurrenceDate(occurrence, timeZone);
+  const tile = getServiceOccurrenceCardDateParts({
+    calendarDate,
+    startsAt: occurrence.startsAt,
+    timeZone,
+  });
   const openLabel = `Open ${serviceName} on ${tile.label}`;
   const isToday = !isNextUpcoming && isOccurrenceToday(occurrence, timeZone);
-
   let markerAriaSuffix = "";
-  if (isNextUpcoming) {
-    markerAriaSuffix = ", up next";
-  } else if (isToday) {
-    markerAriaSuffix = ", today";
-  }
-
-  let markerBorderClassName: string | false = false;
-  if (isNextUpcoming) {
-    markerBorderClassName = scheduleUpNextBorderClassName;
-  } else if (isToday) {
-    markerBorderClassName = scheduleTodayBorderClassName;
-  }
+  if (isNextUpcoming) markerAriaSuffix = ", up next";
+  else if (isToday) markerAriaSuffix = ", today";
+  if (hasPlan) markerAriaSuffix = `${markerAriaSuffix}, service plan available`;
+  const ariaLabel = `${openLabel}${markerAriaSuffix}${isBlockedOut ? ", blocked out" : ""}`;
+  const statusMarker = hasPlan
+    ? <Icon svg={ClipboardList} size="xs" className="text-gray-400" />
+    : null;
 
   return (
-    <li className="relative">
-      <ScheduleOccurrenceRibbon
-        isNextUpcoming={isNextUpcoming}
-        isToday={isToday}
-      />
-      <Button
-        type="button"
-        variant="tertiary"
-        aria-label={cn(
-          openLabel,
-          markerAriaSuffix,
-          isBlockedOut && ", blocked out",
-        )}
-        className={cn(
-          "h-auto w-full flex-col items-stretch gap-0 rounded-lg border px-2.5 py-2 font-normal",
-          hasPlan
-            ? "border-emerald-500/30 bg-gray-800/80 hover:border-emerald-400/45 hover:bg-gray-800"
-            : "border-gray-600/70 bg-gray-800/70 hover:border-orange-400/35 hover:bg-gray-800",
-          markerBorderClassName,
-          isPast && "opacity-55",
-        )}
-        onClick={onOpen}
-      >
-        <span className="flex w-full items-center justify-between gap-1">
-          <span
-            className={cn(
-              "text-[11px] font-semibold uppercase tracking-wide",
-              hasPlan ? "text-emerald-300/70" : "text-gray-400",
-            )}
-          >
-            {tile.weekday}
-          </span>
-          {hasPlan ? (
-            <Icon
-              svg={Check}
-              size="xs"
-              className="shrink-0 text-emerald-300"
-            />
-          ) : (
-            <span className="size-1.5 shrink-0 rounded-full bg-orange-400/45" />
-          )}
-        </span>
-        <span className="mt-0.5 text-left text-lg font-semibold leading-none text-gray-100">
-          {tile.day}
-        </span>
-        <span className="mt-1 flex w-full items-center justify-between gap-1 text-left text-[11px] text-gray-400">
-          <span>{tile.month}</span>
-          {tile.time ? <span>{tile.time}</span> : null}
-        </span>
-        <span
-          className="mt-1 truncate text-left text-[11px] font-medium text-gray-300"
-          title={serviceName}
-        >
-          {serviceName}
-        </span>
-        {role ? (
-          <span
-            className="mt-0.5 truncate text-left text-[11px] text-orange-300/90"
-            title={role}
-          >
-            {role}
-          </span>
-        ) : null}
-        {/* Same wording the owner sees on the schedule grid, so the two
-            surfaces describe one fact the same way. Kept off the border, which
-            already carries plan and up-next meaning. */}
-        {isBlockedOut ? (
-          <span className="mt-1 flex items-center gap-1 text-left text-[11px] font-medium text-amber-300">
-            <Icon svg={TriangleAlert} size="xs" className="shrink-0" />
-            <span className="truncate">Blocked out</span>
-          </span>
-        ) : null}
-      </Button>
-    </li>
+    <ServiceOccurrenceCard
+      calendarDate={calendarDate}
+      startsAt={occurrence.startsAt}
+      timeZone={timeZone}
+      serviceName={serviceName}
+      ariaLabel={ariaLabel}
+      isNextUpcoming={isNextUpcoming}
+      isToday={isToday}
+      isPast={isPast}
+      statusMarker={statusMarker}
+      onOpen={onOpen}
+    >
+      {myAssignments.length > 0 || isBlockedOut ? (
+        <div className="space-y-2">
+          {myAssignments.map((slot) => {
+            const key = `${slot.scheduleId}\u0000${occurrence.occurrenceId}\u0000${slot.columnKey}`;
+            const responseAttempt = responseAttempts.get(key);
+            return (
+              <AssignmentResponseRow
+                key={key}
+                slot={slot}
+                disabled={acceptingPending || responseAttempt?.status === "saving" || responseAttempt?.status === "checking"}
+                isPast={isPast}
+                responseAttempt={responseAttempt}
+                onRespond={(selectedSlot, response) => onRespond(occurrence.occurrenceId, selectedSlot, response)}
+                onRetryResponse={() => onRetryResponse(occurrence.occurrenceId, slot)}
+              />
+            );
+          })}
+          {isBlockedOut ? (
+            <div className="flex items-center gap-1 text-[11px] font-medium text-amber-300">
+              <Icon svg={TriangleAlert} size="xs" className="shrink-0" />
+              <span>Blocked out</span>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </ServiceOccurrenceCard>
   );
 };
 
@@ -469,8 +570,10 @@ type OccurrenceDetailProps = {
   onRespond?: (
     slot: MyScheduleServing,
     response: "accepted" | "declined",
-  ) => void;
-  respondingKey?: string;
+  ) => Promise<boolean>;
+  onRetryResponse?: (slot: MyScheduleServing) => Promise<boolean>;
+  responseAttempts?: Map<string, AssignmentResponseAttempt>;
+  acceptingPending?: boolean;
 };
 
 const OccurrenceDetail = ({
@@ -487,14 +590,25 @@ const OccurrenceDetail = ({
   churchName = "",
   blockoutLabel = "",
   onRespond,
-  respondingKey = "",
+  onRetryResponse,
+  responseAttempts = new Map<string, AssignmentResponseAttempt>(),
+  acceptingPending = false,
 }: OccurrenceDetailProps) => {
   const [tab, setTab] = useState<DetailTab>("schedule");
   const [scheduleLayout, setScheduleLayout] =
     useState<ScheduleExportLayout>("byDate");
+  const [planSelection, setPlanSelection] = useState<{
+    occurrenceId: string;
+    planId: string;
+  } | null>(null);
   const serviceName = occurrenceServiceLabel(occurrence);
   const role = myRoleLabel(occurrence);
-  const plan = occurrence.plan;
+  const myPrimaryAssignments = occurrence.serving.filter((person) => person.isMe && person.isPrimary);
+  const plans = plansForOccurrence(occurrence);
+  const selectedPlanId = planSelection?.occurrenceId === occurrence.occurrenceId
+    ? planSelection.planId
+    : "";
+  const plan = plans.find((candidate) => candidate.planId === selectedPlanId) || plans[0] || null;
   const teamUrl = plan?.publicUrls?.team;
   const generalUrl = plan?.publicUrls?.general || teamUrl;
   const canShare = Boolean(plan?.published && teamUrl);
@@ -502,6 +616,18 @@ const OccurrenceDetail = ({
     () => buildMyScheduleExportModelForOccurrences(scheduleOccurrences, timeZone),
     [scheduleOccurrences, timeZone],
   );
+  const planNameCounts = new Map<string, number>();
+  plans.forEach((candidate) => {
+    const name = candidate.name.trim() || "Service plan";
+    planNameCounts.set(name, (planNameCounts.get(name) || 0) + 1);
+  });
+  const planOptions = plans.map((candidate, index) => {
+    const name = candidate.name.trim() || `Service plan ${index + 1}`;
+    return {
+      value: candidate.planId,
+      label: (planNameCounts.get(name) || 0) > 1 ? `${name} (${index + 1})` : name,
+    };
+  });
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
@@ -597,7 +723,7 @@ const OccurrenceDetail = ({
               </p>
               {/* The role line is redundant once each slot renders its own row
                 with the same label plus its answer. */}
-              {role && !onRespond ? (
+              {role && myPrimaryAssignments.length === 0 ? (
                 <p className="mt-1 text-sm text-orange-300">{role}</p>
               ) : null}
               {/* Opening a tile must not drop the warning the tile carried. */}
@@ -621,18 +747,23 @@ const OccurrenceDetail = ({
               />
             ) : null}
           </div>
-          {onRespond ? (
+          {myPrimaryAssignments.length > 0 ? (
             <div className="space-y-2">
-              {occurrence.serving
-                .filter((person) => person.isMe && person.isPrimary)
-                .map((slot) => (
-                  <AssignmentResponseRow
-                    key={slot.columnKey}
-                    slot={slot}
-                    disabled={respondingKey === slot.columnKey}
-                    onRespond={onRespond}
-                  />
-                ))}
+              {myPrimaryAssignments.map((slot) => {
+                  const key = `${slot.scheduleId}\u0000${occurrence.occurrenceId}\u0000${slot.columnKey}`;
+                  const responseAttempt = responseAttempts.get(key);
+                  return (
+                    <AssignmentResponseRow
+                      key={key}
+                      slot={slot}
+                      disabled={acceptingPending || responseAttempt?.status === "saving" || responseAttempt?.status === "checking"}
+                      isPast={!onRespond}
+                      responseAttempt={responseAttempt}
+                      onRespond={onRespond}
+                      onRetryResponse={onRetryResponse ? () => onRetryResponse(slot) : undefined}
+                    />
+                  );
+                })}
             </div>
           ) : null}
         </header>
@@ -662,6 +793,18 @@ const OccurrenceDetail = ({
             </>
           ) : (
             <>
+              {plans.length > 1 ? (
+                <Select
+                  label="Service plan"
+                  className="w-full sm:max-w-sm"
+                  value={plan?.planId || ""}
+                  options={planOptions}
+                  onChange={(value) => setPlanSelection({
+                    occurrenceId: occurrence.occurrenceId,
+                    planId: value,
+                  })}
+                />
+              ) : null}
               {canShare && teamUrl ? (
                 <section className="rounded-lg border border-gray-700/80 bg-gray-900/50 p-3">
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
@@ -691,7 +834,9 @@ const OccurrenceDetail = ({
               ) : null}
               <MyScheduleServicePlanPanel
                 occurrence={occurrence}
+                plan={plan}
                 churchName={churchName}
+                timeZone={timeZone}
               />
             </>
           )}
@@ -701,13 +846,20 @@ const OccurrenceDetail = ({
   );
 };
 
-const MySchedule = () => {
+const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
   const context = useContext(GlobalInfoContext);
   const { showToast } = useToast();
-  const churchId = context?.churchId || "";
+  const churchId = access?.churchId || context?.churchId || "";
+  const operations = useMemo<MyScheduleOperations>(() => access?.operations || ({
+    load: () => getMyTeamAssignments(churchId),
+    respond: (body) => respondToMyAssignment(churchId, body),
+    saveBlockouts: (ranges, stamp) => updateMyBlockoutDates(churchId, ranges, stamp),
+    acceptUnanswered: (cursor) => acceptPendingMyAssignments(churchId, cursor),
+  }), [access, churchId]);
   /** Changes the unlinked message: an admin can fix this themselves. */
-  const isChurchAdmin = context?.role === "admin";
-  const churchName = context?.churchName || "";
+  const isChurchAdmin = !access && context?.role === "admin";
+  const [personalChurchName, setPersonalChurchName] = useState("");
+  const churchName = access?.churchName || personalChurchName || context?.churchName || "";
   const [occurrences, setOccurrences] = useState<MyScheduleOccurrence[]>([]);
   const [serviceTimeZone, setServiceTimeZone] = useState("UTC");
   const [hasMemberRecord, setHasMemberRecord] = useState(true);
@@ -716,7 +868,9 @@ const MySchedule = () => {
   );
   /** Precondition for the blockout write; see `updateMyBlockoutDates`. */
   const [memberUpdatedAt, setMemberUpdatedAt] = useState("");
+  const [savedDatesLoad, setSavedDatesLoad] = useState<SavedDatesLoadState>({ status: "pending" });
   const [showPast, setShowPast] = useState(false);
+  const [organizeMode, setOrganizeMode] = useState<"byMonth" | "byService">("byMonth");
   const [query, setQuery] = useState("");
   const [teamFilter, setTeamFilter] = useState(ALL_TEAMS);
   const [serviceFilter, setServiceFilter] = useState(ALL_SERVICES);
@@ -725,43 +879,85 @@ const MySchedule = () => {
     "loading",
   );
 
+  const [scheduleError, setScheduleError] = useState("");
+
   const mountedRef = useRef(true);
   /** Drops a response that a newer request has already superseded. */
   const requestRef = useRef(0);
+  /** Scope async UI work to the church active when it started. */
+  const churchIdRef = useRef(churchId);
+  churchIdRef.current = churchId;
+  /** Bulk acceptance outlives ordinary assignment refreshes. */
+  const acceptPendingOperationRef = useRef<{ churchId: string } | null>(null);
   /** Set by the Time off editor; a refresh must never discard an open edit. */
   const timeOffDirtyRef = useRef(false);
+  const assignmentResponsesInFlightRef = useRef(new Set<string>());
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      acceptPendingOperationRef.current = null;
     };
   }, []);
 
   const load = useCallback(
-    ({ showLoading }: { showLoading: boolean }) => {
-      if (!churchId) return;
+    ({
+      showLoading,
+      reportFailure = true,
+    }: {
+      showLoading: boolean;
+      reportFailure?: boolean;
+    }): Promise<MyScheduleLoadResult> => {
+      if (!churchId) return Promise.resolve({ status: "failed" });
       const request = ++requestRef.current;
+      setSavedDatesLoad({ status: "pending" });
       if (showLoading) setStatus("loading");
-      void getMyTeamAssignments(churchId)
-        .then((result) => {
-          if (!mountedRef.current || request !== requestRef.current) return;
-          setOccurrences(result.occurrences || []);
-          setServiceTimeZone(result.serviceTimeZone || "UTC");
-          setHasMemberRecord(Boolean(result.member));
-          setBlockoutDates(result.member?.blockoutDates || []);
-          setMemberUpdatedAt(result.member?.updatedAt || "");
-          setStatus("ready");
-        })
-        .catch(() => {
-          if (!mountedRef.current || request !== requestRef.current) return;
-          // A background refresh that fails leaves the page as it is. Replacing
-          // a working schedule with an error because a resume failed is worse
-          // than showing data that is a few minutes old.
-          if (showLoading) setStatus("error");
-        });
+      const applyFailure = (scheduleFailure: unknown) => {
+        const failureStatus = getApiErrorStatus(scheduleFailure);
+        const accessMessage = failureStatus === 401 || failureStatus === 403
+          ? getApiErrorMessage(scheduleFailure, "Your access is no longer available. Ask an admin for help.")
+          : undefined;
+        const personalAccessMessage = access && accessMessage
+          ? "Could not confirm personal access. Open your personal link again, or ask your church administrator for help."
+          : accessMessage;
+        setSavedDatesLoad({ status: "failed", accessMessage });
+        if (reportFailure) {
+          setScheduleError(personalAccessMessage || (showLoading
+            ? "Could not load your schedule. Try again."
+            : "Could not refresh your schedule. Try again."));
+        }
+        if (showLoading) setStatus("error");
+      };
+
+      return operations.load().then<MyScheduleLoadResult>((result) => {
+        if (!mountedRef.current || churchIdRef.current !== churchId || request !== requestRef.current) return { status: "stale" };
+        if (!result.success || (!showLoading && !result.member)) {
+          applyFailure(new Error("Could not refresh saved dates. Your draft is kept. Try again."));
+          return { status: "failed" };
+        }
+
+        const member = result.member;
+        setSavedDatesLoad({ status: "ready" });
+        setScheduleError("");
+        if (access) setPersonalChurchName(result.churchName || "");
+        const loadedOccurrences = result.occurrences || [];
+        setOccurrences(loadedOccurrences);
+        setServiceTimeZone(result.serviceTimeZone || "UTC");
+        setHasMemberRecord(Boolean(member));
+        // The editor retains its own draft/baseline. New saved props expose
+        // conflicts without lending their revision to unsaved edits.
+        setBlockoutDates(member?.blockoutDates || []);
+        setMemberUpdatedAt(member?.updatedAt || "");
+        setStatus("ready");
+        return { status: "applied", member, occurrences: loadedOccurrences };
+      }).catch<MyScheduleLoadResult>((error: unknown) => {
+        if (!mountedRef.current || churchIdRef.current !== churchId || request !== requestRef.current) return { status: "stale" };
+        applyFailure(error);
+        return { status: "failed" };
+      });
     },
-    [churchId],
+    [access, churchId, operations],
   );
 
   useEffect(() => {
@@ -785,66 +981,266 @@ const MySchedule = () => {
     timeOffDirtyRef.current = dirty;
   }, []);
 
-  const handleBlockoutsSaved = useCallback((member: TeamRosterMember) => {
+  const handleBlockoutsSaved = useCallback((member: MyScheduleMember) => {
+    if (churchIdRef.current !== churchId) return;
+    // A load started before this commit may still contain the old dates/stamp.
+    ++requestRef.current;
+    setSavedDatesLoad({ status: "ready" });
     setBlockoutDates(member?.blockoutDates || []);
     setMemberUpdatedAt(member?.updatedAt || "");
-  }, []);
+  }, [churchId]);
 
   /**
    * The save was rejected because the record moved. Pull the current state in
    * so the reader compares against what is stored — the editor keeps their
-   * draft, so nothing they typed is lost, and saving again now carries a write
-   * stamp the server will accept.
+   * draft and its original precondition until they explicitly resolve it.
    */
   const refreshAfterConflict = useCallback(() => {
-    load({ showLoading: false });
+    return load({ showLoading: false }).then((result) =>
+      result.status === "applied" && Boolean(result.member),
+    );
   }, [load]);
 
-  const [respondingKey, setRespondingKey] = useState("");
+  const [responseAttempts, setResponseAttempts] = useState<Map<string, AssignmentResponseAttempt>>(new Map());
+  const setResponseAttempt = useCallback((key: string, attempt?: AssignmentResponseAttempt) => {
+    setResponseAttempts((current) => {
+      const next = new Map(current);
+      if (attempt) next.set(key, attempt);
+      else next.delete(key);
+      return next;
+    });
+  }, []);
+  const [acceptingPending, setAcceptingPending] = useState(false);
+  const [acceptPendingFeedback, setAcceptPendingFeedback] = useState("");
 
-  /**
-   * Answer one assignment, applied optimistically so the tap feels immediate.
-   *
-   * On any failure the page refetches rather than reverting locally: the common
-   * failure is a 409 because the slot moved to someone else, and in that case
-   * the old value is not the truth to go back to. The server message says what
-   * happened; the refetch makes the screen agree with it.
-   */
+  useEffect(() => {
+    const operation = acceptPendingOperationRef.current;
+    if (operation && operation.churchId !== churchId) {
+      acceptPendingOperationRef.current = null;
+      setAcceptingPending(false);
+      setAcceptPendingFeedback("");
+    }
+  }, [churchId]);
+
+  const pendingAssignmentCount = useMemo(() => {
+    const now = Date.now();
+    const seen = new Set<string>();
+    return occurrences.reduce((count, occurrence) => {
+      const startsAt = Date.parse(occurrence.startsAt);
+      if (!Number.isFinite(startsAt) || startsAt < now) return count;
+      return count + occurrence.serving.reduce((pending, person) => {
+        if (!person.isMe || !person.isPrimary ||
+            (person.response && person.response !== "pending")) return pending;
+        const key = `${person.scheduleId}\u0000${occurrence.occurrenceId}\u0000${person.columnKey}`;
+        if (seen.has(key)) return pending;
+        seen.add(key);
+        return pending + 1;
+      }, 0);
+    }, 0);
+  }, [occurrences]);
+  const hasUnverifiedResponse = [...responseAttempts.values()].some((attempt) => attempt.status === "unverified");
+
+  const acceptAllPending = useCallback(async () => {
+    if (
+      !churchId ||
+      acceptPendingOperationRef.current?.churchId === churchId ||
+      responseAttempts.size > 0
+    ) return;
+    const operation = { churchId };
+    acceptPendingOperationRef.current = operation;
+    setAcceptingPending(true);
+    setAcceptPendingFeedback("");
+
+    const isCurrentOperation = () =>
+      mountedRef.current &&
+      churchIdRef.current === operation.churchId &&
+      acceptPendingOperationRef.current === operation;
+    const totals = {
+      newlyAccepted: 0,
+      alreadyAccepted: 0,
+      alreadyDeclined: 0,
+      skipped: 0,
+      failedScheduleCount: 0,
+    };
+    let cursor: string | undefined;
+    let authorizationChanged = false;
+    let requestFailed = false;
+    const visitedCursors = new Set<string>();
+
+    try {
+      while (isCurrentOperation()) {
+        const page = await operations.acceptUnanswered(cursor);
+        if (!isCurrentOperation()) return;
+        totals.newlyAccepted += page.newlyAccepted;
+        totals.alreadyAccepted += page.alreadyAccepted;
+        totals.alreadyDeclined += page.alreadyDeclined;
+        totals.skipped += page.skipped;
+        totals.failedScheduleCount += page.failedScheduleCount;
+        authorizationChanged ||= page.authorizationChanged;
+        if (!page.hasMore || !page.nextCursor || page.authorizationChanged) break;
+        if (visitedCursors.has(page.nextCursor)) {
+          requestFailed = true;
+          break;
+        }
+        visitedCursors.add(page.nextCursor);
+        cursor = page.nextCursor;
+      }
+    } catch {
+      requestFailed = true;
+    }
+
+    if (!isCurrentOperation()) return;
+
+    const changedCount = totals.newlyAccepted;
+    const countLabel = `${changedCount} ${changedCount === 1 ? "assignment" : "assignments"}`;
+    const hasPartialResults = authorizationChanged || requestFailed ||
+      totals.skipped > 0 || totals.failedScheduleCount > 0;
+    const unchangedParts = [
+      totals.alreadyAccepted > 0
+        ? `${totals.alreadyAccepted} already accepted`
+        : "",
+      totals.alreadyDeclined > 0
+        ? `${totals.alreadyDeclined} declined and left unchanged`
+        : "",
+    ].filter(Boolean);
+    const unchangedSummary = unchangedParts.length
+      ? ` ${unchangedParts.join("; ")}.`
+      : "";
+
+    let feedback = "";
+    if (requestFailed) {
+      feedback = changedCount > 0
+        ? `Accepted ${countLabel}.${unchangedSummary} Could not confirm the remaining assignments. Refresh and try again.`
+        : `Could not confirm your responses.${unchangedSummary} Refresh and try again.`;
+    } else if (authorizationChanged) {
+      const accessChanged = access ? "Your personal access changed." : "Your account access changed.";
+      feedback = changedCount > 0
+        ? `Accepted ${countLabel}.${unchangedSummary} ${accessChanged} Reload My Schedule before retrying.`
+        : `${accessChanged}${unchangedSummary} Reload My Schedule before retrying.`;
+    } else if (hasPartialResults) {
+      const skippedLabel = totals.skipped > 0
+        ? ` ${totals.skipped} assignment${totals.skipped === 1 ? " was" : "s were"} no longer eligible.`
+        : "";
+      const acceptedSummary = changedCount > 0 ? `Accepted ${countLabel}.` : "";
+      feedback = `${acceptedSummary}${skippedLabel}${unchangedSummary} Some assignments couldn't be processed. Retry to finish the rest.`.trim();
+    } else if (changedCount === 0 && unchangedParts.length === 0) {
+      feedback = "No unanswered assignments remained. Existing responses were unchanged.";
+    } else {
+      const accepted = changedCount > 0 ? `Accepted ${countLabel}.` : "No unanswered assignments remained.";
+      feedback = [accepted, unchangedParts.length ? `${unchangedParts.join("; ")}.` : ""].filter(Boolean).join(" ");
+    }
+    setAcceptPendingFeedback(feedback);
+    await load({
+      showLoading: false,
+    });
+    if (isCurrentOperation()) {
+      acceptPendingOperationRef.current = null;
+      setAcceptingPending(false);
+    }
+  }, [access, churchId, load, operations, responseAttempts.size]);
+
+  /** Answer one assignment, treating a response as confirmed only after readback or an exact success echo. */
   const respondToAssignment = useCallback(
-    async (slot: MyScheduleServing, response: "accepted" | "declined") => {
-      if (!selectedId) return;
-      setRespondingKey(slot.columnKey);
-      const apply = (value: MyScheduleServing["response"]) =>
-        setOccurrences((current) =>
-          current.map((occurrence) =>
-            occurrence.occurrenceId === selectedId
-              ? {
-                ...occurrence,
-                serving: occurrence.serving.map((person) =>
-                  person.isMe && person.columnKey === slot.columnKey
-                    ? { ...person, response: value }
-                    : person,
-                ),
-              }
-              : occurrence,
-          ),
-        );
-      apply(response);
+    async (occurrenceId: string, slot: MyScheduleServing, response: "accepted" | "declined"): Promise<boolean> => {
+      const key = `${slot.scheduleId}\u0000${occurrenceId}\u0000${slot.columnKey}`;
+      if (assignmentResponsesInFlightRef.current.has(key)) return false;
+      assignmentResponsesInFlightRef.current.add(key);
+      setResponseAttempt(key, { response, status: "saving" });
       try {
-        await respondToMyAssignment(churchId, {
-          scheduleId: slot.scheduleId,
-          occurrenceId: selectedId,
-          cellKey: slot.columnKey,
-          response,
-        });
-      } catch (error) {
-        showApiErrorToast(showToast, error, "Could not save your response.");
-        load({ showLoading: false });
+        let operationError: unknown;
+        try {
+          const saved = await operations.respond({
+            scheduleId: slot.scheduleId,
+            occurrenceId,
+            cellKey: slot.columnKey,
+            response,
+          });
+          if (!mountedRef.current || churchIdRef.current !== churchId) return false;
+          if (saved?.success === true && saved.response === response) {
+            // A load started before the write must not overwrite its confirmed result.
+            ++requestRef.current;
+            setSavedDatesLoad((current) => current.status === "pending"
+              ? { status: "ready" }
+              : current);
+            setOccurrences((current) => current.map((occurrence) =>
+              occurrence.occurrenceId === occurrenceId
+                ? {
+                  ...occurrence,
+                  serving: occurrence.serving.map((person) =>
+                    person.isMe && person.isPrimary && person.scheduleId === slot.scheduleId && person.columnKey === slot.columnKey
+                      ? { ...person, response }
+                      : person,
+                  ),
+                }
+                : occurrence,
+            ));
+            setResponseAttempt(key);
+            return true;
+          }
+          operationError = new Error("The saved response could not be confirmed.");
+        } catch (error) {
+          operationError = error;
+        }
+
+        if (!mountedRef.current || churchIdRef.current !== churchId) return false;
+        setResponseAttempt(key, { response, status: "checking" });
+        let reconciliation: MyScheduleLoadResult;
+        try {
+          reconciliation = await load({ showLoading: false, reportFailure: false });
+        } catch {
+          reconciliation = { status: "failed" };
+        }
+        if (!mountedRef.current || churchIdRef.current !== churchId) return false;
+        if (reconciliation.status === "applied") {
+          const currentOccurrence = reconciliation.occurrences.find((item) => item.occurrenceId === occurrenceId);
+          const currentAssignment = currentOccurrence?.serving.find((person) =>
+            person.isMe && person.isPrimary && person.scheduleId === slot.scheduleId && person.columnKey === slot.columnKey,
+          );
+          setResponseAttempt(key);
+          if (!currentAssignment || currentAssignment.response === response) return true;
+          showApiErrorToast(showToast, operationError, "Could not save your response. Your schedule was refreshed.");
+          return false;
+        }
+        setResponseAttempt(key, { response, status: "unverified" });
+        return false;
       } finally {
-        setRespondingKey("");
+        assignmentResponsesInFlightRef.current.delete(key);
       }
     },
-    [churchId, load, selectedId, showToast],
+    [churchId, load, operations, setResponseAttempt, showToast],
+  );
+
+  /** Retry only the read that checks a saved response; this never submits it again. */
+  const retryResponseRefresh = useCallback(
+    async (occurrenceId: string, slot: MyScheduleServing): Promise<boolean> => {
+      const key = `${slot.scheduleId}\u0000${occurrenceId}\u0000${slot.columnKey}`;
+      const attempt = responseAttempts.get(key);
+      if (!attempt || attempt.status !== "unverified" || assignmentResponsesInFlightRef.current.has(key)) return false;
+      assignmentResponsesInFlightRef.current.add(key);
+      setResponseAttempt(key, { ...attempt, status: "checking" });
+      try {
+        let reconciliation: MyScheduleLoadResult;
+        try {
+          reconciliation = await load({ showLoading: false, reportFailure: false });
+        } catch {
+          reconciliation = { status: "failed" };
+        }
+        if (!mountedRef.current || churchIdRef.current !== churchId) return false;
+        if (reconciliation.status !== "applied") {
+          setResponseAttempt(key, { ...attempt, status: "unverified" });
+          return false;
+        }
+        const currentOccurrence = reconciliation.occurrences.find((item) => item.occurrenceId === occurrenceId);
+        const currentAssignment = currentOccurrence?.serving.find((person) =>
+          person.isMe && person.isPrimary && person.scheduleId === slot.scheduleId && person.columnKey === slot.columnKey,
+        );
+        setResponseAttempt(key);
+        return !currentAssignment || currentAssignment.response === attempt.response;
+      } finally {
+        assignmentResponsesInFlightRef.current.delete(key);
+      }
+    },
+    [churchId, load, responseAttempts, setResponseAttempt],
   );
 
   const datedOccurrences = useMemo(
@@ -865,15 +1261,16 @@ const MySchedule = () => {
     const labels = new Map<string, string>();
     if (blockoutDates.length === 0) return labels;
     occurrences.forEach((occurrence) => {
-      const range = findBlockoutRangeForDate(blockoutDates, occurrence.date);
+      const date = myScheduleOccurrenceDate(occurrence, serviceTimeZone);
+      const range = findBlockoutRangeForDate(blockoutDates, date);
       if (range) {
         labels.set(occurrence.occurrenceId, formatBlockoutDateRangeLabel(range));
       }
     });
     return labels;
-  }, [blockoutDates, occurrences]);
+  }, [blockoutDates, occurrences, serviceTimeZone]);
 
-  /** Only the teams this person actually serves on are worth offering. */
+  /** Team choices come only from this volunteer's own assignments. */
   const teamOptions = useMemo(() => {
     const names = new Map<string, string>();
     datedOccurrences.forEach((occurrence) =>
@@ -890,12 +1287,12 @@ const MySchedule = () => {
     ];
   }, [datedOccurrences]);
 
-  /** Service names from the schedule — same vocabulary as Plans / Schedule. */
+  /** Service options follow each occurrence's saved service identities. */
   const serviceOptions = useMemo(() => {
     const names = new Map<string, string>();
     datedOccurrences.forEach((occurrence) => {
       const label = occurrenceServiceLabel(occurrence);
-      const key = occurrence.serviceIds.slice().sort().join("|") || label;
+      const key = myScheduleServiceGroupKey(occurrence);
       if (!names.has(key)) names.set(key, label);
     });
     return [
@@ -909,16 +1306,12 @@ const MySchedule = () => {
     return datedOccurrences.filter((occurrence) => {
       if (
         teamFilter !== ALL_TEAMS &&
-        !occurrence.serving.some(
-          (person) => person.isMe && person.teamId === teamFilter,
-        )
+        !occurrence.serving.some((person) => person.isMe && person.teamId === teamFilter)
       ) {
         return false;
       }
       if (serviceFilter !== ALL_SERVICES) {
-        const key =
-          occurrence.serviceIds.slice().sort().join("|") ||
-          occurrenceServiceLabel(occurrence);
+        const key = myScheduleServiceGroupKey(occurrence);
         if (key !== serviceFilter) return false;
       }
       if (!trimmed) return true;
@@ -933,10 +1326,12 @@ const MySchedule = () => {
           person.positionName,
           person.teamName,
         ]),
-        occurrence.plan?.name || "",
-        ...(occurrence.plan?.sections || []).flatMap((section) =>
-          section.elements.map((element) => element.title),
-        ),
+        ...plansForOccurrence(occurrence).flatMap((plan) => [
+          plan.name,
+          ...(plan.sections || []).flatMap((section) =>
+            section.elements.map((element) => element.title),
+          ),
+        ]),
       ]
         .join(" ")
         .toLowerCase();
@@ -958,6 +1353,17 @@ const MySchedule = () => {
       past: filtered.filter(isPast).reverse(),
     };
   }, [filtered]);
+
+  const upcomingMonthGroups = useMemo(
+    () => groupMyScheduleByMonth(upcoming, serviceTimeZone),
+    [serviceTimeZone, upcoming],
+  );
+  const pastMonthGroups = useMemo(
+    () => groupMyScheduleByMonth(past, serviceTimeZone),
+    [past, serviceTimeZone],
+  );
+  const upcomingServiceGroups = useMemo(() => groupMyScheduleByService(upcoming), [upcoming]);
+  const pastServiceGroups = useMemo(() => groupMyScheduleByService(past), [past]);
 
   const navigable = useMemo(
     () => [...upcoming, ...(showPast ? past : [])],
@@ -995,6 +1401,10 @@ const MySchedule = () => {
     teamFilter !== ALL_TEAMS ||
     serviceFilter !== ALL_SERVICES;
 
+  const unlinkedMessage = access
+    ? "Your volunteer record is no longer available. Open your personal link again, or contact your church administrator."
+    : "Your account is not linked to anyone on a team yet. Ask an admin to link you.";
+
   const copyLink = async (url: string, label: string) => {
     try {
       await navigator.clipboard?.writeText(url);
@@ -1008,20 +1418,49 @@ const MySchedule = () => {
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
+  const canShowTimeline = status === "ready" && hasMemberRecord;
+  const canShowSelfService = status === "ready" && hasMemberRecord;
+  const renderTiles = (items: MyScheduleOccurrence[], isPast: boolean) => (
+    <ul
+      aria-label="My scheduled services"
+      className={cn(SERVICE_OCCURRENCE_GRID_CLASS_NAME, "pt-3")}
+    >
+      {items.map((occurrence) => (
+        <OccurrenceTile
+          key={occurrence.occurrenceId}
+          occurrence={occurrence}
+          timeZone={serviceTimeZone}
+          isNextUpcoming={!isPast && occurrence.occurrenceId === nextUpcomingId}
+          isPast={isPast}
+          isBlockedOut={blockoutLabelByOccurrence.has(occurrence.occurrenceId)}
+          responseAttempts={responseAttempts}
+          acceptingPending={acceptingPending}
+          onRespond={respondToAssignment}
+          onRetryResponse={retryResponseRefresh}
+          onOpen={() => setSelectedId(occurrence.occurrenceId)}
+        />
+      ))}
+    </ul>
+  );
+
   return (
     <AppPageShell
       title="My schedule"
-      icon={CalendarDays}
+      {...PAGE_APPEARANCES.mySchedule}
+      showAccountNavigation={!access}
     >
       <div className="flex w-full flex-col gap-4">
         {status === "loading" ? (
-          <p className="text-sm text-gray-300">Loading your schedule…</p>
+          <MyScheduleLoadingSkeleton showSmsPreferences={Boolean(access)} />
         ) : null}
 
-        {status === "error" ? (
-          <p className="text-sm text-red-400">
-            Could not load your schedule. Refresh to try again.
-          </p>
+        {scheduleError ? (
+          <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-red-400">
+            <p>{scheduleError}</p>
+            <Button variant="secondary" disabled={savedDatesLoad.status === "pending"}
+              isLoading={savedDatesLoad.status === "pending"}
+              onClick={() => void load({ showLoading: status === "error" })}>Retry My Schedule</Button>
+          </div>
         ) : null}
 
         {status === "ready" && !hasMemberRecord ? (
@@ -1031,11 +1470,11 @@ const MySchedule = () => {
           <p className="text-sm text-gray-300">
             {isChurchAdmin
               ? "You are not on any team's roster yet. Link your account to a member in Teams → Members."
-              : "Your account is not linked to anyone on a team yet. Ask an admin to link you."}
+              : unlinkedMessage}
           </p>
         ) : null}
 
-        {status === "ready" && hasMemberRecord && selected ? (
+        {canShowTimeline && selected ? (
           <OccurrenceDetail
             occurrence={selected}
             timeZone={serviceTimeZone}
@@ -1061,39 +1500,55 @@ const MySchedule = () => {
             }
             // Past services have nothing left to answer, and offering the
             // buttons there would invite pointless writes.
-            onRespond={
-              past.some(
-                (item) => item.occurrenceId === selected.occurrenceId,
-              )
-                ? undefined
-                : respondToAssignment
-            }
-            respondingKey={respondingKey}
+            onRespond={past.some((item) => item.occurrenceId === selected.occurrenceId)
+              ? undefined
+              : (slot, response) => respondToAssignment(selected.occurrenceId, slot, response)}
+            onRetryResponse={(slot) => retryResponseRefresh(selected.occurrenceId, slot)}
+            responseAttempts={responseAttempts}
+            acceptingPending={acceptingPending}
           />
         ) : null}
 
-        {status === "ready" && hasMemberRecord && !selected ? (
+        {canShowTimeline && !selected ? (
           <>
-            <MyScheduleBlockouts
-              churchId={churchId}
-              serviceTimeZone={serviceTimeZone}
-              blockoutDates={blockoutDates}
-              expectedUpdatedAt={memberUpdatedAt}
-              occurrences={occurrences}
-              onSaved={handleBlockoutsSaved}
-              onDirtyChange={handleTimeOffDirtyChange}
-              onStale={refreshAfterConflict}
-            />
+            {canShowSelfService ? (
+              <>
+                {access ? <a className="text-sm text-orange-300 underline" href={`/sms-opt-in/${encodeURIComponent(churchId)}`}>SMS preferences</a> : null}
+                <MyScheduleBlockouts
+                  key={churchId}
+                  churchId={churchId}
+                  serviceTimeZone={serviceTimeZone}
+                  blockoutDates={blockoutDates}
+                  expectedUpdatedAt={memberUpdatedAt}
+                  occurrences={occurrences}
+                  onSaved={handleBlockoutsSaved}
+                  saveBlockouts={operations.saveBlockouts}
+                  onDirtyChange={handleTimeOffDirtyChange}
+                  onStale={refreshAfterConflict}
+                  savedDatesLoad={savedDatesLoad}
+                />
+              </>
+            ) : null}
 
             {datedOccurrences.length > 0 ? (
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+              <div className="flex flex-wrap items-end gap-2">
                 <Input
                   label="Search"
-                  className="flex-1"
+                  className="w-full min-w-0 sm:w-auto sm:min-w-[16rem] sm:flex-1"
                   value={query}
                   placeholder="Song, position, person, or date"
                   onChange={(value) => setQuery(String(value))}
                 />
+                <div className="flex w-fit flex-col gap-1 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-1.5">
+                  <span className="px-0.5 text-xs font-semibold text-gray-200">Organize</span>
+                  <SegmentedControl
+                    ariaLabel="Organize services"
+                    variant="compact"
+                    value={organizeMode}
+                    onChange={setOrganizeMode}
+                    options={MY_SCHEDULE_ORGANIZE_OPTIONS}
+                  />
+                </div>
                 {serviceOptions.length > 2 ? (
                   <Select
                     label="Service"
@@ -1113,6 +1568,41 @@ const MySchedule = () => {
               </div>
             ) : null}
 
+            {canShowSelfService && pendingAssignmentCount > 0 ? (
+              <section className="flex flex-col gap-2 rounded-md border border-gray-700 bg-gray-900/45 p-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <h2 className="text-sm font-semibold">
+                    You have {pendingAssignmentCount} {pendingAssignmentCount === 1 ? "assignment" : "assignments"} waiting for a response.
+                  </h2>
+                  <p className="text-xs text-gray-300">
+                    {responseAttempts.size > 0
+                      ? hasUnverifiedResponse
+                        ? "Refresh the individual response before accepting the remaining assignments."
+                        : "Wait for the individual response to finish before accepting the remaining assignments."
+                      : "Accepts only assignments you haven't answered yet. You can change individual responses later."}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="none"
+                  svg={Check}
+                  iconSize="sm"
+                  className="w-full shrink-0 justify-center rounded-md bg-emerald-700 px-3 text-sm font-semibold text-white hover:bg-emerald-600 sm:w-auto"
+                  disabled={acceptingPending || responseAttempts.size > 0}
+                  isLoading={acceptingPending}
+                  aria-busy={acceptingPending}
+                  onClick={() => void acceptAllPending()}
+                >
+                  {acceptingPending ? "Accepting…" : "Accept remaining assignments"}
+                </Button>
+              </section>
+            ) : null}
+            {acceptingPending ? (
+              <span className="sr-only" role="status" aria-live="polite">Accepting your pending assignments…</span>
+            ) : null}
+            {acceptPendingFeedback ? (
+              <p className="text-sm text-gray-300" role="status" aria-live="polite">{acceptPendingFeedback}</p>
+            ) : null}
             {upcoming.length === 0 && past.length === 0 ? (
               <p className="text-sm text-gray-300">
                 {hasFilters
@@ -1134,21 +1624,17 @@ const MySchedule = () => {
                 <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
                   Upcoming
                 </h2>
-                <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
-                  {upcoming.map((occurrence) => (
-                    <OccurrenceTile
-                      key={occurrence.occurrenceId}
-                      occurrence={occurrence}
-                      timeZone={serviceTimeZone}
-                      isNextUpcoming={occurrence.occurrenceId === nextUpcomingId}
-                      isPast={false}
-                      isBlockedOut={blockoutLabelByOccurrence.has(
-                        occurrence.occurrenceId,
-                      )}
-                      onOpen={() => setSelectedId(occurrence.occurrenceId)}
-                    />
-                  ))}
-                </ul>
+                {organizeMode === "byMonth" ? upcomingMonthGroups.map((month) => (
+                  <section key={month.key} className="mb-4 space-y-2">
+                    <h3 className="text-sm font-semibold text-gray-200">{month.label}</h3>
+                    {renderTiles(month.occurrences, false)}
+                  </section>
+                )) : upcomingServiceGroups.map((group) => (
+                  <section key={group.key} className="mb-4 space-y-2">
+                    <h3 className="text-sm font-semibold text-gray-200">{group.name}</h3>
+                    {renderTiles(group.occurrences, false)}
+                  </section>
+                ))}
               </section>
             ) : null}
 
@@ -1165,21 +1651,19 @@ const MySchedule = () => {
                     : `Show ${past.length} past ${past.length === 1 ? "service" : "services"}`}
                 </Button>
                 {showPast ? (
-                  <ul className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
-                    {past.map((occurrence) => (
-                      <OccurrenceTile
-                        key={occurrence.occurrenceId}
-                        occurrence={occurrence}
-                        timeZone={serviceTimeZone}
-                        isNextUpcoming={false}
-                        isPast
-                        isBlockedOut={blockoutLabelByOccurrence.has(
-                          occurrence.occurrenceId,
-                        )}
-                        onOpen={() => setSelectedId(occurrence.occurrenceId)}
-                      />
+                  <div className="mt-3 space-y-4">
+                    {organizeMode === "byMonth" ? pastMonthGroups.map((month) => (
+                      <section key={month.key} className="space-y-2">
+                        <h3 className="text-sm font-semibold text-gray-300">{month.label}</h3>
+                        {renderTiles(month.occurrences, true)}
+                      </section>
+                    )) : pastServiceGroups.map((group) => (
+                      <section key={group.key} className="space-y-2">
+                        <h3 className="text-sm font-semibold text-gray-300">{group.name}</h3>
+                        {renderTiles(group.occurrences, true)}
+                      </section>
                     ))}
-                  </ul>
+                  </div>
                 ) : null}
               </div>
             ) : null}
@@ -1188,6 +1672,12 @@ const MySchedule = () => {
       </div>
     </AppPageShell>
   );
+};
+
+const MySchedule = ({ access }: { access?: PersonalScheduleAccess }) => {
+  const context = useContext(GlobalInfoContext);
+  const identity = access ? `personal:${access.churchId}:${access.memberId}` : `human:${context?.churchId || ""}:${context?.userId || ""}`;
+  return <MyScheduleView key={identity} access={access} />;
 };
 
 export default MySchedule;

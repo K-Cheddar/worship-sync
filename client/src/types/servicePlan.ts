@@ -12,6 +12,7 @@
  * client/src/api/auth.ts (getServicePlan/saveServicePlan/deleteServicePlan).
  */
 import type { RichTextDocument } from "./richText";
+import { getServicePlanScriptureResourceTitle } from "../../../shared/servicePlanScripture";
 
 // Mirrors ServiceItem.type (client/src/types.ts) minus the presentation-only
 // "timer"/"service-time" kinds, so pushing a plan into the outline is 1:1.
@@ -140,6 +141,41 @@ export type ServicePlanAssignee = {
   iemIds?: string[];
 };
 
+/** Explicit opt-in for preparing participant overlays from one plan item. */
+export type ServicePlanParticipantOverlaySettings = {
+  enabled?: boolean;
+  /** Blank or omitted uses the item title as the reusable overlay event. */
+  eventLabel?: string;
+};
+
+export type ServicePlanParticipantOverlayAssignee = {
+  /** Current name resolved from Teams, or the saved free-text guest name. */
+  name: string;
+  memberStatus: "resolved" | "missing" | "guest";
+  roleStatus:
+    | "resolved"
+    | "ambiguous"
+    | "missing"
+    | "archived"
+    | "unavailable"
+    | "not-applicable";
+  /** TeamRole.name only; scheduling position names are never returned here. */
+  roleTitle?: string;
+};
+
+export type ServicePlanParticipantOverlayElement = {
+  elementId: string;
+  assignees: ServicePlanParticipantOverlayAssignee[];
+};
+
+/** Plan-scoped, contact-free read projection used only for overlay preview. */
+export type ServicePlanParticipantOverlayProjection = {
+  status: "ready" | "restricted" | "failed";
+  /** Revision of the saved plan used to resolve these participants. */
+  planRevision?: number;
+  elements: ServicePlanParticipantOverlayElement[];
+};
+
 /** Structured source assignment retained when an importer can distinguish a
  * person from a Planning Center team position. */
 export type ServicePlanSourceLedByAssignment = {
@@ -233,6 +269,7 @@ export type ServicePlanScriptureReference = {
   label: string;
   book: string;
   chapter: string;
+  /** Empty for a whole-chapter reading. */
   verseRange: string;
   version: string;
 };
@@ -332,6 +369,8 @@ export type ServicePlanElement = {
   contentOrder?: string[];
   /** Everyone doing this item, and the microphones each of them carries. */
   assignees?: ServicePlanAssignee[];
+  /** Explicitly opts this item into the Controller's participant overlay preview. */
+  participantOverlay?: ServicePlanParticipantOverlaySettings;
   /**
    * @deprecated Superseded by `assignees`. Read only for plans saved before
    * multi-assignee support; see getServicePlanElementAssignees.
@@ -478,7 +517,11 @@ export const getServicePlanElementContentResources = (
     }
     return true;
   });
-  const allResources = [...legacyResources, ...resourcesWithoutLegacyDuplicates];
+  const allResources = [...legacyResources, ...resourcesWithoutLegacyDuplicates].map(
+    (resource) => resource.type === "scripture"
+      ? { ...resource, title: getServicePlanScriptureResourceTitle(resource) }
+      : resource,
+  );
   if (!element.contentOrder?.length) return allResources;
   const byId = new Map(allResources.map((resource) => [resource.id, resource]));
   const ordered = element.contentOrder.flatMap((id) => {

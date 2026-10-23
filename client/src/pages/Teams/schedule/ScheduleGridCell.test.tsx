@@ -5,6 +5,7 @@ import {
   type ScheduleAssignmentHandlers,
 } from "./ScheduleAssignmentContext";
 import ScheduleGridCell from "./ScheduleGridCell";
+import { CurrentMemberIdentityProvider } from "../components/CurrentUserMemberIndicator";
 import { scheduleAssignmentLabelClassName } from "./scheduleUtils";
 
 const baseProps = {
@@ -26,32 +27,35 @@ const baseProps = {
 const renderCell = (
   props: Partial<ComponentProps<typeof ScheduleGridCell>> = {},
   handlers: Partial<ScheduleAssignmentHandlers> = {},
+  selfMemberId: string | null = null,
 ) => {
   const requestRemoveAdditionalPosition = jest.fn();
-  render(
-    <ScheduleAssignmentProvider
-      handlers={
-        {
-          requestRemoveAdditionalPosition,
-          ...handlers,
-        } as ScheduleAssignmentHandlers
-      }
-    >
-      <table>
-        <tbody>
-          <tr>
-            <ScheduleGridCell
-              {...baseProps}
-              isSlotEnabled
-              isAdditionalPosition
-              {...props}
-            />
-          </tr>
-        </tbody>
-      </table>
-    </ScheduleAssignmentProvider>,
+  const view = render(
+    <CurrentMemberIdentityProvider memberId={selfMemberId}>
+      <ScheduleAssignmentProvider
+        handlers={
+          {
+            requestRemoveAdditionalPosition,
+            ...handlers,
+          } as ScheduleAssignmentHandlers
+        }
+      >
+        <table>
+          <tbody>
+            <tr>
+              <ScheduleGridCell
+                {...baseProps}
+                isSlotEnabled
+                isAdditionalPosition
+                {...props}
+              />
+            </tr>
+          </tbody>
+        </table>
+      </ScheduleAssignmentProvider>
+    </CurrentMemberIdentityProvider>,
   );
-  return { requestRemoveAdditionalPosition };
+  return { requestRemoveAdditionalPosition, unmount: view.unmount };
 };
 
 describe("ScheduleGridCell", () => {
@@ -83,6 +87,31 @@ describe("ScheduleGridCell", () => {
       "src",
       "https://example.com/rae.jpg",
     );
+  });
+
+  it("marks the linked roster member in a grid slot but not a schedule guest", () => {
+    const rosterMember = {
+      memberId: "m1",
+      churchId: "church-1",
+      firstName: "Rae",
+      lastName: "Kim",
+      positionIds: ["cam"],
+      blockoutDates: [],
+    };
+    const { unmount } = renderCell({
+      assignmentCell: { primaryMemberId: "m1" },
+      allMembers: [rosterMember],
+    }, {}, "m1");
+
+    expect(screen.getByText("You")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Sunday Service Camera 2, Rae, You/ })).toBeInTheDocument();
+
+    unmount();
+    renderCell({
+      assignmentCell: { primaryMemberId: "m1" },
+      allMembers: [{ ...rosterMember, scheduleGuest: true }],
+    }, {}, "m1");
+    expect(screen.queryByText("You")).not.toBeInTheDocument();
   });
 
   it("shows remove for an added optional position and requests removal", () => {

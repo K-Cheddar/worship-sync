@@ -24,13 +24,17 @@ import type { RootState } from "../../store/store";
 const AppPageShell = ({
   title,
   icon,
+  iconColorClass = "text-orange-300",
   description,
   children,
+  showAccountNavigation = true,
 }: {
   title: string;
   icon?: LucideIcon;
+  iconColorClass?: string;
   description?: string;
   children: ReactNode;
+  showAccountNavigation?: boolean;
 }) => {
   const scrollbarWidth = useSelector(
     (state: RootState) => state.undoable.present.preferences.scrollbarWidth,
@@ -44,11 +48,11 @@ const AppPageShell = ({
       <div className="mx-auto flex min-h-0 w-full flex-1 flex-col px-4 pb-6 lg:px-6">
         <div className="flex w-full shrink-0 flex-wrap items-center justify-between gap-4 border-b border-gray-700 py-3">
           <div className="flex flex-wrap items-center gap-3">
-            <HomeToolbarMenu />
+            {showAccountNavigation ? <HomeToolbarMenu /> : null}
             <div>
               <h1 className="flex items-center gap-2 text-base font-semibold sm:text-lg">
                 {icon ? (
-                  <Icon svg={icon} size="md" className="text-orange-300" />
+                  <Icon svg={icon} size="md" className={iconColorClass} />
                 ) : null}
                 {title}
               </h1>
@@ -57,7 +61,7 @@ const AppPageShell = ({
               ) : null}
             </div>
           </div>
-          <UserSection />
+          {showAccountNavigation ? <UserSection /> : null}
         </div>
 
         <section className="mt-3 flex min-h-0 w-full flex-1 flex-col overflow-y-auto overscroll-y-contain lg:mt-4">

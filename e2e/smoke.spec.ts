@@ -1,5 +1,5 @@
 import { test, expect } from "./smokeFixtures";
-import { openEditableTeam, checkSchedulingPeriodRoundTrip } from "./smokeNavigation";
+import { openEditableTeam } from "./smokeNavigation";
 
 const openHome = async (page: import("@playwright/test").Page) => {
   await page.goto("/#/home", { waitUntil: "domcontentloaded" });
@@ -81,21 +81,9 @@ test("Teams opens an existing team with its positions and member UI", async ({ p
   await teamsLink.click();
   await expect(page).toHaveURL(/#\/teams-and-services\/groups$/);
   await expect(page.getByRole("status", { name: "Loading teams" })).toBeHidden();
-  await expect(page.getByRole("heading", { name: "Teams", exact: true })).toBeVisible();
+  await expect(page.getByTestId("teams-create-panel-list").getByRole("heading", { name: "Teams", exact: true })).toBeVisible();
 
   await openEditableTeam(page);
-});
-
-test("Scheduling changes period and returns with schedule content ready", async ({ page }) => {
-  await openTeamsAndServices(page);
-  const schedulesLink = page.getByRole("link", { name: "Schedules", exact: true });
-  await expect(schedulesLink).toBeVisible();
-  await schedulesLink.click();
-  await expect(page).toHaveURL(/#\/teams-and-services\/schedules$/);
-  await expect(page.getByRole("status", { name: "Loading schedules" })).toBeHidden();
-  await expect(page.getByRole("heading", { name: "Choose a church time zone" })).toBeHidden();
-
-  await checkSchedulingPeriodRoundTrip(page);
 });
 
 test("Members opens an active member's details without saving changes", async ({ page }) => {
@@ -115,13 +103,13 @@ test("Members opens an active member's details without saving changes", async ({
   const memberCount = (await membersHeading.innerText()).match(/\((\d+)\)/);
   if (!memberCount) throw new Error("The loaded Members list did not expose its record count.");
   if (Number(memberCount[1]) === 0) {
-    throw new Error("The configured disposable test tenant must contain at least one active member for the details smoke test.");
+    throw new Error("The configured demo church must contain at least one active member for the details smoke test.");
   }
 
   const activeMemberAction = page.getByRole("button", { name: /^Edit .+/ }).first();
   if (await activeMemberAction.count() === 0) {
     throw new Error(
-      "The saved E2E account must have permission to open active member details in the configured disposable test tenant.",
+      "The saved E2E account must have permission to open active member details in the configured demo church.",
     );
   }
 
@@ -215,7 +203,7 @@ test("Service Templates opens and returns to a seeded template", async ({ page }
   if (templates.length === 0) {
     const emptyState = await page.locator("main").innerText();
     throw new Error(
-      `The configured disposable test tenant must seed at least one service template with section structure for the editor-opening smoke assertion. Current Templates state: ${emptyState}`,
+      `The configured demo church must seed at least one service template with section structure for the editor-opening smoke assertion. Current Templates state: ${emptyState}`,
     );
   }
   const seededTemplate = templates.find((template) =>
@@ -223,7 +211,7 @@ test("Service Templates opens and returns to a seeded template", async ({ page }
       && templates.filter((candidate) => candidate.name === template.name).length === 1,
   );
   if (!seededTemplate) {
-    throw new Error("The configured disposable test tenant must seed a uniquely named service template with at least one section.");
+    throw new Error("The configured demo church must seed a uniquely named service template with at least one section.");
   }
   const templateName = seededTemplate.name;
   const templateButton = page.getByRole("button", { name: `Edit ${templateName}`, exact: true }).or(

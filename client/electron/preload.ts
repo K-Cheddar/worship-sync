@@ -3,6 +3,7 @@ import type { WindowType } from "./windowState";
 import type { LocalAssetMetadata } from "./localAssetStore";
 import type { PreparedVideoMetrics } from "../src/types/electron";
 import type { ResourcePolicy } from "./resourceGovernor";
+import type { ChatTaskbarScope, ChatTaskbarUnreadState } from "./chatTaskbar";
 import { createSharedEventSubscription } from "./rendererSubscription";
 
 const preparedVideoMetricsSubscription = createSharedEventSubscription<PreparedVideoMetrics>((publish) => {
@@ -208,6 +209,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("set-upload-in-progress", inProgress),
   setTaskbarUploadProgress: (progress: number | null) =>
     ipcRenderer.invoke("set-taskbar-upload-progress", progress),
+  setChatTaskbarUnreadState: (state: ChatTaskbarUnreadState) =>
+    ipcRenderer.invoke("set-chat-taskbar-unread", state),
+  requestChatTaskbarAttention: (scope: ChatTaskbarScope) =>
+    ipcRenderer.invoke("request-chat-taskbar-attention", scope),
 });
 
 // Expose a flag to indicate we're running in Electron

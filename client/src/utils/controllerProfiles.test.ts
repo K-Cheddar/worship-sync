@@ -17,12 +17,14 @@ import {
   isKnownControllerProfile,
   toggleControllerOutput,
   normalizeControllerProfiles,
+  getControllerProfilesInNavigationOrder,
   resolveControllerProfile,
   sanitizeControllerProfileDescription,
   sanitizeControllerProfileName,
   serializeControllerProfiles,
   getControllerProfileDescription,
   getDefaultControllerProfileDescription,
+  resolveHomeControllerDisplayName,
 } from "./controllerProfiles";
 
 const profile = (
@@ -71,6 +73,10 @@ describe("defaults", () => {
       expect(p.outputsConfigured).toBe(false);
       expect(p.defaultSendOutputIds).toEqual([]);
     }
+    expect(defaults.map((p) => [p.icon, p.iconColor])).toEqual([
+      ["presentation", "orange"],
+      ["layers", "purple"],
+    ]);
   });
 
   it("returns fresh arrays so a caller cannot mutate the shared defaults", () => {
@@ -89,6 +95,59 @@ describe("defaults", () => {
     expect(isBuiltInControllerId(PRESENTATION_CONTROLLER_ID)).toBe(true);
     expect(isBuiltInControllerId(OVERLAY_CONTROLLER_ID)).toBe(true);
     expect(isBuiltInControllerId("ctrl_1")).toBe(false);
+  });
+
+  it("keeps current built-in home names and resolves only known legacy labels", () => {
+    const defaults = getDefaultControllerProfiles();
+    expect(defaults.map(({ name }) => name)).toEqual([
+      "Presentation",
+      "Overlays",
+    ]);
+
+    expect(
+      resolveHomeControllerDisplayName("presentation", "Presentation Controller"),
+    ).toBe("Presentation");
+    expect(
+      resolveHomeControllerDisplayName("overlay", "Graphics Operator"),
+    ).toBe("Overlays");
+    expect(
+      resolveHomeControllerDisplayName("overlay", "Overlay Controller"),
+    ).toBe("Overlays");
+    expect(resolveHomeControllerDisplayName("presentation", "Text Master")).toBe(
+      "Text Master",
+    );
+    expect(resolveHomeControllerDisplayName("overlay", "Graphics Lead")).toBe(
+      "Graphics Lead",
+    );
+    expect(
+      resolveHomeControllerDisplayName("ctrl_lobby", "Overlay Controller"),
+    ).toBe("Overlay Controller");
+  });
+});
+
+describe("controller presentation ordering", () => {
+  it("places built-ins first by ID, then keeps additional controllers in saved relative order", () => {
+    const profiles = [
+      profile({ id: "ctrl_visual", name: "Visual Technician", order: 0 }),
+      profile({ id: OVERLAY_CONTROLLER_ID, type: "overlay", name: "Graphics Lead", order: 1 }),
+      profile({ id: "ctrl_lobby", name: "Lobby", order: 2 }),
+      profile({ id: PRESENTATION_CONTROLLER_ID, type: "presentation", name: "Text Master", order: 3 }),
+    ];
+
+    const ordered = getControllerProfilesInNavigationOrder(profiles);
+
+    expect(ordered.map(({ id }) => id)).toEqual([
+      PRESENTATION_CONTROLLER_ID,
+      OVERLAY_CONTROLLER_ID,
+      "ctrl_visual",
+      "ctrl_lobby",
+    ]);
+    expect(profiles.map(({ id, order }) => [id, order])).toEqual([
+      ["ctrl_visual", 0],
+      [OVERLAY_CONTROLLER_ID, 1],
+      ["ctrl_lobby", 2],
+      [PRESENTATION_CONTROLLER_ID, 3],
+    ]);
   });
 });
 
@@ -158,6 +217,32 @@ describe("normalizeControllerProfiles", () => {
     expect(presentation?.type).toBe("presentation");
     // The church's own configuration survives the type correction.
     expect(presentation?.outputIds).toEqual(["projector"]);
+  });
+
+  it("preserves valid rich home icon references and safely drops malformed ones", () => {
+    const result = normalizeControllerProfiles([
+      {
+        id: "ctrl_rich",
+        type: "aux-presentation",
+        name: "Visual Technician",
+        order: 0,
+        homeIcon: { source: "tabler", name: "device-desktop", color: "#12AbEf" },
+      },
+      {
+        id: "ctrl_bad_icon",
+        type: "aux-presentation",
+        name: "Unknown",
+        order: 1,
+        homeIcon: { source: "lucide", name: "Monitor", color: "red" },
+      },
+    ]);
+
+    expect(result.find((entry) => entry.id === "ctrl_rich")?.homeIcon).toEqual({
+      source: "tabler",
+      name: "device-desktop",
+      color: "#12AbEf",
+    });
+    expect(result.find((entry) => entry.id === "ctrl_bad_icon")?.homeIcon).toBeUndefined();
   });
 
   it("drops entries with no id or an unknown type", () => {
@@ -241,6 +326,7 @@ describe("serializeControllerProfiles", () => {
         order: 0,
         outputIds: ["out_lobby"],
         defaultSendOutputIds: ["out_lobby"],
+        homeIcon: { source: "tabler", name: "device-desktop", color: "#12abef" },
       },
     ]);
     expect(
@@ -308,6 +394,39 @@ describe("descriptions", () => {
         description: "  ",
       }),
     ).toBe(getDefaultControllerProfileDescription("aux-presentation"));
+    expect(
+      getControllerProfileDescription({ type: "overlay", description: "" }),
+    ).toBe("Manage stream overlays, timers, and credits.");
+  });
+
+  it("resolves defaults by controller type even after an auxiliary controller is renamed", () => {
+    const visualTechnician = profile({
+      id: "ctrl_visual",
+      name: "Visual Technician",
+      description: "",
+    });
+
+    expect(getControllerProfileDescription(visualTechnician)).toBe(
+      "Show independent content or mirror another display.",
+    );
+    expect(
+      getControllerProfileDescription({
+        ...visualTechnician,
+        description: "Show the lobby slides.",
+      }),
+    ).toBe("Show the lobby slides.");
+  });
+
+  it("uses the concise Presentation default while retaining other profile defaults", () => {
+    expect(getDefaultControllerProfileDescription("presentation")).toBe(
+      "Present slides, songs, and scripture on your screens.",
+    );
+    expect(getDefaultControllerProfileDescription("overlay")).toBe(
+      "Manage stream overlays, timers, and credits.",
+    );
+    expect(getDefaultControllerProfileDescription("aux-presentation")).toBe(
+      "Show independent content or mirror another display.",
+    );
   });
 
   it("prefers a custom description when set", () => {
@@ -339,6 +458,45 @@ describe("descriptions", () => {
       { id: "ctrl_1", type: "aux-presentation", name: "Lobby", order: 0 },
     ]);
     expect(result.find((p) => p.id === "ctrl_1")?.description).toBe("");
+  });
+
+  it("normalizes configured appearance and supplies defaults for old profiles", () => {
+    const result = normalizeControllerProfiles([
+      {
+        id: "presentation",
+        type: "presentation",
+        name: "Text Master",
+        order: 0,
+        icon: "captions",
+        iconColor: "cyan",
+      },
+      { id: "ctrl_lobby", type: "aux-presentation", name: "Lobby", order: 2 },
+    ]);
+    expect(result.find((p) => p.id === "presentation")).toMatchObject({
+      icon: "captions",
+      iconColor: "cyan",
+    });
+    expect(result.find((p) => p.id === "ctrl_lobby")).toMatchObject({
+      icon: "monitor",
+      iconColor: "cyan",
+    });
+  });
+
+  it("replaces invalid icon identifiers and colors with safe type defaults", () => {
+    const result = normalizeControllerProfiles([
+      {
+        id: "ctrl_lobby",
+        type: "aux-presentation",
+        name: "Lobby",
+        order: 2,
+        icon: "https://example.test/icon.svg",
+        iconColor: "bg-[url(javascript:alert(1))]",
+      },
+    ]);
+    expect(result.find((p) => p.id === "ctrl_lobby")).toMatchObject({
+      icon: "monitor",
+      iconColor: "cyan",
+    });
   });
 });
 

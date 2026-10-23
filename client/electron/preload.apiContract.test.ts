@@ -36,6 +36,8 @@ describe("electron preload API contract", () => {
       "searchGeniusLyrics",
       "saveLastRoute",
       "getLastRoute",
+      "setChatTaskbarUnreadState",
+      "requestChatTaskbarAttention",
     ];
 
     for (const method of requiredMethods) {
@@ -45,6 +47,13 @@ describe("electron preload API contract", () => {
 
   it("exposes the Electron runtime flag", () => {
     expect(preloadSource).toContain('exposeInMainWorld("__ELECTRON__", true)');
+  });
+
+  it("keeps media upload taskbar progress independent", () => {
+    expect(preloadSource).toContain("setTaskbarUploadProgress:");
+    expect(preloadSource).toContain(
+      'ipcRenderer.invoke("set-taskbar-upload-progress", progress)',
+    );
   });
 
   it("does not expose raw ipcRenderer to the renderer", () => {

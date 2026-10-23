@@ -2,6 +2,7 @@ import {
   app,
   net,
   BrowserWindow,
+  nativeImage,
   desktopCapturer,
   ipcMain,
   screen,
@@ -11,6 +12,7 @@ import {
   Menu,
   shell,
   type WebContents,
+  type NativeImage,
 } from "electron";
 import { join, dirname } from "node:path";
 import { cpus, freemem, totalmem } from "node:os";
@@ -77,6 +79,12 @@ import {
   isTrustedControllerIpcSender,
   isTrustedWorshipSyncIpcSender,
 } from "./ipcSenderAuthorization";
+import {
+  bindChatTaskbarLifecycle,
+  createChatTaskbarController,
+  findChatTaskbarOverlayIconPath,
+  registerChatTaskbarIpcHandlers,
+} from "./chatTaskbar";
 import { createLyricsImportService } from "../../lyricsImport.js";
 import {
   createUnavailablePreparedVideoMetrics,
@@ -176,6 +184,31 @@ const getIconPath = (): string | undefined => {
   return undefined;
 };
 
+const getChatTaskbarOverlayIcon = (): NativeImage | null => {
+  if (process.platform !== "win32") return null;
+  const iconPath = findChatTaskbarOverlayIconPath({
+    resourcesPath: process.resourcesPath,
+    appPath: app.getAppPath(),
+    mainDirectory: __dirname,
+    exists: existsSync,
+  });
+  if (!iconPath) {
+    console.warn("Chat taskbar overlay icon was not found in build resources.");
+    return null;
+  }
+  try {
+    const overlayIcon = nativeImage.createFromPath(iconPath);
+    if (overlayIcon.isEmpty()) {
+      console.warn(`Chat taskbar overlay icon could not be loaded: ${iconPath}`);
+      return null;
+    }
+    return overlayIcon;
+  } catch {
+    console.warn(`Chat taskbar overlay icon could not be loaded: ${iconPath}`);
+    return null;
+  }
+};
+
 /** Attach cut, copy, paste, select all context menu to a window's webContents. */
 function setupContextMenu(webContents: WebContents): void {
   webContents.on("context-menu", (_event, _params) => {
@@ -251,6 +284,11 @@ app.on("open-url", (event, targetUrl) => {
 });
 
 let mainWindow: BrowserWindow | null = null;
+const chatTaskbarController = createChatTaskbarController({
+  platform: process.platform,
+  getWindow: () => mainWindow,
+  overlayIcon: getChatTaskbarOverlayIcon(),
+});
 let windowStateManager: WindowStateManager;
 let mediaCacheManager: MediaCacheManager;
 let localAssetStore: LocalAssetStore;
@@ -684,6 +722,7 @@ const createWindow = () => {
     autoHideMenuBar: !isDev,
     ...(iconPath && { icon: iconPath }),
   });
+  bindChatTaskbarLifecycle(mainWindow, chatTaskbarController);
 
   if (wasMaximized) {
     mainWindow.maximize();
@@ -2025,6 +2064,12 @@ ipcMain.handle("set-upload-in-progress", (_event, inProgress: boolean) => {
   isUploadInProgress = inProgress;
   return true;
 });
+
+registerChatTaskbarIpcHandlers(
+  ipcMain,
+  () => mainWindow,
+  chatTaskbarController,
+);
 
 /** `progress` 0–1 for determinate; `null` clears the taskbar / dock progress overlay. */
 ipcMain.handle(

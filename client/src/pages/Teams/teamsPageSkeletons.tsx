@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import { ResponsiveDataTableSkeleton } from "../../components/ResponsiveDataTable";
+import { useResponsiveTableLayout } from "../../hooks/useResponsiveTableLayout";
 import { lineTabsListShellClassName } from "../../components/ui/tabs";
 import { cn } from "../../utils/cnHelper";
 import {
@@ -14,7 +16,6 @@ import {
   scheduleWorkspaceMainColumnClassName,
   scheduleWorkspacePanelClassName,
   scheduleWorkspaceTabsClassName,
-  teamsCreatePanelRowClassName,
   teamsCreatePanelListClassName,
   teamsCompactEntityRowLayoutClassName,
   teamsManagerPageRootClassName,
@@ -163,29 +164,6 @@ const SkeletonManagerPanel = ({
       />
     </div>
   </section>
-);
-
-const SkeletonSubmissionCards = ({ count = 2 }: { count?: number }) => (
-  <div className="space-y-3">
-    {Array.from({ length: count }, (_, index) => (
-      <div
-        key={index}
-        className="rounded-md border border-gray-700 bg-gray-950/60 p-3"
-      >
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="space-y-2">
-            <div className={cn(skeletonBar, "h-4 w-36")} />
-            <div className={cn(skeletonBar, "h-3 w-48")} />
-            <div className={cn(skeletonBar, "h-3 w-40")} />
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <div className={cn(skeletonBar, "h-8 w-24")} />
-            <div className={cn(skeletonBar, "h-8 w-20")} />
-          </div>
-        </div>
-      </div>
-    ))}
-  </div>
 );
 
 const SkeletonScheduleSelectRow = () => (
@@ -558,82 +536,107 @@ export const TeamsMicrophonesPageSkeleton = () => (
   </SkeletonStatus>
 );
 
+const TeamsFormFiltersSkeleton = () => (
+  <div className="mb-3 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2">
+    <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
+      <div className="flex min-w-0 items-center gap-2 sm:w-60 sm:shrink-0">
+        <div className={cn(skeletonBar, "h-4 w-9 shrink-0")} />
+        <div className={cn(skeletonBar, "h-9 min-w-0 flex-1")} />
+      </div>
+      <div className="min-w-0 flex-1 space-y-1.5">
+        <div className={cn(skeletonBar, "h-4 w-12")} />
+        <div className="flex h-7 w-full items-center justify-between rounded-md bg-gray-800/80 px-2 lg:hidden">
+          <div className={cn(skeletonBar, "h-3 w-20")} />
+          <div className={cn(skeletonBar, "size-4")} />
+        </div>
+        <div className="hidden flex-wrap gap-1.5 lg:flex">
+          {["w-20", "w-16", "w-20", "w-20", "w-20", "w-16"].map((width, index) => (
+            <div key={index} className={cn(skeletonBar, "h-7", width)} />
+          ))}
+        </div>
+        <div className={cn(skeletonBar, "h-3 w-40 max-w-full")} />
+      </div>
+    </div>
+  </div>
+);
+
+const TeamsIntakeFormCardSkeleton = () => (
+  <div className="flex flex-col gap-3 rounded-lg border border-gray-800 bg-gray-950/40 p-3">
+    <div className="flex items-start justify-between gap-2">
+      <div className={cn(skeletonBar, "h-5 w-40 max-w-full")} />
+      <div className={cn(skeletonBar, "h-5 w-12 shrink-0")} />
+    </div>
+    <div className="mt-1 space-y-1.5">
+      <div className={cn(skeletonBar, "h-5 w-64 max-w-full")} />
+      <div className={cn(skeletonBar, "h-5 w-32")} />
+      <div className={cn(skeletonBar, "h-3 w-48 max-w-full")} />
+    </div>
+    <div className="flex justify-end">
+      <div className={cn(skeletonBar, "h-8 w-24")} />
+    </div>
+  </div>
+);
+
 export const TeamsFormsPageSkeleton = () => (
   <SkeletonStatus label="Loading forms">
-    <div className={teamsCreatePanelRowClassName}>
-      <div className="flex min-h-0 flex-1 flex-col lg:min-w-0 lg:max-w-2xl lg:flex-1">
-        <SkeletonManagerPanel
-          withSearch={false}
-          rowCount={3}
-          withNote
-          withExtraAction
-        />
+    <section
+      className={cn(
+        panelShellClassName,
+        "mx-auto flex w-full min-w-0 flex-col lg:max-w-3xl",
+        teamsPanelMaxHeightClassName,
+      )}
+    >
+      <div className={cn("shrink-0", panelHeaderPaddingClassName)}>
+        <div className="flex items-center justify-between gap-3">
+          <div className={cn(skeletonBar, "h-6 w-32")} />
+          <div className={cn(skeletonBar, "h-8 w-40 shrink-0")} />
+        </div>
+        <div className={cn(skeletonBar, "mt-2 h-4 w-full max-w-md")} />
       </div>
-      <section
+      <div
         className={cn(
-          panelShellClassName,
-          "flex min-h-0 flex-1 flex-col overflow-hidden",
-          teamsPanelMaxHeightClassName,
+          "scrollbar-variable mt-4 min-h-0 flex-1 space-y-2 overflow-y-auto",
+          panelScrollPaddingClassName,
         )}
       >
-        <div className={cn("shrink-0", panelHeaderPaddingClassName)}>
-          <div className={cn(skeletonBar, "h-6 w-32")} />
+        <TeamsFormFiltersSkeleton />
+        <div className="space-y-2">
+          <TeamsIntakeFormCardSkeleton />
+          <TeamsIntakeFormCardSkeleton />
         </div>
-        <div
-          className={cn(
-            "scrollbar-variable mt-4 min-h-0 flex-1 overflow-y-auto",
-            panelScrollPaddingClassName,
-          )}
-        >
-          <SkeletonSubmissionCards />
-        </div>
-      </section>
-    </div>
+      </div>
+    </section>
   </SkeletonStatus>
 );
 
-export const TeamsMessagesPageSkeleton = () => (
+export const TeamsMessagesPageSkeleton = () => {
+  const { containerRef, compact } = useResponsiveTableLayout<HTMLDivElement>();
+  return (
   <SkeletonStatus label="Loading messages">
-    <div className="mx-auto w-full max-w-5xl space-y-5 overflow-y-auto p-4 sm:p-6">
-      <header className="space-y-2">
-        <div className={cn(skeletonBar, "h-6 w-44")} />
-        <div className={cn(skeletonBar, "h-4 w-full max-w-2xl")} />
+    <div ref={containerRef} className="mx-auto w-full max-w-5xl space-y-5 overflow-y-auto p-4 sm:p-6">
+      <header className="flex items-start justify-between gap-3">
+        <div className="space-y-2"><div className={cn(skeletonBar, "h-6 w-32")} /><div className={cn(skeletonBar, "h-4 w-64 max-w-full")} /></div>
+        <div className={cn(skeletonBar, "h-9 w-32")} />
       </header>
-      <section className="space-y-5 rounded-xl border border-gray-700 bg-gray-900/40 p-4 shadow-sm sm:p-6">
-        <div className="space-y-2">
-          <div className={cn(skeletonBar, "h-5 w-32")} />
-          <div className={cn(skeletonBar, "h-4 w-full max-w-lg")} />
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className={cn(skeletonBar, "h-10 w-full")} />
-          <div className={cn(skeletonBar, "h-10 w-full")} />
-        </div>
-        <div className="space-y-3 border-t border-gray-700 pt-4">
-          <div className="space-y-2">
-            <div className={cn(skeletonBar, "h-5 w-24")} />
-            <div className={cn(skeletonBar, "h-4 w-full max-w-lg")} />
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className={cn(skeletonBar, "h-10 w-full")} />
-            <div className={cn(skeletonBar, "h-10 w-full")} />
-          </div>
-          <div className="space-y-2 rounded-lg border border-gray-700 bg-gray-950/50 p-3">
-            <div className={cn(skeletonBar, "h-9 w-full")} />
-            <SkeletonEntityRows count={4} />
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-700 pt-4">
-          <div className={cn(skeletonBar, "h-4 w-56 max-w-full")} />
-          <div className={cn(skeletonBar, "h-9 w-36")} />
-        </div>
-      </section>
       <section className="space-y-3">
         <div className={cn(skeletonBar, "h-5 w-36")} />
-        <SkeletonEntityRows count={2} withNote />
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          <div className={cn(skeletonBar, "col-span-2 h-12 sm:col-span-1")} />
+          <div className={cn(skeletonBar, "h-12")} />
+          <div className={cn(skeletonBar, "h-12")} />
+        </div>
+        <ResponsiveDataTableSkeleton label="Message history table" loadingLabel="Loading messages" compact={compact} minWidthClassName="min-w-[40rem]" columns={[
+          { label: "Message", widthClassName: "w-[55%]" },
+          { label: "Date", widthClassName: "w-[15%]" },
+          { label: "Recipients", widthClassName: "w-[10%]" },
+          { label: "Status", widthClassName: "w-[20%]" },
+        ]}
+        />
       </section>
     </div>
   </SkeletonStatus>
-);
+  );
+};
 
 export const getTeamsSectionSkeleton = (routePath: string) => {
   switch (routePath) {

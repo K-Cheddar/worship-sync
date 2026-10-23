@@ -6,7 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { ChevronLeft, ChevronRight, ListChecks, Users } from "lucide-react";
+import { ChevronLeft, ChevronRight, ListChecks } from "lucide-react";
 import {
   Navigate,
   Outlet,
@@ -24,6 +24,7 @@ import Sidebar, { APP_SIDEBAR_WIDTH_CLASS } from "../../components/Sidebar/Sideb
 import TeamsMobileNavigation from "./components/TeamsMobileNavigation";
 import TeamsSidebarNav from "./components/TeamsSidebarNav";
 import TeamsMobileShortcuts from "./components/TeamsMobileShortcuts";
+import { PAGE_APPEARANCES } from "../pageAppearances";
 import ChurchServiceTimeZoneGate from "./components/ChurchServiceTimeZoneGate";
 import { useTeamsAbandonedReturnCleanup } from "./hooks/useTeamsAbandonedReturnCleanup";
 import { TeamsPageProvider, useTeamsPage } from "./TeamsPageContext";
@@ -184,7 +185,7 @@ const TeamsAndServicesLayout = () => {
       title="Teams and Services"
       mobileTitle={activeSection.label}
       centerTitleOnMobile
-      icon={Users}
+      {...PAGE_APPEARANCES.teamsAndServices}
       toolbarLogos={toolbarLogos}
       churchName={churchName}
       compactMobileToolbar

@@ -4,6 +4,7 @@ import type { RefObject } from "react";
 import type { TeamRosterMember } from "../../../api/authTypes";
 import type { PositionIcon } from "../../../components/icons/iconTypes";
 import ScheduleBoardCell from "./ScheduleBoardCell";
+import { CurrentMemberIdentityProvider } from "../components/CurrentUserMemberIndicator";
 import {
   ScheduleAssignmentContext,
   type ScheduleAssignmentHandlers,
@@ -38,18 +39,23 @@ const baseProps = {
 };
 
 /** Render a cell wired to a spyable activateSlot handler via the shared context. */
-const renderCell = (props: Partial<typeof baseProps> & Record<string, unknown> = {}) => {
+const renderCell = (
+  props: Partial<typeof baseProps> & Record<string, unknown> = {},
+  selfMemberId: string | null = null,
+) => {
   const activateSlot = jest.fn();
   const handlersRef = createRef<ScheduleAssignmentHandlers>() as RefObject<
     ScheduleAssignmentHandlers
   >;
   handlersRef.current = { activateSlot } as unknown as ScheduleAssignmentHandlers;
-  render(
-    <ScheduleAssignmentContext.Provider value={handlersRef}>
-      <ScheduleBoardCell {...baseProps} {...props} />
-    </ScheduleAssignmentContext.Provider>,
+  const view = render(
+    <CurrentMemberIdentityProvider memberId={selfMemberId}>
+      <ScheduleAssignmentContext.Provider value={handlersRef}>
+        <ScheduleBoardCell {...baseProps} {...props} />
+      </ScheduleAssignmentContext.Provider>
+    </CurrentMemberIdentityProvider>,
   );
-  return { activateSlot };
+  return { activateSlot, unmount: view.unmount };
 };
 
 describe("ScheduleBoardCell", () => {
@@ -70,6 +76,25 @@ describe("ScheduleBoardCell", () => {
       "w-5",
     );
     expect(screen.queryByTestId("schedule-position-marker")).not.toBeInTheDocument();
+  });
+
+  it("marks the linked roster assignee accessibly, but not a guest assignment", () => {
+    const { unmount } = renderCell(
+      { assignmentCell: { primaryMemberId: "m1" } },
+      "m1",
+    );
+    const button = screen.getByRole("button", {
+      name: /Sunday Service Front Of House Audio, Kameal, You/,
+    });
+    expect(within(button).getByText("You")).toBeInTheDocument();
+
+    unmount();
+    renderCell({
+      allMembers: [member({ scheduleGuest: true })],
+      assignmentCell: { primaryMemberId: "m1" },
+    }, "m1");
+    expect(screen.queryByText("You")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Kameal/ })).toBeInTheDocument();
   });
 
   it("shows an unassigned placeholder when the slot is empty", () => {

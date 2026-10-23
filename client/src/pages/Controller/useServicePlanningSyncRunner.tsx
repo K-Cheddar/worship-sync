@@ -116,6 +116,9 @@ export const useServicePlanningSyncRunner = ({
   const { showToast, removeToast } = useToast();
   const { db } = useContext(ControllerInfoContext) || {};
   const preview = useSelector((s: RootState) => s.servicePlanningImport.preview);
+  const isPlanPreviewStale = useSelector(
+    (s: RootState) => s.servicePlanningImport.isPlanPreviewStale,
+  );
   const sync = useSelector((s: RootState) => s.servicePlanningImport.sync);
   const {
     planOutlineSyncSteps,
@@ -161,6 +164,14 @@ export const useServicePlanningSyncRunner = ({
 
   useEffect(() => {
     if (sync.status !== "running") return;
+    if (isPlanPreviewStale) {
+      dispatch(
+        failServicePlanningSync(
+          "This saved plan could not be verified. Refresh before syncing.",
+        ),
+      );
+      return;
+    }
     if (!allowOverlaySync && sync.mode !== "outline") {
       dispatch(
         failServicePlanningSync(
@@ -243,6 +254,7 @@ export const useServicePlanningSyncRunner = ({
     sync.mode,
     sync.runId,
     sync.status,
+    isPlanPreviewStale,
     store,
   ]);
 

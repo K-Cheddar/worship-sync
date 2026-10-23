@@ -12,7 +12,8 @@ export async function openEditableTeam(page: Page) {
 
   await expect(page.getByRole("heading", { name: "Edit team", exact: true })).toBeVisible();
   const editor = page.getByRole("region", { name: "Edit team", exact: true });
-  await expect(editor.getByText("Members", { exact: true })).toBeVisible();
+  await expect(editor.getByRole("region", { name: /^Members\b/ })).toBeVisible();
+  await expect(editor.getByRole("list", { name: "Members on this team", exact: true })).toBeVisible();
   await expect(editor.getByText("Positions", { exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "Edit positions", exact: true })).toBeVisible();
 }

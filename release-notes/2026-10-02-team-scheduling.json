@@ -3,5 +3,5 @@
   "date": "2026-10-02",
   "type": "improved",
   "title": "Team scheduling",
-  "description": "Team schedules add new service occurrences automatically, keep existing assignments and equipment, and save edits in the background so you can keep working."
+  "description": "Team schedules add new service occurrences automatically, keep existing assignments and equipment, and save edits in the background so you can keep working. New period schedules stay private as Drafts, and deleted periods can be scheduled again."
 }

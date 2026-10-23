@@ -26,6 +26,9 @@ declare const self: ServiceWorkerGlobalScope;
 const baseUrl = import.meta.env.BASE_URL || "";
 const indexUrl = baseUrl + "index.html";
 
+// Personal session/data requests and their navigation never enter runtime caches.
+registerRoute(({ url }) => /^\/s\/?$/.test(url.pathname) || url.pathname.startsWith("/api/volunteer/"), new NetworkOnly());
+
 // Document (navigation) requests: network first, then precache fallback.
 // Register before precacheAndRoute so this wins for all navigations (including /index.html).
 // Avoids white screen after deploys when the old SW served cached index.html that

@@ -424,7 +424,7 @@ describe("CurrentServiceViewer", () => {
 
     expect(snapshot.service.sections[0].items[0].resources).toEqual([
       { type: "song", title: "Opening Song" },
-      { type: "scripture", title: "Psalm 100" },
+      { type: "scripture", title: "Psalms 100 NIV" },
       { type: "youtube", title: "Worship set", url: "https://youtube.com/watch?v=abc123" },
       { type: "audio", title: "Reference audio" },
       { type: "document", title: "Set list" },

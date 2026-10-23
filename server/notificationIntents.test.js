@@ -7,6 +7,7 @@ import {
   AUTOMATIC_NOTIFICATION_SENDS_DISABLED,
   createNotificationIntentHandlers,
   createNotificationIntent,
+  NOTIFICATION_SEND_STALE_AFTER_MS,
   NOTIFICATION_INTENT_TYPES,
 } from "./notificationIntents.js";
 import { createSmsStatusWebhookHandler } from "./smsStatusWebhook.js";
@@ -16,24 +17,29 @@ import {
   getScheduleAssignedMemberIds,
   getScheduleMemberAssignments,
 } from "./scheduleInitialSms.js";
-import { approveReviewedScheduleBatch } from "./notificationBatches.js";
+import { approveReviewedScheduleBatch, executeReviewedNotificationBatch } from "./notificationBatches.js";
 
 const createHarness = ({
   providerSend,
   firestore = false,
   firestoreDb = null,
+  sharedCollections = null,
   requireTeamsEdit,
   authorizeSchedule,
   authorizeScheduleActor,
+  authorizeCustomMember,
+  authorizeMessagingHistory,
   scheduleBulkDispatchReady = false,
+  assertCsrf,
   authorizeAvailabilityForm,
   isAvailabilityRecipientInFormScope,
   validateReplacementCandidate,
   beforeSetDoc,
   resolveAvailabilityNotificationContext,
+  resolveScheduleNotificationContext,
   logger = { info() {}, warn() {}, error() {} },
 } = {}) => {
-  const collections = new Map();
+  const collections = sharedCollections || new Map();
   const storeFor = (collection) => {
     if (!collections.has(collection)) collections.set(collection, new Map());
     return collections.get(collection);
@@ -148,7 +154,7 @@ const createHarness = ({
     churchMessagingConfigs: "churchMessagingConfigs", smsConsents: "smsConsents",
     teamPositions: "teamPositions",
     },
-    assertCsrf: async () => undefined,
+    assertCsrf: assertCsrf || (async () => undefined),
     createId: (prefix) => `${prefix}_${++nextId}`,
     getDoc,
     deleteDoc: async (collection, id) => {
@@ -158,9 +164,18 @@ const createHarness = ({
     hashValue,
     httpError: (statusCode, message) => Object.assign(new Error(message), { statusCode }),
     nowIso,
-    queryDocs: async (collection, filters = []) => [...storeFor(collection).values()].filter((item) => filters.every((filter) => filter.op === "in" ? filter.value.includes(item[filter.field]) : item[filter.field] === filter.value)),
+    queryDocs: async (collection, filters = [], options = {}) => {
+      const rows = firestoreDb
+        ? (await firestoreDb.collection(collection).get()).docs.map((snapshot) => ({ id: snapshot.id, ...snapshot.data() }))
+        : [...storeFor(collection).values()];
+      const matched = rows.filter((item) => filters.every((filter) => filter.op === "in"
+        ? filter.value.includes(item[filter.field]) : item[filter.field] === filter.value));
+      return options.limit ? matched.slice(0, options.limit) : matched;
+    },
     requireFirestore: () => firestoreDb || (firestore ? db : null),
     requireTeamsEdit: requireTeamsEdit || (async () => ({ user: { uid: "admin_a" } })),
+    ...(authorizeCustomMember ? { authorizeCustomMember } : {}),
+    ...(authorizeMessagingHistory ? { authorizeMessagingHistory } : {}),
     ...(authorizeSchedule ? { authorizeSchedule } : {}),
     authorizeScheduleActor: authorizeScheduleActor || (async ({ churchId: targetChurchId, scheduleId }) => ({
       admin: { user: { uid: "admin_a" } },
@@ -177,7 +192,7 @@ const createHarness = ({
     getSmsConsentForChurchPhone: async (id, phone) => id === churchId && phone === phoneNumber
       ? getDoc("smsConsents", smsConsentIdForChurchPhone(id, phone))
       : null,
-    prepareAvailabilityNotificationRecipients: async ({ memberIds, purpose }) => {
+    prepareAvailabilityNotificationRecipients: async ({ memberIds, purpose, audienceType }) => {
       const currentForm = storeFor("teamIntakeForms").get(form.formId);
       return {
         form: currentForm,
@@ -187,7 +202,7 @@ const createHarness = ({
             ? "Volunteer is outside this form's team scope."
             : currentRecipient?.revokedAt
               ? "Request was revoked."
-              : currentRecipient?.respondedAt
+              : currentRecipient?.respondedAt && !(purpose === "availability_request" && audienceType === "specific")
                 ? "Availability response already received."
                 : purpose === "availability_reminder" && !currentRecipient
                   ? "No individual intake request exists."
@@ -216,7 +231,7 @@ const createHarness = ({
       church: storeFor("churches").get(churchId),
       publicUrl: "https://www.worshipsync.net/a/secure-token",
     })),
-    resolveScheduleNotificationContext: async (intent) => {
+    resolveScheduleNotificationContext: resolveScheduleNotificationContext || (async (intent) => {
       const currentSchedule = storeFor("teamSchedules").get(intent.sourceId);
       const currentMember = storeFor("teamRosterMembers").get(intent.memberId);
       if (intent.intentType === "schedule_initial_notification") return {
@@ -236,7 +251,7 @@ const createHarness = ({
         positionName: "Worship",
         responseUrl: "https://www.worshipsync.net/schedule-response/secure-token",
       };
-    },
+    }),
     prepareScheduleInitialSmsRecipients: async ({ churchId: targetChurchId, schedule: currentSchedule }) =>
       getScheduleAssignedMemberIds(currentSchedule).map((memberId) => {
         const currentMember = storeFor("teamRosterMembers").get(memberId);
@@ -295,10 +310,15 @@ const createHarness = ({
     await handler.sendIntent({ params: { churchId: targetChurchId, intentId }, body: { confirmed: true, approvalVersion: intent?.approvalSnapshot?.approvalVersion || "" } }, res);
     return res;
   };
-  const dispatch = async (batchId, confirmed = true) => {
+  const dispatch = async (batchId, confirmed = true, acknowledgedUncertainMemberIds = []) => {
     const res = makeResponse();
     const batch = await getDoc("notificationBatches", batchId);
-    await handler.dispatchAvailabilityBatch({ params: { churchId, batchId }, body: { confirmed, approvalVersion: batch?.reviewVersion || "" } }, res);
+    await handler.dispatchAvailabilityBatch({ params: { churchId, batchId }, body: { confirmed, approvalVersion: batch?.reviewVersion || "", acknowledgedUncertainMemberIds } }, res);
+    return res;
+  };
+  const abandon = async (batchId) => {
+    const res = makeResponse();
+    await handler.abandonAvailabilityBatch({ params: { churchId, batchId }, body: {} }, res);
     return res;
   };
   const seedFirestore = async () => {
@@ -307,8 +327,506 @@ const createHarness = ({
       for (const [id, data] of rows) await firestoreDb.collection(collection).doc(id).set(data);
     }
   };
-  return { collections, storeFor, getDoc, db, handler, makeResponse, preview, send, dispatch, seedFirestore, schedule, form, recipient, member, phoneNumber, churchId, get providerCalls() { return providerCalls; } };
+  return { collections, storeFor, getDoc, db, handler, makeResponse, preview, send, dispatch, abandon, seedFirestore, schedule, form, recipient, member, phoneNumber, churchId, get providerCalls() { return providerCalls; } };
 };
+
+test("reviewed batch persistence omits a missing optional exclusion reason", async () => {
+  let intent = {
+    intentId: "intent-legacy", churchId: "church_a", batchId: "batch-legacy", sourceType: "custom_message",
+    intentType: "custom_message", memberId: "member_a", status: "preview",
+    approvalSnapshot: { approvalVersion: "approval-v1", expiresAt: Date.now() + 60_000 },
+  };
+  const batch = {
+    batchId: "batch-legacy", churchId: "church_a", intentIds: [intent.intentId],
+    recipients: [{ memberId: "member_a", intentId: intent.intentId, status: "preview", approvalVersion: "approval-v1", segmentCount: 1 }],
+  };
+  const result = await executeReviewedNotificationBatch({
+    batch,
+    getIntent: async () => intent,
+    matchesSource: (current) => current.sourceType === "custom_message",
+    isStaleSending: () => false,
+    markUnknownAfterInterruption: async (current) => current,
+    sendReviewedIntent: async () => {
+      intent = { ...intent, status: "sent", outcome: "confirmed" };
+      return { success: true };
+    },
+    nowIso: () => new Date().toISOString(),
+  });
+  assert.equal(Object.hasOwn(result.recipients[0], "exclusionReason"), false);
+  assert.doesNotThrow(() => JSON.stringify(result));
+});
+
+for (const firestore of [false, true]) {
+  test(`custom message uses reviewed intents and a separate durable operation (${firestore ? "transaction fake" : "memory"})`, async () => {
+    const h = createHarness({ firestore });
+    const prepare = async (requestKey) => {
+      const res = h.makeResponse();
+      await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+        memberIds: [h.member.memberId], message: "Practice Friday.", requestKey,
+      } }, res);
+      assert.equal(res.statusCode, 200, res.payload?.errorMessage);
+      return res.payload.batch;
+    };
+    const first = await prepare("operation-one");
+    assert.equal(h.providerCalls, 0);
+    assert.equal(first.message, "Practice Friday. Reply STOP to opt out.");
+    assert.equal(first.summary.eligible, 1);
+    assert.match(first.recipients[0].destinationFingerprint, /^[a-f0-9]{64}$/);
+    assert.match(first.recipients[0].approvalBindingFingerprint, /^[a-f0-9]{64}$/);
+    assert.equal(JSON.stringify(first).includes(h.phoneNumber), false);
+    assert.equal((await prepare("operation-one")).batchId, first.batchId);
+    const sent = await h.dispatch(first.batchId);
+    assert.equal(sent.statusCode, 200, sent.payload?.errorMessage);
+    assert.equal(h.providerCalls, 1);
+    assert.equal((await h.dispatch(first.batchId)).statusCode, 409);
+    assert.equal(h.providerCalls, 1);
+    const second = await prepare("operation-two");
+    assert.notEqual(second.batchId, first.batchId);
+    assert.equal(second.recipients[0].destinationFingerprint, first.recipients[0].destinationFingerprint);
+    assert.equal(second.recipients[0].approvalBindingFingerprint, first.recipients[0].approvalBindingFingerprint);
+    assert.equal((await h.dispatch(second.batchId)).statusCode, 200);
+    assert.equal(h.providerCalls, 2);
+    const consentId = smsConsentIdForChurchPhone(h.churchId, h.phoneNumber);
+    const currentConsent = h.storeFor("smsConsents").get(consentId);
+    h.storeFor("smsConsents").set(consentId, { ...currentConsent, consentedAt: "2026-10-22T12:00:00.000Z" });
+    const consentChanged = await prepare("operation-three");
+    assert.equal(consentChanged.recipients[0].destinationFingerprint, second.recipients[0].destinationFingerprint);
+    assert.notEqual(consentChanged.recipients[0].approvalBindingFingerprint, second.recipients[0].approvalBindingFingerprint);
+    assert.equal(h.providerCalls, 2);
+    const history = h.makeResponse();
+    await h.handler.listMessageHistory({ params: { churchId: h.churchId }, query: {} }, history);
+    assert.equal(history.statusCode, 200, history.payload?.errorMessage);
+    assert.equal(history.payload.entries.filter((entry) => entry.messageType === "custom_message").length, 2);
+  });
+}
+
+test("custom message preparation needs no feature switch and rejects foreign or archived members", async () => {
+  const h = createHarness();
+  const prepare = async (memberId) => {
+    const res = h.makeResponse();
+    await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+      memberIds: [memberId], message: "Practice Friday.", requestKey: randomUUID(),
+    } }, res);
+    return res;
+  };
+  const prepared = await prepare(h.member.memberId);
+  assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
+  assert.equal(prepared.payload.enabled, undefined);
+  assert.equal(prepared.payload.batch.summary.eligible, 1);
+  assert.equal(h.providerCalls, 0);
+  h.storeFor("teamRosterMembers").set("foreign", { memberId: "foreign", churchId: "other", phoneNumber: h.phoneNumber });
+  assert.equal((await prepare("foreign")).statusCode, 403);
+  h.storeFor("teamRosterMembers").set("archived", { memberId: "archived", churchId: h.churchId, archivedAt: "now", phoneNumber: h.phoneNumber });
+  assert.equal((await prepare("archived")).statusCode, 403);
+});
+
+test("custom direct send requires explicit confirmation and accepts an approved operation", async () => {
+  const h = createHarness();
+  const prepared = h.makeResponse();
+  await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+    memberIds: [h.member.memberId], message: "Practice Friday.", requestKey: "direct-reviewed-send",
+  } }, prepared);
+  assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
+  const intentId = prepared.payload.batch.intentIds[0];
+  const intent = await h.getDoc("notificationIntents", intentId);
+  const unconfirmed = h.makeResponse();
+  await h.handler.sendIntent({ params: { churchId: h.churchId, intentId }, body: {
+    approvalVersion: intent.approvalSnapshot.approvalVersion,
+  } }, unconfirmed);
+  assert.equal(unconfirmed.statusCode, 400);
+  assert.equal(h.providerCalls, 0);
+  const sent = await h.send(intentId);
+  assert.equal(sent.statusCode, 200, sent.payload?.errorMessage);
+  assert.equal(h.providerCalls, 1);
+  assert.equal((await h.send(intentId)).statusCode, 409);
+  assert.equal(h.providerCalls, 1);
+});
+
+test("custom batch pre-provider failure is reported as not sent and the same approval can recover", async () => {
+  let failAuthorizationAtCall = 0;
+  let authorizationCalls = 0;
+  const assertFirestoreSerializable = (value, path = "notification batch") => {
+    if (value === undefined) throw new TypeError(`${path} must not contain undefined`);
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => assertFirestoreSerializable(item, `${path}[${index}]`));
+    } else if (value && typeof value === "object") {
+      for (const [key, item] of Object.entries(value)) {
+        assertFirestoreSerializable(item, `${path}.${key}`);
+      }
+    }
+  };
+  const h = createHarness({
+    beforeSetDoc: (collection, _id, data) => {
+      if (collection === "notificationBatches") assertFirestoreSerializable(data);
+    },
+    authorizeCustomMember: async () => {
+      authorizationCalls += 1;
+      if (failAuthorizationAtCall && authorizationCalls === failAuthorizationAtCall) {
+        throw new TypeError("Cannot read properties of undefined (reading 'x-csrf-token')");
+      }
+      return { admin: { user: { uid: "admin_a" } }, scoped: false };
+    },
+  });
+  const prepared = h.makeResponse();
+  await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+    memberIds: [h.member.memberId], message: "Practice Friday.", requestKey: "pre-provider-recovery",
+  } }, prepared);
+  assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
+  const batchId = prepared.payload.batch.batchId;
+  const intentId = prepared.payload.batch.intentIds[0];
+  const approvalVersion = prepared.payload.batch.recipients[0].approvalVersion;
+  authorizationCalls = 0;
+  failAuthorizationAtCall = 2; // Batch authorization succeeds; per-intent authorization fails before claim.
+
+  const failed = await h.dispatch(batchId);
+  assert.equal(failed.statusCode, 500);
+  assert.equal(failed.payload.outcome, "not_sent");
+  assert.equal(failed.payload.errorMessage, "Could not send this message.");
+  assert.doesNotMatch(failed.payload.errorMessage, /Cannot read properties/);
+  assert.equal(h.providerCalls, 0);
+  const untouchedIntent = await h.getDoc("notificationIntents", intentId);
+  assert.equal(untouchedIntent.status, "preview");
+  assert.equal(untouchedIntent.attemptId, undefined);
+  const retryableBatch = await h.getDoc("notificationBatches", batchId);
+  assert.equal(retryableBatch.status, "prepared");
+  assert.equal(retryableBatch.reviewVersion, prepared.payload.batch.approvalVersion);
+  assert.equal(retryableBatch.recipients[0].approvalVersion, approvalVersion);
+  assert.equal((await h.getDoc("notificationIntents", intentId)).approvalSnapshot.approvalVersion, approvalVersion);
+
+  failAuthorizationAtCall = 0;
+  const recovered = await h.dispatch(batchId);
+  assert.equal(recovered.statusCode, 200, recovered.payload?.errorMessage);
+  assert.equal(recovered.payload.batch.summary.sent, 1);
+  assert.equal(h.providerCalls, 1);
+  const sentIntent = await h.getDoc("notificationIntents", intentId);
+  assert.equal(sentIntent.status, "sent");
+  assert.equal(sentIntent.approvalSnapshot.approvalVersion, approvalVersion);
+  const sentBatch = await h.getDoc("notificationBatches", batchId);
+  assert.equal(sentBatch.status, "sent");
+  assert.equal(sentBatch.recipients[0].approvalVersion, approvalVersion);
+  const ownedAttempt = await h.getDoc("smsDeliveryAttempts", sentIntent.attemptId);
+  assert.equal(ownedAttempt.notificationIntentId, intentId);
+  assert.equal(ownedAttempt.batchId, batchId);
+  assert.equal(ownedAttempt.providerCallStarted, true);
+  assert.equal(ownedAttempt.outcome, "confirmed");
+  assert.equal((await h.dispatch(batchId)).statusCode, 409);
+  assert.equal(h.providerCalls, 1, "a completed approval replay does not duplicate the provider request");
+});
+
+test("a missing attempt at the provider-start gate stays uncertain and cannot be retried", async () => {
+  const sharedCollections = new Map([["smsDeliveryAttempts", new Map()]]);
+  const h = createHarness({
+    sharedCollections,
+    authorizeCustomMember: async () => ({ admin: { user: { uid: "admin_a" } }, scoped: false }),
+    beforeSetDoc: async (collection, id, data) => {
+      if (collection === "smsDeliveryAttempts" && data.providerCallStarted === true) {
+        sharedCollections.get("smsDeliveryAttempts").delete(id);
+        throw new Error("The attempt record disappeared before the provider gate.");
+      }
+    },
+  });
+  const prepared = h.makeResponse();
+  await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+    memberIds: [h.member.memberId], message: "Practice Friday.", requestKey: "missing-attempt-is-uncertain",
+  } }, prepared);
+  assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
+  const intentId = prepared.payload.batch.intentIds[0];
+
+  const first = await h.send(intentId);
+  assert.equal(first.statusCode, 500);
+  assert.equal(first.payload.outcome, "unknown");
+  assert.equal(h.providerCalls, 0);
+  assert.equal(await h.getDoc("smsDeliveryAttempts", (await h.getDoc("notificationIntents", intentId)).attemptId), null);
+  const uncertainIntent = await h.getDoc("notificationIntents", intentId);
+  assert.equal(uncertainIntent.status, "unknown");
+  assert.equal(uncertainIntent.outcome, "unknown");
+
+  const replay = await h.send(intentId);
+  assert.equal(replay.statusCode, 409);
+  assert.equal(replay.payload.outcome, "unknown");
+  assert.equal(h.providerCalls, 0, "uncertain outcome blocks a second provider call");
+});
+
+test("custom message accepts 500 unique recipients after deduplicating IDs", async () => {
+  const h = createHarness();
+  const memberIds = Array.from({ length: 500 }, (_, index) => `bulk-member-${index + 1}`);
+  for (const [index, memberId] of memberIds.entries()) {
+    h.storeFor("teamRosterMembers").set(memberId, {
+      ...h.member, memberId, firstName: `Volunteer${index + 1}`, phoneNumber: h.phoneNumber,
+    });
+  }
+  const prepared = h.makeResponse();
+  await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+    memberIds: [...memberIds, memberIds[0], memberIds[499]],
+    message: "Practice Friday.", requestKey: "exact-500-unique-members",
+  } }, prepared);
+  assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
+  assert.equal(prepared.payload.batch.selectedMemberIds.length, 500);
+  assert.equal(prepared.payload.batch.recipients.length, 500);
+  assert.equal(prepared.payload.batch.summary.eligible, 500);
+  assert.equal(h.storeFor("notificationIntents").size, 500);
+  assert.equal(h.providerCalls, 0);
+});
+
+test("custom message rejects 501 unique recipients before reserving a batch or intents", async () => {
+  const h = createHarness();
+  const memberIds = Array.from({ length: 501 }, (_, index) => `too-many-${index + 1}`);
+  const rejected = h.makeResponse();
+  await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+    memberIds, message: "Practice Friday.", requestKey: "reject-501-members",
+  } }, rejected);
+  assert.equal(rejected.statusCode, 400);
+  assert.equal(rejected.payload.errorMessage, "Select 500 or fewer volunteers, then try again.");
+  assert.equal(h.storeFor("notificationBatches").size, 0);
+  assert.equal(h.storeFor("notificationIntents").size, 0);
+  assert.equal(h.providerCalls, 0);
+});
+
+test("availability SMS preparation rejects an oversized selected audience before reserving a batch", async () => {
+  const h = createHarness();
+  const rejected = h.makeResponse();
+  await h.handler.prepareAvailabilityBatch({ params: { churchId: h.churchId }, body: {
+    intentType: "availability_request", formId: h.form.formId,
+    memberIds: Array.from({ length: 501 }, (_, index) => `availability-${index + 1}`),
+    requestKey: "reject-large-availability-audience",
+  } }, rejected);
+  assert.equal(rejected.statusCode, 400);
+  assert.equal(rejected.payload.errorMessage, "Select 500 or fewer volunteers, then try again.");
+  assert.equal(h.storeFor("notificationBatches").size, 0);
+  assert.equal(h.storeFor("notificationIntents").size, 0);
+  assert.equal(h.providerCalls, 0);
+});
+
+test("custom batch authorization exceptions are not exposed as delivery explanations", async () => {
+  let failAuthorization = false;
+  const h = createHarness({
+    authorizeCustomMember: async () => {
+      if (failAuthorization) throw new TypeError("Cannot read properties of undefined (reading 'x-csrf-token')");
+      return { admin: { user: { uid: "admin_a" } }, scoped: false };
+    },
+  });
+  const prepared = h.makeResponse();
+  await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+    memberIds: [h.member.memberId], message: "Practice Friday.", requestKey: "safe-batch-error",
+  } }, prepared);
+  assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
+  failAuthorization = true;
+
+  const failed = await h.dispatch(prepared.payload.batch.batchId);
+  assert.equal(failed.statusCode, 500);
+  assert.equal(failed.payload.errorMessage, "Could not send this message batch.");
+  assert.doesNotMatch(failed.payload.errorMessage, /Cannot read properties/);
+  assert.equal((await h.getDoc("notificationBatches", prepared.payload.batch.batchId)).status, "prepared");
+  assert.equal(h.providerCalls, 0);
+});
+
+for (const firestore of [false, true]) {
+  test(`custom dispatch refuses an expired approval without reaching the provider (${firestore ? "transaction fake" : "memory"})`, async () => {
+    const h = createHarness({ firestore });
+    const prepared = h.makeResponse();
+    await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+      memberIds: [h.member.memberId], message: "Practice Friday.", requestKey: `expired-${firestore}`,
+    } }, prepared);
+    assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
+    const intentId = prepared.payload.batch.intentIds[0];
+    const intent = await h.getDoc("notificationIntents", intentId);
+    intent.approvalSnapshot.expiresAt = Date.now() - 1;
+    h.storeFor("notificationIntents").set(intentId, intent);
+    const result = await h.dispatch(prepared.payload.batch.batchId);
+    assert.equal(result.statusCode, 200, result.payload?.errorMessage);
+    assert.equal(h.providerCalls, 0);
+    const latestIntent = await h.getDoc("notificationIntents", intentId);
+    assert.equal(latestIntent.status, "preview");
+    assert.equal(latestIntent.approvalSnapshot, null);
+    assert.equal(result.payload.batch.summary.eligible, 0);
+  });
+}
+
+test("custom message provider uncertainty fences replay of the same operation", async () => {
+  const h = createHarness({ providerSend: async () => {
+    throw new Error("provider timeout");
+  } });
+  const prepared = h.makeResponse();
+  await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+    memberIds: [h.member.memberId], message: "Practice Friday.", requestKey: "unknown-outcome",
+  } }, prepared);
+  assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
+  const first = await h.dispatch(prepared.payload.batch.batchId);
+  assert.equal(first.statusCode, 200);
+  assert.equal(h.providerCalls, 1);
+  assert.equal(first.payload.batch.summary.uncertain, 1);
+  assert.equal((await h.dispatch(prepared.payload.batch.batchId)).statusCode, 200);
+  assert.equal(h.providerCalls, 1);
+});
+
+for (const firestore of [false, true]) {
+  test(`legacy pending attempt without a start marker cannot be resent (${firestore ? "transaction fake" : "memory"})`, async () => {
+    const h = createHarness({ firestore });
+    const { intent } = await h.preview();
+    const legacyAttemptId = "legacy-pending-attempt";
+    h.storeFor("notificationIntents").set(intent.intentId, {
+      ...intent, status: "failed", attemptId: legacyAttemptId,
+    });
+    h.storeFor("smsDeliveryAttempts").set(legacyAttemptId, {
+      attemptId: legacyAttemptId,
+      churchId: h.churchId,
+      notificationIntentId: intent.intentId,
+      memberId: intent.memberId,
+      recipientId: intent.recipientId,
+      sourceId: intent.sourceId,
+      formId: intent.formId,
+      intentType: intent.intentType,
+      status: "pending",
+    });
+    const result = await h.send(intent.intentId);
+    assert.equal(result.statusCode, 409);
+    assert.equal(h.providerCalls, 0);
+  });
+}
+
+for (const firestore of [false, true]) {
+  test(`custom message allows a deliberate new batch after a definitive failure (${firestore ? "transaction fake" : "memory"})`, async () => {
+    let rejectFirstAttempt = true;
+    const h = createHarness({ firestore, providerSend: async () => {
+      if (rejectFirstAttempt) {
+        rejectFirstAttempt = false;
+        throw Object.assign(new Error("The SMS provider rejected this number."), { definitiveRejection: true, code: "21614" });
+      }
+      return { providerMessageId: "SM_custom_retry", status: "accepted" };
+    } });
+    const prepare = async (requestKey) => {
+      const response = h.makeResponse();
+      await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+        memberIds: [h.member.memberId], message: "Practice Friday.", requestKey,
+      } }, response);
+      assert.equal(response.statusCode, 200, response.payload?.errorMessage);
+      return response.payload.batch;
+    };
+    const failedBatch = await prepare("custom-definitive-failure");
+    const failed = await h.dispatch(failedBatch.batchId);
+    assert.equal(failed.statusCode, 200, failed.payload?.errorMessage);
+    assert.equal(failed.payload.batch.summary.failed, 1);
+    assert.equal(h.providerCalls, 1);
+
+    const retryBatch = await prepare("custom-deliberate-retry");
+    assert.notEqual(retryBatch.batchId, failedBatch.batchId);
+    assert.equal(retryBatch.summary.eligible, 1);
+    const sent = await h.dispatch(retryBatch.batchId);
+    assert.equal(sent.statusCode, 200, sent.payload?.errorMessage);
+    assert.equal(sent.payload.batch.summary.sent, 1);
+    assert.equal(h.providerCalls, 2);
+
+    const history = h.makeResponse();
+    await h.handler.listMessageHistory({ params: { churchId: h.churchId }, query: {} }, history);
+    const customEntries = history.payload.entries.filter((entry) => entry.messageType === "custom_message");
+    assert.equal(customEntries.length, 2);
+    assert.deepEqual(new Set(customEntries.map((entry) => entry.status)), new Set(["failed", "accepted"]));
+  });
+}
+
+test("custom review excludes members without consent or after STOP and sends nothing", async () => {
+  const h = createHarness();
+  const consentId = smsConsentIdForChurchPhone(h.churchId, h.phoneNumber);
+  h.storeFor("smsConsents").delete(consentId);
+  const prepare = async (key) => {
+    const res = h.makeResponse();
+    await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+      memberIds: [h.member.memberId], message: "Practice Friday.", requestKey: key,
+    } }, res);
+    return res;
+  };
+  const withoutConsent = await prepare("missing-consent");
+  assert.equal(withoutConsent.statusCode, 200, withoutConsent.payload?.errorMessage);
+  assert.equal(withoutConsent.payload.batch.summary.eligible, 0);
+  assert.equal(withoutConsent.payload.batch.recipients[0].exclusionReason, "SMS consent is needed for this phone number.");
+  h.storeFor("smsConsents").set(consentId, { consentId, churchId: h.churchId, phoneNumber: h.phoneNumber,
+    status: "opted_out", optedOutAt: new Date().toISOString() });
+  const optedOut = await prepare("opted-out");
+  assert.equal(optedOut.statusCode, 200, optedOut.payload?.errorMessage);
+  assert.equal(optedOut.payload.batch.summary.eligible, 0);
+  assert.equal(optedOut.payload.batch.recipients[0].exclusionReason, "This phone number has opted out of SMS.");
+  h.storeFor("teamRosterMembers").set("invalid_phone", {
+    memberId: "invalid_phone", churchId: h.churchId, firstName: "Invalid", lastName: "Number", phoneNumber: "not a phone",
+  });
+  const invalidNumber = h.makeResponse();
+  await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+    memberIds: ["invalid_phone"], message: "Practice Friday.", requestKey: "invalid-number",
+  } }, invalidNumber);
+  assert.equal(invalidNumber.statusCode, 200, invalidNumber.payload?.errorMessage);
+  assert.equal(invalidNumber.payload.batch.summary.eligible, 0);
+  assert.equal(invalidNumber.payload.batch.recipients[0].exclusionReason, "This volunteer does not have a valid mobile number.");
+  assert.equal(h.providerCalls, 0);
+});
+
+test("custom dispatch rechecks church SMS configuration and returns an actionable reason", async () => {
+  const h = createHarness();
+  const prepared = h.makeResponse();
+  await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+    memberIds: [h.member.memberId], message: "Practice Friday.", requestKey: "configuration-changed",
+  } }, prepared);
+  assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
+  assert.equal(prepared.payload.batch.summary.eligible, 1);
+  const config = h.storeFor("churchMessagingConfigs").get(h.churchId);
+  h.storeFor("churchMessagingConfigs").set(h.churchId, { ...config, enabled: false });
+  const blocked = await h.dispatch(prepared.payload.batch.batchId);
+  assert.equal(blocked.statusCode, 200, JSON.stringify(blocked.payload));
+  assert.equal(h.providerCalls, 0);
+  assert.equal(blocked.payload.batch.summary.eligible, 0);
+  assert.equal(blocked.payload.batch.summary.excluded, 1);
+  assert.match(blocked.payload.batch.recipients[0].exclusionReason, /SMS messaging must be enabled and fully configured/);
+});
+
+test("custom review keeps two roster identities sharing one consented phone", async () => {
+  const h = createHarness();
+  const res = h.makeResponse();
+  await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+    memberIds: [h.member.memberId, "member_b"], message: "Practice Friday.", requestKey: "shared-phone",
+  } }, res);
+  assert.equal(res.statusCode, 200, res.payload?.errorMessage);
+  assert.equal(res.payload.batch.summary.eligible, 2);
+  assert.equal(new Set(res.payload.batch.intentIds).size, 2);
+  assert.equal((await h.dispatch(res.payload.batch.batchId)).statusCode, 200);
+  assert.equal(h.providerCalls, 2);
+});
+
+test("unified history redacts form links while showing authorized custom content", async () => {
+  const h = createHarness();
+  const form = await h.preview();
+  assert.equal(form.res.statusCode, 200, form.res.payload?.errorMessage);
+  const custom = h.makeResponse();
+  await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+    memberIds: [h.member.memberId], message: "Practice Friday.", requestKey: "history-custom",
+  } }, custom);
+  assert.equal(custom.statusCode, 200, custom.payload?.errorMessage);
+  await h.dispatch(custom.payload.batch.batchId);
+  const response = h.makeResponse();
+  await h.handler.listMessageHistory({ params: { churchId: h.churchId }, query: {} }, response);
+  assert.equal(response.statusCode, 200, response.payload?.errorMessage);
+  const entries = response.payload.entries;
+  assert.equal(entries.find((entry) => entry.messageType === "custom_message")?.summary, "Practice Friday. Reply STOP to opt out.");
+  assert.doesNotMatch(JSON.stringify(entries.find((entry) => entry.messageType === "availability_request")), /secure-token/);
+});
+
+test("scoped history does not reveal another operator's custom message", async () => {
+  let actorUid = "admin_a";
+  const h = createHarness({
+    authorizeCustomMember: async () => ({ admin: { user: { uid: actorUid } }, scoped: true }),
+    authorizeMessagingHistory: async () => ({ admin: { user: { uid: actorUid } }, scoped: true }),
+  });
+  const prepared = h.makeResponse();
+  await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+    memberIds: [h.member.memberId], message: "Private practice note.", requestKey: "scoped-note",
+  } }, prepared);
+  assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
+  const dispatched = await h.dispatch(prepared.payload.batch.batchId);
+  assert.equal(dispatched.statusCode, 200, JSON.stringify(dispatched.payload));
+  assert.equal(h.providerCalls, 1, "the approved scoped administrator's current authorization matches the review");
+  actorUid = "other_editor";
+  const history = h.makeResponse();
+  await h.handler.listMessageHistory({ params: { churchId: h.churchId }, query: {} }, history);
+  assert.equal(history.statusCode, 200, history.payload?.errorMessage);
+  assert.equal(history.payload.entries.length, 0);
+});
 
 for (const firestore of [false, true]) {
   test(`grouped schedule SMS is one reviewed intent per current roster member and remains gated (${firestore ? "transaction fake" : "memory"})`, async () => {
@@ -459,7 +977,9 @@ for (const firestore of [false, true]) {
     const result = await h.send(intent.intentId);
     assert.equal(result.statusCode, 403);
     assert.equal(h.providerCalls, 0);
-    assert.equal(h.storeFor("notificationIntents").get(intent.intentId).status, "failed");
+    assert.equal(h.storeFor("notificationIntents").get(intent.intentId).status, "preview");
+    assert.equal(h.storeFor("notificationIntents").get(intent.intentId).outcome, "not_sent");
+    assert.ok(h.storeFor("notificationIntents").get(intent.intentId).approvalSnapshot.approvalVersion);
     assert.equal([...h.storeFor("smsDeliveryAttempts").values()][0].outcome, "not_sent");
   });
 
@@ -499,6 +1019,14 @@ test("availability preview is church-scoped and does not call the provider", asy
   assert.equal(h.providerCalls, 0);
 });
 
+test("availability preparation rejects an unknown audience instead of silently defaulting", async () => {
+  const h = createHarness();
+  const { res, batch } = await h.preview({ audienceType: "unknown" });
+  assert.equal(res.statusCode, 400);
+  assert.equal(batch, undefined);
+  assert.equal(h.storeFor("notificationBatches").size, 0);
+});
+
 test("a prepared batch is scoped to its selected form and recipients, and hides tokens from history", async () => {
   const h = createHarness();
   h.storeFor("teamIntakeRecipients").set(h.recipient.recipientId, {
@@ -536,22 +1064,217 @@ test("a prepared batch is scoped to its selected form and recipients, and hides 
   assert.equal(intent.batchId, batch.batchId);
 });
 
-test("a confirmed availability request cannot be selected for a duplicate send", async () => {
+test("an unsent prepared batch can be abandoned and cannot be sent afterward", async () => {
+  const h = createHarness();
+  const { batch } = await h.preview({ audienceType: "specific", requestKey: "abandon-prepared-batch" });
+
+  const abandoned = await h.abandon(batch.batchId);
+  assert.equal(abandoned.statusCode, 200, JSON.stringify(abandoned.payload));
+  assert.equal(abandoned.payload.batch.status, "abandoned");
+  assert.equal((await h.getDoc("notificationBatches", batch.batchId)).status, "abandoned");
+  assert.equal(h.providerCalls, 0);
+
+  const batchDispatch = await h.dispatch(batch.batchId);
+  assert.equal(batchDispatch.statusCode, 409);
+  assert.equal(h.providerCalls, 0);
+
+  const intentDispatch = await h.send(batch.intentIds[0]);
+  assert.equal(intentDispatch.statusCode, 409);
+  assert.match(intentDispatch.payload.errorMessage, /review was discarded/i);
+  assert.equal(h.providerCalls, 0);
+});
+
+test("a batch cannot be abandoned after a send has started", async () => {
+  const h = createHarness();
+  const { batch } = await h.preview({ requestKey: "do-not-abandon-sent-batch" });
+  const dispatched = await h.dispatch(batch.batchId);
+  assert.equal(dispatched.statusCode, 200);
+
+  const abandoned = await h.abandon(batch.batchId);
+  assert.equal(abandoned.statusCode, 409);
+  assert.equal((await h.getDoc("notificationBatches", batch.batchId)).status, "sent");
+  assert.equal(h.providerCalls, 1);
+});
+
+test("an intentional availability resend gets a new identity while retries preserve each send", async () => {
   const h = createHarness();
   const { batch: firstBatch } = await h.preview();
   const firstSend = await h.dispatch(firstBatch.batchId);
   assert.equal(firstSend.statusCode, 200);
   assert.equal(firstSend.payload.batch.summary.sent, 1);
   assert.equal(h.providerCalls, 1);
+  const firstIntent = await h.getDoc("notificationIntents", firstBatch.intentIds[0]);
 
-  const { batch: secondBatch } = await h.preview();
-  assert.equal(secondBatch.summary.eligible, 0);
-  assert.equal(secondBatch.summary.alreadySent, 1);
-  assert.equal(secondBatch.recipients[0].status, "sent");
-  assert.match(secondBatch.recipients[0].exclusionReason, /already sent/i);
+  const { batch: secondBatch } = await h.preview({ audienceType: "specific" });
+  assert.equal(secondBatch.summary.eligible, 1);
+  assert.notEqual(secondBatch.intentIds[0], firstBatch.intentIds[0]);
+  const secondIntent = await h.getDoc("notificationIntents", secondBatch.intentIds[0]);
+  assert.notEqual(secondIntent.idempotencyKey, firstIntent.idempotencyKey);
+  assert.equal(secondIntent.message, firstIntent.message);
+
   const secondSend = await h.dispatch(secondBatch.batchId);
   assert.equal(secondSend.statusCode, 200);
+  assert.equal(h.providerCalls, 2);
+  assert.equal((await h.getDoc("notificationIntents", firstBatch.intentIds[0])).status, "sent");
+  assert.equal((await h.getDoc("notificationIntents", secondBatch.intentIds[0])).status, "sent");
+  const replay = await h.dispatch(secondBatch.batchId);
+  assert.equal(replay.statusCode, 409);
+  assert.equal(h.providerCalls, 2);
+});
+
+test("retrying preparation with the same batch key adopts the same intent", async () => {
+  const h = createHarness();
+  const first = await h.preview({ audienceType: "specific", requestKey: "same-operation" });
+  const retry = await h.preview({ audienceType: "specific", requestKey: "same-operation" });
+  assert.equal(retry.res.statusCode, 200);
+  assert.equal(retry.batch.batchId, first.batch.batchId);
+  assert.deepEqual(retry.batch.intentIds, first.batch.intentIds);
+  assert.equal(h.storeFor("notificationIntents").size, 1);
+  assert.equal(h.providerCalls, 0);
+});
+
+test("CSRF rejection happens before batch dispatch and the same prepared operation can be retried", async () => {
+  let rejectCsrf = false;
+  const h = createHarness({ assertCsrf: async () => {
+    if (rejectCsrf) throw Object.assign(new Error("Could not verify this request."), {
+      statusCode: 403,
+      code: "AUTH_CSRF_MISMATCH",
+    });
+  } });
+  const { batch } = await h.preview({ audienceType: "specific", requestKey: "csrf-recovery-operation" });
+  rejectCsrf = true;
+  const rejected = await h.dispatch(batch.batchId);
+  assert.equal(rejected.statusCode, 403);
+  assert.equal(rejected.payload.code, "AUTH_CSRF_MISMATCH");
+  assert.equal((await h.getDoc("notificationBatches", batch.batchId)).status, "prepared");
+  assert.equal((await h.getDoc("notificationIntents", batch.intentIds[0])).status, "preview");
+  assert.equal(h.storeFor("smsDeliveryAttempts").size, 0);
+  assert.equal(h.providerCalls, 0);
+
+  rejectCsrf = false;
+  const retried = await h.dispatch(batch.batchId);
+  assert.equal(retried.statusCode, 200);
+  assert.equal(retried.payload.batch.batchId, batch.batchId);
+  assert.equal(retried.payload.batch.intentIds[0], batch.intentIds[0]);
   assert.equal(h.providerCalls, 1);
+});
+
+test("a new message after an uncertain result requires explicit duplicate-risk acknowledgment", async () => {
+  let providerAttempt = 0;
+  const h = createHarness({ providerSend: async () => {
+    providerAttempt += 1;
+    if (providerAttempt === 1) throw Object.assign(new Error("Provider timed out."), { code: "ETIMEDOUT" });
+    return { providerMessageId: "SM_second_operation", status: "accepted" };
+  } });
+  const first = (await h.preview()).batch;
+  const uncertain = await h.dispatch(first.batchId);
+  assert.equal(uncertain.statusCode, 200);
+  assert.equal(uncertain.payload.batch.summary.uncertain, 1);
+  assert.equal(h.providerCalls, 1);
+
+  const second = (await h.preview({ audienceType: "specific", requestKey: "deliberate-unknown-resend" })).batch;
+  assert.equal(second.summary.eligible, 1);
+  assert.equal(second.recipients[0].previousDeliveryStatus, "uncertain");
+  const unacknowledged = await h.dispatch(second.batchId);
+  assert.equal(unacknowledged.statusCode, 409);
+  assert.equal(h.providerCalls, 1);
+  assert.equal((await h.getDoc("notificationBatches", second.batchId)).status, "prepared");
+
+  const acknowledged = await h.dispatch(second.batchId, true, [h.member.memberId]);
+  assert.equal(acknowledged.statusCode, 200);
+  assert.equal(acknowledged.payload.batch.summary.sent, 1);
+  const savedAcknowledgment = await h.getDoc("notificationBatches", second.batchId);
+  assert.deepEqual(savedAcknowledgment.uncertainOutcomeAcknowledgment.memberIds, [h.member.memberId]);
+  assert.equal(savedAcknowledgment.uncertainOutcomeAcknowledgment.actorUid, "admin_a");
+  assert.equal(h.providerCalls, 2);
+
+  await h.dispatch(first.batchId);
+  assert.equal(h.providerCalls, 2, "replaying the unknown operation must never invoke the provider again");
+  assert.equal((await h.getDoc("notificationIntents", first.intentIds[0])).status, "unknown");
+});
+
+test("a newly uncertain earlier send is rechecked after the batch claim", async () => {
+  let h;
+  let injected = false;
+  h = createHarness({ beforeSetDoc: async (collection, _id, data) => {
+    if (injected || collection !== "notificationBatches" || data.status !== "dispatching") return;
+    injected = true;
+    h.storeFor("notificationIntents").set("late_unknown_intent", {
+      intentId: "late_unknown_intent",
+      churchId: h.churchId,
+      formId: h.form.formId,
+      recipientId: h.recipient.recipientId,
+      memberId: h.member.memberId,
+      sourceType: "team_intake_recipient",
+      sourceId: h.recipient.recipientId,
+      intentType: "availability_request",
+      status: "unknown",
+      batchId: "earlier_batch",
+      createdAt: "2026-09-01T00:00:00.000Z",
+    });
+  } });
+
+  const { batch } = await h.preview({ audienceType: "specific", requestKey: "uncertain-race-operation" });
+  const firstDispatch = await h.dispatch(batch.batchId);
+  assert.equal(injected, true);
+  assert.equal(firstDispatch.statusCode, 200);
+  assert.equal(h.providerCalls, 0, "the send must be stopped when earlier delivery becomes uncertain after preflight");
+  assert.match(firstDispatch.payload.batch.recipients[0].exclusionReason, /became unconfirmed/i);
+
+  const refreshed = await h.dispatch(batch.batchId);
+  assert.equal(refreshed.statusCode, 409);
+  assert.equal(h.providerCalls, 0);
+  const acknowledged = await h.dispatch(batch.batchId, true, [h.member.memberId]);
+  assert.equal(acknowledged.statusCode, 200);
+  assert.equal(acknowledged.payload.batch.summary.sent, 1);
+  assert.equal(h.providerCalls, 1);
+});
+
+test("an uncertain resend blocks a reminder despite an older accepted request", async () => {
+  let providerAttempt = 0;
+  const h = createHarness({ providerSend: async () => {
+    providerAttempt += 1;
+    if (providerAttempt === 2) throw Object.assign(new Error("Provider timed out."), { code: "ETIMEDOUT" });
+    return { providerMessageId: `SM_${providerAttempt}`, status: "accepted" };
+  } });
+
+  const initialRequest = (await h.preview({ requestKey: "accepted-initial-request" })).batch;
+  assert.equal((await h.dispatch(initialRequest.batchId)).payload.batch.summary.sent, 1);
+
+  const reminderReview = (await h.preview({
+    intentType: "availability_reminder",
+    audienceType: "nonresponders",
+    requestKey: "reminder-reviewed-before-uncertain-resend",
+  })).batch;
+  assert.equal(reminderReview.summary.eligible, 1);
+
+  const uncertainResend = (await h.preview({
+    audienceType: "specific",
+    requestKey: "newer-uncertain-resend",
+  })).batch;
+  assert.equal((await h.dispatch(uncertainResend.batchId)).payload.batch.summary.uncertain, 1);
+  assert.equal(h.providerCalls, 2);
+
+  const blockedDispatch = await h.dispatch(reminderReview.batchId);
+  assert.equal(blockedDispatch.statusCode, 409);
+  assert.match(blockedDispatch.payload.errorMessage, /before sending a reminder/i);
+  assert.equal(h.providerCalls, 2);
+  assert.equal((await h.getDoc("notificationBatches", reminderReview.batchId)).status, "prepared");
+
+  const nextReminder = await h.preview({
+    intentType: "availability_reminder",
+    audienceType: "nonresponders",
+    requestKey: "reminder-after-uncertain-resend",
+  });
+  assert.equal(nextReminder.batch.summary.eligible, 0);
+  assert.equal(nextReminder.batch.summary.excluded, 1);
+  assert.match(nextReminder.batch.recipients[0].exclusionReason, /before preparing a reminder/i);
+  assert.equal(h.providerCalls, 2);
+
+  const directSend = await h.send(reminderReview.intentIds[0]);
+  assert.equal(directSend.statusCode, 409);
+  assert.match(directSend.payload.errorMessage, /before sending a reminder/i);
+  assert.equal(h.providerCalls, 2);
 });
 
 test("forms with editable non-availability fields prepare form-response messages", async () => {
@@ -579,14 +1302,18 @@ test("form reminders use reminder wording and remain scoped to the current form 
     availabilityOccurrences: [],
   };
   h.storeFor("teamIntakeForms").set(form.formId, form);
+  const initial = await h.preview();
+  assert.equal(initial.batch.summary.eligible, 1);
+  await h.dispatch(initial.batch.batchId);
   const { res, batch } = await h.preview({ intentType: "availability_reminder" });
   assert.equal(res.statusCode, 200);
-  assert.equal(batch.reminderRound, 1);
+  assert.equal(batch.reminderRound, 0);
+  assert.equal(h.storeFor("teamIntakeForms").get(h.form.formId).reminderRound, undefined);
   assert.equal(batch.recipients[0].message, "First Church: Reminder: Please complete the October availability form: https://www.worshipsync.net/a/secure-token Reply STOP to opt out.");
   assert.equal(batch.recipients[0].segmentCount, 1);
   assert.equal(measureSmsMessage(batch.recipients[0].message).segmentCount, 1);
   assert.match(batch.recipients[0].message, /\/a\/secure-token/);
-  assert.equal(h.providerCalls, 0);
+  assert.equal(h.providerCalls, 1);
 });
 
 test("batch preparation rejects forms without any editable personalized response fields before reserving a batch", async () => {
@@ -743,13 +1470,15 @@ test("church-wide form history keeps former recipients while scoped editors lose
 
 test("a response after reminder preparation blocks dispatch and keeps request history", async () => {
   const h = createHarness();
+  const initial = await h.preview();
+  await h.dispatch(initial.batch.batchId);
   const { batch, intent } = await h.preview({ intentType: "availability_reminder" });
   h.storeFor("teamIntakeRecipients").set(h.recipient.recipientId, {
     ...h.recipient, respondedAt: "2026-09-25T12:01:00.000Z", submissionId: "submission_a",
   });
   const dispatch = await h.dispatch(batch.batchId);
   assert.equal(dispatch.statusCode, 200);
-  assert.equal(h.providerCalls, 0);
+  assert.equal(h.providerCalls, 1);
   assert.equal(h.storeFor("notificationIntents").get(intent.intentId).status, "preview");
   assert.match(dispatch.payload.batch.recipients[0].exclusionReason, /already responded/i);
 });
@@ -773,18 +1502,19 @@ test("bulk dispatch requires confirmation, sends exactly one selected batch, and
   assert.equal(completed.summary.awaitingDispatch, 0);
 });
 
-test("a newly prepared batch supersedes its prior draft and cannot dispatch through the old batch identity", async () => {
+test("a new operation does not overwrite an abandoned prepared batch", async () => {
   const h = createHarness();
   const oldBatch = (await h.preview()).batch;
-  const newBatch = (await h.preview()).batch;
+  const newBatch = (await h.preview({ audienceType: "specific" })).batch;
   assert.notEqual(oldBatch.batchId, newBatch.batchId);
-  assert.equal(h.storeFor("notificationBatches").get(oldBatch.batchId).status, "superseded");
-  const staleDispatch = await h.dispatch(oldBatch.batchId);
-  assert.equal(staleDispatch.statusCode, 409);
-  assert.equal(h.providerCalls, 0);
+  assert.notEqual(oldBatch.intentIds[0], newBatch.intentIds[0]);
+  assert.equal(h.storeFor("notificationBatches").get(oldBatch.batchId).status, "prepared");
+  const oldDispatch = await h.dispatch(oldBatch.batchId);
+  assert.equal(oldDispatch.statusCode, 200);
+  assert.equal(h.providerCalls, 1);
   const currentDispatch = await h.dispatch(newBatch.batchId);
   assert.equal(currentDispatch.statusCode, 200);
-  assert.equal(h.providerCalls, 1);
+  assert.equal(h.providerCalls, 2);
 });
 
 test("a concurrent approval makes one provider call and stores one attempt", async () => {
@@ -862,11 +1592,13 @@ test("opt-out and changed source records block dispatch after preview", async ()
   assert.equal(h.providerCalls, 0);
 
   const changedSource = createHarness();
+  const initial = await changedSource.preview();
+  await changedSource.dispatch(initial.batch.batchId);
   const { intent: second } = await changedSource.preview({ intentType: "availability_reminder" });
   changedSource.storeFor("teamIntakeForms").set(changedSource.form.formId, { ...changedSource.form, active: false });
   const changed = await changedSource.send(second.intentId);
   assert.equal(changed.statusCode, 409);
-  assert.equal(changedSource.providerCalls, 0);
+  assert.equal(changedSource.providerCalls, 1);
 });
 
 test("permission is checked again immediately before the provider send", async () => {
@@ -972,6 +1704,7 @@ test("shared intents cover every requested volunteer notification event", () => 
     "availability_request", "availability_reminder", "assignment_notification",
     "assignment_confirmation", "schedule_change", "replacement_request",
     "schedule_initial_notification",
+    "custom_message",
   ]);
   for (const intentType of NOTIFICATION_INTENT_TYPES) {
     assert.equal(createNotificationIntent({
@@ -1610,6 +2343,83 @@ const clearFirestoreEmulator = async () => {
   assert.equal(response.status, 200, "Firestore emulator database was cleared before the integration case");
 };
 
+for (const mode of ["memory restart", "Firestore emulator restart"]) {
+  const useFirestore = mode.startsWith("Firestore");
+  test(`custom SMS interruption is recovered from history and batch status (${mode})`, { skip: useFirestore && !firestoreEmulatorAvailable }, async () => {
+    if (useFirestore) await clearFirestoreEmulator();
+    const app = useFirestore ? initializeApp({ projectId: firestoreEmulatorProjectId }, `custom-interruption-${randomUUID()}`) : null;
+    const db = app ? getFirestore(app) : null;
+    let signalProviderStarted;
+    const providerStarted = new Promise((resolve) => { signalProviderStarted = resolve; });
+    const providerGate = new Promise(() => {}); // Simulate a process that never records the provider result.
+    let firstProcess;
+    try {
+      firstProcess = createHarness({
+        ...(db ? { firestoreDb: db } : {}),
+        providerSend: async () => {
+          signalProviderStarted();
+          await providerGate;
+          return { providerMessageId: "SM_unreachable", status: "accepted" };
+        },
+      });
+      if (db) await firstProcess.seedFirestore();
+      const prepared = firstProcess.makeResponse();
+      await firstProcess.handler.prepareCustomBatch({ params: { churchId: firstProcess.churchId }, body: {
+        memberIds: [firstProcess.member.memberId], message: "Practice Friday.", requestKey: `interrupted-${mode}`,
+      } }, prepared);
+      assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
+      const batchId = prepared.payload.batch.batchId;
+      const intentId = prepared.payload.batch.intentIds[0];
+
+      void firstProcess.dispatch(batchId);
+      await providerStarted;
+      const inFlightIntent = await firstProcess.getDoc("notificationIntents", intentId);
+      const inFlightAttempt = await firstProcess.getDoc("smsDeliveryAttempts", inFlightIntent.attemptId);
+      assert.equal(inFlightIntent.status, "sending");
+      assert.equal(inFlightAttempt.providerCallStarted, true);
+      assert.equal(firstProcess.providerCalls, 1);
+
+      const staleAt = new Date(Date.now() - NOTIFICATION_SEND_STALE_AFTER_MS - 1_000).toISOString();
+      if (db) {
+        await Promise.all([
+          db.collection("notificationIntents").doc(intentId).set({ sendStartedAt: staleAt }, { merge: true }),
+          db.collection("notificationBatches").doc(batchId).set({ dispatchStartedAt: staleAt }, { merge: true }),
+        ]);
+      } else {
+        firstProcess.storeFor("notificationIntents").set(intentId, { ...inFlightIntent, sendStartedAt: staleAt });
+        const savedBatch = await firstProcess.getDoc("notificationBatches", batchId);
+        firstProcess.storeFor("notificationBatches").set(batchId, { ...savedBatch, dispatchStartedAt: staleAt });
+      }
+
+      const restarted = createHarness({
+        ...(db ? { firestoreDb: db } : { sharedCollections: firstProcess.collections }),
+        providerSend: async () => { throw new Error("A read after restart must not resend an uncertain message."); },
+      });
+      const history = restarted.makeResponse();
+      await restarted.handler.listMessageHistory({ params: { churchId: restarted.churchId }, query: {} }, history);
+      assert.equal(history.statusCode, 200, history.payload?.errorMessage);
+      const entry = history.payload.entries.find((row) => row.historyId === batchId);
+      assert.equal(entry.status, "unconfirmed");
+      assert.equal(entry.recipients[0].status, "unknown");
+      assert.equal(entry.recipients[0].outcome, "unknown");
+      assert.equal((await restarted.getDoc("notificationIntents", intentId)).status, "unknown");
+      assert.equal((await restarted.getDoc("smsDeliveryAttempts", inFlightIntent.attemptId)).outcome, "unknown");
+      assert.equal((await restarted.getDoc("notificationBatches", batchId)).status, "partial");
+
+      const detail = restarted.makeResponse();
+      await restarted.handler.getAvailabilityBatch({ params: { churchId: restarted.churchId, batchId } }, detail);
+      assert.equal(detail.statusCode, 200, detail.payload?.errorMessage);
+      assert.equal(detail.payload.batch.status, "partial");
+      assert.equal(detail.payload.batch.recipients[0].status, "unknown");
+      assert.equal(detail.payload.batch.recipients[0].attemptOutcome, "unknown");
+      assert.equal(firstProcess.providerCalls, 1);
+      assert.equal(restarted.providerCalls, 0);
+    } finally {
+      if (app) await deleteApp(app);
+    }
+  });
+}
+
 test("Firestore emulator fences competing client sends with one provider request", { skip: !firestoreEmulatorAvailable }, async () => {
   await clearFirestoreEmulator();
   const projectId = firestoreEmulatorProjectId;
@@ -1648,6 +2458,152 @@ test("Firestore emulator fences competing client sends with one provider request
     assert.equal(attempts.size, 1);
   } finally {
     releaseProvider?.();
+    await deleteApp(app);
+  }
+});
+
+test("Firestore emulator fences competing custom batch dispatches with one provider request", { skip: !firestoreEmulatorAvailable }, async () => {
+  await clearFirestoreEmulator();
+  const app = initializeApp({ projectId: firestoreEmulatorProjectId }, `custom-batch-race-${randomUUID()}`);
+  const db = getFirestore(app);
+  let signalProviderStarted;
+  let releaseProvider;
+  const providerStarted = new Promise((resolve) => { signalProviderStarted = resolve; });
+  const providerGate = new Promise((resolve) => { releaseProvider = resolve; });
+  try {
+    const h = createHarness({
+      firestoreDb: db,
+      providerSend: async () => {
+        signalProviderStarted();
+        await providerGate;
+        return { providerMessageId: "SM_custom_batch_race", status: "accepted" };
+      },
+    });
+    await h.seedFirestore();
+    const prepared = h.makeResponse();
+    await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+      memberIds: [h.member.memberId], message: "Practice Friday.", requestKey: "emulator-custom-race",
+    } }, prepared);
+    assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
+    const batchId = prepared.payload.batch.batchId;
+    const dispatches = [h.dispatch(batchId), h.dispatch(batchId)];
+    const fastest = await Promise.race(dispatches.map((promise) => promise.then((result) => ({ result }))));
+    if (fastest.result.statusCode !== 409) await providerStarted;
+    releaseProvider();
+    const results = await Promise.all(dispatches);
+    assert.equal(h.providerCalls, 1);
+    assert.ok(results.some((result) => result.statusCode === 409));
+    const batch = await db.collection("notificationBatches").doc(batchId).get();
+    assert.equal(batch.data().status, "sent");
+    const attempts = await db.collection("smsDeliveryAttempts").where("batchId", "==", batchId).get();
+    assert.equal(attempts.size, 1);
+  } finally {
+    releaseProvider?.();
+    await deleteApp(app);
+  }
+});
+
+test("Firestore emulator retains an uncertain custom attempt and never replays it", { skip: !firestoreEmulatorAvailable }, async () => {
+  await clearFirestoreEmulator();
+  const app = initializeApp({ projectId: firestoreEmulatorProjectId }, `custom-batch-recovery-${randomUUID()}`);
+  const db = getFirestore(app);
+  try {
+    const h = createHarness({
+      firestoreDb: db,
+      providerSend: async () => { throw Object.assign(new Error("Provider response timed out."), { code: "ETIMEDOUT" }); },
+    });
+    await h.seedFirestore();
+    const prepared = h.makeResponse();
+    await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+      memberIds: [h.member.memberId], message: "Practice Friday.", requestKey: "emulator-custom-unknown",
+    } }, prepared);
+    assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
+    const batchId = prepared.payload.batch.batchId;
+    const first = await h.dispatch(batchId);
+    assert.equal(first.statusCode, 200, first.payload?.errorMessage);
+    assert.equal(first.payload.batch.summary.uncertain, 1);
+    const status = h.makeResponse();
+    await h.handler.getAvailabilityBatch({ params: { churchId: h.churchId, batchId } }, status);
+    assert.equal(status.statusCode, 200, status.payload?.errorMessage);
+    assert.equal(status.payload.batch.summary.uncertain, 1);
+    assert.equal((await h.dispatch(batchId)).statusCode, 200);
+    assert.equal(h.providerCalls, 1);
+    const attempts = await db.collection("smsDeliveryAttempts").where("batchId", "==", batchId).get();
+    assert.equal(attempts.size, 1);
+    const history = h.makeResponse();
+    await h.handler.listMessageHistory({ params: { churchId: h.churchId }, query: {} }, history);
+    assert.equal(history.payload.entries.find((entry) => entry.historyId === batchId).status, "unconfirmed");
+  } finally {
+    await deleteApp(app);
+  }
+});
+
+test("Firestore emulator persists a pre-provider custom failure as retryable and not sent", { skip: !firestoreEmulatorAvailable }, async () => {
+  await clearFirestoreEmulator();
+  const app = initializeApp({ projectId: firestoreEmulatorProjectId }, `custom-batch-preflight-${randomUUID()}`);
+  const db = getFirestore(app);
+  let failAuthorizationAtCall = 0;
+  let authorizationCalls = 0;
+  try {
+    const h = createHarness({
+      firestoreDb: db,
+      authorizeCustomMember: async () => {
+        authorizationCalls += 1;
+        if (failAuthorizationAtCall && authorizationCalls === failAuthorizationAtCall) {
+          throw new TypeError("Cannot read properties of undefined (reading 'x-csrf-token')");
+        }
+        return { admin: { user: { uid: "admin_a" } }, scoped: false };
+      },
+    });
+    await h.seedFirestore();
+    const prepared = h.makeResponse();
+    await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+      memberIds: [h.member.memberId], message: "Practice Friday.", requestKey: "emulator-pre-provider-recovery",
+    } }, prepared);
+    assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
+    const batchId = prepared.payload.batch.batchId;
+    const intentId = prepared.payload.batch.intentIds[0];
+    const approvalVersion = prepared.payload.batch.recipients[0].approvalVersion;
+    authorizationCalls = 0;
+    failAuthorizationAtCall = 2;
+
+    const failed = await h.dispatch(batchId);
+    assert.equal(failed.statusCode, 500);
+    assert.equal(failed.payload.outcome, "not_sent");
+    assert.equal(failed.payload.errorMessage, "Could not send this message.");
+    assert.equal(h.providerCalls, 0);
+    const savedBatch = await db.collection("notificationBatches").doc(batchId).get();
+    const savedIntent = await db.collection("notificationIntents").doc(intentId).get();
+    assert.equal(savedBatch.data().status, "prepared");
+    assert.equal(savedBatch.data().reviewVersion, prepared.payload.batch.approvalVersion);
+    assert.equal(savedBatch.data().recipients[0].approvalVersion, approvalVersion);
+    assert.equal(savedIntent.data().status, "preview");
+    assert.equal(savedIntent.data().attemptId, undefined);
+    assert.equal(savedIntent.data().approvalSnapshot.approvalVersion, approvalVersion);
+    assert.equal((await db.collection("smsDeliveryAttempts").where("batchId", "==", batchId).get()).size, 0);
+
+    failAuthorizationAtCall = 0;
+    const recovered = await h.dispatch(batchId);
+    assert.equal(recovered.statusCode, 200, recovered.payload?.errorMessage);
+    assert.equal(recovered.payload.batch.summary.sent, 1);
+    assert.equal(h.providerCalls, 1);
+    const sentBatch = await db.collection("notificationBatches").doc(batchId).get();
+    const sentIntent = await db.collection("notificationIntents").doc(intentId).get();
+    assert.equal(sentBatch.data().status, "sent");
+    assert.equal(sentBatch.data().recipients[0].approvalVersion, approvalVersion);
+    assert.equal(sentIntent.data().status, "sent");
+    assert.equal(sentIntent.data().approvalSnapshot.approvalVersion, approvalVersion);
+    assert.equal(sentIntent.data().batchId, batchId);
+    assert.ok(sentIntent.data().attemptId);
+    assert.equal((await h.dispatch(batchId)).statusCode, 409);
+    assert.equal(h.providerCalls, 1);
+    const attempts = await db.collection("smsDeliveryAttempts").where("batchId", "==", batchId).get();
+    assert.equal(attempts.size, 1);
+    assert.equal(attempts.docs[0].data().notificationIntentId, intentId);
+    assert.equal(attempts.docs[0].data().attemptId, sentIntent.data().attemptId);
+    assert.equal(attempts.docs[0].data().providerCallStarted, true);
+    assert.equal(attempts.docs[0].data().outcome, "confirmed");
+  } finally {
     await deleteApp(app);
   }
 });
@@ -1822,5 +2778,54 @@ test("Firestore emulator preserves callback evidence through duplicate, delayed,
     assert.equal(restarted.providerCalls, 0, "accepted work remains fenced after process restart");
   } finally {
     await deleteApp(app);
+  }
+});
+
+test("compact personal SMS binds the reviewed URL/body to the provider and requires fresh review after replacement", async () => {
+  for (const replaced of [false, true]) {
+    let h;
+    let active = true;
+    const delivered = [];
+    const url = `https://www.worshipsync.net/s#v_${"x".repeat(32)}`;
+    const expiresAt = Date.now() + 90 * 24 * 60 * 60 * 1000;
+    h = createHarness({ firestore: true, scheduleBulkDispatchReady: true,
+      providerSend: async (input) => { delivered.push(input); return { providerMessageId: "SM_personal", status: "accepted" }; },
+      resolveScheduleNotificationContext: async (intent, options = {}) => {
+        if (!active || (options.responseUrlOverride && options.responseUrlOverride !== url)) {
+          throw Object.assign(new Error("Personal access changed. Review again."), { statusCode: 409 });
+        }
+        return { schedule: h.schedule, member: h.member, church: { name: "First Church" },
+          assignments: getScheduleMemberAssignments({ schedule: h.schedule, memberId: intent.memberId, positions: [...h.storeFor("teamPositions").values()] }),
+          serviceTimeZone: "UTC", responseUrl: url, personalAccessExpiresAt: expiresAt };
+      },
+    });
+    h.schedule.published = true;
+    h.schedule.startDate = "2026-11-01"; h.schedule.endDate = "2026-11-30";
+    h.schedule.assignments = { occ_1: { "position::0": h.member.memberId } };
+    const preparedResponse = h.makeResponse();
+    await h.handler.prepareScheduleInitialSmsBatch({ params: { churchId: h.churchId, scheduleId: h.schedule.scheduleId },
+      body: { memberIds: [h.member.memberId] } }, preparedResponse);
+    assert.equal(preparedResponse.statusCode, 200, JSON.stringify(preparedResponse.payload));
+    const batch = preparedResponse.payload.batch;
+    const persisted = h.storeFor("notificationIntents").get(batch.intentIds[0]);
+    const exactBody = persisted.message;
+    assert.match(exactBody, /Your November volunteer schedule is ready/);
+    assert.ok(exactBody.includes(url));
+    assert.ok(!JSON.stringify(batch).includes(url));
+    assert.equal(batch.recipients[0].segmentCount, measureSmsMessage(exactBody).segmentCount);
+    active = !replaced;
+    const approval = await h.dispatch(batch.batchId);
+    if (replaced) {
+      assert.equal(approval.statusCode, 409);
+      assert.equal(delivered.length, 0);
+    } else {
+      assert.equal(approval.statusCode, 200);
+      for (let attempt = 0; attempt < 100 && !delivered.length; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+      assert.equal(delivered.length, 1);
+      assert.equal(delivered[0].body, exactBody);
+      await h.dispatch(batch.batchId);
+      assert.equal(delivered.length, 1);
+    }
+    await h.handler.stopScheduleBatchDispatcher();
   }
 });

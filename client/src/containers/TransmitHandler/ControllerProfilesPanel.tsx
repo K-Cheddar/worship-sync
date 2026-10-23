@@ -5,6 +5,7 @@ import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import TextArea from "../../components/TextArea/TextArea";
 import Toggle from "../../components/Toggle/Toggle";
+import EntityIconPicker from "../../components/icons/EntityIconPicker";
 import { useDispatch, useSelector } from "../../hooks";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { useToast } from "../../context/toastContext";
@@ -17,6 +18,7 @@ import {
   setControllerProfileDefaultSends,
   setControllerProfileDescription,
   setControllerProfileEnabled,
+  setControllerProfileHomeIcon,
   setControllerProfileOutputs,
 } from "../../store/controllerProfilesSlice";
 import { RootState } from "../../store/store";
@@ -26,8 +28,14 @@ import {
   getControllersClaimingOutput,
   getDefaultControllerProfileDescription,
   isBuiltInControllerId,
+  getControllerProfilesInNavigationOrder,
   toggleControllerOutput,
 } from "../../utils/controllerProfiles";
+import {
+  CONTROLLER_RECOMMENDED_ICON_GROUPS,
+  getLegacyControllerHomeIcon,
+  getRenderableControllerHomeIcon,
+} from "../../utils/controllerAppearance";
 import { writeControllerProfiles } from "../../utils/controllerProfilesWriter";
 import { isPushOutputType } from "../../utils/displayOutputs";
 import { buildShareableHashRouterUrl } from "../../utils/environment";
@@ -129,6 +137,7 @@ const ControllerProfilesPanel = () => {
    */
   const isFixedSurface = (profile: ControllerProfile) =>
     isBuiltInControllerId(profile.id);
+  const builtInProfiles = getControllerProfilesInNavigationOrder(profiles).filter(isFixedSurface);
 
   const addController = () => {
     // Seed with nothing selected rather than guessing a display: pointing a new
@@ -229,8 +238,8 @@ const ControllerProfilesPanel = () => {
         </div>
 
         <TextArea
-          label="Home description"
-          description="Shown on the home page under this controller's name. Leave blank to use the default."
+          label="Description"
+          description="Shown on the homepage when explanations are enabled."
           className="w-full"
           textareaClassName="min-h-20"
           value={pendingDescription[profile.id] ?? profile.description}
@@ -255,6 +264,26 @@ const ControllerProfilesPanel = () => {
               }),
             );
           }}
+        />
+
+        <EntityIconPicker
+          label={profile.name}
+          value={getRenderableControllerHomeIcon(profile.homeIcon) ?? getLegacyControllerHomeIcon(
+            profile.icon,
+            profile.iconColor,
+            profile.type,
+            profile.order,
+          )}
+          fallbackIcon={getLegacyControllerHomeIcon(
+            profile.icon,
+            profile.iconColor,
+            profile.type,
+            profile.order,
+          )}
+          recommendedGroups={CONTROLLER_RECOMMENDED_ICON_GROUPS}
+          onChange={(icon) =>
+            withPersist(setControllerProfileHomeIcon({ id: profile.id, icon }))
+          }
         />
 
         {/* aria-label carries the controller name so each card's group is
@@ -387,7 +416,7 @@ const ControllerProfilesPanel = () => {
       <div className="flex flex-col gap-2">
         <h3 className="text-lg font-semibold">Built-in</h3>
         <ul className="flex flex-col gap-4">
-          {profiles.filter(isFixedSurface).map(renderProfile)}
+          {builtInProfiles.map(renderProfile)}
         </ul>
       </div>
 

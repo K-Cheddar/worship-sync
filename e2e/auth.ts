@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { devices, expect, type Browser, type Page } from "@playwright/test";
-import { allowedE2EAuthOrigins } from "./authOrigins";
+import { allowedE2EAuthOrigins, isObservedSharedDataSignIn } from "./authOrigins";
 
 type AuthStateFiles = { authFile: string; metadataFile: string };
 
@@ -424,6 +424,13 @@ const observeSilentSessionRecovery = async (
   baseURL: string,
   expectedDeviceIdentity: string,
 ) => {
+  const sharedDataTokens: Promise<string>[] = [];
+  page.on("response", response => {
+    const url = new URL(response.url());
+    if (response.ok() && response.request().method() === "GET" && allowedE2EAuthOrigins(baseURL).has(url.origin) && url.pathname === "/api/auth/shared-data-token") {
+      sharedDataTokens.push(response.json().then(data => typeof data.token === "string" ? data.token : "").catch(() => ""));
+    }
+  });
   const allowedOrigins = allowedE2EAuthOrigins(baseURL);
   let attempts = 0;
   let blockedRequest = false;
@@ -531,8 +538,14 @@ const observeSilentSessionRecovery = async (
       await route.continue();
       return;
     }
-    // Firebase refreshes a persisted user through securetoken.googleapis.com;
-    // every other Identity Toolkit action is outside silent session recovery.
+    let body: unknown;
+    try { body = route.request().postDataJSON(); } catch { /* fail closed */ }
+    if (route.request().method() === "POST" && isObservedSharedDataSignIn(pathname, body, (await Promise.all(sharedDataTokens)).filter(Boolean))) {
+      await route.continue();
+      return;
+    }
+    // Password, verification-email and other Identity Toolkit actions remain
+    // outside saved-session recovery.
     blockedRequest = true;
     await route.abort("blockedbyclient");
   });

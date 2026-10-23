@@ -35,6 +35,7 @@ import {
 import { useControllerBasePath } from "../../context/activeController";
 import { bibleRefToUrlParams, parseBibleReference } from "../../integrations/servicePlanning/parseBibleReference";
 import { formatServicePlanDuration } from "../Services/servicePlanDuration";
+import { getControllerServicePlanResourcePillClass } from "../Services/servicePlanChipStyles";
 import { getServicePlanLiveProgress } from "../Services/servicePlanLive";
 import {
   getServicePlanCustomDocumentDisplayLabel,
@@ -250,9 +251,12 @@ const ControllerResources = ({
             ? getServicePlanCustomDocumentId(planResource)
             : "";
           const customDocument = customDocumentDocsById.get(customDocumentId);
-          const label = resourceType === "custom-document" && planResource
-            ? getServicePlanCustomDocumentDisplayLabel(planResource, customDocument)
-            : resource.title?.trim() || planResource?.title || definition.label;
+          let label = resource.title?.trim() || planResource?.title || definition.label;
+          if (resourceType === "custom-document" && planResource) {
+            label = getServicePlanCustomDocumentDisplayLabel(planResource, customDocument);
+          } else if (resourceType === "scripture" && planResource) {
+            label = planResource.title;
+          }
           const repeatedLabel = duplicateResourceCount > 1
             ? ` (attachment ${resourceOccurrence} of ${duplicateResourceCount})`
             : "";
@@ -263,17 +267,17 @@ const ControllerResources = ({
             <>
               <ResourceIcon className={`size-3.5 shrink-0 ${definition.toneClassName}`} aria-hidden />
               <span className="min-w-0 flex-1 whitespace-normal break-words [overflow-wrap:anywhere]">{label}</span>
-              {canPreview ? <Eye className="size-3 shrink-0 opacity-70" aria-hidden /> : null}
+              {canPreview ? <Eye className="size-3 shrink-0" aria-hidden /> : null}
             </>
           );
-          const chipClassName = "inline-flex min-w-0 max-w-full items-center gap-1 whitespace-normal rounded-full border border-neutral-700 bg-neutral-900/80 px-2 py-0.5 text-left text-xs leading-5 text-neutral-300 hover:border-cyan-500/70 hover:bg-neutral-800";
+          const chipClassName = getControllerServicePlanResourcePillClass(resourceType);
           return canPreview ? (
             <div key={resourceKey} className="flex min-w-0 max-w-full flex-wrap items-center gap-x-1.5 gap-y-0.5">
               <button
                 type="button"
                 title={`${definition.label}: ${label}`}
                 aria-label={`View ${definition.label}: ${label}${repeatedLabel}`}
-                className={`${chipClassName} cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400`}
+                className={`${chipClassName} cursor-pointer`}
                 onClick={() => {
                   if (resourceType === "song" && songReference) {
                     setPreviewResource(null);

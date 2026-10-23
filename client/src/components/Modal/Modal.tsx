@@ -118,7 +118,7 @@ const Modal = ({
                 if (event.defaultPrevented) return;
                 if (returnFocusRef.current?.isConnected) {
                   event.preventDefault();
-                  returnFocusRef.current.focus();
+                  returnFocusRef.current.focus({ preventScroll: true });
                 }
               }}
               style={{ pointerEvents: "auto" }}

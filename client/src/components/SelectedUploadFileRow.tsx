@@ -1,15 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
-import {
-  AudioLines,
-  FileText,
-  FileType2,
-  Image as ImageIcon,
-  Pencil,
-  Presentation,
-  Table2,
-  Video,
-  X,
-} from "lucide-react";
+import { Pencil, X } from "lucide-react";
+import ResourceFileIcon from "./ResourceFileIcon";
+import { resolveResourceFileType } from "../utils/resourceFileType";
 import Button from "./Button/Button";
 import Input from "./Input/Input";
 import { formatStorageBytes } from "./StorageUsage/storageUsageFormatting";
@@ -25,24 +17,6 @@ type SelectedUploadFileRowProps = {
   error?: string;
 };
 
-const getFileVisual = (file: File) => {
-  const extension = file.name.split(".").pop()?.toLowerCase() || "";
-  const contentType = file.type.toLowerCase();
-  if (extension === "pdf" || contentType === "application/pdf") return { Icon: FileText, label: "PDF" };
-  if (["doc", "docx"].includes(extension) || contentType === "application/msword" || contentType.includes("wordprocessingml")) {
-    return { Icon: FileText, label: extension === "doc" ? "DOC" : "DOCX" };
-  }
-  if (["ppt", "pptx"].includes(extension) || contentType.includes("presentation")) {
-    return { Icon: Presentation, label: extension === "ppt" ? "PPT" : "PPTX" };
-  }
-  if (["xls", "xlsx", "csv"].includes(extension) || contentType.includes("spreadsheet") || contentType === "application/vnd.ms-excel") {
-    return { Icon: Table2, label: extension === "xls" ? "XLS" : extension === "csv" ? "CSV" : "XLSX" };
-  }
-  if (extension === "mp3" || contentType.startsWith("audio/")) return { Icon: AudioLines, label: extension.toUpperCase() || "AUDIO" };
-  if (extension === "txt" || contentType.startsWith("text/")) return { Icon: FileType2, label: "TEXT" };
-  return { Icon: FileText, label: extension.toUpperCase() || "FILE" };
-};
-
 const SelectedUploadFileRow = ({
   file,
   displayName,
@@ -55,9 +29,10 @@ const SelectedUploadFileRow = ({
 }: SelectedUploadFileRowProps) => {
   const [isEditing, setIsEditing] = useState(false);
   const [previewUrl, setPreviewUrl] = useState("");
+  const visual = resolveResourceFileType({ fileName: file.name, mimeType: file.type, mediaType: visualType });
   const extension = file.name.includes(".")
-    ? file.name.split(".").pop()?.toUpperCase() || getFileVisual(file).label
-    : getFileVisual(file).label;
+    ? file.name.split(".").pop()?.toUpperCase() || visual.label
+    : visual.label;
 
   useEffect(() => {
     if (visualType !== "image" || typeof URL.createObjectURL !== "function") {
@@ -73,15 +48,13 @@ const SelectedUploadFileRow = ({
     if (!editable) setIsEditing(false);
   }, [editable]);
 
-  const FileVisual = visualType === "video" ? Video : visualType === "image" ? ImageIcon : getFileVisual(file).Icon;
-
   return (
     <div className="flex w-full items-center gap-3 rounded border border-gray-700 bg-gray-950/40 p-3 text-sm">
       <div className="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded bg-gray-800 text-gray-300" aria-hidden="true">
         {previewUrl ? <img src={previewUrl} alt="" className="size-full object-cover" /> : (
-          <div className="flex flex-col items-center gap-0.5">
-            <FileVisual className="size-5" />
-            {visualType === "file" ? <span className="text-[9px] leading-none">{getFileVisual(file).label}</span> : null}
+          <div className="flex flex-col items-center">
+            <ResourceFileIcon visual={visual} compact />
+            {visualType === "file" ? <span className="text-[9px] leading-none">{visual.label === "TXT" ? "TEXT" : visual.label}</span> : null}
           </div>
         )}
       </div>

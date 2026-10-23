@@ -34,6 +34,7 @@ export const isPublicSharePathname = (pathname: string): boolean => {
   const path = normalizePathname(pathname);
 
   if (path === "/invite") return true;
+  if (path === "/s") return true;
   if (
     path === "/sms-opt-in" ||
     /^\/sms-opt-in\/[^/]+$/.test(path) ||

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { type Database } from "firebase/database";
 import { useDispatch, useSelector } from "./reduxHooks";
 import { useFirebaseValueWithRetry } from "./useFirebaseValueWithRetry";
-import { setDisplayOutputsFromRemote } from "../store/displayOutputsSlice";
+import { setDisplayOutputsForChurch } from "../store/displayOutputsSlice";
 import { syncOutputSlots } from "../store/presentationSlice";
 import {
   PushOutputType,
@@ -18,7 +18,7 @@ import type { RootState } from "../store/store";
  * Every surface needs this, not just controllers: a paired screen resolves which
  * output it renders from this list, and a controller resolves which previews and
  * transmit toggles to show. The node is absent for churches that predate the
- * registry — `setDisplayOutputsFromRemote` normalizes that to the built-ins, so
+ * registry — `setDisplayOutputsForChurch` normalizes that to the built-ins, so
  * a missing node degrades to today's behavior rather than an empty controller.
  */
 export const useSyncDisplayOutputs = (
@@ -47,7 +47,8 @@ export const useSyncDisplayOutputs = (
 
   const handleDisplayOutputs = useCallback(
     (data: unknown) => {
-      dispatch(setDisplayOutputsFromRemote(data));
+      if (!churchId) return;
+      dispatch(setDisplayOutputsForChurch({ churchId, data }));
       // Presentation state is keyed by output id, so every push output needs a
       // slot before content can be sent to it.
       const pushOutputs = normalizeDisplayOutputs(data)
@@ -58,7 +59,7 @@ export const useSyncDisplayOutputs = (
         }));
       dispatch(syncOutputSlots(pushOutputs));
     },
-    [dispatch],
+    [churchId, dispatch],
   );
 
   useFirebaseValueWithRetry({

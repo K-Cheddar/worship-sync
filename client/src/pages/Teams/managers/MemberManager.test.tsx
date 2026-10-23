@@ -6,6 +6,7 @@ import MemberManager from "./MemberManager";
 import { ToastProvider } from "../../../context/toastContext";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { TeamsNavigationGuardProvider } from "../TeamsNavigationGuardContext";
+import { CurrentMemberIdentityProvider } from "../components/CurrentUserMemberIndicator";
 import type {
   TeamRecord,
   TeamRosterMember,
@@ -25,6 +26,7 @@ const mockRecordMemberSmsConsent = jest.fn(async (..._args: unknown[]) => ({ suc
 jest.mock("../../../api/auth", () => ({
   AuthApiError: class MockAuthApiError extends Error {},
   archiveTeamRosterMember: jest.fn(),
+  manageVolunteerPersonalAccess: jest.fn().mockResolvedValue({ success: true, status: "none" }),
   createTeamRosterMember: (...args: unknown[]) =>
     mockCreateTeamRosterMember(...args),
   deleteTeamRosterMember: jest.fn(),
@@ -111,12 +113,14 @@ const renderManager = ({
   onSaved = jest.fn(),
   onTeamSaved = jest.fn(),
   userId = "",
+  selfMemberId = null,
   role = "admin",
   canEdit = true,
   canEditAllTeams = true,
   canManageMemberLifecycle = true,
   canEditMember,
   initialEntry,
+  onIdentityChanged = jest.fn(),
   onSmsConsentRecorded = jest.fn(),
   onSmsEligibilityRefresh,
 }: {
@@ -124,6 +128,7 @@ const renderManager = ({
   onSaved?: jest.Mock;
   onTeamSaved?: jest.Mock;
   userId?: string;
+  selfMemberId?: string | null;
   /** Invite and the account picker call admin-only endpoints. */
   role?: string;
   canEdit?: boolean;
@@ -131,6 +136,7 @@ const renderManager = ({
   canManageMemberLifecycle?: boolean;
   canEditMember?: (member: TeamRosterMember) => boolean;
   initialEntry?: string | { pathname: string; state?: unknown };
+  onIdentityChanged?: jest.Mock;
   onSmsConsentRecorded?: jest.Mock;
   onSmsEligibilityRefresh?: (memberId: string, phoneNumber: string, previousPhoneNumber: string) => Promise<void>;
 } = {}) => {
@@ -144,8 +150,9 @@ const renderManager = ({
         }
       >
         <ToastProvider>
-          <TeamsNavigationGuardProvider>
-            <MemberManager
+          <CurrentMemberIdentityProvider memberId={selfMemberId}>
+            <TeamsNavigationGuardProvider>
+              <MemberManager
               members={data.members}
               positions={data.positions}
               data={data}
@@ -154,18 +161,20 @@ const renderManager = ({
               canManageMemberLifecycle={canManageMemberLifecycle}
               canEditMember={canEditMember}
               onSaved={onSaved}
+              onIdentityChanged={onIdentityChanged}
               onTeamSaved={onTeamSaved}
               onArchived={jest.fn()}
               onRemoved={jest.fn()}
               onSmsConsentRecorded={onSmsConsentRecorded}
               onSmsEligibilityRefresh={onSmsEligibilityRefresh}
-            />
-          </TeamsNavigationGuardProvider>
+              />
+            </TeamsNavigationGuardProvider>
+          </CurrentMemberIdentityProvider>
         </ToastProvider>
       </GlobalInfoContext.Provider>
     </MemoryRouter>,
   );
-  return { onSaved, onTeamSaved, onSmsConsentRecorded };
+  return { onSaved, onTeamSaved, onIdentityChanged, onSmsConsentRecorded };
 };
 
 const openCreateForm = async (user: ReturnType<typeof userEvent.setup>) => {
@@ -250,6 +259,20 @@ afterEach(() => {
 });
 
 describe("MemberManager member preferences", () => {
+  it("marks the linked roster entry and current member editor context", async () => {
+    const user = userEvent.setup();
+    renderManager({ data: joinedData(), selfMemberId: "member-1" });
+
+    const memberRow = screen.getByTestId("entity-row");
+    expect(within(memberRow).getByText("You")).toBeInTheDocument();
+    expect(
+      within(memberRow).getByRole("button", { name: "Edit Rae Kim, You" }),
+    ).toBeInTheDocument();
+    await openMember(user, /Rae Kim/);
+    expect(screen.getAllByText("You")).toHaveLength(2);
+    expect(screen.getByRole("group", { name: /Member details/ })).toBeInTheDocument();
+  });
+
   it("keeps church-level member lifecycle actions hidden from a scoped Team editor", async () => {
     const user = userEvent.setup();
     renderManager({
@@ -919,6 +942,26 @@ describe("MemberManager team membership", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("submits the member revision so stale roster edits cannot overwrite newer time off", async () => {
+    const user = userEvent.setup();
+    const member = { ...worshipMember, updatedAt: "member-revision-a" };
+    mockUpdateTeamRosterMember.mockResolvedValue({
+      success: true,
+      member: { ...member, firstName: "Rachel" },
+    });
+    renderManager({
+      data: joinedData({ members: [member] }),
+    });
+    await openMember(user, /Rae Kim/);
+    await user.clear(screen.getByLabelText(/^First name/));
+    await user.type(screen.getByLabelText(/^First name/), "Rachel");
+    await user.click(saveButton());
+
+    await waitFor(() => expect(mockUpdateTeamRosterMember).toHaveBeenCalledTimes(1));
+    const [, , body] = mockUpdateTeamRosterMember.mock.calls[0];
+    expect(body.expectedUpdatedAt).toBe("member-revision-a");
+  });
+
   it("sends the remaining membership so the server can drop the roster", async () => {
     const user = userEvent.setup();
     mockUpdateTeamRosterMember.mockResolvedValue({
@@ -1184,7 +1227,7 @@ describe("MemberManager account linking", () => {
 
   it("reflects the link in the open panel without reopening the member", async () => {
     const user = userEvent.setup();
-    renderManager({ data: linkableMembers(), userId: "user-1" });
+    const { onIdentityChanged } = renderManager({ data: linkableMembers(), userId: "user-1" });
 
     await openMember(user, /Someone Else/);
     expect(screen.getByText("Not linked to an account.")).toBeInTheDocument();
@@ -1200,6 +1243,10 @@ describe("MemberManager account linking", () => {
     expect(
       screen.queryByRole("button", { name: /This is me/i }),
     ).not.toBeInTheDocument();
+    expect(onIdentityChanged).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: /^Unlink$/i }));
+    await waitFor(() => expect(onIdentityChanged).toHaveBeenCalledTimes(2));
   });
 });
 
@@ -1728,4 +1775,12 @@ describe("MemberManager admin-only linking controls", () => {
       screen.getByRole("button", { name: /This is me/i }),
     ).toBeInTheDocument();
   });
+});
+
+it("administrators can reach personal link management from the existing member editor", async () => {
+  const user = userEvent.setup();
+  renderManager({ role: "admin", data: buildData({ members: [worshipMember] }) });
+  await openMember(user, /Rae Kim/);
+  await user.click(await screen.findByText("Personal My Schedule access"));
+  expect(await screen.findByRole("button", { name: "Prepare personal link" })).toBeEnabled();
 });

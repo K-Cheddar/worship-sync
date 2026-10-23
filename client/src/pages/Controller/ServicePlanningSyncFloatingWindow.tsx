@@ -36,6 +36,7 @@ import Input from "../../components/Input/Input";
 import { useToast } from "../../context/toastContext";
 import type { RootState } from "../../store/store";
 import Button from "../../components/Button/Button";
+import ServicePlanningOverlayPreview from "../../components/ServicePlanningOverlayPreview/ServicePlanningOverlayPreview";
 import FloatingWindow, { type FloatingWindowHandle } from "../../components/FloatingWindow/FloatingWindow";
 import Spinner from "../../components/Spinner/Spinner";
 import ProfileImagePreview from "../../components/ProfileImagePreview/ProfileImagePreview";
@@ -384,9 +385,10 @@ const ServicePlanningSyncFloatingWindow = ({
   const [isStoppingSavedPlan, setIsStoppingSavedPlan] = useState(false);
   const [lastSyncSummary, setLastSyncSummary] = useState<SyncSummary | null>(null);
   const [isSyncSummaryExpanded, setIsSyncSummaryExpanded] = useState(true);
+  const [isOverlayPreviewExpanded, setIsOverlayPreviewExpanded] = useState(true);
   const cancelSavedPlanPushRef = useRef(false);
   const pendingSavedPlanSummaryRef = useRef<{
-    addedTitles: string[];
+    outline: SyncSummaryEntry[];
     skipped: SyncSummaryEntry[];
   } | null>(null);
   const [activeTab, setActiveTab] = useState<"plan" | "assignments">("plan");
@@ -405,7 +407,11 @@ const ServicePlanningSyncFloatingWindow = ({
     isManualSelection,
     isEnabled: isSavedPlanAccessEnabled,
     isLoading,
+    isRefreshing: isPlanRefreshing,
+    isRefreshingParticipants,
+    isParticipantOverlayUnsafe,
     isLoadingPlans,
+    isPlanPreviewStale,
     plansError,
     isPlanSourced,
     refresh: refreshPlan,
@@ -413,6 +419,8 @@ const ServicePlanningSyncFloatingWindow = ({
   } = useCurrentServicePlanSource();
   const currentPlanRef = useRef(selectedPlanDetails);
   currentPlanRef.current = selectedPlanDetails;
+  const planSyncEligibilityRef = useRef({ isLoading, isPlanPreviewStale });
+  planSyncEligibilityRef.current = { isLoading, isPlanPreviewStale };
 
   const preview = useSelector((s: RootState) => s.servicePlanningImport.preview);
   const allFreeFormDocs = useSelector((s: RootState) => s.allDocs.allFreeFormDocs);
@@ -513,17 +521,29 @@ const ServicePlanningSyncFloatingWindow = ({
     ) {
       return;
     }
-    // A plan-sourced preview follows the Services plan, so re-read that rather
-    // than re-scraping `url` — which is only the plan's original import source
-    // and may belong to a different service entirely.
-    if (isPlanSourced) {
+    // A selected saved plan is authoritative even before it has produced a
+    // preview; retry that read instead of scraping the URL from an older import.
+    if (selectedPlanKey || isPlanSourced) {
       setIsRefreshing(true);
       try {
-        await refreshPlan();
-        setMicrophoneRefreshVersion((version) => version + 1);
-        showToast("Plan refreshed", "success");
+        const result = await refreshPlan();
+        if (result === "updated" || result === "unchanged") {
+          setMicrophoneRefreshVersion((version) => version + 1);
+          showToast(
+            result === "updated" ? "Plan refreshed" : "Plan is up to date",
+            "success",
+          );
+        } else if (result === "failed") {
+          showToast(
+            "Plan refresh failed. Check your connection and try again.",
+            "error",
+          );
+        }
       } catch {
-        showToast("Failed to refresh plan", "error");
+        showToast(
+          "Plan refresh failed. Check your connection and try again.",
+          "error",
+        );
       } finally {
         setIsRefreshing(false);
       }
@@ -548,17 +568,24 @@ const ServicePlanningSyncFloatingWindow = ({
     isRefreshing,
     loadPreview,
     refreshPlan,
+    selectedPlanKey,
     showToast,
     sync.status,
     url,
   ]);
 
-  const isContextChanging = isLoading || targetOutlineLoading;
+  const isContextChanging = isLoading || isPlanRefreshing || targetOutlineLoading;
   const canSyncOverlays =
     allowOverlaySync &&
+    !isPlanPreviewStale &&
     !isContextChanging &&
+    !isRefreshingParticipants &&
+    !isParticipantOverlayUnsafe &&
     hasSyncableOverlayItems(preview, overlays);
+  const canSyncOverlaysRef = useRef(canSyncOverlays);
+  canSyncOverlaysRef.current = canSyncOverlays;
   const canSyncOutline =
+    !isPlanPreviewStale &&
     !isContextChanging && Boolean(selectedList) && (isPlanSourced && selectedPlanDetails
       ? selectedPlanDetails.sections.some((section) => section.elements.some((element) =>
           getServicePlanElementContentResources(element).some((resource) =>
@@ -576,31 +603,29 @@ const ServicePlanningSyncFloatingWindow = ({
       setIsPushingSavedPlan(true);
       cancelSavedPlanPushRef.current = false;
       const sourcePlan = selectedPlanDetails;
-      const addedTitles: string[] = [];
+      const outline: SyncSummaryEntry[] = [];
       void pushPlanToOutline(
         sourcePlan,
-        () => currentPlanRef.current === sourcePlan,
-        async (item) => {
-          addedTitles.push(item.name);
+        () =>
+          currentPlanRef.current === sourcePlan &&
+          !planSyncEligibilityRef.current.isLoading &&
+          !planSyncEligibilityRef.current.isPlanPreviewStale,
+        async (item, fallback) => {
+          outline.push({
+            label: item.name,
+            ...(fallback ? { reason: fallback.reason === "mapped-heading-missing"
+              ? `Added at end — mapped heading "${fallback.headingName}" wasn't found.`
+              : `Added at end — heading "${fallback.headingName}" was removed before insertion.` } : {}),
+          });
           dispatch(setActiveItemInList(item.listId));
           await ensureElementInView(`service-item-${item.listId}`, "service-items-list");
         },
         () => !cancelSavedPlanPushRef.current,
       )
         .then((result) => {
-          const skipped = [
-            ...result.skippedTitles.map((label) => ({ label, reason: "Unresolved Service Plan attachment" })),
-            ...result.placementIssues.map((issue) => ({
-              label: issue.sectionName,
-              reason: issue.reason === "mapped-heading-missing"
-                ? `Mapped outline heading "${issue.headingName}" is not present`
-                : issue.reason === "heading-removed"
-                  ? `Outline heading "${issue.headingName}" disappeared before insertion`
-                  : "No matching outline heading or section rule",
-            })),
-          ];
+          const skipped = result.skippedTitles.map((label) => ({ label, reason: "Unresolved Service Plan attachment" }));
           setLastSyncSummary({
-            outline: addedTitles.map((label) => ({ label })),
+            outline,
             overlaysUpdated: [],
             overlaysCreated: [],
             skipped,
@@ -612,8 +637,8 @@ const ServicePlanningSyncFloatingWindow = ({
                 : "Sync complete",
           });
           setIsSyncSummaryExpanded(true);
-          if (mode === "both" && !cancelSavedPlanPushRef.current && allowOverlaySync && canSyncOverlays) {
-            pendingSavedPlanSummaryRef.current = { addedTitles, skipped };
+          if (mode === "both" && !cancelSavedPlanPushRef.current && allowOverlaySync && canSyncOverlaysRef.current) {
+            pendingSavedPlanSummaryRef.current = { outline, skipped };
             dispatch(setServicePlanningFloatingWindowDismissed(false));
             dispatch(startServicePlanningSync({ mode: "overlays" }));
           } else {
@@ -629,7 +654,7 @@ const ServicePlanningSyncFloatingWindow = ({
         })
         .catch((error: unknown) => {
           const message = error instanceof Error ? error.message : "Could not add plan content to the outline.";
-          setLastSyncSummary({ outline: addedTitles.map((label) => ({ label })), overlaysUpdated: [], overlaysCreated: [], skipped: [], errors: [{ label: message }], title: "Sync incomplete" });
+          setLastSyncSummary({ outline, overlaysUpdated: [], overlaysCreated: [], skipped: [], errors: [{ label: message }], title: "Sync incomplete" });
           setIsSyncSummaryExpanded(true);
           showToast(message, "error");
         })
@@ -671,7 +696,7 @@ const ServicePlanningSyncFloatingWindow = ({
     const overlaysCreated = sync.syncItems.filter((item) => item.phase === "overlays" && item.status === "created").map((item) => ({ label: overlayLabel(item) }));
     if (!savedOutline && sync.mode === "outline") return;
     setLastSyncSummary({
-      outline: (savedOutline?.addedTitles || sync.syncItems.filter((item) => item.phase === "outline" && item.status === "added").map((item) => item.label)).map((label) => ({ label })),
+      outline: savedOutline?.outline ?? sync.syncItems.filter((item) => item.phase === "outline" && item.status === "added").map((item) => ({ label: item.label })),
       overlaysUpdated,
       overlaysCreated,
       skipped: [
@@ -930,6 +955,24 @@ const ServicePlanningSyncFloatingWindow = ({
   const titleNode = (
     <span className="flex min-w-0 items-baseline gap-1.5 truncate">
       <span className="truncate">{planLabel}</span>
+      {isPlanRefreshing ? (
+        <span
+          className="shrink-0 text-[11px] font-normal text-zinc-400"
+          role="status"
+          aria-live="polite"
+        >
+          Updating…
+        </span>
+      ) : null}
+      {isRefreshingParticipants ? (
+        <span
+          className="shrink-0 text-[11px] font-normal text-zinc-400"
+          role="status"
+          aria-live="polite"
+        >
+          Updating participants…
+        </span>
+      ) : null}
       {stateLabel ? (
         <span className="shrink-0 text-[11px] font-normal text-zinc-400">
           ({stateLabel})
@@ -1206,6 +1249,16 @@ const ServicePlanningSyncFloatingWindow = ({
     >
       <div className="flex flex-col gap-3 text-sm text-white">
         {planContextControls}
+        {isPlanPreviewStale && !isLoading ? (
+          <p
+            role="alert"
+            className="rounded border border-amber-500/40 bg-amber-950/30 px-2 py-1.5 text-xs text-amber-200"
+          >
+            {preview
+              ? "The plan could not be refreshed. Refresh before syncing."
+              : "The plan and its assignments could not be fully loaded. Retry before syncing."}
+          </p>
+        ) : null}
 
         <div className="sticky -top-3 z-10 -mx-3 -mt-2 border-b border-zinc-700 bg-gray-800/95 px-3 pt-3 pb-2 backdrop-blur">
           <Tabs
@@ -1318,10 +1371,18 @@ const ServicePlanningSyncFloatingWindow = ({
 
         {!isLoading && (preview || (isPlanSourced && selectedPlanDetails)) ? (
           <div className="flex flex-col gap-2">
+            {activeTab === "plan" && preview?.nativeOverlaySummary ? (
+              <ServicePlanningOverlayPreview
+                items={preview.overlayPlan}
+                nativeSummary={preview.nativeOverlaySummary}
+                expanded={isOverlayPreviewExpanded}
+                onExpandedChange={setIsOverlayPreviewExpanded}
+              />
+            ) : null}
             {activeTab === "plan" ? (
               isPlanSourced && selectedPlanDetails ? (
                 <ControllerServicePlanView
-                  key={`${churchId}:${controllerProfile.id}`}
+                  key={`${churchId}:${controllerProfile.id}:${selectedPlanDetails.planKey}`}
                   plan={selectedPlanDetails}
                   snapshot={selectedPlanSnapshot}
                   churchId={churchId || ""}

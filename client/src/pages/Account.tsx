@@ -1,5 +1,5 @@
 import { Suspense, useContext, useEffect, useMemo, type ReactNode } from "react";
-import { Building2, ListChecks, LogIn } from "lucide-react";
+import { ListChecks, LogIn } from "lucide-react";
 import {
   Navigate,
   Outlet,
@@ -28,6 +28,7 @@ import AccountSidebarNav from "./Account/components/AccountSidebarNav";
 import AccountMobileNavigation from "./Account/components/AccountMobileNavigation";
 import AccountMobileShortcuts from "./Account/components/AccountMobileShortcuts";
 import { getAccountSectionSkeleton } from "./Account/accountPageSkeletons";
+import { PAGE_APPEARANCES } from "./pageAppearances";
 import Sidebar from "../components/Sidebar/Sidebar";
 import {
   PendingRouteNavigationProvider,
@@ -152,7 +153,7 @@ const AccountShell = () => {
       title="Church administration"
       mobileTitle={activeSection.label}
       centerTitleOnMobile
-      icon={Building2}
+      {...PAGE_APPEARANCES.churchAdministration}
       compactMobileToolbar
       className="[--account-bottom-navigation-height:calc(57px_+_env(safe-area-inset-bottom))] max-lg:pb-[var(--account-bottom-navigation-height)] lg:[--account-bottom-navigation-height:0px]"
       toolbarLogos={toolbarLogos}

@@ -21,11 +21,14 @@ type DisplayOutputsState = {
   list: DisplayOutput[];
   /** False until the church registry has been read once (local edits stay local). */
   isLoaded: boolean;
+  /** Church whose Firebase snapshot currently populates this registry. */
+  syncedChurchId?: string | null;
 };
 
 const initialState: DisplayOutputsState = {
   list: getDefaultDisplayOutputs(),
   isLoaded: false,
+  syncedChurchId: null,
 };
 
 const reindex = (list: DisplayOutput[]) =>
@@ -48,6 +51,15 @@ export const displayOutputsSlice = createSlice({
     setDisplayOutputsFromRemote: (state, action: PayloadAction<unknown>) => {
       state.list = normalizeDisplayOutputs(action.payload);
       state.isLoaded = true;
+      state.syncedChurchId = null;
+    },
+    setDisplayOutputsForChurch: (
+      state,
+      action: PayloadAction<{ churchId: string; data: unknown }>,
+    ) => {
+      state.list = normalizeDisplayOutputs(action.payload.data);
+      state.isLoaded = true;
+      state.syncedChurchId = action.payload.churchId;
     },
     addDisplayOutput: {
       reducer: (
@@ -232,8 +244,13 @@ export const selectDisplayOutputsLoaded = (state: {
   displayOutputs?: DisplayOutputsState;
 }): boolean => state?.displayOutputs?.isLoaded ?? false;
 
+export const selectDisplayOutputsChurchId = (state: {
+  displayOutputs?: DisplayOutputsState;
+}): string | null => state?.displayOutputs?.syncedChurchId ?? null;
+
 export const {
   setDisplayOutputsFromRemote,
+  setDisplayOutputsForChurch,
   addDisplayOutput,
   renameDisplayOutput,
   setDisplayOutputEnabled,

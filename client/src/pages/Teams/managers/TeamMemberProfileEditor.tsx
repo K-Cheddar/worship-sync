@@ -22,6 +22,7 @@ import type {
 } from "../../../api/authTypes";
 import generateRandomId from "../../../utils/generateRandomId";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
+import { MemberNameWithIndicator } from "../components/CurrentUserMemberIndicator";
 
 const safeMemberName = (member: TeamMemberProfile | null) =>
   member ? [member.title, member.firstName, member.lastName].filter(Boolean).join(" ") : "team member";
@@ -207,7 +208,15 @@ const TeamMemberProfileEditor = ({
     <Modal
       isOpen={Boolean(member)}
       onClose={() => { if (!saving) onClose(); }}
-      title={`Manage ${selectedMemberName}`}
+      title={
+        <span className="inline-flex min-w-0 items-baseline gap-1.5">
+          Manage{" "}
+          <MemberNameWithIndicator
+            name={selectedMemberName}
+            memberId={selectedMemberId}
+          />
+        </span>
+      }
       description={`Only ${team.name} positions, role, lead state, and qualifications are shown here.`}
       size="lg"
       busy={loading || saving}

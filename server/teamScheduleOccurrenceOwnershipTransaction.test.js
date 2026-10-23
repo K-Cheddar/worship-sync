@@ -12,6 +12,7 @@ import { createTeamsAuthHandlers } from "./teamsAuthHandlers.js";
 const {
   authHandlers,
   COLLECTIONS,
+  deleteDoc,
   getDoc,
   queryDocs,
   seedActiveHumanBearerForServerTests,
@@ -314,6 +315,124 @@ const periodBody = (teamId, startDate, endDate, occurrences) => ({
   serviceIds: [...new Set(occurrences.map((item) => item.serviceId))],
   occurrences,
 });
+
+for (const firestore of [false, true]) {
+  test(`${firestore ? "Firestore" : "in-memory"} delete overlapping ensure cannot leave dangling or erase regenerated claims`, async (t) => {
+    const first = occurrence("first", "2026-10-10T12:00:00.000Z");
+    const second = occurrence("second", "2026-10-17T12:00:00.000Z");
+    const services = [service("first", first.startsAt), service("second", second.startsAt)];
+    const { db, context, teamId } = await createFixture(`delete_race_${firestore}`, services, firestore);
+    t.after(() => setServerFirestoreForTests(null));
+    let resume;
+    let entered;
+    const gate = new Promise((resolve) => { resume = resolve; });
+    const paused = new Promise((resolve) => { entered = resolve; });
+    let didPause = false;
+    const pause = async () => { if (!didPause) { didPause = true; entered(); await gate; } };
+    const operator = { user: { uid: "race-operator" } };
+    const handlers = createTeamsAuthHandlers({
+      COLLECTIONS, getDoc, setDoc, deleteDoc,
+      queryDocs: async (collection, filters) => {
+        const result = await queryDocs(collection, filters);
+        if (collection === COLLECTIONS.teamScheduleOccurrenceOwners && filters.some((filter) => filter.field === "scheduleId")) await pause();
+        return result;
+      },
+      requireFirestore: () => db,
+      assertCsrf: async () => {}, requireAdminSession: async () => operator,
+      requireTeamsEditForTeamSession: async () => operator,
+      readChurchServiceTimes: async () => services,
+      normalizeEmail: (value) => String(value || "").toLowerCase(),
+      nowIso: () => new Date().toISOString(), createId: (prefix) => `${prefix}_${randomUUID()}`,
+      httpError: (statusCode, message) => Object.assign(new Error(message), { statusCode }),
+      addSecurityEvent: async () => {},
+    });
+    const body = periodBody(teamId, "2026-10-01", "2026-10-31", [first]);
+    const created = await callHandler(handlers.ensureTeamScheduleForPeriod, { context, body });
+    assert.equal(created.statusCode, 200, JSON.stringify(created.payload));
+    assert.equal(created.payload.schedule.published, false, "the first edit must persist a private Draft");
+    const scheduleId = created.payload.schedule.scheduleId;
+    if (db) {
+      const original = db.runTransaction.bind(db);
+      db.runTransaction = (callback) => original((transaction) => callback({ ...transaction, get: async (target) => {
+        const snapshot = await transaction.get(target);
+        if (target.kind === "query" && target.collectionName === COLLECTIONS.teamScheduleOccurrenceOwners) await pause();
+        return snapshot;
+      } }));
+    }
+    const deletion = callHandler(handlers.deleteTeamSchedule, { context, params: { scheduleId } });
+    await Promise.race([paused, deletion.then((result) => { throw new Error(`Delete did not reach claim read: ${JSON.stringify(result.payload)}`); })]);
+    const expanded = periodBody(teamId, "2026-10-01", "2026-10-31", [first, second]);
+    const ensure = callHandler(handlers.ensureTeamScheduleForPeriod, { context, body: expanded });
+    const create = callHandler(handlers.createTeamSchedule, { context, body: expanded });
+    await new Promise((resolve) => setImmediate(resolve));
+    resume();
+    const results = await Promise.all([deletion, ensure, create]);
+    assert.ok(results.every((result) => [200, 409].includes(result.statusCode)), JSON.stringify(results));
+    const final = await callHandler(handlers.ensureTeamScheduleForPeriod, { context, body: expanded });
+    assert.equal(final.statusCode, 200, JSON.stringify(final.payload));
+    const claims = await queryDocs(COLLECTIONS.teamScheduleOccurrenceOwners, [{ field: "churchId", value: context.churchId }]);
+    assert.equal(claims.length, 2);
+    assert.ok(claims.every((claim) => claim.scheduleId === final.payload.schedule.scheduleId));
+    const stored = await getDoc(COLLECTIONS.teamSchedules, final.payload.schedule.scheduleId);
+    assert.equal(stored.occurrences.length, 2);
+    if (db) assert.equal(db.stats.readAfterWriteAttempts, 0);
+  });
+
+  test(`${firestore ? "Firestore" : "in-memory"} deletion releases only exact owned claims and permits repeated regeneration`, async (t) => {
+    const event = occurrence("sunday", "2026-10-10T12:00:00.000Z");
+    const { db, context, teamId } = await createFixture(`delete_${firestore}`, [service("sunday", event.startsAt)], firestore);
+    t.after(() => setServerFirestoreForTests(null));
+    const body = periodBody(teamId, "2026-10-01", "2026-10-31", [event]);
+    const created = await callHandler(authHandlers.ensureTeamScheduleForPeriod, { context, body });
+    assert.equal(created.statusCode, 200, JSON.stringify(created.payload));
+    const scheduleId = created.payload.schedule.scheduleId;
+    const [claim] = await queryDocs(COLLECTIONS.teamScheduleOccurrenceOwners, [{ field: "churchId", value: context.churchId }]);
+    const foreignClaims = [
+      { ...claim, id: "foreign-team", teamId: "other-team" },
+      { ...claim, id: "foreign-church", churchId: "other-church" },
+      { ...claim, id: "foreign-owner", scheduleId: "other-schedule" },
+    ];
+    // Also release a claim left over from an earlier occurrence list.
+    const { id: claimId, ...claimData } = claim;
+    await setDoc(COLLECTIONS.teamScheduleOccurrenceOwners, "old-occurrence", { ...claimData, logicalOccurrenceId: "old@2026-10-03" });
+    for (let index = 0; index < 125; index++) await setDoc(COLLECTIONS.teamScheduleOccurrenceOwners, `old-${index}`, { ...claimData, logicalOccurrenceId: `old-${index}` });
+    for (const { id, ...data } of foreignClaims) await setDoc(COLLECTIONS.teamScheduleOccurrenceOwners, id, data);
+    const foreignBefore = await Promise.all(foreignClaims.map(({ id }) => getDoc(COLLECTIONS.teamScheduleOccurrenceOwners, id)));
+    for (let run = 0; run < 2; run++) {
+      const deleted = await callHandler(authHandlers.deleteTeamSchedule, { context, params: { scheduleId } });
+      assert.equal(deleted.statusCode, 200, JSON.stringify(deleted.payload));
+      assert.equal(await getDoc(COLLECTIONS.teamSchedules, scheduleId), null);
+      assert.equal(await getDoc(COLLECTIONS.teamScheduleOccurrenceOwners, claim.id), null);
+      assert.equal(await getDoc(COLLECTIONS.teamScheduleOccurrenceOwners, "old-occurrence"), null);
+      for (let index = 0; index < 125; index++) assert.equal(await getDoc(COLLECTIONS.teamScheduleOccurrenceOwners, `old-${index}`), null);
+      for (const [index, { id }] of foreignClaims.entries()) assert.deepEqual(await getDoc(COLLECTIONS.teamScheduleOccurrenceOwners, id), foreignBefore[index]);
+      const regenerated = await callHandler(authHandlers.ensureTeamScheduleForPeriod, { context, body });
+      assert.equal(regenerated.statusCode, 200, JSON.stringify(regenerated.payload));
+      assert.equal(regenerated.payload.schedule.scheduleId, scheduleId);
+      assert.equal(regenerated.payload.created, true);
+      assert.equal((await getDoc(COLLECTIONS.teamScheduleOccurrenceOwners, claim.id)).scheduleId, scheduleId);
+    }
+    if (db) assert.equal(db.stats.readAfterWriteAttempts, 0);
+  });
+
+  test(`${firestore ? "Firestore" : "in-memory"} deleting a former owner preserves a replacement owner's claim`, async (t) => {
+    const event = occurrence("sunday", "2026-10-10T12:00:00.000Z");
+    const { context, teamId } = await createFixture(`delete_replaced_${firestore}`, [service("sunday", event.startsAt)], firestore);
+    t.after(() => setServerFirestoreForTests(null));
+    const body = periodBody(teamId, "2026-10-01", "2026-10-31", [event]);
+    const first = await callHandler(authHandlers.createTeamSchedule, { context, body });
+    assert.equal(first.statusCode, 200);
+    const scheduleId = first.payload.schedule.scheduleId;
+    await setDoc(COLLECTIONS.teamSchedules, scheduleId, { occurrences: [] }, { merge: true });
+    const replacement = await callHandler(authHandlers.createTeamSchedule, { context, body });
+    assert.equal(replacement.statusCode, 200, JSON.stringify(replacement.payload));
+    const claims = await queryDocs(COLLECTIONS.teamScheduleOccurrenceOwners, [{ field: "churchId", value: context.churchId }]);
+    const deleted = await callHandler(authHandlers.deleteTeamSchedule, { context, params: { scheduleId } });
+    assert.equal(deleted.statusCode, 200);
+    assert.deepEqual(await queryDocs(COLLECTIONS.teamScheduleOccurrenceOwners, [{ field: "churchId", value: context.churchId }]), claims);
+    assert.ok(await getDoc(COLLECTIONS.teamSchedules, replacement.payload.schedule.scheduleId));
+  });
+}
 
 test("Firestore occurrence ownership transactions serialize overlapping creates and reject the loser", async (t) => {
   const startsAt = "2026-10-10T12:00:00.000Z";

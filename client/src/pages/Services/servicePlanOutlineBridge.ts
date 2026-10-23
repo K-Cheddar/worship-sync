@@ -47,13 +47,19 @@ export type ServicePlanOutlinePushResult = {
   insertedCount: number;
   /** Titles of elements carrying an attachment that still can't be pushed. */
   skippedTitles: string[];
-  placementIssues: ServicePlanOutlinePlacementIssue[];
+  /** Successful outline-end insertions whose requested heading was missing. */
+  placementFallbacks: ServicePlanOutlinePlacementFallback[];
 };
 
 export type ServicePlanOutlinePlacementIssue = {
   sectionName: string;
   headingName?: string;
   reason: "mapped-heading-missing" | "heading-removed";
+};
+
+export type ServicePlanOutlinePlacementFallback = ServicePlanOutlinePlacementIssue & {
+  listId: string;
+  title: string;
 };
 
 const findExistingListId = (
@@ -127,6 +133,7 @@ export type ServicePlanOutlineStep = {
   element: ElementOutlinePlan;
   sectionName: string;
   destination: ServicePlanOutlineDestination;
+  placementFallback?: ServicePlanOutlinePlacementIssue;
 };
 
 export type ServicePlanOutlineDestination =
@@ -136,7 +143,6 @@ export type ServicePlanOutlineDestination =
 export type ServicePlanOutlinePlan = {
   steps: ServicePlanOutlineStep[];
   skippedTitles: string[];
-  placementIssues: ServicePlanOutlinePlacementIssue[];
 };
 
 /** Insert immediately before the next heading, or at the list end. */
@@ -205,16 +211,18 @@ const planElementOutlineItems = (
       continue;
     }
     if (resource.type === "scripture") {
-      const storedReference = resource.data?.scripture;
+      const storedReference = resource.data?.scripture ?? resource.data?.scriptureRef;
       const scriptureRef = storedReference && typeof storedReference === "object"
         ? storedReference as ServicePlanScriptureReference
         : resource.data && typeof resource.data.book === "string"
             ? resource.data as unknown as ServicePlanScriptureReference
             : undefined;
-      const parsedReference = scriptureRef?.book && scriptureRef.chapter && scriptureRef.verseRange
-        ? parseBibleReference(`${scriptureRef.book} ${scriptureRef.chapter}:${scriptureRef.verseRange}`)
+      const parsedReference = scriptureRef?.book && scriptureRef.chapter
+        ? parseBibleReference(`${scriptureRef.book} ${scriptureRef.chapter}${scriptureRef.verseRange ? `:${scriptureRef.verseRange}` : ""}`)
         : null;
-      if (parsedReference && scriptureRef) {
+      const [startVerse, endVerse = startVerse] = parsedReference?.verseRange.split("-").map(Number) ?? [];
+      const validRange = !parsedReference?.verseRange || (startVerse >= 1 && endVerse >= startVerse);
+      if (parsedReference && Number(parsedReference.chapter) >= 1 && validRange && scriptureRef) {
         planned.push({
           kind: "scripture",
           listId,
@@ -331,7 +339,6 @@ export const planServicePlanOutlineItems = ({
 }): ServicePlanOutlinePlan => {
   const steps: ServicePlanOutlineStep[] = [];
   const skippedTitles: string[] = [];
-  const placementIssues: ServicePlanOutlinePlacementIssue[] = [];
   let workingList = [...currentList];
 
   for (const section of plan.sections) {
@@ -353,18 +360,16 @@ export const planServicePlanOutlineItems = ({
     }
 
     const sectionSteps: ServicePlanOutlineStep[] = [];
-    const unresolvedForSection: PlannedOutlineItem[] = [];
     for (const elementPlan of elementPlans) {
       const additions = missingPlannedItems(workingList, elementPlan);
-      if (!placement.heading && placement.rule) {
-        unresolvedForSection.push(...additions);
-        continue;
-      }
       for (const planned of additions) {
         const step = {
           planned,
           element: elementPlan,
           sectionName: section.name,
+          ...(!placement.heading && placement.rule && placement.issue
+            ? { placementFallback: { ...placement.issue, reason: "mapped-heading-missing" as const } }
+            : {}),
           destination: placement.heading
             ? {
                 kind: "heading" as const,
@@ -400,12 +405,27 @@ export const planServicePlanOutlineItems = ({
       }
     }
     if (sectionSteps.length) steps.push(...sectionSteps);
-    else if (placement.rule && placement.issue && unresolvedForSection.length) {
-      placementIssues.push({ ...placement.issue, reason: "mapped-heading-missing" });
-    }
   }
 
-  return { steps, skippedTitles, placementIssues };
+  return { steps, skippedTitles };
+};
+
+/** Resolve placement against the latest outline, including a heading removed during a build. */
+export const placeServicePlanOutlineItem = (
+  list: ServiceItem[],
+  item: ServiceItem,
+  step: ServicePlanOutlineStep,
+): { list: ServiceItem[]; fallback?: ServicePlanOutlinePlacementFallback } => {
+  const inserted = insertServicePlanOutlineItem(list, item, step.destination);
+  const issue = inserted ? step.placementFallback : {
+    sectionName: step.sectionName,
+    ...(step.destination.kind === "heading" ? { headingName: step.destination.name } : {}),
+    reason: "heading-removed" as const,
+  };
+  return {
+    list: inserted ?? [...list, item],
+    ...(issue ? { fallback: { ...issue, listId: item.listId, title: item.name } } : {}),
+  };
 };
 
 export const buildServicePlanOutlineItems = async ({
@@ -434,23 +454,18 @@ export const buildServicePlanOutlineItems = async ({
   };
   const planned = planServicePlanOutlineItems({ plan, currentList, songs, customDocuments, sectionRules });
   const items: ServiceItem[] = [];
+  const placementFallbacks: ServicePlanOutlinePlacementFallback[] = [];
   let workingList = currentList;
   for (const step of planned.steps) {
     assertCurrentContext();
     // eslint-disable-next-line no-await-in-loop -- build and append in content order
     const item = await buildServicePlanOutlineItem({ step, list: workingList, db, bibleDb });
-    const inserted = insertServicePlanOutlineItem(workingList, item, step.destination);
-    if (!inserted) {
-      planned.placementIssues.push({
-        sectionName: step.sectionName,
-        ...(step.destination.kind === "heading" ? { headingName: step.destination.name } : {}),
-        reason: "heading-removed",
-      });
-      continue;
-    }
+    assertCurrentContext();
+    const placed = placeServicePlanOutlineItem(workingList, item, step);
     items.push(item);
-    workingList = inserted;
+    if (placed.fallback) placementFallbacks.push(placed.fallback);
+    workingList = placed.list;
   }
   assertCurrentContext();
-  return { items, insertedCount: items.length, skippedTitles: planned.skippedTitles, placementIssues: planned.placementIssues };
+  return { items, insertedCount: items.length, skippedTitles: planned.skippedTitles, placementFallbacks };
 };

@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { projectTeamsBootstrapForAccess } from "./teamsBootstrapProjection.js";
+import {
+  projectTeamsBootstrapForAccess,
+  resolveSelfMemberId,
+} from "./teamsBootstrapProjection.js";
 import { resolveEffectiveTeamAccess } from "./teamAccess.js";
 
 const churchId = "church-1";
@@ -270,6 +273,36 @@ test("admin and global Teams editor preserve the existing full bootstrap object"
       source,
     );
   }
+});
+
+test("self identity requires one unique, consistent, active canonical link", () => {
+  const members = [
+    { id: "member-1", memberId: "member-1", churchId, userId: "caller" },
+    { id: "member-2", memberId: "member-2", churchId, userId: "other" },
+  ];
+  assert.equal(resolveSelfMemberId({ churchId, userId: "caller", members }), "member-1");
+  assert.equal(resolveSelfMemberId({ churchId, userId: "unlinked", members }), null);
+  assert.equal(resolveSelfMemberId({ churchId, userId: "caller", members, truncated: true }), null);
+  assert.equal(resolveSelfMemberId({
+    churchId,
+    userId: "caller",
+    members: [...members, { id: "duplicate", memberId: "duplicate", churchId, userId: "caller" }],
+  }), null);
+  assert.equal(resolveSelfMemberId({
+    churchId,
+    userId: "caller",
+    members: [{ ...members[0], archivedAt: "2026-01-01" }],
+  }), null);
+  assert.equal(resolveSelfMemberId({
+    churchId,
+    userId: "caller",
+    members: [{ ...members[0], id: "different-document" }],
+  }), null);
+  assert.equal(resolveSelfMemberId({
+    churchId,
+    userId: "caller",
+    members: [members[0], { id: "member-1", memberId: "member-1", churchId, userId: "other" }],
+  }), null);
 });
 
 test("global Teams viewer receives a safe read-only bootstrap projection", () => {

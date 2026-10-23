@@ -72,6 +72,35 @@ describe("WorshipSync position icons", () => {
     expect(screen.getByTestId("legacy-icon")).toBeInTheDocument();
   });
 
+  it("renders the legacy fallback when a rich icon is unavailable", async () => {
+    const fallback = <svg data-testid="legacy-home-icon" />;
+    const { rerender } = render(
+      <WorshipSyncIcon
+        icon={{ source: "lucide", name: "NoLongerAvailable" }}
+        fallback={fallback}
+      />,
+    );
+    expect(screen.getByTestId("legacy-home-icon")).toBeInTheDocument();
+
+    rerender(
+      <WorshipSyncIcon
+        icon={{ source: "tabler", name: "no-longer-available" }}
+        fallback={fallback}
+      />,
+    );
+    expect(screen.getByTestId("legacy-home-icon")).toBeInTheDocument();
+
+    rerender(
+      <WorshipSyncIcon
+        icon={{ source: "worshipsync", name: "no-longer-available" }}
+        fallback={fallback}
+      />,
+    );
+    expect(screen.getByTestId("legacy-home-icon")).toBeInTheDocument();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(screen.getByTestId("legacy-home-icon")).toBeInTheDocument();
+  });
+
   it("renders Tabler through the canonical renderer, keeps it stable, and ignores unknown names", async () => {
     const icon = { source: "tabler", name: "camera" } as const;
     const { rerender } = render(<WorshipSyncIcon icon={icon} />);
