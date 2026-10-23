@@ -337,7 +337,8 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
     await signedInPage.getByRole("button", { name: /Open Sunday Gathering/i }).waitFor();
     await signedInPage.getByRole("button", { name: /Change your response for Camera/ }).click();
     const declineResponsePromise = signedInPage.waitForResponse((result) =>
-      new URL(result.url()).pathname === "/api/volunteer/respond" && result.request().method() === "POST",
+      /\/api\/churches\/[^/]+\/my-assignments\/respond$/.test(new URL(result.url()).pathname) &&
+      result.request().method() === "POST",
     );
     await signedInPage.getByRole("button", { name: /Decline Camera/ }).click();
     const declineResponse = await declineResponsePromise;
