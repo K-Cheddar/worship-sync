@@ -473,6 +473,7 @@ describe("MemberManager member preferences", () => {
     renderManager({ data: joinedData() });
 
     await openMember(user, /Rae Kim/);
+    expect(screen.queryByRole("checkbox", { name: /^Team lead$/i })).not.toBeInTheDocument();
 
     const createButton = screen.getByRole("button", { name: "Create member" });
     const filterButton = screen.getByRole("button", { name: "Filter members" });

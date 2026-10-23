@@ -177,7 +177,6 @@ const TeamMemberProfileEditor = ({
         desiredPositionIds: profile.desiredPositionIds,
         membership: {
           roleId: profile.membership.roleId || null,
-          isTeamLead: profile.membership.isTeamLead,
         },
         qualifications: profile.qualifications.map((qualification) => ({
           qualificationId: qualification.qualificationId,
@@ -263,16 +262,6 @@ const TeamMemberProfileEditor = ({
                   ? [{ value: profile.membership.roleId, label: `Archived role (${profile.membership.roleId})` }]
                   : []),
               ]}
-            />
-            <Checkbox
-              label={`${selectedMemberName} is a ${team.name} team lead`}
-              checked={profile.membership.isTeamLead}
-              disabled={saving}
-              onCheckedChange={(isTeamLead) => setProfile((current) => current ? {
-                ...current,
-                membership: { ...current.membership, isTeamLead },
-              } : current)}
-              className="self-end"
             />
           </section>
 

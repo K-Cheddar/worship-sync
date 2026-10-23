@@ -45,29 +45,28 @@ export const inviteAccessDraftFromInvite = (
   teamsAccess: toTeamsAccessOption(invite.permissions, invite.role),
   servicesAccess: toServicesAccessOption(invite.permissions, invite.role),
   teamScopeIds: getEditableTeamScopeIds(invite.permissions),
+  basePermissions: invite.permissions,
 });
 
 export const buildPermissionsFromAccessDraft = (
   draft: Pick<
     InviteAccessDraft,
-    "role" | "teamsAccess" | "servicesAccess" | "teamScopeIds"
+    "role" | "teamsAccess" | "servicesAccess" | "teamScopeIds" | "basePermissions"
   >,
 ): MemberPermissions => {
   return {
+    ...draft.basePermissions,
     teams: draft.role === "admin" ? "edit" : draft.teamsAccess,
     services: draft.role === "admin" ? "edit" : draft.servicesAccess,
-    teamScopes:
-      draft.role === "admin" || draft.teamsAccess === "edit"
-        ? {}
-        : buildTeamScopesPermissions(draft.teamScopeIds),
+    teamScopes: buildTeamScopesPermissions(draft.teamScopeIds, draft.basePermissions),
   };
 };
 
 export const resolveInviteAccessPayload = (
   draft: InviteAccessDraft,
 ): {
-  role: string;
-  controllerAccess: string;
+  role: InviteAccessDraft["role"];
+  controllerAccess: InviteAccessDraft["controllerAccess"];
   appAccess: string;
   permissions: MemberPermissions;
 } => {
@@ -90,7 +89,7 @@ export const getInviteAccessSummaryLabel = (draft: InviteAccessDraft) => {
   ];
   if (draft.teamsAccess === "edit") parts.push("Edit all teams");
   else if (draft.teamsAccess === "view") parts.push("View all teams");
-  else if (draft.teamScopeIds.length > 0) parts.push("Selected team manager");
+  if (draft.teamScopeIds.length > 0) parts.push("Team lead");
   if (draft.servicesAccess === "edit") parts.push("Edit services");
   else if (draft.servicesAccess === "view") parts.push("View services");
   return parts.join(" · ");
@@ -100,5 +99,5 @@ export const scopedTeamsHelperText = (
   _teamsAccess: TeamsPermission,
   _hasScopedTeams: boolean,
 ) => {
-  return "Team membership gives read-only access automatically. Select teams here to let this person manage them. They don't need to be on a team's roster.";
+  return "Team leads can manage their teams and receive team updates by default. They can turn off emails in their notification settings.";
 };

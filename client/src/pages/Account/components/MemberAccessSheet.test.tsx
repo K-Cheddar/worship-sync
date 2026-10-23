@@ -232,7 +232,7 @@ describe("MemberAccessSheet independent access axes", () => {
     context.getMemberAccessValue.mockReturnValue("member");
     context.getMemberTeamsAccessValue.mockReturnValue("none");
     context.getMemberServicesAccessValue.mockReturnValue("none");
-    context.getMemberTeamScopeValue.mockReturnValue(["worship"]);
+    context.getMemberTeamScopeValue.mockReturnValue([]);
     context.getEditableTeamScopeIds.mockReturnValue([]);
     rerender(<MemberAccessSheet />);
 
@@ -248,7 +248,8 @@ describe("MemberAccessSheet independent access axes", () => {
     expect(servicesSelect).toHaveValue("edit");
     expect(screen.getByTestId("member-services-access-sheet-membership-1-selected-label")).toHaveTextContent("Edit");
     expect(servicesSelect).toBeDisabled();
-    expect(screen.queryByRole("group", { name: "Manage selected teams" })).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Team leads" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Worship" })).not.toBeChecked();
 
     fireEvent.change(accessSelect, {
       target: { value: "member" },

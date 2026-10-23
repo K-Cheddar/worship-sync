@@ -70,17 +70,16 @@ const MemberAccessSheet = () => {
   const draftTeamScopeIds = member
     ? getMemberTeamScopeValue(member)
     : inviteDraft.teamScopeIds;
-  const selectedTeamScopeIds = isExistingAdmin ? [] : draftTeamScopeIds;
+  const selectedTeamScopeIds = draftTeamScopeIds;
   const currentTeamScopeIds = member
     ? getEditableTeamScopeIds(member.permissions)
     : inviteDraft.teamScopeIds;
-  const effectiveCurrentTeamScopeIds = isExistingAdmin ? [] : currentTeamScopeIds;
   const inviteBaseline = invite ? inviteAccessDraftFromInvite(invite) : null;
 
   const memberTeamScopesChanged =
     isMemberTarget &&
     [...selectedTeamScopeIds].sort().join("|") !==
-      [...effectiveCurrentTeamScopeIds].sort().join("|");
+      [...currentTeamScopeIds].sort().join("|");
   const inviteAccessChanged = useMemo(
     () =>
       isInviteTarget &&
@@ -160,10 +159,7 @@ const MemberAccessSheet = () => {
       ? `save-invite-access:${invite.inviteId}`
       : "save-invite-draft";
   const isSaving = Boolean(memberActionLoading[saveAccessKey]);
-  const showPerTeamSection =
-    selectedTeamsAccess !== "edit" &&
-    teams.length > 0 &&
-    !isAdminAccess;
+  const showPerTeamSection = teams.length > 0;
   const servicesEditingIncluded = isAdminAccess || selectedTeamsAccess === "edit";
 
   const headerTitle = isMemberTarget
@@ -202,6 +198,7 @@ const MemberAccessSheet = () => {
   };
 
   const handleClose = () => {
+    if (isSaving) return;
     if (member) {
       clearMemberDrafts(member.membershipId);
     }
@@ -243,12 +240,10 @@ const MemberAccessSheet = () => {
       }
       void runMemberAction(saveAccessKey, async () => {
         await updateChurchMemberAccess(churchId, targetUserId, selectedMemberAccess, {
+          ...member?.permissions,
           teams: selectedTeamsAccess,
           services: selectedServicesAccess,
-          teamScopes:
-            selectedTeamsAccess === "edit"
-              ? {}
-              : buildTeamScopesPermissions(selectedTeamScopeIds),
+          teamScopes: buildTeamScopesPermissions(selectedTeamScopeIds, member?.permissions),
         });
         clearMemberDrafts(member!.membershipId);
         showStatus(`Updated access for ${memberLabel}.`);
@@ -300,14 +295,12 @@ const MemberAccessSheet = () => {
           controllerAccess: "full",
           teamsAccess: "edit",
           servicesAccess: "edit",
-          teamScopeIds: [],
         }
       : {
           role: "member",
           controllerAccess: "full",
           teamsAccess: "none",
           servicesAccess: "none",
-          teamScopeIds: [],
         });
   };
 
@@ -317,19 +310,11 @@ const MemberAccessSheet = () => {
         ...prev,
         [member.membershipId]: value,
       }));
-      if (value === "edit") {
-        setMemberTeamScopeDrafts((prev) => {
-          const next = { ...prev };
-          delete next[member.membershipId];
-          return next;
-        });
-      }
       return;
     }
 
     updateInviteDraft({
       teamsAccess: value,
-      ...(value === "edit" ? { teamScopeIds: [] } : {}),
     });
   };
 
@@ -409,6 +394,7 @@ const MemberAccessSheet = () => {
                 options={[{ value: "member", label: "Member" }, { value: "admin", label: "Admin" }]}
                 selectClassName={ACCOUNT_CONTROL_SELECT_CLASSNAME}
                 onChange={(value) => handleRoleChange(value as "admin" | "member")}
+                disabled={isSaving}
               />
             </section>
           ) : null}
@@ -428,7 +414,7 @@ const MemberAccessSheet = () => {
                 isMemberTarget ? memberAccessOptions : inviteAccessSelectOptions
               }
               selectClassName={ACCOUNT_CONTROL_SELECT_CLASSNAME}
-              disabled={isAdminAccess}
+              disabled={isAdminAccess || isSaving}
               onChange={handleControllerAccessChange}
             />
           </section>
@@ -451,21 +437,23 @@ const MemberAccessSheet = () => {
               }
               options={teamsPageAccessOptions}
               selectClassName={ACCOUNT_CONTROL_SELECT_CLASSNAME}
-              disabled={isAdminAccess}
+              disabled={isAdminAccess || isSaving}
               onChange={(value) =>
                 handleTeamsAccessChange(value as TeamsPermission)
               }
             />
             {selectedTeamsAccess === "edit" || isAdminAccess ? (
               <p className="rounded-lg border border-cyan-500/30 bg-cyan-950/20 px-3 py-2 text-xs text-cyan-100/90">
-                Edit all teams includes every team plus service plans and service settings. Per-team rules are not used.
+                {isAdminAccess
+                  ? "Admins can already edit all teams. Team Lead selections determine which routine team updates they receive."
+                  : "Edit all teams includes service plans and service settings. Team Lead selections determine which routine team updates this person receives."}
               </p>
             ) : null}
 
             {showPerTeamSection ? (
               <fieldset className="space-y-3 rounded-lg border border-gray-700 px-4 py-3">
                 <legend className="px-1 text-sm font-medium text-gray-200">
-                  Manage selected teams
+                  Team leads
                 </legend>
                 <p className="text-xs text-gray-400">
                   {scopedTeamsHelperText(
@@ -481,6 +469,7 @@ const MemberAccessSheet = () => {
                         key={team.teamId}
                         label={team.name}
                         checked={checked}
+                        disabled={isSaving}
                         onCheckedChange={(next) => handleTeamScopeToggle(team.teamId, next, currentTeamScopeIds)}
                         className={cn(
                           "inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm",
@@ -509,7 +498,7 @@ const MemberAccessSheet = () => {
               value={servicesEditingIncluded ? "edit" : selectedServicesAccess}
               options={serviceEditingAccessOptions}
               selectClassName={ACCOUNT_CONTROL_SELECT_CLASSNAME}
-              disabled={isAdminAccess || servicesEditingIncluded}
+              disabled={isAdminAccess || servicesEditingIncluded || isSaving}
               onChange={(value) =>
                 handleServicesAccessChange(value as ServicesPermission)
               }
@@ -525,7 +514,7 @@ const MemberAccessSheet = () => {
         </div>
 
         <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-gray-700 px-5 py-4">
-          <Button type="button" variant="tertiary" onClick={handleClose}>
+          <Button type="button" variant="tertiary" onClick={handleClose} disabled={isSaving}>
             Cancel
           </Button>
           <Button

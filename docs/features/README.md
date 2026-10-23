@@ -18,6 +18,7 @@ Do not mark agent-authored prose as confirmed merely because it is in this repos
 The [Teams and Services navigation contract](responsive-navigation.md) and [Church Administration navigation contract](church-administration-navigation.md) record their confirmed responsive shell organization and scope.
 The [Current member identification contract](current-member-identification.md) records the confirmed identity resolution and presentation behavior for **You** markers across Teams and Services.
 The [Resources responsive browsing contract](resources.md) records the October 20, 2026 request for compact mobile browsing, shared file-type visuals, and existing permission-aware resource actions.
+The [Account Team Leads contract](account-team-leads.md) records account-scoped team leadership, personal routine email eligibility, and durable digest delivery confirmed on October 23, 2026.
 
 ## Feature inventory
 

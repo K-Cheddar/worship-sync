@@ -12150,6 +12150,9 @@ test("Controller None preserves independently granted global Teams and Services 
       teamScopes: { worship: "edit" },
     },
   });
+  await setDoc(COLLECTIONS.teams, "worship", {
+    teamId: "worship", churchId: narrowed.churchId, name: "Worship",
+  });
   const narrowedBootstrap = await callHandler(authHandlers.getAuthMe, {
     context: narrowed,
   });
@@ -19907,6 +19910,9 @@ test("Services catalog reads follow Services grants while scoped Teams retain on
     body: { microphones: [], audiences: [] },
   })).statusCode, 200);
 
+  await setDoc(COLLECTIONS.teams, "scoped-team", {
+    teamId: "scoped-team", churchId: owner.churchId, name: "Scoped team",
+  });
   const scoped = await createHumanContext("services_read_team_scope", {
     churchId: owner.churchId,
     role: "member",

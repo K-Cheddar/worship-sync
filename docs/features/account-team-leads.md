@@ -1,0 +1,19 @@
+# Account Team Leads and routine team emails
+
+**Status:** Confirmed product intent. **Approval source:** Account-based Team Leads and consistent team notification routing request, October 23, 2026.
+
+Church administrators designate Team Leads in Church Administration -> People -> Edit access, for active accounts and new or pending invitations. Each active team has one checkbox. An administrator can edit their own Team Lead assignments. Administrators keep full editing access; global Teams editors retain their broad editing access. Their explicit selections determine routine email eligibility independently of that access.
+
+The canonical designation is `permissions.teamScopes[teamId] === "edit"` on the church membership (or pending invite). For regular members it also grants team editing. View scopes remain view-only and survive unrelated access changes. There is no second assignment field, recipient database, or roster prerequisite. Only church administrators assign/remove leads. Archived, foreign-church and missing team scopes are removed during access validation and invitation acceptance. Promotion retains explicit scopes; demotion removes global Teams/Services privileges and retains only validated explicit scopes.
+
+Availability-submission and schedule-response digests share the same recipient rule: active membership in the church, explicit edit scope for a relevant active team, an account email, and the corresponding personal preference not turned off. Admin status and global editing alone never qualify. A multi-team form notifies the union once per digest. A form with empty `teamIds` covers every active team in that church; an account with empty scopes still receives nothing. A schedule uses only its own team.
+
+Lead assignments default both personal categories to enabled through existing `default` preferences. Users may turn each category off across their teams. Only eligible leads are offered these team email switches; personal assignment/reminder settings retain their existing behavior. Administration does not manage another person's preferences.
+
+Roster Team Lead controls are retired. Stored `isTeamLead` flags may remain for compatibility but have no notification authority. No migration/backfill is performed. Volunteer roles, positions, qualifications, identity links, schedules, SMS and manual messages are unchanged.
+
+Digests retain the 20-minute window and private individual sends. Provider configuration and confirmed provider acceptance are required before recording delivery; intentional development debug email remains available for other workflows. Intake keeps its durable batches, bounded retries and delivery ledger. Schedule digests freeze their payload, use a leased durable batch on the schedule, and reuse the delivery ledger and provider idempotency keys. Failed schedule recipients retain pending work; accepted recipients are skipped on retry. Recovery runs on server startup and periodically without needing another submission/response. New responses/conflicts arriving during sending remain pending. Logs contain identifiers, counts and outcome/error categories, without recipient addresses or email content.
+
+Provider acceptance is not proof of inbox delivery. Stable provider idempotency protects uncertain outcomes only within the provider's retention window (currently documented in the sender as 24 hours); no real provider/inbox verification is implied by automated transport tests.
+
+Implementation: `authService.js`, `server/intakeNotifyRecipients.js`, `server/notificationPreferences.js`, Account access drawer/draft helpers, People-page actions, and the two roster editors. Verification: `server/accountTeamLeads.test.js`, `server/scheduleResponseDigest.test.js`, `server/intakeSubmissionDigest.test.js`, existing auth/team authorization suites, and `AccountPeoplePage.teamLeads.test.tsx` through the actual account provider and controls.

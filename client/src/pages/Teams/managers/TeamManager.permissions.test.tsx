@@ -565,7 +565,7 @@ it("opens a Team-only member profile and saves through the scoped profile API", 
       teamId: worship.teamId,
       positionIds: [worshipPosition.positionId],
       desiredPositionIds: [worshipDesired.positionId],
-      membership: { roleId: alternateWorshipRole.roleId, isTeamLead: true },
+      membership: { roleId: alternateWorshipRole.roleId },
       qualifications: [{ qualificationId: "worship-qualification", areaId: worshipArea.areaId, levelId: worshipLevel.levelId,
         teamId: worship.teamId, status: "completed", completedAt: "2026-09-15", expiresAt: "2027-09-15", notes: "Updated notes" }],
     },
@@ -592,7 +592,7 @@ it("opens a Team-only member profile and saves through the scoped profile API", 
   expect(within(dialog).getByText("Eligible positions")).toBeInTheDocument();
   expect(within(dialog).getByText("Desired positions")).toBeInTheDocument();
   expect(within(dialog).getByRole("combobox", { name: "Worship role:" })).toBeInTheDocument();
-  expect(within(dialog).getByLabelText("Avery Singer is a Worship team lead")).toBeInTheDocument();
+  expect(within(dialog).queryByLabelText("Avery Singer is a Worship team lead")).not.toBeInTheDocument();
   expect(within(dialog).getByRole("heading", { name: "Worship qualifications" })).toBeInTheDocument();
   expect(within(dialog).getByRole("combobox", { name: "Area:" })).toBeInTheDocument();
   expect(within(dialog).getByRole("combobox", { name: "Level:" })).toBeInTheDocument();
@@ -612,7 +612,6 @@ it("opens a Team-only member profile and saves through the scoped profile API", 
   expect(screen.queryByRole("option", { name: "AV Operator" })).not.toBeInTheDocument();
   await user.click(screen.getByRole("option", { name: "Worship Coordinator" }));
 
-  await user.click(screen.getByRole("checkbox", { name: "Avery Singer is a Worship team lead" }));
   await user.click(screen.getByRole("button", { name: "Save Worship profile" }));
   await waitFor(() => expect(updateTeamRosterMemberProfile).toHaveBeenCalledWith(
     "church-1",
@@ -621,7 +620,7 @@ it("opens a Team-only member profile and saves through the scoped profile API", 
     expect.objectContaining({
       positionIds: [worshipPosition.positionId],
       desiredPositionIds: [worshipDesired.positionId],
-      membership: { roleId: alternateWorshipRole.roleId, isTeamLead: true },
+      membership: { roleId: alternateWorshipRole.roleId },
       qualifications: [expect.objectContaining({
         areaId: worshipArea.areaId,
         levelId: worshipLevel.levelId,
@@ -675,7 +674,7 @@ it("explicitly clears an existing Team role when No role is saved", async () => 
     worship.teamId,
     member.memberId,
     expect.objectContaining({
-      membership: { roleId: null, isTeamLead: true },
+      membership: { roleId: null },
     }),
   ));
 });

@@ -69,6 +69,7 @@ export type InviteAccessDraft = {
   teamsAccess: TeamsPermission;
   servicesAccess: ServicesPermission;
   teamScopeIds: string[];
+  basePermissions?: MemberPermissions;
 };
 
 export type AccessSheetTarget =

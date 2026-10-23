@@ -1159,6 +1159,9 @@ test("bootstrap normalizes legacy appAccess and prefers explicit controllerAcces
   ]) {
     const userId = `legacy_access_${index}`;
     const churchId = `legacy_access_church_${index}`;
+    await setDoc(COLLECTIONS.teams, `worship_${index}`, {
+      teamId: `worship_${index}`, churchId, name: "Worship",
+    });
     const session = createSession();
     const { humanApiToken } = await seedActiveHumanBearerForServerTests({
       req: createReq({ session }),
@@ -1170,7 +1173,7 @@ test("bootstrap normalizes legacy appAccess and prefers explicit controllerAcces
       permissions: {
         teams: "none",
         services: "view",
-        teamScopes: { worship: "edit" },
+        teamScopes: { [`worship_${index}`]: "edit" },
       },
     });
     if (index === 0) {
@@ -1189,13 +1192,14 @@ test("bootstrap normalizes legacy appAccess and prefers explicit controllerAcces
     assert.deepEqual(bootstrap.payload?.permissions, {
       teams: "none",
       services: "view",
-      teamScopes: { worship: "edit" },
+      teamScopes: { [`worship_${index}`]: "edit" },
     });
     if (index === 0) assert.equal(bootstrap.payload?.appAccess, "member");
   }
 
   const adminUserId = "legacy_access_admin";
   const adminChurchId = "legacy_access_admin_church";
+  await setDoc(COLLECTIONS.teams, "worship_admin", { teamId: "worship_admin", churchId: adminChurchId, name: "Worship" });
   const adminSession = createSession();
   const { humanApiToken } = await seedActiveHumanBearerForServerTests({
     req: createReq({ session: adminSession }),
@@ -1204,7 +1208,7 @@ test("bootstrap normalizes legacy appAccess and prefers explicit controllerAcces
     churchId: adminChurchId,
     role: "admin",
     controllerAccess: "none",
-    permissions: { teams: "none", services: "none", teamScopes: { worship: "edit" } },
+    permissions: { teams: "none", services: "none", teamScopes: { worship_admin: "edit" } },
   });
   const adminBootstrap = createRes();
   await authHandlers.getAuthMe(createReq({
@@ -1215,6 +1219,6 @@ test("bootstrap normalizes legacy appAccess and prefers explicit controllerAcces
   assert.deepEqual(adminBootstrap.payload?.permissions, {
     teams: "edit",
     services: "edit",
-    teamScopes: {},
+    teamScopes: { worship_admin: "edit" },
   });
 });
