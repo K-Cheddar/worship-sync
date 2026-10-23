@@ -1,3 +1,47 @@
+# [2.46.0](https://github.com/K-Cheddar/worship-sync/compare/v2.45.2...v2.46.0) (2026-10-23)
+
+
+### Bug Fixes
+
+* bind overlay participants to plan revision ([5256702](https://github.com/K-Cheddar/worship-sync/commit/5256702bb633fb1186e7b6a94fa68af1555bd48f))
+* **chat:** respect floating window visibility ([150380e](https://github.com/K-Cheddar/worship-sync/commit/150380e7abcc41d6359d3941877c92a431ee5c20))
+* **ci:** address in-progress check failures ([3f894ba](https://github.com/K-Cheddar/worship-sync/commit/3f894ba2ee52f0c57299c4772b514ea3d57d0fe6))
+* **controller:** keep stale plan previews blocked ([15a2d96](https://github.com/K-Cheddar/worship-sync/commit/15a2d96bde7408c0bd6278dee7f05a9e64c3c559))
+* enforce volunteer identity integrity ([68ebee9](https://github.com/K-Cheddar/worship-sync/commit/68ebee9111d74b5c9b280f00267b8a0885c00d31))
+* handle aborted volunteer identity link transactions ([0dd2787](https://github.com/K-Cheddar/worship-sync/commit/0dd2787ab5373e62f08ffd30d813acf026fb68e3))
+* **home:** restore original palette ([1e2d3ba](https://github.com/K-Cheddar/worship-sync/commit/1e2d3baf4bd54f3df53c088035fe779ae98e8372))
+* **home:** restore slate palette and logo branding ([9e61711](https://github.com/K-Cheddar/worship-sync/commit/9e61711dffbbf97e0718c239e5b3bcf28ad628e7))
+* Improve forms ux ([13e4b30](https://github.com/K-Cheddar/worship-sync/commit/13e4b30eb5ee9cf35813bc0e0d4f075760437cc7))
+* keep service plan sync running through library refreshes ([491142e](https://github.com/K-Cheddar/worship-sync/commit/491142e50a0d7a07782d06e86e475557552ef561))
+* make volunteer identity deletion safe ([dda3dcf](https://github.com/K-Cheddar/worship-sync/commit/dda3dcf40d83b0cccee0bfd8f5d82948c1a0dcde))
+* **media:** repair deletion dialogs and mobile focus scroll ([29e5213](https://github.com/K-Cheddar/worship-sync/commit/29e52130daff4881ae458f78b4cdaa7ff089929b))
+* preserve controller service plan position on refresh ([0e9e1ac](https://github.com/K-Cheddar/worship-sync/commit/0e9e1aca1f2304530293a42bfaab8c38783ad802))
+* preserve self indicators in compact layouts ([45449b1](https://github.com/K-Cheddar/worship-sync/commit/45449b1dfb0ca0840452743ff3055ee32bb3550a))
+* preserve service plan scripture and outline sync content ([0035323](https://github.com/K-Cheddar/worship-sync/commit/00353230045cf72dded50a8d1e0c6e785a354777))
+* preserve time-off draft revision ownership ([b8c1615](https://github.com/K-Cheddar/worship-sync/commit/b8c16151803bdc1d0584e8ef41d1fd54a1b1386c))
+* recover overlapping service plan refreshes ([ef4dca2](https://github.com/K-Cheddar/worship-sync/commit/ef4dca284652f8030b28e38be17d324d3ce688c7))
+* **scheduling:** make demo workflows repeatable ([7c86e4f](https://github.com/K-Cheddar/worship-sync/commit/7c86e4f2b82bd2ca9109319988e12ec043f1e802))
+* **teams:** make scheduling member creation safe and discoverable ([a401653](https://github.com/K-Cheddar/worship-sync/commit/a4016534ff0137c27f2884ebcbeed2e5391c6bb3))
+* **volunteers:** require authoritative time-off conflict refresh ([f1aaf4e](https://github.com/K-Cheddar/worship-sync/commit/f1aaf4e0f31dc45a4e8ae74d6ee5a43ad8a78fa5))
+
+
+### Features
+
+* add identity-aware You indicators across Teams and Services ([0824ca3](https://github.com/K-Cheddar/worship-sync/commit/0824ca3350beb904ec6d5075f8feb4f0d7533307))
+* add native service plan participant overlays ([3ddda87](https://github.com/K-Cheddar/worship-sync/commit/3ddda8784cc41ba37fd7c2037817fc4c6a99397b))
+* adding custom sms ([7c072b1](https://github.com/K-Cheddar/worship-sync/commit/7c072b1d7e30684fd431c97dccb48d024789fdcf))
+* **chat:** add Windows taskbar notifications ([5be6549](https://github.com/K-Cheddar/worship-sync/commit/5be6549ce1570558eb46c0546c38075b1c0e2318))
+* establish volunteer self-service foundation ([8ff7d59](https://github.com/K-Cheddar/worship-sync/commit/8ff7d5947489d81ae74be2cd212afffa03a07b4e))
+* Homepage modification ([cafc047](https://github.com/K-Cheddar/worship-sync/commit/cafc047c17c45e20bb772bc91c33a2bb163cd7dd))
+* **home:** refine launcher visual design ([d0e3a78](https://github.com/K-Cheddar/worship-sync/commit/d0e3a78366007fe0e1a2dfa22adf9db3a96cd4af))
+* **home:** refine navigation launcher ([a480816](https://github.com/K-Cheddar/worship-sync/commit/a4808160717e7532b9cfcb3546f544cb3268182b))
+* **resources:** add compact responsive list and shared file icons ([95187e2](https://github.com/K-Cheddar/worship-sync/commit/95187e29c6e6c1998e37e2c695314bfb3101012e))
+* **songs:** add reviewed TXT song import ([d386f28](https://github.com/K-Cheddar/worship-sync/commit/d386f28943d8c4a9c58286d3e4f372d396afcb8c))
+* **teams:** redesign inline member editing ([e0e3eb0](https://github.com/K-Cheddar/worship-sync/commit/e0e3eb0a8f16d0db9f507787220c00fd98334319))
+* unify fixed page icon appearances ([b7a3654](https://github.com/K-Cheddar/worship-sync/commit/b7a36544ad81fd27e80866d60e304bc6ea2f8bd2))
+* unify volunteer My Schedule with secure personal access ([6befa02](https://github.com/K-Cheddar/worship-sync/commit/6befa029a629c698b60b2c141c905a8032728ace))
+* **volunteers:** accept all pending assignments ([65ce516](https://github.com/K-Cheddar/worship-sync/commit/65ce516e117a00cd59059c331b04c445b9da7166))
+
 ## [2.45.2](https://github.com/K-Cheddar/worship-sync/compare/v2.45.1...v2.45.2) (2026-10-17)
 
 
