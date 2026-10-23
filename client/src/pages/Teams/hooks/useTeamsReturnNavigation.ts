@@ -9,6 +9,7 @@ import {
   readPersistedTeamsReturnTo,
   readTeamsRestore,
   readTeamsReturnTo,
+  TEAMS_RETURN_TO_STATE_KEY,
   type TeamsGroupsRestore,
   type TeamsPlansRestore,
   type TeamsRestoreState,
@@ -45,13 +46,21 @@ export const useTeamsReturnNavigation = () => {
       onReset?.();
       if (!returnTo) return;
       clearPersistedTeamsReturnTo();
+      // Consume the origin on this history entry too, so browser Back cannot
+      // revive a return action that has already been used.
+      const nextState = { ...location.state };
+      delete nextState[TEAMS_RETURN_TO_STATE_KEY];
+      navigate(`${location.pathname}${location.search}${location.hash}`, {
+        replace: true,
+        state: Object.keys(nextState).length ? nextState : null,
+      });
       navigate(returnTo.pathname, {
         state: returnTo.restore
           ? buildTeamsRestoreNavigationState(returnTo.restore)
           : undefined,
       });
     },
-    [navigate, returnTo],
+    [location, navigate, returnTo],
   );
 
   return { returnTo, finishEditing };

@@ -14274,6 +14274,7 @@ test("individual intake recipients personalize and automatically apply one audit
   );
   assert.equal(preview.statusCode, 200);
   assert.equal(preview.payload.recipient.firstName, "Kevin");
+  assert.ok(preview.payload.recipient.missingFields.includes("email"));
   assert.ok(!JSON.stringify(preview.payload).includes("Cheddar"));
   assert.ok(!JSON.stringify(preview.payload).includes("recipientTokenNonce"));
 
@@ -14297,7 +14298,7 @@ test("individual intake recipients personalize and automatically apply one audit
         body: {
           firstName: "",
           lastName: "",
-          email: "",
+          email: "kevin@example.com",
           positionIds: [positionIds.Vocal],
           occurrenceAvailability:
             availability === undefined ? {} : { [occurrenceId]: availability },
@@ -14337,6 +14338,7 @@ test("individual intake recipients personalize and automatically apply one audit
   assert.equal(firstSubmission.status, "applied");
   assert.equal(firstSubmission.appliedMemberId, memberId);
   assert.equal(firstMember.serviceAvailability[occurrenceId], "unavailable");
+  assert.equal(firstMember.email, "kevin@example.com");
   assert.equal(firstRecipient.submissionId, firstSubmissionId);
   assert.ok(firstRecipient.respondedAt);
 
@@ -14427,6 +14429,231 @@ test("individual intake recipients personalize and automatically apply one audit
     reactivatedPreview,
   );
   assert.equal(reactivatedPreview.statusCode, 200);
+});
+
+test("personalized intake exposes missing fields and saves them without replacing existing details", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const previousContactSecret = process.env.AUTH_VOLUNTEER_PORTAL_SECRET;
+  const contactSecret = "team-intake-profile-test-secret";
+  process.env.AUTH_VOLUNTEER_PORTAL_SECRET = contactSecret;
+  t.after(() => {
+    if (previousContactSecret === undefined) {
+      delete process.env.AUTH_VOLUNTEER_PORTAL_SECRET;
+    } else {
+      process.env.AUTH_VOLUNTEER_PORTAL_SECRET = previousContactSecret;
+    }
+  });
+
+  const context = await createAdminContext("intake_missing_member_details");
+  const { teamId, memberIds } = await seedTeam(context, {
+    teamName: "Worship",
+    members: [
+      { firstName: "Avery", lastName: "Morgan" },
+      { firstName: "Riley", lastName: "Jones" },
+    ],
+  });
+  const memberId = memberIds.Avery;
+  const memberMissingFirstNameId = memberIds.Riley;
+  await setDoc(
+    COLLECTIONS.teamRosterMembers,
+    memberId,
+    { lastName: " ", email: "", title: "", birthDate: null },
+    { merge: true },
+  );
+  await setDoc(
+    COLLECTIONS.teamRosterMembers,
+    memberMissingFirstNameId,
+    {
+      firstName: " ",
+      email: "riley@example.com",
+      title: "Ms.",
+      birthDate: { month: 5, day: 3 },
+    },
+    { merge: true },
+  );
+  const form = await callHandler(authHandlers.createTeamIntakeForm, {
+    context,
+    body: {
+      name: "Complete your profile",
+      startDate: calendarDaysFromToday(0),
+      endDate: calendarDaysFromToday(45),
+      responseDeadline: calendarDaysFromToday(45),
+      purpose: "general_intake",
+      teamIds: [teamId],
+      enabledFields: ["title", "firstName", "lastName", "email", "birthDate"],
+      active: true,
+    },
+  });
+  assert.equal(form.statusCode, 200, JSON.stringify(form.payload));
+  const formId = form.payload.form.formId;
+  const created = await callHandler(authHandlers.createTeamIntakeRecipients, {
+    context,
+    params: { formId },
+    body: { memberIds: [memberId, memberMissingFirstNameId] },
+  });
+  assert.equal(created.statusCode, 200, JSON.stringify(created.payload));
+  const recipient = created.payload.recipients[0];
+  const link = await callHandler(authHandlers.getTeamIntakeRecipientLink, {
+    context,
+    params: { recipientId: recipient.recipientId },
+  });
+  const token = link.payload.publicUrl.split("/a/")[1];
+
+  const preview = createRes();
+  await authHandlers.getTeamIntakePreview(
+    createReq({ query: { token, recipientOnly: "true" } }),
+    preview,
+  );
+  assert.equal(preview.statusCode, 200, JSON.stringify(preview.payload));
+  assert.deepEqual(
+    new Set(preview.payload.recipient.missingFields),
+    new Set(["lastName", "title", "birthDate", "email"]),
+  );
+  assert.equal(Object.hasOwn(preview.payload.recipient, "lastName"), false);
+  assert.equal(JSON.stringify(preview.payload).includes("avery@example.com"), false);
+
+  const submitted = createRes();
+  await authHandlers.submitTeamIntake(
+    createReq({
+      query: { token, recipientOnly: "true" },
+      body: {
+        firstName: "Changed",
+        lastName: "Lee",
+        title: "Dr.",
+        email: "  Volunteer@Example.COM ",
+        birthDate: { month: 3, day: 2, year: 2000 },
+        positionIds: [],
+        occurrenceAvailability: {},
+        blockoutRanges: [],
+      },
+    }),
+    submitted,
+  );
+  assert.equal(submitted.statusCode, 200, JSON.stringify(submitted.payload));
+  const member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+  assert.equal(member.firstName, "Avery");
+  assert.equal(member.lastName, "Lee");
+  assert.equal(member.title, "Dr.");
+  assert.equal(member.email, "volunteer@example.com");
+  assert.deepEqual(member.birthDate, { month: 3, day: 2, year: 2000 });
+  assert.deepEqual(
+    member.volunteerContactKeys,
+    volunteerContactIndexFields(member, contactSecret).volunteerContactKeys,
+  );
+  const savedSubmissions = await queryDocs(COLLECTIONS.teamIntakeSubmissions, [
+    { field: "formId", value: formId },
+  ]);
+  assert.equal(savedSubmissions[0].submittedMemberDetails, undefined);
+
+  const firstNameRecipient = created.payload.recipients.find(
+    (item) => item.memberId === memberMissingFirstNameId,
+  );
+  const firstNameLink = await callHandler(authHandlers.getTeamIntakeRecipientLink, {
+    context,
+    params: { recipientId: firstNameRecipient.recipientId },
+  });
+  const firstNameToken = firstNameLink.payload.publicUrl.split("/a/")[1];
+  const firstNamePreview = createRes();
+  await authHandlers.getTeamIntakePreview(
+    createReq({ query: { token: firstNameToken, recipientOnly: "true" } }),
+    firstNamePreview,
+  );
+  assert.deepEqual(firstNamePreview.payload.recipient.missingFields, ["firstName"]);
+
+  const firstNameSubmitted = createRes();
+  await authHandlers.submitTeamIntake(
+    createReq({
+      query: { token: firstNameToken, recipientOnly: "true" },
+      body: {
+        firstName: "Riley",
+        lastName: "Do not replace",
+        title: "Dr.",
+        email: "changed@example.net",
+        birthDate: { month: 1, day: 1, year: 1980 },
+        positionIds: [],
+        occurrenceAvailability: {},
+        blockoutRanges: [],
+      },
+    }),
+    firstNameSubmitted,
+  );
+  assert.equal(firstNameSubmitted.statusCode, 200, JSON.stringify(firstNameSubmitted.payload));
+  const completedFirstNameMember = await getDoc(
+    COLLECTIONS.teamRosterMembers,
+    memberMissingFirstNameId,
+  );
+  assert.equal(completedFirstNameMember.firstName, "Riley");
+  assert.equal(completedFirstNameMember.lastName, "Jones");
+  assert.equal(completedFirstNameMember.title, "Ms.");
+  assert.equal(completedFirstNameMember.email, "riley@example.com");
+  assert.deepEqual(completedFirstNameMember.birthDate, { month: 5, day: 3 });
+});
+
+test("personalized availability fallback accepts blank personal values and preserves availability", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("intake_availability_fallback");
+  const { teamId, memberIds } = await seedTeam(context, {
+    teamName: "Worship",
+    members: [{ firstName: "Avery", lastName: "Morgan" }],
+  });
+  const memberId = memberIds.Avery;
+  const serviceDate = calendarDaysFromToday(7);
+  const startsAt = `${serviceDate}T10:00:00.000Z`;
+  const occurrenceId = `service_1@${startsAt}`;
+  const form = await callHandler(authHandlers.createTeamIntakeForm, {
+    context,
+    body: {
+      name: "November availability",
+      startDate: calendarDaysFromToday(0),
+      endDate: calendarDaysFromToday(14),
+      responseDeadline: calendarDaysFromToday(14),
+      purpose: "team_availability",
+      teamIds: [teamId],
+      enabledFields: ["availability"],
+      availabilityOccurrences: [{
+        occurrenceId,
+        serviceId: "service_1",
+        name: "Sunday service",
+        serviceDate,
+        startsAt,
+      }],
+      active: true,
+    },
+  });
+  assert.equal(form.statusCode, 200, JSON.stringify(form.payload));
+  const formId = form.payload.form.formId;
+  const created = await callHandler(authHandlers.createTeamIntakeRecipients, {
+    context,
+    params: { formId },
+    body: { memberIds: [memberId] },
+  });
+  assert.equal(created.statusCode, 200, JSON.stringify(created.payload));
+  const link = await callHandler(authHandlers.getTeamIntakeRecipientLink, {
+    context,
+    params: { recipientId: created.payload.recipients[0].recipientId },
+  });
+  const token = link.payload.publicUrl.split("/a/")[1];
+
+  const submitted = createRes();
+  await authHandlers.submitTeamIntake(
+    createReq({
+      query: { token, recipientOnly: "true" },
+      body: {
+        firstName: "",
+        lastName: "",
+        title: "",
+        email: "",
+        birthDate: null,
+        occurrenceAvailability: { [occurrenceId]: "available" },
+      },
+    }),
+    submitted,
+  );
+  assert.equal(submitted.statusCode, 200, JSON.stringify(submitted.payload));
+  const member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+  assert.equal(member.firstName, "Avery");
+  assert.equal(member.lastName, "Morgan");
+  assert.equal(member.serviceAvailability[occurrenceId], "available");
 });
 
 test("notification requests accept personalized forms with blockout and notes fields", async (t) => {

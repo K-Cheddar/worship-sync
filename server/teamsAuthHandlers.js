@@ -7738,6 +7738,71 @@ export const createTeamsAuthHandlers = ({
       })
       .filter(Boolean);
 
+  const normalizeTeamIntakeMemberBirthDate = (value) => {
+    if (
+      value === undefined ||
+      value === null ||
+      (typeof value === "string" && !value.trim())
+    ) return null;
+    if (
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      !Object.values(value).some(
+        (part) =>
+          part !== undefined && part !== null && String(part).trim() !== "",
+      )
+    ) {
+      return null;
+    }
+    try {
+      return normalizeBirthDate(value);
+    } catch {
+      // Treat a nonempty legacy value as populated so a public link cannot
+      // replace it with a different birthday.
+      return value;
+    }
+  };
+
+  const getMissingTeamIntakeMemberDetailFields = (member) => {
+    const missingFields = [];
+    if (!normalizeShortText(member?.title, { max: 40 })) missingFields.push("title");
+    if (!normalizeShortText(member?.firstName, { max: 80 })) missingFields.push("firstName");
+    if (!normalizeShortText(member?.lastName, { max: 80 })) missingFields.push("lastName");
+    if (!normalizeTeamIntakeMemberBirthDate(member?.birthDate)) missingFields.push("birthDate");
+    if (!String(member?.email || "").trim()) missingFields.push("email");
+    return missingFields;
+  };
+
+  const buildTeamIntakeMissingMemberDetailPatch = ({
+    member,
+    submittedMemberDetails = {},
+    form,
+  }) => {
+    const enabledFields = new Set(
+      normalizeTeamIntakeFields(undefined, form?.enabledFields),
+    );
+    const missingFields = new Set(getMissingTeamIntakeMemberDetailFields(member));
+    const patch = {};
+    for (const field of ["title", "firstName", "lastName"]) {
+      if (!enabledFields.has(field) || !missingFields.has(field)) continue;
+      const max = field === "title" ? 40 : 80;
+      const value = normalizeShortText(submittedMemberDetails[field], { max });
+      if (value) patch[field] = value;
+    }
+    if (enabledFields.has("email") && missingFields.has("email")) {
+      const email = normalizeMemberEmail(submittedMemberDetails.email);
+      if (email) patch.email = email;
+    }
+    if (enabledFields.has("birthDate") && missingFields.has("birthDate")) {
+      const birthDate = normalizeBirthDate(submittedMemberDetails.birthDate);
+      if (birthDate) {
+        patch.birthDate = birthDate;
+        patch.isMinor = isMinorFromBirthDate(birthDate) ?? Boolean(member?.isMinor);
+      }
+    }
+    return patch;
+  };
+
   const validateTeamIntakeSubmissionPayload = async (
     body,
     form,
@@ -7746,13 +7811,22 @@ export const createTeamsAuthHandlers = ({
     const enabledFields = new Set(
       normalizeTeamIntakeFields(undefined, form?.enabledFields),
     );
+    const missingPersonalFields = new Set(
+      personalizedMember
+        ? getMissingTeamIntakeMemberDetailFields(personalizedMember)
+        : [],
+    );
     const firstName = personalizedMember
-      ? normalizeShortText(personalizedMember.firstName, { max: 80 })
+      ? enabledFields.has("firstName") && missingPersonalFields.has("firstName")
+        ? normalizeShortText(body?.firstName, { max: 80 })
+        : normalizeShortText(personalizedMember.firstName, { max: 80 })
       : enabledFields.has("firstName")
         ? normalizeShortText(body?.firstName, { max: 80 })
         : "";
     const lastName = personalizedMember
-      ? normalizeShortText(personalizedMember.lastName, { max: 80 })
+      ? enabledFields.has("lastName") && missingPersonalFields.has("lastName")
+        ? normalizeShortText(body?.lastName, { max: 80 })
+        : normalizeShortText(personalizedMember.lastName, { max: 80 })
       : enabledFields.has("lastName")
         ? normalizeShortText(body?.lastName, { max: 80 })
         : "";
@@ -7771,28 +7845,56 @@ export const createTeamsAuthHandlers = ({
     // public form even renders an email field. Churches enable it per form, and
     // the default can flip once the client field has shipped everywhere.
     const email = personalizedMember
-      ? ""
+      ? enabledFields.has("email") && missingPersonalFields.has("email")
+        ? normalizeMemberEmail(body?.email)
+        : ""
       : enabledFields.has("email")
         ? normalizeMemberEmail(body?.email)
         : "";
-    if (!personalizedMember && enabledFields.has("email") && !email) {
+    if (
+      enabledFields.has("email") &&
+      (!personalizedMember || missingPersonalFields.has("email")) &&
+      !email
+    ) {
       throw httpError(400, "Email is required.");
     }
     const title = personalizedMember
-      ? ""
+      ? enabledFields.has("title") && missingPersonalFields.has("title")
+        ? normalizeShortText(body?.title, { max: 40 })
+        : ""
       : enabledFields.has("title")
         ? normalizeShortText(body?.title, { max: 40 })
         : "";
-    if (!personalizedMember && enabledFields.has("title") && !title) {
+    if (
+      enabledFields.has("title") &&
+      (!personalizedMember || missingPersonalFields.has("title")) &&
+      !title
+    ) {
       throw httpError(400, "Title is required.");
     }
     const birthDate = personalizedMember
-      ? null
+      ? enabledFields.has("birthDate") && missingPersonalFields.has("birthDate")
+        ? normalizeBirthDate(body?.birthDate)
+        : null
       : enabledFields.has("birthDate")
         ? normalizeBirthDate(body?.birthDate)
         : null;
-    if (!personalizedMember && enabledFields.has("birthDate") && !birthDate) {
+    if (
+      enabledFields.has("birthDate") &&
+      (!personalizedMember || missingPersonalFields.has("birthDate")) &&
+      !birthDate
+    ) {
       throw httpError(400, "Birthday is required.");
+    }
+    const submittedMemberDetails = {};
+    if (personalizedMember) {
+      for (const field of ["title", "firstName", "lastName", "birthDate", "email"]) {
+        if (!enabledFields.has(field) || !missingPersonalFields.has(field)) continue;
+        const value = { title, firstName, lastName, birthDate, email }[field];
+        if (value !== "" && value !== null && value !== undefined) {
+          submittedMemberDetails[field] = value;
+        }
+      }
     }
     // The public preview only offers positions from the form's scoped teams
     // (empty teamIds means every team). Enforce that same scope on submission so
@@ -7842,6 +7944,7 @@ export const createTeamsAuthHandlers = ({
       email,
       title,
       birthDate,
+      ...(personalizedMember ? { submittedMemberDetails } : {}),
       normalizedName: normalizePersonNameKey(firstName, lastName),
       positionIds,
       occurrenceAvailability,
@@ -8794,6 +8897,8 @@ export const createTeamsAuthHandlers = ({
     churchId,
     memberId,
     createMember = false,
+    personalizedSubmission = false,
+    submittedMemberDetails = {},
     adminUserId,
     now = nowIso(),
   }) => {
@@ -8802,35 +8907,49 @@ export const createTeamsAuthHandlers = ({
       if (createMember) {
         throw httpError(400, "Availability responses can only update an existing Team member.");
       }
-      const member = await assertTeamEntityInChurch("member", memberId, churchId, {
-        label: "Member",
-        active: false,
-      });
-      const serviceAvailability = replaceServiceAvailabilityForForm({
-        existingAvailability: member.serviceAvailability,
-        replacementAvailability: normalizeServiceAvailability(
-          submission.occurrenceAvailability,
-        ),
-        form,
-      });
-      await setDoc(
-        COLLECTIONS.teamRosterMembers,
-        member.memberId,
-        {
-          serviceAvailability,
-          updatedAt: now,
-          updatedByUid: adminUserId,
-        },
-        { merge: true },
-      );
+      const updateMember = async () => {
+        const member = await assertTeamEntityInChurch("member", memberId, churchId, {
+          label: "Member",
+          active: false,
+        });
+        const serviceAvailability = replaceServiceAvailabilityForForm({
+          existingAvailability: member.serviceAvailability,
+          replacementAvailability: normalizeServiceAvailability(
+            submission.occurrenceAvailability,
+          ),
+          form,
+        });
+        const memberDetailPatch = personalizedSubmission
+          ? buildTeamIntakeMissingMemberDetailPatch({
+              member,
+              submittedMemberDetails,
+              form,
+            })
+          : {};
+        await setDoc(
+          COLLECTIONS.teamRosterMembers,
+          member.memberId,
+          {
+            serviceAvailability,
+            ...memberDetailPatch,
+            updatedAt: now,
+            updatedByUid: adminUserId,
+          },
+          { merge: true },
+        );
+        return member.memberId;
+      };
+      const memberIdForResponse = requireFirestore?.()?.runTransaction
+        ? await updateMember()
+        : await enqueueInMemoryRosterMemberMutation(memberId, updateMember);
       return {
-        member: await getTeamEntity("member", member.memberId),
+        member: await getTeamEntity("member", memberIdForResponse),
         updatedTeams: [],
         application: {
           status: "applied",
           appliedAt: now,
           appliedByUid: adminUserId,
-          appliedMemberId: member.memberId,
+          appliedMemberId: memberIdForResponse,
           appliedMemberCreated: false,
         },
       };
@@ -8900,64 +9019,81 @@ export const createTeamsAuthHandlers = ({
         }),
       );
     } else {
-      member = await assertTeamEntityInChurch("member", memberId, churchId, {
-        label: "Member",
-        active: false,
-      });
       const nextDesiredPositionIds = normalizeIdArray(desiredPositionIds);
-      const nextBlockoutDates = formCollectsBlockouts
-        ? replaceBlockoutDateRangesInPeriod({
-            existingRanges: member.blockoutDates,
-            replacementRanges: blockoutDates,
-            startDate: form.startDate,
-            endDate: form.endDate,
-          })
-        : formBelongsToChurch
-          ? member.blockoutDates || []
-          : mergeBlockoutDateRanges([
-              ...(member.blockoutDates || []),
-              ...blockoutDates,
-            ]);
-      const nextServiceAvailability = replaceServiceAvailabilityForForm({
-        existingAvailability: member.serviceAvailability,
-        replacementAvailability: submissionAvailability,
-        form,
-      });
       const submittedEmail = normalizeMemberEmail(submission.email);
       const submittedTitle = normalizeShortText(submission.title, { max: 40 });
       const submittedBirthDate = normalizeBirthDate(submission.birthDate);
-      await setDoc(
-        COLLECTIONS.teamRosterMembers,
-        member.memberId,
-        {
-          desiredPositionIds: nextDesiredPositionIds,
-          serviceAvailability: nextServiceAvailability,
-          blockoutDates: nextBlockoutDates,
-          ...(member.email
-            ? {}
-            : submittedEmail
-              ? { email: submittedEmail }
+      const updateMember = async () => {
+        const currentMember = await assertTeamEntityInChurch("member", memberId, churchId, {
+          label: "Member",
+          active: false,
+        });
+        const nextBlockoutDates = formCollectsBlockouts
+          ? replaceBlockoutDateRangesInPeriod({
+              existingRanges: currentMember.blockoutDates,
+              replacementRanges: blockoutDates,
+              startDate: form.startDate,
+              endDate: form.endDate,
+            })
+          : formBelongsToChurch
+            ? currentMember.blockoutDates || []
+            : mergeBlockoutDateRanges([
+                ...(currentMember.blockoutDates || []),
+                ...blockoutDates,
+              ]);
+        const nextServiceAvailability = replaceServiceAvailabilityForForm({
+          existingAvailability: currentMember.serviceAvailability,
+          replacementAvailability: submissionAvailability,
+          form,
+        });
+        const memberDetailPatch = personalizedSubmission
+          ? buildTeamIntakeMissingMemberDetailPatch({
+              member: currentMember,
+              submittedMemberDetails,
+              form,
+            })
+          : {
+              ...(currentMember.email
+                ? {}
+                : submittedEmail
+                  ? { email: submittedEmail }
+                  : {}),
+              ...(!currentMember.title && submittedTitle
+                ? { title: submittedTitle }
+                : {}),
+              ...(!currentMember.birthDate && submittedBirthDate
+                ? {
+                    birthDate: submittedBirthDate,
+                    isMinor:
+                      isMinorFromBirthDate(submittedBirthDate) ??
+                      Boolean(currentMember.isMinor),
+                  }
+                : {}),
+            };
+        await setDoc(
+          COLLECTIONS.teamRosterMembers,
+          currentMember.memberId,
+          {
+            desiredPositionIds: nextDesiredPositionIds,
+            serviceAvailability: nextServiceAvailability,
+            blockoutDates: nextBlockoutDates,
+            ...memberDetailPatch,
+            ...(submission.servingFrequency
+              ? { servingFrequency: submission.servingFrequency }
               : {}),
-          ...(!member.title && submittedTitle ? { title: submittedTitle } : {}),
-          ...(!member.birthDate && submittedBirthDate
-            ? {
-                birthDate: submittedBirthDate,
-                isMinor:
-                  isMinorFromBirthDate(submittedBirthDate) ??
-                  Boolean(member.isMinor),
-              }
-            : {}),
-          ...(submission.servingFrequency
-            ? { servingFrequency: submission.servingFrequency }
-            : {}),
-          ...(submission.recurringAvailability
-            ? { recurringAvailability: submission.recurringAvailability }
-            : {}),
-          updatedAt: now,
-          updatedByUid: adminUserId,
-        },
-        { merge: true },
-      );
+            ...(submission.recurringAvailability
+              ? { recurringAvailability: submission.recurringAvailability }
+              : {}),
+            updatedAt: now,
+            updatedByUid: adminUserId,
+          },
+          { merge: true },
+        );
+        return getTeamEntity("member", currentMember.memberId);
+      };
+      member = requireFirestore?.()?.runTransaction
+        ? await updateMember()
+        : await enqueueInMemoryRosterMemberMutation(memberId, updateMember);
       trackTeams(
         await addMemberToTeamsForPositions({
           churchId,
@@ -8992,7 +9128,7 @@ export const createTeamsAuthHandlers = ({
 
   const submitTeamIntakeRecipientWithFirestoreTransaction = async ({
     token,
-    payload,
+    body,
     identity,
     recipientId,
   }) => {
@@ -9051,10 +9187,13 @@ export const createTeamsAuthHandlers = ({
 
 
       if (identity) assertTeamIntakeFormResponseDeadline(form);
-      // Revalidate occurrence scope from the form read in this transaction.
-      const currentPayload = availabilityOnly
-        ? await validateTeamIntakeSubmissionPayload(payload, form, { member })
-        : payload;
+      // Revalidate submitted fields against the member and form read in this
+      // transaction so a value filled after preview cannot be overwritten.
+      const currentPayload = await validateTeamIntakeSubmissionPayload(
+        body,
+        form,
+        { member },
+      );
 
       const submissionId =
         recipient.submissionId ||
@@ -9135,25 +9274,17 @@ export const createTeamsAuthHandlers = ({
         ),
         form,
       });
+      const memberDetailPatch = buildTeamIntakeMissingMemberDetailPatch({
+        member,
+        submittedMemberDetails: currentPayload.submittedMemberDetails,
+        form,
+      });
       const adminUserId = `recipient:${recipient.recipientId}`;
       const memberUpdate = {
         desiredPositionIds,
         serviceAvailability: nextServiceAvailability,
         blockoutDates: nextBlockoutDates,
-        ...(member.email || !currentPayload.email
-          ? {}
-          : { email: normalizeMemberEmail(currentPayload.email) }),
-        ...(!member.title && currentPayload.title
-          ? { title: normalizeShortText(currentPayload.title, { max: 40 }) }
-          : {}),
-        ...(!member.birthDate && currentPayload.birthDate
-          ? {
-              birthDate: normalizeBirthDate(currentPayload.birthDate),
-              isMinor:
-                isMinorFromBirthDate(currentPayload.birthDate) ??
-                Boolean(member.isMinor),
-            }
-          : {}),
+        ...memberDetailPatch,
         ...(currentPayload.servingFrequency
           ? { servingFrequency: currentPayload.servingFrequency }
           : {}),
@@ -9170,8 +9301,12 @@ export const createTeamsAuthHandlers = ({
         appliedMemberId: member.memberId,
         appliedMemberCreated: false,
       };
+      const {
+        submittedMemberDetails = {},
+        ...submissionPayload
+      } = currentPayload;
       const submission = {
-        ...currentPayload,
+        ...submissionPayload,
         submissionId,
         formId: form.formId,
         churchId: form.churchId,
@@ -9186,6 +9321,7 @@ export const createTeamsAuthHandlers = ({
       const memberPatch = availabilityOnly
         ? {
             serviceAvailability: nextServiceAvailability,
+            ...memberDetailPatch,
             updatedAt: submittedAt,
             updatedByUid: adminUserId,
           }
@@ -9282,7 +9418,7 @@ export const createTeamsAuthHandlers = ({
         const transactionalResult =
           await submitTeamIntakeRecipientWithFirestoreTransaction({
             token,
-            payload,
+            body: req.body,
             identity,
             recipientId,
           });
@@ -9299,11 +9435,15 @@ export const createTeamsAuthHandlers = ({
           );
         }
         const submittedAt = nowIso();
+        const {
+          submittedMemberDetails = {},
+          ...submissionPayload
+        } = payload;
         const submissionId =
           recipient.submissionId ||
           `teamIntakeSubmission_${hashValue(recipient.recipientId).slice(0, 32)}`;
         const submission = {
-          ...payload,
+          ...submissionPayload,
           submissionId,
           formId: form.formId,
           churchId: form.churchId,
@@ -9329,6 +9469,8 @@ export const createTeamsAuthHandlers = ({
           form,
           churchId: form.churchId,
           memberId: member.memberId,
+          personalizedSubmission: true,
+          submittedMemberDetails,
           adminUserId: `recipient:${recipient.recipientId}`,
           now: submittedAt,
         });
@@ -18122,7 +18264,12 @@ export const createTeamsAuthHandlers = ({
             notesMessage: form.notesMessage || "",
           },
           ...(member
-            ? { recipient: { firstName: member.firstName || "there" } }
+            ? {
+                recipient: {
+                  firstName: member.firstName || "there",
+                  missingFields: getMissingTeamIntakeMemberDetailFields(member),
+                },
+              }
             : {}),
           // Allowlist the fields the public form needs — never ship internal
           // position columns (description, order, timestamps) on a public link.

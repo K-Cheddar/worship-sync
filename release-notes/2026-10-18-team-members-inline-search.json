@@ -3,5 +3,5 @@
   "date": "2026-10-18",
   "type": "improved",
   "title": "Team membership editing",
-  "description": "Review team rosters, add or remove members with inline search, and open member profiles with protection for unsaved changes."
+  "description": "Review team rosters, add or remove members with inline search, and manage member profiles with protection for unsaved changes. Close profiles to stay in Members, then return to your team when ready."
 }

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import TeamManager from "./TeamManager";
@@ -31,6 +31,31 @@ const LocationProbe = () => {
 };
 
 beforeEach(() => jest.mocked(updateTeam).mockReset());
+
+it("closes a dirty Team editor locally and retains its explicit return action", async () => {
+  const user = userEvent.setup();
+  render(<MemoryRouter initialEntries={[{ pathname: TEAMS_SECTION_PATHS.groups, state: { teamsReturnTo: returnTo } }]}>
+    <GlobalInfoContext.Provider value={{ churchId: "church-1", churchBranding: { colors: [] } } as never}>
+      <ToastProvider><TeamsNavigationGuardProvider>
+        <TeamManager teams={[team]} positions={[]} roles={[]} qualificationAreas={[]} members={[]}
+          data={data} canEditTeams canEditTeam={() => true} onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()} />
+        <LocationProbe />
+      </TeamsNavigationGuardProvider></ToastProvider>
+    </GlobalInfoContext.Provider>
+  </MemoryRouter>);
+  await user.click(screen.getByText("Worship"));
+  await user.type(screen.getByLabelText(/^Description/), "Unsaved");
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await user.click(screen.getByRole("button", { name: "Discard changes" }));
+  expect(screen.queryByRole("heading", { name: "Edit team" })).not.toBeInTheDocument();
+  expect(screen.getByTestId("location")).toHaveTextContent(TEAMS_SECTION_PATHS.groups);
+  expect(screen.getAllByRole("button", { name: "Back to schedule" })).toHaveLength(1);
+  await user.click(screen.getByText("Worship"));
+  await user.click(within(screen.getByRole("region", { name: "Edit team" })).getByRole("button", { name: "Close" }));
+  expect(screen.getByTestId("location")).toHaveTextContent(TEAMS_SECTION_PATHS.groups);
+  await user.click(screen.getByRole("button", { name: "Back to schedule" }));
+  expect(screen.getByTestId("location")).toHaveTextContent(TEAMS_SECTION_PATHS.schedules);
+});
 
 const renderScopedTeam = () => {
   render(

@@ -152,7 +152,7 @@ test("opens a personalized /a/:token request without an authenticated app sessio
 test("personalizes an individual request without re-entering identity", async () => {
   mockGetPreview.mockResolvedValue({
     ...preview,
-    recipient: { firstName: "Kevin" },
+    recipient: { firstName: "Kevin", missingFields: [] },
     form: {
       ...preview.form,
       enabledFields: ["firstName", "lastName", "email", "title", "birthDate"],
@@ -165,6 +165,11 @@ test("personalizes an individual request without re-entering identity", async ()
   expect(screen.queryByLabelText(/first name/i)).not.toBeInTheDocument();
   expect(screen.queryByLabelText(/last name/i)).not.toBeInTheDocument();
   expect(screen.queryByLabelText(/email/i)).not.toBeInTheDocument();
+  expect(screen.queryByLabelText(/title/i)).not.toBeInTheDocument();
+  expect(screen.queryByText(/birthday/i)).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("group", { name: /personal information/i }),
+  ).not.toBeInTheDocument();
 
   await userEvent.click(
     screen.getByRole("button", { name: /submit response/i }),
@@ -176,6 +181,32 @@ test("personalizes an individual request without re-entering identity", async ()
     expect.objectContaining({ firstName: "", lastName: "", email: "" }),
     { personalized: true },
   );
+});
+
+test("personalized forms show only enabled personal fields missing from the member", async () => {
+  mockGetPreview.mockResolvedValue({
+    ...preview,
+    recipient: {
+      firstName: "there",
+      missingFields: ["firstName", "lastName", "email", "birthDate", "title"],
+    },
+    form: {
+      ...preview.form,
+      enabledFields: ["lastName", "email", "birthDate", "title"],
+    },
+  } as never);
+  renderPage("/a/tok_123");
+
+  await screen.findByText("Fall Volunteers");
+
+  expect(screen.queryByLabelText(/first name/i)).not.toBeInTheDocument();
+  expect(screen.getByLabelText(/last name/i)).toBeInTheDocument();
+  expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
+  expect(screen.getByText(/birthday/i)).toBeInTheDocument();
+  expect(screen.getByLabelText(/title/i)).toBeInTheDocument();
+  expect(
+    screen.getByRole("group", { name: /personal information/i }),
+  ).toBeInTheDocument();
 });
 
 test("personalized non-availability form asks volunteers to complete the form", async () => {
@@ -223,6 +254,45 @@ test("renders only the fields selected by the form owner", async () => {
 
   await userEvent.click(screen.getByRole("button", { name: /submit form/i }));
   await waitFor(() => expect(mockSubmit).toHaveBeenCalledTimes(1));
+});
+
+test("blank personal values do not block a personalized availability response", async () => {
+  mockGetPreview.mockResolvedValue({
+    ...preview,
+    recipient: {
+      firstName: "Avery",
+      missingFields: ["title", "firstName", "lastName", "birthDate", "email"],
+    },
+    form: {
+      ...preview.form,
+      enabledFields: ["availability"],
+      availabilityOccurrences: [
+        {
+          occurrenceId: "service_1@2026-09-06T10:00:00.000Z",
+          serviceId: "service_1",
+          name: "Saturday service",
+          startsAt: "2026-09-06T10:00:00.000Z",
+        },
+      ],
+    },
+  } as never);
+  mockSubmit.mockResolvedValue({ success: true, submissionId: "s1" });
+  renderPage("/a/tok_123");
+  await screen.findByText("Fall Volunteers");
+
+  expect(
+    screen.queryByRole("group", { name: /personal information/i }),
+  ).not.toBeInTheDocument();
+  await userEvent.click(
+    screen.getByRole("button", { name: /submit availability/i }),
+  );
+
+  await waitFor(() => expect(mockSubmit).toHaveBeenCalledTimes(1));
+  expect(mockSubmit).toHaveBeenCalledWith(
+    "tok_123",
+    expect.objectContaining({ firstName: "", lastName: "", email: "" }),
+    { personalized: true },
+  );
 });
 
 test("shows the added profile and scheduling fields when selected", async () => {

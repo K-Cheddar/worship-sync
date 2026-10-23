@@ -682,16 +682,14 @@ const MemberManager = ({
 
   const cancelEditing = () => {
     requestDiscardAction(() => {
-      if (returnTo) {
-        finishEditing(reset);
-        return;
-      }
       reset();
-      const nextParams = new URLSearchParams(searchParams);
-      nextParams.delete(TEAMS_MEMBER_EDIT_SEARCH_PARAM);
-      nextParams.delete(TEAMS_TEAM_SEARCH_PARAM);
-      setSearchParams(nextParams, { replace: true, state: location.state });
+      updateMemberEditRoute("", "");
     });
+  };
+
+  const returnToOrigin = () => {
+    if (isSavingCurrent) return;
+    requestDiscardAction(() => finishEditing(reset));
   };
 
   const confirmDelete = async () => {
@@ -1240,8 +1238,7 @@ const MemberManager = ({
     [positions, data.teams, teamNameById],
   );
 
-  // Team filter chips for the position pickers: same order as the list, and only
-  // teams that actually own a position.
+  // Team filter groups for the position pickers retain their default scope.
   const positionTeamFilters = useMemo(() => {
     const labelById = new Map<string, string>();
     positionOptions.forEach((option) => {
@@ -1481,8 +1478,8 @@ const MemberManager = ({
         scrollableList
         listToolbar={
           <div className="space-y-3">
-            {returnTo && !editing ? (
-              <TeamsReturnToolbar returnTo={returnTo} onBack={cancelEditing} />
+            {returnTo && !showCreate ? (
+              <TeamsReturnToolbar returnTo={returnTo} onBack={returnToOrigin} backDisabled={isSavingCurrent} />
             ) : null}
             {editRouteError ? <p role="alert" className="text-sm text-red-300">{editRouteError}</p> : null}
             {members.length > 0 ? (
@@ -1622,8 +1619,8 @@ const MemberManager = ({
           </>
         }
         formHeaderActions={
-          editing || returnTo ? (
-            <TeamsReturnToolbar returnTo={returnTo} onBack={cancelEditing}>
+          showCreate && (editing || returnTo) ? (
+            <TeamsReturnToolbar returnTo={returnTo} onBack={returnToOrigin} backDisabled={isSavingCurrent}>
               {editing && !isScopedMemberEditing ? (
                 <EntityFormDangerActions
                   archived={Boolean(editing.archivedAt)}
@@ -2134,11 +2131,11 @@ const MemberManager = ({
           key={`${showCreate ? "open" : "closed"}-${editing?.memberId || "create-member"}`}
           label="Positions"
           description="Positions this member can be scheduled for."
+          inlineSublabel
           options={positionOptions}
           groups={positionTeamFilters}
-          groupFilterLabel="Filter positions by team"
+          hideGroupFilters
           defaultGroupIds={draftTeamIds}
-          allGroupsLabel="All teams"
           value={draft.positionIds}
           onChange={applyPositionSelection}
           renderOptionAction={
@@ -2291,10 +2288,10 @@ const MemberManager = ({
               hideLabel
               hideSelectAll
               description="What the member wants to do, from intake forms. Does not affect scheduling on its own."
+              inlineSublabel
               options={positionOptions}
               groups={positionTeamFilters}
-              groupFilterLabel="Filter desired positions by team"
-              allGroupsLabel="All teams"
+              hideGroupFilters
               value={draft.desiredPositionIds || []}
               onChange={(desiredPositionIds) =>
                 setDraft((d) => ({ ...d, desiredPositionIds }))

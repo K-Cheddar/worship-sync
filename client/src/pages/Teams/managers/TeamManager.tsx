@@ -199,6 +199,10 @@ const TeamManager = ({
   };
 
   const cancelEditing = () => {
+    requestDiscardAction(reset);
+  };
+
+  const returnToOrigin = () => {
     requestDiscardAction(() => finishEditing(reset));
   };
 
@@ -575,7 +579,7 @@ const TeamManager = ({
         listToolbar={
           <div className="space-y-3">
             {returnTo && !showCreate ? (
-              <TeamsReturnToolbar returnTo={returnTo} onBack={cancelEditing} />
+              <TeamsReturnToolbar returnTo={returnTo} onBack={returnToOrigin} />
             ) : null}
             <EntityListFilterToolbar
               entityLabel="Teams"
@@ -612,7 +616,7 @@ const TeamManager = ({
         }
         formHeaderActions={
           showCreate ? (
-            <TeamsReturnToolbar returnTo={returnTo} onBack={cancelEditing}>
+            <TeamsReturnToolbar returnTo={returnTo} onBack={returnToOrigin}>
               {editing ? (
                 <EntityFormDangerActions
                   archived={Boolean(editing.archivedAt)}

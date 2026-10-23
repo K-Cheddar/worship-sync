@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
@@ -604,7 +604,7 @@ it("guards Manage navigation when the Team editor has unsaved changes", async ()
   expect(JSON.parse(screen.getByTestId("location").textContent || "{}").pathname).toBe(TEAMS_SECTION_PATHS.members);
 });
 
-it("completes Team → Manage → Members → Save → Back to the restored Team editor", async () => {
+it("completes Team → Manage → Close → Cancel → Save → Back with the scoped save guard", async () => {
   const user = userEvent.setup();
   const position = {
     positionId: "position-vocal",
@@ -628,21 +628,23 @@ it("completes Team → Manage → Members → Save → Back to the restored Team
       teamId: worship.teamId,
       positionIds: [],
       desiredPositionIds: [],
-      membership: {},
+      membership: { isTeamLead: false },
       qualifications: [],
     },
   } as never);
-  jest.mocked(updateTeamRosterMemberProfile).mockResolvedValue({
+  const pendingSave = deferred<Awaited<ReturnType<typeof updateTeamRosterMemberProfile>>>();
+  jest.mocked(updateTeamRosterMemberProfile).mockReturnValue(pendingSave.promise);
+  const savedProfile = {
     success: true,
     member: { memberId: member.memberId, firstName: member.firstName, lastName: member.lastName },
     teamProfile: {
       teamId: worship.teamId,
       positionIds: [position.positionId],
       desiredPositionIds: [],
-      membership: {},
+      membership: { isTeamLead: false },
       qualifications: [],
     },
-  } as never);
+  } as Awaited<ReturnType<typeof updateTeamRosterMemberProfile>>;
 
   render(
     <MemoryRouter initialEntries={[TEAMS_SECTION_PATHS.groups]}>
@@ -676,12 +678,10 @@ it("completes Team → Manage → Members → Save → Back to the restored Team
                   <MemberManager
                     members={flowData.members}
                     positions={flowData.positions}
-                    data={flowData}
+                    data={{ ...flowData, teams: [worship] }}
                     canEdit
                     canEditAllTeams={false}
-                    canEditMember={(candidate) => flowData.teams.some((team) =>
-                      !team.archivedAt && (team.memberIds || []).includes(candidate.memberId),
-                    )}
+                    canEditMember={(candidate) => (worship.memberIds || []).includes(candidate.memberId)}
                     onSaved={jest.fn()}
                     onTeamSaved={jest.fn()}
                     onArchived={jest.fn()}
@@ -701,10 +701,28 @@ it("completes Team → Manage → Members → Save → Back to the restored Team
   await user.click(screen.getByRole("button", { name: "Edit Worship" }));
   await user.click(screen.getByRole("button", { name: `Manage ${member.firstName} ${member.lastName}` }));
 
+  await screen.findByRole("checkbox", { name: "Eligible position: Vocal" });
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(JSON.parse(screen.getByTestId("location").textContent || "{}")).toMatchObject({
+    pathname: TEAMS_SECTION_PATHS.members, search: "",
+  });
+  expect(screen.getAllByRole("button", { name: "Back to Worship" })).toHaveLength(1);
+  await user.click(screen.getByRole("button", { name: "Edit Avery Singer" }));
+  await user.click(await screen.findByRole("checkbox", { name: "Eligible position: Vocal" }));
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await user.click(screen.getByRole("button", { name: "Discard changes" }));
+  expect(JSON.parse(screen.getByTestId("location").textContent || "{}").pathname).toBe(TEAMS_SECTION_PATHS.members);
+  await user.click(screen.getByRole("button", { name: "Edit Avery Singer" }));
   const memberEditor = await screen.findByRole("region", { name: "Avery Singer" });
   expect(await within(memberEditor).findByRole("heading", { name: "Worship" })).toBeInTheDocument();
   await user.click(within(memberEditor).getByRole("checkbox", { name: "Eligible position: Vocal" }));
   await user.click(screen.getByRole("button", { name: "Save profile" }));
+  expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Back to Worship" }));
+  expect(screen.getByRole("dialog", { name: "Saving changes" })).toBeInTheDocument();
+  expect(JSON.parse(screen.getByTestId("location").textContent || "{}").pathname).toBe(TEAMS_SECTION_PATHS.members);
+  await user.click(screen.getByRole("button", { name: "Stay on page" }));
+  await act(async () => pendingSave.resolve(savedProfile));
 
   await waitFor(() => expect(updateTeamRosterMemberProfile).toHaveBeenCalledWith(
     "church-1",
@@ -713,6 +731,7 @@ it("completes Team → Manage → Members → Save → Back to the restored Team
     expect.objectContaining({ positionIds: [position.positionId] }),
   ));
   expect(onScopedProfileSaved).toHaveBeenCalledWith(member.memberId);
+  expect(JSON.parse(screen.getByTestId("location").textContent || "{}").pathname).toBe(TEAMS_SECTION_PATHS.members);
   await user.click(await screen.findByRole("button", { name: "Back to Worship" }));
 
   expect(await screen.findByRole("heading", { name: "Edit team" })).toBeInTheDocument();

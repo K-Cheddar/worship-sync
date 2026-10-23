@@ -24,6 +24,8 @@ The compact toolbar and route tabs remain outside the scrollable page content. T
 
 ## Boundaries
 
+Ordinary panel, modal, drawer, and editor actions follow the shared [editor action navigation contract](responsive-navigation.md#editor-action-navigation-contract).
+
 This contract covers Church Administration navigation and the shared shell behavior required to support it. It does not combine or change administration pages, their workflows, data models, permission rules, or deep links. Teams, Services, and other controller, workspace, media, and public page layouts are outside scope.
 
 ## Product decisions

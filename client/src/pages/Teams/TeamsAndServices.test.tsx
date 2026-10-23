@@ -1147,6 +1147,38 @@ describe("Teams", () => {
     30_000,
   );
 
+  it.each([
+    { access: "administrator", editorName: "Edit member", context: { role: "admin", canEditTeams: true } },
+    { access: "scoped manager", editorName: "Avery Stone", context: {
+      role: "member", permissions: { teams: "none", teamScopes: { "team-main": "edit" } },
+      canViewTeams: true, hasBroadTeamsReadAccess: false, canEditTeams: false,
+      canEditTeam: (teamId: string) => teamId === "team-main",
+      canViewTeam: (teamId: string) => teamId === "team-main",
+    } },
+  ])("keeps Member Close local and explicitly restores the team through the real routes for $access", async ({ editorName, context }) => {
+    const user = userEvent.setup();
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse(scheduleBootstrap));
+    jest.mocked(getTeamRosterMemberProfile).mockImplementation(async (_churchId, _teamId, memberId) => ({
+      member: scheduleBootstrap.members.find((candidate) => candidate.memberId === memberId),
+      teamProfile: { teamId: "team-main", positionIds: [], desiredPositionIds: [],
+        membership: { isTeamLead: false }, qualifications: [] },
+    } as never));
+    renderTeams("/teams-and-services/groups", context);
+    await user.click(await screen.findByRole("button", { name: "Edit Main Team" }));
+    await user.click(screen.getByRole("button", { name: "Manage Avery Stone" }));
+    const editor = await screen.findByRole("region", { name: editorName });
+    await user.click(within(editor).getByRole("button", { name: /^(Close|Cancel)$/ }));
+    expect(screen.getByTestId("teams-location")).toHaveTextContent('"pathname":"/teams-and-services/members"');
+    expect(screen.getAllByRole("button", { name: "Back to Main Team" })).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "Edit Morgan Lee" }));
+    await screen.findByRole("region", { name: editorName === "Edit member" ? "Edit member" : "Morgan Lee" });
+    await user.click(screen.getByRole("button", { name: "Back to Main Team" }));
+    expect(await screen.findByRole("heading", { name: "Edit team" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: /^Name:?$/ })).toHaveValue("Main Team");
+    expect(screen.getByTestId("teams-location")).toHaveTextContent('"pathname":"/teams-and-services/groups"');
+    expect(sessionStorage.getItem("worship-sync:teams-return-to")).toBeNull();
+  });
+
   it("renders the empty schedule state after bootstrap loads", async () => {
     renderTeams();
 

@@ -30,6 +30,10 @@ An editor opens a team, reviews the assigned members in alphabetical order, and 
 
 ## Behavioral boundaries
 
+The full member editor's Positions and Desired positions lists omit team filter chips. Positions remain limited to the member's selected teams, with all positions available when no team is selected; Desired positions retain their existing all-team scope. Search, saved position order, and automatic team membership when choosing an eligible position remain unchanged. **Approval source:** Remove the positions filter request, clarification selecting team filter chips, and correction preserving selected-team filtering, 2026-10-23.
+
+Closing or canceling a Member editor stays on Members, removes `editMember` and `teamId`, preserves list search/filters and the mounted list scrollport, and retains the originating Team return action on the list. Opening another member retains that origin. Only explicit Back returns and restores the original Team selection, then consumes return metadata. Close, Cancel, and Back retain unsaved-change and active-save guards; Save does not leave Members. Team editors follow the same Close/Cancel versus Back separation. See the [editor action navigation contract](responsive-navigation.md#editor-action-navigation-contract). **Approval source:** Member Editor Navigation and Navigation Antipatterns request, 2026-10-23.
+
 Member editor deep links identify the church, member, and selected team together. Changing either URL selection preserves a dirty draft until the existing discard confirmation is accepted; Stay retains the editor and its URL. Delayed profile loads cannot replace a newer member, team, or church. Scoped links resolve only against authorized team projections, and server authorization remains authoritative. Create new member from a scoped team editor uses the same navigation guard and retains the originating team for preselection. **Approval source:** current code-review correction request, October 23, 2026.
 
 - The inline editor does not add a permission or expose the full roster, cross-team information, or sensitive member fields to scoped managers.

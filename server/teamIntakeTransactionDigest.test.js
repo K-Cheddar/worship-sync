@@ -18,6 +18,7 @@ const {
   createTeamIntakeRecipientToken,
   hashTeamIntakeRecipientToken,
 } = await import("./teamIntakeRecipientToken.js");
+const { volunteerContactIndexFields } = await import("./volunteerContactIndex.js");
 
 const snapshotFor = (id, data, ref = null) => ({
   id,
@@ -242,7 +243,14 @@ const submitAvailabilityToken = async (token, occurrenceId) => {
       headers: {},
       session: {},
       query: { token, recipientOnly: "true" },
-      body: { occurrenceAvailability: { [occurrenceId]: "available" } },
+      body: {
+        firstName: "",
+        lastName: "",
+        title: "",
+        email: "",
+        birthDate: null,
+        occurrenceAvailability: { [occurrenceId]: "available" },
+      },
     },
     response,
   );
@@ -320,6 +328,122 @@ test("individual recipient Firestore transaction schedules the digest after comm
     storedSubmission.digestBatchId,
     storedForm.pendingDigestBatchId,
   );
+});
+
+test("personalized intake transaction keeps a profile field filled concurrently after preview", async (t) => {
+  const previousContactSecret = process.env.AUTH_VOLUNTEER_PORTAL_SECRET;
+  const contactSecret = "team-intake-transaction-profile-secret";
+  process.env.AUTH_VOLUNTEER_PORTAL_SECRET = contactSecret;
+  t.after(() => {
+    if (previousContactSecret === undefined) {
+      delete process.env.AUTH_VOLUNTEER_PORTAL_SECRET;
+    } else {
+      process.env.AUTH_VOLUNTEER_PORTAL_SECRET = previousContactSecret;
+    }
+  });
+
+  const churchId = "transactional_profile_church";
+  const formId = "transactional_profile_form";
+  const memberId = "transactional_profile_member";
+  const recipientId = "transactional_profile_recipient";
+  const token = createTeamIntakeRecipientToken();
+  const startDate = new Date().toISOString().slice(0, 10);
+  const endDate = new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10);
+  let filledDuringTransaction = false;
+  const stores = {
+    [COLLECTIONS.teamIntakeForms]: {
+      [formId]: {
+        formId,
+        churchId,
+        active: true,
+        name: "Complete your profile",
+        purpose: "general_intake",
+        teamIds: [],
+        startDate,
+        endDate,
+        responseDeadline: endDate,
+        enabledFields: ["firstName", "lastName", "email"],
+        availabilityOccurrences: [],
+      },
+    },
+    [COLLECTIONS.teamRosterMembers]: {
+      [memberId]: {
+        memberId,
+        churchId,
+        firstName: "Avery",
+        lastName: "Morgan",
+        email: "",
+        serviceAvailability: { "older-occurrence": "unavailable" },
+      },
+    },
+    [COLLECTIONS.teamIntakeRecipients]: {
+      [recipientId]: {
+        recipientId,
+        formId,
+        churchId,
+        memberId,
+        recipientTokenHash: hashTeamIntakeRecipientToken(token),
+      },
+    },
+  };
+  const db = createFirestoreMock(stores, {
+    afterTransactionRead: ({ collection, id, store }) => {
+      if (
+        !filledDuringTransaction &&
+        collection === COLLECTIONS.teamRosterMembers &&
+        id === memberId
+      ) {
+        filledDuringTransaction = true;
+        store.set(id, { ...store.get(id), email: "latest@example.org" });
+      }
+    },
+  });
+  setServerFirestoreForTests(db);
+  t.after(() => setServerFirestoreForTests(null));
+
+  const response = {
+    statusCode: 200,
+    payload: null,
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+    json(payload) {
+      this.payload = payload;
+      return this;
+    },
+  };
+  await authHandlers.submitTeamIntake(
+    {
+      params: {},
+      headers: {},
+      session: {},
+      query: { token, recipientOnly: "true" },
+      body: {
+        firstName: "Changed",
+        lastName: "Changed",
+        email: "stale@example.net",
+        occurrenceAvailability: {},
+      },
+    },
+    response,
+  );
+
+  assert.equal(filledDuringTransaction, true);
+  assert.equal(response.statusCode, 200, JSON.stringify(response.payload));
+  const member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+  assert.equal(member.firstName, "Avery");
+  assert.equal(member.lastName, "Morgan");
+  assert.equal(member.email, "latest@example.org");
+  assert.deepEqual(
+    member.volunteerContactKeys,
+    volunteerContactIndexFields(member, contactSecret).volunteerContactKeys,
+  );
+  const submission = await getDoc(
+    COLLECTIONS.teamIntakeSubmissions,
+    response.payload.submissionId,
+  );
+  assert.equal(submission.submittedMemberDetails, undefined);
 });
 
 test("availability recipient submission uses the current Team roster inside its Firestore transaction", async (t) => {

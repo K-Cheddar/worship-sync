@@ -24,6 +24,18 @@ Secondary route tabs use the shared Tabs primitive; labels never compress, horiz
 
 Teams and Services use the shared temporary pending-route mechanism to select a requested destination before its lazy page is ready. The Teams navigation guard continues to own unsaved-edit confirmation separately.
 
+## Editor action navigation contract
+
+For ordinary editors across Teams, Services, and Church Administration:
+
+- **Close** dismisses the current panel, modal, drawer, or editor.
+- **Cancel** abandons the current editing operation, confirming unsaved changes when needed.
+- **Back** navigates to an explicitly identified previous destination or parent view and respects dirty and active-save guards.
+- **Save** persists changes without navigating unless the workflow explicitly requires otherwise.
+- **Return context** supplies an optional destination; it must not override Close or Cancel automatically. Retain it while closing/reopening editors and consume it only on explicit return navigation, including its history and stored metadata.
+
+Use separate intention-revealing handlers for dismissal and navigation. Explicit workflow exits, such as canceling a dedicated full-page wizard, may differ when documented. **Approval source:** Member Editor Navigation and Navigation Antipatterns request, 2026-10-23.
+
 ## Boundaries
 
 No pages are combined. Authorization and direct-route enforcement, data models, persisted navigation routes, lazy loading, workflows, and API behavior remain unchanged. Controller, projector, monitor, stream, public pages, authentication, and Home layouts are outside this redesign.

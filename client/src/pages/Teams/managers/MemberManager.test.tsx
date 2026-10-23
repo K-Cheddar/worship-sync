@@ -13,7 +13,7 @@ import type {
   TeamSchedule,
 } from "../../../api/authTypes";
 import type { TeamsData } from "../types";
-import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
+import { buildGroupsReturnTo, TEAMS_RETURN_STORAGE_KEY, TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 
 const mockCreateTeamRosterMember = jest.fn();
 const mockUpdateTeamRosterMember = jest.fn();
@@ -143,7 +143,7 @@ const renderManager = ({
   canEditAllTeams?: boolean;
   canManageMemberLifecycle?: boolean;
   canEditMember?: (member: TeamRosterMember) => boolean;
-  initialEntry?: string | { pathname: string; state?: unknown };
+  initialEntry?: string | { pathname: string; search?: string; state?: unknown };
   onIdentityChanged?: jest.Mock;
   onSmsConsentRecorded?: jest.Mock;
   onSmsEligibilityRefresh?: (memberId: string, phoneNumber: string, previousPhoneNumber: string) => Promise<void>;
@@ -994,13 +994,84 @@ describe("MemberManager member preferences", () => {
 });
 
 describe("MemberManager return navigation", () => {
+  it("closes locally, preserves the list and origin, and returns explicitly after opening another member", async () => {
+    const user = userEvent.setup();
+    const returnTo = { ...buildGroupsReturnTo(worshipTeam.teamId), label: "Back to Worship" };
+    const second = { ...worshipMember, memberId: "member-2", firstName: "Rae", lastName: "Lee" };
+    renderManager({ data: joinedData({ members: [worshipMember, second],
+      teams: [{ ...worshipTeam, memberIds: [worshipMember.memberId, second.memberId] }],
+    }), initialEntry: {
+      pathname: TEAMS_SECTION_PATHS.members,
+      search: "?editMember=member-1&teamId=team-worship&view=active",
+      state: { teamsReturnTo: returnTo },
+    } });
+    await user.type(screen.getByPlaceholderText(/Search members/), "Rae");
+    await user.click(screen.getByRole("button", { name: "Filter members" }));
+    await user.click(within(screen.getByRole("region", { name: "Filter members" })).getByRole("checkbox", { name: "Worship" }));
+    await user.click(screen.getByRole("button", { name: "Close filters" }));
+    // The scrollport has no interactive role; inspect its retained DOM identity.
+    // eslint-disable-next-line testing-library/no-node-access
+    const list = screen.getByTestId("teams-create-panel-list").querySelector(".overflow-y-auto")!;
+    list.scrollTop = 140;
+    await user.click(form().getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("region", { name: "Edit member" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("location")).toHaveAttribute("data-search", "?view=active");
+    expect(screen.getByTestId("location")).toHaveTextContent(TEAMS_SECTION_PATHS.members);
+    expect(screen.getByPlaceholderText(/Search members/)).toHaveValue("Rae");
+    expect(screen.getByRole("button", { name: "Filter members, 1 selected" })).toBeInTheDocument();
+    expect(list.scrollTop).toBe(140);
+    expect(screen.getAllByRole("button", { name: "Back to Worship" })).toHaveLength(1);
+    await openMember(user, /Rae Lee/);
+    expect(screen.getByLabelText(/^Last name/)).toHaveValue("Lee");
+    expect(screen.getAllByRole("button", { name: "Back to Worship" })).toHaveLength(1);
+    await user.type(screen.getByLabelText(/^Last name/), " unsaved");
+    await user.click(screen.getByRole("button", { name: "Back to Worship" }));
+    await user.click(screen.getByRole("button", { name: "Stay" }));
+    await user.click(form().getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("button", { name: "Stay" }));
+    expect(screen.getByLabelText(/^Last name/)).toHaveValue("Lee unsaved");
+    await user.click(form().getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("button", { name: "Discard changes" }));
+    expect(screen.getByTestId("location")).toHaveTextContent(TEAMS_SECTION_PATHS.members);
+    await user.click(screen.getByRole("button", { name: "Back to Worship" }));
+    expect(screen.getByTestId("location")).toHaveTextContent(JSON.stringify({
+      pathname: TEAMS_SECTION_PATHS.groups, state: { teamsRestore: returnTo.restore },
+    }));
+    expect(sessionStorage.getItem(TEAMS_RETURN_STORAGE_KEY)).toBeNull();
+  });
+
+  it.each([false, true])("remounts the closed list without returning automatically (reload=%s)", async (reload) => {
+    const user = userEvent.setup();
+    const returnTo = buildGroupsReturnTo(worshipTeam.teamId);
+    const view = renderManager({ data: joinedData(), initialEntry: {
+      pathname: TEAMS_SECTION_PATHS.members,
+      search: "?editMember=member-1&teamId=team-worship",
+      state: { teamsReturnTo: returnTo },
+    } });
+    await user.click(form().getByRole("button", { name: "Close" }));
+    view.unmount();
+    const performanceSpy = jest.spyOn(window, "performance", "get").mockReturnValue({
+      getEntriesByType: () => [{ type: reload ? "reload" : "navigate" }],
+    } as unknown as Performance);
+    try {
+      renderManager({ data: joinedData(), initialEntry: {
+        pathname: TEAMS_SECTION_PATHS.members,
+        state: reload ? undefined : { teamsReturnTo: returnTo },
+      } });
+      expect(screen.queryByRole("region", { name: "Edit member" })).not.toBeInTheDocument();
+      expect(screen.getByTestId("location")).toHaveTextContent(TEAMS_SECTION_PATHS.members);
+      expect(screen.getAllByRole("button", { name: "Back to teams" })).toHaveLength(1);
+      await openMember(user, /Rae Kim/);
+      expect(screen.getByLabelText(/^First name/)).toHaveValue("Rae");
+    } finally {
+      performanceSpy.mockRestore();
+    }
+  });
+
   it("keeps a cross-section edit open and only returns when contextual Back is selected", async () => {
     const user = userEvent.setup();
-    mockUpdateTeamRosterMember.mockResolvedValue({
-      success: true,
-      member: { ...worshipMember, firstName: "Rachel", lastName: "Kim" },
-      teams: [],
-    });
+    let finishSave!: (value: { success: true; member: TeamRosterMember; teams: TeamRecord[] }) => void;
+    mockUpdateTeamRosterMember.mockImplementation(() => new Promise((resolve) => { finishSave = resolve; }));
     render(
       <MemoryRouter initialEntries={[{
         pathname: TEAMS_SECTION_PATHS.members,
@@ -1025,6 +1096,13 @@ describe("MemberManager return navigation", () => {
     await user.click(saveButton());
 
     await waitFor(() => expect(mockUpdateTeamRosterMember).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: "Back to schedule" })).toBeDisabled();
+    expect(form().getByRole("button", { name: "Close" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Back to schedule" }));
+    expect(screen.getByTestId("location")).toHaveTextContent(TEAMS_SECTION_PATHS.members);
+    await act(async () => finishSave({
+      success: true, member: { ...worshipMember, firstName: "Rachel", lastName: "Kim" }, teams: [],
+    }));
     expect(screen.getByRole("region", { name: "Edit member" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Back to schedule" })).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Unsaved changes" })).not.toBeInTheDocument();
@@ -1039,7 +1117,43 @@ describe("MemberManager return navigation", () => {
 });
 
 describe("MemberManager team membership", () => {
-  it("defaults an existing one-team member to that team's positions", async () => {
+  it("keeps position search and shows desired positions without team filter chips", async () => {
+    const user = userEvent.setup();
+    const positions = [
+      vocalPosition,
+      producerPosition,
+      ...Array.from({ length: 4 }, (_, index) => ({
+        ...producerPosition,
+        positionId: `position-camera-${index}`,
+        name: `Camera ${index}`,
+      })),
+    ];
+    renderManager({
+      data: buildData({
+        positions,
+        teams: [worshipTeam, mediaTeam],
+      }),
+    });
+    await openCreateForm(user);
+
+    const search = within(positionsField()).getByRole("textbox", { name: /^Search Positions/ });
+    await user.type(search, "Producer");
+    expect(within(positionsField()).getAllByRole("checkbox")).toHaveLength(1);
+    expect(producerPositionCheckbox()).toBeInTheDocument();
+    await user.clear(search);
+    expect(within(positionsField()).getAllByRole("checkbox")).toHaveLength(6);
+
+    await user.click(form().getByRole("button", { name: "Desired positions" }));
+    const desired = within(form().getByRole("group", { name: "Desired positions" }));
+    expect(desired.getAllByRole("checkbox")).toHaveLength(6);
+    expect(desired.queryByRole("group", { name: "Filter desired positions by team" })).not.toBeInTheDocument();
+    expect(desired.queryByRole("button", { name: "All teams" })).not.toBeInTheDocument();
+    await user.type(desired.getByRole("textbox", { name: /^Search Desired positions/ }), "Producer");
+    expect(desired.getAllByRole("checkbox")).toHaveLength(1);
+    expect(desired.getByRole("checkbox", { name: /Producer/ })).toBeInTheDocument();
+  });
+
+  it("shows only selected-team positions without team filter chips for an existing member", async () => {
     const user = userEvent.setup();
     renderManager({
       data: joinedData({
@@ -1052,10 +1166,11 @@ describe("MemberManager team membership", () => {
     expect(within(positionsField()).getAllByRole("checkbox")).toHaveLength(1);
     expect(vocalPositionCheckbox()).toBeChecked();
     expect(within(positionsField()).queryByRole("checkbox", { name: /Producer/ })).not.toBeInTheDocument();
-    expect(within(positionsField()).queryByRole("button", { name: "Selected teams" })).not.toBeInTheDocument();
+    expect(within(positionsField()).queryByRole("group", { name: "Filter positions by team" })).not.toBeInTheDocument();
+    expect(within(positionsField()).queryByRole("button", { name: "All teams" })).not.toBeInTheDocument();
   });
 
-  it("defaults an existing member to the union of roster and team-membership teams", async () => {
+  it("preserves the union of roster and team-membership teams without position filters", async () => {
     const user = userEvent.setup();
     renderManager({
       data: joinedData({
@@ -1074,16 +1189,11 @@ describe("MemberManager team membership", () => {
     expect(within(positionsField()).getAllByRole("checkbox")).toHaveLength(2);
     expect(vocalPositionCheckbox()).toBeChecked();
     expect(producerPositionCheckbox()).toBeInTheDocument();
-    expect(within(positionsField()).queryByRole("button", { name: "Selected teams" })).not.toBeInTheDocument();
-    expect(within(positionsField()).getByRole("button", { name: "Worship" })).toHaveAttribute(
-      "aria-pressed", "true",
-    );
-    expect(within(positionsField()).getByRole("button", { name: "Media" })).toHaveAttribute(
-      "aria-pressed", "true",
-    );
+    expect(worshipTeamCheckbox()).toBeChecked();
+    expect(within(teamsField()).getByRole("checkbox", { name: /Media/ })).toBeChecked();
   });
 
-  it("starts a new member with all teams, then reacts to selected team changes", async () => {
+  it("keeps positions scoped to selected teams as a new member's teams change", async () => {
     const user = userEvent.setup();
     renderManager({
       data: buildData({
@@ -1094,20 +1204,10 @@ describe("MemberManager team membership", () => {
     await openCreateForm(user);
 
     expect(within(positionsField()).getAllByRole("checkbox")).toHaveLength(2);
-    expect(within(positionsField()).getByRole("button", { name: "All teams" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
     await toggleWorshipTeam(user);
-    expect(within(positionsField()).getByRole("button", { name: "Worship" })).toHaveAttribute(
-      "aria-pressed", "true",
-    );
     expect(within(positionsField()).getAllByRole("checkbox")).toHaveLength(1);
     await user.click(within(teamsField()).getByRole("checkbox", { name: /Media/ }));
     expect(within(positionsField()).getAllByRole("checkbox")).toHaveLength(2);
-    expect(within(positionsField()).getByRole("button", { name: "Media" })).toHaveAttribute(
-      "aria-pressed", "true",
-    );
     await user.click(producerPositionCheckbox());
     expect(within(teamsField()).getByRole("checkbox", { name: /Media/ })).toHaveAttribute(
       "aria-checked",
@@ -1115,16 +1215,13 @@ describe("MemberManager team membership", () => {
     );
     await user.click(within(teamsField()).getByRole("checkbox", { name: /Media/ }));
     expect(within(positionsField()).queryByRole("checkbox", { name: /Producer/ })).not.toBeInTheDocument();
-    expect(within(positionsField()).getByRole("button", { name: "Media" })).toHaveAttribute(
-      "aria-pressed", "false",
-    );
     expect(within(teamsField()).getByRole("checkbox", { name: /Media/ })).toHaveAttribute(
       "aria-checked",
       "false",
     );
   });
 
-  it("keeps explicit All teams and adds an out-of-team position's team", async () => {
+  it("shows all positions again when no team is selected and adds a chosen position's team", async () => {
     const user = userEvent.setup();
     renderManager({
       data: buildData({
@@ -1134,7 +1231,8 @@ describe("MemberManager team membership", () => {
     });
     await openCreateForm(user);
     await toggleWorshipTeam(user);
-    await user.click(within(positionsField()).getByRole("button", { name: "All teams" }));
+    expect(within(positionsField()).getAllByRole("checkbox")).toHaveLength(1);
+    await toggleWorshipTeam(user);
 
     expect(within(positionsField()).getAllByRole("checkbox")).toHaveLength(2);
     await user.click(producerPositionCheckbox());
@@ -1142,10 +1240,7 @@ describe("MemberManager team membership", () => {
       "aria-checked",
       "true",
     );
-    expect(within(positionsField()).getByRole("button", { name: "All teams" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    expect(within(positionsField()).getAllByRole("checkbox")).toHaveLength(1);
   });
 
   it("checks a position's team, so eligibility and membership cannot disagree", async () => {
@@ -1158,7 +1253,7 @@ describe("MemberManager team membership", () => {
     expect(worshipTeamCheckbox()).toHaveAttribute("aria-checked", "true");
   });
 
-  it("keeps the team filter separate from membership until a position is selected", async () => {
+  it("shows another team's positions only after that team is selected", async () => {
     const user = userEvent.setup();
     const praiseTeam: TeamRecord = {
       teamId: "team-praise",
@@ -1188,13 +1283,13 @@ describe("MemberManager team membership", () => {
     });
     await openMember(user, /Rae Kim/);
 
-    const praiseFilter = within(positionsField()).getByRole("button", { name: "Praise Team" });
-    await user.click(praiseFilter);
-    expect(praiseFilter).toHaveAttribute("aria-pressed", "true");
+    expect(within(positionsField()).queryByRole("checkbox", { name: /Singer/ })).not.toBeInTheDocument();
     expect(within(teamsField()).getByRole("checkbox", { name: /Praise Team/ })).toHaveAttribute(
       "aria-checked", "false",
     );
 
+    await user.click(within(teamsField()).getByRole("checkbox", { name: /Praise Team/ }));
+    expect(within(positionsField()).getByRole("checkbox", { name: /Singer/ })).not.toBeChecked();
     await user.click(within(positionsField()).getByRole("checkbox", { name: /Singer/ }));
     expect(within(teamsField()).getByRole("checkbox", { name: /Praise Team/ })).toHaveAttribute(
       "aria-checked", "true",
