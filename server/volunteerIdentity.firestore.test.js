@@ -1,4 +1,9 @@
 process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT = "1";
+process.env.FIREBASE_PROJECT_ID = "";
+process.env.FIREBASE_CLIENT_EMAIL = "";
+process.env.FIREBASE_PRIVATE_KEY = "";
+process.env.FIREBASE_DATABASE_URL = "";
+process.env.VITE_FIREBASE_DATABASE_URL = "";
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -13,6 +18,37 @@ import {
 const enabled = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
 const httpError = (statusCode, message) =>
   Object.assign(new Error(message), { statusCode });
+
+test("Firestore transaction aborts during roster linking are retryable conflicts", async () => {
+  const operations = createVolunteerIdentityOperations({
+    COLLECTIONS: {},
+    requireFirestore: () => ({
+      runTransaction: async () => {
+        throw Object.assign(new Error("Transaction failed all retries."), {
+          code: 10,
+        });
+      },
+    }),
+    getDoc: async () => null,
+    queryDocs: async () => [],
+    setDoc: async () => {},
+    deleteDoc: async () => {},
+    nowIso: () => "2026-10-23T00:00:00.000Z",
+  });
+
+  await assert.rejects(
+    operations.linkRosterMember({
+      churchId: "church",
+      memberId: "member",
+      userId: "user",
+    }),
+    (error) => {
+      assert.equal(error.statusCode, 409);
+      assert.match(error.message, /try again/i);
+      return true;
+    },
+  );
+});
 
 const createRes = () => ({
   statusCode: 200,
@@ -375,7 +411,13 @@ test("Firestore permanent roster deletion releases only its church claim during 
       ),
     ]);
     assert.equal(deletion.statusCode, 200);
-    assert.ok([200, 409].includes(replacementLink.statusCode));
+    assert.ok(
+      [200, 409].includes(replacementLink.statusCode),
+      `Unexpected replacement link result: ${JSON.stringify({
+        statusCode: replacementLink.statusCode,
+        payload: replacementLink.payload,
+      })}`,
+    );
     if (replacementLink.statusCode === 409) {
       const retriedLink = createRes();
       await auth.authHandlers.linkTeamRosterMember(
