@@ -1,3 +1,24 @@
+# [2.47.0](https://github.com/K-Cheddar/worship-sync/compare/v2.46.0...v2.47.0) (2026-10-23)
+
+
+### Bug Fixes
+
+* **account:** retain access selections until drawer closes ([ba65fe1](https://github.com/K-Cheddar/worship-sync/commit/ba65fe180a12090e4b99f860784de6f42dacd140))
+* **auth:** guard stale email verification sessions ([ca1921e](https://github.com/K-Cheddar/worship-sync/commit/ca1921eef2c0c4f966c422e6345c3b5edba0b003))
+* **auth:** preserve email verification link sign-in ([a90a71c](https://github.com/K-Cheddar/worship-sync/commit/a90a71c1cd3e9c03c3be5e6ebe678e495dbece1f))
+* correct team editing ([5945bf9](https://github.com/K-Cheddar/worship-sync/commit/5945bf9aef4284672a022910da685d8ac0c69114))
+* **home:** tighten mobile navigation card spacing ([7f6ff5a](https://github.com/K-Cheddar/worship-sync/commit/7f6ff5aa9004a2bc87e516d3a04fc0a9507affb4))
+* **teams:** address digest recovery and editor review findings ([7bc5a4f](https://github.com/K-Cheddar/worship-sync/commit/7bc5a4f7af97cc322e27c96e0b62198a77941dd6))
+* **teams:** bound schedule digest retries and batch scope lookups ([7c401f5](https://github.com/K-Cheddar/worship-sync/commit/7c401f5061390a73a74278cb6b6dd51ac40a9022))
+
+
+### Features
+
+* **teams:** move member removal into actions menu ([d8d9e3f](https://github.com/K-Cheddar/worship-sync/commit/d8d9e3f4992c54c2c033316c090423d7f40b478e))
+* **teams:** unify member management workflow ([79a2996](https://github.com/K-Cheddar/worship-sync/commit/79a29962cbe4ce6f7a4f9e0449bf3a2fff04dbab))
+* **teams:** unify member profile editors ([78c87f1](https://github.com/K-Cheddar/worship-sync/commit/78c87f1f4f3ed14b5a4b2113f1d276a2d5ab550f))
+* **teams:** use account team leads for reliable notifications ([6c36991](https://github.com/K-Cheddar/worship-sync/commit/6c36991924e585ad01150158b3f1a1b01fb957b8))
+
 # [2.46.0](https://github.com/K-Cheddar/worship-sync/compare/v2.45.2...v2.46.0) (2026-10-23)
 
 
