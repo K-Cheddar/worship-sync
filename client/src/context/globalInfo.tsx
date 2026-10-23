@@ -363,6 +363,7 @@ type GlobalInfoContextType = {
     exchangeCode: string;
     method: Exclude<HumanAuthMethod, "password">;
   }) => Promise<boolean>;
+  claimEmailVerificationChallenge: (pendingAuthId: string) => void;
   verifyEmailCode: ({
     pendingAuthId,
     code,
@@ -667,6 +668,14 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     canEditServices ||
     permissions.services === "view";
   const pendingLinkCredentialRef = useRef<AuthCredential | null>(null);
+  const emailVerificationChallengeGenerationRef = useRef(0);
+  const emailVerificationOwnerRef = useRef<{
+    pendingAuthId: string;
+    generation: number;
+  } | null>(null);
+  const emailVerificationRequestGenerationRef = useRef(0);
+  const emailVerificationRequestRef = useRef<Promise<boolean> | null>(null);
+  const staleEmailVerificationSessionCsrfRef = useRef<string | null>(null);
   const instanceRef = useRef<ReturnType<typeof ref> | null>(null);
   const hasRehydratedTimersRef = useRef(false);
   const hasRehydratedServiceTimesRef = useRef(false);
@@ -2899,59 +2908,172 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     [authServerStatus, finalizeHumanSignIn, isReachabilityError],
   );
 
-  const verifyEmailCode = useCallback(async ({
-    pendingAuthId,
-    code,
-  }: {
-    pendingAuthId: string;
-    code: string;
-  }) => {
-    if (authServerStatus !== "online") {
-      setAuthError("Could not reach the server. Check the connection and try again.");
-      setLoginState("idle");
-      return false;
-    }
-
-    setLoginState("loading");
-    setAuthError("");
-    try {
-      const response = await verifyEmailCodeRequest({
-        pendingAuthId,
-        code,
-        deviceId: getOrCreateDeviceId(),
-        userAgent: navigator.userAgent,
-        platform: navigator.platform,
-        deviceLabel: getTrustedDeviceLabel(),
-      });
-      const completedMethod =
-        consumePendingEmailCodeSignInMethod() ?? "password";
-      const pendingRedirect = getPendingProviderRedirectState();
-      setPendingProviderRedirectState(null);
-      setPendingDesktopEmailResendState(null);
-      finalizeHumanSignIn({
-        bootstrap: response.bootstrap,
-        method: completedMethod,
-        humanApiToken: response.humanApiToken,
-        postAuthPath: pendingRedirect?.returnPath,
-      });
-      return true;
-    } catch (error) {
-      console.error("verifyEmailCode error:", error);
-      if (isReachabilityError(error)) {
-        setAuthServerStatus("offline");
-        setAuthError("Could not reach the server. Check the connection and try again.");
-        setLoginState("idle");
-        return false;
+  const claimEmailVerificationChallenge = useCallback(
+    (pendingAuthId: string) => {
+      const normalizedPendingAuthId = pendingAuthId.trim();
+      if (!normalizedPendingAuthId) {
+        return;
       }
-      setAuthError(getVerifyEmailCodeErrorMessage(error));
-      setLoginState("error");
-      return false;
-    }
-  }, [
-    authServerStatus,
-    finalizeHumanSignIn,
-    isReachabilityError,
-  ]);
+
+      const current = emailVerificationOwnerRef.current;
+      if (current?.pendingAuthId === normalizedPendingAuthId) {
+        return;
+      }
+
+      const generation = ++emailVerificationChallengeGenerationRef.current;
+      emailVerificationOwnerRef.current = {
+        pendingAuthId: normalizedPendingAuthId,
+        generation,
+      };
+    },
+    [],
+  );
+
+  const verifyEmailCode = useCallback(
+    async ({
+      pendingAuthId,
+      code,
+    }: {
+      pendingAuthId: string;
+      code: string;
+    }) => {
+      const normalizedPendingAuthId = pendingAuthId.trim();
+      const ownerAtStart = emailVerificationOwnerRef.current;
+      const challengeGeneration = ownerAtStart?.generation ?? 0;
+      const requestGeneration =
+        ++emailVerificationRequestGenerationRef.current;
+      const previousRequest = emailVerificationRequestRef.current;
+      const isCurrentAttempt = () =>
+        requestGeneration === emailVerificationRequestGenerationRef.current &&
+        challengeGeneration === emailVerificationChallengeGenerationRef.current &&
+        (!ownerAtStart ||
+          ownerAtStart.pendingAuthId === normalizedPendingAuthId);
+
+      const clearStaleVerifiedSession = async (csrfToken?: string | null) => {
+        if (csrfToken) {
+          staleEmailVerificationSessionCsrfRef.current = csrfToken;
+        }
+        const staleCsrfToken = staleEmailVerificationSessionCsrfRef.current;
+        if (!staleCsrfToken) {
+          throw new Error("The earlier sign-in session could not be cleared.");
+        }
+        const result = await logoutSession(staleCsrfToken);
+        if (result?.success === false) {
+          throw new Error("The earlier sign-in session could not be cleared.");
+        }
+        staleEmailVerificationSessionCsrfRef.current = null;
+        clearCsrfToken();
+      };
+
+      const requestPromise = (async () => {
+        if (previousRequest) {
+          try {
+            await previousRequest;
+          } catch {
+            // A previous request owns its own error state and cleanup.
+          }
+        }
+        if (!isCurrentAttempt()) {
+          return false;
+        }
+
+        if (authServerStatus !== "online") {
+          setAuthError("Could not reach the server. Check the connection and try again.");
+          setLoginState("idle");
+          return false;
+        }
+
+        setLoginState("loading");
+        setAuthError("");
+        try {
+          if (staleEmailVerificationSessionCsrfRef.current) {
+            try {
+              await clearStaleVerifiedSession();
+            } catch (cleanupError) {
+              console.error("stale verifyEmailCode session cleanup error:", cleanupError);
+              if (isReachabilityError(cleanupError)) {
+                setAuthServerStatus("offline");
+              }
+              setAuthError(
+                "Could not clear the earlier sign-in. Check your connection and try again.",
+              );
+              setLoginState("error");
+              return false;
+            }
+          }
+          if (!isCurrentAttempt()) {
+            setLoginState("idle");
+            return false;
+          }
+
+          const response = await verifyEmailCodeRequest({
+            pendingAuthId: normalizedPendingAuthId,
+            code,
+            deviceId: getOrCreateDeviceId(),
+            userAgent: navigator.userAgent,
+            platform: navigator.platform,
+            deviceLabel: getTrustedDeviceLabel(),
+          });
+
+          if (!isCurrentAttempt()) {
+            try {
+              await clearStaleVerifiedSession(response.bootstrap?.csrfToken);
+            } catch (cleanupError) {
+              console.error("stale verifyEmailCode session cleanup error:", cleanupError);
+              if (isReachabilityError(cleanupError)) {
+                setAuthServerStatus("offline");
+              }
+              setAuthError(
+                "Could not clear the earlier sign-in. Check your connection and try again.",
+              );
+              setLoginState("error");
+              return false;
+            }
+            setLoginState("idle");
+            return false;
+          }
+
+          const completedMethod =
+            consumePendingEmailCodeSignInMethod() ?? "password";
+          const pendingRedirect = getPendingProviderRedirectState();
+          setPendingProviderRedirectState(null);
+          setPendingDesktopEmailResendState(null);
+          finalizeHumanSignIn({
+            bootstrap: response.bootstrap,
+            method: completedMethod,
+            humanApiToken: response.humanApiToken,
+            postAuthPath: pendingRedirect?.returnPath,
+          });
+          return true;
+        } catch (error) {
+          if (!isCurrentAttempt()) {
+            setLoginState("idle");
+            return false;
+          }
+          console.error("verifyEmailCode error:", error);
+          if (isReachabilityError(error)) {
+            setAuthServerStatus("offline");
+            setAuthError("Could not reach the server. Check the connection and try again.");
+            setLoginState("idle");
+            return false;
+          }
+          setAuthError(getVerifyEmailCodeErrorMessage(error));
+          setLoginState("error");
+          return false;
+        }
+      })();
+
+      emailVerificationRequestRef.current = requestPromise;
+      try {
+        return await requestPromise;
+      } finally {
+        if (emailVerificationRequestRef.current === requestPromise) {
+          emailVerificationRequestRef.current = null;
+        }
+      }
+    },
+    [authServerStatus, finalizeHumanSignIn, isReachabilityError],
+  );
 
   const resendEmailCode = useCallback(
     async ({ pendingAuthId }: { pendingAuthId: string }) => {
@@ -3270,6 +3392,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       uploadPreset,
       login,
       completeDesktopExchange,
+      claimEmailVerificationChallenge,
       verifyEmailCode,
       resendEmailCode,
       createChurchAccount: createChurchAccountHandler,
@@ -3344,6 +3467,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       uploadPreset,
       login,
       completeDesktopExchange,
+      claimEmailVerificationChallenge,
       verifyEmailCode,
       resendEmailCode,
       createChurchAccountHandler,

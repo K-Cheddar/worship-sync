@@ -994,11 +994,11 @@ export const createChurchAccount = async (body: JsonBody) =>
     body: JSON.stringify(body),
   });
 
-export const logoutSession = async () =>
+export const logoutSession = async (csrfToken?: string) =>
   apiFetch<{ success: boolean }>("api/auth/logout", {
     method: "POST",
     body: JSON.stringify({}),
-  });
+  }, csrfToken ? { "x-csrf-token": csrfToken } : undefined);
 
 export const forgotPassword = async (email: string) =>
   apiFetch<{ success: boolean }>("api/auth/forgot-password", {

@@ -549,6 +549,7 @@ const VerifyNavigationProbe = () => {
 
 const LoginRouteProbe = () => {
   const location = useLocation();
+  const navigate = useNavigate();
   return (
     <>
       <Routes>
@@ -556,7 +557,45 @@ const LoginRouteProbe = () => {
         <Route path="*" element={<div>Signed-in destination</div>} />
       </Routes>
       <div data-testid="auth-route">{location.pathname}</div>
+      <div data-testid="auth-search">{location.search}</div>
+      <button
+        type="button"
+        onClick={() =>
+          navigate("/login?code=654321&pendingAuthId=pending-current-link")
+        }
+      >
+        Open newer link
+      </button>
     </>
+  );
+};
+
+const VerificationOwnershipProbe = () => {
+  const context = useContext(GlobalInfoContext);
+  if (!context) return null;
+
+  const beginVerification = (pendingAuthId: string, code: string) => {
+    context.claimEmailVerificationChallenge(pendingAuthId);
+    void context.verifyEmailCode({ pendingAuthId, code });
+  };
+
+  return (
+    <div>
+      <div data-testid="ownership-auth-status">{context.authServerStatus}</div>
+      <div data-testid="ownership-auth-error">{context.authError}</div>
+      <button
+        type="button"
+        onClick={() => beginVerification("pending-old-probe", "123456")}
+      >
+        Start older verification
+      </button>
+      <button
+        type="button"
+        onClick={() => beginVerification("pending-current-probe", "654321")}
+      >
+        Start current verification
+      </button>
+    </div>
   );
 };
 
@@ -595,6 +634,9 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     (authApi.createChurchAccount as jest.Mock).mockReset();
     (authApi.exchangeDesktopAuth as jest.Mock).mockReset();
     (authApi.verifyEmailCode as jest.Mock).mockReset();
+    (authApi.logoutSession as jest.Mock)
+      .mockReset()
+      .mockResolvedValue({ success: true });
     (authApi.resendEmailCode as jest.Mock).mockReset();
     (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(demoBootstrap);
     (authApi.getEmailCodeHint as jest.Mock).mockResolvedValue({
@@ -944,6 +986,181 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
       expect(screen.getByTestId("auth-route")).toHaveTextContent("/home"),
     );
     expect(screen.getByText("Signed-in destination")).toBeInTheDocument();
+  });
+
+  it("clears a stale verification session cookie before completing a newer link", async () => {
+    const oldAttempt = createDeferred<{
+      success: true;
+      bootstrap: typeof loggedInHumanBootstrap;
+    }>();
+    const currentAttempt = createDeferred<{
+      success: true;
+      bootstrap: typeof loggedInHumanBootstrap;
+    }>();
+    (authApi.verifyEmailCode as jest.Mock)
+      .mockReturnValueOnce(oldAttempt.promise)
+      .mockReturnValueOnce(currentAttempt.promise);
+    (authApi.logoutSession as jest.Mock).mockResolvedValue({ success: true });
+    renderProvider(
+      <LoginRouteProbe />,
+      ["/login?code=123456&pendingAuthId=pending-old-link"],
+    );
+
+    await waitFor(() =>
+      expect(authApi.verifyEmailCode).toHaveBeenCalledTimes(1),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Open newer link" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("auth-search")).toBeEmptyDOMElement(),
+    );
+
+    await act(async () => {
+      oldAttempt.resolve({
+        success: true,
+        bootstrap: loggedInHumanBootstrap,
+      });
+      await oldAttempt.promise;
+    });
+
+    await waitFor(() =>
+      expect(authApi.logoutSession).toHaveBeenCalledWith("csrf-test"),
+    );
+    await waitFor(() =>
+      expect(authApi.verifyEmailCode).toHaveBeenCalledTimes(2),
+    );
+    expect(authApi.verifyEmailCode).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        pendingAuthId: "pending-current-link",
+        code: "654321",
+      }),
+    );
+    expect(
+      (authApi.logoutSession as jest.Mock).mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      (authApi.verifyEmailCode as jest.Mock).mock.invocationCallOrder[1],
+    );
+    expect(screen.getByTestId("auth-route")).toHaveTextContent("/login");
+
+    await act(async () => {
+      currentAttempt.resolve({
+        success: true,
+        bootstrap: loggedInHumanBootstrap,
+      });
+      await currentAttempt.promise;
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("auth-route")).toHaveTextContent("/home"),
+    );
+  });
+
+  it("suppresses a stale expiration at the shared verification boundary", async () => {
+    const oldAttempt = createDeferred<{
+      success: true;
+      bootstrap: typeof loggedInHumanBootstrap;
+    }>();
+    const currentAttempt = createDeferred<{
+      success: true;
+      bootstrap: typeof loggedInHumanBootstrap;
+    }>();
+    (authApi.verifyEmailCode as jest.Mock)
+      .mockReturnValueOnce(oldAttempt.promise)
+      .mockReturnValueOnce(currentAttempt.promise);
+    renderProvider(<VerificationOwnershipProbe />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("ownership-auth-status")).toHaveTextContent(
+        "online",
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Start older verification" }));
+    await waitFor(() =>
+      expect(authApi.verifyEmailCode).toHaveBeenCalledTimes(1),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Start current verification" }));
+
+    await act(async () => {
+      oldAttempt.reject(
+        new Error("This code has expired. Request a new code to continue."),
+      );
+      await oldAttempt.promise.catch(() => undefined);
+    });
+
+    await waitFor(() =>
+      expect(authApi.verifyEmailCode).toHaveBeenCalledTimes(2),
+    );
+    expect(authApi.verifyEmailCode).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        pendingAuthId: "pending-current-probe",
+        code: "654321",
+      }),
+    );
+    expect(screen.getByTestId("ownership-auth-error")).toBeEmptyDOMElement();
+
+    await act(async () => {
+      currentAttempt.reject(new Error("That code is not valid."));
+      await currentAttempt.promise.catch(() => undefined);
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("ownership-auth-error")).toHaveTextContent(
+        "That code does not match. Check the number from your email and try again.",
+      ),
+    );
+  });
+
+  it("retries stale session cleanup before sending the current verification", async () => {
+    const oldAttempt = createDeferred<{
+      success: true;
+      bootstrap: typeof loggedInHumanBootstrap;
+    }>();
+    (authApi.verifyEmailCode as jest.Mock)
+      .mockReturnValueOnce(oldAttempt.promise)
+      .mockResolvedValueOnce({
+        success: true,
+        bootstrap: loggedInHumanBootstrap,
+      });
+    (authApi.logoutSession as jest.Mock)
+      .mockRejectedValueOnce(new Error("temporary cleanup failure"))
+      .mockRejectedValueOnce(new Error("temporary cleanup failure"))
+      .mockResolvedValueOnce({ success: true });
+    renderProvider(<VerificationOwnershipProbe />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("ownership-auth-status")).toHaveTextContent(
+        "online",
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Start older verification" }));
+    await waitFor(() =>
+      expect(authApi.verifyEmailCode).toHaveBeenCalledTimes(1),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Start current verification" }));
+
+    await act(async () => {
+      oldAttempt.resolve({
+        success: true,
+        bootstrap: loggedInHumanBootstrap,
+      });
+      await oldAttempt.promise;
+    });
+
+    await waitFor(() =>
+      expect(authApi.logoutSession).toHaveBeenCalledTimes(2),
+    );
+    expect(authApi.verifyEmailCode).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("ownership-auth-error")).toHaveTextContent(
+      "Could not clear the earlier sign-in. Check your connection and try again.",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Start current verification" }));
+    await waitFor(() =>
+      expect(authApi.verifyEmailCode).toHaveBeenCalledTimes(2),
+    );
+    expect(authApi.logoutSession).toHaveBeenCalledTimes(3);
+    expect(
+      (authApi.logoutSession as jest.Mock).mock.invocationCallOrder[2],
+    ).toBeLessThan(
+      (authApi.verifyEmailCode as jest.Mock).mock.invocationCallOrder[1],
+    );
   });
 
   it("marks display sessions as read-only for shared realtime data", async () => {

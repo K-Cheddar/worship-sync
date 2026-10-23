@@ -189,6 +189,20 @@ describe("api/auth", () => {
     );
   });
 
+  it("uses the returned session CSRF token when clearing a stale sign-in", async () => {
+    await logoutSession("csrf-from-stale-verification");
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "http://localhost:5000/api/auth/logout",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          "x-csrf-token": "csrf-from-stale-verification",
+        }),
+      }),
+    );
+  });
+
   it("sends x-csrf-token on mutating POST when a CSRF token is stored", async () => {
     csrfStore.token = "csrf-test-token";
     await revokeTrustedDevice("device-xyz");

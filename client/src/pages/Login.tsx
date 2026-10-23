@@ -174,8 +174,6 @@ const Login = () => {
   const activeEmailCodeAttemptRef = useRef<string | null>(null);
   const currentEmailCodeInputRef = useRef({ pendingAuthId, code });
   currentEmailCodeInputRef.current = { pendingAuthId, code };
-  const currentAuthErrorRef = useRef(context?.authError);
-  currentAuthErrorRef.current = context?.authError;
   const [isVerifyingCode, setIsVerifyingCode] = useState(false);
   const [isCompletingCodeSignIn, setIsCompletingCodeSignIn] = useState(false);
   const [verificationEmail, setVerificationEmail] = useState("");
@@ -296,6 +294,8 @@ const Login = () => {
     context?.loginState === "loading" ||
     (isFinishingSignIn && !isAwaitingDeviceCode);
   const verifyEmailCode = context?.verifyEmailCode;
+  const claimEmailVerificationChallenge =
+    context?.claimEmailVerificationChallenge;
   const clearAuthError = context?.clearAuthError;
   const pendingLinkState = context?.pendingLinkState;
   const humanSessionRedirectStartedRef = useRef(false);
@@ -318,6 +318,7 @@ const Login = () => {
       restoredEmailCodeChallengeRef.current = null;
       explicitEmailCodeLinkLocationKeyRef.current = null;
       emailCodeChallengeGenerationRef.current += 1;
+      claimEmailVerificationChallenge?.(pendingId);
       attemptedEmailCodeVerificationsRef.current.clear();
       setCode("");
       setPendingAuthId(pendingId);
@@ -326,7 +327,7 @@ const Login = () => {
       setFieldErrors({});
       setInfoBanner("");
     },
-    [],
+    [claimEmailVerificationChallenge],
   );
 
   useLayoutEffect(() => {
@@ -336,6 +337,20 @@ const Login = () => {
     }
     setResendCooldownSec(RESEND_COOLDOWN_SEC);
   }, [mode]);
+
+  useLayoutEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const pendingAuthId = params.get("pendingAuthId")?.trim() || "";
+    if (!pendingAuthId) {
+      return;
+    }
+
+    claimEmailVerificationChallenge?.(pendingAuthId);
+  }, [
+    claimEmailVerificationChallenge,
+    location.key,
+    location.search,
+  ]);
 
   useEffect(() => {
     if (mode !== "code") {
@@ -578,6 +593,9 @@ const Login = () => {
     explicitEmailCodeLinkLocationKeyRef.current = null;
     restoredEmailCodeChallengeRef.current = null;
     emailCodeChallengeGenerationRef.current += 1;
+    claimEmailVerificationChallenge?.(
+      restoredChallenge?.pendingAuthId || pendingAuthId,
+    );
     setCode("");
     setFieldErrors({});
     if (restoredChallenge) {
@@ -590,7 +608,12 @@ const Login = () => {
       );
       clearAuthError?.();
     }
-  }, [clearAuthError, context?.authError, pendingAuthId]);
+  }, [
+    claimEmailVerificationChallenge,
+    clearAuthError,
+    context?.authError,
+    pendingAuthId,
+  ]);
 
   useEffect(() => {
     const hasAlternateAuthFlow = Boolean(
@@ -1206,10 +1229,6 @@ const Login = () => {
           setPendingAuthId("");
           setVerificationEmail("");
         }
-      } else if (!success && !stillCurrent && isMountedRef.current) {
-        if (currentAuthErrorRef.current !== AUTH_EMAIL_CODE_EXPIRED_MESSAGE) {
-          clearAuthError?.();
-        }
       }
       return success;
     } finally {
@@ -1225,7 +1244,6 @@ const Login = () => {
     activeProviderSignIn,
     code,
     context?.bootstrapStatus,
-    clearAuthError,
     context?.loginState,
     context?.pendingEmailVerificationId,
     context?.sessionKind,
@@ -1319,6 +1337,7 @@ const Login = () => {
         restoredEmailCodeChallengeRef.current = null;
         explicitEmailCodeLinkLocationKeyRef.current = null;
         emailCodeChallengeGenerationRef.current += 1;
+        claimEmailVerificationChallenge?.(result.pendingAuthId);
         attemptedEmailCodeVerificationsRef.current.clear();
         setPendingAuthId(result.pendingAuthId);
         if (result.verificationEmail) {
