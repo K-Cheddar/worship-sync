@@ -469,7 +469,7 @@ type GlobalInfoContextType = {
   operatorName: string;
   device: AuthBootstrap["device"] | null;
   setOperatorName: (value: string) => void;
-  refreshAuthBootstrap: () => Promise<void>;
+  refreshAuthBootstrap: (options?: { requireFresh?: boolean }) => Promise<void>;
   refreshPresentationListeners: () => void;
   updateSelfDisplayName: (displayName: string) => Promise<boolean>;
   /** Categories to offer this person, server-derived so the catalog has one owner. */
@@ -1561,9 +1561,11 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     [applyBootstrap, dispatch, navigate]
   );
 
-  const refreshAuthBootstrap = useCallback(async () => {
+  const refreshAuthBootstrap = useCallback(async (options?: { requireFresh?: boolean }) => {
     if (refreshAuthBootstrapPromiseRef.current) {
       await refreshAuthBootstrapPromiseRef.current;
+      // A mutation must not reuse a request that read access before it committed.
+      if (options?.requireFresh) await refreshAuthBootstrapRef.current();
       return;
     }
 

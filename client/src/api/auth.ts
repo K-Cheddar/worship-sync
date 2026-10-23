@@ -3188,6 +3188,7 @@ export const updateChurchMemberAccess = async (
   userId: string,
   controllerAccess: ControllerAccess,
   permissions: MemberPermissions,
+  accessRevision?: string,
 ) =>
   apiFetch<{ success: boolean }>(
     `api/churches/${churchId}/members/${userId}/access`,
@@ -3197,6 +3198,7 @@ export const updateChurchMemberAccess = async (
         controllerAccess,
         appAccess: controllerAccess === "none" ? "member" : controllerAccess,
         permissions,
+        ...(accessRevision ? { accessRevision } : {}),
       }),
     },
   );

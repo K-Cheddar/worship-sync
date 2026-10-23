@@ -199,6 +199,7 @@ export type ChurchMemberRow = {
   controllerAccess?: ControllerAccess;
   appAccess?: string;
   permissions?: MemberPermissions;
+  accessRevision?: string;
   user: AuthUserSummary | null;
 };
 

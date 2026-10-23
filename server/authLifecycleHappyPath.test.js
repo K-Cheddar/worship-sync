@@ -297,6 +297,8 @@ test("Controller None invite preserves independent permissions through acceptanc
       context: accessAdminContext,
       params: { userId: "firebase_uid_accept_1" },
       body: {
+        accessRevision: (await callHandler(authHandlers.listChurchMembers, { context: accessAdminContext }))
+          .payload.members.find((member) => member.userId === "firebase_uid_accept_1").accessRevision,
         controllerAccess: "none",
         appAccess: "full",
         permissions: {
@@ -339,6 +341,8 @@ test("Controller None invite preserves independent permissions through acceptanc
       context: accessAdminContext,
       params: { userId: "firebase_uid_accept_1" },
       body: {
+        accessRevision: (await callHandler(authHandlers.listChurchMembers, { context: accessAdminContext }))
+          .payload.members.find((member) => member.userId === "firebase_uid_accept_1").accessRevision,
         appAccess: "member",
         permissions: { teams: "none", services: "none", teamScopes: {} },
       },

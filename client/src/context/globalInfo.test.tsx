@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { type ReactNode, useContext } from "react";
 import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import GlobalInfoProvider, {
@@ -10,6 +11,11 @@ import * as authApi from "../api/auth";
 import { requestAuthRecovery } from "../api/authErrorBus";
 import * as firebaseApps from "../firebase/apps";
 import * as environmentUtils from "../utils/environment";
+import { AccountPageProvider } from "../pages/Account/AccountPageContext";
+import AccountPeoplePage from "../pages/Account/pages/AccountPeoplePage";
+import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
+import { ToastContext } from "./toastContext";
+import type { MemberPermissions, NotificationCategory } from "../api/authTypes";
 import {
   getPendingDesktopEmailResendState,
   getPendingProviderRedirectState,
@@ -92,7 +98,10 @@ const mockHumanAuth = {
 
 jest.mock("../hooks", () => ({
   useDispatch: () => mockDispatch,
+  useSelector: () => false,
 }));
+jest.mock("../chat/ChatContext", () => ({ useChat: () => null }));
+jest.mock("../chat/ChatLauncher", () => () => null);
 
 jest.mock("../api/auth", () => ({
   AuthApiError: class MockAuthApiError extends Error {
@@ -105,6 +114,13 @@ jest.mock("../api/auth", () => ({
     }
   },
   getAuthBootstrap: jest.fn(),
+  listChurchMembers: jest.fn(),
+  listChurchInvites: jest.fn(),
+  listTrustedDevices: jest.fn(),
+  listWorkstations: jest.fn(),
+  listDisplayDevices: jest.fn(),
+  getTeamsBootstrap: jest.fn(),
+  updateChurchMemberAccess: jest.fn(),
   authenticatedApiFetch: (path: RequestInfo | URL, options?: RequestInit) =>
     fetch(path, options),
   getSharedDataToken: jest.fn(() =>
@@ -605,6 +621,85 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
       status: 200,
       json: () => Promise.resolve(false),
     }) as jest.Mock;
+  });
+
+  it("refreshes global permissions and account notification switches after self Team Lead edits even with an older bootstrap pending", async () => {
+    const user = userEvent.setup();
+    let permissions: MemberPermissions = { teams: "edit", services: "edit", teamScopes: {} };
+    let holdNextBootstrap = false;
+    let releaseOlderBootstrap: () => void = () => {};
+    jest.mocked(authApi.getAuthBootstrap).mockImplementation(async () => {
+      const notificationCategories: NotificationCategory[] = ["scheduleAssignments", "scheduleReminders"];
+      if (permissions.teamScopes?.media === "edit") notificationCategories.push("scheduleResponses", "intakeSubmissions");
+      const snapshot = { ...loggedInHumanBootstrap, appAccess: "full" as const, permissions, notificationCategories };
+      if (holdNextBootstrap) {
+        holdNextBootstrap = false;
+        await new Promise<void>((resolve) => { releaseOlderBootstrap = resolve; });
+      }
+      return snapshot;
+    });
+    jest.mocked(authApi.listChurchMembers).mockImplementation(async () => ({ success: true, members: [{
+      membershipId: "church-1_u1", churchId: "church-1", userId: "u1", role: "admin", status: "active",
+      appAccess: "full", controllerAccess: "full", permissions, accessRevision: JSON.stringify(permissions),
+      user: loggedInHumanBootstrap.user,
+    }] }));
+    jest.mocked(authApi.listChurchInvites).mockResolvedValue({ success: true, invites: [] });
+    jest.mocked(authApi.listTrustedDevices).mockResolvedValue({ success: true, devices: [] });
+    jest.mocked(authApi.listWorkstations).mockResolvedValue({ success: true, workstations: [] });
+    jest.mocked(authApi.listDisplayDevices).mockResolvedValue({ success: true, displayDevices: [] });
+    jest.mocked(authApi.getTeamsBootstrap).mockResolvedValue({ teams: [{ teamId: "media", name: "Media" }] } as Awaited<ReturnType<typeof authApi.getTeamsBootstrap>>);
+    jest.mocked(authApi.updateChurchMemberAccess).mockImplementation(async (_church, _user, _access, saved) => {
+      permissions = saved;
+      return { success: true };
+    });
+    const PermissionsProbe = () => {
+      const context = useContext(GlobalInfoContext);
+      return <>
+        <output aria-label="Current access permissions">{JSON.stringify(context?.permissions)}</output>
+        <button onClick={() => void context?.refreshAuthBootstrap()}>Refresh older access</button>
+      </>;
+    };
+    renderProvider(
+      <ToastContext.Provider value={{ showToast: jest.fn(), updateToast: jest.fn(), removeToast: jest.fn() }}>
+        <AccountPageProvider><AccountPeoplePage /><UserSection /><PermissionsProbe /></AccountPageProvider>
+      </ToastContext.Provider>, ["/account/people"],
+    );
+    const openNotifications = async () => {
+      await user.click(await screen.findByRole("button", { name: /^Account:/ }));
+      const collapsed = screen.queryByRole("button", { name: /email notifications/i, expanded: false });
+      if (collapsed) await user.click(collapsed);
+    };
+    const editMediaLead = async (releasePending?: () => void) => {
+      await user.click(screen.getByRole("button", { name: "Actions for Test User" }));
+      await user.click(screen.getByRole("menuitem", { name: "Edit access" }));
+      await user.click(await screen.findByRole("checkbox", { name: "Media" }));
+      const savesBefore = jest.mocked(authApi.updateChurchMemberAccess).mock.calls.length;
+      await user.click(screen.getByRole("button", { name: "Save access" }));
+      await waitFor(() => expect(authApi.updateChurchMemberAccess).toHaveBeenCalledTimes(savesBefore + 1));
+      if (releasePending) {
+        await act(async () => { releasePending(); });
+      }
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit access" })).not.toBeInTheDocument());
+    };
+    await screen.findByRole("button", { name: "Actions for Test User" });
+    await openNotifications();
+    expect(screen.getByRole("switch", { name: "Email me when I am scheduled" })).toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "Email me about new intake submissions" })).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    holdNextBootstrap = true;
+    await user.click(screen.getByRole("button", { name: "Refresh older access" }));
+    await editMediaLead(() => releaseOlderBootstrap());
+    expect(screen.getByLabelText("Current access permissions")).toHaveTextContent('"media":"edit"');
+    await openNotifications();
+    expect(screen.getByRole("switch", { name: "Email me about new intake submissions" })).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Email me when someone responds to a schedule" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await editMediaLead();
+    expect(screen.getByLabelText("Current access permissions")).toHaveTextContent('"teamScopes":{}');
+    await openNotifications();
+    expect(screen.queryByRole("switch", { name: "Email me about new intake submissions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "Email me when someone responds to a schedule" })).not.toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Email me when I am scheduled" })).toBeInTheDocument();
   });
 
   it.each([

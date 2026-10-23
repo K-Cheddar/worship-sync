@@ -5,6 +5,7 @@ import Button from "../../../components/Button/Button";
 import Drawer from "../../../components/Drawer";
 import Select from "../../../components/Select/Select";
 import {
+  AuthApiError,
   updateChurchInviteAccess,
   updateChurchMemberAccess,
 } from "../../../api/auth";
@@ -33,6 +34,7 @@ import { cn } from "@/utils/cnHelper";
 
 const MemberAccessSheet = () => {
   const {
+    context,
     churchId,
     teams,
     memberActionLoading,
@@ -239,16 +241,28 @@ const MemberAccessSheet = () => {
         return;
       }
       void runMemberAction(saveAccessKey, async () => {
-        await updateChurchMemberAccess(churchId, targetUserId, selectedMemberAccess, {
-          ...member?.permissions,
-          teams: selectedTeamsAccess,
-          services: selectedServicesAccess,
-          teamScopes: buildTeamScopesPermissions(selectedTeamScopeIds, member?.permissions),
-        });
+        try {
+          await updateChurchMemberAccess(churchId, targetUserId, selectedMemberAccess, {
+            ...member?.permissions,
+            teams: selectedTeamsAccess,
+            services: selectedServicesAccess,
+            teamScopes: buildTeamScopesPermissions(selectedTeamScopeIds, member?.permissions),
+          }, member?.accessRevision);
+        } catch (error) {
+          if (error instanceof AuthApiError && error.code === "MEMBER_ACCESS_CONFLICT") await refresh();
+          throw error;
+        }
         clearMemberDrafts(member!.membershipId);
-        showStatus(`Updated access for ${memberLabel}.`);
+        let authRefreshFailed = false;
+        try {
+          if (context?.userId === targetUserId) await context.refreshAuthBootstrap({ requireFresh: true });
+        } catch {
+          authRefreshFailed = true;
+        }
         await refresh();
         closeAccessSheet();
+        if (authRefreshFailed) throw new Error("Access was saved. Reload the app to refresh your notification settings.");
+        showStatus(`Updated access for ${memberLabel}.`);
       });
       return;
     }

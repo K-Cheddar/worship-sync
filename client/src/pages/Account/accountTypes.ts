@@ -12,6 +12,7 @@ export type Member = {
   controllerAccess?: string;
   appAccess: string;
   permissions?: MemberPermissions;
+  accessRevision?: string;
   user?: {
     uid: string;
     email: string;

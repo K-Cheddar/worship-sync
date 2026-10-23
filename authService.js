@@ -311,6 +311,20 @@ const normalizeMembershipPermissions = (
     teamScopes: normalizeTeamScopes(permissions?.teamScopes),
   };
 };
+// A compare-and-swap token for access only. Preference/profile changes must not
+// invalidate an access draft, and map insertion order must not cause conflicts.
+const membershipAccessRevision = (membership) => {
+  const permissions = normalizeMembershipPermissions(membership.permissions, membership.role);
+  return hashValue(JSON.stringify([
+    membership.churchId, membership.userId, membership.role,
+    normalizeControllerAccess(membership.role === "admin" ? "full" : membership.controllerAccess ?? membership.appAccess),
+    permissions.teams, permissions.services, Object.entries(permissions.teamScopes).sort(),
+  ]));
+};
+const memberAccessConflict = () => httpError(409,
+  "Access changed. Close and reopen access settings to review the latest changes.",
+  "MEMBER_ACCESS_CONFLICT",
+);
 const normalizeMembershipPermissionsForChurch = async ({
   permissions,
   role,
@@ -4980,12 +4994,32 @@ const updateMemberAccessSettings = async ({
   controllerAccess,
   permissions,
   expectedRole,
+  accessRevision,
 }) => {
   const appAccess = legacyAppAccessForController(controllerAccess);
   const membershipId = membershipIdFor({ churchId, userId });
+  const buildUpdate = async (membership, transaction) => {
+    if (membership.status !== "active") throw httpError(400, "Only active members can be updated.");
+    if (membership.role !== expectedRole) throw memberAccessConflict();
+    if (accessRevision && accessRevision !== membershipAccessRevision(membership)) throw memberAccessConflict();
+    // Older callers can still save unrelated access. Changing a scope requires
+    // the revision they reviewed, rather than an unsafe full-map replacement.
+    if (!accessRevision && Object.hasOwn(permissions || {}, "teamScopes")) {
+      const requested = normalizeTeamScopes(permissions.teamScopes);
+      const current = normalizeTeamScopes(membership.permissions?.teamScopes);
+      if (JSON.stringify(Object.entries(requested).sort()) !== JSON.stringify(Object.entries(current).sort())) {
+        throw memberAccessConflict();
+      }
+    }
+    if (membership.role === "admin" && controllerAccess !== "full") throw httpError(400, "Admins must keep full access.");
+    return { controllerAccess, appAccess, permissions: await normalizeMembershipPermissionsForChurch({
+      permissions: { ...membership.permissions, ...permissions },
+      role: membership.role, churchId, transaction,
+    }) };
+  };
   const db = requireFirestore();
   if (db) {
-    await db.runTransaction(async (transaction) => {
+    return db.runTransaction(async (transaction) => {
       const membershipRef = db
         .collection(COLLECTIONS.memberships)
         .doc(membershipId);
@@ -4994,31 +5028,23 @@ const updateMemberAccessSettings = async ({
         throw httpError(404, "Membership not found");
       }
       const membershipData = membershipSnap.data();
-      if (membershipData.status !== "active") {
-        throw httpError(400, "Only active members can be updated.");
-      }
-      if (membershipData.role !== expectedRole) {
-        throw httpError(409, "This person's role changed. Refresh and try again.");
-      }
-      transaction.update(membershipRef, { controllerAccess, appAccess, permissions });
+      const update = await buildUpdate(membershipData, transaction);
+      transaction.update(membershipRef, update);
+      return update.permissions;
     });
   } else {
     const membership = await getDoc(COLLECTIONS.memberships, membershipId);
     if (!membership) {
       throw httpError(404, "Membership not found");
     }
-    if (membership.status !== "active") {
-      throw httpError(400, "Only active members can be updated.");
-    }
-    if (membership.role !== expectedRole) {
-      throw httpError(409, "This person's role changed. Refresh and try again.");
-    }
-    await setDoc(
-      COLLECTIONS.memberships,
-      membershipId,
-      { controllerAccess, appAccess, permissions },
-      { merge: true },
-    );
+    const revision = membershipAccessRevision(membership);
+    const update = await buildUpdate(membership);
+    const store = collectionMap[COLLECTIONS.memberships];
+    const latest = store.get(membershipId);
+    if (!latest || latest.status !== "active" || membershipAccessRevision(latest) !== revision) throw memberAccessConflict();
+    // No await between comparison and commit: mirror Firestore's atomic CAS.
+    store.set(membershipId, { ...latest, ...update });
+    return update.permissions;
   }
 };
 
@@ -8935,6 +8961,7 @@ export const authHandlers = {
           }
           return {
             ...membership,
+            accessRevision: membershipAccessRevision(membership),
             controllerAccess:
               membership.role === "admin"
                 ? "full"
@@ -10156,17 +10183,17 @@ export const authHandlers = {
       if (targetMembership.role === "admin" && controllerAccess !== "full") {
         throw httpError(400, "Admins must keep full access.");
       }
-      const permissions = await normalizeMembershipPermissionsForChurch({
-        permissions: { ...targetMembership.permissions, ...req.body?.permissions },
-        role: targetMembership.role,
-        churchId: req.params.churchId,
-      });
-      await updateMemberAccessSettings({
+      const accessRevision = req.body?.accessRevision;
+      if (accessRevision !== undefined && (typeof accessRevision !== "string" || !accessRevision.trim())) {
+        throw httpError(400, "Refresh access settings and try again.");
+      }
+      const permissions = await updateMemberAccessSettings({
         churchId: req.params.churchId,
         userId: req.params.userId,
         controllerAccess,
-        permissions,
+        permissions: req.body?.permissions,
         expectedRole: targetMembership.role,
+        accessRevision,
       });
       await addSecurityEvent({
         type: "member_access_updated",
@@ -10181,6 +10208,7 @@ export const authHandlers = {
     } catch (error) {
       return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
+        ...(error.code === "MEMBER_ACCESS_CONFLICT" ? { code: error.code } : {}),
       }));
     }
   },

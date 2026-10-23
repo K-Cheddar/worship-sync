@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import AccountPeoplePage from "./AccountPeoplePage";
@@ -21,6 +21,7 @@ jest.mock("../../../api/auth", () => ({
 
 let permissions: MemberPermissions;
 const member = () => ({ membershipId: "church-1_owner", churchId: "church-1", status: "active", userId: "owner", role: "admin",
+  accessRevision: JSON.stringify(permissions),
   appAccess: "full", permissions,
   user: { uid: "owner", email: "owner@example.test", displayName: "Owner" } });
 
@@ -38,10 +39,10 @@ beforeEach(() => {
   ] } as Awaited<ReturnType<typeof api.getTeamsBootstrap>>);
 });
 
-const mount = () => render(
+const mount = (contextOverrides: Parameters<typeof createMockGlobalContext>[0] = {}, showToast = jest.fn()) => render(
   <MemoryRouter>
-    <ToastContext.Provider value={{ showToast: jest.fn(), updateToast: jest.fn(), removeToast: jest.fn() }}>
-      <GlobalInfoContext.Provider value={createMockGlobalContext({ churchId: "church-1", role: "admin", userId: "owner" }) as React.ContextType<typeof GlobalInfoContext>}>
+    <ToastContext.Provider value={{ showToast, updateToast: jest.fn(), removeToast: jest.fn() }}>
+      <GlobalInfoContext.Provider value={createMockGlobalContext({ churchId: "church-1", role: "admin", userId: "owner", ...contextOverrides }) as React.ContextType<typeof GlobalInfoContext>}>
         <AccountPageProvider><AccountPeoplePage /></AccountPageProvider>
       </GlobalInfoContext.Provider>
     </ToastContext.Provider>
@@ -70,12 +71,93 @@ it("opens the real admin access drawer, preserves view scopes, and hydrates save
   expect(within(drawer).getByRole("checkbox", { name: "Media" })).toBeDisabled();
   expect(api.updateChurchMemberAccess).toHaveBeenCalledWith("church-1", "owner", "full", {
     teams: "edit", services: "edit", teamScopes: { praise: "view" },
-  });
+  }, expect.any(String));
   finishSave();
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit access" })).not.toBeInTheDocument());
   await user.click(screen.getByRole("button", { name: "Actions for Owner" }));
   await user.click(screen.getByRole("menuitem", { name: "Edit access" }));
   expect(await screen.findByRole("checkbox", { name: "Media" })).not.toBeChecked();
+});
+
+it("refreshes a conflicting access snapshot and requires reopening to review the current assignment", async () => {
+  const user = userEvent.setup();
+  const showToast = jest.fn();
+  const loadedRevision = JSON.stringify(permissions);
+  jest.mocked(api.updateChurchMemberAccess).mockImplementation(async () => {
+    permissions = { ...permissions, teamScopes: { media: "edit", praise: "edit" } };
+    throw new api.AuthApiError("Access changed. Close and reopen access settings to review the latest changes.", {
+      status: 409, code: "MEMBER_ACCESS_CONFLICT",
+    });
+  });
+  mount({}, showToast);
+  await user.click(await screen.findByRole("button", { name: "Actions for Owner" }));
+  await user.click(screen.getByRole("menuitem", { name: "Edit access" }));
+  await user.click(await screen.findByRole("checkbox", { name: "Media" }));
+  await user.click(screen.getByRole("button", { name: "Save access" }));
+  await waitFor(() => expect(showToast).toHaveBeenCalledWith(expect.stringContaining("Access changed"), "error"));
+  expect(screen.getByRole("checkbox", { name: "Media" })).not.toBeChecked();
+  expect(api.updateChurchMemberAccess).toHaveBeenCalledWith("church-1", "owner", "full", expect.any(Object), loadedRevision);
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await user.click(screen.getByRole("button", { name: "Actions for Owner" }));
+  await user.click(screen.getByRole("menuitem", { name: "Edit access" }));
+  expect(await screen.findByRole("checkbox", { name: "Media" })).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Praise Team" })).toBeChecked();
+});
+
+it("keeps the durable save complete when self-bootstrap refresh fails", async () => {
+  const user = userEvent.setup();
+  const showToast = jest.fn();
+  const refreshAuthBootstrap = jest.fn().mockRejectedValue(new Error("offline"));
+  jest.mocked(api.updateChurchMemberAccess).mockImplementation(async (_church, _user, _access, saved) => {
+    permissions = saved;
+    return { success: true };
+  });
+  mount({ refreshAuthBootstrap }, showToast);
+  await user.click(await screen.findByRole("button", { name: "Actions for Owner" }));
+  await user.click(screen.getByRole("menuitem", { name: "Edit access" }));
+  await user.click(await screen.findByRole("checkbox", { name: "Media" }));
+  await user.click(screen.getByRole("button", { name: "Save access" }));
+  await waitFor(() => expect(showToast).toHaveBeenCalledWith("Access was saved. Reload the app to refresh your notification settings.", "error"));
+  expect(screen.queryByRole("dialog", { name: "Edit access" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Actions for Owner" }));
+  await user.click(screen.getByRole("menuitem", { name: "Edit access" }));
+  expect(await screen.findByRole("checkbox", { name: "Media" })).not.toBeChecked();
+  expect(screen.getByRole("button", { name: "Save access" })).toBeDisabled();
+  expect(api.updateChurchMemberAccess).toHaveBeenCalledTimes(1);
+});
+
+it("does not refresh the current administrator's bootstrap when another account is edited", async () => {
+  const user = userEvent.setup();
+  const refreshAuthBootstrap = jest.fn();
+  jest.mocked(api.updateChurchMemberAccess).mockResolvedValue({ success: true });
+  mount({ userId: "another-admin", refreshAuthBootstrap });
+  await user.click(await screen.findByRole("button", { name: "Actions for Owner" }));
+  await user.click(screen.getByRole("menuitem", { name: "Edit access" }));
+  await user.click(await screen.findByRole("checkbox", { name: "Media" }));
+  await user.click(screen.getByRole("button", { name: "Save access" }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit access" })).not.toBeInTheDocument());
+  expect(refreshAuthBootstrap).not.toHaveBeenCalled();
+});
+
+it("finishes the original self-save and global refresh after leaving administration", async () => {
+  const user = userEvent.setup();
+  const refreshAuthBootstrap = jest.fn().mockResolvedValue(undefined);
+  let releaseSave: () => void = () => {};
+  jest.mocked(api.updateChurchMemberAccess).mockImplementation(async (_church, _user, _access, saved) => {
+    await new Promise<void>((resolve) => { releaseSave = resolve; });
+    permissions = saved;
+    return { success: true };
+  });
+  const view = mount({ refreshAuthBootstrap });
+  await user.click(await screen.findByRole("button", { name: "Actions for Owner" }));
+  await user.click(screen.getByRole("menuitem", { name: "Edit access" }));
+  await user.click(await screen.findByRole("checkbox", { name: "Media" }));
+  await user.click(screen.getByRole("button", { name: "Save access" }));
+  view.unmount();
+  await act(async () => { releaseSave(); });
+  expect(permissions.teamScopes).toEqual({ praise: "view" });
+  expect(refreshAuthBootstrap).toHaveBeenCalledWith({ requireFresh: true });
+  expect(api.updateChurchMemberAccess).toHaveBeenCalledTimes(1);
 });
 
 it("retains selected leads through invitation role and global-access changes and serializes them when sending", async () => {

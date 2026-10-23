@@ -60,6 +60,129 @@ const teams = async () => {
     archived: `${churchId}_archived`, foreign: `${churchId}_foreign` };
 };
 
+const concurrentAccessFixture = async (firestore) => {
+  const churchId = `concurrent_access_${++counter}`;
+  const permissions = { teams: "view", services: "none", teamScopes: { praise: "view" } };
+  const seed = {
+    [C.churches]: { [churchId]: { churchId, status: "active", name: "Church" } },
+    [C.users]: {}, [C.memberships]: {},
+    [C.teams]: { media: { churchId, teamId: "media" }, praise: { churchId, teamId: "praise" } },
+  };
+  for (const userId of ["adminA", "adminB", "target"]) {
+    seed[C.users][userId] = { uid: userId, email: `${userId}@example.test` };
+    seed[C.memberships][`${churchId}_${userId}`] = { churchId, userId, status: "active",
+      role: userId === "target" ? "member" : "admin", controllerAccess: "full", permissions,
+      notifications: { intakeSubmissions: "off" } };
+  }
+  const db = firestore ? createDigestFirestore(seed) : null;
+  auth.setServerFirestoreForTests(db);
+  if (!db) for (const [collection, rows] of Object.entries(seed)) {
+    for (const [id, row] of Object.entries(rows)) await setDoc(collection, id, row);
+  }
+  const admins = [];
+  for (const userId of ["adminA", "adminB"]) {
+    const context = { churchId, session: { ...session(), auth: { sessionKind: "human", userId, churchId } }, headers: {} };
+    context.headers["x-csrf-token"] = (await call(authHandlers.getAuthMe, context)).payload.csrfToken;
+    admins.push(context);
+  }
+  const readTarget = async (context) => (await call(authHandlers.listChurchMembers, context))
+    .payload.members.find((member) => member.userId === "target");
+  const save = (context, loaded, nextPermissions, controllerAccess = "full") =>
+    call(authHandlers.updateMemberAccess, context, { params: { userId: "target" }, body: {
+      accessRevision: loaded.accessRevision, controllerAccess, permissions: nextPermissions,
+    } });
+  return { churchId, db, admins, readTarget, save, permissions };
+};
+
+test("two administrators cannot erase a Team Lead with a stale access snapshot", async () => {
+  for (const firestore of [false, true]) {
+    const { churchId, admins: [adminA, adminB], readTarget, save } = await concurrentAccessFixture(firestore);
+    const aLoaded = await readTarget(adminA);
+    const bLoaded = await readTarget(adminB);
+    const assigned = { ...bLoaded.permissions, teamScopes: { praise: "view", media: "edit" } };
+    assert.equal((await save(adminB, bLoaded, assigned)).statusCode, 200);
+    const stale = await save(adminA, aLoaded, aLoaded.permissions, "music");
+    assert.equal(stale.statusCode, 409, "stale full permission maps must never erase the other admin's grant");
+    assert.equal(stale.payload.code, "MEMBER_ACCESS_CONFLICT");
+    const fresh = await readTarget(adminA);
+    assert.deepEqual(fresh.permissions, assigned);
+    assert.notEqual(fresh.accessRevision, aLoaded.accessRevision);
+    assert.equal((await save(adminA, fresh, fresh.permissions, "music")).statusCode, 200);
+    const saved = await getDoc(C.memberships, `${churchId}_target`);
+    assert.deepEqual(saved.permissions, assigned);
+    assert.equal(saved.controllerAccess, "music");
+    assert.equal(saved.notifications.intakeSubmissions, "off");
+    auth.setServerFirestoreForTests(null);
+  }
+});
+
+test("a second admin's commit between request parsing and the access transaction is retained", async () => {
+  const { db, admins: [adminA, adminB], readTarget, save } = await concurrentAccessFixture(true);
+  const aLoaded = await readTarget(adminA);
+  const bLoaded = await readTarget(adminB);
+  let release;
+  let start;
+  const started = new Promise((resolve) => { start = resolve; });
+  db.beforeTransaction = async () => {
+    db.beforeTransaction = null;
+    start();
+    await new Promise((resolve) => { release = resolve; });
+  };
+  const pendingA = save(adminA, aLoaded, aLoaded.permissions, "music");
+  await started;
+  const assigned = { ...bLoaded.permissions, teamScopes: { praise: "view", media: "edit" } };
+  assert.equal((await save(adminB, bLoaded, assigned)).statusCode, 200);
+  release();
+  assert.equal((await pendingA).statusCode, 409);
+  assert.deepEqual((await readTarget(adminB)).permissions, assigned);
+});
+
+test("legacy access patches merge fresh scopes but cannot replace them without a revision", async () => {
+  for (const firestore of [false, true]) {
+    const { admins: [adminA, adminB], readTarget, save } = await concurrentAccessFixture(firestore);
+    const stale = await readTarget(adminA);
+    const assigned = { ...stale.permissions, teamScopes: { praise: "view", media: "edit" } };
+    assert.equal((await save(adminB, stale, assigned)).statusCode, 200);
+    const withoutRevision = { ...stale, accessRevision: undefined };
+    assert.equal((await save(adminA, withoutRevision, stale.permissions, "music")).statusCode, 409);
+    assert.equal((await save(adminA, withoutRevision, { services: "view" }, "music")).statusCode, 200);
+    assert.deepEqual((await readTarget(adminA)).permissions, { ...assigned, services: "view" });
+    const events = await queryDocs(C.securityEvents, [{ field: "churchId", value: adminA.churchId }]);
+    assert.deepEqual(events.find((event) => event.userId === "adminA").permissions, { ...assigned, services: "view" });
+    auth.setServerFirestoreForTests(null);
+  }
+});
+
+test("personal preferences and scope insertion order do not invalidate a reviewed access revision", async () => {
+  for (const firestore of [false, true]) {
+    const { churchId, admins: [adminA], readTarget, save } = await concurrentAccessFixture(firestore);
+    const initial = await readTarget(adminA);
+    const assigned = { ...initial.permissions, teamScopes: { praise: "view", media: "edit" } };
+    assert.equal((await save(adminA, initial, assigned)).statusCode, 200);
+    const reviewed = await readTarget(adminA);
+    const membershipId = `${churchId}_target`;
+    await setDoc(C.memberships, membershipId, {
+      ...(await getDoc(C.memberships, membershipId)),
+      permissions: { ...assigned, teamScopes: { media: "edit", praise: "view" } },
+      notifications: { intakeSubmissions: "on" },
+    });
+    assert.equal((await readTarget(adminA)).accessRevision, reviewed.accessRevision);
+    assert.equal((await save(adminA, reviewed, assigned, "music")).statusCode, 200);
+    assert.equal((await getDoc(C.memberships, membershipId)).notifications.intakeSubmissions, "on");
+    auth.setServerFirestoreForTests(null);
+  }
+});
+
+test("an access revision cannot cross churches even for the same account and permissions", async () => {
+  const first = await concurrentAccessFixture(false);
+  const firstLoaded = await first.readTarget(first.admins[0]);
+  const second = await concurrentAccessFixture(false);
+  const secondLoaded = await second.readTarget(second.admins[0]);
+  assert.notEqual(firstLoaded.accessRevision, secondLoaded.accessRevision);
+  assert.equal((await second.save(second.admins[0], firstLoaded, secondLoaded.permissions, "music")).statusCode, 409);
+  assert.deepEqual(await second.readTarget(second.admins[0]), secondLoaded);
+});
+
 test("admins can save explicit Team Leads; promotion and demotion retain only valid scopes", async () => {
   const { churchId, media, praise, archived, foreign } = await teams();
   const admin = await account(churchId, "admin", "admin");
@@ -75,6 +198,8 @@ test("admins can save explicit Team Leads; promotion and demotion retain only va
 
   const saved = await call(authHandlers.updateMemberAccess, admin, {
     params: { userId: lead.userId }, body: { controllerAccess: "full",
+      accessRevision: (await call(authHandlers.listChurchMembers, admin)).payload.members
+        .find((member) => member.userId === lead.userId).accessRevision,
       permissions: { teams: "none", services: "none", teamScopes: {
         ...scopes, [archived]: "edit", [foreign]: "edit", missing: "edit",
       } } },

@@ -90,6 +90,7 @@ jest.mock("../../../api/auth", () => ({
 }));
 
 const member: Member = {
+  accessRevision: "loaded-revision",
   membershipId: "membership-1",
   userId: "user-1",
   role: "member",
@@ -324,6 +325,7 @@ describe("MemberAccessSheet independent access axes", () => {
       "user-1",
       "none",
       { teams: "none", services: "none", teamScopes: { worship: "edit" } },
+      "loaded-revision",
     ));
   });
 
@@ -345,6 +347,7 @@ describe("MemberAccessSheet independent access axes", () => {
         services: "edit",
         teamScopes: { worship: "edit" },
       },
+      "loaded-revision",
     );
   });
 
