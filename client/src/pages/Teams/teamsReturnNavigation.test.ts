@@ -3,6 +3,7 @@ import {
   TEAMS_SECTION_PATHS,
   buildScheduleReturnTo,
   buildTeamsPositionEditPath,
+  buildTeamsMemberEditPath,
   buildTeamsReturnNavigationState,
   clearPersistedTeamsReturnTo,
   persistTeamsReturnTo,
@@ -61,6 +62,15 @@ describe("teamsReturnNavigation persistence", () => {
   it("builds a position edit path with team and position params", () => {
     expect(buildTeamsPositionEditPath("pos-1", "team-1")).toBe(
       `${TEAMS_SECTION_PATHS.positions}?teamId=team-1&editPosition=pos-1`,
+    );
+  });
+
+  it("builds a member edit path with optional originating team context", () => {
+    expect(buildTeamsMemberEditPath("member-1")).toBe(
+      `${TEAMS_SECTION_PATHS.members}?editMember=member-1`,
+    );
+    expect(buildTeamsMemberEditPath("member-1", "team-1")).toBe(
+      `${TEAMS_SECTION_PATHS.members}?editMember=member-1&teamId=team-1`,
     );
   });
 

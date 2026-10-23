@@ -1,18 +1,18 @@
-# Feature Contract: Team roster editing in Create/Edit Team
+# Feature Contract: Team roster editing and member management
 
-**Contract status:** Mixed; inline membership editing is confirmed, broader team roster and access workflows remain under review
+**Contract status:** Confirmed for inline membership editing and team-scoped member management
 
-**Approval source:** Current request dated 2026-10-18
+**Approval source:** Current request dated 2026-10-23
 
-**Last reviewed:** 2026-10-19
+**Last reviewed:** 2026-10-23
 
 ## Purpose
 
-Let authorized team editors quickly see who is on a team and make membership changes without leaving the Create/Edit Team form.
+Let authorized team editors quickly see who is on a team and change membership in the Create/Edit Team form. Use Members as the single destination for editing a person's profile, with the originating team retained as context.
 
 ## Operator workflow
 
-An editor opens a team, reviews the assigned members in alphabetical order, and searches inline for an active person to add. Removing a member requires confirmation. Church-wide administrators save or cancel membership changes with the rest of the team draft. Team-scoped managers save each roster change immediately through the restricted roster endpoints.
+An editor opens a team, reviews the assigned members in alphabetical order, and searches inline for an active person to add. Removing a member requires confirmation. Church-wide administrators save or cancel membership changes with the rest of the team draft. Team-scoped managers save each roster change immediately through the restricted roster endpoints. Manage opens that member in Members with the team selected and a return path to the edited team. Global editors use the full member form; scoped managers receive only the selected team's positions, role, and qualifications, loaded and saved through the restricted team-profile endpoints.
 
 ## Expected behavior
 
@@ -23,7 +23,10 @@ An editor opens a team, reviews the assigned members in alphabetical order, and 
 - Church-wide administrators change `memberIds` in the existing draft. Save uses the existing `memberIds` and `baseMemberIds` contract when membership changed; an unrelated settings save omits membership fields. Cancel discards draft changes.
 - Team-scoped managers search only through `searchTeamRosterCandidates`, then add or remove through the scoped roster endpoints. These endpoints retain their existing authorization checks, safe member projections, membership synchronization, and projection reconciliation.
 - Confirm before removing a member. Scoped removal explains that team positions, role, and qualifications are removed, while historical schedule assignments remain. Removing someone from a team never deletes their member record.
-- Team member profile editing and the existing Create new member flow remain available to scoped editors.
+- Manage is available to administrators, global Teams editors, and editors of the current team. It opens Members with `editMember` and the originating `teamId`; leaving a dirty team draft uses the existing navigation guard. Returning restores the originating team editor.
+- Global editors use the existing full member editor. A scoped manager can switch only among teams they can edit where the member is an active roster member. The team profile reads and writes go through `getTeamRosterMemberProfile` and `updateTeamRosterMemberProfile`; only that team's positions, role, and qualifications appear in the form. Switching teams or members is guarded when the profile has unsaved changes.
+- Scoped managers see Members grouped into `Your teams` and `Other members`, alphabetically within each group. Search and filters apply to both groups; names and team details outside their authorized projection are not included.
+- The member list distinguishes `No team assigned` only when the server can establish that all active team rosters are complete. If ownership is truncated or malformed, it shows an unavailable status rather than inferring no assignment. Scoped managers only see the safe status enum and their authorized team details.
 
 ## Behavioral boundaries
 
@@ -31,7 +34,7 @@ An editor opens a team, reviews the assigned members in alphabetical order, and 
 - The church-wide draft path and the scoped immediate-persistence path remain separate.
 - Schedule assignments and unrelated team settings are not changed by a roster-only edit.
 - `EntityMultiSelect` remains unchanged for other forms.
-- Broader team roles, positions, qualifications, archive, delete, and access workflows are not newly confirmed by this contract.
+- Team role, position, and qualification setup, plus archive, delete, and access workflows remain unchanged by this contract.
 
 ## Important scenarios
 
@@ -57,12 +60,22 @@ An editor opens a team, reviews the assigned members in alphabetical order, and 
 - **Why:** Keep the roster easier to scan while leaving removal easy to find when needed.
 - **Approval source/date:** Current user request dated 2026-10-23.
 - **Affected workflow/contract:** Create/Edit Team membership; broader team roster behavior remains inventory-only.
+- **Question/problem:** Editors currently need separate Team and Members workflows to manage someone whose team-specific profile needs attention.
+- **Approved behavior:** Keep Manage on each assigned member for administrators, global Teams editors, and scoped editors of that team. Open that member in Members with the originating team selected and a return path to the team editor. Keep the full member form for global editors and provide scoped editors only the current team's positions, role, and qualifications through the existing restricted APIs. Guard dirty team and profile changes.
+- **Why:** Team membership and team-specific profile changes should be reachable from one Members destination without changing the existing permission boundary.
+- **Approval source/date:** Current user request dated 2026-10-23.
+- **Affected workflow/contract:** Create/Edit Team → Members profile editing and return navigation.
+- **Question/problem:** Scoped managers need to find people they manage without exposing hidden team assignments or treating an incomplete roster as proof that a person has no team.
+- **Approved behavior:** Group scoped Members results into `Your teams` and `Other members`, preserve alphabetical order within each group, and apply search and filters to both. Show `No team assigned` only from a complete server-derived membership status; otherwise use a generic unavailable status and never include hidden team names or IDs.
+- **Why:** The list can prioritize relevant people while preserving the server's projection and authorization boundaries.
+- **Approval source/date:** Current user request dated 2026-10-23.
+- **Affected workflow/contract:** Team-scoped Members list and member assignment summary.
 
 ## Implementation references
 
 - Entry point: `client/src/pages/Teams/pages/TeamsGroupsPage.tsx`
-- Implementation: `client/src/pages/Teams/managers/TeamManager.tsx`, `client/src/pages/Teams/components/TeamMembersEditor.tsx`, `client/src/api/auth.ts`, `server/teamsAuthHandlers.js`
-- Tests: `client/src/pages/Teams/components/TeamMembersEditor.test.tsx`, `client/src/pages/Teams/managers/TeamManager.permissions.test.tsx`, `client/src/pages/Teams/managers/TeamManager.navigation.test.tsx`, `server/teamsApi.test.js`
+- Implementation: `client/src/pages/Teams/managers/TeamManager.tsx`, `client/src/pages/Teams/managers/MemberManager.tsx`, `client/src/pages/Teams/managers/TeamMemberProfileEditor.tsx`, `client/src/pages/Teams/components/TeamMembersEditor.tsx`, `client/src/api/auth.ts`, `server/teamsAuthHandlers.js`, `server/teamsBootstrapProjection.js`
+- Tests: `client/src/pages/Teams/components/TeamMembersEditor.test.tsx`, `client/src/pages/Teams/managers/TeamManager.permissions.test.tsx`, `client/src/pages/Teams/managers/MemberManager.test.tsx`, `client/src/pages/Teams/teamsUtils.test.ts`, `server/teamsBootstrapProjection.test.js`, `server/teamsApi.test.js`
 
 ## Technical design notes
 

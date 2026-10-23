@@ -54,6 +54,9 @@ import {
 } from "../components/MemberListFilters";
 import TeamsCrossSectionLink from "../components/TeamsCrossSectionLink";
 import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
+import TeamMemberProfileEditor, {
+  type TeamMemberProfileEditorStatus,
+} from "./TeamMemberProfileEditor";
 import EntityMultiSelect from "../EntityMultiSelect";
 import EntityRow from "../components/EntityRow";
 import {
@@ -80,6 +83,7 @@ import { getMemberListAssignments } from "../memberListAssignments";
 import { hasMemberContactInfo } from "../memberContactInfo";
 import {
   TEAMS_MEMBER_EDIT_SEARCH_PARAM,
+  TEAMS_TEAM_SEARCH_PARAM,
   TEAMS_SECTION_PATHS,
   buildSectionReturnTo,
   buildTeamsMemberEditPath,
@@ -130,6 +134,16 @@ const readMemberTeamIds = (member: TeamRosterMember, teams: TeamRecord[]) =>
     ]),
   ).sort();
 
+const getManagedTeamsForMember = (
+  member: TeamRosterMember,
+  teams: TeamRecord[],
+) => member.archivedAt ? [] : teams
+  .filter((team) => !team.archivedAt && (team.memberIds || []).includes(member.memberId))
+  .sort((left, right) =>
+    left.name.localeCompare(right.name, undefined, { sensitivity: "base" }) ||
+    left.teamId.localeCompare(right.teamId),
+  );
+
 const sameIdSet = (left: string[], right: string[]) => {
   const leftIds = new Set(left);
   const rightIds = new Set(right);
@@ -177,6 +191,7 @@ const qualificationStatusOptions: {
 
 type MemberManagerProps = {
   members: TeamRosterMember[];
+  isLoading?: boolean;
   positions: TeamPosition[];
   data: TeamsData;
   canEdit: boolean;
@@ -192,10 +207,12 @@ type MemberManagerProps = {
   onImported?: () => void | Promise<void>;
   onSmsConsentRecorded?: () => Promise<void> | void;
   onSmsEligibilityRefresh?: (memberId: string, phoneNumber: string, previousPhoneNumber: string) => Promise<void>;
+  onScopedProfileSaved?: (memberId: string) => void | Promise<void>;
 };
 
 const MemberManager = ({
   members,
+  isLoading = false,
   positions,
   data,
   canEdit,
@@ -210,6 +227,7 @@ const MemberManager = ({
   onImported,
   onSmsConsentRecorded,
   onSmsEligibilityRefresh,
+  onScopedProfileSaved,
 }: MemberManagerProps) => {
   const context = useContext(GlobalInfoContext);
   const selfMemberId = useCurrentMemberId();
@@ -345,12 +363,43 @@ const MemberManager = ({
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
   const { requestDiscardAction } = useTeamsNavigationGuard();
   const pendingEditMemberIdRef = useRef<string | null>(null);
+  const lastAppliedEditMemberIdRef = useRef<string | null>(null);
   const consumedCreateLocationKeyRef = useRef<string | null>(null);
+  const [scopedTeamId, setScopedTeamId] = useState("");
+  const [scopedProfileStatus, setScopedProfileStatus] =
+    useState<TeamMemberProfileEditorStatus | null>(null);
+  const [editRouteError, setEditRouteError] = useState("");
+  const routeEditMemberId = searchParams.get(TEAMS_MEMBER_EDIT_SEARCH_PARAM)?.trim() || "";
+  const routeTeamId = searchParams.get(TEAMS_TEAM_SEARCH_PARAM)?.trim() || "";
+
+  const updateMemberEditRoute = useCallback((memberId: string, teamId: string) => {
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set(TEAMS_MEMBER_EDIT_SEARCH_PARAM, memberId);
+    if (teamId) nextParams.set(TEAMS_TEAM_SEARCH_PARAM, teamId);
+    else if (!canEditAllTeams) nextParams.delete(TEAMS_TEAM_SEARCH_PARAM);
+    setSearchParams(nextParams, { replace: true, state: location.state });
+  }, [canEditAllTeams, location.state, searchParams, setSearchParams]);
 
   const openMemberEditor = useCallback(
-    (member: TeamRosterMember) => {
+    (member: TeamRosterMember, requestedTeamId = "") => {
       activeEditorSessionRef.current += 1;
       profileImageSelectionRevisionRef.current += 1;
+      const availableTeams = canEditAllTeams
+        ? []
+        : getManagedTeamsForMember(member, data.teams);
+      const selectedTeamId = canEditAllTeams
+        ? requestedTeamId
+        : availableTeams.find((team) => team.teamId === requestedTeamId)?.teamId ||
+          availableTeams[0]?.teamId ||
+          "";
+      const editRouteTeamId = canEditAllTeams
+        ? requestedTeamId || routeTeamId
+        : selectedTeamId;
+      setScopedTeamId(selectedTeamId);
+      setScopedProfileStatus(null);
+      setEditRouteError("");
+      lastAppliedEditMemberIdRef.current = member.memberId;
+      updateMemberEditRoute(member.memberId, editRouteTeamId);
       setShowFilters(false);
       setShowDesiredPositions(false);
       setPendingProfileImage(null);
@@ -361,22 +410,28 @@ const MemberManager = ({
       setSavedMembershipBaseline({ memberId: member.memberId, teamIds });
       setDraft(buildMemberDraft(member, teamIds));
     },
-    [data.teams, setDraft],
+    [canEditAllTeams, data.teams, routeTeamId, setDraft, updateMemberEditRoute],
   );
 
   const selectMember = useCallback((member: TeamRosterMember) => {
     if (editing?.memberId === member.memberId) return;
-    requestDiscardAction(() => openMemberEditor(member));
-  }, [editing?.memberId, openMemberEditor, requestDiscardAction]);
+    requestDiscardAction(() => openMemberEditor(member, scopedTeamId || routeTeamId));
+  }, [editing?.memberId, openMemberEditor, requestDiscardAction, routeTeamId, scopedTeamId]);
 
   useEffect(() => {
-    const editMemberId = searchParams.get(TEAMS_MEMBER_EDIT_SEARCH_PARAM)?.trim();
-    if (!editMemberId || !canEdit) return;
-    pendingEditMemberIdRef.current = editMemberId;
-    const nextParams = new URLSearchParams(searchParams);
-    nextParams.delete(TEAMS_MEMBER_EDIT_SEARCH_PARAM);
-    setSearchParams(nextParams, { replace: true, state: location.state });
-  }, [canEdit, location.state, searchParams, setSearchParams]);
+    if (!routeEditMemberId) {
+      pendingEditMemberIdRef.current = null;
+      lastAppliedEditMemberIdRef.current = null;
+      setEditRouteError("");
+      return;
+    }
+    if (canEdit) {
+      pendingEditMemberIdRef.current = routeEditMemberId;
+      setEditRouteError("");
+    } else if (!isLoading) {
+      setEditRouteError("This member is not available for editing with your current access.");
+    }
+  }, [canEdit, isLoading, routeEditMemberId]);
 
   useEffect(() => {
     const state = location.state as { teamsCreateMember?: { teamId?: string } } | null;
@@ -397,11 +452,20 @@ const MemberManager = ({
     const editMemberId = pendingEditMemberIdRef.current;
     if (!editMemberId) return;
     const member = members.find((item) => item.memberId === editMemberId);
-    if (!member) return;
+    if (!member) {
+      if (isLoading) return;
+      pendingEditMemberIdRef.current = null;
+      setEditRouteError("This member is no longer available in the Teams directory.");
+      return;
+    }
     pendingEditMemberIdRef.current = null;
-    if (!canEditMember(member)) return;
-    openMemberEditor(member);
-  }, [canEditMember, members, openMemberEditor]);
+    if (lastAppliedEditMemberIdRef.current === editMemberId) return;
+    if (!canEditMember(member)) {
+      setEditRouteError("This member is not available for editing with your current team access.");
+      return;
+    }
+    openMemberEditor(member, routeTeamId);
+  }, [canEditMember, isLoading, members, openMemberEditor, routeTeamId]);
 
   useEffect(() => {
     if (!showCreate) return;
@@ -530,6 +594,66 @@ const MemberManager = ({
       ),
     [members, listQuery, listFilters, memberAssignmentsById, teamsById],
   );
+  const isScopedTeamManager = canEdit && !canEditAllTeams;
+  const managedVisibleMemberIds = useMemo(
+    () => new Set(
+      data.teams
+        .filter((team) => !team.archivedAt)
+        .flatMap((team) => team.memberIds || []),
+    ),
+    [data.teams],
+  );
+  const memberGroups = useMemo(() => {
+    if (!isScopedTeamManager) {
+      return [{ key: "all", label: "", members: filteredMembers }];
+    }
+    return [
+      {
+        key: "managed",
+        label: "Your teams",
+        members: filteredMembers.filter((member) => managedVisibleMemberIds.has(member.memberId)),
+      },
+      {
+        key: "other",
+        label: "Other members",
+        members: filteredMembers.filter((member) => !managedVisibleMemberIds.has(member.memberId)),
+      },
+    ];
+  }, [filteredMembers, isScopedTeamManager, managedVisibleMemberIds]);
+  const isScopedMemberEditing = Boolean(editing && !canEditAllTeams);
+  const scopedTeamOptions = useMemo(
+    () => editing && !canEditAllTeams
+      ? getManagedTeamsForMember(editing, data.teams)
+      : [],
+    [canEditAllTeams, data.teams, editing],
+  );
+  const scopedTeam = scopedTeamOptions.find((team) => team.teamId === scopedTeamId) || null;
+  const scopedProfileIdentity = editing && scopedTeam
+    ? `${churchId}:${scopedTeam.teamId}:${editing.memberId}`
+    : "";
+  const currentScopedProfileStatus = scopedProfileStatus?.identity === scopedProfileIdentity
+    ? scopedProfileStatus
+    : null;
+
+  const getMembershipStatus = (member: TeamRosterMember) => {
+    if (member.teamMembershipStatus) return member.teamMembershipStatus;
+    if (!canEditAllTeams || data.truncated === true) return "unknown" as const;
+    const activeTeams = data.teams.filter((team) => !team.archivedAt);
+    if (!activeTeams.every((team) => Array.isArray(team.memberIds))) return "unknown" as const;
+    return activeTeams.some((team) => team.memberIds?.includes(member.memberId))
+      ? "assigned" as const
+      : "none" as const;
+  };
+
+  const handleScopedTeamChange = useCallback((nextTeamId: string) => {
+    if (!editing || nextTeamId === scopedTeamId) return;
+    if (!scopedTeamOptions.some((team) => team.teamId === nextTeamId)) return;
+    requestDiscardAction(() => {
+      setScopedTeamId(nextTeamId);
+      setScopedProfileStatus(null);
+      updateMemberEditRoute(editing.memberId, nextTeamId);
+    });
+  }, [editing, requestDiscardAction, scopedTeamId, scopedTeamOptions, updateMemberEditRoute]);
   const reset = () => {
     if (profileImageSelectionToastIdRef.current) {
       removeToast(profileImageSelectionToastIdRef.current);
@@ -539,6 +663,11 @@ const MemberManager = ({
     profileImageSelectionRevisionRef.current += 1;
     setEditing(null);
     setShowCreate(false);
+    setScopedTeamId("");
+    setScopedProfileStatus(null);
+    setEditRouteError("");
+    pendingEditMemberIdRef.current = null;
+    lastAppliedEditMemberIdRef.current = null;
     setSavedMembershipBaseline(null);
     setDraft(buildMemberDraft(null, []));
     setShowDesiredPositions(false);
@@ -569,7 +698,17 @@ const MemberManager = ({
   };
 
   const cancelEditing = () => {
-    requestDiscardAction(() => finishEditing(reset));
+    requestDiscardAction(() => {
+      if (returnTo) {
+        finishEditing(reset);
+        return;
+      }
+      reset();
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete(TEAMS_MEMBER_EDIT_SEARCH_PARAM);
+      nextParams.delete(TEAMS_TEAM_SEARCH_PARAM);
+      setSearchParams(nextParams, { replace: true, state: location.state });
+    });
   };
 
   const confirmDelete = async () => {
@@ -1050,7 +1189,12 @@ const MemberManager = ({
     pendingSaveSnapshot.pendingImage === pendingProfileImage &&
     pendingSaveSnapshot.imageRevision === profileImageSelectionRevisionRef.current
   );
-  useTeamsUnsavedChanges(hasPendingChanges);
+  useTeamsUnsavedChanges(
+    isScopedMemberEditing
+      ? Boolean(currentScopedProfileStatus?.hasPendingChanges)
+      : hasPendingChanges,
+    isScopedMemberEditing && Boolean(currentScopedProfileStatus?.saving),
+  );
 
   // Positions follow each team's Positions tab order; teams follow the roster list.
   const positionOptions = useMemo(
@@ -1253,12 +1397,35 @@ const MemberManager = ({
     status: "in_training",
   });
 
+  const handleScopedEditorStateChange = useCallback((status: TeamMemberProfileEditorStatus) => {
+    setScopedProfileStatus((current) =>
+      current?.identity === status.identity &&
+      current.loading === status.loading &&
+      current.saving === status.saving &&
+      current.hasPendingChanges === status.hasPendingChanges &&
+      current.save === status.save
+        ? current
+        : status,
+    );
+  }, []);
+  const handleScopedProfileSaved = useCallback((memberId: string) => {
+    void onScopedProfileSaved?.(memberId);
+  }, [onScopedProfileSaved]);
+  let memberEditorTitle = "Create member";
+  if (editing) {
+    memberEditorTitle = isScopedMemberEditing ? memberName(editing) : "Edit member";
+  }
+
   return (
     <>
       <CreatePanel
         open={showCreate}
         onOpenCreate={() => {
           requestDiscardAction(() => {
+            const nextParams = new URLSearchParams(searchParams);
+            nextParams.delete(TEAMS_MEMBER_EDIT_SEARCH_PARAM);
+            nextParams.delete(TEAMS_TEAM_SEARCH_PARAM);
+            setSearchParams(nextParams, { replace: true, state: location.state });
             setShowFilters(false);
             reset();
             activeEditorSessionRef.current += 1;
@@ -1266,7 +1433,7 @@ const MemberManager = ({
           });
         }}
         canEdit={canEdit}
-        title={editing ? "Edit member" : "Create member"}
+        title={memberEditorTitle}
         sectionTitle={
           <>
             Members{" "}
@@ -1285,21 +1452,27 @@ const MemberManager = ({
         keepCreateActionVisible
         scrollableList
         listToolbar={
-          members.length > 0 ? (
-            <MemberListFilterToolbar
-              data={data}
-              listQuery={listQuery}
-              onListQueryChange={setListQuery}
-              filters={listFilters}
-              onFiltersChange={(filters) => {
-                setListFilters(filters);
-                setDraftListFilters(filters);
-              }}
-              filtersOpen={showFilters}
-              onFiltersOpenChange={handleFiltersOpenChange}
-              onClearFilters={clearFilters}
-            />
-          ) : null
+          <div className="space-y-3">
+            {returnTo && !editing ? (
+              <TeamsReturnToolbar returnTo={returnTo} onBack={cancelEditing} />
+            ) : null}
+            {editRouteError ? <p role="alert" className="text-sm text-red-300">{editRouteError}</p> : null}
+            {members.length > 0 ? (
+              <MemberListFilterToolbar
+                data={data}
+                listQuery={listQuery}
+                onListQueryChange={setListQuery}
+                filters={listFilters}
+                onFiltersChange={(filters) => {
+                  setListFilters(filters);
+                  setDraftListFilters(filters);
+                }}
+                filtersOpen={showFilters}
+                onFiltersOpenChange={handleFiltersOpenChange}
+                onClearFilters={clearFilters}
+              />
+            ) : null}
+          </div>
         }
         asideOpen={showFilters}
         asideId={MEMBER_FILTER_PANEL_ID}
@@ -1361,52 +1534,69 @@ const MemberManager = ({
                   : "No matches."}
               </p>
             ) : null}
-            {filteredMembers.map((member) => {
-              const assignments = memberAssignmentsById.get(member.memberId) || [];
-              const canEditCurrentMember = canEdit && canEditMember(member);
-              return (
-                <EntityRow
-                  key={member.memberId}
-                  compact
-                  title={memberName(member)}
-                  editButtonAriaLabel={
-                    member.memberId === selfMemberId
-                      ? `Edit ${memberName(member)}, You`
-                      : undefined
+            {memberGroups.map((group) => (
+              <section key={group.key} className="space-y-1.5">
+                {group.label ? (
+                  <h3 className="px-1 pt-2 text-xs font-semibold text-gray-300">
+                    {group.label} <span className="font-normal text-gray-500">({group.members.length})</span>
+                  </h3>
+                ) : null}
+                {group.members.map((member) => {
+                  const assignments = memberAssignmentsById.get(member.memberId) || [];
+                  const canEditCurrentMember = canEdit && canEditMember(member);
+                  const membershipStatus = getMembershipStatus(member);
+                  let emptyAssignmentLabel = "Team assignments unavailable";
+                  if (membershipStatus === "none") {
+                    emptyAssignmentLabel = "No team assigned";
+                  } else if (isScopedTeamManager && membershipStatus === "assigned") {
+                    emptyAssignmentLabel = "Not in your managed teams";
                   }
-                  headerBadge={<CurrentUserMemberIndicator memberId={member.memberId} />}
-                  details={
-                    <MemberAssignmentsDetails
-                      assignments={assignments}
-                      memberName={memberName(member)}
+                  return (
+                    <EntityRow
+                      key={member.memberId}
+                      compact
+                      title={memberName(member)}
+                      editButtonAriaLabel={
+                        member.memberId === selfMemberId
+                          ? `Edit ${memberName(member)}, You`
+                          : undefined
+                      }
+                      headerBadge={<CurrentUserMemberIndicator memberId={member.memberId} />}
+                      details={
+                        <MemberAssignmentsDetails
+                          assignments={assignments}
+                          memberName={memberName(member)}
+                          emptyLabel={emptyAssignmentLabel}
+                        />
+                      }
+                      detailsInteractive
+                      subtitle={
+                        canEditAllTeams && canEditCurrentMember && !hasMemberContactInfo(member)
+                          ? "No contact info"
+                          : undefined
+                      }
+                      leadingVisual={
+                        <MemberAvatar
+                          profileImageUrl={member.profileImageUrl}
+                          memberName={memberName(member)}
+                          className="h-8 w-8"
+                        />
+                      }
+                      archived={Boolean(member.archivedAt)}
+                      selected={editing?.memberId === member.memberId}
+                      canEdit={canEditCurrentMember}
+                      onTitleClick={() => selectMember(member)}
                     />
-                  }
-                  detailsInteractive
-                  subtitle={
-                    canEditCurrentMember && !hasMemberContactInfo(member)
-                      ? "No contact info"
-                      : undefined
-                  }
-                  leadingVisual={
-                    <MemberAvatar
-                      profileImageUrl={member.profileImageUrl}
-                      memberName={memberName(member)}
-                      className="h-8 w-8"
-                    />
-                  }
-                  archived={Boolean(member.archivedAt)}
-                  selected={editing?.memberId === member.memberId}
-                  canEdit={canEditCurrentMember}
-                  onTitleClick={() => selectMember(member)}
-                />
-              );
-            })}
+                  );
+                })}
+              </section>
+            ))}
           </>
         }
         formHeaderActions={
           editing || returnTo ? (
             <TeamsReturnToolbar returnTo={returnTo} onBack={cancelEditing}>
-              {editing ? (
+              {editing && !isScopedMemberEditing ? (
                 <EntityFormDangerActions
                   archived={Boolean(editing.archivedAt)}
                   canEdit={canEditActiveMember && canManageMemberLifecycle}
@@ -1467,30 +1657,80 @@ const MemberManager = ({
           ) : null
         }
         formFooter={
-          canEditActiveMember ? (
-          <FormActionButtons
-            pinFooter
-            entityLabel="member"
-            isCreate={!editing}
-            isSaving={isSavingCurrent}
-            onSave={() => void submit()}
-            onCancel={cancelEditing}
-            hasPendingChanges={hasPendingChanges}
-            disabled={
-              !canEditActiveMember ||
-              !draft.firstName.trim() ||
-              !draft.lastName.trim() ||
-              // The server rejects a malformed address, so blocking here turns
-              // a failed round-trip into an inline message.
-              Boolean(emailError) ||
-              isSavingCurrent ||
-              profileImageUploading ||
-              (!editing && !canEditAllTeams && (draft.teamIds || []).length === 0)
-            }
-          />
+          isScopedMemberEditing ? (
+            <div className="flex shrink-0 justify-end gap-2 border-t border-gray-700/50 bg-gray-950/45 px-4 py-3">
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={Boolean(currentScopedProfileStatus?.saving)}
+                onClick={cancelEditing}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                isLoading={Boolean(currentScopedProfileStatus?.saving)}
+                disabled={
+                  !canEditActiveMember ||
+                  !scopedTeam ||
+                  !currentScopedProfileStatus ||
+                  currentScopedProfileStatus.loading ||
+                  currentScopedProfileStatus.saving ||
+                  !currentScopedProfileStatus.hasPendingChanges
+                }
+                onClick={() => currentScopedProfileStatus?.save()}
+              >
+                Save profile
+              </Button>
+            </div>
+          ) : canEditActiveMember ? (
+            <FormActionButtons
+              pinFooter
+              entityLabel="member"
+              isCreate={!editing}
+              isSaving={isSavingCurrent}
+              onSave={() => void submit()}
+              onCancel={cancelEditing}
+              hasPendingChanges={hasPendingChanges}
+              disabled={
+                !canEditActiveMember ||
+                !draft.firstName.trim() ||
+                !draft.lastName.trim() ||
+                // The server rejects a malformed address, so blocking here turns
+                // a failed round-trip into an inline message.
+                Boolean(emailError) ||
+                isSavingCurrent ||
+                profileImageUploading ||
+                (!editing && !canEditAllTeams && (draft.teamIds || []).length === 0)
+              }
+            />
           ) : null
         }
       >
+        {isScopedMemberEditing ? (
+          scopedTeam && canEditActiveMember ? (
+            <TeamMemberProfileEditor
+              key={`${churchId}:${editing?.memberId}:${scopedTeam.teamId}`}
+              churchId={churchId}
+              team={scopedTeam}
+              teams={scopedTeamOptions}
+              member={editing}
+              positions={data.positions}
+              roles={data.teamRoles}
+              qualificationAreas={data.qualificationAreas}
+              qualificationLevels={data.qualificationLevels}
+              onTeamChange={handleScopedTeamChange}
+              onEditorStateChange={handleScopedEditorStateChange}
+              onSaved={handleScopedProfileSaved}
+            />
+          ) : (
+            <p role="alert" className="text-sm text-amber-200">
+              Team profile access is no longer available for this member. Go back and refresh the Teams directory.
+            </p>
+          )
+        ) : (
+          <>
         <fieldset disabled={!canEditActiveMember} className="space-y-2 rounded-md border border-gray-700 bg-gray-950/40 p-3 pt-0">
           <legend className="px-1 text-sm font-semibold">
             Member details{" "}
@@ -2285,6 +2525,8 @@ const MemberManager = ({
         />
         <TextArea label="Notes" value={draft.notes || ""} textareaClassName="min-h-24" onChange={(notes) => setDraft((d) => ({ ...d, notes }))} />
         {isChurchAdmin && editing && !editing.archivedAt ? <VolunteerPersonalAccessControls key={`${churchId}:${editing.memberId}`} churchId={churchId} memberId={editing.memberId} /> : null}
+          </>
+        )}
       </CreatePanel>
       <DeleteModal
         isOpen={Boolean(deleting)}

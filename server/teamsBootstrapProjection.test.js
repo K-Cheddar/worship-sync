@@ -255,7 +255,7 @@ const resolveAccess = ({
 
 const source = fullData();
 
-test("admin and global Teams editor preserve the existing full bootstrap object", () => {
+test("admin and global Teams editor preserve the full bootstrap and add a safe membership status", () => {
   for (const access of [
     resolveAccess({
       role: "admin",
@@ -268,10 +268,15 @@ test("admin and global Teams editor preserve the existing full bootstrap object"
       members: source.members,
     }),
   ]) {
-    assert.strictEqual(
-      projectTeamsBootstrapForAccess({ data: source, access }),
-      source,
-    );
+    const projected = projectTeamsBootstrapForAccess({ data: source, access });
+    assert.notStrictEqual(projected, source);
+    assert.deepEqual(projected, {
+      ...source,
+      members: source.members.map((member) => ({
+        ...member,
+        teamMembershipStatus: "unknown",
+      })),
+    });
   }
 });
 
@@ -430,9 +435,11 @@ test("membership-only reader receives only safe roster fields for their team", (
     "memberId",
     "positionIds",
     "profileImageUrl",
+    "teamMembershipStatus",
     "title",
   ]);
   assert.deepEqual(caller.positionIds, ["position-worship"]);
+  assert.equal(caller.teamMembershipStatus, "unknown");
   assert.equal(projected.editableMemberIds.includes(caller.memberId), false);
   for (const field of [
     "email",
@@ -639,6 +646,77 @@ test("truncated ownership sources fail closed for rich member projection", () =>
     assert.equal(member.email, undefined);
     assert.equal(member.serviceAvailability, undefined);
   }
+});
+
+test("membership status is a safe enum derived only from complete active team rosters", () => {
+  const data = fullData();
+  data.truncated = false;
+  data.members.push(makeMember("unassigned", {
+    positionIds: [],
+    desiredPositionIds: [],
+    teamMemberships: {},
+    qualifications: [],
+  }));
+
+  const projected = projectTeamsBootstrapForAccess({
+    data,
+    access: { editAll: true },
+  });
+  const statusByMemberId = Object.fromEntries(
+    projected.members.map(({ memberId, teamMembershipStatus }) => [memberId, teamMembershipStatus]),
+  );
+
+  assert.equal(statusByMemberId.caller, "assigned");
+  assert.equal(statusByMemberId.unassigned, "none");
+  assert.equal(statusByMemberId["hidden-only"], "assigned");
+  assert.equal(statusByMemberId["archived-member"], "none");
+
+  const limited = projectTeamsBootstrapForAccess({
+    data,
+    access: {
+      viewAll: false,
+      viewTeamIds: new Set(["worship"]),
+      editTeamIds: new Set(),
+    },
+  });
+  const visibleHiddenOnly = limited.members.find(({ memberId }) => memberId === "hidden-only");
+  assert.equal(visibleHiddenOnly, undefined);
+  const shared = limited.members.find(({ memberId }) => memberId === "shared");
+  assert.equal(shared.teamMembershipStatus, "assigned");
+  assert.equal(shared.teamMemberships, undefined);
+  assert.equal(shared.email, undefined);
+});
+
+test("membership status is unknown when team roster ownership may be incomplete", () => {
+  const completeData = fullData();
+  completeData.truncated = false;
+  const truncated = projectTeamsBootstrapForAccess({
+    data: { ...completeData, truncated: true },
+    access: { editAll: true },
+  });
+  assert.ok(truncated.members.every(({ teamMembershipStatus }) => teamMembershipStatus === "unknown"));
+
+  const incompleteRoster = projectTeamsBootstrapForAccess({
+    data: {
+      ...completeData,
+      teams: completeData.teams.map((team) =>
+        team.teamId === "av" ? { teamId: "av", churchId } : team,
+      ),
+    },
+    access: { editAll: true },
+  });
+  assert.ok(incompleteRoster.members.every(({ teamMembershipStatus }) => teamMembershipStatus === "unknown"));
+
+  const malformedRoster = projectTeamsBootstrapForAccess({
+    data: {
+      ...completeData,
+      teams: completeData.teams.map((team) =>
+        team.teamId === "av" ? { ...team, memberIds: [null] } : team,
+      ),
+    },
+    access: { editAll: true },
+  });
+  assert.ok(malformedRoster.members.every(({ teamMembershipStatus }) => teamMembershipStatus === "unknown"));
 });
 
 test("known archived ownership metadata does not block editability from the only active Team", () => {

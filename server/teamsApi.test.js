@@ -18337,7 +18337,9 @@ test("effective Teams reads admit member appAccess through current roster links 
       "lastName",
       "memberId",
       "positionIds",
+      "teamMembershipStatus",
     ]);
+    assert.equal(member.teamMembershipStatus, "assigned");
   }
   for (const field of [
     "intakeForms",

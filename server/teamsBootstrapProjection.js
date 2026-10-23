@@ -102,12 +102,46 @@ export const projectViewOnlySchedule = (schedule) => {
  * must receive the complete canonical active team set for this church.
  */
 export const projectTeamsBootstrapForAccess = ({ data, access } = {}) => {
+  const rawSource = data && typeof data === "object" ? data : {};
+  const sourceTeams = Array.isArray(rawSource.teams) ? rawSource.teams : null;
+  // Derive a coarse assignment status from the canonical source before applying
+  // the caller's team scope. Hidden team IDs and names never enter the projection.
+  const activeMembershipTeams = sourceTeams?.filter(
+    (team) => team && !team.archivedAt,
+  ) || [];
+  const canDetermineTeamMemberships = Boolean(
+    sourceTeams &&
+    rawSource.truncated !== true &&
+    activeMembershipTeams.every((team) =>
+      typeof (team.teamId || team.id) === "string" &&
+      (team.teamId || team.id).trim() !== "" &&
+      Array.isArray(team.memberIds) &&
+      team.memberIds.every((memberId) =>
+        typeof memberId === "string" && memberId.trim() !== "",
+      ),
+    ),
+  );
+  const memberIdsWithMembership = new Set(
+    activeMembershipTeams.flatMap((team) =>
+      Array.isArray(team.memberIds) ? team.memberIds : [],
+    ),
+  );
+  const getTeamMembershipStatus = (member) => {
+    if (!canDetermineTeamMemberships || !member?.memberId) return "unknown";
+    return memberIdsWithMembership.has(member.memberId) ? "assigned" : "none";
+  };
+  const source = {
+    ...rawSource,
+    members: (Array.isArray(rawSource.members) ? rawSource.members : []).map((member) =>
+      member && typeof member === "object"
+        ? { ...member, teamMembershipStatus: getTeamMembershipStatus(member) }
+        : member,
+    ),
+  };
   // Only Teams editors receive the raw church-wide projection. View-all users
   // still need the same read projection used by scoped readers so private
   // member fields and management-only schedule data do not cross the boundary.
-  if (access?.editAll === true) return data;
-
-  const source = data && typeof data === "object" ? data : {};
+  if (access?.editAll === true) return source;
   const visibleTeamIds = access?.viewAll === true
     ? new Set(
         (Array.isArray(source.teams) ? source.teams : [])
@@ -305,6 +339,7 @@ export const projectTeamsBootstrapForAccess = ({ data, access } = {}) => {
       [...memberTeamIds].filter((teamId) => editableTeamIds.has(teamId)),
     );
     const projected = copyDefinedFields(member, READ_ONLY_MEMBER_FIELDS);
+    projected.teamMembershipStatus = member.teamMembershipStatus;
     projected.positionIds = (
       Array.isArray(member.positionIds) ? member.positionIds : []
     ).filter((positionId) => positionById.has(positionId));

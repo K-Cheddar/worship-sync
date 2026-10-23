@@ -77,8 +77,27 @@ it("marks the linked assigned member without matching another member who has the
   expect(within(assigned).getByText("You")).toBeInTheDocument();
   expect(within(suggestions).queryByText("You")).not.toBeInTheDocument();
   expect(within(assigned).getByRole("button", { name: "Actions for Rae Kim, You" })).toBeInTheDocument();
-  expect(within(suggestions).getByRole("button", { name: "Add Rae Kim to team" })).toBeInTheDocument();
   expect(screen.queryByRole("menuitem", { name: "Remove from team" })).not.toBeInTheDocument();
+  expect(within(suggestions).getByRole("button", { name: "Add Rae Kim to team" })).toBeInTheDocument();
+});
+
+it("can expose Manage independently from the inline membership mutations", async () => {
+  const user = userEvent.setup();
+  const assigned = member("m-1", "Avery", "Singer");
+  const onManageMember = jest.fn();
+  renderEditor({
+    memberIds: [assigned.memberId],
+    members: [assigned],
+    canEditMembership: false,
+    canManageMembers: true,
+    onManageMember,
+  });
+
+  await user.click(screen.getByRole("button", { name: "Manage Avery Singer" }));
+
+  expect(onManageMember).toHaveBeenCalledWith(assigned);
+  expect(screen.queryByRole("button", { name: /Add members/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Actions for/ })).not.toBeInTheDocument();
 });
 
 it("shows no directory entries until searching, then offers only active unassigned people inline", async () => {

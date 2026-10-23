@@ -8,15 +8,22 @@ const TeamsMembersPage = () => {
     removeData,
     refresh,
     reconcileTeamsProjection,
+    invalidateMemberEditability,
     refreshMemberSmsEligibility,
+    loading,
     canEditTeams,
     canEditTeam,
   } =
     useTeamsPage();
   const editableTeamIds = new Set(
     pageData.teams
-      .filter((team) => canEditTeam(team.teamId))
+      .filter((team) => !team.archivedAt && canEditTeam(team.teamId))
       .map((team) => team.teamId),
+  );
+  const managedMemberIds = new Set(
+    pageData.teams
+      .filter((team) => editableTeamIds.has(team.teamId))
+      .flatMap((team) => team.memberIds || []),
   );
   const canEditScopedMembers = canEditTeams || editableTeamIds.size > 0;
   const managerData = canEditTeams
@@ -45,12 +52,19 @@ const TeamsMembersPage = () => {
   return (
     <MemberManager
       members={pageData.members}
+      isLoading={loading}
       positions={canEditScopedMembers ? managerData.positions : pageData.positions}
       data={canEditScopedMembers ? managerData : pageData}
       canEdit={canEditScopedMembers}
       canEditAllTeams={canEditTeams}
       canManageMemberLifecycle={canEditTeams}
-      canEditMember={() => canEditTeams}
+      canEditMember={(member) =>
+        canEditTeams || (!member.archivedAt && managedMemberIds.has(member.memberId))
+      }
+      onScopedProfileSaved={(memberId) => {
+        invalidateMemberEditability(memberId);
+        return reconcileTeamsProjection();
+      }}
       onSaved={(member, replaceId) =>
         upsertData("members", "memberId", member, replaceId)
       }

@@ -28,6 +28,7 @@ type PendingAction = {
 
 type TeamsNavigationGuardContextValue = {
   setDirtySource: (sourceId: string, isDirty: boolean) => void;
+  setSavingSource: (sourceId: string, isSaving: boolean) => void;
   requestNavigation: (to: string, options?: NavigationOptions) => void;
   requestDiscardAction: (action: () => void) => void;
 };
@@ -49,7 +50,12 @@ const TeamsNavigationGuardContent = ({
   const [dirtySources, setDirtySources] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
+  const [savingSources, setSavingSources] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const hasUnsavedChanges = dirtySources.size > 0;
+  const hasSaveInProgress = savingSources.size > 0;
+  const [blockedBySaveAttempt, setBlockedBySaveAttempt] = useState(false);
   const [pendingNavigation, setPendingNavigation] =
     useState<PendingNavigation | null>(null);
   const pendingRoute = usePendingRouteNavigation();
@@ -82,6 +88,25 @@ const TeamsNavigationGuardContent = ({
     });
   }, []);
 
+  const setSavingSource = useCallback((sourceId: string, isSaving: boolean) => {
+    setSavingSources((current) => {
+      const next = new Set(current);
+      if (isSaving) {
+        next.add(sourceId);
+      } else {
+        next.delete(sourceId);
+      }
+      if (next.size === current.size && [...next].every((id) => current.has(id))) {
+        return current;
+      }
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!hasSaveInProgress) setBlockedBySaveAttempt(false);
+  }, [hasSaveInProgress]);
+
   useEffect(() => {
     const index = window.history.state?.idx;
     historyIndexRef.current = typeof index === "number" ? index : null;
@@ -107,7 +132,7 @@ const TeamsNavigationGuardContent = ({
         restoreHistoryPopRef.current = false;
         return;
       }
-      if (!hasUnsavedChanges) return;
+      if (!hasUnsavedChanges && !hasSaveInProgress) return;
 
       const targetIndex = event.state?.idx;
       const currentIndex = historyIndexRef.current;
@@ -125,32 +150,46 @@ const TeamsNavigationGuardContent = ({
       // discard dialog used for sidebar navigation.
       event.stopImmediatePropagation();
       restoreHistoryPopRef.current = true;
-      setPendingHistoryDelta(delta);
+      if (hasSaveInProgress) {
+        setBlockedBySaveAttempt(true);
+      } else {
+        setPendingHistoryDelta(delta);
+      }
       window.history.go(-delta);
     };
 
     window.addEventListener("popstate", handlePopState, true);
     return () => window.removeEventListener("popstate", handlePopState, true);
-  }, [hasUnsavedChanges]);
+  }, [hasSaveInProgress, hasUnsavedChanges]);
 
   const requestNavigation = useCallback((to: string, options: NavigationOptions = {}) => {
+    if (hasSaveInProgress) {
+      pendingRoute.clear();
+      setBlockedBySaveAttempt(true);
+      return;
+    }
     if (hasUnsavedChanges) {
       pendingRoute.clear();
       setPendingNavigation({ to, ...options });
       return;
     }
     navigateTo(to, options);
-  }, [hasUnsavedChanges, navigateTo, pendingRoute]);
+  }, [hasSaveInProgress, hasUnsavedChanges, navigateTo, pendingRoute]);
 
   const requestDiscardAction = useCallback((action: () => void) => {
+    if (hasSaveInProgress) {
+      setBlockedBySaveAttempt(true);
+      return;
+    }
     if (hasUnsavedChanges) {
       setPendingAction({ action });
       return;
     }
     action();
-  }, [hasUnsavedChanges]);
+  }, [hasSaveInProgress, hasUnsavedChanges]);
 
   const discardAndNavigate = () => {
+    if (hasSaveInProgress) return;
     if (!pendingNavigation && !pendingAction && pendingHistoryDelta === null) return;
     const nextNavigation = pendingNavigation;
     const nextAction = pendingAction;
@@ -171,43 +210,64 @@ const TeamsNavigationGuardContent = ({
   };
 
   const navigationGuardValue = useMemo(
-    () => ({ setDirtySource, requestNavigation, requestDiscardAction }),
-    [requestDiscardAction, requestNavigation, setDirtySource],
+    () => ({ setDirtySource, setSavingSource, requestNavigation, requestDiscardAction }),
+    [requestDiscardAction, requestNavigation, setDirtySource, setSavingSource],
   );
+
+  const showSaveInProgress = blockedBySaveAttempt && hasSaveInProgress;
 
   return (
     <TeamsNavigationGuardContext.Provider value={navigationGuardValue}>
       {children}
       <Modal
-        isOpen={hasPendingConfirmation}
+        isOpen={hasPendingConfirmation || showSaveInProgress}
         onClose={() => {
           setPendingNavigation(null);
           setPendingAction(null);
           setPendingHistoryDelta(null);
+          setBlockedBySaveAttempt(false);
         }}
-        title="Unsaved changes"
+        title={showSaveInProgress ? "Saving changes" : "Unsaved changes"}
         size="sm"
         contentPadding="px-4 pb-4 pt-0"
         showCloseButton={false}
       >
-        <p className="mb-6 text-sm text-gray-200">
-          You have unsaved changes. Do you want to discard them and leave?
-        </p>
-        <div className="flex justify-end gap-3">
-          <Button
-            variant="secondary"
-            onClick={() => {
-              setPendingNavigation(null);
-              setPendingAction(null);
-              setPendingHistoryDelta(null);
-            }}
-          >
-            Stay
-          </Button>
-          <Button variant="destructive" onClick={discardAndNavigate}>
-            Discard changes
-          </Button>
-        </div>
+        {showSaveInProgress ? (
+          <>
+            <p className="mb-6 text-sm text-gray-200">
+              A save is in progress. Wait for it to finish before leaving this page.
+            </p>
+            <div className="flex justify-end">
+              <Button
+                variant="secondary"
+                onClick={() => setBlockedBySaveAttempt(false)}
+              >
+                Stay on page
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="mb-6 text-sm text-gray-200">
+              You have unsaved changes. Do you want to discard them and leave?
+            </p>
+            <div className="flex justify-end gap-3">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setPendingNavigation(null);
+                  setPendingAction(null);
+                  setPendingHistoryDelta(null);
+                }}
+              >
+                Stay
+              </Button>
+              <Button variant="destructive" onClick={discardAndNavigate}>
+                Discard changes
+              </Button>
+            </div>
+          </>
+        )}
       </Modal>
     </TeamsNavigationGuardContext.Provider>
   );

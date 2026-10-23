@@ -242,6 +242,8 @@ export type TeamMemberRecurringAvailability = {
 export type TeamRosterMember = {
   memberId: string;
   churchId: string;
+  /** Server-derived active roster membership status; hidden team IDs are never included. */
+  teamMembershipStatus?: "none" | "assigned" | "unknown";
   /** Optional display prefix, such as "Dr." or "Pastor". */
   title?: string;
   firstName: string;
