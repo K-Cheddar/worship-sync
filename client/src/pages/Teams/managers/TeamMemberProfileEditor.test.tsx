@@ -2,7 +2,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ToastProvider } from "../../../context/toastContext";
 import type { TeamMemberTeamProfile } from "../../../api/auth";
-import type { TeamPosition, TeamRecord, TeamRosterMember } from "../../../api/authTypes";
+import type { TeamPosition, TeamQualificationArea, TeamRecord, TeamRosterMember } from "../../../api/authTypes";
 import TeamMemberProfileEditor from "./TeamMemberProfileEditor";
 
 const mockGetTeamRosterMemberProfile = jest.fn();
@@ -53,7 +53,7 @@ const completeProfile: TeamMemberTeamProfile = {
   qualifications: [],
 };
 
-const renderEditor = (initialProfile?: TeamMemberTeamProfile) => render(
+const renderEditor = (initialProfile?: TeamMemberTeamProfile, qualificationAreas: TeamQualificationArea[] = []) => render(
   <ToastProvider>
     <TeamMemberProfileEditor
       churchId="church-1"
@@ -68,7 +68,7 @@ const renderEditor = (initialProfile?: TeamMemberTeamProfile) => render(
         teamId: worshipTeam.teamId,
         name: "Team lead",
       }]}
-      qualificationAreas={[]}
+      qualificationAreas={qualificationAreas}
       qualificationLevels={[]}
       onTeamChange={jest.fn()}
       onEditorStateChange={jest.fn()}
@@ -118,4 +118,27 @@ it("uses the restricted profile read and offers retry when bootstrap data is una
   const vocalCheckbox = await within(screen.getByRole("group", { name: "Positions" }))
     .findByRole("checkbox", { name: /Vocal/ });
   expect(vocalCheckbox).toHaveAttribute("aria-checked", "true");
+});
+
+it("omits empty archived area options while preserving archived and known qualification areas", async () => {
+  const user = userEvent.setup();
+  renderEditor({
+    ...completeProfile,
+    qualifications: ["", "retired", "known"].map((areaId) => ({
+      qualificationId: `qualification-${areaId || "blank"}`,
+      areaId,
+      teamId: worshipTeam.teamId,
+      status: "in_training",
+    })),
+  }, [{ areaId: "known", teamId: worshipTeam.teamId, churchId: "church-1", name: "Known area" }]);
+
+  expect(screen.getAllByRole("combobox", { name: "Area:" })[0]).toHaveTextContent("Choose area");
+  await user.click(screen.getAllByRole("combobox", { name: "Area:" })[0]);
+  expect(screen.queryByRole("option", { name: /Archived qualification area \(\)/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("option", { name: /Archived qualification area \(retired\)/ })).toBeInTheDocument();
+  expect(screen.getAllByRole("option", { name: /Known area/ })).toHaveLength(1);
+  expect(screen.queryByRole("option", { name: /Archived qualification area \(known\)/ })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("option", { name: /Known area/ }));
+  expect(screen.getAllByRole("combobox", { name: "Area:" })[0]).toHaveTextContent("Known area");
+  expect(mockUpdateTeamRosterMemberProfile).not.toHaveBeenCalled();
 });

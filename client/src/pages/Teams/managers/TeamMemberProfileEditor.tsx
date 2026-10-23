@@ -243,7 +243,7 @@ const TeamMemberProfileEditor = ({
           qualificationAreas={[
             ...qualificationAreas.filter((area) => area.teamId === team.teamId),
             ...[...new Set(currentProfile.qualifications.map((qualification) => qualification.areaId))]
-              .filter((areaId) => !qualificationAreas.some((area) => area.areaId === areaId))
+              .filter((areaId) => areaId && !qualificationAreas.some((area) => area.areaId === areaId))
               .map((areaId) => ({
                 areaId,
                 churchId,

@@ -6,9 +6,11 @@ process.env.RESEND_API_KEY = "";
 
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { createDigestFirestore } from "./fixtures/digestFirestore.js";
 const auth = await import("../authService.js");
 const { COLLECTIONS: C } = auth;
+const recipientHash = (email) => createHash("sha256").update(email).digest("hex");
 let counter = 0;
 afterEach(() => {
   auth.setSendEmailForServerTests(null);
@@ -46,6 +48,125 @@ const fixture = async ({ firestore = false, old = true } = {}) => {
   }
   return { id, churchId, teamId, since, db };
 };
+
+test("three failed attempts complete the batch without duplicates and allow the next digest", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+  const warnings = [];
+  t.mock.method(console, "warn", (line) => warnings.push(JSON.parse(line)));
+  for (const firestore of [false, true]) {
+    const { id, since } = await fixture({ firestore });
+    const sent = [];
+    let newerAt;
+    const conflict = { memberId: "jordan", occurrenceId: "next", cellKey: "camera::1", blockedAt: since };
+    auth.setSendEmailForServerTests(async (email) => {
+      sent.push(email);
+      if (email.to === "second@example.test") {
+        if (sent.length === 4) {
+          newerAt = new Date(Date.now() + 1000).toISOString();
+          await auth.setDoc(C.teamSchedules, id, {
+            responses: { next: { "camera::1": { memberId: "jordan", response: "declined", respondedAt: newerAt } } },
+            pendingBlockoutConflicts: { added: conflict },
+          }, { merge: true });
+        }
+        throw new Error("permanent provider failure");
+      }
+    });
+    let frozen;
+    for (const count of [1, 2]) {
+      await auth.sendScheduleResponseDigest(id);
+      const current = await auth.getDoc(C.teamSchedules, id);
+      assert.equal(current.pendingResponseDigestSince, since);
+      assert.deepEqual(current.pendingResponseDigestBatch.attempts, { [recipientHash("second@example.test")]: count });
+      frozen ||= current.pendingResponseDigestBatch;
+    }
+    await auth.sendScheduleResponseDigest(id);
+    assert.deepEqual(sent.map((email) => email.to), [
+      "first@example.test", "second@example.test", "second@example.test", "second@example.test",
+    ]);
+    assert.ok(sent.slice(1).every((email) => email.idempotencyKey === sent[1].idempotencyKey && email.htmlBody === frozen.email.htmlBody));
+    const completed = await auth.getDoc(C.teamSchedules, id);
+    assert.equal(completed.pendingResponseDigestBatch, null);
+    assert.equal(completed.pendingResponseDigestSince, frozen.nextSince);
+    assert.equal(completed.responses.next["camera::1"].respondedAt, newerAt);
+    assert.deepEqual(completed.pendingBlockoutConflicts, { added: conflict });
+    assert.equal((await auth.queryDocs(C.notificationDeliveries, [{ field: "subject", value: id }])).length, 1);
+
+    t.mock.timers.tick(1001);
+    auth.setSendEmailForServerTests(async (email) => sent.push(email));
+    await auth.sendScheduleResponseDigest(id);
+    assert.deepEqual(sent.slice(4).map((email) => email.to), ["first@example.test", "second@example.test"]);
+    assert.notEqual(sent[4].idempotencyKey, sent[0].idempotencyKey);
+    assert.match(sent[4].textBody, /Cannot serve \(1\)/);
+    assert.equal((await auth.getDoc(C.teamSchedules, id)).pendingResponseDigestSince, null);
+    auth.setServerFirestoreForTests(null);
+  }
+  const exhausted = warnings.filter((line) => line.event === "schedule.responses.digest.retry_exhausted");
+  assert.equal(exhausted.length, 2);
+  assert.ok(exhausted.every((line) => line.attemptCount === 3));
+  assert.ok(warnings.every((line) => !JSON.stringify(line).includes("@example.test")));
+});
+
+test("restart retains retry counts and skips exhausted recipients while respecting an active lease", async () => {
+  const { id, db } = await fixture({ firestore: true });
+  auth.setSendEmailForServerTests(async () => { throw new Error("provider unavailable"); });
+  await auth.sendScheduleResponseDigest(id);
+  await auth.sendScheduleResponseDigest(id);
+  const frozen = db.read(C.teamSchedules, id).pendingResponseDigestBatch;
+  assert.deepEqual(frozen.attempts, {
+    [recipientHash("first@example.test")]: 2, [recipientHash("second@example.test")]: 2,
+  });
+  // Simulate a worker stopping after checkpointing the first recipient's last failure.
+  const retained = { ...frozen, claimId: "stopped-worker", leaseUntil: Date.now() + 60_000,
+    attempts: { ...frozen.attempts, [recipientHash("first@example.test")]: 3 } };
+  await db.collection(C.teamSchedules).doc(id).update({ pendingResponseDigestBatch: retained });
+  const restarted = await import("../authService.js?response-digest-retry-limit-restart");
+  restarted.setServerFirestoreForTests(db);
+  const sent = [];
+  restarted.setSendEmailForServerTests(async (email) => {
+    sent.push(email);
+    throw new Error("provider still unavailable");
+  });
+  try {
+    await restarted.recoverPendingScheduleResponseDigests();
+    await restarted.sendScheduleResponseDigest(id);
+    assert.equal(sent.length, 0);
+    assert.deepEqual(db.read(C.teamSchedules, id).pendingResponseDigestBatch, retained);
+    await db.collection(C.teamSchedules).doc(id).update({ pendingResponseDigestBatch: { ...retained, leaseUntil: 1 } });
+    await restarted.sendScheduleResponseDigest(id);
+    assert.deepEqual(sent.map((email) => email.to), ["second@example.test"]);
+    assert.equal(sent[0].htmlBody, frozen.email.htmlBody);
+    assert.equal(db.read(C.teamSchedules, id).pendingResponseDigestBatch, null);
+    assert.equal(db.read(C.teamSchedules, id).pendingResponseDigestSince, null);
+    await restarted.sendScheduleResponseDigest(id);
+    assert.equal(sent.length, 1);
+  } finally {
+    restarted.setSendEmailForServerTests(null);
+    restarted.setServerFirestoreForTests(null);
+  }
+});
+
+test("a failed send cannot change retry counts or release a replacement worker's lease", async () => {
+  const { id, db } = await fixture({ firestore: true });
+  let rejectSend;
+  let started;
+  const ready = new Promise((resolve) => { started = resolve; });
+  const sent = [];
+  auth.setSendEmailForServerTests(async (email) => {
+    sent.push(email);
+    started();
+    await new Promise((_resolve, reject) => { rejectSend = reject; });
+  });
+  const running = auth.sendScheduleResponseDigest(id);
+  await ready;
+  const batch = db.read(C.teamSchedules, id).pendingResponseDigestBatch;
+  const replacement = { ...batch, claimId: "replacement-worker", leaseUntil: Date.now() + 60_000,
+    attempts: { [recipientHash("first@example.test")]: 2 } };
+  await db.collection(C.teamSchedules).doc(id).update({ pendingResponseDigestBatch: replacement });
+  rejectSend(new Error("late failed send"));
+  await running;
+  assert.equal(sent.length, 1);
+  assert.deepEqual(db.read(C.teamSchedules, id).pendingResponseDigestBatch, replacement);
+});
 
 test("restart recovery waits for an active lease then resumes the frozen batch at expiration", async (t) => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.now() });

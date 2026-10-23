@@ -94,6 +94,51 @@ const concurrentAccessFixture = async (firestore) => {
   return { churchId, db, admins, readTarget, save, permissions };
 };
 
+test("bootstrap batches Firestore scope reads, retains memory reads, and skips empty scopes", async () => {
+  for (const firestore of [false, true]) {
+    const { churchId, db } = await concurrentAccessFixture(firestore);
+    await setDoc(C.teams, "archived", { churchId, archivedAt: "2026-01-01" });
+    await setDoc(C.teams, "foreign", { churchId: "other" });
+    const teamScopes = { media: "edit", praise: "view", archived: "edit", foreign: "edit", missing: "edit" };
+    await setDoc(C.memberships, `${churchId}_target`, {
+      permissions: { teams: "none", services: "view", teamScopes },
+    }, { merge: true });
+    const batches = [];
+    const reads = [];
+    if (db) {
+      const getAll = db.getAll.bind(db);
+      db.getAll = (...refs) => {
+        batches.push(refs.map((ref) => [ref.collection, ref.id]));
+        return getAll(...refs);
+      };
+    }
+    auth.setAuthReadObserverForServerTests((read) => {
+      if (read.type === "getDoc" && read.collectionName === C.teams) reads.push(read.id);
+    });
+    const target = { churchId, session: { ...session(), auth: { sessionKind: "human", userId: "target", churchId } }, headers: {} };
+    const me = await call(authHandlers.getAuthMe, target);
+    assert.equal(me.statusCode, 200);
+    assert.deepEqual(me.payload.permissions, {
+      teams: "none", services: "view", teamScopes: { media: "edit", praise: "view" },
+    });
+    assert.deepEqual(batches.map((refs) => refs.sort()),
+      firestore ? [Object.keys(teamScopes).map((id) => [C.teams, id]).sort()] : []);
+    assert.deepEqual(reads.sort(), firestore ? [] : Object.keys(teamScopes).sort());
+
+    batches.length = 0;
+    reads.length = 0;
+    await setDoc(C.memberships, `${churchId}_target`, {
+      ...(await getDoc(C.memberships, `${churchId}_target`)),
+      permissions: { teams: "none", services: "view", teamScopes: {} },
+    });
+    assert.deepEqual((await call(authHandlers.getAuthMe, target)).payload.permissions.teamScopes, {});
+    assert.deepEqual(batches, []);
+    assert.deepEqual(reads, []);
+    auth.setAuthReadObserverForServerTests(null);
+    auth.setServerFirestoreForTests(null);
+  }
+});
+
 test("two administrators cannot erase a Team Lead with a stale access snapshot", async () => {
   for (const firestore of [false, true]) {
     const { churchId, admins: [adminA, adminB], readTarget, save } = await concurrentAccessFixture(firestore);
@@ -325,7 +370,7 @@ test("bootstrap offers team email settings only for active scopes and an account
 
 test("Firestore role transactions retain valid scopes and replace privilege maps on demotion", async () => {
   const churchId = "firestore_account_leads";
-  const scopes = { media: "edit", praise: "view", foreign: "edit", archived: "edit" };
+  const scopes = { media: "edit", praise: "view", foreign: "edit", archived: "edit", missing: "edit" };
   const db = createDigestFirestore({
     [C.churches]: { [churchId]: { churchId, status: "active", name: "Church", adminCount: 1 } },
     [C.users]: { owner: { uid: "owner", email: "owner@example.test" }, lead: { uid: "lead", email: "lead@example.test" } },
@@ -337,6 +382,16 @@ test("Firestore role transactions retain valid scopes and replace privilege maps
     [C.teams]: { media: { teamId: "media", churchId }, praise: { teamId: "praise", churchId },
       foreign: { teamId: "foreign", churchId: "other" }, archived: { teamId: "archived", churchId, archivedAt: "2026-01-01" } },
   });
+  const transactionTeamReads = [];
+  const runTransaction = db.runTransaction.bind(db);
+  db.runTransaction = (callback) => runTransaction((transaction) => callback({
+    ...transaction,
+    get(ref) {
+      if (ref.collection === C.teams) transactionTeamReads.push(ref.id);
+      return transaction.get(ref);
+    },
+  }));
+  db.getAll = () => { throw new Error("role transactions must read scopes with transaction.get"); };
   auth.setServerFirestoreForTests(db);
   const owner = { churchId, session: { ...session(), auth: { sessionKind: "human", userId: "owner", churchId } }, headers: {} };
   owner.headers["x-csrf-token"] = (await call(authHandlers.getAuthMe, owner)).payload.csrfToken;
@@ -346,6 +401,7 @@ test("Firestore role transactions retain valid scopes and replace privilege maps
   assert.equal((await call(authHandlers.removeAdmin, owner, { params: { userId: "lead" } })).statusCode, 200);
   assert.deepEqual(db.read(C.memberships, `${churchId}_lead`).permissions,
     { teams: "none", services: "none", teamScopes: { media: "edit", praise: "view" } });
+  assert.deepEqual(transactionTeamReads, [...Object.keys(scopes), "media", "praise"]);
 });
 
 test("recovery promotions preserve explicit scopes and personal preferences in both stores", async () => {
