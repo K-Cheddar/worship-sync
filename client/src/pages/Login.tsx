@@ -85,6 +85,11 @@ type HostedDesktopHandoff = {
   provider: DesktopAuthProvider;
 };
 
+type RestoredEmailCodeChallenge = {
+  pendingAuthId: string;
+  verificationEmail: string;
+};
+
 // Reads never consume a handoff: Firebase redirects reload the whole page.
 const readHostedDesktopHandoff = (
   searchParams = new URLSearchParams(),
@@ -158,6 +163,19 @@ const Login = () => {
   const [code, setCode] = useState("");
   const [pendingAuthId, setPendingAuthId] = useState("");
   const attemptedEmailCodeVerificationsRef = useRef(new Set<string>());
+  // A URL challenge remains authoritative while bootstrap restores other auth state.
+  const explicitEmailCodeLinkRef = useRef<{ pendingAuthId: string } | null>(
+    null,
+  );
+  const restoredEmailCodeChallengeRef =
+    useRef<RestoredEmailCodeChallenge | null>(null);
+  const explicitEmailCodeLinkLocationKeyRef = useRef<string | null>(null);
+  const emailCodeChallengeGenerationRef = useRef(0);
+  const activeEmailCodeAttemptRef = useRef<string | null>(null);
+  const currentEmailCodeInputRef = useRef({ pendingAuthId, code });
+  currentEmailCodeInputRef.current = { pendingAuthId, code };
+  const currentAuthErrorRef = useRef(context?.authError);
+  currentAuthErrorRef.current = context?.authError;
   const [isVerifyingCode, setIsVerifyingCode] = useState(false);
   const [isCompletingCodeSignIn, setIsCompletingCodeSignIn] = useState(false);
   const [verificationEmail, setVerificationEmail] = useState("");
@@ -278,6 +296,7 @@ const Login = () => {
     context?.loginState === "loading" ||
     (isFinishingSignIn && !isAwaitingDeviceCode);
   const verifyEmailCode = context?.verifyEmailCode;
+  const clearAuthError = context?.clearAuthError;
   const pendingLinkState = context?.pendingLinkState;
   const humanSessionRedirectStartedRef = useRef(false);
   const hasExplicitAuthFlowRef = useRef(false);
@@ -295,6 +314,10 @@ const Login = () => {
       verificationEmail?: string;
     }) => {
       hasExplicitAuthFlowRef.current = true;
+      explicitEmailCodeLinkRef.current = null;
+      restoredEmailCodeChallengeRef.current = null;
+      explicitEmailCodeLinkLocationKeyRef.current = null;
+      emailCodeChallengeGenerationRef.current += 1;
       attemptedEmailCodeVerificationsRef.current.clear();
       setCode("");
       setPendingAuthId(pendingId);
@@ -412,21 +435,6 @@ const Login = () => {
   ]);
 
   useEffect(() => {
-    const pendingId = context?.pendingEmailVerificationId;
-    const clearPending = context?.clearPendingEmailVerification;
-    if (!pendingId || !clearPending) {
-      return;
-    }
-    context?.clearAuthError();
-    clearProviderSignInAttempt();
-    openVerificationCodeStep({
-      pendingId: pendingId,
-      verificationEmail: context?.pendingEmailVerificationEmail || undefined,
-    });
-    clearPending();
-  }, [clearProviderSignInAttempt, context, openVerificationCodeStep]);
-
-  useEffect(() => {
     if (
       isElectronRuntime ||
       mode !== "signIn" ||
@@ -479,14 +487,28 @@ const Login = () => {
     }
 
     if (hasValidCode && pendingTrimmed) {
+      if (explicitEmailCodeLinkLocationKeyRef.current !== location.key) {
+        emailCodeChallengeGenerationRef.current += 1;
+        explicitEmailCodeLinkLocationKeyRef.current = location.key;
+      }
+      explicitEmailCodeLinkRef.current = {
+        pendingAuthId: pendingTrimmed,
+      };
+      restoredEmailCodeChallengeRef.current = null;
       attemptedEmailCodeVerificationsRef.current.clear();
       setCode(digits);
       setPendingAuthId(pendingTrimmed);
-    } else if (pendingTrimmed) {
+    } else {
+      explicitEmailCodeLinkRef.current = null;
+      restoredEmailCodeChallengeRef.current = null;
+      emailCodeChallengeGenerationRef.current += 1;
+      explicitEmailCodeLinkLocationKeyRef.current = null;
+    }
+    if (pendingTrimmed && !hasValidCode) {
       attemptedEmailCodeVerificationsRef.current.clear();
       setCode("");
       setPendingAuthId(pendingTrimmed);
-    } else if (hasValidCode) {
+    } else if (hasValidCode && !pendingTrimmed) {
       attemptedEmailCodeVerificationsRef.current.clear();
       setCode(digits);
       setPendingAuthId("");
@@ -507,7 +529,68 @@ const Login = () => {
       },
       { replace: true, state: location.state }
     );
-  }, [location.state, searchParams, setSearchParams]);
+  }, [location.key, location.state, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    const pendingId = context?.pendingEmailVerificationId;
+    const clearPending = context?.clearPendingEmailVerification;
+    if (!pendingId || !clearPending) {
+      return;
+    }
+
+    const verificationEmail =
+      context?.pendingEmailVerificationEmail?.trim() || "";
+    const explicitLink = explicitEmailCodeLinkRef.current;
+    if (explicitLink) {
+      if (explicitLink.pendingAuthId === pendingId) {
+        setVerificationEmail(verificationEmail);
+      } else {
+        restoredEmailCodeChallengeRef.current = {
+          pendingAuthId: pendingId,
+          verificationEmail,
+        };
+      }
+      clearPending();
+      return;
+    }
+
+    context?.clearAuthError();
+    clearProviderSignInAttempt();
+    openVerificationCodeStep({
+      pendingId,
+      verificationEmail: verificationEmail || undefined,
+    });
+    clearPending();
+  }, [clearProviderSignInAttempt, context, openVerificationCodeStep]);
+
+  useEffect(() => {
+    const explicitLink = explicitEmailCodeLinkRef.current;
+    const restoredChallenge = restoredEmailCodeChallengeRef.current;
+    if (
+      !explicitLink ||
+      explicitLink.pendingAuthId !== pendingAuthId ||
+      context?.authError !== AUTH_EMAIL_CODE_EXPIRED_MESSAGE
+    ) {
+      return;
+    }
+
+    explicitEmailCodeLinkRef.current = null;
+    explicitEmailCodeLinkLocationKeyRef.current = null;
+    restoredEmailCodeChallengeRef.current = null;
+    emailCodeChallengeGenerationRef.current += 1;
+    setCode("");
+    setFieldErrors({});
+    if (restoredChallenge) {
+      setPendingAuthId(restoredChallenge.pendingAuthId);
+      setVerificationEmail(restoredChallenge.verificationEmail);
+      setInfoBanner(
+        restoredChallenge.verificationEmail
+          ? `This link expired. Enter the latest code sent to ${restoredChallenge.verificationEmail}.`
+          : "This link expired. Enter the latest code from your email or request a new code.",
+      );
+      clearAuthError?.();
+    }
+  }, [clearAuthError, context?.authError, pendingAuthId]);
 
   useEffect(() => {
     const hasAlternateAuthFlow = Boolean(
@@ -1047,6 +1130,9 @@ const Login = () => {
     setLocalAuthError("");
     const digits = code.replace(/\D/g, "");
     const normalizedPendingAuthId = pendingAuthId.trim();
+    const ownsExplicitLink =
+      explicitEmailCodeLinkRef.current?.pendingAuthId ===
+      normalizedPendingAuthId;
     if (!normalizedPendingAuthId || digits.length !== 6) {
       setFieldErrors({ code: "Enter the six-digit code from your email." });
       return false;
@@ -1056,7 +1142,7 @@ const Login = () => {
       context?.bootstrapStatus !== "ready" ||
       !isAuthServerOnline ||
       context?.loginState === "loading" ||
-      context?.pendingEmailVerificationId
+      (context?.pendingEmailVerificationId && !ownsExplicitLink)
     ) {
       return false;
     }
@@ -1065,7 +1151,9 @@ const Login = () => {
       (context?.sessionKind === "human" ||
         activeProviderSignIn !== null ||
         pendingLinkState ||
-        context?.pendingEmailVerificationId ||
+        (context?.pendingEmailVerificationId &&
+          explicitEmailCodeLinkRef.current?.pendingAuthId !==
+            normalizedPendingAuthId) ||
         pendingProviderRedirect ||
         pendingDesktopAuth ||
         isHostedDesktopBrowserFlow ||
@@ -1076,6 +1164,15 @@ const Login = () => {
     }
 
     const attemptKey = getEmailCodeAttemptKey(normalizedPendingAuthId, digits);
+    const attemptGeneration = emailCodeChallengeGenerationRef.current;
+    const attemptOwnsCurrentChallenge = () => {
+      const current = currentEmailCodeInputRef.current;
+      return (
+        emailCodeChallengeGenerationRef.current === attemptGeneration &&
+        current.pendingAuthId.trim() === normalizedPendingAuthId &&
+        current.code.replace(/\D/g, "") === digits
+      );
+    };
     if (
       automatic &&
       attemptedEmailCodeVerificationsRef.current.has(attemptKey)
@@ -1087,6 +1184,7 @@ const Login = () => {
     }
 
     emailCodeVerificationInFlight.add(attemptKey);
+    activeEmailCodeAttemptRef.current = attemptKey;
     attemptedEmailCodeVerificationsRef.current.add(attemptKey);
     hasExplicitAuthFlowRef.current = true;
     setIsVerifyingCode(true);
@@ -1097,7 +1195,10 @@ const Login = () => {
         pendingAuthId: normalizedPendingAuthId,
         code: digits,
       });
-      if (success) {
+      const stillCurrent = attemptOwnsCurrentChallenge();
+      if (success && stillCurrent) {
+        explicitEmailCodeLinkRef.current = null;
+        restoredEmailCodeChallengeRef.current = null;
         attemptedEmailCodeVerificationsRef.current.clear();
         if (isMountedRef.current) {
           setIsCompletingCodeSignIn(true);
@@ -1105,18 +1206,26 @@ const Login = () => {
           setPendingAuthId("");
           setVerificationEmail("");
         }
+      } else if (!success && !stillCurrent && isMountedRef.current) {
+        if (currentAuthErrorRef.current !== AUTH_EMAIL_CODE_EXPIRED_MESSAGE) {
+          clearAuthError?.();
+        }
       }
       return success;
     } finally {
       emailCodeVerificationInFlight.delete(attemptKey);
-      if (isMountedRef.current) {
-        setIsVerifyingCode(false);
+      if (activeEmailCodeAttemptRef.current === attemptKey) {
+        activeEmailCodeAttemptRef.current = null;
+        if (isMountedRef.current) {
+          setIsVerifyingCode(false);
+        }
       }
     }
   }, [
     activeProviderSignIn,
     code,
     context?.bootstrapStatus,
+    clearAuthError,
     context?.loginState,
     context?.pendingEmailVerificationId,
     context?.sessionKind,
@@ -1143,7 +1252,9 @@ const Login = () => {
       !isAuthServerOnline ||
       !verifyEmailCode ||
       context?.sessionKind === "human" ||
-      context?.pendingEmailVerificationId ||
+      (context?.pendingEmailVerificationId &&
+        explicitEmailCodeLinkRef.current?.pendingAuthId !==
+          normalizedPendingAuthId) ||
       activeProviderSignIn !== null ||
       pendingLinkState ||
       pendingProviderRedirect ||
@@ -1188,12 +1299,26 @@ const Login = () => {
     ) {
       return;
     }
+    const requestedPendingAuthId = pendingAuthId;
+    const requestedGeneration = emailCodeChallengeGenerationRef.current;
     setIsResending(true);
     setInfoBanner("");
     setLocalAuthError("");
     try {
-      const result = await context?.resendEmailCode({ pendingAuthId });
+      const result = await context?.resendEmailCode({
+        pendingAuthId: requestedPendingAuthId,
+      });
+      if (
+        requestedGeneration !== emailCodeChallengeGenerationRef.current ||
+        currentEmailCodeInputRef.current.pendingAuthId !== requestedPendingAuthId
+      ) {
+        return;
+      }
       if (result?.pendingAuthId) {
+        explicitEmailCodeLinkRef.current = null;
+        restoredEmailCodeChallengeRef.current = null;
+        explicitEmailCodeLinkLocationKeyRef.current = null;
+        emailCodeChallengeGenerationRef.current += 1;
         attemptedEmailCodeVerificationsRef.current.clear();
         setPendingAuthId(result.pendingAuthId);
         if (result.verificationEmail) {

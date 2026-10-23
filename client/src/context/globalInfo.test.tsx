@@ -1,11 +1,18 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { type ReactNode, useContext } from "react";
-import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
+import {
+  MemoryRouter,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from "react-router-dom";
 import GlobalInfoProvider, {
   GlobalInfoContext,
   globalFireDbInfo,
 } from "./globalInfo";
+import Login from "../pages/Login";
 import { useTeamsLiveSync } from "../pages/Teams/hooks/useTeamsLiveSync";
 import * as authApi from "../api/auth";
 import { requestAuthRecovery } from "../api/authErrorBus";
@@ -114,6 +121,7 @@ jest.mock("../api/auth", () => ({
     }
   },
   getAuthBootstrap: jest.fn(),
+  getEmailCodeHint: jest.fn(),
   listChurchMembers: jest.fn(),
   listChurchInvites: jest.fn(),
   listTrustedDevices: jest.fn(),
@@ -539,6 +547,19 @@ const VerifyNavigationProbe = () => {
   );
 };
 
+const LoginRouteProbe = () => {
+  const location = useLocation();
+  return (
+    <>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="*" element={<div>Signed-in destination</div>} />
+      </Routes>
+      <div data-testid="auth-route">{location.pathname}</div>
+    </>
+  );
+};
+
 describe("GlobalInfoProvider presentation listener contracts", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -566,6 +587,7 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     microsoftCredentialFromErrorMock.mockReset();
     mockHumanAuth.currentUser = null;
     (authApi.getAuthBootstrap as jest.Mock).mockReset();
+    (authApi.getEmailCodeHint as jest.Mock).mockReset();
     (authApi.getSharedDataToken as jest.Mock).mockReset();
     (authApi.unlinkWorkstation as jest.Mock).mockReset();
     (authApi.updateWorkstationOperator as jest.Mock).mockReset();
@@ -575,6 +597,10 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     (authApi.verifyEmailCode as jest.Mock).mockReset();
     (authApi.resendEmailCode as jest.Mock).mockReset();
     (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(demoBootstrap);
+    (authApi.getEmailCodeHint as jest.Mock).mockResolvedValue({
+      success: true,
+      verificationEmail: "person@example.com",
+    });
     (authApi.getSharedDataToken as jest.Mock).mockResolvedValue({
       success: true,
       token: "test-token",
@@ -860,6 +886,64 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
         "/before-login",
       ),
     );
+  });
+
+  it("preserves and completes an email link through restored-session bootstrap", async () => {
+    const restoreSession = createDeferred<{
+      success: true;
+      requiresEmailCode: true;
+      pendingAuthId: string;
+      verificationEmail: string;
+    }>();
+    const persistedUser = {
+      uid: "u1",
+      getIdToken: jest.fn(() => Promise.resolve("restore-id-token")),
+      providerData: [{ providerId: "password" }],
+    };
+    mockHumanAuth.currentUser = persistedUser;
+    (authApi.createHumanSession as jest.Mock).mockReturnValue(
+      restoreSession.promise,
+    );
+    (authApi.verifyEmailCode as jest.Mock).mockResolvedValue({
+      success: true,
+      bootstrap: loggedInHumanBootstrap,
+    });
+    renderProvider(
+      <LoginRouteProbe />,
+      ["/login?code=123456&pendingAuthId=pending-link-bootstrap"],
+    );
+
+    expect(await screen.findByLabelText("Digit 1 of 6")).toHaveValue("1");
+    expect(authApi.verifyEmailCode).not.toHaveBeenCalled();
+
+    await act(async () => {
+      restoreSession.resolve({
+        success: true,
+        requiresEmailCode: true,
+        pendingAuthId: "pending-link-bootstrap",
+        verificationEmail: "restored@example.com",
+      });
+      await restoreSession.promise;
+    });
+
+    await waitFor(() =>
+      expect(authApi.verifyEmailCode).toHaveBeenCalledWith(
+        expect.objectContaining({
+          pendingAuthId: "pending-link-bootstrap",
+          code: "123456",
+        }),
+      ),
+    );
+    expect(authApi.createHumanSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idToken: "restore-id-token",
+        requestNewCode: false,
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("auth-route")).toHaveTextContent("/home"),
+    );
+    expect(screen.getByText("Signed-in destination")).toBeInTheDocument();
   });
 
   it("marks display sessions as read-only for shared realtime data", async () => {
