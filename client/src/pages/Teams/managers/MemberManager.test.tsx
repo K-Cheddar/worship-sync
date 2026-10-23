@@ -550,11 +550,10 @@ describe("MemberManager member preferences", () => {
       "church-1",
       worshipTeam.teamId,
       scopedMember.memberId,
-      expect.objectContaining({
+      {
         positionIds: [vocalPosition.positionId],
-        desiredPositionIds: [],
-        membership: { roleId: null },
-      }),
+        baseProfile: { positionIds: [] },
+      },
     ));
     expect(mockUpdateTeamRosterMember).not.toHaveBeenCalled();
     expect(onScopedProfileSaved).toHaveBeenCalledWith(scopedMember.memberId);
@@ -618,10 +617,10 @@ describe("MemberManager member preferences", () => {
     await waitFor(() => expect(mockUpdateTeamRosterMemberProfile).toHaveBeenCalledTimes(2));
     expect(mockUpdateTeamRosterMemberProfile).toHaveBeenLastCalledWith(
       "church-1", worshipTeam.teamId, member.memberId,
-      expect.objectContaining({
-        positionIds: [vocalPosition.positionId],
+      {
         membership: { roleId: leadRole.roleId },
-      }),
+        baseProfile: { membership: { roleId: null } },
+      },
     );
     expect(mockUpdateTeamRosterMember).not.toHaveBeenCalled();
   });

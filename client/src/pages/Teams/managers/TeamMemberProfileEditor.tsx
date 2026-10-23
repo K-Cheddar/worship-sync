@@ -7,6 +7,7 @@ import {
   updateTeamRosterMemberProfile,
   type TeamMemberProfile,
   type TeamMemberTeamProfile,
+  type TeamMemberTeamProfileChanges,
 } from "../../../api/auth";
 import type {
   TeamPosition,
@@ -20,6 +21,22 @@ import MemberTeamProfileFields from "./MemberTeamProfileFields";
 
 const safeMemberName = (member: TeamMemberProfile | null) =>
   member ? [member.title, member.firstName, member.lastName].filter(Boolean).join(" ") : "team member";
+
+const editableSections = (profile: TeamMemberTeamProfile) => ({
+  positionIds: profile.positionIds,
+  desiredPositionIds: profile.desiredPositionIds,
+  membership: { roleId: profile.membership.roleId || null },
+  qualifications: profile.qualifications.map((qualification) => ({
+    qualificationId: qualification.qualificationId,
+    areaId: qualification.areaId,
+    levelId: qualification.levelId,
+    teamId: qualification.teamId,
+    status: qualification.status,
+    completedAt: qualification.completedAt,
+    expiresAt: qualification.expiresAt,
+    notes: qualification.notes,
+  })),
+});
 
 export type TeamMemberProfileEditorStatus = {
   identity: string;
@@ -128,26 +145,22 @@ const TeamMemberProfileEditor = ({
   };
 
   const save = useCallback(async () => {
-    if (!member || !currentProfile || saving || !hasPendingChanges) return;
+    if (!member || !currentProfile || !currentSavedProfile || saving || !hasPendingChanges) return;
     const saveIdentity = identity;
+    const current = editableSections(currentProfile);
+    const baseline = editableSections(currentSavedProfile);
+    const changes: TeamMemberTeamProfileChanges = {};
+    const baseProfile: TeamMemberTeamProfileChanges = {};
+    for (const key of Object.keys(current) as (keyof typeof current)[]) {
+      if (JSON.stringify(current[key]) === JSON.stringify(baseline[key])) continue;
+      Object.assign(changes, { [key]: current[key] });
+      Object.assign(baseProfile, { [key]: baseline[key] });
+    }
     setSaving(true);
     try {
       const response = await updateTeamRosterMemberProfile(churchId, team.teamId, member.memberId, {
-        positionIds: currentProfile.positionIds,
-        desiredPositionIds: currentProfile.desiredPositionIds,
-        membership: {
-          roleId: currentProfile.membership.roleId || null,
-        },
-        qualifications: currentProfile.qualifications.map((qualification) => ({
-          qualificationId: qualification.qualificationId,
-          areaId: qualification.areaId,
-          levelId: qualification.levelId,
-          teamId: qualification.teamId,
-          status: qualification.status,
-          completedAt: qualification.completedAt,
-          expiresAt: qualification.expiresAt,
-          notes: qualification.notes,
-        })),
+        ...changes,
+        baseProfile,
       });
       onSaved(member.memberId);
       if (mountedRef.current && identityRef.current === saveIdentity) {
@@ -166,6 +179,7 @@ const TeamMemberProfileEditor = ({
   }, [
     churchId,
     currentProfile,
+    currentSavedProfile,
     hasPendingChanges,
     identity,
     member,

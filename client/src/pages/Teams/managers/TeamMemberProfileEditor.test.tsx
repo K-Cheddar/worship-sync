@@ -1,14 +1,15 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ToastProvider } from "../../../context/toastContext";
-import type { TeamMemberTeamProfile } from "../../../api/auth";
+import { AuthApiError, type TeamMemberTeamProfile } from "../../../api/auth";
 import type { TeamPosition, TeamQualificationArea, TeamRecord, TeamRosterMember } from "../../../api/authTypes";
-import TeamMemberProfileEditor from "./TeamMemberProfileEditor";
+import TeamMemberProfileEditor, { type TeamMemberProfileEditorStatus } from "./TeamMemberProfileEditor";
 
 const mockGetTeamRosterMemberProfile = jest.fn();
 const mockUpdateTeamRosterMemberProfile = jest.fn();
 
 jest.mock("../../../api/auth", () => ({
+  ...jest.requireActual("../../../api/auth"),
   getTeamRosterMemberProfile: (...args: unknown[]) => mockGetTeamRosterMemberProfile(...args),
   updateTeamRosterMemberProfile: (...args: unknown[]) => mockUpdateTeamRosterMemberProfile(...args),
 }));
@@ -53,7 +54,11 @@ const completeProfile: TeamMemberTeamProfile = {
   qualifications: [],
 };
 
-const renderEditor = (initialProfile?: TeamMemberTeamProfile, qualificationAreas: TeamQualificationArea[] = []) => render(
+const renderEditor = (
+  initialProfile?: TeamMemberTeamProfile,
+  qualificationAreas: TeamQualificationArea[] = [],
+  onEditorStateChange = jest.fn<void, [TeamMemberProfileEditorStatus]>(),
+) => render(
   <ToastProvider>
     <TeamMemberProfileEditor
       churchId="church-1"
@@ -71,7 +76,7 @@ const renderEditor = (initialProfile?: TeamMemberTeamProfile, qualificationAreas
       qualificationAreas={qualificationAreas}
       qualificationLevels={[]}
       onTeamChange={jest.fn()}
-      onEditorStateChange={jest.fn()}
+      onEditorStateChange={onEditorStateChange}
       onSaved={jest.fn()}
     />
   </ToastProvider>,
@@ -141,4 +146,41 @@ it("omits empty archived area options while preserving archived and known qualif
   await user.click(screen.getByRole("option", { name: /Known area/ }));
   expect(screen.getAllByRole("combobox", { name: "Area:" })[0]).toHaveTextContent("Known area");
   expect(mockUpdateTeamRosterMemberProfile).not.toHaveBeenCalled();
+});
+
+it("sends only a changed role and its loaded baseline, preserving a conflict draft on retry", async () => {
+  const user = userEvent.setup();
+  const onState = jest.fn<void, [TeamMemberProfileEditorStatus]>();
+  const conflict = new AuthApiError("This part of the team profile changed. Reopen the profile to review it.", { status: 409 });
+  mockUpdateTeamRosterMemberProfile.mockRejectedValue(conflict);
+  renderEditor(completeProfile, [], onState);
+  await user.click(screen.getByRole("combobox", { name: "Worship role:" }));
+  await user.click(screen.getByRole("option", { name: "No role" }));
+  const save = () => onState.mock.calls[onState.mock.calls.length - 1][0].save();
+  await act(async () => save());
+  expect(mockUpdateTeamRosterMemberProfile).toHaveBeenLastCalledWith("church-1", worshipTeam.teamId, member.memberId, {
+    membership: { roleId: null }, baseProfile: { membership: { roleId: "role-lead" } },
+  });
+  expect(await screen.findByText(conflict.message)).toBeInTheDocument();
+  expect(onState.mock.calls[onState.mock.calls.length - 1][0].hasPendingChanges).toBe(true);
+  expect(screen.getByRole("combobox", { name: "Worship role:" })).toHaveTextContent("No role");
+  await act(async () => save());
+  expect(mockUpdateTeamRosterMemberProfile).toHaveBeenCalledTimes(2);
+  expect(mockUpdateTeamRosterMemberProfile.mock.calls[1]).toEqual(mockUpdateTeamRosterMemberProfile.mock.calls[0]);
+});
+
+it("sends an explicit section clear with its original baseline and adopts the saved profile", async () => {
+  const user = userEvent.setup();
+  const onState = jest.fn<void, [TeamMemberProfileEditorStatus]>();
+  mockGetTeamRosterMemberProfile.mockResolvedValue({ member, teamProfile: completeProfile });
+  mockUpdateTeamRosterMemberProfile.mockResolvedValue({
+    teamProfile: { ...completeProfile, positionIds: [] },
+  });
+  renderEditor(undefined, [], onState);
+  await user.click(await screen.findByRole("checkbox", { name: /Vocal/ }));
+  await act(async () => onState.mock.calls[onState.mock.calls.length - 1][0].save());
+  expect(mockUpdateTeamRosterMemberProfile).toHaveBeenCalledWith("church-1", worshipTeam.teamId, member.memberId, {
+    positionIds: [], baseProfile: { positionIds: completeProfile.positionIds },
+  });
+  expect(onState.mock.calls[onState.mock.calls.length - 1][0].hasPendingChanges).toBe(false);
 });

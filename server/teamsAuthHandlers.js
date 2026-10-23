@@ -4342,11 +4342,12 @@ export const createTeamsAuthHandlers = ({
     };
   };
 
-  const validateTeamProfilePatch = (body) => {
+  const validateTeamProfilePatch = (body, allowBaseProfile = false) => {
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw httpError(400, "A team profile is required.");
     }
-    const allowed = new Set(["positionIds", "desiredPositionIds", "membership", "qualifications"]);
+    const allowed = new Set(["positionIds", "desiredPositionIds", "membership", "qualifications",
+      ...(allowBaseProfile ? ["baseProfile"] : [])]);
     const unknown = Object.keys(body).filter((key) => !allowed.has(key));
     if (unknown.length) {
       throw httpError(400, `Unsupported team profile field: ${unknown[0]}.`);
@@ -4390,7 +4391,8 @@ export const createTeamsAuthHandlers = ({
   };
 
   const updateTeamProfile = async ({ churchId, teamId, memberId, body, adminUserId }) => {
-    const requested = validateTeamProfilePatch(body);
+    const requested = validateTeamProfilePatch(body, true);
+    const baseline = body.baseProfile === undefined ? null : validateTeamProfilePatch(body.baseProfile);
     const db = requireFirestore();
     const now = nowIso();
     const mutate = async (transaction = null) => {
@@ -4596,6 +4598,45 @@ export const createTeamsAuthHandlers = ({
         }
         const unrelated = priorQualifications.filter((item) => !ownedQualificationIds.has(item.qualificationId));
         nextQualifications = [...unrelated, ...replacements];
+      }
+
+      // Compare only submitted sections against the fresh transaction snapshot.
+      // Value baselines also detect changes made by the full member editor,
+      // without adding revision counters that every roster writer must maintain.
+      const currentSections = {
+        positionIds: slices.targetPositionIds(member.positionIds),
+        desiredPositionIds: slices.targetPositionIds(member.desiredPositionIds),
+        membership: slices.membership,
+        qualifications: slices.targetQualifications,
+      };
+      for (const key of Object.keys(requested)) {
+        if (!baseline || !Object.hasOwn(baseline, key)) {
+          throw httpError(409, "Reopen this team profile before saving so your changes can be checked.");
+        }
+        let current = currentSections[key];
+        let base = baseline[key];
+        if (key === "membership") {
+          const membershipView = (value) => ({
+            ...(Object.hasOwn(requested.membership, "roleId") ? { roleId: value.roleId || null } : {}),
+            ...(Object.hasOwn(requested.membership, "isTeamLead") ? { isTeamLead: value.isTeamLead === true } : {}),
+          });
+          current = membershipView(current);
+          base = membershipView(base);
+        } else if (key === "qualifications") {
+          if (base.some((item) => !item || typeof item !== "object" || Array.isArray(item))) {
+            throw httpError(400, "Qualification baseline is invalid.");
+          }
+          // Bootstrap fills in the owning team for legacy qualifications whose
+          // stored teamId is absent. Both read paths describe the same section.
+          const qualificationView = (item) => teamProfileQualificationView({ ...item, teamId });
+          current = current.map(qualificationView);
+          base = base.map(qualificationView);
+        } else {
+          current = [...new Set(current)];
+        }
+        if (!isDeepStrictEqual(current, base)) {
+          throw httpError(409, "This part of the team profile changed since you opened it. Your edits are still here. Reopen the profile to review the latest changes before saving.");
+        }
       }
 
       const memberPatch = {

@@ -6007,7 +6007,9 @@ describe("Teams", () => {
     await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledWith("church-1", "schedule-july", expect.objectContaining({ memberId: member.memberId, positionSlotKey: "position-vocal::0" })));
     expect(mockCreateTeamRosterMember).not.toHaveBeenCalled();
     expect(mockUpdateTeam).not.toHaveBeenCalled();
-    expect(updateTeamRosterMemberProfile).toHaveBeenCalledWith("church-1", "team-main", member.memberId, { positionIds: ["position-keys", "position-vocal"] });
+    expect(updateTeamRosterMemberProfile).toHaveBeenCalledWith("church-1", "team-main", member.memberId, {
+      positionIds: ["position-keys", "position-vocal"], baseProfile: { positionIds: ["position-keys"] },
+    });
     jest.mocked(searchTeamRosterCandidates).mockResolvedValue({ candidates: [] });
   });
 

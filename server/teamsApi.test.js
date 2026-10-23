@@ -20078,7 +20078,16 @@ test("team profile patches replace one team slice and reject cross-team fields",
     ],
   };
   await setDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId, original, { merge: true });
+  const loaded = await callHandler(authHandlers.getTeamRosterMemberProfile, {
+    context: worshipManager, params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
+  });
   const body = {
+    baseProfile: {
+      positionIds: loaded.payload.teamProfile.positionIds,
+      desiredPositionIds: loaded.payload.teamProfile.desiredPositionIds,
+      membership: loaded.payload.teamProfile.membership,
+      qualifications: loaded.payload.teamProfile.qualifications,
+    },
     positionIds: [`${fixture.ids.worship}_position`],
     desiredPositionIds: [],
     membership: { roleId: "worship-leader", isTeamLead: true },
@@ -20111,11 +20120,17 @@ test("team profile patches replace one team slice and reject cross-team fields",
   assert.equal(after.email, original.email);
   assert.equal(after.phoneNumber, original.phoneNumber);
   assert.equal(after.notes, original.notes);
-  const reject = async (patchBody) => callHandler(authHandlers.updateTeamRosterMemberProfile, {
-    context: worshipManager,
-    params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
-    body: patchBody,
-  });
+  const reject = async (patchBody) => {
+    const latest = await callHandler(authHandlers.getTeamRosterMemberProfile, {
+      context: worshipManager, params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
+    });
+    const { teamId: _teamId, ...baseProfile } = latest.payload.teamProfile;
+    return callHandler(authHandlers.updateTeamRosterMemberProfile, {
+      context: worshipManager,
+      params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
+      body: { ...patchBody, baseProfile },
+    });
+  };
   const clearRole = await reject({ membership: { roleId: null, isTeamLead: false } });
   assert.equal(clearRole.statusCode, 200, JSON.stringify(clearRole.payload));
   const afterRoleClear = await getDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId);
@@ -20280,15 +20295,15 @@ test("concurrent team profile saves preserve each team slice and removal blocks 
   const [worship, av, worshipAgain] = await Promise.all([
     callHandler(authHandlers.updateTeamRosterMemberProfile, {
       context: worshipManager, params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
-      body: { qualifications: [{ qualificationId: "worship-concurrent", areaId: worshipAreaId, teamId: fixture.ids.worship }] },
+      body: { qualifications: [{ qualificationId: "worship-concurrent", areaId: worshipAreaId, teamId: fixture.ids.worship }], baseProfile: { qualifications: [] } },
     }),
     callHandler(authHandlers.updateTeamRosterMemberProfile, {
       context: avManager, params: { teamId: fixture.ids.av, memberId: fixture.sharedId },
-      body: { qualifications: [{ qualificationId: "av-concurrent", areaId: avAreaId, teamId: fixture.ids.av }] },
+      body: { qualifications: [{ qualificationId: "av-concurrent", areaId: avAreaId, teamId: fixture.ids.av }], baseProfile: { qualifications: [] } },
     }),
     callHandler(authHandlers.updateTeamRosterMemberProfile, {
       context: worshipManager, params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
-      body: { membership: { isTeamLead: true } },
+      body: { membership: { isTeamLead: true }, baseProfile: { membership: { isTeamLead: false } } },
     }),
   ]);
   assert.equal(worship.statusCode, 200, JSON.stringify(worship.payload));
@@ -20310,6 +20325,77 @@ test("concurrent team profile saves preserve each team slice and removal blocks 
   const afterRemoval = await getDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId);
   assert.equal(afterRemoval.qualifications.some(({ qualificationId }) => qualificationId === "resurrect"), false);
   assert.ok(afterRemoval.qualifications.some(({ qualificationId }) => qualificationId === "av-concurrent"));
+});
+
+test("two editors of one team profile preserve different sections and reject stale replacements", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const fixture = await seedEffectiveTeamsReadFixture("same_team_profile_editors");
+  const managers = await Promise.all(["a", "b"].map((suffix) => createHumanContext(`same_team_editor_${suffix}`, {
+    churchId: fixture.churchId, role: "member",
+    permissions: { teams: "none", teamScopes: { [fixture.ids.worship]: "edit" } },
+  })));
+  const params = { teamId: fixture.ids.worship, memberId: fixture.sharedId };
+  const areaId = "same-team-area";
+  const roleId = "same-team-role";
+  await setDoc(COLLECTIONS.teamQualificationAreas, areaId, {
+    areaId, churchId: fixture.churchId, teamId: params.teamId, name: "Skills",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamRoles, roleId, {
+    roleId, churchId: fixture.churchId, teamId: params.teamId, name: "Captain",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamRosterMembers, params.memberId, {
+    qualifications: [{ qualificationId: "legacy-skill", areaId, status: "in_training" }],
+  }, { merge: true });
+  const read = async (context) => {
+    const result = await callHandler(authHandlers.getTeamRosterMemberProfile, { context, params });
+    assert.equal(result.statusCode, 200, JSON.stringify(result.payload));
+    return result.payload.teamProfile;
+  };
+  const save = (context, body) => callHandler(authHandlers.updateTeamRosterMemberProfile, { context, params, body });
+  // Both editors load before either saves. A adds a skill, then B edits only role.
+  const [profileA, profileB] = await Promise.all(managers.map(read));
+  const qualification = { qualificationId: "new-skill", areaId, teamId: params.teamId, status: "completed" };
+  assert.equal((await save(managers[0], {
+    qualifications: [...profileA.qualifications, qualification],
+    // Match bootstrap's complete projection of a legacy missing teamId.
+    baseProfile: { qualifications: profileA.qualifications.map((item) => ({ ...item, teamId: params.teamId })) },
+  })).statusCode, 200);
+  assert.equal((await save(managers[1], {
+    membership: { roleId }, baseProfile: { membership: profileB.membership },
+  })).statusCode, 200);
+  const persisted = await getDoc(COLLECTIONS.teamRosterMembers, params.memberId);
+  assert.ok(persisted.qualifications.some((item) => item.qualificationId === qualification.qualificationId));
+  assert.equal(persisted.teamMemberships[params.teamId].roleId, roleId);
+
+  // Each replacement/clear must compare its own original section, even when
+  // the same request also includes an otherwise valid update to another field.
+  const replacements = {
+    positionIds: [],
+    desiredPositionIds: [`${params.teamId}_position`],
+    membership: { roleId: null, isTeamLead: true },
+    qualifications: [],
+  };
+  for (const [section, replacement] of Object.entries(replacements)) {
+    const stale = await read(managers[1]);
+    const first = await save(managers[0], { [section]: replacement, baseProfile: { [section]: stale[section] } });
+    assert.equal(first.statusCode, 200, JSON.stringify(first.payload));
+    const beforeRejected = await getDoc(COLLECTIONS.teamRosterMembers, params.memberId);
+    const otherSection = section === "membership" ? "desiredPositionIds" : "membership";
+    const otherValue = section === "membership" ? [] : { roleId: stale.membership.roleId ? null : roleId };
+    const staleBody = {
+      [section]: stale[section], [otherSection]: otherValue,
+      baseProfile: { [section]: stale[section], [otherSection]: stale[otherSection] },
+    };
+    const rejected = await save(managers[1], staleBody);
+    assert.equal(rejected.statusCode, 409, `${section}: ${JSON.stringify(rejected.payload)}`);
+    assert.deepEqual(await getDoc(COLLECTIONS.teamRosterMembers, params.memberId), beforeRejected);
+    const retry = await save(managers[1], staleBody);
+    assert.equal(retry.statusCode, 409);
+  }
+  const beforeMissing = await getDoc(COLLECTIONS.teamRosterMembers, params.memberId);
+  assert.equal((await save(managers[1], { positionIds: [] })).statusCode, 409);
+  assert.deepEqual(await getDoc(COLLECTIONS.teamRosterMembers, params.memberId), beforeMissing);
+  assert.equal((await save(managers[1], { qualifications: [], baseProfile: { qualifications: [null] } })).statusCode, 400);
 });
 
 test("Services catalog reads follow Services grants while scoped Teams retain only planning catalogs", async (t) => {
