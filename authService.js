@@ -63,7 +63,6 @@ import {
 import {
   collectDigestSubmitterNames,
   decideDigestAction,
-  isTeamEditorForForm,
   isTeamLeadForForm,
   selectIntakeNotifyRecipients,
 } from "./server/intakeNotifyRecipients.js";
@@ -75,7 +74,6 @@ import {
   visibleNotificationCategories,
 } from "./server/notificationPreferences.js";
 import {
-  blockoutConflictKey,
   normalizePendingBlockoutConflicts,
   verifiedBlockoutConflicts,
 } from "./server/blockoutConflicts.js";
@@ -305,7 +303,7 @@ const normalizeMembershipPermissions = (
   role = "member",
 ) => {
   if (role === "admin") {
-    return { teams: "edit", services: "edit", teamScopes: {} };
+    return { teams: "edit", services: "edit", teamScopes: normalizeTeamScopes(permissions?.teamScopes) };
   }
   return {
     teams: normalizeTeamPermission(permissions?.teams, "none"),
@@ -313,20 +311,42 @@ const normalizeMembershipPermissions = (
     teamScopes: normalizeTeamScopes(permissions?.teamScopes),
   };
 };
+// A compare-and-swap token for access only. Preference/profile changes must not
+// invalidate an access draft, and map insertion order must not cause conflicts.
+const membershipAccessRevision = (membership) => {
+  const permissions = normalizeMembershipPermissions(membership.permissions, membership.role);
+  return hashValue(JSON.stringify([
+    membership.churchId, membership.userId, membership.role,
+    normalizeControllerAccess(membership.role === "admin" ? "full" : membership.controllerAccess ?? membership.appAccess),
+    permissions.teams, permissions.services, Object.entries(permissions.teamScopes).sort(),
+  ]));
+};
+const memberAccessConflict = () => httpError(409,
+  "Access changed. Close and reopen access settings to review the latest changes.",
+  "MEMBER_ACCESS_CONFLICT",
+);
 const normalizeMembershipPermissionsForChurch = async ({
   permissions,
   role,
   churchId,
+  transaction,
 }) => {
   const normalized = normalizeMembershipPermissions(permissions, role);
-  const validScopes = await Promise.all(
-    Object.entries(normalized.teamScopes).map(async ([teamId, scope]) => {
-      const team = await getDoc(COLLECTIONS.teams, teamId);
-      return team && team.churchId === churchId && !team.archivedAt
-        ? [teamId, scope]
-        : null;
-    }),
-  );
+  const scopes = Object.entries(normalized.teamScopes);
+  if (scopes.length === 0) return normalized;
+  const db = requireFirestore();
+  const teams = db && !transaction
+    ? (await db.getAll(...scopes.map(([teamId]) => db.collection(COLLECTIONS.teams).doc(teamId))))
+      .map((snapshot) => snapshot.data())
+    : await Promise.all(scopes.map(async ([teamId]) => transaction
+      ? (await transaction.get(db.collection(COLLECTIONS.teams).doc(teamId))).data()
+      : getDoc(COLLECTIONS.teams, teamId)));
+  const validScopes = scopes.map(([teamId, scope], index) => {
+    const team = teams[index];
+    return team && team.churchId === churchId && !team.archivedAt
+      ? [teamId, scope]
+      : null;
+  });
   return {
     ...normalized,
     teamScopes: Object.fromEntries(validScopes.filter(Boolean)),
@@ -427,7 +447,7 @@ const validateUpdateInviteAccessPayload = (body) => {
     role,
     controllerAccess,
     appAccess: legacyAppAccessForController(controllerAccess),
-    permissions: normalizeMembershipPermissions(permissions, role),
+    permissions,
   };
 };
 
@@ -971,7 +991,7 @@ const createEmailTags = (tags = {}) =>
 let sendEmailForServerTests = null;
 
 const sendEmail = async (payload = {}) => {
-  const { timeoutMs, ...emailPayload } = payload;
+  const { timeoutMs, requireProviderAcceptance = false, ...emailPayload } = payload;
   const controller = timeoutMs ? new AbortController() : null;
   let timeoutHandle;
   const send = async () => {
@@ -1020,7 +1040,15 @@ const sendEmail = async (payload = {}) => {
       if (response.error) {
         throw new Error(response.error.message || "Could not send email.");
       }
+      if (requireProviderAcceptance && !response.data?.id) {
+        throw new Error("Email provider did not confirm acceptance.");
+      }
       return response.data || null;
+    }
+    if (requireProviderAcceptance) {
+      const error = new Error("Email provider is not configured.");
+      error.name = "EmailProviderNotConfiguredError";
+      throw error;
     }
     logAuthEvent("log", "email.debug", { to, subject, tags, replyTo });
     return null;
@@ -2862,63 +2890,57 @@ const listTrustedHumanDevicesForChurch = async (churchId) => {
   );
 };
 
-// Addresses to notify for a form's submissions: derived from designated leads
-// on the form's teams, minus anyone who muted intake notifications. Never a
-// stored recipient list, so it follows live roster ownership. Since the
-// 2026-09-01 recipient change, administrators and other Teams editors who are
-// not designated leads are intentionally excluded; do not broaden this pool
-// without an explicit product decision about the audience.
-const listIntakeNotifyRecipients = async (churchId, formTeamIds = []) => {
+// Both routine team digests use explicit account edit scopes, independent of
+// broad access or a volunteer roster link. Callers resolve all-teams forms first.
+const listTeamLeadNotifyRecipients = async (churchId, teamIds, category) => {
+  const activeTeamIds = (await Promise.all(
+    [...new Set(teamIds)].map(async (teamId) => {
+      const team = await getDoc(COLLECTIONS.teams, teamId);
+      return team && team.churchId === churchId && !team.archivedAt ? teamId : null;
+    }),
+  )).filter(Boolean);
   const memberships = (await listMembershipsForChurch(churchId)).filter(
     (membership) => membership.status === "active",
   );
-  const rosterMembers = await queryDocs(
-    COLLECTIONS.teamRosterMembers,
-    [{ field: "churchId", value: churchId }],
-    { limit: 5000 },
-  );
-  const leadUserIds = new Set(
-    rosterMembers
-      .filter((member) => !member.archivedAt)
-      .filter((member) =>
-        isTeamLeadForForm({
-          teamMemberships: member.teamMemberships,
-          formTeamIds,
-        }),
-      )
-      .map((member) => member.userId)
-      .filter(Boolean),
-  );
+  let eligibleCount = 0;
+  let optedOutCount = 0;
   const candidates = await Promise.all(
     memberships.map(async (membership) => {
-      if (!leadUserIds.has(membership.userId)) {
+      if (!isTeamLeadForForm({
+        teamScopes: membership.permissions?.teamScopes,
+        formTeamIds: activeTeamIds,
+      })) {
+        return { isTeamLead: false };
+      }
+      eligibleCount += 1;
+      const preference = normalizeMembershipNotifications(membership.notifications)[category];
+      if (!isNotificationEnabled(category, preference)) {
+        optedOutCount += 1;
         return { isTeamLead: false };
       }
       const user = await getUserByUid(membership.userId);
       return {
         isTeamLead: true,
         email: user?.primaryEmail || user?.email || "",
-        preference: normalizeMembershipNotifications(membership.notifications)
-          .intakeSubmissions,
+        preference,
       };
     }),
   );
-  return selectIntakeNotifyRecipients(candidates);
+  const recipients = selectIntakeNotifyRecipients(candidates, category);
+  logAuthEvent("info", "team.digest.recipients_resolved", {
+    churchId, category, activeTeamCount: activeTeamIds.length,
+    eligibleCount, optedOutCount, recipientCount: recipients.length,
+  });
+  return recipients;
 };
 
-// Schedule response notifications still follow the Teams edit-permission
-// model; intake notifications intentionally use designated team leads above.
-const membershipCanEditTeams = (membership, formTeamIds) => {
-  const permissions = normalizeMembershipPermissions(
-    membership.permissions,
-    membership.role,
-  );
-  return isTeamEditorForForm({
-    role: membership.role,
-    teamsPermission: permissions.teams,
-    teamScopes: permissions.teamScopes,
-    formTeamIds,
-  });
+const listIntakeNotifyRecipients = async (churchId, formTeamIds = []) => {
+  const teamIds = formTeamIds.length > 0 ? formTeamIds : (await queryDocs(
+    COLLECTIONS.teams,
+    [{ field: "churchId", value: churchId }],
+    { limit: 5000 },
+  )).filter((team) => !team.archivedAt).map((team) => team.id || team.teamId);
+  return listTeamLeadNotifyRecipients(churchId, teamIds, "intakeSubmissions");
 };
 
 const listInviteAcceptedNotifyRecipients = async (churchId, acceptedUserId) => {
@@ -3710,7 +3732,7 @@ const upsertProfileFromVerifiedToken = async (
   });
 };
 
-const buildHumanBootstrap = ({
+const buildHumanBootstrap = async ({
   req,
   user,
   church,
@@ -3718,57 +3740,60 @@ const buildHumanBootstrap = ({
   device,
   profileDisplayName = "",
   csrfToken: csrfTokenOverride = undefined,
-}) => ({
-  authenticated: true,
-  sessionKind: SESSION_KIND_HUMAN,
-  churchId: church.churchId,
-  churchName: church.name || "",
-  churchStatus: church.status,
-  recoveryEmail: church.recoveryEmail || "",
-  csrfToken:
-    typeof csrfTokenOverride === "string" && csrfTokenOverride
-      ? csrfTokenOverride
-      : ensureSessionCsrfToken(req),
-  database: church.contentDatabaseKey,
-  uploadPreset: church.cloudinaryUploadPreset || "bpqu4ma5",
-  role: membership.role,
-  controllerAccess: normalizeControllerAccess(
-    membership.role === "admin" ? "full" : membership.controllerAccess ?? membership.appAccess,
-    "view",
-  ),
-  appAccess: legacyAppAccessForController(
-    normalizeControllerAccess(
+}) => {
+  const permissions = await normalizeMembershipPermissionsForChurch({
+    permissions: membership.permissions,
+    role: membership.role,
+    churchId: church.churchId,
+  });
+  return {
+    authenticated: true,
+    sessionKind: SESSION_KIND_HUMAN,
+    churchId: church.churchId,
+    churchName: church.name || "",
+    churchStatus: church.status,
+    recoveryEmail: church.recoveryEmail || "",
+    csrfToken:
+      typeof csrfTokenOverride === "string" && csrfTokenOverride
+        ? csrfTokenOverride
+        : ensureSessionCsrfToken(req),
+    database: church.contentDatabaseKey,
+    uploadPreset: church.cloudinaryUploadPreset || "bpqu4ma5",
+    role: membership.role,
+    controllerAccess: normalizeControllerAccess(
       membership.role === "admin" ? "full" : membership.controllerAccess ?? membership.appAccess,
       "view",
     ),
-  ),
-  permissions: normalizeMembershipPermissions(
-    membership.permissions,
-    membership.role,
-  ),
-  notifications: normalizeMembershipNotifications(membership.notifications),
-  // Which switches to render. Sent rather than derived client-side so the
-  // catalog has one owner; a client that hardcoded it would drift the first
-  // time a category is added or an audience rule changes.
-  notificationCategories: visibleNotificationCategories({
-    role: membership.role,
-    teamsPermission: membership.permissions?.teams,
-    teamScopes: membership.permissions?.teamScopes,
-  }),
-  user: {
-    uid: user.uid,
-    email: user.email,
-    primaryEmail: user.primaryEmail || user.email,
-    linkedMethods: normalizeLinkedMethods(user.linkedMethods || []),
-    displayName: String(profileDisplayName || "").trim(),
-  },
-  device: {
-    deviceId: device?.deviceId || null,
-    label: device?.label || null,
-    operatorName: null,
-    surfaceType: null,
-  },
-});
+    appAccess: legacyAppAccessForController(
+      normalizeControllerAccess(
+        membership.role === "admin" ? "full" : membership.controllerAccess ?? membership.appAccess,
+        "view",
+      ),
+    ),
+    permissions,
+    notifications: normalizeMembershipNotifications(membership.notifications),
+    // Which switches to render. Sent rather than derived client-side so the
+    // catalog has one owner; a client that hardcoded it would drift the first
+    // time a category is added or an audience rule changes.
+    notificationCategories: visibleNotificationCategories({
+      teamScopes: String(user.primaryEmail || user.email || "").trim()
+        ? permissions.teamScopes : {},
+    }),
+    user: {
+      uid: user.uid,
+      email: user.email,
+      primaryEmail: user.primaryEmail || user.email,
+      linkedMethods: normalizeLinkedMethods(user.linkedMethods || []),
+      displayName: String(profileDisplayName || "").trim(),
+    },
+    device: {
+      deviceId: device?.deviceId || null,
+      label: device?.label || null,
+      operatorName: null,
+      surfaceType: null,
+    },
+  };
+};
 
 /**
  * Booth / Current Service Workspace grant on a paired workstation.
@@ -4382,10 +4407,12 @@ const acceptInviteMembership = async ({ invite, user }) => {
           role: inviteData.role,
           controllerAccess: acceptedControllerAccess,
           appAccess: legacyAppAccessForController(acceptedControllerAccess),
-          permissions: normalizeMembershipPermissions(
-            inviteData.permissions,
-            inviteData.role,
-          ),
+          permissions: await normalizeMembershipPermissionsForChurch({
+            permissions: inviteData.permissions,
+            role: inviteData.role,
+            churchId,
+            transaction,
+          }),
           createdAt: inviteData.createdAt || nowIso(),
           createdByUid: inviteData.createdByUid,
         };
@@ -4533,10 +4560,11 @@ const acceptInviteMembership = async ({ invite, user }) => {
           role: latestInvite.role,
           controllerAccess: acceptedControllerAccess,
           appAccess: legacyAppAccessForController(acceptedControllerAccess),
-          permissions: normalizeMembershipPermissions(
-            latestInvite.permissions,
-            latestInvite.role,
-          ),
+          permissions: await normalizeMembershipPermissionsForChurch({
+            permissions: latestInvite.permissions,
+            role: latestInvite.role,
+            churchId,
+          }),
           createdAt: latestInvite.createdAt || nowIso(),
           createdByUid: latestInvite.createdByUid,
         };
@@ -4827,7 +4855,10 @@ const demoteAdminMembership = async ({ churchId, userId }) => {
         role: "member",
         controllerAccess,
         appAccess: legacyAppAccessForController(controllerAccess),
-        permissions: normalizeMembershipPermissions(null, "member"),
+        permissions: await normalizeMembershipPermissionsForChurch({
+          permissions: { teamScopes: membershipData.permissions?.teamScopes },
+          role: "member", churchId, transaction,
+        }),
       });
       transaction.update(churchRef, {
         adminCount: nextAdminCount,
@@ -4851,7 +4882,10 @@ const demoteAdminMembership = async ({ churchId, userId }) => {
         role: "member",
         controllerAccess,
         appAccess: legacyAppAccessForController(controllerAccess),
-        permissions: normalizeMembershipPermissions(null, "member"),
+        permissions: await normalizeMembershipPermissionsForChurch({
+          permissions: { teamScopes: membership.permissions?.teamScopes },
+          role: "member", churchId,
+        }),
       },
       { merge: true },
     );
@@ -4908,7 +4942,10 @@ const promoteAdminMembership = async ({ churchId, userId }) => {
         role: "admin",
         controllerAccess: "full",
         appAccess: "full",
-        permissions: normalizeMembershipPermissions(null, "admin"),
+        permissions: await normalizeMembershipPermissionsForChurch({
+          permissions: membershipData.permissions,
+          role: "admin", churchId, transaction,
+        }),
       });
       transaction.update(churchRef, {
         adminCount: nextAdminCount,
@@ -4933,7 +4970,10 @@ const promoteAdminMembership = async ({ churchId, userId }) => {
         role: "admin",
         controllerAccess: "full",
         appAccess: "full",
-        permissions: normalizeMembershipPermissions(null, "admin"),
+        permissions: await normalizeMembershipPermissionsForChurch({
+          permissions: membership.permissions,
+          role: "admin", churchId,
+        }),
       },
       { merge: true },
     );
@@ -4958,12 +4998,33 @@ const updateMemberAccessSettings = async ({
   userId,
   controllerAccess,
   permissions,
+  expectedRole,
+  accessRevision,
 }) => {
   const appAccess = legacyAppAccessForController(controllerAccess);
   const membershipId = membershipIdFor({ churchId, userId });
+  const buildUpdate = async (membership, transaction) => {
+    if (membership.status !== "active") throw httpError(400, "Only active members can be updated.");
+    if (membership.role !== expectedRole) throw memberAccessConflict();
+    if (accessRevision && accessRevision !== membershipAccessRevision(membership)) throw memberAccessConflict();
+    // Older callers can still save unrelated access. Changing a scope requires
+    // the revision they reviewed, rather than an unsafe full-map replacement.
+    if (!accessRevision && Object.hasOwn(permissions || {}, "teamScopes")) {
+      const requested = normalizeTeamScopes(permissions.teamScopes);
+      const current = normalizeTeamScopes(membership.permissions?.teamScopes);
+      if (JSON.stringify(Object.entries(requested).sort()) !== JSON.stringify(Object.entries(current).sort())) {
+        throw memberAccessConflict();
+      }
+    }
+    if (membership.role === "admin" && controllerAccess !== "full") throw httpError(400, "Admins must keep full access.");
+    return { controllerAccess, appAccess, permissions: await normalizeMembershipPermissionsForChurch({
+      permissions: { ...membership.permissions, ...permissions },
+      role: membership.role, churchId, transaction,
+    }) };
+  };
   const db = requireFirestore();
   if (db) {
-    await db.runTransaction(async (transaction) => {
+    return db.runTransaction(async (transaction) => {
       const membershipRef = db
         .collection(COLLECTIONS.memberships)
         .doc(membershipId);
@@ -4972,25 +5033,23 @@ const updateMemberAccessSettings = async ({
         throw httpError(404, "Membership not found");
       }
       const membershipData = membershipSnap.data();
-      if (membershipData.status !== "active") {
-        throw httpError(400, "Only active members can be updated.");
-      }
-      transaction.update(membershipRef, { controllerAccess, appAccess, permissions });
+      const update = await buildUpdate(membershipData, transaction);
+      transaction.update(membershipRef, update);
+      return update.permissions;
     });
   } else {
     const membership = await getDoc(COLLECTIONS.memberships, membershipId);
     if (!membership) {
       throw httpError(404, "Membership not found");
     }
-    if (membership.status !== "active") {
-      throw httpError(400, "Only active members can be updated.");
-    }
-    await setDoc(
-      COLLECTIONS.memberships,
-      membershipId,
-      { controllerAccess, appAccess, permissions },
-      { merge: true },
-    );
+    const revision = membershipAccessRevision(membership);
+    const update = await buildUpdate(membership);
+    const store = collectionMap[COLLECTIONS.memberships];
+    const latest = store.get(membershipId);
+    if (!latest || latest.status !== "active" || membershipAccessRevision(latest) !== revision) throw memberAccessConflict();
+    // No await between comparison and commit: mirror Firestore's atomic CAS.
+    store.set(membershipId, { ...latest, ...update });
+    return update.permissions;
   }
 };
 
@@ -5024,6 +5083,7 @@ const approveRecoveryRequest = async (recoveryRequest) => {
         return { expired: true };
       }
 
+      const existingMembership = (await transaction.get(membershipRef)).data();
       const adminSnapshot = await transaction.get(
         db
           .collection(COLLECTIONS.memberships)
@@ -5035,18 +5095,21 @@ const approveRecoveryRequest = async (recoveryRequest) => {
       transaction.set(
         membershipRef,
         {
+          ...existingMembership,
           membershipId,
           churchId: recoveryRequest.churchId,
           userId: recoveryRequest.requesterUid,
           role: "admin",
           controllerAccess: "full",
           appAccess: "full",
-          permissions: normalizeMembershipPermissions(null, "admin"),
+          permissions: await normalizeMembershipPermissionsForChurch({
+            permissions: existingMembership?.permissions, role: "admin",
+            churchId: recoveryRequest.churchId, transaction,
+          }),
           status: "active",
           createdAt: requestData.createdAt || nowIso(),
           createdByUid: "recovery",
         },
-        { merge: true },
       );
 
       const nextAdminCount = adminSnapshot.docs.some(
@@ -5070,6 +5133,7 @@ const approveRecoveryRequest = async (recoveryRequest) => {
       throw httpError(400, "This recovery request has expired");
     }
   } else {
+    const existingMembership = await getDoc(COLLECTIONS.memberships, membershipId);
     await setDoc(
       COLLECTIONS.memberships,
       membershipId,
@@ -5080,7 +5144,9 @@ const approveRecoveryRequest = async (recoveryRequest) => {
         role: "admin",
         controllerAccess: "full",
         appAccess: "full",
-        permissions: normalizeMembershipPermissions(null, "admin"),
+        permissions: await normalizeMembershipPermissionsForChurch({
+          permissions: existingMembership?.permissions, role: "admin", churchId: recoveryRequest.churchId,
+        }),
         status: "active",
         createdAt: nowIso(),
         createdByUid: "recovery",
@@ -5121,6 +5187,7 @@ const supportRecoverAdminMembership = async ({ churchId, userId }) => {
       const membershipRef = db
         .collection(COLLECTIONS.memberships)
         .doc(membershipId);
+      const existingMembership = (await transaction.get(membershipRef)).data();
       const adminSnapshot = await transaction.get(
         db
           .collection(COLLECTIONS.memberships)
@@ -5131,18 +5198,21 @@ const supportRecoverAdminMembership = async ({ churchId, userId }) => {
       transaction.set(
         membershipRef,
         {
+          ...existingMembership,
           membershipId,
           churchId,
           userId,
           role: "admin",
           controllerAccess: "full",
           appAccess: "full",
-          permissions: normalizeMembershipPermissions(null, "admin"),
+          permissions: await normalizeMembershipPermissionsForChurch({
+            permissions: existingMembership?.permissions, role: "admin",
+            churchId: churchId, transaction,
+          }),
           status: "active",
           createdAt: nowIso(),
           createdByUid: "support",
         },
-        { merge: true },
       );
       const nextAdminCount = adminSnapshot.docs.some(
         (doc) => doc.id === membershipId,
@@ -5155,6 +5225,7 @@ const supportRecoverAdminMembership = async ({ churchId, userId }) => {
       });
     });
   } else {
+    const existingMembership = await getDoc(COLLECTIONS.memberships, membershipId);
     await setDoc(
       COLLECTIONS.memberships,
       membershipId,
@@ -5165,7 +5236,9 @@ const supportRecoverAdminMembership = async ({ churchId, userId }) => {
         role: "admin",
         controllerAccess: "full",
         appAccess: "full",
-        permissions: normalizeMembershipPermissions(null, "admin"),
+        permissions: await normalizeMembershipPermissionsForChurch({
+          permissions: existingMembership?.permissions, role: "admin", churchId: churchId,
+        }),
         status: "active",
         createdAt: nowIso(),
         createdByUid: "support",
@@ -6490,6 +6563,7 @@ const sendIntakeSubmissionDigestInner = async (formId) => {
       });
       continue;
     }
+    let deliveryPhase = "provider";
     try {
       // One email per recipient keeps addresses private.
       // Resend honors this stable key if delivery succeeds but the process
@@ -6501,10 +6575,13 @@ const sendIntakeSubmissionDigestInner = async (formId) => {
         htmlBody: html,
         tags: { type: "intake_digest" },
         idempotencyKey: `intake-digest/${ledgerId}`,
+        requireProviderAcceptance: true,
         timeoutMs:
           intakeDigestProviderTimeoutForServerTests ||
           INTAKE_DIGEST_PROVIDER_TIMEOUT_MS,
       });
+      logAuthEvent("info", "intake.digest.provider_accepted", { formId });
+      deliveryPhase = "ledger";
       // A timeout or process stop can leave provider acceptance unknown.
       // Resend honors this stable key for up to 24 hours; after that the
       // provider outcome cannot be recovered from our delivery ledger alone.
@@ -6537,6 +6614,7 @@ const sendIntakeSubmissionDigestInner = async (formId) => {
         formId,
         attemptCount: attemptCount + 1,
         errorName: error?.name || "Error",
+        phase: deliveryPhase,
       });
     }
   }
@@ -6726,108 +6804,202 @@ export const startIntakeSubmissionDigestRecovery = () => {
 // one mechanism to reason about. A send produces a burst of answers in the first
 // hour, and one email per answer would be filtered within a week.
 //
-// The window cannot be stretched to hours or a day on this infrastructure. The
-// timer is in-process and recovers only when the *next* answer arrives, so a
-// restart with no further response drops the batch — a small exposure at 20
-// minutes, an unacceptable one at 24 hours. Longer digests need durable
-// scheduling first.
+// Pending markers and frozen batches survive restarts. Only new work waits for
+// coalescing; existing batches resume after their lease or a bounded retry delay.
 const RESPONSE_DIGEST_WINDOW_MS =
   Number(process.env.AUTH_SCHEDULE_RESPONSE_DIGEST_WINDOW_MS) || 20 * 60 * 1000;
 const responseDigestTimers = new Map();
 const responseDigestInFlight = new Set();
+const RESPONSE_DIGEST_RETRY_MS = 60 * 1000;
 
-/** Editors of these teams who have not muted `category`. */
-const listTeamEditorNotifyRecipients = async (churchId, teamIds, category) => {
-  const memberships = (await listMembershipsForChurch(churchId)).filter(
-    (membership) => membership.status === "active",
-  );
-  const seen = new Set();
-  const recipients = [];
-  for (const membership of memberships) {
-    if (!membershipCanEditTeams(membership, teamIds)) continue;
-    const preferences = normalizeMembershipNotifications(
-      membership.notifications,
-    );
-    if (!isNotificationEnabled(category, preferences[category])) continue;
-    const user = await getUserByUid(membership.userId);
-    const email = String(user?.primaryEmail || user?.email || "").trim();
-    if (!email) continue;
-    const key = email.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    recipients.push(email);
+const responseDigestDelay = (schedule, retry = false) => {
+  const batch = schedule.pendingResponseDigestBatch;
+  if (batch) {
+    const leaseRemaining = (batch.leaseUntil || 0) - Date.now();
+    return leaseRemaining > 0 ? leaseRemaining : retry ? RESPONSE_DIGEST_RETRY_MS : 0;
   }
-  return recipients;
+  const remaining = RESPONSE_DIGEST_WINDOW_MS -
+    (Date.now() - new Date(schedule.pendingResponseDigestSince).getTime());
+  return Math.max(retry ? RESPONSE_DIGEST_RETRY_MS : 0, remaining);
 };
 
-/**
- * Close the window when this cycle produced no email — nobody listening, or
- * nothing left worth reporting once conflicts were re-verified.
- *
- * Drops the conflicts **this cycle actually read**, and only those. Keeping them
- * would mean a church that has muted the category accumulates a map for ever;
- * dropping the whole field would take anything written while we were deciding.
- * Nothing is lost that anyone would have been told about: a digest reports what
- * changed while someone was listening, so un-muting later starts from then.
- */
-const abandonResponseDigest = (scheduleId, seenConflicts) =>
-  updateDocMapKeys(
-    COLLECTIONS.teamSchedules,
-    scheduleId,
-    "pendingBlockoutConflicts",
-    {
-      remove: Object.keys(normalizePendingBlockoutConflicts(seenConflicts)),
-      fields: { pendingResponseDigestSince: null },
-    },
-  );
+// Only digest metadata and the exact conflicts read by this batch are changed.
+// Firestore transactions protect the lease and preserve concurrent responses.
+const updateResponseDigestState = async (scheduleId, change) => {
+  const db = requireFirestore();
+  if (db) {
+    return db.runTransaction(async (transaction) => {
+      const ref = db.collection(COLLECTIONS.teamSchedules).doc(scheduleId);
+      const snapshot = await transaction.get(ref);
+      if (!snapshot.exists) return null;
+      const patch = change(snapshot.data());
+      if (!patch) return null;
+      transaction.update(ref, patch);
+      return { ...snapshot.data(), ...patch };
+    });
+  }
+  const store = collectionMap[COLLECTIONS.teamSchedules];
+  const schedule = store.get(scheduleId);
+  if (!schedule) return null;
+  const patch = change(schedule);
+  if (!patch) return null;
+  store.set(scheduleId, { ...schedule, ...patch });
+  return { ...schedule, ...patch };
+};
 
-/**
- * Close out a digest that actually sent, accounting only for what it reported.
- *
- * **Never a blanket clear.** Sending takes seconds — a roster read, a render,
- * one email per recipient — and an answer or a blockout landing inside that
- * window was decided about before it existed. Wiping the whole map would delete
- * it unread, and a blockout deleted here is gone for good: the next save only
- * reports *newly* blocked dates, so nothing would ever mention it again.
- *
- * So the emailed keys are removed individually, and the marker moves forward to
- * the moment the schedule was read rather than to null. Everything reported is
- * now behind the marker; anything that arrived during the send is still in front
- * of it. A fresh timer is armed so that leftover actually goes out — the next
- * cycle finds nothing and closes the window for real.
- */
-const finishResponseDigest = async (
-  scheduleId,
-  { emailedConflictKeys, nextSince },
-) =>
-  updateDocMapKeys(
-    COLLECTIONS.teamSchedules,
-    scheduleId,
-    "pendingBlockoutConflicts",
-    {
-      remove: emailedConflictKeys,
-      fields: { pendingResponseDigestSince: nextSince },
-    },
-  );
+const finishResponseDigest = (scheduleId, batch) =>
+  updateResponseDigestState(scheduleId, (current) => {
+    if (current.pendingResponseDigestBatch?.claimId !== batch.claimId) return null;
+    if (current.churchId !== batch.churchId || (current.teamId || null) !== batch.teamId) return null;
+    const conflicts = { ...normalizePendingBlockoutConflicts(current.pendingBlockoutConflicts) };
+    for (const [key, value] of Object.entries(batch.conflicts)) {
+      if (JSON.stringify(conflicts[key]) === JSON.stringify(value)) delete conflicts[key];
+    }
+    const hasNewResponses = Object.values(current.responses || {}).some((row) =>
+      Object.values(row || {}).some((record) => record?.respondedAt >= batch.nextSince),
+    );
+    return {
+      pendingResponseDigestBatch: null,
+      pendingResponseDigestSince: hasNewResponses || Object.keys(conflicts).length > 0
+        ? batch.nextSince : null,
+      pendingBlockoutConflicts: conflicts,
+    };
+  });
+
+const deliverResponseDigest = async (scheduleId, prepared) => {
+  const claimId = crypto.randomUUID();
+  const claimed = await updateResponseDigestState(scheduleId, (current) => {
+    if (!current.pendingResponseDigestSince) return null;
+    const existing = current.pendingResponseDigestBatch;
+    if (existing?.leaseUntil > Date.now()) return null;
+    if (!existing && current.pendingResponseDigestSince !== prepared.since) return null;
+    const batch = existing || prepared;
+    if (current.churchId !== batch.churchId || (current.teamId || null) !== batch.teamId) {
+      // Keep the pending window, but rebuild content for the current owner.
+      return { pendingResponseDigestBatch: null };
+    }
+    return { pendingResponseDigestBatch: {
+      ...(existing || prepared), claimId,
+      leaseUntil: Date.now() + INTAKE_DIGEST_LEASE_MS,
+    } };
+  });
+  if (!claimed) return;
+  const batch = claimed.pendingResponseDigestBatch;
+  if (!batch) {
+    logAuthEvent("info", "schedule.responses.digest.owner_changed", { scheduleId });
+    return;
+  }
+  try {
+    // Re-evaluate active teams, membership, assignments and opt-outs on retry.
+    const recipients = await listTeamLeadNotifyRecipients(
+      claimed.churchId, [claimed.teamId].filter(Boolean), "scheduleResponses",
+    );
+    if (recipients.length === 0 || !batch.email) {
+      logAuthEvent("info", "schedule.responses.digest.no_delivery", {
+        scheduleId, reason: recipients.length === 0 ? "no_recipients" : "no_entries",
+      });
+      await finishResponseDigest(scheduleId, batch);
+      return;
+    }
+    let retrying = false;
+    const attempts = { ...(batch.attempts || {}) };
+    for (const to of recipients) {
+      const key = notificationDeliveryKey({
+        recipient: to, event: "schedule.responses.digest", subject: scheduleId,
+        occurrence: batch.batchId,
+      });
+      const ledgerId = hashValue(`${claimed.churchId}|${key}`);
+      if (await getDoc(COLLECTIONS.notificationDeliveries, ledgerId)) continue;
+      const attemptKey = hashValue(to.trim().toLowerCase());
+      const attemptCount = Number(attempts[attemptKey] || 0);
+      if (attemptCount >= INTAKE_DIGEST_MAX_ATTEMPTS) {
+        logAuthEvent("warn", "schedule.responses.digest.retry_exhausted", { scheduleId, attemptCount });
+        continue;
+      }
+      const renewed = await updateResponseDigestState(scheduleId, (current) =>
+        current.pendingResponseDigestBatch?.claimId === claimId &&
+        current.churchId === batch.churchId && (current.teamId || null) === batch.teamId ? {
+          pendingResponseDigestBatch: {
+            ...current.pendingResponseDigestBatch,
+            leaseUntil: Date.now() + INTAKE_DIGEST_LEASE_MS,
+          },
+        } : null,
+      );
+      if (!renewed) return;
+      let deliveryPhase = "provider";
+      try {
+        await sendEmail({
+          ...batch.email, to, tags: { type: "schedule_responses_digest" },
+          requireProviderAcceptance: true,
+          idempotencyKey: `schedule-response-digest/${ledgerId}`,
+          timeoutMs: intakeDigestProviderTimeoutForServerTests || INTAKE_DIGEST_PROVIDER_TIMEOUT_MS,
+        });
+        logAuthEvent("info", "schedule.responses.digest.provider_accepted", { scheduleId });
+        deliveryPhase = "ledger";
+        await setDoc(COLLECTIONS.notificationDeliveries, ledgerId, {
+          deliveryKey: key, recipient: to, event: "schedule.responses.digest",
+          subject: scheduleId, occurrence: batch.batchId,
+          churchId: claimed.churchId, createdAt: nowIso(),
+        });
+        logAuthEvent("info", "schedule.responses.digest.delivery_recorded", { scheduleId });
+      } catch (error) {
+        const nextAttemptCount = attemptCount + 1;
+        const recorded = await updateResponseDigestState(scheduleId, (current) =>
+          current.pendingResponseDigestBatch?.claimId === claimId &&
+          current.churchId === batch.churchId && (current.teamId || null) === batch.teamId ? {
+            pendingResponseDigestBatch: {
+              ...current.pendingResponseDigestBatch,
+              attempts: { ...current.pendingResponseDigestBatch.attempts, [attemptKey]: nextAttemptCount },
+            },
+          } : null,
+        );
+        if (!recorded) return;
+        attempts[attemptKey] = nextAttemptCount;
+        if (nextAttemptCount < INTAKE_DIGEST_MAX_ATTEMPTS) retrying = true;
+        else logAuthEvent("warn", "schedule.responses.digest.retry_exhausted", {
+          scheduleId, attemptCount: nextAttemptCount,
+        });
+        logAuthEvent("warn", "schedule.responses.digest.delivery_failed", {
+          scheduleId, attemptCount: nextAttemptCount, errorName: error?.name || "Error", phase: deliveryPhase,
+        });
+      }
+    }
+    if (!retrying) await finishResponseDigest(scheduleId, batch);
+  } finally {
+    await updateResponseDigestState(scheduleId, (current) =>
+      current.pendingResponseDigestBatch?.claimId === claimId ? {
+        pendingResponseDigestBatch: { ...current.pendingResponseDigestBatch, leaseUntil: 0 },
+      } : null,
+    );
+  }
+};
 
 const sendScheduleResponseDigestInner = async (scheduleId) => {
   const schedule = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
   if (!schedule?.pendingResponseDigestSince) return;
+  if (schedule.pendingResponseDigestBatch) {
+    return deliverResponseDigest(scheduleId, schedule.pendingResponseDigestBatch);
+  }
   const since = schedule.pendingResponseDigestSince;
   // The boundary between "reported by this digest" and "arrived while it was
   // sending". Taken from the read, not the send, so nothing can fall between.
   const readAt = nowIso();
+  const batch = {
+    batchId: crypto.randomUUID(), since, nextSince: readAt,
+    churchId: schedule.churchId, teamId: schedule.teamId || null,
+    conflicts: normalizePendingBlockoutConflicts(schedule.pendingBlockoutConflicts),
+    email: null,
+  };
 
   // Every fallible step happens before the marker is cleared, so a transient
   // failure degrades to "late", never "lost".
-  const recipients = await listTeamEditorNotifyRecipients(
+  const recipients = await listTeamLeadNotifyRecipients(
     schedule.churchId,
     [schedule.teamId].filter(Boolean),
     "scheduleResponses",
   );
   if (recipients.length === 0) {
-    await abandonResponseDigest(scheduleId, schedule.pendingBlockoutConflicts);
-    return;
+    return deliverResponseDigest(scheduleId, batch);
   }
 
   const members = await queryDocs(
@@ -6871,7 +7043,11 @@ const sendScheduleResponseDigestInner = async (scheduleId) => {
     },
   );
   const entries = buildScheduleDigestEntries({
-    schedule,
+    schedule: { ...schedule, responses: Object.fromEntries(
+      Object.entries(schedule.responses || {}).map(([id, row]) => [id,
+        Object.fromEntries(Object.entries(row || {}).filter(([, record]) => record?.respondedAt < readAt)),
+      ]),
+    ) },
     since,
     blockoutConflicts,
     nameById,
@@ -6881,8 +7057,7 @@ const sendScheduleResponseDigestInner = async (scheduleId) => {
   if (entries.length === 0) {
     // Conflicts that failed verification go too: the slot was refilled or the
     // blockout undone, so there is nothing to report and nothing to keep.
-    await abandonResponseDigest(scheduleId, schedule.pendingBlockoutConflicts);
-    return;
+    return deliverResponseDigest(scheduleId, batch);
   }
 
   const church = await getChurchById(schedule.churchId);
@@ -6894,34 +7069,14 @@ const sendScheduleResponseDigestInner = async (scheduleId) => {
   });
   const subject = scheduleDigestSubject(entries, schedule.name);
 
-  await Promise.all(
-    recipients.map((to) =>
-      sendEmail({
-        to,
-        subject,
-        textBody: text,
-        htmlBody: html,
-        tags: { type: "schedule_responses_digest" },
-      }).catch((error) =>
-        logAuthEvent("warn", "schedule.responses.digest.send-error", {
-          scheduleId,
-          errorMessage: error?.message || "send failed",
-        }),
-      ),
-    ),
-  );
-
-  await finishResponseDigest(scheduleId, {
-    emailedConflictKeys: blockoutConflicts.map(blockoutConflictKey),
-    nextSince: readAt,
+  return deliverResponseDigest(scheduleId, {
+    ...batch, email: { subject, textBody: text, htmlBody: html },
   });
-  // The window stays open at `readAt`, so anything that arrived mid-send is
-  // still ahead of it and needs something to come back for it. This terminates:
-  // the next cycle finds nothing and closes the window outright.
-  armResponseDigestTimer(scheduleId);
 };
 
-const sendScheduleResponseDigest = async (scheduleId) => {
+export const sendScheduleResponseDigest = async (scheduleId) => {
+  const existingTimer = responseDigestTimers.get(scheduleId);
+  if (existingTimer) clearTimeout(existingTimer);
   responseDigestTimers.delete(scheduleId);
   if (responseDigestInFlight.has(scheduleId)) return;
   responseDigestInFlight.add(scheduleId);
@@ -6929,18 +7084,24 @@ const sendScheduleResponseDigest = async (scheduleId) => {
     await sendScheduleResponseDigestInner(scheduleId);
   } finally {
     responseDigestInFlight.delete(scheduleId);
+    const current = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+    if (current?.pendingResponseDigestSince) {
+      armResponseDigestTimer(scheduleId, responseDigestDelay(current, true));
+    }
   }
 };
 
-const armResponseDigestTimer = (scheduleId) => {
+const armResponseDigestTimer = (scheduleId, delayMs = RESPONSE_DIGEST_WINDOW_MS) => {
+  const existing = responseDigestTimers.get(scheduleId);
+  if (existing) clearTimeout(existing);
   const timer = setTimeout(() => {
     sendScheduleResponseDigest(scheduleId).catch((error) =>
       logAuthEvent("warn", "schedule.responses.digest.error", {
         scheduleId,
-        errorMessage: error?.message || "digest failed",
+        errorName: error?.name || "Error",
       }),
     );
-  }, RESPONSE_DIGEST_WINDOW_MS);
+  }, Math.max(0, delayMs));
   if (typeof timer.unref === "function") timer.unref();
   responseDigestTimers.set(scheduleId, timer);
 };
@@ -6964,14 +7125,68 @@ const scheduleAssignmentResponseDigest = async (
     return;
   }
   if (action === "open-window") {
-    await setDoc(
-      COLLECTIONS.teamSchedules,
-      scheduleId,
-      { pendingResponseDigestSince: respondedAt },
-      { merge: true },
+    await updateResponseDigestState(scheduleId, (current) =>
+      current.pendingResponseDigestSince ? null : { pendingResponseDigestSince: respondedAt },
     );
   }
-  armResponseDigestTimer(scheduleId);
+  const pending = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+  if (pending?.pendingResponseDigestSince) {
+    armResponseDigestTimer(scheduleId, responseDigestDelay(pending));
+  }
+};
+
+let responseDigestRecoveryTimer = null;
+let responseDigestRecoveryInFlight = false;
+let responseDigestRecoveryCursor = null;
+
+export const recoverPendingScheduleResponseDigests = async () => {
+  if (responseDigestRecoveryInFlight) return;
+  responseDigestRecoveryInFlight = true;
+  try {
+    const db = requireFirestore();
+    let schedules;
+    if (db) {
+      let query = db.collection(COLLECTIONS.teamSchedules)
+        .where("pendingResponseDigestSince", ">", "")
+        .orderBy("pendingResponseDigestSince").orderBy(FieldPath.documentId())
+        .limit(INTAKE_DIGEST_RECOVERY_BATCH_LIMIT);
+      if (responseDigestRecoveryCursor) query = query.startAfter(
+        responseDigestRecoveryCursor.since, responseDigestRecoveryCursor.id,
+      );
+      schedules = (await query.get()).docs.map((doc) => ({ ...doc.data(), id: doc.id }));
+    } else {
+      schedules = (await queryDocs(COLLECTIONS.teamSchedules,
+        [{ field: "pendingResponseDigestSince", op: ">", value: "" }], { limit: 100000 },
+      )).sort((a, b) => a.pendingResponseDigestSince.localeCompare(b.pendingResponseDigestSince) || a.id.localeCompare(b.id));
+      if (responseDigestRecoveryCursor) schedules = schedules.filter((schedule) =>
+        schedule.pendingResponseDigestSince > responseDigestRecoveryCursor.since ||
+        (schedule.pendingResponseDigestSince === responseDigestRecoveryCursor.since && schedule.id > responseDigestRecoveryCursor.id),
+      );
+      schedules = schedules.slice(0, INTAKE_DIGEST_RECOVERY_BATCH_LIMIT);
+    }
+    const last = schedules.at(-1);
+    responseDigestRecoveryCursor = schedules.length === INTAKE_DIGEST_RECOVERY_BATCH_LIMIT
+      ? { since: last.pendingResponseDigestSince, id: last.id } : null;
+    for (const schedule of schedules) {
+      if (responseDigestTimers.has(schedule.id) || responseDigestInFlight.has(schedule.id)) continue;
+      const remaining = responseDigestDelay(schedule);
+      if (remaining <= 0) await sendScheduleResponseDigest(schedule.id);
+      else armResponseDigestTimer(schedule.id, remaining);
+    }
+  } catch (error) {
+    logAuthEvent("warn", "schedule.responses.digest.recovery_failed", { errorName: error?.name || "Error" });
+  } finally {
+    responseDigestRecoveryInFlight = false;
+  }
+};
+
+export const startScheduleResponseDigestRecovery = () => {
+  if (responseDigestRecoveryTimer) return;
+  void recoverPendingScheduleResponseDigests();
+  responseDigestRecoveryTimer = setInterval(
+    () => void recoverPendingScheduleResponseDigests(), INTAKE_DIGEST_RECOVERY_INTERVAL_MS,
+  );
+  responseDigestRecoveryTimer.unref?.();
 };
 
 let scheduleAssignmentResponseDigestForHandlers = scheduleAssignmentResponseDigest;
@@ -8786,6 +9001,7 @@ export const authHandlers = {
           }
           return {
             ...membership,
+            accessRevision: membershipAccessRevision(membership),
             controllerAccess:
               membership.role === "admin"
                 ? "full"
@@ -8801,10 +9017,11 @@ export const authHandlers = {
                     "view",
                   ),
             ),
-            permissions: normalizeMembershipPermissions(
-              membership.permissions,
-              membership.role,
-            ),
+            permissions: await normalizeMembershipPermissionsForChurch({
+              permissions: membership.permissions,
+              role: membership.role,
+              churchId: req.params.churchId,
+            }),
             user: user
               ? {
                   ...user,
@@ -9198,14 +9415,20 @@ export const authHandlers = {
       }
       const { role, controllerAccess, permissions } =
         validateUpdateInviteAccessPayload(req.body);
-      const buildAccessUpdate = async () => ({
+      const buildAccessUpdate = async (currentInvite, transaction) => ({
         role,
         controllerAccess,
         appAccess: legacyAppAccessForController(controllerAccess),
         permissions: await normalizeMembershipPermissionsForChurch({
-          permissions,
+          permissions: {
+            ...(currentInvite.role === "admin" && role !== "admin"
+              ? { teamScopes: currentInvite.permissions?.teamScopes }
+              : currentInvite.permissions),
+            ...permissions,
+          },
           role,
           churchId: req.params.churchId,
+          transaction,
         }),
       });
       const db = requireFirestore();
@@ -9224,7 +9447,7 @@ export const authHandlers = {
           if (currentInvite.status !== "pending") {
             throw httpError(400, "Only pending invites can be updated.");
           }
-          const accessUpdate = await buildAccessUpdate();
+          const accessUpdate = await buildAccessUpdate(currentInvite, transaction);
           transaction.update(inviteRef, accessUpdate);
           return { ...currentInvite, inviteId, ...accessUpdate };
         });
@@ -9237,7 +9460,7 @@ export const authHandlers = {
           if (currentInvite.status !== "pending") {
             throw httpError(400, "Only pending invites can be updated.");
           }
-          const accessUpdate = await buildAccessUpdate();
+          const accessUpdate = await buildAccessUpdate(currentInvite);
           await setDoc(COLLECTIONS.invites, inviteId, accessUpdate, { merge: true });
           return { ...currentInvite, inviteId, ...accessUpdate };
         });
@@ -10000,16 +10223,17 @@ export const authHandlers = {
       if (targetMembership.role === "admin" && controllerAccess !== "full") {
         throw httpError(400, "Admins must keep full access.");
       }
-      const permissions = await normalizeMembershipPermissionsForChurch({
-        permissions: req.body?.permissions,
-        role: targetMembership.role,
-        churchId: req.params.churchId,
-      });
-      await updateMemberAccessSettings({
+      const accessRevision = req.body?.accessRevision;
+      if (accessRevision !== undefined && (typeof accessRevision !== "string" || !accessRevision.trim())) {
+        throw httpError(400, "Refresh access settings and try again.");
+      }
+      const permissions = await updateMemberAccessSettings({
         churchId: req.params.churchId,
         userId: req.params.userId,
         controllerAccess,
-        permissions,
+        permissions: req.body?.permissions,
+        expectedRole: targetMembership.role,
+        accessRevision,
       });
       await addSecurityEvent({
         type: "member_access_updated",
@@ -10024,6 +10248,7 @@ export const authHandlers = {
     } catch (error) {
       return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
+        ...(error.code === "MEMBER_ACCESS_CONFLICT" ? { code: error.code } : {}),
       }));
     }
   },

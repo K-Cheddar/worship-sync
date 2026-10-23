@@ -26,7 +26,7 @@ describe("accountInviteAccess", () => {
     });
   });
 
-  it("clears team scopes when global Teams edit is selected", () => {
+  it("preserves Team Lead scopes when global Teams edit is selected", () => {
     expect(
       buildPermissionsFromAccessDraft({
         role: "member",
@@ -37,7 +37,7 @@ describe("accountInviteAccess", () => {
     ).toEqual({
       teams: "edit",
       services: "none",
-      teamScopes: {},
+      teamScopes: { "team-a": "edit" },
     });
   });
 
@@ -85,7 +85,7 @@ describe("accountInviteAccess", () => {
         servicesAccess: "view",
         teamScopeIds: ["worship"],
       }),
-    ).toBe("No controller access · Selected team manager · View services");
+    ).toBe("No controller access · Team lead · View services");
   });
 
   it("offers Controller None without a Member access option", () => {
@@ -131,6 +131,7 @@ describe("accountInviteAccess", () => {
       teamsAccess: "none",
       servicesAccess: "none",
       teamScopeIds: ["team-main"],
+      basePermissions: { teams: "none", teamScopes: { "team-main": "edit" } },
     });
   });
 
@@ -148,7 +149,7 @@ describe("accountInviteAccess", () => {
 
   it("explains roster read access and independent team management", () => {
     expect(scopedTeamsHelperText("none", false)).toBe(
-      "Team membership gives read-only access automatically. Select teams here to let this person manage them. They don't need to be on a team's roster.",
+      "Team leads can manage their teams and receive team updates by default. They can turn off emails in their notification settings.",
     );
   });
 });

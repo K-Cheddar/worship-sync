@@ -12,10 +12,13 @@ export const HOME_NAVIGATION_GRID_CLASS =
   "grid auto-rows-fr grid-cols-2 gap-2 md:grid-cols-3 md:gap-3 lg:grid-cols-4";
 
 export const HOME_TILE_CLASS =
-  "flex h-full min-h-[74px] min-w-0 w-full items-center rounded-2xl border border-gray-600 bg-gray-900 px-0 py-0 text-left text-white transition-colors duration-150 hover:border-gray-500 hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 active:translate-y-px sm:min-h-[82px]";
+  "flex h-full min-h-[48px] min-w-0 w-full items-center rounded-2xl border border-gray-600 bg-gray-900 px-0 py-0 text-left text-white transition-colors duration-150 hover:border-gray-500 hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 active:translate-y-px max-sm:!min-h-[48px] sm:min-h-[82px]";
+
+export const HOME_TILE_DESCRIPTION_SIZE_CLASS =
+  "min-h-[48px] max-sm:!min-h-[48px] sm:min-h-[82px]";
 
 export const HOME_TILE_CONTENT_CLASS =
-  "flex w-full min-w-0 items-center px-4";
+  "flex w-full min-w-0 items-center px-[8px] sm:px-4";
 
 export const HOME_TILE_ICON_CLASS =
   "flex h-12 w-8 shrink-0 items-center justify-center rounded-xl sm:h-14";
@@ -76,7 +79,7 @@ export const HomeNavigationLink = ({
   };
 
   const content = (
-    <span className={`${HOME_TILE_CONTENT_CLASS} gap-3`}>
+    <span className={cn(HOME_TILE_CONTENT_CLASS, "gap-3 py-[8px] sm:py-0")}>
       <span
         aria-hidden
         data-testid="home-navigation-icon"
@@ -99,7 +102,7 @@ export const HomeNavigationLink = ({
           <span className="block break-words text-[15px] font-semibold leading-snug tracking-[-0.01em] sm:text-[17px]">
             {title}
           </span>
-          <span className="mt-0.5 block break-words text-xs font-normal leading-snug text-gray-400">
+          <span className="mt-[5px] block break-words text-xs font-normal leading-snug text-gray-400 sm:mt-0.5">
             {description}
           </span>
         </span>
@@ -113,7 +116,14 @@ export const HomeNavigationLink = ({
 
   if (pending) {
     return (
-      <div className={cn(HOME_TILE_CLASS, "pointer-events-none border-gray-700 bg-gray-900")} aria-disabled="true">
+      <div
+        className={cn(
+          HOME_TILE_CLASS,
+          showDescriptions && HOME_TILE_DESCRIPTION_SIZE_CLASS,
+          "pointer-events-none border-gray-700 bg-gray-900",
+        )}
+        aria-disabled="true"
+      >
         {content}
       </div>
     );
@@ -127,7 +137,11 @@ export const HomeNavigationLink = ({
       aria-busy={isPending}
       isLoading={isPending}
       onClick={handleClick}
-      className={cn(HOME_TILE_CLASS, isPending && "border-cyan-300/70 ring-2 ring-cyan-400/30")}
+      className={cn(
+        HOME_TILE_CLASS,
+        showDescriptions && HOME_TILE_DESCRIPTION_SIZE_CLASS,
+        isPending && "border-cyan-300/70 ring-2 ring-cyan-400/30",
+      )}
       wrap
     >
       {content}
@@ -222,6 +236,7 @@ type HomeOutputLinkCardProps = {
   icon: LucideIcon;
   iconColorClass: string;
   pending?: boolean;
+  showDescriptions?: boolean;
 };
 
 export const HomeOutputLinkCard = ({
@@ -231,6 +246,7 @@ export const HomeOutputLinkCard = ({
   icon,
   iconColorClass,
   pending = false,
+  showDescriptions = false,
 }: HomeOutputLinkCardProps) => {
   const [copyState, setCopyState] = useState<"idle" | "copying" | "copied" | "error">("idle");
   const resetTimeoutRef = useRef<number | null>(null);
@@ -277,6 +293,7 @@ export const HomeOutputLinkCard = ({
     <div
       className={cn(
         HOME_TILE_CLASS,
+        showDescriptions && HOME_TILE_DESCRIPTION_SIZE_CLASS,
         "gap-0 overflow-hidden py-0 hover:border-gray-600 hover:bg-gray-900",
         pending && "pointer-events-none border-gray-700 bg-gray-900",
       )}
@@ -286,12 +303,20 @@ export const HomeOutputLinkCard = ({
         <Link
           to={to}
           aria-label={`Open ${title} ${linkContext} link`}
-          className="relative z-0 flex min-w-0 flex-1 items-center gap-3 self-stretch rounded-l-2xl px-4 py-3 text-left transition-colors hover:bg-gray-800 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300"
+          className={cn(
+            "relative z-0 flex min-w-0 flex-1 items-center gap-3 self-stretch rounded-l-2xl px-4 text-left transition-colors hover:bg-gray-800 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300",
+            "px-[8px] py-[8px] sm:px-4 sm:py-3",
+          )}
         >
           {content}
         </Link>
       ) : (
-        <span className="flex min-w-0 flex-1 items-center gap-3 self-stretch px-4 py-3">
+        <span
+          className={cn(
+            "flex min-w-0 flex-1 items-center gap-3 self-stretch px-4",
+            "px-[8px] py-[8px] sm:px-4 sm:py-3",
+          )}
+        >
           {content}
         </span>
       )}

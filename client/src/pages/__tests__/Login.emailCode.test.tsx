@@ -20,6 +20,7 @@ import Login from "../Login";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { createMockGlobalContext } from "../../test/mocks";
 import { getHumanPostAuthPath } from "../../utils/authRedirectPath";
+import { AUTH_EMAIL_CODE_EXPIRED_MESSAGE } from "../../utils/authUserMessages";
 
 type VerifyEmailCodeArgs = { pendingAuthId: string; code: string };
 type TestContext = Record<string, unknown>;
@@ -200,12 +201,89 @@ describe("Login email-code sign-in", () => {
     expect(
       await screen.findByText(/Checking your sign-in session/),
     ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId("current-route")).not.toHaveTextContent(
+        /code=|pendingAuthId=/,
+      ),
+    );
     expect(verifyEmailCodeMock).not.toHaveBeenCalled();
 
     await act(async () => {
       updateTestContext({ bootstrapStatus: "ready", loginState: "idle" });
     });
     await waitFor(() => expect(verifyEmailCodeMock).toHaveBeenCalledTimes(1));
+  });
+
+  it.each([
+    ["same", "pending-explicit-link"],
+    ["different", "pending-restored-different"],
+  ])(
+    "keeps the explicit email link when restoration returns the %s challenge",
+    async (_kind, restoredPendingId) => {
+      const clearPendingEmailVerification = jest.fn(() =>
+        updateTestContext({
+          pendingEmailVerificationId: null,
+          pendingEmailVerificationEmail: null,
+        }),
+      );
+      renderLogin(
+        {
+          bootstrapStatus: "loading",
+          loginState: "loading",
+          clearPendingEmailVerification,
+        },
+        emailCodeLink("pending-explicit-link"),
+      );
+
+      expect(await screen.findByLabelText("Digit 1 of 6")).toHaveValue("1");
+      await act(async () => {
+        updateTestContext({
+          pendingEmailVerificationId: restoredPendingId,
+          pendingEmailVerificationEmail: "restored@example.com",
+        });
+      });
+
+      expect(screen.getByLabelText("Digit 1 of 6")).toHaveValue("1");
+      expect(verifyEmailCodeMock).not.toHaveBeenCalled();
+
+      await act(async () => {
+        updateTestContext({ bootstrapStatus: "ready", loginState: "idle" });
+      });
+
+      await waitFor(() => expect(verifyEmailCodeMock).toHaveBeenCalledTimes(1));
+      expect(verifyEmailCodeMock).toHaveBeenCalledWith({
+        pendingAuthId: "pending-explicit-link",
+        code: "123456",
+      });
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Verify device" })).toBeEnabled(),
+      );
+      expect(
+        screen.getByText(
+          _kind === "same"
+            ? /restored@example.com/
+            : /person@example.com/,
+        ),
+      ).toBeInTheDocument();
+      expect(clearPendingEmailVerification).toHaveBeenCalled();
+    },
+  );
+
+  it("submits the explicit link while a different restored challenge remains pending", async () => {
+    renderLogin(
+      {
+        pendingEmailVerificationId: "pending-restored-different",
+        pendingEmailVerificationEmail: "restored@example.com",
+        clearPendingEmailVerification: jest.fn(),
+      },
+      emailCodeLink("pending-explicit-link"),
+    );
+
+    await waitFor(() => expect(verifyEmailCodeMock).toHaveBeenCalledTimes(1));
+    expect(verifyEmailCodeMock).toHaveBeenCalledWith({
+      pendingAuthId: "pending-explicit-link",
+      code: "123456",
+    });
   });
 
   it("keeps a code eligible after an initially disabled login state becomes ready", async () => {
@@ -323,6 +401,89 @@ describe("Login email-code sign-in", () => {
     });
   });
 
+  it("switches to a restored challenge when the explicit link has expired", async () => {
+    const explicitAttempt = createDeferred<boolean>();
+    verifyEmailCodeMock.mockReturnValue(explicitAttempt.promise);
+    const clearPendingEmailVerification = jest.fn(() =>
+      updateTestContext({
+        pendingEmailVerificationId: null,
+        pendingEmailVerificationEmail: null,
+      }),
+    );
+    const clearAuthError = jest.fn(() => updateTestContext({ authError: "" }));
+    renderLogin(
+      { clearPendingEmailVerification, clearAuthError },
+      emailCodeLink("pending-expired-link"),
+    );
+
+    await waitFor(() => expect(verifyEmailCodeMock).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      updateTestContext({
+        pendingEmailVerificationId: "pending-restored-after-expiration",
+        pendingEmailVerificationEmail: "restored@example.com",
+      });
+    });
+    await act(async () => {
+      updateTestContext({
+        authError: AUTH_EMAIL_CODE_EXPIRED_MESSAGE,
+        loginState: "error",
+      });
+    });
+    expect(clearAuthError).toHaveBeenCalled();
+    await act(async () => {
+      explicitAttempt.resolve(false);
+      await explicitAttempt.promise;
+    });
+
+    expect(screen.getByLabelText("Digit 1 of 6")).toHaveValue("");
+    expect(screen.getByText(/latest code sent to restored@example.com/)).toBeInTheDocument();
+    expect(verifyEmailCodeMock).toHaveBeenCalledTimes(1);
+
+    fireEvent.paste(screen.getByLabelText("Digit 1 of 6"), {
+      clipboardData: { getData: () => "654321" },
+    });
+    await waitFor(() => expect(verifyEmailCodeMock).toHaveBeenCalledTimes(2));
+    expect(verifyEmailCodeMock).toHaveBeenLastCalledWith({
+      pendingAuthId: "pending-restored-after-expiration",
+      code: "654321",
+    });
+  });
+
+  it("keeps a newer challenge busy when an older verification finishes", async () => {
+    const firstAttempt = createDeferred<boolean>();
+    const secondAttempt = createDeferred<boolean>();
+    verifyEmailCodeMock.mockImplementation(({ pendingAuthId }) =>
+      pendingAuthId === "pending-stale-first"
+        ? firstAttempt.promise
+        : secondAttempt.promise,
+    );
+    renderLogin({}, emailCodeLink("pending-stale-first"));
+
+    await waitFor(() => expect(verifyEmailCodeMock).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      navigateTestRouter(emailCodeLink("pending-stale-second", "654321"));
+    });
+    await waitFor(() => expect(verifyEmailCodeMock).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      firstAttempt.resolve(false);
+      await firstAttempt.promise;
+    });
+
+    expect(
+      await screen.findByText(/Verifying the code you entered/),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("current-route")).toHaveTextContent("/login");
+
+    await act(async () => {
+      secondAttempt.resolve(false);
+      await secondAttempt.promise;
+    });
+    await waitFor(() =>
+      expect(screen.getByLabelText("Digit 1 of 6")).toHaveValue("6"),
+    );
+  });
+
   it("allows reopening a failed link to start a new automatic attempt", async () => {
     const link = emailCodeLink("pending-reopened-link");
     renderLogin({}, link);
@@ -354,10 +515,11 @@ describe("Login email-code sign-in", () => {
     );
     renderLogin(
       { clearPendingEmailVerification },
-      emailCodeLink("pending-change-code"),
+      "/login?pendingAuthId=pending-change-code",
     );
 
-    await waitFor(() => expect(verifyEmailCodeMock).toHaveBeenCalledTimes(1));
+    expect(await screen.findByLabelText("Digit 1 of 6")).toHaveValue("");
+    expect(verifyEmailCodeMock).not.toHaveBeenCalled();
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: "Verify device" }),
@@ -366,7 +528,7 @@ describe("Login email-code sign-in", () => {
     fireEvent.paste(screen.getByLabelText("Digit 1 of 6"), {
       clipboardData: { getData: () => "654321" },
     });
-    await waitFor(() => expect(verifyEmailCodeMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(verifyEmailCodeMock).toHaveBeenCalledTimes(1));
     expect(verifyEmailCodeMock).toHaveBeenLastCalledWith({
       pendingAuthId: "pending-change-code",
       code: "654321",
@@ -388,12 +550,12 @@ describe("Login email-code sign-in", () => {
     await waitFor(() =>
       expect(screen.getByLabelText("Digit 1 of 6")).toHaveValue(""),
     );
-    expect(verifyEmailCodeMock).toHaveBeenCalledTimes(2);
+    expect(verifyEmailCodeMock).toHaveBeenCalledTimes(1);
 
     fireEvent.paste(screen.getByLabelText("Digit 1 of 6"), {
       clipboardData: { getData: () => "987654" },
     });
-    await waitFor(() => expect(verifyEmailCodeMock).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(verifyEmailCodeMock).toHaveBeenCalledTimes(2));
     expect(verifyEmailCodeMock).toHaveBeenLastCalledWith({
       pendingAuthId: "pending-new-challenge",
       code: "987654",

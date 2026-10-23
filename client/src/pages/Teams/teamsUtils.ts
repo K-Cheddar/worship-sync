@@ -165,6 +165,7 @@ export const normalizeTeamsData = (data?: Partial<TeamsData>): TeamsData => ({
   intakeRecipients: data?.intakeRecipients || [],
   smsEligibilityByMemberId: data?.smsEligibilityByMemberId || {},
   smsDeliveryAttempts: data?.smsDeliveryAttempts || [],
+  ...(data?.truncated === true ? { truncated: true } : {}),
 });
 
 // Normalize a single data collection without touching the rest of the dataset.
@@ -490,6 +491,7 @@ export const buildTeamsDataFromBootstrap = (response: {
   intakeRecipients?: TeamIntakeRecipient[];
   smsEligibilityByMemberId?: TeamsBootstrap["smsEligibilityByMemberId"];
   smsDeliveryAttempts?: TeamsBootstrap["smsDeliveryAttempts"];
+  truncated?: boolean;
 }) =>
   normalizeTeamsData({
     members: response.members,
@@ -505,6 +507,7 @@ export const buildTeamsDataFromBootstrap = (response: {
     intakeRecipients: response.intakeRecipients,
     smsEligibilityByMemberId: response.smsEligibilityByMemberId,
     smsDeliveryAttempts: response.smsDeliveryAttempts,
+    truncated: response.truncated,
   });
 
 export const assignmentFailureKey = (serviceId: string, positionId: string) =>

@@ -199,6 +199,7 @@ export type ChurchMemberRow = {
   controllerAccess?: ControllerAccess;
   appAccess?: string;
   permissions?: MemberPermissions;
+  accessRevision?: string;
   user: AuthUserSummary | null;
 };
 
@@ -241,6 +242,8 @@ export type TeamMemberRecurringAvailability = {
 export type TeamRosterMember = {
   memberId: string;
   churchId: string;
+  /** Server-derived active roster membership status; hidden team IDs are never included. */
+  teamMembershipStatus?: "none" | "assigned" | "unknown";
   /** Optional display prefix, such as "Dr." or "Pastor". */
   title?: string;
   firstName: string;
@@ -608,6 +611,8 @@ export const onlyHydratedSchedules = (
 
 export type TeamsBootstrap = {
   editableMemberIds?: string[];
+  /** Members whose scoped team profile is complete in this authorized projection. */
+  teamProfileReadyMemberIds?: string[];
   /** Authenticated human's unique active roster link; null when unavailable. */
   selfMemberId?: string | null;
   success: boolean;
@@ -1010,6 +1015,13 @@ export type TeamIntakeSubmission = {
   appliedMemberCreated?: boolean;
 };
 
+export type TeamIntakeMemberDetailField =
+  | "title"
+  | "firstName"
+  | "lastName"
+  | "birthDate"
+  | "email";
+
 export type TeamIntakePreview = {
   success: boolean;
   churchName: string;
@@ -1030,8 +1042,11 @@ export type TeamIntakePreview = {
     | "availabilityMessage"
     | "notesMessage"
   >;
-  /** Present only for a recipient-bound link; contains no contact or account data. */
-  recipient?: { firstName: string };
+  /** Present only for a recipient-bound link; missing fields only are disclosed. */
+  recipient?: {
+    firstName: string;
+    missingFields?: TeamIntakeMemberDetailField[];
+  };
   /** Allowlisted position fields only — the public link never ships internal columns. */
   positions: Pick<TeamPosition, "positionId" | "teamId" | "name" | "icon">[];
   /** Teams referenced by `positions`, for grouping the public form by team. */

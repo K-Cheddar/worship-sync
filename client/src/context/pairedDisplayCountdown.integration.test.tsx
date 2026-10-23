@@ -55,7 +55,7 @@ describe("paired output countdown production composition", () => {
         ? { error: "Server unavailable" }
         : {
             success: true,
-            serviceTimeZone: configured ? zone : "UTC",
+            serviceTimeZone: configured ? zone : null,
             isConfigured: configured,
             serviceTimeZoneRevision: revision,
           };

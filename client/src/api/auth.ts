@@ -994,11 +994,11 @@ export const createChurchAccount = async (body: JsonBody) =>
     body: JSON.stringify(body),
   });
 
-export const logoutSession = async () =>
+export const logoutSession = async (csrfToken?: string) =>
   apiFetch<{ success: boolean }>("api/auth/logout", {
     method: "POST",
     body: JSON.stringify({}),
-  });
+  }, csrfToken ? { "x-csrf-token": csrfToken } : undefined);
 
 export const forgotPassword = async (email: string) =>
   apiFetch<{ success: boolean }>("api/auth/forgot-password", {
@@ -1137,11 +1137,17 @@ export const listChurchMembers = async (churchId: string) =>
 
 export type ChurchServiceTimeZoneResponse = {
   success: boolean;
-  serviceTimeZone: string;
+  serviceTimeZone: string | null;
   isConfigured: boolean;
   serviceTimeZoneRevision: string;
   legacyTimeZoneSuggestion?: string | null;
 };
+
+export type ConfiguredChurchServiceTimeZoneResponse =
+  ChurchServiceTimeZoneResponse & {
+    serviceTimeZone: string;
+    isConfigured: true;
+  };
 
 export const getChurchServiceTimeZone = async (churchId: string) =>
   apiFetch<ChurchServiceTimeZoneResponse>(
@@ -1154,7 +1160,7 @@ export const updateChurchServiceTimeZone = async (
   churchId: string,
   serviceTimeZone: string,
 ) =>
-  apiFetch<ChurchServiceTimeZoneResponse>(
+  apiFetch<ConfiguredChurchServiceTimeZoneResponse>(
     `api/churches/${churchId}/service-time-zone`,
     { method: "POST", body: JSON.stringify({ serviceTimeZone }) },
   );
@@ -1947,9 +1953,12 @@ export type TeamMemberTeamProfile = {
   membership: { roleId?: string; isTeamLead: boolean };
   qualifications: TeamMemberQualification[];
 };
-export type TeamMemberTeamProfilePatch = Partial<
+export type TeamMemberTeamProfileChanges = Partial<
   Pick<TeamMemberTeamProfile, "positionIds" | "desiredPositionIds" | "qualifications">
 > & { membership?: { roleId?: string | null; isTeamLead?: boolean } };
+export type TeamMemberTeamProfilePatch = TeamMemberTeamProfileChanges & {
+  baseProfile: TeamMemberTeamProfileChanges;
+};
 export type TeamMemberTeamProfileResponse = {
   member: TeamMemberProfile;
   teamProfile: TeamMemberTeamProfile;
@@ -3188,6 +3197,7 @@ export const updateChurchMemberAccess = async (
   userId: string,
   controllerAccess: ControllerAccess,
   permissions: MemberPermissions,
+  accessRevision?: string,
 ) =>
   apiFetch<{ success: boolean }>(
     `api/churches/${churchId}/members/${userId}/access`,
@@ -3197,6 +3207,7 @@ export const updateChurchMemberAccess = async (
         controllerAccess,
         appAccess: controllerAccess === "none" ? "member" : controllerAccess,
         permissions,
+        ...(accessRevision ? { accessRevision } : {}),
       }),
     },
   );

@@ -61,6 +61,7 @@ import {
   getEnabledDisplayOutputs,
   type DisplayOutput,
 } from "../utils/displayOutputs";
+import { cn } from "../utils/cnHelper";
 import {
   readHomeNavigationMetadata,
   writeHomeNavigationMetadata,
@@ -73,6 +74,7 @@ import {
   HOME_NAVIGATION_GRID_CLASS,
   HOME_TILE_CLASS,
   HOME_TILE_CONTENT_CLASS,
+  HOME_TILE_DESCRIPTION_SIZE_CLASS,
   HOME_TILE_ICON_CLASS,
   HomeNavigationLink,
   HomeNavigationSection,
@@ -242,7 +244,11 @@ const HomeLockedFeatureCard = ({
     component="button"
     type="button"
     onClick={onSelect}
-    className={`${HOME_TILE_CLASS} cursor-pointer`}
+    className={cn(
+      HOME_TILE_CLASS,
+      showDescriptions && HOME_TILE_DESCRIPTION_SIZE_CLASS,
+      "cursor-pointer",
+    )}
     wrap
     aria-label={
       showDescriptions && description
@@ -250,7 +256,9 @@ const HomeLockedFeatureCard = ({
         : `${title}. Sign in required.`
     }
   >
-    <span className={`${HOME_TILE_CONTENT_CLASS} gap-3 py-3 whitespace-normal`}>
+    <span
+      className={`${HOME_TILE_CONTENT_CLASS} gap-3 py-[8px] sm:py-3 whitespace-normal`}
+    >
       <span aria-hidden className={`${HOME_TILE_ICON_CLASS} ${iconColorClass}`}>
         <Icon
           svg={icon}
@@ -264,7 +272,7 @@ const HomeLockedFeatureCard = ({
           {title}
         </span>
         {showDescriptions && description ? (
-          <span className="mt-0.5 block break-words text-xs font-normal leading-snug text-gray-400">
+          <span className="mt-[5px] block break-words text-xs font-normal leading-snug text-gray-400 sm:mt-0.5">
             {description}
           </span>
         ) : null}
@@ -311,6 +319,7 @@ const HomeOutputGroup = ({
             icon={link.icon}
             iconColorClass={link.iconColorClass}
             pending={pending}
+            showDescriptions={showDescriptions}
           />
         ))}
       </div>
@@ -644,7 +653,7 @@ const Welcome = () => {
               {showMyTeams ? (
                 <HomeNavigationLink
                   title="My teams"
-                  to="/teams-and-services"
+                  to="/teams-and-services/groups"
                   {...PAGE_APPEARANCES.myTeams}
                   description="See your teams and responsibilities."
                   showDescriptions={showDescriptions}
