@@ -12,9 +12,12 @@ const fixture = (transactional) => {
   const attempt = { attemptId: "a", churchId: "c", memberId: "m", recipientId: "r", sourceId: "r", notificationIntentId: "i", phoneNumberSnapshot: "+14155550123", providerAccountId: "AC1", callbackToken: "a".repeat(64), status: "pending", providerCallStarted: true };
   const docs = new Map([["notificationIntents/i", copy(intent)], ["smsDeliveryAttempts/a", copy(attempt)]]);
   const versions = new Map();
-  const hooks = { beforeCommit: null, beforeWrite: null, retries: 0 };
+  const hooks = { beforeCommit: null, beforeWrite: null, beforeRead: null, retries: 0 };
   const put = (key, value) => { docs.set(key, copy(value)); versions.set(key, (versions.get(key) || 0) + 1); };
-  const getDoc = async (collection, id) => copy(docs.get(`${collection}/${id}`));
+  const getDoc = async (collection, id) => {
+    if (hooks.beforeRead) await hooks.beforeRead(collection, id);
+    return copy(docs.get(`${collection}/${id}`));
+  };
   const setDoc = async (collection, id, value) => {
     if (hooks.beforeWrite) await hooks.beforeWrite(collection, id, value);
     const key = `${collection}/${id}`; put(key, { ...docs.get(key), ...value });
@@ -29,6 +32,10 @@ const fixture = (transactional) => {
         const result = await callback({
           async get(key) {
             assert.equal(writing, false, "Firestore disallows reads after writes");
+            if (hooks.beforeRead) {
+              const [collection, id] = key.split("/");
+              await hooks.beforeRead(collection, id);
+            }
             reads.set(key, versions.get(key) || 0);
             const value = copy(docs.get(key));
             return { exists: Boolean(value), data: () => value };
@@ -100,14 +107,37 @@ for (const transactional of [false, true]) {
     assert.equal(recoveredAttempt.status, "failed");
     assert.equal(recoveredAttempt.outcome, "not_sent");
   });
-  test(`recovery of a missing attempt record is safely not sent (${mode})`, async () => {
+  test(`recovery of a missing attempt record remains uncertain (${mode})`, async () => {
     const h = fixture(transactional);
     h.docs.delete("smsDeliveryAttempts/a");
     await h.recovery();
     const recoveredIntent = h.docs.get("notificationIntents/i");
-    assert.equal(recoveredIntent.status, "preview");
-    assert.equal(recoveredIntent.outcome, "not_sent");
+    assert.equal(recoveredIntent.status, "unknown");
+    assert.equal(recoveredIntent.outcome, "unknown");
     assert.equal(recoveredIntent.approvalSnapshot.approvalVersion, "approval-v1");
+  });
+  test(`recovery with an unreadable attempt record fails closed (${mode})`, async () => {
+    const h = fixture(transactional);
+    h.hooks.beforeRead = async (collection) => {
+      if (collection === "smsDeliveryAttempts") throw new Error("attempt store unavailable");
+    };
+    await assert.rejects(h.recovery(), /attempt store unavailable/);
+    assert.equal(h.docs.get("notificationIntents/i").status, "sending");
+    assert.equal(h.docs.get("notificationIntents/i").outcome, undefined);
+  });
+  test(`a not-sent report without a persisted false provider-start marker stays uncertain (${mode})`, async () => {
+    for (const marker of ["missing", true]) {
+      const h = fixture(transactional);
+      if (marker === "missing") {
+        h.docs.delete("smsDeliveryAttempts/a");
+      } else {
+        h.put("smsDeliveryAttempts/a", { ...h.attempt, providerCallStarted: marker });
+      }
+      await h.reconcile({ churchId: "c", intentId: "i", attemptId: "a", update: { status: "failed", outcome: "not_sent" } });
+      assert.equal(h.docs.get("notificationIntents/i").status, "unknown");
+      assert.equal(h.docs.get("notificationIntents/i").outcome, "unknown");
+      if (marker === true) assert.equal(h.docs.get("smsDeliveryAttempts/a").outcome, "unknown");
+    }
   });
   test(`legacy attempt without a provider-start marker stays uncertain (${mode})`, async () => {
     const h = fixture(transactional);

@@ -513,6 +513,40 @@ test("custom batch pre-provider failure is reported as not sent and the same app
   assert.equal(h.providerCalls, 1, "a completed approval replay does not duplicate the provider request");
 });
 
+test("a missing attempt at the provider-start gate stays uncertain and cannot be retried", async () => {
+  const sharedCollections = new Map([["smsDeliveryAttempts", new Map()]]);
+  const h = createHarness({
+    sharedCollections,
+    authorizeCustomMember: async () => ({ admin: { user: { uid: "admin_a" } }, scoped: false }),
+    beforeSetDoc: async (collection, id, data) => {
+      if (collection === "smsDeliveryAttempts" && data.providerCallStarted === true) {
+        sharedCollections.get("smsDeliveryAttempts").delete(id);
+        throw new Error("The attempt record disappeared before the provider gate.");
+      }
+    },
+  });
+  const prepared = h.makeResponse();
+  await h.handler.prepareCustomBatch({ params: { churchId: h.churchId }, body: {
+    memberIds: [h.member.memberId], message: "Practice Friday.", requestKey: "missing-attempt-is-uncertain",
+  } }, prepared);
+  assert.equal(prepared.statusCode, 200, prepared.payload?.errorMessage);
+  const intentId = prepared.payload.batch.intentIds[0];
+
+  const first = await h.send(intentId);
+  assert.equal(first.statusCode, 500);
+  assert.equal(first.payload.outcome, "unknown");
+  assert.equal(h.providerCalls, 0);
+  assert.equal(await h.getDoc("smsDeliveryAttempts", (await h.getDoc("notificationIntents", intentId)).attemptId), null);
+  const uncertainIntent = await h.getDoc("notificationIntents", intentId);
+  assert.equal(uncertainIntent.status, "unknown");
+  assert.equal(uncertainIntent.outcome, "unknown");
+
+  const replay = await h.send(intentId);
+  assert.equal(replay.statusCode, 409);
+  assert.equal(replay.payload.outcome, "unknown");
+  assert.equal(h.providerCalls, 0, "uncertain outcome blocks a second provider call");
+});
+
 test("custom message accepts 500 unique recipients after deduplicating IDs", async () => {
   const h = createHarness();
   const memberIds = Array.from({ length: 500 }, (_, index) => `bulk-member-${index + 1}`);

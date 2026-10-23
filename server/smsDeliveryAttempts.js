@@ -64,11 +64,10 @@ export const createSmsDeliveryReconciler = ({
     const relatedId = intentId || attempt?.notificationIntentId;
     const intent = relatedId ? await read(COLLECTIONS.notificationIntents, relatedId) : null;
     const ignored = { ignored: true, updated: false, intent, attempt };
-    const recoveryOwnsMissingAttempt = recovery && attemptId && !attempt && intent?.attemptId === attemptId &&
-      intent?.status === "sending";
-    const notSentOwnsMissingAttempt = update.outcome === "not_sent" && attemptId && !attempt &&
+    // A matching intent pointer lets recovery fence a missing attempt as unknown.
+    const recoveryOwnsMissingAttempt = (recovery || update.outcome === "not_sent") && attemptId && !attempt &&
       intent?.attemptId === attemptId && intent?.status === "sending";
-    if (attemptId && ((!attempt && !recoveryOwnsMissingAttempt && !notSentOwnsMissingAttempt) ||
+    if (attemptId && ((!attempt && !recoveryOwnsMissingAttempt) ||
         (attempt?.attemptId && attempt.attemptId !== attemptId))) return ignored;
     if (churchId && attempt && attempt.churchId !== churchId) return ignored;
     if (attemptId && intentId && attempt && attempt.notificationIntentId !== intentId) return ignored;
@@ -92,13 +91,20 @@ export const createSmsDeliveryReconciler = ({
     }
     const now = nowIso();
     const intentEvidence = intent?.attemptId === attemptId && Boolean(intent.providerMessageId || (intent.status === "sent" && (!intent.providerAcceptedAttemptId || intent.providerAcceptedAttemptId === attemptId)));
-    neverStarted = Boolean(attemptId && intent?.attemptId === attemptId &&
+    // Absence or a legacy marker is ambiguous; only persisted false proves no provider call began.
+    neverStarted = Boolean(attempt && attemptId && intent?.attemptId === attemptId &&
       (recovery || update.outcome === "not_sent") && !hasConfirmedSmsEvidence(attempt) &&
-      !intentEvidence && !intent?.providerMessageId && (!attempt || attempt.providerCallStarted === false));
+      !intentEvidence && !intent?.providerMessageId && attempt.providerCallStarted === false);
+    const notSentWithoutDurableStartEvidence = update.outcome === "not_sent" &&
+      attempt?.providerCallStarted !== false;
     const effectiveUpdate = neverStarted ? {
       status: "failed", outcome: "not_sent",
       failureCode: "dispatch_interrupted_before_provider",
       failureMessage: "The message was not sent because sending stopped before contacting the provider.",
+    } : notSentWithoutDurableStartEvidence ? {
+      status: "pending", outcome: "unknown",
+      failureCode: "provider_start_unconfirmed",
+      failureMessage: "Delivery status could not be confirmed because durable evidence that sending had not started is unavailable.",
     } : update;
     let nextAttempt = attempt;
     if (attempt) {

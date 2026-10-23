@@ -1209,6 +1209,7 @@ export const createNotificationIntentHandlers = ({
   }) => {
     let attemptId = "";
     let intent = null;
+    let initialIntentState = null;
     let providerCallStarted = false;
     let scopedAccess = false;
     let confirmedResult = null;
@@ -1217,6 +1218,7 @@ export const createNotificationIntentHandlers = ({
       const churchId = normalize(requestedChurchId);
       const intentId = normalize(requestedIntentId);
       const currentIntent = await getDoc(COLLECTIONS.notificationIntents, intentId);
+      initialIntentState = currentIntent;
       if (!currentIntent || currentIntent.churchId !== churchId) throw httpError(404, "Message preview not found.");
       const readBackgroundApproval = async () => {
         if (!backgroundContext || !isScheduleBulkDispatchReady()) throw httpError(503, SCHEDULE_SMS_NOT_READY_ERROR);
@@ -1350,21 +1352,31 @@ export const createNotificationIntentHandlers = ({
       }
       return res.json({ success: true, intent: safeIntentProjection(reconciled.intent || { ...intent, status: "sent", attemptId, providerMessageId, sentAt: updatedAt }), attempt: responseAttempt });
     } catch (error) {
+      let failureReconciliation = null;
       if (intent && attemptId) {
-        await reconcileDelivery({ churchId: intent.churchId, intentId: intent.intentId, attemptId,
+        failureReconciliation = await reconcileDelivery({ churchId: intent.churchId, intentId: intent.intentId, attemptId,
           update: confirmedResult || {
             status: providerCallStarted ? "pending" : "failed",
             outcome: providerCallStarted ? "unknown" : "not_sent",
             failureCode: String(error?.code || "dispatch_interrupted").slice(0, 80),
             failureMessage: safeIntentSendFailureMessage(error, "Could not send this message."),
           },
-        }).catch(() => {});
+        }).catch(() => null);
       }
       const errorMessage = safeIntentSendFailureMessage(error, "Could not send this message.");
       const scopedErrorMessage = scopedAccess && /consent|opted out|mobile number|phone number/i.test(errorMessage)
         ? "This volunteer is not currently eligible for SMS."
         : errorMessage;
-      const outcome = confirmedResult ? "confirmed" : providerCallStarted ? "unknown" : "not_sent";
+      const durableNotStarted = Boolean(failureReconciliation && !failureReconciliation.ignored &&
+        failureReconciliation.attempt?.attemptId === attemptId &&
+        failureReconciliation.attempt.providerCallStarted === false &&
+        failureReconciliation.attempt.outcome === "not_sent" &&
+        failureReconciliation.intent?.status === "preview" &&
+        failureReconciliation.intent?.outcome === "not_sent");
+      const deliveryIsUncertain = providerCallStarted ||
+        ["sending", "unknown"].includes(initialIntentState?.status) ||
+        Boolean(initialIntentState?.providerAcceptedAttemptId) || (intent && !durableNotStarted);
+      const outcome = confirmedResult ? "confirmed" : deliveryIsUncertain ? "unknown" : "not_sent";
       return res.status(error.statusCode || 500).json({ success: false, outcome, errorMessage: scopedErrorMessage, ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}) });
     }
   };
