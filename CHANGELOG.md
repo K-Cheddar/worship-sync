@@ -1,3 +1,10 @@
+## [2.47.1](https://github.com/K-Cheddar/worship-sync/compare/v2.47.0...v2.47.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* correct overlay syncing ([3c4a67e](https://github.com/K-Cheddar/worship-sync/commit/3c4a67e170e7a14e19780590debf747441a16135))
+
 # [2.47.0](https://github.com/K-Cheddar/worship-sync/compare/v2.46.0...v2.47.0) (2026-10-23)
 
 
