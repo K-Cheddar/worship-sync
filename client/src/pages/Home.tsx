@@ -19,7 +19,6 @@ import Button from "../components/Button/Button";
 import Icon from "../components/Icon/Icon";
 import AnimateCollapse from "../components/AnimateCollapse/AnimateCollapse";
 import Toggle from "../components/Toggle/Toggle";
-import WorshipSyncIcon from "../assets/WorshipSyncIconNoBg.png";
 import WorshipSyncWordmark from "../assets/WorshipSyncWordmark.png";
 import Modal from "../components/Modal/Modal";
 import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
@@ -252,10 +251,7 @@ const HomeLockedFeatureCard = ({
     }
   >
     <span className={`${HOME_TILE_CONTENT_CLASS} gap-3 py-3 whitespace-normal`}>
-      <span
-        aria-hidden
-        className={`${HOME_TILE_ICON_CLASS} ${iconColorClass}`}
-      >
+      <span aria-hidden className={`${HOME_TILE_ICON_CLASS} ${iconColorClass}`}>
         <Icon
           svg={icon}
           size="xl"
@@ -549,9 +545,9 @@ const Welcome = () => {
             className="pointer-events-none absolute left-1/2 hidden -translate-x-1/2 select-none items-center gap-2 lg:flex"
           >
             <img
-              src={WorshipSyncIcon}
+              src={`${import.meta.env.BASE_URL}logo192.png`}
               alt=""
-              className="h-7 w-auto object-contain"
+              className="h-6 w-auto object-contain"
             />
             <img
               src={WorshipSyncWordmark}

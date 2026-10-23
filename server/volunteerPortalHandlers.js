@@ -159,7 +159,10 @@ export const createVolunteerPortalHandlers = ({
     getVolunteerPersonalSession: handle(async (req, res) => {
       const store = storeForRequest();
       const session = await store.readSession(cookieValue(req));
-      if (!session) throw httpError(401, "Open your personal link to continue.");
+      if (!session) {
+        return res.status(401).json({ success: false, accessStatus: "invalid",
+          errorMessage: "Open your personal link to continue." });
+      }
       return res.json({ success: true, csrfToken: session.csrfToken, expiresAt: session.expiresAt,
         churchId: session.churchId, memberId: session.memberId });
     }),
