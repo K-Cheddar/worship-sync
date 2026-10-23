@@ -417,7 +417,8 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     ).toEqual(["Second item revised", "First item revised"]);
   });
 
-  it("shows native participant names, titles, and sync actions before explicit sync", () => {
+  it("starts overlay preview collapsed and shows native participant details when expanded", async () => {
+    const user = userEvent.setup();
     mockPlanSource.isPlanSourced = true;
     mockPlanSource.selectedPlanKey = "service-1@2026-07-30";
     mockPlanSource.selectedPlanDetails = {
@@ -468,10 +469,16 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     renderWindow(store);
 
     const overlayPreview = screen.getByRole("region", { name: "Overlay preview" });
+    expect(within(overlayPreview).queryByText("Dr. Greg Baldeo")).not.toBeInTheDocument();
+    expect(within(overlayPreview).getByText("1 update")).toBeInTheDocument();
+    await user.click(within(overlayPreview).getByRole("button", { name: "Expand overlay preview" }));
     expect(within(overlayPreview).getByText("Dr. Greg Baldeo")).toBeInTheDocument();
     expect(within(overlayPreview).getByText("Lead Pastor")).toBeInTheDocument();
     expect(within(overlayPreview).getByText("Sabbath School")).toBeInTheDocument();
     expect(within(overlayPreview).getByText("Update existing")).toBeInTheDocument();
+    await user.click(within(overlayPreview).getByRole("button", { name: "Collapse overlay preview" }));
+    expect(within(overlayPreview).queryByText("Dr. Greg Baldeo")).not.toBeInTheDocument();
+    expect(within(overlayPreview).getByText("1 update")).toBeInTheDocument();
   });
 
   it("keeps the scheduled LIVE row when the outline selection changes", () => {

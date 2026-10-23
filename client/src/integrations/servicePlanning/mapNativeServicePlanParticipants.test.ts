@@ -1,4 +1,5 @@
 import type { OverlayInfo } from "../../types";
+import type { ServicePlanningConfig, ServicePlanningElementRule } from "../../types/integrations";
 import type {
   ServicePlan,
   ServicePlanElement,
@@ -38,22 +39,24 @@ const buildNativePreview = (
   sourcePlan: ReturnType<typeof plan>,
   projection: ServicePlanParticipantOverlayProjection,
   overlays: OverlayInfo[] = [],
+  servicePlanning: ServicePlanningConfig = {
+    enabled: false,
+    people: [],
+    sectionRules: [],
+    elementRules: [],
+  },
 ) => {
   const importData = servicePlanToImportData(sourcePlan);
   const mapping = mapNativeServicePlanParticipants({
     sections: sourcePlan.sections,
     importData,
     participantOverlay: projection,
+    servicePlanning,
   });
 
   return buildServicePlanningPreview({
     importData,
-    servicePlanning: {
-      enabled: false,
-      people: [],
-      sectionRules: [],
-      elementRules: [],
-    },
+    servicePlanning,
     overlays,
     songLibrary: [],
     activeOutlineList: [],
@@ -63,6 +66,102 @@ const buildNativePreview = (
 };
 
 describe("mapNativeServicePlanParticipants", () => {
+  const lessonRule: ServicePlanningElementRule = {
+    id: "lesson",
+    matchElementType: "Sabbath School Lesson Study",
+    matchMode: "contains",
+    displayName: "Sabbath School",
+    nameSources: ["title", "ledBy"],
+    multiOverlay: { mode: "split", eventSuffixByPersonIndex: [" Panelist "] },
+  };
+  const lessonProjection = readyProjection([{
+    elementId: "lesson",
+    assignees: [
+      { name: "Dr. Avery Stone", memberStatus: "resolved", roleStatus: "resolved", roleTitle: "Lead Pastor" },
+      { name: "Morgan Lee", memberStatus: "resolved", roleStatus: "ambiguous" },
+      { name: "Jordan Guest", memberStatus: "guest", roleStatus: "not-applicable" },
+    ],
+  }]);
+  const lessonConfig = (rule = lessonRule): ServicePlanningConfig => ({
+    enabled: false,
+    people: [{ id: "legacy", names: ["Dr. Avery Stone"], displayName: "Legacy Name", title: "Legacy Title" }],
+    sectionRules: [],
+    elementRules: [rule],
+  });
+
+  it.each([undefined, false, true])("uses native rule events and respects repeatLastEventSuffix=%s", (repeatLastEventSuffix) => {
+    const preview = buildNativePreview(
+      plan([element("lesson", "Sabbath School Lesson Study")]),
+      lessonProjection,
+      [{ id: "panelist", type: "participant", event: "Sabbath School Panelist", name: "Previous" }],
+      lessonConfig({ ...lessonRule, multiOverlay: { ...lessonRule.multiOverlay, repeatLastEventSuffix } }),
+    );
+
+    expect(preview.overlayPlan.map((item) => item.patch)).toEqual([
+      { name: "Dr. Avery Stone", title: "Lead Pastor", event: "Sabbath School Panelist" },
+      { name: "Morgan Lee", title: "", event: repeatLastEventSuffix ? "Sabbath School Panelist" : "Sabbath School" },
+      { name: "Jordan Guest", title: "", event: repeatLastEventSuffix ? "Sabbath School Panelist" : "Sabbath School" },
+    ]);
+    expect(preview.overlayPlan.map((item) => item.action)).toEqual(
+      repeatLastEventSuffix ? ["update", "clone", "clone"] : ["update", "create", "create"],
+    );
+    expect(preview.overlayPlan[1].resolutionNotice).toMatch(/multiple team roles/i);
+  });
+
+  it.each([undefined, "  Teaching  "])("matches the original element type and prioritizes item override %s", (eventLabel) => {
+    const preview = buildNativePreview(
+      plan([{ ...element("lesson", "A different title", { eventLabel }), sourceElementTypeRaw: "Sabbath School Lesson Study - Discussion" }]),
+      lessonProjection,
+      [],
+      lessonConfig(),
+    );
+
+    expect(preview.overlayPlan.map((item) => item.patch.event)).toEqual(
+      eventLabel ? ["Teaching", "Teaching", "Teaching"] : ["Sabbath School Panelist", "Sabbath School", "Sabbath School"],
+    );
+  });
+
+  it("uses the effective rule label without split suffixes in single mode", () => {
+    const preview = buildNativePreview(
+      plan([element("lesson", "Sabbath School Lesson Study")]),
+      lessonProjection,
+      [],
+      lessonConfig({ ...lessonRule, displayName: "  ", multiOverlay: { ...lessonRule.multiOverlay, mode: "single" } }),
+    );
+
+    expect(preview.overlayPlan.map((item) => item.patch.event)).toEqual(Array(3).fill("Sabbath School Lesson Study"));
+  });
+
+  it("keeps duplicate item events unsafe when a configured suffix collides with another item label", () => {
+    const preview = buildNativePreview(
+      plan([element("lesson", "Sabbath School Lesson Study"), element("other", "Sabbath School Panelist")]),
+      readyProjection([...lessonProjection.elements, {
+        elementId: "other",
+        assignees: [{ name: "Guest", memberStatus: "guest", roleStatus: "not-applicable" }],
+      }]),
+      [],
+      lessonConfig(),
+    );
+
+    expect(preview.overlayPlan.every((item) => item.action === "skip")).toBe(true);
+    expect(preview.overlayPlan[0].reason).toMatch(/unique event label/i);
+  });
+
+  it("honors disabled matching rules while leaving unmatched items automatically eligible", () => {
+    const preview = buildNativePreview(
+      plan([element("lesson", "Sabbath School Lesson Study", { eventLabel: "Override" }), element("prayer", "Prayer")]),
+      readyProjection([...lessonProjection.elements, {
+        elementId: "prayer",
+        assignees: [{ name: "Guest", memberStatus: "guest", roleStatus: "not-applicable" }],
+      }]),
+      [],
+      lessonConfig({ ...lessonRule, overlaySyncEnabled: false }),
+    );
+
+    expect(preview.overlayPlan).toHaveLength(1);
+    expect(preview.overlayPlan[0]).toMatchObject({ action: "create", patch: { name: "Guest", title: "", event: "Prayer" } });
+  });
+
   it("includes assigned participants without settings and projects current names and TeamRole titles in assignment order", () => {
     const servicePlan = plan([
       element("item-1", "Sermon"),

@@ -285,6 +285,7 @@ export const useServicePlanningImport = () => {
         sections: plan.sections,
         importData,
         participantOverlay,
+        servicePlanning: sp,
       });
       const state = store.getState();
       const songLibrary = selectSongLibrary(state).songs;

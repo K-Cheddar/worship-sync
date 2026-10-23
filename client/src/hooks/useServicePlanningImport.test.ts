@@ -312,15 +312,16 @@ describe("useServicePlanningImport overlay execution", () => {
     jest.useRealTimers();
   });
 
-  it("previews and explicitly syncs native assignees with legacy rules disabled", async () => {
+  it.each([false, true])("previews and syncs native assignees with URL import disabled and a matching rule=%s", async (withRule) => {
     jest.useFakeTimers();
+    const event = withRule ? "Sabbath School Panelist" : "Panelist";
 
     const existingOverlay: OverlayInfo = {
       id: "weekly-host",
       type: "participant",
       name: "Previous participant",
       title: "Previous title",
-      event: "Panelist",
+      event,
       description: "Keep this note",
       formatting: { participantOverlayPosition: "left" },
     };
@@ -344,9 +345,16 @@ describe("useServicePlanningImport overlay execution", () => {
       churchIntegrations: {
         servicePlanning: {
           enabled: false,
-          people: [],
+          people: [{ id: "legacy", names: ["Dr. Greg Baldeo"], displayName: "Legacy Name", title: "Legacy Title" }],
           sectionRules: [],
-          elementRules: [],
+          elementRules: withRule ? [{
+            id: "lesson",
+            matchElementType: "Sabbath School Lesson Study",
+            matchMode: "contains",
+            displayName: "Sabbath School",
+            nameSources: ["title", "ledBy"],
+            multiOverlay: { mode: "split", eventSuffixByPersonIndex: ["Panelist"] },
+          }] : [],
         },
       },
     });
@@ -362,7 +370,7 @@ describe("useServicePlanningImport overlay execution", () => {
           type: "free" as const,
           title: plainTextToRichText("Sabbath School Lesson Study"),
           positionId: "position-worship",
-          participantOverlay: { eventLabel: "Panelist" },
+          participantOverlay: withRule ? undefined : { eventLabel: "Panelist" },
           assignees: [{ id: "assignee-1", memberId: "member-1", name: "Old name" }],
         }],
       }],
@@ -394,7 +402,7 @@ describe("useServicePlanningImport overlay execution", () => {
       patch: {
         name: "Dr. Greg Baldeo",
         title: "Lead Pastor",
-        event: "Panelist",
+        event,
       },
     });
     const step = outline.preview.overlayPlan[0] as ExecutableOverlaySyncPlanItem;
@@ -411,7 +419,7 @@ describe("useServicePlanningImport overlay execution", () => {
     expect(storedDoc).toMatchObject({
       name: "Dr. Greg Baldeo",
       title: "Lead Pastor",
-      event: "Panelist",
+      event,
       description: "Keep this note",
       formatting: { participantOverlayPosition: "left" },
     });
