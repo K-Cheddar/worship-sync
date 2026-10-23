@@ -24,3 +24,15 @@ export const SERVICE_PLAN_UNLINKED_SONG_ICON_CLASS = "text-amber-300";
 
 export const SERVICE_PLAN_SCRIPTURE_CHIP_CLASS =
   "border-violet-500/50 text-violet-50";
+
+/** Controller-only resource pills retain their compact, wrapping layout. */
+export const getControllerServicePlanResourcePillClass = (type: string): string => {
+  const layout = "inline-flex min-w-0 max-w-full items-center gap-1 whitespace-normal rounded-full border px-2 py-0.5 text-left text-xs leading-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950";
+  if (type === "song") {
+    return `${layout} border-cyan-400/60 bg-cyan-950/60 text-cyan-50 hover:border-cyan-300 hover:bg-cyan-900/60 focus-visible:ring-cyan-300`;
+  }
+  if (type === "scripture") {
+    return `${layout} border-violet-400/60 bg-violet-950/60 text-violet-50 hover:border-violet-300 hover:bg-violet-900/60 focus-visible:ring-violet-300`;
+  }
+  return `${layout} border-neutral-500 bg-neutral-900 text-neutral-100 hover:border-neutral-300 hover:bg-neutral-800 focus-visible:ring-neutral-200`;
+};

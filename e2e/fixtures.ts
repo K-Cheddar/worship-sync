@@ -68,10 +68,11 @@ export const test = base.extend({
   page: async ({ page }, use, testInfo) => {
     const diagnostics: BrowserDiagnostic[] = [];
     const blockedEmailGeneratingAuthRequests: { count: number } = { count: 0 };
+    const blockedAutomaticSessionRenewals: { count: number } = { count: 0 };
     const blockedMailSlurpRequests: { count: number } = { count: 0 };
     const blockedUntrustedAuthRequests: { count: number } = { count: 0 };
 
-    if (["chromium", "smoke"].includes(testInfo.project.name)) {
+    if (["chromium", "smoke", "scheduling"].includes(testInfo.project.name)) {
       const trustedAuthOrigins = process.env.E2E_BASE_URL
         ? allowedE2EAuthOrigins(process.env.E2E_BASE_URL)
         : new Set<string>();
@@ -97,6 +98,11 @@ export const test = base.extend({
         const isNoEmailSessionRenewal =
           pathname === "/api/auth/session" && body.requestNewCode === false;
         if (isNoEmailSessionRenewal) {
+          if (["smoke", "scheduling"].includes(testInfo.project.name)) {
+            blockedAutomaticSessionRenewals.count += 1;
+            await route.abort("blockedbyclient");
+            return;
+          }
           await route.continue();
           return;
         }
@@ -164,6 +170,7 @@ export const test = base.extend({
       const report = JSON.stringify(
         {
           blockedEmailGeneratingAuthRequests: blockedEmailGeneratingAuthRequests.count,
+          blockedAutomaticSessionRenewals: blockedAutomaticSessionRenewals.count,
           blockedMailSlurpRequests: blockedMailSlurpRequests.count,
           blockedUntrustedAuthRequests: blockedUntrustedAuthRequests.count,
           diagnostics,
@@ -181,11 +188,12 @@ export const test = base.extend({
     if (
       !testFailure &&
       (blockedEmailGeneratingAuthRequests.count > 0 ||
+        blockedAutomaticSessionRenewals.count > 0 ||
         blockedMailSlurpRequests.count > 0 ||
         blockedUntrustedAuthRequests.count > 0)
     ) {
       throw new Error(
-        `The controller test safety guard blocked ${blockedEmailGeneratingAuthRequests.count} unsafe auth POST(s), ${blockedMailSlurpRequests.count} MailSlurp request(s), and ${blockedUntrustedAuthRequests.count} untrusted auth request(s). See sanitized browser-diagnostics.json.`,
+        `The browser test safety guard blocked ${blockedEmailGeneratingAuthRequests.count} unsafe auth POST(s), ${blockedAutomaticSessionRenewals.count} automatic smoke session renewal(s), ${blockedMailSlurpRequests.count} MailSlurp request(s), and ${blockedUntrustedAuthRequests.count} untrusted auth request(s). See sanitized browser-diagnostics.json.`,
       );
     }
     if (testFailure) throw testFailure;

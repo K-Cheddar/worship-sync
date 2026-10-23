@@ -17,10 +17,11 @@ const RESERVED_BOARD_SEGMENTS = new Set(["controller", "display"]);
 const LINK_PREVIEW_CRAWLER_PATTERN =
   /facebookexternalhit|Facebot|Twitterbot|LinkedInBot|Slackbot|Discordbot|WhatsApp|TelegramBot|SkypeUriPreview|Googlebot|bingbot|Applebot|Embedly|Quora Link Preview|outbrain|Pinterest|redditbot|Showyoubot|DuckDuckBot|MetaInspector|iframely/i;
 
-/** @typedef {"invite" | "sms-opt-in" | "service" | "schedule-response" | "team-schedule" | "team-intake" | "team-intake-recipient" | "board" | "board-present"} PublicShareKind */
+/** @typedef {"volunteer" | "invite" | "sms-opt-in" | "service" | "schedule-response" | "team-schedule" | "team-intake" | "team-intake-recipient" | "board" | "board-present"} PublicShareKind */
 
 /** @type {Record<PublicShareKind, { title: string, description: string }>} */
 const META_BY_KIND = {
+  volunteer: { title: "My Schedule | WorshipSync", description: "View and respond to your volunteer schedule." },
   invite: {
     title: "You're invited | WorshipSync",
     description: "Accept your invitation to join WorshipSync.",
@@ -94,6 +95,9 @@ export const matchPublicShareRoute = (pathname, search = "") => {
       canonicalPath: "/invite",
       hashTarget: `/#/invite${querySuffix}`,
     };
+  }
+  if (path === "/s") {
+    return { kind: "volunteer", canonicalPath: "/s", hashTarget: "/s" };
   }
 
   if (path === "/sms-opt-in") {

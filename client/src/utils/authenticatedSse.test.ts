@@ -63,10 +63,35 @@ describe("connectAuthenticatedSse", () => {
         headers: { Accept: "text/event-stream" },
         signal: expect.any(AbortSignal),
       }),
+      undefined,
     );
     expect(handlers.onOpen).toHaveBeenCalledTimes(1);
     expect(handlers.onMessage).toHaveBeenCalledWith(
       '{"type":"connected","churchId":"church-1"}',
+    );
+    close();
+  });
+
+  it("forwards optional display credentials without replacing SSE headers", async () => {
+    mockAuthenticatedApiFetch.mockResolvedValue(
+      openResponse(new ReadableStream<Uint8Array>({ start() {} })),
+    );
+    const handlers = emptyHandlers();
+    const close = connectAuthenticatedSse(
+      "api/churches/church-1/service-time-zone/stream",
+      handlers,
+      { "x-display-token": "display-credential" },
+    );
+    await flushMicrotasks();
+
+    expect(mockAuthenticatedApiFetch).toHaveBeenCalledWith(
+      "api/churches/church-1/service-time-zone/stream",
+      expect.objectContaining({
+        method: "GET",
+        headers: { Accept: "text/event-stream" },
+        signal: expect.any(AbortSignal),
+      }),
+      { "x-display-token": "display-credential" },
     );
     close();
   });

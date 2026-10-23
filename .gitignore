@@ -66,3 +66,8 @@ jest/
 
 # node-compilers cache
 node-compile-cache/
+
+artifacts/
+
+# Temporary Superpowers agent planning files
+docs/superpowers/plans/

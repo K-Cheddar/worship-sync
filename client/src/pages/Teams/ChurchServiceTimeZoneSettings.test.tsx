@@ -5,6 +5,7 @@ import ChurchServiceTimeZoneSettings from "./ChurchServiceTimeZoneSettings";
 const mockUpdateChurchServiceTimeZone = jest.fn();
 const mockRefreshChatContext = jest.fn();
 const mockRefreshTimeZone = jest.fn();
+const mockAdoptSavedTimeZone = jest.fn();
 const mockShowToast = jest.fn();
 let mockSavedTimeZone: string | null;
 let mockChurchTimeZone: {
@@ -13,6 +14,7 @@ let mockChurchTimeZone: {
   isConfigured: boolean;
   legacyTimeZoneSuggestion: string | null;
   refresh: typeof mockRefreshTimeZone;
+  adoptSavedTimeZone: typeof mockAdoptSavedTimeZone;
 };
 
 jest.mock("../../api/auth", () => ({
@@ -55,14 +57,17 @@ beforeEach(() => {
     isConfigured: false,
     legacyTimeZoneSuggestion: null,
     refresh: mockRefreshTimeZone,
+    adoptSavedTimeZone: mockAdoptSavedTimeZone,
   };
   mockSavedTimeZone = null;
   mockUpdateChurchServiceTimeZone.mockReset().mockImplementation(
     async (_churchId: string, serviceTimeZone: string) => {
       mockSavedTimeZone = serviceTimeZone;
       return {
+        success: true,
         serviceTimeZone,
         isConfigured: true,
+        serviceTimeZoneRevision: "revision-saved",
       };
     },
   );
@@ -75,6 +80,13 @@ beforeEach(() => {
         isConfigured: true,
       };
     }
+  });
+  mockAdoptSavedTimeZone.mockReset().mockImplementation((result) => {
+    mockChurchTimeZone = {
+      ...mockChurchTimeZone,
+      timeZone: result.serviceTimeZone,
+      isConfigured: result.isConfigured,
+    };
   });
   mockShowToast.mockReset();
   document.documentElement.classList.remove("dark");
@@ -129,7 +141,13 @@ describe("ChurchServiceTimeZoneSettings", () => {
     await waitFor(() => {
       expect(mockUpdateChurchServiceTimeZone).toHaveBeenCalledWith("church-1", value);
     });
-    expect(mockRefreshTimeZone).toHaveBeenCalledTimes(1);
+    expect(mockAdoptSavedTimeZone).toHaveBeenCalledWith({
+      success: true,
+      serviceTimeZone: value,
+      isConfigured: true,
+      serviceTimeZoneRevision: "revision-saved",
+    });
+    expect(mockRefreshTimeZone).not.toHaveBeenCalled();
     expect(mockRefreshChatContext).toHaveBeenCalledTimes(1);
   });
 

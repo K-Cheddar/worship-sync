@@ -64,9 +64,13 @@ export const createSmsDeliveryReconciler = ({
     const relatedId = intentId || attempt?.notificationIntentId;
     const intent = relatedId ? await read(COLLECTIONS.notificationIntents, relatedId) : null;
     const ignored = { ignored: true, updated: false, intent, attempt };
-    if (attemptId && (!attempt || (attempt.attemptId && attempt.attemptId !== attemptId))) return ignored;
+    // A matching intent pointer lets recovery fence a missing attempt as unknown.
+    const recoveryOwnsMissingAttempt = (recovery || update.outcome === "not_sent") && attemptId && !attempt &&
+      intent?.attemptId === attemptId && intent?.status === "sending";
+    if (attemptId && ((!attempt && !recoveryOwnsMissingAttempt) ||
+        (attempt?.attemptId && attempt.attemptId !== attemptId))) return ignored;
     if (churchId && attempt && attempt.churchId !== churchId) return ignored;
-    if (attemptId && intentId && attempt?.notificationIntentId !== intentId) return ignored;
+    if (attemptId && intentId && attempt && attempt.notificationIntentId !== intentId) return ignored;
     if (callbackToken !== undefined && (!attempt?.callbackToken || attempt.callbackToken !== callbackToken)) return ignored;
     if (callbackPhone && callbackPhone !== attempt?.phoneNumberSnapshot) return ignored;
     if (callbackAccount && attempt?.providerAccountId && callbackAccount !== attempt.providerAccountId) return ignored;
@@ -79,27 +83,43 @@ export const createSmsDeliveryReconciler = ({
         ["batchId", "formId", "occurrenceId", "cellKey", "intentType"].some((key) =>
           attempt[key] !== undefined && String(attempt[key] || "") !== String(intent[key] || ""))) return ignored;
     if (intent?.attemptId === attemptId && intent?.providerMessageId && update.providerMessageId && intent.providerMessageId !== update.providerMessageId) return ignored;
+    let neverStarted = false;
     if (recovery) {
       if (!intent || intent.churchId !== churchId || intent.attemptId !== expectedIntent.attemptId ||
           ["sourceId", "memberId", "recipientId", "batchId", "sendStartedAt", "approvedByUid"].some((key) => intent[key] !== expectedIntent[key])) return ignored;
       if (!hasConfirmedSmsEvidence(attempt) && !intent.providerMessageId && intent.status !== "sent" && (intent.status !== "sending" || !isStaleSending(intent))) return ignored;
     }
     const now = nowIso();
+    const intentEvidence = intent?.attemptId === attemptId && Boolean(intent.providerMessageId || (intent.status === "sent" && (!intent.providerAcceptedAttemptId || intent.providerAcceptedAttemptId === attemptId)));
+    // Absence or a legacy marker is ambiguous; only persisted false proves no provider call began.
+    neverStarted = Boolean(attempt && attemptId && intent?.attemptId === attemptId &&
+      (recovery || update.outcome === "not_sent") && !hasConfirmedSmsEvidence(attempt) &&
+      !intentEvidence && !intent?.providerMessageId && attempt.providerCallStarted === false);
+    const notSentWithoutDurableStartEvidence = update.outcome === "not_sent" &&
+      attempt?.providerCallStarted !== false;
+    const effectiveUpdate = neverStarted ? {
+      status: "failed", outcome: "not_sent",
+      failureCode: "dispatch_interrupted_before_provider",
+      failureMessage: "The message was not sent because sending stopped before contacting the provider.",
+    } : notSentWithoutDurableStartEvidence ? {
+      status: "pending", outcome: "unknown",
+      failureCode: "provider_start_unconfirmed",
+      failureMessage: "Delivery status could not be confirmed because durable evidence that sending had not started is unavailable.",
+    } : update;
     let nextAttempt = attempt;
     if (attempt) {
-      const intentEvidence = intent?.attemptId === attemptId && Boolean(intent.providerMessageId || (intent.status === "sent" && (!intent.providerAcceptedAttemptId || intent.providerAcceptedAttemptId === attemptId)));
-      const confirmed = hasConfirmedSmsEvidence(attempt) || intentEvidence || Boolean(update.providerMessageId) || update.outcome === "confirmed";
+      const confirmed = hasConfirmedSmsEvidence(attempt) || intentEvidence || Boolean(effectiveUpdate.providerMessageId) || effectiveUpdate.outcome === "confirmed";
       // Definitive rejection also survives a later generic interrupted handler.
       const definitive = ["failed", "not_sent"].includes(attempt.outcome);
       const patch = confirmed ? {
-        ...((update.providerMessageId || (intentEvidence && intent.providerMessageId)) ? { providerMessageId: update.providerMessageId || intent.providerMessageId } : {}),
+        ...((effectiveUpdate.providerMessageId || (intentEvidence && intent.providerMessageId)) ? { providerMessageId: effectiveUpdate.providerMessageId || intent.providerMessageId } : {}),
         outcome: "confirmed", status: nextSmsDeliveryStatus(
           hasConfirmedSmsEvidence(attempt) ? attempt.status : "pending",
-          (update.outcome === "confirmed" || update.providerMessageId) ? update.status || "accepted" : attempt.status || "accepted"),
+          (effectiveUpdate.outcome === "confirmed" || effectiveUpdate.providerMessageId) ? effectiveUpdate.status || "accepted" : attempt.status || "accepted"),
         acceptedAt: attempt.acceptedAt || (intentEvidence && intent.sentAt) || now,
-      } : definitive ? {} : update;
-      if (confirmed && (update.outcome === "confirmed" || update.providerMessageId) && update.status === patch.status) {
-        for (const key of ["failureCode", "failureMessage"]) if (update[key]) patch[key] = update[key];
+      } : definitive ? {} : effectiveUpdate;
+      if (confirmed && (effectiveUpdate.outcome === "confirmed" || effectiveUpdate.providerMessageId) && effectiveUpdate.status === patch.status) {
+        for (const key of ["failureCode", "failureMessage"]) if (effectiveUpdate[key]) patch[key] = effectiveUpdate[key];
         if (["sent", "delivered", "undelivered", "failed"].includes(patch.status)) {
           const timestamp = `${patch.status}At`;
           patch[timestamp] = attempt[timestamp] || now;
@@ -114,14 +134,15 @@ export const createSmsDeliveryReconciler = ({
     let nextIntent = intent;
     if (intent && (!attempt || intent.attemptId === attemptId)) {
       const confirmed = hasConfirmedSmsEvidence(nextAttempt) || intent.status === "sent" || intent.providerMessageId || intent.providerAcceptedAttemptId;
-      const outcome = nextAttempt?.outcome || update.outcome;
+      const outcome = nextAttempt?.outcome || effectiveUpdate.outcome;
       const patch = confirmed ? {
         status: "sent", outcome: "confirmed",
         ...(hasConfirmedSmsEvidence(nextAttempt) ? { providerAcceptedAttemptId: intent.providerAcceptedAttemptId || attemptId } : {}),
         ...(nextAttempt?.providerMessageId ? { providerMessageId: nextAttempt.providerMessageId } : {}),
         sentAt: intent.sentAt || nextAttempt?.acceptedAt || now,
       } : ["failed", "not_sent"].includes(outcome) ? {
-        status: "failed", outcome, approvalSnapshot: null,
+        status: neverStarted ? "preview" : "failed", outcome,
+        ...(!neverStarted ? { approvalSnapshot: null } : {}),
       } : { status: "unknown", outcome: "unknown" };
       if (Object.entries(patch).some(([key, value]) => intent[key] !== value)) {
         nextIntent = { ...intent, ...patch, updatedAt: now };

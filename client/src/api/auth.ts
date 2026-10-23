@@ -2,6 +2,7 @@ import {
   getApiBasePath,
   isPackagedElectronRenderer,
 } from "../utils/environment";
+import type { VolunteerAvailabilityRequest, VolunteerBulkResult } from "../pages/myScheduleOperations";
 import {
   getCsrfToken,
   getHumanApiToken,
@@ -24,6 +25,7 @@ import type {
   ServicePlanMicrophone,
   ServicePlanMicrophoneAudience,
   ServiceEquipment,
+  ServicePlanParticipantOverlayProjection,
 } from "../types/servicePlan";
 import type { ServicePlanningTeamAssignment } from "../types/servicePlanningImport";
 import type {
@@ -39,6 +41,8 @@ import type {
   MemberNotifications,
   NotificationIntent,
   NotificationIntentType,
+  NotificationIntentStatus,
+  SmsDeliveryAttemptStatus,
   NotificationBatch,
   ScheduleInitialSmsRecipient,
   ScheduleInitialSmsBatchHistoryEntry,
@@ -1131,13 +1135,16 @@ export const listChurchMembers = async (churchId: string) =>
     `api/churches/${churchId}/members`,
   );
 
+export type ChurchServiceTimeZoneResponse = {
+  success: boolean;
+  serviceTimeZone: string;
+  isConfigured: boolean;
+  serviceTimeZoneRevision: string;
+  legacyTimeZoneSuggestion?: string | null;
+};
+
 export const getChurchServiceTimeZone = async (churchId: string) =>
-  apiFetch<{
-    success: boolean;
-    serviceTimeZone: string;
-    isConfigured: boolean;
-    legacyTimeZoneSuggestion?: string | null;
-  }>(
+  apiFetch<ChurchServiceTimeZoneResponse>(
     `api/churches/${churchId}/service-time-zone`,
     { method: "GET", cache: "no-store" },
     getDisplayToken() ? { "x-display-token": getDisplayToken() } : undefined,
@@ -1147,11 +1154,7 @@ export const updateChurchServiceTimeZone = async (
   churchId: string,
   serviceTimeZone: string,
 ) =>
-  apiFetch<{
-    success: boolean;
-    serviceTimeZone: string;
-    isConfigured: boolean;
-  }>(
+  apiFetch<ChurchServiceTimeZoneResponse>(
     `api/churches/${churchId}/service-time-zone`,
     { method: "POST", body: JSON.stringify({ serviceTimeZone }) },
   );
@@ -1263,6 +1266,8 @@ export const updateCurrentServiceWorkspace = async (
 };
 
 export type TeamRosterMemberPayload = {
+  /** Revision the member editor loaded; protects roster and time-off edits from stale saves. */
+  expectedUpdatedAt?: string;
   title?: string;
   firstName: string;
   lastName: string;
@@ -1444,6 +1449,35 @@ export const getNotificationIntents = async (
   );
 };
 
+export type MessageHistoryEntry = {
+  historyId: string;
+  messageType: NotificationIntentType;
+  createdAt: string;
+  summary: string;
+  recipientCount: number;
+  status: "accepted" | "delivered" | "failed" | "unconfirmed" | "sending" | "not_sent";
+  recipients: {
+    memberId: string;
+    memberName: string;
+    status: NotificationIntentStatus;
+    deliveryStatus: SmsDeliveryAttemptStatus | "";
+    outcome: string;
+    failureMessage: string;
+  }[];
+};
+
+export const getMessageHistory = async (churchId: string, cursor = "") =>
+  apiFetch<{ success: boolean; entries: MessageHistoryEntry[]; nextCursor: string }>(
+    `api/churches/${churchId}/message-history${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+  );
+
+export const prepareCustomMessage = async (churchId: string, body: {
+  memberIds: string[]; message: string; requestKey: string;
+}) => apiFetch<{ success: boolean; batch: NotificationBatch }>(
+  `api/churches/${churchId}/notification-batches/custom/prepare`,
+  { method: "POST", body: JSON.stringify(body) },
+);
+
 export const getNotificationIntentPreview = async (
   churchId: string,
   intentId: string,
@@ -1532,6 +1566,7 @@ export const prepareAvailabilityNotificationBatch = async (
       NotificationIntentType,
       "availability_request" | "availability_reminder"
     >;
+      audienceType?: "not_contacted" | "nonresponders" | "specific" | "first" | "reminder";
     formId: string;
     memberIds: string[];
     requestKey: string;
@@ -1594,13 +1629,23 @@ export const dispatchAvailabilityNotificationBatch = async (
   churchId: string,
   batchId: string,
   approvalVersion: string,
+  acknowledgedUncertainMemberIds: string[] = [],
 ) =>
   apiFetch<{ success: boolean; batch: NotificationBatch }>(
     `api/churches/${churchId}/notification-batches/${encodeURIComponent(batchId)}/dispatch`,
     {
       method: "POST",
-      body: JSON.stringify({ confirmed: true, approvalVersion }),
+        body: JSON.stringify({ confirmed: true, approvalVersion, acknowledgedUncertainMemberIds }),
     },
+  );
+
+export const abandonPreparedAvailabilityBatch = async (
+  churchId: string,
+  batchId: string,
+) =>
+  apiFetch<{ success: boolean; batch: NotificationBatch }>(
+    `api/churches/${churchId}/notification-batches/${encodeURIComponent(batchId)}/abandon`,
+    { method: "POST", body: JSON.stringify({}) },
   );
 
 export const sendNotificationIntent = async (
@@ -1864,7 +1909,7 @@ export const searchTeamRosterCandidates = async (
   churchId: string,
   teamId: string,
   query: string,
-) => apiFetch<{ candidates: TeamRosterCandidate[] }>(
+) => apiFetch<{ candidates: TeamRosterCandidate[]; hasMore?: boolean }>(
   `api/churches/${churchId}/teams/${teamId}/roster-candidates?q=${encodeURIComponent(query)}`,
 );
 
@@ -1959,6 +2004,8 @@ export type MySchedulePlanElement = {
 
 export type MySchedulePlan = {
   planId: string;
+  /** Service whose saved plan belongs to this occurrence date. */
+  serviceId?: string;
   name: string;
   /** True when share links have been enabled for this plan. */
   published?: boolean;
@@ -1993,6 +2040,8 @@ export type MyScheduleOccurrence = {
    * only when the plan is already published.
    */
   plan: MySchedulePlan | null;
+  /** All saved plans matched to a combined occurrence; absent on older servers. */
+  plans?: MySchedulePlan[];
 };
 
 /**
@@ -2125,6 +2174,59 @@ export const respondToMyAssignment = async (
     `api/churches/${churchId}/my-assignments/respond`,
     { method: "POST", body: JSON.stringify(body) },
   );
+
+export type AcceptPendingAssignmentsResponse = {
+  success: boolean;
+  newlyAccepted: number;
+  alreadyAccepted: number;
+  alreadyDeclined: number;
+  skipped: number;
+  failedScheduleCount: number;
+  schedules: Array<{
+    scheduleId: string;
+    status: "updated" | "unchanged" | "skipped" | "failed";
+    newlyAccepted: number;
+    alreadyAccepted: number;
+    alreadyDeclined: number;
+    skipped: number;
+    errorCode?: string;
+  }>;
+  authorizationChanged: boolean;
+  hasMore: boolean;
+  nextCursor: string | null;
+};
+
+/**
+ * Accepts only unanswered upcoming assignments across all published schedules.
+ * The cursor pages server-discovered schedule groups; it never selects an
+ * owner, member, or schedule target for the operation.
+ */
+export const acceptPendingMyAssignments = async (
+  churchId: string,
+  afterScheduleId?: string | null,
+) =>
+  apiFetch<AcceptPendingAssignmentsResponse>(
+    `api/churches/${churchId}/my-assignments/accept-pending`,
+    {
+      method: "POST",
+      body: JSON.stringify(afterScheduleId ? { afterScheduleId } : {}),
+    },
+  );
+export const acceptMyUnansweredAssignments = (churchId: string, afterScheduleId?: string) => apiFetch<VolunteerBulkResult>(
+  `api/churches/${churchId}/my-assignments/accept-unanswered`, { method: "POST", body: JSON.stringify(afterScheduleId ? { afterScheduleId } : {}) },
+);
+export const getMyVolunteerAvailability = (churchId: string) => apiFetch<{ success: boolean; requests: VolunteerAvailabilityRequest[] }>(
+  `api/churches/${churchId}/my-availability`,
+);
+export const submitMyVolunteerAvailability = (churchId: string, recipientId: string, occurrenceAvailability: VolunteerAvailabilityRequest["availability"]) => apiFetch<{ success: boolean }>(
+  `api/churches/${churchId}/my-availability`, { method: "POST", body: JSON.stringify({ recipientId, occurrenceAvailability }) },
+);
+
+export const manageVolunteerPersonalAccess = (churchId: string, memberId: string,
+  action: "status" | "prepare" | "replace" | "revoke" | "restore" | "verify-contact/start" | "verify-contact/complete", body: unknown = {}) => apiFetch<{
+    success: boolean; status?: string; expiresAt?: number; url?: string; challengeId?: string;
+  }>(`api/churches/${churchId}/team-roster-members/${memberId}/personal-access/${action}`,
+    action === "status" ? {} : { method: "POST", body: JSON.stringify(body) });
 
 /**
  * Replaces the signed-in person's own blockout dates.
@@ -2678,7 +2780,11 @@ export const getServicePlanAssignments = async (
   churchId: string,
   planKey: string,
 ) =>
-  apiFetch<{ success: boolean; assignments: ServicePlanningTeamAssignment[] }>(
+  apiFetch<{
+    success: boolean;
+    assignments: ServicePlanningTeamAssignment[];
+    participantOverlay?: ServicePlanParticipantOverlayProjection;
+  }>(
     `api/churches/${churchId}/service-plans/${encodeURIComponent(planKey)}/assignments`,
     { method: "GET" },
   );
@@ -3256,7 +3362,7 @@ export const previewPortableImport = async (
   csv: string,
   mapping: Record<string, string>,
   timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-  options: { destinationTeamId?: string; updateMode?: "merge" | "replace"; clearBlankScalars?: boolean; positionActions?: PortablePositionAction[]; teamActions?: PortableTeamAction[] } = {},
+  options: { destinationTeamId?: string; updateMode?: "merge" | "replace"; clearBlankScalars?: boolean; positionActions?: PortablePositionAction[]; teamActions?: PortableTeamAction[]; memberMatches?: Record<number, string> } = {},
 ) =>
   apiFetch<{
     success: boolean;
@@ -3288,7 +3394,7 @@ export const commitPortableImport = async (
     expectedStateHash?: string;
   }>,
   timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-  options: { destinationTeamId?: string; updateMode?: "merge" | "replace"; clearBlankScalars?: boolean; previewToken?: string; previewCsvHash?: string; mapping?: Record<string, string>; positionActions?: PortablePositionAction[]; teamActions?: PortableTeamAction[] } = {},
+  options: { destinationTeamId?: string; updateMode?: "merge" | "replace"; clearBlankScalars?: boolean; previewToken?: string; previewCsvHash?: string; mapping?: Record<string, string>; positionActions?: PortablePositionAction[]; teamActions?: PortableTeamAction[]; memberMatches?: Record<number, string> } = {},
 ) =>
   apiFetch<{
     success: boolean;

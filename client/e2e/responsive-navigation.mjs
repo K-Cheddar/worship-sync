@@ -241,7 +241,7 @@ try {
   }
   for(const [route,ready] of [
     ['schedules',()=>page.getByRole('heading',{name:'Schedules',exact:true}).waitFor()],
-    ['messages',()=>page.getByRole('heading',{name:'Volunteer messages',exact:true}).waitFor()],
+    ['messages',()=>page.getByRole('heading',{name:'Messages',exact:true}).waitFor()],
     ['groups',()=>page.getByTestId('teams-create-panel-list').waitFor()],
   ]){
     for(const width of [320,375,390,768,1024,1440]){
@@ -293,7 +293,12 @@ try {
   assert(Math.abs(backWorkspace.y+backWorkspace.height-fallbackBottom)<=2,'Back restored a stale mobile height constraint');
   await page.goForward();
   await page.waitForURL(url=>url.hash.endsWith('/teams-and-services/messages'));
-  await page.getByRole('heading',{name:'Volunteer messages',exact:true}).waitFor();
+  await page.getByRole('heading',{name:'Messages',exact:true}).waitFor();
+  await page.getByRole('button',{name:'+ New message'}).click();
+  await page.getByRole('dialog',{name:'New message'}).waitFor();
+  assert(await page.getByRole('textbox',{name:'Message'}).isVisible(),'custom message composer did not open from the routed Messages page');
+  await page.getByRole('dialog',{name:'New message'}).getByRole('button',{name:'Cancel'}).click();
+  await page.getByRole('dialog',{name:'New message'}).waitFor({state:'hidden'});
   console.log('PASS production Forms layout, lazy fallback dimensions, nested list reachability, and browser back/forward');
 
   for(const width of [320,375,390,768,1024,1440]){

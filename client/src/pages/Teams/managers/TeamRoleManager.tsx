@@ -2,7 +2,7 @@ import { useCallback, useContext, useMemo, useRef, useState } from "react";
 import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 import TextArea from "../../../components/TextArea/TextArea";
-import EntityIconPicker from "../EntityIconPicker";
+import EntityIconPicker from "@/components/icons/EntityIconPicker";
 import DeleteModal from "../../../components/Modal/DeleteModal";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useToast } from "../../../context/toastContext";

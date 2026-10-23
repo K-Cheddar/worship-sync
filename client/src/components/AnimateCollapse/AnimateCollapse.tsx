@@ -7,6 +7,8 @@ export type AnimateCollapseProps = {
   open: boolean;
   children: ReactNode;
   className?: string;
+  /** Called after the keep-mounted collapse transition finishes. */
+  onCloseComplete?: () => void;
   /**
    * When true, children unmount after the close animation finishes.
    * Open still animates from zero height on mount.
@@ -33,6 +35,7 @@ const AnimateCollapse = ({
   open,
   children,
   className,
+  onCloseComplete,
   unmountOnExit = false,
 }: AnimateCollapseProps) => {
   const [rendered, setRendered] = useState(open);
@@ -63,7 +66,18 @@ const AnimateCollapse = ({
   // Keep-mounted path: drive height + a11y from `open` on the same render.
   if (!unmountOnExit) {
     return (
-      <div className={collapseFrameClassName(open, className)}>
+      <div
+        className={collapseFrameClassName(open, className)}
+        onTransitionEnd={(event) => {
+          if (
+            event.target === event.currentTarget &&
+            event.propertyName === "grid-template-rows" &&
+            !open
+          ) {
+            onCloseComplete?.();
+          }
+        }}
+      >
         <div
           className="min-h-0 overflow-hidden"
           inert={open ? undefined : true}

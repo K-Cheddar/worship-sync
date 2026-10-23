@@ -1574,6 +1574,7 @@ describe("Media", () => {
     await waitFor(() => expect(mockRepairPersistedMediaRouteFolders).toHaveBeenCalledWith(
       db, new Set(["folder-1"]), MEDIA_LIBRARY_ROOT_VIEW,
     ));
+    expect(screen.queryByRole("dialog", { name: 'Delete folder: "Sermon slides"' })).not.toBeInTheDocument();
 
     const renamed = { ...original, name: "Concurrent rename" };
     const addedDuringRepair = { ...baseMedia, id: "added-during-repair", name: "Concurrent addition", folderId: "folder-1" };
@@ -1862,6 +1863,33 @@ describe("Media", () => {
     });
   });
 
+  it.each(["single", "multiple"] as const)(
+    "closes the %s media confirmation before its tombstone finishes",
+    async (selection) => {
+      const first = makeBaseState().media.list[0];
+      const rows = selection === "multiple"
+        ? [first, { ...first, id: "media-2", name: "Second image" }]
+        : [first];
+      mockState = makeBaseState({ media: { list: rows, folders: [] } });
+      mockSelectedMedia = { ...rows[0], source: "uploaded" };
+      mockSelectedMediaIds = new Set(rows.map((row) => row.id));
+      const tombstone = deferred<"deleted">();
+      mockDeleteMediaItemAtRevisionFromPouch.mockReturnValueOnce(tombstone.promise);
+      await renderMedia();
+
+      await userEvent.click(screen.getByRole("button", {
+        name: selection === "multiple" ? "Delete 2 items" : "Delete",
+      }));
+      const confirm = screen.getByRole("button", { name: "confirm-delete" });
+      fireEvent.click(confirm);
+      fireEvent.click(confirm);
+
+      await waitFor(() => expect(mockDeleteMediaItemAtRevisionFromPouch).toHaveBeenCalledTimes(1));
+      expect(screen.queryByRole("button", { name: "confirm-delete" })).not.toBeInTheDocument();
+      await act(async () => { tombstone.resolve("deleted"); await tombstone.promise; });
+    },
+  );
+
   it("tracks deleting a folder subtree in Activity", async () => {
     const mediaRow = {
       ...makeBaseState().media.list[0],
@@ -1942,6 +1970,37 @@ describe("Media", () => {
     expect(mockGetTransfer(folderTransferId)).toBeUndefined();
     await act(async () => { rejectDelete(new Error("disk unavailable after unmount")); });
     expect(mockGetTransfer(folderTransferId)).toBeUndefined();
+  });
+
+  it("closes an accepted folder confirmation immediately and ignores repeated confirmation clicks", async () => {
+    const mediaRow = {
+      ...makeBaseState().media.list[0],
+      id: "pending-folder-media",
+      name: "Folder image",
+      folderId: "folder-1",
+      source: "uploaded",
+    };
+    mockState = makeBaseState({
+      media: {
+        list: [mediaRow],
+        folders: [{ id: "folder-1", name: "Sermon slides", parentId: null }],
+      },
+    });
+    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-default": "folder-1" };
+    mockState.undoable.present.preferences.mediaRouteFoldersControllerProfileId = "presentation";
+    const tombstone = deferred<"deleted">();
+    mockDeleteMediaItemAtRevisionFromPouch.mockReturnValueOnce(tombstone.promise);
+    await renderMedia();
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete folder" }));
+    await userEvent.click(screen.getByRole("radio", { name: "Delete folder and contents" }));
+    const confirm = screen.getByRole("button", { name: /^Delete$/ });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+
+    await waitFor(() => expect(mockDeleteMediaItemAtRevisionFromPouch).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("dialog", { name: 'Delete folder: "Sermon slides"' })).not.toBeInTheDocument();
+    await act(async () => { tombstone.resolve("deleted"); await tombstone.promise; });
   });
 
   it("deletes each selected row by its known item id", async () => {

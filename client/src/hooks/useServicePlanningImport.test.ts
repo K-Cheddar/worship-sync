@@ -7,12 +7,13 @@ import {
   getChangedOverlayPatch,
   getRepeatedOverlayDedupeKey,
   overlayPlanHasExecutableChange,
+  useServicePlanningImport,
+  type ExecutableOverlaySyncPlanItem,
 } from "./useServicePlanningImport";
 import { buildServicePlanningPreview } from "../integrations/servicePlanning/buildServicePlanningPreview";
 import type { OutlineItemCandidate } from "../types/servicePlanningImport";
 import type { OverlayInfo } from "../types";
 import type { ServicePlanningConfig } from "../types/integrations";
-import { useServicePlanningImport } from "./useServicePlanningImport";
 import { ControllerInfoContext } from "../context/controllerInfo";
 import { GlobalInfoContext } from "../context/globalInfo";
 import overlaysReducer, {
@@ -22,6 +23,7 @@ import overlaysReducer, {
 } from "../store/overlaysSlice";
 import { overlaySlice } from "../store/overlaySlice";
 import { normalizeOverlayForSync } from "../utils/overlayUtils";
+import { plainTextToRichText } from "../types/richText";
 
 type SyncTestState = {
   allItems: { list: never[]; isAllItemsLoading: boolean };
@@ -90,6 +92,7 @@ const createSyncTestStore = (initialOverlays: OverlayInfo[]) => {
 const servicePlanningHookWrapper = (
   store: ReturnType<typeof createSyncTestStore>,
   db: { get: (id: string) => Promise<unknown>; put: (doc: unknown) => Promise<unknown> },
+  globalInfo: Record<string, unknown> = {},
 ) => ({ children }: PropsWithChildren) =>
   React.createElement(
     Provider,
@@ -100,7 +103,7 @@ const servicePlanningHookWrapper = (
         { value: { db } as never },
         React.createElement(
           GlobalInfoContext.Provider,
-          { value: {} as never },
+          { value: globalInfo as never },
           children,
         ),
       ),
@@ -307,6 +310,111 @@ describe("useServicePlanningImport overlay execution", () => {
   afterEach(() => {
     jest.runOnlyPendingTimers();
     jest.useRealTimers();
+  });
+
+  it("previews and explicitly syncs native assignees with legacy rules disabled", async () => {
+    jest.useFakeTimers();
+
+    const existingOverlay: OverlayInfo = {
+      id: "weekly-host",
+      type: "participant",
+      name: "Previous participant",
+      title: "Previous title",
+      event: "Panelist",
+      description: "Keep this note",
+      formatting: { participantOverlayPosition: "left" },
+    };
+    let storedDoc: Record<string, unknown> = {
+      _id: "overlay-weekly-host",
+      _rev: "1-a",
+      docType: "overlay",
+      ...existingOverlay,
+    };
+    const db = {
+      get: jest.fn(async () => ({ ...storedDoc })),
+      put: jest.fn(async (doc: unknown) => {
+        storedDoc = { ...(doc as Record<string, unknown>), _rev: "2-b" };
+        return { ok: true, rev: "2-b" };
+      }),
+    };
+    const store = createSyncTestStore([existingOverlay]);
+    const wrapper = servicePlanningHookWrapper(store, db, {
+      churchId: "church-1",
+      churchIntegrationsStatus: "ready",
+      churchIntegrations: {
+        servicePlanning: {
+          enabled: false,
+          people: [],
+          sectionRules: [],
+          elementRules: [],
+        },
+      },
+    });
+    const { result } = renderHook(() => useServicePlanningImport(), { wrapper });
+    const nativePlan = {
+      planKey: "service@2026-10-18",
+      name: "Sunday service",
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        elements: [{
+          id: "element-panel",
+          type: "free" as const,
+          title: plainTextToRichText("Sabbath School Lesson Study"),
+          positionId: "position-worship",
+          participantOverlay: { enabled: true, eventLabel: "Panelist" },
+          assignees: [{ id: "assignee-1", memberId: "member-1", name: "Old name" }],
+        }],
+      }],
+    };
+    const participantOverlay = {
+      status: "ready" as const,
+      elements: [{
+        elementId: "element-panel",
+        assignees: [{
+          name: "Dr. Greg Baldeo",
+          memberStatus: "resolved" as const,
+          roleStatus: "resolved" as const,
+          roleTitle: "Lead Pastor",
+        }],
+      }],
+    };
+
+    let outline!: Awaited<ReturnType<typeof result.current.loadPlanPreview>>;
+    await act(async () => {
+      outline = await result.current.loadPlanPreview(nativePlan, [], participantOverlay);
+    });
+
+    expect(result.current.isServicePlanningEnabled).toBe(false);
+    expect(outline.preview.overlayPlan).toHaveLength(1);
+    expect(outline.preview.overlayPlan[0]).toMatchObject({
+      action: "update",
+      targetOverlayId: "weekly-host",
+      duplicateExactMatchesAreAmbiguous: true,
+      patch: {
+        name: "Dr. Greg Baldeo",
+        title: "Lead Pastor",
+        event: "Panelist",
+      },
+    });
+    const step = outline.preview.overlayPlan[0] as ExecutableOverlaySyncPlanItem;
+    expect(step.action).toBe("update");
+
+    let executionResult!: Awaited<ReturnType<typeof result.current.executeOverlaySyncStep>>;
+    await act(async () => {
+      const pending = result.current.executeOverlaySyncStep(step);
+      await jest.advanceTimersByTimeAsync(500);
+      executionResult = await pending;
+    });
+
+    expect(executionResult.overlaysUpdated).toBe(1);
+    expect(storedDoc).toMatchObject({
+      name: "Dr. Greg Baldeo",
+      title: "Lead Pastor",
+      event: "Panelist",
+      description: "Keep this note",
+      formatting: { participantOverlayPosition: "left" },
+    });
   });
 
   it("rechecks stale create steps, replaces manual names, and preserves persisted order and settings", async () => {

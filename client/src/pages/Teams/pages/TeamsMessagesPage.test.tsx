@@ -1,629 +1,565 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import TeamsMessagesPage from "./TeamsMessagesPage";
 import { useTeamsPage } from "../TeamsPageContext";
-import {
-  dispatchAvailabilityNotificationBatch,
-  getAvailabilityNotificationBatch,
-  getNotificationIntentPreview,
-  getNotificationIntents,
-  getTeamIntakeSmsAttempts,
-  prepareAvailabilityNotificationBatch,
-  sendNotificationIntent,
-} from "../../../api/auth";
-import type { NotificationBatch } from "../../../api/authTypes";
+import { dispatchAvailabilityNotificationBatch, getAvailabilityNotificationBatch, getMessageHistory, prepareCustomMessage } from "../../../api/auth";
+import { GlobalInfoContext } from "../../../context/globalInfo";
 
 jest.mock("../TeamsPageContext", () => ({ useTeamsPage: jest.fn() }));
 jest.mock("../../../api/auth", () => ({
   dispatchAvailabilityNotificationBatch: jest.fn(),
   getAvailabilityNotificationBatch: jest.fn(),
-  getNotificationIntentPreview: jest.fn(),
-  getNotificationIntents: jest.fn(),
-  getTeamIntakeSmsAttempts: jest.fn(),
-  prepareAvailabilityNotificationBatch: jest.fn(),
-  sendNotificationIntent: jest.fn(),
+  getMessageHistory: jest.fn(),
+  prepareCustomMessage: jest.fn(),
 }));
 
-const mockUseTeamsPage = jest.mocked(useTeamsPage);
-const mockGetBatch = jest.mocked(getAvailabilityNotificationBatch);
-const mockGetIntents = jest.mocked(getNotificationIntents);
-const mockGetSmsAttempts = jest.mocked(getTeamIntakeSmsAttempts);
-const mockGetIntentPreview = jest.mocked(getNotificationIntentPreview);
-const mockPrepare = jest.mocked(prepareAvailabilityNotificationBatch);
-const mockDispatch = jest.mocked(dispatchAvailabilityNotificationBatch);
-const mockSendIntent = jest.mocked(sendNotificationIntent);
-
-const batch: NotificationBatch = {
-  batchId: "batch_1",
-  churchId: "church_1",
-  formId: "form_1",
-  intentType: "availability_request",
-  reminderRound: 0,
-  status: "prepared",
-  selectedMemberIds: ["member_1"],
-  intentIds: ["intent_1"],
-  approvalVersion: "batch-review-v1",
-  recipients: [{
-    memberId: "member_1", memberName: "Rae Rivera", recipientId: "recipient_1",
-    maskedPhoneNumber: "••• ••• 0123", eligibilityStatus: "", eligible: true,
-    intentId: "intent_1", status: "preview", segmentCount: 2,
-    approvalVersion: "intent-review-v1",
-    message: "Church: please respond at https://example.test/a/private-token. Reply STOP to opt out.",
-  }],
-  summary: {
-    requested: 1, selected: 1, eligible: 1, awaitingDispatch: 1, alreadySent: 0, excluded: 0, totalSegments: 2,
-    sent: 0, delivered: 0, failed: 0, uncertain: 0, responded: 0,
-    waiting: 0, optedOut: 0,
-  },
+const members = [
+  { memberId: "m1", churchId: "church", firstName: "Alex", lastName: "Lane", positionIds: ["p1"], phoneNumber: "+15555550101" },
+  { memberId: "m2", churchId: "church", firstName: "Blair", lastName: "Rivera", positionIds: ["p1", "p2"], phoneNumber: "+15555550102" },
+  { memberId: "m3", churchId: "church", firstName: "Casey", lastName: "Stone", positionIds: ["p2"], phoneNumber: "" },
+];
+const batch = {
+  batchId: "b1", churchId: "church", intentType: "custom_message", status: "prepared",
+  selectedMemberIds: ["m1", "m2"], intentIds: ["i1", "i2"], approvalVersion: "review-v1",
+  message: "Practice Friday. Reply STOP to opt out.",
+  recipients: [
+    { memberId: "m1", memberName: "Alex Lane", maskedPhoneNumber: "••• ••• 0101", destinationFingerprint: "destination-m1-v1", approvalBindingFingerprint: "binding-m1-v1", eligible: true, status: "preview", segmentCount: 1 },
+    { memberId: "m2", memberName: "Blair Rivera", maskedPhoneNumber: "••• ••• 0102", destinationFingerprint: "destination-m2-v1", approvalBindingFingerprint: "binding-m2-v1", eligible: true, status: "preview", segmentCount: 1 },
+  ],
+  summary: { eligible: 2, excluded: 0, totalSegments: 2 },
 };
 
 beforeEach(() => {
   jest.clearAllMocks();
   window.localStorage.clear();
-  mockUseTeamsPage.mockReturnValue({
-    churchId: "church_1",
-    canEditTeams: true,
-    pageData: {
-      intakeForms: [{ formId: "form_1", name: "October availability", startDate: "2026-10-01", endDate: "2026-10-31", active: true }],
-      schedules: [],
-      teams: [], positions: [], intakeRecipients: [],
-      smsEligibilityByMemberId: { member_1: { status: "enabled", eligible: true } },
-      members: [{ memberId: "member_1", firstName: "Rae", lastName: "Rivera", churchId: "church_1", phoneNumber: "+15555550123", positionIds: [] }],
-    },
+  jest.mocked(useTeamsPage).mockReturnValue({
+    churchId: "church", canEditTeams: true, canEditTeam: () => true,
+    pageData: { members, positions: [{ positionId: "p1", teamId: "t1" }, { positionId: "p2", teamId: "t2" }],
+      teams: [{ teamId: "t1", name: "Praise Team", memberIds: ["m1", "m2"] },
+        { teamId: "t2", name: "Tech Team", memberIds: ["m2", "m3"] }],
+      smsEligibilityByMemberId: { m1: { eligible: true }, m2: { eligible: true }, m3: { eligible: false } } },
   } as unknown as ReturnType<typeof useTeamsPage>);
-  mockGetIntents.mockResolvedValue({ success: true, intents: [], nextCursor: "", limit: 50 });
-  mockGetSmsAttempts.mockResolvedValue({ success: true, attempts: [] });
-  mockGetIntentPreview.mockResolvedValue({
-    success: true,
-    preview: {
-      intentId: "intent_1", intentType: "availability_request", memberId: "member_1",
-      message: "Exact server message for Rae.", approvalVersion: "fresh-approval-v3", expiresAt: 100,
-      eligible: true, eligibilityStatus: "enabled", phoneNumberSnapshot: "+15555550987",
-      characterCount: 31, segmentCount: 2, maskedPhoneNumber: "••• ••• 0987",
-    },
-  });
-  mockSendIntent.mockResolvedValue({ success: true });
-  mockGetBatch.mockResolvedValue({ success: true, batch });
-  mockPrepare.mockResolvedValue({ success: true, batch });
-  mockDispatch.mockResolvedValue({ success: true, batch: { ...batch, status: "sent", summary: { ...batch.summary, sent: 1 } } });
+  jest.mocked(getMessageHistory).mockResolvedValue({ success: true, entries: [], nextCursor: "" });
+  jest.mocked(getAvailabilityNotificationBatch).mockResolvedValue({ success: true, batch: batch as never });
+  jest.mocked(prepareCustomMessage).mockResolvedValue({ success: true, batch: batch as never });
+  jest.mocked(dispatchAvailabilityNotificationBatch).mockResolvedValue({ success: true, batch: batch as never });
 });
 
-const recentIntent = {
-  intentId: "intent_1", churchId: "church_1", intentType: "availability_request" as const,
-  sourceType: "team_intake_recipient" as const, sourceId: "recipient_1", sourceVersion: "v1",
-  memberId: "member_1", formId: "form_1", recipientId: "recipient_1", occurrenceId: "occurrence_1",
-  channel: "sms" as const, status: "ready" as const, createdAt: "2026-10-01T12:00:00.000Z",
-  updatedAt: "2026-10-01T12:00:00.000Z", previewEligible: true,
-};
+const renderForAdmin = (administratorId = "admin-1") => render(
+  <GlobalInfoContext.Provider value={{ sessionKind: "human", userId: administratorId } as never}>
+    <TeamsMessagesPage />
+  </GlobalInfoContext.Provider>,
+);
 
-async function openRecentMessages(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
-  await user.click(screen.getByRole("option", { name: /October availability/ }));
-  await screen.findByRole("button", { name: "Send individually" });
-  await user.click(screen.getByRole("button", { name: "Send individually" }));
-  expect(mockGetIntentPreview).toHaveBeenCalledWith("church_1", "intent_1");
-  await screen.findByRole("dialog", { name: "Send this text message?" });
-}
-
-test("recent message SMS review shows the fresh server snapshot and Cancel does not send", async () => {
+it("opens history first and cancels without sending", async () => {
   const user = userEvent.setup();
-  mockGetIntents.mockResolvedValue({ success: true, intents: [recentIntent], nextCursor: "", limit: 50 });
-  render(<TeamsMessagesPage />);
-
-  await openRecentMessages(user);
-  const dialog = screen.getByRole("dialog", { name: "Send this text message?" });
-  expect(within(dialog).getByText("Rae Rivera")).toBeInTheDocument();
-  expect(within(dialog).getByText("+15555550987")).toBeInTheDocument();
-  expect(within(dialog).getByText("Exact server message for Rae.")).toBeInTheDocument();
-  expect(within(dialog).getByText("This longer message counts as 2 texts.")).toBeInTheDocument();
+  renderForAdmin();
+  expect(await screen.findByText("Message history")).toBeInTheDocument();
+  expect(screen.queryByLabelText(/Search volunteers/)).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "+ New message" }));
+  expect(screen.getByLabelText(/Search volunteers/)).toBeInTheDocument();
+  expect(screen.getByText("0 selected · 0 eligible · 0 excluded")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Cancel" }));
-
-  expect(screen.queryByRole("dialog", { name: "Send this text message?" })).not.toBeInTheDocument();
-  expect(mockSendIntent).not.toHaveBeenCalled();
+  expect(dispatchAvailabilityNotificationBatch).not.toHaveBeenCalled();
 });
 
-test("recent message send uses the fresh preview approval version and refreshes history", async () => {
-  const user = userEvent.setup();
-  mockGetIntents.mockResolvedValue({ success: true, intents: [recentIntent], nextCursor: "", limit: 50 });
-  render(<TeamsMessagesPage />);
-
-  await openRecentMessages(user);
-  await user.click(screen.getByRole("button", { name: /^Send$/ }));
-
-  await waitFor(() => expect(mockSendIntent).toHaveBeenCalledWith("church_1", "intent_1", "fresh-approval-v3"));
-  await waitFor(() => expect(mockGetIntents.mock.calls.length).toBeGreaterThanOrEqual(2));
-  expect(await screen.findByText("Your text message was sent. Delivery updates may take a moment.")).toBeInTheDocument();
+it("shows the shared table loading state while history is pending", () => {
+  jest.mocked(getMessageHistory).mockImplementationOnce(() => new Promise(() => {}));
+  renderForAdmin();
+  const loading = screen.getByRole("region", { name: "Loading messages" });
+  expect(within(loading).getByRole("table", { name: "Message history table" })).toBeInTheDocument();
+  expect(screen.queryByText("Loading message history…")).not.toBeInTheDocument();
 });
 
-test("a confirmed send stays successful when message history cannot be refreshed", async () => {
+it("shows message history in a filterable table", async () => {
+  jest.mocked(getMessageHistory).mockResolvedValue({ success: true, nextCursor: "", entries: [{
+    historyId: "h1", messageType: "custom_message", summary: "Practice Friday", createdAt: "2026-10-22T12:00:00.000Z",
+    recipientCount: 1, status: "accepted", recipients: [{ memberId: "m1", memberName: "Alex Lane", status: "sent" }],
+  }] as never });
   const user = userEvent.setup();
-  mockGetIntents
-    .mockResolvedValueOnce({ success: true, intents: [recentIntent], nextCursor: "", limit: 50 })
-    .mockRejectedValueOnce(new Error("History temporarily unavailable."));
-  render(<TeamsMessagesPage />);
-
-  await openRecentMessages(user);
-  await user.click(screen.getByRole("button", { name: /^Send$/ }));
-
-  expect(await screen.findByRole("status")).toHaveTextContent(
-    "Your text message was sent, but we couldn't refresh message history. Try refreshing it.",
-  );
-  expect(screen.getByRole("alert")).toHaveTextContent("Could not verify consent and message history");
-  expect(screen.getByRole("alert")).not.toHaveTextContent(/wasn't sent|could not send/i);
-  expect(screen.queryByRole("button", { name: "Send individually" })).not.toBeInTheDocument();
+  renderForAdmin();
+  await screen.findByRole("button", { name: "View details for Practice Friday" });
+  const table = screen.getByRole("table", { name: "Message history table" });
+  expect(within(table).getByRole("columnheader", { name: "Recipients" })).toBeInTheDocument();
+  expect(within(table).getByRole("button", { name: "View details for Practice Friday" })).toBeInTheDocument();
+  await user.click(within(table).getByRole("button", { name: "View details for Practice Friday" }));
+  const details = screen.getByRole("dialog", { name: "Message details" });
+  expect(within(details).getByText("Alex Lane")).toBeInTheDocument();
+  await user.click(within(details).getByRole("button", { name: "Close modal" }));
+  await user.click(screen.getByRole("combobox", { name: /Status/ }));
+  await user.click(screen.getByRole("option", { name: "Failed" }));
+  expect(within(table).getByText("No messages match these filters.")).toBeInTheDocument();
 });
 
-test("recent message send keeps an uncertain provider outcome visible", async () => {
-  const user = userEvent.setup();
-  mockGetIntents.mockResolvedValue({ success: true, intents: [recentIntent], nextCursor: "", limit: 50 });
-  mockSendIntent.mockResolvedValue({
-    success: false,
-    outcome: "unknown",
-  });
-  render(<TeamsMessagesPage />);
-
-  await openRecentMessages(user);
-  await user.click(screen.getByRole("button", { name: /^Send$/ }));
-
-  expect(await screen.findByRole("alert")).toHaveTextContent("We couldn't confirm whether this text was sent. Check message history before trying again.");
-  await waitFor(() => expect(mockGetIntents.mock.calls.length).toBeGreaterThanOrEqual(2));
+it("shows compact message rows at phone width", async () => {
+  const originalMatchMedia = window.matchMedia;
+  window.matchMedia = jest.fn().mockImplementation((query: string) => ({ matches: query === "(max-width: 767px)", media: query, addEventListener: jest.fn(), removeEventListener: jest.fn() }));
+  jest.mocked(getMessageHistory).mockResolvedValue({ success: true, nextCursor: "", entries: [{
+    historyId: "h1", messageType: "custom_message", summary: "Practice Friday", createdAt: "2026-10-22T12:00:00.000Z",
+    recipientCount: 1, status: "accepted", recipients: [{ memberId: "m1", memberName: "Alex Lane", status: "sent" }],
+  }] as never });
+  try {
+    const user = userEvent.setup();
+    renderForAdmin();
+    await screen.findByRole("button", { name: "View details for Practice Friday" });
+    const list = screen.getByRole("list", { name: "Message history table" });
+    expect(screen.queryByRole("table", { name: "Message history table" })).not.toBeInTheDocument();
+    await user.click(within(list).getByRole("button", { name: "View details for Practice Friday" }));
+    expect(within(screen.getByRole("dialog", { name: "Message details" })).getByText("Alex Lane")).toBeInTheDocument();
+  } finally { window.matchMedia = originalMatchMedia; }
 });
 
-test("a definitive provider rejection stays a failure when the API rejects the send request", async () => {
+it("confirms a bulk message once and preserves the draft when confirmation is canceled", async () => {
   const user = userEvent.setup();
-  mockGetIntents
-    .mockResolvedValueOnce({ success: true, intents: [recentIntent], nextCursor: "", limit: 50 })
-    .mockResolvedValueOnce({ success: true, intents: [{ ...recentIntent, status: "failed", attemptOutcome: "failed" }], nextCursor: "", limit: 50 });
-  mockSendIntent.mockRejectedValue(Object.assign(new Error("The SMS provider rejected this message."), {
-    status: 502,
-    details: { success: false, outcome: "failed", errorMessage: "The SMS provider rejected this message." },
-  }));
-  render(<TeamsMessagesPage />);
-
-  await openRecentMessages(user);
-  await user.click(screen.getByRole("button", { name: /^Send$/ }));
-
-  expect(await screen.findByRole("alert")).toHaveTextContent("The SMS provider rejected this message.");
-  await waitFor(() => expect(mockGetIntents.mock.calls.length).toBeGreaterThanOrEqual(2));
-  expect(screen.getByRole("alert")).not.toHaveTextContent("We couldn't confirm whether this text was sent");
-  expect(screen.queryByRole("button", { name: "Send individually" })).not.toBeInTheDocument();
+  renderForAdmin();
+  await user.click(screen.getByRole("button", { name: "+ New message" }));
+  await user.click(screen.getByRole("button", { name: "Teams" }));
+  await user.click(screen.getByRole("menuitemcheckbox", { name: "Praise Team" }));
+  await user.click(screen.getByRole("menuitemcheckbox", { name: "Tech Team" }));
+  expect(screen.getByRole("menuitemcheckbox", { name: "Praise Team" })).toHaveAttribute("aria-checked", "true");
+  expect(screen.getByRole("menuitemcheckbox", { name: "Tech Team" })).toHaveAttribute("aria-checked", "true");
+  await user.keyboard("{Escape}");
+  expect(screen.getByRole("button", { name: "Teams" })).toHaveTextContent("2 teams selected");
+  expect(screen.getByText("2 selected · 2 eligible · 0 excluded")).toBeInTheDocument();
+  await user.type(screen.getByLabelText(/Search volunteers/), "Alex");
+  expect(screen.getByText("2 selected · 2 eligible · 0 excluded · 1 hidden by search")).toBeInTheDocument();
+  await user.clear(screen.getByLabelText(/Search volunteers/));
+  expect(within(screen.getByRole("list", { name: "Volunteers" })).getByRole("checkbox", { name: "Casey Stone" })).toBeInTheDocument();
+  await user.type(screen.getByRole("textbox", { name: /Message:/ }), "Practice Friday.");
+  expect(screen.getByText(/about 1 SMS segment/i)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Send to 2 volunteers" }));
+  expect(prepareCustomMessage).toHaveBeenCalledWith("church", expect.objectContaining({ memberIds: ["m1", "m2"], message: "Practice Friday." }));
+  expect(screen.getByText("Send this message to 2 volunteers?")).toBeInTheDocument();
+  expect(screen.getByText("Practice Friday. Reply STOP to opt out.")).toBeInTheDocument();
+  expect(screen.getByText("2 eligible · 0 excluded · 2 estimated SMS segments")).toBeInTheDocument();
+  expect(screen.queryByText(/awaiting SMS campaign|feature flag/i)).not.toBeInTheDocument();
+  const sendButton = screen.getByRole("button", { name: "Send 2 messages" });
+  expect(sendButton).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(dispatchAvailabilityNotificationBatch).not.toHaveBeenCalled();
+  expect(screen.getByRole("textbox", { name: /Message:/ })).toHaveValue("Practice Friday.");
+  await user.click(screen.getByRole("button", { name: "Send to 2 volunteers" }));
+  await screen.findByText("Send this message to 2 volunteers?");
+  await user.click(screen.getByRole("button", { name: "Send 2 messages" }));
+  expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledWith("church", "b1", "review-v1");
 });
 
-test("recent message confirmation ignores duplicate Send activation", async () => {
-  const user = userEvent.setup();
-  mockGetIntents.mockResolvedValue({ success: true, intents: [recentIntent], nextCursor: "", limit: 50 });
-  mockSendIntent.mockImplementation(() => new Promise(() => {}));
-  render(<TeamsMessagesPage />);
-
-  await openRecentMessages(user);
-  const sendButton = within(screen.getByRole("dialog", { name: "Send this text message?" })).getByRole("button", { name: /^Send$/ });
-  fireEvent.click(sendButton);
-  fireEvent.click(sendButton);
-
-  expect(mockSendIntent).toHaveBeenCalledTimes(1);
-  expect(mockSendIntent).toHaveBeenCalledWith("church_1", "intent_1", "fresh-approval-v3");
-});
-
-test("only sends after confirmation and dispatches the explicitly prepared batch", async () => {
-  const user = userEvent.setup();
-  render(<TeamsMessagesPage />);
-
-  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
-  await user.click(screen.getByRole("option", { name: /October availability/ }));
-  await user.click(screen.getByRole("checkbox", { name: "Rae Rivera" }));
-  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
-
-  await waitFor(() => expect(mockPrepare).toHaveBeenCalledWith("church_1", expect.objectContaining({
-    intentType: "availability_request", formId: "form_1", memberIds: ["member_1"],
-  })));
-  const confirmation = await screen.findByRole("dialog", { name: "Review text messages" });
-  expect(within(confirmation).getByText("October availability")).toBeInTheDocument();
-  expect(within(confirmation).getByText("1 volunteer will receive a text message.")).toBeInTheDocument();
-  expect(within(confirmation).getByText("This longer message counts as 2 texts.")).toBeInTheDocument();
-  expect(mockDispatch).not.toHaveBeenCalled();
-  await user.click(within(confirmation).getByText("View message"));
-  expect(await within(confirmation).findByText(/Church: please respond at/)).toBeInTheDocument();
-  expect(mockDispatch).not.toHaveBeenCalled();
-
-  expect(within(confirmation).getByRole("button", { name: "Send 1 message" })).toBeInTheDocument();
-  await user.click(within(confirmation).getByRole("button", { name: "Send 1 message" }));
-  await waitFor(() => expect(mockDispatch).toHaveBeenCalledWith("church_1", "batch_1", "batch-review-v1"));
-});
-
-test("cancelling the group confirmation sends nothing and allows a fresh review", async () => {
-  const user = userEvent.setup();
-  render(<TeamsMessagesPage />);
-  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
-  await user.click(screen.getByRole("option", { name: /October availability/ }));
-  await user.click(screen.getByRole("checkbox", { name: "Rae Rivera" }));
-  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
-  const confirmation = await screen.findByRole("dialog", { name: "Review text messages" });
-  await user.click(within(confirmation).getByRole("button", { name: "Cancel" }));
-
-  expect(mockDispatch).not.toHaveBeenCalled();
-  expect(screen.queryByRole("dialog", { name: "Review text messages" })).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
-  expect(await screen.findByRole("dialog", { name: "Review text messages" })).toBeInTheDocument();
-  expect(mockDispatch).not.toHaveBeenCalled();
-});
-
-test("a pending preparation cannot open a review from a previous church", async () => {
-  const user = userEvent.setup();
-  let resolvePreparation!: (value: Awaited<ReturnType<typeof prepareAvailabilityNotificationBatch>>) => void;
-  mockPrepare.mockReturnValueOnce(new Promise((resolve) => { resolvePreparation = resolve; }));
-  const view = render(<TeamsMessagesPage />);
-  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
-  await user.click(screen.getByRole("option", { name: /October availability/ }));
-  await user.click(screen.getByRole("checkbox", { name: "Rae Rivera" }));
-  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
-  await waitFor(() => expect(mockPrepare).toHaveBeenCalledTimes(1));
-
-  const initialContext = mockUseTeamsPage.mock.results[mockUseTeamsPage.mock.results.length - 1].value as ReturnType<typeof useTeamsPage>;
-  mockUseTeamsPage.mockReturnValue({ ...initialContext, churchId: "church_2" });
-  view.rerender(<TeamsMessagesPage />);
-  await act(async () => resolvePreparation({ success: true, batch }));
-
-  expect(screen.queryByRole("dialog", { name: "Review text messages" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("heading", { name: /Message status/ })).not.toBeInTheDocument();
-});
-
-test("rapid group confirmation sends the reviewed batch once", async () => {
-  const user = userEvent.setup();
-  mockDispatch.mockImplementation(() => new Promise(() => {}));
-  render(<TeamsMessagesPage />);
-  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
-  await user.click(screen.getByRole("option", { name: /October availability/ }));
-  await user.click(screen.getByRole("checkbox", { name: "Rae Rivera" }));
-  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
-  const send = within(await screen.findByRole("dialog", { name: "Review text messages" })).getByRole("button", { name: "Send 1 message" });
-  fireEvent.click(send);
-  fireEvent.click(send);
-
-  expect(mockDispatch).toHaveBeenCalledTimes(1);
-  expect(mockDispatch).toHaveBeenCalledWith("church_1", "batch_1", "batch-review-v1");
-});
-
-test("restored batch status refreshes after an individual send and removes the old send action", async () => {
-  const user = userEvent.setup();
-  const sentIntent = { ...recentIntent, status: "sent" as const, attemptId: "attempt-1", attemptStatus: "accepted" as const };
-  const sentBatch: NotificationBatch = {
+it("sends one eligible recipient after one click when the prepared details match the composer", async () => {
+  const singleBatch = {
     ...batch,
-    status: "sent",
-    summary: { ...batch.summary, sent: 1, awaitingDispatch: 0 },
-    recipients: batch.recipients.map((recipient) => ({ ...recipient, status: "sent", attemptStatus: "accepted" })),
+    selectedMemberIds: ["m1"], intentIds: ["i1"], approvalVersion: "single-v1",
+    recipients: [batch.recipients[0]],
+    summary: { ...batch.summary, eligible: 1, excluded: 0, totalSegments: 1 },
   };
-  window.localStorage.setItem("worshipsync:last-notification-batch:church_1:form_1", "batch_1");
-  mockGetIntents
-    .mockResolvedValueOnce({ success: true, intents: [recentIntent], nextCursor: "", limit: 50 })
-    .mockResolvedValueOnce({ success: true, intents: [sentIntent], nextCursor: "", limit: 50 });
-  mockGetBatch
-    .mockResolvedValueOnce({ success: true, batch })
-    .mockResolvedValueOnce({ success: true, batch: sentBatch });
-  render(<TeamsMessagesPage />);
-
-  await openRecentMessages(user);
-  await user.click(screen.getByRole("button", { name: /^Send$/ }));
-
-  expect(await screen.findByRole("heading", { name: "Message status · October availability" })).toBeInTheDocument();
-  expect(await screen.findAllByText(/Sent · Waiting for delivery confirmation/)).toHaveLength(2);
-  expect(screen.queryByRole("button", { name: "Send individually" })).not.toBeInTheDocument();
-  expect(await screen.findByText("Your text message was sent. Delivery updates may take a moment.")).toBeInTheDocument();
-  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-  expect(mockGetBatch).toHaveBeenCalledTimes(2);
+  const sentBatch = {
+    ...singleBatch, status: "sent",
+    recipients: [{ ...singleBatch.recipients[0], status: "sent", eligible: false }],
+    summary: { ...singleBatch.summary, sent: 1, delivered: 0, failed: 0, uncertain: 0 },
+  };
+  jest.mocked(prepareCustomMessage).mockResolvedValueOnce({ success: true, batch: singleBatch as never });
+  jest.mocked(dispatchAvailabilityNotificationBatch).mockResolvedValueOnce({ success: true, batch: sentBatch as never });
+  const user = userEvent.setup();
+  renderForAdmin();
+  await user.click(screen.getByRole("button", { name: "+ New message" }));
+  await user.click(screen.getByRole("checkbox", { name: "Alex Lane" }));
+  await user.type(screen.getByRole("textbox", { name: /Message:/ }), "Practice Friday.");
+  expect(screen.getByText(/Alex Lane/, { selector: "p" })).toBeInTheDocument();
+  expect(screen.getByText("Practice Friday. Reply STOP to opt out.")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledWith("church", "b1", "single-v1"));
+  expect(prepareCustomMessage).toHaveBeenCalledWith("church", expect.objectContaining({ memberIds: ["m1"], message: "Practice Friday." }));
+  expect(screen.queryByText(/Send this message to/)).not.toBeInTheDocument();
 });
 
-test("an unknown send outcome remains visible while its related batch refreshes", async () => {
+it("ignores a rapid second click while a single-recipient send is preparing", async () => {
+  const singleBatch = {
+    ...batch,
+    selectedMemberIds: ["m1"], intentIds: ["i1"], approvalVersion: "single-v1",
+    recipients: [batch.recipients[0]],
+    summary: { ...batch.summary, eligible: 1, excluded: 0, totalSegments: 1 },
+  };
+  let resolvePreparation: ((value: { success: boolean; batch: typeof singleBatch }) => void) | undefined;
+  jest.mocked(prepareCustomMessage).mockReturnValueOnce(new Promise((resolve) => { resolvePreparation = resolve; }) as never);
   const user = userEvent.setup();
-  window.localStorage.setItem("worshipsync:last-notification-batch:church_1:form_1", "batch_1");
-  mockGetIntents
-    .mockResolvedValueOnce({ success: true, intents: [recentIntent], nextCursor: "", limit: 50 })
-    .mockRejectedValueOnce(new Error("History temporarily unavailable."));
-  mockGetBatch
-    .mockResolvedValueOnce({ success: true, batch })
-    .mockResolvedValueOnce({ success: true, batch });
-  mockSendIntent.mockResolvedValue({ success: false, outcome: "unknown" });
-  render(<TeamsMessagesPage />);
-
-  await openRecentMessages(user);
-  await user.click(screen.getByRole("button", { name: /^Send$/ }));
-
-  expect(await screen.findByText(/We couldn't confirm whether this text was sent/)).toBeInTheDocument();
-  await waitFor(() => expect(mockGetBatch).toHaveBeenCalledTimes(2));
-  expect(screen.queryByRole("button", { name: "Send individually" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  renderForAdmin();
+  await user.click(screen.getByRole("button", { name: "+ New message" }));
+  await user.click(screen.getByRole("checkbox", { name: "Alex Lane" }));
+  await user.type(screen.getByRole("textbox", { name: /Message:/ }), "Practice Friday.");
+  await user.dblClick(screen.getByRole("button", { name: "Send message" }));
+  expect(prepareCustomMessage).toHaveBeenCalledTimes(1);
+  resolvePreparation?.({ success: true, batch: singleBatch });
+  await waitFor(() => expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledTimes(1));
 });
 
-test("a failed batch refresh does not replace confirmed send feedback", async () => {
+it("refreshes an expired approval and sends only when the confirmed details still match", async () => {
+  const firstBatch = {
+    ...batch, batchId: "b1", selectedMemberIds: ["m1"], intentIds: ["i1"], approvalVersion: "expired-v1",
+    recipients: [batch.recipients[0]],
+    summary: { ...batch.summary, eligible: 1, excluded: 0, totalSegments: 1 },
+  };
+  const freshBatch = { ...firstBatch, batchId: "b2", approvalVersion: "fresh-v2" };
+  const sentBatch = {
+    ...freshBatch, status: "sent",
+    recipients: [{ ...freshBatch.recipients[0], status: "sent", eligible: false }],
+    summary: { ...freshBatch.summary, sent: 1, delivered: 0, failed: 0, uncertain: 0 },
+  };
+  jest.mocked(prepareCustomMessage)
+    .mockResolvedValueOnce({ success: true, batch: firstBatch as never })
+    .mockResolvedValueOnce({ success: true, batch: freshBatch as never });
+  jest.mocked(dispatchAvailabilityNotificationBatch)
+    .mockRejectedValueOnce(Object.assign(new Error("This batch preview changed or expired."), { status: 409 }))
+    .mockResolvedValueOnce({ success: true, batch: sentBatch as never });
+  jest.mocked(getAvailabilityNotificationBatch).mockResolvedValueOnce({ success: true, batch: firstBatch as never });
   const user = userEvent.setup();
-  window.localStorage.setItem("worshipsync:last-notification-batch:church_1:form_1", "batch_1");
-  mockGetIntents
-    .mockResolvedValueOnce({ success: true, intents: [recentIntent], nextCursor: "", limit: 50 })
-    .mockResolvedValueOnce({ success: true, intents: [{ ...recentIntent, status: "sent" }], nextCursor: "", limit: 50 });
-  mockGetBatch
-    .mockResolvedValueOnce({ success: true, batch })
-    .mockRejectedValueOnce(new Error("Batch status temporarily unavailable."));
-  render(<TeamsMessagesPage />);
+  renderForAdmin();
+  await user.click(screen.getByRole("button", { name: "+ New message" }));
+  await user.click(screen.getByRole("checkbox", { name: "Alex Lane" }));
+  await user.type(screen.getByRole("textbox", { name: /Message:/ }), "Practice Friday.");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledTimes(2));
+  expect(prepareCustomMessage).toHaveBeenCalledTimes(2);
+  expect(dispatchAvailabilityNotificationBatch).toHaveBeenNthCalledWith(2, "church", "b2", "fresh-v2");
+  expect(screen.queryByRole("dialog", { name: "Confirm message" })).not.toBeInTheDocument();
+});
 
-  await openRecentMessages(user);
-  await user.click(screen.getByRole("button", { name: /^Send$/ }));
-
-  expect(await screen.findByRole("status")).toHaveTextContent(
-    "Your text message was sent. Delivery updates may take a moment. Batch status couldn't be refreshed. Refresh the page to check it.",
+it("keeps the editable draft after an authenticated send rejection", async () => {
+  const singleBatch = {
+    ...batch,
+    selectedMemberIds: ["m1"], intentIds: ["i1"], approvalVersion: "single-v1",
+    recipients: [batch.recipients[0]],
+    summary: { ...batch.summary, eligible: 1, excluded: 0, totalSegments: 1 },
+  };
+  jest.mocked(prepareCustomMessage).mockResolvedValueOnce({ success: true, batch: singleBatch as never });
+  jest.mocked(getAvailabilityNotificationBatch).mockResolvedValueOnce({ success: true, batch: singleBatch as never });
+  jest.mocked(dispatchAvailabilityNotificationBatch).mockRejectedValueOnce(
+    Object.assign(new Error("Your session could not be refreshed."), { status: 403, code: "AUTH_CSRF_MISMATCH" }),
   );
-  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-  await waitFor(() => expect(mockGetBatch).toHaveBeenCalledTimes(2));
-  expect(screen.queryByRole("heading", { name: "Message status · October availability" })).not.toBeInTheDocument();
+  const user = userEvent.setup();
+  renderForAdmin();
+  await user.click(screen.getByRole("button", { name: "+ New message" }));
+  await user.click(screen.getByRole("checkbox", { name: "Alex Lane" }));
+  await user.type(screen.getByRole("textbox", { name: /Message:/ }), "Practice Friday.");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("No message was sent. Your draft is saved.");
+  expect(screen.getByRole("textbox", { name: /Message:/ })).toHaveValue("Practice Friday.");
+  expect(prepareCustomMessage).toHaveBeenCalledTimes(1);
+  expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledTimes(1);
 });
 
-test("a delayed related-batch refresh from a previous form cannot replace the current form state", async () => {
-  const user = userEvent.setup();
-  const novemberForm = {
-    formId: "form_2", name: "November availability", startDate: "2026-11-01", endDate: "2026-11-30", active: true,
+it("reprepares and recovers after a dispatch fails before any provider request", async () => {
+  const singleBatch = {
+    ...batch,
+    selectedMemberIds: ["m1"], intentIds: ["i1"], approvalVersion: "single-v1",
+    recipients: [batch.recipients[0]],
+    summary: { ...batch.summary, eligible: 1, excluded: 0, totalSegments: 1 },
   };
-  mockUseTeamsPage.mockReturnValue({
-    churchId: "church_1",
-    canEditTeams: true,
+  const freshBatch = {
+    ...singleBatch, batchId: "b2", intentIds: ["i2"], approvalVersion: "fresh-v2",
+  };
+  const sentBatch = {
+    ...freshBatch, status: "sent",
+    recipients: [{ ...freshBatch.recipients[0], status: "sent", eligible: false }],
+    summary: { ...freshBatch.summary, sent: 1, delivered: 0, failed: 0, uncertain: 0 },
+  };
+  jest.mocked(prepareCustomMessage)
+    .mockResolvedValueOnce({ success: true, batch: singleBatch as never })
+    .mockResolvedValueOnce({ success: true, batch: freshBatch as never });
+  jest.mocked(getAvailabilityNotificationBatch).mockResolvedValueOnce({ success: true, batch: singleBatch as never });
+  jest.mocked(dispatchAvailabilityNotificationBatch)
+    .mockRejectedValueOnce(Object.assign(new Error("Could not send this message."), { status: 500 }))
+    .mockResolvedValueOnce({ success: true, batch: sentBatch as never });
+
+  const user = userEvent.setup();
+  renderForAdmin();
+  await user.click(screen.getByRole("button", { name: "+ New message" }));
+  await user.click(screen.getByRole("checkbox", { name: "Alex Lane" }));
+  await user.type(screen.getByRole("textbox", { name: /Message:/ }), "Practice Friday.");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("No message was sent. Your draft is saved. Choose Send again to prepare a fresh review.");
+  expect(screen.getByRole("textbox", { name: /Message:/ })).toHaveValue("Practice Friday.");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledTimes(2));
+  expect(prepareCustomMessage).toHaveBeenCalledTimes(2);
+  expect(prepareCustomMessage).toHaveBeenLastCalledWith("church", expect.objectContaining({ memberIds: ["m1"], message: "Practice Friday." }));
+  expect(dispatchAvailabilityNotificationBatch).toHaveBeenNthCalledWith(1, "church", "b1", "single-v1");
+  expect(dispatchAvailabilityNotificationBatch).toHaveBeenNthCalledWith(2, "church", "b2", "fresh-v2");
+});
+
+it("requires confirmation when single-recipient destination details change during preparation", async () => {
+  const changedBatch = {
+    ...batch,
+    selectedMemberIds: ["m1"], intentIds: ["i1"], approvalVersion: "changed-v1",
+    recipients: [{ ...batch.recipients[0], maskedPhoneNumber: "••• ••• 9999" }],
+    summary: { ...batch.summary, eligible: 1, excluded: 0, totalSegments: 1 },
+  };
+  jest.mocked(prepareCustomMessage).mockResolvedValueOnce({ success: true, batch: changedBatch as never });
+  const user = userEvent.setup();
+  renderForAdmin();
+  await user.click(screen.getByRole("button", { name: "+ New message" }));
+  await user.click(screen.getByRole("checkbox", { name: "Alex Lane" }));
+  await user.type(screen.getByRole("textbox", { name: /Message:/ }), "Practice Friday.");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(await screen.findByRole("dialog", { name: "Review updated message" })).toBeInTheDocument();
+  expect(screen.getByText(/9999/, { selector: "p" })).toBeInTheDocument();
+  expect(dispatchAvailabilityNotificationBatch).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledWith("church", "b1", "changed-v1");
+});
+
+it("requires confirmation when a renewed single-recipient destination changes but keeps the same last four digits", async () => {
+  const firstBatch = {
+    ...batch, batchId: "b1", selectedMemberIds: ["m1"], intentIds: ["i1"], approvalVersion: "expired-v1",
+    recipients: [{ ...batch.recipients[0], destinationFingerprint: "destination-original" }],
+    summary: { ...batch.summary, eligible: 1, excluded: 0, totalSegments: 1 },
+  };
+  const freshBatch = {
+    ...firstBatch, batchId: "b2", approvalVersion: "fresh-v2",
+    recipients: [{ ...firstBatch.recipients[0], destinationFingerprint: "destination-changed", approvalBindingFingerprint: "binding-changed" }],
+  };
+  const sentBatch = { ...freshBatch, status: "sent" as const };
+  jest.mocked(prepareCustomMessage)
+    .mockResolvedValueOnce({ success: true, batch: firstBatch as never })
+    .mockResolvedValueOnce({ success: true, batch: freshBatch as never });
+  jest.mocked(getAvailabilityNotificationBatch).mockResolvedValueOnce({ success: true, batch: firstBatch as never });
+  jest.mocked(dispatchAvailabilityNotificationBatch)
+    .mockRejectedValueOnce(Object.assign(new Error("Review expired."), { status: 409 }))
+    .mockResolvedValueOnce({ success: true, batch: sentBatch as never });
+
+  const user = userEvent.setup();
+  renderForAdmin();
+  await user.click(screen.getByRole("button", { name: "+ New message" }));
+  await user.click(screen.getByRole("checkbox", { name: "Alex Lane" }));
+  await user.type(screen.getByRole("textbox", { name: /Message:/ }), "Practice Friday.");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+
+  expect(await screen.findByRole("dialog", { name: "Review updated message" })).toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveTextContent("A volunteer’s phone number changed. Review and confirm before sending.");
+  expect(screen.getByText(/0101/, { selector: "p" })).toBeInTheDocument();
+  expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledTimes(2));
+  expect(dispatchAvailabilityNotificationBatch).toHaveBeenLastCalledWith("church", "b2", "fresh-v2");
+});
+
+it("requires confirmation when bulk approval renewal changes a same-suffix destination", async () => {
+  const firstBatch = {
+    ...batch,
+    recipients: [
+      { ...batch.recipients[0], destinationFingerprint: "destination-m1-v1" },
+      { ...batch.recipients[1], destinationFingerprint: "destination-m2-v1" },
+    ],
+  };
+  const freshBatch = {
+    ...firstBatch, batchId: "b2", approvalVersion: "fresh-bulk-v2",
+    recipients: [
+      { ...firstBatch.recipients[0], destinationFingerprint: "destination-m1-changed", approvalBindingFingerprint: "binding-m1-changed" },
+      firstBatch.recipients[1],
+    ],
+  };
+  const sentBatch = { ...freshBatch, status: "sent" as const };
+  jest.mocked(prepareCustomMessage)
+    .mockResolvedValueOnce({ success: true, batch: firstBatch as never })
+    .mockResolvedValueOnce({ success: true, batch: freshBatch as never });
+  jest.mocked(getAvailabilityNotificationBatch).mockResolvedValueOnce({ success: true, batch: firstBatch as never });
+  jest.mocked(dispatchAvailabilityNotificationBatch)
+    .mockRejectedValueOnce(Object.assign(new Error("Review expired."), { status: 409 }))
+    .mockResolvedValueOnce({ success: true, batch: sentBatch as never });
+
+  const user = userEvent.setup();
+  renderForAdmin();
+  await user.click(screen.getByRole("button", { name: "+ New message" }));
+  await user.click(screen.getByRole("button", { name: "Teams" }));
+  await user.click(screen.getByRole("menuitemcheckbox", { name: "Praise Team" }));
+  await user.click(screen.getByRole("menuitemcheckbox", { name: "Tech Team" }));
+  await user.keyboard("{Escape}");
+  await user.type(screen.getByRole("textbox", { name: /Message:/ }), "Practice Friday.");
+  await user.click(screen.getByRole("button", { name: "Send to 2 volunteers" }));
+  await user.click(await screen.findByRole("button", { name: "Send 2 messages" }));
+
+  expect(await screen.findByRole("dialog", { name: "Confirm message" })).toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveTextContent("A volunteer’s phone number changed. Review and confirm before sending.");
+  expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole("button", { name: "Send 2 messages" }));
+  await waitFor(() => expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledTimes(2));
+  expect(dispatchAvailabilityNotificationBatch).toHaveBeenLastCalledWith("church", "b2", "fresh-bulk-v2");
+});
+
+it("keeps the editable message and all 501 selected recipients after the server rejects an oversized audience", async () => {
+  const oversizedMembers = Array.from({ length: 501 }, (_, index) => ({
+    memberId: `large-${index + 1}`,
+    churchId: "church",
+    firstName: `Volunteer${index + 1}`,
+    lastName: "Roster",
+    phoneNumber: `+1555555${String(index + 1).padStart(4, "0")}`,
+  }));
+  const oversizedIds = oversizedMembers.map((member) => member.memberId);
+  jest.mocked(useTeamsPage).mockReturnValue({
+    churchId: "church", canEditTeams: true, canEditTeam: () => true,
     pageData: {
-      intakeForms: [
-        { formId: "form_1", name: "October availability", startDate: "2026-10-01", endDate: "2026-10-31", active: true },
-        novemberForm,
-      ],
-      schedules: [], teams: [], positions: [], intakeRecipients: [],
-      smsEligibilityByMemberId: { member_1: { status: "enabled", eligible: true } },
-      members: [{ memberId: "member_1", firstName: "Rae", lastName: "Rivera", churchId: "church_1", phoneNumber: "+15555550123", positionIds: [] }],
+      members: oversizedMembers,
+      positions: [],
+      teams: [{ teamId: "large-team", name: "Large Team", memberIds: oversizedIds }],
+      smsEligibilityByMemberId: Object.fromEntries(oversizedIds.map((id) => [id, { eligible: true }])),
     },
   } as unknown as ReturnType<typeof useTeamsPage>);
-  window.localStorage.setItem("worshipsync:last-notification-batch:church_1:form_1", "batch_1");
-  let resolveRelatedBatch!: (value: Awaited<ReturnType<typeof getAvailabilityNotificationBatch>>) => void;
-  let resolveHistoryRefresh!: (value: Awaited<ReturnType<typeof getNotificationIntents>>) => void;
-  mockGetBatch
-    .mockResolvedValueOnce({ success: true, batch })
-    .mockReturnValueOnce(new Promise((resolve) => { resolveRelatedBatch = resolve; }));
-  mockGetIntents
-    .mockResolvedValueOnce({ success: true, intents: [recentIntent], nextCursor: "", limit: 50 })
-    .mockReturnValueOnce(new Promise((resolve) => { resolveHistoryRefresh = resolve; }))
-    .mockResolvedValue({ success: true, intents: [], nextCursor: "", limit: 50 });
-  render(<TeamsMessagesPage />);
+  jest.mocked(prepareCustomMessage).mockRejectedValueOnce(
+    Object.assign(new Error("Select 500 or fewer volunteers, then try again."), { status: 400 }),
+  );
 
-  await openRecentMessages(user);
-  await user.click(screen.getByRole("button", { name: /^Send$/ }));
-  await waitFor(() => expect(mockSendIntent).toHaveBeenCalledTimes(1));
-  await waitFor(() => expect(mockGetBatch).toHaveBeenCalledTimes(2));
+  const user = userEvent.setup();
+  renderForAdmin();
+  await user.click(screen.getByRole("button", { name: "+ New message" }));
+  await user.click(screen.getByRole("button", { name: "Teams" }));
+  await user.click(screen.getByRole("menuitemcheckbox", { name: "Large Team" }));
+  await user.keyboard("{Escape}");
+  await user.type(screen.getByRole("textbox", { name: /Message:/ }), "Practice Friday.");
+  await user.click(screen.getByRole("button", { name: "Send to 501 volunteers" }));
 
-  const formSelect = screen.getByRole("combobox", { name: /Intake form/ });
-  fireEvent.change(formSelect, { target: { value: "form_2" } });
-  await waitFor(() => expect(formSelect).toHaveValue("form_2"));
-  await act(async () => {
-    resolveRelatedBatch({ success: true, batch: { ...batch, status: "sent" } });
-    resolveHistoryRefresh({ success: true, intents: [recentIntent], nextCursor: "", limit: 50 });
-  });
-
-  expect(screen.getByRole("checkbox", { name: "Rae Rivera" })).not.toBeChecked();
-  expect(screen.queryByRole("heading", { name: "Message status · November availability" })).not.toBeInTheDocument();
+  expect(await screen.findByRole("alert")).toHaveTextContent("Select 500 or fewer volunteers, then try again.");
+  expect(screen.getByRole("textbox", { name: /Message:/ })).toHaveValue("Practice Friday.");
+  expect(screen.getByText("501 selected · 501 eligible · 0 excluded")).toBeInTheDocument();
+  expect(prepareCustomMessage).toHaveBeenCalledTimes(1);
+  expect(jest.mocked(prepareCustomMessage).mock.calls[0][1]).toEqual(expect.objectContaining({ message: "Practice Friday." }));
+  expect(jest.mocked(prepareCustomMessage).mock.calls[0][1].memberIds).toHaveLength(501);
+  expect(new Set(jest.mocked(prepareCustomMessage).mock.calls[0][1].memberIds)).toEqual(new Set(oversizedIds));
+  expect(dispatchAvailabilityNotificationBatch).not.toHaveBeenCalled();
 });
 
-test("Messages waits for complete history before enabling recipient selection", async () => {
+it("requires confirmation when the prepared single-recipient segment estimate changes", async () => {
+  const changedSegmentBatch = {
+    ...batch,
+    selectedMemberIds: ["m1"], intentIds: ["i1"], approvalVersion: "segments-v1",
+    recipients: [{ ...batch.recipients[0], segmentCount: 2 }],
+    summary: { ...batch.summary, eligible: 1, excluded: 0, totalSegments: 2 },
+  };
+  jest.mocked(prepareCustomMessage).mockResolvedValueOnce({ success: true, batch: changedSegmentBatch as never });
   const user = userEvent.setup();
-  let resolveHistory!: (value: Awaited<ReturnType<typeof getNotificationIntents>>) => void;
-  mockGetIntents.mockReturnValueOnce(new Promise((resolve) => { resolveHistory = resolve; }));
-  render(<TeamsMessagesPage />);
-
-  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
-  await user.click(screen.getByRole("option", { name: /October availability/ }));
-  expect(screen.getByRole("checkbox", { name: "Rae Rivera" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Review and send 0 messages" })).toBeDisabled();
-
-  await act(async () => resolveHistory({ success: true, intents: [], nextCursor: "", limit: 100 }));
-  expect(screen.getByRole("checkbox", { name: "Rae Rivera" })).toBeEnabled();
+  renderForAdmin();
+  await user.click(screen.getByRole("button", { name: "+ New message" }));
+  await user.click(screen.getByRole("checkbox", { name: "Alex Lane" }));
+  await user.type(screen.getByRole("textbox", { name: /Message:/ }), "Practice Friday.");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(await screen.findByRole("dialog", { name: "Review updated message" })).toBeInTheDocument();
+  expect(screen.getByText(/1 eligible.*0 excluded.*2 estimated SMS segments/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+  expect(dispatchAvailabilityNotificationBatch).not.toHaveBeenCalled();
 });
 
-test("a history response from the previous church cannot block the same form in the new church", async () => {
+it("restores editable drafts by church and administrator and removes legacy review pointers", async () => {
+  const storageKey = "worshipsync:custom-message-draft:v1:church:admin-1";
+  window.localStorage.setItem(storageKey, JSON.stringify({ message: "Practice Friday.", memberIds: ["m1"] }));
+  window.localStorage.setItem("worshipsync:last-custom-message:church", "expired-batch");
   const user = userEvent.setup();
-  let resolveOldIntents!: (value: Awaited<ReturnType<typeof getNotificationIntents>>) => void;
-  let resolveOldAttempts!: (value: Awaited<ReturnType<typeof getTeamIntakeSmsAttempts>>) => void;
-  mockGetIntents
-    .mockReturnValueOnce(new Promise((resolve) => { resolveOldIntents = resolve; }))
-    .mockResolvedValueOnce({ success: true, intents: [], nextCursor: "", limit: 100 });
-  mockGetSmsAttempts
-    .mockReturnValueOnce(new Promise((resolve) => { resolveOldAttempts = resolve; }))
-    .mockResolvedValueOnce({ success: true, attempts: [] });
-  const view = render(<TeamsMessagesPage />);
-
-  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
-  await user.click(screen.getByRole("option", { name: /October availability/ }));
-  const initialContext = mockUseTeamsPage.mock.results[mockUseTeamsPage.mock.results.length - 1].value as ReturnType<typeof useTeamsPage>;
-  const recipient = { recipientId: "recipient_1", churchId: "church_1", formId: "form_1", memberId: "member_1", createdAt: "2026-09-01" };
-  mockUseTeamsPage.mockReturnValue({
-    ...initialContext,
-    churchId: "church_2",
-    pageData: { ...initialContext.pageData, intakeRecipients: [recipient] },
-  });
-  view.rerender(<TeamsMessagesPage />);
-  await waitFor(() => expect(screen.getByRole("checkbox", { name: "Rae Rivera" })).toBeEnabled());
-
-  await act(async () => {
-    resolveOldIntents({ success: true, intents: [{ ...recentIntent, recipientId: recipient.recipientId, status: "sent" }], nextCursor: "", limit: 100 });
-    resolveOldAttempts({ success: true, attempts: [] });
-  });
-  expect(screen.getByRole("checkbox", { name: "Rae Rivera" })).toBeEnabled();
-  expect(screen.queryByText("Already sent")).not.toBeInTheDocument();
-  expect(mockGetIntents.mock.calls.map(([church]) => church)).toEqual(["church_1", "church_2"]);
+  const view = renderForAdmin("admin-1");
+  expect(await screen.findByText("Message history")).toBeInTheDocument();
+  expect(screen.queryByText(/earlier message review/i)).not.toBeInTheDocument();
+  expect(getAvailabilityNotificationBatch).not.toHaveBeenCalled();
+  expect(window.localStorage.getItem("worshipsync:last-custom-message:church")).toBeNull();
+  await user.click(screen.getByRole("button", { name: "+ New message" }));
+  expect(screen.getByRole("textbox", { name: /Message:/ })).toHaveValue("Practice Friday.");
+  expect(screen.getByRole("checkbox", { name: "Alex Lane" })).toBeChecked();
+  view.rerender(<GlobalInfoContext.Provider value={{ sessionKind: "human", userId: "admin-2" } as never}><TeamsMessagesPage /></GlobalInfoContext.Provider>);
+  await screen.findByText("Message history");
+  await user.click(screen.getByRole("button", { name: "+ New message" }));
+  expect(screen.getByRole("textbox", { name: /Message:/ })).toHaveValue("");
+  expect(screen.getByRole("checkbox", { name: "Alex Lane" })).not.toBeChecked();
+  view.rerender(<GlobalInfoContext.Provider value={{ sessionKind: "human", userId: "admin-1" } as never}><TeamsMessagesPage /></GlobalInfoContext.Provider>);
+  await screen.findByText("Message history");
+  await user.click(screen.getByRole("button", { name: "+ New message" }));
+  expect(screen.getByRole("textbox", { name: /Message:/ })).toHaveValue("Practice Friday.");
+  expect(screen.getByRole("checkbox", { name: "Alex Lane" })).toBeChecked();
 });
 
-test("a failed Messages history load blocks selection until status check succeeds", async () => {
+it("checks an uncertain custom send from message history without dispatching it again", async () => {
+  jest.mocked(getMessageHistory).mockResolvedValue({ success: true, nextCursor: "", entries: [{
+    historyId: "b1", messageType: "custom_message", summary: "Practice Friday.", createdAt: "2026-10-22T12:00:00.000Z",
+    recipientCount: 1, status: "unconfirmed", recipients: [{ memberId: "m1", memberName: "Alex Lane", status: "unknown", outcome: "unknown" }],
+  }] as never });
+  const uncertainBatch = {
+    ...batch, batchId: "b1", status: "partial",
+    recipients: [{ ...batch.recipients[0], status: "unknown", eligible: false, attemptOutcome: "unknown" }],
+    summary: { ...batch.summary, eligible: 0, sent: 0, delivered: 0, failed: 0, uncertain: 1 },
+  };
+  jest.mocked(getAvailabilityNotificationBatch).mockResolvedValue({ success: true, batch: uncertainBatch as never });
   const user = userEvent.setup();
-  mockGetIntents.mockRejectedValueOnce(new Error("History temporarily unavailable."));
-  render(<TeamsMessagesPage />);
-
-  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
-  await user.click(screen.getByRole("option", { name: /October availability/ }));
-  expect(await screen.findByText("Could not verify consent and message history: History temporarily unavailable.")).toBeInTheDocument();
-  expect(screen.getAllByRole("alert")).toHaveLength(1);
-  expect(screen.queryByText("No volunteer messages for this form yet.")).not.toBeInTheDocument();
-  expect(screen.getByRole("checkbox", { name: "Rae Rivera" })).toBeDisabled();
-
-  await user.click(screen.getByRole("button", { name: "Retry status check" }));
-  await waitFor(() => expect(screen.getByRole("checkbox", { name: "Rae Rivera" })).toBeEnabled());
+  renderForAdmin();
+  await user.click(await screen.findByRole("button", { name: "View details for Practice Friday." }));
+  await user.click(screen.getByRole("button", { name: "Check delivery status" }));
+  expect(await screen.findByText("Latest status: 0 accepted · 0 delivered · 0 failed · 1 unconfirmed.")).toBeInTheDocument();
+  expect(getAvailabilityNotificationBatch).toHaveBeenCalledWith("church", "b1");
+  expect(dispatchAvailabilityNotificationBatch).not.toHaveBeenCalled();
 });
 
-test("a delayed retry for one form cannot replace the new form's loaded history", async () => {
+it("updates open history details after delivery becomes confirmed", async () => {
+  const unresolvedEntry = {
+    historyId: "b1", messageType: "custom_message", summary: "Practice Friday.", createdAt: "2026-10-22T12:00:00.000Z",
+    recipientCount: 1, status: "unconfirmed", recipients: [{ memberId: "m1", memberName: "Alex Lane", status: "unknown", outcome: "unknown" }],
+  };
+  const deliveredEntry = {
+    ...unresolvedEntry, status: "delivered",
+    recipients: [{ memberId: "m1", memberName: "Alex Lane", status: "sent", deliveryStatus: "delivered", outcome: "delivered", failureMessage: "" }],
+  };
+  jest.mocked(getMessageHistory)
+    .mockResolvedValueOnce({ success: true, nextCursor: "", entries: [unresolvedEntry] as never })
+    .mockResolvedValueOnce({ success: true, nextCursor: "", entries: [deliveredEntry] as never });
+  const deliveredBatch = {
+    ...batch, batchId: "b1", status: "sent",
+    recipients: [{ ...batch.recipients[0], status: "sent", eligible: false, attemptStatus: "delivered" }],
+    summary: { ...batch.summary, eligible: 0, excluded: 0, totalSegments: 1, sent: 1, delivered: 1, failed: 0, uncertain: 0 },
+  };
+  jest.mocked(getAvailabilityNotificationBatch).mockResolvedValueOnce({ success: true, batch: deliveredBatch as never });
   const user = userEvent.setup();
-  let resolveOldIntents!: (value: Awaited<ReturnType<typeof getNotificationIntents>>) => void;
-  let resolveOldAttempts!: (value: Awaited<ReturnType<typeof getTeamIntakeSmsAttempts>>) => void;
-  mockGetIntents
-    .mockRejectedValueOnce(new Error("Initial history unavailable."))
-    .mockReturnValueOnce(new Promise((resolve) => { resolveOldIntents = resolve; }))
-    .mockResolvedValueOnce({ success: true, intents: [], nextCursor: "", limit: 100 });
-  mockGetSmsAttempts
-    .mockResolvedValueOnce({ success: true, attempts: [] })
-    .mockReturnValueOnce(new Promise((resolve) => { resolveOldAttempts = resolve; }))
-    .mockResolvedValueOnce({ success: true, attempts: [] });
-  const view = render(<TeamsMessagesPage />);
-  const initialContext = mockUseTeamsPage.mock.results[mockUseTeamsPage.mock.results.length - 1].value as ReturnType<typeof useTeamsPage>;
-  const secondForm = { formId: "form_2", churchId: "church_1", name: "November availability", startDate: "2026-11-01", endDate: "2026-11-30", availabilityServices: [], availabilityOccurrences: [], teamIds: [], active: true };
-  mockUseTeamsPage.mockReturnValue({
-    ...initialContext,
-    pageData: { ...initialContext.pageData, intakeForms: [...initialContext.pageData.intakeForms, secondForm] },
-  });
-  view.rerender(<TeamsMessagesPage />);
-
-  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
-  await user.click(screen.getByRole("option", { name: /October availability/ }));
-  expect(await screen.findByText(/Initial history unavailable/)).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Retry status check" }));
-  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
-  await user.click(screen.getByRole("option", { name: /November availability/ }));
-  await waitFor(() => expect(screen.getByRole("checkbox", { name: "Rae Rivera" })).toBeEnabled());
-
-  await act(async () => {
-    resolveOldIntents({ success: true, intents: [], nextCursor: "", limit: 100 });
-    resolveOldAttempts({ success: true, attempts: [] });
-  });
-  expect(screen.getByRole("checkbox", { name: "Rae Rivera" })).toBeEnabled();
+  renderForAdmin();
+  await user.click(await screen.findByRole("button", { name: "View details for Practice Friday." }));
+  await user.click(screen.getByRole("button", { name: "Check delivery status" }));
+  await screen.findByText(/Latest status: 1 accepted.*1 delivered.*0 failed.*0 unconfirmed/);
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Check delivery status" })).not.toBeInTheDocument());
+  expect(screen.getAllByText("Delivered").length).toBeGreaterThan(0);
+  expect(dispatchAvailabilityNotificationBatch).not.toHaveBeenCalled();
 });
 
-test("team and name filters compose, and selection survives filter changes", async () => {
+it("shows the specific reason an excluded volunteer cannot receive the reviewed message", async () => {
+  const reviewedBatch = {
+    ...batch,
+    recipients: [batch.recipients[0], {
+      ...batch.recipients[1], eligible: false, status: "excluded",
+      exclusionReason: "SMS consent is needed for this phone number.",
+    }],
+    summary: { ...batch.summary, eligible: 1, excluded: 1, totalSegments: 1 },
+  };
+  jest.mocked(prepareCustomMessage).mockResolvedValue({ success: true, batch: reviewedBatch as never });
   const user = userEvent.setup();
-  mockUseTeamsPage.mockReturnValue({
-    churchId: "church_1", canEditTeams: true,
-    pageData: {
-      intakeForms: [{ formId: "form_1", name: "October availability", startDate: "2026-10-01", endDate: "2026-10-31", active: true, teamIds: [] }],
-      teams: [{ teamId: "worship", churchId: "church_1", name: "Worship", memberIds: ["member_1", "member_2"] }, { teamId: "care", churchId: "church_1", name: "Care", memberIds: ["member_1", "member_3"] }],
-      positions: [], schedules: [], intakeRecipients: [],
-      smsEligibilityByMemberId: { member_1: { status: "enabled", eligible: true }, member_2: { status: "enabled", eligible: true }, member_3: { status: "no_mobile", eligible: false } },
-      members: [
-        { memberId: "member_1", firstName: "Rae", lastName: "Rivera", churchId: "church_1", phoneNumber: "+15555550123", positionIds: [] },
-        { memberId: "member_2", firstName: "Sam", lastName: "Smith", churchId: "church_1", phoneNumber: "+15555550124", positionIds: [] },
-        { memberId: "member_3", firstName: "Terry", lastName: "Taylor", churchId: "church_1", positionIds: [] },
-      ],
-    },
-  } as unknown as ReturnType<typeof useTeamsPage>);
-  render(<TeamsMessagesPage />);
-  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
-  await user.click(screen.getByRole("option", { name: /October availability/ }));
-  await user.click(screen.getByRole("checkbox", { name: "Rae Rivera" }));
-  await user.click(screen.getByRole("combobox", { name: /Team/ }));
-  await user.click(screen.getByRole("option", { name: "Worship" }));
-  await user.type(screen.getByRole("textbox", { name: /Search volunteers/ }), "sam");
-  expect(screen.getByText("Sam Smith")).toBeInTheDocument();
-  expect(screen.queryByText("Rae Rivera")).not.toBeInTheDocument();
-  expect(screen.getByText("1 selected")).toBeInTheDocument();
-  await user.clear(screen.getByRole("textbox", { name: /Search volunteers/ }));
-  await user.click(screen.getByRole("combobox", { name: /Team/ }));
-  await user.click(screen.getByRole("option", { name: "All teams" }));
-  await user.click(screen.getByRole("checkbox", { name: /Select all 2 eligible shown/ }));
-  expect(screen.getByRole("checkbox", { name: /Select all 2 eligible shown/ })).toHaveAttribute("data-state", "checked");
-  expect(screen.getByText("2 selected")).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Clear" }));
-  expect(screen.getByText("0 selected")).toBeInTheDocument();
-  expect(screen.getByText("No mobile number")).toBeInTheDocument();
-  expect(screen.getByRole("checkbox", { name: "Terry Taylor" })).toBeDisabled();
+  renderForAdmin();
+  await user.click(screen.getByRole("button", { name: "+ New message" }));
+  await user.click(screen.getByRole("button", { name: "Select all eligible volunteers" }));
+  await user.type(screen.getByRole("textbox", { name: /Message:/ }), "Practice Friday.");
+  await user.click(screen.getByRole("button", { name: "Send to 2 volunteers" }));
+  await user.click(screen.getByText("Show recipients"));
+  expect(screen.getByText("SMS consent is needed for this phone number.")).toBeInTheDocument();
+  expect(screen.getByText("Send this message to 1 volunteer?")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Send 1 message" })).toBeEnabled();
 });
 
-test("changing recipients after cancelling confirmation invalidates the reviewed batch", async () => {
+it("removes deselected teams while preserving individual volunteer changes", async () => {
   const user = userEvent.setup();
-  mockPrepare.mockResolvedValue({ success: true, batch });
-  render(<TeamsMessagesPage />);
-  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
-  await user.click(screen.getByRole("option", { name: /October availability/ }));
-  await user.click(screen.getByRole("checkbox", { name: "Rae Rivera" }));
-  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
-  expect(await screen.findByRole("dialog", { name: "Review text messages" })).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Cancel" }));
-
-  await user.click(screen.getByRole("checkbox", { name: "Rae Rivera" }));
-  expect(screen.queryByRole("dialog", { name: "Review text messages" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("heading", { name: /Message status/ })).not.toBeInTheDocument();
-  expect(screen.getByRole("status")).toHaveTextContent("Recipients changed");
-});
-
-test("changing the intake form invalidates the active batch", async () => {
-  const user = userEvent.setup();
-  mockPrepare.mockResolvedValue({ success: true, batch });
-  mockUseTeamsPage.mockReturnValue({
-    churchId: "church_1", canEditTeams: true,
-    pageData: {
-      intakeForms: [
-        { formId: "form_1", name: "October availability", startDate: "2026-10-01", endDate: "2026-10-31", active: true },
-        { formId: "form_2", name: "November availability", startDate: "2026-11-01", endDate: "2026-11-30", active: true },
-      ],
-      schedules: [], teams: [], positions: [], intakeRecipients: [],
-      smsEligibilityByMemberId: { member_1: { status: "enabled", eligible: true } },
-      members: [{ memberId: "member_1", firstName: "Rae", lastName: "Rivera", churchId: "church_1", phoneNumber: "+15555550123", positionIds: [] }],
-    },
-  } as unknown as ReturnType<typeof useTeamsPage>);
-  render(<TeamsMessagesPage />);
-  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
-  await user.click(screen.getByRole("option", { name: /October availability/ }));
-  await user.click(screen.getByRole("checkbox", { name: "Rae Rivera" }));
-  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
-  expect(await screen.findByRole("dialog", { name: "Review text messages" })).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Cancel" }));
-
-  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
-  await user.click(screen.getByRole("option", { name: /November availability/ }));
-  expect(screen.queryByRole("dialog", { name: "Review text messages" })).not.toBeInTheDocument();
-  expect(screen.getByRole("status")).toHaveTextContent("Form changed");
-});
-
-test("changing the message type invalidates the active batch", async () => {
-  const user = userEvent.setup();
-  mockPrepare.mockResolvedValue({ success: true, batch });
-  render(<TeamsMessagesPage />);
-  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
-  await user.click(screen.getByRole("option", { name: /October availability/ }));
-  await user.click(screen.getByRole("checkbox", { name: "Rae Rivera" }));
-  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
-  expect(await screen.findByRole("dialog", { name: "Review text messages" })).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Cancel" }));
-
-  await user.click(screen.getByRole("combobox", { name: /Message/ }));
-  await user.click(screen.getByRole("option", { name: "Remind nonresponders" }));
-  expect(screen.queryByRole("dialog", { name: "Review text messages" })).not.toBeInTheDocument();
-  expect(screen.getByRole("status")).toHaveTextContent("Message type changed");
-});
-
-test("select all is indeterminate for some visible selections and prepares only eligible selected volunteers", async () => {
-  const user = userEvent.setup();
-  mockUseTeamsPage.mockReturnValue({
-    churchId: "church_1", canEditTeams: true,
-    pageData: {
-      intakeForms: [{ formId: "form_1", name: "October availability", startDate: "2026-10-01", endDate: "2026-10-31", active: true, teamIds: [] }],
-      teams: [{ teamId: "worship", churchId: "church_1", name: "Worship", memberIds: ["member_1", "member_2"] }], positions: [], schedules: [], intakeRecipients: [],
-      smsEligibilityByMemberId: { member_1: { status: "enabled", eligible: true }, member_2: { status: "enabled", eligible: true } },
-      members: [
-        { memberId: "member_1", firstName: "Rae", lastName: "Rivera", churchId: "church_1", phoneNumber: "+15555550123", positionIds: [] },
-        { memberId: "member_2", firstName: "Terry", lastName: "Taylor", churchId: "church_1", phoneNumber: "+15555550124", positionIds: [] },
-      ],
-    },
-  } as unknown as ReturnType<typeof useTeamsPage>);
-  render(<TeamsMessagesPage />);
-  expect(screen.getByRole("button", { name: "Review and send 0 messages" })).toBeDisabled();
-  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
-  await user.click(screen.getByRole("option", { name: /October availability/ }));
-  await user.click(screen.getByRole("checkbox", { name: "Rae Rivera" }));
-  expect(screen.getByRole("checkbox", { name: /Select all 2 eligible shown/ })).toHaveAttribute("data-state", "indeterminate");
-  expect(screen.getByRole("button", { name: "Review and send 1 message" })).toBeEnabled();
-  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
-  await waitFor(() => expect(mockPrepare).toHaveBeenCalledWith("church_1", expect.objectContaining({ memberIds: ["member_1"] })));
+  renderForAdmin();
+  await user.click(screen.getByRole("button", { name: "+ New message" }));
+  await user.click(screen.getByRole("button", { name: "Teams" }));
+  await user.click(screen.getByRole("menuitemcheckbox", { name: "Praise Team" }));
+  await user.click(screen.getByRole("menuitemcheckbox", { name: "Tech Team" }));
+  await user.click(screen.getByRole("menuitemcheckbox", { name: "Praise Team" }));
+  expect(screen.getByText("1 selected · 1 eligible · 0 excluded")).toBeInTheDocument();
+  await user.click(screen.getByRole("menuitemcheckbox", { name: "Praise Team" }));
+  await user.keyboard("{Escape}");
+  await user.click(screen.getByRole("checkbox", { name: "Alex Lane" }));
+  expect(screen.getByText("1 selected · 1 eligible · 0 excluded")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Teams" }));
+  await user.click(screen.getByRole("menuitemcheckbox", { name: "Praise Team" }));
+  await user.click(screen.getByRole("menuitemcheckbox", { name: "Praise Team" }));
+  expect(screen.getByText("1 selected · 1 eligible · 0 excluded")).toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  await user.click(screen.getByRole("button", { name: "Clear selection" }));
+  expect(screen.getByText("0 selected · 0 eligible · 0 excluded")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Teams" })).toHaveTextContent("Choose teams");
 });

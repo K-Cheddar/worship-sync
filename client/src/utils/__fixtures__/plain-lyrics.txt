@@ -1,0 +1,5 @@
+Keep every WORD, and punctuation!
+Keep this line too.
+
+Another stanza
+With no metadata

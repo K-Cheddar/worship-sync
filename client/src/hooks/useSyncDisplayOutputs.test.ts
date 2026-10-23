@@ -83,6 +83,7 @@ describe("useSyncDisplayOutputs", () => {
     });
 
     expect(store.getState().displayOutputs.isLoaded).toBe(true);
+    expect(store.getState().displayOutputs.syncedChurchId).toBe("church-1");
   });
 
   it("re-attaches after RESET so the Displays panel can leave the loading lock", () => {

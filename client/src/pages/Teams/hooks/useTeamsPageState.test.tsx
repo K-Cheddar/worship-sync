@@ -1,5 +1,5 @@
 import React, { type PropsWithChildren } from "react";
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { ToastContext } from "../../../context/toastContext";
 import { createMockGlobalContext } from "../../../test/mocks";
@@ -163,6 +163,89 @@ describe("useTeamsPageState bootstrap recovery", () => {
     unmount();
   });
 
+  it("reconciles linked, unlinked, and relinked self identity from the bootstrap", async () => {
+    mockGetTeamsBootstrap
+      .mockResolvedValueOnce({ ...emptyBootstrap, selfMemberId: "member-self" } as never)
+      .mockResolvedValueOnce({ ...emptyBootstrap, selfMemberId: null } as never)
+      .mockResolvedValueOnce({ ...emptyBootstrap, selfMemberId: "member-self-again" } as never);
+    const { result, unmount } = renderPageState();
+    await flushMicrotasks();
+    expect(result.current.selfMemberId).toBe("member-self");
+
+    await act(async () => result.current.reconcileTeamsProjection());
+    expect(result.current.selfMemberId).toBeNull();
+
+    await act(async () => result.current.reconcileTeamsProjection());
+    expect(result.current.selfMemberId).toBe("member-self-again");
+    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(3);
+    unmount();
+  });
+
+  it("fetches a post-link identity after an older bootstrap already started", async () => {
+    const olderBootstrap = deferred<typeof emptyBootstrap & { selfMemberId: string | null }>();
+    mockGetTeamsBootstrap
+      .mockReturnValueOnce(olderBootstrap.promise as never)
+      .mockResolvedValueOnce({ ...emptyBootstrap, selfMemberId: "member-self" } as never);
+    const { result, unmount } = renderPageState(undefined, undefined, {
+      sessionKind: "human",
+      userId: "user-1",
+    });
+    await waitFor(() => expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1));
+
+    let reconciliation: Promise<void> = Promise.resolve();
+    act(() => {
+      reconciliation = result.current.reconcileTeamsProjection();
+    });
+    await act(async () => {
+      olderBootstrap.resolve({ ...emptyBootstrap, selfMemberId: null });
+      await reconciliation;
+    });
+
+    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(2);
+    expect(result.current.selfMemberId).toBe("member-self");
+    unmount();
+  });
+
+  it("clears self identity immediately on church or account changes and ignores a stale bootstrap", async () => {
+    const oldChurchBootstrap = deferred<typeof emptyBootstrap & { selfMemberId: string }>();
+    mockGetTeamsBootstrap
+      .mockImplementationOnce(() => oldChurchBootstrap.promise as never)
+      .mockResolvedValueOnce({ ...emptyBootstrap, selfMemberId: "church-2-member" } as never)
+      .mockResolvedValue({ ...emptyBootstrap, selfMemberId: null } as never);
+    const contextOverrides: Record<string, unknown> = {
+      sessionKind: "human",
+      userId: "user-1",
+    };
+    const { result, rerender, unmount } = renderPageState(undefined, undefined, contextOverrides);
+    expect(result.current.selfMemberId).toBeNull();
+
+    churchId = "church-2";
+    rerender();
+    expect(result.current.selfMemberId).toBeNull();
+    await act(async () => oldChurchBootstrap.resolve({
+      ...emptyBootstrap,
+      selfMemberId: "stale-church-1-member",
+    }));
+    await waitFor(() => expect(result.current.selfMemberId).toBe("church-2-member"));
+    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(2);
+
+    const oldAccountBootstrap = deferred<typeof emptyBootstrap & { selfMemberId: string }>();
+    mockGetTeamsBootstrap.mockImplementationOnce(() => oldAccountBootstrap.promise as never);
+    contextOverrides.userId = "user-2";
+    rerender();
+    expect(result.current.selfMemberId).toBeNull();
+    contextOverrides.sessionKind = null;
+    contextOverrides.userId = "";
+    rerender();
+    expect(result.current.selfMemberId).toBeNull();
+    await act(async () => oldAccountBootstrap.resolve({
+      ...emptyBootstrap,
+      selfMemberId: "stale-user-2-member",
+    }));
+    expect(result.current.selfMemberId).toBeNull();
+    unmount();
+  });
+
   it("reconciles a removed sole-Team member and clears editability through the authoritative bootstrap", async () => {
     const kevin = {
       memberId: "kevin", churchId: "church-1", firstName: "Kevin", lastName: "Singer",
@@ -193,6 +276,223 @@ describe("useTeamsPageState bootstrap recovery", () => {
     expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(2);
     expect(result.current.pageData.members).toEqual([]);
     expect(result.current.editableMemberIds.has("kevin")).toBe(false);
+    unmount();
+  });
+
+  it("refreshes only the saved member's phone eligibility from an authoritative bootstrap", async () => {
+    const noPhone = {
+      memberId: "member-sms", churchId: "church-1", firstName: "Rae", lastName: "Kim",
+      phoneNumber: "", positionIds: [], blockoutDates: [],
+    };
+    mockGetTeamsBootstrap
+      .mockResolvedValueOnce({
+        ...emptyBootstrap,
+        members: [noPhone],
+        smsEligibilityByMemberId: {
+          [noPhone.memberId]: { status: "no_mobile", eligible: false, phoneNumber: "" },
+        },
+      } as never)
+      .mockResolvedValueOnce({
+        ...emptyBootstrap,
+        members: [{ ...noPhone, phoneNumber: "+19545551234" }],
+        smsEligibilityByMemberId: {
+          [noPhone.memberId]: { status: "consent_needed", eligible: false, phoneNumber: "+19545551234" },
+        },
+      } as never);
+    const { result, unmount } = renderPageState();
+    await flushMicrotasks();
+    expect(result.current.pageData.smsEligibilityByMemberId?.[noPhone.memberId]?.status).toBe("no_mobile");
+
+    act(() => result.current.upsertData("members", "memberId", {
+      ...noPhone, phoneNumber: "+19545551234",
+    } as never));
+    await act(async () => {
+      await result.current.refreshMemberSmsEligibility(noPhone.memberId, "+19545551234", "");
+    });
+
+    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(2);
+    expect(result.current.pageData.members[0].phoneNumber).toBe("+19545551234");
+    expect(result.current.pageData.smsEligibilityByMemberId?.[noPhone.memberId]).toEqual({
+      status: "consent_needed", eligible: false, phoneNumber: "+19545551234",
+    });
+    unmount();
+  });
+
+  it("waits for an older bootstrap, then restores the confirmed phone with its matching eligibility", async () => {
+    const noPhone = {
+      memberId: "member-sms", churchId: "church-1", firstName: "Rae", lastName: "Kim",
+      phoneNumber: "", positionIds: [], blockoutDates: [],
+    };
+    const oldBootstrap = deferred<unknown>();
+    mockGetTeamsBootstrap
+      .mockReturnValueOnce(oldBootstrap.promise as never)
+      .mockResolvedValueOnce({
+        ...emptyBootstrap,
+        members: [{ ...noPhone, phoneNumber: "+19545551234" }],
+        smsEligibilityByMemberId: {
+          [noPhone.memberId]: { status: "consent_needed", eligible: false, phoneNumber: "+19545551234" },
+        },
+      } as never);
+    const { result, unmount } = renderPageState();
+    await waitFor(() => expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1));
+
+    act(() => result.current.upsertData("members", "memberId", {
+      ...noPhone, phoneNumber: "+19545551234",
+    } as never));
+    let reconciliation: Promise<void> = Promise.resolve();
+    act(() => {
+      reconciliation = result.current.refreshMemberSmsEligibility(noPhone.memberId, "+19545551234", "");
+    });
+    await act(async () => {
+      oldBootstrap.resolve({
+        ...emptyBootstrap,
+        members: [noPhone],
+        smsEligibilityByMemberId: {
+          [noPhone.memberId]: { status: "no_mobile", eligible: false, phoneNumber: "" },
+        },
+      });
+      await reconciliation;
+    });
+
+    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(2);
+    expect(result.current.pageData.members[0].phoneNumber).toBe("+19545551234");
+    expect(result.current.pageData.smsEligibilityByMemberId?.[noPhone.memberId]?.status).toBe("consent_needed");
+    unmount();
+  });
+
+  it("refreshes to no-mobile eligibility after the saved phone is removed", async () => {
+    const member = {
+      memberId: "member-sms", churchId: "church-1", firstName: "Rae", lastName: "Kim",
+      phoneNumber: "+19545550111", positionIds: [], blockoutDates: [],
+    };
+    mockGetTeamsBootstrap
+      .mockResolvedValueOnce({
+        ...emptyBootstrap,
+        members: [member],
+        smsEligibilityByMemberId: {
+          [member.memberId]: { status: "opted_out", eligible: false, phoneNumber: member.phoneNumber },
+        },
+      } as never)
+      .mockResolvedValueOnce({
+        ...emptyBootstrap,
+        members: [{ ...member, phoneNumber: "" }],
+        smsEligibilityByMemberId: {
+          [member.memberId]: { status: "no_mobile", eligible: false, phoneNumber: "" },
+        },
+      } as never);
+    const { result, unmount } = renderPageState();
+    await flushMicrotasks();
+    act(() => result.current.upsertData("members", "memberId", { ...member, phoneNumber: "" } as never));
+    await act(async () => {
+      await result.current.refreshMemberSmsEligibility(member.memberId, "", member.phoneNumber);
+    });
+
+    expect(result.current.pageData.smsEligibilityByMemberId?.[member.memberId]).toEqual({
+      status: "no_mobile", eligible: false, phoneNumber: "",
+    });
+    unmount();
+  });
+
+  it("does not let a delayed response for an earlier phone replace newer eligibility", async () => {
+    const member = {
+      memberId: "member-sms", churchId: "church-1", firstName: "Rae", lastName: "Kim",
+      phoneNumber: "+19545550111", positionIds: [], blockoutDates: [],
+    };
+    mockGetTeamsBootstrap.mockResolvedValueOnce({
+      ...emptyBootstrap,
+      members: [member],
+      smsEligibilityByMemberId: {
+        [member.memberId]: { status: "enabled", eligible: true, phoneNumber: member.phoneNumber },
+      },
+    } as never);
+    const { result, unmount } = renderPageState();
+    await flushMicrotasks();
+    const earlierResponse = deferred<unknown>();
+    mockGetTeamsBootstrap
+      .mockReturnValueOnce(earlierResponse.promise as never)
+      .mockResolvedValueOnce({
+        ...emptyBootstrap,
+        members: [{ ...member, phoneNumber: "+19545550222" }],
+        smsEligibilityByMemberId: {
+          [member.memberId]: { status: "consent_needed", eligible: false, phoneNumber: "+19545550222" },
+        },
+      } as never);
+    let earlier: Promise<void> = Promise.resolve();
+    act(() => {
+      earlier = result.current.refreshMemberSmsEligibility(member.memberId, "+19545550111", "");
+    });
+    await waitFor(() => expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(2));
+
+    act(() => result.current.upsertData("members", "memberId", {
+      ...member, phoneNumber: "+19545550222",
+    } as never));
+    await act(async () => {
+      await result.current.refreshMemberSmsEligibility(member.memberId, "+19545550222", "+19545550111");
+    });
+    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(3);
+    expect(result.current.pageData.smsEligibilityByMemberId?.[member.memberId]).toEqual({
+      status: "consent_needed", eligible: false, phoneNumber: "+19545550222",
+    });
+    await act(async () => {
+      earlierResponse.resolve({
+        ...emptyBootstrap,
+        members: [member],
+        smsEligibilityByMemberId: {
+          [member.memberId]: { status: "enabled", eligible: true, phoneNumber: member.phoneNumber },
+        },
+      });
+      await earlier;
+    });
+    expect(result.current.pageData.members[0].phoneNumber).toBe("+19545550222");
+    expect(result.current.pageData.smsEligibilityByMemberId?.[member.memberId]?.phoneNumber).toBe("+19545550222");
+    unmount();
+  });
+
+  it("ignores a pending eligibility response after the active church changes", async () => {
+    const member = {
+      memberId: "member-sms", churchId: "church-1", firstName: "Rae", lastName: "Kim",
+      phoneNumber: "+19545550111", positionIds: [], blockoutDates: [],
+    };
+    const oldEligibilityResponse = deferred<unknown>();
+    mockGetTeamsBootstrap
+      .mockResolvedValueOnce({
+        ...emptyBootstrap,
+        members: [member],
+        smsEligibilityByMemberId: {
+          [member.memberId]: { status: "consent_needed", eligible: false, phoneNumber: member.phoneNumber },
+        },
+      } as never)
+      .mockReturnValueOnce(oldEligibilityResponse.promise as never)
+      .mockResolvedValueOnce({
+        ...emptyBootstrap,
+        members: [{ ...member, churchId: "church-2" }],
+        smsEligibilityByMemberId: {
+          [member.memberId]: { status: "opted_out", eligible: false, phoneNumber: member.phoneNumber },
+        },
+      } as never);
+    const { result, rerender, unmount } = renderPageState();
+    await flushMicrotasks();
+    let oldRequest: Promise<void> = Promise.resolve();
+    act(() => {
+      oldRequest = result.current.refreshMemberSmsEligibility(member.memberId, member.phoneNumber, "");
+    });
+    await waitFor(() => expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(2));
+
+    churchId = "church-2";
+    rerender();
+    await flushMicrotasks();
+    await act(async () => {
+      oldEligibilityResponse.resolve({
+        ...emptyBootstrap,
+        members: [member],
+        smsEligibilityByMemberId: {
+          [member.memberId]: { status: "enabled", eligible: true, phoneNumber: member.phoneNumber },
+        },
+      });
+      await oldRequest;
+    });
+
+    expect(result.current.pageData.smsEligibilityByMemberId?.[member.memberId]?.status).toBe("opted_out");
     unmount();
   });
 

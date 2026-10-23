@@ -3,6 +3,7 @@ import Button from "../../../components/Button/Button";
 import Select from "../../../components/Select/Select";
 import type { TeamRosterMember } from "../../../api/authTypes";
 import { scheduleMemberName } from "../teamsUtils";
+import { MemberNameWithIndicator } from "../components/CurrentUserMemberIndicator";
 
 export type ScheduleReplacementVacancy = {
   occurrenceId: string;
@@ -46,7 +47,14 @@ const ScheduleReplacementInvitationForm = ({ vacancies, members, duplicateFirstN
           options={[{ value: "", label: "Choose an assignment" }, ...vacancies.map((item) => ({ value: keyFor(item), label: item.label }))]}
           onChange={(value) => { setVacancyKey(value); setMemberId(""); setError(""); }} />
         <Select label="Replacement volunteer" value={memberId} disabled={!vacancy || pending}
-          options={[{ value: "", label: "Choose a volunteer" }, ...candidates.map((member) => ({ value: member.memberId, label: scheduleMemberName(member, duplicateFirstNames) }))]}
+          options={[{ value: "", label: "Choose a volunteer" }, ...candidates.map((member) => {
+            const name = scheduleMemberName(member, duplicateFirstNames);
+            return {
+              value: member.memberId,
+              label: <MemberNameWithIndicator name={name} memberId={member.memberId} />,
+              textValue: name,
+            };
+          })]}
           onChange={setMemberId} />
         {error ? <p role="alert" className="text-sm text-red-200">{error}</p> : null}
         <Button variant="secondary" disabled={pending || !candidates.some((member) => member.memberId === memberId)} isLoading={pending} onClick={() => void prepare()}>Review replacement text message</Button>

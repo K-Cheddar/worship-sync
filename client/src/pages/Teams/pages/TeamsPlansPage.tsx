@@ -77,11 +77,10 @@ import {
 } from "../teamsReturnNavigation";
 import { isActive } from "../teamsUtils";
 import { getUpcomingServiceRange } from "../servicePeriodRange";
-import ScheduleOccurrenceRibbon from "../schedule/ScheduleOccurrenceRibbon";
-import {
-  scheduleTodayBorderClassName,
-  scheduleUpNextBorderClassName,
-} from "../schedule/scheduleUtils";
+import ServiceOccurrenceCard, {
+  getServiceOccurrenceCardDateParts,
+  SERVICE_OCCURRENCE_GRID_CLASS_NAME,
+} from "../../../components/ServiceOccurrenceCard/ServiceOccurrenceCard";
 import RangeSelector from "../components/RangeSelector";
 import {
   formatResolvedDateRange,
@@ -128,15 +127,6 @@ type MonthGroup = {
   occurrences: TeamScheduleOccurrence[];
 };
 
-type PlansTileParts = {
-  weekday: string;
-  month: string;
-  day: string;
-  time: string | null;
-  /** Accessible / aria label, e.g. "Sat · Jul 25". */
-  label: string;
-};
-
 const occurrenceCalendarDateTime = (
   occurrence: TeamScheduleOccurrence,
   timeZone: string,
@@ -175,31 +165,6 @@ const groupOccurrencesByMonth = (
     });
   }
   return groups;
-};
-
-/**
- * Compact calendar-style parts for month-grouped tiles. Year lives in the month
- * header; shared service time lives in the service header chips.
- */
-const getPlansTileParts = (
-  occurrence: TeamScheduleOccurrence,
-  shared: SharedOccurrenceTiming,
-  timeZone: string,
-): PlansTileParts => {
-  const date = occurrenceCalendarDateTime(occurrence, timeZone);
-  const weekday = date.toLocaleString(undefined, { timeZone: "UTC", weekday: "short" });
-  const month = date.toLocaleString(undefined, { timeZone: "UTC", month: "short" });
-  const day = date.toLocaleString(undefined, { timeZone: "UTC", day: "numeric" });
-  const scheduledStart = new Date(occurrence.startsAt);
-  const time = shared.sharedTime
-    ? null
-    : scheduledStart.toLocaleString(undefined, {
-      timeZone,
-      hour: "numeric",
-      minute: "2-digit",
-    });
-  const label = time ? `${weekday} · ${month} ${day} · ${time}` : `${weekday} · ${month} ${day}`;
-  return { weekday, month, day, time, label };
 };
 
 const serviceTimingLabel = (
@@ -245,7 +210,13 @@ const PlansOccurrenceTile = ({
   planStatusLoading,
   onOpen,
 }: PlansOccurrenceTileProps) => {
-  const tile = getPlansTileParts(occurrence, shared, timeZone);
+  const calendarDate = getOccurrenceDate(occurrence, timeZone);
+  const tile = getServiceOccurrenceCardDateParts({
+    calendarDate,
+    startsAt: occurrence.startsAt,
+    timeZone,
+    showTime: !shared.sharedTime,
+  });
   const isToday = !isNextUpcoming && isOccurrenceToday(occurrence, timeZone);
   let planActionLabel = `Add plan for ${tile.label}`;
   if (planStatusLoading) {
@@ -264,77 +235,28 @@ const PlansOccurrenceTile = ({
     markerAriaSuffix = ", today";
   }
 
-  let markerBorderClassName: string | false = false;
-  if (isNextUpcoming) {
-    markerBorderClassName = scheduleUpNextBorderClassName;
-  } else if (isToday) {
-    markerBorderClassName = scheduleTodayBorderClassName;
-  }
-
   return (
-    <li className="relative">
-      <ScheduleOccurrenceRibbon
-        isNextUpcoming={isNextUpcoming}
-        isToday={isToday}
-      />
-      <Button
-        type="button"
-        variant="tertiary"
-        aria-label={`${planActionLabel}${markerAriaSuffix}`}
-        aria-busy={planStatusLoading || undefined}
-        className={cn(
-          "h-auto w-full flex-col items-stretch gap-0 rounded-lg border px-2.5 py-2 font-normal",
-          planStatusLoading
-            ? "border-gray-600/70 bg-gray-800/70 hover:border-gray-500/50 hover:bg-gray-800"
-            : hasPlan
-              ? "border-emerald-500/30 bg-gray-800/80 hover:border-emerald-400/45 hover:bg-gray-800"
-              : "border-gray-600/70 bg-gray-800/70 hover:border-orange-400/35 hover:bg-gray-800",
-          markerBorderClassName,
-          isPast && !hasPlan && !planStatusLoading && "opacity-55",
-        )}
-        onClick={onOpen}
-      >
-        <span className="flex w-full items-center justify-between gap-1">
-          <span
-            className={cn(
-              "text-[11px] font-semibold uppercase tracking-wide",
-              hasPlan ? "text-emerald-300/70" : "text-gray-400",
-            )}
-          >
-            {tile.weekday}
-          </span>
-          {planStatusLoading ? (
-            <span
-              className="size-3 shrink-0 animate-pulse rounded-sm bg-white/10"
-              aria-hidden
-            />
-          ) : hasPlan ? (
-            <Icon
-              svg={Check}
-              size="xs"
-              className="shrink-0 text-emerald-300"
-            />
-          ) : (
-            <span className="size-1.5 shrink-0 rounded-full bg-orange-400/45" />
-          )}
-        </span>
-        <span className="mt-0.5 text-left text-lg font-semibold leading-none text-gray-100">
-          {tile.day}
-        </span>
-        <span className="mt-1 flex w-full items-center justify-between gap-1 text-left text-[11px] text-gray-400">
-          <span>{tile.month}</span>
-          {tile.time ? <span>{tile.time}</span> : null}
-        </span>
-        {serviceName ? (
-          <span
-            className="mt-1 truncate text-left text-[11px] font-medium text-gray-300"
-            title={serviceName}
-          >
-            {serviceName}
-          </span>
-        ) : null}
-      </Button>
-    </li>
+    <ServiceOccurrenceCard
+      calendarDate={calendarDate}
+      startsAt={occurrence.startsAt}
+      timeZone={timeZone}
+      showTime={!shared.sharedTime}
+      serviceName={serviceName}
+      ariaLabel={`${planActionLabel}${markerAriaSuffix}`}
+      ariaBusy={planStatusLoading}
+      isNextUpcoming={isNextUpcoming}
+      isToday={isToday}
+      isPast={isPast && !hasPlan && !planStatusLoading}
+      statusTone={!planStatusLoading && hasPlan ? "success" : "neutral"}
+      statusMarker={planStatusLoading ? (
+        <span className="size-3 animate-pulse rounded-sm bg-white/10" />
+      ) : hasPlan ? (
+        <Icon svg={Check} size="xs" className="text-emerald-300" />
+      ) : (
+        <span className="size-1.5 rounded-full bg-orange-400/45" />
+      )}
+      onOpen={onOpen}
+    />
   );
 };
 
@@ -1548,7 +1470,10 @@ const TeamsPlansCalendarPage = () => {
                       {month.occurrences.length}
                     </span>
                   </div>
-                  <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                  <ul
+                    aria-label={`Service occurrences for ${month.label}`}
+                    className={SERVICE_OCCURRENCE_GRID_CLASS_NAME}
+                  >
                     {month.occurrences.map((occurrence) => {
                       const entry = entryByOccurrenceId.get(
                         occurrence.occurrenceId,
@@ -1727,12 +1652,8 @@ const TeamsPlansCalendarPage = () => {
                           </span>
                         </div>
                         <ul
-                          className={cn(
-                            "grid grid-cols-2 gap-2 sm:grid-cols-3",
-                            visibleGroups.length > 1
-                              ? "xl:grid-cols-2 2xl:grid-cols-3"
-                              : "lg:grid-cols-4 xl:grid-cols-5",
-                          )}
+                          aria-label={`Service occurrences for ${month.label}`}
+                          className={SERVICE_OCCURRENCE_GRID_CLASS_NAME}
                         >
                           {month.occurrences.map((occurrence) => {
                             const hasPlan =

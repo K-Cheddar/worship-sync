@@ -75,6 +75,17 @@ afterEach(async () => {
   jest.useRealTimers();
 });
 
+it("scrubs personal credentials before selecting public bootstrap and skips console forwarding", async () => {
+  const pending = deferred();
+  mockPublic.mockReturnValue(pending.promise);
+  await start(`/s#v_${"x".repeat(32)}`);
+  expect(window.location.hash).toBe("");
+  expect(mockPublic).toHaveBeenCalledTimes(1);
+  expect(mockOperator).not.toHaveBeenCalled();
+  const { initConsoleLogForwarder } = await import("./utils/consoleLogForwarder");
+  expect(initConsoleLogForwarder).not.toHaveBeenCalled();
+});
+
 it.each([
   "/#/stream", "/#/stream-info", "/?cacheBust=1#/stream-info?controllerId=abc",
   "/#/projector", "/#/projector-full?outputId=main", "/#/monitor", "/#/credits",

@@ -274,6 +274,15 @@ export interface ElectronAPI {
   setUploadInProgress: (inProgress: boolean) => Promise<boolean>;
   /** 0–1 normalized progress, or `null` to clear the taskbar / dock indicator. */
   setTaskbarUploadProgress: (progress: number | null) => Promise<boolean>;
+  setChatTaskbarUnreadState?: (state: {
+    scope: { churchId: string; actorId: string } | null;
+    unread: boolean;
+    revision: number;
+  }) => Promise<boolean>;
+  requestChatTaskbarAttention?: (scope: {
+    churchId: string;
+    actorId: string;
+  }) => Promise<boolean>;
 }
 
 declare global {

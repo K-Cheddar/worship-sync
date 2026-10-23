@@ -142,6 +142,18 @@ jobs:
       - name: Install server dependencies
         run: npm ci
 
+      - name: Install client dependencies for browser integration
+        run: npm ci --prefix client
+
+      - name: Install Chromium for browser integration
+        run: npx playwright install --with-deps chromium
+
+      - name: Build client for server browser integration
+        run: npm run build:heroku --prefix client
+
+      - name: Generate temporary TLS certificate for browser integration
+        run: openssl req -x509 -newkey rsa:2048 -nodes -keyout client/local.worshipsync.net-key.pem -out client/local.worshipsync.net.pem -days 1 -subj "/CN=127.0.0.1"
+
       - name: Run server tests with Firestore emulator integration
         run: npx --yes firebase-tools@14.4.0 emulators:exec --only firestore --project demo-worshipsync "npm run test:server"
 

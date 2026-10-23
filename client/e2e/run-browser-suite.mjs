@@ -6,7 +6,14 @@ import { fileURLToPath } from "node:url";
 const [suite] = process.argv.slice(2);
 const allowedSuites = new Set([
   "account-responsive-navigation.mjs",
+  "home-launcher.mjs",
+  "home-navigation.mjs",
   "board-controller-mobile.mjs",
+  "modal-mobile-focus.mjs",
+  "schedule-quick-member.mjs",
+  "my-schedule-service-cards.mjs",
+  "service-plan-refresh.mjs",
+  "availability-workspace.mjs",
 ]);
 if (!allowedSuites.has(suite)) {
   throw new Error(`Unknown browser suite: ${suite || "(missing)"}`);

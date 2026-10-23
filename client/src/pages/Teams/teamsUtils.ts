@@ -581,7 +581,10 @@ export const emptyRange = (): TeamBlockoutDateRange => ({
   notes: "",
 });
 
-export const memberName = (member?: TeamRosterMember | null) => {
+export const memberName = (
+  member?: (Pick<TeamRosterMember, "firstName" | "lastName"> &
+    Partial<Pick<TeamRosterMember, "title">>) | null,
+) => {
   if (!member) return "Unassigned";
   return `${member.title || ""} ${member.firstName} ${member.lastName}`.trim();
 };

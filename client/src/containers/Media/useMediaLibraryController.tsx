@@ -1607,19 +1607,30 @@ export function useMediaLibraryController({
       };
       const finalState = getFinalState();
       if (isOperationUiScopeCurrent()) dispatch(setMediaListAndFolders(finalState));
-      const flushResult = await flushMediaLibraryDocToPouch(
-        operationScope.db,
-        finalState.list,
-        finalState.folders,
-        getFinalState,
-        changeBase,
-        {
-          allowOriginalOwnerPersistenceAfterScopeChange: true,
-          publishIfCurrent: isOperationUiScopeCurrent,
-          automaticMediaRehomeIds,
-          automaticFolderRehomeIds,
-        },
-      );
+      let flushResult: Awaited<ReturnType<typeof flushMediaLibraryDocToPouch>>;
+      try {
+        if (!operationScope.db) throw new Error("Media database is unavailable");
+        flushResult = await flushMediaLibraryDocToPouch(
+          operationScope.db,
+          finalState.list,
+          finalState.folders,
+          getFinalState,
+          changeBase,
+          {
+            allowOriginalOwnerPersistenceAfterScopeChange: true,
+            publishIfCurrent: isOperationUiScopeCurrent,
+            automaticMediaRehomeIds,
+            automaticFolderRehomeIds,
+          },
+        );
+      } catch (error) {
+        console.error("Could not persist kept Media folder contents", error);
+        if (isOperationUiScopeCurrent()) {
+          showToast(mediaLibraryFlushFailureMessage(error, "folder"), "error");
+        }
+        return isOperationUiScopeCurrent()
+          && !store.getState().media.folders.some((folder) => folder.id === folderId);
+      }
       if (flushResult.ok && isOperationUiScopeCurrent()) {
         const current = store.getState().media;
         const clearOwnedMarker = <T extends { _keepContentsRehomeOperationId?: string }>(row: T): T => {
@@ -1640,6 +1651,8 @@ export function useMediaLibraryController({
       if (!flushResult.ok && isOperationUiScopeCurrent()) {
         showToast(mediaLibraryFlushFailureMessage(flushResult.error, "folder"), "error");
       }
+      return isOperationUiScopeCurrent()
+        && !store.getState().media.folders.some((folder) => folder.id === folderId);
     },
     [activeMediaRouteFolders, controllerProfile.id, db, churchId, dispatch, isCurrentUiScope, showToast, store],
   );
@@ -1654,8 +1667,10 @@ export function useMediaLibraryController({
     const folder = folders.find((f) => f.id === selectedLibraryFilter);
     if (!folder) return;
     if (isMediaLibraryFolderEmpty(folder.id, folders, list)) {
-      handleDeleteFolderKeepContents(folder.id);
-      navigateToFolder(folder.parentId ?? MEDIA_LIBRARY_ROOT_VIEW);
+      const parentId = folder.parentId ?? MEDIA_LIBRARY_ROOT_VIEW;
+      void handleDeleteFolderKeepContents(folder.id).then((folderRemoved) => {
+        if (folderRemoved) navigateToFolder(parentId);
+      });
       return;
     }
     setFolderDeleteOpen(true);
@@ -2067,19 +2082,23 @@ export function useMediaLibraryController({
       });
 
       if (removedRows.length === 0) {
-        const finalized = await finalizeFolder();
+        await finalizeFolder();
         publish(
-          finalized ? "complete" : "failed",
-          finalized ? "Folder deletion complete" : "Folder finalization needs attention",
+          folderFinalized ? "complete" : "failed",
+          folderFinalized ? "Folder deletion complete" : "Folder finalization needs attention",
           folderFinalizationError,
         );
-        return ownerActive && finalized;
+        return ownerActive
+          && isOperationUiScopeCurrent()
+          && !store.getState().media.folders.some((folder) => folder.id === folderId);
       }
       const deletionClaim = claimMediaDeletion(removedRows.map((row) => row.id));
       publish("active", "Stopping cloud uploads for folder items");
       try {
-        const deleted = await runDeletionAttempt(removedRows, deletionClaim);
-        return ownerActive && deleted;
+        await runDeletionAttempt(removedRows, deletionClaim);
+        return ownerActive
+          && isOperationUiScopeCurrent()
+          && !store.getState().media.folders.some((folder) => folder.id === folderId);
       } finally {
         deletionClaim.release();
       }

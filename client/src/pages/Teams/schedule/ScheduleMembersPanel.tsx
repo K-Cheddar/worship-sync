@@ -262,6 +262,7 @@ const ScheduleMembersPanel = ({
         <MemberChip
           key={member.memberId}
           label={scheduleMemberName(member, duplicateFirstNames)}
+          memberId={member.memberId}
           avatar={
             <MemberAvatar
               profileImageUrl={member.profileImageUrl}
@@ -309,6 +310,7 @@ const ScheduleMembersPanel = ({
           {showEligibilityGroupDivider ? <ScheduleMemberPositionGroupDivider /> : null}
           <MemberChip
             label={scheduleMemberName(row.member, duplicateFirstNames)}
+            memberId={row.member.memberId}
             avatar={
               <MemberAvatar
                 profileImageUrl={row.member.profileImageUrl}

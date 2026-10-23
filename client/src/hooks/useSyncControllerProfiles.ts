@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { type Database } from "firebase/database";
 import { useDispatch, useSelector } from "./reduxHooks";
 import { useFirebaseValueWithRetry } from "./useFirebaseValueWithRetry";
-import { setControllerProfilesFromRemote } from "../store/controllerProfilesSlice";
+import { setControllerProfilesForChurch } from "../store/controllerProfilesSlice";
 import { getChurchDataPath } from "../utils/firebasePaths";
 import type { RootState } from "../store/store";
 
@@ -12,7 +12,7 @@ import type { RootState } from "../store/store";
  * Needed on every surface, not just controllers: send targeting resolves
  * against a profile, and a quick link fired from the home page has to resolve
  * the same way the controller that created it would. The node is absent for
- * churches that predate the registry — `setControllerProfilesFromRemote`
+ * churches that predate the registry — `setControllerProfilesForChurch`
  * normalizes that to the unscoped built-ins, so a missing node degrades to
  * pre-registry behavior rather than a controller that can reach nothing.
  */
@@ -42,9 +42,10 @@ export const useSyncControllerProfiles = (
 
   const handleProfiles = useCallback(
     (data: unknown) => {
-      dispatch(setControllerProfilesFromRemote(data));
+      if (!churchId) return;
+      dispatch(setControllerProfilesForChurch({ churchId, data }));
     },
-    [dispatch],
+    [churchId, dispatch],
   );
 
   useFirebaseValueWithRetry({

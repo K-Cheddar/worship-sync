@@ -17,3 +17,9 @@ export const allowedE2EAuthOrigins = (baseURL: string): Set<string> => {
 
   return origins;
 };
+
+/** A scoped RTDB sign-in uses a token observed from our authenticated API. */
+export const isObservedSharedDataSignIn = (pathname: string, body: unknown, tokens: string[]) =>
+  pathname === "/v1/accounts:signInWithCustomToken" && Boolean(body && typeof body === "object" &&
+    typeof (body as Record<string, unknown>).token === "string" &&
+    tokens.includes((body as Record<string, unknown>).token as string));

@@ -162,7 +162,7 @@ type MediaModalProps = {
     list: MediaType[];
     folders: MediaFolder[];
   }) => void;
-  onDeleteFolderKeepContents: (folderId: string) => void;
+  onDeleteFolderKeepContents: (folderId: string) => boolean | Promise<boolean>;
   onDeleteFolderSubtree: (folderId: string) => boolean | Promise<boolean>;
   selectedMedia: MediaType;
   selectedMediaIds: Set<string>;
@@ -495,8 +495,12 @@ const MediaModal = ({
   const handleRequestFolderDelete = useCallback(() => {
     if (!selectedRealFolder) return;
     if (isMediaLibraryFolderEmpty(selectedRealFolder.id, folders, fullList)) {
-      onDeleteFolderKeepContents(selectedRealFolder.id);
-      navigateToFolder(selectedRealFolder.parentId ?? MEDIA_LIBRARY_ROOT_VIEW);
+      const parentId = selectedRealFolder.parentId ?? MEDIA_LIBRARY_ROOT_VIEW;
+      void Promise.resolve(onDeleteFolderKeepContents(selectedRealFolder.id)).then(
+        (folderRemoved) => {
+          if (folderRemoved) navigateToFolder(parentId);
+        },
+      );
       return;
     }
     setFolderDeleteOpen(true);

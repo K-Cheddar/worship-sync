@@ -94,6 +94,7 @@ export const findOverlayForServicePlanningCandidate = (
   targetEvent: string | undefined,
   list: OverlayInfo[],
   excludeIds?: ReadonlySet<string>,
+  options?: { duplicateExactMatchesAreAmbiguous?: boolean },
 ): OverlayMatchResolution => {
   const pool = list.filter(
     (overlay) =>
@@ -103,11 +104,17 @@ export const findOverlayForServicePlanningCandidate = (
 
   const normalizedTargetEvent = normalizeOverlayEvent(targetEvent);
   if (normalizedTargetEvent) {
-    const exact = pool.find(
+    const exactMatches = pool.filter(
       (overlay) => normalizeOverlayEvent(overlay.event) === normalizedTargetEvent,
     );
-    return exact
-      ? { kind: "match", overlay: exact, score: 100 }
+    if (
+      options?.duplicateExactMatchesAreAmbiguous &&
+      exactMatches.length > 1
+    ) {
+      return { kind: "ambiguous", score: 100 };
+    }
+    return exactMatches[0]
+      ? { kind: "match", overlay: exactMatches[0], score: 100 }
       : { kind: "none" };
   }
 

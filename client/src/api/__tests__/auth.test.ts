@@ -27,8 +27,10 @@ jest.mock("../../utils/authStorage", () => ({
 // Imports follow jest.mock factories; module under test must load after mocks.
 // eslint-disable-next-line import/first -- see above
 import {
+  abandonPreparedAvailabilityBatch,
   apiFetch,
   authenticatedApiFetch,
+  dispatchAvailabilityNotificationBatch,
   createHumanSession,
   getAuthBootstrap,
   logoutSession,
@@ -639,6 +641,74 @@ describe("api/auth", () => {
         headers: expect.objectContaining({ "x-csrf-token": "new-csrf" }),
       }),
     );
+  });
+
+  it("retries the exact reviewed availability batch after CSRF recovery", async () => {
+    setAuthenticatedSessionExpected(true);
+    workstationTokenStore.value = "ws-1";
+    csrfStore.token = "old-csrf";
+    const recoveryHandler = jest.fn(async () => {
+      const bootstrap = await getAuthBootstrap({ workstationToken: "ws-1" });
+      csrfStore.token = bootstrap.csrfToken || "";
+      return bootstrap.authenticated;
+    });
+    const unsubscribeRecovery = registerAuthRecoveryHandler(recoveryHandler);
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        json: () => Promise.resolve({ errorMessage: "Could not verify this request.", code: "AUTH_CSRF_MISMATCH" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ authenticated: true, csrfToken: "new-csrf" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ success: true }),
+      });
+
+    try {
+      await expect(dispatchAvailabilityNotificationBatch(
+        "church-1", "batch-1", "review-v1", ["member-1"],
+      )).resolves.toEqual({ success: true });
+    } finally {
+      unsubscribeRecovery();
+    }
+
+    expect(global.fetch).toHaveBeenCalledTimes(3);
+    const firstRequest = (global.fetch as jest.Mock).mock.calls[0];
+    const retryRequest = (global.fetch as jest.Mock).mock.calls[2];
+    expect(firstRequest[0]).toBe("http://localhost:5000/api/churches/church-1/notification-batches/batch-1/dispatch");
+    expect(retryRequest[0]).toBe(firstRequest[0]);
+    expect(firstRequest[1].body).toBe(JSON.stringify({
+      confirmed: true,
+      approvalVersion: "review-v1",
+      acknowledgedUncertainMemberIds: ["member-1"],
+    }));
+    expect(retryRequest[1].body).toBe(firstRequest[1].body);
+    expect(firstRequest[1].headers["x-csrf-token"]).toBe("old-csrf");
+    expect(retryRequest[1].headers["x-csrf-token"]).toBe("new-csrf");
+  });
+
+  it("posts to the abandon endpoint for an unsent availability review", async () => {
+    setAuthenticatedSessionExpected(true);
+    workstationTokenStore.value = "ws-1";
+    csrfStore.token = "csrf-token";
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true }),
+    });
+
+    await expect(abandonPreparedAvailabilityBatch("church-1", "batch-1"))
+      .resolves.toEqual({ success: true });
+
+    const [url, options] = (global.fetch as jest.Mock).mock.calls[0];
+    expect(url).toBe("http://localhost:5000/api/churches/church-1/notification-batches/batch-1/abandon");
+    expect(options).toEqual(expect.objectContaining({ method: "POST", body: "{}" }));
   });
 
   it("does not recover or retry an ordinary permission 403", async () => {

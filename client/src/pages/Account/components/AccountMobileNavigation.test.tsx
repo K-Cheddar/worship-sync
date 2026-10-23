@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider, useLocation } from "react-router-dom";
 import type { MenuItemType } from "../../../types";
 import AccountMobileNavigation from "./AccountMobileNavigation";
+import { PendingRouteNavigationProvider } from "../../../hooks/usePendingRouteNavigation";
 
 const CurrentPath = () => {
   const { pathname } = useLocation();
@@ -23,10 +24,12 @@ it("keeps universal destinations and all grouped administration pages in the mob
       {
         path: "*",
         element: (
-          <>
-            <AccountMobileNavigation menuItems={menuItems} />
-            <CurrentPath />
-          </>
+          <PendingRouteNavigationProvider>
+            <>
+              <AccountMobileNavigation menuItems={menuItems} />
+              <CurrentPath />
+            </>
+          </PendingRouteNavigationProvider>
         ),
       },
     ],

@@ -63,6 +63,27 @@ describe("useFirebaseValueWithRetry", () => {
     expect(onData).toHaveBeenCalledWith([{ id: "t1" }], expect.anything());
   });
 
+  it("ignores a late snapshot from a previous path after the scope changes", () => {
+    const previousPathData = jest.fn();
+    const currentPathData = jest.fn();
+    const { rerender } = renderHook(
+      ({ path, onData }: { path: string; onData: typeof previousPathData }) =>
+        useFirebaseValueWithRetry({ ...baseArgs, path, onData }),
+      { initialProps: { path: "churches/c1/data/timers", onData: previousPathData } },
+    );
+    const previousListener = listeners[0];
+
+    rerender({ path: "churches/c2/data/timers", onData: currentPathData });
+    act(() => previousListener.success({ val: () => [{ id: "church-1-timer" }] }));
+    act(() => flushSnapshot([{ id: "church-2-timer" }]));
+
+    expect(previousPathData).not.toHaveBeenCalled();
+    expect(currentPathData).toHaveBeenCalledWith(
+      [{ id: "church-2-timer" }],
+      expect.anything(),
+    );
+  });
+
   it("re-attaches after a permission_denied cancellation", () => {
     const onData = jest.fn();
     renderHook(() => useFirebaseValueWithRetry({ ...baseArgs, onData }));

@@ -8,7 +8,16 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { AuthApiError, getChurchServiceTimeZone } from "../api/auth";
+import {
+  AuthApiError,
+  getChurchServiceTimeZone,
+  type ChurchServiceTimeZoneResponse,
+} from "../api/auth";
+import { getDisplayToken } from "../utils/authStorage";
+import {
+  connectAuthenticatedSse,
+  type AuthenticatedSseFailure,
+} from "../utils/authenticatedSse";
 import { GlobalInfoContext } from "./globalInfo";
 
 type TimeZoneStatus = "loading" | "ready" | "error";
@@ -22,6 +31,28 @@ export type ChurchServiceTimeZoneRefreshIssue = {
   since: number;
 };
 
+type LoadedTimeZone = {
+  churchId: string;
+  scopeKey: string;
+  timeZone: string | null;
+  isConfigured: boolean;
+  legacyTimeZoneSuggestion: string | null;
+  serviceTimeZoneRevision: string;
+};
+
+type ScopedRefreshIssue = {
+  churchId: string;
+  scopeKey: string;
+  issue: ChurchServiceTimeZoneRefreshIssue;
+};
+
+type InFlightRequest = {
+  churchId: string;
+  scopeKey: string;
+  requestId: number;
+  promise: Promise<void>;
+};
+
 type ChurchServiceTimeZoneValue = {
   status: TimeZoneStatus;
   timeZone: string | null;
@@ -29,10 +60,13 @@ type ChurchServiceTimeZoneValue = {
   legacyTimeZoneSuggestion: string | null;
   refreshIssue: ChurchServiceTimeZoneRefreshIssue | null;
   refresh: () => Promise<void>;
+  adoptSavedTimeZone: (result: ChurchServiceTimeZoneResponse) => void;
 };
 
 const ChurchServiceTimeZoneContext =
   createContext<ChurchServiceTimeZoneValue | null>(null);
+
+const LEGACY_SERVICE_TIME_ZONE_REVISION = "legacy";
 
 const getIssueKind = (error: unknown): ChurchServiceTimeZoneIssueKind => {
   if (!(error instanceof AuthApiError)) return "unavailable";
@@ -50,7 +84,23 @@ const getIssueKind = (error: unknown): ChurchServiceTimeZoneIssueKind => {
   return "configuration";
 };
 
-const REFRESH_RECONNECT_COALESCE_MS = 0;
+const getSseIssueKind = (
+  failure: AuthenticatedSseFailure,
+): ChurchServiceTimeZoneIssueKind => {
+  if (failure.kind === "authentication") return "authentication";
+  if (failure.kind === "permission") return "permission";
+  if (failure.kind === "http") {
+    return failure.retryable ? "unavailable" : "configuration";
+  }
+  if (failure.kind === "invalid-response") return "configuration";
+  return "unavailable";
+};
+
+const getRevision = (result: ChurchServiceTimeZoneResponse) =>
+  typeof result.serviceTimeZoneRevision === "string" &&
+  result.serviceTimeZoneRevision
+    ? result.serviceTimeZoneRevision
+    : LEGACY_SERVICE_TIME_ZONE_REVISION;
 
 export const ChurchServiceTimeZoneProvider = ({
   children,
@@ -59,53 +109,56 @@ export const ChurchServiceTimeZoneProvider = ({
 }) => {
   const globalInfo = useContext(GlobalInfoContext);
   const churchId = globalInfo?.churchId || "";
+  const loginState = globalInfo?.loginState || "";
+  const sessionKind = globalInfo?.sessionKind || "";
+  const userId = sessionKind === "human" ? globalInfo?.userId || "" : "";
+  const deviceId = globalInfo?.device?.deviceId || "";
+  const displayToken = getDisplayToken();
   const canRead = Boolean(
     churchId &&
-      globalInfo?.loginState === "success" &&
-      (globalInfo.sessionKind === "human" ||
-        globalInfo.sessionKind === "workstation" ||
-        globalInfo.sessionKind === "display"),
+      loginState === "success" &&
+      (sessionKind === "human" ||
+        sessionKind === "workstation" ||
+        sessionKind === "display"),
   );
+  const scopeKey = JSON.stringify([
+    churchId,
+    loginState,
+    sessionKind,
+    userId,
+    deviceId,
+  ]);
+
   const canReadRef = useRef(canRead);
   canReadRef.current = canRead;
   const churchIdRef = useRef(churchId);
   churchIdRef.current = churchId;
-  const scopeKey = JSON.stringify([churchId, globalInfo?.loginState, globalInfo?.sessionKind, globalInfo?.device?.deviceId]);
   const scopeRef = useRef(scopeKey);
   scopeRef.current = scopeKey;
   const requestIdRef = useRef(0);
-  const inFlightRequestRef = useRef<{
-    churchId: string;
+  const inFlightRequestRef = useRef<InFlightRequest | null>(null);
+  const latestObservedRevisionRef = useRef<{
     scopeKey: string;
-    requestId: number;
-    promise: Promise<void>;
+    revision: string;
   } | null>(null);
-  const refreshIssueRef = useRef<{
-    churchId: string;
-    scopeKey: string;
-    issue: ChurchServiceTimeZoneRefreshIssue;
-  } | null>(null);
-  const reconnectTimerRef = useRef<number | null>(null);
+  const initialLoadScopeRef = useRef<string | null>(null);
+  const refreshIssueRef = useRef<ScopedRefreshIssue | null>(null);
   const mountedRef = useRef(false);
+  const [streamRestartEpoch, setStreamRestartEpoch] = useState(0);
   const [requestState, setRequestState] = useState<{
     churchId: string;
     scopeKey: string;
     requestId: number;
     status: TimeZoneStatus;
   } | null>(null);
-  const [loadedTimeZone, setLoadedTimeZone] = useState<{
-    churchId: string;
-    timeZone: string | null;
-    isConfigured: boolean;
-    legacyTimeZoneSuggestion: string | null;
-  } | null>(null);
+  const [loadedTimeZone, setLoadedTimeZone] = useState<LoadedTimeZone | null>(
+    null,
+  );
   const loadedTimeZoneRef = useRef(loadedTimeZone);
   loadedTimeZoneRef.current = loadedTimeZone;
-  const [refreshIssue, setRefreshIssue] = useState<{
-    churchId: string;
-    scopeKey: string;
-    issue: ChurchServiceTimeZoneRefreshIssue;
-  } | null>(null);
+  const [refreshIssue, setRefreshIssue] = useState<ScopedRefreshIssue | null>(
+    null,
+  );
 
   useEffect(() => {
     mountedRef.current = true;
@@ -114,10 +167,55 @@ export const ChurchServiceTimeZoneProvider = ({
     };
   }, []);
 
-  const loadForChurch = useCallback((requestedChurchId: string, force = false) => {
-    if (!mountedRef.current || !canReadRef.current || requestedChurchId !== churchIdRef.current) {
+  const recordIssue = useCallback((
+    requestedChurchId: string,
+    requestedScope: string,
+    kind: ChurchServiceTimeZoneIssueKind,
+  ) => {
+    const previous = refreshIssueRef.current;
+    const issue = {
+      kind,
+      since:
+        previous?.churchId === requestedChurchId &&
+        previous.scopeKey === requestedScope &&
+        previous.issue.kind === kind
+          ? previous.issue.since
+          : Date.now(),
+    } satisfies ChurchServiceTimeZoneRefreshIssue;
+    const nextIssue = {
+      churchId: requestedChurchId,
+      scopeKey: requestedScope,
+      issue,
+    };
+    refreshIssueRef.current = nextIssue;
+    setRefreshIssue(nextIssue);
+  }, []);
+
+  const clearIssue = useCallback((requestedScope: string, onlyUnavailable = false) => {
+    const current = refreshIssueRef.current;
+    if (
+      current?.scopeKey !== requestedScope ||
+      (onlyUnavailable && current.issue.kind !== "unavailable")
+    ) {
+      return;
+    }
+    refreshIssueRef.current = null;
+    setRefreshIssue(null);
+  }, []);
+
+  const loadForChurch = useCallback((
+    requestedChurchId: string,
+    force = false,
+    retriedRevision?: string,
+  ): Promise<void> => {
+    if (
+      !mountedRef.current ||
+      !canReadRef.current ||
+      requestedChurchId !== churchIdRef.current
+    ) {
       return Promise.resolve();
     }
+
     const requestedScope = scopeRef.current;
     const inFlight = inFlightRequestRef.current;
     if (
@@ -132,19 +230,20 @@ export const ChurchServiceTimeZoneProvider = ({
       !force &&
       previousIssue?.churchId === requestedChurchId &&
       previousIssue.scopeKey === requestedScope &&
-      (previousIssue.issue.kind === "permission" ||
-        previousIssue.issue.kind === "configuration")
+      previousIssue.issue.kind !== "unavailable"
     ) {
       return Promise.resolve();
     }
 
     const requestId = ++requestIdRef.current;
-    if (mountedRef.current) {
-      setRequestState(() => ({
-        churchId: requestedChurchId, scopeKey: requestedScope, requestId,
-        status: "loading",
-      }));
-    }
+    setRequestState({
+      churchId: requestedChurchId,
+      scopeKey: requestedScope,
+      requestId,
+      status: "loading",
+    });
+
+    let followUpRevision: string | null = null;
     const promise = (async () => {
       try {
         const result = await getChurchServiceTimeZone(requestedChurchId);
@@ -153,23 +252,50 @@ export const ChurchServiceTimeZoneProvider = ({
           churchIdRef.current !== requestedChurchId ||
           scopeRef.current !== requestedScope ||
           requestIdRef.current !== requestId
-        ) return;
-        const nextTimeZone = {
+        ) {
+          return;
+        }
+
+        const serviceTimeZoneRevision = getRevision(result);
+        const observedRevision = latestObservedRevisionRef.current;
+        if (
+          observedRevision?.scopeKey === requestedScope &&
+          observedRevision.revision !== serviceTimeZoneRevision &&
+          retriedRevision !== observedRevision.revision
+        ) {
+          followUpRevision = observedRevision.revision;
+          return;
+        }
+
+        const nextTimeZone: LoadedTimeZone = {
           churchId: requestedChurchId,
+          scopeKey: requestedScope,
           // The API uses UTC only as a legacy display value when no church
           // setting exists. It is not a configured service timezone and must
           // never drive scheduling or date-derived pages.
-          timeZone: result.isConfigured && result.serviceTimeZone
-            ? result.serviceTimeZone
-            : null,
+          timeZone:
+            result.isConfigured && result.serviceTimeZone
+              ? result.serviceTimeZone
+              : null,
           isConfigured: result.isConfigured,
           legacyTimeZoneSuggestion: result.legacyTimeZoneSuggestion || null,
+          serviceTimeZoneRevision,
         };
         loadedTimeZoneRef.current = nextTimeZone;
         setLoadedTimeZone(nextTimeZone);
-        refreshIssueRef.current = null;
-        setRefreshIssue(null);
-        setRequestState({ churchId: requestedChurchId, scopeKey: requestedScope, requestId, status: "ready" });
+        if (observedRevision?.scopeKey !== requestedScope) {
+          latestObservedRevisionRef.current = {
+            scopeKey: requestedScope,
+            revision: serviceTimeZoneRevision,
+          };
+        }
+        clearIssue(requestedScope);
+        setRequestState({
+          churchId: requestedChurchId,
+          scopeKey: requestedScope,
+          requestId,
+          status: "ready",
+        });
       } catch (error) {
         if (
           mountedRef.current &&
@@ -178,27 +304,33 @@ export const ChurchServiceTimeZoneProvider = ({
           requestIdRef.current === requestId
         ) {
           const kind = getIssueKind(error);
-          const previous = refreshIssueRef.current;
-          const issue = {
-            kind,
-            since: previous?.churchId === requestedChurchId &&
-              previous.scopeKey === requestedScope &&
-              previous.issue.kind === kind
-              ? previous.issue.since
-              : Date.now(),
-          } satisfies ChurchServiceTimeZoneRefreshIssue;
-          refreshIssueRef.current = { churchId: requestedChurchId, scopeKey: requestedScope, issue };
-          setRefreshIssue({ churchId: requestedChurchId, scopeKey: requestedScope, issue });
-          const hasConfirmedChurchState =
-            loadedTimeZoneRef.current?.churchId === requestedChurchId;
-          if (!hasConfirmedChurchState) {
-            setRequestState({ churchId: requestedChurchId, scopeKey: requestedScope, requestId, status: "error" });
+          recordIssue(requestedChurchId, requestedScope, kind);
+          if (loadedTimeZoneRef.current?.scopeKey !== requestedScope) {
+            setRequestState({
+              churchId: requestedChurchId,
+              scopeKey: requestedScope,
+              requestId,
+              status: "error",
+            });
           }
         }
         throw error;
       } finally {
         if (inFlightRequestRef.current?.requestId === requestId) {
           inFlightRequestRef.current = null;
+        }
+        if (
+          followUpRevision &&
+          mountedRef.current &&
+          canReadRef.current &&
+          churchIdRef.current === requestedChurchId &&
+          scopeRef.current === requestedScope
+        ) {
+          void loadForChurch(
+            requestedChurchId,
+            false,
+            followUpRevision,
+          ).catch(() => undefined);
         }
       }
     })();
@@ -209,26 +341,78 @@ export const ChurchServiceTimeZoneProvider = ({
       promise,
     };
     return promise;
-  }, []);
+  }, [clearIssue, recordIssue]);
 
   const refresh = useCallback(async () => {
-    if (!canRead || !churchId || churchIdRef.current !== churchId) return;
-    await loadForChurch(churchId, true);
-  }, [canRead, churchId, loadForChurch]);
-
-  const scheduleReconnectRefresh = useCallback(() => {
-    if (reconnectTimerRef.current !== null) {
-      window.clearTimeout(reconnectTimerRef.current);
+    if (
+      !canRead ||
+      !churchId ||
+      churchIdRef.current !== churchId ||
+      scopeRef.current !== scopeKey
+    ) {
+      return;
     }
-    reconnectTimerRef.current = window.setTimeout(() => {
-      reconnectTimerRef.current = null;
-      void loadForChurch(churchIdRef.current).catch(() => undefined);
-    }, REFRESH_RECONNECT_COALESCE_MS);
-  }, [loadForChurch]);
+    const requestedScope = scopeKey;
+    await loadForChurch(churchId, true);
+    if (
+      mountedRef.current &&
+      canReadRef.current &&
+      scopeRef.current === requestedScope
+    ) {
+      setStreamRestartEpoch((epoch) => epoch + 1);
+    }
+  }, [canRead, churchId, loadForChurch, scopeKey]);
+
+  const adoptSavedTimeZone = useCallback((result: ChurchServiceTimeZoneResponse) => {
+    if (
+      !mountedRef.current ||
+      !canReadRef.current ||
+      !churchId ||
+      churchIdRef.current !== churchId ||
+      scopeRef.current !== scopeKey
+    ) {
+      return;
+    }
+    const requestedChurchId = churchId;
+    const requestedScope = scopeKey;
+    const requestId = ++requestIdRef.current;
+    inFlightRequestRef.current = null;
+    const serviceTimeZoneRevision = getRevision(result);
+    const nextTimeZone: LoadedTimeZone = {
+      churchId: requestedChurchId,
+      scopeKey: requestedScope,
+      timeZone:
+        result.isConfigured && result.serviceTimeZone
+          ? result.serviceTimeZone
+          : null,
+      isConfigured: result.isConfigured,
+      legacyTimeZoneSuggestion: result.legacyTimeZoneSuggestion || null,
+      serviceTimeZoneRevision,
+    };
+    loadedTimeZoneRef.current = nextTimeZone;
+    latestObservedRevisionRef.current = {
+      scopeKey: requestedScope,
+      revision: serviceTimeZoneRevision,
+    };
+    setLoadedTimeZone(nextTimeZone);
+    clearIssue(requestedScope);
+    setRequestState({
+      churchId: requestedChurchId,
+      scopeKey: requestedScope,
+      requestId,
+      status: "ready",
+    });
+  }, [churchId, clearIssue, scopeKey]);
 
   useEffect(() => {
     if (!canRead) {
+      initialLoadScopeRef.current = null;
       const requestId = ++requestIdRef.current;
+      inFlightRequestRef.current = null;
+      loadedTimeZoneRef.current = null;
+      refreshIssueRef.current = null;
+      setLoadedTimeZone(null);
+      setRefreshIssue(null);
       setRequestState({
         churchId,
         scopeKey,
@@ -237,62 +421,141 @@ export const ChurchServiceTimeZoneProvider = ({
       });
       return;
     }
-    void loadForChurch(churchId).catch(() => undefined);
-    // Revalidate credentials and settings even on passive, long-running outputs.
-    const reload = () => { void loadForChurch(churchId).catch(() => undefined); };
-    const interval = window.setInterval(reload, 60_000);
-    window.addEventListener("online", scheduleReconnectRefresh);
+
+    const effectScope = scopeKey;
+    const effectChurchId = churchId;
+    if (initialLoadScopeRef.current !== effectScope) {
+      initialLoadScopeRef.current = effectScope;
+      void loadForChurch(effectChurchId).catch(() => undefined);
+    }
+    const closeStream = connectAuthenticatedSse(
+      `api/churches/${effectChurchId}/service-time-zone/stream`,
+      {
+        onOpen: () => {
+          clearIssue(effectScope, true);
+        },
+        onMessage: (message) => {
+          let event: unknown;
+          try {
+            event = JSON.parse(message);
+          } catch {
+            return;
+          }
+          if (
+            !event ||
+            typeof event !== "object" ||
+            (event as { type?: unknown }).type !==
+              "service-time-zone-revision" ||
+            (event as { churchId?: unknown }).churchId !== effectChurchId ||
+            typeof (event as { serviceTimeZoneRevision?: unknown })
+              .serviceTimeZoneRevision !== "string" ||
+            !canReadRef.current ||
+            scopeRef.current !== effectScope
+          ) {
+            return;
+          }
+
+          const revision = (event as {
+            serviceTimeZoneRevision: string;
+          }).serviceTimeZoneRevision;
+          latestObservedRevisionRef.current = {
+            scopeKey: effectScope,
+            revision,
+          };
+          const loaded = loadedTimeZoneRef.current;
+          if (
+            loaded?.scopeKey === effectScope &&
+            loaded.serviceTimeZoneRevision === revision
+          ) {
+            return;
+          }
+          const currentIssue = refreshIssueRef.current;
+          if (
+            currentIssue?.scopeKey === effectScope &&
+            currentIssue.issue.kind !== "unavailable"
+          ) {
+            return;
+          }
+          const inFlight = inFlightRequestRef.current;
+          if (
+            inFlight?.scopeKey === effectScope &&
+            inFlight.churchId === effectChurchId
+          ) {
+            return;
+          }
+          void loadForChurch(effectChurchId).catch(() => undefined);
+        },
+        onError: (failure) => {
+          if (scopeRef.current !== effectScope || !canReadRef.current) return;
+          recordIssue(
+            effectChurchId,
+            effectScope,
+            getSseIssueKind(failure),
+          );
+        },
+      },
+      displayToken ? { "x-display-token": displayToken } : undefined,
+    );
+
     return () => {
-      window.clearInterval(interval);
-      window.removeEventListener("online", scheduleReconnectRefresh);
-      if (reconnectTimerRef.current !== null) {
-        window.clearTimeout(reconnectTimerRef.current);
-        reconnectTimerRef.current = null;
-      }
+      closeStream();
     };
-  }, [canRead, churchId, loadForChurch, scheduleReconnectRefresh, scopeKey]);
+  }, [
+    canRead,
+    churchId,
+    clearIssue,
+    displayToken,
+    loadForChurch,
+    recordIssue,
+    scopeKey,
+    streamRestartEpoch,
+  ]);
 
-  const realtimeConnected = Boolean(globalInfo?.realtimeConnected);
-  const isAuthenticated = globalInfo?.loginState === "success";
-  const previousRealtimeConnectedRef = useRef(realtimeConnected);
-  useEffect(() => {
-    const reconnected = realtimeConnected && !previousRealtimeConnectedRef.current;
-    previousRealtimeConnectedRef.current = realtimeConnected;
-    if (canRead && reconnected) scheduleReconnectRefresh();
-  }, [canRead, realtimeConnected, scheduleReconnectRefresh]);
-
-  const value = useMemo(
-    () => {
-      const requestStatus = requestState?.scopeKey === scopeKey
-        ? requestState.status
-        : "loading";
-      const hasChurchData = canRead && loadedTimeZone?.churchId === churchId;
-      const currentRefreshIssue = !canRead && churchId
-        ? {
-          kind: isAuthenticated ? "permission" as const : "authentication" as const,
+  const isAuthenticated = loginState === "success";
+  const value = useMemo(() => {
+    const requestStatus =
+      requestState?.scopeKey === scopeKey ? requestState.status : "loading";
+    const hasScopeData =
+      canRead && loadedTimeZone?.scopeKey === scopeKey;
+    const currentRefreshIssue = !canRead && churchId
+      ? {
+          kind: isAuthenticated
+            ? ("permission" as const)
+            : ("authentication" as const),
           since: 0,
         }
-        : refreshIssue?.churchId === churchId && refreshIssue.scopeKey === scopeKey
-          ? refreshIssue.issue
-          : null;
-      return {
-        // A confirmed church-scoped value remains ready during refreshes and
-        // failures, so controllers and displays keep using it. Never expose a
-        // value from another church.
-        status: canRead
-          ? hasChurchData ? "ready" : requestStatus
-          : churchId ? "error" : "loading",
-        timeZone: hasChurchData ? loadedTimeZone.timeZone : null,
-        isConfigured: hasChurchData && loadedTimeZone.isConfigured,
-        legacyTimeZoneSuggestion: hasChurchData
-          ? loadedTimeZone.legacyTimeZoneSuggestion
-          : null,
-        refreshIssue: currentRefreshIssue,
-        refresh,
-      };
-    },
-    [canRead, churchId, isAuthenticated, loadedTimeZone, refresh, refreshIssue, requestState, scopeKey],
-  );
+      : refreshIssue?.churchId === churchId && refreshIssue.scopeKey === scopeKey
+        ? refreshIssue.issue
+        : null;
+
+    return {
+      status: canRead
+        ? hasScopeData
+          ? "ready"
+          : requestStatus
+        : churchId
+          ? "error"
+          : "loading",
+      timeZone: hasScopeData ? loadedTimeZone.timeZone : null,
+      isConfigured: hasScopeData && loadedTimeZone.isConfigured,
+      legacyTimeZoneSuggestion: hasScopeData
+        ? loadedTimeZone.legacyTimeZoneSuggestion
+        : null,
+      refreshIssue: currentRefreshIssue,
+      refresh,
+      adoptSavedTimeZone,
+    };
+  }, [
+    adoptSavedTimeZone,
+    canRead,
+    churchId,
+    isAuthenticated,
+    loadedTimeZone,
+    refresh,
+    refreshIssue,
+    requestState,
+    scopeKey,
+  ]);
 
   return (
     <ChurchServiceTimeZoneContext.Provider value={value}>

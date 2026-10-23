@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Trash2 } from "lucide-react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
@@ -85,7 +85,7 @@ type MediaLibraryFolderModalsProps = {
     folders: MediaFolder[];
   }) => void;
   onDeleteFolderSubtree: (folderId: string) => boolean | Promise<boolean>;
-  onDeleteFolderKeepContents: (folderId: string) => void;
+  onDeleteFolderKeepContents: (folderId: string) => boolean | Promise<boolean>;
   folderDeleteOpen: boolean;
   onFolderDeleteOpenChange: (open: boolean) => void;
 };
@@ -104,6 +104,8 @@ const MediaLibraryFolderModals = ({
   const [folderDeleteMode, setFolderDeleteMode] = useState<
     "subtree" | "keep" | null
   >(null);
+  const [isDeletePending, setIsDeletePending] = useState(false);
+  const deleteInFlightRef = useRef(false);
 
   useEffect(() => {
     if (folderDeleteOpen) setFolderDeleteMode(null);
@@ -115,22 +117,31 @@ const MediaLibraryFolderModals = ({
       ? folders.find((f) => f.id === selectedLibraryFilter)
       : undefined;
 
-  const handleConfirmFolderDelete = useCallback(async () => {
-    if (!selectedRealFolder || !folderDeleteMode) return;
-    if (folderDeleteMode === "keep") {
-      onDeleteFolderKeepContents(selectedRealFolder.id);
-      onSelectLibraryFilter(
-        selectedRealFolder.parentId ?? MEDIA_LIBRARY_ROOT_VIEW,
-      );
-    } else {
-      const deleted = await onDeleteFolderSubtree(selectedRealFolder.id);
-      if (!deleted) return;
-      onSelectLibraryFilter(
-        selectedRealFolder.parentId ?? MEDIA_LIBRARY_ROOT_VIEW,
-      );
-    }
+  const handleConfirmFolderDelete = useCallback(() => {
+    if (!selectedRealFolder || !folderDeleteMode || deleteInFlightRef.current) return;
+    deleteInFlightRef.current = true;
+    setIsDeletePending(true);
+    const folderId = selectedRealFolder.id;
+    const parentId = selectedRealFolder.parentId ?? MEDIA_LIBRARY_ROOT_VIEW;
+    const deleteFolder = folderDeleteMode === "keep"
+      ? onDeleteFolderKeepContents
+      : onDeleteFolderSubtree;
     onFolderDeleteOpenChange(false);
     setFolderDeleteMode(null);
+    void (async () => {
+      try {
+        // The accepted operation continues after its dialog closes. The subtree
+        // cleanup retains its Activity owner, while keep-contents reports persistence
+        // errors through the existing toast path. Navigate only when the folder is
+        // actually gone; partial media failures leave it open so failed rows are reachable.
+        if (await deleteFolder(folderId)) onSelectLibraryFilter(parentId);
+      } finally {
+        deleteInFlightRef.current = false;
+        setIsDeletePending(false);
+      }
+    })().catch((error: unknown) => {
+      console.error("Could not delete Media folder", error);
+    });
   }, [
     selectedRealFolder,
     folderDeleteMode,
@@ -215,10 +226,10 @@ const MediaLibraryFolderModals = ({
             <Button
               variant="secondary"
               className="bg-red-800 hover:bg-red-700"
-              disabled={!folderDeleteMode}
+              disabled={!folderDeleteMode || isDeletePending}
               svg={Trash2}
               title="Delete folder"
-              onClick={() => void handleConfirmFolderDelete()}
+              onClick={handleConfirmFolderDelete}
             >
               Delete
             </Button>

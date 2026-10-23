@@ -48,6 +48,8 @@ export type TeamsAssignmentSummaryRow = {
   /** null when the slot is required but nobody is assigned yet. */
   memberName: string | null;
   memberId?: string;
+  /** True when the assignment id belongs to a schedule-scoped guest record. */
+  memberIsGuest?: boolean;
   response?: AssignmentResponse;
   /** Public profile image for the assigned roster member, when present. */
   memberProfileImageUrl?: string;
@@ -271,6 +273,7 @@ export const getOccurrenceAssignmentSummary = ({
         slotLabel,
         memberName,
         memberId,
+        memberIsGuest: Boolean(memberId && guestById.has(memberId)),
         response: readAssignmentResponse(
           schedule.responses?.[scheduleOccurrenceId]?.[columnKey],
           memberId || "",

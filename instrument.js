@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { init } from "@sentry/node";
+import { filterVolunteerTelemetry, redactVolunteerSecrets } from "./server/volunteerPrivacy.js";
 
 const isDevelopment = process.env.NODE_ENV === "development";
 
@@ -9,4 +10,7 @@ init({
   tracesSampleRate: 1.0,
   sendDefaultPii: true,
   enableLogs: true,
+  beforeSend: filterVolunteerTelemetry,
+  beforeSendTransaction: filterVolunteerTelemetry,
+  beforeSendLog: redactVolunteerSecrets,
 });

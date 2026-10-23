@@ -11,6 +11,7 @@ export type ToolbarButtonProps = {
   hidden?: boolean;
   className?: string;
   isActive?: boolean;
+  "aria-pressed"?: boolean;
   children: React.ReactNode;
   "aria-label"?: string;
 };
@@ -37,6 +38,7 @@ const ToolbarButton = React.forwardRef<
     hidden = false,
     className,
     isActive = false,
+    "aria-pressed": ariaPressed,
     children,
     "aria-label": ariaLabel,
   },
@@ -58,6 +60,7 @@ const ToolbarButton = React.forwardRef<
         disabled={disabled}
         className={buttonClassName}
         aria-label={ariaLabel}
+        aria-pressed={ariaPressed}
       >
         {children}
       </Button>
@@ -74,6 +77,7 @@ const ToolbarButton = React.forwardRef<
       disabled={disabled}
       className={buttonClassName}
       aria-label={ariaLabel}
+      aria-pressed={ariaPressed}
     >
       {children}
     </Button>

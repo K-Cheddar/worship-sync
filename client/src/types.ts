@@ -260,6 +260,11 @@ export type SongMetadata = {
   lyricsOvhKey?: string;
   trackName: string;
   artistName: string;
+  authors?: string;
+  ccliSongNumber?: string;
+  copyright?: string;
+  publisher?: string;
+  importFilename?: string;
   albumName?: string;
   key?: string;
   durationMs?: number;

@@ -307,6 +307,8 @@ export const cloneSectionsForTemplate = (
           sourceContentTitleRaw: undefined,
           sourceNoteRaw: undefined,
           sourceOccurrenceId: undefined,
+          sourceTemplateElementId: undefined,
+          sourceTemplateElementType: undefined,
           sourcePlanningManaged: undefined,
           servicePlanningImport: undefined,
           importAmbiguity: undefined,
@@ -342,6 +344,8 @@ export const cloneSectionsFromTemplate = (
     elements: section.elements.map((element) => ({
       ...element,
       id: generateRandomId(),
+      sourceTemplateElementId: element.sourceTemplateElementId || element.id,
+      sourceTemplateElementType: element.sourceTemplateElementType || element.type,
       assignees: getServicePlanElementAssignees(element).map((assignee) => ({
         ...assignee,
         id: generateRandomId(),

@@ -18,6 +18,15 @@
 const RESPONSE_VALUES = new Set(["pending", "accepted", "declined"]);
 
 /**
+ * Schedule visibility for volunteer self-service and schedule-specific
+ * response links. Publication belongs to the schedule document; service-plan
+ * publication remains a separate concern. Missing publication metadata keeps
+ * the established Published behavior for legacy schedules.
+ */
+export const isVolunteerScheduleVisible = (schedule) =>
+  Boolean(schedule && !schedule.archivedAt && schedule.published !== false);
+
+/**
  * The member who holds an assignment cell.
  *
  * Lives here, and is shared by everything that has to read a cell, because the
@@ -123,12 +132,8 @@ export const pruneStaleResponses = (responses, readHolder) => {
 /**
  * Decide what a batch of answers becomes, given the schedule as read.
  *
- * Pulled out of the writer deliberately. That writer has two branches — a
- * Firestore transaction and an in-memory fallback — and **the suite only ever
- * exercises the fallback** (`skipUnlessInMemoryAuth`), so any logic living
- * inside the transaction branch is untested by construction. Keeping the
- * decision here means both branches share tested code and the untested part is
- * reduced to Firestore's own read/write, which is not our logic to verify.
+ * Both the Firestore transaction and serialized in-memory writer use this
+ * decision. Emulator tests exercise actual transaction contention separately.
  *
  * Slots the member no longer holds are skipped rather than failing the batch:
  * with one link covering a whole schedule, an owner reshuffling one date must
@@ -159,5 +164,94 @@ export const applyAssignmentResponses = (
   return {
     responses: responses || normalizeScheduleResponses(schedule?.responses),
     applied: applicable.length,
+  };
+};
+
+/**
+ * Accept only slots that are pending for their current primary holder.
+ * Unlike `applyAssignmentResponses`, this operation never replaces a real
+ * answer. A stale answer from a prior holder reads as pending through the
+ * shared response reader. Only touched response rows/cells are cloned so an
+ * unrelated legacy record is not normalized as a side effect.
+ *
+ * @param {{ assignments?: object, responses?: object }} schedule
+ * @param {{ memberId: string, targets: Array<{occurrenceId: string, cellKey: string}>, respondedAt: string }} params
+ * @returns {{ responses: object, outcomes: Array<{occurrenceId: string, cellKey: string, status: string}>, newlyAccepted: number, alreadyAccepted: number, alreadyDeclined: number, skipped: number, changed: boolean }}
+ */
+export const applyPendingAssignmentResponses = (
+  schedule,
+  { memberId, targets, respondedAt },
+) => {
+  const holderId = String(memberId || "");
+  const seen = new Set();
+  const uniqueTargets = (targets || []).filter(({ occurrenceId, cellKey }) => {
+    const key = `${String(occurrenceId || "")}\u0000${String(cellKey || "")}`;
+    if (!occurrenceId || !cellKey || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  let responses = schedule?.responses && typeof schedule.responses === "object" && !Array.isArray(schedule.responses)
+    ? schedule.responses
+    : {};
+  const outcomes = [];
+  let newlyAccepted = 0;
+  let alreadyAccepted = 0;
+  let alreadyDeclined = 0;
+  let skipped = 0;
+
+  uniqueTargets.forEach(({ occurrenceId, cellKey }) => {
+    const target = { occurrenceId, cellKey };
+    const currentHolder = readAssignmentCellHolderId(
+      schedule?.assignments?.[occurrenceId]?.[cellKey],
+    );
+    if (!holderId || currentHolder !== holderId) {
+      outcomes.push({ ...target, status: "skipped" });
+      skipped += 1;
+      return;
+    }
+
+    const current = readAssignmentResponse(
+      responses?.[occurrenceId]?.[cellKey],
+      holderId,
+    );
+    if (current.response === "accepted") {
+      outcomes.push({ ...target, status: "already_accepted" });
+      alreadyAccepted += 1;
+      return;
+    }
+    if (current.response === "declined") {
+      outcomes.push({ ...target, status: "already_declined" });
+      alreadyDeclined += 1;
+      return;
+    }
+
+    responses = {
+      ...responses,
+      [occurrenceId]: {
+        ...(responses?.[occurrenceId] && typeof responses[occurrenceId] === "object"
+          ? responses[occurrenceId]
+          : {}),
+        [cellKey]: {
+          ...(responses?.[occurrenceId]?.[cellKey]?.memberId === holderId
+            ? responses[occurrenceId][cellKey]
+            : {}),
+          memberId: holderId,
+          response: "accepted",
+          respondedAt: String(respondedAt || ""),
+        },
+      },
+    };
+    outcomes.push({ ...target, status: "accepted" });
+    newlyAccepted += 1;
+  });
+
+  return {
+    responses,
+    outcomes,
+    newlyAccepted,
+    alreadyAccepted,
+    alreadyDeclined,
+    skipped,
+    changed: newlyAccepted > 0,
   };
 };

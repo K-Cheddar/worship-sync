@@ -46,4 +46,10 @@ describe("EntityRow", () => {
 
     expect(screen.getByTestId("entity-row")).toHaveAttribute("aria-current", "true");
   });
+
+  it("keeps the generic edit-button name based on the entity title", () => {
+    render(<EntityRow title="Fall Volunteers" compact onTitleClick={jest.fn()} />);
+
+    expect(screen.getByRole("button", { name: "Edit Fall Volunteers" })).toBeInTheDocument();
+  });
 });

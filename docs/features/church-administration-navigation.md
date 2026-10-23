@@ -18,6 +18,8 @@ The mobile menu retains Home, What's New, About, and Interface Zoom and includes
 
 The route table, labels, groups, defaults, sidebar links, mobile tabs, and shortcuts share the Account navigation definition. Existing route paths, page features, `/account` default-to-People behavior, and supported legacy `?tab=` redirects remain stable. Existing Church Administration authorization remains enforced at the route layout; navigation does not grant access.
 
+Navigation selection and loading feedback appear immediately, independently of lazy page loading. The selected group and section follow the latest requested destination while its route module loads, and the destination-specific skeleton remains visible until that page renders or reaches its error state. Account route controls share the same temporary pending-route mechanism as Teams and Services; Account owns its route integration, and Teams retains its separate unsaved-edit policy.
+
 The compact toolbar and route tabs remain outside the scrollable page content. The administration content uses the remaining viewport height and reserves the bottom bar and device safe area once. Existing page components continue to render as routed pages rather than tab panels.
 
 ## Boundaries
@@ -28,6 +30,7 @@ This contract covers Church Administration navigation and the shared shell behav
 
 - **2026-10-15 — Use three administration groups for responsive navigation.** Approved groups and defaults are Access → People, Service Tools → Controllers, and Settings → Branding. Desktop shows all seven destinations without collapsible groups; mobile shows the three group shortcuts and each group's route tabs. **Approval source:** Church Administration Responsive Navigation Redesign request, 2026-10-15.
 - **2026-10-15 — Preserve existing administration workflows and access checks.** Routes, page names, deep links, legacy account-tab redirects, `/account` default behavior, and authorization remain stable. **Approval source:** Church Administration Responsive Navigation Redesign request, 2026-10-15.
+- **2026-10-16 — Acknowledge navigation before administration pages load.** Selection and the appropriate loading presentation update immediately while lazy route modules are pending. Latest navigation wins; route completion or failure ends the pending presentation. **Approval source:** DRY Immediate Navigation for Church Administration request, 2026-10-16.
 
 ## Verification references
 

@@ -11,7 +11,7 @@ import {
   UserRound,
   type LucideIcon,
 } from "lucide-react";
-import WorshipSyncImage from "../assets/WorshipSyncImage.png";
+import WorshipSyncWordmark from "../assets/WorshipSyncWordmark.png";
 import AuthScreenMain from "../components/AuthScreenMain";
 import Button from "../components/Button/Button";
 import Icon from "../components/Icon/Icon";
@@ -277,14 +277,28 @@ const AppEntry = () => {
             </div>
 
             <div className="mt-6 flex flex-col items-center text-center">
-              <img
-                src={WorshipSyncImage}
-                alt="WorshipSync"
-                className="mx-auto max-w-[42%] sm:max-w-[36%]"
-                width={220}
-                height={201}
-                loading="eager"
-              />
+              <div
+                role="img"
+                aria-label="WorshipSync"
+                className="mx-auto flex w-[220px] max-w-[42%] flex-col items-center gap-2 sm:max-w-[36%]"
+              >
+                <img
+                  src={`${import.meta.env.BASE_URL}logo192.png`}
+                  alt=""
+                  className="aspect-square w-3/4 object-contain mb-4"
+                  width={192}
+                  height={192}
+                  loading="eager"
+                />
+                <img
+                  src={WorshipSyncWordmark}
+                  alt=""
+                  className="h-auto w-full object-contain"
+                  width={1204}
+                  height={94}
+                  loading="eager"
+                />
+              </div>
               <h1 className="mt-5 text-2xl font-semibold sm:text-3xl">
                 {isStoredServerSessionBlocked
                   ? "Reconnect to continue"
