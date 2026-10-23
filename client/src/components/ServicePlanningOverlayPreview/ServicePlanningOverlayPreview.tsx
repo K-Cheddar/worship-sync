@@ -60,11 +60,8 @@ const getEmptyMessage = (summary?: NativeServicePlanOverlaySummary) => {
   if (summary?.status === "failed") {
     return "Participant details could not be loaded. Refresh the plan before syncing.";
   }
-  if (summary?.selectedItemCount === 0) {
-    return "No plan items are selected for participant overlays. Turn on the setting in Services for each item you want to include.";
-  }
-  if (summary?.assignedParticipantCount === 0) {
-    return "No participants are assigned to the selected items.";
+  if (summary?.selectedItemCount === 0 || summary?.assignedParticipantCount === 0) {
+    return "No participants are assigned to this plan. Add people in Led by in Services to prepare participant overlays.";
   }
   return "No overlay changes are planned for this preview.";
 };

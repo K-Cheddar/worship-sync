@@ -2364,13 +2364,8 @@ export const createTeamsAuthHandlers = ({
 
   const normalizeServicePlanParticipantOverlay = (raw) => {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-    const enabled = raw.enabled === true;
     const eventLabel = normalizeShortText(raw.eventLabel, { max: 120 });
-    if (!enabled && !eventLabel) return undefined;
-    return {
-      ...(enabled ? { enabled: true } : {}),
-      ...(eventLabel ? { eventLabel } : {}),
-    };
+    return eventLabel ? { eventLabel } : undefined;
   };
 
   const normalizeServicePlanMicrophoneAssignments = (raw) =>
@@ -7284,8 +7279,8 @@ export const createTeamsAuthHandlers = ({
   };
 
   /**
-   * Resolve only people explicitly opted into participant overlays for this
-   * saved plan. The response contains no contact fields or unrelated roster
+   * Resolve people assigned to items in this saved plan for participant
+   * overlays. The response contains no contact fields or unrelated roster
    * rows. A position may scope which team membership to inspect, but its name
    * is never used as the participant title.
    */
@@ -7414,13 +7409,17 @@ export const createTeamsAuthHandlers = ({
       return { name, memberStatus: "resolved", ...role };
     };
 
-    const enabledElements = (servicePlan?.sections || []).flatMap((section) =>
+    const assignedElements = (servicePlan?.sections || []).flatMap((section) =>
       (section?.elements || []).filter(
-        (element) => element?.participantOverlay?.enabled === true,
+        (element) => assigneesForElement(element).some(
+          (assignee) =>
+            normalizeShortText(assignee?.memberId, { max: 160 }) ||
+            normalizeShortText(assignee?.name, { max: 200 }),
+        ),
       ),
     );
     const elements = await Promise.all(
-      enabledElements.map(async (element) => {
+      assignedElements.map(async (element) => {
         const positionIds = [
           ...new Set(
             [

@@ -41,6 +41,7 @@ Member editor deep links identify the church, member, and selected team together
 - The inline editor does not add a permission or expose the full roster, cross-team information, or sensitive member fields to scoped managers.
 - The church-wide draft path and the scoped immediate-persistence path remain separate.
 - Bootstrap profile readiness is a display optimization only. Missing fields, unresolved entity references, and malformed relationships use the restricted profile read; the restricted PATCH remains the only scoped save path.
+- After a scoped save and roster refresh, switching teams uses the refreshed member projection so reopening a team preserves its saved profile. Regression coverage: `MemberManager.test.tsx` exercises save, readiness invalidation, refresh, switching away and back, and a subsequent role save. **Approval source:** current code-review correction request, 2026-10-23.
 - Schedule assignments and unrelated team settings are not changed by a roster-only edit.
 - `EntityMultiSelect` remains unchanged for other forms.
 - Team role, position, and qualification setup, plus archive, delete, and access workflows remain unchanged by this contract.

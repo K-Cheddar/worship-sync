@@ -154,7 +154,7 @@ const renderManager = ({
   churchId?: string;
   useHashRouter?: boolean;
 } = {}) => {
-  const content = (
+  const content = (currentData = data, readyMemberIds = teamProfileReadyMemberIds) => (
     <>
       <LocationProbe />
       <GlobalInfoContext.Provider
@@ -168,15 +168,15 @@ const renderManager = ({
           <CurrentMemberIdentityProvider memberId={selfMemberId}>
             <TeamsNavigationGuardProvider>
               <MemberManager
-              members={data.members}
+              members={currentData.members}
               isLoading={isLoading}
-              positions={data.positions}
-              data={data}
+              positions={currentData.positions}
+              data={currentData}
               canEdit={canEdit}
               canEditAllTeams={canEditAllTeams}
               canManageMemberLifecycle={canManageMemberLifecycle}
               canEditMember={canEditMember}
-              teamProfileReadyMemberIds={teamProfileReadyMemberIds}
+              teamProfileReadyMemberIds={readyMemberIds}
               onSaved={onSaved}
               onIdentityChanged={onIdentityChanged}
               onTeamSaved={onTeamSaved}
@@ -192,11 +192,13 @@ const renderManager = ({
       </GlobalInfoContext.Provider>
     </>
   );
-  const view = render(
-    useHashRouter ? <HashRouter>{content}</HashRouter> :
-      <MemoryRouter initialEntries={initialEntry ? [initialEntry] : undefined}>{content}</MemoryRouter>,
-  );
-  return { ...view, onSaved, onTeamSaved, onIdentityChanged, onSmsConsentRecorded, onScopedProfileSaved };
+  const routedContent = (currentData = data, readyMemberIds = teamProfileReadyMemberIds) =>
+    useHashRouter ? <HashRouter>{content(currentData, readyMemberIds)}</HashRouter> :
+      <MemoryRouter initialEntries={initialEntry ? [initialEntry] : undefined}>{content(currentData, readyMemberIds)}</MemoryRouter>;
+  const view = render(routedContent());
+  const refreshManager = (currentData: TeamsData, readyMemberIds?: ReadonlySet<string>) =>
+    view.rerender(routedContent(currentData, readyMemberIds));
+  return { ...view, refreshManager, onSaved, onTeamSaved, onIdentityChanged, onSmsConsentRecorded, onScopedProfileSaved };
 };
 
 const openCreateForm = async (user: ReturnType<typeof userEvent.setup>) => {
@@ -556,6 +558,72 @@ describe("MemberManager member preferences", () => {
     ));
     expect(mockUpdateTeamRosterMember).not.toHaveBeenCalled();
     expect(onScopedProfileSaved).toHaveBeenCalledWith(scopedMember.memberId);
+  });
+
+  it("preserves a saved scoped position after refresh and switching teams before a role save", async () => {
+    const user = userEvent.setup();
+    const member: TeamRosterMember = {
+      ...worshipMember,
+      positionIds: [producerPosition.positionId],
+      desiredPositionIds: [],
+      teamMemberships: {},
+      qualifications: [],
+    };
+    const data = joinedData({
+      members: [member],
+      teams: [worshipTeam, mediaTeam].map((team) => ({ ...team, memberIds: [member.memberId] })),
+      positions: [vocalPosition, producerPosition],
+    });
+    const savedProfile = {
+      teamId: worshipTeam.teamId,
+      positionIds: [vocalPosition.positionId],
+      desiredPositionIds: [],
+      membership: {},
+      qualifications: [],
+    };
+    mockUpdateTeamRosterMemberProfile.mockResolvedValue({ success: true, teamProfile: savedProfile });
+    const { refreshManager, onScopedProfileSaved } = renderManager({
+      data,
+      canEditAllTeams: false,
+      canManageMemberLifecycle: false,
+      canEditMember: () => true,
+      role: "member",
+      teamProfileReadyMemberIds: new Set([member.memberId]),
+      initialEntry: `${TEAMS_SECTION_PATHS.members}?editMember=${member.memberId}&teamId=${worshipTeam.teamId}`,
+    });
+    const editor = await screen.findByRole("region", { name: "Rae Kim" });
+    await user.click(within(editor).getByRole("checkbox", { name: /Vocal/ }));
+    await user.click(screen.getByRole("button", { name: "Save profile" }));
+    await waitFor(() => expect(onScopedProfileSaved).toHaveBeenCalledWith(member.memberId));
+
+    // The page invalidates readiness, then reconciles the authorized bootstrap projection.
+    refreshManager(data, new Set());
+    refreshManager({
+      ...data,
+      members: [{ ...member, positionIds: [producerPosition.positionId, vocalPosition.positionId] }],
+    }, new Set([member.memberId]));
+    await user.click(within(editor).getByRole("combobox", { name: "Team profile:" }));
+    await user.click(screen.getByRole("option", { name: "Media" }));
+    expect(within(editor).getByRole("checkbox", { name: /Producer/ }))
+      .toHaveAttribute("aria-checked", "true");
+    await user.click(within(editor).getByRole("combobox", { name: "Team profile:" }));
+    await user.click(screen.getByRole("option", { name: "Worship" }));
+    expect(within(editor).getByRole("checkbox", { name: /Vocal/ }))
+      .toHaveAttribute("aria-checked", "true");
+    expect(mockGetTeamRosterMemberProfile).not.toHaveBeenCalled();
+
+    await user.click(within(editor).getByRole("combobox", { name: "Worship role:" }));
+    await user.click(screen.getByRole("option", { name: "Team lead" }));
+    await user.click(screen.getByRole("button", { name: "Save profile" }));
+    await waitFor(() => expect(mockUpdateTeamRosterMemberProfile).toHaveBeenCalledTimes(2));
+    expect(mockUpdateTeamRosterMemberProfile).toHaveBeenLastCalledWith(
+      "church-1", worshipTeam.teamId, member.memberId,
+      expect.objectContaining({
+        positionIds: [vocalPosition.positionId],
+        membership: { roleId: leadRole.roleId },
+      }),
+    );
+    expect(mockUpdateTeamRosterMember).not.toHaveBeenCalled();
   });
 
   it("opens a complete scoped bootstrap profile immediately with the shared controls", async () => {
