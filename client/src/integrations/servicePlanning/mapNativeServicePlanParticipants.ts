@@ -1,5 +1,6 @@
 import type { ServicePlanningImportData } from "../../containers/Overlays/eventParser";
 import { richTextToPlainText } from "../../types/richText";
+import { getServicePlanElementAssignees } from "../../types/servicePlan";
 import type {
   ServicePlanParticipantOverlayProjection,
   ServicePlanSection,
@@ -42,7 +43,7 @@ const getUnavailableProjectionReason = (
     ? "Assigned participant details are not available in this Controller session."
     : "Assigned participant details could not be loaded. Refresh the plan before syncing.";
 
-/** Build native overlay candidates directly from enabled plan items and their assignees. */
+/** Build native overlay candidates directly from plan items with assigned people. */
 export const mapNativeServicePlanParticipants = ({
   sections,
   importData,
@@ -66,14 +67,16 @@ export const mapNativeServicePlanParticipants = ({
 
   sections.forEach((section, sectionIndex) => {
     section.elements.forEach((element, sourceRowIndex) => {
-      if (element.participantOverlay?.enabled !== true) return;
+      if (!getServicePlanElementAssignees(element).some(
+        (assignee) => assignee.memberId?.trim() || assignee.name?.trim(),
+      )) return;
       selectedItemCount += 1;
 
       const source = importData.sections[sectionIndex]?.rows[sourceRowIndex];
       if (!source) return;
       const itemTitle = richTextToPlainText(element.title).trim();
       const eventLabel =
-        element.participantOverlay.eventLabel?.trim() || itemTitle;
+        element.participantOverlay?.eventLabel?.trim() || itemTitle;
       const defaultSkipReason = !eventLabel
         ? "Add an item title or event label before syncing this participant."
         : undefined;
@@ -172,7 +175,7 @@ export const mapNativeServicePlanParticipants = ({
     for (const row of rows) {
       row.candidates = row.candidates.map((candidate) => ({
         ...candidate,
-        skipReason: `More than one selected plan item uses the event label "${eventLabel}". Give each item a unique event label before syncing.`,
+        skipReason: `More than one plan item with assigned participants uses the event label "${eventLabel}". Give each item a unique event label before syncing.`,
       }));
     }
   }

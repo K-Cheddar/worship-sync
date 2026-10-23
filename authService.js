@@ -332,16 +332,21 @@ const normalizeMembershipPermissionsForChurch = async ({
   transaction,
 }) => {
   const normalized = normalizeMembershipPermissions(permissions, role);
-  const validScopes = await Promise.all(
-    Object.entries(normalized.teamScopes).map(async ([teamId, scope]) => {
-      const team = transaction
-        ? (await transaction.get(requireFirestore().collection(COLLECTIONS.teams).doc(teamId))).data()
-        : await getDoc(COLLECTIONS.teams, teamId);
-      return team && team.churchId === churchId && !team.archivedAt
-        ? [teamId, scope]
-        : null;
-    }),
-  );
+  const scopes = Object.entries(normalized.teamScopes);
+  if (scopes.length === 0) return normalized;
+  const db = requireFirestore();
+  const teams = db && !transaction
+    ? (await db.getAll(...scopes.map(([teamId]) => db.collection(COLLECTIONS.teams).doc(teamId))))
+      .map((snapshot) => snapshot.data())
+    : await Promise.all(scopes.map(async ([teamId]) => transaction
+      ? (await transaction.get(db.collection(COLLECTIONS.teams).doc(teamId))).data()
+      : getDoc(COLLECTIONS.teams, teamId)));
+  const validScopes = scopes.map(([teamId, scope], index) => {
+    const team = teams[index];
+    return team && team.churchId === churchId && !team.archivedAt
+      ? [teamId, scope]
+      : null;
+  });
   return {
     ...normalized,
     teamScopes: Object.fromEntries(validScopes.filter(Boolean)),
@@ -6896,7 +6901,8 @@ const deliverResponseDigest = async (scheduleId, prepared) => {
       await finishResponseDigest(scheduleId, batch);
       return;
     }
-    let failed = false;
+    let retrying = false;
+    const attempts = { ...(batch.attempts || {}) };
     for (const to of recipients) {
       const key = notificationDeliveryKey({
         recipient: to, event: "schedule.responses.digest", subject: scheduleId,
@@ -6904,6 +6910,12 @@ const deliverResponseDigest = async (scheduleId, prepared) => {
       });
       const ledgerId = hashValue(`${claimed.churchId}|${key}`);
       if (await getDoc(COLLECTIONS.notificationDeliveries, ledgerId)) continue;
+      const attemptKey = hashValue(to.trim().toLowerCase());
+      const attemptCount = Number(attempts[attemptKey] || 0);
+      if (attemptCount >= INTAKE_DIGEST_MAX_ATTEMPTS) {
+        logAuthEvent("warn", "schedule.responses.digest.retry_exhausted", { scheduleId, attemptCount });
+        continue;
+      }
       const renewed = await updateResponseDigestState(scheduleId, (current) =>
         current.pendingResponseDigestBatch?.claimId === claimId &&
         current.churchId === batch.churchId && (current.teamId || null) === batch.teamId ? {
@@ -6931,13 +6943,28 @@ const deliverResponseDigest = async (scheduleId, prepared) => {
         });
         logAuthEvent("info", "schedule.responses.digest.delivery_recorded", { scheduleId });
       } catch (error) {
-        failed = true;
+        const nextAttemptCount = attemptCount + 1;
+        const recorded = await updateResponseDigestState(scheduleId, (current) =>
+          current.pendingResponseDigestBatch?.claimId === claimId &&
+          current.churchId === batch.churchId && (current.teamId || null) === batch.teamId ? {
+            pendingResponseDigestBatch: {
+              ...current.pendingResponseDigestBatch,
+              attempts: { ...current.pendingResponseDigestBatch.attempts, [attemptKey]: nextAttemptCount },
+            },
+          } : null,
+        );
+        if (!recorded) return;
+        attempts[attemptKey] = nextAttemptCount;
+        if (nextAttemptCount < INTAKE_DIGEST_MAX_ATTEMPTS) retrying = true;
+        else logAuthEvent("warn", "schedule.responses.digest.retry_exhausted", {
+          scheduleId, attemptCount: nextAttemptCount,
+        });
         logAuthEvent("warn", "schedule.responses.digest.delivery_failed", {
-          scheduleId, errorName: error?.name || "Error", phase: deliveryPhase,
+          scheduleId, attemptCount: nextAttemptCount, errorName: error?.name || "Error", phase: deliveryPhase,
         });
       }
     }
-    if (!failed) await finishResponseDigest(scheduleId, batch);
+    if (!retrying) await finishResponseDigest(scheduleId, batch);
   } finally {
     await updateResponseDigestState(scheduleId, (current) =>
       current.pendingResponseDigestBatch?.claimId === claimId ? {

@@ -362,7 +362,7 @@ describe("useServicePlanningImport overlay execution", () => {
           type: "free" as const,
           title: plainTextToRichText("Sabbath School Lesson Study"),
           positionId: "position-worship",
-          participantOverlay: { enabled: true, eventLabel: "Panelist" },
+          participantOverlay: { eventLabel: "Panelist" },
           assignees: [{ id: "assignee-1", memberId: "member-1", name: "Old name" }],
         }],
       }],

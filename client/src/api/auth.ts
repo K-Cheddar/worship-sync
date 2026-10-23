@@ -1953,9 +1953,12 @@ export type TeamMemberTeamProfile = {
   membership: { roleId?: string; isTeamLead: boolean };
   qualifications: TeamMemberQualification[];
 };
-export type TeamMemberTeamProfilePatch = Partial<
+export type TeamMemberTeamProfileChanges = Partial<
   Pick<TeamMemberTeamProfile, "positionIds" | "desiredPositionIds" | "qualifications">
 > & { membership?: { roleId?: string | null; isTeamLead?: boolean } };
+export type TeamMemberTeamProfilePatch = TeamMemberTeamProfileChanges & {
+  baseProfile: TeamMemberTeamProfileChanges;
+};
 export type TeamMemberTeamProfileResponse = {
   member: TeamMemberProfile;
   teamProfile: TeamMemberTeamProfile;

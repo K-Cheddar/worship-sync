@@ -2364,13 +2364,8 @@ export const createTeamsAuthHandlers = ({
 
   const normalizeServicePlanParticipantOverlay = (raw) => {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-    const enabled = raw.enabled === true;
     const eventLabel = normalizeShortText(raw.eventLabel, { max: 120 });
-    if (!enabled && !eventLabel) return undefined;
-    return {
-      ...(enabled ? { enabled: true } : {}),
-      ...(eventLabel ? { eventLabel } : {}),
-    };
+    return eventLabel ? { eventLabel } : undefined;
   };
 
   const normalizeServicePlanMicrophoneAssignments = (raw) =>
@@ -4347,11 +4342,12 @@ export const createTeamsAuthHandlers = ({
     };
   };
 
-  const validateTeamProfilePatch = (body) => {
+  const validateTeamProfilePatch = (body, allowBaseProfile = false) => {
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw httpError(400, "A team profile is required.");
     }
-    const allowed = new Set(["positionIds", "desiredPositionIds", "membership", "qualifications"]);
+    const allowed = new Set(["positionIds", "desiredPositionIds", "membership", "qualifications",
+      ...(allowBaseProfile ? ["baseProfile"] : [])]);
     const unknown = Object.keys(body).filter((key) => !allowed.has(key));
     if (unknown.length) {
       throw httpError(400, `Unsupported team profile field: ${unknown[0]}.`);
@@ -4395,7 +4391,8 @@ export const createTeamsAuthHandlers = ({
   };
 
   const updateTeamProfile = async ({ churchId, teamId, memberId, body, adminUserId }) => {
-    const requested = validateTeamProfilePatch(body);
+    const requested = validateTeamProfilePatch(body, true);
+    const baseline = body.baseProfile === undefined ? null : validateTeamProfilePatch(body.baseProfile);
     const db = requireFirestore();
     const now = nowIso();
     const mutate = async (transaction = null) => {
@@ -4601,6 +4598,45 @@ export const createTeamsAuthHandlers = ({
         }
         const unrelated = priorQualifications.filter((item) => !ownedQualificationIds.has(item.qualificationId));
         nextQualifications = [...unrelated, ...replacements];
+      }
+
+      // Compare only submitted sections against the fresh transaction snapshot.
+      // Value baselines also detect changes made by the full member editor,
+      // without adding revision counters that every roster writer must maintain.
+      const currentSections = {
+        positionIds: slices.targetPositionIds(member.positionIds),
+        desiredPositionIds: slices.targetPositionIds(member.desiredPositionIds),
+        membership: slices.membership,
+        qualifications: slices.targetQualifications,
+      };
+      for (const key of Object.keys(requested)) {
+        if (!baseline || !Object.hasOwn(baseline, key)) {
+          throw httpError(409, "Reopen this team profile before saving so your changes can be checked.");
+        }
+        let current = currentSections[key];
+        let base = baseline[key];
+        if (key === "membership") {
+          const membershipView = (value) => ({
+            ...(Object.hasOwn(requested.membership, "roleId") ? { roleId: value.roleId || null } : {}),
+            ...(Object.hasOwn(requested.membership, "isTeamLead") ? { isTeamLead: value.isTeamLead === true } : {}),
+          });
+          current = membershipView(current);
+          base = membershipView(base);
+        } else if (key === "qualifications") {
+          if (base.some((item) => !item || typeof item !== "object" || Array.isArray(item))) {
+            throw httpError(400, "Qualification baseline is invalid.");
+          }
+          // Bootstrap fills in the owning team for legacy qualifications whose
+          // stored teamId is absent. Both read paths describe the same section.
+          const qualificationView = (item) => teamProfileQualificationView({ ...item, teamId });
+          current = current.map(qualificationView);
+          base = base.map(qualificationView);
+        } else {
+          current = [...new Set(current)];
+        }
+        if (!isDeepStrictEqual(current, base)) {
+          throw httpError(409, "This part of the team profile changed since you opened it. Your edits are still here. Reopen the profile to review the latest changes before saving.");
+        }
       }
 
       const memberPatch = {
@@ -7284,8 +7320,8 @@ export const createTeamsAuthHandlers = ({
   };
 
   /**
-   * Resolve only people explicitly opted into participant overlays for this
-   * saved plan. The response contains no contact fields or unrelated roster
+   * Resolve people assigned to items in this saved plan for participant
+   * overlays. The response contains no contact fields or unrelated roster
    * rows. A position may scope which team membership to inspect, but its name
    * is never used as the participant title.
    */
@@ -7414,13 +7450,17 @@ export const createTeamsAuthHandlers = ({
       return { name, memberStatus: "resolved", ...role };
     };
 
-    const enabledElements = (servicePlan?.sections || []).flatMap((section) =>
+    const assignedElements = (servicePlan?.sections || []).flatMap((section) =>
       (section?.elements || []).filter(
-        (element) => element?.participantOverlay?.enabled === true,
+        (element) => assigneesForElement(element).some(
+          (assignee) =>
+            normalizeShortText(assignee?.memberId, { max: 160 }) ||
+            normalizeShortText(assignee?.name, { max: 200 }),
+        ),
       ),
     );
     const elements = await Promise.all(
-      enabledElements.map(async (element) => {
+      assignedElements.map(async (element) => {
         const positionIds = [
           ...new Set(
             [

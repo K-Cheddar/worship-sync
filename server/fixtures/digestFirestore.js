@@ -123,6 +123,9 @@ export const createDigestFirestore = (seed = {}) => {
   let transactionTail = Promise.resolve();
   database = {
     collection,
+    async getAll(...refs) {
+      return Promise.all(refs.map((ref) => ref.get()));
+    },
     async runTransaction(callback) {
       if (database.beforeTransaction) await database.beforeTransaction();
       let release;

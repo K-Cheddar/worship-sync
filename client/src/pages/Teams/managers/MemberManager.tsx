@@ -669,9 +669,10 @@ const MemberManager = ({
     if (!editing || nextTeamId === scopedTeamId) return;
     if (!scopedTeamOptions.some((team) => team.teamId === nextTeamId)) return;
     requestDiscardAction(() => {
-      openMemberEditor(editing, nextTeamId);
+      const member = members.find((candidate) => candidate.memberId === editing.memberId) || editing;
+      openMemberEditor(member, nextTeamId);
     });
-  }, [editing, openMemberEditor, requestDiscardAction, scopedTeamId, scopedTeamOptions]);
+  }, [editing, members, openMemberEditor, requestDiscardAction, scopedTeamId, scopedTeamOptions]);
   const reset = () => {
     if (profileImageSelectionToastIdRef.current) {
       removeToast(profileImageSelectionToastIdRef.current);
