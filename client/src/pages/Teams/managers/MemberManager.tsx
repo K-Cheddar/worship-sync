@@ -1,17 +1,15 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
-import { Camera, Plus, X } from "lucide-react";
+import { Camera, X } from "lucide-react";
 import { useLocation, useNavigate, useNavigationType, useSearchParams } from "react-router-dom";
 import Button from "../../../components/Button/Button";
 import Checkbox from "../../../components/Checkbox/Checkbox";
 import Input from "../../../components/Input/Input";
 import Select from "../../../components/Select/Select";
-import EntityIconBadge from "../../../components/icons/EntityIconBadge";
 import SearchableSelect from "../../../components/SearchableSelect";
 import TextArea from "../../../components/TextArea/TextArea";
 import DeleteModal from "../../../components/Modal/DeleteModal";
 import RecordSmsConsentModal from "./RecordSmsConsentModal";
 import VolunteerPersonalAccessControls from "./VolunteerPersonalAccessControls";
-import DatePicker from "@/components/ui/DatePicker";
 import BirthDateField from "../components/BirthDateField";
 import { getBirthDateValidationError } from "../../../utils/birthDate";
 import {
@@ -33,12 +31,11 @@ import {
   listChurchMembers,
   unlinkTeamRosterMember,
   updateTeamRosterMember,
+  type TeamMemberTeamProfile,
   type TeamRosterMemberPayload,
 } from "../../../api/auth";
 import type {
   ChurchMemberRow,
-  TeamMemberQualification,
-  TeamMemberQualificationStatus,
   TeamPosition,
   TeamRecord,
   TeamRosterMember,
@@ -57,6 +54,7 @@ import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import TeamMemberProfileEditor, {
   type TeamMemberProfileEditorStatus,
 } from "./TeamMemberProfileEditor";
+import MemberTeamProfileFields from "./MemberTeamProfileFields";
 import EntityMultiSelect from "../EntityMultiSelect";
 import EntityRow from "../components/EntityRow";
 import {
@@ -66,8 +64,6 @@ import {
 import { MemberAssignmentsDetails } from "../components/MemberAssignmentsSummary";
 import MemberAvatar from "../../../components/MemberAvatar/MemberAvatar";
 import BlockoutDatesField from "../components/BlockoutDatesField";
-import CollapsibleSectionTrigger from "../../../components/CollapsibleSectionTrigger/CollapsibleSectionTrigger";
-import SelectAllButton from "../../../components/SelectAllButton";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { uploadImageToCloudinary } from "../../../containers/Media/utils/cloudinaryUpload";
 import { deleteCloudinaryAsset } from "../../../utils/cloudinaryUtils";
@@ -76,7 +72,6 @@ import {
   describeDeletionImpacts,
   memberMatchesListQuery,
   memberName,
-  orderPositionsByTeamList,
   sortTeamRosterMembersAlphabetically,
 } from "../teamsUtils";
 import { getMemberListAssignments } from "../memberListAssignments";
@@ -105,11 +100,6 @@ import {
   recurringAvailabilityWeekOptions,
   servingFrequencyOptions,
 } from "../memberPreferences";
-
-const NO_SELECTION_VALUE = "__none";
-
-// Filter-chip id for positions whose team no longer exists.
-const NO_TEAM_GROUP_ID = "__no_team";
 
 // Key used to track an in-flight save for the create form, which has no member
 // id yet. Existing members are tracked by their own memberId.
@@ -180,15 +170,6 @@ const buildMemberDraft = (
   profileImagePublicId: member?.profileImagePublicId || "",
 });
 
-const qualificationStatusOptions: {
-  value: TeamMemberQualificationStatus;
-  label: string;
-}[] = [
-    { value: "in_training", label: "In training" },
-    { value: "completed", label: "Completed" },
-    { value: "expired", label: "Expired" },
-  ];
-
 type MemberManagerProps = {
   members: TeamRosterMember[];
   isLoading?: boolean;
@@ -198,6 +179,7 @@ type MemberManagerProps = {
   canEditAllTeams?: boolean;
   canManageMemberLifecycle?: boolean;
   canEditMember?: (member: TeamRosterMember) => boolean;
+  teamProfileReadyMemberIds?: ReadonlySet<string>;
   onSaved: (member: TeamRosterMember, replaceId?: string) => void;
   onIdentityChanged?: () => void;
   /** Applies rosters the server changed by joining this member to a team. */
@@ -219,6 +201,7 @@ const MemberManager = ({
   canEditAllTeams = true,
   canManageMemberLifecycle = true,
   canEditMember: canEditMemberProp,
+  teamProfileReadyMemberIds,
   onSaved,
   onIdentityChanged,
   onTeamSaved,
@@ -358,7 +341,6 @@ const MemberManager = ({
   const [listFilters, setListFilters] = useState(emptyMemberListFilters);
   const [draftListFilters, setDraftListFilters] = useState(emptyMemberListFilters);
   const [showFilters, setShowFilters] = useState(false);
-  const [showDesiredPositions, setShowDesiredPositions] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
   const navigationType = useNavigationType();
@@ -411,7 +393,6 @@ const MemberManager = ({
       pendingEditIdentityRef.current = null;
       updateMemberEditRoute(member.memberId, editRouteTeamId);
       setShowFilters(false);
-      setShowDesiredPositions(false);
       setPendingProfileImage(null);
       setPendingProfileImagePreviewUrl("");
       setEditing(member);
@@ -488,10 +469,6 @@ const MemberManager = ({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [closeFilters, showFilters]);
 
-  const positionNameById = useMemo(
-    () => new Map(positions.map((position) => [position.positionId, position.name])),
-    [positions],
-  );
   const positionsById = useMemo(
     () => new Map(data.positions.map((position) => [position.positionId, position])),
     [data.positions],
@@ -536,14 +513,6 @@ const MemberManager = ({
     [members, positionsById, teamIdsByMemberId, teamsById],
   );
   const activeFilterCount = countActiveMemberListFilters(listFilters);
-  const roleById = useMemo(
-    () => new Map(data.teamRoles.map((role) => [role.roleId, role])),
-    [data.teamRoles],
-  );
-  const areaById = useMemo(
-    () => new Map(data.qualificationAreas.map((area) => [area.areaId, area])),
-    [data.qualificationAreas],
-  );
   // Teams the member belongs to right now, i.e. before anything in this draft.
   const joinedTeamIds = useMemo(
     () => editing
@@ -613,6 +582,72 @@ const MemberManager = ({
     [canEditAllTeams, data.teams, editing],
   );
   const scopedTeam = scopedTeamOptions.find((team) => team.teamId === scopedTeamId) || null;
+  const scopedInitialProfile = useMemo<TeamMemberTeamProfile | undefined>(() => {
+    if (
+      !editing ||
+      !scopedTeam ||
+      !teamProfileReadyMemberIds?.has(editing.memberId) ||
+      !Array.isArray(editing.positionIds) ||
+      !Array.isArray(editing.desiredPositionIds) ||
+      !Array.isArray(editing.qualifications) ||
+      !editing.teamMemberships ||
+      typeof editing.teamMemberships !== "object" ||
+      Array.isArray(editing.teamMemberships)
+    ) return undefined;
+
+    const positionsById = new Map(data.positions.map((position) => [position.positionId, position]));
+    const allPositionIds = [...editing.positionIds, ...editing.desiredPositionIds];
+    if (allPositionIds.some((positionId) => {
+      const position = positionsById.get(positionId);
+      return typeof positionId !== "string" || !position ||
+        position.positionId !== positionId || position.churchId !== churchId || !position.teamId;
+    })) return undefined;
+    const areasById = new Map(data.qualificationAreas.map((area) => [area.areaId, area]));
+    if (editing.qualifications.some((qualification) => {
+      if (!qualification || typeof qualification !== "object" || Array.isArray(qualification)) return true;
+      const area = areasById.get(qualification.areaId);
+      const level = qualification.levelId
+        ? data.qualificationLevels.find((item) => item.levelId === qualification.levelId)
+        : null;
+      return typeof qualification.qualificationId !== "string" || !qualification.qualificationId.trim() ||
+        typeof qualification.areaId !== "string" || !area || area.churchId !== churchId ||
+        qualification.teamId !== area.teamId ||
+        (qualification.levelId && (!level || level.churchId !== churchId || level.areaId !== area.areaId)) ||
+        (qualification.status !== undefined && !["in_training", "completed", "expired"].includes(qualification.status)) ||
+        (qualification.completedAt !== undefined && typeof qualification.completedAt !== "string") ||
+        (qualification.expiresAt !== undefined && typeof qualification.expiresAt !== "string") ||
+        (qualification.notes !== undefined && typeof qualification.notes !== "string");
+    })) return undefined;
+
+    const teamId = scopedTeam.teamId;
+    const membership = editing.teamMemberships[teamId];
+    if (membership && (
+      typeof membership !== "object" ||
+      Array.isArray(membership) ||
+      (membership.teamId !== undefined && membership.teamId !== teamId)
+    )) return undefined;
+    if (membership?.isTeamLead !== undefined && typeof membership.isTeamLead !== "boolean") return undefined;
+    if (membership?.roleId !== undefined && membership.roleId !== null && membership.roleId !== "" &&
+        (typeof membership.roleId !== "string" || !data.teamRoles.some((role) =>
+          role.roleId === membership.roleId && role.teamId === teamId && role.churchId === churchId))) {
+      return undefined;
+    }
+
+    return {
+      teamId,
+      positionIds: editing.positionIds.filter((positionId) =>
+        positionsById.get(positionId)?.teamId === teamId),
+      desiredPositionIds: editing.desiredPositionIds.filter((positionId) =>
+        positionsById.get(positionId)?.teamId === teamId),
+      membership: {
+        ...(membership?.roleId ? { roleId: membership.roleId } : {}),
+        isTeamLead: membership?.isTeamLead === true,
+      },
+      qualifications: editing.qualifications.filter((qualification) =>
+        qualification.teamId === teamId),
+    };
+  }, [churchId, data.positions, data.qualificationAreas, data.qualificationLevels, data.teamRoles,
+    editing, scopedTeam, teamProfileReadyMemberIds]);
   const scopedProfileIdentity = editing && scopedTeam
     ? `${churchId}:${scopedTeam.teamId}:${editing.memberId}`
     : "";
@@ -653,7 +688,6 @@ const MemberManager = ({
     pendingEditIdentityRef.current = null;
     setSavedMembershipBaseline(null);
     setDraft(buildMemberDraft(null, []));
-    setShowDesiredPositions(false);
     setProfileImageUploading(false);
     setPendingProfileImage(null);
     setPendingProfileImagePreviewUrl("");
@@ -1222,69 +1256,6 @@ const MemberManager = ({
   }, [canEdit, canEditAllTeams, canEditMember, churchId, data.teams, isLoading, members, navigationType,
     openMemberEditor, requestDiscardAction, routeEditMemberId, routeTeamId, showCreate, updateMemberEditRoute]);
 
-  // Positions follow each team's Positions tab order; teams follow the roster list.
-  const positionOptions = useMemo(
-    () =>
-      orderPositionsByTeamList(positions, data.teams).map((position) => ({
-        id: position.positionId,
-        label: position.name,
-        sublabel: teamNameById.get(position.teamId) || "No team",
-        archived: Boolean(position.archivedAt),
-        // Positions whose team is missing share one "No team" filter chip.
-        groupId: teamNameById.has(position.teamId)
-          ? position.teamId
-          : NO_TEAM_GROUP_ID,
-      })),
-    [positions, data.teams, teamNameById],
-  );
-
-  // Team filter groups for the position pickers retain their default scope.
-  const positionTeamFilters = useMemo(() => {
-    const labelById = new Map<string, string>();
-    positionOptions.forEach((option) => {
-      if (labelById.has(option.groupId)) return;
-      labelById.set(option.groupId, option.sublabel);
-    });
-    return Array.from(labelById, ([id, label]) => ({ id, label }));
-  }, [positionOptions]);
-  const desiredPositionSelectableIds = useMemo(
-    () =>
-      positionOptions
-        .filter(
-          (option) =>
-            !option.archived || (draft.desiredPositionIds || []).includes(option.id),
-        )
-        .map((option) => option.id),
-    [draft.desiredPositionIds, positionOptions],
-  );
-  const desiredPositionsAllSelected =
-    desiredPositionSelectableIds.length > 0 &&
-    desiredPositionSelectableIds.every((id) =>
-      (draft.desiredPositionIds || []).includes(id),
-    );
-  const toggleAllDesiredPositions = () => {
-    const selected = new Set(draft.desiredPositionIds || []);
-    if (desiredPositionsAllSelected) {
-      desiredPositionSelectableIds.forEach((id) => selected.delete(id));
-    } else {
-      desiredPositionSelectableIds.forEach((id) => selected.add(id));
-    }
-    setDraft((current) => ({
-      ...current,
-      desiredPositionIds: Array.from(selected),
-    }));
-  };
-
-  // Positions the member asked for (intake) but is not yet eligible to be
-  // scheduled for. Promoting one adds it to positionIds (the assignment gate).
-  const desiredNotEligible = useMemo(
-    () =>
-      (draft.desiredPositionIds || []).filter(
-        (positionId) => !draft.positionIds.includes(positionId),
-      ),
-    [draft.desiredPositionIds, draft.positionIds],
-  );
-
   const teamIdsForPositions = useCallback(
     (positionIds: string[]) =>
       Array.from(
@@ -1300,10 +1271,6 @@ const MemberManager = ({
   const draftTeamIds = useMemo(() => draft.teamIds || [], [draft.teamIds]);
   // Membership is explicit now, so the teams that can hold a role are exactly
   // the teams selected below — including ones a position just added.
-  const roleTeams = draftTeamIds
-    .map((teamId) => data.teams.find((team) => team.teamId === teamId))
-    .filter(Boolean) as TeamRecord[];
-
   const teamNamesFor = useCallback(
     (teamIds: string[]) =>
       teamIds
@@ -1405,23 +1372,6 @@ const MemberManager = ({
       ).sort(),
     }));
   };
-  const qualificationAreaOptions = data.qualificationAreas.map((area) => ({
-    value: area.areaId,
-    label: <span className="inline-flex items-center gap-2"><EntityIconBadge icon={area.icon || "Award"} className="size-5 shrink-0" iconClassName="size-3" /><span>{area.name}{teamNameById.get(area.teamId) ? ` (${teamNameById.get(area.teamId)})` : ""}</span></span>,
-  }));
-
-  const createEmptyQualification = (): TeamMemberQualification => ({
-    qualificationId: `local-qualification-${generateRandomId()}`,
-    areaId: data.qualificationAreas[0]?.areaId || "",
-    levelId: data.qualificationAreas[0]
-      ? data.qualificationLevels.find(
-        (level) => level.areaId === data.qualificationAreas[0].areaId,
-      )?.levelId || ""
-      : "",
-    teamId: data.qualificationAreas[0]?.teamId || "",
-    status: "in_training",
-  });
-
   const handleScopedEditorStateChange = useCallback((status: TeamMemberProfileEditorStatus) => {
     setScopedProfileStatus((current) =>
       current?.identity === status.identity &&
@@ -1741,6 +1691,7 @@ const MemberManager = ({
               team={scopedTeam}
               teams={scopedTeamOptions}
               member={editing}
+              initialProfile={scopedInitialProfile}
               positions={data.positions}
               roles={data.teamRoles}
               qualificationAreas={data.qualificationAreas}
@@ -2127,416 +2078,105 @@ const MemberManager = ({
           onChange={applyTeamSelection}
           emptyText="No teams yet."
         />
-        <EntityMultiSelect
+        <MemberTeamProfileFields
           key={`${showCreate ? "open" : "closed"}-${editing?.memberId || "create-member"}`}
-          label="Positions"
-          description="Positions this member can be scheduled for."
-          inlineSublabel
-          options={positionOptions}
-          groups={positionTeamFilters}
-          hideGroupFilters
-          defaultGroupIds={draftTeamIds}
-          value={draft.positionIds}
-          onChange={applyPositionSelection}
-          renderOptionAction={
-            canEdit
-              ? (option) => {
-                const teamIdForPosition = positionTeamIdById.get(option.id);
-                if (!teamIdForPosition) return null;
-                return (
-                  <TeamsCrossSectionLink
-                    to={buildTeamsPositionEditPath(option.id, teamIdForPosition)}
-                    returnTo={
-                      editing
-                        ? {
-                          label: "Back to member",
-                          pathname: buildTeamsMemberEditPath(editing.memberId),
-                        }
-                        : buildSectionReturnTo(TEAMS_SECTION_PATHS.members)
-                    }
-                    aria-label={`Edit ${option.label}`}
-                  >
-                    Edit
-                  </TeamsCrossSectionLink>
-                );
-              }
-              : undefined
-          }
-        />
-        {teamsBeingJoined.length > 0 ? (
-          <p className="rounded-md border border-cyan-500/30 bg-cyan-950/20 px-3 py-2 text-xs text-cyan-100/90">
-            Saving will add {draft.firstName.trim() || "this member"} to{" "}
-            <span className="font-semibold">
-              {formatTeamNameList(teamsBeingJoined)}
-            </span>
-            .
-          </p>
-        ) : null}
-        {teamIdsBeingLeft.length > 0 ? (
-          <div className="rounded-md border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100/90">
-            <p>
-              Saving will remove {draft.firstName.trim() || "this member"} from{" "}
-              <span className="font-semibold">
-                {formatTeamNameList(teamNamesFor(teamIdsBeingLeft))}
-              </span>
-              .
-            </p>
-            {editing
-              ? teamIdsBeingLeft.map((teamId) => {
-                const assignmentCount = countMemberAssignmentsOnTeam(
-                  editing.memberId,
-                  teamId,
-                  data.schedules,
-                );
-                if (!assignmentCount) return null;
-                return (
-                  <p key={teamId} className="mt-1">
-                    They are still assigned{" "}
-                    {assignmentCount === 1
-                      ? "once"
-                      : `${assignmentCount} times`}{" "}
-                    on {teamNameById.get(teamId) || "that team"} schedules.
-                    Those assignments stay as they are.
+          teams={data.teams}
+          positions={positions}
+          roles={data.teamRoles}
+          qualificationAreas={data.qualificationAreas}
+          qualificationLevels={data.qualificationLevels}
+          selectedTeamIds={draftTeamIds}
+          positionIds={draft.positionIds || []}
+          desiredPositionIds={draft.desiredPositionIds || []}
+          teamMemberships={draft.teamMemberships || {}}
+          qualifications={draft.qualifications || []}
+          disabled={!canEditActiveMember}
+          defaultFirstLevelOnAdd
+          renderPositionAction={canEdit ? (option) => {
+            const teamIdForPosition = positionTeamIdById.get(option.id);
+            if (!teamIdForPosition) return null;
+            return (
+              <TeamsCrossSectionLink
+                to={buildTeamsPositionEditPath(option.id, teamIdForPosition)}
+                returnTo={editing
+                  ? {
+                    label: "Back to member",
+                    pathname: buildTeamsMemberEditPath(editing.memberId),
+                  }
+                  : buildSectionReturnTo(TEAMS_SECTION_PATHS.members)}
+                aria-label={`Edit ${option.label}`}
+              >
+                Edit
+              </TeamsCrossSectionLink>
+            );
+          } : undefined}
+          beforeDesiredPositions={(
+            <>
+              {teamsBeingJoined.length > 0 ? (
+                <p className="rounded-md border border-cyan-500/30 bg-cyan-950/20 px-3 py-2 text-xs text-cyan-100/90">
+                  Saving will add {draft.firstName.trim() || "this member"} to{" "}
+                  <span className="font-semibold">{formatTeamNameList(teamsBeingJoined)}</span>.
+                </p>
+              ) : null}
+              {teamIdsBeingLeft.length > 0 ? (
+                <div className="rounded-md border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100/90">
+                  <p>
+                    Saving will remove {draft.firstName.trim() || "this member"} from{" "}
+                    <span className="font-semibold">{formatTeamNameList(teamNamesFor(teamIdsBeingLeft))}</span>.
                   </p>
-                );
-              })
-              : null}
-          </div>
-        ) : null}
-        {teamsWithNoPositionsLeft.map((team) => (
-          <div
-            key={team.teamId}
-            className="rounded-md border border-amber-400/40 bg-amber-500/10 p-3"
-          >
-            <p className="text-sm font-semibold text-amber-100">
-              No {team.name} positions left
-            </p>
-            <p className="mt-0.5 text-xs text-amber-100/80">
-              They stay on the {team.name} roster and can still be shadowed in.
-              {team.assignmentCount
-                ? ` They are assigned ${team.assignmentCount === 1
-                  ? "once"
-                  : `${team.assignmentCount} times`
-                } on ${team.name} schedules.`
-                : ""}
-            </p>
-            <div className="mt-2">
-              <Button
-                variant="secondary"
-                svg={X}
-                iconSize="sm"
-                padding="px-2 py-1"
-                onClick={() =>
-                  applyTeamSelection(
-                    draftTeamIds.filter((teamId) => teamId !== team.teamId),
-                  )
-                }
-              >
-                Remove from {team.name}
-              </Button>
-            </div>
-          </div>
-        ))}
-        {desiredNotEligible.length > 0 ? (
-          <div className="rounded-md border border-amber-400/40 bg-amber-500/10 p-3">
-            <p className="text-sm font-semibold text-amber-100">
-              Requested from intake, not yet schedulable
-            </p>
-            <p className="mt-0.5 text-xs text-amber-100/80">
-              These positions are what the member wants to do. Add one to make
-              them assignable to it.
-            </p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {desiredNotEligible.map((positionId) => (
-                <Button
-                  key={positionId}
-                  variant="secondary"
-                  svg={Plus}
-                  iconSize="sm"
-                  padding="px-2 py-1"
-                  onClick={() =>
-                    applyPositionSelection([...draft.positionIds, positionId])
-                  }
-                >
-                  {positionNameById.get(positionId) || "Position"}
-                </Button>
+                  {editing ? teamIdsBeingLeft.map((teamId) => {
+                    const assignmentCount = countMemberAssignmentsOnTeam(
+                      editing.memberId,
+                      teamId,
+                      data.schedules,
+                    );
+                    if (!assignmentCount) return null;
+                    return (
+                      <p key={teamId} className="mt-1">
+                        They are still assigned {assignmentCount === 1 ? "once" : `${assignmentCount} times`}{" "}
+                        on {teamNameById.get(teamId) || "that team"} schedules. Those assignments stay as they are.
+                      </p>
+                    );
+                  }) : null}
+                </div>
+              ) : null}
+              {teamsWithNoPositionsLeft.map((team) => (
+                <div key={team.teamId} className="rounded-md border border-amber-400/40 bg-amber-500/10 p-3">
+                  <p className="text-sm font-semibold text-amber-100">No {team.name} positions left</p>
+                  <p className="mt-0.5 text-xs text-amber-100/80">
+                    They stay on the {team.name} roster and can still be shadowed in.
+                    {team.assignmentCount
+                      ? ` They are assigned ${team.assignmentCount === 1 ? "once" : `${team.assignmentCount} times`} on ${team.name} schedules.`
+                      : ""}
+                  </p>
+                  <div className="mt-2">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      svg={X}
+                      iconSize="sm"
+                      padding="px-2 py-1"
+                      onClick={() => applyTeamSelection(draftTeamIds.filter((teamId) => teamId !== team.teamId))}
+                    >
+                      Remove from {team.name}
+                    </Button>
+                  </div>
+                </div>
               ))}
-            </div>
-          </div>
-        ) : null}
-        <div className="min-w-0 space-y-1">
-          <CollapsibleSectionTrigger
-            label="Desired positions"
-            expanded={showDesiredPositions}
-            onExpandedChange={setShowDesiredPositions}
-            endContent={
-              <span
-                onClick={(event) => event.stopPropagation()}
-                onKeyDown={(event) => event.stopPropagation()}
-              >
-                <SelectAllButton
-                  allSelected={desiredPositionsAllSelected}
-                  tone="admin"
-                  onClick={toggleAllDesiredPositions}
-                />
-              </span>
-            }
-          />
-          {showDesiredPositions ? (
-            <EntityMultiSelect
-              label="Desired positions"
-              hideLabel
-              hideSelectAll
-              description="What the member wants to do, from intake forms. Does not affect scheduling on its own."
-              inlineSublabel
-              options={positionOptions}
-              groups={positionTeamFilters}
-              hideGroupFilters
-              value={draft.desiredPositionIds || []}
-              onChange={(desiredPositionIds) =>
-                setDraft((d) => ({ ...d, desiredPositionIds }))
-              }
-            />
-          ) : null}
-        </div>
-        <fieldset disabled={!canEditActiveMember} className="space-y-2">
-          <legend className="p-1 text-sm font-semibold">Team roles</legend>
-          {roleTeams.length === 0 ? (
-            <p className="text-sm text-gray-400">
-              Choose a team above to assign a team role.
-            </p>
-          ) : null}
-          {roleTeams.map((team) => {
-            const membership = draft.teamMemberships?.[team.teamId] || {
-              teamId: team.teamId,
-            };
-            const roleOptions = [
-              { value: NO_SELECTION_VALUE, label: "No role" },
-              ...data.teamRoles
-                .filter((role) => role.teamId === team.teamId)
-                .map((role) => ({
-                  value: role.roleId,
-                  label: <span className="inline-flex items-center gap-2"><EntityIconBadge icon={role.icon || "ShieldCheck"} className="size-5 shrink-0" iconClassName="size-3" /><span>{role.name}{role.archivedAt ? " (archived)" : ""}</span></span>,
-                })),
-            ];
-            return (
-              <div
-                key={team.teamId}
-                className="rounded-md border border-gray-700 bg-gray-950/60 p-2"
-              >
-                <Select
-                  label={`${team.name} role`}
-                  value={membership.roleId || NO_SELECTION_VALUE}
-                  options={roleOptions}
-                  onChange={(roleId) =>
-                    setDraft((current) => {
-                      const teamMemberships = { ...(current.teamMemberships || {}) };
-                      const existing = teamMemberships[team.teamId] || {
-                        teamId: team.teamId,
-                      };
-                      teamMemberships[team.teamId] = {
-                        ...existing,
-                        roleId:
-                          roleId === NO_SELECTION_VALUE ? undefined : roleId,
-                        roleLabel:
-                          roleId === NO_SELECTION_VALUE
-                            ? undefined
-                            : roleById.get(roleId)?.name || existing.roleLabel,
-                      };
-                      return { ...current, teamMemberships };
-                    })
-                  }
-                  selectClassName="w-full"
-                />
-              </div>
-            );
+            </>
+          )}
+          onPositionIdsChange={applyPositionSelection}
+          onDesiredPositionIdsChange={(desiredPositionIds) =>
+            setDraft((current) => ({ ...current, desiredPositionIds }))}
+          onRoleChange={(teamId, roleId, roleLabel) => setDraft((current) => {
+            const teamMemberships = { ...(current.teamMemberships || {}) };
+            const existing = teamMemberships[teamId] || { teamId };
+            teamMemberships[teamId] = { ...existing, roleId, roleLabel };
+            return { ...current, teamMemberships };
           })}
-        </fieldset>
-        <fieldset disabled={!canEditActiveMember} className="space-y-2">
-          <legend className="p-1 text-sm font-semibold">Qualifications</legend>
-          {data.qualificationAreas.length === 0 ? (
-            <p className="text-sm text-gray-400">
-              Add qualification areas before assigning training levels.
-            </p>
-          ) : null}
-          {(draft.qualifications || []).map((qualification, index) => {
-            const selectedArea = areaById.get(qualification.areaId);
-            const levelOptions = [
-              { value: NO_SELECTION_VALUE, label: "No level" },
-              ...data.qualificationLevels
-                .filter((level) => level.areaId === qualification.areaId)
-                .sort((a, b) => a.rank - b.rank)
-                .map((level) => ({
-                  value: level.levelId,
-                  label: `${level.name}${level.archivedAt ? " (archived)" : ""}`,
-                })),
-            ];
-            return (
-              <div
-                key={qualification.qualificationId || index}
-                className="space-y-2 rounded-md border border-gray-700 bg-gray-950/60 p-2"
-              >
-                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
-                  <Select
-                    label="Area"
-                    value={qualification.areaId || NO_SELECTION_VALUE}
-                    options={[
-                      { value: NO_SELECTION_VALUE, label: "Choose area" },
-                      ...qualificationAreaOptions,
-                    ]}
-                    onChange={(areaId) =>
-                      setDraft((current) => ({
-                        ...current,
-                        qualifications: (current.qualifications || []).map(
-                          (item, itemIndex) =>
-                            itemIndex === index
-                              ? {
-                                ...item,
-                                areaId:
-                                  areaId === NO_SELECTION_VALUE ? "" : areaId,
-                                teamId:
-                                  areaId === NO_SELECTION_VALUE
-                                    ? ""
-                                    : areaById.get(areaId)?.teamId || "",
-                                levelId: "",
-                              }
-                              : item,
-                        ),
-                      }))
-                    }
-                    selectClassName="w-full"
-                  />
-                  <Select
-                    label="Level"
-                    value={qualification.levelId || NO_SELECTION_VALUE}
-                    options={levelOptions}
-                    onChange={(levelId) =>
-                      setDraft((current) => ({
-                        ...current,
-                        qualifications: (current.qualifications || []).map(
-                          (item, itemIndex) =>
-                            itemIndex === index
-                              ? {
-                                ...item,
-                                levelId:
-                                  levelId === NO_SELECTION_VALUE
-                                    ? undefined
-                                    : levelId,
-                              }
-                              : item,
-                        ),
-                      }))
-                    }
-                    selectClassName="w-full"
-                  />
-                  <Select
-                    label="Status"
-                    value={qualification.status || "in_training"}
-                    options={qualificationStatusOptions}
-                    onChange={(status) =>
-                      setDraft((current) => ({
-                        ...current,
-                        qualifications: (current.qualifications || []).map(
-                          (item, itemIndex) =>
-                            itemIndex === index
-                              ? {
-                                ...item,
-                                status: status as TeamMemberQualificationStatus,
-                              }
-                              : item,
-                        ),
-                      }))
-                    }
-                    selectClassName="w-full"
-                  />
-                  <Button
-                    type="button"
-                    variant="tertiary"
-                    svg={X}
-                    iconSize="sm"
-                    padding="p-0"
-                    className="shrink-0 self-center text-gray-400 hover:text-white"
-                    aria-label="Remove qualification"
-                    onClick={() =>
-                      setDraft((current) => ({
-                        ...current,
-                        qualifications: (current.qualifications || []).filter(
-                          (_, itemIndex) => itemIndex !== index,
-                        ),
-                      }))
-                    }
-                  />
-                </div>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <DatePicker
-                    label="Completed"
-                    value={qualification.completedAt || ""}
-                    onChange={(completedAt) =>
-                      setDraft((current) => ({
-                        ...current,
-                        qualifications: (current.qualifications || []).map(
-                          (item, itemIndex) =>
-                            itemIndex === index ? { ...item, completedAt } : item,
-                        ),
-                      }))
-                    }
-                  />
-                  <DatePicker
-                    label="Expires"
-                    value={qualification.expiresAt || ""}
-                    onChange={(expiresAt) =>
-                      setDraft((current) => ({
-                        ...current,
-                        qualifications: (current.qualifications || []).map(
-                          (item, itemIndex) =>
-                            itemIndex === index ? { ...item, expiresAt } : item,
-                        ),
-                      }))
-                    }
-                  />
-                </div>
-                <Input
-                  label="Notes"
-                  hideLabel
-                  placeholder={
-                    selectedArea
-                      ? `Notes for ${selectedArea.name}`
-                      : "Qualification notes"
-                  }
-                  value={qualification.notes || ""}
-                  onChange={(notes) =>
-                    setDraft((current) => ({
-                      ...current,
-                      qualifications: (current.qualifications || []).map(
-                        (item, itemIndex) =>
-                          itemIndex === index
-                            ? { ...item, notes: String(notes) }
-                            : item,
-                      ),
-                    }))
-                  }
-                />
-              </div>
-            );
-          })}
-          <Button
-            variant="secondary"
-            svg={Plus}
-            iconSize="sm"
-            disabled={data.qualificationAreas.length === 0}
-            onClick={() =>
-              setDraft((current) => ({
-                ...current,
-                qualifications: [
-                  ...(current.qualifications || []),
-                  createEmptyQualification(),
-                ],
-              }))
-            }
-          >
-            Add qualification
-          </Button>
-        </fieldset>
+          onQualificationsChange={(qualifications) =>
+            setDraft((current) => ({ ...current, qualifications }))}
+        />
         <BlockoutDatesField
           key={editing?.memberId ?? "new-member"}
           variant="admin"

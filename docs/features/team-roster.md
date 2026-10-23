@@ -25,6 +25,8 @@ An editor opens a team, reviews the assigned members in alphabetical order, and 
 - Confirm before removing a member. Scoped removal explains that team positions, role, and qualifications are removed, while historical schedule assignments remain. Removing someone from a team never deletes their member record.
 - Manage is available to administrators, global Teams editors, and editors of the current team. It opens Members with `editMember` and the originating `teamId`; leaving a dirty team draft uses the existing navigation guard. Returning restores the originating team editor.
 - Global editors use the existing full member editor. A scoped manager can switch only among teams they can edit where the member is an active roster member. The team profile reads and writes go through `getTeamRosterMemberProfile` and `updateTeamRosterMemberProfile`; only that team's positions, role, and qualifications appear in the form. Switching teams or members is guarded when the profile has unsaved changes.
+- Both editor modes use the same eligible-position, desired-position, team-role, and qualification controls. The scoped mode passes only the selected team's options and profile slice; it does not render inaccessible member fields.
+- A scoped profile opens from Teams bootstrap data only when the server marks the full editable profile projection complete and the client verifies every referenced field and entity. Partial or malformed bootstrap data is never interpreted as an empty profile; it uses `getTeamRosterMemberProfile` for the authoritative team slice. Scoped saves continue through `updateTeamRosterMemberProfile`, whose server-side ownership checks remain authoritative.
 - Scoped managers see Members grouped into `Your teams` and `Other members`, alphabetically within each group. Search and filters apply to both groups; names and team details outside their authorized projection are not included.
 - The member list distinguishes `No team assigned` only when the server can establish that all active team rosters are complete. If ownership is truncated or malformed, it shows an unavailable status rather than inferring no assignment. Scoped managers only see the safe status enum and their authorized team details.
 
@@ -38,6 +40,7 @@ Member editor deep links identify the church, member, and selected team together
 
 - The inline editor does not add a permission or expose the full roster, cross-team information, or sensitive member fields to scoped managers.
 - The church-wide draft path and the scoped immediate-persistence path remain separate.
+- Bootstrap profile readiness is a display optimization only. Missing fields, unresolved entity references, and malformed relationships use the restricted profile read; the restricted PATCH remains the only scoped save path.
 - Schedule assignments and unrelated team settings are not changed by a roster-only edit.
 - `EntityMultiSelect` remains unchanged for other forms.
 - Team role, position, and qualification setup, plus archive, delete, and access workflows remain unchanged by this contract.
@@ -76,11 +79,16 @@ Member editor deep links identify the church, member, and selected team together
 - **Why:** The list can prioritize relevant people while preserving the server's projection and authorization boundaries.
 - **Approval source/date:** Current user request dated 2026-10-23.
 - **Affected workflow/contract:** Team-scoped Members list and member assignment summary.
+- **Question/problem:** Administrator and scoped member editors use separate controls, and the scoped editor waits for a second profile request even when authorized bootstrap data already contains a complete team profile.
+- **Approved behavior:** Share the position, desired-position, role, and qualification controls. Initialize the scoped editor from a complete authorized bootstrap profile; keep the restricted profile read for partial or malformed projections and keep the restricted team-profile PATCH as the save authority.
+- **Why:** Keep the same editing experience for both roles while opening complete scoped profiles without another request and retaining team ownership validation.
+- **Approval source/date:** Current user request dated 2026-10-23.
+- **Affected workflow/contract:** Members profile editing for administrators and scoped team managers.
 
 ## Implementation references
 
 - Entry point: `client/src/pages/Teams/pages/TeamsGroupsPage.tsx`
-- Implementation: `client/src/pages/Teams/managers/TeamManager.tsx`, `client/src/pages/Teams/managers/MemberManager.tsx`, `client/src/pages/Teams/managers/TeamMemberProfileEditor.tsx`, `client/src/pages/Teams/components/TeamMembersEditor.tsx`, `client/src/api/auth.ts`, `server/teamsAuthHandlers.js`, `server/teamsBootstrapProjection.js`
+- Implementation: `client/src/pages/Teams/managers/TeamManager.tsx`, `client/src/pages/Teams/managers/MemberManager.tsx`, `client/src/pages/Teams/managers/TeamMemberProfileEditor.tsx`, `client/src/pages/Teams/managers/MemberTeamProfileFields.tsx`, `client/src/pages/Teams/components/TeamMembersEditor.tsx`, `client/src/api/auth.ts`, `server/teamsAuthHandlers.js`, `server/teamsBootstrapProjection.js`
 - Tests: `client/src/pages/Teams/components/TeamMembersEditor.test.tsx`, `client/src/pages/Teams/managers/TeamManager.permissions.test.tsx`, `client/src/pages/Teams/managers/MemberManager.test.tsx`, `client/src/pages/Teams/teamsUtils.test.ts`, `server/teamsBootstrapProjection.test.js`, `server/teamsApi.test.js`
 
 ## Technical design notes

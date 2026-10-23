@@ -4180,6 +4180,22 @@ export const createTeamsAuthHandlers = ({
     ...(qualification.notes ? { notes: qualification.notes } : {}),
   });
 
+  const createTeamProfileReadCache = (read, initialRecords = []) => {
+    const records = new Map(
+      initialRecords.map(([collectionName, id, document]) => [
+        JSON.stringify([collectionName, id]),
+        Promise.resolve(document),
+      ]),
+    );
+    return (collectionName, id) => {
+      const key = JSON.stringify([collectionName, id]);
+      if (!records.has(key)) {
+        records.set(key, Promise.resolve().then(() => read(collectionName, id)));
+      }
+      return records.get(key);
+    };
+  };
+
   const resolveMemberTeamSlices = async ({ churchId, teamId, member, read }) => {
     if ((member.positionIds !== undefined && !Array.isArray(member.positionIds)) ||
         (member.desiredPositionIds !== undefined && !Array.isArray(member.desiredPositionIds)) ||
@@ -4188,24 +4204,13 @@ export const createTeamsAuthHandlers = ({
       throw httpError(409, "Member team data is invalid.");
     }
 
-    const positionOwnerById = new Map();
     const positionIds = [...new Set([...(member.positionIds || []), ...(member.desiredPositionIds || [])])];
     for (const positionId of positionIds) {
       if (typeof positionId !== "string" || !positionId.trim()) throw httpError(409, "Position ownership is invalid.");
-      const position = await read(COLLECTIONS.teamPositions, positionId);
-      if (!position || (position.positionId !== undefined && position.positionId !== positionId) || position.churchId !== churchId || !position.teamId) {
-        throw httpError(409, "Position ownership is invalid.");
-      }
-      const owner = await read(COLLECTIONS.teams, position.teamId);
-      if (!owner || owner.churchId !== churchId || (owner.teamId !== undefined && owner.teamId !== position.teamId)) {
-        throw httpError(409, "Position ownership is invalid.");
-      }
-      positionOwnerById.set(positionId, position.teamId);
     }
-
-    const qualificationOwnerById = new Map();
+    const qualifications = member.qualifications || [];
     const qualificationIds = new Set();
-    for (const qualification of member.qualifications || []) {
+    for (const qualification of qualifications) {
       if (!qualification || typeof qualification !== "object" || Array.isArray(qualification)) {
         throw httpError(409, "Member qualification ownership is invalid.");
       }
@@ -4220,15 +4225,55 @@ export const createTeamsAuthHandlers = ({
         throw httpError(409, "Member qualification ownership is invalid.");
       }
       qualificationIds.add(qualificationId);
-      const area = await read(COLLECTIONS.teamQualificationAreas, areaId);
+    }
+
+    const [positionDocuments, qualificationAreaDocuments] = await Promise.all([
+      mapWithConcurrency(positionIds, 8, async (positionId) => ({
+        id: positionId,
+        document: await read(COLLECTIONS.teamPositions, positionId),
+      })),
+      mapWithConcurrency(qualifications, 8, async (qualification) => ({
+        qualification,
+        areaId: qualification.areaId,
+        document: await read(COLLECTIONS.teamQualificationAreas, qualification.areaId),
+      })),
+    ]);
+
+    const positionById = new Map();
+    const ownerTeamIds = new Set();
+    for (const { id: positionId, document: position } of positionDocuments) {
+      if (!position || (position.positionId !== undefined && position.positionId !== positionId) || position.churchId !== churchId || !position.teamId) {
+        throw httpError(409, "Position ownership is invalid.");
+      }
+      positionById.set(positionId, position);
+      ownerTeamIds.add(position.teamId);
+    }
+
+    const areaByQualificationId = new Map();
+    for (const { qualification, areaId, document: area } of qualificationAreaDocuments) {
       if (!area || (area.areaId !== undefined && area.areaId !== areaId) || area.churchId !== churchId || !area.teamId ||
           (Object.hasOwn(qualification, "teamId") && qualification.teamId !== area.teamId)) {
         throw httpError(409, "Member qualification ownership is invalid.");
       }
-      const owner = await read(COLLECTIONS.teams, area.teamId);
-      if (!owner || owner.churchId !== churchId || (owner.teamId !== undefined && owner.teamId !== area.teamId)) {
-        throw httpError(409, "Member qualification ownership is invalid.");
+      areaByQualificationId.set(qualification.qualificationId, area);
+      ownerTeamIds.add(area.teamId);
+    }
+
+    const ownerTeamDocuments = await mapWithConcurrency([...ownerTeamIds], 8, async (ownerTeamId) => ({
+      teamId: ownerTeamId,
+      document: await read(COLLECTIONS.teams, ownerTeamId),
+    }));
+    for (const { teamId: ownerTeamId, document: owner } of ownerTeamDocuments) {
+      if (!owner || owner.churchId !== churchId || (owner.teamId !== undefined && owner.teamId !== ownerTeamId)) {
+        throw httpError(409, "Position ownership is invalid.");
       }
+    }
+
+    const positionOwnerById = new Map(
+      [...positionById].map(([positionId, position]) => [positionId, position.teamId]),
+    );
+    const qualificationOwnerById = new Map();
+    for (const [qualificationId, area] of areaByQualificationId) {
       qualificationOwnerById.set(qualificationId, area.teamId);
     }
 
@@ -4263,15 +4308,19 @@ export const createTeamsAuthHandlers = ({
     if ((team.teamId && team.teamId !== teamId) || (member.memberId && member.memberId !== memberId)) {
       throw httpError(409, "Team profile ownership is invalid.");
     }
+    const read = createTeamProfileReadCache(getDoc, [
+      [COLLECTIONS.teams, teamId, team],
+      [COLLECTIONS.teamRosterMembers, memberId, member],
+    ]);
     const slices = await resolveMemberTeamSlices({
       churchId,
       teamId,
       member,
-      read: getDoc,
+      read,
     });
     const membership = slices.membership;
     if (membership.roleId) {
-      const role = await getDoc(COLLECTIONS.teamRoles, membership.roleId);
+      const role = await read(COLLECTIONS.teamRoles, membership.roleId);
       if (!role || role.churchId !== churchId || role.teamId !== teamId ||
           (role.roleId !== undefined && role.roleId !== membership.roleId)) {
         throw httpError(409, "Member team ownership is invalid.");
@@ -4350,11 +4399,11 @@ export const createTeamsAuthHandlers = ({
     const db = requireFirestore();
     const now = nowIso();
     const mutate = async (transaction = null) => {
-      const read = async (collectionName, id) => {
+      const read = createTeamProfileReadCache(async (collectionName, id) => {
         if (!transaction) return getDoc(collectionName, id);
         const snapshot = await transaction.get(db.collection(collectionName).doc(id));
         return snapshot.exists ? { id: snapshot.id, ...snapshot.data() } : null;
-      };
+      });
       const team = await read(COLLECTIONS.teams, teamId);
       const member = await read(COLLECTIONS.teamRosterMembers, memberId);
       if (!team || team.churchId !== churchId) throw httpError(404, "Team not found.");
@@ -4382,9 +4431,53 @@ export const createTeamsAuthHandlers = ({
         ...(requested.desiredPositionIds || []),
       ]);
       const positionDocs = new Map();
-      for (const id of new Set([...existingPositions, ...requestedPositionIds])) {
-        if (!positionDocs.has(id)) positionDocs.set(id, await read(COLLECTIONS.teamPositions, id));
+      await mapWithConcurrency([...new Set([...existingPositions, ...requestedPositionIds])], 8, async (id) => {
+        positionDocs.set(id, await read(COLLECTIONS.teamPositions, id));
+      });
+      const positionOwnerById = new Map(slices.positionOwnerById);
+      const newPositionOwnerIds = new Set(
+        [...new Set([...existingPositions, ...requestedPositionIds])]
+          .filter((id) => !positionOwnerById.has(id))
+          .map((id) => positionDocs.get(id))
+          .filter((position) => position?.churchId === churchId && position.teamId)
+          .map((position) => position.teamId),
+      );
+      const newPositionOwners = await mapWithConcurrency([...newPositionOwnerIds], 8, async (ownerTeamId) => ({
+        teamId: ownerTeamId,
+        document: await read(COLLECTIONS.teams, ownerTeamId),
+      }));
+      for (const { teamId: ownerTeamId, document: owner } of newPositionOwners) {
+        if (!owner || owner.churchId !== churchId || (owner.teamId !== undefined && owner.teamId !== ownerTeamId)) {
+          throw httpError(409, "Position ownership is invalid.");
+        }
       }
+      for (const [positionId, position] of positionDocs) {
+        if (position?.churchId === churchId && position.teamId) {
+          positionOwnerById.set(positionId, position.teamId);
+        }
+      }
+      const requestedQualificationAreaIds = new Set();
+      const requestedQualificationLevelIds = new Set();
+      for (const qualification of requested.qualifications || []) {
+        if (!qualification || typeof qualification !== "object" || Array.isArray(qualification)) continue;
+        const areaId = normalizeShortText(qualification.areaId, { max: 160 });
+        if (!areaId) continue;
+        requestedQualificationAreaIds.add(areaId);
+        const levelId = normalizeShortText(qualification.levelId, { max: 160 });
+        if (levelId) requestedQualificationLevelIds.add(levelId);
+      }
+      const [requestedAreaDocuments, requestedLevelDocuments] = await Promise.all([
+        mapWithConcurrency([...requestedQualificationAreaIds], 8, async (areaId) => ({
+          id: areaId,
+          document: await read(COLLECTIONS.teamQualificationAreas, areaId),
+        })),
+        mapWithConcurrency([...requestedQualificationLevelIds], 8, async (levelId) => ({
+          id: levelId,
+          document: await read(COLLECTIONS.teamQualificationLevels, levelId),
+        })),
+      ]);
+      const requestedAreasById = new Map(requestedAreaDocuments.map(({ id, document }) => [id, document]));
+      const requestedLevelsById = new Map(requestedLevelDocuments.map(({ id, document }) => [id, document]));
       const validatePositionIds = async (ids, existingIds) => {
         if (!ids) return undefined;
         for (const id of ids) {
@@ -4392,14 +4485,7 @@ export const createTeamsAuthHandlers = ({
           if (!position || position.churchId !== churchId || !position.teamId) {
             throw httpError(400, "Position must belong to this team.");
           }
-          let ownerTeamId = slices.positionOwnerById.get(id);
-          if (!ownerTeamId) {
-            const owner = await read(COLLECTIONS.teams, position.teamId);
-            if (!owner || owner.churchId !== churchId || (owner.teamId !== undefined && owner.teamId !== position.teamId)) {
-              throw httpError(409, "Position ownership is invalid.");
-            }
-            ownerTeamId = position.teamId;
-          }
+          const ownerTeamId = positionOwnerById.get(id);
           if (ownerTeamId !== teamId) throw httpError(400, "Position must belong to this team.");
           if (position.archivedAt && !existingIds.has(id)) {
             throw httpError(400, "Archived positions cannot be added.");
@@ -4451,8 +4537,8 @@ export const createTeamsAuthHandlers = ({
         const priorQualifications = Array.isArray(member.qualifications) ? member.qualifications : [];
         const ownedQualifications = slices.targetQualifications;
         const ownedQualificationIds = new Set(ownedQualifications.map((item) => item.qualificationId));
-        const areasById = new Map();
-        const levelById = new Map();
+        const areasById = new Map(requestedAreasById);
+        const levelById = new Map(requestedLevelsById);
         const requestedIds = new Set();
         const replacements = [];
         for (const qualification of requested.qualifications) {

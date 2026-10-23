@@ -9,6 +9,8 @@ const TeamsMembersPage = () => {
     refresh,
     reconcileTeamsProjection,
     invalidateMemberEditability,
+    teamProfileReadyMemberIds,
+    invalidateTeamProfileReadiness,
     refreshMemberSmsEligibility,
     loading,
     canEditTeams,
@@ -57,12 +59,14 @@ const TeamsMembersPage = () => {
       data={canEditScopedMembers ? managerData : pageData}
       canEdit={canEditScopedMembers}
       canEditAllTeams={canEditTeams}
+      teamProfileReadyMemberIds={teamProfileReadyMemberIds}
       canManageMemberLifecycle={canEditTeams}
       canEditMember={(member) =>
         canEditTeams || (!member.archivedAt && managedMemberIds.has(member.memberId))
       }
       onScopedProfileSaved={(memberId) => {
         invalidateMemberEditability(memberId);
+        invalidateTeamProfileReadiness(memberId);
         return reconcileTeamsProjection();
       }}
       onSaved={(member, replaceId) =>

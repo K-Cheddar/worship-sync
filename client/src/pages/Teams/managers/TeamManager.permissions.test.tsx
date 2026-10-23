@@ -701,21 +701,21 @@ it("completes Team → Manage → Close → Cancel → Save → Back with the sc
   await user.click(screen.getByRole("button", { name: "Edit Worship" }));
   await user.click(screen.getByRole("button", { name: `Manage ${member.firstName} ${member.lastName}` }));
 
-  await screen.findByRole("checkbox", { name: "Eligible position: Vocal" });
+  await screen.findByRole("checkbox", { name: /Vocal\s+Worship/ });
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(JSON.parse(screen.getByTestId("location").textContent || "{}")).toMatchObject({
     pathname: TEAMS_SECTION_PATHS.members, search: "",
   });
   expect(screen.getAllByRole("button", { name: "Back to Worship" })).toHaveLength(1);
   await user.click(screen.getByRole("button", { name: "Edit Avery Singer" }));
-  await user.click(await screen.findByRole("checkbox", { name: "Eligible position: Vocal" }));
+  await user.click(await screen.findByRole("checkbox", { name: /Vocal\s+Worship/ }));
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   await user.click(screen.getByRole("button", { name: "Discard changes" }));
   expect(JSON.parse(screen.getByTestId("location").textContent || "{}").pathname).toBe(TEAMS_SECTION_PATHS.members);
   await user.click(screen.getByRole("button", { name: "Edit Avery Singer" }));
   const memberEditor = await screen.findByRole("region", { name: "Avery Singer" });
   expect(await within(memberEditor).findByRole("heading", { name: "Worship" })).toBeInTheDocument();
-  await user.click(within(memberEditor).getByRole("checkbox", { name: "Eligible position: Vocal" }));
+  await user.click(within(memberEditor).getByRole("checkbox", { name: /Vocal/ }));
   await user.click(screen.getByRole("button", { name: "Save profile" }));
   expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
   await user.click(screen.getByRole("button", { name: "Back to Worship" }));

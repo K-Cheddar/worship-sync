@@ -19903,6 +19903,101 @@ test("team profile reads expose only the authorized shared-member slice", async 
   assert.equal(anonymousPatch.statusCode, 401);
 });
 
+test("team profile GET deduplicates bounded ownership reads for a multi-team member", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const fixture = await seedEffectiveTeamsReadFixture("team_profile_read_measurement");
+  const manager = await createHumanContext("team_profile_read_measurement_manager", {
+    churchId: fixture.churchId,
+    role: "member",
+    permissions: { teams: "none", teamScopes: { [fixture.ids.worship]: "edit" } },
+  });
+  const positionIds = [
+    `${fixture.ids.worship}_position`,
+    `${fixture.ids.av}_position`,
+    `${fixture.ids.worship}_position_extra`,
+    `${fixture.ids.av}_position_extra`,
+  ];
+  for (const [index, positionId] of positionIds.slice(2).entries()) {
+    const teamId = index === 0 ? fixture.ids.worship : fixture.ids.av;
+    await setDoc(COLLECTIONS.teamPositions, positionId, {
+      positionId,
+      churchId: fixture.churchId,
+      teamId,
+      name: `Extra ${index + 1}`,
+    }, { merge: false });
+  }
+  const areaIds = [
+    `${fixture.ids.worship}_area_one`,
+    `${fixture.ids.worship}_area_two`,
+    `${fixture.ids.av}_area_one`,
+  ];
+  for (const [index, areaId] of areaIds.entries()) {
+    const teamId = index === 2 ? fixture.ids.av : fixture.ids.worship;
+    await setDoc(COLLECTIONS.teamQualificationAreas, areaId, {
+      areaId,
+      churchId: fixture.churchId,
+      teamId,
+      name: `Skill area ${index + 1}`,
+    }, { merge: false });
+  }
+  const roleId = "team_profile_read_measurement_role";
+  await setDoc(COLLECTIONS.teamRoles, roleId, {
+    roleId,
+    churchId: fixture.churchId,
+    teamId: fixture.ids.worship,
+    name: "Worship lead",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId, {
+    positionIds,
+    desiredPositionIds: [...positionIds],
+    teamMemberships: {
+      [fixture.ids.worship]: { teamId: fixture.ids.worship, roleId },
+      [fixture.ids.av]: { teamId: fixture.ids.av },
+    },
+    qualifications: areaIds.map((areaId, index) => ({
+      qualificationId: `measurement-qualification-${index + 1}`,
+      areaId,
+      teamId: index === 2 ? fixture.ids.av : fixture.ids.worship,
+      status: "completed",
+    })),
+  }, { merge: true });
+
+  const observedReads = [];
+  setAuthReadObserverForServerTests((read) => {
+    if (read.type === "getDoc") observedReads.push(read);
+  });
+  let result;
+  try {
+    result = await callHandler(authHandlers.getTeamRosterMemberProfile, {
+      context: manager,
+      params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
+    });
+  } finally {
+    setAuthReadObserverForServerTests(null);
+  }
+
+  assert.equal(result.statusCode, 200, JSON.stringify(result.payload));
+  assert.equal(result.payload.teamProfile.positionIds.length, 2);
+  assert.equal(result.payload.teamProfile.qualifications.length, 2);
+  const measuredPositionAndAreaReads = observedReads.filter((read) =>
+    read.collectionName === COLLECTIONS.teamPositions && positionIds.includes(read.id) ||
+    read.collectionName === COLLECTIONS.teamQualificationAreas && areaIds.includes(read.id));
+  const measuredOwnerAndRoleReads = observedReads.filter((read) =>
+    read.collectionName === COLLECTIONS.teams && read.id === fixture.ids.av ||
+    read.collectionName === COLLECTIONS.teamRoles && read.id === roleId);
+  // Before: 4 positions + each owner team, 3 areas + each owner team, and the role = 15.
+  // After: 4 positions + 3 unique areas + one non-selected owner team + the role = 9.
+  assert.equal(measuredPositionAndAreaReads.length + measuredOwnerAndRoleReads.length, 9);
+  for (const positionId of positionIds) {
+    assert.equal(measuredPositionAndAreaReads.filter((read) => read.collectionName === COLLECTIONS.teamPositions && read.id === positionId).length, 1);
+  }
+  for (const areaId of areaIds) {
+    assert.equal(measuredPositionAndAreaReads.filter((read) => read.collectionName === COLLECTIONS.teamQualificationAreas && read.id === areaId).length, 1);
+  }
+  assert.equal(measuredOwnerAndRoleReads.filter((read) => read.collectionName === COLLECTIONS.teams && read.id === fixture.ids.av).length, 1);
+  assert.equal(measuredOwnerAndRoleReads.filter((read) => read.collectionName === COLLECTIONS.teamRoles && read.id === roleId).length, 1);
+});
+
 test("team profile patches replace one team slice and reject cross-team fields", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const fixture = await seedEffectiveTeamsReadFixture("team_profile_write_isolation");

@@ -611,6 +611,8 @@ export const onlyHydratedSchedules = (
 
 export type TeamsBootstrap = {
   editableMemberIds?: string[];
+  /** Members whose scoped team profile is complete in this authorized projection. */
+  teamProfileReadyMemberIds?: string[];
   /** Authenticated human's unique active roster link; null when unavailable. */
   selfMemberId?: string | null;
   success: boolean;
