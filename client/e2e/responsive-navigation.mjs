@@ -57,7 +57,9 @@ const server = await createServer({
         export const TeamsPageProvider = ({children}) => children;
         const forms = Array.from({length:32},(_,index)=>({formId:'form-'+(index+1),churchId:'fixture-church',name:'Fixture intake form '+(index+1),purpose:'intake',active:false,teamIds:[],startDate:'',endDate:'',responseDeadline:'',availabilityOccurrences:[],availabilityServices:[],enabledFields:[]}));
         const planTime='${planServiceDateTime}'; const planService={id:'fixture-service',serviceId:'fixture-service',churchId:'fixture-church',name:'Fixture Service',timerType:'countdown',reccurence:location.search.includes('smoke-recurring')?'weekly':'one_time',dayOfWeek:new Date(planTime).getUTCDay(),time:'10:00',dateTimeISO:planTime,positionRequirements:location.search.includes('smoke')?[{positionId:'fixture-position',count:1}]:[]};
-        const pageData = {services:[planService],intakeForms:forms,intakeSubmissions:[],intakeRecipients:[],smsEligibilityByMemberId:{},smsDeliveryAttempts:[],members:[],positions:location.search.includes('smoke')?[{positionId:'fixture-position',churchId:'fixture-church',teamId:'editable-team',name:'Camera'}]:[],schedules:[],teams:location.search.includes('smoke')?[{teamId:'readonly-team',churchId:'fixture-church',name:'A Read only',memberIds:[]},{teamId:'editable-team',churchId:'fixture-church',name:'B Editable',memberIds:[]}]:[],teamRoles:[],qualificationAreas:[],qualificationLevels:[]};
+        const populatedTeam=location.search.includes('smoke-populated');
+        const assignedMembers=populatedTeam?[{memberId:'fixture-member',churchId:'fixture-church',firstName:'Jordan',lastName:'Lee',positionIds:[],qualifications:[],blockoutDates:[]}]:[];
+        const pageData = {services:[planService],intakeForms:forms,intakeSubmissions:[],intakeRecipients:[],smsEligibilityByMemberId:{},smsDeliveryAttempts:[],members:assignedMembers,positions:location.search.includes('smoke')?[{positionId:'fixture-position',churchId:'fixture-church',teamId:'editable-team',name:'Camera'}]:[],schedules:[],teams:location.search.includes('smoke')?[{teamId:'readonly-team',churchId:'fixture-church',name:'A Read only',memberIds:[]},{teamId:'editable-team',churchId:'fixture-church',name:'B Editable',memberIds:populatedTeam?['fixture-member']:[]}]:[],teamRoles:[],qualificationAreas:[],qualificationLevels:[]};
         const templates = {data:[],loaded:true,loading:false,error:null,ensureLoaded:async()=>{},refresh:async()=>{},remove:()=>{},upsert:()=>{}};
         const availableNavSections = getAvailableTeamsNavSections({hasTeamsWorkspaceAccess:true,hasBroadTeamsReadAccess:true,canViewServices:!location.search.includes('restricted')});
         export const useTeamsPage = () => ({loading:false,accessDenied:false,canViewServices:true,canEditServices:true,canEditTeams:true,canEditAnyTeam:true,canManageTeamAvailability:false,canEditTeam:(id)=>id!=='readonly-team',editableMemberIds:new Set(),serviceTimeZone:'America/New_York',churchId:'fixture-church',pageData,templates,upsertData:()=>{},removeData:()=>{},refresh:()=>{},availableNavSections,selectedScheduleId:'',scheduleDrafts:{},trackTeamsSave:()=>()=>{},updateSelectedScheduleId:()=>{},updateScheduleDraft:()=>{},flushScheduleDraft:async()=>{},clearScheduleDraft:()=>{},reconcileTeamsProjection:async()=>{},invalidateMemberEditability:()=>{}});`;
@@ -105,8 +107,11 @@ try {
     await page.route('**/notification-intents*', route=>route.fulfill({json:{success:true,intents:[]}}));
     await page.setViewportSize({width:1440,height:900});
     await page.goto('http://127.0.0.1:3107/navigation?smoke#/teams-and-services/groups');
-    await openEditableTeam(page);
-    console.log('PASS smoke selector skips the read-only first team and opens the editable second team');
+    await openEditableTeam(page, 'empty');
+    console.log('PASS smoke selector opens an editable empty team and verifies its empty state and member controls');
+    await page.goto('http://127.0.0.1:3107/navigation?smoke-populated#/teams-and-services/groups');
+    await openEditableTeam(page, 'populated');
+    console.log('PASS smoke selector opens an editable populated team and verifies its member list and controls');
     await page.goto('http://127.0.0.1:3107/navigation?smoke#/teams-and-services/schedules');
     await checkSchedulingPeriodRoundTrip(page);
     console.log('PASS smoke scheduling: populated period -> empty period -> restored controls');

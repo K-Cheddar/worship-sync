@@ -17,7 +17,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
 import twilio from "twilio";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { smsConsentIdForChurchPhone } from "./smsConsent.js";
 import { isPublicSharePathname } from "../client/src/utils/publicSharePathRedirect.ts";
 import { buildTeamSchedulePeriod } from "../client/src/pages/Teams/schedule/teamSchedulePeriod.ts";
@@ -65,6 +65,9 @@ import {
   setSmsProviderForServerTests,
 } from "./smsProvider.js";
 import { volunteerIdentityClaimId } from "./volunteerIdentity.js";
+import { createVolunteerContactIndex, volunteerContactIndexFields } from "./volunteerContactIndex.js";
+import { createVolunteerPersonalAccess } from "./volunteerPersonalAccess.js";
+import { createVolunteerRecovery } from "./volunteerRecovery.js";
 
 // Minimal stand-in for an SSE response: captures the `data:` frames the teams
 // broadcaster writes. Shares the same teamsSse.js singleton the handlers use.
@@ -10499,6 +10502,195 @@ test("two members may share one contact email", async (t) => {
   assert.equal(first.statusCode, 200);
   assert.equal(second.statusCode, 200);
   assert.equal(second.payload.member.email, "parent@example.com");
+});
+
+test("Firestore member revision writes keep ready volunteer contact indexes current", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  if (!process.env.FIRESTORE_EMULATOR_HOST) {
+    t.skip("Requires Firestore emulator for the transactional contact-index path");
+    return;
+  }
+
+  const { initializeApp, deleteApp } = await import("firebase-admin/app");
+  const { getFirestore } = await import("firebase-admin/firestore");
+  const suffix = randomBytes(6).toString("hex");
+  const projectId = `demo-teams-contact-${suffix}`;
+  const app = initializeApp({ projectId }, projectId);
+  const db = getFirestore(app);
+  const secret = "synthetic-teams-contact-index-secret-only";
+  const coverageCollection = `contact_index_coverage_${suffix}`;
+  const memberCollection = COLLECTIONS.teamRosterMembers;
+  const collections = Object.fromEntries(
+    ["proofs", "challenges", "limits"].map((name) => [name, `contact_index_${name}_${suffix}`]),
+  );
+  const accessCollections = Object.fromEntries(
+    ["access", "credentials", "sessions"].map((name) => [name, `contact_index_${name}_${suffix}`]),
+  );
+  const previousSecret = process.env.AUTH_VOLUNTEER_PORTAL_SECRET;
+  process.env.AUTH_VOLUNTEER_PORTAL_SECRET = secret;
+  setServerFirestoreForTests(db);
+  t.after(async () => {
+    setServerFirestoreForTests(null);
+    if (previousSecret === undefined) delete process.env.AUTH_VOLUNTEER_PORTAL_SECRET;
+    else process.env.AUTH_VOLUNTEER_PORTAL_SECRET = previousSecret;
+    for (const collection of await db.listCollections()) await db.recursiveDelete(collection);
+    await db.terminate();
+    await deleteApp(app);
+  });
+
+  const admin = await createAdminContext(`contact_index_${suffix}`);
+  const oldEmail = "old-contact@example.test";
+  const newEmail = "new-contact@example.test";
+  const oldPhone = "+12125550123";
+  const newPhone = "+12125550124";
+  const created = await callHandler(authHandlers.createTeamRosterMember, {
+    context: admin,
+    body: {
+      firstName: "Contact",
+      lastName: "Index",
+      email: oldEmail,
+      phoneNumber: oldPhone,
+    },
+  });
+  assert.equal(created.statusCode, 200, JSON.stringify(created.payload));
+  const memberId = created.payload.member.memberId;
+  const identity = { churchId: admin.churchId, memberId };
+  const memberRef = db.collection(memberCollection).doc(memberId);
+  const index = createVolunteerContactIndex({ db, memberCollection, coverageCollection, secret });
+  assert.equal((await index.auditChurch(admin.churchId)).complete, true);
+  const coverage = await db.collection(coverageCollection).get();
+  assert.equal(coverage.docs.length, 1);
+  assert.equal(coverage.docs[0].data().ready, true);
+  const assertOwner = async (channel, address, expected) => {
+    assert.equal(await index.hasUniqueOwner(identity, channel, address), expected,
+      `${channel} ${address} owner should be ${expected ? "present" : "absent"}`);
+  };
+  const assertIndexMatchesCurrent = async () => {
+    const member = (await memberRef.get()).data();
+    const expected = volunteerContactIndexFields(member, secret);
+    assert.deepEqual(member.volunteerContactKeys, expected.volunteerContactKeys);
+    assert.equal(member.volunteerContactKeyId, expected.volunteerContactKeyId);
+  };
+  const save = (expectedUpdatedAt, fields = {}) => callHandler(authHandlers.updateTeamRosterMember, {
+    context: admin,
+    params: { memberId },
+    body: {
+      firstName: "Contact",
+      lastName: "Index",
+      expectedUpdatedAt,
+      ...fields,
+    },
+  });
+
+  const deliveries = [];
+  const access = createVolunteerPersonalAccess({
+    db,
+    memberCollection,
+    secret,
+    collections: accessCollections,
+  });
+  const recovery = createVolunteerRecovery({
+    db,
+    access,
+    secret,
+    memberCollection,
+    consentCollection: `contact_index_consents_${suffix}`,
+    contactIndexCoverageCollection: coverageCollection,
+    collections,
+    sendCode: async (delivery) => deliveries.push(delivery),
+  });
+  const requestKey = () => randomBytes(24).toString("base64url");
+  const enrolled = await recovery.start({
+    requestKey: requestKey(),
+    clientIp: "127.0.0.1",
+    enrollment: { identity, channel: "email", actorUid: "contact-index-admin" },
+  });
+  assert.equal(deliveries.length, 1);
+  const initial = await memberRef.get();
+  const initialVersion = initial.data().personalContactVersion || "";
+  assert.equal((await recovery.verify({
+    challengeId: enrolled.challengeId,
+    code: deliveries.at(-1).code,
+    completionKey: requestKey(),
+    enrollmentActorUid: "contact-index-admin",
+    enrollmentIdentity: identity,
+  })).success, true);
+  const proofBeforeChange = (await db.collection(collections.proofs).get()).docs[0].data();
+  assert.equal(proofBeforeChange.contactVersion, initialVersion);
+
+  // No teamMemberships field: this must exercise upsertTeamEntity's direct
+  // Firestore transaction.set branch with the revision precondition.
+  const emailChanged = await save(initial.data().updatedAt, { email: newEmail });
+  assert.equal(emailChanged.statusCode, 200, JSON.stringify(emailChanged.payload));
+  assert.notEqual(emailChanged.payload.member.personalContactVersion, initialVersion);
+  await assertIndexMatchesCurrent();
+  await assertOwner("email", newEmail, true);
+  await assertOwner("email", oldEmail, false);
+  await assertOwner("sms", oldPhone, true);
+  const staleProofs = await db.collection(collections.proofs).get();
+  assert.equal(staleProofs.size, 1, "contact edits must not create a verification proof");
+  assert.equal(staleProofs.docs[0].data().contactVersion, initialVersion);
+  await recovery.start({ requestKey: requestKey(), clientIp: "127.0.0.1", contact: oldEmail });
+  await recovery.start({ requestKey: requestKey(), clientIp: "127.0.0.1", contact: newEmail });
+  assert.equal(deliveries.length, 1, "old proofs cannot verify or recover through the new address");
+
+  const phoneChanged = await save(emailChanged.payload.member.updatedAt, { phoneNumber: newPhone });
+  assert.equal(phoneChanged.statusCode, 200, JSON.stringify(phoneChanged.payload));
+  assert.notEqual(
+    phoneChanged.payload.member.personalContactVersion,
+    emailChanged.payload.member.personalContactVersion,
+  );
+  await assertIndexMatchesCurrent();
+  await assertOwner("sms", newPhone, true);
+  await assertOwner("sms", oldPhone, false);
+  await assertOwner("email", newEmail, true);
+
+  const beforeUnrelated = (await memberRef.get()).data();
+  const unrelated = await save(beforeUnrelated.updatedAt, { notes: "Updated unrelated details" });
+  assert.equal(unrelated.statusCode, 200, JSON.stringify(unrelated.payload));
+  const afterUnrelated = (await memberRef.get()).data();
+  assert.equal(afterUnrelated.email, newEmail);
+  assert.equal(afterUnrelated.phoneNumber, newPhone);
+  assert.deepEqual(afterUnrelated.volunteerContactKeys, beforeUnrelated.volunteerContactKeys);
+  assert.equal(afterUnrelated.volunteerContactKeyId, beforeUnrelated.volunteerContactKeyId);
+  await assertIndexMatchesCurrent();
+
+  const staleRevision = afterUnrelated.updatedAt;
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const latest = await save(staleRevision, { notes: "Newer details" });
+  assert.equal(latest.statusCode, 200, JSON.stringify(latest.payload));
+  assert.notEqual(latest.payload.member.updatedAt, staleRevision);
+  const beforeStale = (await memberRef.get()).data();
+  const stale = await save(staleRevision, { email: "stale-contact@example.test" });
+  assert.equal(stale.statusCode, 409);
+  const afterStale = (await memberRef.get()).data();
+  assert.deepEqual(afterStale, beforeStale);
+  await assertIndexMatchesCurrent();
+  await assertOwner("email", newEmail, true);
+  await assertOwner("email", "stale-contact@example.test", false);
+
+  const team = await seedTeam(admin, { teamName: `Contact Index ${suffix}` });
+  const membershipEmail = "membership-contact@example.test";
+  const membershipUpdated = await save(afterStale.updatedAt, {
+    email: membershipEmail,
+    teamMemberships: { [team.teamId]: { isTeamLead: true, notes: "Team role retained" } },
+  });
+  assert.equal(membershipUpdated.statusCode, 200, JSON.stringify(membershipUpdated.payload));
+  assert.equal(membershipUpdated.payload.member.teamMemberships[team.teamId].isTeamLead, true);
+  await assertIndexMatchesCurrent();
+  await assertOwner("email", membershipEmail, true);
+  await assertOwner("email", newEmail, false);
+
+  const emailCleared = await save(membershipUpdated.payload.member.updatedAt, { email: "" });
+  assert.equal(emailCleared.statusCode, 200, JSON.stringify(emailCleared.payload));
+  await assertIndexMatchesCurrent();
+  await assertOwner("email", membershipEmail, false);
+  await assertOwner("sms", newPhone, true);
+  const phoneCleared = await save(emailCleared.payload.member.updatedAt, { phoneNumber: "" });
+  assert.equal(phoneCleared.statusCode, 200, JSON.stringify(phoneCleared.payload));
+  await assertIndexMatchesCurrent();
+  await assertOwner("sms", newPhone, false);
+  assert.deepEqual((await memberRef.get()).data().volunteerContactKeys, []);
 });
 
 test("updating a member without an email field keeps the existing address", async (t) => {
