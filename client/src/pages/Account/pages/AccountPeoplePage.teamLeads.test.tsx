@@ -28,7 +28,7 @@ const member = () => ({ membershipId: "church-1_owner", churchId: "church-1", st
 beforeEach(() => {
   jest.clearAllMocks();
   permissions = { teams: "edit", services: "edit", teamScopes: { media: "edit", praise: "view" } };
-  jest.mocked(api.listChurchMembers).mockImplementation(async () => ({ success: true, members: [member()] }));
+  jest.mocked(api.listChurchMembers).mockReset().mockImplementation(async () => ({ success: true, members: [member()] }));
   jest.mocked(api.listChurchInvites).mockResolvedValue({ success: true, invites: [] });
   jest.mocked(api.listTrustedDevices).mockResolvedValue({ success: true, devices: [] });
   jest.mocked(api.listWorkstations).mockResolvedValue({ success: true, workstations: [] });
@@ -77,6 +77,67 @@ it("opens the real admin access drawer, preserves view scopes, and hydrates save
   await user.click(screen.getByRole("button", { name: "Actions for Owner" }));
   await user.click(screen.getByRole("menuitem", { name: "Edit access" }));
   expect(await screen.findByRole("checkbox", { name: "Media" })).not.toBeChecked();
+});
+
+it.each(["member", "invite"])("retains selected checkboxes through the %s save and refresh until the drawer closes", async (kind) => {
+  const user = userEvent.setup();
+  let finishSave: () => void = () => {};
+  let finishAuthRefresh: () => void = () => {};
+  let finishPeopleRefresh: () => void = () => {};
+  const savePending = new Promise<void>((resolve) => { finishSave = resolve; });
+  const authPending = new Promise<void>((resolve) => { finishAuthRefresh = resolve; });
+  const peoplePending = new Promise<void>((resolve) => { finishPeopleRefresh = resolve; });
+  const refreshAuthBootstrap = jest.fn(() => authPending);
+  let invite: ChurchInviteRow = {
+    inviteId: "pending", churchId: "church-1", email: "pending@example.test", role: "admin",
+    appAccess: "full", controllerAccess: "full", status: "pending", permissions,
+    expiresAt: "2026-12-01T00:00:00Z", createdAt: "2026-10-23T00:00:00Z",
+  };
+  if (kind === "invite") {
+    jest.mocked(api.listChurchInvites).mockImplementation(async () => ({ success: true, invites: [invite] }));
+  }
+  jest.mocked(api.updateChurchMemberAccess).mockImplementation(async (_church, _user, _access, saved) => {
+    await savePending;
+    permissions = saved;
+    return { success: true };
+  });
+  jest.mocked(api.updateChurchInviteAccess).mockImplementation(async (_church, _id, payload) => {
+    await savePending;
+    invite = { ...invite, ...payload as ReturnType<typeof resolveInviteAccessPayload> };
+    return { success: true, invite };
+  });
+  mount({ refreshAuthBootstrap });
+  const actionLabel = kind === "member" ? "Actions for Owner" : "Actions for invite to pending@example.test";
+  await user.click(await screen.findByRole("button", { name: actionLabel }));
+  await user.click(screen.getByRole("menuitem", { name: "Edit access" }));
+  await user.click(await screen.findByRole("checkbox", { name: "Media" }));
+  await user.click(screen.getByRole("checkbox", { name: "Praise Team" }));
+  jest.mocked(api.listChurchMembers).mockImplementationOnce(async () => {
+    await peoplePending;
+    return { success: true, members: [member()] };
+  });
+  const expectPendingSelections = () => {
+    expect(screen.getByRole("checkbox", { name: "Praise Team" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Praise Team" })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "Media" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Media" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save access" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+  };
+  await user.click(screen.getByRole("button", { name: "Save access" }));
+  expectPendingSelections();
+  await act(async () => { finishSave(); });
+  expectPendingSelections();
+  await act(async () => { finishAuthRefresh(); });
+  await waitFor(() => expect(api.listChurchMembers).toHaveBeenCalledTimes(2));
+  expectPendingSelections();
+  await act(async () => { finishPeopleRefresh(); });
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit access" })).not.toBeInTheDocument());
+  await user.click(screen.getByRole("button", { name: actionLabel }));
+  await user.click(screen.getByRole("menuitem", { name: "Edit access" }));
+  expect(await screen.findByRole("checkbox", { name: "Praise Team" })).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Media" })).not.toBeChecked();
+  expect(screen.getByRole("button", { name: "Save access" })).toBeDisabled();
 });
 
 it("refreshes a conflicting access snapshot and requires reopening to review the current assignment", async () => {

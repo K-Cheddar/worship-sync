@@ -855,7 +855,7 @@ describe("Home", () => {
 
       expect(screen.getByRole("link", { name: /My teams/ })).toHaveAttribute(
         "href",
-        "/teams-and-services",
+        "/teams-and-services/groups",
       );
       expect(
         screen.queryByRole("link", { name: /^Teams and Services\b/i }),

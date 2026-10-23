@@ -1137,11 +1137,17 @@ export const listChurchMembers = async (churchId: string) =>
 
 export type ChurchServiceTimeZoneResponse = {
   success: boolean;
-  serviceTimeZone: string;
+  serviceTimeZone: string | null;
   isConfigured: boolean;
   serviceTimeZoneRevision: string;
   legacyTimeZoneSuggestion?: string | null;
 };
+
+export type ConfiguredChurchServiceTimeZoneResponse =
+  ChurchServiceTimeZoneResponse & {
+    serviceTimeZone: string;
+    isConfigured: true;
+  };
 
 export const getChurchServiceTimeZone = async (churchId: string) =>
   apiFetch<ChurchServiceTimeZoneResponse>(
@@ -1154,7 +1160,7 @@ export const updateChurchServiceTimeZone = async (
   churchId: string,
   serviceTimeZone: string,
 ) =>
-  apiFetch<ChurchServiceTimeZoneResponse>(
+  apiFetch<ConfiguredChurchServiceTimeZoneResponse>(
     `api/churches/${churchId}/service-time-zone`,
     { method: "POST", body: JSON.stringify({ serviceTimeZone }) },
   );

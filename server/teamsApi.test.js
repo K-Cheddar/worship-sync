@@ -209,6 +209,7 @@ const createHumanContext = async (
     churchId = `teams_api_church_${suffix}`,
     role = "admin",
     appAccess = "full",
+    controllerAccess,
     permissions,
   } = {},
 ) => {
@@ -222,6 +223,7 @@ const createHumanContext = async (
       churchId,
       role,
       appAccess,
+      controllerAccess,
       permissions,
     });
   // Test churches model an explicitly configured UTC church by default. Tests
@@ -2095,7 +2097,7 @@ test("church service timezone is stored separately from Chat browser hints", asy
     params: { churchId: context.churchId },
   });
   assert.equal(initial.statusCode, 200);
-  assert.equal(initial.payload.serviceTimeZone, "UTC");
+  assert.equal(initial.payload.serviceTimeZone, null);
   assert.equal(initial.payload.isConfigured, false);
   assert.equal(initial.payload.legacyTimeZoneSuggestion, "America/Los_Angeles");
 
@@ -2225,7 +2227,7 @@ test("service timezone read grants only the requested permission axis", async (t
     ["controller", "view", { teams: "none", services: "none" }, 200],
     ["services", "member", { teams: "none", services: "view" }, 200],
     ["teams", "member", { teams: "view", services: "none" }, 200],
-    ["no_access", "member", { teams: "none", services: "none" }, 403],
+    ["membership_only", "none", { teams: "none", services: "none" }, 200],
   ];
   const members = [];
   for (const [name, appAccess, permissions] of cases) {
@@ -2233,11 +2235,15 @@ test("service timezone read grants only the requested permission axis", async (t
       churchId: owner.churchId,
       role: "member",
       appAccess,
+      ...(name === "membership_only" ? { controllerAccess: "none" } : {}),
       permissions,
     }));
   }
   await setDoc(COLLECTIONS.churches, owner.churchId, {
     serviceTimeZone: "America/New_York",
+  }, { merge: true });
+  await setDoc("chatSettings", owner.churchId, {
+    timeZone: "America/Los_Angeles",
   }, { merge: true });
 
   for (const [index, [name, , , expectedStatus]] of cases.entries()) {
@@ -2246,7 +2252,21 @@ test("service timezone read grants only the requested permission axis", async (t
       context: member,
     });
     assert.equal(timezone.statusCode, expectedStatus, name);
-    if (name === "controller") {
+    if (name === "membership_only") {
+      assert.equal(timezone.payload.legacyTimeZoneSuggestion, undefined);
+      const bootstrap = await resolveRequestBootstrap(createReq({
+        params: { churchId: member.churchId },
+        headers: member.headers,
+        session: member.session,
+      }));
+      assert.equal(bootstrap.controllerAccess, "none");
+      assert.deepEqual(bootstrap.permissions, {
+        teams: "none",
+        services: "none",
+        teamScopes: {},
+      });
+    }
+    if (name === "controller" || name === "membership_only") {
       assert.equal(timezone.payload.serviceTimeZone, "America/New_York");
       assert.equal(timezone.payload.legacyTimeZoneSuggestion, undefined);
       assert.equal(
@@ -2259,6 +2279,43 @@ test("service timezone read grants only the requested permission axis", async (t
       );
     }
   }
+
+  await setDoc(COLLECTIONS.churches, owner.churchId, {
+    serviceTimeZone: null,
+  }, { merge: true });
+  const unconfiguredRestricted = await callHandler(
+    authHandlers.getChurchServiceTimeZone,
+    { context: members[3] },
+  );
+  assert.equal(unconfiguredRestricted.statusCode, 200);
+  assert.equal(unconfiguredRestricted.payload.serviceTimeZone, null);
+  assert.equal(unconfiguredRestricted.payload.isConfigured, false);
+  assert.equal(unconfiguredRestricted.payload.legacyTimeZoneSuggestion, undefined);
+
+  const unauthenticated = await callHandler(authHandlers.getChurchServiceTimeZone, {
+    context: { churchId: owner.churchId, headers: {}, session: createSession() },
+  });
+  assert.equal(unauthenticated.statusCode, 401);
+
+  const crossChurch = await callHandler(authHandlers.getChurchServiceTimeZone, {
+    context: members[3],
+    params: { churchId: "another-church" },
+  });
+  assert.equal(crossChurch.statusCode, 403);
+
+  const revokedUserId = "teams_api_admin_timezone_matrix_membership_only";
+  const [membership] = await queryDocs(COLLECTIONS.memberships, [
+    { field: "churchId", value: owner.churchId },
+    { field: "userId", value: revokedUserId },
+  ], { limit: 1 });
+  assert.ok(membership?.membershipId);
+  await setDoc(COLLECTIONS.memberships, membership.membershipId, {
+    status: "revoked",
+  }, { merge: true });
+  const revoked = await callHandler(authHandlers.getChurchServiceTimeZone, {
+    context: members[3],
+  });
+  assert.ok([401, 403].includes(revoked.statusCode));
 });
 
 test("paired workstations read timezone without expanding Teams or Services edit access", async (t) => {
@@ -2354,7 +2411,7 @@ test("church service timezone stream snapshots revisions for authorized readers"
     appAccess: "view",
     permissions: { services: "none", teams: "none" },
   });
-  const deniedReader = await createHumanContext("timezone_stream_denied", {
+  const membershipReader = await createHumanContext("timezone_stream_membership_only", {
     churchId: owner.churchId,
     role: "member",
     appAccess: "none",
@@ -2364,7 +2421,7 @@ test("church service timezone stream snapshots revisions for authorized readers"
     serviceTimeZoneRevision: "revision-stream-test",
   }, { merge: true });
 
-  for (const context of [owner, servicesReader, teamsReader, controllerReader]) {
+  for (const context of [owner, servicesReader, teamsReader, controllerReader, membershipReader]) {
     const stream = await callStreamHandler(authHandlers.streamChurchServiceTimeZone, { context });
     assert.equal(stream.headers["Content-Type"], "text/event-stream");
     assert.equal(stream.headers["Cache-Control"], "no-cache");
@@ -2392,11 +2449,11 @@ test("church service timezone stream snapshots revisions for authorized readers"
     assert.equal(stream.writes.length, writesBeforeClose);
   }
 
-  const denied = await callStreamHandler(authHandlers.streamChurchServiceTimeZone, {
-    context: deniedReader,
+  const unauthenticated = await callStreamHandler(authHandlers.streamChurchServiceTimeZone, {
+    context: { churchId: owner.churchId, headers: {}, session: createSession() },
   });
-  assert.equal(denied.res.statusCode, 403);
-  assert.equal(denied.writes.length, 0);
+  assert.equal(unauthenticated.res.statusCode, 401);
+  assert.equal(unauthenticated.writes.length, 0);
 
   const crossChurch = await callStreamHandler(authHandlers.streamChurchServiceTimeZone, {
     context: owner,
@@ -2679,6 +2736,12 @@ test("team-scoped edit can manage that team schedules and members only", async (
       teamScopes: { [mediaTeamId]: "edit" },
     },
   });
+
+  const timeZone = await callHandler(authHandlers.getChurchServiceTimeZone, {
+    context: scopedContext,
+  });
+  assert.equal(timeZone.statusCode, 200);
+  assert.equal(timeZone.payload.serviceTimeZone, "UTC");
 
   const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
     context: scopedContext,
@@ -18247,9 +18310,19 @@ test("effective Teams reads admit member appAccess through current roster links 
     churchId: fixture.churchId,
     userId: fixture.userId,
     role: "member",
-    appAccess: "member",
-    permissions: { teams: "none", teamScopes: {} },
+    controllerAccess: "none",
+    permissions: { teams: "none", services: "none", teamScopes: {} },
   });
+  await setDoc("chatSettings", fixture.churchId, {
+    timeZone: "America/Los_Angeles",
+  }, { merge: true });
+  const timeZone = await callHandler(authHandlers.getChurchServiceTimeZone, {
+    context,
+  });
+  assert.equal(timeZone.statusCode, 200);
+  assert.equal(timeZone.payload.serviceTimeZone, "UTC");
+  assert.equal(timeZone.payload.legacyTimeZoneSuggestion, undefined);
+
   const result = await callHandler(authHandlers.getTeamsBootstrap, { context });
   assert.equal(result.statusCode, 200);
   assert.deepEqual(
@@ -18276,13 +18349,26 @@ test("effective Teams reads admit member appAccess through current roster links 
     assert.equal(result.payload[field], undefined);
   }
   assertSafeReadSchedule(result.payload.schedules[0]);
+  assert.equal(
+    getMemberId(result.payload.schedules[0].assignments.occurrence.slot),
+    fixture.memberId,
+  );
   const detail = await callHandler(authHandlers.getTeamScheduleDetail, {
     context,
     params: { scheduleId: `${fixture.ids.worship}_schedule` },
   });
   assert.equal(detail.statusCode, 200);
   assertSafeReadSchedule(detail.payload.schedule);
+  assert.equal(
+    getMemberId(detail.payload.schedule.assignments.occurrence.slot),
+    fixture.memberId,
+  );
   assert.deepEqual(detail.payload.relatedSchedules, []);
+  const unrelatedSchedule = await callHandler(authHandlers.getTeamScheduleDetail, {
+    context,
+    params: { scheduleId: `${fixture.ids.av}_schedule` },
+  });
+  assert.equal(unrelatedSchedule.statusCode, 403);
   for (const handler of [
     authHandlers.getTeamIntakeSmsAttempts,
     authHandlers.listServicePlanTemplates,
@@ -18302,6 +18388,27 @@ test("effective Teams reads admit member appAccess through current roster links 
     body: { name: "Unsafe edit", memberIds: [] },
   });
   assert.equal(deniedWrite.statusCode, 403);
+  const deniedAssignment = await callHandler(
+    authHandlers.updateTeamScheduleAssignment,
+    {
+      context,
+      params: { scheduleId: `${fixture.ids.worship}_schedule` },
+      body: {
+        serviceId: "occurrence",
+        positionSlotKey: "slot",
+        memberId: fixture.memberId,
+      },
+    },
+  );
+  assert.equal(deniedAssignment.statusCode, 403);
+  const unchangedSchedule = await getDoc(
+    COLLECTIONS.teamSchedules,
+    `${fixture.ids.worship}_schedule`,
+  );
+  assert.deepEqual(unchangedSchedule.assignments.occurrence.slot, {
+    primaryMemberId: fixture.memberId,
+    shadows: [],
+  });
   await setDoc(
     COLLECTIONS.teams,
     fixture.ids.av,

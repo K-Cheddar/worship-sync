@@ -12567,7 +12567,7 @@ export const createTeamsAuthHandlers = ({
   };
 
   const authorizeChurchServiceTimeZoneRead = async (req, churchId) => {
-    let bootstrap = await resolveRequestBootstrap(req);
+    const bootstrap = await resolveRequestBootstrap(req);
     if (!bootstrap?.authenticated) {
       throw httpError(401, "Authentication required");
     }
@@ -12576,34 +12576,33 @@ export const createTeamsAuthHandlers = ({
     }
     if (bootstrap.sessionKind === "display") {
       // Presentation configuration only; this grants no workspace or edit access.
-      return { controllerOnlyRead: true };
+      return { restrictedRead: true };
     }
 
     try {
       await requireServicesWorkspaceView(req, churchId);
-      return { controllerOnlyRead: false };
+      return { restrictedRead: false };
     } catch (error) {
       if (error?.statusCode !== 403) throw error;
     }
 
     try {
       await requireTeamsView(req, churchId);
-      return { controllerOnlyRead: false };
+      return { restrictedRead: false };
     } catch (error) {
       if (error?.statusCode !== 403) throw error;
-      if (bootstrap.sessionKind !== "workstation") {
-        bootstrap = await requireHumanSession(req);
-        const controllerAccess =
-          bootstrap.controllerAccess ?? bootstrap.appAccess ?? "view";
-        if (
-          bootstrap.churchId !== churchId ||
-          bootstrap.role !== "member" ||
-          !["full", "music", "view"].includes(controllerAccess)
-        ) {
-          throw error;
-        }
+      if (bootstrap.sessionKind === "workstation") {
+        return { restrictedRead: true };
       }
-      return { controllerOnlyRead: true };
+
+      // Any active human church member may read this narrow setting. The
+      // human session guard revalidates current church membership; this does
+      // not grant access to the wider Teams or Services workspace.
+      const humanSession = await requireHumanSession(req);
+      if (humanSession.churchId !== churchId) {
+        throw httpError(403, "Church access required");
+      }
+      return { restrictedRead: true };
     }
   };
 
@@ -19881,14 +19880,14 @@ export const createTeamsAuthHandlers = ({
     async getChurchServiceTimeZone(req, res) {
       try {
         const churchId = req.params.churchId;
-        const { controllerOnlyRead } =
+        const { restrictedRead } =
           await authorizeChurchServiceTimeZoneRead(req, churchId);
         const church = await getDoc(COLLECTIONS.churches, churchId);
         if (!church) throw httpError(404, "Church settings were not found.");
         const isConfigured = isValidPortableTimeZone(church.serviceTimeZone);
-        const serviceTimeZone = isConfigured ? church.serviceTimeZone : "UTC";
+        const serviceTimeZone = isConfigured ? church.serviceTimeZone : null;
         let legacyTimeZoneSuggestion = null;
-        if (!isConfigured && !controllerOnlyRead) {
+        if (!isConfigured && !restrictedRead) {
           const legacyChatSettings = await getDoc("chatSettings", churchId);
           const legacyTimeZone = legacyChatSettings?.timeZone;
           if (isValidPortableTimeZone(legacyTimeZone)) {
@@ -19904,7 +19903,7 @@ export const createTeamsAuthHandlers = ({
             church.serviceTimeZoneRevision
               ? church.serviceTimeZoneRevision
               : "legacy",
-          ...(controllerOnlyRead ? {} : { legacyTimeZoneSuggestion }),
+          ...(restrictedRead ? {} : { legacyTimeZoneSuggestion }),
         });
       } catch (error) {
         return sendTeamsJsonError(

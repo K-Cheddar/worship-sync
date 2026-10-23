@@ -252,7 +252,6 @@ const MemberAccessSheet = () => {
           if (error instanceof AuthApiError && error.code === "MEMBER_ACCESS_CONFLICT") await refresh();
           throw error;
         }
-        clearMemberDrafts(member!.membershipId);
         let authRefreshFailed = false;
         try {
           if (context?.userId === targetUserId) await context.refreshAuthBootstrap({ requireFresh: true });
@@ -261,6 +260,7 @@ const MemberAccessSheet = () => {
         }
         await refresh();
         closeAccessSheet();
+        clearMemberDrafts(member!.membershipId);
         if (authRefreshFailed) throw new Error("Access was saved. Reload the app to refresh your notification settings.");
         showStatus(`Updated access for ${memberLabel}.`);
       });
@@ -274,14 +274,14 @@ const MemberAccessSheet = () => {
           invite.inviteId,
           resolveInviteAccessPayload(inviteDraft),
         );
+        showStatus(`Updated access for ${invite.email}.`);
+        await refresh();
+        closeAccessSheet();
         setInvitePendingAccessDrafts((prev) => {
           const next = { ...prev };
           delete next[invite.inviteId];
           return next;
         });
-        showStatus(`Updated access for ${invite.email}.`);
-        await refresh();
-        closeAccessSheet();
       });
     }
   };

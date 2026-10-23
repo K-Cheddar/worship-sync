@@ -653,7 +653,7 @@ const Welcome = () => {
               {showMyTeams ? (
                 <HomeNavigationLink
                   title="My teams"
-                  to="/teams-and-services"
+                  to="/teams-and-services/groups"
                   {...PAGE_APPEARANCES.myTeams}
                   description="See your teams and responsibilities."
                   showDescriptions={showDescriptions}

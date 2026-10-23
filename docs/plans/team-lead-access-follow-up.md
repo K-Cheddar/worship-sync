@@ -91,8 +91,69 @@ The targeted sibling search covered membership promotion/demotion/recovery, invi
 - Unmount/lifetime test reviewed or added: Yes — navigation during held durable save.
 - Contract round trip traced: Yes — list/API types/drawer/client/body/transaction/result/bootstrap/menu.
 - Validate/use security boundary reviewed: Yes — fresh membership, revision, role/status and church-team validation before commit.
-- Retry-state authority reviewed: Yes — conflicts preserve the dirty draft until explicit close; completed saves clear it before refresh.
+- Retry-state authority reviewed: Yes — conflicts preserve the dirty draft until explicit close; completed saves now clear it after refresh and drawer close (checkbox follow-up below).
 - Owner-retirement handoff reviewed: Yes — durable original-owner work continues and the global provider owns refresh; no global retry callback retains the route.
 - External side-effect adoption/compensation reviewed: Not applicable — no external resource creation/deletion added.
 - Authorization/data-projection reviewed: Yes — admin and CSRF guards unchanged; revision is only exposed with the existing admin member list.
 - Production entry point, runtime context, and test composition compared: Yes — described above.
+
+## Pending checkbox visibility follow-up
+
+### Goal
+Keep selected Team Lead checkboxes visible and disabled until save and refresh finish and the drawer closes.
+
+### Existing architecture
+MemberAccessSheet reads the access target snapshot plus AccountPageProvider drafts. Both persisted save paths currently clear drafts before an awaited refresh, reverting visible values to the target snapshot. Existing `isSaving` already disables controls for the whole action. Drawer closes when `closeAccessSheet` removes its target.
+
+### Before behavior
+After the mutation succeeds, selections revert during the remaining refresh/loading state.
+
+### After behavior
+Retain drafts through mutation, self-bootstrap refresh and People refresh; close the drawer, then discard drafts. Apply the same order to active members and pending invitations.
+
+### Product Decision Check
+Authorized explicitly by the current checkbox-visibility request. The account-Team-Leads feature contract owns this drawer; record the requested pending-state behavior there. No unresolved decisions.
+
+### Behavior intentionally unchanged
+Request payloads, server revisions, authorization, notification routing, refresh-failure recovery, duplicate-save protection and shared Drawer animation/focus behavior.
+
+### Acceptance criteria
+For both member and invitation saves, a newly checked team stays checked and a removed team stays unchecked while the mutation and subsequent refreshes are held. All checkboxes and Save/Cancel remain disabled. The drawer closes after refresh and reopening reflects saved values. Existing conflict, failed-refresh and navigation cases still pass.
+
+### Proposed implementation
+Reorder existing close/cleanup calls; do not add duplicate draft state, timers or shared Drawer changes.
+
+### Affected surfaces
+MemberAccessSheet member/invitation save handlers; real People-page/drawer integration tests and feature contract. No server, transport, persistence or display changes.
+
+### Risks / edge cases
+Self-bootstrap and People refresh have separate async boundaries. Keep durable-failure recovery and original-target cleanup intact; review existing unmount test. Manual cancel remains synchronous.
+
+### Questions requiring user input
+None.
+
+### Verification
+Reproduce with deferred mutation/bootstrap/list-refresh promises in the real AccountPageProvider and drawer. Run the changed integration suite, MemberAccessSheet tests and real-global-provider integration, then TypeScript, lint and diff checks. Review both save branches and existing failure/lifetime coverage.
+
+### Verification results
+Both new member/invitation cases failed before the fix because the newly selected Praise Team became unchecked after the mutation resolved. Both pass after moving cleanup below refresh and close. The same test also holds self-bootstrap and People refresh separately, verifies removed Media stays unchecked, checks disabled controls, then reopens the saved access drawer.
+
+`npm.cmd test --prefix client -- --runInBand --runTestsByPath src/pages/Account/pages/AccountPeoplePage.teamLeads.test.tsx src/pages/Account/components/MemberAccessSheet.test.tsx src/context/globalInfo.test.tsx` passed: 3 suites, 80 tests, including existing conflict, post-save refresh failure, navigation during save and real-global-provider notification tests. `npm.cmd run type-check --prefix client`, `npm.cmd run lint:check --prefix client` and `git diff --check` passed. The fix only reorders existing calls; no state, request, shared component or timer was added. This narrow refinement does not change the existing unreleased Team Leads product note.
+
+### Checkbox fix review
+**Findings:** Critical: None. High: None. Medium: None. Low: None.
+
+**Product authorization status:** Authorized by the current request; the feature contract now records visible, disabled selections until drawer close for members and invitations.
+
+**Open questions / assumptions:** None. Manual cancel and shared close animations are unchanged.
+
+**Verification gaps:** Required: None. Production context: Pass — the regression uses the real AccountPageProvider, People page, MemberAccessSheet and portal-based Drawer/checkbox controls, with external API boundaries deferred. App/Account provider composition is unchanged and the real global-provider suite passed. Optional: no manual browser/animation inspection, full suites or production builds were run. Server behavior is untouched.
+
+| Invariant | Controlled transition / code evidence | Executed evidence | Result |
+| --- | --- | --- | --- |
+| Draft remains visible for all pending work | Save resolves; bootstrap stays pending; bootstrap resolves; People refresh stays pending; only then close and clear | Parameterized member/invite test retains Praise checked and Media unchecked with disabled controls at every boundary, then verifies reopened saved values | Pass |
+| Completed writes are not retried or redirected | Refresh failure still closes and clears; leaving Administration during held save still finishes for the original target | Existing durable-save-failure and route-unmount tests passed; original request/cleanup identities remain captured | Pass |
+
+**Pattern / learning opportunities:** The sibling invitation handler had the same cleanup-before-refresh order and is fixed too. Both use existing action pending state and original target IDs. Rejected mutations still retain drafts; completed mutations still clear drafts before any refresh-failure error reaches the action handler. No new general guidance is needed.
+
+**Final readiness:** Ready for this checkbox-visibility fix. Broader workflow/security checks from the preceding review are unchanged; this is not a new branch-wide production-readiness claim.

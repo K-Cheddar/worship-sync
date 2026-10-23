@@ -270,9 +270,8 @@ export const ChurchServiceTimeZoneProvider = ({
         const nextTimeZone: LoadedTimeZone = {
           churchId: requestedChurchId,
           scopeKey: requestedScope,
-          // The API uses UTC only as a legacy display value when no church
-          // setting exists. It is not a configured service timezone and must
-          // never drive scheduling or date-derived pages.
+          // An unconfigured church has no service timezone. Never use an
+          // invented or browser-local value for scheduling or date-derived pages.
           timeZone:
             result.isConfigured && result.serviceTimeZone
               ? result.serviceTimeZone
