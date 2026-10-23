@@ -202,14 +202,14 @@ describe("Home", () => {
   });
 
   it("shows Teams and Services for an authorized non-admin and hides it when access is denied", () => {
-    const authorized = renderHomeWithGlobalOverrides({
+    const { unmount } = renderHomeWithGlobalOverrides({
       role: "member",
       canViewTeams: true,
     });
     expect(
       screen.getByRole("link", { name: /^Teams and Services\b/ }),
     ).toHaveAttribute("href", "/teams-and-services");
-    authorized.unmount();
+    unmount();
 
     renderHomeWithGlobalOverrides({
       role: "member",
