@@ -42,12 +42,13 @@ it("sorts assigned members by display name and keeps every assigned ID visible",
   });
 
   const list = screen.getByRole("list", { name: "Members on this team" });
-  expect(within(list).getAllByRole("button", { name: /Remove .* from team/ }).map((button) => button.getAttribute("aria-label"))).toEqual([
-    "Remove Enya-Kaye Cheddar from team",
-    "Remove Kevin Cheddar from team",
-    "Remove Kevoun Morgan from team",
-    "Remove Member details unavailable from team",
+  expect(within(list).getAllByRole("button", { name: /^Actions for/ }).map((button) => button.getAttribute("aria-label"))).toEqual([
+    "Actions for Enya-Kaye Cheddar",
+    "Actions for Kevin Cheddar",
+    "Actions for Kevoun Morgan",
+    "Actions for Member details unavailable",
   ]);
+  expect(screen.queryByRole("menuitem", { name: "Remove from team" })).not.toBeInTheDocument();
   expect(list).toHaveTextContent("Member details unavailable");
   expect(screen.getByRole("heading", { name: "Members · 4" })).toBeInTheDocument();
 });
@@ -75,8 +76,28 @@ it("marks the linked assigned member without matching another member who has the
   const suggestions = screen.getByRole("list", { name: "Matching members to add" });
   expect(within(assigned).getByText("You")).toBeInTheDocument();
   expect(within(suggestions).queryByText("You")).not.toBeInTheDocument();
-  expect(within(assigned).getByRole("button", { name: "Remove Rae Kim from team, You" })).toBeInTheDocument();
+  expect(within(assigned).getByRole("button", { name: "Actions for Rae Kim, You" })).toBeInTheDocument();
+  expect(screen.queryByRole("menuitem", { name: "Remove from team" })).not.toBeInTheDocument();
   expect(within(suggestions).getByRole("button", { name: "Add Rae Kim to team" })).toBeInTheDocument();
+});
+
+it("can expose Manage independently from the inline membership mutations", async () => {
+  const user = userEvent.setup();
+  const assigned = member("m-1", "Avery", "Singer");
+  const onManageMember = jest.fn();
+  renderEditor({
+    memberIds: [assigned.memberId],
+    members: [assigned],
+    canEditMembership: false,
+    canManageMembers: true,
+    onManageMember,
+  });
+
+  await user.click(screen.getByRole("button", { name: "Manage Avery Singer" }));
+
+  expect(onManageMember).toHaveBeenCalledWith(assigned);
+  expect(screen.queryByRole("button", { name: /Add members/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Actions for/ })).not.toBeInTheDocument();
 });
 
 it("shows no directory entries until searching, then offers only active unassigned people inline", async () => {
@@ -151,7 +172,7 @@ it("sorts safe scoped candidates and excludes assigned or duplicate IDs", () => 
   ]);
 });
 
-it("routes inline Add and Remove actions by member ID", async () => {
+it("routes Add and menu-based Remove actions by member ID", async () => {
   const user = userEvent.setup();
   const onAddMember = jest.fn();
   const onRemoveMember = jest.fn();
@@ -166,7 +187,8 @@ it("routes inline Add and Remove actions by member ID", async () => {
   });
 
   await user.click(screen.getByRole("button", { name: "Add Amy Jones to team" }));
-  await user.click(screen.getByRole("button", { name: "Remove Avery Singer from team" }));
+  await user.click(screen.getByRole("button", { name: "Actions for Avery Singer" }));
+  await user.click(screen.getByRole("menuitem", { name: "Remove from team" }));
   expect(onAddMember).toHaveBeenCalledWith("amy-id");
   expect(onRemoveMember).toHaveBeenCalledWith("assigned");
 });

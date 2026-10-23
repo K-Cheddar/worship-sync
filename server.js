@@ -29,6 +29,7 @@ import {
   requireBroadTeamsViewSession,
   assertServerCsrf,
   startIntakeSubmissionDigestRecovery,
+  startScheduleResponseDigestRecovery,
   startScheduleInitialSmsBatchDispatcher,
   stopScheduleInitialSmsBatchDispatcher,
   setDoc,
@@ -4176,6 +4177,7 @@ let shutdownStarted = false;
 
 const startServerBackgroundWork = () => {
   startIntakeSubmissionDigestRecovery();
+  startScheduleResponseDigestRecovery();
   startScheduleInitialSmsBatchDispatcher();
 };
 

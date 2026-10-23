@@ -28,6 +28,7 @@ describe("MemberAssignmentsDetails", () => {
     render(
       <MemberAssignmentsDetails
         memberName="Alex Kim"
+        emptyLabel="No team assigned"
         assignments={[
           { teamId: "worship", teamName: "Worship", positionName: "Vocalist" },
           { teamId: "worship", teamName: "Worship", positionName: "Piano" },
@@ -47,5 +48,18 @@ describe("MemberAssignmentsDetails", () => {
     });
     expect(within(moreAssignments).getByText("Guitar")).toBeInTheDocument();
     expect(within(moreAssignments).getByText("Drums")).toBeInTheDocument();
+  });
+
+  it("uses the caller's authoritative empty-assignment label", () => {
+    render(
+      <MemberAssignmentsDetails
+        memberName="Alex Kim"
+        assignments={[]}
+        emptyLabel="Not in your managed teams"
+      />,
+    );
+
+    expect(screen.getByText("Not in your managed teams")).toBeInTheDocument();
+    expect(screen.queryByText("No team assigned")).not.toBeInTheDocument();
   });
 });

@@ -335,8 +335,10 @@ export const buildTeamScopedReturnTo = (
   },
 });
 
-export const buildTeamsMemberEditPath = (memberId: string) =>
-  `${TEAMS_SECTION_PATHS.members}?${TEAMS_MEMBER_EDIT_SEARCH_PARAM}=${encodeURIComponent(memberId)}`;
+export const buildTeamsMemberEditPath = (memberId: string, teamId?: string) =>
+  `${TEAMS_SECTION_PATHS.members}?${TEAMS_MEMBER_EDIT_SEARCH_PARAM}=${encodeURIComponent(memberId)}${
+    teamId ? `&${TEAMS_TEAM_SEARCH_PARAM}=${encodeURIComponent(teamId)}` : ""
+  }`;
 
 export const buildTeamsTeamScopedPath = (
   section: TeamsTeamScopedSection,

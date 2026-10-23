@@ -47,10 +47,14 @@ type EntityMultiSelectProps = {
   variant?: "admin" | "board-attendee";
   /** When set, sublabel renders above label with stronger visual weight (e.g. service dates). */
   emphasizeSublabel?: boolean;
+  /** Keep the label and sublabel on one line for compact option lists. */
+  inlineSublabel?: boolean;
   /** Trailing control per option (e.g. cross-section Edit link). Rendered outside the toggle. */
   renderOptionAction?: (option: EntityMultiSelectOption) => ReactNode;
   /** Filter chips shown above the list; each scopes it to options with that `groupId`. */
   groups?: EntityMultiSelectGroup[];
+  /** Hide the filter chips while retaining the configured group scope. */
+  hideGroupFilters?: boolean;
   /** Accessible name for the chip row, e.g. "Filter positions by team". */
   groupFilterLabel?: string;
   /** Chip label that clears the group filter. */
@@ -85,8 +89,10 @@ const EntityMultiSelect = ({
   emptyText = "Nothing to choose yet.",
   variant = "admin",
   emphasizeSublabel = false,
+  inlineSublabel = false,
   renderOptionAction,
   groups,
+  hideGroupFilters = false,
   groupFilterLabel,
   allGroupsLabel = "All",
   defaultGroupIds = [],
@@ -233,7 +239,7 @@ const EntityMultiSelect = ({
           {description}
         </p>
       ) : null}
-      {groupChips ? (
+      {groupChips && !hideGroupFilters ? (
         <div
           className="mb-2 flex flex-wrap gap-1.5"
           role="group"
@@ -350,6 +356,7 @@ const EntityMultiSelect = ({
                   onClick={() => toggle(option.id)}
                   className={cn(
                     "flex min-w-0 flex-1 items-start gap-3 px-2.5 py-2 text-left text-sm transition-colors",
+                    inlineSublabel && "items-center",
                     !disabled &&
                     (isBoard
                       ? "cursor-pointer hover:bg-stone-800/40"
@@ -360,6 +367,7 @@ const EntityMultiSelect = ({
                   <span
                     className={cn(
                       "mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border",
+                      inlineSublabel && "mt-0",
                       checked
                         ? isBoard
                           ? "border-amber-400 bg-amber-400 text-stone-950"
@@ -377,7 +385,12 @@ const EntityMultiSelect = ({
                       className={cn("h-7 w-7", isBoard && "border-stone-600")}
                     />
                   ) : null}
-                  <span className="min-w-0 flex-1">
+                  <span
+                    className={cn(
+                      "min-w-0 flex-1",
+                      inlineSublabel && !emphasizeSublabel && "flex items-baseline gap-2",
+                    )}
+                  >
                     {option.sublabel && emphasizeSublabel ? (
                       <>
                         <span
@@ -400,7 +413,10 @@ const EntityMultiSelect = ({
                       </>
                     ) : (
                       <>
-                        <span className="block truncate font-medium">
+                        <span
+                          className="block min-w-0 truncate font-medium"
+                          title={inlineSublabel ? option.label : undefined}
+                        >
                           {option.label}
                           {option.archived ? " (archived)" : ""}
                         </span>
@@ -408,8 +424,10 @@ const EntityMultiSelect = ({
                           <span
                             className={cn(
                               "block truncate text-xs",
+                              inlineSublabel && "max-w-[40%] shrink-[2]",
                               isBoard ? "text-stone-400" : "text-gray-400",
                             )}
+                            title={inlineSublabel ? option.sublabel : undefined}
                           >
                             {option.sublabel}
                           </span>

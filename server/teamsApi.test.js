@@ -209,6 +209,7 @@ const createHumanContext = async (
     churchId = `teams_api_church_${suffix}`,
     role = "admin",
     appAccess = "full",
+    controllerAccess,
     permissions,
   } = {},
 ) => {
@@ -222,6 +223,7 @@ const createHumanContext = async (
       churchId,
       role,
       appAccess,
+      controllerAccess,
       permissions,
     });
   // Test churches model an explicitly configured UTC church by default. Tests
@@ -2095,7 +2097,7 @@ test("church service timezone is stored separately from Chat browser hints", asy
     params: { churchId: context.churchId },
   });
   assert.equal(initial.statusCode, 200);
-  assert.equal(initial.payload.serviceTimeZone, "UTC");
+  assert.equal(initial.payload.serviceTimeZone, null);
   assert.equal(initial.payload.isConfigured, false);
   assert.equal(initial.payload.legacyTimeZoneSuggestion, "America/Los_Angeles");
 
@@ -2225,7 +2227,7 @@ test("service timezone read grants only the requested permission axis", async (t
     ["controller", "view", { teams: "none", services: "none" }, 200],
     ["services", "member", { teams: "none", services: "view" }, 200],
     ["teams", "member", { teams: "view", services: "none" }, 200],
-    ["no_access", "member", { teams: "none", services: "none" }, 403],
+    ["membership_only", "none", { teams: "none", services: "none" }, 200],
   ];
   const members = [];
   for (const [name, appAccess, permissions] of cases) {
@@ -2233,11 +2235,15 @@ test("service timezone read grants only the requested permission axis", async (t
       churchId: owner.churchId,
       role: "member",
       appAccess,
+      ...(name === "membership_only" ? { controllerAccess: "none" } : {}),
       permissions,
     }));
   }
   await setDoc(COLLECTIONS.churches, owner.churchId, {
     serviceTimeZone: "America/New_York",
+  }, { merge: true });
+  await setDoc("chatSettings", owner.churchId, {
+    timeZone: "America/Los_Angeles",
   }, { merge: true });
 
   for (const [index, [name, , , expectedStatus]] of cases.entries()) {
@@ -2246,7 +2252,21 @@ test("service timezone read grants only the requested permission axis", async (t
       context: member,
     });
     assert.equal(timezone.statusCode, expectedStatus, name);
-    if (name === "controller") {
+    if (name === "membership_only") {
+      assert.equal(timezone.payload.legacyTimeZoneSuggestion, undefined);
+      const bootstrap = await resolveRequestBootstrap(createReq({
+        params: { churchId: member.churchId },
+        headers: member.headers,
+        session: member.session,
+      }));
+      assert.equal(bootstrap.controllerAccess, "none");
+      assert.deepEqual(bootstrap.permissions, {
+        teams: "none",
+        services: "none",
+        teamScopes: {},
+      });
+    }
+    if (name === "controller" || name === "membership_only") {
       assert.equal(timezone.payload.serviceTimeZone, "America/New_York");
       assert.equal(timezone.payload.legacyTimeZoneSuggestion, undefined);
       assert.equal(
@@ -2259,6 +2279,43 @@ test("service timezone read grants only the requested permission axis", async (t
       );
     }
   }
+
+  await setDoc(COLLECTIONS.churches, owner.churchId, {
+    serviceTimeZone: null,
+  }, { merge: true });
+  const unconfiguredRestricted = await callHandler(
+    authHandlers.getChurchServiceTimeZone,
+    { context: members[3] },
+  );
+  assert.equal(unconfiguredRestricted.statusCode, 200);
+  assert.equal(unconfiguredRestricted.payload.serviceTimeZone, null);
+  assert.equal(unconfiguredRestricted.payload.isConfigured, false);
+  assert.equal(unconfiguredRestricted.payload.legacyTimeZoneSuggestion, undefined);
+
+  const unauthenticated = await callHandler(authHandlers.getChurchServiceTimeZone, {
+    context: { churchId: owner.churchId, headers: {}, session: createSession() },
+  });
+  assert.equal(unauthenticated.statusCode, 401);
+
+  const crossChurch = await callHandler(authHandlers.getChurchServiceTimeZone, {
+    context: members[3],
+    params: { churchId: "another-church" },
+  });
+  assert.equal(crossChurch.statusCode, 403);
+
+  const revokedUserId = "teams_api_admin_timezone_matrix_membership_only";
+  const [membership] = await queryDocs(COLLECTIONS.memberships, [
+    { field: "churchId", value: owner.churchId },
+    { field: "userId", value: revokedUserId },
+  ], { limit: 1 });
+  assert.ok(membership?.membershipId);
+  await setDoc(COLLECTIONS.memberships, membership.membershipId, {
+    status: "revoked",
+  }, { merge: true });
+  const revoked = await callHandler(authHandlers.getChurchServiceTimeZone, {
+    context: members[3],
+  });
+  assert.ok([401, 403].includes(revoked.statusCode));
 });
 
 test("paired workstations read timezone without expanding Teams or Services edit access", async (t) => {
@@ -2354,7 +2411,7 @@ test("church service timezone stream snapshots revisions for authorized readers"
     appAccess: "view",
     permissions: { services: "none", teams: "none" },
   });
-  const deniedReader = await createHumanContext("timezone_stream_denied", {
+  const membershipReader = await createHumanContext("timezone_stream_membership_only", {
     churchId: owner.churchId,
     role: "member",
     appAccess: "none",
@@ -2364,7 +2421,7 @@ test("church service timezone stream snapshots revisions for authorized readers"
     serviceTimeZoneRevision: "revision-stream-test",
   }, { merge: true });
 
-  for (const context of [owner, servicesReader, teamsReader, controllerReader]) {
+  for (const context of [owner, servicesReader, teamsReader, controllerReader, membershipReader]) {
     const stream = await callStreamHandler(authHandlers.streamChurchServiceTimeZone, { context });
     assert.equal(stream.headers["Content-Type"], "text/event-stream");
     assert.equal(stream.headers["Cache-Control"], "no-cache");
@@ -2392,11 +2449,11 @@ test("church service timezone stream snapshots revisions for authorized readers"
     assert.equal(stream.writes.length, writesBeforeClose);
   }
 
-  const denied = await callStreamHandler(authHandlers.streamChurchServiceTimeZone, {
-    context: deniedReader,
+  const unauthenticated = await callStreamHandler(authHandlers.streamChurchServiceTimeZone, {
+    context: { churchId: owner.churchId, headers: {}, session: createSession() },
   });
-  assert.equal(denied.res.statusCode, 403);
-  assert.equal(denied.writes.length, 0);
+  assert.equal(unauthenticated.res.statusCode, 401);
+  assert.equal(unauthenticated.writes.length, 0);
 
   const crossChurch = await callStreamHandler(authHandlers.streamChurchServiceTimeZone, {
     context: owner,
@@ -2679,6 +2736,12 @@ test("team-scoped edit can manage that team schedules and members only", async (
       teamScopes: { [mediaTeamId]: "edit" },
     },
   });
+
+  const timeZone = await callHandler(authHandlers.getChurchServiceTimeZone, {
+    context: scopedContext,
+  });
+  assert.equal(timeZone.statusCode, 200);
+  assert.equal(timeZone.payload.serviceTimeZone, "UTC");
 
   const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
     context: scopedContext,
@@ -12150,6 +12213,9 @@ test("Controller None preserves independently granted global Teams and Services 
       teamScopes: { worship: "edit" },
     },
   });
+  await setDoc(COLLECTIONS.teams, "worship", {
+    teamId: "worship", churchId: narrowed.churchId, name: "Worship",
+  });
   const narrowedBootstrap = await callHandler(authHandlers.getAuthMe, {
     context: narrowed,
   });
@@ -14208,6 +14274,7 @@ test("individual intake recipients personalize and automatically apply one audit
   );
   assert.equal(preview.statusCode, 200);
   assert.equal(preview.payload.recipient.firstName, "Kevin");
+  assert.ok(preview.payload.recipient.missingFields.includes("email"));
   assert.ok(!JSON.stringify(preview.payload).includes("Cheddar"));
   assert.ok(!JSON.stringify(preview.payload).includes("recipientTokenNonce"));
 
@@ -14231,7 +14298,7 @@ test("individual intake recipients personalize and automatically apply one audit
         body: {
           firstName: "",
           lastName: "",
-          email: "",
+          email: "kevin@example.com",
           positionIds: [positionIds.Vocal],
           occurrenceAvailability:
             availability === undefined ? {} : { [occurrenceId]: availability },
@@ -14271,6 +14338,7 @@ test("individual intake recipients personalize and automatically apply one audit
   assert.equal(firstSubmission.status, "applied");
   assert.equal(firstSubmission.appliedMemberId, memberId);
   assert.equal(firstMember.serviceAvailability[occurrenceId], "unavailable");
+  assert.equal(firstMember.email, "kevin@example.com");
   assert.equal(firstRecipient.submissionId, firstSubmissionId);
   assert.ok(firstRecipient.respondedAt);
 
@@ -14361,6 +14429,231 @@ test("individual intake recipients personalize and automatically apply one audit
     reactivatedPreview,
   );
   assert.equal(reactivatedPreview.statusCode, 200);
+});
+
+test("personalized intake exposes missing fields and saves them without replacing existing details", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const previousContactSecret = process.env.AUTH_VOLUNTEER_PORTAL_SECRET;
+  const contactSecret = "team-intake-profile-test-secret";
+  process.env.AUTH_VOLUNTEER_PORTAL_SECRET = contactSecret;
+  t.after(() => {
+    if (previousContactSecret === undefined) {
+      delete process.env.AUTH_VOLUNTEER_PORTAL_SECRET;
+    } else {
+      process.env.AUTH_VOLUNTEER_PORTAL_SECRET = previousContactSecret;
+    }
+  });
+
+  const context = await createAdminContext("intake_missing_member_details");
+  const { teamId, memberIds } = await seedTeam(context, {
+    teamName: "Worship",
+    members: [
+      { firstName: "Avery", lastName: "Morgan" },
+      { firstName: "Riley", lastName: "Jones" },
+    ],
+  });
+  const memberId = memberIds.Avery;
+  const memberMissingFirstNameId = memberIds.Riley;
+  await setDoc(
+    COLLECTIONS.teamRosterMembers,
+    memberId,
+    { lastName: " ", email: "", title: "", birthDate: null },
+    { merge: true },
+  );
+  await setDoc(
+    COLLECTIONS.teamRosterMembers,
+    memberMissingFirstNameId,
+    {
+      firstName: " ",
+      email: "riley@example.com",
+      title: "Ms.",
+      birthDate: { month: 5, day: 3 },
+    },
+    { merge: true },
+  );
+  const form = await callHandler(authHandlers.createTeamIntakeForm, {
+    context,
+    body: {
+      name: "Complete your profile",
+      startDate: calendarDaysFromToday(0),
+      endDate: calendarDaysFromToday(45),
+      responseDeadline: calendarDaysFromToday(45),
+      purpose: "general_intake",
+      teamIds: [teamId],
+      enabledFields: ["title", "firstName", "lastName", "email", "birthDate"],
+      active: true,
+    },
+  });
+  assert.equal(form.statusCode, 200, JSON.stringify(form.payload));
+  const formId = form.payload.form.formId;
+  const created = await callHandler(authHandlers.createTeamIntakeRecipients, {
+    context,
+    params: { formId },
+    body: { memberIds: [memberId, memberMissingFirstNameId] },
+  });
+  assert.equal(created.statusCode, 200, JSON.stringify(created.payload));
+  const recipient = created.payload.recipients[0];
+  const link = await callHandler(authHandlers.getTeamIntakeRecipientLink, {
+    context,
+    params: { recipientId: recipient.recipientId },
+  });
+  const token = link.payload.publicUrl.split("/a/")[1];
+
+  const preview = createRes();
+  await authHandlers.getTeamIntakePreview(
+    createReq({ query: { token, recipientOnly: "true" } }),
+    preview,
+  );
+  assert.equal(preview.statusCode, 200, JSON.stringify(preview.payload));
+  assert.deepEqual(
+    new Set(preview.payload.recipient.missingFields),
+    new Set(["lastName", "title", "birthDate", "email"]),
+  );
+  assert.equal(Object.hasOwn(preview.payload.recipient, "lastName"), false);
+  assert.equal(JSON.stringify(preview.payload).includes("avery@example.com"), false);
+
+  const submitted = createRes();
+  await authHandlers.submitTeamIntake(
+    createReq({
+      query: { token, recipientOnly: "true" },
+      body: {
+        firstName: "Changed",
+        lastName: "Lee",
+        title: "Dr.",
+        email: "  Volunteer@Example.COM ",
+        birthDate: { month: 3, day: 2, year: 2000 },
+        positionIds: [],
+        occurrenceAvailability: {},
+        blockoutRanges: [],
+      },
+    }),
+    submitted,
+  );
+  assert.equal(submitted.statusCode, 200, JSON.stringify(submitted.payload));
+  const member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+  assert.equal(member.firstName, "Avery");
+  assert.equal(member.lastName, "Lee");
+  assert.equal(member.title, "Dr.");
+  assert.equal(member.email, "volunteer@example.com");
+  assert.deepEqual(member.birthDate, { month: 3, day: 2, year: 2000 });
+  assert.deepEqual(
+    member.volunteerContactKeys,
+    volunteerContactIndexFields(member, contactSecret).volunteerContactKeys,
+  );
+  const savedSubmissions = await queryDocs(COLLECTIONS.teamIntakeSubmissions, [
+    { field: "formId", value: formId },
+  ]);
+  assert.equal(savedSubmissions[0].submittedMemberDetails, undefined);
+
+  const firstNameRecipient = created.payload.recipients.find(
+    (item) => item.memberId === memberMissingFirstNameId,
+  );
+  const firstNameLink = await callHandler(authHandlers.getTeamIntakeRecipientLink, {
+    context,
+    params: { recipientId: firstNameRecipient.recipientId },
+  });
+  const firstNameToken = firstNameLink.payload.publicUrl.split("/a/")[1];
+  const firstNamePreview = createRes();
+  await authHandlers.getTeamIntakePreview(
+    createReq({ query: { token: firstNameToken, recipientOnly: "true" } }),
+    firstNamePreview,
+  );
+  assert.deepEqual(firstNamePreview.payload.recipient.missingFields, ["firstName"]);
+
+  const firstNameSubmitted = createRes();
+  await authHandlers.submitTeamIntake(
+    createReq({
+      query: { token: firstNameToken, recipientOnly: "true" },
+      body: {
+        firstName: "Riley",
+        lastName: "Do not replace",
+        title: "Dr.",
+        email: "changed@example.net",
+        birthDate: { month: 1, day: 1, year: 1980 },
+        positionIds: [],
+        occurrenceAvailability: {},
+        blockoutRanges: [],
+      },
+    }),
+    firstNameSubmitted,
+  );
+  assert.equal(firstNameSubmitted.statusCode, 200, JSON.stringify(firstNameSubmitted.payload));
+  const completedFirstNameMember = await getDoc(
+    COLLECTIONS.teamRosterMembers,
+    memberMissingFirstNameId,
+  );
+  assert.equal(completedFirstNameMember.firstName, "Riley");
+  assert.equal(completedFirstNameMember.lastName, "Jones");
+  assert.equal(completedFirstNameMember.title, "Ms.");
+  assert.equal(completedFirstNameMember.email, "riley@example.com");
+  assert.deepEqual(completedFirstNameMember.birthDate, { month: 5, day: 3 });
+});
+
+test("personalized availability fallback accepts blank personal values and preserves availability", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("intake_availability_fallback");
+  const { teamId, memberIds } = await seedTeam(context, {
+    teamName: "Worship",
+    members: [{ firstName: "Avery", lastName: "Morgan" }],
+  });
+  const memberId = memberIds.Avery;
+  const serviceDate = calendarDaysFromToday(7);
+  const startsAt = `${serviceDate}T10:00:00.000Z`;
+  const occurrenceId = `service_1@${startsAt}`;
+  const form = await callHandler(authHandlers.createTeamIntakeForm, {
+    context,
+    body: {
+      name: "November availability",
+      startDate: calendarDaysFromToday(0),
+      endDate: calendarDaysFromToday(14),
+      responseDeadline: calendarDaysFromToday(14),
+      purpose: "team_availability",
+      teamIds: [teamId],
+      enabledFields: ["availability"],
+      availabilityOccurrences: [{
+        occurrenceId,
+        serviceId: "service_1",
+        name: "Sunday service",
+        serviceDate,
+        startsAt,
+      }],
+      active: true,
+    },
+  });
+  assert.equal(form.statusCode, 200, JSON.stringify(form.payload));
+  const formId = form.payload.form.formId;
+  const created = await callHandler(authHandlers.createTeamIntakeRecipients, {
+    context,
+    params: { formId },
+    body: { memberIds: [memberId] },
+  });
+  assert.equal(created.statusCode, 200, JSON.stringify(created.payload));
+  const link = await callHandler(authHandlers.getTeamIntakeRecipientLink, {
+    context,
+    params: { recipientId: created.payload.recipients[0].recipientId },
+  });
+  const token = link.payload.publicUrl.split("/a/")[1];
+
+  const submitted = createRes();
+  await authHandlers.submitTeamIntake(
+    createReq({
+      query: { token, recipientOnly: "true" },
+      body: {
+        firstName: "",
+        lastName: "",
+        title: "",
+        email: "",
+        birthDate: null,
+        occurrenceAvailability: { [occurrenceId]: "available" },
+      },
+    }),
+    submitted,
+  );
+  assert.equal(submitted.statusCode, 200, JSON.stringify(submitted.payload));
+  const member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+  assert.equal(member.firstName, "Avery");
+  assert.equal(member.lastName, "Morgan");
+  assert.equal(member.serviceAvailability[occurrenceId], "available");
 });
 
 test("notification requests accept personalized forms with blockout and notes fields", async (t) => {
@@ -18244,9 +18537,19 @@ test("effective Teams reads admit member appAccess through current roster links 
     churchId: fixture.churchId,
     userId: fixture.userId,
     role: "member",
-    appAccess: "member",
-    permissions: { teams: "none", teamScopes: {} },
+    controllerAccess: "none",
+    permissions: { teams: "none", services: "none", teamScopes: {} },
   });
+  await setDoc("chatSettings", fixture.churchId, {
+    timeZone: "America/Los_Angeles",
+  }, { merge: true });
+  const timeZone = await callHandler(authHandlers.getChurchServiceTimeZone, {
+    context,
+  });
+  assert.equal(timeZone.statusCode, 200);
+  assert.equal(timeZone.payload.serviceTimeZone, "UTC");
+  assert.equal(timeZone.payload.legacyTimeZoneSuggestion, undefined);
+
   const result = await callHandler(authHandlers.getTeamsBootstrap, { context });
   assert.equal(result.statusCode, 200);
   assert.deepEqual(
@@ -18261,7 +18564,9 @@ test("effective Teams reads admit member appAccess through current roster links 
       "lastName",
       "memberId",
       "positionIds",
+      "teamMembershipStatus",
     ]);
+    assert.equal(member.teamMembershipStatus, "assigned");
   }
   for (const field of [
     "intakeForms",
@@ -18273,13 +18578,26 @@ test("effective Teams reads admit member appAccess through current roster links 
     assert.equal(result.payload[field], undefined);
   }
   assertSafeReadSchedule(result.payload.schedules[0]);
+  assert.equal(
+    getMemberId(result.payload.schedules[0].assignments.occurrence.slot),
+    fixture.memberId,
+  );
   const detail = await callHandler(authHandlers.getTeamScheduleDetail, {
     context,
     params: { scheduleId: `${fixture.ids.worship}_schedule` },
   });
   assert.equal(detail.statusCode, 200);
   assertSafeReadSchedule(detail.payload.schedule);
+  assert.equal(
+    getMemberId(detail.payload.schedule.assignments.occurrence.slot),
+    fixture.memberId,
+  );
   assert.deepEqual(detail.payload.relatedSchedules, []);
+  const unrelatedSchedule = await callHandler(authHandlers.getTeamScheduleDetail, {
+    context,
+    params: { scheduleId: `${fixture.ids.av}_schedule` },
+  });
+  assert.equal(unrelatedSchedule.statusCode, 403);
   for (const handler of [
     authHandlers.getTeamIntakeSmsAttempts,
     authHandlers.listServicePlanTemplates,
@@ -18299,6 +18617,27 @@ test("effective Teams reads admit member appAccess through current roster links 
     body: { name: "Unsafe edit", memberIds: [] },
   });
   assert.equal(deniedWrite.statusCode, 403);
+  const deniedAssignment = await callHandler(
+    authHandlers.updateTeamScheduleAssignment,
+    {
+      context,
+      params: { scheduleId: `${fixture.ids.worship}_schedule` },
+      body: {
+        serviceId: "occurrence",
+        positionSlotKey: "slot",
+        memberId: fixture.memberId,
+      },
+    },
+  );
+  assert.equal(deniedAssignment.statusCode, 403);
+  const unchangedSchedule = await getDoc(
+    COLLECTIONS.teamSchedules,
+    `${fixture.ids.worship}_schedule`,
+  );
+  assert.deepEqual(unchangedSchedule.assignments.occurrence.slot, {
+    primaryMemberId: fixture.memberId,
+    shadows: [],
+  });
   await setDoc(
     COLLECTIONS.teams,
     fixture.ids.av,
@@ -19564,6 +19903,101 @@ test("team profile reads expose only the authorized shared-member slice", async 
   assert.equal(anonymousPatch.statusCode, 401);
 });
 
+test("team profile GET deduplicates bounded ownership reads for a multi-team member", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const fixture = await seedEffectiveTeamsReadFixture("team_profile_read_measurement");
+  const manager = await createHumanContext("team_profile_read_measurement_manager", {
+    churchId: fixture.churchId,
+    role: "member",
+    permissions: { teams: "none", teamScopes: { [fixture.ids.worship]: "edit" } },
+  });
+  const positionIds = [
+    `${fixture.ids.worship}_position`,
+    `${fixture.ids.av}_position`,
+    `${fixture.ids.worship}_position_extra`,
+    `${fixture.ids.av}_position_extra`,
+  ];
+  for (const [index, positionId] of positionIds.slice(2).entries()) {
+    const teamId = index === 0 ? fixture.ids.worship : fixture.ids.av;
+    await setDoc(COLLECTIONS.teamPositions, positionId, {
+      positionId,
+      churchId: fixture.churchId,
+      teamId,
+      name: `Extra ${index + 1}`,
+    }, { merge: false });
+  }
+  const areaIds = [
+    `${fixture.ids.worship}_area_one`,
+    `${fixture.ids.worship}_area_two`,
+    `${fixture.ids.av}_area_one`,
+  ];
+  for (const [index, areaId] of areaIds.entries()) {
+    const teamId = index === 2 ? fixture.ids.av : fixture.ids.worship;
+    await setDoc(COLLECTIONS.teamQualificationAreas, areaId, {
+      areaId,
+      churchId: fixture.churchId,
+      teamId,
+      name: `Skill area ${index + 1}`,
+    }, { merge: false });
+  }
+  const roleId = "team_profile_read_measurement_role";
+  await setDoc(COLLECTIONS.teamRoles, roleId, {
+    roleId,
+    churchId: fixture.churchId,
+    teamId: fixture.ids.worship,
+    name: "Worship lead",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId, {
+    positionIds,
+    desiredPositionIds: [...positionIds],
+    teamMemberships: {
+      [fixture.ids.worship]: { teamId: fixture.ids.worship, roleId },
+      [fixture.ids.av]: { teamId: fixture.ids.av },
+    },
+    qualifications: areaIds.map((areaId, index) => ({
+      qualificationId: `measurement-qualification-${index + 1}`,
+      areaId,
+      teamId: index === 2 ? fixture.ids.av : fixture.ids.worship,
+      status: "completed",
+    })),
+  }, { merge: true });
+
+  const observedReads = [];
+  setAuthReadObserverForServerTests((read) => {
+    if (read.type === "getDoc") observedReads.push(read);
+  });
+  let result;
+  try {
+    result = await callHandler(authHandlers.getTeamRosterMemberProfile, {
+      context: manager,
+      params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
+    });
+  } finally {
+    setAuthReadObserverForServerTests(null);
+  }
+
+  assert.equal(result.statusCode, 200, JSON.stringify(result.payload));
+  assert.equal(result.payload.teamProfile.positionIds.length, 2);
+  assert.equal(result.payload.teamProfile.qualifications.length, 2);
+  const measuredPositionAndAreaReads = observedReads.filter((read) =>
+    read.collectionName === COLLECTIONS.teamPositions && positionIds.includes(read.id) ||
+    read.collectionName === COLLECTIONS.teamQualificationAreas && areaIds.includes(read.id));
+  const measuredOwnerAndRoleReads = observedReads.filter((read) =>
+    read.collectionName === COLLECTIONS.teams && read.id === fixture.ids.av ||
+    read.collectionName === COLLECTIONS.teamRoles && read.id === roleId);
+  // Before: 4 positions + each owner team, 3 areas + each owner team, and the role = 15.
+  // After: 4 positions + 3 unique areas + one non-selected owner team + the role = 9.
+  assert.equal(measuredPositionAndAreaReads.length + measuredOwnerAndRoleReads.length, 9);
+  for (const positionId of positionIds) {
+    assert.equal(measuredPositionAndAreaReads.filter((read) => read.collectionName === COLLECTIONS.teamPositions && read.id === positionId).length, 1);
+  }
+  for (const areaId of areaIds) {
+    assert.equal(measuredPositionAndAreaReads.filter((read) => read.collectionName === COLLECTIONS.teamQualificationAreas && read.id === areaId).length, 1);
+  }
+  assert.equal(measuredOwnerAndRoleReads.filter((read) => read.collectionName === COLLECTIONS.teams && read.id === fixture.ids.av).length, 1);
+  assert.equal(measuredOwnerAndRoleReads.filter((read) => read.collectionName === COLLECTIONS.teamRoles && read.id === roleId).length, 1);
+});
+
 test("team profile patches replace one team slice and reject cross-team fields", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const fixture = await seedEffectiveTeamsReadFixture("team_profile_write_isolation");
@@ -19907,6 +20341,9 @@ test("Services catalog reads follow Services grants while scoped Teams retain on
     body: { microphones: [], audiences: [] },
   })).statusCode, 200);
 
+  await setDoc(COLLECTIONS.teams, "scoped-team", {
+    teamId: "scoped-team", churchId: owner.churchId, name: "Scoped team",
+  });
   const scoped = await createHumanContext("services_read_team_scope", {
     churchId: owner.churchId,
     role: "member",

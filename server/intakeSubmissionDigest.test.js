@@ -11,6 +11,7 @@ import crypto from "node:crypto";
 const {
   COLLECTIONS,
   getDoc,
+  queryDocs,
   nowIso,
   persistIntakeSubmissionForServerTests,
   recoverPendingIntakeSubmissionDigests,
@@ -50,187 +51,19 @@ afterEach(() => {
   setServerFirestoreForTests(null);
 });
 
-const clone = (value) => structuredClone(value);
-const mergeFirestore = (current, update) => {
-  const result = { ...(current || {}) };
-  for (const [key, value] of Object.entries(update)) {
-    result[key] =
-      value && typeof value === "object" && !Array.isArray(value)
-        ? mergeFirestore(result[key], value)
-        : value;
-  }
-  return result;
-};
+import { createDigestFirestore as createFirestore } from "./fixtures/digestFirestore.js";
 
-const createFirestore = (seed = {}) => {
-  const stores = new Map(
-    Object.entries(seed).map(([name, docs]) => [
-      name,
-      new Map(Object.entries(docs).map(([id, value]) => [id, clone(value)])),
-    ]),
-  );
-  const getStore = (name) => {
-    if (!stores.has(name)) stores.set(name, new Map());
-    return stores.get(name);
-  };
-  let database;
-  const snapshot = (id, data, ref) => ({
-    id,
-    ref,
-    exists: Boolean(data),
-    data: () => (data ? clone(data) : undefined),
-  });
-  const collection = (name) => {
-    const store = getStore(name);
-    const doc = (id) => {
-      const ref = {
-        id,
-        collection: name,
-        async get() {
-          return snapshot(id, store.get(id), ref);
-        },
-        async set(data, options = {}) {
-          store.set(
-            id,
-            options.merge ? mergeFirestore(store.get(id), data) : clone(data),
-          );
-        },
-        async update(data) {
-          const current = store.get(id);
-          if (!current) throw new Error("document does not exist");
-          store.set(id, { ...current, ...clone(data) });
-        },
-      };
-      return ref;
-    };
-    return {
-      doc,
-      where(field, op, value) {
-        const filters = [{ field, op, value }];
-        let limit = Infinity;
-        let cursor = null;
-        let cursorArgs = null;
-        const query = {
-          where(nextField, nextOp, nextValue) {
-            filters.push({ field: nextField, op: nextOp, value: nextValue });
-            return query;
-          },
-          orderBy() {
-            return query;
-          },
-          startAfter(...args) {
-            cursorArgs = args;
-            return query;
-          },
-          limit(count) {
-            limit = count;
-            return query;
-          },
-          async get() {
-            await database.beforeQuery?.(name, filters);
-            let docs = [...store.entries()]
-              .filter(([id, value]) =>
-                filters.every((filter) => {
-                  const actual =
-                    filter.field === "__name__" ? id : value[filter.field];
-                  if (filter.op === "==") return actual === filter.value;
-                  if (filter.op === ">") return actual > filter.value;
-                  return false;
-                }),
-              )
-              .sort(
-                ([idA, a], [idB, b]) =>
-                  String(a.pendingDigestSince || "").localeCompare(
-                    String(b.pendingDigestSince || ""),
-                  ) || idA.localeCompare(idB),
-              );
-            if (cursorArgs) {
-              if (cursorArgs.length === 1 && cursorArgs[0]?.id) {
-                docs = docs.filter(([docId]) => docId > cursorArgs[0].id);
-              } else {
-                const [since, id] = cursorArgs;
-                docs = docs.filter(
-                  ([docId, value]) =>
-                    value.pendingDigestSince > since ||
-                    (value.pendingDigestSince === since && docId > id),
-                );
-              }
-            }
-            docs = docs.slice(0, limit).map(([id, value]) => ({
-              id,
-              ref: doc(id),
-              data: () => clone(value),
-            }));
-            return { docs };
-          },
-        };
-        return query;
-      },
-    };
-  };
-
-  let transactionTail = Promise.resolve();
-  database = {
-    collection,
-    async runTransaction(callback) {
-      if (database.beforeTransaction) await database.beforeTransaction();
-      let release;
-      const previous = transactionTail;
-      transactionTail = new Promise((resolve) => {
-        release = resolve;
-      });
-      await previous;
-      try {
-        const run = async () => {
-          const writes = [];
-          const result = await callback({
-            async get(ref) {
-              if (typeof ref.get === "function") return ref.get();
-              throw new Error("Unsupported transaction query");
-            },
-            set(ref, data, options) {
-              writes.push({ type: "set", ref, data, options });
-            },
-            update(ref, data) {
-              writes.push({ type: "update", ref, data });
-            },
-          });
-          return { result, writes };
-        };
-        let pending = await run();
-        if (database.retryTransactions > 0) {
-          database.retryTransactions -= 1;
-          database.transactionCallbackRuns += 1;
-          pending = await run();
-        }
-        const { result, writes } = pending;
-        for (const write of writes) {
-          const store = getStore(write.ref.collection);
-          if (write.type === "update") {
-            store.set(write.ref.id, {
-              ...store.get(write.ref.id),
-              ...clone(write.data),
-            });
-          } else {
-            const next = write.options?.merge
-              ? mergeFirestore(store.get(write.ref.id), write.data)
-              : clone(write.data);
-            store.set(write.ref.id, next);
-          }
-        }
-        return result;
-      } finally {
-        release();
-      }
-    },
-    read(name, id) {
-      return clone(getStore(name).get(id));
-    },
-    retryTransactions: 0,
-    transactionCallbackRuns: 0,
-  };
-  return database;
-};
+test("missing email provider does not create an intake delivery or close retryable work", async () => {
+  setIntakeNotifyRecipientsForServerTests(["lead@example.test"]);
+  const { formId } = await createPendingDigest();
+  await sendIntakeSubmissionDigest(formId);
+  const form = await getDoc(COLLECTIONS.teamIntakeForms, formId);
+  assert.ok(form.pendingDigestSince);
+  const key = crypto.createHash("sha256").update("lead@example.test").digest("hex");
+  assert.equal(form.pendingDigestAttempts[key], 1);
+  assert.equal((await queryDocs(COLLECTIONS.notificationDeliveries,
+    [{ field: "subject", value: formId }])).length, 0);
+});
 
 test("a digest with no eligible recipients closes without sending", async () => {
   setIntakeNotifyRecipientsForServerTests([]);

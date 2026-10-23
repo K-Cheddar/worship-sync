@@ -42,6 +42,13 @@ import { useToast } from "../../context/toastContext";
 type PreviewPosition = TeamIntakePreview["positions"][number];
 type MemberDetailField = "title" | "firstName" | "lastName" | "birthDate" | "email";
 type MemberDetailErrors = Partial<Record<MemberDetailField, string>>;
+const PERSONAL_INFORMATION_FIELDS: MemberDetailField[] = [
+  "title",
+  "firstName",
+  "lastName",
+  "birthDate",
+  "email",
+];
 
 const emptyPayload = (): TeamIntakeSubmissionPayload => ({
   firstName: "",
@@ -101,38 +108,50 @@ const TeamIntakePublic = () => {
     };
   }, [personalizedRoute, token]);
 
+  /** Render only form-enabled fields, and only missing fields on recipient links. */
+  const enabledFields = preview ? resolveIntakeFormFields(preview.form) : [];
+  const isPersonalized = Boolean(preview?.recipient);
+  const missingPersonalFields = new Set(preview?.recipient?.missingFields || []);
+  const personalInformationFields = PERSONAL_INFORMATION_FIELDS.filter(
+    (field) =>
+      enabledFields.includes(field) &&
+      (!isPersonalized || missingPersonalFields.has(field)),
+  );
+  const shouldCollectPersonalField = (field: MemberDetailField) =>
+    personalInformationFields.includes(field);
+
   const submit = async () => {
     const nextFieldErrors: MemberDetailErrors = {};
-    if (!isPersonalized && enabledFields.includes("title") && !payload.title?.trim()) {
+    if (shouldCollectPersonalField("title") && !payload.title?.trim()) {
       nextFieldErrors.title = "Enter your title.";
     }
-    if (!isPersonalized && enabledFields.includes("firstName") && !payload.firstName.trim()) {
+    if (shouldCollectPersonalField("firstName") && !payload.firstName.trim()) {
       nextFieldErrors.firstName = "Enter your first name.";
     }
-    if (!isPersonalized && enabledFields.includes("lastName") && !payload.lastName.trim()) {
+    if (shouldCollectPersonalField("lastName") && !payload.lastName.trim()) {
       nextFieldErrors.lastName = "Enter your last name.";
     }
-    if (!isPersonalized && enabledFields.includes("birthDate") && !payload.birthDate) {
+    if (shouldCollectPersonalField("birthDate") && !payload.birthDate) {
       nextFieldErrors.birthDate = "Enter your birthday.";
     }
-    if (!isPersonalized && enabledFields.includes("email") && !payload.email?.trim()) {
+    if (shouldCollectPersonalField("email") && !payload.email?.trim()) {
       nextFieldErrors.email = "Enter your email.";
     }
 
     const missingMemberDetailFields = [
-      !isPersonalized && enabledFields.includes("title") && !payload.title?.trim()
+      shouldCollectPersonalField("title") && !payload.title?.trim()
         ? "title"
         : "",
-      !isPersonalized && enabledFields.includes("firstName") && !payload.firstName.trim()
+      shouldCollectPersonalField("firstName") && !payload.firstName.trim()
         ? "first name"
         : "",
-      !isPersonalized && enabledFields.includes("lastName") && !payload.lastName.trim()
+      shouldCollectPersonalField("lastName") && !payload.lastName.trim()
         ? "last name"
         : "",
-      !isPersonalized && enabledFields.includes("birthDate") && !payload.birthDate
+      shouldCollectPersonalField("birthDate") && !payload.birthDate
         ? "birthday"
         : "",
-      !isPersonalized && enabledFields.includes("email") && !payload.email?.trim()
+      shouldCollectPersonalField("email") && !payload.email?.trim()
         ? "email"
         : "",
     ].filter(Boolean);
@@ -156,7 +175,7 @@ const TeamIntakePublic = () => {
       showToast(message, "neutral");
       return;
     }
-    const birthdayError = isPersonalized
+    const birthdayError = isPersonalized && !shouldCollectPersonalField("birthDate")
       ? ""
       : getBirthDateValidationError(payload.birthDate);
     if (birthdayError) {
@@ -177,9 +196,6 @@ const TeamIntakePublic = () => {
   };
 
   const churchLogoUrl = preview?.churchLogoUrl?.trim() || "";
-  /** The public form only renders fields selected by its owner. */
-  const enabledFields = preview ? resolveIntakeFormFields(preview.form) : [];
-  const isPersonalized = Boolean(preview?.recipient);
   const collectsAvailability = enabledFields.includes("availability") && Boolean(preview?.form.availabilityOccurrences?.length);
   const personalizedSubmitLabel = collectsAvailability ? "Submit availability" : "Submit response";
 
@@ -312,18 +328,12 @@ const TeamIntakePublic = () => {
         </header>
 
         <section className={cn(boardIntakeFormSectionClassName, "mt-4 space-y-6")}>
-          {!isPersonalized && [
-            "title",
-            "firstName",
-            "lastName",
-            "birthDate",
-            "email",
-          ].some((field) => enabledFields.includes(field as (typeof enabledFields)[number])) ? (
+          {personalInformationFields.length > 0 ? (
             <fieldset
               aria-label="Personal information"
               className="grid grid-cols-12 gap-3 rounded-md border border-stone-700 bg-stone-950/20 p-4"
             >
-              {enabledFields.includes("title") ? (
+              {shouldCollectPersonalField("title") ? (
                 <Input
                   label="Title"
                   value={payload.title || ""}
@@ -339,7 +349,7 @@ const TeamIntakePublic = () => {
                   }}
                 />
               ) : null}
-              {enabledFields.includes("firstName") ? (
+              {shouldCollectPersonalField("firstName") ? (
                 <Input
                   label="First name"
                   value={payload.firstName}
@@ -348,7 +358,7 @@ const TeamIntakePublic = () => {
                   inputClassName={boardDarkFieldClassName}
                   className={cn(
                     "col-span-6",
-                    enabledFields.includes("title") ? "sm:col-span-5" : "sm:col-span-6",
+                    shouldCollectPersonalField("title") ? "sm:col-span-5" : "sm:col-span-6",
                   )}
                   required
                   onChange={(firstName) => {
@@ -357,7 +367,7 @@ const TeamIntakePublic = () => {
                   }}
                 />
               ) : null}
-              {enabledFields.includes("lastName") ? (
+              {shouldCollectPersonalField("lastName") ? (
                 <Input
                   label="Last name"
                   value={payload.lastName}
@@ -366,7 +376,7 @@ const TeamIntakePublic = () => {
                   inputClassName={boardDarkFieldClassName}
                   className={cn(
                     "col-span-6",
-                    enabledFields.includes("title") ? "sm:col-span-5" : "sm:col-span-6",
+                    shouldCollectPersonalField("title") ? "sm:col-span-5" : "sm:col-span-6",
                   )}
                   required
                   onChange={(lastName) => {
@@ -376,7 +386,7 @@ const TeamIntakePublic = () => {
                 />
               ) : null}
 
-          {enabledFields.includes("birthDate") ? (
+          {shouldCollectPersonalField("birthDate") ? (
             <BirthDateField
               label="Birthday"
               value={payload.birthDate}
@@ -400,7 +410,7 @@ const TeamIntakePublic = () => {
               label has to say so before they submit — the server rejects a
               missing address, and discovering that after filling the whole
               form is the worst time to learn it. */}
-          {enabledFields.includes("email") ? (
+          {shouldCollectPersonalField("email") ? (
             <Input
               label="Email"
               type="email"
