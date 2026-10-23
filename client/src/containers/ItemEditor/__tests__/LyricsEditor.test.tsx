@@ -399,6 +399,7 @@ describe("LyricsEditor", () => {
 
     await waitFor(() => {
       expect(onSaveLyrics).toHaveBeenCalledWith({
+        baselineSong: librarySong,
         arrangements: librarySong.arrangements,
         selectedArrangement: 0,
         songMetadata: undefined,

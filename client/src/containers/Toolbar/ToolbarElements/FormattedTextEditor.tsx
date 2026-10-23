@@ -69,7 +69,8 @@ type fieldType =
 const FormattedTextEditor = ({ className }: { className?: string }) => {
   const item = useSelector((state) => state.undoable.present.item);
 
-  const { slides, selectedSlide, type } = item;
+  const { selectedSlide, type } = item;
+  const slides = getActiveItemSlides(item);
 
   const formattedTextDisplayInfo = useMemo(() => {
     return slides[selectedSlide]?.formattedTextDisplayInfo;

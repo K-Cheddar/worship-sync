@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-06-song-v2-editing",
+  "date": "2026-10-06",
+  "type": "improved",
+  "title": "Keep editing songs after migration",
+  "description": "Songs remain editable after moving to the newer song format. Update song details, lyrics, slides, and audio as usual."
+}

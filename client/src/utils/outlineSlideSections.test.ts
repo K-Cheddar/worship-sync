@@ -122,6 +122,29 @@ describe("outlineSlideSections", () => {
     expect(neighborSlides.map((item) => item.id)).toEqual(["cached"]);
   });
 
+  it("recovers selected arrangement legacy root slides when another arrangement has slides", () => {
+    const doc = {
+      ...songDoc("song-legacy", "1-a", []),
+      selectedArrangement: 0,
+      slides: [slide("stale-root", "Stale root")],
+      arrangements: [
+        { id: "empty", name: "Empty", formattedLyrics: [], songOrder: [], slides: [] },
+        { id: "usable", name: "Usable", formattedLyrics: [], songOrder: [], slides: [slide("arr-slide", "Arrangement")] },
+      ],
+    } as DBItem;
+    const docsById = buildDocsById({
+      allSongDocs: [doc],
+      allFreeFormDocs: [],
+      allTimerDocs: [],
+      allBibleDocs: [],
+    });
+    const slides = resolveSlidesForOutlineItem(
+      outlineItem({ _id: "song-legacy", listId: "l-1", name: "Song", type: "song" }),
+      { activeItem: {}, docsById },
+    );
+    expect(slides.map((item) => item.id)).toEqual(["stale-root"]);
+  });
+
   it("uses allDocs slides for inactive items and keys sections by listId", () => {
     const docsById = buildDocsById({
       allSongDocs: [

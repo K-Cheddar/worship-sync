@@ -585,7 +585,7 @@ const CurrentServiceViewerToolbar = ({
     role="toolbar"
     aria-label="Current service toolbar"
     data-current-service-toolbar
-    className="sticky top-0 z-20 flex w-full flex-wrap items-center gap-2 border border-neutral-700 bg-neutral-900 p-3 shadow-lg sm:gap-3 lg:grid lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]"
+    className="sticky top-0 left-1/2 z-30 order-0 -mt-4 flex w-dvw max-w-none -translate-x-1/2 flex-wrap items-center gap-2 border border-neutral-700 bg-neutral-900/95 p-3 shadow-lg sm:-mt-6 sm:gap-3 lg:grid lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]"
   >
     <div className="order-1 shrink-0 lg:col-start-1">
       <Button

@@ -1,3 +1,4 @@
+import type { SongLibraryDiagnostic } from "../utils/songLibraryDiscovery";
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import { DBItem } from "../types";
 import {
@@ -5,8 +6,15 @@ import {
   updateLocalImageReferenceInItem,
   type LocalImageReferencePatch,
 } from "../utils/localImageAssets";
+import { normalizeSongForLibrary } from "../utils/activeItemSlides";
 
-function getDocsKey(type: string): keyof AllDocsState | null {
+const normalizeLibrarySong = (song: DBItem): DBItem => normalizeSongForLibrary(
+  song.docType === "song-v2-root"
+    ? { ...song, slides: [], arrangements: song.arrangements.map((arrangement) => ({ ...arrangement, slides: [] })) }
+    : song,
+);
+
+function getDocsKey(type: string): "allSongDocs" | "allFreeFormDocs" | "allTimerDocs" | "allBibleDocs" | null {
   if (type === "song") return "allSongDocs";
   if (type === "free") return "allFreeFormDocs";
   if (type === "timer") return "allTimerDocs";
@@ -15,6 +23,7 @@ function getDocsKey(type: string): keyof AllDocsState | null {
 }
 
 type AllDocsState = {
+  songLibraryDiagnostics: SongLibraryDiagnostic[];
   allSongDocs: DBItem[];
   allFreeFormDocs: DBItem[];
   allTimerDocs: DBItem[];
@@ -22,6 +31,7 @@ type AllDocsState = {
 };
 
 const initialState: AllDocsState = {
+  songLibraryDiagnostics: [],
   allSongDocs: [],
   allFreeFormDocs: [],
   allTimerDocs: [],
@@ -32,8 +42,11 @@ export const allDocsSlice = createSlice({
   name: "allDocs",
   initialState,
   reducers: {
+    updateSongLibraryDiagnostics: (state, action: PayloadAction<SongLibraryDiagnostic[]>) => {
+      state.songLibraryDiagnostics = action.payload;
+    },
     updateAllSongDocs: (state, action: PayloadAction<DBItem[]>) => {
-      state.allSongDocs = action.payload;
+      state.allSongDocs = action.payload.map(normalizeLibrarySong);
     },
     updateAllFreeFormDocs: (state, action: PayloadAction<DBItem[]>) => {
       state.allFreeFormDocs = action.payload;
@@ -45,11 +58,15 @@ export const allDocsSlice = createSlice({
       state.allBibleDocs = action.payload;
     },
     upsertItemInAllDocs: (state, action: PayloadAction<DBItem>) => {
-      const doc = action.payload;
+      const doc = action.payload.type === "song"
+        ? normalizeLibrarySong(action.payload)
+        : action.payload;
       const key = getDocsKey(doc.type);
       if (!key) return;
       const arr = state[key];
       const idx = arr.findIndex((d) => d._id === doc._id);
+      if (doc.type === "song" && doc.docType !== "song-v2-root" &&
+        (arr[idx]?.docType === "song-v2-root" || state.songLibraryDiagnostics.some((diagnostic) => diagnostic.songId === doc._id))) return;
       if (idx >= 0) {
         arr[idx] = doc;
       } else {
@@ -57,11 +74,16 @@ export const allDocsSlice = createSlice({
       }
     },
     upsertItemsInAllDocs: (state, action: PayloadAction<DBItem[]>) => {
-      for (const doc of action.payload) {
+      for (const inputDoc of action.payload) {
+        const doc = inputDoc.type === "song"
+          ? normalizeLibrarySong(inputDoc)
+          : inputDoc;
         const key = getDocsKey(doc.type);
         if (!key) continue;
         const arr = state[key];
         const idx = arr.findIndex((candidate) => candidate._id === doc._id);
+        if (doc.type === "song" && doc.docType !== "song-v2-root" &&
+          (arr[idx]?.docType === "song-v2-root" || state.songLibraryDiagnostics.some((diagnostic) => diagnostic.songId === doc._id))) continue;
         if (idx >= 0) arr[idx] = doc;
         else state[key] = [...arr, doc];
       }
@@ -131,6 +153,7 @@ export const allDocsSlice = createSlice({
 });
 
 export const {
+  updateSongLibraryDiagnostics,
   updateAllSongDocs,
   updateAllFreeFormDocs,
   updateAllTimerDocs,

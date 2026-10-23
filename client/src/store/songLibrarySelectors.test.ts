@@ -61,3 +61,10 @@ describe("selectSongLibrary", () => {
     });
   });
 });
+
+
+it("suppresses stale index rows while activated v2 songs are incomplete", () => {
+  const state = createState({ items: [songItem("song-1", "Stale")] });
+  state.allDocs.songLibraryDiagnostics = [{ songId: "song-1", rootId: "root", code: "incomplete-v2", message: "Missing arrangement" }];
+  expect(selectSongLibrary(state).songs).toEqual([]);
+});

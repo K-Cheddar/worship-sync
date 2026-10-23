@@ -93,7 +93,7 @@ export const createSongLibraryIndexRepairMiddleware = () => {
       if (allDocsSlice.actions.updateAllSongDocs.match(action)) {
         for (const id of deletedSongIds) {
           const durableDoc = state.allDocs.allSongDocs.find((doc) => doc._id === id);
-          if (!durableDoc) deletedSongIds.delete(id);
+          if (!durableDoc && !state.allDocs.songLibraryDiagnostics?.some((diagnostic) => diagnostic.songId === id)) deletedSongIds.delete(id);
         }
       }
 

@@ -109,6 +109,73 @@ export const setGlobalContentDatabase = (
   setActiveContentDatabase(owner, databaseInstance);
 };
 
+type CleanupMaintenanceState = {
+  lastStartedAt: number;
+  running?: Promise<void>;
+  timer?: ReturnType<typeof setTimeout>;
+  consecutiveFailures: number;
+  rerunRequested: boolean;
+};
+const cleanupMaintenanceRuns = new WeakMap<PouchDB.Database, CleanupMaintenanceState>();
+const scheduleSongV2CleanupMaintenance = (db: PouchDB.Database, force = false) => {
+  const state = cleanupMaintenanceRuns.get(db) ?? {
+    lastStartedAt: 0,
+    consecutiveFailures: 0,
+    rerunRequested: false,
+  };
+  cleanupMaintenanceRuns.set(db, state);
+
+  const scheduleAfter = (delay: number) => {
+    if (state.timer) return;
+    state.timer = setTimeout(() => {
+      state.timer = undefined;
+      scheduleSongV2CleanupMaintenance(db, true);
+    }, delay);
+  };
+  const retryDelay = () => Math.min(30_000 * 2 ** Math.min(state.consecutiveFailures - 1, 4), 300_000);
+
+  if (state.running) {
+    state.rerunRequested = true;
+    return;
+  }
+  if (state.timer) {
+    if (!force) return;
+    clearTimeout(state.timer);
+    state.timer = undefined;
+  }
+  const throttleRemaining = 30_000 - (Date.now() - state.lastStartedAt);
+  if (!force && throttleRemaining > 0) {
+    scheduleAfter(throttleRemaining);
+    return;
+  }
+  state.lastStartedAt = Date.now();
+  state.running = import("../utils/songV2Writer")
+    .then(({ reconcilePendingSongV2Cleanup }) => reconcilePendingSongV2Cleanup(db, 20))
+    .then((result) => {
+      if (result.quarantined.length) {
+        console.warn("Song cleanup records were quarantined after their target revisions changed:", result.quarantined);
+      }
+      if (result.cleanupErrors.length) {
+        console.error("Song cleanup maintenance left records for a later retry:", result.cleanupErrors);
+      }
+      state.consecutiveFailures = result.cleanupErrors.length ? state.consecutiveFailures + 1 : 0;
+      if (result.cleanupErrors.length) scheduleAfter(retryDelay());
+      else if (result.hasMore) scheduleAfter(250);
+    })
+    .catch((error) => {
+      state.consecutiveFailures += 1;
+      console.error("Could not run song cleanup maintenance:", error);
+      scheduleAfter(retryDelay());
+    })
+    .finally(() => {
+      state.running = undefined;
+      if (state.rerunRequested) {
+        state.rerunRequested = false;
+        scheduleAfter(0);
+      }
+    });
+};
+
 const DEMO_DATABASE_KEY = "demo";
 const GUEST_DATABASE_NAME = "worship-sync-demo-guest";
 
@@ -276,6 +343,10 @@ const ControllerInfoProvider = ({ children }: any) => {
               updater.current.dispatchEvent(
                 new CustomEvent("update", { detail: event.change.docs })
               );
+              if ((event.change.docs as Array<{ docType?: string }> | undefined)
+                ?.some((doc) => doc.docType === "song-v2-cleanup")) {
+                scheduleSongV2CleanupMaintenance(localDb);
+              }
             }
           })
           .on("active", () => {
@@ -526,6 +597,7 @@ const ControllerInfoProvider = ({ children }: any) => {
             databaseKey: broadcastDatabaseKey,
             churchId: globalFireDbInfo.churchId || "",
           });
+          scheduleSongV2CleanupMaintenance(localDb, true);
           if (broadcastDatabaseKey) {
             updateGlobalBroadcast(broadcastDatabaseKey);
           }
@@ -634,6 +706,7 @@ const ControllerInfoProvider = ({ children }: any) => {
               databaseKey: activeDatabaseKey,
               churchId: globalFireDbInfo.churchId || "",
             });
+            scheduleSongV2CleanupMaintenance(localDb, true);
             if (broadcastDatabaseKey) {
               updateGlobalBroadcast(broadcastDatabaseKey);
             }

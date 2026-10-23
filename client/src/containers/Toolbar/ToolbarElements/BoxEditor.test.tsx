@@ -51,39 +51,40 @@ jest.mock("../../../components/PopOver/PopoverPanel", () => ({
   ),
 }));
 
-const makeItem = (overrides: Partial<ItemState> = {}): ItemState =>
-  ({
+const makeItem = (overrides: Partial<ItemState> = {}): ItemState => {
+  const type = overrides.type ?? "song";
+  const songSlide = {
+    id: "slide-1",
+    type: "Media" as const,
+    name: "Slide 1",
+    boxes: [
+      { id: "bg", width: 100, height: 100, x: 0, y: 0 },
+      { id: "text", width: 50, height: 50, x: 0, y: 0, words: "Words" },
+    ],
+  };
+  return ({
     _id: "item-default",
     name: "Item",
-    type: "song",
+    type,
     selectedArrangement: 0,
     selectedSlide: 0,
     selectedBox: 1,
-    slides: [
-      {
-        id: "slide-1",
-        type: "Media",
-        name: "Slide 1",
-        boxes: [
-          { id: "bg", width: 100, height: 100, x: 0, y: 0 },
-          { id: "text", width: 50, height: 50, x: 0, y: 0, words: "Words" },
-        ],
-      },
-    ],
-    arrangements: [
+    slides: type === "song" ? [] : [songSlide],
+    arrangements: type === "song" ? [
       {
         id: "arr-1",
         name: "Master",
-        slides: [],
         songOrder: [],
         formattedLyrics: [
           { id: "lyric-1", type: "Verse", name: "Verse 1", words: "One\n\nTwo", slideSpan: 1 },
         ],
+        slides: [songSlide],
       },
-    ],
+    ] : [],
     shouldSendTo: { projector: true, monitor: true, stream: true },
     ...overrides,
   }) as ItemState;
+};
 
 describe("BoxEditor", () => {
   beforeEach(() => {
@@ -124,6 +125,30 @@ describe("BoxEditor", () => {
         message: "This song has extra blank lines. Remove them?",
       })
     );
+  });
+
+  it("reads and edits box dimensions from the selected song arrangement", () => {
+    const updateItem = jest.fn();
+    const item = makeItem();
+    mockState.undoable.present.item = item;
+
+    render(<BoxEditor updateItem={updateItem} isMobile={false} />);
+
+    expect(screen.getByLabelText(/Width/i)).toHaveValue(50);
+    fireEvent.change(screen.getByLabelText(/Width/i), {
+      target: { value: "60" },
+    });
+    act(() => jest.runAllTimers());
+
+    expect(mockUpdateBoxProperties).toHaveBeenCalledWith(expect.objectContaining({
+      updatedProperties: expect.objectContaining({ width: 60 }),
+      item: expect.objectContaining({
+        slides: [],
+        arrangements: [expect.objectContaining({
+          slides: [expect.objectContaining({ boxes: expect.arrayContaining([expect.objectContaining({ width: 50 })]) })],
+        })],
+      }),
+    }));
   });
 
   it("shows a cleanup toast after a free-item height change with cleanable newlines", () => {

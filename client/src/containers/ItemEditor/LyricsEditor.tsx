@@ -1,4 +1,7 @@
-import { useEffect, useState } from "react";
+import { ControllerInfoContext } from "../../context/controllerInfo";
+import { loadSong } from "../../utils/songPersistence";
+import Button from "../../components/Button/Button";
+import { useContext, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useSelector, useDispatch } from "../../hooks";
 import { setIsLyricsEditorOpen } from "../../store/itemSlice";
@@ -16,6 +19,7 @@ type LyricsEditorProps = {
   isOpen?: boolean;
   onClose?: () => void;
   onSaveLyrics?: (payload: {
+    baselineSong: DBItem;
     arrangements: Arrangment[];
     selectedArrangement: number;
     songMetadata?: SongMetadata;
@@ -37,9 +41,34 @@ const LyricsEditor = ({ song = null, isOpen, onClose, onSaveLyrics }: LyricsEdit
   );
   const dispatch = useDispatch();
   const [panelReady, setPanelReady] = useState(false);
+  const { db } = useContext(ControllerInfoContext) || {};
+  const [libraryLoad, setLibraryLoad] = useState<{
+    songId: string; db: PouchDB.Database | undefined; song?: DBItem; error?: string;
+  } | null>(null);
 
   const isLibraryEditor = Boolean(song);
   const editorIsOpen = isLibraryEditor ? Boolean(isOpen) : controllerIsEditMode;
+
+  const v2SongId = song?.docType === "song-v2-root" ? song._id : undefined;
+  useEffect(() => {
+    if (!editorIsOpen || !v2SongId) {
+      setLibraryLoad(null);
+      return;
+    }
+    let cancelled = false;
+    setLibraryLoad(null);
+    const hydrate = async () => {
+      try {
+        if (!db) throw new Error("The song library is not available. Close and try again.");
+        const hydrated = await loadSong(db, v2SongId);
+        if (!cancelled) setLibraryLoad({ songId: v2SongId, db, song: hydrated });
+      } catch {
+        if (!cancelled) setLibraryLoad({ songId: v2SongId, db, error: "Could not load this song. Close and try again." });
+      }
+    };
+    void hydrate();
+    return () => { cancelled = true; };
+  }, [db, editorIsOpen, v2SongId]);
 
   useEffect(() => {
     if (isLibraryEditor) return;
@@ -63,17 +92,32 @@ const LyricsEditor = ({ song = null, isOpen, onClose, onSaveLyrics }: LyricsEdit
     return null;
   }
 
-  if (!panelReady) {
-    return <LyricsEditorLoadingSkeleton />;
+  const exactLoad = libraryLoad?.songId === v2SongId && libraryLoad?.db === db ? libraryLoad : null;
+  let panel;
+  if (v2SongId && exactLoad?.error) {
+    panel = (
+      <div role="alert" className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-4 bg-homepage-canvas">
+        <p>{exactLoad.error}</p>
+        <Button onClick={onClose}>Close</Button>
+      </div>
+    );
+  } else if (!panelReady || (v2SongId && !exactLoad?.song)) {
+    panel = (
+      <>
+        <LyricsEditorLoadingSkeleton />
+        {v2SongId ? <Button className="absolute right-2 top-2 z-40" onClick={onClose}>Close</Button> : null}
+      </>
+    );
+  } else {
+    panel = (
+      <LyricsEditorPanel
+        key={song?._id ?? "controller"}
+        song={v2SongId ? exactLoad?.song : song}
+        onClose={onClose}
+        onSaveLyrics={onSaveLyrics}
+      />
+    );
   }
-
-  const panel = (
-    <LyricsEditorPanel
-      song={song}
-      onClose={onClose}
-      onSaveLyrics={onSaveLyrics}
-    />
-  );
 
   // Library entry points can live inside a sheet. Portal the editor so it
   // retains the controller's normal full-screen editing layout.

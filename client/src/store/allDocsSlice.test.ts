@@ -1,5 +1,6 @@
 import { configureStore } from "@reduxjs/toolkit";
 import allDocsReducer, {
+  allDocsSlice,
   updateAllSongDocs,
   updateAllFreeFormDocs,
   updateAllTimerDocs,
@@ -135,4 +136,60 @@ describe("allDocsSlice", () => {
       ]);
     });
   });
+});
+describe("allDocsSlice song normalization boundary", () => {
+  it("keeps bulk and individual song upserts arrangement-canonical", () => {
+    const legacySlide = {
+      id: "legacy",
+      type: "Verse" as const,
+      name: "Verse 1",
+      boxes: [],
+      monitorCurrentBandBoxes: [{ id: "clone" }],
+    };
+    const song = {
+      _id: "song-1",
+      name: "Song",
+      type: "song",
+      slides: [legacySlide],
+      monitorLayout: { currentFontSizePx: 40, nextFontSizePx: 39 },
+      arrangements: [{
+        id: "arr-1",
+        name: "Master",
+        formattedLyrics: [],
+        songOrder: [],
+        slides: [],
+      }],
+    } as unknown as DBItem;
+
+    const bulk = allDocsSlice.reducer(
+      undefined,
+      allDocsSlice.actions.updateAllSongDocs([song]),
+    ).allSongDocs[0];
+    const single = allDocsSlice.reducer(
+      undefined,
+      allDocsSlice.actions.upsertItemInAllDocs(song),
+    ).allSongDocs[0];
+    const multiple = allDocsSlice.reducer(
+      undefined,
+      allDocsSlice.actions.upsertItemsInAllDocs([song]),
+    ).allSongDocs[0];
+
+    for (const normalized of [bulk, single, multiple]) {
+      expect(normalized).not.toHaveProperty("slides");
+      expect(normalized).not.toHaveProperty("monitorLayout");
+      expect(normalized.arrangements[0].slides[0]).not.toHaveProperty("monitorCurrentBandBoxes");
+      expect(normalized.arrangements[0].slides[0].id).toBe("legacy");
+    }
+  });
+});
+
+
+it("keeps exact v2 upserts lightweight and rejects stale legacy echoes", () => {
+  const store = createStore();
+  const exact: DBItem = { ...makeDoc("v2", "song"), docType: "song-v2-root", arrangements: [{ id: "a", name: "Master", formattedLyrics: [], songOrder: [], slides: [{ id: "s", type: "Verse", name: "Verse", boxes: [] }] }] };
+  store.dispatch(upsertItemInAllDocs(exact));
+  store.dispatch(upsertItemInAllDocs({ ...makeDoc("v2", "song"), name: "Stale" }));
+  store.dispatch(upsertItemsInAllDocs([{ ...makeDoc("v2", "song"), name: "Stale batch" }]));
+  expect(store.getState().allDocs.allSongDocs).toHaveLength(1);
+  expect(store.getState().allDocs.allSongDocs[0]).toMatchObject({ name: "v2", docType: "song-v2-root", arrangements: [{ slides: [] }] });
 });

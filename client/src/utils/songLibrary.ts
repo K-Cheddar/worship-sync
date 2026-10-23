@@ -19,13 +19,17 @@ export const mergeSongLibraryItems = (
   allSongDocs: DBItem[],
 ): ServiceItem[] => {
   const songsById = new Map(
-    allSongDocs.map((doc) => [doc._id, songDocToServiceItem(doc)]),
+    allSongDocs.filter((doc) => doc.type === "song").map((doc) => [doc._id, songDocToServiceItem(doc)]),
   );
 
   for (const item of allItems) {
     if (item.type === "song") songsById.set(item._id, item);
   }
 
+  // Preserve legacy index precedence; activated v2 metadata is durable authority.
+  for (const doc of allSongDocs) {
+    if (doc.type === "song" && doc.docType === "song-v2-root") songsById.set(doc._id, songDocToServiceItem(doc));
+  }
   return sortNamesInList([...songsById.values()]);
 };
 
@@ -49,6 +53,6 @@ export const reconcileSongLibraryIndex = (
 
   if (missingSongDocs.length === 0) return allItems;
 
-  const missingSongItems = missingSongDocs.map(songDocToServiceItem);
+  const missingSongItems = [...new Map(missingSongDocs.map((doc) => [doc._id, songDocToServiceItem(doc)])).values()];
   return sortNamesInList([...allItems, ...missingSongItems]);
 };

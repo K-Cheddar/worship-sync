@@ -21,6 +21,7 @@ import type {
   Arrangment,
   FormattedSection,
   ItemSlideType,
+  MonitorLayout,
   ShouldSendTo,
   TimerInfo,
 } from "../../types";
@@ -94,6 +95,7 @@ type OutlineItemSlidesScrollerProps = {
         listId: string;
         timerId?: string;
         shouldSendTo?: ShouldSendTo;
+        monitorLayout?: MonitorLayout;
       };
     },
   ) => void;
@@ -1220,6 +1222,7 @@ const OutlineItemSlidesScroller = ({
             itemId: section.itemId,
             listId: section.listId,
             shouldSendTo: section.shouldSendTo,
+            monitorLayout: section.monitorLayout,
             timerId: timersByItemId.get(section.itemId)?.id,
           },
         });
