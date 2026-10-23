@@ -16,7 +16,7 @@
     "test:e2e:scheduling:policy": "node --import tsx --test e2e/schedulingScope.test.ts",
     "test:e2e:scheduling:fixtures": "node --import tsx scripts/scheduling-fixtures.ts",
     "test:e2e:controller:fixtures": "node --import tsx scripts/controller-fixtures.ts",
-    "test:e2e:controller:fixture-policy": "node --import tsx --test e2e/controllerFixtureCleanup.test.ts",
+    "test:e2e:controller:fixture-policy": "node --import tsx --test e2e/controllerFixtureCleanup.test.ts e2e/controllerNavigation.test.ts",
     "test:e2e:auth:refresh": "node scripts/run-e2e-auth-refresh.mjs",
     "test:e2e:auth:validate": "playwright test --project=setup",
     "test:e2e:auth": "playwright test --project=auth",

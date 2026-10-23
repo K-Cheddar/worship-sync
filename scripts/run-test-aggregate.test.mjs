@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
-import { aggregateExitCode, E2E_SUITES, npmInvocation, redactText, runAggregateGroups, runSequential } from "./run-test-aggregate.mjs";
+import { aggregateExitCode, E2E_SUITES, evaluateApplicationWorkflowAccess, getReservedSchedulingTeamId, npmInvocation, redactText, runAggregateGroups, runSequential } from "./run-test-aggregate.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -54,7 +54,7 @@ test("records skipped suites distinctly and excludes them from execution", async
 
 test("redacts credential fields, bearer values, emails, and one-time codes", () => {
   const output = redactText(
-    'Authorization: Bearer abc.def; cookie=session-secret; email user@example.org; code 123456',
+    'Authorization: Bearer abc.def; cookie=session-secret; email user@example.org; verification code: 123456',
     ["session-secret"],
   );
 
@@ -62,6 +62,97 @@ test("redacts credential fields, bearer values, emails, and one-time codes", () 
   assert.match(output, /Authorization: \[redacted\]/);
   assert.match(output, /\[redacted-email\]/);
   assert.match(output, /\[redacted-code\]/);
+});
+
+test("redacts recognizable authentication codes while preserving numeric measurements", () => {
+  const output = redactText(
+    "JS transfer 123456 bytes; duration 123456 ms; tests=123456; PID 123456; verification code: 654321; otp=789012",
+  );
+
+  for (const metric of ["123456 bytes", "123456 ms", "tests=123456", "PID 123456"]) {
+    assert.ok(output.includes(metric), `preserves ${metric}`);
+  }
+  assert.doesNotMatch(output, /654321|789012/);
+  assert.equal((output.match(/\[redacted-code\]/g) || []).length, 2);
+});
+
+test("redacts PEM private-key blocks without changing surrounding text", () => {
+  const output = redactText(
+    "before -----BEGIN PRIVATE KEY-----synthetic-key-----END PRIVATE KEY----- after",
+  );
+  assert.equal(output, "before [redacted-private-key] after");
+  assert.doesNotMatch(output, /synthetic-key/);
+});
+
+test("redacts sensitive URL query strings and fragments", () => {
+  const output = redactText("request https://example.test/auth?code=123456#id_token=secret-value");
+  assert.doesNotMatch(output, /123456|secret-value/);
+  assert.equal(output, "request https://example.test/auth?[redacted]#[redacted]");
+});
+
+test("application permission preflight distinguishes smoke, scheduling, and controller access", () => {
+  const teamId = getReservedSchedulingTeamId({});
+  const auth = {
+    authenticated: true,
+    sessionKind: "human",
+    churchId: "demo",
+    role: "member",
+    controllerAccess: "full",
+    permissions: {
+      teams: "edit",
+      services: "view",
+      teamScopes: { [teamId]: "edit" },
+    },
+  };
+  const home = {
+    teamsAndServicesLinkRendered: true,
+    workspaceNavigationLoaded: true,
+    workspaceLinks: ["Services", "Teams", "Members", "Equipment", "Templates"],
+    controllersSectionVisible: true,
+    controllerProfilesLoaded: true,
+    presentationControllerLinkRendered: true,
+  };
+
+  const permitted = evaluateApplicationWorkflowAccess(auth, home, teamId);
+  assert.deepEqual(Object.values(permitted.workflows).map(({ ok }) => ok), [true, true, true]);
+  assert.match(teamId, /^e2e-scheduling-[a-f0-9]{16}$/);
+
+  const denied = evaluateApplicationWorkflowAccess(
+    {
+      ...auth,
+      permissions: { teams: "view", services: "none", teamScopes: { unrelated: "edit" } },
+    },
+    { ...home, teamsAndServicesLinkRendered: false },
+    teamId,
+  );
+  assert.equal(denied.workflows.smoke.ok, false);
+  assert.equal(denied.workflows.scheduling.ok, false);
+  assert.equal(denied.workflows.controller.ok, true);
+  assert.match(denied.workflows.scheduling.details, new RegExp(teamId));
+
+  const scopedSchedulingOnly = evaluateApplicationWorkflowAccess(
+    {
+      ...auth,
+      permissions: {
+        teams: "none",
+        services: "view",
+        teamScopes: { [teamId]: "edit" },
+      },
+    },
+    { ...home, teamsAndServicesLinkRendered: false },
+    teamId,
+  );
+  assert.equal(scopedSchedulingOnly.workflows.scheduling.ok, true);
+  assert.equal(scopedSchedulingOnly.workflows.smoke.ok, false);
+  assert.equal(scopedSchedulingOnly.workflows.controller.ok, true);
+
+  const unresolved = evaluateApplicationWorkflowAccess(auth, { homeContentLoaded: false }, teamId);
+  assert.equal(unresolved.flags.authStateTrusted, false);
+  assert.equal(unresolved.flags.authenticated, null);
+  assert.deepEqual(
+    Object.values(unresolved.workflows).map(({ details }) => details),
+    Array(3).fill("Home authentication/bootstrap did not finish; account identity and workflow permissions could not be evaluated."),
+  );
 });
 
 test("maps each standalone client browser script exactly once and excludes auth workflows", async () => {

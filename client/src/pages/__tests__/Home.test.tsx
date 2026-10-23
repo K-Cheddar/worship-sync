@@ -201,6 +201,25 @@ describe("Home", () => {
     expect(screen.queryByRole("heading", { name: "Church administration" })).not.toBeInTheDocument();
   });
 
+  it("shows Teams and Services for an authorized non-admin and hides it when access is denied", () => {
+    const { unmount } = renderHomeWithGlobalOverrides({
+      role: "member",
+      canViewTeams: true,
+    });
+    expect(
+      screen.getByRole("link", { name: /^Teams and Services\b/ }),
+    ).toHaveAttribute("href", "/teams-and-services");
+    unmount();
+
+    renderHomeWithGlobalOverrides({
+      role: "member",
+      canViewTeams: false,
+    });
+    expect(
+      screen.queryByRole("link", { name: /^Teams and Services\b/ }),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders fixed launcher appearances from the shared map", () => {
     const cases: Array<readonly [keyof typeof PAGE_APPEARANCES, string]> = [
       ["churchAdministration", "Administration"],

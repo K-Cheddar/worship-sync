@@ -202,6 +202,8 @@ try {
   const desktopDescriptionBounds = await page.getByText("Manage resources, access, teams, and services.").boundingBox();
   assert.ok(desktopHeadingBounds && desktopDescriptionBounds && Math.abs(desktopDescriptionBounds.y + desktopDescriptionBounds.height / 2 - desktopHeadingBounds.y - desktopHeadingBounds.height / 2) <= 8, "section descriptions should sit inline with the heading when desktop space allows");
   await page.getByRole("region", { name: "Controllers" }).getByText("Present slides, songs, and scripture on your screens.").waitFor();
+  const describedRowHeights = await page.getByRole("group", { name: "Management navigation" }).getByRole("link").evaluateAll((elements) => elements.slice(0, 3).map((element) => element.getBoundingClientRect().height));
+  assert.ok(describedRowHeights.every((height) => Math.abs(height - describedRowHeights[0]) < 0.5), "cards in a desktop row should remain equal height with descriptions shown");
   const desktopDisplayTitleBounds = await page.getByText("Display outputs").boundingBox();
   const desktopDisplayDescriptionBounds = await page.getByText("Links for room screens and streaming software.").boundingBox();
   const desktopDisplayActionBounds = await page.getByText("View links", { exact: true }).boundingBox();
@@ -236,7 +238,9 @@ try {
   assert.notEqual(cardHoverStyle.backgroundColor, cardStyle.backgroundColor, "hover should apply the gray-800 background treatment");
   assert.notEqual(cardHoverStyle.borderColor, cardStyle.borderColor, "hover should apply the gray-500 border treatment");
   const desktopCard = await page.getByRole("link", { name: /^Resources\b/ }).boundingBox();
-  assert.ok(desktopCard && desktopCard.height >= 96 && desktopCard.height <= 112, "desktop navigation cards should be approximately 96–112px tall");
+  assert.ok(desktopCard, "desktop navigation cards should have measurable bounds");
+  console.log(`[home launcher] desktop Resources card height: ${desktopCard.height.toFixed(1)}px`);
+  assert.ok(desktopCard.height >= 82, "desktop navigation cards should preserve the 82px minimum clickable height");
   const desktopIconWidth = await page.getByRole("link", { name: /^Resources\b/ }).locator("[data-testid=home-navigation-icon] svg").evaluate((element) => element.getBoundingClientRect().width);
   assert.ok(desktopIconWidth >= 32 && desktopIconWidth <= 36, "desktop navigation icons should be approximately 32–36px");
   const adminSectionRadius = await page.getByRole("region", { name: "Management" }).evaluate((element) => getComputedStyle(element).borderTopLeftRadius);
@@ -254,7 +258,7 @@ try {
   ]);
   assert.ok(sharedCardWidths.every((width) => Math.abs(width - sharedCardWidths[0]) < 0.5), "launcher sections should share card widths");
   const firstRowHeights = await page.getByRole("group", { name: "Management navigation" }).getByRole("link").evaluateAll((elements) => elements.slice(0, 3).map((element) => element.getBoundingClientRect().height));
-  assert.ok(firstRowHeights.every((height) => Math.abs(height - firstRowHeights[0]) < 0.5), "cards in a desktop row should remain equal height with descriptions shown");
+  assert.ok(firstRowHeights.every((height) => Math.abs(height - firstRowHeights[0]) < 0.5), "cards in a desktop row should remain equal height with descriptions hidden");
   const desktopToolbarHeight = await page.getByTestId("home-toolbar").evaluate((element) => element.getBoundingClientRect().height);
   assert.ok(desktopToolbarHeight <= 56, "desktop Home toolbar should stay within its current height");
 

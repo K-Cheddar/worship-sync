@@ -6442,7 +6442,13 @@ export const createTeamsAuthHandlers = ({
             },
           );
         } else if (transaction) {
-          transaction.set(ref, doc, { merge: true });
+          transaction.set(ref, {
+            ...doc,
+            ...volunteerContactIndexFields(
+              { ...current, ...doc },
+              process.env.AUTH_VOLUNTEER_PORTAL_SECRET,
+            ),
+          }, { merge: true });
         } else {
           await setDoc(config.collection, nextId, doc, { merge: true });
         }

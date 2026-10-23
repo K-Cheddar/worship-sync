@@ -1,6 +1,12 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { readDocument, resetLocalOutputs, waitForControllerDatabase } from "./controllerRuntime";
+import {
+  hasControllerOperatorAccess,
+  homeNavigationDiagnostics,
+  openHome,
+  type E2EAuthFlags,
+} from "./smokeNavigation";
 
 // A failed test restarts its worker. A fresh identity prevents that worker
 // from reusing a deleted document or adopting an interrupted worker's records.
@@ -57,18 +63,81 @@ export const expectSongSections = async (
   }
 };
 
+export const presentationControllerHomeLink = (page: Page) =>
+  page.getByRole("link").and(page.locator('main a[href="#/controller"]'));
+
+export const requirePresentationControllerHomeLink = async (
+  page: Page,
+  auth: E2EAuthFlags,
+) => {
+  if (!hasControllerOperatorAccess(auth)) {
+    throw new Error(
+      await homeNavigationDiagnostics(
+        page,
+        auth,
+        "The saved account lacks operator-controller access (Controller access must be View, Music, or Full).",
+      ),
+    );
+  }
+
+  const controllersRegion = page.getByRole("region", {
+    name: "Controllers",
+    exact: true,
+  });
+  try {
+    await expect(controllersRegion).toBeVisible({ timeout: 15_000 });
+    await expect(controllersRegion).not.toHaveAttribute("aria-busy", "true", {
+      timeout: 60_000,
+    });
+  } catch {
+    throw new Error(
+      await homeNavigationDiagnostics(
+        page,
+        auth,
+        "The account has operator-controller access, but Home did not finish rendering and loading its Controllers section; no controller link was assumed available.",
+      ),
+    );
+  }
+
+  const controllerLink = presentationControllerHomeLink(page);
+  if ((await controllerLink.count()) !== 1) {
+    throw new Error(
+      await homeNavigationDiagnostics(
+        page,
+        auth,
+        "Controller access is present and profile loading completed, but Home has no unique link to #/controller. The Presentation Controller profile may be disabled or missing.",
+      ),
+    );
+  }
+  await expect(controllerLink).toBeVisible();
+  return controllerLink;
+};
+
 export const openPresentationController = async (page: Page) => {
   const started = Date.now();
-  await page.goto("/#/home", { waitUntil: "domcontentloaded" });
-  await expect(
-    page.getByRole("heading", { name: "Controllers", exact: true }),
-  ).toBeVisible();
-  await page.getByRole("link", { name: /^Presentation\b/ }).click();
-  await expect(page).toHaveURL(/#\/controller(?:\/|$)/);
+  const auth = await openHome(page);
+  const homeSnapshot = await homeNavigationDiagnostics(
+    page,
+    auth,
+    "Home navigation before opening Presentation Controller.",
+  );
+  const controllerLink = await requirePresentationControllerHomeLink(page, auth);
+  await controllerLink.click();
+  try {
+    await expect(page).toHaveURL(/#\/controller(?:\/|$)/, { timeout: 15_000 });
+  } catch {
+    throw new Error(
+      `Clicking the #/controller Home link opened an unexpected route (${new URL(page.url()).hash || "unknown"}).\n${homeSnapshot}`,
+    );
+  }
   const startupOverlay = page.getByTestId("controller-loading-overlay");
-  await expect(startupOverlay).toBeHidden({
-    timeout: 90_000,
-  });
+  try {
+    await expect(startupOverlay).toBeHidden({ timeout: 90_000 });
+  } catch {
+    throw new Error(
+      `Presentation Controller startup did not resolve; current route is ${new URL(page.url()).hash || "unknown"} and the startup overlay is still visible.\n${homeSnapshot}`,
+    );
+  }
   await expect(page.locator("#controller-main")).toBeVisible();
   await waitForControllerDatabase(page);
   await expect(page.getByRole("link", { name: "Songs", exact: true })).toBeVisible();
