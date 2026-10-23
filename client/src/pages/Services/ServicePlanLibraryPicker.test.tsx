@@ -2,7 +2,7 @@ import { configureStore } from "@reduxjs/toolkit";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Provider } from "react-redux";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import ServicePlanLibraryPicker from "./ServicePlanLibraryPicker";
 import { createNewSong } from "../../utils/itemUtil";
 import {
@@ -93,9 +93,11 @@ const createUndoableState = () => ({
 
 const createPickerStore = ({
   allItemsList = songItems,
+  allSongDocs = songDocs,
   isAllItemsLoading = false,
 }: {
   allItemsList?: ServiceItem[];
+  allSongDocs?: typeof songDocs;
   isAllItemsLoading?: boolean;
 } = {}) => {
   const undoableState = createUndoableState();
@@ -119,7 +121,7 @@ const createPickerStore = ({
       },
       allDocs: {
         ...allDocsSlice.getInitialState(),
-        allSongDocs: songDocs,
+        allSongDocs,
       },
       itemList: itemListSlice.getInitialState(),
       item: itemSlice.getInitialState(),
@@ -151,6 +153,8 @@ const attachSongNamed = async (
   await user.click(within(row as HTMLElement).getByRole("button", { name: /^Attach$/i }));
 };
 
+const LocationProbe = () => <div data-testid="current-route">{useLocation().pathname}</div>;
+
 const renderPicker = (
   store = createPickerStore(),
   props: {
@@ -168,7 +172,8 @@ const renderPicker = (
   } = props;
   render(
     <Provider store={store}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={["/services/plan-123"]}>
+        <LocationProbe />
         <ControllerInfoContext.Provider value={controllerContext as never}>
           <GlobalInfoContext.Provider value={createMockGlobalContext() as never}>
             <ServicePlanLibraryPicker
@@ -363,6 +368,54 @@ describe("ServicePlanLibraryPicker", () => {
       songId: "song-new",
       songName: "Brand New Song",
     });
+  });
+
+  it("imports TXT in the embedded form and waits for Create and attach", async () => {
+    const user = userEvent.setup();
+    const { onSelectSong } = renderPicker();
+    await user.click(screen.getByRole("button", { name: /Create a new song/i }));
+    const file = new File(["Lyrics"], "new.txt", { type: "text/plain" });
+    Object.defineProperty(file, "arrayBuffer", { value: async () => new TextEncoder().encode("Title: Brand New Song\nVerse 1\nWords to sing\nCCLI Song # 789\n© Example").buffer });
+    await user.click(screen.getByRole("button", { name: "Import TXT" }));
+    await user.upload(screen.getByLabelText("TXT song file"), file);
+    await user.click(await screen.findByRole("button", { name: "Apply TXT to draft" }));
+    expect(mockCreateNewSong).not.toHaveBeenCalled();
+    expect(onSelectSong).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: /Create and attach/i }));
+    await waitFor(() => expect(onSelectSong).toHaveBeenCalledWith({ kind: "library", songId: "song-new", songName: "Brand New Song" }));
+    expect(mockCreateNewSong).toHaveBeenCalledWith(expect.objectContaining({ songMetadata: expect.objectContaining({ ccliSongNumber: "789" }) }));
+  });
+
+  it.each(["title", "CCLI"])("attaches a %s duplicate from the embedded TXT form without leaving the plan", async (matchBy) => {
+    const user = userEvent.setup();
+    const documents = songDocs.map((song, index) => index === 0 ? {
+      ...song, songMetadata: { source: "manual" as const, trackName: song.name, artistName: "Library artist", importedAt: "", ccliSongNumber: "456", key: "F" },
+    } : song);
+    const store = createPickerStore({ allSongDocs: documents });
+    const { onSelectSong, onClose } = renderPicker(store);
+    await user.click(screen.getByRole("button", { name: /Create a new song/i }));
+    const importedTitle = matchBy === "title" ? "Living Hope" : "Different imported title";
+    const file = new File(["Lyrics"], "duplicate.txt", { type: "text/plain" });
+    Object.defineProperty(file, "arrayBuffer", { value: async () => new TextEncoder().encode(`Title: ${importedTitle}\nArtist: Imported artist\nVerse 1\nImported words\nAuthors: Imported writer\nCCLI Song # ${matchBy === "CCLI" ? "456" : "789"}\n© Imported copyright`).buffer });
+    await user.upload(screen.getByLabelText("TXT song file"), file);
+    await user.click(await screen.findByRole("button", { name: "Apply TXT to draft" }));
+    const draftBefore = store.getState().createItem;
+    const docsBefore = JSON.parse(JSON.stringify(store.getState().allDocs.allSongDocs));
+    const indexBefore = store.getState().allItems.list;
+    await user.click(screen.getByRole("button", { name: "Create and attach" }));
+    await user.click(screen.getByRole("button", { name: "Return to editing" }));
+    expect(store.getState().createItem).toEqual(draftBefore);
+    expect(onSelectSong).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Create and attach" }));
+    await user.click(screen.getByRole("button", { name: "Attach Living Hope" }));
+    expect(screen.getByTestId("current-route")).toHaveTextContent("/services/plan-123");
+    expect(onSelectSong).toHaveBeenCalledTimes(1);
+    expect(onSelectSong).toHaveBeenCalledWith({ kind: "library", songId: "song-1", songName: "Living Hope", key: "F" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(mockCreateNewSong).not.toHaveBeenCalled();
+    expect(store.getState().allDocs.allSongDocs).toEqual(docsBefore);
+    expect(store.getState().allItems.list).toEqual(indexBefore);
+    expect(store.getState().itemList.list).toHaveLength(0);
   });
 
   it("waits for the song library before allowing a new song to be attached", async () => {

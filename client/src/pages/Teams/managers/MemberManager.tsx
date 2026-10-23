@@ -10,6 +10,7 @@ import SearchableSelect from "../../../components/SearchableSelect";
 import TextArea from "../../../components/TextArea/TextArea";
 import DeleteModal from "../../../components/Modal/DeleteModal";
 import RecordSmsConsentModal from "./RecordSmsConsentModal";
+import VolunteerPersonalAccessControls from "./VolunteerPersonalAccessControls";
 import DatePicker from "@/components/ui/DatePicker";
 import BirthDateField from "../components/BirthDateField";
 import { getBirthDateValidationError } from "../../../utils/birthDate";
@@ -55,6 +56,10 @@ import TeamsCrossSectionLink from "../components/TeamsCrossSectionLink";
 import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import EntityMultiSelect from "../EntityMultiSelect";
 import EntityRow from "../components/EntityRow";
+import {
+  CurrentUserMemberIndicator,
+  useCurrentMemberId,
+} from "../components/CurrentUserMemberIndicator";
 import { MemberAssignmentsDetails } from "../components/MemberAssignmentsSummary";
 import MemberAvatar from "../../../components/MemberAvatar/MemberAvatar";
 import BlockoutDatesField from "../components/BlockoutDatesField";
@@ -179,6 +184,7 @@ type MemberManagerProps = {
   canManageMemberLifecycle?: boolean;
   canEditMember?: (member: TeamRosterMember) => boolean;
   onSaved: (member: TeamRosterMember, replaceId?: string) => void;
+  onIdentityChanged?: () => void;
   /** Applies rosters the server changed by joining this member to a team. */
   onTeamSaved: (team: TeamRecord) => void;
   onArchived: () => void;
@@ -197,6 +203,7 @@ const MemberManager = ({
   canManageMemberLifecycle = true,
   canEditMember: canEditMemberProp,
   onSaved,
+  onIdentityChanged,
   onTeamSaved,
   onArchived,
   onRemoved,
@@ -205,6 +212,7 @@ const MemberManager = ({
   onSmsEligibilityRefresh,
 }: MemberManagerProps) => {
   const context = useContext(GlobalInfoContext);
+  const selfMemberId = useCurrentMemberId();
   const { showToast, removeToast } = useToast();
   const churchId = context?.churchId || "";
   const currentUserId = context?.userId || "";
@@ -776,6 +784,7 @@ const MemberManager = ({
         current?.memberId === member.memberId ? next : current,
       );
       setShowAccountPicker(false);
+      onIdentityChanged?.();
       showToast(
         action === "link"
           ? targetUserId && targetUserId !== currentUserId
@@ -830,6 +839,9 @@ const MemberManager = ({
         (range) => range.startDate || range.endDate,
       ),
     };
+    if (wasEditing) {
+      body.expectedUpdatedAt = wasEditing.updatedAt || "";
+    }
     if (wasEditing && membershipChanged) {
       body = {
         ...body,
@@ -1357,6 +1369,12 @@ const MemberManager = ({
                   key={member.memberId}
                   compact
                   title={memberName(member)}
+                  editButtonAriaLabel={
+                    member.memberId === selfMemberId
+                      ? `Edit ${memberName(member)}, You`
+                      : undefined
+                  }
+                  headerBadge={<CurrentUserMemberIndicator memberId={member.memberId} />}
                   details={
                     <MemberAssignmentsDetails
                       assignments={assignments}
@@ -1474,7 +1492,10 @@ const MemberManager = ({
         }
       >
         <fieldset disabled={!canEditActiveMember} className="space-y-2 rounded-md border border-gray-700 bg-gray-950/40 p-3 pt-0">
-          <legend className="px-1 text-sm font-semibold">Member details</legend>
+          <legend className="px-1 text-sm font-semibold">
+            Member details{" "}
+            {editing ? <CurrentUserMemberIndicator memberId={editing.memberId} /> : null}
+          </legend>
           <div className="grid gap-3 sm:grid-cols-[minmax(0,0.5fr)_minmax(0,1fr)_minmax(0,1fr)]">
             <Input
               label="Title"
@@ -2283,6 +2304,7 @@ const MemberManager = ({
           }
         />
         <TextArea label="Notes" value={draft.notes || ""} textareaClassName="min-h-24" onChange={(notes) => setDraft((d) => ({ ...d, notes }))} />
+        {isChurchAdmin && editing && !editing.archivedAt ? <VolunteerPersonalAccessControls key={`${churchId}:${editing.memberId}`} churchId={churchId} memberId={editing.memberId} /> : null}
       </CreatePanel>
       <DeleteModal
         isOpen={Boolean(deleting)}

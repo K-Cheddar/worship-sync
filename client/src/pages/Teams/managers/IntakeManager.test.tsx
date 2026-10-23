@@ -8,8 +8,10 @@ import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { ToastProvider } from "../../../context/toastContext";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { TeamsNavigationGuardProvider } from "../TeamsNavigationGuardContext";
+import { CurrentMemberIdentityProvider } from "../components/CurrentUserMemberIndicator";
 import type {
   NotificationIntent,
+  TeamAvailabilityResponse,
   TeamIntakeForm,
   TeamIntakeRecipient,
   TeamIntakeSubmission,
@@ -21,6 +23,7 @@ import type {
 } from "../../../api/authTypes";
 import {
   createTeamIntakeForm,
+  createTeamIntakeRecipients,
   dispatchAvailabilityNotificationBatch,
   getNotificationIntents,
   getTeamIntakeSmsAttempts,
@@ -92,6 +95,9 @@ const recipient: TeamIntakeRecipient = {
 
 const renderManager = ({
   eligibilityStatus = "consent_needed",
+  canEdit = true,
+  availabilityResponses = [],
+  onAvailabilityRefresh,
   forms = [form],
   services = [],
   positions = [],
@@ -104,7 +110,11 @@ const renderManager = ({
   members = [member],
   serviceTimeZone = "UTC",
   smsEligibilityByMemberId,
+  selfMemberId = null,
 }: {
+  canEdit?: boolean;
+  availabilityResponses?: TeamAvailabilityResponse[];
+  onAvailabilityRefresh?: () => void | Promise<void>;
   eligibilityStatus?: "no_mobile" | "consent_needed" | "enabled" | "opted_out";
   forms?: TeamIntakeForm[];
   services?: TeamService[];
@@ -117,6 +127,7 @@ const renderManager = ({
   teams?: TeamRecord[];
   members?: TeamRosterMember[];
   serviceTimeZone?: string;
+  selfMemberId?: string | null;
   smsEligibilityByMemberId?: Record<string, { eligible: boolean; status?: "no_mobile" | "consent_needed" | "enabled" | "opted_out" }>;
 } = {}) => {
   mockServiceTimeZone = serviceTimeZone;
@@ -130,8 +141,9 @@ const renderManager = ({
         >}
       >
         <ToastProvider>
-          <TeamsNavigationGuardProvider>
-            <IntakeManager
+          <CurrentMemberIdentityProvider memberId={selfMemberId}>
+            <TeamsNavigationGuardProvider>
+              <IntakeManager
               availabilityOnly={availabilityOnly}
               managedTeamIds={managedTeamIds}
               forms={forms}
@@ -142,7 +154,9 @@ const renderManager = ({
               members={members}
               positions={positions}
               teams={teams}
-              canEdit
+              canEdit={canEdit}
+              availabilityResponses={availabilityResponses}
+              onAvailabilityRefresh={onAvailabilityRefresh}
               onFormSaved={jest.fn()}
               onSubmissionSaved={jest.fn()}
               onMemberSaved={jest.fn()}
@@ -156,8 +170,9 @@ const renderManager = ({
                 },
               }}
               smsDeliveryAttempts={[]}
-            />
-          </TeamsNavigationGuardProvider>
+              />
+            </TeamsNavigationGuardProvider>
+          </CurrentMemberIdentityProvider>
         </ToastProvider>
       </GlobalInfoContext.Provider>
     </MemoryRouter>,
@@ -176,6 +191,203 @@ beforeEach(() => {
 
 afterEach(() => {
   jest.useRealTimers();
+});
+
+const workspaceForm: TeamIntakeForm = {
+  ...form, purpose: "team_availability", enabledFields: ["availability"], publicUrl: "https://example.test/general",
+  availabilityOccurrences: [{ occurrenceId: "sunday", serviceId: "service", name: "Sunday", serviceDate: "2026-10-18", startsAt: "2026-10-18T10:00:00Z" }],
+};
+
+test("availability workspace shows one searchable volunteer list and inline answers", async () => {
+  const user = userEvent.setup();
+  renderManager({ forms: [workspaceForm], intakeRecipients: [{ ...recipient, respondedAt: "2026-10-01T10:00:00Z" }], availabilityResponses: [{ formId: form.formId, recipientId: recipient.recipientId, memberId: member.memberId, respondedAt: "2026-10-01T10:00:00Z", submittedAt: "2026-10-01T10:00:00Z", occurrenceAvailability: { sunday: "available" } }] });
+  await openForm(user);
+  expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+  expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+  expect(screen.queryByText("Individual links and text messages")).not.toBeInTheDocument();
+  expect(screen.getByRole("progressbar", { name: "Availability response completion" })).toHaveAttribute("aria-valuetext", "1 of 1 responded");
+  const volunteers = screen.getByRole("region", { name: "Volunteers" });
+  await user.click(within(volunteers).getByRole("combobox", { name: /Response\/request status/ }));
+  await user.click(screen.getByRole("option", { name: "Not invited" }));
+  expect(screen.getByText("No volunteers match these filters.")).toBeInTheDocument();
+  await user.click(within(volunteers).getByRole("combobox", { name: /Response\/request status/ }));
+  await user.click(screen.getByRole("option", { name: "All statuses" }));
+  await user.type(within(volunteers).getByRole("textbox", { name: /Search volunteers/ }), "missing");
+  expect(screen.getByText("No volunteers match these filters.")).toBeInTheDocument();
+  await user.clear(within(volunteers).getByRole("textbox", { name: /Search volunteers/ }));
+  await user.click(screen.getByRole("button", { name: "View availability for Rae Kim" }));
+  expect(within(screen.getByRole("region", { name: "Rae Kim availability details" })).getByText("Available")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "View availability by date" }));
+  const comparison = screen.getByRole("dialog", { name: "Availability by date" });
+  expect(within(comparison).getAllByText("Available", { exact: true }).length).toBeGreaterThan(0);
+  await user.click(within(comparison).getByRole("combobox", { name: /^Team:/ }));
+  expect(screen.getByRole("option", { name: "All teams" })).toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  await user.click(within(comparison).getByRole("button", { name: "Close modal" }));
+  await user.click(screen.getByRole("button", { name: "All forms" }));
+  expect(screen.getByRole("button", { name: `Edit ${form.name}` })).toBeInTheDocument();
+});
+
+test("volunteer status, team and incomplete-answer filters keep missing responses distinct", async () => {
+  const user = userEvent.setup();
+  const incomplete = {
+    ...member,
+    memberId: "member-2",
+    firstName: "Incomplete",
+    lastName: "Volunteer",
+  };
+  const uninvited = {
+    ...member,
+    memberId: "member-3",
+    firstName: "Uninvited",
+    lastName: "Volunteer",
+    teamMemberships: { "team-2": { teamId: "team-2" } },
+  };
+  const multiTeamForm = { ...workspaceForm, teamIds: ["team-1", "team-2"] };
+  const secondRecipient = { ...recipient, recipientId: "recipient-2", memberId: incomplete.memberId, respondedAt: "2026-10-02T10:00:00Z" };
+  const answeredAt = "2026-10-01T10:00:00Z";
+  renderManager({
+    forms: [multiTeamForm],
+    members: [member, incomplete, uninvited],
+    teams: [
+      { teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: [member.memberId, incomplete.memberId] },
+      { teamId: "team-2", churchId: "church-1", name: "Media", memberIds: [uninvited.memberId] },
+    ],
+    intakeRecipients: [
+      { ...recipient, respondedAt: answeredAt },
+      secondRecipient,
+    ],
+    availabilityResponses: [
+      { formId: form.formId, recipientId: recipient.recipientId, memberId: member.memberId, respondedAt: answeredAt, submittedAt: answeredAt, occurrenceAvailability: { sunday: "available" } },
+      { formId: form.formId, recipientId: secondRecipient.recipientId, memberId: incomplete.memberId, respondedAt: secondRecipient.respondedAt!, submittedAt: secondRecipient.respondedAt!, occurrenceAvailability: {} },
+    ],
+  });
+  await openForm(user);
+  const volunteers = screen.getByRole("region", { name: "Volunteers" });
+  const statusFilter = within(volunteers).getByRole("combobox", { name: /Response\/request status/ });
+  await user.click(statusFilter);
+  await user.click(screen.getByRole("option", { name: "Incomplete responses" }));
+  expect(screen.getByText("Incomplete Volunteer")).toBeInTheDocument();
+  expect(screen.queryByText("Uninvited Volunteer")).not.toBeInTheDocument();
+  expect(screen.getByText("0 of 1 answered")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "View availability for Incomplete Volunteer" }));
+  expect(screen.getByText("No answer")).toBeInTheDocument();
+
+  await user.click(statusFilter);
+  await user.click(screen.getByRole("option", { name: "Not invited" }));
+  await user.click(within(volunteers).getByRole("combobox", { name: /^Team:/ }));
+  await user.click(screen.getByRole("option", { name: "Media" }));
+  expect(screen.getByText("Uninvited Volunteer")).toBeInTheDocument();
+  expect(screen.queryByText("Incomplete Volunteer")).not.toBeInTheDocument();
+  expect(screen.getByText("—")).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "View availability by date" }));
+  const comparison = screen.getByRole("dialog", { name: "Availability by date" });
+  await user.click(within(comparison).getByRole("combobox", { name: /^Team:/ }));
+  await user.click(screen.getByRole("option", { name: "Media" }));
+  expect(within(comparison).getByRole("listitem", { name: "Uninvited Volunteer: No response" })).toBeInTheDocument();
+  expect(within(comparison).queryByRole("listitem", { name: "Incomplete Volunteer: No answer" })).not.toBeInTheDocument();
+});
+
+test("large volunteer lists paginate without dropping roster members", async () => {
+  const user = userEvent.setup();
+  const roster = Array.from({ length: 51 }, (_, index) => ({
+    ...member,
+    memberId: `bulk-${index}`,
+    firstName: `Volunteer${index}`,
+    lastName: "Roster",
+  }));
+  renderManager({
+    forms: [workspaceForm],
+    members: roster,
+    intakeRecipients: [],
+    teams: [{
+      teamId: "team-1",
+      churchId: "church-1",
+      name: "Worship",
+      memberIds: roster.map((row) => row.memberId),
+    }],
+  });
+  await openForm(user);
+  expect(screen.getByText("Page 1 of 2 · 51 volunteers")).toBeInTheDocument();
+  expect(screen.getByText("Volunteer0 Roster")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Next" }));
+  expect(screen.getByText("Page 2 of 2 · 51 volunteers")).toBeInTheDocument();
+  expect(screen.getByText("Volunteer50 Roster")).toBeInTheDocument();
+  expect(screen.queryByText("Volunteer0 Roster")).not.toBeInTheDocument();
+});
+
+test("availability row and header menus keep private and general links separate", async () => {
+  const user = userEvent.setup();
+  mockGetRecipientLink.mockResolvedValue({ recipient, publicUrl: "https://example.test/private" });
+  renderManager({ forms: [workspaceForm] });
+  const writeText = jest.spyOn(navigator.clipboard, "writeText");
+  await openForm(user);
+  await user.click(screen.getByRole("button", { name: "Actions for Rae Kim" }));
+  await user.click(screen.getByRole("menuitem", { name: "Copy personal availability link" }));
+  await waitFor(() => expect(writeText).toHaveBeenCalledWith("https://example.test/private"));
+  expect(mockGetRecipientLink).toHaveBeenCalledWith("church-1", recipient.recipientId, { markCopied: true });
+  await user.click(screen.getByRole("button", { name: "More form actions" }));
+  await user.click(screen.getByRole("menuitem", { name: "Copy general form link" }));
+  await waitFor(() => expect(writeText).toHaveBeenCalledWith(workspaceForm.publicUrl));
+});
+
+test("personal link creation does not send and uses only the selected member", async () => {
+  const user = userEvent.setup();
+  jest.mocked(createTeamIntakeRecipients).mockResolvedValue({ success: true, recipients: [recipient] });
+  renderManager({ forms: [workspaceForm], intakeRecipients: [] });
+  await openForm(user);
+  await user.click(screen.getByRole("button", { name: "Actions for Rae Kim" }));
+  await user.click(screen.getByRole("menuitem", { name: "Create personal link" }));
+  await waitFor(() => expect(createTeamIntakeRecipients).toHaveBeenCalledWith("church-1", form.formId, [member.memberId]));
+  expect(mockSendIntent).not.toHaveBeenCalled();
+  expect(dispatchAvailabilityNotificationBatch).not.toHaveBeenCalled();
+});
+
+test("read-only availability hides mutations and keeps other teams out of recipient scope", async () => {
+  const user = userEvent.setup();
+  renderManager({ forms: [workspaceForm], canEdit: false, members: [member, { ...member, memberId: "outside", firstName: "Outside", teamMemberships: { other: { teamId: "other" } } }] });
+  await openForm(user);
+  expect(screen.queryByRole("button", { name: "Send requests" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "More form actions" })).not.toBeInTheDocument();
+  expect(screen.queryByText("Outside Kim")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Actions for Rae Kim" }));
+  expect(screen.queryByRole("menuitem", { name: /Copy|Create|Revoke|Open personal/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("menuitem", { name: "View request and delivery history" })).toBeInTheDocument();
+});
+
+test("availability Send requests opens one dialog and cancel sends nothing", async () => {
+  const user = userEvent.setup();
+  renderManager({ forms: [workspaceForm], eligibilityStatus: "enabled" });
+  await openForm(user);
+  await user.click(screen.getByRole("button", { name: "Send requests" }));
+  const dialog = screen.getByRole("dialog", { name: "Send requests" });
+  expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  expect(within(dialog).getByText("1 selected")).toBeInTheDocument();
+  expect(within(dialog).queryByRole("checkbox", { name: "Rae Kim" })).not.toBeInTheDocument();
+  await user.click(within(dialog).getByRole("button", { name: "Change recipients" }));
+  expect(within(dialog).getByRole("checkbox", { name: "Rae Kim" })).toBeInTheDocument();
+  await user.click(within(dialog).getByRole("button", { name: "Close modal" }));
+  expect(dispatchAvailabilityNotificationBatch).not.toHaveBeenCalled();
+  expect(prepareAvailabilityNotificationBatch).not.toHaveBeenCalled();
+});
+
+test("a personal link result cannot copy or update a different selected form", async () => {
+  const user = userEvent.setup();
+  let resolveLink!: (value: { recipient: TeamIntakeRecipient; publicUrl: string }) => void;
+  mockGetRecipientLink.mockImplementationOnce(() => new Promise((resolve) => { resolveLink = resolve; }));
+  const { onRecipientSaved } = renderManager({ forms: [workspaceForm, { ...workspaceForm, formId: "other-form", name: "December availability" }] });
+  const writeText = jest.spyOn(navigator.clipboard, "writeText");
+  await openForm(user);
+  await user.click(screen.getByRole("button", { name: "Actions for Rae Kim" }));
+  await user.click(screen.getByRole("menuitem", { name: "Copy personal availability link" }));
+  expect(screen.getByRole("status")).toHaveTextContent("Updating personal link");
+  await user.click(screen.getByRole("button", { name: "All forms" }));
+  await user.click(screen.getByRole("button", { name: "Edit December availability" }));
+  await act(async () => resolveLink({ recipient, publicUrl: "https://example.test/old-private" }));
+  expect(writeText).not.toHaveBeenCalled();
+  expect(onRecipientSaved).not.toHaveBeenCalled();
+  expect(screen.getByRole("heading", { name: /December availability/ })).toBeInTheDocument();
 });
 
 test("late form history failures do not publish an error toast after Forms unmounts", async () => {
@@ -236,11 +448,12 @@ test("availability-only manager hides member intake and consent details", async 
 
   await openForm(user);
 
-  expect(screen.getByText("Availability responses")).toBeInTheDocument();
+  expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Volunteers" })).toBeInTheDocument();
   expect(screen.queryByText("Not eligible to receive text messages")).not.toBeInTheDocument();
   expect(screen.queryByText(/Text message consent needed|This phone number opted out|No mobile number/)).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Send text message" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Send form" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Send requests" })).toBeInTheDocument();
 
   await user.click(screen.getByRole("button", { name: "Edit" }));
   expect(screen.queryByRole("group", { name: "Fields to include" })).not.toBeInTheDocument();
@@ -329,9 +542,9 @@ test("saved availability forms stay readable and keep their dates when the churc
   });
 
   await openForm(user);
-  expect(screen.getByRole("heading", { name: availabilityForm.name })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: new RegExp(`${availabilityForm.name}.*Open`) })).toBeInTheDocument();
   expect(screen.getByText(/October 01, 2026 – October 31, 2026/)).toBeInTheDocument();
-  expect(screen.getByText(/1 availability dates/)).toBeInTheDocument();
+  expect(screen.getByText(/1 service dates/)).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Edit" }));
   expect(screen.getByRole("note")).toHaveTextContent(/review this form and edit its wording/i);
   expect(screen.getByText("Load the church time zone before choosing service dates.")).toBeInTheDocument();
@@ -703,6 +916,17 @@ const submittedAvailability: TeamIntakeSubmission = {
   submittedAt: "2026-10-03T12:00:00.000Z",
 };
 
+test("does not mark an unmatched intake submission by name", async () => {
+  const user = userEvent.setup();
+  renderManager({ submissions: [submittedAvailability], selfMemberId: member.memberId });
+  await openForm(user);
+
+  const submissionCard = screen.getByRole("button", {
+    name: "Expand submission from Rae Kim",
+  });
+  expect(within(submissionCard).queryByText("You")).not.toBeInTheDocument();
+});
+
 test.each([
   {
     issuedBy: "recipient",
@@ -771,6 +995,8 @@ test.each([
 
 test("closed future availability coverage opens for review without creating another form", async () => {
   const user = userEvent.setup();
+  const serviceDate = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const startsAt = `${serviceDate}T14:00:00.000Z`;
   const upcoming = {
     id: "upcoming-service",
     serviceId: "upcoming-service",
@@ -778,7 +1004,7 @@ test("closed future availability coverage opens for review without creating anot
     name: "Sunday service",
     timerType: "countdown" as const,
     reccurence: "one_time" as const,
-    dateTimeISO: "2026-10-18T14:00:00.000Z",
+    dateTimeISO: startsAt,
     positionRequirements: [{ positionId: "vocal", count: 1 }],
   };
   const closedForm = {
@@ -788,11 +1014,11 @@ test("closed future availability coverage opens for review without creating anot
     enabledFields: ["availability" as const],
     availabilityServices: [{ serviceId: upcoming.serviceId, name: upcoming.name }],
     availabilityOccurrences: [{
-      occurrenceId: "upcoming-service@2026-10-18",
+      occurrenceId: `upcoming-service@${serviceDate}`,
       serviceId: upcoming.serviceId,
       name: upcoming.name,
-      serviceDate: "2026-10-18",
-      startsAt: upcoming.dateTimeISO,
+      serviceDate,
+      startsAt,
     }],
   } as TeamIntakeForm;
   renderManager({
@@ -839,7 +1065,7 @@ test("an existing form view exposes Send form", async () => {
   await openForm(user);
 
   await user.click(screen.getByRole("button", { name: "Send form" }));
-  expect(screen.getByRole("heading", { name: "Send form" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Send requests" })).toBeInTheDocument();
   expect(updateTeamIntakeForm).not.toHaveBeenCalled();
   expect(mockSendIntent).not.toHaveBeenCalled();
 });
@@ -871,8 +1097,8 @@ test("refreshes history on every Send form open and ignores older history respon
   await waitFor(() => expect(getNotificationIntents).toHaveBeenCalledTimes(1));
 
   await user.click(screen.getByRole("button", { name: "Send form" }));
-  const sendRegion = screen.getByRole("region", { name: "Send form" });
-  expect(within(sendRegion).getByRole("checkbox", { name: "Rae Kim" })).toBeDisabled();
+  const sendRegion = screen.getByRole("region", { name: "Send requests" });
+  await waitFor(() => expect(within(sendRegion).queryByRole("checkbox", { name: "Rae Kim" })).not.toBeInTheDocument());
   await waitFor(() => expect(within(sendRegion).getAllByText("Already sent").length).toBeGreaterThan(0));
   expect(getNotificationIntents).toHaveBeenCalledTimes(2);
 
@@ -880,19 +1106,19 @@ test("refreshes history on every Send form open and ignores older history respon
     resolveOlderIntents(historyPage([]));
     resolveOlderAttempts(attemptsPage);
   });
-  expect(within(sendRegion).getByRole("checkbox", { name: "Rae Kim" })).toBeDisabled();
+  expect(within(sendRegion).queryByRole("checkbox", { name: "Rae Kim" })).not.toBeInTheDocument();
   expect(within(sendRegion).getAllByText("Already sent").length).toBeGreaterThan(0);
 
   await user.click(within(sendRegion).getByRole("button", { name: "Close" }));
   await user.click(screen.getByRole("button", { name: "Send form" }));
-  const reopenedRegion = screen.getByRole("region", { name: "Send form" });
-  expect(within(reopenedRegion).getByRole("checkbox", { name: "Rae Kim" })).toBeDisabled();
+  const reopenedRegion = screen.getByRole("region", { name: "Send requests" });
+  expect(within(reopenedRegion).queryByRole("checkbox", { name: "Rae Kim" })).not.toBeInTheDocument();
   await waitFor(() => expect(getNotificationIntents).toHaveBeenCalledTimes(3));
   await act(async () => {
     resolveReopenIntents(historyPage([sentIntent]));
     resolveReopenAttempts(attemptsPage);
   });
-  expect(within(reopenedRegion).getByRole("checkbox", { name: "Rae Kim" })).toBeDisabled();
+  expect(within(reopenedRegion).queryByRole("checkbox", { name: "Rae Kim" })).not.toBeInTheDocument();
   expect(within(reopenedRegion).getAllByText("Already sent").length).toBeGreaterThan(0);
 });
 
@@ -948,7 +1174,7 @@ test("a sent batch updates recipients and delivery counts in Forms without reloa
   render(<StatefulManager />);
   await openForm(user);
   await user.click(screen.getByRole("button", { name: "Send form" }));
-  expect(within(screen.getByRole("region", { name: "Send form" })).getByRole("checkbox", { name: "Rae Kim" })).toBeChecked();
+  expect(within(screen.getByRole("region", { name: "Send requests" })).getByRole("checkbox", { name: "Rae Kim" })).toBeChecked();
   await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
   const confirmation = await screen.findByRole("dialog", { name: "Review text messages" });
   expect(dispatchAvailabilityNotificationBatch).not.toHaveBeenCalled();

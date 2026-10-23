@@ -132,5 +132,17 @@ export default defineConfig({
         trace: "off",
       },
     },
+    {
+      name: "scheduling",
+      testMatch: /scheduling\.spec\.ts$/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        browserName: "chromium",
+        storageState: authFile,
+        screenshot: "only-on-failure",
+        trace: "off",
+      },
+    },
   ],
 });

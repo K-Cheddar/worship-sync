@@ -8,7 +8,6 @@ import {
   ChevronDown,
   Info,
   LayoutList,
-  MessagesSquare,
   SlidersHorizontal,
   Sparkles,
   StarOff,
@@ -33,6 +32,7 @@ import { useStickToBottomScroll } from "../hooks/useStickToBottomScroll";
 import BoardSyncProvider, { useBoardSync } from "../boards/BoardSyncContext";
 import { ControllerInfoContext } from "../context/controllerInfo";
 import { BoardRenameModal } from "../boards/BoardRenameModal";
+import { PAGE_APPEARANCES } from "./pageAppearances";
 import { BoardPostMessage } from "../boards/BoardPostMessage";
 import {
   buildBoardPublicUrl,
@@ -1838,9 +1838,9 @@ export const BoardControllerContent = () => {
           />
           <h1 className="hidden min-w-0 items-center gap-2 text-base font-semibold tracking-tight sm:text-lg xl:flex">
             <Icon
-              svg={MessagesSquare}
+              svg={PAGE_APPEARANCES.boardModeration.icon}
               size="md"
-              className="shrink-0 text-sky-400"
+              className={cn("shrink-0", PAGE_APPEARANCES.boardModeration.iconColorClass)}
             />
             <span className="truncate">Discussion Board</span>
           </h1>

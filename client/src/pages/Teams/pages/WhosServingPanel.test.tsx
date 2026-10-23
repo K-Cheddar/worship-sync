@@ -5,6 +5,7 @@ import WhosServingPanel, {
 } from "./WhosServingPanel";
 import type { TeamsAssignmentSummaryTeamGroup } from "./teamsAssignmentsSummary";
 import type { ServiceEquipment, ServicePlanMicrophone } from "../../../types/servicePlan";
+import { CurrentMemberIdentityProvider } from "../components/CurrentUserMemberIndicator";
 
 const longName = "The Member With A Very Long Display Name";
 
@@ -98,6 +99,58 @@ describe("WhosServingPanel", () => {
     expect(within(dialog).getByText("Camera - Roving 2")).toBeInTheDocument();
     expect(within(dialog).getByText(longName)).toBeInTheDocument();
     expect(within(dialog).getByText("Lead")).toBeInTheDocument();
+  });
+
+  it("marks the exact roster assignee and suppresses the marker for a guest row", () => {
+    const rosterTeam = {
+      ...assignmentTeams[0],
+      filled: [{ ...assignmentTeams[0].filled[0], memberId: "self-member" }],
+    };
+    const { unmount } = render(
+      <CurrentMemberIdentityProvider memberId="self-member">
+        <WhosServingPanel assignmentTeams={[rosterTeam]} onOpenSchedule={jest.fn()} />
+      </CurrentMemberIdentityProvider>,
+    );
+
+    expect(screen.getByText("You")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: `Details for ${longName}, You` })).toBeInTheDocument();
+
+    unmount();
+    const guestTeam = {
+      ...assignmentTeams[0],
+      filled: [{ ...assignmentTeams[0].filled[0], memberId: "self-member", memberIsGuest: true }],
+    };
+    render(
+      <CurrentMemberIdentityProvider memberId="self-member">
+        <WhosServingPanel assignmentTeams={[guestTeam]} onOpenSchedule={jest.fn()} />
+      </CurrentMemberIdentityProvider>,
+    );
+    expect(screen.queryByText("You")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: `Details for ${longName}` })).toBeInTheDocument();
+  });
+
+  it("truncates the compact serving name beside You and wraps the full popover name", async () => {
+    const user = userEvent.setup();
+    const rosterTeam = {
+      ...assignmentTeams[0],
+      filled: [{ ...assignmentTeams[0].filled[0], memberId: "self-member" }],
+    };
+    render(
+      <CurrentMemberIdentityProvider memberId="self-member">
+        <WhosServingPanel assignmentTeams={[rosterTeam]} onOpenSchedule={jest.fn()} />
+      </CurrentMemberIdentityProvider>,
+    );
+
+    const trigger = screen.getByRole("button", { name: `Details for ${longName}, You` });
+    const compactName = within(trigger).getByTestId("member-name-with-indicator");
+    expect(compactName).toHaveClass("inline-flex", "w-full", "min-w-0");
+    expect(within(compactName).getByText(longName)).toHaveClass("min-w-0", "truncate");
+    expect(within(compactName).getByText("You")).toHaveClass("shrink-0", "whitespace-nowrap");
+
+    await user.click(trigger);
+    const dialog = await screen.findByRole("dialog");
+    const fullName = within(dialog).getByTestId("member-name-with-indicator");
+    expect(within(fullName).getByText(longName)).toHaveClass("whitespace-normal", "break-words");
   });
 
   it("shows schedule access without edit actions for a view-only team", () => {

@@ -1,4 +1,5 @@
 import React from "react";
+import userEvent from "@testing-library/user-event";
 import { configureStore } from "@reduxjs/toolkit";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Provider } from "react-redux";
@@ -251,6 +252,7 @@ describe("CreateItem", () => {
     expect(store.getState().createItem.text).toBe("");
     expect(store.getState().allDocs.allSongDocs).toEqual([a, b]);
     fireEvent.click(screen.getByRole("button", { name: "Create Song" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create separate song" }));
     await waitFor(() => expect(db.put).toHaveBeenCalledTimes(1));
     const created = [...docs.values()].filter(doc => !["song-A", "song-B"].includes(doc._id));
     expect(created).toHaveLength(1);
@@ -919,7 +921,7 @@ describe("CreateItem", () => {
     expect(store.getState().createItem.text).toBe("Verse 1");
   });
 
-  it("still allows creating a song when another song with the same name exists", async () => {
+  it("requires explicit separate creation when another song with the same name exists", async () => {
     mockedCreateNewSong.mockResolvedValue(
       createMockItem({
         name: "Amazing Grace",
@@ -951,12 +953,16 @@ describe("CreateItem", () => {
 
     fireEvent.click(createButton);
 
+    // The requested duplicate safeguard now requires an explicit separate create.
+    expect(mockedCreateNewSong).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Create separate song" }));
+
     await waitFor(() => {
       expect(mockedCreateNewSong).toHaveBeenCalled();
     });
   });
 
-  it("shows an existing song from the document-backed library in embedded create", () => {
+  it("shows an existing song without controller actions when an embedded caller has no attachment callback", () => {
     const store = createTestStore({
       createItem: {
         ...initialCreateItemState,
@@ -986,6 +992,14 @@ describe("CreateItem", () => {
     expect(
       screen.getByText(/A song named “Amazing Grace” already exists\./),
     ).toBeInTheDocument();
+    const draftBefore = store.getState().createItem;
+    fireEvent.click(screen.getByRole("button", { name: "Create and attach" }));
+    expect(screen.getByRole("region", { name: "Possible duplicate songs" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open Amazing Grace" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Attach Amazing Grace" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Return to editing" }));
+    expect(store.getState().createItem).toEqual(draftBefore);
+    expect(mockedCreateNewSong).not.toHaveBeenCalled();
   });
 
   it("waits for the shared item index before embedded song creation", () => {
@@ -1166,6 +1180,147 @@ describe("CreateItem", () => {
 
     expect(screen.getByLabelText("Item Name:")).toHaveValue("John Reading");
     expect(screen.getByLabelText("Bible:")).toBeChecked();
+  });
+
+  it("reviews and applies TXT without saving, then creates using the existing song action", async () => {
+    const user = userEvent.setup();
+    mockedCreateNewSong.mockResolvedValue(createMockItem({ name: "TXT Song" }));
+    const { store } = renderCreateItem();
+    const file = new File(["lyrics"], "import.txt", { type: "text/plain" });
+    Object.defineProperty(file, "arrayBuffer", { value: async () => new TextEncoder().encode("Title: TXT Song\nArtist: Example\nVerse 1\nOriginal words!\nCCLI Song # 123\n© Example").buffer });
+    await user.click(screen.getByRole("button", { name: "Import TXT" }));
+    await user.upload(screen.getByLabelText("TXT song file"), file);
+    expect(await screen.findByRole("region", { name: "Review TXT import" })).toBeInTheDocument();
+    expect(store.getState().createItem.text).toBe("");
+    expect(mockedCreateNewSong).not.toHaveBeenCalled();
+    await user.click(screen.getByText("Formatted sections"));
+    expect(await screen.findByText("Verse")).toBeInTheDocument();
+    expect(screen.getByText("Original words!")).toBeInTheDocument();
+    await user.clear(screen.getByLabelText("Imported song name:"));
+    await user.type(screen.getByLabelText("Imported song name:"), "Reviewed Song");
+    await user.click(screen.getByRole("button", { name: "Apply TXT to draft" }));
+    expect(store.getState().createItem).toMatchObject({ name: "Reviewed Song", songArtist: "Example", text: "Verse 1\nOriginal words!", songMetadata: { ccliSongNumber: "123", copyright: "© Example" } });
+    expect(mockedCreateNewSong).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Create Song" }));
+    expect(mockedCreateNewSong).toHaveBeenCalledWith(expect.objectContaining({ name: "Reviewed Song", songMetadata: expect.objectContaining({ ccliSongNumber: "123", trackName: "Reviewed Song" }) }));
+  });
+
+  it("leaves an existing draft intact on cancel and requires confirmation to replace it", async () => {
+    const user = userEvent.setup();
+    const store = createTestStore({ createItem: { ...initialCreateItemState, name: "My draft", text: "My words" } });
+    renderCreateItem({ store });
+    const file = new File(["Lyrics"], "new.txt", { type: "text/plain" });
+    Object.defineProperty(file, "arrayBuffer", { value: async () => new TextEncoder().encode("New lyrics").buffer });
+    await user.upload(screen.getByLabelText("TXT song file"), file);
+    await user.click(await screen.findByRole("button", { name: "Apply TXT to draft" }));
+    expect(store.getState().createItem.text).toBe("My words");
+    await user.click(screen.getByRole("button", { name: "Cancel TXT import" }));
+    expect(store.getState().createItem.text).toBe("My words");
+    await user.upload(screen.getByLabelText("TXT song file"), file);
+    await user.click(await screen.findByRole("button", { name: "Apply TXT to draft" }));
+    await user.click(screen.getByRole("button", { name: "Replace current draft with TXT" }));
+    expect(store.getState().createItem.text).toBe("New lyrics");
+    expect(mockedCreateNewSong).not.toHaveBeenCalled();
+  });
+
+  it("detects a CCLI duplicate with a different title and allows opening or returning to editing", async () => {
+    const user = userEvent.setup();
+    const store = createTestStore({ createItem: { ...initialCreateItemState, name: "Another title", text: "Words", songMetadata: { source: "manual", trackName: "Another title", artistName: "", importedAt: "", ccliSongNumber: "123" } }, allSongDocs: [createMockItem({ _id: "existing", name: "Library title", songMetadata: { source: "manual", trackName: "Library title", artistName: "", importedAt: "", ccliSongNumber: "123" } })] });
+    renderCreateItem({ store });
+    await user.click(screen.getByRole("button", { name: "Create Song" }));
+    expect(screen.getByRole("button", { name: "Open Library title" })).toBeInTheDocument();
+    expect(mockedCreateNewSong).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Return to editing" }));
+    expect(screen.queryByRole("region", { name: "Possible duplicate songs" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Create Song" }));
+    await user.click(screen.getByRole("button", { name: "Open Library title" }));
+    expect(await screen.findByTestId("item-page")).toBeInTheDocument();
+    expect(mockedCreateNewSong).not.toHaveBeenCalled();
+  });
+
+  it("discards a pending TXT read when the draft is reset", async () => {
+    const user = userEvent.setup();
+    const { store } = renderCreateItem();
+    let finish!: (value: ArrayBuffer) => void;
+    const file = new File(["Lyrics"], "old.txt", { type: "text/plain" });
+    Object.defineProperty(file, "arrayBuffer", { value: () => new Promise<ArrayBuffer>(resolve => { finish = resolve; }) });
+    await user.upload(screen.getByLabelText("TXT song file"), file);
+    expect(screen.getByRole("button", { name: "Reading TXT..." })).toBeDisabled();
+    act(() => { store.dispatch(createItemSlice.actions.resetCreateItem()); });
+    await act(async () => finish(new TextEncoder().encode("Old lyrics").buffer));
+    expect(screen.queryByRole("region", { name: "Review TXT import" })).not.toBeInTheDocument();
+    expect(store.getState().createItem.text).toBe("");
+  });
+
+  it("cancels a pending TXT read and ignores its late result", async () => {
+    const user = userEvent.setup();
+    const { store } = renderCreateItem();
+    let finish!: (value: ArrayBuffer) => void;
+    const file = new File(["Lyrics"], "old.txt", { type: "text/plain" });
+    Object.defineProperty(file, "arrayBuffer", { value: () => new Promise<ArrayBuffer>(resolve => { finish = resolve; }) });
+    await user.upload(screen.getByLabelText("TXT song file"), file);
+    await user.click(screen.getByRole("button", { name: "Cancel TXT import" }));
+    await act(async () => finish(new TextEncoder().encode("Old lyrics").buffer));
+    expect(screen.queryByRole("region", { name: "Review TXT import" })).not.toBeInTheDocument();
+    expect(store.getState().createItem.text).toBe("");
+  });
+
+  it("keeps a newer draft intact when an older song creation finishes", async () => {
+    const user = userEvent.setup();
+    let finish!: (value: ItemState) => void;
+    mockedCreateNewSong.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const store = createTestStore({ createItem: { ...initialCreateItemState, name: "Older song", text: "Words" } });
+    renderCreateItem({ store });
+    await user.click(screen.getByRole("button", { name: "Create Song" }));
+    expect(screen.getByRole("button", { name: "Creating..." })).toBeDisabled();
+    act(() => { store.dispatch(createItemSlice.actions.setCreateItem({ ...initialCreateItemState, name: "New draft" })); });
+    await act(async () => finish(createMockItem({ name: "Older song" })));
+    expect(store.getState().createItem.name).toBe("New draft");
+    expect(store.getState().itemList.list).toHaveLength(0);
+    expect(screen.queryByTestId("item-page")).not.toBeInTheDocument();
+  });
+
+  it("keeps a pending song write in its original database after a database switch", async () => {
+    const user = userEvent.setup();
+    let finish!: (value: { ok: boolean }) => void;
+    const databaseA = {
+      name: "church-a",
+      get: jest.fn().mockRejectedValue(Object.assign(new Error("not found"), { status: 404 })),
+      put: jest.fn(() => new Promise(resolve => { finish = resolve; })),
+    };
+    const databaseB = { name: "church-b", get: jest.fn(), put: jest.fn() };
+    mockedCreateNewSong.mockImplementation(jest.requireActual("../../utils/itemUtil").createNewSong);
+    const store = createTestStore({ createItem: { ...initialCreateItemState, name: "Song", text: "Words" } });
+    const surface = (database: unknown) => <Provider store={store}>
+      <ControllerInfoContext.Provider value={createMockControllerContext({ db: database as PouchDB.Database }) as any}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+          <MemoryRouter><CreateItem /></MemoryRouter>
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>
+    </Provider>;
+    const { rerender } = render(surface(databaseA));
+    await user.click(screen.getByRole("button", { name: "Create Song" }));
+    await waitFor(() => expect(databaseA.put).toHaveBeenCalledTimes(1));
+    rerender(surface(databaseB));
+    await act(async () => finish({ ok: true }));
+    expect(databaseB.get).not.toHaveBeenCalled();
+    expect(databaseB.put).not.toHaveBeenCalled();
+    expect(store.getState().createItem.name).toBe("Song");
+    expect(store.getState().allDocs.allSongDocs).toHaveLength(0);
+  });
+
+  it("does not publish a song creation after its form unmounts", async () => {
+    const user = userEvent.setup();
+    let finish!: (value: ItemState) => void;
+    mockedCreateNewSong.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const store = createTestStore({ createItem: { ...initialCreateItemState, name: "Song", text: "Words" } });
+    const { unmount } = renderCreateItem({ store });
+    await user.click(screen.getByRole("button", { name: "Create Song" }));
+    unmount();
+    await act(async () => finish(createMockItem({ name: "Song" })));
+    expect(store.getState().createItem.name).toBe("Song");
+    expect(store.getState().itemList.list).toHaveLength(0);
+    expect(store.getState().allDocs.allSongDocs).toHaveLength(0);
   });
 
   it("shows remove-ad-libs toggle for songs without opening Advanced", () => {

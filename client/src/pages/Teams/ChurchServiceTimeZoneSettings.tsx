@@ -103,7 +103,7 @@ const ChurchServiceTimeZoneSettings = ({ churchId, canEdit }: Props) => {
     try {
       const result = await updateChurchServiceTimeZone(churchId, timeZoneDraft);
       setTimeZoneDraft(result.serviceTimeZone);
-      await churchTimeZone.refresh();
+      churchTimeZone.adoptSavedTimeZone(result);
       await chat?.refreshContext();
       setIsEditing(false);
       showToast("Church time zone saved.", "success");

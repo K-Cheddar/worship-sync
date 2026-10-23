@@ -72,7 +72,7 @@ export const test = base.extend({
     const blockedMailSlurpRequests: { count: number } = { count: 0 };
     const blockedUntrustedAuthRequests: { count: number } = { count: 0 };
 
-    if (["chromium", "smoke"].includes(testInfo.project.name)) {
+    if (["chromium", "smoke", "scheduling"].includes(testInfo.project.name)) {
       const trustedAuthOrigins = process.env.E2E_BASE_URL
         ? allowedE2EAuthOrigins(process.env.E2E_BASE_URL)
         : new Set<string>();
@@ -98,7 +98,7 @@ export const test = base.extend({
         const isNoEmailSessionRenewal =
           pathname === "/api/auth/session" && body.requestNewCode === false;
         if (isNoEmailSessionRenewal) {
-          if (testInfo.project.name === "smoke") {
+          if (["smoke", "scheduling"].includes(testInfo.project.name)) {
             blockedAutomaticSessionRenewals.count += 1;
             await route.abort("blockedbyclient");
             return;

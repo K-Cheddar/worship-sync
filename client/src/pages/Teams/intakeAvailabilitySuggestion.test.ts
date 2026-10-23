@@ -2,6 +2,7 @@ import type { TeamIntakeForm, TeamPosition, TeamSchedule, TeamScheduleOccurrence
 import { generateScheduleOccurrences } from "../../utils/teamScheduleOccurrences";
 import { getServicePlanKey } from "../../utils/servicePlanKeys";
 import { getUpcomingAvailabilitySuggestion, getUpcomingAvailabilitySuggestions } from "./intakeAvailabilitySuggestion";
+import { isAvailabilityFocusedForm } from "./intakeFormFields";
 
 const service: TeamService = {
   id: "sunday",
@@ -26,6 +27,14 @@ const makeForm = (overrides: Partial<TeamIntakeForm> = {}): TeamIntakeForm => ({
   active: true,
   enabledFields: ["availability"],
   ...overrides,
+});
+
+it("keeps the supported general-intake suggestion metadata recognizable as availability without migrating it", () => {
+  const result = getUpcomingAvailabilitySuggestion({ services: [service], forms: [], now: new Date("2026-10-01T12:00:00Z"), timeZone: "UTC" });
+  expect(result?.draft.purpose).toBe("general_intake");
+  expect(result?.draft.enabledFields).toEqual(expect.arrayContaining(["email", "availability", "notes"]));
+  expect(result?.draft.availabilityOccurrences.length).toBeGreaterThan(0);
+  expect(isAvailabilityFocusedForm({ ...makeForm(), ...result!.draft })).toBe(true);
 });
 
 describe("getUpcomingAvailabilitySuggestion", () => {

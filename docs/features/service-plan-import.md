@@ -1,10 +1,10 @@
 # Feature Contract: Service-plan import and refresh
 
-**Contract status:** Mixed; cross-section matching and relocation are confirmed, broader workflow remains inventory only
+**Contract status:** Mixed; cross-section matching, relocation, and saved-plan outline sync rules are confirmed, broader workflow remains inventory only
 
-**Approval source:** Current request, 2026-10-16 (cross-section matching, review, selection, and ordering requirements)
+**Approval source:** User requests, 2026-10-16 (cross-section matching, review, selection, and ordering) and 2026-10-18 (saved-plan outline fallbacks and whole-chapter Scripture)
 
-**Last reviewed:** 2026-10-16
+**Last reviewed:** 2026-10-18
 
 ## Purpose
 
@@ -32,6 +32,19 @@ An operator imports or refreshes a plan, reviews the proposed item changes, sele
 - An ambiguous match must not relocate, replace, or delete an existing item.
 - Import does not apply every item's position as a blanket reorder.
 - Changes beyond the selected additions, removals, updates, and moves remain untouched.
+
+## Saved-plan outline sync (confirmed 2026-10-18)
+
+The current user request authorizes these rules for syncing a saved Service Plan to the Controller outline:
+
+- Insert actionable attachments beneath their resolved mapped heading when it exists. If an explicitly mapped heading is missing, append the content at the outline end in Service Plan order. Do not create a heading or substitute a similarly named heading.
+- Recheck placement against the latest outline after asynchronous item creation. If the destination heading was removed, append to that same outline only while its original context remains valid. Stop requests finish the active item and leave later items untouched.
+- Count successful fallbacks as added content and explain the missing heading in the added item's summary. Report the fallback only after insertion, including in partial-success or combined outline/overlay summaries.
+- Accept whole-chapter Scripture such as Psalms 105 alongside explicit verse ranges. Use the existing Bible loader and requested version; invalid or unavailable passages must not produce empty items.
+- Retain stable attachment/list IDs and skip already-present items on repeated sync. Preserve saved Service Plan data. The independent Planning URL import keeps its existing heading-creation behavior.
+- Library refreshes caused by indexing imported Bible items do not interrupt the remaining saved-plan attachments; outline, database, source-plan, and component ownership checks still apply.
+
+Regression coverage: `servicePlanOutlineBridge.test.ts`, `useServicePlanOutlinePush.test.tsx`, `ServicePlanningSyncFloatingWindow.test.tsx`.
 
 ## Important scenarios
 

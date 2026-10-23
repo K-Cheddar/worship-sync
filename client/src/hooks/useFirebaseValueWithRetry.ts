@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { type Database, type DataSnapshot } from "firebase/database";
 import { subscribeWithPermissionRetry } from "../utils/firebaseListeners";
 
@@ -41,17 +41,19 @@ export const useFirebaseValueWithRetry = ({
   label,
   resyncKey,
 }: UseFirebaseValueWithRetryParams) => {
-  const onDataRef = useRef(onData);
-  onDataRef.current = onData;
-
   useEffect(() => {
     if (!db || !path || !enabled) return;
 
-    return subscribeWithPermissionRetry(
+    let active = true;
+    const unsubscribe = subscribeWithPermissionRetry(
       db,
       path,
-      (snapshot) => onDataRef.current(snapshot.val(), snapshot),
+      (snapshot) => active && onData(snapshot.val(), snapshot),
       { label },
     );
-  }, [db, path, enabled, label, resyncKey]);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [db, path, enabled, onData, label, resyncKey]);
 };

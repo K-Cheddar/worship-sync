@@ -21,6 +21,10 @@ import {
 import { isMemberAvailableOnDate } from "../memberPreferences";
 import PositionIconBadge from "../../../components/icons/PositionIconBadge";
 import MemberAvatar from "../../../components/MemberAvatar/MemberAvatar";
+import {
+  MemberNameWithIndicator,
+  useCurrentMemberId,
+} from "../components/CurrentUserMemberIndicator";
 import type { PositionIcon } from "../../../components/icons/iconTypes";
 import ScheduleShadowChip from "./ScheduleShadowChip";
 import { ScheduleAssignmentContext } from "./ScheduleAssignmentContext";
@@ -106,6 +110,7 @@ const ScheduleBoardCell = memo(({
   iemLoading,
   iemUnavailable,
 }: ScheduleBoardCellProps) => {
+  const selfMemberId = useCurrentMemberId();
   const handlersRef = useContext(ScheduleAssignmentContext);
   const assignedMemberId = getCellPrimaryMemberId(assignmentCell);
   const shadowAssignments = getCellShadowAssignments(assignmentCell);
@@ -114,6 +119,9 @@ const ScheduleBoardCell = memo(({
   );
   const avatarMember =
     assignedMember && !assignedMember.scheduleGuest ? assignedMember : null;
+  const assignedMemberIsSelf = Boolean(
+    avatarMember && avatarMember.memberId === selfMemberId,
+  );
 
   const assigneeLabel = assignedMember
     ? scheduleMemberName(assignedMember, duplicateFirstNames)
@@ -172,7 +180,7 @@ const ScheduleBoardCell = memo(({
         aria-haspopup="listbox"
         aria-expanded={isActiveSlot}
         aria-label={cn(
-          `${occurrenceName} ${positionLabel}, ${assigneeLabel || "empty"}`,
+          `${occurrenceName} ${positionLabel}, ${assigneeLabel || "empty"}${assignedMemberIsSelf ? ", You" : ""}`,
           availabilityConflictLabel && `, ${availabilityConflictLabel}`,
         )}
         disabled={!canEdit}
@@ -234,9 +242,12 @@ const ScheduleBoardCell = memo(({
                 memberName={assigneeLabel}
               />
             ) : null}
-            <span className={scheduleAssignmentLabelClassName}>
-              {assigneeLabel || "Unassigned"}
-            </span>
+            <MemberNameWithIndicator
+              name={assigneeLabel || "Unassigned"}
+              memberId={avatarMember?.memberId}
+              className="min-w-0 flex-1"
+              nameClassName={scheduleAssignmentLabelClassName}
+            />
             {assignedMember?.scheduleGuest ? (
               <span
                 className="shrink-0 rounded-full border border-violet-400/40 bg-violet-500/15 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-violet-200"
@@ -293,6 +304,7 @@ const ScheduleBoardCell = memo(({
                 positionId={positionId}
                 shadow={shadow}
                 memberName={scheduleMemberName(member, duplicateFirstNames)}
+                memberId={member?.scheduleGuest ? undefined : shadow.memberId}
                 canEdit={canEdit}
               />
             );

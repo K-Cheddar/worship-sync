@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
+import { FloatingWindowZIndexProvider } from "../components/FloatingWindow/FloatingWindowZIndexContext";
 import ChatWindowHost from "./ChatWindowHost";
 import { useChat } from "./ChatContext";
 import { useMediaQuery } from "../hooks/useMediaQuery";
@@ -14,31 +15,38 @@ jest.mock("../hooks/useMediaQuery", () => ({
 
 jest.mock("./ChatWindow", () => ({
   __esModule: true,
-  default: () => <div>Chat content</div>,
-}));
-
-jest.mock("../components/FloatingWindow/FloatingWindow", () => ({
-  __esModule: true,
-  default: ({
-    children,
-    title,
-  }: {
-    children: React.ReactNode;
-    title: string;
-  }) => (
-    <div data-testid="floating-window" aria-label={title}>
-      {children}
-    </div>
+  default: ({ floatingWindowContentVisible }: { floatingWindowContentVisible?: boolean }) => (
+    <>
+      <div>Chat content</div>
+      <span data-testid="chat-content-visibility">
+        {String(Boolean(floatingWindowContentVisible))}
+      </span>
+    </>
   ),
 }));
 
 const mockedUseChat = jest.mocked(useChat);
 const mockedUseMediaQuery = jest.mocked(useMediaQuery);
+const renderHost = () =>
+  render(
+    <FloatingWindowZIndexProvider>
+      <ChatWindowHost />
+    </FloatingWindowZIndexProvider>,
+  );
+const chatHostTree = () => (
+  <FloatingWindowZIndexProvider>
+    <ChatWindowHost />
+  </FloatingWindowZIndexProvider>
+);
 
 describe("ChatWindowHost", () => {
   beforeEach(() => {
     mockedUseChat.mockReset();
     mockedUseMediaQuery.mockReset();
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
   it("renders nothing when chat is closed", () => {
@@ -49,7 +57,7 @@ describe("ChatWindowHost", () => {
     } as unknown as ReturnType<typeof useChat>);
     mockedUseMediaQuery.mockReturnValue(true);
 
-    const { container } = render(<ChatWindowHost />);
+    const { container } = renderHost();
     expect(container).toBeEmptyDOMElement();
   });
 
@@ -61,12 +69,12 @@ describe("ChatWindowHost", () => {
     } as unknown as ReturnType<typeof useChat>);
 
     mockedUseMediaQuery.mockReturnValue(false);
-    const { rerender } = render(<ChatWindowHost />);
+    const { rerender } = renderHost();
     expect(screen.getByTestId("floating-window")).toBeInTheDocument();
     expect(screen.getByText("Chat content")).toBeInTheDocument();
 
     mockedUseMediaQuery.mockReturnValue(true);
-    rerender(<ChatWindowHost />);
+    rerender(chatHostTree());
     expect(screen.getByTestId("floating-window")).toBeInTheDocument();
   });
 
@@ -80,10 +88,47 @@ describe("ChatWindowHost", () => {
 
     render(
       <MemoryRouter initialEntries={["/current-service/view"]}>
-        <ChatWindowHost />
+        <FloatingWindowZIndexProvider>
+          <ChatWindowHost />
+        </FloatingWindowZIndexProvider>
       </MemoryRouter>,
     );
 
     expect(screen.getByTestId("floating-window")).toBeInTheDocument();
+  });
+
+  it("resets content visibility when a closed chat window is mounted again", async () => {
+    const closeChat = jest.fn();
+    mockedUseChat.mockReturnValue({
+      available: true,
+      isOpen: true,
+      closeChat,
+    } as unknown as ReturnType<typeof useChat>);
+    mockedUseMediaQuery.mockReturnValue(true);
+
+    const { rerender } = renderHost();
+    await screen.findByText("true", {
+      selector: '[data-testid="chat-content-visibility"]',
+    });
+
+    jest.spyOn(window, "requestAnimationFrame").mockImplementation(() => 1);
+
+    mockedUseChat.mockReturnValue({
+      available: true,
+      isOpen: false,
+      closeChat,
+    } as unknown as ReturnType<typeof useChat>);
+    rerender(chatHostTree());
+    expect(screen.queryByTestId("floating-window")).not.toBeInTheDocument();
+
+    mockedUseChat.mockReturnValue({
+      available: true,
+      isOpen: true,
+      closeChat,
+    } as unknown as ReturnType<typeof useChat>);
+    rerender(chatHostTree());
+
+    expect(screen.getByTestId("floating-window")).toBeInTheDocument();
+    expect(screen.getByTestId("chat-content-visibility")).toHaveTextContent("false");
   });
 });

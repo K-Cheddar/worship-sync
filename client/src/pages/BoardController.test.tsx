@@ -1,3 +1,4 @@
+/* eslint-disable testing-library/no-node-access -- Compare the decorative icon SVG directly to verify its identity. */
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
@@ -12,6 +13,8 @@ import { useRestreamSession } from "../boards/useRestreamSession";
 import { useYouTubeConnectionStatus } from "../boards/useYouTubeConnectionStatus";
 import { useAboutChangelogMenu } from "../hooks/useAboutChangelogMenu";
 import type { RootState } from "../store/store";
+import { PAGE_APPEARANCES } from "./pageAppearances";
+import { getLucideIconInnerMarkup } from "../test/lucideIconTestUtils";
 
 jest.mock("../hooks", () => {
   const actual = jest.requireActual("../hooks") as typeof import("../hooks");
@@ -2284,7 +2287,19 @@ describe("BoardControllerContent", () => {
   it("shows share links in Board tools and board context in the toolbar", async () => {
     renderPage();
 
-    await screen.findByRole("heading", { name: "Discussion Board" });
+    const title = await screen.findByRole("heading", { name: "Discussion Board" });
+    const titleIcon = title.querySelector("svg");
+    expect(titleIcon?.innerHTML).toBe(
+      getLucideIconInnerMarkup(PAGE_APPEARANCES.boardModeration.icon),
+    );
+    expect(titleIcon?.parentElement).toHaveClass(
+      PAGE_APPEARANCES.boardModeration.iconColorClass,
+    );
+    expect(document.querySelector("[data-board-toolbar]")).toHaveClass(
+      "h-[48px]",
+      "min-h-[48px]",
+      "xl:h-auto",
+    );
     await screen.findByRole("heading", { name: "Sunday Board" });
     expect(screen.queryByRole("heading", { name: "Discussion boards" })).not.toBeInTheDocument();
     expect(screen.getByText(/\d+ total/i)).toBeInTheDocument();

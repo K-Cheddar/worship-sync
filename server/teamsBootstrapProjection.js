@@ -49,6 +49,43 @@ const VIEW_ONLY_SCHEDULE_FIELDS = [
   "additionalPositionSlots",
 ];
 
+/**
+ * Resolve only the caller's own active roster link. The id must agree with the
+ * canonical document id and be unique within the active church roster; names
+ * and contact fields never participate in identity matching.
+ */
+export const resolveSelfMemberId = ({
+  churchId,
+  userId,
+  members,
+  truncated = false,
+} = {}) => {
+  if (
+    truncated ||
+    typeof churchId !== "string" || !churchId ||
+    typeof userId !== "string" || !userId ||
+    !Array.isArray(members)
+  ) {
+    return null;
+  }
+
+  const activeMembers = members.filter(
+    (member) => member && member.churchId === churchId && !member.archivedAt,
+  );
+  const linkedMembers = activeMembers.filter((member) => member.userId === userId);
+  if (linkedMembers.length !== 1) return null;
+
+  const [member] = linkedMembers;
+  if (
+    typeof member.memberId !== "string" || !member.memberId ||
+    member.id !== member.memberId ||
+    activeMembers.filter((candidate) => candidate.memberId === member.memberId).length !== 1
+  ) {
+    return null;
+  }
+  return member.memberId;
+};
+
 export const projectViewOnlySchedule = (schedule) => {
   const projected = copyDefinedFields(schedule, VIEW_ONLY_SCHEDULE_FIELDS);
   if (Array.isArray(schedule.guests)) {

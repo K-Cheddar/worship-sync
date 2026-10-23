@@ -160,6 +160,52 @@ describe("displays a controller can be given", () => {
   });
 });
 
+describe("controller home appearance", () => {
+  it("changes the icon and custom color through the shared picker and church profile writer", async () => {
+    const user = userEvent.setup();
+    const { store } = renderPanel();
+
+    await user.click(screen.getByRole("button", { name: "Visual Technician picker" }));
+    await user.click(screen.getByRole("button", { name: "Monitor Play" }));
+    await user.click(screen.getByRole("button", { name: "Choose custom icon color" }));
+    const customHexInput = await screen.findByRole("textbox", { name: "Choose custom icon color hex" });
+    await user.clear(customHexInput);
+    await user.type(customHexInput, "#12abef");
+    await waitFor(() => expect(
+      store.getState().controllerProfiles.list.find((profile) => profile.id === "ctrl_visual")?.homeIcon?.color,
+    ).toBe("#12abef"));
+
+    expect(store.getState().controllerProfiles.list.find((profile) => profile.id === "ctrl_visual"))
+      .toMatchObject({ homeIcon: { source: "lucide", name: "MonitorPlay", color: "#12abef" } });
+    await waitFor(() => expect(writeControllerProfiles).toHaveBeenCalled());
+    expect(writeControllerProfiles.mock.calls.at(-1)?.[2]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "ctrl_visual", homeIcon: { source: "lucide", name: "MonitorPlay", color: "#12abef" } }),
+      ]),
+    );
+  });
+});
+
+describe("controller admin presentation ordering", () => {
+  it("shows Presentation before Graphics without changing the registry order", () => {
+    const { store } = renderPanel([
+      ...PROFILES.map((profile) => ({ ...profile, order: 0 })),
+      { id: "overlay", type: "overlay", name: "Graphics", order: 1, enabled: true, outputIds: [], outputsConfigured: false, defaultSendOutputIds: [], outlineScope: "presentation" },
+      { id: "presentation", type: "presentation", name: "Presentation", order: 2, enabled: true, outputIds: [], outputsConfigured: false, defaultSendOutputIds: [], outlineScope: "presentation" },
+    ]);
+    const visibleNames = screen.getAllByLabelText("Name:")
+      .slice(0, 2)
+      .map((input) => (input as HTMLInputElement).value);
+
+    expect(visibleNames).toEqual(["Presentation", "Graphics"]);
+    expect(store.getState().controllerProfiles.list.map((profile) => profile.id)).toEqual([
+      "ctrl_visual",
+      "overlay",
+      "presentation",
+    ]);
+  });
+});
+
 describe("assigning a display", () => {
   it("scopes the controller and persists it", async () => {
     const { store } = renderPanel();
@@ -221,8 +267,10 @@ describe("home description", () => {
   it("saves a custom home description for a controller", async () => {
     const { store } = renderPanel();
     const visualField = screen.getByPlaceholderText(
-      /Drive this screen with its own outline/i,
+      /Show independent content or mirror another display/i,
     );
+    expect(screen.getAllByLabelText(/^Description:$/)).toContain(visualField);
+    expect(screen.getAllByText("Shown on the homepage when explanations are enabled.")).toHaveLength(3);
 
     fireEvent.change(visualField, {
       target: { value: "Drive the lobby screens." },

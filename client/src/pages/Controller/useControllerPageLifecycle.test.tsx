@@ -1,10 +1,11 @@
 import React from "react";
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { Provider } from "react-redux";
 import store from "../../store/store";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { itemListsSlice } from "../../store/itemListsSlice";
+import { markServicePlanningPlanPreviewStale } from "../../store/servicePlanningImportSlice";
 import { initiateMediaFromDoc } from "../../store/mediaSlice";
 import { loadMediaLibrary as readMediaLibrary } from "../../utils/mediaDocUtils";
 import { ActiveControllerProvider } from "../../context/activeController";
@@ -120,6 +121,57 @@ describe("useControllerPageLifecycle selected outline loading", () => {
       { id: "existing", name: "Existing" },
       expect.objectContaining({ id: "new", name: "New item" }),
     ]);
+  });
+
+  it("does not clear saved-plan freshness when an outline is restored during controller loading", async () => {
+    const outlineRead = deferred<any>();
+    const documents = new Map<string, Record<string, unknown>>();
+    const db = {
+      get: jest.fn(async (id: string) => {
+        if (id === "outline") return outlineRead.promise;
+        const document = documents.get(id);
+        if (document) return document;
+        throw Object.assign(new Error("missing document"), { status: 404 });
+      }),
+      put: jest.fn(async (document: Record<string, unknown>) => {
+        documents.set(document._id as string, document);
+        return { ok: true, rev: "1-created" };
+      }),
+    } as any;
+    const storedOutline = {
+      source: "servicePlanning",
+      loadedAt: "2026-05-03T12:00:00.000Z",
+      sourceUrl: "https://example.com/legacy-outline",
+      planLabel: "Legacy outline",
+      preview: { lineItems: [], outlineCandidates: [], overlayCandidates: [] },
+    };
+    store.dispatch(
+      itemListsSlice.actions.initiateItemLists([
+        { _id: "outline", name: "Sunday AM" },
+      ]),
+    );
+    store.dispatch(markServicePlanningPlanPreviewStale("saved-plan"));
+
+    renderHook(() => useControllerPageLifecycle(), {
+      wrapper: ({ children }) => (
+        <Provider store={store}>
+          <ControllerInfoContext.Provider value={{ db, cloud: {} } as any}>
+            {children}
+          </ControllerInfoContext.Provider>
+        </Provider>
+      ),
+    });
+
+    await waitFor(() => expect(db.get).toHaveBeenCalledWith("outline"));
+    await act(async () => {
+      outlineRead.resolve({ ...details("Loaded outline"), serviceOutline: storedOutline });
+      await outlineRead.promise;
+      await Promise.resolve();
+    });
+
+    expect(store.getState().servicePlanningImport.serviceOutline).toBeNull();
+    expect(store.getState().servicePlanningImport.preview).toBeNull();
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(true);
   });
 
   it("routes the same replicated media document through Redux only once", () => {

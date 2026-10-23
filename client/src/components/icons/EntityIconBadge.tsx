@@ -20,6 +20,8 @@ export const getPositionIconColor = getEntityIconColor;
 
 export type EntityIconBadgeProps = {
   icon?: EntityIcon | null;
+  /** Used if a previously saved rich icon is no longer available. */
+  fallbackIcon?: EntityIcon;
   /** Render-only fill for candidate previews; never copied into the icon ref. */
   color?: string;
   /** Use picker-level CSS variables so a color drag does not update each tile. */
@@ -34,6 +36,7 @@ export type PositionIconBadgeProps = EntityIconBadgeProps;
 /** Shared neutral, contrast-aware surface for entity icons. */
 const EntityIconBadge = ({
   icon,
+  fallbackIcon,
   color,
   preview = false,
   className,
@@ -58,6 +61,13 @@ const EntityIconBadge = ({
           icon={icon}
           inheritColor
           className={cn("h-4 w-4 text-current", iconClassName)}
+          fallback={fallbackIcon ? (
+            <WorshipSyncIcon
+              icon={fallbackIcon}
+              inheritColor
+              className={cn("h-4 w-4 text-current", iconClassName)}
+            />
+          ) : undefined}
         />
       ) : null}
     </ColoredIconBadge>

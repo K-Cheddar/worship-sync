@@ -1,6 +1,7 @@
 import type { MouseEvent } from "react";
 import { ChevronLeft } from "lucide-react";
 import { cn } from "@/utils/cnHelper";
+import { MemberNameWithIndicator } from "../components/CurrentUserMemberIndicator";
 
 export type MemberAssignmentActionIssues = {
   replace: string;
@@ -29,6 +30,7 @@ export const shouldShowMemberAssignmentActionGroupDivider = <T extends { issue: 
 
 type MemberAssignmentSubmenuProps = {
   title: string;
+  memberId?: string;
   issues: MemberAssignmentActionIssues;
   onReplace: () => void;
   onAddShadow: () => void;
@@ -66,6 +68,7 @@ const SubmenuButton = ({
 
 const MemberAssignmentSubmenu = ({
   title,
+  memberId,
   issues,
   onReplace,
   onAddShadow,
@@ -99,7 +102,9 @@ const MemberAssignmentSubmenu = ({
           <div className="my-1 h-px bg-gray-700" role="separator" />
         </>
       ) : null}
-      <p className="px-2 py-1.5 text-xs font-normal text-gray-400">{title}</p>
+      <div className="px-2 py-1.5 text-xs font-normal text-gray-400">
+        <MemberNameWithIndicator name={title} memberId={memberId} />
+      </div>
       {actionItems.map((item, index) => (
         <div key={item.label}>
           {shouldShowMemberAssignmentActionGroupDivider(actionItems, index) ? (

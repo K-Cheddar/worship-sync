@@ -10,6 +10,7 @@ import {
   prepareScheduleInitialSmsBatch,
 } from "../../../api/auth";
 import AvailabilityBatchReview from "../components/AvailabilityBatchReview";
+import { MemberNameWithIndicator } from "../components/CurrentUserMemberIndicator";
 
 const DISPATCH_READINESS_MESSAGE = "Schedule text messages aren't available yet. Check back later.";
 
@@ -335,7 +336,7 @@ const ScheduleInitialSmsSendFlow = ({
               {visibleRows.length ? visibleRows.map((row) => (
                 <div key={row.memberId} className="space-y-1 px-3 py-3" role="listitem">
                   <div className="flex flex-wrap items-center gap-3">
-                    <Checkbox label={row.memberName} checked={selectedIds.includes(row.memberId)} disabled={busy || batchIsActive || !row.eligible} onCheckedChange={(checked) => updateSelection([row.memberId], checked === true)} className="flex-1" />
+                    <Checkbox label={<MemberNameWithIndicator name={row.memberName} memberId={row.memberId} className="flex-1" />} checked={selectedIds.includes(row.memberId)} disabled={busy || batchIsActive || !row.eligible} onCheckedChange={(checked) => updateSelection([row.memberId], checked === true)} className="flex-1" />
                     <span className={`text-xs ${row.eligible ? "text-emerald-200" : "text-amber-200"}`}>{statusReason(row)}</span>
                   </div>
                   <details className="pl-7 text-xs text-gray-400">

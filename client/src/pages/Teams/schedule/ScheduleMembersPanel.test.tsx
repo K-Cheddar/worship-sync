@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import ScheduleMembersPanel from "./ScheduleMembersPanel";
 import type { TeamRosterMember } from "../../../api/authTypes";
+import { CurrentMemberIdentityProvider } from "../components/CurrentUserMemberIndicator";
 
 const member: TeamRosterMember = {
   memberId: "member-1",
@@ -15,7 +16,8 @@ const member: TeamRosterMember = {
 describe("ScheduleMembersPanel", () => {
   it("renders a member photo in browse mode", () => {
     render(
-      <ScheduleMembersPanel
+      <CurrentMemberIdentityProvider memberId="member-1">
+        <ScheduleMembersPanel
         open
         expandedMemberIds={[]}
         onExpandedMemberIdsChange={jest.fn()}
@@ -39,7 +41,8 @@ describe("ScheduleMembersPanel", () => {
         onClearSlot={jest.fn()}
         onSelectMember={jest.fn()}
         getIssue={() => ""}
-      />,
+        />
+      </CurrentMemberIdentityProvider>,
     );
 
     expect(screen.getByAltText("")).toHaveAttribute(
@@ -47,6 +50,7 @@ describe("ScheduleMembersPanel", () => {
       "https://example.com/rae.jpg",
     );
     expect(screen.getByRole("group", { name: /Rae/ })).toBeInTheDocument();
+    expect(screen.getByText("You")).toBeInTheDocument();
   });
 
   it("keeps the avatar inside the assign action in assignment mode", () => {

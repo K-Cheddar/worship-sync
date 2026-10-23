@@ -8,6 +8,7 @@ import { recordMemberSmsConsent } from "../../../api/auth";
 import type { TeamRosterMember } from "../../../api/authTypes";
 import { formatUsPhoneNumber } from "../../../utils/phoneNumber";
 import { memberName } from "../teamsUtils";
+import { MemberNameWithIndicator } from "../components/CurrentUserMemberIndicator";
 
 type Props = {
   churchId: string;
@@ -65,7 +66,11 @@ const RecordSmsConsentModal = ({ churchId, member, onClose, onSaved }: Props) =>
     >
       <div className="space-y-4">
         <div className="rounded-md border border-gray-700 bg-gray-950/40 px-3 py-2 text-sm">
-          <p className="font-semibold">{memberName(member)}</p>
+          <MemberNameWithIndicator
+            name={memberName(member)}
+            memberId={member.memberId}
+            className="font-semibold"
+          />
           <p className="text-gray-300">{formatUsPhoneNumber(member.phoneNumber)}</p>
         </div>
         <fieldset className="space-y-2">

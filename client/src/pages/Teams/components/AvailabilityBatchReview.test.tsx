@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import AvailabilityBatchReview from "./AvailabilityBatchReview";
 import type { NotificationBatch } from "../../../api/authTypes";
+import { CurrentMemberIdentityProvider } from "./CurrentUserMemberIndicator";
 
 const batch: NotificationBatch = {
   batchId: "batch-1",
@@ -25,6 +26,28 @@ it("keeps delivery and response counts separate and surfaces send exceptions", (
   expect(screen.getByText("1 failed · 1 could not be confirmed · 1 phone number opted out")).toBeInTheDocument();
   expect(screen.getAllByRole("definition").map((element) => element.textContent)).toEqual(["1", "1", "2", "3"]);
   expect(screen.getByText(/Sent · Delivered/)).toBeInTheDocument();
+});
+
+it("marks only the selected roster recipient in the review list", () => {
+  const sameNameBatch: NotificationBatch = {
+    ...batch,
+    recipients: [
+      ...batch.recipients,
+      { ...batch.recipients[0], memberId: "other", status: "sent" },
+    ],
+  };
+  render(
+    <CurrentMemberIdentityProvider memberId="one">
+      <AvailabilityBatchReview
+        batch={sameNameBatch}
+        formName="October Availability"
+        busy={false}
+      />
+    </CurrentMemberIdentityProvider>,
+  );
+
+  expect(screen.getAllByText("Rae Rivera")).toHaveLength(2);
+  expect(screen.getAllByText("You")).toHaveLength(1);
 });
 
 it("shows a shared phone destination while retaining each member's separate private message", () => {

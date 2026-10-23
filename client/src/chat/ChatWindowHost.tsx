@@ -1,3 +1,4 @@
+import { useState } from "react";
 import FloatingWindow from "../components/FloatingWindow/FloatingWindow";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useChat } from "./ChatContext";
@@ -29,11 +30,16 @@ const chatWindowLayout = (isCompact: boolean) => {
   };
 };
 
-const ChatWindowHost = () => {
-  const chat = useChat();
-  const isDesktop = useMediaQuery("(min-width: 768px)");
-  if (!chat?.available || !chat.isOpen) return null;
+type ActiveChat = NonNullable<ReturnType<typeof useChat>>;
 
+const ChatFloatingWindow = ({
+  chat,
+  isDesktop,
+}: {
+  chat: ActiveChat;
+  isDesktop: boolean;
+}) => {
+  const [isContentVisible, setIsContentVisible] = useState(false);
   const layout = chatWindowLayout(!isDesktop);
 
   return (
@@ -46,10 +52,19 @@ const ChatWindowHost = () => {
       defaultHeight={layout.defaultHeight}
       resizable
       contentClassName="overflow-hidden p-0"
+      onContentVisibilityChange={setIsContentVisible}
     >
-      <ChatWindow />
+      <ChatWindow floatingWindowContentVisible={isContentVisible} />
     </FloatingWindow>
   );
+};
+
+const ChatWindowHost = () => {
+  const chat = useChat();
+  const isDesktop = useMediaQuery("(min-width: 768px)");
+  if (!chat?.available || !chat.isOpen) return null;
+
+  return <ChatFloatingWindow chat={chat} isDesktop={isDesktop} />;
 };
 
 export default ChatWindowHost;

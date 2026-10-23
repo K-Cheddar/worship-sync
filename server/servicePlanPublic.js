@@ -1,4 +1,8 @@
 import { normalizeRichTextDocument } from "./serviceFlowService.js";
+import {
+  getServicePlanScriptureLabel,
+  getServicePlanScriptureResourceTitle,
+} from "../shared/servicePlanScripture.ts";
 
 /** Shared with the member schedule so both views read plan titles the same way. */
 export const richTextToPlainText = (document) =>
@@ -186,7 +190,7 @@ const publicScriptureLabels = (element) => {
       ? [element.scriptureRef]
       : [];
   return refs
-    .map((ref) => String(ref?.label || "").trim())
+    .map((ref) => getServicePlanScriptureLabel(ref))
     .filter(Boolean);
 };
 
@@ -199,7 +203,7 @@ const publicSongResource = (reference) => ({
 
 const publicScriptureResource = (reference) => ({
   type: "scripture",
-  title: String(reference?.label || "").trim() || "Scripture",
+  title: getServicePlanScriptureLabel(reference),
 });
 
 const isHttpUrl = (value) => {
@@ -386,7 +390,9 @@ const publicResources = (element) => {
 
   return [...legacy, ...resourcesWithoutLegacyDuplicates].map((resource) => {
     const type = String(resource?.type || "generic").trim() || "generic";
-    const rawTitle = String(resource?.title || "").trim();
+    const rawTitle = type === "scripture"
+      ? getServicePlanScriptureResourceTitle(resource)
+      : String(resource?.title || "").trim();
     const url = String(resource?.url || "").trim();
     const safeUrl = publicResourceUrl(resource);
     const titleIsPlaceholder = ["untitled resource", "church resource"].includes(rawTitle.toLowerCase());

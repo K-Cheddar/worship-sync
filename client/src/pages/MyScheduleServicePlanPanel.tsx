@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useChat } from "../chat/ChatContext";
 import Spinner from "../components/Spinner/Spinner";
 import { useSelector } from "../hooks";
-import type { MyScheduleOccurrence } from "../api/auth";
+import type { MyScheduleOccurrence, MySchedulePlan } from "../api/auth";
 import { usePublicServiceFlow } from "../services/usePublicServiceFlow";
 import { buildMyScheduleServiceFlowSnapshot } from "./buildMyScheduleServiceFlowSnapshot";
 import { shareIdFromPublicServiceUrl } from "./shareIdFromPublicServiceUrl";
@@ -10,8 +10,10 @@ import ServicePublicView from "./ServicePublicView";
 
 type MyScheduleServicePlanPanelProps = {
   occurrence: MyScheduleOccurrence;
+  plan: MySchedulePlan | null;
   churchName?: string;
   churchLogoUrl?: string;
+  timeZone?: string;
 };
 
 /**
@@ -21,34 +23,37 @@ type MyScheduleServicePlanPanelProps = {
  */
 const MyScheduleServicePlanPanel = ({
   occurrence,
+  plan,
   churchName = "",
   churchLogoUrl = "",
+  timeZone,
 }: MyScheduleServicePlanPanelProps) => {
-  const churchTimeZone = useChat()?.context?.timeZone || "UTC";
+  const chat = useChat();
+  const churchTimeZone = timeZone || chat?.context?.timeZone || "UTC";
   // Prefer the detailed/team public token — never the simple/general link.
   const scrollbarWidth = useSelector(
     (state) => state.undoable.present.preferences.scrollbarWidth,
   );
   const shareId = useMemo(() => {
-    const teamUrl = occurrence.plan?.publicUrls?.team || "";
-    return occurrence.plan?.published ? shareIdFromPublicServiceUrl(teamUrl) : "";
-  }, [occurrence.plan?.published, occurrence.plan?.publicUrls?.team]);
+    const teamUrl = plan?.publicUrls?.team || "";
+    return plan?.published ? shareIdFromPublicServiceUrl(teamUrl) : "";
+  }, [plan?.published, plan?.publicUrls?.team]);
 
   const { snapshot, error, loading, connection, refresh } =
     usePublicServiceFlow(shareId);
 
   const staticSnapshot = useMemo(() => {
-    if (!occurrence.plan) return null;
+    if (!plan) return null;
     return buildMyScheduleServiceFlowSnapshot({
       occurrence,
-      plan: occurrence.plan,
+      plan,
       churchName,
       churchLogoUrl,
       timeZone: churchTimeZone,
     });
-  }, [churchLogoUrl, churchName, churchTimeZone, occurrence]);
+  }, [churchLogoUrl, churchName, churchTimeZone, occurrence, plan]);
 
-  if (!occurrence.plan) {
+  if (!plan) {
     return (
       <p className="text-sm text-gray-400">
         No order of service is set for this date yet.

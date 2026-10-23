@@ -21,6 +21,7 @@ const FollowHarness = ({
   suspensionReason,
   itemReady = true,
   itemVisible,
+  contentRevision = 0,
   scrollToItem,
 }: {
   itemId: string | null;
@@ -30,6 +31,7 @@ const FollowHarness = ({
   suspensionReason?: string | null;
   itemReady?: boolean;
   itemVisible?: boolean;
+  contentRevision?: number;
   scrollToItem: jest.Mock;
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -68,7 +70,7 @@ const FollowHarness = ({
       onKeyDown={follow.handleKeyDown}
     >
       <div ref={containerRef} role="region" aria-label="Plan">
-        {renderItem && itemId ? <div id={itemId} data-testid={itemId} data-live-row>Live item</div> : null}
+        {renderItem && itemId ? <div id={itemId} data-testid={itemId} data-live-row>Live item {contentRevision}</div> : null}
       </div>
       {itemId && !follow.isFollowingLive ? (
         <button type="button" onClick={follow.resumeFollowing}>Follow live</button>
@@ -198,6 +200,25 @@ describe("useFollowLiveScroll", () => {
     await flushDoubleRaf();
 
     expect(scrollToItem).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Follow live" })).toBeInTheDocument();
+  });
+
+  it("does not resume live following after same-plan content refresh", async () => {
+    const scrollToItem = jest.fn();
+    const { rerender } = render(
+      <FollowHarness itemId="welcome" contentRevision={1} scrollToItem={scrollToItem} />,
+    );
+    await flushDoubleRaf();
+    scrollToItem.mockClear();
+    fireEvent.wheel(screen.getByRole("region", { name: "Plan" }));
+
+    rerender(
+      <FollowHarness itemId="welcome" contentRevision={2} scrollToItem={scrollToItem} />,
+    );
+    await flushDoubleRaf();
+
+    expect(screen.getByTestId("welcome")).toHaveTextContent("Live item 2");
+    expect(scrollToItem).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Follow live" })).toBeInTheDocument();
   });
 

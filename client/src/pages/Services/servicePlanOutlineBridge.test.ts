@@ -1,11 +1,20 @@
 import {
   buildServicePlanOutlineItems,
   planServicePlanOutlineItems,
+  placeServicePlanOutlineItem,
 } from "./servicePlanOutlineBridge";
 import { createBibleItemFromParsedReference } from "../../utils/servicePlanningBibleImport";
 import { plainTextToRichText } from "../../types/richText";
 import type { ServicePlan } from "../../types/servicePlan";
 import type { ServiceItem } from "../../types";
+import { getVerses } from "../../api/getVerses";
+import { createNewBible } from "../../utils/itemUtil";
+
+jest.mock("../../api/getVerses", () => ({ getVerses: jest.fn() }));
+jest.mock("../../utils/itemUtil", () => ({
+  ...jest.requireActual("../../utils/itemUtil"),
+  createNewBible: jest.fn(),
+}));
 
 jest.mock("../../utils/servicePlanningBibleImport", () => ({
   createBibleItemFromParsedReference: jest.fn(),
@@ -68,6 +77,92 @@ describe("buildServicePlanOutlineItems", () => {
       type: "bible",
       background: "",
     }) as unknown as Awaited<ReturnType<typeof createBibleItemFromParsedReference>>);
+  });
+
+  it("loads Psalms 105 as a whole chapter and John 3:16–18 as a range, preserving versions, order and IDs", async () => {
+    const actual = jest.requireActual<typeof import("../../utils/servicePlanningBibleImport")>("../../utils/servicePlanningBibleImport");
+    mockCreateBibleItem.mockImplementation(actual.createBibleItemFromParsedReference);
+    const chapterVerses = Array.from({ length: 45 }, (_, index) => ({ name: String(index + 1), index, text: `Verse ${index + 1}` }));
+    jest.mocked(getVerses).mockResolvedValue({ name: "105", index: 104, verses: chapterVerses });
+    jest.mocked(createNewBible).mockImplementation(async ({ name }) => ({ _id: name, name, type: "bible", background: "" }) as Awaited<ReturnType<typeof createNewBible>>);
+    const plan: ServicePlan = { ...basePlan, sections: [{ id: "reading", name: "Reading the Word", elements: [{
+      id: "mixed", type: "bible", title: plainTextToRichText("Reading the Word"),
+      songRefs: [{ id: "song", kind: "library", songId: "song-1", songName: librarySongs[0].name }],
+      scriptureRefs: [
+        { id: "psalm", label: "Psalms 105", book: "Psalms", chapter: "105", verseRange: "", version: "NIV" },
+        { id: "john", label: "John 3:16–18", book: "John", chapter: "3", verseRange: "16–18", version: "NKJV" },
+      ],
+      contentOrder: ["psalm", "song", "john"],
+    }] }] };
+    const saved = JSON.stringify(plan);
+    const result = await buildServicePlanOutlineItems({ plan, currentList: [], db: undefined, songs: librarySongs });
+    expect(result.items.map((item) => item.type)).toEqual(["bible", "song", "bible"]);
+    expect(result.items.map((item) => item.listId)).toEqual(["mixed::attachment:psalm", "mixed::attachment:song", "mixed::attachment:john"]);
+    expect(jest.mocked(getVerses).mock.calls.map(([args]) => args)).toEqual([
+      { book: "Psalms", chapter: 104, version: "niv" }, { book: "John", chapter: 2, version: "nkjv" },
+    ]);
+    expect(jest.mocked(createNewBible).mock.calls[0][0]).toEqual(expect.objectContaining({ verses: chapterVerses, version: "niv" }));
+    expect(jest.mocked(createNewBible).mock.calls[1][0]).toEqual(expect.objectContaining({ verses: chapterVerses.slice(15, 18), version: "nkjv" }));
+    const repeated = await buildServicePlanOutlineItems({ plan, currentList: result.items, db: undefined, songs: librarySongs });
+    expect(repeated.items).toEqual([]);
+    expect(getVerses).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(plan)).toBe(saved);
+  });
+
+  it.each(["scripture", "scriptureRef", "flat"])("supports explicit whole-chapter Scripture in %s data", async (shape) => {
+    const reference = { label: "Psalms 105", book: "Psalms", chapter: "105", verseRange: "", version: "NIV" };
+    const plan: ServicePlan = { ...basePlan, sections: [{ id: "reading", name: "Reading", elements: [{
+      id: "reading", type: "bible", title: plainTextToRichText("Reading the Word"),
+      resources: [{ id: "chapter", type: "scripture", title: reference.label,
+        data: shape === "flat" ? reference : { [shape]: reference } }],
+    }] }] };
+    const result = await buildServicePlanOutlineItems({ plan, currentList: [], db: undefined, songs: [] });
+    expect(result.skippedTitles).toEqual([]);
+    expect(result.items[0].listId).toBe("reading::attachment:chapter");
+    expect(mockCreateBibleItem).toHaveBeenCalledWith(expect.objectContaining({ parsedRef: {
+      book: "Psalms", chapter: "105", verseRange: "", version: "NIV",
+    } }));
+  });
+
+  it("reports invalid scripture and rejects unavailable chapters without creating empty Bible items", async () => {
+    const plan: ServicePlan = { ...basePlan, sections: [{ id: "reading", name: "Reading", elements: [{
+      id: "invalid", type: "bible", title: plainTextToRichText("Invalid reading"),
+      scriptureRef: { label: "Unknown 1", book: "Unknown", chapter: "1", verseRange: "", version: "NIV" },
+    }] }] };
+    const result = await buildServicePlanOutlineItems({ plan, currentList: [], db: undefined, songs: [] });
+    expect(result.skippedTitles).toEqual(["Invalid reading"]);
+    expect(mockCreateBibleItem).not.toHaveBeenCalled();
+    for (const [chapter, verseRange] of [["3", "18-16"], ["3", "0"], ["0", ""]]) {
+      plan.sections[0].elements[0].scriptureRef = { label: "Invalid", book: "John", chapter, verseRange, version: "NIV" };
+      const invalid = await buildServicePlanOutlineItems({ plan, currentList: [], db: undefined, songs: [] });
+      expect(invalid.skippedTitles).toEqual(["Invalid reading"]);
+      expect(invalid.items).toEqual([]);
+    }
+    expect(mockCreateBibleItem).not.toHaveBeenCalled();
+    plan.sections[0].elements[0].scriptureRef = { label: "Psalms 105", book: "Psalms", chapter: "105", verseRange: "", version: "NIV" };
+    mockCreateBibleItem.mockImplementation(jest.requireActual<typeof import("../../utils/servicePlanningBibleImport")>("../../utils/servicePlanningBibleImport").createBibleItemFromParsedReference);
+    jest.mocked(getVerses).mockResolvedValue({ name: "105", index: 104, verses: [] });
+    await expect(buildServicePlanOutlineItems({ plan, currentList: [], db: undefined, songs: [] })).rejects.toThrow("Could not load Bible passage");
+    expect(createNewBible).not.toHaveBeenCalled();
+  });
+
+  it("appends multiple missing mappings in plan order and reports only successful additions", async () => {
+    const plan: ServicePlan = { ...basePlan, sections: ["Praise & Prayer", "Praise & Worship"].map((name, index) => ({
+      id: `section-${index}`, name,
+      elements: [{ ...basePlan.sections[0].elements[0], id: `element-${index}` }],
+    })) };
+    const sectionRules = plan.sections.map((section, index) => ({ id: section.id, matchSectionName: section.name, matchMode: "exact" as const, headingName: ["Call to Prayer", "Praise and Worship"][index] }));
+    const tail: ServiceItem = { _id: "tail", listId: "tail", type: "song", name: "Tail" };
+    const result = await buildServicePlanOutlineItems({ plan, currentList: [worshipHeading, tail], db: undefined, songs: librarySongs, sectionRules });
+    expect(result.insertedCount).toBe(2);
+    expect(result.skippedTitles).toEqual([]);
+    expect(result.placementFallbacks.map((fallback) => fallback.headingName)).toEqual(["Call to Prayer", "Praise and Worship"]);
+    const planned = planServicePlanOutlineItems({ plan, currentList: [worshipHeading, tail], songs: librarySongs, sectionRules });
+    const outline = planned.steps.reduce((list, step, index) => placeServicePlanOutlineItem(list, result.items[index], step).list, [worshipHeading, tail]);
+    expect(outline.map((item) => item.listId)).toEqual([worshipHeading.listId, tail.listId, ...result.items.map((item) => item.listId)]);
+    const repeated = await buildServicePlanOutlineItems({ plan, currentList: outline, db: undefined, songs: librarySongs, sectionRules });
+    expect(repeated.insertedCount).toBe(0);
+    expect(repeated.placementFallbacks).toEqual([]);
   });
 
   it("inserts the library-matched song without creating a section heading", async () => {
@@ -608,10 +703,10 @@ describe("buildServicePlanOutlineItems", () => {
       listId: worshipHeading.listId,
       name: worshipHeading.name,
     });
-    expect(result.placementIssues).toEqual([]);
+    expect(result.steps.every((step) => !step.placementFallback)).toBe(true);
   });
 
-  it("does not fall back to a section name when a mapped heading is missing", () => {
+  it("plans outline-end insertion without substituting a heading when an explicit mapping is missing", () => {
     const result = planServicePlanOutlineItems({
       plan: basePlan,
       currentList: [worshipHeading],
@@ -623,12 +718,13 @@ describe("buildServicePlanOutlineItems", () => {
         headingName: "Praise & Worship",
       }],
     });
-    expect(result.steps).toEqual([]);
-    expect(result.placementIssues).toEqual([{
+    expect(result.steps).toHaveLength(1);
+    expect(result.steps[0].destination).toEqual({ kind: "outline-end" });
+    expect(result.steps[0].placementFallback).toEqual({
       sectionName: "Worship",
       headingName: "Praise & Worship",
       reason: "mapped-heading-missing",
-    }]);
+    });
   });
 
   it("appends an unmatched section to the actual outline end without a placement warning", () => {
@@ -646,7 +742,7 @@ describe("buildServicePlanOutlineItems", () => {
     expect(result.steps).toHaveLength(1);
     expect(result.steps[0].destination).toEqual({ kind: "outline-end" });
     expect(result.steps[0].planned.listId).toBe("el-song::attachment:legacy-song-0-library");
-    expect(result.placementIssues).toEqual([]);
+    expect(result.steps.every((step) => !step.placementFallback)).toBe(true);
   });
 
   it("keeps all unmatched actionable items and sections in Service Plan order at the outline end", () => {
@@ -681,7 +777,7 @@ describe("buildServicePlanOutlineItems", () => {
       "special-two::attachment:legacy-song-0-library",
       "other-one::attachment:legacy-song-0-library",
     ]);
-    expect(result.placementIssues).toEqual([]);
+    expect(result.steps.every((step) => !step.placementFallback)).toBe(true);
   });
 
   it("keeps plan order when sections resolve to different or shared heading occurrences", () => {

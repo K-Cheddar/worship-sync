@@ -1,6 +1,8 @@
+/* eslint-disable testing-library/no-node-access -- Compare the rendered SVG from the mocked shell to the shared icon identity. */
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
+import type { LucideIcon } from "lucide-react";
 import { ControllerInfoContext } from "../context/controllerInfo";
 import { GlobalInfoContext as AppGlobalInfoContext } from "../context/globalInfo";
 import { TransferProvider } from "../context/transferContext";
@@ -20,6 +22,8 @@ import {
   uploadChurchResource,
 } from "../api/auth";
 import { updateAllDocs } from "../utils/dbUtils";
+import { PAGE_APPEARANCES } from "./pageAppearances";
+import { getLucideIconInnerMarkup } from "../test/lucideIconTestUtils";
 
 // Renderer behavior and binary fetching are covered by the shared preview tests.
 jest.mock("../components/ContentPreview/DocxPreview", () => ({
@@ -29,7 +33,29 @@ jest.mock("../components/ContentPreview/DocxPreview", () => ({
 
 jest.mock("../components/AppPageShell/AppWorkspaceShell", () => ({
   __esModule: true,
-  default: ({ children }: { children: ReactNode }) => <>{children}</>,
+  default: ({
+    children,
+    title,
+    icon: PageIcon,
+    iconColorClass,
+  }: {
+    children: ReactNode;
+    title: string;
+    icon: LucideIcon;
+    iconColorClass?: string;
+  }) => (
+    <>
+      <header>
+        <h1>
+          <span data-testid="workspace-title-icon" className={iconColorClass}>
+            <PageIcon />
+          </span>
+          {title}
+        </h1>
+      </header>
+      {children}
+    </>
+  ),
 }));
 
 jest.mock("../api/auth", () => ({
@@ -165,6 +191,212 @@ const deferred = <T,>() => {
 };
 
 describe("Resources page", () => {
+  describe("compact layout", () => {
+    const originalMatchMedia = window.matchMedia;
+    beforeEach(() => {
+      window.matchMedia = jest.fn().mockReturnValue({ matches: true, addEventListener: jest.fn(), removeEventListener: jest.fn() });
+      mockListChurchResources.mockResolvedValue({ success: true, resources: [resource] });
+    });
+    afterEach(() => { window.matchMedia = originalMatchMedia; });
+
+    it("toggles the full compact resource name without opening a preview", async () => {
+      const user = userEvent.setup();
+      const name = "A very long resource filename that should stay on one line until touched.pdf";
+      mockListChurchResources.mockResolvedValue({ success: true, resources: [{ ...resource, name }] });
+      renderPage();
+      const toggle = await screen.findByRole("button", { name: `Toggle full name for ${name}` });
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+      expect(within(toggle).getByText(name)).toHaveClass("truncate");
+      await user.click(toggle);
+      expect(toggle).toHaveAttribute("aria-expanded", "true");
+      expect(within(toggle).getByText(name)).not.toHaveClass("truncate");
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      await user.click(toggle);
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+      toggle.focus();
+      await user.keyboard("{Enter}");
+      expect(toggle).toHaveAttribute("aria-expanded", "true");
+      await user.keyboard(" ");
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      jest.mocked(getChurchResourceUrl).mockResolvedValue({ url: "https://files.test/guide.pdf", expiresAt: new Date(Date.now() + 900000).toISOString() });
+      await user.click(screen.getByRole("button", { name: `Preview ${name}` }));
+      expect(screen.getByRole("dialog", { name })).toBeInTheDocument();
+    });
+
+    it.each(["Name", "Type", "Size", "Updated", "Source"])("shares %s sorting with the table including descending and default order", async (dimension) => {
+      const user = userEvent.setup();
+      const view = renderPage();
+      await screen.findByRole("button", { name: "Preview Guidelines.pdf" });
+      const order = () => screen.getAllByRole("button", { name: /^Preview / }).map((row) => row.getAttribute("aria-label"));
+      const initial = order();
+      let asc: (string | null)[] = [];
+      let desc: (string | null)[] = [];
+      for (const direction of ["ascending", "descending"] as const) {
+        await user.click(screen.getByRole("button", { name: "Sort resources" }));
+        await user.click(screen.getByRole("menuitemradio", { name: `${dimension} ${direction}` }));
+        if (direction === "ascending") asc = order();
+        else desc = order();
+      }
+      await user.click(screen.getByRole("button", { name: "Sort resources" }));
+      await user.click(screen.getByRole("menuitemradio", { name: "Default order" }));
+      expect(order()).toEqual(initial);
+      view.unmount();
+      window.matchMedia = originalMatchMedia;
+      renderPage();
+      await screen.findByRole("button", { name: "Preview Guidelines.pdf" });
+      await user.click(screen.getByRole("button", { name: dimension }));
+      expect(order()).toEqual(asc);
+      await user.click(screen.getByRole("button", { name: dimension }));
+      expect(order()).toEqual(desc);
+    });
+
+    it("keeps a filtered preview in mobile sort order", async () => {
+      mockSongDocs = [];
+      mockListChurchResources.mockResolvedValue({ success: true, resources: [resource, { ...resource, id: "second", name: "Second guide.pdf" }, imageResource] });
+      jest.mocked(getChurchResourceUrl).mockResolvedValue({ url: "https://files.test/guide.pdf", expiresAt: new Date(Date.now() + 900000).toISOString() });
+      const user = userEvent.setup();
+      renderPage();
+      await screen.findByRole("button", { name: "Preview Guidelines.pdf" });
+      await user.click(screen.getByRole("button", { name: "Documents" }));
+      await user.type(screen.getByPlaceholderText("Search..."), "guide");
+      await user.click(screen.getByRole("button", { name: "Sort resources" }));
+      await user.click(screen.getByRole("menuitemradio", { name: "Name descending" }));
+      await user.click(screen.getByRole("button", { name: "Preview Second guide.pdf" }));
+      const preview = screen.getByRole("dialog", { name: "Second guide.pdf" });
+      expect(within(preview).getByText("1 of 2")).toBeInTheDocument();
+      await user.click(within(preview).getByRole("button", { name: "Next resource" }));
+      expect(screen.getByRole("dialog", { name: "Guidelines.pdf" })).toBeInTheDocument();
+    });
+
+    it("preserves selection on a reference conflict and clears it on cancellation", async () => {
+      mockDeleteChurchResource.mockRejectedValue(Object.assign(new Error("Used by a service plan"), { status: 409 }));
+      const user = userEvent.setup();
+      renderPage();
+      await screen.findByRole("button", { name: "Preview Guidelines.pdf" });
+      await user.click(screen.getByRole("button", { name: "Select" }));
+      await user.click(screen.getByRole("checkbox", { name: "Select Guidelines.pdf" }));
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Delete selected (1)" }));
+      await user.click(within(screen.getByRole("dialog", { name: "Delete resource?" })).getByRole("button", { name: "Cancel" }));
+      expect(mockDeleteChurchResource).not.toHaveBeenCalled();
+      await user.click(screen.getByRole("button", { name: "Delete selected (1)" }));
+      await user.click(within(screen.getByRole("dialog", { name: "Delete resource?" })).getByRole("button", { name: "Delete" }));
+      await screen.findByText("Used by a service plan");
+      expect(screen.getByRole("checkbox", { name: "Select Guidelines.pdf" })).toBeChecked();
+      await user.click(screen.getByRole("button", { name: "Cancel selection" }));
+      expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Select" }));
+      expect(screen.getByRole("checkbox", { name: "Select Guidelines.pdf" })).not.toBeChecked();
+    });
+
+    it("downloads a song attachment with pending feedback and no destructive action", async () => {
+      const download = deferred<{ url: string; expiresAt: string }>();
+      mockGetSongAudioUrl.mockReturnValue(download.promise);
+      const open = jest.spyOn(window, "open").mockImplementation(() => null);
+      const user = userEvent.setup();
+      renderPage();
+      await user.click(await screen.findByRole("button", { name: "Actions for rehearsal.mp3" }));
+      expect(screen.queryByRole("menuitem", { name: "Delete" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("menuitem", { name: "Rename" })).not.toBeInTheDocument();
+      await user.click(screen.getByRole("menuitem", { name: "Download" }));
+      expect(screen.getByRole("menuitem", { name: "Downloading…" })).toHaveAttribute("aria-disabled", "true");
+      await act(async () => download.resolve({ url: "https://audio.test/download.mp3", expiresAt: "later" }));
+      expect(open).toHaveBeenCalledWith("https://audio.test/download.mp3", "_blank", "noopener,noreferrer");
+      expect(mockGetSongAudioUrl).toHaveBeenCalledWith(expect.objectContaining({ disposition: "attachment", songId: "song-1" }));
+      open.mockRestore();
+    });
+
+    it("shows the existing load error and a genuine empty state on mobile", async () => {
+      mockSongDocs = [];
+      mockListChurchResources.mockRejectedValueOnce(new Error("Files unavailable"));
+      const view = renderPage();
+      await screen.findByRole("alert");
+      expect(screen.getByText("Files unavailable")).toBeInTheDocument();
+      expect(screen.queryByText("No resources match this view.")).not.toBeInTheDocument();
+      view.unmount();
+      mockListChurchResources.mockResolvedValue({ success: true, resources: [] });
+      renderPage();
+      expect(await screen.findByText("No resources match this view.")).toBeInTheDocument();
+    });
+
+    it("mounts one compact list, sorts it, and navigates that order", async () => {
+      jest.mocked(getChurchResourceUrl).mockResolvedValue({ url: "https://files.test/guide.pdf", expiresAt: new Date(Date.now() + 900000).toISOString() });
+      const user = userEvent.setup();
+      renderPage();
+      await screen.findByRole("button", { name: "Preview Guidelines.pdf" });
+      expect(screen.queryByRole("table")).not.toBeInTheDocument();
+      expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: /Sort resources/ }));
+      await user.click(screen.getByRole("menuitemradio", { name: "Name descending" }));
+      expect(screen.getAllByRole("button", { name: /^Preview / }).map((row) => row.getAttribute("aria-label"))).toEqual(["Preview rehearsal.mp3", "Preview Guidelines.pdf"]);
+      await user.click(screen.getByRole("button", { name: "Preview rehearsal.mp3" }));
+      const dialog = screen.getByRole("dialog", { name: "rehearsal.mp3" });
+      expect(within(dialog).getByText("1 of 2")).toBeInTheDocument();
+      await user.click(within(dialog).getByRole("button", { name: "Next resource" }));
+      expect(screen.getByRole("dialog", { name: "Guidelines.pdf" })).toBeInTheDocument();
+    });
+
+    it("selects only church resources and confirms bulk deletion before exiting selection", async () => {
+      mockDeleteChurchResource.mockResolvedValue({ success: true });
+      const user = userEvent.setup();
+      renderPage();
+      await screen.findByRole("button", { name: "Preview Guidelines.pdf" });
+      await user.click(screen.getByRole("button", { name: "Select" }));
+      expect(screen.queryByRole("checkbox", { name: "Select rehearsal.mp3" })).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Select all" }));
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Delete selected (1)" }));
+      const confirmation = screen.getByRole("dialog", { name: "Delete resource?" });
+      expect(mockDeleteChurchResource).not.toHaveBeenCalled();
+      await user.click(within(confirmation).getByRole("button", { name: "Delete" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      expect(mockDeleteChurchResource).toHaveBeenCalledWith({ churchId: "church-1", resourceId: "resource-1" });
+      expect(screen.queryByRole("button", { name: "Cancel selection" })).not.toBeInTheDocument();
+    });
+
+    it.each(["music", "view"] as const)("limits %s row actions without opening a preview", async (access) => {
+      const user = userEvent.setup();
+      renderPage(access);
+      await user.click(await screen.findByRole("button", { name: "Actions for Guidelines.pdf" }));
+      expect(screen.getByRole("menuitem", { name: "Download" })).toBeInTheDocument();
+      expect(screen.queryByRole("menuitem", { name: "Rename" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("menuitem", { name: "Delete" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Select" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("offers rename and delete for external links without inventing downloads", async () => {
+      mockListChurchResources.mockResolvedValue({ success: true, resources: [externalResource("external", "Worship flow", "other", "https://example.test", "web", { provider: "google-drive" })] });
+      const user = userEvent.setup();
+      renderPage();
+      await user.click(await screen.findByRole("button", { name: "Actions for Worship flow" }));
+      expect(screen.queryByRole("menuitem", { name: "Download" })).not.toBeInTheDocument();
+      expect(screen.getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
+      await user.click(screen.getByRole("menuitem", { name: "Rename" }));
+      expect(await screen.findByRole("textbox", { name: /Resource name/ })).toHaveValue("Worship flow");
+    });
+
+    it("renders compact loading without a wide table", () => {
+      mockUpdateAllDocs.mockReturnValue(new Promise(() => {}));
+      renderPage();
+      expect(screen.getByRole("status")).toHaveTextContent("Loading resources");
+      expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    });
+  });
+  it("uses the shared Resources page icon identity", () => {
+    renderPage();
+
+    const title = screen.getByRole("heading", { name: "Resources" });
+    const titleIcon = title.querySelector("svg");
+    expect(titleIcon?.innerHTML).toBe(
+      getLucideIconInnerMarkup(PAGE_APPEARANCES.resources.icon),
+    );
+    expect(screen.getByTestId("workspace-title-icon")).toHaveClass(
+      PAGE_APPEARANCES.resources.iconColorClass,
+    );
+  });
+
   it.each(["asc", "desc"])("navigates the searched, filtered %s order and prepares only immediate neighbors", async (direction) => {
     mockSongDocs = [];
     const files = ["D", "A", "C", "B"].map((letter) => ({
@@ -736,5 +968,16 @@ describe("Resources page", () => {
     expect(within(confirmation).getByRole("button", { name: "Delete" })).toHaveAttribute("data-variant", "presentDestructive");
     expect(within(confirmation).getByText("Guidelines.pdf")).toBeInTheDocument();
     expect(within(confirmation).getByText("Second guide.pdf")).toBeInTheDocument();
+  });
+
+  it("does not open a desktop preview when operating a selection checkbox with the keyboard", async () => {
+    mockListChurchResources.mockResolvedValue({ success: true, resources: [resource] });
+    const user = userEvent.setup();
+    renderPage();
+    const checkbox = await screen.findByRole("checkbox", { name: "Select Guidelines.pdf" });
+    checkbox.focus();
+    await user.keyboard(" ");
+    expect(checkbox).toBeChecked();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

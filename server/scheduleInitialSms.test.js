@@ -81,3 +81,16 @@ test("fallback dates use the church timezone and initial identity is independent
   );
   assert.notEqual(scheduleInitialSmsIdempotencyKey("schedule-a", "member-a"), scheduleInitialSmsIdempotencyKey("schedule-b", "member-a"));
 });
+
+test("personal My Schedule SMS is compact and independent of assignment count", () => {
+  const input = { churchName: "First Church", responseUrl: `https://example.test/s#v_${"x".repeat(32)}`,
+    schedule: { startDate: "2026-11-01", endDate: "2026-11-30" } };
+  const single = buildScheduleInitialSmsMessage({ ...input, assignments: [{ serviceName: "Private assignment details" }] });
+  assert.equal(single, buildScheduleInitialSmsMessage({ ...input, assignments: Array(100).fill({ serviceName: "Another assignment" }) }));
+  assert.match(single, /First Church: Your November volunteer schedule is ready/);
+  assert.doesNotMatch(single, /Private|Another assignment|You're serving/);
+  assert.equal((single.match(/https:\/\//g) || []).length, 1);
+  assert.match(single, /Reply STOP to opt out\.$/);
+  const multiple = buildScheduleInitialSmsMessage({ ...input, schedule: { startDate: "2026-11-01", endDate: "2026-12-01" } });
+  assert.match(multiple, /Your volunteer schedule is ready/);
+});

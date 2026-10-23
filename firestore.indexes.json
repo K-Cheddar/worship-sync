@@ -139,6 +139,15 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "churchId", "order": "ASCENDING" },
+        { "fieldPath": "formId", "order": "ASCENDING" },
+        { "fieldPath": "recipientId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notificationIntents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "churchId", "order": "ASCENDING" },
         { "fieldPath": "sourceId", "order": "ASCENDING" },
         { "fieldPath": "sourceType", "order": "ASCENDING" }
       ]

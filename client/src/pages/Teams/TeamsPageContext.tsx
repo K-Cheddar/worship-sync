@@ -6,6 +6,7 @@ import type {
   ServicePlanTemplateUpdatedEvent,
 } from "./hooks/useTeamsLiveSync";
 import { useChurchServiceTimeZone } from "../../context/churchServiceTimeZone";
+import { CurrentMemberIdentityProvider } from "./components/CurrentUserMemberIndicator";
 
 export type TeamsPageState = ReturnType<typeof useTeamsPageState> &
   ReturnType<typeof useTeamsDomainResources> & {
@@ -52,9 +53,11 @@ export const TeamsPageProvider = ({ children }: { children: ReactNode }) => {
   }), [churchTimeZone.status, domainResources, pageState, serviceTimeZone]);
 
   return (
-    <TeamsPageContext.Provider value={value}>
-      {children}
-    </TeamsPageContext.Provider>
+    <CurrentMemberIdentityProvider memberId={pageState.selfMemberId}>
+      <TeamsPageContext.Provider value={value}>
+        {children}
+      </TeamsPageContext.Provider>
+    </CurrentMemberIdentityProvider>
   );
 };
 

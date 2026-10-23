@@ -1,9 +1,11 @@
 import Button from "../../../components/Button/Button";
 import Modal from "../../../components/Modal/Modal";
+import { MemberNameWithIndicator } from "./CurrentUserMemberIndicator";
 
 type SmsConfirmationModalProps = {
   isOpen: boolean;
   recipientName: string;
+  recipientMemberId?: string;
   phoneNumberSnapshot: string;
   message: string;
   segmentCount: number;
@@ -15,6 +17,7 @@ type SmsConfirmationModalProps = {
 const SmsConfirmationModal = ({
   isOpen,
   recipientName,
+  recipientMemberId,
   phoneNumberSnapshot,
   message,
   segmentCount,
@@ -34,7 +37,12 @@ const SmsConfirmationModal = ({
       <dl className="space-y-2">
         <div>
           <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">Volunteer</dt>
-          <dd>{recipientName}</dd>
+          <dd>
+            <MemberNameWithIndicator
+              name={recipientName}
+              memberId={recipientMemberId}
+            />
+          </dd>
         </div>
         <div>
           <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">Phone number</dt>

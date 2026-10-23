@@ -43,6 +43,8 @@ type EntityRowProps = {
   selected?: boolean;
   /** Opens edit mode; the row becomes fully clickable with a hover affordance. */
   onTitleClick?: () => void;
+  /** Overrides the accessible name of the edit button for identity-aware rows. */
+  editButtonAriaLabel?: string;
   onEdit?: () => void;
   canEdit?: boolean;
   onArchive?: () => void;
@@ -76,6 +78,7 @@ const EntityRow = ({
   compact = false,
   selected = false,
   onTitleClick,
+  editButtonAriaLabel,
   onEdit,
   canEdit = true,
   onArchive,
@@ -228,7 +231,7 @@ const EntityRow = ({
             "flex min-w-0 w-full cursor-pointer items-center rounded-md text-left",
             "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400",
           )}
-          aria-label={`Edit ${title}`}
+          aria-label={editButtonAriaLabel ?? `Edit ${title}`}
           onClick={onTitleClick}
         >
           {titleBlock}
@@ -252,7 +255,7 @@ const EntityRow = ({
         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400",
         clickableBodyClassName,
       )}
-      aria-label={`Edit ${title}`}
+      aria-label={editButtonAriaLabel ?? `Edit ${title}`}
       onClick={onTitleClick}
     >
       {useStackedCardLayout ? stackedCardBody : rowContent}
@@ -328,7 +331,7 @@ const EntityRow = ({
               iconSize="sm"
               className={teamsRowIconButtonClassName}
               padding={teamsRowIconButtonPadding}
-              aria-label={`Edit ${title}`}
+              aria-label={editButtonAriaLabel ?? `Edit ${title}`}
               onClick={onEdit}
             >
               Edit

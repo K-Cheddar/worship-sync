@@ -95,8 +95,17 @@ export const getScheduleMemberAssignments = ({ schedule, memberId, positions = [
     );
 };
 
-export const buildScheduleInitialSmsMessage = ({ churchName, assignments, responseUrl, timeZone }) => {
+export const buildScheduleInitialSmsMessage = ({ churchName, assignments, responseUrl, timeZone, schedule }) => {
   const introduction = clean(churchName) || "Your church";
+  if (/\/s#v_[A-Za-z0-9_-]{32}$/.test(String(responseUrl || ""))) {
+    const start = String(schedule?.startDate || "");
+    const end = String(schedule?.endDate || "");
+    let period = "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(start) && /^\d{4}-\d{2}-\d{2}$/.test(end) && start.slice(0, 7) === end.slice(0, 7)) {
+      period = `${new Date(`${start}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", timeZone: "UTC" })} `;
+    }
+    return `${introduction}: Your ${period}volunteer schedule is ready. View and respond: ${responseUrl}. Reply STOP to opt out.`;
+  }
   const assignmentLines = (assignments || []).map((assignment) => {
     const service = clean(assignment.serviceName) || "Service";
     const date = assignmentDate(assignment, timeZone);

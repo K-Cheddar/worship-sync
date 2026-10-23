@@ -37,6 +37,7 @@ const InviteAccept = lazyRoute(() => import("../pages/InviteAccept"));
 const PrivacyPolicy = lazyRoute(() => import("../pages/Legal/PrivacyPolicy"));
 const TermsOfService = lazyRoute(() => import("../pages/Legal/TermsOfService"));
 const SmsOptIn = lazyRoute(() => import("../pages/SmsOptIn"));
+const VolunteerPortal = lazyRoute(() => import("../pages/VolunteerPortal"));
 
 const PublicFallback = () => {
   const { pathname } = useLocation();
@@ -92,6 +93,7 @@ const PublicApp = ({
       <ErrorBoundary>
         <Suspense fallback={<PublicFallback />}>
           <Routes>
+            <Route path="/s" element={<Provider store={store}><VolunteerPortal /></Provider>} />
             <Route path="/sms-opt-in" element={<SmsOptIn />} />
             <Route path="/sms-opt-in/:churchId" element={<SmsOptIn />} />
             <Route path="/privacy" element={<PrivacyPolicy />} />
