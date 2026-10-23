@@ -3,5 +3,5 @@
   "date": "2026-10-23",
   "type": "fixed",
   "title": "Participant overlays from assigned people",
-  "description": "Controller overlay previews and Sync All now include people assigned in Led by automatically, including in existing service plans. Optional event labels still apply."
+  "description": "Controller overlay previews and Sync All automatically include people assigned in Led by, using existing integration event labels and split suffixes unless an item overrides the label. Expand the preview to review participant details."
 }
