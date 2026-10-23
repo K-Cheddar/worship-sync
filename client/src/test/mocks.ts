@@ -145,7 +145,7 @@ export function createMockGlobalContext(
     operatorName: "",
     device: null,
     setOperatorName: jest.fn(),
-    refreshAuthBootstrap: jest.fn(() => Promise.resolve()),
+    refreshAuthBootstrap: jest.fn(() => Promise.resolve(true)),
     refreshPresentationListeners: jest.fn(),
     updateSelfDisplayName: jest.fn(() => Promise.resolve(true)),
     notificationCategories: [
@@ -235,7 +235,7 @@ export function createMockGlobalInfo(overrides: Record<string, unknown> = {}) {
     operatorName: "",
     device: null,
     setOperatorName: jest.fn(),
-    refreshAuthBootstrap: jest.fn(() => Promise.resolve()),
+    refreshAuthBootstrap: jest.fn(() => Promise.resolve(true)),
     refreshPresentationListeners: jest.fn(),
     updateSelfDisplayName: jest.fn(() => Promise.resolve(true)),
     notificationCategories: [

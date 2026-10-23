@@ -87,7 +87,7 @@ it.each(["member", "invite"])("retains selected checkboxes through the %s save a
   const savePending = new Promise<void>((resolve) => { finishSave = resolve; });
   const authPending = new Promise<void>((resolve) => { finishAuthRefresh = resolve; });
   const peoplePending = new Promise<void>((resolve) => { finishPeopleRefresh = resolve; });
-  const refreshAuthBootstrap = jest.fn(() => authPending);
+  const refreshAuthBootstrap = jest.fn(async () => { await authPending; return true; });
   let invite: ChurchInviteRow = {
     inviteId: "pending", churchId: "church-1", email: "pending@example.test", role: "admin",
     appAccess: "full", controllerAccess: "full", status: "pending", permissions,
@@ -165,10 +165,12 @@ it("refreshes a conflicting access snapshot and requires reopening to review the
   expect(screen.getByRole("checkbox", { name: "Praise Team" })).toBeChecked();
 });
 
-it("keeps the durable save complete when self-bootstrap refresh fails", async () => {
+it.each(["rejected", "unavailable"])("keeps the durable save complete when self-bootstrap refresh is %s", async (outcome) => {
   const user = userEvent.setup();
   const showToast = jest.fn();
-  const refreshAuthBootstrap = jest.fn().mockRejectedValue(new Error("offline"));
+  const refreshAuthBootstrap = outcome === "rejected"
+    ? jest.fn().mockRejectedValue(new Error("offline"))
+    : jest.fn().mockResolvedValue(false);
   jest.mocked(api.updateChurchMemberAccess).mockImplementation(async (_church, _user, _access, saved) => {
     permissions = saved;
     return { success: true };
@@ -202,7 +204,7 @@ it("does not refresh the current administrator's bootstrap when another account 
 
 it("finishes the original self-save and global refresh after leaving administration", async () => {
   const user = userEvent.setup();
-  const refreshAuthBootstrap = jest.fn().mockResolvedValue(undefined);
+  const refreshAuthBootstrap = jest.fn().mockResolvedValue(true);
   let releaseSave: () => void = () => {};
   jest.mocked(api.updateChurchMemberAccess).mockImplementation(async (_church, _user, _access, saved) => {
     await new Promise<void>((resolve) => { releaseSave = resolve; });

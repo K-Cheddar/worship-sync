@@ -252,7 +252,7 @@ const loggedInHumanBootstrap = {
   sessionKind: "human" as const,
   database: "main",
   uploadPreset: "bpqu4ma5",
-  appAccess: "full",
+  appAccess: "full" as const,
   churchId: "church-1",
   churchName: "Test Church",
   churchStatus: "active" as const,
@@ -272,7 +272,7 @@ const loggedInWorkstationBootstrap = {
   sessionKind: "workstation" as const,
   database: "main",
   uploadPreset: "bpqu4ma5",
-  appAccess: "full",
+  appAccess: "full" as const,
   churchId: "church-1",
   churchName: "Test Church",
   churchStatus: "active" as const,
@@ -283,6 +283,7 @@ const loggedInWorkstationBootstrap = {
     deviceId: "workstation-1",
     label: "Front Row Laptop",
     operatorName: "Alex",
+    surfaceType: null,
   },
   csrfToken: "csrf-test",
 };
@@ -2229,6 +2230,71 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     expect(screen.getByTestId("session-kind")).toHaveTextContent("workstation");
     expect(screen.getByTestId("operator-name")).toHaveTextContent("Alex");
     expect(getWorkstationSessionOperatorName()).toBe("Alex");
+  });
+
+  it.each([
+    ["human", loggedInHumanBootstrap],
+    ["workstation", loggedInWorkstationBootstrap],
+    ["display", loggedInDisplayBootstrap],
+  ])("reports an unavailable %s refresh as false while preserving the offline session", async (_kind, bootstrap) => {
+    jest.useFakeTimers();
+    let current: React.ContextType<typeof GlobalInfoContext>;
+    const Probe = () => {
+      current = useContext(GlobalInfoContext);
+      return <output>{current?.bootstrapStatus}</output>;
+    };
+    jest.mocked(authApi.getAuthBootstrap).mockResolvedValue(bootstrap);
+    const view = renderProvider(<Probe />);
+    try {
+      await screen.findByText("ready");
+      const permissionsBeforeRefresh = current!.permissions;
+      jest.mocked(authApi.getAuthBootstrap).mockRejectedValue(makeReachabilityError());
+      let result: Promise<boolean> = Promise.resolve(true);
+      await act(async () => { result = current!.refreshAuthBootstrap({ requireFresh: true }); });
+      await act(async () => { await jest.advanceTimersByTimeAsync(30_000); });
+      await expect(result).resolves.toBe(false);
+      expect(current!.sessionKind).toBe(bootstrap.sessionKind);
+      expect(current!.authServerStatus).toBe("offline");
+      expect(current!.permissions).toEqual(permissionsBeforeRefresh);
+    } finally {
+      view.unmount();
+      jest.useRealTimers();
+    }
+  });
+
+  it("returns the fresh failure after an older successful bootstrap while ordinary callers stay deduplicated", async () => {
+    jest.useFakeTimers();
+    let current: React.ContextType<typeof GlobalInfoContext>;
+    const Probe = () => {
+      current = useContext(GlobalInfoContext);
+      return <output>{current?.bootstrapStatus}</output>;
+    };
+    const bootstrap = { ...loggedInHumanBootstrap, appAccess: "full" as const };
+    jest.mocked(authApi.getAuthBootstrap).mockResolvedValue(bootstrap);
+    const view = renderProvider(<Probe />);
+    try {
+      await screen.findByText("ready");
+      const stale = createDeferred<typeof bootstrap>();
+      jest.mocked(authApi.getAuthBootstrap).mockReturnValueOnce(stale.promise).mockRejectedValue(makeReachabilityError());
+      let older!: Promise<boolean>;
+      let deduplicated!: Promise<boolean>;
+      let fresh!: Promise<boolean>;
+      await act(async () => {
+        older = current!.refreshAuthBootstrap();
+        deduplicated = current!.refreshAuthBootstrap();
+        fresh = current!.refreshAuthBootstrap({ requireFresh: true });
+      });
+      expect(authApi.getAuthBootstrap).toHaveBeenCalledTimes(2);
+      await act(async () => { stale.resolve(bootstrap); });
+      await expect(older).resolves.toBe(true);
+      await expect(deduplicated).resolves.toBe(true);
+      await act(async () => { await jest.advanceTimersByTimeAsync(30_000); });
+      await expect(fresh).resolves.toBe(false);
+      expect(current!.authServerStatus).toBe("offline");
+    } finally {
+      view.unmount();
+      jest.useRealTimers();
+    }
   });
 
   it("re-authenticates shared Firebase when the session context changes mid-session", async () => {

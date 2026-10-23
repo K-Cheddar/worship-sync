@@ -47,6 +47,65 @@ const fixture = async ({ firestore = false, old = true } = {}) => {
   return { id, churchId, teamId, since, db };
 };
 
+test("restart recovery waits for an active lease then resumes the frozen batch at expiration", async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.now() });
+  const { id, db } = await fixture({ firestore: true });
+  auth.setSendEmailForServerTests(async (email) => {
+    if (email.to.startsWith("second")) throw new Error("acceptance uncertain");
+  });
+  await auth.sendScheduleResponseDigest(id);
+  const frozen = db.read(C.teamSchedules, id).pendingResponseDigestBatch;
+  const restartAt = Date.now();
+  // A stopped process loses its local timers; retain only the durable database.
+  t.mock.timers.reset();
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: restartAt });
+  const leaseUntil = Date.now() + 5 * 60 * 1000;
+  await db.collection(C.teamSchedules).doc(id).update({
+    pendingResponseDigestBatch: { ...frozen, claimId: "stopped-worker", leaseUntil },
+  });
+  const restarted = await import("../authService.js?response-digest-active-restart");
+  restarted.setServerFirestoreForTests(db);
+  const sent = [];
+  restarted.setSendEmailForServerTests(async (email) => { sent.push(email); });
+  try {
+    await restarted.recoverPendingScheduleResponseDigests();
+    await restarted.sendScheduleResponseDigest(id); // A competing explicit attempt must also wait.
+    t.mock.timers.tick(5 * 60 * 1000 - 1);
+    await restarted.recoverPendingScheduleResponseDigests();
+    assert.equal(sent.length, 0);
+    assert.equal(db.read(C.teamSchedules, id).pendingResponseDigestBatch.claimId, "stopped-worker");
+    t.mock.timers.tick(1);
+    await new Promise(setImmediate); // Drain the timer's asynchronous delivery.
+    assert.equal(sent.length, 1); // The first recipient was already accepted before the restart.
+    assert.equal(sent[0].to, "second@example.test");
+    assert.equal(sent[0].htmlBody, frozen.email.htmlBody);
+    assert.equal(db.read(C.teamSchedules, id).pendingResponseDigestSince, null);
+  } finally {
+    restarted.setSendEmailForServerTests(null);
+    restarted.setServerFirestoreForTests(null);
+  }
+});
+
+test("failed durable sends retry after a bounded delay without a busy loop", async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.now() });
+  const { id } = await fixture();
+  const attempts = [];
+  auth.setSendEmailForServerTests(async (email) => {
+    attempts.push(email);
+    throw new Error("provider unavailable");
+  });
+  await auth.sendScheduleResponseDigest(id);
+  t.mock.timers.tick(59_999);
+  await auth.recoverPendingScheduleResponseDigests();
+  assert.equal(attempts.length, 2);
+  auth.setSendEmailForServerTests(async (email) => { attempts.push(email); });
+  t.mock.timers.tick(1);
+  await new Promise(setImmediate);
+  assert.equal(attempts.length, 4);
+  assert.equal(attempts[0].idempotencyKey, attempts[2].idempotencyKey);
+  assert.equal((await auth.getDoc(C.teamSchedules, id)).pendingResponseDigestSince, null);
+});
+
 test("missing provider never records delivery or advances the schedule batch", async () => {
   const { id, since } = await fixture();
   await auth.sendScheduleResponseDigest(id);

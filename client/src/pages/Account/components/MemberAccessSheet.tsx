@@ -254,7 +254,9 @@ const MemberAccessSheet = () => {
         }
         let authRefreshFailed = false;
         try {
-          if (context?.userId === targetUserId) await context.refreshAuthBootstrap({ requireFresh: true });
+          if (context?.userId === targetUserId) {
+            authRefreshFailed = !await context.refreshAuthBootstrap({ requireFresh: true });
+          }
         } catch {
           authRefreshFailed = true;
         }

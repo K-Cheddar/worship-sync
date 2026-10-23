@@ -14,6 +14,10 @@ Access edits carry the revision of the loaded member access. The writer validate
 
 After a successful self-access save, the existing global authentication bootstrap refreshes both permissions and notification categories, including when an older bootstrap request was already pending. Adding or removing your Team Lead designation updates the account menu's email switches without a reload. Editing another account does not refresh your bootstrap. A later refresh failure does not turn the completed access save into a retryable mutation.
 
+The refresh explicitly reports whether authenticated server data was applied. An unavailable refresh, including an offline fallback, reports failure to the access drawer. The drawer still closes and clears the completed access draft, and explains that access was saved and the app must be reloaded to refresh notification settings. Ordinary bootstrap callers continue to share an in-flight request; self-access saves require a request started after persistence.
+
+Only new response digests wait for the 20-minute coalescing window. Recovery of an existing frozen batch waits for its active lease to expire; failed sends retry after one minute. A renewed lease is respected on the next attempt. Delivery content, accepted-recipient records and provider idempotency keys survive these retries. **Approval source:** current code-review correction request, October 23, 2026.
+
 For member and pending-invitation saves, Team Lead selections remain visible and disabled throughout the mutation and subsequent refreshes. The drawer closes after those steps complete, then its draft state is discarded; selections must not revert while the open drawer is loading.
 
 Roster Team Lead controls are retired. Stored `isTeamLead` flags may remain for compatibility but have no notification authority. No migration/backfill is performed. Volunteer roles, positions, qualifications, identity links, schedules, SMS and manual messages are unchanged.

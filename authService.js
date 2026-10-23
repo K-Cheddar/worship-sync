@@ -6799,12 +6799,24 @@ export const startIntakeSubmissionDigestRecovery = () => {
 // one mechanism to reason about. A send produces a burst of answers in the first
 // hour, and one email per answer would be filtered within a week.
 //
-// Pending markers and frozen batches survive restarts. Recovery re-arms the
-// same 20-minute window; delivery keys suppress already accepted recipients.
+// Pending markers and frozen batches survive restarts. Only new work waits for
+// coalescing; existing batches resume after their lease or a bounded retry delay.
 const RESPONSE_DIGEST_WINDOW_MS =
   Number(process.env.AUTH_SCHEDULE_RESPONSE_DIGEST_WINDOW_MS) || 20 * 60 * 1000;
 const responseDigestTimers = new Map();
 const responseDigestInFlight = new Set();
+const RESPONSE_DIGEST_RETRY_MS = 60 * 1000;
+
+const responseDigestDelay = (schedule, retry = false) => {
+  const batch = schedule.pendingResponseDigestBatch;
+  if (batch) {
+    const leaseRemaining = (batch.leaseUntil || 0) - Date.now();
+    return leaseRemaining > 0 ? leaseRemaining : retry ? RESPONSE_DIGEST_RETRY_MS : 0;
+  }
+  const remaining = RESPONSE_DIGEST_WINDOW_MS -
+    (Date.now() - new Date(schedule.pendingResponseDigestSince).getTime());
+  return Math.max(retry ? RESPONSE_DIGEST_RETRY_MS : 0, remaining);
+};
 
 // Only digest metadata and the exact conflicts read by this batch are changed.
 // Firestore transactions protect the lease and preserve concurrent responses.
@@ -7046,7 +7058,9 @@ export const sendScheduleResponseDigest = async (scheduleId) => {
   } finally {
     responseDigestInFlight.delete(scheduleId);
     const current = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
-    if (current?.pendingResponseDigestSince) armResponseDigestTimer(scheduleId);
+    if (current?.pendingResponseDigestSince) {
+      armResponseDigestTimer(scheduleId, responseDigestDelay(current, true));
+    }
   }
 };
 
@@ -7089,9 +7103,9 @@ const scheduleAssignmentResponseDigest = async (
     );
   }
   const pending = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
-  const remaining = RESPONSE_DIGEST_WINDOW_MS -
-    (Date.now() - new Date(pending?.pendingResponseDigestSince || respondedAt).getTime());
-  armResponseDigestTimer(scheduleId, Math.max(0, remaining));
+  if (pending?.pendingResponseDigestSince) {
+    armResponseDigestTimer(scheduleId, responseDigestDelay(pending));
+  }
 };
 
 let responseDigestRecoveryTimer = null;
@@ -7128,8 +7142,7 @@ export const recoverPendingScheduleResponseDigests = async () => {
       ? { since: last.pendingResponseDigestSince, id: last.id } : null;
     for (const schedule of schedules) {
       if (responseDigestTimers.has(schedule.id) || responseDigestInFlight.has(schedule.id)) continue;
-      const remaining = RESPONSE_DIGEST_WINDOW_MS -
-        (Date.now() - new Date(schedule.pendingResponseDigestSince).getTime());
+      const remaining = responseDigestDelay(schedule);
       if (remaining <= 0) await sendScheduleResponseDigest(schedule.id);
       else armResponseDigestTimer(schedule.id, remaining);
     }

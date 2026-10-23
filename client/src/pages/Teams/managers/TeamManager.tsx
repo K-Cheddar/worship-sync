@@ -1,5 +1,4 @@
 import { useContext, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 import TextArea from "../../../components/TextArea/TextArea";
@@ -106,7 +105,6 @@ const TeamManager = ({
   const context = useContext(GlobalInfoContext);
   const { showToast } = useToast();
   const churchId = context?.churchId || "";
-  const navigate = useNavigate();
   const [editing, setEditing] = useState<TeamRecord | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [listQuery, setListQuery] = useState("");
@@ -706,7 +704,7 @@ const TeamManager = ({
               }
               : undefined}
             onCreateMember={!canEditTeams && editing
-              ? () => navigate(TEAMS_SECTION_PATHS.members, {
+              ? () => requestNavigation(TEAMS_SECTION_PATHS.members, {
                 state: { teamsCreateMember: { teamId: editing.teamId } },
               })
               : undefined}

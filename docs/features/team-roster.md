@@ -30,6 +30,8 @@ An editor opens a team, reviews the assigned members in alphabetical order, and 
 
 ## Behavioral boundaries
 
+Member editor deep links identify the church, member, and selected team together. Changing either URL selection preserves a dirty draft until the existing discard confirmation is accepted; Stay retains the editor and its URL. Delayed profile loads cannot replace a newer member, team, or church. Scoped links resolve only against authorized team projections, and server authorization remains authoritative. Create new member from a scoped team editor uses the same navigation guard and retains the originating team for preselection. **Approval source:** current code-review correction request, October 23, 2026.
+
 - The inline editor does not add a permission or expose the full roster, cross-team information, or sensitive member fields to scoped managers.
 - The church-wide draft path and the scoped immediate-persistence path remain separate.
 - Schedule assignments and unrelated team settings are not changed by a roster-only edit.

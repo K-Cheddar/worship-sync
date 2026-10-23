@@ -470,7 +470,8 @@ type GlobalInfoContextType = {
   operatorName: string;
   device: AuthBootstrap["device"] | null;
   setOperatorName: (value: string) => void;
-  refreshAuthBootstrap: (options?: { requireFresh?: boolean }) => Promise<void>;
+  /** True only when fresh authenticated server state was applied. */
+  refreshAuthBootstrap: (options?: { requireFresh?: boolean }) => Promise<boolean>;
   refreshPresentationListeners: () => void;
   updateSelfDisplayName: (displayName: string) => Promise<boolean>;
   /** Categories to offer this person, server-derived so the catalog has one owner. */
@@ -870,7 +871,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     storageListenerCleanupRef.current?.();
     storageListenerCleanupRef.current = undefined;
   }, []);
-  const refreshAuthBootstrapPromiseRef = useRef<Promise<void> | null>(null);
+  const refreshAuthBootstrapPromiseRef = useRef<Promise<boolean> | null>(null);
   const recoverAuthSessionPromiseRef = useRef<Promise<boolean> | null>(null);
 
   const navigate = useNavigate();
@@ -1570,12 +1571,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     [applyBootstrap, dispatch, navigate]
   );
 
-  const refreshAuthBootstrap = useCallback(async (options?: { requireFresh?: boolean }) => {
+  const refreshAuthBootstrap = useCallback(async (options?: { requireFresh?: boolean }): Promise<boolean> => {
     if (refreshAuthBootstrapPromiseRef.current) {
-      await refreshAuthBootstrapPromiseRef.current;
+      const refreshed = await refreshAuthBootstrapPromiseRef.current;
       // A mutation must not reuse a request that read access before it committed.
-      if (options?.requireFresh) await refreshAuthBootstrapRef.current();
-      return;
+      if (options?.requireFresh) return refreshAuthBootstrapRef.current();
+      return refreshed;
     }
 
     if (bootstrapStatusRef.current !== "ready") {
@@ -1628,16 +1629,16 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           }
           if (bootstrapError && isReachabilityError(bootstrapError)) {
             applyOfflineBootstrapFallback();
-            return;
+            return false;
           }
           setAuthServerStatus("offline");
           applyBootstrap(null, { clearWorkstationSessionOperator: true });
-          return;
+          return false;
         }
 
         if (bootstrap.authenticated) {
           applyBootstrap(bootstrap);
-          return;
+          return true;
         }
 
         const persistedUser = await waitForHumanAuthUser();
@@ -1656,7 +1657,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
             );
           }
           applyBootstrap(null, { clearWorkstationSessionOperator: true });
-          return;
+          return false;
         }
 
         try {
@@ -1680,7 +1681,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
             ) {
               setHumanApiToken(restoredSession.humanApiToken);
             }
-            return;
+            return Boolean(restoredSession.bootstrap.authenticated);
           }
 
           if (
@@ -1708,7 +1709,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
               ...getAuthErrorDetails(error),
             });
             applyOfflineBootstrapFallback();
-            return;
+            return false;
           }
 
           logAuthDiagnostic("error", "auth_session_restore_failed", {
@@ -1724,18 +1725,19 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         });
         if (isReachabilityError(error)) {
           applyOfflineBootstrapFallback();
-          return;
+          return false;
         }
         setAuthServerStatus("offline");
         applyBootstrap(null, { clearWorkstationSessionOperator: true });
       } finally {
         setBootstrapStatus("ready");
       }
+      return false;
     })();
 
     refreshAuthBootstrapPromiseRef.current = promise;
     try {
-      await promise;
+      return await promise;
     } finally {
       refreshAuthBootstrapPromiseRef.current = null;
     }

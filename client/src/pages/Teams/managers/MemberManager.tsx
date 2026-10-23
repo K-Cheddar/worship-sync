@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import { Camera, Plus, X } from "lucide-react";
-import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useNavigationType, useSearchParams } from "react-router-dom";
 import Button from "../../../components/Button/Button";
 import Checkbox from "../../../components/Checkbox/Checkbox";
 import Input from "../../../components/Input/Input";
@@ -233,6 +233,8 @@ const MemberManager = ({
   const selfMemberId = useCurrentMemberId();
   const { showToast, removeToast } = useToast();
   const churchId = context?.churchId || "";
+  const currentChurchIdRef = useRef(churchId);
+  currentChurchIdRef.current = churchId;
   const currentUserId = context?.userId || "";
   const canEditMember = useCallback(
     (member: TeamRosterMember) =>
@@ -306,7 +308,7 @@ const MemberManager = ({
   const [showAccountPicker, setShowAccountPicker] = useState(false);
   const [editing, setEditing] = useState<TeamRosterMember | null>(null);
   const canEditActiveMember = editing
-    ? canEdit && canEditMember(editing)
+    ? canEdit && editing.churchId === churchId && canEditMember(editing)
     : canEdit;
   const [showCreate, setShowCreate] = useState(false);
   const [deleting, setDeleting] = useState<TeamRosterMember | null>(null);
@@ -359,11 +361,14 @@ const MemberManager = ({
   const [showDesiredPositions, setShowDesiredPositions] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
+  const navigationType = useNavigationType();
   const navigate = useNavigate();
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
   const { requestDiscardAction } = useTeamsNavigationGuard();
-  const pendingEditMemberIdRef = useRef<string | null>(null);
-  const lastAppliedEditMemberIdRef = useRef<string | null>(null);
+  const lastAppliedEditIdentityRef = useRef<{
+    churchId: string; memberId: string; teamId: string;
+  } | null>(null);
+  const pendingEditIdentityRef = useRef<typeof lastAppliedEditIdentityRef.current>(null);
   const consumedCreateLocationKeyRef = useRef<string | null>(null);
   const [scopedTeamId, setScopedTeamId] = useState("");
   const [scopedProfileStatus, setScopedProfileStatus] =
@@ -374,14 +379,16 @@ const MemberManager = ({
 
   const updateMemberEditRoute = useCallback((memberId: string, teamId: string) => {
     const nextParams = new URLSearchParams(searchParams);
-    nextParams.set(TEAMS_MEMBER_EDIT_SEARCH_PARAM, memberId);
+    if (memberId) nextParams.set(TEAMS_MEMBER_EDIT_SEARCH_PARAM, memberId);
+    else nextParams.delete(TEAMS_MEMBER_EDIT_SEARCH_PARAM);
     if (teamId) nextParams.set(TEAMS_TEAM_SEARCH_PARAM, teamId);
-    else if (!canEditAllTeams) nextParams.delete(TEAMS_TEAM_SEARCH_PARAM);
+    else nextParams.delete(TEAMS_TEAM_SEARCH_PARAM);
     setSearchParams(nextParams, { replace: true, state: location.state });
-  }, [canEditAllTeams, location.state, searchParams, setSearchParams]);
+  }, [location.state, searchParams, setSearchParams]);
 
   const openMemberEditor = useCallback(
     (member: TeamRosterMember, requestedTeamId = "") => {
+      if (currentChurchIdRef.current !== churchId || member.churchId !== churchId) return;
       activeEditorSessionRef.current += 1;
       profileImageSelectionRevisionRef.current += 1;
       const availableTeams = canEditAllTeams
@@ -398,7 +405,10 @@ const MemberManager = ({
       setScopedTeamId(selectedTeamId);
       setScopedProfileStatus(null);
       setEditRouteError("");
-      lastAppliedEditMemberIdRef.current = member.memberId;
+      lastAppliedEditIdentityRef.current = {
+        churchId, memberId: member.memberId, teamId: editRouteTeamId,
+      };
+      pendingEditIdentityRef.current = null;
       updateMemberEditRoute(member.memberId, editRouteTeamId);
       setShowFilters(false);
       setShowDesiredPositions(false);
@@ -410,7 +420,7 @@ const MemberManager = ({
       setSavedMembershipBaseline({ memberId: member.memberId, teamIds });
       setDraft(buildMemberDraft(member, teamIds));
     },
-    [canEditAllTeams, data.teams, routeTeamId, setDraft, updateMemberEditRoute],
+    [canEditAllTeams, churchId, data.teams, routeTeamId, setDraft, updateMemberEditRoute],
   );
 
   const selectMember = useCallback((member: TeamRosterMember) => {
@@ -419,19 +429,11 @@ const MemberManager = ({
   }, [editing?.memberId, openMemberEditor, requestDiscardAction, routeTeamId, scopedTeamId]);
 
   useEffect(() => {
-    if (!routeEditMemberId) {
-      pendingEditMemberIdRef.current = null;
-      lastAppliedEditMemberIdRef.current = null;
-      setEditRouteError("");
-      return;
-    }
-    if (canEdit) {
-      pendingEditMemberIdRef.current = routeEditMemberId;
-      setEditRouteError("");
-    } else if (!isLoading) {
-      setEditRouteError("This member is not available for editing with your current access.");
-    }
-  }, [canEdit, isLoading, routeEditMemberId]);
+    pendingEditIdentityRef.current = routeEditMemberId
+      ? { churchId, memberId: routeEditMemberId, teamId: routeTeamId }
+      : null;
+    if (!routeEditMemberId) setEditRouteError("");
+  }, [canEdit, churchId, isLoading, routeEditMemberId, routeTeamId]);
 
   useEffect(() => {
     const state = location.state as { teamsCreateMember?: { teamId?: string } } | null;
@@ -439,6 +441,8 @@ const MemberManager = ({
     if (!teamId || !canEdit || consumedCreateLocationKeyRef.current === location.key) return;
     if (!data.teams.some((team) => team.teamId === teamId && !team.archivedAt)) return;
     consumedCreateLocationKeyRef.current = location.key;
+    lastAppliedEditIdentityRef.current = null;
+    pendingEditIdentityRef.current = null;
     activeEditorSessionRef.current += 1;
     profileImageSelectionRevisionRef.current += 1;
     setEditing(null);
@@ -447,25 +451,6 @@ const MemberManager = ({
     setShowCreate(true);
     navigate(location.pathname, { replace: true, state: { ...(state || {}), teamsCreateMember: undefined } });
   }, [canEdit, data.teams, location.key, location.pathname, location.state, navigate, setDraft]);
-
-  useEffect(() => {
-    const editMemberId = pendingEditMemberIdRef.current;
-    if (!editMemberId) return;
-    const member = members.find((item) => item.memberId === editMemberId);
-    if (!member) {
-      if (isLoading) return;
-      pendingEditMemberIdRef.current = null;
-      setEditRouteError("This member is no longer available in the Teams directory.");
-      return;
-    }
-    pendingEditMemberIdRef.current = null;
-    if (lastAppliedEditMemberIdRef.current === editMemberId) return;
-    if (!canEditMember(member)) {
-      setEditRouteError("This member is not available for editing with your current team access.");
-      return;
-    }
-    openMemberEditor(member, routeTeamId);
-  }, [canEditMember, isLoading, members, openMemberEditor, routeTeamId]);
 
   useEffect(() => {
     if (!showCreate) return;
@@ -649,11 +634,9 @@ const MemberManager = ({
     if (!editing || nextTeamId === scopedTeamId) return;
     if (!scopedTeamOptions.some((team) => team.teamId === nextTeamId)) return;
     requestDiscardAction(() => {
-      setScopedTeamId(nextTeamId);
-      setScopedProfileStatus(null);
-      updateMemberEditRoute(editing.memberId, nextTeamId);
+      openMemberEditor(editing, nextTeamId);
     });
-  }, [editing, requestDiscardAction, scopedTeamId, scopedTeamOptions, updateMemberEditRoute]);
+  }, [editing, openMemberEditor, requestDiscardAction, scopedTeamId, scopedTeamOptions]);
   const reset = () => {
     if (profileImageSelectionToastIdRef.current) {
       removeToast(profileImageSelectionToastIdRef.current);
@@ -666,8 +649,8 @@ const MemberManager = ({
     setScopedTeamId("");
     setScopedProfileStatus(null);
     setEditRouteError("");
-    pendingEditMemberIdRef.current = null;
-    lastAppliedEditMemberIdRef.current = null;
+    lastAppliedEditIdentityRef.current = null;
+    pendingEditIdentityRef.current = null;
     setSavedMembershipBaseline(null);
     setDraft(buildMemberDraft(null, []));
     setShowDesiredPositions(false);
@@ -1195,6 +1178,51 @@ const MemberManager = ({
       : hasPendingChanges,
     isScopedMemberEditing && Boolean(currentScopedProfileStatus?.saving),
   );
+
+  useEffect(() => {
+    const requested = pendingEditIdentityRef.current;
+    if (!requested || requested.churchId !== churchId) return;
+    const applied = lastAppliedEditIdentityRef.current;
+    if (applied?.churchId === churchId && applied.memberId === requested.memberId &&
+      applied.teamId === requested.teamId) {
+      pendingEditIdentityRef.current = null;
+      return;
+    }
+    if (isLoading) return;
+    const member = members.find((item) => item.memberId === requested.memberId);
+    // The Teams provider can still expose its previous projection during the
+    // first render of a church switch. Wait for this church's data to arrive.
+    if (member && member.churchId !== churchId) return;
+    pendingEditIdentityRef.current = null;
+    if (!member) {
+      setEditRouteError("This member is no longer available in the Teams directory.");
+      return;
+    }
+    if (!canEdit || !canEditMember(member)) {
+      setEditRouteError("This member is not available for editing with your current team access.");
+      return;
+    }
+    const availableTeams = canEditAllTeams ? [] : getManagedTeamsForMember(member, data.teams);
+    const selectedTeamId = canEditAllTeams ? requested.teamId :
+      availableTeams.find((team) => team.teamId === requested.teamId)?.teamId || availableTeams[0]?.teamId || "";
+    if (applied?.churchId === churchId && applied.memberId === member.memberId &&
+      applied.teamId === selectedTeamId) {
+      updateMemberEditRoute(member.memberId, selectedTeamId);
+      return;
+    }
+    const openDestination = () => openMemberEditor(member, requested.teamId);
+    // Browser history is already confirmed by TeamsNavigationGuard's POP guard.
+    // Initial links and a new church have no current draft to replace.
+    if ((!applied && !showCreate) || (applied && applied.churchId !== churchId) || navigationType === "POP") {
+      openDestination();
+      return;
+    }
+    // Restore the current editor's URL while confirmation is pending so Stay,
+    // refresh, and the next navigation all retain the same editor identity.
+    updateMemberEditRoute(applied?.memberId || "", applied?.teamId || "");
+    requestDiscardAction(openDestination);
+  }, [canEdit, canEditAllTeams, canEditMember, churchId, data.teams, isLoading, members, navigationType,
+    openMemberEditor, requestDiscardAction, routeEditMemberId, routeTeamId, showCreate, updateMemberEditRoute]);
 
   // Positions follow each team's Positions tab order; teams follow the roster list.
   const positionOptions = useMemo(
