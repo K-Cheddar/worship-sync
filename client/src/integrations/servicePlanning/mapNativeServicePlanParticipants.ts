@@ -1,4 +1,5 @@
 import type { ServicePlanningImportData } from "../../containers/Overlays/eventParser";
+import type { ServicePlanningConfig } from "../../types/integrations";
 import { richTextToPlainText } from "../../types/richText";
 import { getServicePlanElementAssignees } from "../../types/servicePlan";
 import type {
@@ -6,6 +7,13 @@ import type {
   ServicePlanSection,
 } from "../../types/servicePlan";
 import { normalizeOverlayEvent } from "./findBestOverlayMatch";
+import {
+  effectiveRuleEventLabel,
+  findBestMatchingElementRule,
+  normalizeEventSuffixList,
+  resolveEventSuffixForSplitIndex,
+  ruleAppliesToOverlaySync,
+} from "./mapServicePlanningToOverlays";
 import type {
   ServicePlanningCandidate,
   ServicePlanningFieldPatch,
@@ -48,10 +56,12 @@ export const mapNativeServicePlanParticipants = ({
   sections,
   importData,
   participantOverlay,
+  servicePlanning,
 }: {
   sections: ServicePlanSection[];
   importData: ServicePlanningImportData;
   participantOverlay: ServicePlanParticipantOverlayProjection;
+  servicePlanning?: ServicePlanningConfig;
 }): NativeServicePlanOverlayMapping => {
   const projectionsByElementId = new Map<string, number>();
   participantOverlay.elements.forEach(({ elementId }) => {
@@ -70,13 +80,21 @@ export const mapNativeServicePlanParticipants = ({
       if (!getServicePlanElementAssignees(element).some(
         (assignee) => assignee.memberId?.trim() || assignee.name?.trim(),
       )) return;
-      selectedItemCount += 1;
-
       const source = importData.sections[sectionIndex]?.rows[sourceRowIndex];
       if (!source) return;
       const itemTitle = richTextToPlainText(element.title).trim();
+      const rule = findBestMatchingElementRule(
+        element.sourceElementTypeRaw?.trim() || itemTitle || element.type,
+        servicePlanning?.elementRules ?? [],
+      );
+      if (rule && !ruleAppliesToOverlaySync(rule)) return;
+      selectedItemCount += 1;
+      const eventOverride = element.participantOverlay?.eventLabel?.trim();
       const eventLabel =
-        element.participantOverlay?.eventLabel?.trim() || itemTitle;
+        eventOverride || (rule ? effectiveRuleEventLabel(rule) : itemTitle);
+      const eventSuffixes = rule?.multiOverlay.mode === "split"
+        ? normalizeEventSuffixList(rule.multiOverlay.eventSuffixByPersonIndex)
+        : undefined;
       const defaultSkipReason = !eventLabel
         ? "Add an item title or event label before syncing this participant."
         : undefined;
@@ -131,13 +149,20 @@ export const mapNativeServicePlanParticipants = ({
       assignedParticipantCount += projection.assignees.length;
       const candidates: ServicePlanningCandidate[] = projection.assignees.map(
         (assignee, personIndex) => {
+          const suffix = !eventOverride
+            ? resolveEventSuffixForSplitIndex(
+                eventSuffixes,
+                personIndex,
+                rule?.multiOverlay.repeatLastEventSuffix,
+              )?.trim()
+            : undefined;
           const patch: ServicePlanningFieldPatch = {
             name: assignee.name.trim(),
             title:
               assignee.roleStatus === "resolved"
                 ? assignee.roleTitle?.trim() ?? ""
                 : "",
-            event: eventLabel,
+            event: suffix ? `${eventLabel} ${suffix}`.replace(/\s+/g, " ") : eventLabel,
           };
           const skipReason =
             defaultSkipReason ||
@@ -160,8 +185,11 @@ export const mapNativeServicePlanParticipants = ({
       row.candidates = candidates;
       overlayCandidates.push(row);
 
-      const normalizedLabel = normalizeOverlayEvent(eventLabel);
-      if (normalizedLabel) {
+      const candidateLabels = new Set(
+        candidates.map(({ patch }) => normalizeOverlayEvent(patch.event ?? "")),
+      );
+      for (const normalizedLabel of candidateLabels) {
+        if (!normalizedLabel) continue;
         const group = eventGroups.get(normalizedLabel) ?? [];
         group.push(row);
         eventGroups.set(normalizedLabel, group);

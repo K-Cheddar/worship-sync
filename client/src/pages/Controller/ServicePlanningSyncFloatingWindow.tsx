@@ -385,7 +385,7 @@ const ServicePlanningSyncFloatingWindow = ({
   const [isStoppingSavedPlan, setIsStoppingSavedPlan] = useState(false);
   const [lastSyncSummary, setLastSyncSummary] = useState<SyncSummary | null>(null);
   const [isSyncSummaryExpanded, setIsSyncSummaryExpanded] = useState(true);
-  const [isOverlayPreviewExpanded, setIsOverlayPreviewExpanded] = useState(true);
+  const [isOverlayPreviewExpanded, setIsOverlayPreviewExpanded] = useState(false);
   const cancelSavedPlanPushRef = useRef(false);
   const pendingSavedPlanSummaryRef = useRef<{
     outline: SyncSummaryEntry[];
