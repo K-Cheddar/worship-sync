@@ -17,6 +17,7 @@ An editor opens a team, reviews the assigned members in alphabetical order, and 
 ## Expected behavior
 
 - Show assigned members first, sorted by display name using `memberName` and a locale-aware comparison. Show eight at first for larger teams, with an inline control to show the full list. Always render assigned membership, even when a member projection is unavailable.
+- Keep member rows focused on names; place removal in each row's Actions menu with a trash icon. Confirm before removing a member.
 - Do not show the available directory until the editor searches. Show matching unassigned members in alphabetical order, with one Add action per member. Exclude archived people from global-admin suggestions.
 - Scoped search sorts all eligible matches before returning at most 20 candidates and reports when more matches exist, so the editor can prompt users to refine a broad search.
 - Church-wide administrators change `memberIds` in the existing draft. Save uses the existing `memberIds` and `baseMemberIds` contract when membership changed; an unrelated settings save omits membership fields. Cancel discards draft changes.
@@ -50,6 +51,11 @@ An editor opens a team, reviews the assigned members in alphabetical order, and 
 - **Why:** Editors should be able to identify and change membership quickly while existing authorization, save, concurrency, and removal protections remain intact.
 - **Material alternative rejected:** A separate membership modal, drawer, or page; combining the two persistence paths.
 - **Approval source/date:** Current user request dated 2026-10-18.
+- **Affected workflow/contract:** Create/Edit Team membership; broader team roster behavior remains inventory-only.
+- **Question/problem:** The inline Remove button adds visual noise to each assigned-member row.
+- **Approved behavior:** Put Remove from team in the per-member Actions menu and show a trash icon beside it; retain the existing removal confirmation and permission paths.
+- **Why:** Keep the roster easier to scan while leaving removal easy to find when needed.
+- **Approval source/date:** Current user request dated 2026-10-23.
 - **Affected workflow/contract:** Create/Edit Team membership; broader team roster behavior remains inventory-only.
 
 ## Implementation references

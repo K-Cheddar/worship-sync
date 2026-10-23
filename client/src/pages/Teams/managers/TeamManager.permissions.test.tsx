@@ -163,7 +163,8 @@ it("lets a scoped manager edit team settings and manage only that team's roster"
   expect(screen.getByRole("heading", { name: "Edit team" })).toBeInTheDocument();
   expect(within(screen.getByRole("region", { name: "Edit team" })).getByText("Avery Singer")).toBeInTheDocument();
   expect(screen.getByRole("textbox", { name: /Add members/i })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Remove Avery Singer from team" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Actions for Avery Singer" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Remove Avery Singer from team" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Team actions" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /select members/i })).not.toBeInTheDocument();
 
@@ -370,7 +371,8 @@ it("confirms team removal and explains that existing assignments stay", async ()
     onRosterMemberSaved, onRosterMemberRemoved, onRosterMutationReconcile,
   });
   await user.click(screen.getByRole("button", { name: "Edit Worship" }));
-  await user.click(screen.getByRole("button", { name: "Remove Avery Singer from team" }));
+  await user.click(screen.getByRole("button", { name: "Actions for Avery Singer" }));
+  await user.click(screen.getByRole("menuitem", { name: "Remove from team" }));
   expect(screen.getByRole("dialog", { name: "Remove Avery Singer from Worship?" })).toHaveTextContent(
     "Existing schedule assignments will remain and can be reassigned separately.",
   );
@@ -407,7 +409,8 @@ it("removes a sole-Team member from projected state immediately", async () => {
     teams: [worship], onRosterMemberSaved, onRosterMemberRemoved, onRosterMutationReconcile,
   });
   await user.click(screen.getByRole("button", { name: "Edit Worship" }));
-  await user.click(screen.getByRole("button", { name: "Remove Avery Singer from team" }));
+  await user.click(screen.getByRole("button", { name: "Actions for Avery Singer" }));
+  await user.click(screen.getByRole("menuitem", { name: "Remove from team" }));
   await user.click(screen.getByRole("button", { name: /^Remove from team$/ }));
   await waitFor(() => expect(onRosterMemberRemoved).toHaveBeenCalledWith(member.memberId));
   expect(onRosterMemberSaved).not.toHaveBeenCalled();
@@ -447,7 +450,7 @@ it("shows counts without member names or edit controls for read-only Team viewer
   expect(screen.queryByRole("button", { name: "Edit AV" })).not.toBeInTheDocument();
   expect(screen.queryByRole("textbox", { name: /Add members/i })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Manage .*$/ })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /Remove .* from team/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Actions for/ })).not.toBeInTheDocument();
 });
 
 it("keeps creation and roster controls available to global Teams editors", async () => {
@@ -496,7 +499,8 @@ it("keeps global membership edits in the draft until Save and sends the original
   expect(within(assigned).getByText("Jordan Lee")).toBeInTheDocument();
   expect(addTeamRosterMemberToTeam).not.toHaveBeenCalled();
 
-  await user.click(screen.getByRole("button", { name: "Remove Avery Singer from team" }));
+  await user.click(screen.getByRole("button", { name: "Actions for Avery Singer" }));
+  await user.click(screen.getByRole("menuitem", { name: "Remove from team" }));
   expect(screen.getByRole("dialog", { name: "Remove Avery Singer from Worship?" })).toHaveTextContent(
     "when you save your changes",
   );

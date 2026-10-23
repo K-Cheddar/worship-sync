@@ -1,8 +1,14 @@
 import { useId, useState } from "react";
-import { Plus, UserPlus } from "lucide-react";
+import { MoreHorizontal, Plus, Trash2, UserPlus } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 import MemberAvatar from "../../../components/MemberAvatar/MemberAvatar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../../../components/ui/DropdownMenu";
 import type { TeamRosterMember } from "../../../api/authTypes";
 import { memberName } from "../teamsUtils";
 import {
@@ -146,16 +152,28 @@ const TeamMembersEditor = ({
                         Manage
                       </Button>
                     ) : null}
-                    <Button
-                      type="button"
-                      variant="tertiary"
-                      iconSize="sm"
-                      className="min-h-9 max-md:min-h-11"
-                      aria-label={`Remove ${name} from team${memberId === selfMemberId ? ", You" : ""}`}
-                      onClick={() => onRemoveMember(memberId)}
-                    >
-                      Remove
-                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="tertiary"
+                          svg={MoreHorizontal}
+                          iconSize="sm"
+                          padding="p-2"
+                          className="min-h-9 min-w-9 max-md:min-h-11 max-md:min-w-11"
+                          aria-label={`Actions for ${name}${memberId === selfMemberId ? ", You" : ""}`}
+                        />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          variant="destructive"
+                          onSelect={() => onRemoveMember(memberId)}
+                        >
+                          <Trash2 aria-hidden />
+                          Remove from team
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </span>
                 ) : null}
               </li>
