@@ -20,6 +20,8 @@ The [Current member identification contract](current-member-identification.md) r
 The [Resources responsive browsing contract](resources.md) records the October 20, 2026 request for compact mobile browsing, shared file-type visuals, and existing permission-aware resource actions.
 The [Account Team Leads contract](account-team-leads.md) records account-scoped team leadership, personal routine email eligibility, and durable digest delivery confirmed on October 23, 2026.
 
+The [Manual item-library search contract](item-library-search.md) records shared manual relevance, conservative typo retrieval, stable-ID content lookup, and preserved automatic song-identification safeguards confirmed October 24-25, 2026.
+
 ## Feature inventory
 
 Only workflows specifically labeled as confirmed contracts are documented as owner-confirmed. All other registry workflows are **inventory only**: their broad labels are observed from current product surfaces and need product-owner validation before being treated as behavioral contracts. Implementation references help locate features; they are not requirements.

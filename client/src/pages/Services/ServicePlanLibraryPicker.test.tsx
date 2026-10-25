@@ -436,4 +436,22 @@ describe("ServicePlanLibraryPicker", () => {
     );
     expect(screen.getByRole("button", { name: /Create and attach/i })).toBeDisabled();
   });
+  it("uses shared typo and lyric ranking in the real attach modal", async () => {
+    const user = userEvent.setup();
+    const docs = [
+      { ...songDocs[0], name: "Amazing Grace", arrangements: [{ name: "Default", formattedLyrics: [{ name: "Verse 1", words: "how sweet the sound" }] }] },
+      { ...songDocs[1], name: "Sound of Praise", arrangements: [] },
+    ];
+    const { onSelectSong } = renderPicker(createPickerStore({ allSongDocs: docs, allItemsList: [] }), { initialQuery: "how sweet the sound" });
+    const results = await screen.findByTestId("filtered-items-results");
+    await waitFor(() => expect(results).toHaveAttribute("data-search-query", "how sweet the sound"));
+    expect(within(results).getAllByRole("listitem").map((row) => row.getAttribute("data-item-id"))).toEqual(["song-1", "song-2"]);
+    const input = screen.getByLabelText(/^Search:/);
+    await user.clear(input);
+    await user.type(input, "amzing grace");
+    await waitFor(() => expect(results).toHaveAttribute("data-search-query", "amzing grace"));
+    await attachSongNamed(user, "Amazing Grace");
+    expect(onSelectSong).toHaveBeenCalledWith(expect.objectContaining({ songId: "song-1", songName: "Amazing Grace" }));
+  });
+
 });
