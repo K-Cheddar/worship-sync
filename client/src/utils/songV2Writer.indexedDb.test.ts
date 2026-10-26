@@ -2,8 +2,8 @@ import "core-js/stable/structured-clone";
 import "fake-indexeddb/auto";
 import PouchDB from "pouchdb-browser";
 import type { DBItem } from "../types";
-import { createSong, deleteSong, loadSong, loadSongV2Snapshot, saveSong, songToLibraryProjection, SongV2DeletedError } from "./songPersistence";
-import { createSongV2, persistSongV2CleanupErrors, reconcilePendingSongV2Cleanup, reconcileSongV2Orphans, saveSongV2, saveSongV2FromBaseline } from "./songV2Writer";
+import { createSong, deleteSong, deleteSongV2AfterValidation, loadSong, loadSongV2Snapshot, saveSong, songToLibraryProjection, SongV2DeletedError, SongV2DeletionDeferredError, SongV2DeletionIncompleteError } from "./songPersistence";
+import { createSongV2, ensureSongV2CleanupDiscovery, persistSongV2CleanupErrors, reconcilePendingSongV2Cleanup, reconcileSongV2Orphans, saveSongV2, saveSongV2FromBaseline } from "./songV2Writer";
 import { persistLocalImageCloudCopy } from "./localImageAssets";
 
 const source = (): DBItem => ({
@@ -557,11 +557,23 @@ describe("Song v2 writer with real PouchDB over IndexedDB", () => {
     expect((await loadSongV2Snapshot(db, "real-song")).slides.map(doc => doc._id)).toContain(candidate);
   });
 
-  it("deletes v2 songs with a retained root tombstone before child cleanup", async () => {
+  it("keeps whole-song v2 deletion deferred through the normal delete path", async () => {
+    const legacy = await createSong(db, source());
+    await createSongV2(db, legacy);
+    const rootId = "song-v2:root:real-song";
+
+    await expect(deleteSong(db, legacy._id)).rejects.toBeInstanceOf(SongV2DeletionDeferredError);
+
+    expect(await db.get(rootId)).not.toHaveProperty("deletedAt");
+    expect(await db.get(legacy._id)).toEqual(expect.objectContaining({ _id: legacy._id, type: "song" }));
+    expect(await db.get("song-v2:arrangement:real-song:a")).toHaveProperty("docType", "song-v2-arrangement");
+  });
+
+  it("retains internal v2 deletion with a root tombstone before child cleanup", async () => {
     const legacy = await createSong(db, source());
     await createSongV2(db, legacy);
 
-    const deleted = await deleteSong(db, legacy._id);
+    const deleted = await deleteSongV2AfterValidation(db, legacy._id);
 
     expect(deleted._id).toBe(legacy._id);
     const tombstone = await db.get("song-v2:root:real-song");
@@ -571,7 +583,67 @@ describe("Song v2 writer with real PouchDB over IndexedDB", () => {
     await expect(db.get("song-v2:arrangement:real-song:a")).rejects.toMatchObject({ status: 404 });
   });
 
-  it("resumes failed tombstone cleanup without opening the deleted song", async () => {
+  it("reports arrangement enumeration failure and retains a durable discovery obligation", async () => {
+    const legacy = await createSong(db, source());
+    await createSongV2(db, legacy);
+    const originalAllDocs = db.allDocs.bind(db);
+    jest.spyOn(db, "allDocs").mockImplementation((async (options: PouchDB.Core.AllDocsOptions & { startkey?: string }) => {
+      if (options.startkey === "song-v2:arrangement:real-song:") throw new Error("replication unavailable");
+      return originalAllDocs(options as never) as never;
+    }) as never);
+
+    await expect(deleteSongV2AfterValidation(db, legacy._id)).rejects.toBeInstanceOf(SongV2DeletionIncompleteError);
+
+    expect((await db.get("song-v2:root:real-song") as any).deletedAt).toEqual(expect.any(String));
+    expect(await db.get("song-v2:cleanup-discovery:real-song")).toHaveProperty("pendingPrefixes", [
+      "song-v2:arrangement:real-song:", "song-v2:slide:real-song:",
+    ]);
+    expect(await db.get(legacy._id)).toHaveProperty("type", "song");
+    expect(await db.get("song-v2:arrangement:real-song:a")).toHaveProperty("docType", "song-v2-arrangement");
+  });
+
+  it("keeps a replicated discovery marker until its root tombstone arrives", async () => {
+    await createSongV2(db, source());
+    await ensureSongV2CleanupDiscovery(db, "real-song");
+
+    const beforeTombstone = await reconcilePendingSongV2Cleanup(db, 20);
+    expect(beforeTombstone.cleanupErrors).toHaveLength(1);
+    expect(beforeTombstone.hasMore).toBe(true);
+    expect(await db.get("song-v2:cleanup-discovery:real-song")).toHaveProperty("docType", "song-v2-cleanup-discovery");
+    expect(await db.get("song-v2:arrangement:real-song:a")).toHaveProperty("docType", "song-v2-arrangement");
+
+    const root = await db.get("song-v2:root:real-song") as any;
+    await db.put({ ...root, arrangementIds: [], deletedAt: new Date().toISOString() });
+    const afterTombstone = await reconcilePendingSongV2Cleanup(db, 20);
+
+    expect(afterTombstone.deleted).toContain("song-v2:arrangement:real-song:a");
+    expect(afterTombstone.cleanupErrors).toEqual([]);
+    await expect(db.get("song-v2:cleanup-discovery:real-song")).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("retains partial discovery when slide enumeration fails", async () => {
+    const legacy = await createSong(db, source());
+    await createSongV2(db, legacy);
+    const originalAllDocs = db.allDocs.bind(db);
+    jest.spyOn(db, "allDocs").mockImplementation((async (options: PouchDB.Core.AllDocsOptions & { startkey?: string }) => {
+      if (options.startkey === "song-v2:slide:real-song:") throw new Error("replication unavailable");
+      return originalAllDocs(options as never) as never;
+    }) as never);
+
+    await expect(deleteSongV2AfterValidation(db, legacy._id)).rejects.toBeInstanceOf(SongV2DeletionIncompleteError);
+
+    expect(await db.get("song-v2:cleanup-discovery:real-song")).toHaveProperty("pendingPrefixes", [
+      "song-v2:slide:real-song:",
+    ]);
+    const queued = await db.allDocs({
+      startkey: "song-v2:cleanup:", endkey: "song-v2:cleanup:\uffff", include_docs: true,
+    });
+    expect(queued.rows.filter(row => (row.doc as any)?.docType === "song-v2-cleanup").map(row => (row.doc as any).documentId))
+      .toContain("song-v2:arrangement:real-song:a");
+    expect(await db.get("song-v2:arrangement:real-song:a")).toHaveProperty("docType", "song-v2-arrangement");
+  });
+
+  it("recovers incomplete discovery after replication resumes", async () => {
     const legacy = await createSong(db, source());
     await createSongV2(db, legacy);
     const childIds = new Set([
@@ -580,21 +652,98 @@ describe("Song v2 writer with real PouchDB over IndexedDB", () => {
       "song-v2:slide:real-song:a:s2",
       "song-v2:slide:real-song:a:s3",
     ]);
-    const remove = db.remove.bind(db);
-    let failCleanup = true;
-    jest.spyOn(db, "remove").mockImplementation((async (idOrDoc: any, rev?: string) => {
-      const id = typeof idOrDoc === "string" ? idOrDoc : idOrDoc._id;
-      if (childIds.has(id) && failCleanup) throw new Error("temporary cleanup failure");
-      return (remove as any)(idOrDoc, rev);
-    }) as any);
+    const originalAllDocs = db.allDocs.bind(db);
+    let replicationAvailable = false;
+    jest.spyOn(db, "allDocs").mockImplementation((async (options: PouchDB.Core.AllDocsOptions & { startkey?: string }) => {
+      if (options.startkey === "song-v2:slide:real-song:" && !replicationAvailable) throw new Error("replication unavailable");
+      return originalAllDocs(options as never) as never;
+    }) as never);
 
-    await deleteSong(db, legacy._id);
-    failCleanup = false;
-    await expect(loadSong(db, legacy._id)).rejects.toBeInstanceOf(SongV2DeletedError);
+    await expect(deleteSongV2AfterValidation(db, legacy._id)).rejects.toBeInstanceOf(SongV2DeletionIncompleteError);
+    replicationAvailable = true;
 
     const result = await reconcilePendingSongV2Cleanup(db, 20);
     expect(result.deleted.sort()).toEqual([...childIds].sort());
+    expect(result.cleanupErrors).toEqual([]);
+    await expect(db.get("song-v2:cleanup-discovery:real-song")).rejects.toMatchObject({ status: 404 });
     await expect(db.get("song-v2:arrangement:real-song:a")).rejects.toMatchObject({ status: 404 });
+    await expect(loadSong(db, legacy._id)).rejects.toBeInstanceOf(SongV2DeletedError);
+  });
+
+  it("persists a page cursor when cleanup discovery only enumerates part of the children", async () => {
+    const manySlides = source();
+    manySlides.arrangements[0].slides = Array.from({ length: 25 }, (_, index) => ({
+      id: `slide-${String(index).padStart(2, "0")}`,
+      type: "Verse",
+      name: `Verse ${index}`,
+      boxes: [{ id: `box-${index}`, words: `Words ${index}`, width: 1920, height: 1080 }],
+    }));
+    const legacy = await createSong(db, manySlides);
+    await createSongV2(db, legacy);
+
+    await expect(deleteSongV2AfterValidation(db, legacy._id)).rejects.toBeInstanceOf(SongV2DeletionIncompleteError);
+
+    const discovery = await db.get("song-v2:cleanup-discovery:real-song") as any;
+    expect(discovery.pendingPrefixes).toContain("song-v2:slide:real-song:");
+    expect(discovery.cursors["song-v2:slide:real-song:"]).toContain("song-v2:slide:real-song:a:");
+    const queueRows = await db.allDocs({
+      startkey: "song-v2:cleanup:", endkey: "song-v2:cleanup:\uffff", include_docs: true,
+    });
+    expect(queueRows.rows.filter(row => (row.doc as any)?.docType === "song-v2-cleanup")).toHaveLength(21);
+
+    const resumed = await reconcilePendingSongV2Cleanup(db, 20);
+    expect(resumed.cancelled).toBe(false);
+    expect(resumed.deleted.length).toBeGreaterThanOrEqual(20);
+    expect(resumed.hasMore).toBe(true);
+    const final = await reconcilePendingSongV2Cleanup(db, 20);
+    expect(final.hasMore).toBe(false);
+    expect(final.cleanupErrors).toEqual([]);
+    await expect(db.get("song-v2:cleanup-discovery:real-song")).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("stops a running cleanup before the next database operation after cancellation", async () => {
+    await createSongV2(db, source());
+    const targetId = "song-v2:slide:real-song:a:orphan";
+    await db.put({
+      _id: targetId,
+      docType: "song-v2-slide",
+      songId: "real-song",
+      arrangementId: "a",
+      id: "orphan",
+      boxes: [],
+    } as never);
+    await persistSongV2CleanupErrors(db, "real-song", [{
+      documentId: targetId,
+      revision: (await db.get(targetId))._rev!,
+      cause: new Error("cleanup deferred"),
+    }]);
+
+    const arrangementId = "song-v2:arrangement:real-song:a";
+    const originalGet = db.get.bind(db);
+    let enteredArrangementRead!: () => void;
+    const arrangementReadStarted = new Promise<void>(resolve => { enteredArrangementRead = resolve; });
+    let continueArrangementRead!: () => void;
+    const arrangementRead = new Promise<void>(resolve => { continueArrangementRead = resolve; });
+    const get = jest.spyOn(db, "get").mockImplementation((async (id: string, options?: unknown) => {
+      if (id === arrangementId) {
+        enteredArrangementRead();
+        await arrangementRead;
+      }
+      return originalGet(id, options as never);
+    }) as any);
+    const remove = jest.spyOn(db, "remove");
+    const abortController = new AbortController();
+
+    const cleanup = reconcilePendingSongV2Cleanup(db, 20, abortController.signal);
+    await arrangementReadStarted;
+    abortController.abort();
+    continueArrangementRead();
+
+    const result = await cleanup;
+    expect(result.cancelled).toBe(true);
+    expect(get.mock.calls.some(([id]) => id === targetId)).toBe(false);
+    expect(remove).not.toHaveBeenCalled();
+    expect(await db.get(targetId)).toHaveProperty("docType", "song-v2-slide");
   });
 });
 

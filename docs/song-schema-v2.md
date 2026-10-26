@@ -195,14 +195,21 @@ the writer never calculates a new layout with DOM measurement.
 
 ### Deletion
 
-Deleting a v2 song writes a root tombstone with an empty arrangement manifest
-first. The tombstone is the logical deletion point and remains in place so the
-retained v1 copy cannot become authoritative again. Arrangement and slide
-documents, followed by the legacy predecessor, are cleanup work; failures are
-reported and can be retried by calling `deleteSong` again. Ordinary save calls
-log child cleanup failures and accept an `onCleanupErrors` diagnostic callback.
-`reconcileSongV2Orphans` retries only named failed child removals after reading
-the current manifests and confirming those IDs remain unreferenced.
+Whole-song v2 deletion is deferred until migration validation is complete.
+Normal application `deleteSong` rejects a migrated song before writing a
+tombstone, removing children, or touching the retained v1 predecessor. The
+destructive implementation remains isolated in
+`deleteSongV2AfterValidation` for deliberate activation after that validation.
+
+That internal path writes a durable cleanup-discovery record before publishing
+the root tombstone. It scans child IDs in bounded pages and advances its cursor
+only after storing exact-revision cleanup queue records. A failed enumeration
+leaves the discovery record for controller maintenance to retry and reports an
+incomplete deletion to its caller. The tombstone remains authoritative during
+recovery. Ordinary save calls continue to queue failed child removals and accept
+an `onCleanupErrors` diagnostic callback. `reconcileSongV2Orphans` retries only
+named failed child removals after reading the current manifests and confirming
+those IDs remain unreferenced.
 
 ## Library discovery and lazy slides
 

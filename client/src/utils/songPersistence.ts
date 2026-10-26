@@ -31,6 +31,22 @@ export class SongV2DeletedError extends Error {
   }
 }
 
+export class SongV2DeletionDeferredError extends Error {
+  readonly code = "SONG_V2_DELETION_DEFERRED";
+  constructor(readonly songId: string) {
+    super(`Song ${songId} is migrated. Deleting migrated songs is deferred until migration validation is complete.`);
+    this.name = "SongV2DeletionDeferredError";
+  }
+}
+
+export class SongV2DeletionIncompleteError extends Error {
+  readonly code = "SONG_V2_DELETION_INCOMPLETE";
+  constructor(readonly songId: string, readonly cause: unknown) {
+    super(`Cleanup discovery for deleted song ${songId} is incomplete and remains queued for recovery.`);
+    this.name = "SongV2DeletionIncompleteError";
+  }
+}
+
 export type SongSaveDiagnostics = {
   onCleanupErrors?: (errors: { documentId: string; revision?: string; cause: unknown }[]) => void;
 };
@@ -275,8 +291,11 @@ export async function saveSong(
   return normalizeItemSlides({ ...persisted, _rev: result.rev });
 }
 
-/** Logically deletes v2 songs by publishing a root tombstone before child cleanup. */
-export async function deleteSong(
+/**
+ * Internal deletion implementation. Keep disconnected from normal application
+ * deleteSong until the migration validation rollout explicitly enables it.
+ */
+export async function deleteSongV2AfterValidation(
   db: PouchDB.Database,
   songId: string,
 ): Promise<DBItem> {
@@ -285,77 +304,67 @@ export async function deleteSong(
     getSongV2RootDocId(songId),
   );
   if (v2Root) {
-    let previousSong: DBItem;
+    const previousSong: DBItem = {
+      _id: songId,
+      _rev: v2Root._rev,
+      type: "song",
+      docType: "song-v2-root",
+      name: v2Root.name,
+      selectedArrangement: v2Root.selectedArrangement,
+      songAudio: v2Root.songAudio,
+      arrangements: [],
+    } as unknown as DBItem;
+
+    const { ensureSongV2CleanupDiscovery, reconcileSongV2CleanupDiscovery, reconcileSongV2CleanupQueue } =
+      await import("./songV2Writer");
+    // The durable discovery record precedes the tombstone so an interrupted
+    // scan always has a restart point, including when no children were found yet.
+    await ensureSongV2CleanupDiscovery(db, songId);
     if (!v2Root.deletedAt) {
-      previousSong = {
-        _id: songId,
-        _rev: v2Root._rev,
-        type: "song",
-        docType: "song-v2-root",
-        name: v2Root.name,
-        selectedArrangement: v2Root.selectedArrangement,
-        songAudio: v2Root.songAudio,
-        arrangements: [],
-      } as unknown as DBItem;
       const tombstone = applyPouchAudit(v2Root, {
         ...v2Root,
         arrangementIds: [],
         deletedAt: new Date().toISOString(),
       }, { isNew: false });
       await db.put(tombstone);
-    } else {
-      previousSong = {
-        _id: songId,
-        _rev: v2Root._rev,
-        type: "song",
-        docType: "song-v2-root",
-        name: v2Root.name,
-        selectedArrangement: v2Root.selectedArrangement,
-        arrangements: [],
-      } as unknown as DBItem;
     }
 
-    // The retained tombstone keeps v2 authoritative even if either cleanup fails.
-    const encodedSongId = encodeURIComponent(songId);
-    const prefixes = [
-      `song-v2:arrangement:${encodedSongId}:`,
-      `song-v2:slide:${encodedSongId}:`,
-    ];
-    let cleanupCandidates: PouchDB.Core.RemoveDocument[] = [];
     try {
-      const childRows = await Promise.all(prefixes.map(prefix => db.allDocs({
-        startkey: prefix,
-        endkey: `${prefix}\uffff`,
-        include_docs: true,
-      })));
-      cleanupCandidates = childRows.flatMap(result => result.rows.flatMap(row => {
-        const doc = row.doc as Record<string, unknown> | undefined;
-        return doc && doc.songId === songId &&
-          (doc.docType === "song-v2-arrangement" || doc.docType === "song-v2-slide")
-          ? [doc as unknown as PouchDB.Core.RemoveDocument]
-          : [];
-      }));
-    } catch (error) {
-      console.error("Could not inspect deleted song children for cleanup:", songId, error);
+      const discovery = await reconcileSongV2CleanupDiscovery(db, songId);
+      if (!discovery.complete) {
+        throw new Error("Cleanup discovery continues in bounded pages.");
+      }
+    } catch (cause) {
+      throw new SongV2DeletionIncompleteError(songId, cause);
+    }
+
+    const childCleanup = await reconcileSongV2CleanupQueue(db, songId);
+    if (childCleanup.cleanupErrors.length) {
+      console.error(`Song ${songId} has v2 child cleanup retries remaining:`, childCleanup.cleanupErrors);
     }
     let legacy: DBItem | null = null;
     try { legacy = await getOptionalDocument<DBItem>(db, songId); }
     catch (error) { console.error("Could not inspect deleted song legacy document for cleanup:", songId, error); }
-    const cleanupErrors: { documentId: string; revision?: string; cause: unknown }[] = [];
-    for (const child of cleanupCandidates) {
-      try { await db.remove(child); }
-      catch (cause) {
-        console.error("Could not clean deleted song v2 child:", child._id, cause);
-        cleanupErrors.push({ documentId: child._id, revision: child._rev, cause });
-      }
-    }
     if (legacy) {
       try { await db.remove(legacy as PouchDB.Core.RemoveDocument); }
       catch (error) { console.error("Could not clean deleted song legacy document:", songId, error); }
     }
-    if (cleanupErrors.length) await reportV2CleanupErrors(db, songId, cleanupErrors);
     return previousSong;
   }
+  throw new Error(`Song ${songId} is not backed by a v2 root.`);
+}
+
+/** Deletes v1 songs unchanged; v2 deletion remains deferred through this app path. */
+export async function deleteSong(
+  db: PouchDB.Database,
+  songId: string,
+): Promise<DBItem> {
+  const v2Root = await getOptionalDocument<SongV2RootDocument>(
+    db,
+    getSongV2RootDocId(songId),
+  );
+  if (v2Root) throw new SongV2DeletionDeferredError(songId);
+
   const document = (await db.get(songId)) as DBItem;
   if (document.type !== "song") {
     throw new Error(`Document ${songId} is not a song`);

@@ -439,11 +439,181 @@ type SongV2CleanupQueueDocument = PouchDB.Core.Document<{
   documentId: string;
   revision: string;
 }>;
+type SongV2CleanupDiscoveryDocument = PouchDB.Core.Document<{
+  _rev?: string;
+  docType: "song-v2-cleanup-discovery";
+  songId: string;
+  pendingPrefixes: string[];
+  cursors: Record<string, string>;
+}>;
 const cleanupQueuePrefix = (songId: string) => `song-v2:cleanup:${encodeURIComponent(songId)}:`;
 const cleanupQueueId = (songId: string, documentId: string) =>
   `${cleanupQueuePrefix(songId)}${encodeURIComponent(documentId)}`;
+const cleanupDiscoveryPrefix = "song-v2:cleanup-discovery:";
+const cleanupDiscoveryId = (songId: string) =>
+  `${cleanupDiscoveryPrefix}${encodeURIComponent(songId)}`;
+const cleanupDiscoveryPageSize = 20;
 const cleanupQuarantineId = (songId: string, documentId: string, revision: string) =>
   `song-v2:cleanup-quarantine:${encodeURIComponent(songId)}:${encodeURIComponent(documentId)}:${encodeURIComponent(revision)}`;
+
+export class SongV2CleanupCancelledError extends Error {
+  constructor() {
+    super("Song v2 cleanup was cancelled because its database is no longer active.");
+    this.name = "SongV2CleanupCancelledError";
+  }
+}
+
+const assertCleanupActive = (signal?: AbortSignal) => {
+  if (signal?.aborted) throw new SongV2CleanupCancelledError();
+};
+
+const isCleanupCancelled = (error: unknown, signal?: AbortSignal) =>
+  signal?.aborted || error instanceof SongV2CleanupCancelledError;
+
+const putSongV2CleanupQueueRecord = async (
+  db: PouchDB.Database,
+  songId: string,
+  error: SongV2WriteProgress["cleanupErrors"][number],
+  signal?: AbortSignal,
+): Promise<void> => {
+  if (!error.revision) return;
+  assertCleanupActive(signal);
+  const _id = cleanupQueueId(songId, error.documentId);
+  let existing: SongV2CleanupQueueDocument | undefined;
+  try { existing = await db.get<SongV2CleanupQueueDocument>(_id); }
+  catch (cause) {
+    if (!(typeof cause === "object" && cause !== null && "status" in cause && cause.status === 404)) throw cause;
+  }
+  assertCleanupActive(signal);
+  await db.put({
+    ...(existing ?? {}), _id, ...(existing?._rev ? { _rev: existing._rev } : {}),
+    docType: "song-v2-cleanup", songId, documentId: error.documentId, revision: error.revision,
+  });
+};
+
+/** Creates a durable scan obligation before a v2 deletion publishes its tombstone. */
+export async function ensureSongV2CleanupDiscovery(
+  db: PouchDB.Database,
+  songId: string,
+): Promise<void> {
+  const _id = cleanupDiscoveryId(songId);
+  const pendingPrefixes = [
+    `song-v2:arrangement:${encodeURIComponent(songId)}:`,
+    `song-v2:slide:${encodeURIComponent(songId)}:`,
+  ];
+  let existing: SongV2CleanupDiscoveryDocument | undefined;
+  try { existing = await db.get<SongV2CleanupDiscoveryDocument>(_id); }
+  catch (cause) {
+    if (!(typeof cause === "object" && cause !== null && "status" in cause && cause.status === 404)) throw cause;
+  }
+  if (existing) {
+    if (existing.docType !== "song-v2-cleanup-discovery" || existing.songId !== songId ||
+      !Array.isArray(existing.pendingPrefixes) || !existing.cursors || typeof existing.cursors !== "object") {
+      throw new SongV2DocumentError(`Invalid cleanup discovery record for ${songId}`);
+    }
+    return;
+  }
+  try {
+    await db.put({ _id, docType: "song-v2-cleanup-discovery", songId, pendingPrefixes, cursors: {} } as SongV2CleanupDiscoveryDocument);
+  } catch (cause) {
+    if (!(typeof cause === "object" && cause !== null && "status" in cause && cause.status === 409)) throw cause;
+    const concurrent = await db.get<SongV2CleanupDiscoveryDocument>(_id);
+    if (concurrent.docType !== "song-v2-cleanup-discovery" || concurrent.songId !== songId) throw cause;
+  }
+}
+
+/** Scans one bounded page per child type and advances the durable cursor only after queueing it. */
+export async function reconcileSongV2CleanupDiscovery(
+  db: PouchDB.Database,
+  songId: string,
+  signal?: AbortSignal,
+): Promise<{ complete: boolean; cancelled: boolean; waitingForTombstone?: boolean }> {
+  assertCleanupActive(signal);
+  const _id = cleanupDiscoveryId(songId);
+  let discovery: SongV2CleanupDiscoveryDocument;
+  try { discovery = await db.get<SongV2CleanupDiscoveryDocument>(_id); }
+  catch (cause) {
+    if (typeof cause === "object" && cause !== null && "status" in cause && cause.status === 404) {
+      return { complete: true, cancelled: false };
+    }
+    throw cause;
+  }
+  assertCleanupActive(signal);
+  if (discovery.docType !== "song-v2-cleanup-discovery" || discovery.songId !== songId ||
+    !Array.isArray(discovery.pendingPrefixes) || !discovery.cursors || typeof discovery.cursors !== "object") {
+    throw new SongV2DocumentError(`Invalid cleanup discovery record for ${songId}`);
+  }
+
+  let root: SongV2RootDocument;
+  try { root = await db.get<SongV2RootDocument>(getSongV2RootDocId(songId)); }
+  catch (cause) {
+    if (typeof cause === "object" && cause !== null && "status" in cause && cause.status === 404) {
+      // Replication may deliver the prewritten discovery record before its tombstone.
+      // Keep the obligation until the logical deletion becomes visible.
+      return { complete: false, cancelled: false, waitingForTombstone: true };
+    }
+    throw cause;
+  }
+  assertCleanupActive(signal);
+  if (root.docType !== "song-v2-root" || root.songId !== songId) {
+    throw new SongV2DocumentError(`Invalid v2 root while discovering cleanup for ${songId}`);
+  }
+  if (!root.deletedAt) {
+    return { complete: false, cancelled: false, waitingForTombstone: true };
+  }
+
+  for (const prefix of discovery.pendingPrefixes.slice(0, 2)) {
+    assertCleanupActive(signal);
+    const afterId = discovery.cursors[prefix];
+    const page = await db.allDocs({
+      startkey: afterId ?? prefix,
+      endkey: `${prefix}\uffff`,
+      ...(afterId ? { inclusive_start: false } : {}),
+      include_docs: true,
+      limit: cleanupDiscoveryPageSize + 1,
+    });
+    assertCleanupActive(signal);
+    const rows = page.rows.slice(0, cleanupDiscoveryPageSize);
+    const hasAnotherPage = page.rows.length > cleanupDiscoveryPageSize;
+    const cleanupErrors = rows.flatMap(row => {
+      const doc = row.doc as Record<string, unknown> | undefined;
+      return doc && doc.songId === songId &&
+        (doc.docType === "song-v2-arrangement" || doc.docType === "song-v2-slide") &&
+        typeof doc._id === "string" && typeof doc._rev === "string"
+        ? [{ documentId: doc._id, revision: doc._rev, cause: new Error("Deletion cleanup discovery") }]
+        : [];
+    });
+    for (const cleanupError of cleanupErrors) {
+      await putSongV2CleanupQueueRecord(db, songId, cleanupError, signal);
+    }
+    assertCleanupActive(signal);
+
+    const nextPendingPrefixes = hasAnotherPage
+      ? discovery.pendingPrefixes
+      : discovery.pendingPrefixes.filter(candidate => candidate !== prefix);
+    const nextCursors = { ...discovery.cursors };
+    if (hasAnotherPage && rows.length) {
+      nextCursors[prefix] = String(rows[rows.length - 1].key);
+    } else {
+      delete nextCursors[prefix];
+    }
+    const result = await db.put({
+      ...discovery,
+      _rev: discovery._rev,
+      pendingPrefixes: nextPendingPrefixes,
+      cursors: nextCursors,
+    });
+    discovery = { ...discovery, _rev: result.rev, pendingPrefixes: nextPendingPrefixes, cursors: nextCursors };
+    if (hasAnotherPage) return { complete: false, cancelled: false };
+  }
+
+  assertCleanupActive(signal);
+  if (discovery.pendingPrefixes.length === 0) {
+    await db.remove(discovery._id, discovery._rev!);
+    return { complete: true, cancelled: false };
+  }
+  return { complete: false, cancelled: false };
+}
 
 /** Stores failed child removals durably; callers treat queue failures as diagnostics. */
 export async function persistSongV2CleanupErrors(
@@ -452,19 +622,8 @@ export async function persistSongV2CleanupErrors(
   errors: SongV2WriteProgress["cleanupErrors"],
 ): Promise<void> {
   for (const error of errors) {
-    if (!error.revision) continue;
-    const _id = cleanupQueueId(songId, error.documentId);
-    try {
-      let existing: SongV2CleanupQueueDocument | undefined;
-      try { existing = await db.get<SongV2CleanupQueueDocument>(_id); }
-      catch (cause) {
-        if (!(typeof cause === "object" && cause !== null && "status" in cause && cause.status === 404)) throw cause;
-      }
-      await db.put({
-        ...(existing ?? {}), _id, ...(existing?._rev ? { _rev: existing._rev } : {}),
-        docType: "song-v2-cleanup", songId, documentId: error.documentId, revision: error.revision,
-      });
-    } catch (cause) {
+    try { await putSongV2CleanupQueueRecord(db, songId, error); }
+    catch (cause) {
       console.error(`Could not persist cleanup retry for ${error.documentId}:`, cause);
     }
   }
@@ -475,7 +634,9 @@ export async function reconcileSongV2CleanupQueue(
   db: PouchDB.Database,
   songId: string,
   limit = 20,
-): Promise<{ deleted: string[]; retired: string[]; quarantined: string[]; cleanupErrors: SongV2WriteProgress["cleanupErrors"] }> {
+  signal?: AbortSignal,
+): Promise<{ deleted: string[]; retired: string[]; quarantined: string[]; cleanupErrors: SongV2WriteProgress["cleanupErrors"]; cancelled: boolean }> {
+  assertCleanupActive(signal);
   const prefix = cleanupQueuePrefix(songId);
   const rows = await db.allDocs<SongV2CleanupQueueDocument>({
     startkey: prefix, endkey: `${prefix}\uffff`, include_docs: true, limit: Math.max(0, limit),
@@ -484,11 +645,17 @@ export async function reconcileSongV2CleanupQueue(
   const retired: string[] = [];
   const quarantined: string[] = [];
   const cleanupErrors: SongV2WriteProgress["cleanupErrors"] = [];
+  if (signal?.aborted) return { deleted, retired, quarantined, cleanupErrors, cancelled: true };
   let root: SongV2RootDocument | null = null;
-  try { root = await db.get<SongV2RootDocument>(getSongV2RootDocId(songId)); }
+  try {
+    assertCleanupActive(signal);
+    root = await db.get<SongV2RootDocument>(getSongV2RootDocId(songId));
+  }
   catch (cause) {
+    if (isCleanupCancelled(cause, signal)) return { deleted, retired, quarantined, cleanupErrors, cancelled: true };
     if (!(typeof cause === "object" && cause !== null && "status" in cause && cause.status === 404)) throw cause;
   }
+  if (signal?.aborted) return { deleted, retired, quarantined, cleanupErrors, cancelled: true };
   if (root && (root.docType !== "song-v2-root" || root.songId !== songId)) {
     throw new SongV2DocumentError(`Invalid v2 root while reconciling cleanup for ${songId}`);
   }
@@ -499,14 +666,17 @@ export async function reconcileSongV2CleanupQueue(
     }
     referenced.add(root._id);
     for (const arrangementId of root.arrangementIds) {
+      assertCleanupActive(signal);
       const arrangementIdDoc = getSongV2ArrangementDocId(songId, arrangementId);
       referenced.add(arrangementIdDoc);
       try {
         const arrangement = await db.get<SongV2ArrangementDocument>(arrangementIdDoc);
+        if (signal?.aborted) return { deleted, retired, quarantined, cleanupErrors, cancelled: true };
         for (const slideId of arrangement.slideIds) {
           referenced.add(getSongV2SlideDocId(songId, arrangementId, slideId));
         }
       } catch (cause) {
+        if (isCleanupCancelled(cause, signal)) return { deleted, retired, quarantined, cleanupErrors, cancelled: true };
         // Do not delete any child when the manifest could not be fully read.
         // A failed read is not evidence that a child is unreferenced.
         throw cause;
@@ -514,18 +684,25 @@ export async function reconcileSongV2CleanupQueue(
     }
   }
   for (const row of rows.rows) {
+    if (signal?.aborted) return { deleted, retired, quarantined, cleanupErrors, cancelled: true };
     const queueDoc = row.doc;
     if (!queueDoc) continue;
     try {
       if (referenced.has(queueDoc.documentId)) {
+        assertCleanupActive(signal);
         await db.remove(queueDoc._id, queueDoc._rev!);
         retired.push(queueDoc.documentId);
         continue;
       }
       let target: Document;
-      try { target = await db.get(queueDoc.documentId) as Document; }
+      try {
+        assertCleanupActive(signal);
+        target = await db.get(queueDoc.documentId) as Document;
+      }
       catch (cause) {
+        if (isCleanupCancelled(cause, signal)) return { deleted, retired, quarantined, cleanupErrors, cancelled: true };
         if (typeof cause === "object" && cause !== null && "status" in cause && cause.status === 404) {
+          assertCleanupActive(signal);
           await db.remove(queueDoc._id, queueDoc._rev!);
           retired.push(queueDoc.documentId);
           continue;
@@ -543,6 +720,7 @@ export async function reconcileSongV2CleanupQueue(
           : "target revision changed after the failed removal";
         const quarantineId = cleanupQuarantineId(songId, queueDoc.documentId, queueDoc.revision);
         try {
+          assertCleanupActive(signal);
           await db.put({
             _id: quarantineId,
             docType: "song-v2-cleanup-quarantine",
@@ -554,58 +732,101 @@ export async function reconcileSongV2CleanupQueue(
             quarantinedAt: new Date().toISOString(),
           });
         } catch (cause) {
+          if (isCleanupCancelled(cause, signal)) return { deleted, retired, quarantined, cleanupErrors, cancelled: true };
           if (!(typeof cause === "object" && cause !== null && "status" in cause && cause.status === 409)) throw cause;
+          assertCleanupActive(signal);
           const existing = await db.get(quarantineId) as { docType?: string; documentId?: string; failedRevision?: string };
           if (existing.docType !== "song-v2-cleanup-quarantine" ||
             existing.documentId !== queueDoc.documentId || existing.failedRevision !== queueDoc.revision) throw cause;
         }
+        assertCleanupActive(signal);
         await db.remove(queueDoc._id, queueDoc._rev!);
         quarantined.push(queueDoc.documentId);
         continue;
       }
+      assertCleanupActive(signal);
       await db.remove(target._id, queueDoc.revision);
+      assertCleanupActive(signal);
       await db.remove(queueDoc._id, queueDoc._rev!);
       deleted.push(target._id);
     } catch (cause) {
+      if (isCleanupCancelled(cause, signal)) return { deleted, retired, quarantined, cleanupErrors, cancelled: true };
       cleanupErrors.push({ documentId: queueDoc.documentId, revision: queueDoc.revision, cause });
     }
   }
-  return { deleted, retired, quarantined, cleanupErrors };
+  return { deleted, retired, quarantined, cleanupErrors, cancelled: false };
 }
 
 /** Processes a bounded batch across all songs, including tombstoned songs. */
 export async function reconcilePendingSongV2Cleanup(
   db: PouchDB.Database,
   limit = 20,
-): Promise<{ deleted: string[]; retired: string[]; quarantined: string[]; cleanupErrors: SongV2WriteProgress["cleanupErrors"]; hasMore: boolean }> {
+  signal?: AbortSignal,
+): Promise<{ deleted: string[]; retired: string[]; quarantined: string[]; cleanupErrors: SongV2WriteProgress["cleanupErrors"]; hasMore: boolean; cancelled: boolean }> {
   const boundedLimit = Math.max(0, limit);
+  assertCleanupActive(signal);
+  const result = { deleted: [] as string[], retired: [] as string[], quarantined: [] as string[], cleanupErrors: [] as SongV2WriteProgress["cleanupErrors"] };
+  const discoveryRows = await db.allDocs<SongV2CleanupDiscoveryDocument>({
+    startkey: cleanupDiscoveryPrefix,
+    endkey: `${cleanupDiscoveryPrefix}\uffff`,
+    include_docs: true,
+    limit: boundedLimit + 1,
+  });
+  if (signal?.aborted) return { ...result, hasMore: false, cancelled: true };
+  const discoveryBatch = discoveryRows.rows.slice(0, boundedLimit);
+  let moreDiscovery = discoveryRows.rows.length > boundedLimit;
+  for (const row of discoveryBatch) {
+    if (signal?.aborted) return { ...result, hasMore: false, cancelled: true };
+    const discovery = row.doc;
+    if (discovery?.docType !== "song-v2-cleanup-discovery") continue;
+    try {
+      const discoveryResult = await reconcileSongV2CleanupDiscovery(db, discovery.songId, signal);
+      if (discoveryResult.cancelled) return { ...result, hasMore: false, cancelled: true };
+      if (!discoveryResult.complete) moreDiscovery = true;
+      if (discoveryResult.waitingForTombstone) {
+        result.cleanupErrors.push({
+          documentId: discovery._id,
+          revision: discovery._rev,
+          cause: new Error("Cleanup discovery is waiting for its replicated root tombstone."),
+        });
+      }
+    } catch (cause) {
+      if (isCleanupCancelled(cause, signal)) return { ...result, hasMore: false, cancelled: true };
+      result.cleanupErrors.push({ documentId: discovery._id, revision: discovery._rev, cause });
+    }
+  }
+
+  assertCleanupActive(signal);
   const rows = await db.allDocs<SongV2CleanupQueueDocument>({
     startkey: "song-v2:cleanup:",
     endkey: "song-v2:cleanup:\uffff",
     include_docs: true,
     limit: boundedLimit + 1,
   });
+  if (signal?.aborted) return { ...result, hasMore: false, cancelled: true };
   const batchRows = rows.rows.slice(0, boundedLimit);
-  const hasMore = rows.rows.length > boundedLimit;
+  const hasMore = moreDiscovery || rows.rows.length > boundedLimit;
   const countsBySong = new Map<string, number>();
   for (const row of batchRows) {
     if (row.doc?.docType !== "song-v2-cleanup") continue;
     countsBySong.set(row.doc.songId, (countsBySong.get(row.doc.songId) ?? 0) + 1);
   }
-  const result = { deleted: [] as string[], retired: [] as string[], quarantined: [] as string[], cleanupErrors: [] as SongV2WriteProgress["cleanupErrors"] };
   for (const [songId, count] of countsBySong) {
+    if (signal?.aborted) return { ...result, hasMore: false, cancelled: true };
     try {
-      const songResult = await reconcileSongV2CleanupQueue(db, songId, count);
+      const songResult = await reconcileSongV2CleanupQueue(db, songId, count, signal);
+      if (songResult.cancelled) return { ...result, hasMore: false, cancelled: true };
       result.deleted.push(...songResult.deleted);
       result.retired.push(...songResult.retired);
       result.quarantined.push(...songResult.quarantined);
       result.cleanupErrors.push(...songResult.cleanupErrors);
     } catch (cause) {
+      if (isCleanupCancelled(cause, signal)) return { ...result, hasMore: false, cancelled: true };
       result.cleanupErrors.push(...batchRows.flatMap(row => row.doc?.songId === songId
         ? [{ documentId: row.doc.documentId, revision: row.doc.revision, cause }]
         : []));
     }
   }
-  return { ...result, hasMore };
+  return { ...result, hasMore, cancelled: false };
 }
 

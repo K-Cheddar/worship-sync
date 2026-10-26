@@ -12,6 +12,7 @@ import {
   loadSong,
   saveSong,
   SongV2BaselineRequiredError,
+  SongV2DeletionDeferredError,
   SongV2VersionTransitionError,
   serializeSongToV2Documents,
 } from "./songPersistence";
@@ -604,17 +605,19 @@ describe("songPersistence", () => {
     expect(put).not.toHaveBeenCalled();
   });
 
-  it("logically deletes a v2 song and cleans its retained legacy document", async () => {
+  it("defers normal v2 deletion without writing a tombstone or removing the legacy predecessor", async () => {
     const legacySong = song();
     const documents = serializeSongToV2Documents(legacySong);
-    const { db, remove } = makeDb(
+    const { db, put, remove } = makeDb(
       legacySong,
       [documents.root, ...documents.arrangements, ...documents.slides],
     );
 
-    await loadSong(db, legacySong._id);
-    const deleted = await deleteSong(db, legacySong._id);
-    expect(deleted._id).toBe(legacySong._id);
-    expect(remove).toHaveBeenCalledWith(legacySong);
+    await expect(deleteSong(db, legacySong._id)).rejects.toBeInstanceOf(SongV2DeletionDeferredError);
+
+    expect(put).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+    expect(await db.get(legacySong._id)).toEqual(legacySong);
+    expect(await db.get(documents.root._id)).not.toHaveProperty("deletedAt");
   });
 });

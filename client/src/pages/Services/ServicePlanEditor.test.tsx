@@ -37,7 +37,6 @@ import {
   sendServicePlanShareEmail,
   unpublishServicePlan,
   updateServicePlanPublicLive,
-  searchYouTubeVideos,
   AuthApiError,
 } from "../../api/auth";
 import { ControllerInfoContext } from "../../context/controllerInfo";
@@ -197,8 +196,6 @@ const mockSendServicePlanShareEmail = jest.mocked(sendServicePlanShareEmail);
 const mockUpdateServicePlanPublicLive = jest.mocked(
   updateServicePlanPublicLive,
 );
-const mockSearchYouTubeVideos = jest.mocked(searchYouTubeVideos);
-
 const oneTimeService: TeamService = {
   id: "service-1",
   serviceId: "service-1",

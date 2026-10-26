@@ -18,7 +18,6 @@ import {
   buildServiceTimeItem,
   removeParentheticalPhrases,
   createNewItemList,
-  createNewItemInDb,
 } from "./itemUtil";
 import type { DBItem, ItemState, MediaType, ServiceItem, BibleInfo, verseType } from "../types";
 
@@ -73,6 +72,8 @@ describe("itemUtil", () => {
       item: createItemFromProps({ _id: "new-song" }), db: db as never,
     })).rejects.toThrow("failed write");
     expect(docs.size).toBe(0);
+  });
+
   it("returns the persisted song revision while retaining transient editor fields", async () => {
     const missing = Object.assign(new Error("missing"), {
       status: 404,

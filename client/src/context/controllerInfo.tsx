@@ -113,27 +113,46 @@ type CleanupMaintenanceState = {
   lastStartedAt: number;
   running?: Promise<void>;
   timer?: ReturnType<typeof setTimeout>;
+  abortController?: AbortController;
   consecutiveFailures: number;
   rerunRequested: boolean;
+  cancelled: boolean;
 };
 const cleanupMaintenanceRuns = new WeakMap<PouchDB.Database, CleanupMaintenanceState>();
-const scheduleSongV2CleanupMaintenance = (db: PouchDB.Database, force = false) => {
+export const cancelSongV2CleanupMaintenance = (db: PouchDB.Database | undefined) => {
+  if (!db) return;
+  const state = cleanupMaintenanceRuns.get(db);
+  if (!state || state.cancelled) return;
+  state.cancelled = true;
+  state.rerunRequested = false;
+  if (state.timer) {
+    clearTimeout(state.timer);
+    state.timer = undefined;
+  }
+  state.abortController?.abort();
+};
+export const scheduleSongV2CleanupMaintenance = (db: PouchDB.Database, force = false) => {
   const state = cleanupMaintenanceRuns.get(db) ?? {
     lastStartedAt: 0,
     consecutiveFailures: 0,
     rerunRequested: false,
+    cancelled: false,
   };
   cleanupMaintenanceRuns.set(db, state);
+  const isActive = () => !state.cancelled && cleanupMaintenanceRuns.get(db) === state;
 
   const scheduleAfter = (delay: number) => {
+    if (!isActive()) return;
     if (state.timer) return;
     state.timer = setTimeout(() => {
       state.timer = undefined;
+      if (!isActive()) return;
       scheduleSongV2CleanupMaintenance(db, true);
     }, delay);
   };
   const retryDelay = () => Math.min(30_000 * 2 ** Math.min(state.consecutiveFailures - 1, 4), 300_000);
 
+  if (!isActive()) return;
   if (state.running) {
     state.rerunRequested = true;
     return;
@@ -149,9 +168,16 @@ const scheduleSongV2CleanupMaintenance = (db: PouchDB.Database, force = false) =
     return;
   }
   state.lastStartedAt = Date.now();
+  const abortController = new AbortController();
+  state.abortController = abortController;
   state.running = import("../utils/songV2Writer")
-    .then(({ reconcilePendingSongV2Cleanup }) => reconcilePendingSongV2Cleanup(db, 20))
+    .then(({ reconcilePendingSongV2Cleanup }) => {
+      if (!isActive() || abortController.signal.aborted) return undefined;
+      return reconcilePendingSongV2Cleanup(db, 20, abortController.signal);
+    })
     .then((result) => {
+      if (!isActive() || abortController.signal.aborted || result?.cancelled) return;
+      if (!result) return;
       if (result.quarantined.length) {
         console.warn("Song cleanup records were quarantined after their target revisions changed:", result.quarantined);
       }
@@ -163,13 +189,16 @@ const scheduleSongV2CleanupMaintenance = (db: PouchDB.Database, force = false) =
       else if (result.hasMore) scheduleAfter(250);
     })
     .catch((error) => {
+      if (!isActive() || abortController.signal.aborted) return;
       state.consecutiveFailures += 1;
       console.error("Could not run song cleanup maintenance:", error);
       scheduleAfter(retryDelay());
     })
     .finally(() => {
+      if (cleanupMaintenanceRuns.get(db) !== state) return;
       state.running = undefined;
-      if (state.rerunRequested) {
+      state.abortController = undefined;
+      if (isActive() && state.rerunRequested) {
         state.rerunRequested = false;
         scheduleAfter(0);
       }
@@ -205,6 +234,8 @@ let syncTimeout: NodeJS.Timeout | null = null;
 
 const ControllerInfoProvider = ({ children }: any) => {
   const [db, setDb] = useState<PouchDB.Database | undefined>(undefined);
+  const contentDbRef = useRef<PouchDB.Database | undefined>(db);
+  contentDbRef.current = db;
   const [bibleDb, setBibleDb] = useState<PouchDB.Database | undefined>(
     undefined
   );
@@ -344,7 +375,7 @@ const ControllerInfoProvider = ({ children }: any) => {
                 new CustomEvent("update", { detail: event.change.docs })
               );
               if ((event.change.docs as Array<{ docType?: string }> | undefined)
-                ?.some((doc) => doc.docType === "song-v2-cleanup")) {
+                ?.some((doc) => doc.docType === "song-v2-cleanup" || doc.docType === "song-v2-cleanup-discovery")) {
                 scheduleSongV2CleanupMaintenance(localDb);
               }
             }
@@ -591,6 +622,7 @@ const ControllerInfoProvider = ({ children }: any) => {
           const localDb = new PouchDB(dbName);
           await seedOfflineGuestDatabase(localDb);
           setDbProgress(100);
+          contentDbRef.current = localDb;
           setDb(localDb);
           setIsDbSetup(true);
           setGlobalContentDatabase(localDb, {
@@ -700,6 +732,7 @@ const ControllerInfoProvider = ({ children }: any) => {
           })
           .on("complete", () => {
             setDbProgress(100);
+            contentDbRef.current = localDb;
             setDb(localDb);
             setIsDbSetup(true);
             setGlobalContentDatabase(localDb, {
@@ -841,6 +874,10 @@ const ControllerInfoProvider = ({ children }: any) => {
   ]);
 
   const tearDownLocalDatabases = useCallback(async () => {
+    const mainDb = db;
+    const bibleDbInstance = bibleDb;
+    cancelSongV2CleanupMaintenance(mainDb);
+    if (contentDbRef.current === mainDb) contentDbRef.current = undefined;
     // Invalidate auth-recovery continuations before cancelling handles or
     // destroying the database owned by the previous church.
     syncGenerationRef.current += 1;
@@ -859,8 +896,6 @@ const ControllerInfoProvider = ({ children }: any) => {
     }
     setGlobalContentDatabase(undefined);
     globalBibleDb = undefined;
-    const mainDb = db;
-    const bibleDbInstance = bibleDb;
     setDb(undefined);
     setDbProgress(0);
     setIsDbSetup(false);
@@ -933,6 +968,7 @@ const ControllerInfoProvider = ({ children }: any) => {
     return () => {
       // Auth recovery may still be awaiting session renewal or backoff.
       // Prevent its continuation from reconnecting after provider unmount.
+      cancelSongV2CleanupMaintenance(contentDbRef.current);
       syncGenerationRef.current += 1;
       if (syncTimeout) {
         clearTimeout(syncTimeout);
