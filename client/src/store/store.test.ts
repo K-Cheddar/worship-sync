@@ -1,6 +1,5 @@
 const flushListenerEffects = async () => {
-  await Promise.resolve();
-  await Promise.resolve();
+  for (let attempt = 0; attempt < 12; attempt += 1) await Promise.resolve();
 };
 
 // Pure selectors/helpers from the slot-based presentation slice (no store side effects).
@@ -295,6 +294,25 @@ const createSongDoc = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+const mockV2AllDocs = (db: { allDocs?: jest.Mock }, docs: Map<string, any>) => {
+  db.allDocs = jest.fn(async ({ keys, startkey, endkey }: {
+    keys?: string[];
+    startkey?: string;
+    endkey?: string;
+  }) => {
+    const selected = keys
+      ? keys.map((id) => [id, docs.get(id)] as const)
+      : [...docs.entries()].filter(([id]) =>
+          (!startkey || id >= startkey) && (!endkey || id <= endkey),
+        );
+    return {
+      rows: selected.map(([id, doc]) => doc
+        ? { id, key: id, value: { rev: doc._rev }, doc }
+        : { id, key: id, error: "not_found" }),
+    };
+  });
+};
+
 // Characterization tests deliberately assert the current defects. Convert the
 // defect expectations to preservation expectations when the fixes are approved.
 describe("item content integrity investigation", () => {
@@ -303,6 +321,7 @@ describe("item content integrity investigation", () => {
     slides: [createScreenSlide(id + "-slide", id + " exclusive words")],
     arrangements: type === "song" ? [{
       id: id + "-arrangement", name: "Master",
+      monitorLayout: { currentFontSizePx: 300, nextFontSizePx: 300 },
       slides: [createScreenSlide(id + "-arr-slide", id + " exclusive words")],
       formattedLyrics: [{ id: id + "-section", type: "Verse", name: "Verse",
         words: id + " exclusive words", slideSpan: 1 }],
@@ -324,7 +343,13 @@ describe("item content integrity investigation", () => {
         formattedSections: [{ sectionNum: 1, words: "free-A exclusive words", slideSpan: 1 }] }],
       ["free-B", fixture("free-B", "free")],
     ]);
-    runtime.db.get.mockImplementation(async (id: string) => clone(docs.get(id)));
+    runtime.db.get.mockImplementation(async (id: string) => {
+      const document = docs.get(id);
+      if (!document) {
+        throw Object.assign(new Error(`missing ${id}`), { status: 404, name: "not_found" });
+      }
+      return clone(document);
+    });
     const commit = async (doc: Fixture) => {
       const current = docs.get(doc._id);
       if (current?._rev !== doc._rev) throw Object.assign(new Error("conflict"), { status: 409 });
@@ -379,8 +404,18 @@ describe("item content integrity investigation", () => {
   it("finishes A after its delayed get resolves while B starts a newer save", async () => {
     const { docs, select, edit, tick, db } = setup();
     const held = deferred<Fixture>();
-    db.get.mockImplementation((id: string) => id === "song-A"
-      ? held.promise : Promise.resolve(clone(docs.get(id))));
+    let heldARead = false;
+    db.get.mockImplementation((id: string) => {
+      if (id === "song-A" && !heldARead) {
+        heldARead = true;
+        return held.promise;
+      }
+      const document = docs.get(id);
+      if (!document) {
+        return Promise.reject(Object.assign(new Error(`missing ${id}`), { status: 404, name: "not_found" }));
+      }
+      return Promise.resolve(clone(document));
+    });
     select("song-A"); edit("A canceled"); await tick();
     select("song-B"); edit("B saved");
     held.resolve(clone(docs.get("song-A")!)); await flushListenerEffects();
@@ -575,13 +610,18 @@ describe("item content integrity investigation", () => {
     const remote = { ...fixture("song-A"), _rev: "2-remote", name: "Remote edit" };
     docs.set("song-A", remote);
     store.dispatch({ type: "allDocs/updateAllSongDocs", payload: [remote, docs.get("song-B")] });
+    // Active songs use arrangement-owned slide content even when the remote
+    // library row still has legacy root slides.
+    const { normalizeItemSlides } = require("../utils/activeItemSlides");
     expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(true);
     await tick();
     expect(docs.get("song-A")).toEqual(remote);
     expect(docs.get("song-B")?.name).toBe("song-B");
     expect(store.getState().undoable.present.item.name).toBe("Local edit");
     expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
-    expect(store.getState().undoable.present.item.pendingRemoteItem).toEqual(remote);
+    expect(store.getState().undoable.present.item.pendingRemoteItem).toEqual(
+      normalizeItemSlides(remote),
+    );
   });
 
   it("does not clear a newer pending indicator when an older save completes", async () => {
@@ -2213,7 +2253,15 @@ describe("store module", () => {
     const { store, itemSlice, db } = loadStoreWithItemPersistence();
     const previousAudio = createSongAudio("audio-old");
     const attachedAudio = createSongAudio("audio-new");
-    db.get.mockResolvedValue(createSongDoc({ _rev: "2-song", name: "Edited while uploading", songAudio: attachedAudio }));
+    db.get.mockImplementation(async (id: string) => {
+      if (id.startsWith("song-v2:root:")) {
+        throw Object.assign(new Error("missing v2 root"), { status: 404, name: "not_found" });
+      }
+      if (id === "song-1") {
+        return createSongDoc({ _rev: "2-song", name: "Edited while uploading", songAudio: attachedAudio });
+      }
+      throw Object.assign(new Error(`missing ${id}`), { status: 404, name: "not_found" });
+    });
     db.put.mockResolvedValue({ rev: "3-song" });
 
     store.dispatch(
@@ -2306,9 +2354,7 @@ describe("store module", () => {
       if (!found) throw Object.assign(new Error("missing"), { status: 404, name: "not_found" });
       return found;
     });
-    (db as any).allDocs = jest.fn(async ({ keys }: { keys: string[] }) => ({
-      rows: keys.map((id) => docs.has(id) ? { id, doc: docs.get(id) } : { id, error: "not_found" }),
-    })) as any;
+    mockV2AllDocs(db as any, docs);
     let sequence = 1;
     db.put.mockImplementation(async (next: any) => {
       const existing = docs.get(next._id);
@@ -2362,7 +2408,7 @@ describe("store module", () => {
       if (!found) throw Object.assign(new Error("missing"), { status: 404, name: "not_found" });
       return found;
     });
-    (db as any).allDocs = jest.fn(async ({ keys }: { keys: string[] }) => ({ rows: keys.map((id) => ({ id, doc: docs.get(id) })) })) as any;
+    mockV2AllDocs(db as any, docs);
     const slide = docs.get(physical.slides[0]._id);
     docs.set(slide._id, { ...slide, boxes: [{ ...slide.boxes[0], words: "remote" }], _rev: "2-remote" });
     const baseline = hydrateSongFromV2Documents(docs.get(physical.root._id), physical.arrangements.map((doc: any) => docs.get(doc._id)), [slide]);
@@ -2405,9 +2451,7 @@ describe("store module", () => {
       if (doc) return doc;
       throw Object.assign(new Error("not found"), { status: 404, name: "not_found" });
     });
-    (db as any).allDocs = jest.fn(async ({ keys }: { keys: string[] }) => ({
-      rows: keys.map(id => v2Docs.has(id) ? { id, doc: v2Docs.get(id) } : { id, error: "not_found" }),
-    }));
+    mockV2AllDocs(db as any, v2Docs);
     const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
     store.dispatch(itemSlice.actions.setActiveItem(authored));
     store.dispatch(itemSlice.actions._updateSlides([{
@@ -2447,7 +2491,7 @@ describe("store module", () => {
       if (!found) throw Object.assign(new Error("missing"), { status: 404, name: "not_found" });
       return found;
     });
-    (db as any).allDocs = jest.fn(async ({ keys }: { keys: string[] }) => ({ rows: keys.map(id => ({ id, doc: docs.get(id) })) }));
+    mockV2AllDocs(db as any, docs);
     let sequence = 1;
     let failed = false;
     db.put.mockImplementation(async (next: any) => {
@@ -2500,7 +2544,7 @@ describe("store module", () => {
       if (!found) throw Object.assign(new Error("missing"), { status: 404, name: "not_found" });
       return found;
     });
-    (db as any).allDocs = jest.fn(async ({ keys }: { keys: string[] }) => ({ rows: keys.map(id => ({ id, doc: docs.get(id) })) }));
+    mockV2AllDocs(db as any, docs);
     db.put.mockImplementation(async (next: any) => {
       const remote = { ...next, boxes: [{ ...next.boxes[0], words: "remote" }], _rev: "2-remote" };
       docs.set(next._id, remote);

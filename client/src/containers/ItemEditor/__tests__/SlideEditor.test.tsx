@@ -463,7 +463,13 @@ describe("SlideEditor", () => {
   it.each(["song", "church", "unmount"])("keeps a deferred MP3 upload on its original database after %s changes", async (transition) => {
     const original = { ...makeBaseState().undoable.present.item, _id: "song-A", type: "song", _rev: "1-original" };
     mockState = makeStateWithItem(original);
-    const dbA = createMockPouchDB({ get: jest.fn().mockResolvedValue(original), put: jest.fn().mockResolvedValue({ rev: "2-audio" }) });
+    const dbA = createMockPouchDB({
+      get: jest.fn(async (id: string) => {
+        if (id === original._id) return original;
+        throw Object.assign(new Error(`missing ${id}`), { status: 404, name: "not_found" });
+      }),
+      put: jest.fn().mockResolvedValue({ rev: "2-audio" }),
+    });
     const dbB = createMockPouchDB();
     let resolveUpload!: (value: Awaited<ReturnType<typeof authApi.uploadSongAudio>>) => void;
     const upload = new Promise<Awaited<ReturnType<typeof authApi.uploadSongAudio>>>((resolve) => { resolveUpload = resolve; });

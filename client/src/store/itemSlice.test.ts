@@ -76,6 +76,7 @@ describe("itemSlice", () => {
       arrangements: [{
         id: "B-arrangement",
         name: "B arrangement",
+        monitorLayout: { currentFontSizePx: 300, nextFontSizePx: 300 },
         slides: [slide("B-slide", "B words")],
         formattedLyrics: [],
         songOrder: [],
@@ -109,14 +110,14 @@ describe("itemSlice", () => {
       }],
       expectedOwner: staleOwnerA,
     }) as never);
-    expect(store.getState().undoable.present.item.slides).toEqual(itemB.slides);
+    expect(store.getState().undoable.present.item.slides).toEqual([]);
     expect(store.getState().undoable.present.item.arrangements).toEqual(itemB.arrangements);
 
     await store.dispatch(updateSlides({
       slides: [slide("B-slide", "B updated words")],
       expectedOwner: activeOwnerB,
     }) as never);
-    expect(store.getState().undoable.present.item.slides[0].boxes[0].words).toBe(
+    expect(store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words).toBe(
       "B updated words",
     );
   });

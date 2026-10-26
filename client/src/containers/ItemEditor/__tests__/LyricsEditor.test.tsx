@@ -69,6 +69,7 @@ jest.mock("../../../store/preferencesSlice", () => ({
 jest.mock("../../../utils/overflow", () => ({
   formatSong: (item: any) => mockFormatSong(item),
   formatSection: jest.fn(() => []),
+  getNewSlidesOffsetForSectionPreview: jest.fn(() => 0),
 }));
 
 jest.mock("../../../utils/generateRandomId", () => ({
@@ -283,7 +284,11 @@ describe("LyricsEditor", () => {
     const a = integritySong("library-A"), b = integritySong("library-B");
     const docs = new Map([[a._id, a], [b._id, b]]);
     const db = {
-      get: jest.fn(async (id: string) => JSON.parse(JSON.stringify(docs.get(id)))),
+      get: jest.fn(async (id: string) => {
+        const document = docs.get(id);
+        if (!document) throw Object.assign(new Error(`missing ${id}`), { status: 404, name: "not_found" });
+        return JSON.parse(JSON.stringify(document));
+      }),
       put: jest.fn(async (doc: DBItem) => {
         docs.set(doc._id, { ...doc, _rev: "2-written" });
         return { rev: "2-written" };
@@ -311,7 +316,11 @@ describe("LyricsEditor", () => {
     const a = integritySong("library-A");
     const docs = new Map([[a._id, a]]);
     const db = {
-      get: jest.fn(async (id: string) => JSON.parse(JSON.stringify(docs.get(id)))),
+      get: jest.fn(async (id: string) => {
+        const document = docs.get(id);
+        if (!document) throw Object.assign(new Error(`missing ${id}`), { status: 404, name: "not_found" });
+        return JSON.parse(JSON.stringify(document));
+      }),
       put: jest.fn(async (doc: DBItem) => {
         docs.set(doc._id, { ...doc, _rev: "3-written" });
         return { rev: "3-written" };

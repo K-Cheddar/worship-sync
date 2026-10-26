@@ -47,6 +47,11 @@ const song = {
   },
 } as DBItem;
 
+const getLegacySong = (document: DBItem = song) => jest.fn(async (id: string) => {
+  if (id === document._id) return { ...document };
+  throw Object.assign(new Error(`missing ${id}`), { status: 404, name: "not_found" });
+});
+
 const StoreBackedPanel = ({
   fallbackSong,
   onEditingChange,
@@ -101,7 +106,7 @@ describe("ServicePlanSongDetailsPanel", () => {
   it("exits edit mode, updates visible details, and notifies its parent after saving", async () => {
     const put = jest.fn().mockResolvedValue({ ok: true, id: song._id, rev: "2-new" });
     const db = createMockPouchDB({
-      get: jest.fn().mockResolvedValue(song),
+      get: getLegacySong(),
       put,
     });
     const { onEditingChange } = renderPanel(db);
@@ -137,7 +142,7 @@ describe("ServicePlanSongDetailsPanel", () => {
 
   it("keeps the entered values and edit mode after a rejected save", async () => {
     const db = createMockPouchDB({
-      get: jest.fn().mockResolvedValue(song),
+      get: getLegacySong(),
       put: jest.fn().mockRejectedValue(new Error("Database unavailable.")),
     });
     const { onEditingChange } = renderPanel(db);

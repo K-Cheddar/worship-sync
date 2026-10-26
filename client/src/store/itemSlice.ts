@@ -258,9 +258,17 @@ export const getItemPersistenceConflicts = (
   const base = normalizeSnapshotForEditorCompare(baseline);
   const remote = normalizeSnapshotForEditorCompare(latest);
   return getItemPersistenceChanges(itemSnapshot, baseline).filter(
-    (field) =>
-      !_.isEqual(remote[field], base[field]) &&
-      !_.isEqual(remote[field], current[field]),
+    (field) => {
+      // The v2 writer validates arrangement and slide documents separately.
+      // A whole-arrangement comparison here would reject a local edit to one
+      // slide whenever a sibling slide changed remotely.
+      if (field === "arrangements" &&
+        (current.docType === "song-v2-root" || base.docType === "song-v2-root")) {
+        return false;
+      }
+      return !_.isEqual(remote[field], base[field]) &&
+        !_.isEqual(remote[field], current[field]);
+    },
   );
 };
 
@@ -327,8 +335,7 @@ const applyItemDataToState = (
   state.arrangements = payload.arrangements || [];
   state.slides = payload.type === "song" ? [] : (payload.slides || []);
   state.monitorLayout = payload.monitorLayout;
-  state.formattedSections =
-    payload.formattedSections || state.formattedSections;
+  state.formattedSections = payload.formattedSections || [];
   state.bibleInfo = payload.bibleInfo || {
     book: "",
     chapter: "",
@@ -609,10 +616,26 @@ export const itemSlice = createSlice({
         (state as unknown as Record<PersistedItemField, unknown>)[field] =
           action.payload[field];
       }
-      state.baseItem = createItemSnapshot(action.payload);
+      const persistedSnapshot = createItemSnapshot(action.payload);
+      state.baseItem = persistedSnapshot;
+      const hasUnappliedV2RemoteChange =
+        state.docType === "song-v2-root" &&
+        action.payload.docType === "song-v2-root" &&
+        !!persistedSnapshot &&
+        getItemPersistenceChanges(state, persistedSnapshot).length > 0;
+      if (hasUnappliedV2RemoteChange) {
+        // The v2 writer can merge a local slide edit with a remote sibling
+        // edit. The local draft is now saved, while the active editor still
+        // needs the merged sibling content applied from this snapshot.
+        state.pendingRemoteItem = action.payload;
+        state.hasRemoteUpdate = true;
+        state.hasPendingUpdate = false;
+        state.remoteUpdateReason = null;
+        return;
+      }
       state.hasPendingUpdate = getItemPersistenceChanges(
         state,
-        action.payload,
+        persistedSnapshot ?? action.payload,
       ).length > 0;
       if (!state.hasPendingUpdate) {
         state.pendingRemoteItem = null;

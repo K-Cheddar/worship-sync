@@ -37,6 +37,7 @@ import {
   sendServicePlanShareEmail,
   unpublishServicePlan,
   updateServicePlanPublicLive,
+  searchYouTubeVideos,
   AuthApiError,
 } from "../../api/auth";
 import { ControllerInfoContext } from "../../context/controllerInfo";
@@ -196,6 +197,7 @@ const mockSendServicePlanShareEmail = jest.mocked(sendServicePlanShareEmail);
 const mockUpdateServicePlanPublicLive = jest.mocked(
   updateServicePlanPublicLive,
 );
+const mockSearchYouTubeVideos = jest.mocked(searchYouTubeVideos);
 const oneTimeService: TeamService = {
   id: "service-1",
   serviceId: "service-1",
@@ -1073,6 +1075,18 @@ describe("ServicePlanEditor", () => {
   });
 
   it("saves a YouTube link through the repository and canonicalizes legacy song slides", async () => {
+    mockSearchYouTubeVideos.mockResolvedValue({
+      query: "Living Hope",
+      cached: false,
+      results: [{
+        videoId: "abcdefghijk",
+        title: "Living Hope (Official Video)",
+        channelName: "Phil Wickham",
+        thumbnail: "https://img.youtube.com/vi/abcdefghijk/default.jpg",
+        description: "Official music video",
+        watchUrl: "https://www.youtube.com/watch?v=abcdefghijk",
+      }],
+    });
     const legacySong = {
       _id: "song-legacy",
       _rev: "1-legacy",

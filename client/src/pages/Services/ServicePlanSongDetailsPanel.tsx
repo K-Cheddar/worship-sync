@@ -126,10 +126,21 @@ const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }:
     songMetadata?: SongMetadata;
   }) => {
     if (!db) throw new Error("The song library is not available. Try again.");
-    const next: DBItem = { ...baselineSong, arrangements, selectedArrangement };
+    const latestSong = await loadSong(db, baselineSong._id);
+    // Keep the v2 baseline from when editing began so the writer can detect
+    // conflicts at the arrangement/slide level. Legacy songs need the newest
+    // root revision for Pouch while retaining the user's draft content.
+    const saveBaseline = latestSong.docType === "song-v2-root"
+      ? baselineSong
+      : latestSong;
+    const next: DBItem = {
+      ...(latestSong.docType === "song-v2-root" ? baselineSong : latestSong),
+      arrangements,
+      selectedArrangement,
+    };
     if (songMetadata === undefined) next.songMetadata = undefined;
     else next.songMetadata = songMetadata;
-    const saved = await saveSong(db, next, baselineSong);
+    const saved = await saveSong(db, next, saveBaseline);
     dispatch(upsertItemInAllDocs(songToLibraryProjection(saved)));
     dispatch(upsertItemInAllItemsList({
       _id: saved._id,

@@ -49,8 +49,8 @@ const StoreBackedDrawer = ({ song }: { song: DBItem }) => {
   );
   return <ViewSongSectionsDrawer song={currentSong} isOpen onClose={jest.fn()} />;
 };
-const getLegacySong = (rev = "1-old") => jest.fn(async (id: string) => {
-  if (id === song._id) return { ...song, _rev: rev };
+const getLegacySong = (document: DBItem = song) => jest.fn(async (id: string) => {
+  if (id === document._id) return { ...document, _rev: document._rev ?? "1-old" };
   throw Object.assign(new Error(`missing ${id}`), { status: 404, name: "not_found" });
 });
 
@@ -319,7 +319,7 @@ describe("ViewSongSectionsDrawer", () => {
   it.each(["attach", "remove"])("preserves a concurrent rename and lyrics during an audio-only %s", async (operation) => {
     const remote = { ...song, _rev: "2-remote", name: "Remote renamed song", arrangements: [] };
     const put = jest.fn().mockResolvedValue({ rev: "3-audio" });
-    const db = createMockPouchDB({ get: jest.fn().mockResolvedValue(remote), put });
+    const db = createMockPouchDB({ get: getLegacySong(remote), put });
     mockUploadSongAudio.mockResolvedValue(song.songAudio!);
     renderDrawer({ db });
     fireEvent.click(screen.getByRole("button", { name: "Edit details" }));
@@ -336,7 +336,7 @@ describe("ViewSongSectionsDrawer", () => {
   it("finishes an audio write on the original database without publishing into an unmounted drawer", async () => {
     let resolveUpload!: (value: NonNullable<DBItem["songAudio"]>) => void;
     mockUploadSongAudio.mockReturnValue(new Promise((resolve) => { resolveUpload = resolve; }));
-    const db = createMockPouchDB({ get: jest.fn().mockResolvedValue({ ...song, _rev: "1-old" }), put: jest.fn().mockResolvedValue({ rev: "2-audio" }) });
+    const db = createMockPouchDB({ get: getLegacySong({ ...song, _rev: "1-old" }), put: jest.fn().mockResolvedValue({ rev: "2-audio" }) });
     const { unmount, store } = renderDrawer({ db });
     fireEvent.click(screen.getByRole("button", { name: "Edit details" }));
     fireEvent.change(screen.getByLabelText("Choose MP3"), { target: { files: [new File(["mp3"], "reference.mp3", { type: "audio/mpeg" })] } });

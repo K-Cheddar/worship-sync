@@ -1090,11 +1090,15 @@ listenerMiddleware.startListening({
       itemSlice.actions.discardPendingRemoteItem,
       itemSlice.actions.applyPendingRemoteItem,
     );
+    const currentItem = (currentState as RootState).undoable.present.item;
+    const previousItem = (previousState as RootState).undoable.present.item;
+    const isExplicitPendingRetry =
+      itemSlice.actions._updateSlides.match(action) &&
+      !!currentItem.hasPendingUpdate;
     return (
-      (currentState as RootState).undoable.present.item !==
-        (previousState as RootState).undoable.present.item &&
+      (currentItem !== previousItem || isExplicitPendingRetry) &&
       !excluded(action) &&
-      !!(currentState as RootState).undoable.present.item.hasPendingUpdate &&
+      !!currentItem.hasPendingUpdate &&
       !isStoreResetAction(action)
     );
   },
@@ -1245,13 +1249,11 @@ listenerMiddleware.startListening({
           db_item = { ...db_item, _rev: result.rev };
         }
       } catch (error) {
-        if (
-          (error as { status?: number })?.status === 409 ||
-          (error instanceof Error && (
-            error.name === "SongV2ConcurrentEditError" ||
-            error.name === "SongV2VersionTransitionError"
-          ))
-        ) {
+        const isSongV2Conflict = error instanceof Error && (
+          error.name === "SongV2ConcurrentEditError" ||
+          error.name === "SongV2VersionTransitionError"
+        );
+        if ((error as { status?: number })?.status === 409 || isSongV2Conflict) {
           const latest = (await loadItemWithSongHydration(
             writeDatabase,
             desired._id,
@@ -1270,6 +1272,10 @@ listenerMiddleware.startListening({
             if (error instanceof Error && error.name === "SongV2VersionTransitionError") {
               listenerApi.dispatch(itemSlice.actions.setRemoteUpdateReason("song-version-transition"));
             }
+          }
+          if (isSongV2Conflict) {
+            console.error("Could not save active song draft", error);
+            return;
           }
         }
         throw error;
@@ -1308,11 +1314,12 @@ listenerMiddleware.startListening({
       }
 
       const activeDatabaseOwner = getActiveContentDatabaseOwner();
-      const stillInOriginalDatabase = contentOwner
-        ? activeDatabaseOwner?.scopeId === contentOwner.scopeId &&
+      const stillInOriginalDatabase = !contentOwner ||
+        contentOwner.scopeId === "unscoped"
+        ? db === writeDatabase
+        : activeDatabaseOwner?.scopeId === contentOwner.scopeId &&
           activeDatabaseOwner.databaseKey === contentOwner.databaseKey &&
-          activeDatabaseOwner.churchId === contentOwner.churchId
-        : db === writeDatabase;
+          activeDatabaseOwner.churchId === contentOwner.churchId;
       if (!stillInOriginalDatabase) return;
 
       listenerApi.dispatch(upsertItemInAllDocs(
@@ -1330,6 +1337,7 @@ listenerMiddleware.startListening({
         );
       }
 
+      if (!isSameActiveOwner) return;
       safePostMessage({
         type: "update",
         data: {
