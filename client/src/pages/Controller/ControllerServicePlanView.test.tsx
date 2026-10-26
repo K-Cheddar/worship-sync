@@ -15,6 +15,7 @@ import { plainTextToRichText } from "../../types/richText";
 import type { DBItem } from "../../types";
 import type { ServicePlan, ServicePlanElement } from "../../types/servicePlan";
 import scriptureFixtures from "../../../../shared/servicePlanScripture.fixtures.json";
+import { createServicePlanTextResource } from "../Services/servicePlanResources";
 
 jest.mock("../../hooks/useCachedMediaUrl", () => ({
   useCachedMediaUrl: (url?: string) => url,
@@ -816,6 +817,26 @@ describe("ControllerServicePlanView", () => {
     await user.click(screen.getByRole("button", { name: "View Custom document: Deleted slides" }));
     expect(screen.getByRole("status"))
       .toHaveTextContent("This custom document is no longer available in the library.");
+  });
+
+  it("shows title-only and notes-only resources and previews their rich notes", async () => {
+    const user = userEvent.setup();
+    const notes = { blocks: [{ type: "paragraph" as const, spans: [{ text: "Formatted cue", bold: true, italic: true }] }] };
+    const resourcePlan = makePlanWithElement({
+      id: "notes-item", type: "free", title: plainTextToRichText("Cues"),
+      resources: [
+        createServicePlanTextResource({ title: "Title only", text: { blocks: [] } }),
+        createServicePlanTextResource({ title: "", text: notes }),
+      ],
+    });
+    renderWithStore(<ControllerServicePlanView
+      {...brandColors} plan={resourcePlan}
+      snapshot={buildServicePlanFlowSnapshot({ plan: resourcePlan, startsAt: resourcePlan.startsAt! })}
+      churchId="church-1" controllerProfileId="presentation"
+    />);
+    expect(screen.getByText("Title only")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "View Notes: Notes" }));
+    expect(screen.getByText("Formatted cue")).toHaveClass("font-bold", "italic");
   });
 
   it("keeps text and media resources on the established content preview", async () => {

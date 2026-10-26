@@ -9837,6 +9837,53 @@ test("service plan elements round-trip scripture refs and raw source strings", a
   ]);
 });
 
+test("service plan title-only and notes-only resources survive save, reload, and public projection", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const { createServicePlanTextResource, createServicePlanGenericResource, createServicePlanLinkResource } =
+    await import("../client/src/pages/Services/servicePlanResources.ts");
+  const { buildServicePlanFlowSnapshot } = await import("../client/src/pages/buildServicePlanFlowSnapshot.ts");
+  const { buildPublicServicePlanSnapshot } = await import("./servicePlanPublic.js");
+  const context = await createAdminContext("service_plan_resource_validation");
+  const planKey = "svc1@2026-10-26";
+  const empty = { blocks: [] };
+  const notes = { blocks: [{ type: "paragraph", spans: [{ text: "Formatted notes", bold: true, italic: true }] }] };
+  const resources = [
+    createServicePlanTextResource({ title: "Title only", text: empty }),
+    createServicePlanTextResource({ title: "", text: notes }),
+    createServicePlanTextResource({ title: "Title and notes", text: notes }),
+    createServicePlanGenericResource({ title: "Generic title", notes: empty, url: "" }),
+    createServicePlanGenericResource({ title: "", notes, url: "" }),
+    createServicePlanGenericResource({ title: "", notes: empty, url: "https://example.com/other" }),
+    createServicePlanLinkResource({ title: "", url: "https://example.com/link" }),
+  ];
+  const saved = await callHandler(authHandlers.saveServicePlan, {
+    context, params: { planKey },
+    body: {
+      serviceId: "svc1", date: "2026-10-26", name: "Service",
+      startsAt: "2026-10-26T14:00:00.000Z", timezone: "UTC",
+      sections: [{ id: "main", name: "Main", elements: [{ id: "item", type: "free", title: richText("Welcome"), resources }] }],
+    },
+  });
+  assert.equal(saved.statusCode, 200);
+  const reloaded = await callHandler(authHandlers.getServicePlan, { context, params: { planKey } });
+  assert.equal(reloaded.statusCode, 200);
+  const plan = reloaded.payload.servicePlan;
+  assert.deepEqual(plan.sections[0].elements[0].resources, resources);
+  const serverSnapshot = buildPublicServicePlanSnapshot({ plan: { ...plan, published: true, publicLinkToken: "resource-test-share" } });
+  const clientSnapshot = buildServicePlanFlowSnapshot({ plan, startsAt: plan.startsAt });
+  const expected = [
+    { type: "text", title: "Title only" },
+    { type: "text", title: "Notes", detail: "Formatted notes", richTextContent: notes },
+    { type: "text", title: "Title and notes", detail: "Formatted notes", richTextContent: notes },
+    { type: "generic", title: "Generic title" },
+    { type: "generic", title: "Untitled resource", detail: "Formatted notes", richTextContent: notes },
+    { type: "generic", title: "example.com", url: "https://example.com/other" },
+    { type: "url", title: "example.com", url: "https://example.com/link" },
+  ];
+  assert.deepEqual(serverSnapshot.service.sections[0].items[0].resources, expected);
+  assert.deepEqual(clientSnapshot.service.sections[0].items[0].resources, expected);
+});
+
 test("service plan templates: create, update in place, list, scope, and delete", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("service_plan_templates");
