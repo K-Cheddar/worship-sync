@@ -1,15 +1,28 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { type ReactNode, useContext } from "react";
-import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
+import {
+  MemoryRouter,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from "react-router-dom";
 import GlobalInfoProvider, {
   GlobalInfoContext,
   globalFireDbInfo,
 } from "./globalInfo";
+import Login from "../pages/Login";
 import { useTeamsLiveSync } from "../pages/Teams/hooks/useTeamsLiveSync";
 import * as authApi from "../api/auth";
 import { requestAuthRecovery } from "../api/authErrorBus";
 import * as firebaseApps from "../firebase/apps";
 import * as environmentUtils from "../utils/environment";
+import { AccountPageProvider } from "../pages/Account/AccountPageContext";
+import AccountPeoplePage from "../pages/Account/pages/AccountPeoplePage";
+import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
+import { ToastContext } from "./toastContext";
+import type { MemberPermissions, NotificationCategory } from "../api/authTypes";
 import {
   getPendingDesktopEmailResendState,
   getPendingProviderRedirectState,
@@ -92,7 +105,10 @@ const mockHumanAuth = {
 
 jest.mock("../hooks", () => ({
   useDispatch: () => mockDispatch,
+  useSelector: () => false,
 }));
+jest.mock("../chat/ChatContext", () => ({ useChat: () => null }));
+jest.mock("../chat/ChatLauncher", () => () => null);
 
 jest.mock("../api/auth", () => ({
   AuthApiError: class MockAuthApiError extends Error {
@@ -105,6 +121,14 @@ jest.mock("../api/auth", () => ({
     }
   },
   getAuthBootstrap: jest.fn(),
+  getEmailCodeHint: jest.fn(),
+  listChurchMembers: jest.fn(),
+  listChurchInvites: jest.fn(),
+  listTrustedDevices: jest.fn(),
+  listWorkstations: jest.fn(),
+  listDisplayDevices: jest.fn(),
+  getTeamsBootstrap: jest.fn(),
+  updateChurchMemberAccess: jest.fn(),
   authenticatedApiFetch: (path: RequestInfo | URL, options?: RequestInit) =>
     fetch(path, options),
   getSharedDataToken: jest.fn(() =>
@@ -228,7 +252,7 @@ const loggedInHumanBootstrap = {
   sessionKind: "human" as const,
   database: "main",
   uploadPreset: "bpqu4ma5",
-  appAccess: "full",
+  appAccess: "full" as const,
   churchId: "church-1",
   churchName: "Test Church",
   churchStatus: "active" as const,
@@ -248,7 +272,7 @@ const loggedInWorkstationBootstrap = {
   sessionKind: "workstation" as const,
   database: "main",
   uploadPreset: "bpqu4ma5",
-  appAccess: "full",
+  appAccess: "full" as const,
   churchId: "church-1",
   churchName: "Test Church",
   churchStatus: "active" as const,
@@ -259,6 +283,7 @@ const loggedInWorkstationBootstrap = {
     deviceId: "workstation-1",
     label: "Front Row Laptop",
     operatorName: "Alex",
+    surfaceType: null,
   },
   csrfToken: "csrf-test",
 };
@@ -381,7 +406,9 @@ const ContextProbe = () => {
       <div data-testid="youtube-connected">
         {context.churchIntegrations.youtube.connected ? "yes" : "no"}
       </div>
-      <div data-testid="path">{location.pathname}</div>
+      <div data-testid="path">
+        {location.pathname}{location.search}{location.hash}
+      </div>
       <button type="button" onClick={() => void context.refreshAuthBootstrap()}>
         Refresh bootstrap
       </button>
@@ -409,7 +436,9 @@ const AuthActionsProbe = () => {
 
   return (
     <div>
-      <div data-testid="path">{location.pathname}</div>
+      <div data-testid="path">
+        {location.pathname}{location.search}{location.hash}
+      </div>
       <div data-testid="probe-auth-status">{context.authServerStatus}</div>
       <div data-testid="probe-auth-error">{context.authError || "none"}</div>
       <div data-testid="pending-email-verification-id">
@@ -523,6 +552,58 @@ const VerifyNavigationProbe = () => {
   );
 };
 
+const LoginRouteProbe = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
+  return (
+    <>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="*" element={<div>Signed-in destination</div>} />
+      </Routes>
+      <div data-testid="auth-route">{location.pathname}</div>
+      <div data-testid="auth-search">{location.search}</div>
+      <button
+        type="button"
+        onClick={() =>
+          navigate("/login?code=654321&pendingAuthId=pending-current-link")
+        }
+      >
+        Open newer link
+      </button>
+    </>
+  );
+};
+
+const VerificationOwnershipProbe = () => {
+  const context = useContext(GlobalInfoContext);
+  if (!context) return null;
+
+  const beginVerification = (pendingAuthId: string, code: string) => {
+    context.claimEmailVerificationChallenge(pendingAuthId);
+    void context.verifyEmailCode({ pendingAuthId, code });
+  };
+
+  return (
+    <div>
+      <div data-testid="ownership-auth-status">{context.authServerStatus}</div>
+      <div data-testid="ownership-auth-error">{context.authError}</div>
+      <button
+        type="button"
+        onClick={() => beginVerification("pending-old-probe", "123456")}
+      >
+        Start older verification
+      </button>
+      <button
+        type="button"
+        onClick={() => beginVerification("pending-current-probe", "654321")}
+      >
+        Start current verification
+      </button>
+    </div>
+  );
+};
+
 describe("GlobalInfoProvider presentation listener contracts", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -550,6 +631,7 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     microsoftCredentialFromErrorMock.mockReset();
     mockHumanAuth.currentUser = null;
     (authApi.getAuthBootstrap as jest.Mock).mockReset();
+    (authApi.getEmailCodeHint as jest.Mock).mockReset();
     (authApi.getSharedDataToken as jest.Mock).mockReset();
     (authApi.unlinkWorkstation as jest.Mock).mockReset();
     (authApi.updateWorkstationOperator as jest.Mock).mockReset();
@@ -557,8 +639,15 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     (authApi.createChurchAccount as jest.Mock).mockReset();
     (authApi.exchangeDesktopAuth as jest.Mock).mockReset();
     (authApi.verifyEmailCode as jest.Mock).mockReset();
+    (authApi.logoutSession as jest.Mock)
+      .mockReset()
+      .mockResolvedValue({ success: true });
     (authApi.resendEmailCode as jest.Mock).mockReset();
     (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(demoBootstrap);
+    (authApi.getEmailCodeHint as jest.Mock).mockResolvedValue({
+      success: true,
+      verificationEmail: "person@example.com",
+    });
     (authApi.getSharedDataToken as jest.Mock).mockResolvedValue({
       success: true,
       token: "test-token",
@@ -605,6 +694,85 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
       status: 200,
       json: () => Promise.resolve(false),
     }) as jest.Mock;
+  });
+
+  it("refreshes global permissions and account notification switches after self Team Lead edits even with an older bootstrap pending", async () => {
+    const user = userEvent.setup();
+    let permissions: MemberPermissions = { teams: "edit", services: "edit", teamScopes: {} };
+    let holdNextBootstrap = false;
+    let releaseOlderBootstrap: () => void = () => {};
+    jest.mocked(authApi.getAuthBootstrap).mockImplementation(async () => {
+      const notificationCategories: NotificationCategory[] = ["scheduleAssignments", "scheduleReminders"];
+      if (permissions.teamScopes?.media === "edit") notificationCategories.push("scheduleResponses", "intakeSubmissions");
+      const snapshot = { ...loggedInHumanBootstrap, appAccess: "full" as const, permissions, notificationCategories };
+      if (holdNextBootstrap) {
+        holdNextBootstrap = false;
+        await new Promise<void>((resolve) => { releaseOlderBootstrap = resolve; });
+      }
+      return snapshot;
+    });
+    jest.mocked(authApi.listChurchMembers).mockImplementation(async () => ({ success: true, members: [{
+      membershipId: "church-1_u1", churchId: "church-1", userId: "u1", role: "admin", status: "active",
+      appAccess: "full", controllerAccess: "full", permissions, accessRevision: JSON.stringify(permissions),
+      user: loggedInHumanBootstrap.user,
+    }] }));
+    jest.mocked(authApi.listChurchInvites).mockResolvedValue({ success: true, invites: [] });
+    jest.mocked(authApi.listTrustedDevices).mockResolvedValue({ success: true, devices: [] });
+    jest.mocked(authApi.listWorkstations).mockResolvedValue({ success: true, workstations: [] });
+    jest.mocked(authApi.listDisplayDevices).mockResolvedValue({ success: true, displayDevices: [] });
+    jest.mocked(authApi.getTeamsBootstrap).mockResolvedValue({ teams: [{ teamId: "media", name: "Media" }] } as Awaited<ReturnType<typeof authApi.getTeamsBootstrap>>);
+    jest.mocked(authApi.updateChurchMemberAccess).mockImplementation(async (_church, _user, _access, saved) => {
+      permissions = saved;
+      return { success: true };
+    });
+    const PermissionsProbe = () => {
+      const context = useContext(GlobalInfoContext);
+      return <>
+        <output aria-label="Current access permissions">{JSON.stringify(context?.permissions)}</output>
+        <button onClick={() => void context?.refreshAuthBootstrap()}>Refresh older access</button>
+      </>;
+    };
+    renderProvider(
+      <ToastContext.Provider value={{ showToast: jest.fn(), updateToast: jest.fn(), removeToast: jest.fn() }}>
+        <AccountPageProvider><AccountPeoplePage /><UserSection /><PermissionsProbe /></AccountPageProvider>
+      </ToastContext.Provider>, ["/account/people"],
+    );
+    const openNotifications = async () => {
+      await user.click(await screen.findByRole("button", { name: /^Account:/ }));
+      const collapsed = screen.queryByRole("button", { name: /email notifications/i, expanded: false });
+      if (collapsed) await user.click(collapsed);
+    };
+    const editMediaLead = async (releasePending?: () => void) => {
+      await user.click(screen.getByRole("button", { name: "Actions for Test User" }));
+      await user.click(screen.getByRole("menuitem", { name: "Edit access" }));
+      await user.click(await screen.findByRole("checkbox", { name: "Media" }));
+      const savesBefore = jest.mocked(authApi.updateChurchMemberAccess).mock.calls.length;
+      await user.click(screen.getByRole("button", { name: "Save access" }));
+      await waitFor(() => expect(authApi.updateChurchMemberAccess).toHaveBeenCalledTimes(savesBefore + 1));
+      if (releasePending) {
+        await act(async () => { releasePending(); });
+      }
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit access" })).not.toBeInTheDocument());
+    };
+    await screen.findByRole("button", { name: "Actions for Test User" });
+    await openNotifications();
+    expect(screen.getByRole("switch", { name: "Email me when I am scheduled" })).toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "Email me about new intake submissions" })).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    holdNextBootstrap = true;
+    await user.click(screen.getByRole("button", { name: "Refresh older access" }));
+    await editMediaLead(() => releaseOlderBootstrap());
+    expect(screen.getByLabelText("Current access permissions")).toHaveTextContent('"media":"edit"');
+    await openNotifications();
+    expect(screen.getByRole("switch", { name: "Email me about new intake submissions" })).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Email me when someone responds to a schedule" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await editMediaLead();
+    expect(screen.getByLabelText("Current access permissions")).toHaveTextContent('"teamScopes":{}');
+    await openNotifications();
+    expect(screen.queryByRole("switch", { name: "Email me about new intake submissions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "Email me when someone responds to a schedule" })).not.toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Email me when I am scheduled" })).toBeInTheDocument();
   });
 
   it.each([
@@ -764,6 +932,239 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
       expect(screen.getByTestId("history-path")).toHaveTextContent(
         "/before-login",
       ),
+    );
+  });
+
+  it("preserves and completes an email link through restored-session bootstrap", async () => {
+    const restoreSession = createDeferred<{
+      success: true;
+      requiresEmailCode: true;
+      pendingAuthId: string;
+      verificationEmail: string;
+    }>();
+    const persistedUser = {
+      uid: "u1",
+      getIdToken: jest.fn(() => Promise.resolve("restore-id-token")),
+      providerData: [{ providerId: "password" }],
+    };
+    mockHumanAuth.currentUser = persistedUser;
+    (authApi.createHumanSession as jest.Mock).mockReturnValue(
+      restoreSession.promise,
+    );
+    (authApi.verifyEmailCode as jest.Mock).mockResolvedValue({
+      success: true,
+      bootstrap: loggedInHumanBootstrap,
+    });
+    renderProvider(
+      <LoginRouteProbe />,
+      ["/login?code=123456&pendingAuthId=pending-link-bootstrap"],
+    );
+
+    expect(await screen.findByLabelText("Digit 1 of 6")).toHaveValue("1");
+    expect(authApi.verifyEmailCode).not.toHaveBeenCalled();
+
+    await act(async () => {
+      restoreSession.resolve({
+        success: true,
+        requiresEmailCode: true,
+        pendingAuthId: "pending-link-bootstrap",
+        verificationEmail: "restored@example.com",
+      });
+      await restoreSession.promise;
+    });
+
+    await waitFor(() =>
+      expect(authApi.verifyEmailCode).toHaveBeenCalledWith(
+        expect.objectContaining({
+          pendingAuthId: "pending-link-bootstrap",
+          code: "123456",
+        }),
+      ),
+    );
+    expect(authApi.createHumanSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idToken: "restore-id-token",
+        requestNewCode: false,
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("auth-route")).toHaveTextContent("/home"),
+    );
+    expect(screen.getByText("Signed-in destination")).toBeInTheDocument();
+  });
+
+  it("clears a stale verification session cookie before completing a newer link", async () => {
+    const oldAttempt = createDeferred<{
+      success: true;
+      bootstrap: typeof loggedInHumanBootstrap;
+    }>();
+    const currentAttempt = createDeferred<{
+      success: true;
+      bootstrap: typeof loggedInHumanBootstrap;
+    }>();
+    (authApi.verifyEmailCode as jest.Mock)
+      .mockReturnValueOnce(oldAttempt.promise)
+      .mockReturnValueOnce(currentAttempt.promise);
+    (authApi.logoutSession as jest.Mock).mockResolvedValue({ success: true });
+    renderProvider(
+      <LoginRouteProbe />,
+      ["/login?code=123456&pendingAuthId=pending-old-link"],
+    );
+
+    await waitFor(() =>
+      expect(authApi.verifyEmailCode).toHaveBeenCalledTimes(1),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Open newer link" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("auth-search")).toBeEmptyDOMElement(),
+    );
+
+    await act(async () => {
+      oldAttempt.resolve({
+        success: true,
+        bootstrap: loggedInHumanBootstrap,
+      });
+      await oldAttempt.promise;
+    });
+
+    await waitFor(() =>
+      expect(authApi.logoutSession).toHaveBeenCalledWith("csrf-test"),
+    );
+    await waitFor(() =>
+      expect(authApi.verifyEmailCode).toHaveBeenCalledTimes(2),
+    );
+    expect(authApi.verifyEmailCode).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        pendingAuthId: "pending-current-link",
+        code: "654321",
+      }),
+    );
+    expect(
+      (authApi.logoutSession as jest.Mock).mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      (authApi.verifyEmailCode as jest.Mock).mock.invocationCallOrder[1],
+    );
+    expect(screen.getByTestId("auth-route")).toHaveTextContent("/login");
+
+    await act(async () => {
+      currentAttempt.resolve({
+        success: true,
+        bootstrap: loggedInHumanBootstrap,
+      });
+      await currentAttempt.promise;
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("auth-route")).toHaveTextContent("/home"),
+    );
+  });
+
+  it("suppresses a stale expiration at the shared verification boundary", async () => {
+    const oldAttempt = createDeferred<{
+      success: true;
+      bootstrap: typeof loggedInHumanBootstrap;
+    }>();
+    const currentAttempt = createDeferred<{
+      success: true;
+      bootstrap: typeof loggedInHumanBootstrap;
+    }>();
+    (authApi.verifyEmailCode as jest.Mock)
+      .mockReturnValueOnce(oldAttempt.promise)
+      .mockReturnValueOnce(currentAttempt.promise);
+    renderProvider(<VerificationOwnershipProbe />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("ownership-auth-status")).toHaveTextContent(
+        "online",
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Start older verification" }));
+    await waitFor(() =>
+      expect(authApi.verifyEmailCode).toHaveBeenCalledTimes(1),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Start current verification" }));
+
+    await act(async () => {
+      oldAttempt.reject(
+        new Error("This code has expired. Request a new code to continue."),
+      );
+      await oldAttempt.promise.catch(() => undefined);
+    });
+
+    await waitFor(() =>
+      expect(authApi.verifyEmailCode).toHaveBeenCalledTimes(2),
+    );
+    expect(authApi.verifyEmailCode).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        pendingAuthId: "pending-current-probe",
+        code: "654321",
+      }),
+    );
+    expect(screen.getByTestId("ownership-auth-error")).toBeEmptyDOMElement();
+
+    await act(async () => {
+      currentAttempt.reject(new Error("That code is not valid."));
+      await currentAttempt.promise.catch(() => undefined);
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("ownership-auth-error")).toHaveTextContent(
+        "That code does not match. Check the number from your email and try again.",
+      ),
+    );
+  });
+
+  it("retries stale session cleanup before sending the current verification", async () => {
+    const oldAttempt = createDeferred<{
+      success: true;
+      bootstrap: typeof loggedInHumanBootstrap;
+    }>();
+    (authApi.verifyEmailCode as jest.Mock)
+      .mockReturnValueOnce(oldAttempt.promise)
+      .mockResolvedValueOnce({
+        success: true,
+        bootstrap: loggedInHumanBootstrap,
+      });
+    (authApi.logoutSession as jest.Mock)
+      .mockRejectedValueOnce(new Error("temporary cleanup failure"))
+      .mockRejectedValueOnce(new Error("temporary cleanup failure"))
+      .mockResolvedValueOnce({ success: true });
+    renderProvider(<VerificationOwnershipProbe />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("ownership-auth-status")).toHaveTextContent(
+        "online",
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Start older verification" }));
+    await waitFor(() =>
+      expect(authApi.verifyEmailCode).toHaveBeenCalledTimes(1),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Start current verification" }));
+
+    await act(async () => {
+      oldAttempt.resolve({
+        success: true,
+        bootstrap: loggedInHumanBootstrap,
+      });
+      await oldAttempt.promise;
+    });
+
+    await waitFor(() =>
+      expect(authApi.logoutSession).toHaveBeenCalledTimes(2),
+    );
+    expect(authApi.verifyEmailCode).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("ownership-auth-error")).toHaveTextContent(
+      "Could not clear the earlier sign-in. Check your connection and try again.",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Start current verification" }));
+    await waitFor(() =>
+      expect(authApi.verifyEmailCode).toHaveBeenCalledTimes(2),
+    );
+    expect(authApi.logoutSession).toHaveBeenCalledTimes(3);
+    expect(
+      (authApi.logoutSession as jest.Mock).mock.invocationCallOrder[2],
+    ).toBeLessThan(
+      (authApi.verifyEmailCode as jest.Mock).mock.invocationCallOrder[1],
     );
   });
 
@@ -1835,6 +2236,71 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     expect(getWorkstationSessionOperatorName()).toBe("Alex");
   });
 
+  it.each([
+    ["human", loggedInHumanBootstrap],
+    ["workstation", loggedInWorkstationBootstrap],
+    ["display", loggedInDisplayBootstrap],
+  ])("reports an unavailable %s refresh as false while preserving the offline session", async (_kind, bootstrap) => {
+    jest.useFakeTimers();
+    let current: React.ContextType<typeof GlobalInfoContext>;
+    const Probe = () => {
+      current = useContext(GlobalInfoContext);
+      return <output>{current?.bootstrapStatus}</output>;
+    };
+    jest.mocked(authApi.getAuthBootstrap).mockResolvedValue(bootstrap);
+    const view = renderProvider(<Probe />);
+    try {
+      await screen.findByText("ready");
+      const permissionsBeforeRefresh = current!.permissions;
+      jest.mocked(authApi.getAuthBootstrap).mockRejectedValue(makeReachabilityError());
+      let result: Promise<boolean> = Promise.resolve(true);
+      await act(async () => { result = current!.refreshAuthBootstrap({ requireFresh: true }); });
+      await act(async () => { await jest.advanceTimersByTimeAsync(30_000); });
+      await expect(result).resolves.toBe(false);
+      expect(current!.sessionKind).toBe(bootstrap.sessionKind);
+      expect(current!.authServerStatus).toBe("offline");
+      expect(current!.permissions).toEqual(permissionsBeforeRefresh);
+    } finally {
+      view.unmount();
+      jest.useRealTimers();
+    }
+  });
+
+  it("returns the fresh failure after an older successful bootstrap while ordinary callers stay deduplicated", async () => {
+    jest.useFakeTimers();
+    let current: React.ContextType<typeof GlobalInfoContext>;
+    const Probe = () => {
+      current = useContext(GlobalInfoContext);
+      return <output>{current?.bootstrapStatus}</output>;
+    };
+    const bootstrap = { ...loggedInHumanBootstrap, appAccess: "full" as const };
+    jest.mocked(authApi.getAuthBootstrap).mockResolvedValue(bootstrap);
+    const view = renderProvider(<Probe />);
+    try {
+      await screen.findByText("ready");
+      const stale = createDeferred<typeof bootstrap>();
+      jest.mocked(authApi.getAuthBootstrap).mockReturnValueOnce(stale.promise).mockRejectedValue(makeReachabilityError());
+      let older!: Promise<boolean>;
+      let deduplicated!: Promise<boolean>;
+      let fresh!: Promise<boolean>;
+      await act(async () => {
+        older = current!.refreshAuthBootstrap();
+        deduplicated = current!.refreshAuthBootstrap();
+        fresh = current!.refreshAuthBootstrap({ requireFresh: true });
+      });
+      expect(authApi.getAuthBootstrap).toHaveBeenCalledTimes(2);
+      await act(async () => { stale.resolve(bootstrap); });
+      await expect(older).resolves.toBe(true);
+      await expect(deduplicated).resolves.toBe(true);
+      await act(async () => { await jest.advanceTimersByTimeAsync(30_000); });
+      await expect(fresh).resolves.toBe(false);
+      expect(current!.authServerStatus).toBe("offline");
+    } finally {
+      view.unmount();
+      jest.useRealTimers();
+    }
+  });
+
   it("re-authenticates shared Firebase when the session context changes mid-session", async () => {
     const staleSharedToken = createDeferred<{
       success: true;
@@ -2344,7 +2810,7 @@ describe("GlobalInfoProvider auth regression coverage", () => {
     };
     setPendingProviderRedirectState({
       method: "google",
-      returnPath: "/controller/bible?search=John%203:16",
+      returnPath: "/current-service?tab=plan#item-2",
     });
     getRedirectResultMock.mockResolvedValueOnce({ user: providerUser });
 
@@ -2365,7 +2831,7 @@ describe("GlobalInfoProvider auth regression coverage", () => {
     expect(getPendingProviderRedirectState()).toBeNull();
     await waitFor(() => {
       expect(screen.getByTestId("path")).toHaveTextContent(
-        "/controller/bible",
+        "/current-service?tab=plan#item-2",
       );
     });
   });

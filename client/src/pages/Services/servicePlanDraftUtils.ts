@@ -25,6 +25,7 @@ export const createEmptyServicePlanSection = (
   name = "New section",
 ): ServicePlanSection => ({
   id: generateRandomId(),
+  phase: "main",
   name,
   elements: [],
 });

@@ -80,34 +80,32 @@ describe("ServicePlanContentPanel resources", () => {
     mockListChurchResources.mockReset();
   });
 
-  it("opts an item into participant overlay sync and saves an event-label override", async () => {
+  it("saves and clears an event-label override without requiring opt-in", async () => {
     const user = userEvent.setup();
     const onUpdate = jest.fn();
     const { rerender } = render(
       <ServicePlanContentPanel element={element()} allowEdit onUpdate={onUpdate} />,
     );
 
-    await user.click(
-      screen.getByRole("checkbox", { name: "Include assigned people in overlay sync" }),
-    );
-    expect(onUpdate).toHaveBeenLastCalledWith({
-      participantOverlay: { enabled: true },
-    });
-
-    rerender(
-      <ServicePlanContentPanel
-        element={element({ participantOverlay: { enabled: true } })}
-        allowEdit
-        onUpdate={onUpdate}
-      />,
-    );
+    expect(screen.queryByRole("checkbox", { name: /Include assigned people/i })).not.toBeInTheDocument();
     const eventLabel = screen.getByRole("textbox", { name: /Event label \(optional\)/ });
     await user.type(eventLabel, "Panelist");
     await user.tab();
 
     expect(onUpdate).toHaveBeenLastCalledWith({
-      participantOverlay: { enabled: true, eventLabel: "Panelist" },
+      participantOverlay: { eventLabel: "Panelist" },
     });
+
+    rerender(
+      <ServicePlanContentPanel
+        element={element({ participantOverlay: { eventLabel: "Panelist" } })}
+        allowEdit
+        onUpdate={onUpdate}
+      />,
+    );
+    await user.clear(screen.getByRole("textbox", { name: /Event label \(optional\)/ }));
+    await user.tab();
+    expect(onUpdate).toHaveBeenLastCalledWith({ participantOverlay: undefined });
   });
 
   it("uses the shared rich-text toolbar while editing a text resource", async () => {

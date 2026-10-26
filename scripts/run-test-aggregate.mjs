@@ -5,6 +5,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { performance } from "node:perf_hooks";
+import { createHash } from "node:crypto";
 import dotenv from "dotenv";
 
 const scriptPath = fileURLToPath(import.meta.url);
@@ -26,6 +27,7 @@ export const E2E_SUITES = [
     script: "test:e2e:smoke",
     auth: true,
     demoChurch: true,
+    workflow: "smoke",
   },
   {
     name: "Scheduling workflows",
@@ -33,11 +35,13 @@ export const E2E_SUITES = [
     auth: true,
     demoChurch: true,
     scheduling: true,
+    workflow: "scheduling",
   },
   {
     name: "Presentation Controller",
     script: "test:e2e:controller",
     auth: true,
+    workflow: "controller",
   },
   {
     name: "Account responsive navigation",
@@ -113,15 +117,28 @@ export function redactText(value, secrets = []) {
     safe = safe.split(secret).join("[redacted]");
   }
   return safe
+    .replace(
+      /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/gi,
+      "[redacted-private-key]",
+    )
     .replace(/https?:\/\/[^\s/@:]+:[^\s/@]+@/gi, "https://[redacted]@")
     .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/-]+=*/gi, "$1 [redacted]")
     .replace(
-      /(["']?(?:authorization|cookie|set-cookie|x-api-key|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|private[_-]?key|password|secret)["']?\s*[:=]\s*["']?)(?:(?:Bearer|Basic)\s+)?[^"'\s,}]+/gi,
+      /(["']?(?:authorization|cookie|set-cookie|x-api-key|api[_ -]?key|access[_ -]?token|refresh[_ -]?token|id[_ -]?token|private[_ -]?key|password|secret)["']?\s*[:=]\s*["']?)(?:(?:Bearer|Basic)\s+)?[^"'\s,}]+/gi,
       "$1[redacted]",
     )
+    .replace(
+      /(["']?(?:otp|passcode|(?:one[_-]?time|verification|authentication|auth|email|sms)[_-]?code)["']?\s*[:=]\s*["']?)(\d{4,8})(["']?)/gi,
+      "$1[redacted-code]$3",
+    )
+    .replace(
+      /\b((?:one[- ]time|verification|authentication|auth|login|sign[- ]?in|email|sms|text)\s+(?:verification\s+)?(?:code|passcode))\s*(?::|=|#|\bis\b)?\s*(\d{4,8})\b/gi,
+      "$1 [redacted-code]",
+    )
+    .replace(/\b(OTP|2FA|MFA)\s*(?::|=|#)?\s*(\d{4,8})\b/gi, "$1 [redacted-code]")
     .replace(/(https?:\/\/[^\s?#]+)\?[^\s#]*/gi, "$1?[redacted]")
-    .replace(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi, "[redacted-email]")
-    .replace(/\b\d{6}\b/g, "[redacted-code]");
+    .replace(/(https?:\/\/[^\s#]*)#[^\s]*/gi, "$1#[redacted]")
+    .replace(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi, "[redacted-email]");
 }
 
 function outputSecrets() {
@@ -430,6 +447,341 @@ function checkSchedulingEnvironment() {
   };
 }
 
+export function getReservedSchedulingTeamId(env = process.env) {
+  return (
+    env.E2E_SCHEDULING_TEAM_ID?.trim() ||
+    `e2e-scheduling-${createHash("sha256").update("demo").digest("hex").slice(0, 16)}`
+  );
+}
+
+export function evaluateApplicationWorkflowAccess(
+  auth,
+  home = {},
+  schedulingTeamId = getReservedSchedulingTeamId(),
+) {
+  if (home.homeContentLoaded === false) {
+    const flags = {
+      bootstrapStatus: auth?.__e2eBootstrapStatus ?? null,
+      authStateTrusted: false,
+      authenticated: null,
+      sessionKind: null,
+      churchId: null,
+      role: null,
+      controllerAccess: null,
+      teamsPermission: null,
+      servicesPermission: null,
+      teamScopeCount: null,
+      canViewTeams: null,
+      canEditTeams: null,
+      canViewServices: null,
+      reservedTeamScope: null,
+      home: {
+        homeContentLoaded: false,
+        teamsAndServicesLinkRendered: null,
+        workspaceNavigationLoaded: null,
+        workspaceLinks: [],
+        controllersSectionVisible: null,
+        controllerProfilesLoaded: null,
+        presentationControllerLinkRendered: null,
+      },
+    };
+    const result = {
+      ok: false,
+      details:
+        "Home authentication/bootstrap did not finish; account identity and workflow permissions could not be evaluated.",
+    };
+    return {
+      schedulingTeamId,
+      flags,
+      workflows: {
+        smoke: result,
+        scheduling: result,
+        controller: result,
+      },
+    };
+  }
+
+  const permissions = auth?.permissions ?? {};
+  const teamScopes = permissions.teamScopes ?? {};
+  const role = auth?.role ?? null;
+  const isAdmin = role === "admin";
+  const teamsPermission = permissions.teams ?? "none";
+  const servicesPermission = permissions.services ?? "none";
+  const controllerAccess = auth?.controllerAccess ?? auth?.appAccess ?? null;
+  const canViewTeams =
+    isAdmin ||
+    teamsPermission === "view" ||
+    teamsPermission === "edit" ||
+    Object.keys(teamScopes).length > 0;
+  const canEditTeams = isAdmin || teamsPermission === "edit";
+  const canViewServices =
+    isAdmin ||
+    servicesPermission === "view" ||
+    servicesPermission === "edit";
+  const validHumanDemo =
+    auth?.authenticated === true &&
+    auth?.sessionKind === "human" &&
+    auth?.churchId === "demo";
+  const hasOperatorControllerAccess = ["view", "music", "full"].includes(
+    controllerAccess,
+  );
+  const canEditReservedTeam =
+    isAdmin ||
+    teamsPermission === "edit" ||
+    teamScopes[schedulingTeamId] === "edit";
+
+  const smokeReasons = [];
+  if (!validHumanDemo)
+    smokeReasons.push("requires an authenticated human session for church demo");
+  if (!canViewTeams)
+    smokeReasons.push("requires canViewTeams (Global Teams access or a team scope)");
+  if (!canEditTeams)
+    smokeReasons.push(
+      "requires Global Teams access: Edit because the smoke flow edits member details from Members",
+    );
+  if (!canViewServices)
+    smokeReasons.push("requires Service access: View or Edit for Services, Equipment, and Templates");
+  if (home.teamsAndServicesLinkRendered !== true) {
+    smokeReasons.push(
+      canViewTeams
+        ? "Home did not render the Teams and Services route after the authenticated permissions loaded"
+        : "the smoke workflow requires canViewTeams; Home correctly hides its route without that permission",
+    );
+  } else if (!canViewTeams && !isAdmin) {
+    smokeReasons.push(
+      "Home rendered the Teams and Services route while canViewTeams is false; verify the permission boundary",
+    );
+  }
+  if (home.workspaceNavigationLoaded !== true) {
+    smokeReasons.push("Teams and Services navigation did not finish loading through the Home link");
+  } else {
+    for (const destination of ["Services", "Teams", "Members", "Equipment", "Templates"]) {
+      if (!home.workspaceLinks?.includes(destination))
+        smokeReasons.push(`the loaded workspace navigation does not expose ${destination}`);
+    }
+  }
+  if (!hasOperatorControllerAccess)
+    smokeReasons.push("core navigation also requires operator-controller access");
+  if (home.controllerProfilesLoaded !== true)
+    smokeReasons.push("core navigation could not verify a loaded Presentation Controller profile");
+  else if (home.presentationControllerLinkRendered !== true)
+    smokeReasons.push("Home has no enabled Presentation Controller link at #/controller");
+
+  const schedulingReasons = [];
+  if (!validHumanDemo)
+    schedulingReasons.push("requires an authenticated human session for church demo");
+  if (!canEditReservedTeam)
+    schedulingReasons.push(
+      `requires edit access to reserved E2E team ${schedulingTeamId}; use Global Teams access: Edit or a scoped Edit checkbox for that team. No scheduling fixtures were changed`,
+    );
+
+  const controllerReasons = [];
+  if (auth?.authenticated !== true || auth?.sessionKind !== "human")
+    controllerReasons.push("requires an authenticated human session");
+  if (!hasOperatorControllerAccess)
+    controllerReasons.push("requires operator-controller access");
+  else if (controllerAccess !== "full")
+    controllerReasons.push(
+      `requires Controller access: Full to edit the outline and songs (current level: ${controllerAccess})`,
+    );
+  if (home.controllersSectionVisible !== true)
+    controllerReasons.push("Home did not render the Controllers section for this account");
+  else if (home.controllerProfilesLoaded !== true)
+    controllerReasons.push("controller profile loading did not complete on Home");
+  else if (home.presentationControllerLinkRendered !== true)
+    controllerReasons.push(
+      "the Presentation Controller profile is missing or disabled; Home rendered no link to #/controller",
+    );
+
+  const flags = {
+    bootstrapStatus: auth?.__e2eBootstrapStatus ?? null,
+    authStateTrusted: true,
+    authenticated: auth?.authenticated === true,
+    sessionKind: auth?.sessionKind ?? null,
+    churchId: auth?.churchId ?? null,
+    role,
+    controllerAccess,
+    teamsPermission,
+    servicesPermission,
+    teamScopeCount: Object.keys(teamScopes).length,
+    canViewTeams,
+    canEditTeams,
+    canViewServices,
+    reservedTeamScope: teamScopes[schedulingTeamId] ?? "none",
+    home: {
+      homeContentLoaded: home.homeContentLoaded ?? null,
+      teamsAndServicesLinkRendered: home.teamsAndServicesLinkRendered ?? null,
+      workspaceNavigationLoaded: home.workspaceNavigationLoaded ?? null,
+      workspaceLinks: home.workspaceLinks ?? [],
+      controllersSectionVisible: home.controllersSectionVisible ?? null,
+      controllerProfilesLoaded: home.controllerProfilesLoaded ?? null,
+      presentationControllerLinkRendered:
+        home.presentationControllerLinkRendered ?? null,
+    },
+  };
+  const result = (reasons) => ({
+    ok: reasons.length === 0,
+    details:
+      reasons.length > 0
+        ? reasons.join("; ")
+        : "Authenticated access and the visible application navigation satisfy this workflow's prerequisites.",
+  });
+
+  return {
+    schedulingTeamId,
+    flags,
+    workflows: {
+      smoke: result(smokeReasons),
+      scheduling: result(schedulingReasons),
+      controller: result(controllerReasons),
+    },
+  };
+}
+
+async function inspectApplicationPermissionState(browser, baseUrl, schedulingTeamId) {
+  let context;
+  let auth = null;
+  let homeSnapshot = "(unavailable)";
+  let inspectionError = "";
+  const home = {
+    homeContentLoaded: null,
+    teamsAndServicesLinkRendered: null,
+    workspaceNavigationLoaded: null,
+    workspaceLinks: [],
+    controllersSectionVisible: null,
+    controllerProfilesLoaded: null,
+    presentationControllerLinkRendered: null,
+  };
+  try {
+    context = await browser.newContext({
+      storageState: authFile,
+      ignoreHTTPSErrors: localHosts.has(baseUrl.url.hostname),
+    });
+    await context.route("**/api/**", async (route) => {
+      if (["GET", "HEAD", "OPTIONS"].includes(route.request().method())) {
+        await route.continue();
+      } else {
+        await route.abort("blockedbyclient");
+      }
+    });
+    const page = await context.newPage();
+    page.setDefaultNavigationTimeout(20_000);
+    const authResponsePromise = page
+      .waitForResponse((response) => {
+        try {
+          return new URL(response.url()).pathname.endsWith("/api/auth/me");
+        } catch {
+          return false;
+        }
+      }, { timeout: 20_000 })
+      .catch(() => null);
+    await page.goto(new URL("/#/home", baseUrl.url).toString(), {
+      waitUntil: "domcontentloaded",
+    });
+    await page.getByTestId("home-content").waitFor({
+      state: "visible",
+      timeout: 30_000,
+    });
+    home.homeContentLoaded = true;
+    const authResponse = await authResponsePromise;
+    if (authResponse?.ok()) {
+      try {
+        auth = await authResponse.json();
+        auth.__e2eBootstrapStatus = authResponse.status();
+      } catch {
+        auth = { __e2eBootstrapStatus: authResponse.status() };
+      }
+    } else {
+      auth = { __e2eBootstrapStatus: authResponse?.status() ?? null };
+    }
+
+    const initial = evaluateApplicationWorkflowAccess(auth, home, schedulingTeamId);
+    const teamsAndServicesLink = page
+      .getByRole("link")
+      .and(page.locator('main a[href="#/teams-and-services"]'));
+    if (initial.flags.canViewTeams) {
+      try {
+        await expect(teamsAndServicesLink).toBeVisible({ timeout: 15_000 });
+        home.teamsAndServicesLinkRendered = true;
+      } catch {
+        home.teamsAndServicesLinkRendered = false;
+      }
+    } else {
+      home.teamsAndServicesLinkRendered = (await teamsAndServicesLink.count()) > 0;
+    }
+    homeSnapshot = await page
+      .getByRole("main")
+      .ariaSnapshot()
+      .catch(() => "(Home accessibility snapshot unavailable)");
+
+    const operatorAccess = ["view", "music", "full"].includes(
+      initial.flags.controllerAccess || "",
+    );
+    const controllersRegion = page.getByRole("region", {
+      name: "Controllers",
+      exact: true,
+    });
+    if (operatorAccess) {
+      try {
+        await expect(controllersRegion).toBeVisible({ timeout: 15_000 });
+        home.controllersSectionVisible = true;
+        await expect(controllersRegion).not.toHaveAttribute("aria-busy", "true", {
+          timeout: 30_000,
+        });
+        home.controllerProfilesLoaded = true;
+        const controllerLink = page
+          .getByRole("link")
+          .and(page.locator('main a[href="#/controller"]'));
+        home.presentationControllerLinkRendered =
+          (await controllerLink.count()) === 1 && await controllerLink.isVisible();
+      } catch {
+        home.controllersSectionVisible = (await controllersRegion.count()) > 0;
+        home.controllerProfilesLoaded = false;
+        home.presentationControllerLinkRendered = false;
+      }
+    } else {
+      home.controllersSectionVisible = (await controllersRegion.count()) > 0;
+    }
+
+    if (home.teamsAndServicesLinkRendered === true) {
+      try {
+        await teamsAndServicesLink.click();
+        const workspaceNav = page.getByRole("navigation", {
+          name: "Teams and Services sections",
+        });
+        await expect(workspaceNav).toBeVisible({ timeout: 15_000 });
+        home.workspaceNavigationLoaded = true;
+        home.workspaceLinks = (await workspaceNav.getByRole("link").allTextContents())
+          .map((label) => label.replace(/\s+/g, " ").trim())
+          .filter(Boolean);
+      } catch {
+        home.workspaceNavigationLoaded = false;
+      }
+    } else {
+      home.workspaceNavigationLoaded = false;
+    }
+  } catch (error) {
+    home.homeContentLoaded = false;
+    inspectionError = redactText(error?.message || error, outputSecrets());
+    const inspectionPage = context?.pages()[0];
+    homeSnapshot = inspectionPage
+      ? await inspectionPage
+          .getByRole("main")
+          .ariaSnapshot()
+          .catch(() => "(Home accessibility snapshot unavailable)")
+      : "(Home accessibility snapshot unavailable)";
+  } finally {
+    if (context) await context.close().catch(() => undefined);
+  }
+
+  const evaluation = evaluateApplicationWorkflowAccess(auth, home, schedulingTeamId);
+  return {
+    ...evaluation,
+    homeSnapshot: redactText(homeSnapshot, outputSecrets()),
+    ...(inspectionError ? { inspectionError } : {}),
+  };
+}
+
 async function runE2ESuites(logDirectory, logIndexStart) {
   const preflight = [];
   let browserAvailable = false;
@@ -515,8 +867,6 @@ async function runE2ESuites(logDirectory, logIndexStart) {
       details: "Target check was not run because Chromium is unavailable.",
     });
   }
-  await browser?.close().catch(() => undefined);
-
   preflight.push({
     name: "Saved auth file",
     status: savedAuth.ok ? "PASS" : "FAIL",
@@ -570,6 +920,77 @@ async function runE2ESuites(logDirectory, logIndexStart) {
     preflight.push(sessionResult);
   }
 
+  let workflowAccess = null;
+  const shouldInspectApplicationAccess =
+    browserAvailable && targetReachable && savedAuth.ok && sessionResult.status === "PASS";
+  if (shouldInspectApplicationAccess) {
+    const schedulingTeamId = getReservedSchedulingTeamId();
+    workflowAccess = await inspectApplicationPermissionState(
+      browser,
+      baseUrl,
+      schedulingTeamId,
+    );
+    const workflowResults = Object.entries(workflowAccess.workflows);
+    const hasWorkflowFailure = workflowResults.some(([, result]) => !result.ok);
+    const stateReadable =
+      workflowAccess.flags.bootstrapStatus === 200 &&
+      workflowAccess.flags.authenticated === true &&
+      workflowAccess.flags.authStateTrusted === true &&
+      workflowAccess.flags.home?.homeContentLoaded === true;
+    const stateDetails = [
+      stateReadable
+        ? "The application auth bootstrap returned an authenticated session; workflow permissions were read from the real Home session."
+        : "The application auth bootstrap did not confirm an authenticated session; workflow permissions could not be established.",
+      `Flags: ${JSON.stringify(workflowAccess.flags)}`,
+      workflowAccess.inspectionError
+        ? `Inspection detail: ${workflowAccess.inspectionError}`
+        : "",
+      hasWorkflowFailure
+        ? `Sanitized Home accessibility snapshot:\n${workflowAccess.homeSnapshot}`
+        : "",
+    ].filter(Boolean).join("\n");
+    preflight.push({
+      name: "Application permission state",
+      status: stateReadable ? "PASS" : "FAIL",
+      durationMs: 0,
+      details: redactText(stateDetails, outputSecrets()),
+    });
+    const workflowLabels = {
+      smoke: "Smoke / navigation permissions",
+      scheduling: "Scheduling team authorization",
+      controller: "Presentation Controller access",
+    };
+    const workflowPrerequisiteUnavailable =
+      workflowAccess.flags.authStateTrusted !== true ||
+      workflowAccess.flags.authenticated !== true ||
+      workflowAccess.flags.sessionKind !== "human";
+    for (const [workflow, result] of workflowResults) {
+      preflight.push({
+        name: workflowLabels[workflow],
+        status: result.ok
+          ? "PASS"
+          : workflowPrerequisiteUnavailable
+            ? "SKIPPED"
+            : "FAIL",
+        durationMs: 0,
+        details: redactText(
+          workflowPrerequisiteUnavailable && !result.ok
+            ? "Not evaluated because Home did not establish an authenticated human session; see Application permission state."
+            : result.details,
+          outputSecrets(),
+        ),
+      });
+    }
+  } else if (browserAvailable && targetReachable && savedAuth.ok) {
+    preflight.push({
+      name: "Application permission state",
+      status: "SKIPPED",
+      durationMs: 0,
+      details: "Not checked because saved-session validation did not pass; no permissions were changed.",
+    });
+  }
+  await browser?.close().catch(() => undefined);
+
   const tasks = E2E_SUITES.map((suite) => {
     let skipReason = "";
     if (!browserAvailable)
@@ -586,6 +1007,9 @@ async function runE2ESuites(logDirectory, logIndexStart) {
         "Skipped because safe saved-session validation did not pass; no email was requested.";
     else if (suite.scheduling && !scheduling.ok)
       skipReason = `Skipped: ${scheduling.message}`;
+    else if (suite.workflow && workflowAccess && !workflowAccess.workflows[suite.workflow]?.ok)
+      skipReason =
+        "Skipped because its application permission preflight failed; see the matching E2E prerequisite row. No permissions were changed.";
     return {
       name: suite.name,
       script: suite.script,

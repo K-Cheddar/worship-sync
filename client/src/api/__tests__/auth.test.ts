@@ -189,6 +189,20 @@ describe("api/auth", () => {
     );
   });
 
+  it("uses the returned session CSRF token when clearing a stale sign-in", async () => {
+    await logoutSession("csrf-from-stale-verification");
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "http://localhost:5000/api/auth/logout",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          "x-csrf-token": "csrf-from-stale-verification",
+        }),
+      }),
+    );
+  });
+
   it("sends x-csrf-token on mutating POST when a CSRF token is stored", async () => {
     csrfStore.token = "csrf-test-token";
     await revokeTrustedDevice("device-xyz");
@@ -331,10 +345,10 @@ describe("api/auth", () => {
     );
   });
 
-  it("posts member access updates with Controller, appAccess, and permissions", async () => {
+  it("posts member access updates with the revision of the reviewed permissions", async () => {
     await updateChurchMemberAccess("church-1", "user-8", "music", {
       teams: "view",
-    });
+    }, "reviewed-access-revision");
 
     expect(global.fetch).toHaveBeenCalledWith(
       "http://localhost:5000/api/churches/church-1/members/user-8/access",
@@ -345,6 +359,7 @@ describe("api/auth", () => {
           controllerAccess: "music",
           appAccess: "music",
           permissions: { teams: "view" },
+          accessRevision: "reviewed-access-revision",
         }),
       }),
     );

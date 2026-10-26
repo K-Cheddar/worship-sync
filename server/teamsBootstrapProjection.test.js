@@ -151,10 +151,10 @@ const fullData = () => ({
     shared: { eligible: false, status: "consent_needed" },
   },
   positions: [
-    { positionId: "position-worship", teamId: "worship" },
-    { positionId: "position-av", teamId: "av" },
-    { positionId: "position-youth", teamId: "youth" },
-    { positionId: "position-archived", teamId: "archived" },
+    { positionId: "position-worship", churchId, teamId: "worship" },
+    { positionId: "position-av", churchId, teamId: "av" },
+    { positionId: "position-youth", churchId, teamId: "youth" },
+    { positionId: "position-archived", churchId, teamId: "archived" },
   ],
   teams: [
     {
@@ -172,20 +172,20 @@ const fullData = () => ({
     },
   ],
   teamRoles: [
-    { roleId: "role-worship", teamId: "worship" },
-    { roleId: "role-av", teamId: "av" },
-    { roleId: "role-youth", teamId: "youth" },
+    { roleId: "role-worship", churchId, teamId: "worship" },
+    { roleId: "role-av", churchId, teamId: "av" },
+    { roleId: "role-youth", churchId, teamId: "youth" },
   ],
   qualificationAreas: [
-    { areaId: "area-worship", teamId: "worship" },
-    { areaId: "area-av", teamId: "av" },
-    { areaId: "area-youth", teamId: "youth" },
+    { areaId: "area-worship", churchId, teamId: "worship" },
+    { areaId: "area-av", churchId, teamId: "av" },
+    { areaId: "area-youth", churchId, teamId: "youth" },
   ],
   qualificationLevels: [
-    { levelId: "level-worship", areaId: "area-worship" },
-    { levelId: "level-av", areaId: "area-av" },
-    { levelId: "level-youth", areaId: "area-youth" },
-    { levelId: "orphan-hidden-level", areaId: "area-not-projected" },
+    { levelId: "level-worship", churchId, areaId: "area-worship" },
+    { levelId: "level-av", churchId, areaId: "area-av" },
+    { levelId: "level-youth", churchId, areaId: "area-youth" },
+    { levelId: "orphan-hidden-level", churchId, areaId: "area-not-projected" },
   ],
   schedules: [
     {
@@ -255,7 +255,7 @@ const resolveAccess = ({
 
 const source = fullData();
 
-test("admin and global Teams editor preserve the existing full bootstrap object", () => {
+test("admin and global Teams editor preserve the full bootstrap and add a safe membership status", () => {
   for (const access of [
     resolveAccess({
       role: "admin",
@@ -268,10 +268,15 @@ test("admin and global Teams editor preserve the existing full bootstrap object"
       members: source.members,
     }),
   ]) {
-    assert.strictEqual(
-      projectTeamsBootstrapForAccess({ data: source, access }),
-      source,
-    );
+    const projected = projectTeamsBootstrapForAccess({ data: source, access });
+    assert.notStrictEqual(projected, source);
+    assert.deepEqual(projected, {
+      ...source,
+      members: source.members.map((member) => ({
+        ...member,
+        teamMembershipStatus: "unknown",
+      })),
+    });
   }
 });
 
@@ -384,6 +389,7 @@ test("scoped manager receives only the managed team's records and manager fields
   );
   assert.equal(worshipOnly.email, undefined);
   assert.deepEqual(projected.editableMemberIds, ["worship-only"]);
+  assert.deepEqual(projected.teamProfileReadyMemberIds, ["worship-only"]);
   assert.equal(worshipOnly.serviceAvailability, undefined);
   assert.deepEqual(
     worshipOnly.qualifications.map(({ qualificationId }) => qualificationId),
@@ -430,9 +436,11 @@ test("membership-only reader receives only safe roster fields for their team", (
     "memberId",
     "positionIds",
     "profileImageUrl",
+    "teamMembershipStatus",
     "title",
   ]);
   assert.deepEqual(caller.positionIds, ["position-worship"]);
+  assert.equal(caller.teamMembershipStatus, "unknown");
   assert.equal(projected.editableMemberIds.includes(caller.memberId), false);
   for (const field of [
     "email",
@@ -553,6 +561,7 @@ test("mixed manager and member access uses editable-team details and safe view-o
   assert.equal(shared.qualifications, undefined);
   assert.equal(shared.desiredPositionIds, undefined);
   assert.equal(projected.editableMemberIds.includes("shared"), false);
+  assert.equal(projected.teamProfileReadyMemberIds.includes("shared"), false);
   assert.equal(worshipAv.email, undefined);
   assert.deepEqual(worshipAv.positionIds, ["position-worship", "position-av"]);
   assert.equal(worshipAv.teamMemberships, undefined);
@@ -634,11 +643,123 @@ test("truncated ownership sources fail closed for rich member projection", () =>
   });
 
   assert.deepEqual(projected.editableMemberIds, []);
+  assert.deepEqual(projected.teamProfileReadyMemberIds, []);
   assert.equal(projected.truncated, true);
   for (const member of projected.members) {
     assert.equal(member.email, undefined);
     assert.equal(member.serviceAvailability, undefined);
   }
+});
+
+test("team profile readiness fails closed when bootstrap would omit persisted fields", () => {
+  for (const invalidField of ["role", "qualificationArea", "qualificationLevel"]) {
+    const member = makeWorshipOnlyMember();
+    if (invalidField === "role") {
+      member.teamMemberships.worship.roleId = "missing-role";
+    } else if (invalidField === "qualificationArea") {
+      member.qualifications[0].areaId = "";
+    } else {
+      member.qualifications[0].levelId = "orphan-hidden-level";
+    }
+    const data = {
+      ...fullData(),
+      truncated: false,
+      members: [member],
+      teams: source.teams.map((team) => team.teamId === "worship"
+        ? { ...team, memberIds: [member.memberId] }
+        : team),
+    };
+    const projected = projectTeamsBootstrapForAccess({
+      data,
+      access: {
+        viewAll: false,
+        viewTeamIds: new Set(["worship"]),
+        editTeamIds: new Set(["worship"]),
+      },
+    });
+    const projectedMember = projected.members[0];
+
+    assert.ok(projected.editableMemberIds.includes(member.memberId));
+    assert.equal(projected.teamProfileReadyMemberIds.includes(member.memberId), false);
+    if (invalidField === "role") {
+      assert.equal(projectedMember.teamMemberships.worship.roleId, undefined);
+    } else if (invalidField === "qualificationArea") {
+      assert.deepEqual(projectedMember.qualifications, []);
+    } else {
+      assert.equal(projectedMember.qualifications[0].levelId, undefined);
+    }
+  }
+});
+
+test("membership status is a safe enum derived only from complete active team rosters", () => {
+  const data = fullData();
+  data.truncated = false;
+  data.members.push(makeMember("unassigned", {
+    positionIds: [],
+    desiredPositionIds: [],
+    teamMemberships: {},
+    qualifications: [],
+  }));
+
+  const projected = projectTeamsBootstrapForAccess({
+    data,
+    access: { editAll: true },
+  });
+  const statusByMemberId = Object.fromEntries(
+    projected.members.map(({ memberId, teamMembershipStatus }) => [memberId, teamMembershipStatus]),
+  );
+
+  assert.equal(statusByMemberId.caller, "assigned");
+  assert.equal(statusByMemberId.unassigned, "none");
+  assert.equal(statusByMemberId["hidden-only"], "assigned");
+  assert.equal(statusByMemberId["archived-member"], "none");
+
+  const limited = projectTeamsBootstrapForAccess({
+    data,
+    access: {
+      viewAll: false,
+      viewTeamIds: new Set(["worship"]),
+      editTeamIds: new Set(),
+    },
+  });
+  const visibleHiddenOnly = limited.members.find(({ memberId }) => memberId === "hidden-only");
+  assert.equal(visibleHiddenOnly, undefined);
+  const shared = limited.members.find(({ memberId }) => memberId === "shared");
+  assert.equal(shared.teamMembershipStatus, "assigned");
+  assert.equal(shared.teamMemberships, undefined);
+  assert.equal(shared.email, undefined);
+});
+
+test("membership status is unknown when team roster ownership may be incomplete", () => {
+  const completeData = fullData();
+  completeData.truncated = false;
+  const truncated = projectTeamsBootstrapForAccess({
+    data: { ...completeData, truncated: true },
+    access: { editAll: true },
+  });
+  assert.ok(truncated.members.every(({ teamMembershipStatus }) => teamMembershipStatus === "unknown"));
+
+  const incompleteRoster = projectTeamsBootstrapForAccess({
+    data: {
+      ...completeData,
+      teams: completeData.teams.map((team) =>
+        team.teamId === "av" ? { teamId: "av", churchId } : team,
+      ),
+    },
+    access: { editAll: true },
+  });
+  assert.ok(incompleteRoster.members.every(({ teamMembershipStatus }) => teamMembershipStatus === "unknown"));
+
+  const malformedRoster = projectTeamsBootstrapForAccess({
+    data: {
+      ...completeData,
+      teams: completeData.teams.map((team) =>
+        team.teamId === "av" ? { ...team, memberIds: [null] } : team,
+      ),
+    },
+    access: { editAll: true },
+  });
+  assert.ok(malformedRoster.members.every(({ teamMembershipStatus }) => teamMembershipStatus === "unknown"));
 });
 
 test("known archived ownership metadata does not block editability from the only active Team", () => {

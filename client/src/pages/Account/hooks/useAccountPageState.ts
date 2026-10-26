@@ -174,7 +174,7 @@ export const useAccountPageState = () => {
       setDisplayDevices(
         (displayResponse.displayDevices || []) as DisplayDevice[],
       );
-      setTeams(teamsResponse.teams || []);
+      setTeams((teamsResponse.teams || []).filter((team) => !team.archivedAt));
     } catch (error) {
       showError(
         error,

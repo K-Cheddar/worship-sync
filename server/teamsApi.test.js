@@ -17,7 +17,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
 import twilio from "twilio";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { smsConsentIdForChurchPhone } from "./smsConsent.js";
 import { isPublicSharePathname } from "../client/src/utils/publicSharePathRedirect.ts";
 import { buildTeamSchedulePeriod } from "../client/src/pages/Teams/schedule/teamSchedulePeriod.ts";
@@ -65,6 +65,9 @@ import {
   setSmsProviderForServerTests,
 } from "./smsProvider.js";
 import { volunteerIdentityClaimId } from "./volunteerIdentity.js";
+import { createVolunteerContactIndex, volunteerContactIndexFields } from "./volunteerContactIndex.js";
+import { createVolunteerPersonalAccess } from "./volunteerPersonalAccess.js";
+import { createVolunteerRecovery } from "./volunteerRecovery.js";
 
 // Minimal stand-in for an SSE response: captures the `data:` frames the teams
 // broadcaster writes. Shares the same teamsSse.js singleton the handlers use.
@@ -206,6 +209,7 @@ const createHumanContext = async (
     churchId = `teams_api_church_${suffix}`,
     role = "admin",
     appAccess = "full",
+    controllerAccess,
     permissions,
   } = {},
 ) => {
@@ -219,6 +223,7 @@ const createHumanContext = async (
       churchId,
       role,
       appAccess,
+      controllerAccess,
       permissions,
     });
   // Test churches model an explicitly configured UTC church by default. Tests
@@ -2092,7 +2097,7 @@ test("church service timezone is stored separately from Chat browser hints", asy
     params: { churchId: context.churchId },
   });
   assert.equal(initial.statusCode, 200);
-  assert.equal(initial.payload.serviceTimeZone, "UTC");
+  assert.equal(initial.payload.serviceTimeZone, null);
   assert.equal(initial.payload.isConfigured, false);
   assert.equal(initial.payload.legacyTimeZoneSuggestion, "America/Los_Angeles");
 
@@ -2222,7 +2227,7 @@ test("service timezone read grants only the requested permission axis", async (t
     ["controller", "view", { teams: "none", services: "none" }, 200],
     ["services", "member", { teams: "none", services: "view" }, 200],
     ["teams", "member", { teams: "view", services: "none" }, 200],
-    ["no_access", "member", { teams: "none", services: "none" }, 403],
+    ["membership_only", "none", { teams: "none", services: "none" }, 200],
   ];
   const members = [];
   for (const [name, appAccess, permissions] of cases) {
@@ -2230,11 +2235,15 @@ test("service timezone read grants only the requested permission axis", async (t
       churchId: owner.churchId,
       role: "member",
       appAccess,
+      ...(name === "membership_only" ? { controllerAccess: "none" } : {}),
       permissions,
     }));
   }
   await setDoc(COLLECTIONS.churches, owner.churchId, {
     serviceTimeZone: "America/New_York",
+  }, { merge: true });
+  await setDoc("chatSettings", owner.churchId, {
+    timeZone: "America/Los_Angeles",
   }, { merge: true });
 
   for (const [index, [name, , , expectedStatus]] of cases.entries()) {
@@ -2243,7 +2252,21 @@ test("service timezone read grants only the requested permission axis", async (t
       context: member,
     });
     assert.equal(timezone.statusCode, expectedStatus, name);
-    if (name === "controller") {
+    if (name === "membership_only") {
+      assert.equal(timezone.payload.legacyTimeZoneSuggestion, undefined);
+      const bootstrap = await resolveRequestBootstrap(createReq({
+        params: { churchId: member.churchId },
+        headers: member.headers,
+        session: member.session,
+      }));
+      assert.equal(bootstrap.controllerAccess, "none");
+      assert.deepEqual(bootstrap.permissions, {
+        teams: "none",
+        services: "none",
+        teamScopes: {},
+      });
+    }
+    if (name === "controller" || name === "membership_only") {
       assert.equal(timezone.payload.serviceTimeZone, "America/New_York");
       assert.equal(timezone.payload.legacyTimeZoneSuggestion, undefined);
       assert.equal(
@@ -2256,6 +2279,43 @@ test("service timezone read grants only the requested permission axis", async (t
       );
     }
   }
+
+  await setDoc(COLLECTIONS.churches, owner.churchId, {
+    serviceTimeZone: null,
+  }, { merge: true });
+  const unconfiguredRestricted = await callHandler(
+    authHandlers.getChurchServiceTimeZone,
+    { context: members[3] },
+  );
+  assert.equal(unconfiguredRestricted.statusCode, 200);
+  assert.equal(unconfiguredRestricted.payload.serviceTimeZone, null);
+  assert.equal(unconfiguredRestricted.payload.isConfigured, false);
+  assert.equal(unconfiguredRestricted.payload.legacyTimeZoneSuggestion, undefined);
+
+  const unauthenticated = await callHandler(authHandlers.getChurchServiceTimeZone, {
+    context: { churchId: owner.churchId, headers: {}, session: createSession() },
+  });
+  assert.equal(unauthenticated.statusCode, 401);
+
+  const crossChurch = await callHandler(authHandlers.getChurchServiceTimeZone, {
+    context: members[3],
+    params: { churchId: "another-church" },
+  });
+  assert.equal(crossChurch.statusCode, 403);
+
+  const revokedUserId = "teams_api_admin_timezone_matrix_membership_only";
+  const [membership] = await queryDocs(COLLECTIONS.memberships, [
+    { field: "churchId", value: owner.churchId },
+    { field: "userId", value: revokedUserId },
+  ], { limit: 1 });
+  assert.ok(membership?.membershipId);
+  await setDoc(COLLECTIONS.memberships, membership.membershipId, {
+    status: "revoked",
+  }, { merge: true });
+  const revoked = await callHandler(authHandlers.getChurchServiceTimeZone, {
+    context: members[3],
+  });
+  assert.ok([401, 403].includes(revoked.statusCode));
 });
 
 test("paired workstations read timezone without expanding Teams or Services edit access", async (t) => {
@@ -2351,7 +2411,7 @@ test("church service timezone stream snapshots revisions for authorized readers"
     appAccess: "view",
     permissions: { services: "none", teams: "none" },
   });
-  const deniedReader = await createHumanContext("timezone_stream_denied", {
+  const membershipReader = await createHumanContext("timezone_stream_membership_only", {
     churchId: owner.churchId,
     role: "member",
     appAccess: "none",
@@ -2361,7 +2421,7 @@ test("church service timezone stream snapshots revisions for authorized readers"
     serviceTimeZoneRevision: "revision-stream-test",
   }, { merge: true });
 
-  for (const context of [owner, servicesReader, teamsReader, controllerReader]) {
+  for (const context of [owner, servicesReader, teamsReader, controllerReader, membershipReader]) {
     const stream = await callStreamHandler(authHandlers.streamChurchServiceTimeZone, { context });
     assert.equal(stream.headers["Content-Type"], "text/event-stream");
     assert.equal(stream.headers["Cache-Control"], "no-cache");
@@ -2389,11 +2449,11 @@ test("church service timezone stream snapshots revisions for authorized readers"
     assert.equal(stream.writes.length, writesBeforeClose);
   }
 
-  const denied = await callStreamHandler(authHandlers.streamChurchServiceTimeZone, {
-    context: deniedReader,
+  const unauthenticated = await callStreamHandler(authHandlers.streamChurchServiceTimeZone, {
+    context: { churchId: owner.churchId, headers: {}, session: createSession() },
   });
-  assert.equal(denied.res.statusCode, 403);
-  assert.equal(denied.writes.length, 0);
+  assert.equal(unauthenticated.res.statusCode, 401);
+  assert.equal(unauthenticated.writes.length, 0);
 
   const crossChurch = await callStreamHandler(authHandlers.streamChurchServiceTimeZone, {
     context: owner,
@@ -2676,6 +2736,12 @@ test("team-scoped edit can manage that team schedules and members only", async (
       teamScopes: { [mediaTeamId]: "edit" },
     },
   });
+
+  const timeZone = await callHandler(authHandlers.getChurchServiceTimeZone, {
+    context: scopedContext,
+  });
+  assert.equal(timeZone.statusCode, 200);
+  assert.equal(timeZone.payload.serviceTimeZone, "UTC");
 
   const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
     context: scopedContext,
@@ -5785,7 +5851,7 @@ test("service plan assignments expose only the selected plan's serving roster", 
   assert.equal(scopedResult.statusCode, 403);
 });
 
-test("native overlay projection resolves opted-in Teams assignees without roster details", async (t) => {
+test("native overlay projection resolves assigned people without opt-in or roster details", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const fixture = await seedEffectiveTeamsReadFixture("native_overlay_projection");
   const worshipRoleId = `${fixture.churchId}_worship_role`;
@@ -5834,13 +5900,13 @@ test("native overlay projection resolves opted-in Teams assignees without roster
     },
   }, { merge: false });
 
-  const planKey = "worship-service@2026-10-18";
+  const planKey = "worship-service@2026-10-24";
   const saved = await callHandler(authHandlers.saveServicePlan, {
     context: fixture.owner,
     params: { planKey },
     body: {
       serviceId: "worship-service",
-      date: "2026-10-18",
+      date: "2026-10-24",
       name: "Native overlay service",
       sections: [{
         id: "section-1",
@@ -5851,22 +5917,23 @@ test("native overlay projection resolves opted-in Teams assignees without roster
             type: "free",
             title: { blocks: [{ type: "paragraph", spans: [{ text: "Panel" }] }] },
             positionId: `${fixture.ids.av}_position`,
-            participantOverlay: { enabled: true, eventLabel: "Panelist" },
+            participantOverlay: { eventLabel: "Panelist" },
             assignees: [{ id: "assignee-av", memberId: fixture.sharedId, name: "Old name" }],
           },
           {
             id: "item-ambiguous",
             type: "free",
             title: { blocks: [{ type: "paragraph", spans: [{ text: "Unscoped panel" }] }] },
-            participantOverlay: { enabled: true },
             assignees: [{ id: "assignee-ambiguous", memberId: fixture.sharedId, name: "Old name" }],
           },
           {
             id: "item-guest",
             type: "free",
             title: { blocks: [{ type: "paragraph", spans: [{ text: "Guest Speaker" }] }] },
-            participantOverlay: { enabled: true },
-            assignees: [{ id: "assignee-guest", name: "Guest Speaker" }],
+            assignees: [
+              { id: "assignee-guest", name: "Guest Speaker" },
+              { id: "assignee-missing-member", memberId: "deleted-member", name: "Missing Member" },
+            ],
           },
           {
             id: "item-archived",
@@ -5889,7 +5956,20 @@ test("native overlay projection resolves opted-in Teams assignees without roster
             type: "free",
             title: { blocks: [{ type: "paragraph", spans: [{ text: "Announcements" }] }] },
             participantOverlay: { enabled: false },
-            assignees: [{ id: "assignee-disabled", name: "Not opted in" }],
+            assignees: [{ id: "assignee-disabled", name: "Previously disabled" }],
+          },
+          {
+            id: "item-empty",
+            type: "free",
+            title: { blocks: [{ type: "paragraph", spans: [{ text: "No participants" }] }] },
+            participantOverlay: { enabled: true, eventLabel: "No people" },
+            assignees: [],
+          },
+          {
+            id: "item-microphone",
+            type: "free",
+            title: { blocks: [{ type: "paragraph", spans: [{ text: "Microphone only" }] }] },
+            assignees: [{ id: "unassigned-mic", microphoneIds: ["mic-1"] }],
           },
         ],
       }],
@@ -5898,8 +5978,21 @@ test("native overlay projection resolves opted-in Teams assignees without roster
   assert.equal(saved.statusCode, 200, JSON.stringify(saved.payload));
   assert.deepEqual(
     saved.payload.servicePlan.sections[0].elements[0].participantOverlay,
-    { enabled: true, eventLabel: "Panelist" },
+    { eventLabel: "Panelist" },
   );
+  assert.equal(saved.payload.servicePlan.sections[0].elements[3].participantOverlay, undefined);
+
+  // Read old saved flags and a pre-multi-assignee item directly, without resaving.
+  const storedPlan = saved.payload.servicePlan;
+  storedPlan.sections[0].elements[2].participantOverlay = { enabled: true };
+  storedPlan.sections[0].elements[5].participantOverlay = { enabled: false };
+  storedPlan.sections[0].elements.push({
+    id: "item-legacy",
+    type: "free",
+    title: { blocks: [{ type: "paragraph", spans: [{ text: "Legacy guest" }] }] },
+    assignedName: "Legacy Guest",
+  });
+  await setDoc(COLLECTIONS.servicePlans, `${fixture.churchId}::${planKey}`, storedPlan, { merge: false });
 
   const result = await callHandler(authHandlers.getServicePlanAssignments, {
     context: fixture.owner,
@@ -5934,6 +6027,10 @@ test("native overlay projection resolves opted-in Teams assignees without roster
           name: "Guest Speaker",
           memberStatus: "guest",
           roleStatus: "not-applicable",
+        }, {
+          name: "Missing Member",
+          memberStatus: "missing",
+          roleStatus: "unavailable",
         }],
       },
       {
@@ -5952,6 +6049,14 @@ test("native overlay projection resolves opted-in Teams assignees without roster
           roleStatus: "missing",
         }],
       },
+      {
+        elementId: "item-disabled",
+        assignees: [{ name: "Previously disabled", memberStatus: "guest", roleStatus: "not-applicable" }],
+      },
+      {
+        elementId: "item-legacy",
+        assignees: [{ name: "Legacy Guest", memberStatus: "guest", roleStatus: "not-applicable" }],
+      },
     ],
   });
   const projectionJson = JSON.stringify(result.payload.participantOverlay);
@@ -5960,7 +6065,6 @@ test("native overlay projection resolves opted-in Teams assignees without roster
     "+15551234567",
     "Private roster note",
     "private/image-id",
-    "Not opted in",
     "Old name",
   ]) {
     assert.equal(projectionJson.includes(privateValue), false);
@@ -9586,6 +9690,7 @@ test("service plan elements round-trip scripture refs and raw source strings", a
       sections: [
         {
           id: "section-1",
+          phase: "pre",
           name: "Worship",
           elements: [
             {
@@ -9671,6 +9776,12 @@ test("service plan elements round-trip scripture refs and raw source strings", a
   });
 
   assert.equal(saved.statusCode, 200);
+  assert.equal(saved.payload.servicePlan.sections[0].phase, "pre");
+  const reloaded = await callHandler(authHandlers.getServicePlan, {
+    context,
+    params: { planKey },
+  });
+  assert.equal(reloaded.payload.servicePlan.sections[0].phase, "pre");
   const [first, second, third] = saved.payload.servicePlan.sections[0].elements;
   assert.deepEqual(first.scriptureRef, {
     label: "John 3:16-18 (NIV)",
@@ -9734,9 +9845,11 @@ test("service plan templates: create, update in place, list, scope, and delete",
   const sections = [
     {
       id: "section-1",
+      phase: "post",
       name: "Worship",
       elements: [{ id: "el-1", type: "free", title: richText("Welcome") }],
     },
+    { id: "legacy-section", name: "Legacy", phase: "before", elements: [] },
   ];
 
   const empty = await callHandler(authHandlers.listServicePlanTemplates, {
@@ -9753,7 +9866,9 @@ test("service plan templates: create, update in place, list, scope, and delete",
   const templateId = created.payload.template.templateId;
   assert.ok(templateId);
   assert.equal(created.payload.template.serviceId, "svc1");
+  assert.equal(created.payload.template.sections[0].phase, "post");
   assert.equal(created.payload.template.sections[0].elements.length, 1);
+  assert.equal(Object.hasOwn(created.payload.template.sections[1], "phase"), false);
 
   // A template with no serviceId is offered for every service.
   await callHandler(authHandlers.saveServicePlanTemplate, {
@@ -9928,6 +10043,7 @@ test("bulk template application creates fresh plans, skips existing plans, and p
         sections: [
           {
             id: "template-section",
+            phase: "pre",
             name: "Service",
             elements: [
               {
@@ -9976,6 +10092,8 @@ test("bulk template application creates fresh plans, skips existing plans, and p
   const sections = planDocs.map((plan) => plan.sections[0]);
   const elements = sections.map((section) => section.elements[0]);
   assert.equal(plans.payload.servicePlans.length, 2);
+  assert.equal(sections[0].phase, "pre");
+  assert.equal(sections[1].phase, "pre");
   assert.equal(planDocs[0].name, "Sabbath Service");
   assert.equal(planDocs[0].clonedFromPlanKey, templateId);
   assert.notEqual(sections[0].id, sections[1].id);
@@ -10499,6 +10617,195 @@ test("two members may share one contact email", async (t) => {
   assert.equal(first.statusCode, 200);
   assert.equal(second.statusCode, 200);
   assert.equal(second.payload.member.email, "parent@example.com");
+});
+
+test("Firestore member revision writes keep ready volunteer contact indexes current", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  if (!process.env.FIRESTORE_EMULATOR_HOST) {
+    t.skip("Requires Firestore emulator for the transactional contact-index path");
+    return;
+  }
+
+  const { initializeApp, deleteApp } = await import("firebase-admin/app");
+  const { getFirestore } = await import("firebase-admin/firestore");
+  const suffix = randomBytes(6).toString("hex");
+  const projectId = `demo-teams-contact-${suffix}`;
+  const app = initializeApp({ projectId }, projectId);
+  const db = getFirestore(app);
+  const secret = "synthetic-teams-contact-index-secret-only";
+  const coverageCollection = `contact_index_coverage_${suffix}`;
+  const memberCollection = COLLECTIONS.teamRosterMembers;
+  const collections = Object.fromEntries(
+    ["proofs", "challenges", "limits"].map((name) => [name, `contact_index_${name}_${suffix}`]),
+  );
+  const accessCollections = Object.fromEntries(
+    ["access", "credentials", "sessions"].map((name) => [name, `contact_index_${name}_${suffix}`]),
+  );
+  const previousSecret = process.env.AUTH_VOLUNTEER_PORTAL_SECRET;
+  process.env.AUTH_VOLUNTEER_PORTAL_SECRET = secret;
+  setServerFirestoreForTests(db);
+  t.after(async () => {
+    setServerFirestoreForTests(null);
+    if (previousSecret === undefined) delete process.env.AUTH_VOLUNTEER_PORTAL_SECRET;
+    else process.env.AUTH_VOLUNTEER_PORTAL_SECRET = previousSecret;
+    for (const collection of await db.listCollections()) await db.recursiveDelete(collection);
+    await db.terminate();
+    await deleteApp(app);
+  });
+
+  const admin = await createAdminContext(`contact_index_${suffix}`);
+  const oldEmail = "old-contact@example.test";
+  const newEmail = "new-contact@example.test";
+  const oldPhone = "+12125550123";
+  const newPhone = "+12125550124";
+  const created = await callHandler(authHandlers.createTeamRosterMember, {
+    context: admin,
+    body: {
+      firstName: "Contact",
+      lastName: "Index",
+      email: oldEmail,
+      phoneNumber: oldPhone,
+    },
+  });
+  assert.equal(created.statusCode, 200, JSON.stringify(created.payload));
+  const memberId = created.payload.member.memberId;
+  const identity = { churchId: admin.churchId, memberId };
+  const memberRef = db.collection(memberCollection).doc(memberId);
+  const index = createVolunteerContactIndex({ db, memberCollection, coverageCollection, secret });
+  assert.equal((await index.auditChurch(admin.churchId)).complete, true);
+  const coverage = await db.collection(coverageCollection).get();
+  assert.equal(coverage.docs.length, 1);
+  assert.equal(coverage.docs[0].data().ready, true);
+  const assertOwner = async (channel, address, expected) => {
+    assert.equal(await index.hasUniqueOwner(identity, channel, address), expected,
+      `${channel} ${address} owner should be ${expected ? "present" : "absent"}`);
+  };
+  const assertIndexMatchesCurrent = async () => {
+    const member = (await memberRef.get()).data();
+    const expected = volunteerContactIndexFields(member, secret);
+    assert.deepEqual(member.volunteerContactKeys, expected.volunteerContactKeys);
+    assert.equal(member.volunteerContactKeyId, expected.volunteerContactKeyId);
+  };
+  const save = (expectedUpdatedAt, fields = {}) => callHandler(authHandlers.updateTeamRosterMember, {
+    context: admin,
+    params: { memberId },
+    body: {
+      firstName: "Contact",
+      lastName: "Index",
+      expectedUpdatedAt,
+      ...fields,
+    },
+  });
+
+  const deliveries = [];
+  const access = createVolunteerPersonalAccess({
+    db,
+    memberCollection,
+    secret,
+    collections: accessCollections,
+  });
+  const recovery = createVolunteerRecovery({
+    db,
+    access,
+    secret,
+    memberCollection,
+    consentCollection: `contact_index_consents_${suffix}`,
+    contactIndexCoverageCollection: coverageCollection,
+    collections,
+    sendCode: async (delivery) => deliveries.push(delivery),
+  });
+  const requestKey = () => randomBytes(24).toString("base64url");
+  const enrolled = await recovery.start({
+    requestKey: requestKey(),
+    clientIp: "127.0.0.1",
+    enrollment: { identity, channel: "email", actorUid: "contact-index-admin" },
+  });
+  assert.equal(deliveries.length, 1);
+  const initial = await memberRef.get();
+  const initialVersion = initial.data().personalContactVersion || "";
+  assert.equal((await recovery.verify({
+    challengeId: enrolled.challengeId,
+    code: deliveries.at(-1).code,
+    completionKey: requestKey(),
+    enrollmentActorUid: "contact-index-admin",
+    enrollmentIdentity: identity,
+  })).success, true);
+  const proofBeforeChange = (await db.collection(collections.proofs).get()).docs[0].data();
+  assert.equal(proofBeforeChange.contactVersion, initialVersion);
+
+  // No teamMemberships field: this must exercise upsertTeamEntity's direct
+  // Firestore transaction.set branch with the revision precondition.
+  const emailChanged = await save(initial.data().updatedAt, { email: newEmail });
+  assert.equal(emailChanged.statusCode, 200, JSON.stringify(emailChanged.payload));
+  assert.notEqual(emailChanged.payload.member.personalContactVersion, initialVersion);
+  await assertIndexMatchesCurrent();
+  await assertOwner("email", newEmail, true);
+  await assertOwner("email", oldEmail, false);
+  await assertOwner("sms", oldPhone, true);
+  const staleProofs = await db.collection(collections.proofs).get();
+  assert.equal(staleProofs.size, 1, "contact edits must not create a verification proof");
+  assert.equal(staleProofs.docs[0].data().contactVersion, initialVersion);
+  await recovery.start({ requestKey: requestKey(), clientIp: "127.0.0.1", contact: oldEmail });
+  await recovery.start({ requestKey: requestKey(), clientIp: "127.0.0.1", contact: newEmail });
+  assert.equal(deliveries.length, 1, "old proofs cannot verify or recover through the new address");
+
+  const phoneChanged = await save(emailChanged.payload.member.updatedAt, { phoneNumber: newPhone });
+  assert.equal(phoneChanged.statusCode, 200, JSON.stringify(phoneChanged.payload));
+  assert.notEqual(
+    phoneChanged.payload.member.personalContactVersion,
+    emailChanged.payload.member.personalContactVersion,
+  );
+  await assertIndexMatchesCurrent();
+  await assertOwner("sms", newPhone, true);
+  await assertOwner("sms", oldPhone, false);
+  await assertOwner("email", newEmail, true);
+
+  const beforeUnrelated = (await memberRef.get()).data();
+  const unrelated = await save(beforeUnrelated.updatedAt, { notes: "Updated unrelated details" });
+  assert.equal(unrelated.statusCode, 200, JSON.stringify(unrelated.payload));
+  const afterUnrelated = (await memberRef.get()).data();
+  assert.equal(afterUnrelated.email, newEmail);
+  assert.equal(afterUnrelated.phoneNumber, newPhone);
+  assert.deepEqual(afterUnrelated.volunteerContactKeys, beforeUnrelated.volunteerContactKeys);
+  assert.equal(afterUnrelated.volunteerContactKeyId, beforeUnrelated.volunteerContactKeyId);
+  await assertIndexMatchesCurrent();
+
+  const staleRevision = afterUnrelated.updatedAt;
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const latest = await save(staleRevision, { notes: "Newer details" });
+  assert.equal(latest.statusCode, 200, JSON.stringify(latest.payload));
+  assert.notEqual(latest.payload.member.updatedAt, staleRevision);
+  const beforeStale = (await memberRef.get()).data();
+  const stale = await save(staleRevision, { email: "stale-contact@example.test" });
+  assert.equal(stale.statusCode, 409);
+  const afterStale = (await memberRef.get()).data();
+  assert.deepEqual(afterStale, beforeStale);
+  await assertIndexMatchesCurrent();
+  await assertOwner("email", newEmail, true);
+  await assertOwner("email", "stale-contact@example.test", false);
+
+  const team = await seedTeam(admin, { teamName: `Contact Index ${suffix}` });
+  const membershipEmail = "membership-contact@example.test";
+  const membershipUpdated = await save(afterStale.updatedAt, {
+    email: membershipEmail,
+    teamMemberships: { [team.teamId]: { isTeamLead: true, notes: "Team role retained" } },
+  });
+  assert.equal(membershipUpdated.statusCode, 200, JSON.stringify(membershipUpdated.payload));
+  assert.equal(membershipUpdated.payload.member.teamMemberships[team.teamId].isTeamLead, true);
+  await assertIndexMatchesCurrent();
+  await assertOwner("email", membershipEmail, true);
+  await assertOwner("email", newEmail, false);
+
+  const emailCleared = await save(membershipUpdated.payload.member.updatedAt, { email: "" });
+  assert.equal(emailCleared.statusCode, 200, JSON.stringify(emailCleared.payload));
+  await assertIndexMatchesCurrent();
+  await assertOwner("email", membershipEmail, false);
+  await assertOwner("sms", newPhone, true);
+  const phoneCleared = await save(emailCleared.payload.member.updatedAt, { phoneNumber: "" });
+  assert.equal(phoneCleared.statusCode, 200, JSON.stringify(phoneCleared.payload));
+  await assertIndexMatchesCurrent();
+  await assertOwner("sms", newPhone, false);
+  assert.deepEqual((await memberRef.get()).data().volunteerContactKeys, []);
 });
 
 test("updating a member without an email field keeps the existing address", async (t) => {
@@ -11957,6 +12264,9 @@ test("Controller None preserves independently granted global Teams and Services 
       services: "edit",
       teamScopes: { worship: "edit" },
     },
+  });
+  await setDoc(COLLECTIONS.teams, "worship", {
+    teamId: "worship", churchId: narrowed.churchId, name: "Worship",
   });
   const narrowedBootstrap = await callHandler(authHandlers.getAuthMe, {
     context: narrowed,
@@ -14016,6 +14326,7 @@ test("individual intake recipients personalize and automatically apply one audit
   );
   assert.equal(preview.statusCode, 200);
   assert.equal(preview.payload.recipient.firstName, "Kevin");
+  assert.ok(preview.payload.recipient.missingFields.includes("email"));
   assert.ok(!JSON.stringify(preview.payload).includes("Cheddar"));
   assert.ok(!JSON.stringify(preview.payload).includes("recipientTokenNonce"));
 
@@ -14039,7 +14350,7 @@ test("individual intake recipients personalize and automatically apply one audit
         body: {
           firstName: "",
           lastName: "",
-          email: "",
+          email: "kevin@example.com",
           positionIds: [positionIds.Vocal],
           occurrenceAvailability:
             availability === undefined ? {} : { [occurrenceId]: availability },
@@ -14079,6 +14390,7 @@ test("individual intake recipients personalize and automatically apply one audit
   assert.equal(firstSubmission.status, "applied");
   assert.equal(firstSubmission.appliedMemberId, memberId);
   assert.equal(firstMember.serviceAvailability[occurrenceId], "unavailable");
+  assert.equal(firstMember.email, "kevin@example.com");
   assert.equal(firstRecipient.submissionId, firstSubmissionId);
   assert.ok(firstRecipient.respondedAt);
 
@@ -14169,6 +14481,231 @@ test("individual intake recipients personalize and automatically apply one audit
     reactivatedPreview,
   );
   assert.equal(reactivatedPreview.statusCode, 200);
+});
+
+test("personalized intake exposes missing fields and saves them without replacing existing details", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const previousContactSecret = process.env.AUTH_VOLUNTEER_PORTAL_SECRET;
+  const contactSecret = "team-intake-profile-test-secret";
+  process.env.AUTH_VOLUNTEER_PORTAL_SECRET = contactSecret;
+  t.after(() => {
+    if (previousContactSecret === undefined) {
+      delete process.env.AUTH_VOLUNTEER_PORTAL_SECRET;
+    } else {
+      process.env.AUTH_VOLUNTEER_PORTAL_SECRET = previousContactSecret;
+    }
+  });
+
+  const context = await createAdminContext("intake_missing_member_details");
+  const { teamId, memberIds } = await seedTeam(context, {
+    teamName: "Worship",
+    members: [
+      { firstName: "Avery", lastName: "Morgan" },
+      { firstName: "Riley", lastName: "Jones" },
+    ],
+  });
+  const memberId = memberIds.Avery;
+  const memberMissingFirstNameId = memberIds.Riley;
+  await setDoc(
+    COLLECTIONS.teamRosterMembers,
+    memberId,
+    { lastName: " ", email: "", title: "", birthDate: null },
+    { merge: true },
+  );
+  await setDoc(
+    COLLECTIONS.teamRosterMembers,
+    memberMissingFirstNameId,
+    {
+      firstName: " ",
+      email: "riley@example.com",
+      title: "Ms.",
+      birthDate: { month: 5, day: 3 },
+    },
+    { merge: true },
+  );
+  const form = await callHandler(authHandlers.createTeamIntakeForm, {
+    context,
+    body: {
+      name: "Complete your profile",
+      startDate: calendarDaysFromToday(0),
+      endDate: calendarDaysFromToday(45),
+      responseDeadline: calendarDaysFromToday(45),
+      purpose: "general_intake",
+      teamIds: [teamId],
+      enabledFields: ["title", "firstName", "lastName", "email", "birthDate"],
+      active: true,
+    },
+  });
+  assert.equal(form.statusCode, 200, JSON.stringify(form.payload));
+  const formId = form.payload.form.formId;
+  const created = await callHandler(authHandlers.createTeamIntakeRecipients, {
+    context,
+    params: { formId },
+    body: { memberIds: [memberId, memberMissingFirstNameId] },
+  });
+  assert.equal(created.statusCode, 200, JSON.stringify(created.payload));
+  const recipient = created.payload.recipients[0];
+  const link = await callHandler(authHandlers.getTeamIntakeRecipientLink, {
+    context,
+    params: { recipientId: recipient.recipientId },
+  });
+  const token = link.payload.publicUrl.split("/a/")[1];
+
+  const preview = createRes();
+  await authHandlers.getTeamIntakePreview(
+    createReq({ query: { token, recipientOnly: "true" } }),
+    preview,
+  );
+  assert.equal(preview.statusCode, 200, JSON.stringify(preview.payload));
+  assert.deepEqual(
+    new Set(preview.payload.recipient.missingFields),
+    new Set(["lastName", "title", "birthDate", "email"]),
+  );
+  assert.equal(Object.hasOwn(preview.payload.recipient, "lastName"), false);
+  assert.equal(JSON.stringify(preview.payload).includes("avery@example.com"), false);
+
+  const submitted = createRes();
+  await authHandlers.submitTeamIntake(
+    createReq({
+      query: { token, recipientOnly: "true" },
+      body: {
+        firstName: "Changed",
+        lastName: "Lee",
+        title: "Dr.",
+        email: "  Volunteer@Example.COM ",
+        birthDate: { month: 3, day: 2, year: 2000 },
+        positionIds: [],
+        occurrenceAvailability: {},
+        blockoutRanges: [],
+      },
+    }),
+    submitted,
+  );
+  assert.equal(submitted.statusCode, 200, JSON.stringify(submitted.payload));
+  const member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+  assert.equal(member.firstName, "Avery");
+  assert.equal(member.lastName, "Lee");
+  assert.equal(member.title, "Dr.");
+  assert.equal(member.email, "volunteer@example.com");
+  assert.deepEqual(member.birthDate, { month: 3, day: 2, year: 2000 });
+  assert.deepEqual(
+    member.volunteerContactKeys,
+    volunteerContactIndexFields(member, contactSecret).volunteerContactKeys,
+  );
+  const savedSubmissions = await queryDocs(COLLECTIONS.teamIntakeSubmissions, [
+    { field: "formId", value: formId },
+  ]);
+  assert.equal(savedSubmissions[0].submittedMemberDetails, undefined);
+
+  const firstNameRecipient = created.payload.recipients.find(
+    (item) => item.memberId === memberMissingFirstNameId,
+  );
+  const firstNameLink = await callHandler(authHandlers.getTeamIntakeRecipientLink, {
+    context,
+    params: { recipientId: firstNameRecipient.recipientId },
+  });
+  const firstNameToken = firstNameLink.payload.publicUrl.split("/a/")[1];
+  const firstNamePreview = createRes();
+  await authHandlers.getTeamIntakePreview(
+    createReq({ query: { token: firstNameToken, recipientOnly: "true" } }),
+    firstNamePreview,
+  );
+  assert.deepEqual(firstNamePreview.payload.recipient.missingFields, ["firstName"]);
+
+  const firstNameSubmitted = createRes();
+  await authHandlers.submitTeamIntake(
+    createReq({
+      query: { token: firstNameToken, recipientOnly: "true" },
+      body: {
+        firstName: "Riley",
+        lastName: "Do not replace",
+        title: "Dr.",
+        email: "changed@example.net",
+        birthDate: { month: 1, day: 1, year: 1980 },
+        positionIds: [],
+        occurrenceAvailability: {},
+        blockoutRanges: [],
+      },
+    }),
+    firstNameSubmitted,
+  );
+  assert.equal(firstNameSubmitted.statusCode, 200, JSON.stringify(firstNameSubmitted.payload));
+  const completedFirstNameMember = await getDoc(
+    COLLECTIONS.teamRosterMembers,
+    memberMissingFirstNameId,
+  );
+  assert.equal(completedFirstNameMember.firstName, "Riley");
+  assert.equal(completedFirstNameMember.lastName, "Jones");
+  assert.equal(completedFirstNameMember.title, "Ms.");
+  assert.equal(completedFirstNameMember.email, "riley@example.com");
+  assert.deepEqual(completedFirstNameMember.birthDate, { month: 5, day: 3 });
+});
+
+test("personalized availability fallback accepts blank personal values and preserves availability", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("intake_availability_fallback");
+  const { teamId, memberIds } = await seedTeam(context, {
+    teamName: "Worship",
+    members: [{ firstName: "Avery", lastName: "Morgan" }],
+  });
+  const memberId = memberIds.Avery;
+  const serviceDate = calendarDaysFromToday(7);
+  const startsAt = `${serviceDate}T10:00:00.000Z`;
+  const occurrenceId = `service_1@${startsAt}`;
+  const form = await callHandler(authHandlers.createTeamIntakeForm, {
+    context,
+    body: {
+      name: "November availability",
+      startDate: calendarDaysFromToday(0),
+      endDate: calendarDaysFromToday(14),
+      responseDeadline: calendarDaysFromToday(14),
+      purpose: "team_availability",
+      teamIds: [teamId],
+      enabledFields: ["availability"],
+      availabilityOccurrences: [{
+        occurrenceId,
+        serviceId: "service_1",
+        name: "Sunday service",
+        serviceDate,
+        startsAt,
+      }],
+      active: true,
+    },
+  });
+  assert.equal(form.statusCode, 200, JSON.stringify(form.payload));
+  const formId = form.payload.form.formId;
+  const created = await callHandler(authHandlers.createTeamIntakeRecipients, {
+    context,
+    params: { formId },
+    body: { memberIds: [memberId] },
+  });
+  assert.equal(created.statusCode, 200, JSON.stringify(created.payload));
+  const link = await callHandler(authHandlers.getTeamIntakeRecipientLink, {
+    context,
+    params: { recipientId: created.payload.recipients[0].recipientId },
+  });
+  const token = link.payload.publicUrl.split("/a/")[1];
+
+  const submitted = createRes();
+  await authHandlers.submitTeamIntake(
+    createReq({
+      query: { token, recipientOnly: "true" },
+      body: {
+        firstName: "",
+        lastName: "",
+        title: "",
+        email: "",
+        birthDate: null,
+        occurrenceAvailability: { [occurrenceId]: "available" },
+      },
+    }),
+    submitted,
+  );
+  assert.equal(submitted.statusCode, 200, JSON.stringify(submitted.payload));
+  const member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+  assert.equal(member.firstName, "Avery");
+  assert.equal(member.lastName, "Morgan");
+  assert.equal(member.serviceAvailability[occurrenceId], "available");
 });
 
 test("notification requests accept personalized forms with blockout and notes fields", async (t) => {
@@ -18052,9 +18589,19 @@ test("effective Teams reads admit member appAccess through current roster links 
     churchId: fixture.churchId,
     userId: fixture.userId,
     role: "member",
-    appAccess: "member",
-    permissions: { teams: "none", teamScopes: {} },
+    controllerAccess: "none",
+    permissions: { teams: "none", services: "none", teamScopes: {} },
   });
+  await setDoc("chatSettings", fixture.churchId, {
+    timeZone: "America/Los_Angeles",
+  }, { merge: true });
+  const timeZone = await callHandler(authHandlers.getChurchServiceTimeZone, {
+    context,
+  });
+  assert.equal(timeZone.statusCode, 200);
+  assert.equal(timeZone.payload.serviceTimeZone, "UTC");
+  assert.equal(timeZone.payload.legacyTimeZoneSuggestion, undefined);
+
   const result = await callHandler(authHandlers.getTeamsBootstrap, { context });
   assert.equal(result.statusCode, 200);
   assert.deepEqual(
@@ -18069,7 +18616,9 @@ test("effective Teams reads admit member appAccess through current roster links 
       "lastName",
       "memberId",
       "positionIds",
+      "teamMembershipStatus",
     ]);
+    assert.equal(member.teamMembershipStatus, "assigned");
   }
   for (const field of [
     "intakeForms",
@@ -18081,13 +18630,26 @@ test("effective Teams reads admit member appAccess through current roster links 
     assert.equal(result.payload[field], undefined);
   }
   assertSafeReadSchedule(result.payload.schedules[0]);
+  assert.equal(
+    getMemberId(result.payload.schedules[0].assignments.occurrence.slot),
+    fixture.memberId,
+  );
   const detail = await callHandler(authHandlers.getTeamScheduleDetail, {
     context,
     params: { scheduleId: `${fixture.ids.worship}_schedule` },
   });
   assert.equal(detail.statusCode, 200);
   assertSafeReadSchedule(detail.payload.schedule);
+  assert.equal(
+    getMemberId(detail.payload.schedule.assignments.occurrence.slot),
+    fixture.memberId,
+  );
   assert.deepEqual(detail.payload.relatedSchedules, []);
+  const unrelatedSchedule = await callHandler(authHandlers.getTeamScheduleDetail, {
+    context,
+    params: { scheduleId: `${fixture.ids.av}_schedule` },
+  });
+  assert.equal(unrelatedSchedule.statusCode, 403);
   for (const handler of [
     authHandlers.getTeamIntakeSmsAttempts,
     authHandlers.listServicePlanTemplates,
@@ -18107,6 +18669,27 @@ test("effective Teams reads admit member appAccess through current roster links 
     body: { name: "Unsafe edit", memberIds: [] },
   });
   assert.equal(deniedWrite.statusCode, 403);
+  const deniedAssignment = await callHandler(
+    authHandlers.updateTeamScheduleAssignment,
+    {
+      context,
+      params: { scheduleId: `${fixture.ids.worship}_schedule` },
+      body: {
+        serviceId: "occurrence",
+        positionSlotKey: "slot",
+        memberId: fixture.memberId,
+      },
+    },
+  );
+  assert.equal(deniedAssignment.statusCode, 403);
+  const unchangedSchedule = await getDoc(
+    COLLECTIONS.teamSchedules,
+    `${fixture.ids.worship}_schedule`,
+  );
+  assert.deepEqual(unchangedSchedule.assignments.occurrence.slot, {
+    primaryMemberId: fixture.memberId,
+    shadows: [],
+  });
   await setDoc(
     COLLECTIONS.teams,
     fixture.ids.av,
@@ -19372,6 +19955,101 @@ test("team profile reads expose only the authorized shared-member slice", async 
   assert.equal(anonymousPatch.statusCode, 401);
 });
 
+test("team profile GET deduplicates bounded ownership reads for a multi-team member", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const fixture = await seedEffectiveTeamsReadFixture("team_profile_read_measurement");
+  const manager = await createHumanContext("team_profile_read_measurement_manager", {
+    churchId: fixture.churchId,
+    role: "member",
+    permissions: { teams: "none", teamScopes: { [fixture.ids.worship]: "edit" } },
+  });
+  const positionIds = [
+    `${fixture.ids.worship}_position`,
+    `${fixture.ids.av}_position`,
+    `${fixture.ids.worship}_position_extra`,
+    `${fixture.ids.av}_position_extra`,
+  ];
+  for (const [index, positionId] of positionIds.slice(2).entries()) {
+    const teamId = index === 0 ? fixture.ids.worship : fixture.ids.av;
+    await setDoc(COLLECTIONS.teamPositions, positionId, {
+      positionId,
+      churchId: fixture.churchId,
+      teamId,
+      name: `Extra ${index + 1}`,
+    }, { merge: false });
+  }
+  const areaIds = [
+    `${fixture.ids.worship}_area_one`,
+    `${fixture.ids.worship}_area_two`,
+    `${fixture.ids.av}_area_one`,
+  ];
+  for (const [index, areaId] of areaIds.entries()) {
+    const teamId = index === 2 ? fixture.ids.av : fixture.ids.worship;
+    await setDoc(COLLECTIONS.teamQualificationAreas, areaId, {
+      areaId,
+      churchId: fixture.churchId,
+      teamId,
+      name: `Skill area ${index + 1}`,
+    }, { merge: false });
+  }
+  const roleId = "team_profile_read_measurement_role";
+  await setDoc(COLLECTIONS.teamRoles, roleId, {
+    roleId,
+    churchId: fixture.churchId,
+    teamId: fixture.ids.worship,
+    name: "Worship lead",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId, {
+    positionIds,
+    desiredPositionIds: [...positionIds],
+    teamMemberships: {
+      [fixture.ids.worship]: { teamId: fixture.ids.worship, roleId },
+      [fixture.ids.av]: { teamId: fixture.ids.av },
+    },
+    qualifications: areaIds.map((areaId, index) => ({
+      qualificationId: `measurement-qualification-${index + 1}`,
+      areaId,
+      teamId: index === 2 ? fixture.ids.av : fixture.ids.worship,
+      status: "completed",
+    })),
+  }, { merge: true });
+
+  const observedReads = [];
+  setAuthReadObserverForServerTests((read) => {
+    if (read.type === "getDoc") observedReads.push(read);
+  });
+  let result;
+  try {
+    result = await callHandler(authHandlers.getTeamRosterMemberProfile, {
+      context: manager,
+      params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
+    });
+  } finally {
+    setAuthReadObserverForServerTests(null);
+  }
+
+  assert.equal(result.statusCode, 200, JSON.stringify(result.payload));
+  assert.equal(result.payload.teamProfile.positionIds.length, 2);
+  assert.equal(result.payload.teamProfile.qualifications.length, 2);
+  const measuredPositionAndAreaReads = observedReads.filter((read) =>
+    read.collectionName === COLLECTIONS.teamPositions && positionIds.includes(read.id) ||
+    read.collectionName === COLLECTIONS.teamQualificationAreas && areaIds.includes(read.id));
+  const measuredOwnerAndRoleReads = observedReads.filter((read) =>
+    read.collectionName === COLLECTIONS.teams && read.id === fixture.ids.av ||
+    read.collectionName === COLLECTIONS.teamRoles && read.id === roleId);
+  // Before: 4 positions + each owner team, 3 areas + each owner team, and the role = 15.
+  // After: 4 positions + 3 unique areas + one non-selected owner team + the role = 9.
+  assert.equal(measuredPositionAndAreaReads.length + measuredOwnerAndRoleReads.length, 9);
+  for (const positionId of positionIds) {
+    assert.equal(measuredPositionAndAreaReads.filter((read) => read.collectionName === COLLECTIONS.teamPositions && read.id === positionId).length, 1);
+  }
+  for (const areaId of areaIds) {
+    assert.equal(measuredPositionAndAreaReads.filter((read) => read.collectionName === COLLECTIONS.teamQualificationAreas && read.id === areaId).length, 1);
+  }
+  assert.equal(measuredOwnerAndRoleReads.filter((read) => read.collectionName === COLLECTIONS.teams && read.id === fixture.ids.av).length, 1);
+  assert.equal(measuredOwnerAndRoleReads.filter((read) => read.collectionName === COLLECTIONS.teamRoles && read.id === roleId).length, 1);
+});
+
 test("team profile patches replace one team slice and reject cross-team fields", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const fixture = await seedEffectiveTeamsReadFixture("team_profile_write_isolation");
@@ -19414,7 +20092,16 @@ test("team profile patches replace one team slice and reject cross-team fields",
     ],
   };
   await setDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId, original, { merge: true });
+  const loaded = await callHandler(authHandlers.getTeamRosterMemberProfile, {
+    context: worshipManager, params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
+  });
   const body = {
+    baseProfile: {
+      positionIds: loaded.payload.teamProfile.positionIds,
+      desiredPositionIds: loaded.payload.teamProfile.desiredPositionIds,
+      membership: loaded.payload.teamProfile.membership,
+      qualifications: loaded.payload.teamProfile.qualifications,
+    },
     positionIds: [`${fixture.ids.worship}_position`],
     desiredPositionIds: [],
     membership: { roleId: "worship-leader", isTeamLead: true },
@@ -19447,11 +20134,17 @@ test("team profile patches replace one team slice and reject cross-team fields",
   assert.equal(after.email, original.email);
   assert.equal(after.phoneNumber, original.phoneNumber);
   assert.equal(after.notes, original.notes);
-  const reject = async (patchBody) => callHandler(authHandlers.updateTeamRosterMemberProfile, {
-    context: worshipManager,
-    params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
-    body: patchBody,
-  });
+  const reject = async (patchBody) => {
+    const latest = await callHandler(authHandlers.getTeamRosterMemberProfile, {
+      context: worshipManager, params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
+    });
+    const { teamId: _teamId, ...baseProfile } = latest.payload.teamProfile;
+    return callHandler(authHandlers.updateTeamRosterMemberProfile, {
+      context: worshipManager,
+      params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
+      body: { ...patchBody, baseProfile },
+    });
+  };
   const clearRole = await reject({ membership: { roleId: null, isTeamLead: false } });
   assert.equal(clearRole.statusCode, 200, JSON.stringify(clearRole.payload));
   const afterRoleClear = await getDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId);
@@ -19616,15 +20309,15 @@ test("concurrent team profile saves preserve each team slice and removal blocks 
   const [worship, av, worshipAgain] = await Promise.all([
     callHandler(authHandlers.updateTeamRosterMemberProfile, {
       context: worshipManager, params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
-      body: { qualifications: [{ qualificationId: "worship-concurrent", areaId: worshipAreaId, teamId: fixture.ids.worship }] },
+      body: { qualifications: [{ qualificationId: "worship-concurrent", areaId: worshipAreaId, teamId: fixture.ids.worship }], baseProfile: { qualifications: [] } },
     }),
     callHandler(authHandlers.updateTeamRosterMemberProfile, {
       context: avManager, params: { teamId: fixture.ids.av, memberId: fixture.sharedId },
-      body: { qualifications: [{ qualificationId: "av-concurrent", areaId: avAreaId, teamId: fixture.ids.av }] },
+      body: { qualifications: [{ qualificationId: "av-concurrent", areaId: avAreaId, teamId: fixture.ids.av }], baseProfile: { qualifications: [] } },
     }),
     callHandler(authHandlers.updateTeamRosterMemberProfile, {
       context: worshipManager, params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
-      body: { membership: { isTeamLead: true } },
+      body: { membership: { isTeamLead: true }, baseProfile: { membership: { isTeamLead: false } } },
     }),
   ]);
   assert.equal(worship.statusCode, 200, JSON.stringify(worship.payload));
@@ -19646,6 +20339,77 @@ test("concurrent team profile saves preserve each team slice and removal blocks 
   const afterRemoval = await getDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId);
   assert.equal(afterRemoval.qualifications.some(({ qualificationId }) => qualificationId === "resurrect"), false);
   assert.ok(afterRemoval.qualifications.some(({ qualificationId }) => qualificationId === "av-concurrent"));
+});
+
+test("two editors of one team profile preserve different sections and reject stale replacements", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const fixture = await seedEffectiveTeamsReadFixture("same_team_profile_editors");
+  const managers = await Promise.all(["a", "b"].map((suffix) => createHumanContext(`same_team_editor_${suffix}`, {
+    churchId: fixture.churchId, role: "member",
+    permissions: { teams: "none", teamScopes: { [fixture.ids.worship]: "edit" } },
+  })));
+  const params = { teamId: fixture.ids.worship, memberId: fixture.sharedId };
+  const areaId = "same-team-area";
+  const roleId = "same-team-role";
+  await setDoc(COLLECTIONS.teamQualificationAreas, areaId, {
+    areaId, churchId: fixture.churchId, teamId: params.teamId, name: "Skills",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamRoles, roleId, {
+    roleId, churchId: fixture.churchId, teamId: params.teamId, name: "Captain",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamRosterMembers, params.memberId, {
+    qualifications: [{ qualificationId: "legacy-skill", areaId, status: "in_training" }],
+  }, { merge: true });
+  const read = async (context) => {
+    const result = await callHandler(authHandlers.getTeamRosterMemberProfile, { context, params });
+    assert.equal(result.statusCode, 200, JSON.stringify(result.payload));
+    return result.payload.teamProfile;
+  };
+  const save = (context, body) => callHandler(authHandlers.updateTeamRosterMemberProfile, { context, params, body });
+  // Both editors load before either saves. A adds a skill, then B edits only role.
+  const [profileA, profileB] = await Promise.all(managers.map(read));
+  const qualification = { qualificationId: "new-skill", areaId, teamId: params.teamId, status: "completed" };
+  assert.equal((await save(managers[0], {
+    qualifications: [...profileA.qualifications, qualification],
+    // Match bootstrap's complete projection of a legacy missing teamId.
+    baseProfile: { qualifications: profileA.qualifications.map((item) => ({ ...item, teamId: params.teamId })) },
+  })).statusCode, 200);
+  assert.equal((await save(managers[1], {
+    membership: { roleId }, baseProfile: { membership: profileB.membership },
+  })).statusCode, 200);
+  const persisted = await getDoc(COLLECTIONS.teamRosterMembers, params.memberId);
+  assert.ok(persisted.qualifications.some((item) => item.qualificationId === qualification.qualificationId));
+  assert.equal(persisted.teamMemberships[params.teamId].roleId, roleId);
+
+  // Each replacement/clear must compare its own original section, even when
+  // the same request also includes an otherwise valid update to another field.
+  const replacements = {
+    positionIds: [],
+    desiredPositionIds: [`${params.teamId}_position`],
+    membership: { roleId: null, isTeamLead: true },
+    qualifications: [],
+  };
+  for (const [section, replacement] of Object.entries(replacements)) {
+    const stale = await read(managers[1]);
+    const first = await save(managers[0], { [section]: replacement, baseProfile: { [section]: stale[section] } });
+    assert.equal(first.statusCode, 200, JSON.stringify(first.payload));
+    const beforeRejected = await getDoc(COLLECTIONS.teamRosterMembers, params.memberId);
+    const otherSection = section === "membership" ? "desiredPositionIds" : "membership";
+    const otherValue = section === "membership" ? [] : { roleId: stale.membership.roleId ? null : roleId };
+    const staleBody = {
+      [section]: stale[section], [otherSection]: otherValue,
+      baseProfile: { [section]: stale[section], [otherSection]: stale[otherSection] },
+    };
+    const rejected = await save(managers[1], staleBody);
+    assert.equal(rejected.statusCode, 409, `${section}: ${JSON.stringify(rejected.payload)}`);
+    assert.deepEqual(await getDoc(COLLECTIONS.teamRosterMembers, params.memberId), beforeRejected);
+    const retry = await save(managers[1], staleBody);
+    assert.equal(retry.statusCode, 409);
+  }
+  const beforeMissing = await getDoc(COLLECTIONS.teamRosterMembers, params.memberId);
+  assert.equal((await save(managers[1], { positionIds: [] })).statusCode, 409);
+  assert.deepEqual(await getDoc(COLLECTIONS.teamRosterMembers, params.memberId), beforeMissing);
+  assert.equal((await save(managers[1], { qualifications: [], baseProfile: { qualifications: [null] } })).statusCode, 400);
 });
 
 test("Services catalog reads follow Services grants while scoped Teams retain only planning catalogs", async (t) => {
@@ -19715,6 +20479,9 @@ test("Services catalog reads follow Services grants while scoped Teams retain on
     body: { microphones: [], audiences: [] },
   })).statusCode, 200);
 
+  await setDoc(COLLECTIONS.teams, "scoped-team", {
+    teamId: "scoped-team", churchId: owner.churchId, name: "Scoped team",
+  });
   const scoped = await createHumanContext("services_read_team_scope", {
     churchId: owner.churchId,
     role: "member",

@@ -12,6 +12,7 @@ export type Member = {
   controllerAccess?: string;
   appAccess: string;
   permissions?: MemberPermissions;
+  accessRevision?: string;
   user?: {
     uid: string;
     email: string;
@@ -69,6 +70,7 @@ export type InviteAccessDraft = {
   teamsAccess: TeamsPermission;
   servicesAccess: ServicesPermission;
   teamScopeIds: string[];
+  basePermissions?: MemberPermissions;
 };
 
 export type AccessSheetTarget =

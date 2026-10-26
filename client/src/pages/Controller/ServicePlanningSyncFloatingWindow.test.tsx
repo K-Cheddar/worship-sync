@@ -25,6 +25,10 @@ import {
 import { getServicePlanningLineItemKey } from "../../utils/servicePlanningSyncKeys";
 import { useServicePlanningImport } from "../../hooks/useServicePlanningImport";
 import { useToast } from "../../context/toastContext";
+import { buildServicePlanningPreview } from "../../integrations/servicePlanning/buildServicePlanningPreview";
+import { mapNativeServicePlanParticipants } from "../../integrations/servicePlanning/mapNativeServicePlanParticipants";
+import { servicePlanToImportData } from "../../integrations/servicePlanning/servicePlanToImportData";
+import type { ServicePlan } from "../../types/servicePlan";
 
 jest.mock("../../hooks/useServicePlanningImport", () => ({
   useServicePlanningImport: jest.fn(),
@@ -413,7 +417,8 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     ).toEqual(["Second item revised", "First item revised"]);
   });
 
-  it("shows native participant names, titles, and sync actions before explicit sync", () => {
+  it("starts overlay preview collapsed and shows native participant details when expanded", async () => {
+    const user = userEvent.setup();
     mockPlanSource.isPlanSourced = true;
     mockPlanSource.selectedPlanKey = "service-1@2026-07-30";
     mockPlanSource.selectedPlanDetails = {
@@ -464,10 +469,16 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     renderWindow(store);
 
     const overlayPreview = screen.getByRole("region", { name: "Overlay preview" });
+    expect(within(overlayPreview).queryByText("Dr. Greg Baldeo")).not.toBeInTheDocument();
+    expect(within(overlayPreview).getByText("1 update")).toBeInTheDocument();
+    await user.click(within(overlayPreview).getByRole("button", { name: "Expand overlay preview" }));
     expect(within(overlayPreview).getByText("Dr. Greg Baldeo")).toBeInTheDocument();
     expect(within(overlayPreview).getByText("Lead Pastor")).toBeInTheDocument();
     expect(within(overlayPreview).getByText("Sabbath School")).toBeInTheDocument();
     expect(within(overlayPreview).getByText("Update existing")).toBeInTheDocument();
+    await user.click(within(overlayPreview).getByRole("button", { name: "Collapse overlay preview" }));
+    expect(within(overlayPreview).queryByText("Dr. Greg Baldeo")).not.toBeInTheDocument();
+    expect(within(overlayPreview).getByText("1 update")).toBeInTheDocument();
   });
 
   it("keeps the scheduled LIVE row when the outline selection changes", () => {
@@ -696,7 +707,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     expect(screen.queryByText("Clarence Jones — Sabbath School Host")).not.toBeInTheDocument();
   });
 
-  it("combines native outline additions and overlay changes after Sync All", async () => {
+  it("combines native outline additions and automatically eligible overlays after Sync All", async () => {
     const song = { _id: "song-1", name: "What A Beautiful Name", type: "song", listId: "song-link" };
     const fallback = { sectionName: "Worship", headingName: "Praise and Worship", reason: "mapped-heading-missing", listId: song.listId, title: song.name };
     mockPushPlanToOutline.mockImplementation(async (_plan, _isCurrent, onItemAdded) => {
@@ -714,9 +725,10 @@ describe("ServicePlanningSyncFloatingWindow", () => {
         type: "song",
         title: { blocks: [{ type: "paragraph", spans: [{ text: song.name }] }] },
         songRef: { kind: "library", songId: song._id, songName: song.name },
+        assignees: [{ id: "assignee-1", name: "Clarence Jones" }],
       }] }],
     };
-    const existingOverlay = { id: "overlay-1", type: "participant", name: "Dobney Keen", event: "Sabbath School Host" };
+    const existingOverlay = { id: "overlay-1", type: "participant" as const, name: "Dobney Keen", event: song.name };
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
@@ -728,24 +740,40 @@ describe("ServicePlanningSyncFloatingWindow", () => {
         } }) => state,
       },
     });
-    store.dispatch(setServicePlanningServiceOutline(wrapImport({
-      overlayCandidates: [],
-      overlayPlan: [{ action: "update", elementType: "Sabbath School Host", targetOverlayId: existingOverlay.id, patch: { name: "Clarence Jones", event: "Sabbath School Host" } }],
-      outlineCandidates: [],
-      lineItems: [],
-      teamAssignments: [],
-    }) as any));
+    const sourcePlan = mockPlanSource.selectedPlanDetails as ServicePlan;
+    const importData = servicePlanToImportData(sourcePlan);
+    const mapping = mapNativeServicePlanParticipants({
+      sections: sourcePlan.sections,
+      importData,
+      participantOverlay: { status: "ready", elements: [{
+        elementId: "element-1",
+        assignees: [{ name: "Clarence Jones", memberStatus: "guest", roleStatus: "not-applicable" }],
+      }] },
+    });
+    const preview = buildServicePlanningPreview({
+      importData,
+      servicePlanning: { enabled: false, people: [], sectionRules: [], elementRules: [] },
+      overlays: [existingOverlay],
+      songLibrary: [],
+      activeOutlineList: [],
+      nativeOverlayCandidates: mapping.overlayCandidates,
+      nativeOverlaySummary: mapping.summary,
+    });
+    expect(preview.overlayPlan[0]).toMatchObject({ action: "update", patch: { name: "Clarence Jones", event: song.name } });
+    store.dispatch(setServicePlanningServiceOutline(wrapImport(preview)));
     store.dispatch(setServicePlanningFloatingWindowDismissed(false));
     renderWindow(store);
 
     await userEvent.setup().click(screen.getByRole("button", { name: "Sync All" }));
     await waitFor(() => expect(store.getState().servicePlanningImport.sync.status).toBe("running"));
+    expect(mockPushPlanToOutline).toHaveBeenCalledWith(sourcePlan, expect.any(Function), expect.any(Function), expect.any(Function));
+    expect(store.getState().servicePlanningImport.sync.mode).toBe("overlays");
     act(() => {
       store.dispatch(setServicePlanningSyncPlanInfo({
         totalSteps: 1,
-        syncItems: [{ label: "Clarence Jones", sublabel: "Sabbath School Host", phase: "overlays", status: "pending" }],
+        syncItems: [{ label: "Clarence Jones", sublabel: song.name, phase: "overlays", status: "pending" }],
       }));
-      store.dispatch(setServicePlanningSyncActiveStep({ phase: "overlays", activeLabel: "Clarence Jones", activeSublabel: "Sabbath School Host" }));
+      store.dispatch(setServicePlanningSyncActiveStep({ phase: "overlays", activeLabel: "Clarence Jones", activeSublabel: song.name }));
       store.dispatch(advanceServicePlanningSyncStep({ resolvedStatus: "updated" }));
       store.dispatch(recordServicePlanningSyncResult({ overlaysUpdated: 1 }));
       store.dispatch(completeServicePlanningSync());
@@ -756,7 +784,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const summary = within(screen.getByLabelText("Most recent sync"));
     expect(summary.getByText("What A Beautiful Name")).toBeInTheDocument();
     expect(summary.getByText(/Added at end — mapped heading "Praise and Worship" wasn't found\./)).toBeInTheDocument();
-    expect(summary.getByText("Clarence Jones — Sabbath School Host")).toBeInTheDocument();
+    expect(summary.getByText(`Clarence Jones — ${song.name}`)).toBeInTheDocument();
   });
 
   it("does not start overlay sync if the plan becomes stale while Sync All pushes the outline", async () => {

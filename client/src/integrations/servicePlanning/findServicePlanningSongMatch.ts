@@ -3,8 +3,8 @@
  *
  * Two stages, because ranking and deciding are different jobs:
  *
- *  1. Rank with the same search the Songs library uses, so the importer and the
- *     song picker agree on which songs a title is even about.
+ *  1. Rank titles with the existing title-only retrieval. Manual library search
+ *     is broader and must not supply lyric or fuzzy-search evidence here.
  *  2. Accept the top candidate only if `songTitleSimilarity` says the two
  *     titles are the same name — the search score can't do this, since it
  *     reports which branch matched rather than how alike two full titles are.

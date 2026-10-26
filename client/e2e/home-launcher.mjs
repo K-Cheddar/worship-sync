@@ -71,6 +71,42 @@ try {
   const getColumnCount = async (groupName) => page.getByRole("group", { name: groupName }).evaluate((element) =>
     getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).length,
   );
+  const inspectMobileNavigationGrid = async (groupName) => page.getByRole("group", { name: groupName }).evaluate((group) => {
+    const cards = [...group.querySelectorAll(":scope > a")];
+    const rows = new Map();
+    const measuredCards = cards.map((card) => {
+      const bounds = card.getBoundingClientRect();
+      const content = card.querySelector("[data-testid=home-navigation-icon]")?.parentElement;
+      const row = bounds.top.toFixed(1);
+      rows.set(row, [...(rows.get(row) ?? []), bounds.height]);
+      const walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT);
+      const overflowingText = [];
+      while (walker.nextNode()) {
+        if (!walker.currentNode.textContent.trim()) continue;
+        const range = document.createRange();
+        range.selectNodeContents(walker.currentNode);
+        if ([...range.getClientRects()].some((rect) =>
+          rect.left < bounds.left - 1 || rect.right > bounds.right + 1
+          || rect.top < bounds.top - 1 || rect.bottom > bounds.bottom + 1,
+        )) overflowingText.push(walker.currentNode.textContent);
+      }
+      const textBlock = content?.children[1];
+      return {
+        height: bounds.height,
+        paddingTop: content ? getComputedStyle(content).paddingTop : null,
+        paddingBottom: content ? getComputedStyle(content).paddingBottom : null,
+        paddingLeft: content ? getComputedStyle(content).paddingLeft : null,
+        paddingRight: content ? getComputedStyle(content).paddingRight : null,
+        descriptionGap: textBlock?.children[1] ? getComputedStyle(textBlock.children[1]).marginTop : null,
+        overflowingText,
+      };
+    });
+    return {
+      columns: getComputedStyle(group).gridTemplateColumns.trim().split(/\s+/).length,
+      cards: measuredCards,
+      rowsEqual: [...rows.values()].every((heights) => heights.every((height) => Math.abs(height - heights[0]) < 0.5)),
+    };
+  });
   const mobileColumns = await getColumnCount("Management navigation");
   const mobileScrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
   const mobileToolbarHeight = await page.getByTestId("home-toolbar").evaluate((element) => element.getBoundingClientRect().height);
@@ -78,7 +114,7 @@ try {
   assert.equal(mobileColumns, 2, "mobile launcher should use two columns");
   assert.equal(mobileScrollWidth, 390, "mobile launcher should not overflow horizontally");
   assert.ok(mobileToolbarHeight <= 48, "mobile Home toolbar should stay within its current compact height");
-  assert.ok(mobileCard && mobileCard.height >= 74, "mobile navigation cards should retain a comfortable minimum height while descriptions wrap");
+  assert.ok(mobileCard && mobileCard.height >= 48, "mobile navigation cards should retain a 48px minimum height while descriptions wrap");
   assert.equal(await page.getByRole("img", { name: "WorshipSync" }).count(), 0, "desktop brand lockup should stay out of the narrow mobile header");
   assert.equal(await page.getByRole("group", { name: "Management navigation" }).getByRole("link").count(), 3);
   assert.equal(await page.getByRole("link", { name: /^Administration\b/ }).getAttribute("href"), "#/account");
@@ -91,6 +127,43 @@ try {
   const descriptionsToggle = page.getByRole("switch", { name: "Show what each page does" });
   assert.equal(await descriptionsToggle.isChecked(), true, "homepage descriptions should be shown by default");
   assert.equal(await page.getByText("Access shared files and church resources.").count(), 1, "homepage descriptions should be visible by default");
+  for (const width of [320, 375, 430]) {
+    await page.setViewportSize({ width, height: 900 });
+    assert.equal(await descriptionsToggle.isChecked(), true);
+    for (const groupName of [
+      "Management navigation",
+      "Personal and service tools navigation",
+      "Controllers navigation",
+    ]) {
+      const describedLayout = await inspectMobileNavigationGrid(groupName);
+      assert.equal(describedLayout.columns, 2, `${groupName} should stay two columns at ${width}px with descriptions`);
+      assert.equal(describedLayout.rowsEqual, true, `${groupName} rows should remain equal height at ${width}px with descriptions`);
+      assert.ok(describedLayout.cards.every((card) => card.height >= 48), `${groupName} cards should preserve the requested minimum height at ${width}px`);
+      assert.ok(describedLayout.cards.every((card) => card.paddingTop === "8px" && card.paddingBottom === "8px"), `${groupName} cards should have 8px vertical content padding at ${width}px`);
+      assert.ok(describedLayout.cards.every((card) => card.paddingLeft === "8px" && card.paddingRight === "8px"), `${groupName} cards should have 8px horizontal content padding at ${width}px`);
+      assert.ok(describedLayout.cards.every((card) => card.descriptionGap === "5px"), `${groupName} cards should separate titles and descriptions by 5px at ${width}px`);
+      assert.deepEqual(describedLayout.cards.flatMap((card) => card.overflowingText), [], `${groupName} text should stay inside cards at ${width}px`);
+    }
+    assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= width, `described mobile launcher should not overflow horizontally at ${width}px`);
+    await descriptionsToggle.click();
+    for (const groupName of [
+      "Management navigation",
+      "Personal and service tools navigation",
+      "Controllers navigation",
+    ]) {
+      const compactLayout = await inspectMobileNavigationGrid(groupName);
+      assert.equal(compactLayout.columns, 2, `${groupName} should stay two columns at ${width}px without descriptions`);
+      assert.equal(compactLayout.rowsEqual, true, `${groupName} rows should remain equal height at ${width}px without descriptions`);
+      assert.ok(compactLayout.cards.every((card) => card.height >= 48), `${groupName} cards should preserve the requested minimum height at ${width}px`);
+      assert.ok(compactLayout.cards.every((card) => card.paddingTop === "8px" && card.paddingBottom === "8px"), `${groupName} cards should retain balanced vertical padding when descriptions are off at ${width}px`);
+      assert.ok(compactLayout.cards.every((card) => card.paddingLeft === "8px" && card.paddingRight === "8px"), `${groupName} cards should preserve 8px horizontal padding at ${width}px`);
+      assert.deepEqual(compactLayout.cards.flatMap((card) => card.overflowingText), [], `${groupName} text should stay inside compact cards at ${width}px`);
+    }
+    assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= width, `compact mobile launcher should not overflow horizontally at ${width}px`);
+    await descriptionsToggle.click();
+    console.log(`[home launcher] ${width}px cards: 8px padding, 48px minimum`);
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
   if (screenshotDirectory) {
     await mkdir(screenshotDirectory, { recursive: true });
     await page.screenshot({ path: join(screenshotDirectory, "mobile-390x844.png"), animations: "disabled" });
@@ -202,6 +275,8 @@ try {
   const desktopDescriptionBounds = await page.getByText("Manage resources, access, teams, and services.").boundingBox();
   assert.ok(desktopHeadingBounds && desktopDescriptionBounds && Math.abs(desktopDescriptionBounds.y + desktopDescriptionBounds.height / 2 - desktopHeadingBounds.y - desktopHeadingBounds.height / 2) <= 8, "section descriptions should sit inline with the heading when desktop space allows");
   await page.getByRole("region", { name: "Controllers" }).getByText("Present slides, songs, and scripture on your screens.").waitFor();
+  const describedRowHeights = await page.getByRole("group", { name: "Management navigation" }).getByRole("link").evaluateAll((elements) => elements.slice(0, 3).map((element) => element.getBoundingClientRect().height));
+  assert.ok(describedRowHeights.every((height) => Math.abs(height - describedRowHeights[0]) < 0.5), "cards in a desktop row should remain equal height with descriptions shown");
   const desktopDisplayTitleBounds = await page.getByText("Display outputs").boundingBox();
   const desktopDisplayDescriptionBounds = await page.getByText("Links for room screens and streaming software.").boundingBox();
   const desktopDisplayActionBounds = await page.getByText("View links", { exact: true }).boundingBox();
@@ -236,7 +311,9 @@ try {
   assert.notEqual(cardHoverStyle.backgroundColor, cardStyle.backgroundColor, "hover should apply the gray-800 background treatment");
   assert.notEqual(cardHoverStyle.borderColor, cardStyle.borderColor, "hover should apply the gray-500 border treatment");
   const desktopCard = await page.getByRole("link", { name: /^Resources\b/ }).boundingBox();
-  assert.ok(desktopCard && desktopCard.height >= 96 && desktopCard.height <= 112, "desktop navigation cards should be approximately 96–112px tall");
+  assert.ok(desktopCard, "desktop navigation cards should have measurable bounds");
+  console.log(`[home launcher] desktop Resources card height: ${desktopCard.height.toFixed(1)}px`);
+  assert.ok(desktopCard.height >= 82, "desktop navigation cards should preserve the 82px minimum clickable height");
   const desktopIconWidth = await page.getByRole("link", { name: /^Resources\b/ }).locator("[data-testid=home-navigation-icon] svg").evaluate((element) => element.getBoundingClientRect().width);
   assert.ok(desktopIconWidth >= 32 && desktopIconWidth <= 36, "desktop navigation icons should be approximately 32–36px");
   const adminSectionRadius = await page.getByRole("region", { name: "Management" }).evaluate((element) => getComputedStyle(element).borderTopLeftRadius);
@@ -254,7 +331,7 @@ try {
   ]);
   assert.ok(sharedCardWidths.every((width) => Math.abs(width - sharedCardWidths[0]) < 0.5), "launcher sections should share card widths");
   const firstRowHeights = await page.getByRole("group", { name: "Management navigation" }).getByRole("link").evaluateAll((elements) => elements.slice(0, 3).map((element) => element.getBoundingClientRect().height));
-  assert.ok(firstRowHeights.every((height) => Math.abs(height - firstRowHeights[0]) < 0.5), "cards in a desktop row should remain equal height with descriptions shown");
+  assert.ok(firstRowHeights.every((height) => Math.abs(height - firstRowHeights[0]) < 0.5), "cards in a desktop row should remain equal height with descriptions hidden");
   const desktopToolbarHeight = await page.getByTestId("home-toolbar").evaluate((element) => element.getBoundingClientRect().height);
   assert.ok(desktopToolbarHeight <= 56, "desktop Home toolbar should stay within its current height");
 
@@ -291,6 +368,51 @@ try {
   await page.getByText("Copy these links into OBS or other streaming software as browser sources.").waitFor();
   assert.equal(await page.getByText("Show full-screen projection content.").count(), 0, "display cards should not show individual fullscreen descriptions");
   assert.equal(await page.getByText("Use as a browser source in streaming software.").count(), 0, "display cards should not show repeated browser-source descriptions");
+  for (const width of [320, 375, 430]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const groupName of ["Fullscreen in the browser navigation", "Browser sources (streaming) navigation"]) {
+      const outputLayout = await page.getByRole("group", { name: groupName }).evaluate((group) => {
+        const cards = [...group.querySelectorAll(":scope > div")];
+        const rows = new Map();
+        const measuredCards = cards.map((card) => {
+          const bounds = card.getBoundingClientRect();
+          const link = card.querySelector(":scope > a");
+          const row = bounds.top.toFixed(1);
+          rows.set(row, [...(rows.get(row) ?? []), bounds.height]);
+          const walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT);
+          const overflowingText = [];
+          while (walker.nextNode()) {
+            if (walker.currentNode.parentElement?.closest(".sr-only")) continue;
+            if (!walker.currentNode.textContent.trim()) continue;
+            const range = document.createRange();
+            range.selectNodeContents(walker.currentNode);
+            if ([...range.getClientRects()].some((rect) =>
+              rect.left < bounds.left - 1 || rect.right > bounds.right + 1
+              || rect.top < bounds.top - 1 || rect.bottom > bounds.bottom + 1,
+            )) overflowingText.push(walker.currentNode.textContent);
+          }
+          return {
+            height: bounds.height,
+            linkPaddingTop: link ? getComputedStyle(link).paddingTop : null,
+            linkPaddingLeft: link ? getComputedStyle(link).paddingLeft : null,
+            overflowingText,
+          };
+        });
+        return {
+          columns: getComputedStyle(group).gridTemplateColumns.trim().split(/\s+/).length,
+          cards: measuredCards,
+          rowsEqual: [...rows.values()].every((heights) => heights.every((height) => Math.abs(height - heights[0]) < 0.5)),
+        };
+      });
+      assert.equal(outputLayout.columns, 2, `${groupName} should stay two columns at ${width}px`);
+      assert.equal(outputLayout.rowsEqual, true, `${groupName} rows should remain equal height at ${width}px`);
+      assert.ok(outputLayout.cards.every((card) => card.height >= 48 && card.linkPaddingTop === "8px" && card.linkPaddingLeft === "8px"), `${groupName} cards should use 8px padding and a 48px minimum at ${width}px`);
+      assert.deepEqual(outputLayout.cards.flatMap((card) => card.overflowingText), [], `${groupName} text should stay inside cards at ${width}px`);
+    }
+    assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= width, `expanded output cards should not overflow horizontally at ${width}px`);
+    console.log(`[home launcher] expanded Display outputs cards checked at ${width}px`);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
   assert.equal(await page.getByText("Sanctuary", { exact: true }).count(), 2, "the visible projector card title should stay the configured name in both groups");
   const displayLink = page.getByRole("link", { name: "Open Sanctuary fullscreen link" });
   assert.equal(await displayLink.getAttribute("href"), "#/projector?output=out_sanctuary");
@@ -312,10 +434,12 @@ try {
   assert.equal(await page.getByText("Copy these links into OBS or other streaming software as browser sources.").count(), 0, "turning descriptions off should hide the browser-source explanation");
   assert.equal(await page.getByRole("heading", { name: "Fullscreen in the browser" }).isVisible(), true, "subgroup headings should stay visible when descriptions are off");
   assert.equal(await page.getByRole("link", { name: "Open Projector browser source link" }).isVisible(), true, "display cards should stay visible when descriptions are off");
-  for (const { width, columns, expectedHeight } of [
-    { width: 390, columns: 2, expectedHeight: 74 },
-    { width: 900, columns: 3, expectedHeight: 82 },
-    { width: 1440, columns: 4, expectedHeight: 82 },
+  for (const { width, columns, minimumHeight } of [
+    { width: 320, columns: 2, minimumHeight: 48 },
+    { width: 375, columns: 2, minimumHeight: 48 },
+    { width: 430, columns: 2, minimumHeight: 48 },
+    { width: 900, columns: 3, minimumHeight: 82 },
+    { width: 1440, columns: 4, minimumHeight: 82 },
   ]) {
     await page.setViewportSize({ width, height: 900 });
     assert.equal(
@@ -324,7 +448,20 @@ try {
       `fullscreen output cards should use ${columns} columns at ${width}px`,
     );
     const projectorCardHeight = await page.getByRole("link", { name: "Open Projector fullscreen link" }).evaluate((element) => element.parentElement?.getBoundingClientRect().height ?? 0);
-    assert.ok(Math.abs(projectorCardHeight - expectedHeight) <= 1, `output cards should match the ${expectedHeight}px homepage tile height at ${width}px (measured ${projectorCardHeight}px)`);
+    assert.ok(projectorCardHeight >= minimumHeight, `output cards should be at least ${minimumHeight}px tall at ${width}px (measured ${projectorCardHeight}px)`);
+    if (width >= 640) {
+      assert.ok(Math.abs(projectorCardHeight - minimumHeight) <= 1, `output cards should preserve their ${minimumHeight}px tablet or desktop height at ${width}px`);
+    }
+    const outputRows = await page.getByRole("group", { name: "Fullscreen in the browser navigation" }).evaluate((group) => {
+      const rows = new Map();
+      for (const card of group.children) {
+        const bounds = card.getBoundingClientRect();
+        const key = bounds.top.toFixed(1);
+        rows.set(key, [...(rows.get(key) ?? []), bounds.height]);
+      }
+      return [...rows.values()];
+    });
+    assert.equal(outputRows.every((heights) => heights.every((height) => Math.abs(height - heights[0]) < 0.5)), true, `output rows should remain equal height at ${width}px`);
     assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= width, `output cards should not overflow horizontally at ${width}px`);
   }
   await page.setViewportSize({ width: 1440, height: 900 });

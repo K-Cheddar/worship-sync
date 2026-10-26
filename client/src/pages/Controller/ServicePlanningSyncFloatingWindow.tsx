@@ -10,6 +10,7 @@ import {
 } from "react";
 import { AlertTriangle, Book, BookOpen, Check, ChevronDown, Download, FileText, Music, Plus, RefreshCw, RotateCcw, Square, Users } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { planNativeOverlaySync } from "../../integrations/servicePlanning/findBestOverlayMatch";
 import { useDispatch, useSelector } from "../../hooks";
 import {
   cancelServicePlanningSync,
@@ -385,7 +386,7 @@ const ServicePlanningSyncFloatingWindow = ({
   const [isStoppingSavedPlan, setIsStoppingSavedPlan] = useState(false);
   const [lastSyncSummary, setLastSyncSummary] = useState<SyncSummary | null>(null);
   const [isSyncSummaryExpanded, setIsSyncSummaryExpanded] = useState(true);
-  const [isOverlayPreviewExpanded, setIsOverlayPreviewExpanded] = useState(true);
+  const [isOverlayPreviewExpanded, setIsOverlayPreviewExpanded] = useState(false);
   const cancelSavedPlanPushRef = useRef(false);
   const pendingSavedPlanSummaryRef = useRef<{
     outline: SyncSummaryEntry[];
@@ -426,6 +427,9 @@ const ServicePlanningSyncFloatingWindow = ({
   const allFreeFormDocs = useSelector((s: RootState) => s.allDocs.allFreeFormDocs);
   const overlays = useSelector(
     (s: RootState) => s.undoable?.present?.overlays?.list ?? EMPTY_OVERLAY_LIST,
+  );
+  const currentOverlayPlan = planNativeOverlaySync(
+    preview?.overlayPlan ?? [], overlays, preview?.overlayLibrary,
   );
   const sync = useSelector((s: RootState) => s.servicePlanningImport.sync);
   const url = useSelector((s: RootState) => s.servicePlanningImport.url);
@@ -1373,7 +1377,7 @@ const ServicePlanningSyncFloatingWindow = ({
           <div className="flex flex-col gap-2">
             {activeTab === "plan" && preview?.nativeOverlaySummary ? (
               <ServicePlanningOverlayPreview
-                items={preview.overlayPlan}
+                items={currentOverlayPlan}
                 nativeSummary={preview.nativeOverlaySummary}
                 expanded={isOverlayPreviewExpanded}
                 onExpandedChange={setIsOverlayPreviewExpanded}

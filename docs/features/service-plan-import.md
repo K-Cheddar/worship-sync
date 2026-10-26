@@ -46,6 +46,21 @@ The current user request authorizes these rules for syncing a saved Service Plan
 
 Regression coverage: `servicePlanOutlineBridge.test.ts`, `useServicePlanOutlinePush.test.tsx`, `ServicePlanningSyncFloatingWindow.test.tsx`.
 
+## Native WorshipSync transfer (confirmed 2026-10-25)
+
+The current user request confirms these native transfer behaviors:
+
+- Export the current editable draft as a versioned WorshipSync JSON file. Exclude publication, live playback, revisions, share tokens, and server-only metadata.
+- Import a supported WorshipSync JSON version or import the snapshot returned by an existing public service-plan link. A Current Service link resolves once at import time.
+- Preserve the destination occurrence identity, date, service association, and publishing settings. Re-key imported items and remove outline-push and external-sync tracking.
+- Keep usable same-church library references. When churches differ, match songs by title when possible, retain usable content, and show unresolved song references for review.
+- Ask before replacing content in a populated destination. Apply the accepted import as one `updateDraft()` edit so undo and autosave remain available.
+- Native transfer is a one-time copy and must not create continuous source-refresh tracking. Existing public links and Planning Center / Service Planning behavior remain unchanged.
+
+**Approval source/date:** Current user request, 2026-10-25.
+
+Regression coverage: `servicePlanNativeTransfer.test.ts` and the public-link replacement flow in `ServicePlanEditor.test.tsx`.
+
 ## Important scenarios
 
 | Scenario | Confirmed expected behavior | Current implementation or test evidence | Status / open question |

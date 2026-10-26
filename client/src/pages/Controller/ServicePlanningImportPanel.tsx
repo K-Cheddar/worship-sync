@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { planNativeOverlaySync } from "../../integrations/servicePlanning/findBestOverlayMatch";
 import { ExternalLink, BookOpen, Plus, RefreshCcw, RefreshCw, PanelsTopLeft, Square } from "lucide-react";
 import Button from "../../components/Button/Button";
 import ExpandCollapseChevronButton from "../../components/ExpandCollapseChevronButton/ExpandCollapseChevronButton";
@@ -352,6 +353,9 @@ const ServicePlanningImportPanel = () => {
   const overlayList = useSelector(
     (s) => s.undoable?.present?.overlays?.list ?? EMPTY_OVERLAY_LIST,
   );
+  const currentOverlayPlan = planNativeOverlaySync(
+    preview?.overlayPlan ?? [], overlayList, preview?.overlayLibrary,
+  );
   const serviceOutline = useSelector(
     (s) => s.servicePlanningImport.serviceOutline,
   );
@@ -583,7 +587,7 @@ const ServicePlanningImportPanel = () => {
           </section>
           {hasOverlayPlan ? (
             <OverlaySummaryPanel
-              items={preview.overlayPlan}
+              items={currentOverlayPlan}
               expanded={overlaySummaryExpanded}
               onExpandedChange={(next) =>
                 dispatch(setServicePlanningImportOverlaySummaryExpanded(next))

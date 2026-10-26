@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import TeamManager from "./TeamManager";
@@ -12,6 +12,7 @@ import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 
 jest.mock("../../../api/auth", () => ({
   archiveTeam: jest.fn(), createTeam: jest.fn(), deleteTeam: jest.fn(), updateTeam: jest.fn(),
+  searchTeamRosterCandidates: jest.fn().mockResolvedValue({ candidates: [], hasMore: false }),
 }));
 
 const team: TeamRecord = { churchId: "church-1", teamId: "team-worship", name: "Worship", memberIds: [] };
@@ -30,6 +31,84 @@ const LocationProbe = () => {
 };
 
 beforeEach(() => jest.mocked(updateTeam).mockReset());
+
+it("closes a dirty Team editor locally and retains its explicit return action", async () => {
+  const user = userEvent.setup();
+  render(<MemoryRouter initialEntries={[{ pathname: TEAMS_SECTION_PATHS.groups, state: { teamsReturnTo: returnTo } }]}>
+    <GlobalInfoContext.Provider value={{ churchId: "church-1", churchBranding: { colors: [] } } as never}>
+      <ToastProvider><TeamsNavigationGuardProvider>
+        <TeamManager teams={[team]} positions={[]} roles={[]} qualificationAreas={[]} members={[]}
+          data={data} canEditTeams canEditTeam={() => true} onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()} />
+        <LocationProbe />
+      </TeamsNavigationGuardProvider></ToastProvider>
+    </GlobalInfoContext.Provider>
+  </MemoryRouter>);
+  await user.click(screen.getByText("Worship"));
+  await user.type(screen.getByLabelText(/^Description/), "Unsaved");
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await user.click(screen.getByRole("button", { name: "Discard changes" }));
+  expect(screen.queryByRole("heading", { name: "Edit team" })).not.toBeInTheDocument();
+  expect(screen.getByTestId("location")).toHaveTextContent(TEAMS_SECTION_PATHS.groups);
+  expect(screen.getAllByRole("button", { name: "Back to schedule" })).toHaveLength(1);
+  await user.click(screen.getByText("Worship"));
+  await user.click(within(screen.getByRole("region", { name: "Edit team" })).getByRole("button", { name: "Close" }));
+  expect(screen.getByTestId("location")).toHaveTextContent(TEAMS_SECTION_PATHS.groups);
+  await user.click(screen.getByRole("button", { name: "Back to schedule" }));
+  expect(screen.getByTestId("location")).toHaveTextContent(TEAMS_SECTION_PATHS.schedules);
+});
+
+const renderScopedTeam = () => {
+  render(
+    <MemoryRouter initialEntries={[TEAMS_SECTION_PATHS.groups]}>
+      <GlobalInfoContext.Provider value={{ churchId: "church-1", churchBranding: { colors: [] } } as never}>
+        <ToastProvider><TeamsNavigationGuardProvider>
+          <Routes>
+            <Route path={TEAMS_SECTION_PATHS.groups} element={<TeamManager
+              teams={[team]} positions={[]} roles={[]} qualificationAreas={[]} members={[]}
+              data={data} canEditTeams={false} canEditTeam={() => true}
+              onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()}
+            />} />
+            <Route path={TEAMS_SECTION_PATHS.members} element={<p>Member creation destination</p>} />
+          </Routes>
+          <LocationProbe />
+        </TeamsNavigationGuardProvider></ToastProvider>
+      </GlobalInfoContext.Provider>
+    </MemoryRouter>,
+  );
+};
+
+it("guards Create new member and preserves the scoped team draft when staying", async () => {
+  const user = userEvent.setup();
+  renderScopedTeam();
+  await user.click(screen.getByText("Worship"));
+  await user.type(screen.getByLabelText(/^Description/i), "Unsaved settings");
+  await user.click(screen.getByRole("button", { name: "Create new member" }));
+  expect(screen.getByRole("dialog", { name: "Unsaved changes" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Stay" }));
+  expect(screen.getByLabelText(/^Description/i)).toHaveValue("Unsaved settings");
+  expect(screen.getByTestId("location")).toHaveTextContent(TEAMS_SECTION_PATHS.groups);
+  await user.click(screen.getByRole("button", { name: "Create new member" }));
+  await user.click(screen.getByRole("button", { name: "Discard changes" }));
+  expect(screen.getByText("Member creation destination")).toBeInTheDocument();
+  expect(screen.getByTestId("location")).toHaveTextContent(JSON.stringify({
+    pathname: TEAMS_SECTION_PATHS.members,
+    state: { teamsCreateMember: { teamId: team.teamId } },
+  }));
+  expect(updateTeam).not.toHaveBeenCalled();
+});
+
+it("opens member creation immediately from a clean scoped team draft", async () => {
+  const user = userEvent.setup();
+  renderScopedTeam();
+  await user.click(screen.getByText("Worship"));
+  await user.click(screen.getByRole("button", { name: "Create new member" }));
+  expect(screen.queryByRole("dialog", { name: "Unsaved changes" })).not.toBeInTheDocument();
+  expect(screen.getByText("Member creation destination")).toBeInTheDocument();
+  expect(screen.getByTestId("location")).toHaveTextContent(JSON.stringify({
+    pathname: TEAMS_SECTION_PATHS.members,
+    state: { teamsCreateMember: { teamId: team.teamId } },
+  }));
+});
 
 it("keeps an edited team open and returns to its originating schedule only on Back", async () => {
   const user = userEvent.setup();

@@ -2364,13 +2364,8 @@ export const createTeamsAuthHandlers = ({
 
   const normalizeServicePlanParticipantOverlay = (raw) => {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-    const enabled = raw.enabled === true;
     const eventLabel = normalizeShortText(raw.eventLabel, { max: 120 });
-    if (!enabled && !eventLabel) return undefined;
-    return {
-      ...(enabled ? { enabled: true } : {}),
-      ...(eventLabel ? { eventLabel } : {}),
-    };
+    return eventLabel ? { eventLabel } : undefined;
   };
 
   const normalizeServicePlanMicrophoneAssignments = (raw) =>
@@ -2876,6 +2871,9 @@ export const createTeamsAuthHandlers = ({
       createId("servicePlanSection"),
     ...(raw?.sourcePlanningManaged === true
       ? { sourcePlanningManaged: true }
+      : {}),
+    ...(raw?.phase === "pre" || raw?.phase === "main" || raw?.phase === "post"
+      ? { phase: raw.phase }
       : {}),
     name: normalizeShortText(raw?.name, { max: 200 }) || "Section",
     elements: Array.isArray(raw?.elements)
@@ -4180,6 +4178,22 @@ export const createTeamsAuthHandlers = ({
     ...(qualification.notes ? { notes: qualification.notes } : {}),
   });
 
+  const createTeamProfileReadCache = (read, initialRecords = []) => {
+    const records = new Map(
+      initialRecords.map(([collectionName, id, document]) => [
+        JSON.stringify([collectionName, id]),
+        Promise.resolve(document),
+      ]),
+    );
+    return (collectionName, id) => {
+      const key = JSON.stringify([collectionName, id]);
+      if (!records.has(key)) {
+        records.set(key, Promise.resolve().then(() => read(collectionName, id)));
+      }
+      return records.get(key);
+    };
+  };
+
   const resolveMemberTeamSlices = async ({ churchId, teamId, member, read }) => {
     if ((member.positionIds !== undefined && !Array.isArray(member.positionIds)) ||
         (member.desiredPositionIds !== undefined && !Array.isArray(member.desiredPositionIds)) ||
@@ -4188,24 +4202,13 @@ export const createTeamsAuthHandlers = ({
       throw httpError(409, "Member team data is invalid.");
     }
 
-    const positionOwnerById = new Map();
     const positionIds = [...new Set([...(member.positionIds || []), ...(member.desiredPositionIds || [])])];
     for (const positionId of positionIds) {
       if (typeof positionId !== "string" || !positionId.trim()) throw httpError(409, "Position ownership is invalid.");
-      const position = await read(COLLECTIONS.teamPositions, positionId);
-      if (!position || (position.positionId !== undefined && position.positionId !== positionId) || position.churchId !== churchId || !position.teamId) {
-        throw httpError(409, "Position ownership is invalid.");
-      }
-      const owner = await read(COLLECTIONS.teams, position.teamId);
-      if (!owner || owner.churchId !== churchId || (owner.teamId !== undefined && owner.teamId !== position.teamId)) {
-        throw httpError(409, "Position ownership is invalid.");
-      }
-      positionOwnerById.set(positionId, position.teamId);
     }
-
-    const qualificationOwnerById = new Map();
+    const qualifications = member.qualifications || [];
     const qualificationIds = new Set();
-    for (const qualification of member.qualifications || []) {
+    for (const qualification of qualifications) {
       if (!qualification || typeof qualification !== "object" || Array.isArray(qualification)) {
         throw httpError(409, "Member qualification ownership is invalid.");
       }
@@ -4220,15 +4223,55 @@ export const createTeamsAuthHandlers = ({
         throw httpError(409, "Member qualification ownership is invalid.");
       }
       qualificationIds.add(qualificationId);
-      const area = await read(COLLECTIONS.teamQualificationAreas, areaId);
+    }
+
+    const [positionDocuments, qualificationAreaDocuments] = await Promise.all([
+      mapWithConcurrency(positionIds, 8, async (positionId) => ({
+        id: positionId,
+        document: await read(COLLECTIONS.teamPositions, positionId),
+      })),
+      mapWithConcurrency(qualifications, 8, async (qualification) => ({
+        qualification,
+        areaId: qualification.areaId,
+        document: await read(COLLECTIONS.teamQualificationAreas, qualification.areaId),
+      })),
+    ]);
+
+    const positionById = new Map();
+    const ownerTeamIds = new Set();
+    for (const { id: positionId, document: position } of positionDocuments) {
+      if (!position || (position.positionId !== undefined && position.positionId !== positionId) || position.churchId !== churchId || !position.teamId) {
+        throw httpError(409, "Position ownership is invalid.");
+      }
+      positionById.set(positionId, position);
+      ownerTeamIds.add(position.teamId);
+    }
+
+    const areaByQualificationId = new Map();
+    for (const { qualification, areaId, document: area } of qualificationAreaDocuments) {
       if (!area || (area.areaId !== undefined && area.areaId !== areaId) || area.churchId !== churchId || !area.teamId ||
           (Object.hasOwn(qualification, "teamId") && qualification.teamId !== area.teamId)) {
         throw httpError(409, "Member qualification ownership is invalid.");
       }
-      const owner = await read(COLLECTIONS.teams, area.teamId);
-      if (!owner || owner.churchId !== churchId || (owner.teamId !== undefined && owner.teamId !== area.teamId)) {
-        throw httpError(409, "Member qualification ownership is invalid.");
+      areaByQualificationId.set(qualification.qualificationId, area);
+      ownerTeamIds.add(area.teamId);
+    }
+
+    const ownerTeamDocuments = await mapWithConcurrency([...ownerTeamIds], 8, async (ownerTeamId) => ({
+      teamId: ownerTeamId,
+      document: await read(COLLECTIONS.teams, ownerTeamId),
+    }));
+    for (const { teamId: ownerTeamId, document: owner } of ownerTeamDocuments) {
+      if (!owner || owner.churchId !== churchId || (owner.teamId !== undefined && owner.teamId !== ownerTeamId)) {
+        throw httpError(409, "Position ownership is invalid.");
       }
+    }
+
+    const positionOwnerById = new Map(
+      [...positionById].map(([positionId, position]) => [positionId, position.teamId]),
+    );
+    const qualificationOwnerById = new Map();
+    for (const [qualificationId, area] of areaByQualificationId) {
       qualificationOwnerById.set(qualificationId, area.teamId);
     }
 
@@ -4263,15 +4306,19 @@ export const createTeamsAuthHandlers = ({
     if ((team.teamId && team.teamId !== teamId) || (member.memberId && member.memberId !== memberId)) {
       throw httpError(409, "Team profile ownership is invalid.");
     }
+    const read = createTeamProfileReadCache(getDoc, [
+      [COLLECTIONS.teams, teamId, team],
+      [COLLECTIONS.teamRosterMembers, memberId, member],
+    ]);
     const slices = await resolveMemberTeamSlices({
       churchId,
       teamId,
       member,
-      read: getDoc,
+      read,
     });
     const membership = slices.membership;
     if (membership.roleId) {
-      const role = await getDoc(COLLECTIONS.teamRoles, membership.roleId);
+      const role = await read(COLLECTIONS.teamRoles, membership.roleId);
       if (!role || role.churchId !== churchId || role.teamId !== teamId ||
           (role.roleId !== undefined && role.roleId !== membership.roleId)) {
         throw httpError(409, "Member team ownership is invalid.");
@@ -4298,11 +4345,12 @@ export const createTeamsAuthHandlers = ({
     };
   };
 
-  const validateTeamProfilePatch = (body) => {
+  const validateTeamProfilePatch = (body, allowBaseProfile = false) => {
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw httpError(400, "A team profile is required.");
     }
-    const allowed = new Set(["positionIds", "desiredPositionIds", "membership", "qualifications"]);
+    const allowed = new Set(["positionIds", "desiredPositionIds", "membership", "qualifications",
+      ...(allowBaseProfile ? ["baseProfile"] : [])]);
     const unknown = Object.keys(body).filter((key) => !allowed.has(key));
     if (unknown.length) {
       throw httpError(400, `Unsupported team profile field: ${unknown[0]}.`);
@@ -4346,15 +4394,16 @@ export const createTeamsAuthHandlers = ({
   };
 
   const updateTeamProfile = async ({ churchId, teamId, memberId, body, adminUserId }) => {
-    const requested = validateTeamProfilePatch(body);
+    const requested = validateTeamProfilePatch(body, true);
+    const baseline = body.baseProfile === undefined ? null : validateTeamProfilePatch(body.baseProfile);
     const db = requireFirestore();
     const now = nowIso();
     const mutate = async (transaction = null) => {
-      const read = async (collectionName, id) => {
+      const read = createTeamProfileReadCache(async (collectionName, id) => {
         if (!transaction) return getDoc(collectionName, id);
         const snapshot = await transaction.get(db.collection(collectionName).doc(id));
         return snapshot.exists ? { id: snapshot.id, ...snapshot.data() } : null;
-      };
+      });
       const team = await read(COLLECTIONS.teams, teamId);
       const member = await read(COLLECTIONS.teamRosterMembers, memberId);
       if (!team || team.churchId !== churchId) throw httpError(404, "Team not found.");
@@ -4382,9 +4431,53 @@ export const createTeamsAuthHandlers = ({
         ...(requested.desiredPositionIds || []),
       ]);
       const positionDocs = new Map();
-      for (const id of new Set([...existingPositions, ...requestedPositionIds])) {
-        if (!positionDocs.has(id)) positionDocs.set(id, await read(COLLECTIONS.teamPositions, id));
+      await mapWithConcurrency([...new Set([...existingPositions, ...requestedPositionIds])], 8, async (id) => {
+        positionDocs.set(id, await read(COLLECTIONS.teamPositions, id));
+      });
+      const positionOwnerById = new Map(slices.positionOwnerById);
+      const newPositionOwnerIds = new Set(
+        [...new Set([...existingPositions, ...requestedPositionIds])]
+          .filter((id) => !positionOwnerById.has(id))
+          .map((id) => positionDocs.get(id))
+          .filter((position) => position?.churchId === churchId && position.teamId)
+          .map((position) => position.teamId),
+      );
+      const newPositionOwners = await mapWithConcurrency([...newPositionOwnerIds], 8, async (ownerTeamId) => ({
+        teamId: ownerTeamId,
+        document: await read(COLLECTIONS.teams, ownerTeamId),
+      }));
+      for (const { teamId: ownerTeamId, document: owner } of newPositionOwners) {
+        if (!owner || owner.churchId !== churchId || (owner.teamId !== undefined && owner.teamId !== ownerTeamId)) {
+          throw httpError(409, "Position ownership is invalid.");
+        }
       }
+      for (const [positionId, position] of positionDocs) {
+        if (position?.churchId === churchId && position.teamId) {
+          positionOwnerById.set(positionId, position.teamId);
+        }
+      }
+      const requestedQualificationAreaIds = new Set();
+      const requestedQualificationLevelIds = new Set();
+      for (const qualification of requested.qualifications || []) {
+        if (!qualification || typeof qualification !== "object" || Array.isArray(qualification)) continue;
+        const areaId = normalizeShortText(qualification.areaId, { max: 160 });
+        if (!areaId) continue;
+        requestedQualificationAreaIds.add(areaId);
+        const levelId = normalizeShortText(qualification.levelId, { max: 160 });
+        if (levelId) requestedQualificationLevelIds.add(levelId);
+      }
+      const [requestedAreaDocuments, requestedLevelDocuments] = await Promise.all([
+        mapWithConcurrency([...requestedQualificationAreaIds], 8, async (areaId) => ({
+          id: areaId,
+          document: await read(COLLECTIONS.teamQualificationAreas, areaId),
+        })),
+        mapWithConcurrency([...requestedQualificationLevelIds], 8, async (levelId) => ({
+          id: levelId,
+          document: await read(COLLECTIONS.teamQualificationLevels, levelId),
+        })),
+      ]);
+      const requestedAreasById = new Map(requestedAreaDocuments.map(({ id, document }) => [id, document]));
+      const requestedLevelsById = new Map(requestedLevelDocuments.map(({ id, document }) => [id, document]));
       const validatePositionIds = async (ids, existingIds) => {
         if (!ids) return undefined;
         for (const id of ids) {
@@ -4392,14 +4485,7 @@ export const createTeamsAuthHandlers = ({
           if (!position || position.churchId !== churchId || !position.teamId) {
             throw httpError(400, "Position must belong to this team.");
           }
-          let ownerTeamId = slices.positionOwnerById.get(id);
-          if (!ownerTeamId) {
-            const owner = await read(COLLECTIONS.teams, position.teamId);
-            if (!owner || owner.churchId !== churchId || (owner.teamId !== undefined && owner.teamId !== position.teamId)) {
-              throw httpError(409, "Position ownership is invalid.");
-            }
-            ownerTeamId = position.teamId;
-          }
+          const ownerTeamId = positionOwnerById.get(id);
           if (ownerTeamId !== teamId) throw httpError(400, "Position must belong to this team.");
           if (position.archivedAt && !existingIds.has(id)) {
             throw httpError(400, "Archived positions cannot be added.");
@@ -4451,8 +4537,8 @@ export const createTeamsAuthHandlers = ({
         const priorQualifications = Array.isArray(member.qualifications) ? member.qualifications : [];
         const ownedQualifications = slices.targetQualifications;
         const ownedQualificationIds = new Set(ownedQualifications.map((item) => item.qualificationId));
-        const areasById = new Map();
-        const levelById = new Map();
+        const areasById = new Map(requestedAreasById);
+        const levelById = new Map(requestedLevelsById);
         const requestedIds = new Set();
         const replacements = [];
         for (const qualification of requested.qualifications) {
@@ -4515,6 +4601,45 @@ export const createTeamsAuthHandlers = ({
         }
         const unrelated = priorQualifications.filter((item) => !ownedQualificationIds.has(item.qualificationId));
         nextQualifications = [...unrelated, ...replacements];
+      }
+
+      // Compare only submitted sections against the fresh transaction snapshot.
+      // Value baselines also detect changes made by the full member editor,
+      // without adding revision counters that every roster writer must maintain.
+      const currentSections = {
+        positionIds: slices.targetPositionIds(member.positionIds),
+        desiredPositionIds: slices.targetPositionIds(member.desiredPositionIds),
+        membership: slices.membership,
+        qualifications: slices.targetQualifications,
+      };
+      for (const key of Object.keys(requested)) {
+        if (!baseline || !Object.hasOwn(baseline, key)) {
+          throw httpError(409, "Reopen this team profile before saving so your changes can be checked.");
+        }
+        let current = currentSections[key];
+        let base = baseline[key];
+        if (key === "membership") {
+          const membershipView = (value) => ({
+            ...(Object.hasOwn(requested.membership, "roleId") ? { roleId: value.roleId || null } : {}),
+            ...(Object.hasOwn(requested.membership, "isTeamLead") ? { isTeamLead: value.isTeamLead === true } : {}),
+          });
+          current = membershipView(current);
+          base = membershipView(base);
+        } else if (key === "qualifications") {
+          if (base.some((item) => !item || typeof item !== "object" || Array.isArray(item))) {
+            throw httpError(400, "Qualification baseline is invalid.");
+          }
+          // Bootstrap fills in the owning team for legacy qualifications whose
+          // stored teamId is absent. Both read paths describe the same section.
+          const qualificationView = (item) => teamProfileQualificationView({ ...item, teamId });
+          current = current.map(qualificationView);
+          base = base.map(qualificationView);
+        } else {
+          current = [...new Set(current)];
+        }
+        if (!isDeepStrictEqual(current, base)) {
+          throw httpError(409, "This part of the team profile changed since you opened it. Your edits are still here. Reopen the profile to review the latest changes before saving.");
+        }
       }
 
       const memberPatch = {
@@ -6442,7 +6567,13 @@ export const createTeamsAuthHandlers = ({
             },
           );
         } else if (transaction) {
-          transaction.set(ref, doc, { merge: true });
+          transaction.set(ref, {
+            ...doc,
+            ...volunteerContactIndexFields(
+              { ...current, ...doc },
+              process.env.AUTH_VOLUNTEER_PORTAL_SECRET,
+            ),
+          }, { merge: true });
         } else {
           await setDoc(config.collection, nextId, doc, { merge: true });
         }
@@ -7192,8 +7323,8 @@ export const createTeamsAuthHandlers = ({
   };
 
   /**
-   * Resolve only people explicitly opted into participant overlays for this
-   * saved plan. The response contains no contact fields or unrelated roster
+   * Resolve people assigned to items in this saved plan for participant
+   * overlays. The response contains no contact fields or unrelated roster
    * rows. A position may scope which team membership to inspect, but its name
    * is never used as the participant title.
    */
@@ -7322,13 +7453,17 @@ export const createTeamsAuthHandlers = ({
       return { name, memberStatus: "resolved", ...role };
     };
 
-    const enabledElements = (servicePlan?.sections || []).flatMap((section) =>
+    const assignedElements = (servicePlan?.sections || []).flatMap((section) =>
       (section?.elements || []).filter(
-        (element) => element?.participantOverlay?.enabled === true,
+        (element) => assigneesForElement(element).some(
+          (assignee) =>
+            normalizeShortText(assignee?.memberId, { max: 160 }) ||
+            normalizeShortText(assignee?.name, { max: 200 }),
+        ),
       ),
     );
     const elements = await Promise.all(
-      enabledElements.map(async (element) => {
+      assignedElements.map(async (element) => {
         const positionIds = [
           ...new Set(
             [
@@ -7732,6 +7867,71 @@ export const createTeamsAuthHandlers = ({
       })
       .filter(Boolean);
 
+  const normalizeTeamIntakeMemberBirthDate = (value) => {
+    if (
+      value === undefined ||
+      value === null ||
+      (typeof value === "string" && !value.trim())
+    ) return null;
+    if (
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      !Object.values(value).some(
+        (part) =>
+          part !== undefined && part !== null && String(part).trim() !== "",
+      )
+    ) {
+      return null;
+    }
+    try {
+      return normalizeBirthDate(value);
+    } catch {
+      // Treat a nonempty legacy value as populated so a public link cannot
+      // replace it with a different birthday.
+      return value;
+    }
+  };
+
+  const getMissingTeamIntakeMemberDetailFields = (member) => {
+    const missingFields = [];
+    if (!normalizeShortText(member?.title, { max: 40 })) missingFields.push("title");
+    if (!normalizeShortText(member?.firstName, { max: 80 })) missingFields.push("firstName");
+    if (!normalizeShortText(member?.lastName, { max: 80 })) missingFields.push("lastName");
+    if (!normalizeTeamIntakeMemberBirthDate(member?.birthDate)) missingFields.push("birthDate");
+    if (!String(member?.email || "").trim()) missingFields.push("email");
+    return missingFields;
+  };
+
+  const buildTeamIntakeMissingMemberDetailPatch = ({
+    member,
+    submittedMemberDetails = {},
+    form,
+  }) => {
+    const enabledFields = new Set(
+      normalizeTeamIntakeFields(undefined, form?.enabledFields),
+    );
+    const missingFields = new Set(getMissingTeamIntakeMemberDetailFields(member));
+    const patch = {};
+    for (const field of ["title", "firstName", "lastName"]) {
+      if (!enabledFields.has(field) || !missingFields.has(field)) continue;
+      const max = field === "title" ? 40 : 80;
+      const value = normalizeShortText(submittedMemberDetails[field], { max });
+      if (value) patch[field] = value;
+    }
+    if (enabledFields.has("email") && missingFields.has("email")) {
+      const email = normalizeMemberEmail(submittedMemberDetails.email);
+      if (email) patch.email = email;
+    }
+    if (enabledFields.has("birthDate") && missingFields.has("birthDate")) {
+      const birthDate = normalizeBirthDate(submittedMemberDetails.birthDate);
+      if (birthDate) {
+        patch.birthDate = birthDate;
+        patch.isMinor = isMinorFromBirthDate(birthDate) ?? Boolean(member?.isMinor);
+      }
+    }
+    return patch;
+  };
+
   const validateTeamIntakeSubmissionPayload = async (
     body,
     form,
@@ -7740,13 +7940,22 @@ export const createTeamsAuthHandlers = ({
     const enabledFields = new Set(
       normalizeTeamIntakeFields(undefined, form?.enabledFields),
     );
+    const missingPersonalFields = new Set(
+      personalizedMember
+        ? getMissingTeamIntakeMemberDetailFields(personalizedMember)
+        : [],
+    );
     const firstName = personalizedMember
-      ? normalizeShortText(personalizedMember.firstName, { max: 80 })
+      ? enabledFields.has("firstName") && missingPersonalFields.has("firstName")
+        ? normalizeShortText(body?.firstName, { max: 80 })
+        : normalizeShortText(personalizedMember.firstName, { max: 80 })
       : enabledFields.has("firstName")
         ? normalizeShortText(body?.firstName, { max: 80 })
         : "";
     const lastName = personalizedMember
-      ? normalizeShortText(personalizedMember.lastName, { max: 80 })
+      ? enabledFields.has("lastName") && missingPersonalFields.has("lastName")
+        ? normalizeShortText(body?.lastName, { max: 80 })
+        : normalizeShortText(personalizedMember.lastName, { max: 80 })
       : enabledFields.has("lastName")
         ? normalizeShortText(body?.lastName, { max: 80 })
         : "";
@@ -7765,28 +7974,56 @@ export const createTeamsAuthHandlers = ({
     // public form even renders an email field. Churches enable it per form, and
     // the default can flip once the client field has shipped everywhere.
     const email = personalizedMember
-      ? ""
+      ? enabledFields.has("email") && missingPersonalFields.has("email")
+        ? normalizeMemberEmail(body?.email)
+        : ""
       : enabledFields.has("email")
         ? normalizeMemberEmail(body?.email)
         : "";
-    if (!personalizedMember && enabledFields.has("email") && !email) {
+    if (
+      enabledFields.has("email") &&
+      (!personalizedMember || missingPersonalFields.has("email")) &&
+      !email
+    ) {
       throw httpError(400, "Email is required.");
     }
     const title = personalizedMember
-      ? ""
+      ? enabledFields.has("title") && missingPersonalFields.has("title")
+        ? normalizeShortText(body?.title, { max: 40 })
+        : ""
       : enabledFields.has("title")
         ? normalizeShortText(body?.title, { max: 40 })
         : "";
-    if (!personalizedMember && enabledFields.has("title") && !title) {
+    if (
+      enabledFields.has("title") &&
+      (!personalizedMember || missingPersonalFields.has("title")) &&
+      !title
+    ) {
       throw httpError(400, "Title is required.");
     }
     const birthDate = personalizedMember
-      ? null
+      ? enabledFields.has("birthDate") && missingPersonalFields.has("birthDate")
+        ? normalizeBirthDate(body?.birthDate)
+        : null
       : enabledFields.has("birthDate")
         ? normalizeBirthDate(body?.birthDate)
         : null;
-    if (!personalizedMember && enabledFields.has("birthDate") && !birthDate) {
+    if (
+      enabledFields.has("birthDate") &&
+      (!personalizedMember || missingPersonalFields.has("birthDate")) &&
+      !birthDate
+    ) {
       throw httpError(400, "Birthday is required.");
+    }
+    const submittedMemberDetails = {};
+    if (personalizedMember) {
+      for (const field of ["title", "firstName", "lastName", "birthDate", "email"]) {
+        if (!enabledFields.has(field) || !missingPersonalFields.has(field)) continue;
+        const value = { title, firstName, lastName, birthDate, email }[field];
+        if (value !== "" && value !== null && value !== undefined) {
+          submittedMemberDetails[field] = value;
+        }
+      }
     }
     // The public preview only offers positions from the form's scoped teams
     // (empty teamIds means every team). Enforce that same scope on submission so
@@ -7836,6 +8073,7 @@ export const createTeamsAuthHandlers = ({
       email,
       title,
       birthDate,
+      ...(personalizedMember ? { submittedMemberDetails } : {}),
       normalizedName: normalizePersonNameKey(firstName, lastName),
       positionIds,
       occurrenceAvailability,
@@ -8788,6 +9026,8 @@ export const createTeamsAuthHandlers = ({
     churchId,
     memberId,
     createMember = false,
+    personalizedSubmission = false,
+    submittedMemberDetails = {},
     adminUserId,
     now = nowIso(),
   }) => {
@@ -8796,35 +9036,49 @@ export const createTeamsAuthHandlers = ({
       if (createMember) {
         throw httpError(400, "Availability responses can only update an existing Team member.");
       }
-      const member = await assertTeamEntityInChurch("member", memberId, churchId, {
-        label: "Member",
-        active: false,
-      });
-      const serviceAvailability = replaceServiceAvailabilityForForm({
-        existingAvailability: member.serviceAvailability,
-        replacementAvailability: normalizeServiceAvailability(
-          submission.occurrenceAvailability,
-        ),
-        form,
-      });
-      await setDoc(
-        COLLECTIONS.teamRosterMembers,
-        member.memberId,
-        {
-          serviceAvailability,
-          updatedAt: now,
-          updatedByUid: adminUserId,
-        },
-        { merge: true },
-      );
+      const updateMember = async () => {
+        const member = await assertTeamEntityInChurch("member", memberId, churchId, {
+          label: "Member",
+          active: false,
+        });
+        const serviceAvailability = replaceServiceAvailabilityForForm({
+          existingAvailability: member.serviceAvailability,
+          replacementAvailability: normalizeServiceAvailability(
+            submission.occurrenceAvailability,
+          ),
+          form,
+        });
+        const memberDetailPatch = personalizedSubmission
+          ? buildTeamIntakeMissingMemberDetailPatch({
+              member,
+              submittedMemberDetails,
+              form,
+            })
+          : {};
+        await setDoc(
+          COLLECTIONS.teamRosterMembers,
+          member.memberId,
+          {
+            serviceAvailability,
+            ...memberDetailPatch,
+            updatedAt: now,
+            updatedByUid: adminUserId,
+          },
+          { merge: true },
+        );
+        return member.memberId;
+      };
+      const memberIdForResponse = requireFirestore?.()?.runTransaction
+        ? await updateMember()
+        : await enqueueInMemoryRosterMemberMutation(memberId, updateMember);
       return {
-        member: await getTeamEntity("member", member.memberId),
+        member: await getTeamEntity("member", memberIdForResponse),
         updatedTeams: [],
         application: {
           status: "applied",
           appliedAt: now,
           appliedByUid: adminUserId,
-          appliedMemberId: member.memberId,
+          appliedMemberId: memberIdForResponse,
           appliedMemberCreated: false,
         },
       };
@@ -8894,64 +9148,81 @@ export const createTeamsAuthHandlers = ({
         }),
       );
     } else {
-      member = await assertTeamEntityInChurch("member", memberId, churchId, {
-        label: "Member",
-        active: false,
-      });
       const nextDesiredPositionIds = normalizeIdArray(desiredPositionIds);
-      const nextBlockoutDates = formCollectsBlockouts
-        ? replaceBlockoutDateRangesInPeriod({
-            existingRanges: member.blockoutDates,
-            replacementRanges: blockoutDates,
-            startDate: form.startDate,
-            endDate: form.endDate,
-          })
-        : formBelongsToChurch
-          ? member.blockoutDates || []
-          : mergeBlockoutDateRanges([
-              ...(member.blockoutDates || []),
-              ...blockoutDates,
-            ]);
-      const nextServiceAvailability = replaceServiceAvailabilityForForm({
-        existingAvailability: member.serviceAvailability,
-        replacementAvailability: submissionAvailability,
-        form,
-      });
       const submittedEmail = normalizeMemberEmail(submission.email);
       const submittedTitle = normalizeShortText(submission.title, { max: 40 });
       const submittedBirthDate = normalizeBirthDate(submission.birthDate);
-      await setDoc(
-        COLLECTIONS.teamRosterMembers,
-        member.memberId,
-        {
-          desiredPositionIds: nextDesiredPositionIds,
-          serviceAvailability: nextServiceAvailability,
-          blockoutDates: nextBlockoutDates,
-          ...(member.email
-            ? {}
-            : submittedEmail
-              ? { email: submittedEmail }
+      const updateMember = async () => {
+        const currentMember = await assertTeamEntityInChurch("member", memberId, churchId, {
+          label: "Member",
+          active: false,
+        });
+        const nextBlockoutDates = formCollectsBlockouts
+          ? replaceBlockoutDateRangesInPeriod({
+              existingRanges: currentMember.blockoutDates,
+              replacementRanges: blockoutDates,
+              startDate: form.startDate,
+              endDate: form.endDate,
+            })
+          : formBelongsToChurch
+            ? currentMember.blockoutDates || []
+            : mergeBlockoutDateRanges([
+                ...(currentMember.blockoutDates || []),
+                ...blockoutDates,
+              ]);
+        const nextServiceAvailability = replaceServiceAvailabilityForForm({
+          existingAvailability: currentMember.serviceAvailability,
+          replacementAvailability: submissionAvailability,
+          form,
+        });
+        const memberDetailPatch = personalizedSubmission
+          ? buildTeamIntakeMissingMemberDetailPatch({
+              member: currentMember,
+              submittedMemberDetails,
+              form,
+            })
+          : {
+              ...(currentMember.email
+                ? {}
+                : submittedEmail
+                  ? { email: submittedEmail }
+                  : {}),
+              ...(!currentMember.title && submittedTitle
+                ? { title: submittedTitle }
+                : {}),
+              ...(!currentMember.birthDate && submittedBirthDate
+                ? {
+                    birthDate: submittedBirthDate,
+                    isMinor:
+                      isMinorFromBirthDate(submittedBirthDate) ??
+                      Boolean(currentMember.isMinor),
+                  }
+                : {}),
+            };
+        await setDoc(
+          COLLECTIONS.teamRosterMembers,
+          currentMember.memberId,
+          {
+            desiredPositionIds: nextDesiredPositionIds,
+            serviceAvailability: nextServiceAvailability,
+            blockoutDates: nextBlockoutDates,
+            ...memberDetailPatch,
+            ...(submission.servingFrequency
+              ? { servingFrequency: submission.servingFrequency }
               : {}),
-          ...(!member.title && submittedTitle ? { title: submittedTitle } : {}),
-          ...(!member.birthDate && submittedBirthDate
-            ? {
-                birthDate: submittedBirthDate,
-                isMinor:
-                  isMinorFromBirthDate(submittedBirthDate) ??
-                  Boolean(member.isMinor),
-              }
-            : {}),
-          ...(submission.servingFrequency
-            ? { servingFrequency: submission.servingFrequency }
-            : {}),
-          ...(submission.recurringAvailability
-            ? { recurringAvailability: submission.recurringAvailability }
-            : {}),
-          updatedAt: now,
-          updatedByUid: adminUserId,
-        },
-        { merge: true },
-      );
+            ...(submission.recurringAvailability
+              ? { recurringAvailability: submission.recurringAvailability }
+              : {}),
+            updatedAt: now,
+            updatedByUid: adminUserId,
+          },
+          { merge: true },
+        );
+        return getTeamEntity("member", currentMember.memberId);
+      };
+      member = requireFirestore?.()?.runTransaction
+        ? await updateMember()
+        : await enqueueInMemoryRosterMemberMutation(memberId, updateMember);
       trackTeams(
         await addMemberToTeamsForPositions({
           churchId,
@@ -8986,7 +9257,7 @@ export const createTeamsAuthHandlers = ({
 
   const submitTeamIntakeRecipientWithFirestoreTransaction = async ({
     token,
-    payload,
+    body,
     identity,
     recipientId,
   }) => {
@@ -9045,10 +9316,13 @@ export const createTeamsAuthHandlers = ({
 
 
       if (identity) assertTeamIntakeFormResponseDeadline(form);
-      // Revalidate occurrence scope from the form read in this transaction.
-      const currentPayload = availabilityOnly
-        ? await validateTeamIntakeSubmissionPayload(payload, form, { member })
-        : payload;
+      // Revalidate submitted fields against the member and form read in this
+      // transaction so a value filled after preview cannot be overwritten.
+      const currentPayload = await validateTeamIntakeSubmissionPayload(
+        body,
+        form,
+        { member },
+      );
 
       const submissionId =
         recipient.submissionId ||
@@ -9129,25 +9403,17 @@ export const createTeamsAuthHandlers = ({
         ),
         form,
       });
+      const memberDetailPatch = buildTeamIntakeMissingMemberDetailPatch({
+        member,
+        submittedMemberDetails: currentPayload.submittedMemberDetails,
+        form,
+      });
       const adminUserId = `recipient:${recipient.recipientId}`;
       const memberUpdate = {
         desiredPositionIds,
         serviceAvailability: nextServiceAvailability,
         blockoutDates: nextBlockoutDates,
-        ...(member.email || !currentPayload.email
-          ? {}
-          : { email: normalizeMemberEmail(currentPayload.email) }),
-        ...(!member.title && currentPayload.title
-          ? { title: normalizeShortText(currentPayload.title, { max: 40 }) }
-          : {}),
-        ...(!member.birthDate && currentPayload.birthDate
-          ? {
-              birthDate: normalizeBirthDate(currentPayload.birthDate),
-              isMinor:
-                isMinorFromBirthDate(currentPayload.birthDate) ??
-                Boolean(member.isMinor),
-            }
-          : {}),
+        ...memberDetailPatch,
         ...(currentPayload.servingFrequency
           ? { servingFrequency: currentPayload.servingFrequency }
           : {}),
@@ -9164,8 +9430,12 @@ export const createTeamsAuthHandlers = ({
         appliedMemberId: member.memberId,
         appliedMemberCreated: false,
       };
+      const {
+        submittedMemberDetails = {},
+        ...submissionPayload
+      } = currentPayload;
       const submission = {
-        ...currentPayload,
+        ...submissionPayload,
         submissionId,
         formId: form.formId,
         churchId: form.churchId,
@@ -9180,6 +9450,7 @@ export const createTeamsAuthHandlers = ({
       const memberPatch = availabilityOnly
         ? {
             serviceAvailability: nextServiceAvailability,
+            ...memberDetailPatch,
             updatedAt: submittedAt,
             updatedByUid: adminUserId,
           }
@@ -9276,7 +9547,7 @@ export const createTeamsAuthHandlers = ({
         const transactionalResult =
           await submitTeamIntakeRecipientWithFirestoreTransaction({
             token,
-            payload,
+            body: req.body,
             identity,
             recipientId,
           });
@@ -9293,11 +9564,15 @@ export const createTeamsAuthHandlers = ({
           );
         }
         const submittedAt = nowIso();
+        const {
+          submittedMemberDetails = {},
+          ...submissionPayload
+        } = payload;
         const submissionId =
           recipient.submissionId ||
           `teamIntakeSubmission_${hashValue(recipient.recipientId).slice(0, 32)}`;
         const submission = {
-          ...payload,
+          ...submissionPayload,
           submissionId,
           formId: form.formId,
           churchId: form.churchId,
@@ -9323,6 +9598,8 @@ export const createTeamsAuthHandlers = ({
           form,
           churchId: form.churchId,
           memberId: member.memberId,
+          personalizedSubmission: true,
+          submittedMemberDetails,
           adminUserId: `recipient:${recipient.recipientId}`,
           now: submittedAt,
         });
@@ -12561,7 +12838,7 @@ export const createTeamsAuthHandlers = ({
   };
 
   const authorizeChurchServiceTimeZoneRead = async (req, churchId) => {
-    let bootstrap = await resolveRequestBootstrap(req);
+    const bootstrap = await resolveRequestBootstrap(req);
     if (!bootstrap?.authenticated) {
       throw httpError(401, "Authentication required");
     }
@@ -12570,34 +12847,33 @@ export const createTeamsAuthHandlers = ({
     }
     if (bootstrap.sessionKind === "display") {
       // Presentation configuration only; this grants no workspace or edit access.
-      return { controllerOnlyRead: true };
+      return { restrictedRead: true };
     }
 
     try {
       await requireServicesWorkspaceView(req, churchId);
-      return { controllerOnlyRead: false };
+      return { restrictedRead: false };
     } catch (error) {
       if (error?.statusCode !== 403) throw error;
     }
 
     try {
       await requireTeamsView(req, churchId);
-      return { controllerOnlyRead: false };
+      return { restrictedRead: false };
     } catch (error) {
       if (error?.statusCode !== 403) throw error;
-      if (bootstrap.sessionKind !== "workstation") {
-        bootstrap = await requireHumanSession(req);
-        const controllerAccess =
-          bootstrap.controllerAccess ?? bootstrap.appAccess ?? "view";
-        if (
-          bootstrap.churchId !== churchId ||
-          bootstrap.role !== "member" ||
-          !["full", "music", "view"].includes(controllerAccess)
-        ) {
-          throw error;
-        }
+      if (bootstrap.sessionKind === "workstation") {
+        return { restrictedRead: true };
       }
-      return { controllerOnlyRead: true };
+
+      // Any active human church member may read this narrow setting. The
+      // human session guard revalidates current church membership; this does
+      // not grant access to the wider Teams or Services workspace.
+      const humanSession = await requireHumanSession(req);
+      if (humanSession.churchId !== churchId) {
+        throw httpError(403, "Church access required");
+      }
+      return { restrictedRead: true };
     }
   };
 
@@ -18117,7 +18393,12 @@ export const createTeamsAuthHandlers = ({
             notesMessage: form.notesMessage || "",
           },
           ...(member
-            ? { recipient: { firstName: member.firstName || "there" } }
+            ? {
+                recipient: {
+                  firstName: member.firstName || "there",
+                  missingFields: getMissingTeamIntakeMemberDetailFields(member),
+                },
+              }
             : {}),
           // Allowlist the fields the public form needs — never ship internal
           // position columns (description, order, timestamps) on a public link.
@@ -19875,14 +20156,14 @@ export const createTeamsAuthHandlers = ({
     async getChurchServiceTimeZone(req, res) {
       try {
         const churchId = req.params.churchId;
-        const { controllerOnlyRead } =
+        const { restrictedRead } =
           await authorizeChurchServiceTimeZoneRead(req, churchId);
         const church = await getDoc(COLLECTIONS.churches, churchId);
         if (!church) throw httpError(404, "Church settings were not found.");
         const isConfigured = isValidPortableTimeZone(church.serviceTimeZone);
-        const serviceTimeZone = isConfigured ? church.serviceTimeZone : "UTC";
+        const serviceTimeZone = isConfigured ? church.serviceTimeZone : null;
         let legacyTimeZoneSuggestion = null;
-        if (!isConfigured && !controllerOnlyRead) {
+        if (!isConfigured && !restrictedRead) {
           const legacyChatSettings = await getDoc("chatSettings", churchId);
           const legacyTimeZone = legacyChatSettings?.timeZone;
           if (isValidPortableTimeZone(legacyTimeZone)) {
@@ -19898,7 +20179,7 @@ export const createTeamsAuthHandlers = ({
             church.serviceTimeZoneRevision
               ? church.serviceTimeZoneRevision
               : "legacy",
-          ...(controllerOnlyRead ? {} : { legacyTimeZoneSuggestion }),
+          ...(restrictedRead ? {} : { legacyTimeZoneSuggestion }),
         });
       } catch (error) {
         return sendTeamsJsonError(

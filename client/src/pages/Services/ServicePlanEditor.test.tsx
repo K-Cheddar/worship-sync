@@ -1,4 +1,11 @@
-import { act, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import type { ContextType, ReactNode } from "react";
@@ -35,6 +42,7 @@ import {
 } from "../../api/auth";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { getServicePlanningImportDataFromUrl } from "../../containers/Overlays/eventParser";
+import { getPublicServiceFlow } from "../../services/serviceFlowApi";
 import { extractTextFromPdfFile } from "./extractPdfText";
 import type {
   TeamPosition,
@@ -47,13 +55,14 @@ import type { ServicePlan } from "../../types/servicePlan";
 import type { ServicePlanTemplateResource } from "./servicePlanTemplateResource";
 import type { TeamsAssignmentSummaryRow } from "../Teams/pages/teamsAssignmentsSummary";
 import type { ServicePlanTimingSource } from "./servicePlanTimingUtils";
-import {
-  plainTextToRichText,
-  richTextToPlainText,
-} from "../../types/richText";
+import { plainTextToRichText, richTextToPlainText } from "../../types/richText";
 import { calendarDateInTimeZone } from "../../utils/teamScheduleOccurrences";
 import * as generalUtils from "../../utils/generalUtils";
-import { flushServicePlanRecoveryDraftWrites, readServicePlanRecoveryDraft, saveServicePlanRecoveryDraft } from "./servicePlanRecovery";
+import {
+  flushServicePlanRecoveryDraftWrites,
+  readServicePlanRecoveryDraft,
+  saveServicePlanRecoveryDraft,
+} from "./servicePlanRecovery";
 
 jest.mock("../../api/auth", () => ({
   // Autosave's conflict check does `error instanceof AuthApiError`, so the
@@ -133,6 +142,9 @@ jest.mock("./ServicePlanLibraryPicker", () => ({
 jest.mock("../../containers/Overlays/eventParser", () => ({
   getServicePlanningImportDataFromUrl: jest.fn(),
 }));
+jest.mock("../../services/serviceFlowApi", () => ({
+  getPublicServiceFlow: jest.fn(),
+}));
 
 jest.mock("../../context/churchServiceTimeZone", () => ({
   useChurchServiceTimeZone: () => ({
@@ -164,20 +176,27 @@ jest.mock("../../hooks", () => ({
 const mockListServicePlanTemplates = jest.mocked(listServicePlanTemplates);
 const mockSaveServicePlanTemplate = jest.mocked(saveServicePlanTemplate);
 const mockGetServicePlan = jest.mocked(getServicePlan);
-const mockGetServicePlanAssignmentHistory = jest.mocked(getServicePlanAssignmentHistory);
+const mockGetServicePlanAssignmentHistory = jest.mocked(
+  getServicePlanAssignmentHistory,
+);
 const mockGetServicePlanMicrophones = jest.mocked(getServicePlanMicrophones);
 const mockGetServiceEquipment = jest.mocked(getServiceEquipment);
-const mockSaveServicePlanAssignmentHistory = jest.mocked(saveServicePlanAssignmentHistory);
+const mockSaveServicePlanAssignmentHistory = jest.mocked(
+  saveServicePlanAssignmentHistory,
+);
 const mockSaveServicePlanMicrophones = jest.mocked(saveServicePlanMicrophones);
 const mockGetServicePlanningImportDataFromUrl = jest.mocked(
   getServicePlanningImportDataFromUrl,
 );
+const mockGetPublicServiceFlow = jest.mocked(getPublicServiceFlow);
 const mockExtractTextFromPdfFile = jest.mocked(extractTextFromPdfFile);
 const mockPublishServicePlan = jest.mocked(publishServicePlan);
 const mockSaveServicePlan = jest.mocked(saveServicePlan);
 const mockUnpublishServicePlan = jest.mocked(unpublishServicePlan);
 const mockSendServicePlanShareEmail = jest.mocked(sendServicePlanShareEmail);
-const mockUpdateServicePlanPublicLive = jest.mocked(updateServicePlanPublicLive);
+const mockUpdateServicePlanPublicLive = jest.mocked(
+  updateServicePlanPublicLive,
+);
 const mockSearchYouTubeVideos = jest.mocked(searchYouTubeVideos);
 
 const oneTimeService: TeamService = {
@@ -289,18 +308,21 @@ const editorTree = ({
   </GlobalInfoContext.Provider>
 );
 
-const renderEditor = (props: RenderEditorProps = {}) => render(editorTree(props));
+const renderEditor = (props: RenderEditorProps = {}) =>
+  render(editorTree(props));
 
-const renderEditorWithDb = (db: PouchDB.Database, props: RenderEditorProps = {}) =>
+const renderEditorWithDb = (
+  db: PouchDB.Database,
+  props: RenderEditorProps = {},
+) =>
   render(
     <ControllerInfoContext.Provider value={createMockControllerContext({ db })}>
       {editorTree(props)}
     </ControllerInfoContext.Provider>,
   );
 
-const mockPlanLayout = () => jest
-  .spyOn(HTMLElement.prototype, "getBoundingClientRect")
-  .mockReturnValue({
+const mockPlanLayout = () =>
+  jest.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
     x: 0,
     y: 0,
     width: 800,
@@ -325,7 +347,11 @@ describe("collectServicePlanTeamNoteLabels", () => {
               type: "free",
               title: plainTextToRichText("One"),
               teamNotes: [
-                { id: "tn-1", label: "Media Team", note: plainTextToRichText("a") },
+                {
+                  id: "tn-1",
+                  label: "Media Team",
+                  note: plainTextToRichText("a"),
+                },
                 { id: "tn-2", label: "Band", note: plainTextToRichText("b") },
                 { id: "tn-3", label: "  ", note: plainTextToRichText("c") },
                 { id: "tn-4", label: "Band", note: plainTextToRichText("d") },
@@ -344,22 +370,28 @@ describe("role note filter options", () => {
   // hides other roles' notes via the existing roleNotesFilter matchers.
   it("keeps quiet roster roles available in the filter", () => {
     const allRoles = collectServicePlanRoleNoteOptions(
-      [{
-        id: "section-1",
-        name: "Worship",
-        elements: [{
-          id: "el-1",
-          type: "free",
-          title: plainTextToRichText("One"),
-          teamNotes: [{
-            id: "note-1",
-            scope: "role",
-            positionId: "camera",
-            label: "Media Team · Camera",
-            note: plainTextToRichText("Hold the wide shot."),
-          }],
-        }],
-      }],
+      [
+        {
+          id: "section-1",
+          name: "Worship",
+          elements: [
+            {
+              id: "el-1",
+              type: "free",
+              title: plainTextToRichText("One"),
+              teamNotes: [
+                {
+                  id: "note-1",
+                  scope: "role",
+                  positionId: "camera",
+                  label: "Media Team · Camera",
+                  note: plainTextToRichText("Hold the wide shot."),
+                },
+              ],
+            },
+          ],
+        },
+      ],
       [
         {
           positionId: "camera",
@@ -376,12 +408,14 @@ describe("role note filter options", () => {
           icon: "lyrics",
         },
       ],
-      [{
-        teamId: "media",
-        churchId: "church-1",
-        name: "Media Team",
-        memberIds: [],
-      }],
+      [
+        {
+          teamId: "media",
+          churchId: "church-1",
+          name: "Media Team",
+          memberIds: [],
+        },
+      ],
     );
 
     const filterOptions = allRoles.filter((role) =>
@@ -427,56 +461,58 @@ describe("ServicePlanEditor", () => {
     jest.clearAllMocks();
     flushServicePlanRecoveryDraftWrites();
     sessionStorage.clear();
-    for (const key of Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index))) {
-      if (key?.startsWith("worship-sync:service-plan-draft:")) localStorage.removeItem(key);
-      if (key?.startsWith("worshipsyncServicePlanLastUsedTemplates:")) localStorage.removeItem(key);
+    for (const key of Array.from({ length: localStorage.length }, (_, index) =>
+      localStorage.key(index),
+    )) {
+      if (key?.startsWith("worship-sync:service-plan-draft:"))
+        localStorage.removeItem(key);
+      if (key?.startsWith("worshipsyncServicePlanLastUsedTemplates:"))
+        localStorage.removeItem(key);
     }
     localStorage.removeItem("worshipsyncServicePlanImportSource");
     localStorage.removeItem("worshipsyncServicePublicNotesTeam");
     mockAllSongDocs = [];
     mockExtractTextFromPdfFile.mockReset();
     mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: null });
-    mockSearchYouTubeVideos.mockResolvedValue({
-      query: "Living Hope",
-      cached: false,
-      results: [{
-        videoId: "abcdefghijk",
-        title: "Living Hope (Official Video)",
-        channelName: "Test Artist",
-        thumbnail: "https://img.example/thumb.jpg",
-        description: "Official recording",
-        durationSeconds: 180,
-        embeddable: true,
-        watchUrl: "https://www.youtube.com/watch?v=abcdefghijk",
-      }],
+    mockGetPublicServiceFlow.mockReset();
+    mockListServicePlanTemplates.mockResolvedValue({
+      success: true,
+      templates: [],
     });
-    mockListServicePlanTemplates.mockResolvedValue({ success: true, templates: [] });
     mockSaveServicePlanTemplate.mockResolvedValue({
       success: true,
       template: {} as never,
     });
-    mockGetServicePlanAssignmentHistory.mockResolvedValue({ success: true, values: [] });
+    mockGetServicePlanAssignmentHistory.mockResolvedValue({
+      success: true,
+      values: [],
+    });
     mockGetServicePlanMicrophones.mockResolvedValue({
       success: true,
       microphones: [],
       audiences: [],
     });
     mockGetServiceEquipment.mockResolvedValue({ success: true, equipment: [] });
-    mockSaveServicePlanAssignmentHistory.mockResolvedValue({ success: true, values: [] });
+    mockSaveServicePlanAssignmentHistory.mockResolvedValue({
+      success: true,
+      values: [],
+    });
     mockSaveServicePlanMicrophones.mockResolvedValue({
       success: true,
       microphones: [],
       audiences: [],
     });
-    mockSaveServicePlan.mockImplementation(async (_churchId, planKey, body) => ({
-      success: true,
-      servicePlan: {
-        planId: `church-1::${planKey}`,
-        churchId: "church-1",
-        planKey,
-        ...body,
-      } as ServicePlan,
-    }));
+    mockSaveServicePlan.mockImplementation(
+      async (_churchId, planKey, body) => ({
+        success: true,
+        servicePlan: {
+          planId: `church-1::${planKey}`,
+          churchId: "church-1",
+          planKey,
+          ...body,
+        } as ServicePlan,
+      }),
+    );
     mockPublishServicePlan.mockResolvedValue({
       success: true,
       publicUrl: "https://www.worshipsync.net/#/services/share-token",
@@ -498,6 +534,86 @@ describe("ServicePlanEditor", () => {
     });
   });
 
+  it("requires confirmation before a public WorshipSync plan replaces existing content", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "plan-1",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        published: true,
+        revision: 3,
+        sections: [
+          {
+            id: "old-section",
+            name: "Current",
+            elements: [
+              {
+                id: "old-item",
+                type: "free",
+                title: plainTextToRichText("Keep this until confirmed"),
+              },
+            ],
+          },
+        ],
+      } as ServicePlan,
+    });
+    mockGetPublicServiceFlow.mockResolvedValue({
+      service: {
+        shareId: "source-share",
+        title: "Source",
+        startsAt: "2026-07-26T14:00:00Z",
+        timezone: "UTC",
+        revision: 7,
+        sections: [
+          {
+            id: "public-section",
+            title: "Imported",
+            items: [
+              {
+                id: "public-item",
+                title: "Public item",
+                durationSeconds: 45,
+                notes: { blocks: [] },
+              },
+            ],
+          },
+        ],
+        live: { mode: "schedule" },
+      },
+    } as never);
+    localStorage.setItem("worshipsyncServicePlanImportSource", "worshipSync");
+
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(
+      await screen.findByRole("button", { name: /Plan actions/i }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: /Import updates/i }),
+    );
+    fireEvent.change(screen.getByLabelText(/Public service-plan link/i), {
+      target: { value: "https://www.worshipsync.net/services/source-share" },
+    });
+    await user.click(screen.getByRole("button", { name: /Import plan/i }));
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Replace this plan's content?",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Keep this until confirmed")).toBeInTheDocument();
+    expect(mockGetPublicServiceFlow).toHaveBeenCalledWith("source-share");
+    await user.click(screen.getByRole("button", { name: /Replace content/i }));
+    expect(await screen.findByDisplayValue("Imported")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Replace this plan's content?" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("autosaves the canonical church-local plan date across a UTC date boundary", async () => {
     const localSaturdayOccurrence: TeamScheduleOccurrence = {
       ...occurrence,
@@ -508,20 +624,25 @@ describe("ServicePlanEditor", () => {
     };
     const user = userEvent.setup();
     renderEditor({ occurrence: localSaturdayOccurrence });
-    await user.click(await screen.findByRole("button", { name: /Start from scratch/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Start from scratch/i }),
+    );
     await waitFor(
-      () => expect(mockSaveServicePlan).toHaveBeenCalledWith(
-        "church-1",
-        "service-1@2026-10-03",
-        expect.anything(),
-      ),
+      () =>
+        expect(mockSaveServicePlan).toHaveBeenCalledWith(
+          "church-1",
+          "service-1@2026-10-03",
+          expect.anything(),
+        ),
       { timeout: 2_500 },
     );
     const [, planKey, body] = mockSaveServicePlan.mock.calls.at(-1)!;
     expect(planKey).toBe("service-1@2026-10-03");
     expect(body.date).toBe("2026-10-03");
     expect(body.startsAt).toBe("2026-10-04T03:30:00.000Z");
-    expect(localSaturdayOccurrence.occurrenceId).toBe("service-1@2026-10-04T03:30:00.000Z");
+    expect(localSaturdayOccurrence.occurrenceId).toBe(
+      "service-1@2026-10-04T03:30:00.000Z",
+    );
   });
 
   describe("Equipment tab", () => {
@@ -557,7 +678,14 @@ describe("ServicePlanEditor", () => {
       });
       mockGetServiceEquipment.mockResolvedValue({
         success: true,
-        equipment: [{ id: "iem-black", category: "iem", name: "Black", subtype: "wireless-beltpack" }],
+        equipment: [
+          {
+            id: "iem-black",
+            category: "iem",
+            name: "Black",
+            subtype: "wireless-beltpack",
+          },
+        ],
       });
     };
 
@@ -597,7 +725,11 @@ describe("ServicePlanEditor", () => {
     it("shows IEM assignments for an IEM-only team", async () => {
       const user = userEvent.setup();
       const onIemChange = jest.fn();
-      const iemTeam = { ...microphoneTeam, usesMicrophoneAssignments: false, usesIemAssignments: true };
+      const iemTeam = {
+        ...microphoneTeam,
+        usesMicrophoneAssignments: false,
+        usesIemAssignments: true,
+      };
       withCatalog();
 
       renderEditor({
@@ -609,7 +741,9 @@ describe("ServicePlanEditor", () => {
         },
       });
 
-      await user.click(await screen.findByRole("tab", { name: /Equipment assignments/i }));
+      await user.click(
+        await screen.findByRole("tab", { name: /Equipment assignments/i }),
+      );
       const iemSelect = await screen.findByRole("combobox", {
         name: /Microphone for Avery Stone \(Vocal 1\) IEM/i,
       });
@@ -643,10 +777,16 @@ describe("ServicePlanEditor", () => {
         await screen.findByRole("tab", { name: /Equipment assignments/i }),
       );
       expect(
-        screen.getByText(/No scheduled roles for teams that use equipment yet/i),
+        screen.getByText(
+          /No scheduled roles for teams that use equipment yet/i,
+        ),
       ).toBeInTheDocument();
-      expect(screen.getByRole("tab", { name: /Order of service/i })).toBeInTheDocument();
-      expect(screen.getByRole("tab", { name: /Rehearse/i })).toBeInTheDocument();
+      expect(
+        screen.getByRole("tab", { name: /Order of service/i }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("tab", { name: /Rehearse/i }),
+      ).toBeInTheDocument();
     });
   });
 
@@ -666,7 +806,11 @@ describe("ServicePlanEditor", () => {
               id: "section-1",
               name: "Worship",
               elements: [
-                { id: "el-1", type: "song", title: plainTextToRichText("Living Hope") },
+                {
+                  id: "el-1",
+                  type: "song",
+                  title: plainTextToRichText("Living Hope"),
+                },
               ],
             },
           ],
@@ -693,9 +837,13 @@ describe("ServicePlanEditor", () => {
       renderEditor();
 
       expect(
-        await screen.findByRole("button", { name: "View full name: Living Hope" }),
+        await screen.findByRole("button", {
+          name: "View full name: Living Hope",
+        }),
       ).toBeInTheDocument();
-      expect(screen.queryByLabelText("Service summary")).not.toBeInTheDocument();
+      expect(
+        screen.queryByLabelText("Service summary"),
+      ).not.toBeInTheDocument();
       expect(screen.queryByText(/filled/i)).not.toBeInTheDocument();
       expect(screen.queryByText(/responses/i)).not.toBeInTheDocument();
     });
@@ -715,7 +863,15 @@ describe("ServicePlanEditor", () => {
     it("shows response progress once scheduled slots are filled", async () => {
       openPlan();
       renderEditor({
-        teams: [{ teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: [], usesMicrophoneAssignments: true }],
+        teams: [
+          {
+            teamId: "team-1",
+            churchId: "church-1",
+            name: "Worship",
+            memberIds: [],
+            usesMicrophoneAssignments: true,
+          },
+        ],
         scheduledAssignmentRows: [
           {
             ...emptySlot,
@@ -735,7 +891,15 @@ describe("ServicePlanEditor", () => {
       const user = userEvent.setup();
       openPlan();
       renderEditor({
-        teams: [{ teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: [], usesMicrophoneAssignments: true }],
+        teams: [
+          {
+            teamId: "team-1",
+            churchId: "church-1",
+            name: "Worship",
+            memberIds: [],
+            usesMicrophoneAssignments: true,
+          },
+        ],
         scheduledAssignmentRows: [
           {
             ...emptySlot,
@@ -759,62 +923,100 @@ describe("ServicePlanEditor", () => {
       });
 
       const summary = await screen.findByLabelText("Service summary");
-      const details = within(summary).getByRole("button", { name: /^Details$/i });
+      const details = within(summary).getByRole("button", {
+        name: /^Details$/i,
+      });
       expect(details).toHaveAttribute("data-slot", "button");
       expect(details).toHaveAttribute("data-variant", "none");
       expect(details).toHaveAttribute("aria-expanded", "false");
       await user.click(details);
-      expect(within(summary).getByText("Mics: 1/1 assigned")).toBeInTheDocument();
-      const hideDetails = within(summary).getByRole("button", { name: "Hide details" });
+      expect(
+        within(summary).getByText("Mics: 1/1 assigned"),
+      ).toBeInTheDocument();
+      const hideDetails = within(summary).getByRole("button", {
+        name: "Hide details",
+      });
       expect(hideDetails).toHaveAttribute("aria-expanded", "true");
       await user.click(hideDetails);
-      expect(within(summary).queryByText("Mics: 1/1 assigned")).not.toBeInTheDocument();
+      expect(
+        within(summary).queryByText("Mics: 1/1 assigned"),
+      ).not.toBeInTheDocument();
     });
 
     it("shows IEM coverage independently for IEM-capable roles", async () => {
       const user = userEvent.setup();
       openPlan();
       renderEditor({
-        teams: [{ teamId: "team-1", churchId: "church-1", name: "Monitors", memberIds: [], usesIemAssignments: true }],
-        scheduledAssignmentRows: [{ ...emptySlot, memberId: "member-1", memberName: "Avery Stone", iemIds: ["iem-black"] }],
+        teams: [
+          {
+            teamId: "team-1",
+            churchId: "church-1",
+            name: "Monitors",
+            memberIds: [],
+            usesIemAssignments: true,
+          },
+        ],
+        scheduledAssignmentRows: [
+          {
+            ...emptySlot,
+            memberId: "member-1",
+            memberName: "Avery Stone",
+            iemIds: ["iem-black"],
+          },
+        ],
         teamEquipment: {
-          rows: [{ ...emptySlot, memberId: "member-1", memberName: "Avery Stone", iemIds: ["iem-black"] }],
+          rows: [
+            {
+              ...emptySlot,
+              memberId: "member-1",
+              memberName: "Avery Stone",
+              iemIds: ["iem-black"],
+            },
+          ],
           onMicrophoneChange: jest.fn(),
           onIemChange: jest.fn(),
         },
       });
 
       const summary = await screen.findByLabelText("Service summary");
-      await user.click(within(summary).getByRole("button", { name: /^Details$/i }));
-      expect(within(summary).getByText("IEMs: 1/1 assigned")).toBeInTheDocument();
+      await user.click(
+        within(summary).getByRole("button", { name: /^Details$/i }),
+      );
+      expect(
+        within(summary).getByText("IEMs: 1/1 assigned"),
+      ).toBeInTheDocument();
       expect(within(summary).queryByText(/^Mics:/i)).not.toBeInTheDocument();
     });
   });
 
   it("shows the rehearsal collection and opens full song details", async () => {
     const user = userEvent.setup();
-    mockAllSongDocs = [{
-      _id: "song-1",
-      name: "Living Hope",
-      type: "song",
-      selectedArrangement: 0,
-      arrangements: [],
-      slides: [],
-      shouldSendTo: { projector: true, monitor: true, stream: true },
-      songLinks: [{
-        id: "link-1",
-        label: "Tutorial",
-        url: "https://example.com/tutorial",
-      }],
-      songAudio: {
-        id: "audio-1",
-        key: "churches/church-1/songs/song-1/audio-1.mp3",
-        fileName: "living-hope.mp3",
-        contentType: "audio/mpeg",
-        sizeBytes: 3_524_633,
-        uploadedAt: "2026-08-06T12:00:00.000Z",
+    mockAllSongDocs = [
+      {
+        _id: "song-1",
+        name: "Living Hope",
+        type: "song",
+        selectedArrangement: 0,
+        arrangements: [],
+        slides: [],
+        shouldSendTo: { projector: true, monitor: true, stream: true },
+        songLinks: [
+          {
+            id: "link-1",
+            label: "Tutorial",
+            url: "https://example.com/tutorial",
+          },
+        ],
+        songAudio: {
+          id: "audio-1",
+          key: "churches/church-1/songs/song-1/audio-1.mp3",
+          fileName: "living-hope.mp3",
+          contentType: "audio/mpeg",
+          sizeBytes: 3_524_633,
+          uploadedAt: "2026-08-06T12:00:00.000Z",
+        },
       },
-    }];
+    ];
     mockGetServicePlan.mockResolvedValue({
       success: true,
       servicePlan: {
@@ -824,40 +1026,53 @@ describe("ServicePlanEditor", () => {
         serviceId: "service-1",
         date: "2026-07-26",
         name: "Easter Sunday",
-        sections: [{
-          id: "section-1",
-          name: "Worship",
-          elements: [{
-            id: "element-1",
-            type: "song",
-            title: plainTextToRichText("Living Hope"),
-            songRefs: [{
-              kind: "library",
-              songId: "song-1",
-              songName: "Living Hope",
-            }],
-          }],
-        }],
+        sections: [
+          {
+            id: "section-1",
+            name: "Worship",
+            elements: [
+              {
+                id: "element-1",
+                type: "song",
+                title: plainTextToRichText("Living Hope"),
+                songRefs: [
+                  {
+                    kind: "library",
+                    songId: "song-1",
+                    songName: "Living Hope",
+                  },
+                ],
+              },
+            ],
+          },
+        ],
       } as ServicePlan,
     });
 
     renderEditor();
     await user.click(await screen.findByRole("tab", { name: "Rehearse" }));
 
-    const setlist = await screen.findByRole("region", { name: "Rehearse songs" });
-    expect(within(setlist).getByRole("link", { name: /Tutorial/i })).toHaveAttribute(
-      "href",
-      "https://example.com/tutorial",
-    );
-    expect(within(setlist).getByRole("button", { name: "Play Living Hope" })).toBeInTheDocument();
-    expect(within(setlist).queryByRole("button", { name: "Download" })).not.toBeInTheDocument();
+    const setlist = await screen.findByRole("region", {
+      name: "Rehearse songs",
+    });
+    expect(
+      within(setlist).getByRole("link", { name: /Tutorial/i }),
+    ).toHaveAttribute("href", "https://example.com/tutorial");
+    expect(
+      within(setlist).getByRole("button", { name: "Play Living Hope" }),
+    ).toBeInTheDocument();
+    expect(
+      within(setlist).queryByRole("button", { name: "Download" }),
+    ).not.toBeInTheDocument();
 
     await user.click(
       within(setlist).getByRole("button", {
         name: /View song details for Living Hope/i,
       }),
     );
-    expect(await screen.findByText(/Song details.*Living Hope/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Song details.*Living Hope/i),
+    ).toBeInTheDocument();
   });
 
   it("saves a YouTube link through the repository and canonicalizes legacy song slides", async () => {
@@ -867,28 +1082,35 @@ describe("ServicePlanEditor", () => {
       type: "song",
       name: "Living Hope",
       selectedArrangement: 0,
-      slides: [{
-        id: "legacy-slide",
-        type: "Verse",
-        name: "Verse 1",
-        boxes: [{ id: "legacy-box", words: "Lyrics", width: 1920, height: 1080 }],
-        monitorCurrentBandBoxes: [{ id: "current-clone", fontSize: 31 }],
-        monitorNextBandBoxes: [{ id: "next-clone", fontSize: 28 }],
-      }],
+      slides: [
+        {
+          id: "legacy-slide",
+          type: "Verse",
+          name: "Verse 1",
+          boxes: [
+            { id: "legacy-box", words: "Lyrics", width: 1920, height: 1080 },
+          ],
+          monitorCurrentBandBoxes: [{ id: "current-clone", fontSize: 31 }],
+          monitorNextBandBoxes: [{ id: "next-clone", fontSize: 28 }],
+        },
+      ],
       monitorLayout: { currentFontSizePx: 31, nextFontSizePx: 28 },
-      arrangements: [{
-        id: "arr-1",
-        name: "Master",
-        formattedLyrics: [],
-        songOrder: [],
-        slides: [],
-      }],
+      arrangements: [
+        {
+          id: "arr-1",
+          name: "Master",
+          formattedLyrics: [],
+          songOrder: [],
+          slides: [],
+        },
+      ],
       shouldSendTo: { projector: true, monitor: true, stream: true },
     };
-    const missing = () => Object.assign(new Error("missing"), {
-      status: 404,
-      name: "not_found",
-    });
+    const missing = () =>
+      Object.assign(new Error("missing"), {
+        status: 404,
+        name: "not_found",
+      });
     const put = jest.fn(async (_document: Record<string, unknown>) => ({
       ok: true,
       id: legacySong._id,
@@ -912,34 +1134,44 @@ describe("ServicePlanEditor", () => {
         serviceId: "service-1",
         date: "2026-07-26",
         name: "Easter Sunday",
-        sections: [{
-          id: "section-1",
-          name: "Worship",
-          elements: [{
-            id: "element-1",
-            type: "song",
-            title: plainTextToRichText("Living Hope"),
-            songRef: {
-              kind: "library",
-              songId: legacySong._id,
-              songName: legacySong.name,
-            },
-          }],
-        }],
+        sections: [
+          {
+            id: "section-1",
+            name: "Worship",
+            elements: [
+              {
+                id: "element-1",
+                type: "song",
+                title: plainTextToRichText("Living Hope"),
+                songRef: {
+                  kind: "library",
+                  songId: legacySong._id,
+                  songName: legacySong.name,
+                },
+              },
+            ],
+          },
+        ],
       },
     });
 
     const user = userEvent.setup();
     renderEditorWithDb(db);
     await user.click(await screen.findByRole("tab", { name: "Rehearse" }));
-    const setlist = await screen.findByRole("region", { name: "Rehearse songs" });
-    await user.click(within(setlist).getByRole("button", { name: "Find video" }));
+    const setlist = await screen.findByRole("region", {
+      name: "Rehearse songs",
+    });
+    await user.click(
+      within(setlist).getByRole("button", { name: "Find video" }),
+    );
     await screen.findByText("Living Hope (Official Video)");
     await user.click(screen.getByRole("button", { name: "Link video" }));
 
     await waitFor(() => expect(put).toHaveBeenCalledTimes(1));
     const persisted = put.mock.calls[0][0];
-    const persistedArrangements = persisted.arrangements as Array<Record<string, unknown>>;
+    const persistedArrangements = persisted.arrangements as Array<
+      Record<string, unknown>
+    >;
     expect(persisted.songLinks).toEqual([
       expect.objectContaining({
         label: "YouTube",
@@ -952,12 +1184,12 @@ describe("ServicePlanEditor", () => {
       expect.objectContaining({
         id: "arr-1",
         monitorLayout: { currentFontSizePx: 31, nextFontSizePx: 28 },
-        slides: [
-          expect.objectContaining({ id: "legacy-slide" }),
-        ],
+        slides: [expect.objectContaining({ id: "legacy-slide" })],
       }),
     ]);
-    const persistedSlides = persistedArrangements[0].slides as Array<Record<string, unknown>>;
+    const persistedSlides = persistedArrangements[0].slides as Array<
+      Record<string, unknown>
+    >;
     expect(persistedSlides[0]).not.toHaveProperty("monitorCurrentBandBoxes");
     expect(persistedSlides[0]).not.toHaveProperty("monitorNextBandBoxes");
   });
@@ -1000,16 +1232,28 @@ describe("ServicePlanEditor", () => {
     renderEditor({
       occurrenceSwitcher: {
         options: [
-          { occurrenceId: occurrence.occurrenceId, label: "Easter Sunday · Sun, Jul 26, 2:00 PM" },
-          { occurrenceId: "service-2@2026-07-29T23:00:00.000Z", label: "Midweek · Wed, Jul 29, 7:00 PM" },
+          {
+            occurrenceId: occurrence.occurrenceId,
+            label: "Easter Sunday · Sun, Jul 26, 2:00 PM",
+          },
+          {
+            occurrenceId: "service-2@2026-07-29T23:00:00.000Z",
+            label: "Midweek · Wed, Jul 29, 7:00 PM",
+          },
         ],
         onSelect,
       },
     });
 
-    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
-    await user.click(await screen.findByRole("menuitem", { name: /Switch service/i }));
-    await user.click(await screen.findByRole("menuitemradio", { name: /Midweek/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Plan actions/i }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: /Switch service/i }),
+    );
+    await user.click(
+      await screen.findByRole("menuitemradio", { name: /Midweek/i }),
+    );
 
     expect(onSelect).toHaveBeenCalledWith("service-2@2026-07-29T23:00:00.000Z");
   });
@@ -1018,7 +1262,10 @@ describe("ServicePlanEditor", () => {
     renderEditor({
       occurrenceSwitcher: {
         options: [
-          { occurrenceId: occurrence.occurrenceId, label: "Easter Sunday · Sun, Jul 26, 2:00 PM" },
+          {
+            occurrenceId: occurrence.occurrenceId,
+            label: "Easter Sunday · Sun, Jul 26, 2:00 PM",
+          },
         ],
         onSelect: jest.fn(),
       },
@@ -1089,11 +1336,19 @@ describe("ServicePlanEditor", () => {
       ],
     });
 
-    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
-    await user.click(await screen.findByRole("menuitem", { name: /Role notes/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Plan actions/i }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: /Role notes/i }),
+    );
 
-    expect(screen.getByRole("textbox", { name: /Search roles/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^All roles$/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("textbox", { name: /Search roles/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^All roles$/i }),
+    ).toBeInTheDocument();
     expect(
       screen.queryByRole("menuitemcheckbox", { name: /^Hide notes$/i }),
     ).not.toBeInTheDocument();
@@ -1118,7 +1373,9 @@ describe("ServicePlanEditor", () => {
     expect(
       await screen.findByRole("button", { name: /Back to Plans/i }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: /Plan navigation/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("group", { name: /Plan navigation/i }),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /Previous plan/i }));
     await user.click(screen.getByRole("button", { name: /Next plan/i }));
@@ -1142,7 +1399,9 @@ describe("ServicePlanEditor", () => {
     const user = userEvent.setup();
     renderEditor();
 
-    await user.click(await screen.findByRole("button", { name: /Start from scratch/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Start from scratch/i }),
+    );
 
     await waitFor(
       () => {
@@ -1173,40 +1432,44 @@ describe("ServicePlanEditor", () => {
             id: "section-1",
             name: "Worship",
             elements: [
-              { id: "el-1", type: "free", title: plainTextToRichText("Living Hope") },
+              {
+                id: "el-1",
+                type: "free",
+                title: plainTextToRichText("Living Hope"),
+              },
             ],
           },
         ],
       },
     });
-    mockSaveServicePlan.mockImplementation(async (_churchId, planKey, body) => ({
-      success: true,
-      servicePlan: {
-        planId: `church-1::${planKey}`,
-        churchId: "church-1",
-        planKey,
-        ...body,
-        revision: (body.baseRevision ?? 0) + 1,
-      } as ServicePlan,
-    }));
+    mockSaveServicePlan.mockImplementation(
+      async (_churchId, planKey, body) => ({
+        success: true,
+        servicePlan: {
+          planId: `church-1::${planKey}`,
+          churchId: "church-1",
+          planKey,
+          ...body,
+          revision: (body.baseRevision ?? 0) + 1,
+        } as ServicePlan,
+      }),
+    );
 
     renderEditor();
     await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
     const title = await screen.findByLabelText(/^Title/i);
     await user.type(title, "!");
-    await waitFor(
-      () => expect(mockSaveServicePlan).toHaveBeenCalledTimes(1),
-      { timeout: 2_500 },
-    );
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalledTimes(1), {
+      timeout: 2_500,
+    });
     expect(mockSaveServicePlan.mock.calls[0][2]).toEqual(
       expect.objectContaining({ baseRevision: 4 }),
     );
 
     await user.type(title, "!");
-    await waitFor(
-      () => expect(mockSaveServicePlan).toHaveBeenCalledTimes(2),
-      { timeout: 2_500 },
-    );
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalledTimes(2), {
+      timeout: 2_500,
+    });
     expect(mockSaveServicePlan.mock.calls[1][2]).toEqual(
       expect.objectContaining({ baseRevision: 5 }),
     );
@@ -1227,7 +1490,11 @@ describe("ServicePlanEditor", () => {
           id: "section-sunday",
           name: "Worship",
           elements: [
-            { id: "el-sunday", type: "free" as const, title: plainTextToRichText("Sunday item") },
+            {
+              id: "el-sunday",
+              type: "free" as const,
+              title: plainTextToRichText("Sunday item"),
+            },
           ],
         },
       ],
@@ -1245,7 +1512,11 @@ describe("ServicePlanEditor", () => {
           id: "section-next",
           name: "Worship",
           elements: [
-            { id: "el-next", type: "free" as const, title: plainTextToRichText("Next week item") },
+            {
+              id: "el-next",
+              type: "free" as const,
+              title: plainTextToRichText("Next week item"),
+            },
           ],
         },
       ],
@@ -1254,35 +1525,42 @@ describe("ServicePlanEditor", () => {
       success: true,
       servicePlan: planKey === nextWeekPlan.planKey ? nextWeekPlan : sundayPlan,
     }));
-    mockSaveServicePlan.mockImplementation(async (_churchId, planKey, body) => ({
-      success: true,
-      servicePlan: {
-        planId: `church-1::${planKey}`,
-        churchId: "church-1",
-        planKey,
-        ...body,
-        revision: (body.baseRevision ?? 0) + 1,
-      } as ServicePlan,
-    }));
+    mockSaveServicePlan.mockImplementation(
+      async (_churchId, planKey, body) => ({
+        success: true,
+        servicePlan: {
+          planId: `church-1::${planKey}`,
+          churchId: "church-1",
+          planKey,
+          ...body,
+          revision: (body.baseRevision ?? 0) + 1,
+        } as ServicePlan,
+      }),
+    );
 
     const view = renderEditor();
     expect(
-      await screen.findByRole("button", { name: "View full name: Sunday item" }),
+      await screen.findByRole("button", {
+        name: "View full name: Sunday item",
+      }),
     ).toBeInTheDocument();
 
-    view.rerender(editorTree({
-      occurrence: nextOccurrence,
-    }));
+    view.rerender(
+      editorTree({
+        occurrence: nextOccurrence,
+      }),
+    );
     expect(
-      await screen.findByRole("button", { name: "View full name: Next week item" }),
+      await screen.findByRole("button", {
+        name: "View full name: Next week item",
+      }),
     ).toBeInTheDocument();
 
     await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
     await user.type(await screen.findByLabelText(/^Title/i), "!");
-    await waitFor(
-      () => expect(mockSaveServicePlan).toHaveBeenCalledTimes(1),
-      { timeout: 2_500 },
-    );
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalledTimes(1), {
+      timeout: 2_500,
+    });
     expect(mockSaveServicePlan).toHaveBeenCalledWith(
       "church-1",
       "service-1@2026-08-02",
@@ -1306,7 +1584,11 @@ describe("ServicePlanEditor", () => {
           id: "section-1",
           name: "Worship",
           elements: [
-            { id: "el-1", type: "free" as const, title: plainTextToRichText("Their item") },
+            {
+              id: "el-1",
+              type: "free" as const,
+              title: plainTextToRichText("Their item"),
+            },
           ],
         },
       ],
@@ -1322,7 +1604,11 @@ describe("ServicePlanEditor", () => {
             id: "section-1",
             name: "Worship",
             elements: [
-              { id: "el-1", type: "free" as const, title: plainTextToRichText("Our item") },
+              {
+                id: "el-1",
+                type: "free" as const,
+                title: plainTextToRichText("Our item"),
+              },
             ],
           },
         ],
@@ -1340,34 +1626,68 @@ describe("ServicePlanEditor", () => {
     await user.type(await screen.findByLabelText(/^Title/i), "!");
 
     expect(
-      await screen.findByText("Plan changed elsewhere", undefined, { timeout: 2_500 }),
+      await screen.findByText("Plan changed elsewhere", undefined, {
+        timeout: 2_500,
+      }),
     ).toBeInTheDocument();
-    expect(await screen.findByRole("dialog", { name: "Review plan changes" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("dialog", { name: "Review plan changes" }),
+    ).toBeInTheDocument();
     expect(screen.getAllByText(/Their item/).length).toBeGreaterThan(0);
-    expect(screen.getByRole("button", { name: "Use latest and discard local changes" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Use latest and discard local changes",
+      }),
+    ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.getByDisplayValue("Our item!")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Review changes" }));
-    expect(await screen.findByRole("dialog", { name: "Review plan changes" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Use latest and discard local changes" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("dialog", { name: "Review plan changes" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Use latest and discard local changes",
+      }),
+    ).toBeInTheDocument();
     await user.click(screen.getAllByRole("button", { name: /^Local/ })[0]);
-    let resolveLatest!: (value: Awaited<ReturnType<typeof getServicePlan>>) => void;
-    mockGetServicePlan.mockReturnValueOnce(new Promise((resolve) => { resolveLatest = resolve; }));
+    let resolveLatest!: (
+      value: Awaited<ReturnType<typeof getServicePlan>>,
+    ) => void;
+    mockGetServicePlan.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveLatest = resolve;
+      }),
+    );
     await user.click(screen.getByRole("button", { name: "Apply merged plan" }));
-    expect(await screen.findByRole("button", { name: "Checking latest…" })).toBeDisabled();
+    expect(
+      await screen.findByRole("button", { name: "Checking latest…" }),
+    ).toBeDisabled();
     await user.keyboard("{Escape}");
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Review plan changes" })).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Review plan changes" }),
+      ).not.toBeInTheDocument(),
+    );
     await act(async () => {
       resolveLatest({
         success: true,
         servicePlan: {
           ...latestPlan,
           revision: 10,
-          sections: [{
-            id: "section-1",
-            name: "Worship",
-            elements: [{ id: "el-1", type: "free", title: plainTextToRichText("Stale response") }],
-          }],
+          sections: [
+            {
+              id: "section-1",
+              name: "Worship",
+              elements: [
+                {
+                  id: "el-1",
+                  type: "free",
+                  title: plainTextToRichText("Stale response"),
+                },
+              ],
+            },
+          ],
         },
       });
     });
@@ -1375,33 +1695,67 @@ describe("ServicePlanEditor", () => {
     expect(screen.getByDisplayValue("Our item!")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Review changes" }));
-    expect(await screen.findByRole("dialog", { name: "Review plan changes" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("dialog", { name: "Review plan changes" }),
+    ).toBeInTheDocument();
     await user.click(screen.getAllByRole("button", { name: /^Local/ })[0]);
     mockGetServicePlan.mockResolvedValueOnce({
       success: true,
       servicePlan: {
         ...latestPlan,
         revision: 10,
-        sections: [{
-          id: "section-1",
-          name: "Worship",
-          elements: [{ id: "el-1", type: "free", title: plainTextToRichText("Newest item") }],
-        }],
+        sections: [
+          {
+            id: "section-1",
+            name: "Worship",
+            elements: [
+              {
+                id: "el-1",
+                type: "free",
+                title: plainTextToRichText("Newest item"),
+              },
+            ],
+          },
+        ],
       },
     });
     await user.click(screen.getByRole("button", { name: "Apply merged plan" }));
     expect(await screen.findByText("Newest item")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Apply merged plan" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Apply merged plan" }),
+    ).toBeDisabled();
 
     await user.click(screen.getAllByRole("button", { name: /^Local/ })[0]);
-    mockSaveServicePlan.mockRejectedValueOnce(new Error("temporary network failure"));
+    mockSaveServicePlan.mockRejectedValueOnce(
+      new Error("temporary network failure"),
+    );
     await user.click(screen.getByRole("button", { name: "Apply merged plan" }));
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Review plan changes" })).not.toBeInTheDocument());
-    expect(await screen.findByText("Retrying save…", undefined, { timeout: 4_000 })).toBeInTheDocument();
-    expect(readServicePlanRecoveryDraft("test-user-id", "church-1", latestPlan.planKey)).not.toBeNull();
-    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalledTimes(3), { timeout: 8_000 });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Review plan changes" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      await screen.findByText("Retrying save…", undefined, { timeout: 4_000 }),
+    ).toBeInTheDocument();
+    expect(
+      readServicePlanRecoveryDraft(
+        "test-user-id",
+        "church-1",
+        latestPlan.planKey,
+      ),
+    ).not.toBeNull();
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalledTimes(3), {
+      timeout: 8_000,
+    });
     await waitFor(() => {
-      expect(readServicePlanRecoveryDraft("test-user-id", "church-1", latestPlan.planKey)).toBeNull();
+      expect(
+        readServicePlanRecoveryDraft(
+          "test-user-id",
+          "church-1",
+          latestPlan.planKey,
+        ),
+      ).toBeNull();
     });
   });
 
@@ -1422,7 +1776,11 @@ describe("ServicePlanEditor", () => {
             id: "section-1",
             name: "Worship",
             elements: [
-              { id: "el-1", type: "free" as const, title: plainTextToRichText("Living Hope") },
+              {
+                id: "el-1",
+                type: "free" as const,
+                title: plainTextToRichText("Living Hope"),
+              },
             ],
           },
         ],
@@ -1437,8 +1795,12 @@ describe("ServicePlanEditor", () => {
     expect(
       await screen.findByText("Retrying save…", undefined, { timeout: 2_500 }),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Reload latest" })).not.toBeInTheDocument();
-    expect(screen.queryByText("Plan changed elsewhere")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Reload latest" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Plan changed elsewhere"),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps recovery private across an account switch in the same tab", async () => {
@@ -1452,21 +1814,41 @@ describe("ServicePlanEditor", () => {
       revision: 2,
       sections: [{ id: "section-1", name: "Worship", elements: [] }],
     };
-    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: currentPlan });
-    saveServicePlanRecoveryDraft("test-user-id", "church-1", currentPlan.planKey, {
-      savedAt: Date.now(),
-      base: currentPlan,
-      local: { ...currentPlan, name: "Private recovered plan" },
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: currentPlan,
     });
+    saveServicePlanRecoveryDraft(
+      "test-user-id",
+      "church-1",
+      currentPlan.planKey,
+      {
+        savedAt: Date.now(),
+        base: currentPlan,
+        local: { ...currentPlan, name: "Private recovered plan" },
+      },
+    );
 
     const view = render(editorTree({ userId: "test-user-id" }));
-    expect(await screen.findByText("Unsaved plan changes are available from this tab.")).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        "Unsaved plan changes are available from this tab.",
+      ),
+    ).toBeInTheDocument();
 
     view.rerender(editorTree({ userId: "another-user-id" }));
     await waitFor(() => {
-      expect(screen.queryByText("Unsaved plan changes are available from this tab.")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("Unsaved plan changes are available from this tab."),
+      ).not.toBeInTheDocument();
     });
-    expect(readServicePlanRecoveryDraft("test-user-id", "church-1", currentPlan.planKey)).not.toBeNull();
+    expect(
+      readServicePlanRecoveryDraft(
+        "test-user-id",
+        "church-1",
+        currentPlan.planKey,
+      ),
+    ).not.toBeNull();
   });
 
   it("restores after an existing edit and retains the snapshot through a failed save and retry", async () => {
@@ -1479,30 +1861,51 @@ describe("ServicePlanEditor", () => {
       date: "2026-07-26",
       name: "Easter Sunday",
       revision: 1,
-      sections: [{
-        id: "section-1",
-        name: "Worship",
-        elements: [{ id: "el-1", type: "free", title: plainTextToRichText("Welcome") }],
-      }],
+      sections: [
+        {
+          id: "section-1",
+          name: "Worship",
+          elements: [
+            { id: "el-1", type: "free", title: plainTextToRichText("Welcome") },
+          ],
+        },
+      ],
     };
     let latest = original;
     let saveCount = 0;
-    mockGetServicePlan.mockImplementation(async () => ({ success: true, servicePlan: latest }));
-    mockSaveServicePlan.mockImplementation(async (_churchId, planKey, payload) => {
-      saveCount += 1;
-      if (saveCount === 2) throw new Error("temporary network failure");
-      latest = { ...latest, ...payload, planKey, revision: (latest.revision || 0) + 1 } as ServicePlan;
-      return { success: true, servicePlan: latest };
-    });
+    mockGetServicePlan.mockImplementation(async () => ({
+      success: true,
+      servicePlan: latest,
+    }));
+    mockSaveServicePlan.mockImplementation(
+      async (_churchId, planKey, payload) => {
+        saveCount += 1;
+        if (saveCount === 2) throw new Error("temporary network failure");
+        latest = {
+          ...latest,
+          ...payload,
+          planKey,
+          revision: (latest.revision || 0) + 1,
+        } as ServicePlan;
+        return { success: true, servicePlan: latest };
+      },
+    );
     saveServicePlanRecoveryDraft("test-user-id", "church-1", original.planKey, {
       savedAt: Date.now(),
       base: original,
       local: {
         ...original,
-        sections: [{
-          ...original.sections[0],
-          elements: [{ ...original.sections[0].elements[0], title: plainTextToRichText("Welcome now") }],
-        }],
+        sections: [
+          {
+            ...original.sections[0],
+            elements: [
+              {
+                ...original.sections[0].elements[0],
+                title: plainTextToRichText("Welcome now"),
+              },
+            ],
+          },
+        ],
       },
     });
 
@@ -1511,12 +1914,28 @@ describe("ServicePlanEditor", () => {
     await user.type(screen.getByLabelText(/^Title/i), " now");
     await user.click(screen.getByRole("button", { name: "Restore draft" }));
 
-    expect(await screen.findByText("Retrying save…", undefined, { timeout: 6_000 })).toBeInTheDocument();
-    expect(readServicePlanRecoveryDraft("test-user-id", "church-1", original.planKey)).not.toBeNull();
-    await waitFor(() => expect(saveCount).toBeGreaterThanOrEqual(3), { timeout: 8_000 });
+    expect(
+      await screen.findByText("Retrying save…", undefined, { timeout: 6_000 }),
+    ).toBeInTheDocument();
+    expect(
+      readServicePlanRecoveryDraft(
+        "test-user-id",
+        "church-1",
+        original.planKey,
+      ),
+    ).not.toBeNull();
+    await waitFor(() => expect(saveCount).toBeGreaterThanOrEqual(3), {
+      timeout: 8_000,
+    });
     expect(await screen.findByDisplayValue("Welcome now")).toBeInTheDocument();
     await waitFor(() => {
-      expect(readServicePlanRecoveryDraft("test-user-id", "church-1", original.planKey)).toBeNull();
+      expect(
+        readServicePlanRecoveryDraft(
+          "test-user-id",
+          "church-1",
+          original.planKey,
+        ),
+      ).toBeNull();
     });
   });
 
@@ -1554,12 +1973,16 @@ describe("ServicePlanEditor", () => {
       await screen.findByRole("button", { name: "Choose a template" }),
     );
     await user.click(
-      await screen.findByRole("button", { name: /Apply template Standard Sabbath/i }),
+      await screen.findByRole("button", {
+        name: /Apply template Standard Sabbath/i,
+      }),
     );
 
     expect(
       JSON.parse(
-        localStorage.getItem("worshipsyncServicePlanLastUsedTemplates:church-1") || "{}",
+        localStorage.getItem(
+          "worshipsyncServicePlanLastUsedTemplates:church-1",
+        ) || "{}",
       ),
     ).toEqual({ "service-1": "tpl-1" });
 
@@ -1568,10 +1991,9 @@ describe("ServicePlanEditor", () => {
     );
 
     // Applying a template is persisted automatically after the editing pause.
-    await waitFor(
-      () => expect(mockSaveServicePlan).toHaveBeenCalledTimes(1),
-      { timeout: 2_500 },
-    );
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalledTimes(1), {
+      timeout: 2_500,
+    });
     const [, , body] = mockSaveServicePlan.mock.calls[0];
     expect(body.sections[0].name).toBe("Worship");
     expect(body.sections[0].elements[0].durationMinutes).toBe(4);
@@ -1584,12 +2006,14 @@ describe("ServicePlanEditor", () => {
     const ensureLoaded = jest.fn();
     renderEditor({
       templateResource: {
-        data: [{
-          templateId: "shared-template",
-          churchId: "church-1",
-          name: "Shared Sabbath",
-          sections: [],
-        }],
+        data: [
+          {
+            templateId: "shared-template",
+            churchId: "church-1",
+            name: "Shared Sabbath",
+            sections: [],
+          },
+        ],
         loaded: true,
         loading: false,
         error: null,
@@ -1599,7 +2023,9 @@ describe("ServicePlanEditor", () => {
       },
     });
 
-    expect(await screen.findByRole("button", { name: /Apply Shared Sabbath/i })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: /Apply Shared Sabbath/i }),
+    ).toBeInTheDocument();
     expect(ensureLoaded).not.toHaveBeenCalled();
     expect(mockListServicePlanTemplates).not.toHaveBeenCalled();
   });
@@ -1673,10 +2099,9 @@ describe("ServicePlanEditor", () => {
       "Scripture reading",
     );
 
-    await waitFor(
-      () => expect(mockSaveServicePlan).toHaveBeenCalledTimes(1),
-      { timeout: 2_500 },
-    );
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalledTimes(1), {
+      timeout: 2_500,
+    });
     const [, , body] = mockSaveServicePlan.mock.calls[0];
     expect(body.sections[0].elements[0].scheduledPositionIds).toEqual([
       "reader",
@@ -1685,16 +2110,19 @@ describe("ServicePlanEditor", () => {
   });
 
   it("shows the resolved template name and truncates long names accessibly", async () => {
-    const longName = "A very long saved template name for the Saturday service outline";
+    const longName =
+      "A very long saved template name for the Saturday service outline";
     mockListServicePlanTemplates.mockResolvedValue({
       success: true,
-      templates: [{
-        templateId: "tpl-long",
-        churchId: "church-1",
-        name: longName,
-        serviceId: "service-1",
-        sections: [],
-      }],
+      templates: [
+        {
+          templateId: "tpl-long",
+          churchId: "church-1",
+          name: longName,
+          serviceId: "service-1",
+          sections: [],
+        },
+      ],
     });
 
     renderEditor();
@@ -1703,7 +2131,9 @@ describe("ServicePlanEditor", () => {
       name: `Apply ${longName}`,
     });
     expect(button).toHaveAttribute("title", `Apply ${longName}`);
-    expect(within(button).getByText(`Apply ${longName}`)).toHaveClass("truncate");
+    expect(within(button).getByText(`Apply ${longName}`)).toHaveClass(
+      "truncate",
+    );
   });
 
   it("uses the persisted last-used template when no default is configured", async () => {
@@ -1803,7 +2233,9 @@ describe("ServicePlanEditor", () => {
     const user = userEvent.setup();
     renderEditor();
 
-    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Plan actions/i }),
+    );
     await user.click(
       await screen.findByRole("menuitem", { name: /Save as template/i }),
     );
@@ -1832,16 +2264,21 @@ describe("ServicePlanEditor", () => {
       sections: [
         {
           sectionName: "Teaching & Mission",
-          rows: [{
-            elementType: "Sabbath School Lesson Study",
-            title: "Panel",
-            ledBy: "Greg Baldeo",
-            teamNotes: [
-              { teamName: "Media Team", note: "3 or 4 headsets" },
-              { teamName: "Sabbath School Panel (g)", note: "Begin after the countdown." },
-              { teamName: "Coordinators", note: "Prep the platform." },
-            ],
-          }],
+          rows: [
+            {
+              elementType: "Sabbath School Lesson Study",
+              title: "Panel",
+              ledBy: "Greg Baldeo",
+              teamNotes: [
+                { teamName: "Media Team", note: "3 or 4 headsets" },
+                {
+                  teamName: "Sabbath School Panel (g)",
+                  note: "Begin after the countdown.",
+                },
+                { teamName: "Coordinators", note: "Prep the platform." },
+              ],
+            },
+          ],
         },
       ],
       teamAssignments: [],
@@ -1870,12 +2307,17 @@ describe("ServicePlanEditor", () => {
     expect(screen.getByText("Coordinators")).toBeInTheDocument();
 
     // And all three are what actually gets saved.
-    await waitFor(() => {
-      expect(mockSaveServicePlan).toHaveBeenCalledTimes(1);
-    }, { timeout: 2_500 });
+    await waitFor(
+      () => {
+        expect(mockSaveServicePlan).toHaveBeenCalledTimes(1);
+      },
+      { timeout: 2_500 },
+    );
     const [, , body] = mockSaveServicePlan.mock.calls[0];
     expect(
-      body.sections?.[0]?.elements?.[0]?.teamNotes?.map((note: { label: string }) => note.label),
+      body.sections?.[0]?.elements?.[0]?.teamNotes?.map(
+        (note: { label: string }) => note.label,
+      ),
     ).toEqual(["Media Team", "Sabbath School Panel (g)", "Coordinators"]);
   });
 
@@ -1885,7 +2327,13 @@ describe("ServicePlanEditor", () => {
       sections: [
         {
           sectionName: "Welcome & Connection",
-          rows: [{ elementType: "Welcome", title: "Pastoral Greetings", ledBy: "Jane" }],
+          rows: [
+            {
+              elementType: "Welcome",
+              title: "Pastoral Greetings",
+              ledBy: "Jane",
+            },
+          ],
         },
       ],
       teamAssignments: [],
@@ -1896,7 +2344,9 @@ describe("ServicePlanEditor", () => {
 
     // Starting from scratch seeds one empty "Service" section. Importing over
     // it must not treat that as a plan to reconcile.
-    await user.click(await screen.findByRole("button", { name: /Start from scratch/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Start from scratch/i }),
+    );
     expect(await screen.findByDisplayValue("Service")).toBeInTheDocument();
     // Empty scratch can autosave before the import finishes under suite load.
     // Drain and clear that write so the assertion below is about the import.
@@ -1905,8 +2355,12 @@ describe("ServicePlanEditor", () => {
     });
     mockSaveServicePlan.mockClear();
 
-    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
-    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Plan actions/i }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: /Import updates/i }),
+    );
     // Set the URL in one event — typing it character by character is the
     // slowest thing in this test, and this suite runs close to its budget.
     fireEvent.change(screen.getByLabelText(/Planning URL/i), {
@@ -1916,19 +2370,24 @@ describe("ServicePlanEditor", () => {
     // not an updates pass over existing content.
     await user.click(screen.getByRole("button", { name: /^Import plan$/i }));
 
-    expect(await screen.findByDisplayValue("Welcome & Connection")).toBeInTheDocument();
+    expect(
+      await screen.findByDisplayValue("Welcome & Connection"),
+    ).toBeInTheDocument();
     expect(screen.queryByDisplayValue("Service")).not.toBeInTheDocument();
 
     // Let the autosave this import queued actually land, both to assert what
     // was persisted and so its timer can't fire during the next test.
-    await waitFor(() => {
-      const body = mockSaveServicePlan.mock.calls.at(-1)?.[2];
-      expect(body?.sections.map((section: { name: string }) => section.name)).toEqual([
-        "Welcome & Connection",
-      ]);
-    }, {
-      timeout: 2_500,
-    });
+    await waitFor(
+      () => {
+        const body = mockSaveServicePlan.mock.calls.at(-1)?.[2];
+        expect(
+          body?.sections.map((section: { name: string }) => section.name),
+        ).toEqual(["Welcome & Connection"]);
+      },
+      {
+        timeout: 2_500,
+      },
+    );
   });
 
   it("imports a plan from a Service Planning URL into editable sections", async () => {
@@ -1937,7 +2396,9 @@ describe("ServicePlanEditor", () => {
       sections: [
         {
           sectionName: "Worship",
-          rows: [{ elementType: "Song", title: "Great Are You Lord", ledBy: "Jane" }],
+          rows: [
+            { elementType: "Song", title: "Great Are You Lord", ledBy: "Jane" },
+          ],
         },
       ],
       teamAssignments: [],
@@ -1968,9 +2429,12 @@ describe("ServicePlanEditor", () => {
       "Great Are You Lord",
     );
 
-    await waitFor(() => {
-      expect(mockSaveServicePlan).toHaveBeenCalledTimes(1);
-    }, { timeout: 2_500 });
+    await waitFor(
+      () => {
+        expect(mockSaveServicePlan).toHaveBeenCalledTimes(1);
+      },
+      { timeout: 2_500 },
+    );
     const [, , body] = mockSaveServicePlan.mock.calls[0];
     expect(body.sourceImport).toEqual({
       source: "servicePlanning",
@@ -2001,78 +2465,115 @@ describe("ServicePlanEditor", () => {
           {
             id: "message",
             name: "Message",
-            elements: [{
-              id: "legacy-sermon",
-              type: "free",
-              title: plainTextToRichText("Sermon"),
-              notes: plainTextToRichText("Operator notes"),
-            }],
+            elements: [
+              {
+                id: "legacy-sermon",
+                type: "free",
+                title: plainTextToRichText("Sermon"),
+                notes: plainTextToRichText("Operator notes"),
+              },
+            ],
           },
           {
             id: "worship",
             sourcePlanningManaged: true,
             name: "Worship",
-            elements: [{
-              id: "tracked-song",
-              sourcePlanningManaged: true,
-              sourceOccurrenceId: "pco-song",
-              type: "free",
-              title: plainTextToRichText("Opening Song"),
-            }],
+            elements: [
+              {
+                id: "tracked-song",
+                sourcePlanningManaged: true,
+                sourceOccurrenceId: "pco-song",
+                type: "free",
+                title: plainTextToRichText("Opening Song"),
+              },
+            ],
           },
         ],
       },
     });
     mockGetServicePlanningImportDataFromUrl.mockResolvedValue({
       planLabel: "Sunday, Jul 26",
-      sections: [{
-        sectionName: "Response & Celebration",
-        rows: [{ elementType: "Sermon", title: "Sermon", ledBy: "", startTime: "10:30" }],
-      }],
+      sections: [
+        {
+          sectionName: "Response & Celebration",
+          rows: [
+            {
+              elementType: "Sermon",
+              title: "Sermon",
+              ledBy: "",
+              startTime: "10:30",
+            },
+          ],
+        },
+      ],
       teamAssignments: [],
     });
 
     const user = userEvent.setup();
     renderEditor();
-    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
-    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Plan actions/i }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: /Import updates/i }),
+    );
     fireEvent.change(screen.getByLabelText(/Planning URL/i), {
       target: { value: "https://services.planningcenteronline.com/plans/123" },
     });
     await user.click(screen.getByRole("button", { name: /Apply updates/i }));
 
-    expect(await screen.findByRole("checkbox", { name: "Confirm match for Sermon" })).not.toBeChecked();
+    expect(
+      await screen.findByRole("checkbox", { name: "Confirm match for Sermon" }),
+    ).not.toBeChecked();
     expect(screen.getByText("Moved")).toBeInTheDocument();
-    expect(screen.getByText("Message → Response & Celebration")).toBeInTheDocument();
+    expect(
+      screen.getByText("Message → Response & Celebration"),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Added")).not.toBeInTheDocument();
   });
 
   it("offers one optional review prompt after an external import adds ambiguous items", async () => {
     mockGetServicePlanningImportDataFromUrl.mockResolvedValue({
       planLabel: "Sunday Service",
-      sections: [{
-        sectionName: "Program",
-        rows: [{
-          elementType: "Special Feature",
-          title: "Unknown free-text Title",
-          ledBy: "",
-          note: "Source note",
-        }],
-      }],
+      sections: [
+        {
+          sectionName: "Program",
+          rows: [
+            {
+              elementType: "Special Feature",
+              title: "Unknown free-text Title",
+              ledBy: "",
+              note: "Source note",
+            },
+          ],
+        },
+      ],
       teamAssignments: [],
     });
 
     const user = userEvent.setup();
     renderEditor();
-    await user.click(await screen.findByRole("button", { name: /Import from Service Planning/i }));
+    await user.click(
+      await screen.findByRole("button", {
+        name: /Import from Service Planning/i,
+      }),
+    );
     fireEvent.change(screen.getByLabelText(/Planning URL/i), {
-      target: { value: "https://planning.myamplify.io/public/serviceFlow.cfm?_wp=abc" },
+      target: {
+        value: "https://planning.myamplify.io/public/serviceFlow.cfm?_wp=abc",
+      },
     });
     await user.click(screen.getByRole("button", { name: /^Import plan$/i }));
 
-    expect(await screen.findByText("1 imported item needs a quick interpretation review.")).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        "1 imported item needs a quick interpretation review.",
+      ),
+    ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Review items" }));
-    expect(await screen.findAllByText("Unknown free-text Title")).toHaveLength(3);
+    expect(await screen.findAllByText("Unknown free-text Title")).toHaveLength(
+      3,
+    );
     expect(screen.getAllByText("Source note")).toHaveLength(2);
   });
 
@@ -2107,16 +2608,23 @@ Opening Song to begin the worship experience.
     });
     fireEvent.change(pdfInput, { target: { files: [file] } });
 
-    expect(await screen.findByDisplayValue("SMC Worship Experience")).toBeInTheDocument();
+    expect(
+      await screen.findByDisplayValue("SMC Worship Experience"),
+    ).toBeInTheDocument();
     expect(screen.getByDisplayValue("SML")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("Come Before His Presence")).toBeInTheDocument();
+    expect(
+      screen.getByDisplayValue("Come Before His Presence"),
+    ).toBeInTheDocument();
 
     await waitFor(() => {
       expect(mockExtractTextFromPdfFile).toHaveBeenCalledWith(file);
     });
-    await waitFor(() => {
-      expect(mockSaveServicePlan).toHaveBeenCalled();
-    }, { timeout: 2_500 });
+    await waitFor(
+      () => {
+        expect(mockSaveServicePlan).toHaveBeenCalled();
+      },
+      { timeout: 2_500 },
+    );
     const [, , body] = mockSaveServicePlan.mock.calls.at(-1)!;
     expect(body.sourceImport).toEqual({
       source: "planningCenterPdf",
@@ -2186,7 +2694,14 @@ Opening Song to begin the worship experience.
       sections: [
         {
           sectionName: "Worship",
-          rows: [{ elementType: "Welcome", title: "Welcome home", ledBy: "Blair", startTime: "09:05" }],
+          rows: [
+            {
+              elementType: "Welcome",
+              title: "Welcome home",
+              ledBy: "Blair",
+              startTime: "09:05",
+            },
+          ],
         },
       ],
       teamAssignments: [],
@@ -2195,26 +2710,42 @@ Opening Song to begin the worship experience.
     const user = userEvent.setup();
     renderEditor();
 
-    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
-    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Plan actions/i }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: /Import updates/i }),
+    );
     expect(screen.getByLabelText(/Planning URL/i)).toHaveValue(
       "https://services.planningcenteronline.com/plans/123",
     );
-    expect(screen.getByRole("checkbox", { name: /Titles and content/i })).toBeChecked();
-    await user.click(screen.getByRole("checkbox", { name: /Start times and durations/i }));
+    expect(
+      screen.getByRole("checkbox", { name: /Titles and content/i }),
+    ).toBeChecked();
+    await user.click(
+      screen.getByRole("checkbox", { name: /Start times and durations/i }),
+    );
     await user.click(screen.getByRole("button", { name: /Apply updates/i }));
-    expect(await screen.findByText(/1 change ready to apply/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/1 change ready to apply/i),
+    ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Apply 1 change/i }));
 
-    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), { timeout: 2_500 });
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), {
+      timeout: 2_500,
+    });
     const [, , body] = mockSaveServicePlan.mock.calls[0];
     expect(body.sections?.[0]?.elements?.[0]).toMatchObject({
       id: "element-1",
       startTime: "09:00",
     });
-    expect(body.sections?.[0]?.elements?.[0]?.assignees?.[0]?.name).toBe("Blair");
+    expect(body.sections?.[0]?.elements?.[0]?.assignees?.[0]?.name).toBe(
+      "Blair",
+    );
     // Non-generic elementType wins over the longer content title.
-    expect(body.sections?.[0]?.elements?.[0]?.title.blocks[0].spans[0].text).toBe("Welcome");
+    expect(
+      body.sections?.[0]?.elements?.[0]?.title.blocks[0].spans[0].text,
+    ).toBe("Welcome");
   });
 
   it("suggests roster members and past free-text names for Assigned to, not roster-linked", async () => {
@@ -2243,9 +2774,13 @@ Opening Song to begin the worship experience.
     await user.click(
       await screen.findByRole("button", { name: /Assignees for item/i }),
     );
-    await user.click(await screen.findByRole("button", { name: /Add person/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Add person/i }),
+    );
 
-    const assignedToField = await screen.findByRole("textbox", { name: /Assigned to/i });
+    const assignedToField = await screen.findByRole("textbox", {
+      name: /Assigned to/i,
+    });
     await user.click(assignedToField);
 
     expect(await screen.findByText("Jane Doe")).toBeInTheDocument();
@@ -2296,12 +2831,15 @@ Opening Song to begin the worship experience.
 
     // Add-item can autosave an empty title before the typed value flushes;
     // wait for the save that includes the edited title.
-    await waitFor(() => {
-      const body = mockSaveServicePlan.mock.calls.at(-1)?.[2];
-      expect(body?.sections?.[0]?.elements?.[0]?.title).toEqual(
-        plainTextToRichText("Great Are You Lord"),
-      );
-    }, { timeout: 2_500 });
+    await waitFor(
+      () => {
+        const body = mockSaveServicePlan.mock.calls.at(-1)?.[2];
+        expect(body?.sections?.[0]?.elements?.[0]?.title).toEqual(
+          plainTextToRichText("Great Are You Lord"),
+        );
+      },
+      { timeout: 2_500 },
+    );
     const [churchId, planKey, body] = mockSaveServicePlan.mock.calls.at(-1)!;
     expect(churchId).toBe("church-1");
     expect(planKey).toBe("service-1@2026-07-26");
@@ -2382,31 +2920,43 @@ Opening Song to begin the worship experience.
     const user = userEvent.setup();
     renderEditor({
       onBack: jest.fn(),
-      scheduledAssignmentRows: [{
-        teamId: "team-1",
-        teamName: "Worship",
-        scheduleId: "schedule-1",
-        occurrenceId: occurrence.occurrenceId,
-        positionId: "position-vocal",
-        positionName: "Vocal",
-        columnKey: "position-vocal::0",
-        slotLabel: "Vocal 1",
-        memberName: null,
-        canNotify: null,
-        microphoneIds: [],
-      }],
+      scheduledAssignmentRows: [
+        {
+          teamId: "team-1",
+          teamName: "Worship",
+          scheduleId: "schedule-1",
+          occurrenceId: occurrence.occurrenceId,
+          positionId: "position-vocal",
+          positionName: "Vocal",
+          columnKey: "position-vocal::0",
+          slotLabel: "Vocal 1",
+          memberName: null,
+          canNotify: null,
+          microphoneIds: [],
+        },
+      ],
     });
 
-    const planList = await screen.findByRole("region", { name: "Service plan" });
-    Object.defineProperty(planList, "scrollHeight", { configurable: true, value: 1_200 });
-    Object.defineProperty(planList, "clientHeight", { configurable: true, value: 320 });
+    const planList = await screen.findByRole("region", {
+      name: "Service plan",
+    });
+    Object.defineProperty(planList, "scrollHeight", {
+      configurable: true,
+      value: 1_200,
+    });
+    Object.defineProperty(planList, "clientHeight", {
+      configurable: true,
+      value: 320,
+    });
     expect(screen.getByLabelText("Service summary")).toBeInTheDocument();
 
     planList.scrollTop = 80;
     fireEvent.wheel(planList, { deltaY: 80 });
     fireEvent.scroll(planList);
 
-    const showDetails = await screen.findByRole("button", { name: "Show service details" });
+    const showDetails = await screen.findByRole("button", {
+      name: "Show service details",
+    });
     expect(showDetails).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByLabelText("Service summary")).not.toBeInTheDocument();
     expect(screen.getByText("Synced")).toBeInTheDocument();
@@ -2426,8 +2976,12 @@ Opening Song to begin the worship experience.
     });
     renderEditor({ initialEditing: true });
 
-    expect(await screen.findByRole("button", { name: /^Done$/i })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Edit$/i })).not.toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: /^Done$/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^Edit$/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("undoes and redoes a structural edit, and autosaves the restored plan", async () => {
@@ -2445,7 +2999,9 @@ Opening Song to begin the worship experience.
     expect(screen.getByRole("button", { name: "Undo" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Redo" })).toBeDisabled();
 
-    await user.click(screen.getByRole("button", { name: /More tools for Worship/i }));
+    await user.click(
+      screen.getByRole("button", { name: /More tools for Worship/i }),
+    );
     await user.click(screen.getByRole("menuitem", { name: /Remove section/i }));
     expect(screen.queryByDisplayValue("Worship")).not.toBeInTheDocument();
 
@@ -2454,13 +3010,16 @@ Opening Song to begin the worship experience.
     expect(screen.getByRole("button", { name: "Undo" })).toBeDisabled();
 
     // The undone plan is the plan of record — autosave persists it.
-    await waitFor(() => {
-      expect(
-        mockSaveServicePlan.mock.calls
-          .at(-1)?.[2]
-          .sections.map((section) => section.name),
-      ).toEqual(["Worship", "Word"]);
-    }, { timeout: 3_000 });
+    await waitFor(
+      () => {
+        expect(
+          mockSaveServicePlan.mock.calls
+            .at(-1)?.[2]
+            .sections.map((section) => section.name),
+        ).toEqual(["Worship", "Word"]);
+      },
+      { timeout: 3_000 },
+    );
 
     await user.click(screen.getByRole("button", { name: "Redo" }));
     expect(screen.queryByDisplayValue("Worship")).not.toBeInTheDocument();
@@ -2477,8 +3036,12 @@ Opening Song to begin the worship experience.
     renderEditor();
 
     await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
-    await user.click(await screen.findByRole("button", { name: /More tools for Word/i }));
-    await user.click(await screen.findByRole("menuitem", { name: /Remove section/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /More tools for Word/i }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: /Remove section/i }),
+    );
     expect(screen.queryByDisplayValue("Word")).not.toBeInTheDocument();
 
     fireEvent.keyDown(document, { key: "z", ctrlKey: true });
@@ -2557,24 +3120,32 @@ Opening Song to begin the worship experience.
     // Removing lands immediately after the typing burst and writes the same
     // `notes` shape, so only the row can say it is a discrete action.
     await user.click(screen.getByRole("button", { name: /Remove note/i }));
-    await waitFor(() => {
-      expect(
-        richTextToPlainText(
-          mockSaveServicePlan.mock.calls.at(-1)![2].sections[0].elements[0].notes,
-        ),
-      ).not.toContain("X");
-    }, { timeout: 3_000 });
+    await waitFor(
+      () => {
+        expect(
+          richTextToPlainText(
+            mockSaveServicePlan.mock.calls.at(-1)![2].sections[0].elements[0]
+              .notes,
+          ),
+        ).not.toContain("X");
+      },
+      { timeout: 3_000 },
+    );
     mockSaveServicePlan.mockClear();
 
     // Undo must land on the typed note, not jump back past the typing too.
     await user.click(screen.getByRole("button", { name: "Undo" }));
-    await waitFor(() => {
-      expect(
-        richTextToPlainText(
-          mockSaveServicePlan.mock.calls.at(-1)![2].sections[0].elements[0].notes,
-        ),
-      ).toContain("X");
-    }, { timeout: 3_000 });
+    await waitFor(
+      () => {
+        expect(
+          richTextToPlainText(
+            mockSaveServicePlan.mock.calls.at(-1)![2].sections[0].elements[0]
+              .notes,
+          ),
+        ).toContain("X");
+      },
+      { timeout: 3_000 },
+    );
   });
 
   it("leaves undo alone for a field that owns its own history", async () => {
@@ -2587,8 +3158,12 @@ Opening Song to begin the worship experience.
     renderEditor();
 
     await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
-    await user.click(await screen.findByRole("button", { name: /More tools for Word/i }));
-    await user.click(await screen.findByRole("menuitem", { name: /Remove section/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /More tools for Word/i }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: /Remove section/i }),
+    );
 
     // Plain inputs carry data-ignore-undo so the browser's own character-level
     // undo still applies inside them; the plan-level step must not also fire.
@@ -2621,7 +3196,11 @@ Opening Song to begin the worship experience.
             id: "section-1",
             name: "Worship",
             elements: [
-              { id: "el-1", type: "song", title: plainTextToRichText("Living Hope") },
+              {
+                id: "el-1",
+                type: "song",
+                title: plainTextToRichText("Living Hope"),
+              },
             ],
           },
         ],
@@ -2632,9 +3211,13 @@ Opening Song to begin the worship experience.
 
     // Existing plans open in compact view mode — titles are text, not inputs.
     expect(
-      await screen.findByRole("button", { name: "View full name: Living Hope" }),
+      await screen.findByRole("button", {
+        name: "View full name: Living Hope",
+      }),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("textbox", { name: /^Title/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("textbox", { name: /^Title/i }),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Edit$/i })).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Start from scratch/i }),
@@ -2699,7 +3282,9 @@ Opening Song to begin the worship experience.
 
     await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
     expect(await screen.findByDisplayValue("Worship")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /More tools for Worship/i }));
+    await user.click(
+      screen.getByRole("button", { name: /More tools for Worship/i }),
+    );
     await user.click(screen.getByRole("menuitem", { name: /Remove section/i }));
 
     expect(
@@ -2730,7 +3315,9 @@ Opening Song to begin the worship experience.
     );
 
     await user.click(screen.getByRole("button", { name: /Plan actions/i }));
-    await user.click(screen.getByRole("menuitem", { name: /Edit service details/i }));
+    await user.click(
+      screen.getByRole("menuitem", { name: /Edit service details/i }),
+    );
     expect(await screen.findByLabelText(/Plan name/i)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Close/i }));
     expect(
@@ -2774,12 +3361,14 @@ Opening Song to begin the worship experience.
 
     const user = userEvent.setup();
     renderEditor({
-      teams: [{
-        teamId: "team-band",
-        churchId: "church-1",
-        name: "Band",
-        memberIds: [],
-      }],
+      teams: [
+        {
+          teamId: "team-band",
+          churchId: "church-1",
+          name: "Band",
+          memberIds: [],
+        },
+      ],
     });
 
     expect(
@@ -2796,9 +3385,13 @@ Opening Song to begin the worship experience.
     await user.type(screen.getByLabelText(/^Title/i), "!");
     expect(screen.getByLabelText(/^Title/i)).toHaveValue("Living Hope!");
     await user.click(
-      screen.getByRole("button", { name: /Show all 1 participant for Living Hope/i }),
+      screen.getByRole("button", {
+        name: /Show all 1 participant for Living Hope/i,
+      }),
     );
-    expect(await screen.findByLabelText(/^Assigned to/i)).toHaveValue("Jane Doe");
+    expect(await screen.findByLabelText(/^Assigned to/i)).toHaveValue(
+      "Jane Doe",
+    );
     await user.click(screen.getByRole("button", { name: /Close side panel/i }));
     await user.click(screen.getByRole("button", { name: /^Done$/i }));
 
@@ -2809,7 +3402,9 @@ Opening Song to begin the worship experience.
     expect(
       await screen.findByRole("button", { name: /Expand notes/i }),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("textbox", { name: "Notes" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("textbox", { name: "Notes" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Edit$/i })).toBeInTheDocument();
   });
 
@@ -2823,16 +3418,20 @@ Opening Song to begin the worship experience.
         serviceId: "service-1",
         date: "2026-07-26",
         name: "Easter Sunday",
-        sections: [{
-          id: "section-1",
-          name: "Worship",
-          elements: [{
-            id: "el-1",
-            type: "free",
-            title: plainTextToRichText("Welcome"),
-            notes: plainTextToRichText("Original"),
-          }],
-        }],
+        sections: [
+          {
+            id: "section-1",
+            name: "Worship",
+            elements: [
+              {
+                id: "el-1",
+                type: "free",
+                title: plainTextToRichText("Welcome"),
+                notes: plainTextToRichText("Original"),
+              },
+            ],
+          },
+        ],
       },
     });
     const user = userEvent.setup();
@@ -2846,14 +3445,13 @@ Opening Song to begin the worship experience.
     await user.click(notes);
     await user.keyboard("X");
 
-    await waitFor(
-      () => expect(mockSaveServicePlan).toHaveBeenCalled(),
-      { timeout: 2_500 },
-    );
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), {
+      timeout: 2_500,
+    });
     const [, , body] = mockSaveServicePlan.mock.calls.at(-1)!;
-    expect(
-      richTextToPlainText(body.sections[0].elements[0].notes),
-    ).toContain("X");
+    expect(richTextToPlainText(body.sections[0].elements[0].notes)).toContain(
+      "X",
+    );
     expect(notes).toHaveFocus();
   });
 
@@ -2897,15 +3495,25 @@ Opening Song to begin the worship experience.
     expect(
       await screen.findByRole("button", { name: /Expand notes/i }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Expand Band/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Expand Band/i }),
+    ).toBeInTheDocument();
 
-    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
-    await user.click(await screen.findByRole("menuitemcheckbox", { name: /^Hide notes$/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Plan actions/i }),
+    );
+    await user.click(
+      await screen.findByRole("menuitemcheckbox", { name: /^Hide notes$/i }),
+    );
     await waitFor(() => {
-      expect(screen.queryByRole("button", { name: /Expand notes/i })).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: /Expand notes/i }),
+      ).not.toBeInTheDocument();
     });
     await waitFor(() => {
-      expect(screen.queryByRole("button", { name: /Expand Band/i })).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: /Expand Band/i }),
+      ).not.toBeInTheDocument();
     });
 
     await user.keyboard("{Escape}");
@@ -2918,7 +3526,9 @@ Opening Song to begin the worship experience.
     expect(
       await screen.findByRole("button", { name: /Expand notes/i }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Expand Band/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Expand Band/i }),
+    ).toBeInTheDocument();
   });
 
   it("filters the plan view to one team's notes", async () => {
@@ -2970,14 +3580,22 @@ Opening Song to begin the worship experience.
       screen.getByRole("button", { name: /Expand Media Team/i }),
     ).toBeInTheDocument();
 
-    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
-    await user.click(await screen.findByRole("menuitemradio", { name: /^Band$/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Plan actions/i }),
+    );
+    await user.click(
+      await screen.findByRole("menuitemradio", { name: /^Band$/i }),
+    );
 
-    expect(screen.getByRole("button", { name: /Expand Band/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Expand Band/i }),
+    ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Expand Media Team/i }),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Expand notes/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Expand notes/i }),
+    ).toBeInTheDocument();
   });
 
   it("keeps the plan-level Add item control available while sections collapse", async () => {
@@ -2995,7 +3613,11 @@ Opening Song to begin the worship experience.
             id: "section-1",
             name: "Worship",
             elements: [
-              { id: "el-1", type: "song", title: plainTextToRichText("Living Hope") },
+              {
+                id: "el-1",
+                type: "song",
+                title: plainTextToRichText("Living Hope"),
+              },
             ],
           },
         ],
@@ -3007,21 +3629,30 @@ Opening Song to begin the worship experience.
 
     await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
     await screen.findByLabelText(/^Title/i);
-    expect(screen.getByRole("button", { name: /Choose item destination/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Choose item destination/i }),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /Collapse section/i }));
     // Collapsed section content stays mounted for the height animation but is
     // aria-hidden / inert — role queries should not see it.
-    expect(screen.getByRole("button", { name: /Expand section/i })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
-    expect(screen.queryByRole("textbox", { name: /^Title/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Choose item destination/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Expand section/i }),
+    ).toHaveAttribute("aria-expanded", "false");
+    expect(
+      screen.queryByRole("textbox", { name: /^Title/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Choose item destination/i }),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /Expand section/i }));
-    expect(await screen.findByRole("textbox", { name: /^Title/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Choose item destination/i })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("textbox", { name: /^Title/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Choose item destination/i }),
+    ).toBeInTheDocument();
   });
 
   it("disables editing controls when canEdit is false", async () => {
@@ -3040,35 +3671,43 @@ Opening Song to begin the worship experience.
 
     renderEditor({ canEdit: false });
 
-    expect(screen.queryByRole("button", { name: /Save plan/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Save plan/i }),
+    ).not.toBeInTheDocument();
     expect(await screen.findByText("Synced")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Edit$/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Add section/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^Edit$/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Add section/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("catches up schedule progress and missed publicLive changes after a long resume under StrictMode", async () => {
     let nowMs = Date.parse("2026-07-26T14:01:00.000Z");
     const nowSpy = jest.spyOn(Date, "now").mockImplementation(() => nowMs);
-    const sections = [{
-      id: "section-1",
-      name: "Worship",
-      elements: [
-        {
-          id: "welcome",
-          type: "free",
-          title: plainTextToRichText("Welcome"),
-          startTime: "14:00",
-          durationMinutes: 5,
-        },
-        {
-          id: "message",
-          type: "free",
-          title: plainTextToRichText("Message"),
-          startTime: "14:05",
-          durationMinutes: 30,
-        },
-      ],
-    }];
+    const sections = [
+      {
+        id: "section-1",
+        name: "Worship",
+        elements: [
+          {
+            id: "welcome",
+            type: "free",
+            title: plainTextToRichText("Welcome"),
+            startTime: "14:00",
+            durationMinutes: 5,
+          },
+          {
+            id: "message",
+            type: "free",
+            title: plainTextToRichText("Message"),
+            startTime: "14:05",
+            durationMinutes: 30,
+          },
+        ],
+      },
+    ];
     const initialPlan = {
       planId: "church-1::service-1@2026-07-26",
       churchId: "church-1",
@@ -3089,25 +3728,22 @@ Opening Song to begin the worship experience.
     let getServicePlanCallCount = 0;
     mockGetServicePlan.mockImplementation(async () => ({
       success: true,
-      servicePlan:
-        getServicePlanCallCount++ < 2 ? initialPlan : resumedPlan,
+      servicePlan: getServicePlanCallCount++ < 2 ? initialPlan : resumedPlan,
     }));
     const onPlanTimingChange = jest.fn();
 
     try {
-      render(
-        <StrictMode>
-          {editorTree({ onPlanTimingChange })}
-        </StrictMode>,
-      );
+      render(<StrictMode>{editorTree({ onPlanTimingChange })}</StrictMode>);
       expect(
         await screen.findByLabelText("Live on schedule: Welcome"),
       ).toBeInTheDocument();
       await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(2));
-      expect(onPlanTimingChange).toHaveBeenCalledWith(expect.objectContaining({
-        timezone: "UTC",
-        startsAt: initialPlan.startsAt,
-      }));
+      expect(onPlanTimingChange).toHaveBeenCalledWith(
+        expect.objectContaining({
+          timezone: "UTC",
+          startsAt: initialPlan.startsAt,
+        }),
+      );
 
       act(() => {
         Object.defineProperty(document, "visibilityState", {
@@ -3145,23 +3781,30 @@ Opening Song to begin the worship experience.
       name: "Easter Sunday",
       startsAt: "2026-07-26T14:00:00.000Z",
       revision: 1,
-      sections: [{
-        id: "section-1",
-        name: "Worship",
-        elements: [{
-          id: "welcome",
-          type: "free",
-          title: plainTextToRichText("Welcome"),
-        }],
-      }, {
-        id: "section-2",
-        name: "Response",
-        elements: [{
-          id: "response",
-          type: "free",
-          title: plainTextToRichText("Response"),
-        }],
-      }],
+      sections: [
+        {
+          id: "section-1",
+          name: "Worship",
+          elements: [
+            {
+              id: "welcome",
+              type: "free",
+              title: plainTextToRichText("Welcome"),
+            },
+          ],
+        },
+        {
+          id: "section-2",
+          name: "Response",
+          elements: [
+            {
+              id: "response",
+              type: "free",
+              title: plainTextToRichText("Response"),
+            },
+          ],
+        },
+      ],
     } as ServicePlan;
     mockGetServicePlan
       .mockResolvedValueOnce({ success: true, servicePlan: initialPlan })
@@ -3181,8 +3824,12 @@ Opening Song to begin the worship experience.
       const user = userEvent.setup();
       renderEditor({ initialEditing: true });
       await screen.findByDisplayValue("Worship");
-      await user.click(screen.getByRole("button", { name: /More tools for Worship/i }));
-      await user.click(screen.getByRole("menuitem", { name: /Remove section/i }));
+      await user.click(
+        screen.getByRole("button", { name: /More tools for Worship/i }),
+      );
+      await user.click(
+        screen.getByRole("menuitem", { name: /Remove section/i }),
+      );
       expect(screen.queryByDisplayValue("Worship")).not.toBeInTheDocument();
       expect(screen.getAllByDisplayValue("Response").length).toBeGreaterThan(0);
 
@@ -3206,7 +3853,9 @@ Opening Song to begin the worship experience.
       expect(screen.queryByDisplayValue("Worship")).not.toBeInTheDocument();
       expect(screen.getAllByDisplayValue("Response").length).toBeGreaterThan(0);
       expect(await screen.findByText("Remote version")).toBeInTheDocument();
-      expect(screen.queryByText("Plan changed elsewhere")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("Plan changed elsewhere"),
+      ).not.toBeInTheDocument();
     } finally {
       const finishSave = resolveSave as (() => void) | null;
       if (finishSave) {
@@ -3245,8 +3894,16 @@ Opening Song to begin the worship experience.
           id: "section-1",
           name: "Worship",
           elements: [
-            { id: "welcome", type: "free", title: plainTextToRichText("Welcome") },
-            { id: "message", type: "free", title: plainTextToRichText("Message") },
+            {
+              id: "welcome",
+              type: "free",
+              title: plainTextToRichText("Welcome"),
+            },
+            {
+              id: "message",
+              type: "free",
+              title: plainTextToRichText("Message"),
+            },
           ],
         },
       ],
@@ -3302,7 +3959,9 @@ Opening Song to begin the worship experience.
 
     // Header Share is md+ only (`hidden md:inline-flex`); below that (and in
     // jsdom, where the base `hidden` rule wins) share stays in Plan actions.
-    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Plan actions/i }),
+    );
     const planActionsMenu = screen.getByRole("menu");
     expect(planActionsMenu).toHaveClass(
       "w-80",
@@ -3345,7 +4004,9 @@ Opening Song to begin the worship experience.
     expect(
       screen.getByRole("button", { name: /Email simple view/i }),
     ).toHaveClass("max-md:min-w-0");
-    expect(screen.queryByRole("menuitem", { name: /^Email$/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: /^Email$/i }),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByRole("menuitem", { name: /Save as template/i }),
     ).toBeInTheDocument();
@@ -3364,20 +4025,28 @@ Opening Song to begin the worship experience.
       screen.queryByText(/Serving links include notes/i),
     ).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /Email detailed view/i }));
+    await user.click(
+      screen.getByRole("button", { name: /Email detailed view/i }),
+    );
     expect(
       await screen.findByRole("heading", { name: "Email service plan" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: /^Subject:/ })).toHaveDisplayValue(
-      /Easter Sunday Service Plan/,
-    );
-    expect(screen.getByText(/current detailed service plan link/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("textbox", { name: /^Subject:/ }),
+    ).toHaveDisplayValue(/Easter Sunday Service Plan/);
+    expect(
+      screen.getByText(/current detailed service plan link/i),
+    ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
 
     await user.keyboard("{Escape}");
 
-    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
-    await user.click(screen.getByRole("button", { name: /Email simple view/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Plan actions/i }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: /Email simple view/i }),
+    );
     expect(
       await screen.findByText(/current simple service plan link/i),
     ).toBeInTheDocument();
@@ -3385,7 +4054,9 @@ Opening Song to begin the worship experience.
 
     await user.keyboard("{Escape}");
 
-    await user.click(await screen.findByRole("button", { name: /Make Welcome live/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Make Welcome live/i }),
+    );
     await waitFor(() => {
       expect(mockUpdateServicePlanPublicLive).toHaveBeenCalledWith(
         "church-1",
@@ -3403,7 +4074,9 @@ Opening Song to begin the worship experience.
     expect(
       screen.getByRole("menuitem", { name: /Return to planned schedule/i }),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("menuitem", { name: /Pause automatic advance/i }));
+    await user.click(
+      screen.getByRole("menuitem", { name: /Pause automatic advance/i }),
+    );
     await waitFor(() => {
       expect(mockUpdateServicePlanPublicLive).toHaveBeenLastCalledWith(
         "church-1",
@@ -3412,7 +4085,9 @@ Opening Song to begin the worship experience.
       );
     });
 
-    await user.click(await screen.findByRole("button", { name: /Make Message live/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Make Message live/i }),
+    );
     await waitFor(() => {
       expect(mockUpdateServicePlanPublicLive).toHaveBeenLastCalledWith(
         "church-1",
@@ -3423,9 +4098,13 @@ Opening Song to begin the worship experience.
 
     await user.click(screen.getByRole("button", { name: /Plan actions/i }));
     expect(
-      await screen.findByRole("menuitem", { name: /Continue automatic timing/i }),
+      await screen.findByRole("menuitem", {
+        name: /Continue automatic timing/i,
+      }),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("menuitem", { name: /Continue automatic timing/i }));
+    await user.click(
+      screen.getByRole("menuitem", { name: /Continue automatic timing/i }),
+    );
     await waitFor(() => {
       expect(mockUpdateServicePlanPublicLive).toHaveBeenLastCalledWith(
         "church-1",
@@ -3460,7 +4139,11 @@ Opening Song to begin the worship experience.
           id: "section-1",
           name: "Worship",
           elements: [
-            { id: "welcome", type: "free", title: plainTextToRichText("Welcome") },
+            {
+              id: "welcome",
+              type: "free",
+              title: plainTextToRichText("Welcome"),
+            },
           ],
         },
       ],
@@ -3478,7 +4161,9 @@ Opening Song to begin the worship experience.
     const user = userEvent.setup();
     renderEditor({ occurrence: todayOccurrence });
 
-    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Plan actions/i }),
+    );
 
     // Previously the only way to publish was to copy a link you did not want.
     // Worded as enable/disable because many plans can be published at once —
@@ -3523,8 +4208,16 @@ Opening Song to begin the worship experience.
           id: "section-1",
           name: "Worship",
           elements: [
-            { id: "welcome", type: "free", title: plainTextToRichText("Welcome") },
-            { id: "message", type: "free", title: plainTextToRichText("Message") },
+            {
+              id: "welcome",
+              type: "free",
+              title: plainTextToRichText("Welcome"),
+            },
+            {
+              id: "message",
+              type: "free",
+              title: plainTextToRichText("Message"),
+            },
           ],
         },
       ],
@@ -3565,7 +4258,9 @@ Opening Song to begin the worship experience.
     const user = userEvent.setup();
     renderEditor({ occurrence: todayOccurrence });
 
-    await user.click(await screen.findByRole("button", { name: /Make Welcome live/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Make Welcome live/i }),
+    );
     await waitFor(() => {
       expect(keepInView).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -3573,13 +4268,19 @@ Opening Song to begin the worship experience.
         }),
       );
     });
-    expect(screen.getByLabelText(/Live, started .*: Welcome/i)).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Service plan" })).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(/Live, started .*: Welcome/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Service plan" }),
+    ).toBeInTheDocument();
 
     keepInView.mockClear();
     await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
     await user.click(await screen.findByRole("button", { name: /^Done$/i }));
-    await user.click(await screen.findByRole("button", { name: /Make Message live/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Make Message live/i }),
+    );
     await waitFor(() => {
       expect(mockUpdateServicePlanPublicLive).toHaveBeenLastCalledWith(
         "church-1",
@@ -3619,16 +4320,29 @@ Opening Song to begin the worship experience.
       name: "Easter Sunday",
       startsAt: todayStartsAt,
       publicLive: { mode: "manual", currentElementId: "welcome" },
-      sections: [{
-        id: "section-1",
-        name: "Worship",
-        elements: [
-          { id: "welcome", type: "free", title: plainTextToRichText("Welcome") },
-          { id: "song", type: "free", title: plainTextToRichText("Opening song") },
-        ],
-      }],
+      sections: [
+        {
+          id: "section-1",
+          name: "Worship",
+          elements: [
+            {
+              id: "welcome",
+              type: "free",
+              title: plainTextToRichText("Welcome"),
+            },
+            {
+              id: "song",
+              type: "free",
+              title: plainTextToRichText("Opening song"),
+            },
+          ],
+        },
+      ],
     };
-    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: livePlan });
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: livePlan,
+    });
     const keepInView = jest
       .spyOn(generalUtils, "keepElementInView")
       .mockReturnValue(true);
@@ -3637,19 +4351,26 @@ Opening Song to begin the worship experience.
 
     renderEditor({ occurrence: todayOccurrence });
     await waitFor(() => expect(keepInView).toHaveBeenCalled());
-    expect(keepInView.mock.calls[0][0].parent).toHaveAttribute("id", "service-plan-list");
+    expect(keepInView.mock.calls[0][0].parent).toHaveAttribute(
+      "id",
+      "service-plan-list",
+    );
     const initialCallCount = keepInView.mock.calls.length;
 
     await act(async () => new Promise((resolve) => setTimeout(resolve, 350)));
     const planRegion = screen.getByRole("region", { name: "Service plan" });
     fireEvent.pointerDown(planRegion);
     fireEvent.scroll(planRegion);
-    const followButton = await screen.findByRole("button", { name: /Follow live/i });
+    const followButton = await screen.findByRole("button", {
+      name: /Follow live/i,
+    });
     await user.click(followButton);
     await waitFor(() => {
       expect(keepInView).toHaveBeenCalledTimes(initialCallCount + 1);
     });
-    expect(screen.queryByRole("button", { name: /Follow live/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Follow live/i }),
+    ).not.toBeInTheDocument();
 
     const resumedCallCount = keepInView.mock.calls.length;
     await user.click(screen.getByRole("button", { name: /^Edit$/i }));
@@ -3679,43 +4400,93 @@ Opening Song to begin the worship experience.
       name: "Easter Sunday",
       startsAt: todayStartsAt,
       publicLive: { mode: "manual", currentElementId: "welcome" },
-      sections: [{
-        id: "section-1",
-        name: "Worship",
-        elements: [{ id: "welcome", type: "free", title: plainTextToRichText("Welcome") }],
-      }],
+      sections: [
+        {
+          id: "section-1",
+          name: "Worship",
+          elements: [
+            {
+              id: "welcome",
+              type: "free",
+              title: plainTextToRichText("Welcome"),
+            },
+          ],
+        },
+      ],
     };
-    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: livePlan });
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: livePlan,
+    });
 
     let rowTop = 140;
-    const getRect = jest.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-      if (this.id === "service-plan-list") {
-        return { x: 0, y: 100, width: 600, height: 200, top: 100, bottom: 300, left: 0, right: 600, toJSON: () => ({}) } as DOMRect;
-      }
-      if (this.id === "service-plan-element-welcome") {
-        return { x: 0, y: rowTop, width: 500, height: 30, top: rowTop, bottom: rowTop + 30, left: 0, right: 500, toJSON: () => ({}) } as DOMRect;
-      }
-      return { x: 0, y: 0, width: 0, height: 0, top: 0, bottom: 0, left: 0, right: 0, toJSON: () => ({}) } as DOMRect;
-    });
-    const keepInView = jest.spyOn(generalUtils, "keepElementInView").mockImplementation(({ child, parent }) => {
-      rowTop = 140;
-      parent.scrollTop = 140;
-      return true;
-    });
+    const getRect = jest
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        if (this.id === "service-plan-list") {
+          return {
+            x: 0,
+            y: 100,
+            width: 600,
+            height: 200,
+            top: 100,
+            bottom: 300,
+            left: 0,
+            right: 600,
+            toJSON: () => ({}),
+          } as DOMRect;
+        }
+        if (this.id === "service-plan-element-welcome") {
+          return {
+            x: 0,
+            y: rowTop,
+            width: 500,
+            height: 30,
+            top: rowTop,
+            bottom: rowTop + 30,
+            left: 0,
+            right: 500,
+            toJSON: () => ({}),
+          } as DOMRect;
+        }
+        return {
+          x: 0,
+          y: 0,
+          width: 0,
+          height: 0,
+          top: 0,
+          bottom: 0,
+          left: 0,
+          right: 0,
+          toJSON: () => ({}),
+        } as DOMRect;
+      });
+    const keepInView = jest
+      .spyOn(generalUtils, "keepElementInView")
+      .mockImplementation(({ child, parent }) => {
+        rowTop = 140;
+        parent.scrollTop = 140;
+        return true;
+      });
     const user = userEvent.setup();
 
     try {
       renderEditor({ occurrence: todayOccurrence });
       await waitFor(() => expect(keepInView).toHaveBeenCalledTimes(1));
       const planList = screen.getByRole("region", { name: "Service plan" });
-      Object.defineProperty(planList, "clientHeight", { configurable: true, value: 200 });
+      Object.defineProperty(planList, "clientHeight", {
+        configurable: true,
+        value: 200,
+      });
 
       await user.click(screen.getByRole("button", { name: /^Edit$/i }));
       rowTop = 20;
       planList!.scrollTop = 480;
       await user.click(screen.getByRole("button", { name: /^Done$/i }));
 
-      expect(await screen.findByRole("button", { name: /Follow live/i })).toBeInTheDocument();
+      expect(
+        await screen.findByRole("button", { name: /Follow live/i }),
+      ).toBeInTheDocument();
       expect(planList!.scrollTop).toBe(480);
       expect(rowTop).toBe(20);
       expect(keepInView).toHaveBeenCalledTimes(1);
@@ -3750,58 +4521,115 @@ Opening Song to begin the worship experience.
       name: "Easter Sunday",
       startsAt: todayStartsAt,
       publicLive: { mode: "manual", currentElementId: "welcome" },
-      sections: [{
-        id: "section-1",
-        name: "Worship",
-        elements: [
-          { id: "welcome", type: "free", title: plainTextToRichText("Welcome") },
-          { id: "song", type: "free", title: plainTextToRichText("Opening song") },
-        ],
-      }],
+      sections: [
+        {
+          id: "section-1",
+          name: "Worship",
+          elements: [
+            {
+              id: "welcome",
+              type: "free",
+              title: plainTextToRichText("Welcome"),
+            },
+            {
+              id: "song",
+              type: "free",
+              title: plainTextToRichText("Opening song"),
+            },
+          ],
+        },
+      ],
     };
-    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: initialPlan });
-    let resolveLiveUpdate: ((result: { success: true; servicePlan: ServicePlan }) => void) | null = null;
-    mockUpdateServicePlanPublicLive.mockImplementationOnce(() => new Promise((resolve) => {
-      resolveLiveUpdate = resolve;
-    })).mockImplementationOnce(() => new Promise((resolve) => {
-      resolveLiveUpdate = resolve;
-    }));
-    const keepInView = jest.spyOn(generalUtils, "keepElementInView").mockReturnValue(true);
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: initialPlan,
+    });
+    let resolveLiveUpdate:
+      | ((result: { success: true; servicePlan: ServicePlan }) => void)
+      | null = null;
+    mockUpdateServicePlanPublicLive
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveLiveUpdate = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveLiveUpdate = resolve;
+          }),
+      );
+    const keepInView = jest
+      .spyOn(generalUtils, "keepElementInView")
+      .mockReturnValue(true);
     const layout = mockPlanLayout();
     const user = userEvent.setup();
 
     renderEditor({ occurrence: todayOccurrence });
     await waitFor(() => expect(keepInView).toHaveBeenCalledTimes(1));
-    const makeSongLive = await screen.findByRole("button", { name: /Make Opening song live/i });
+    const makeSongLive = await screen.findByRole("button", {
+      name: /Make Opening song live/i,
+    });
 
     await user.click(makeSongLive);
-    await waitFor(() => expect(mockUpdateServicePlanPublicLive).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(mockUpdateServicePlanPublicLive).toHaveBeenCalledTimes(1),
+    );
     await user.click(screen.getByRole("tab", { name: "Rehearse" }));
-    await act(async () => resolveLiveUpdate?.({
-      success: true,
-      servicePlan: { ...initialPlan, publicLive: { mode: "manual", currentElementId: "song" } },
-    }));
-    await user.click(screen.getByRole("tab", { name: "Plan / Order of service" }));
+    await act(async () =>
+      resolveLiveUpdate?.({
+        success: true,
+        servicePlan: {
+          ...initialPlan,
+          publicLive: { mode: "manual", currentElementId: "song" },
+        },
+      }),
+    );
+    await user.click(
+      screen.getByRole("tab", { name: "Plan / Order of service" }),
+    );
     await waitFor(() => expect(keepInView).toHaveBeenCalledTimes(2));
-    expect(keepInView.mock.calls[1][0].child).toHaveAttribute("id", "service-plan-element-song");
+    expect(keepInView.mock.calls[1][0].child).toHaveAttribute(
+      "id",
+      "service-plan-element-song",
+    );
 
     fireEvent.wheel(screen.getByRole("region", { name: "Service plan" }));
-    expect(await screen.findByRole("button", { name: /Follow live/i })).toBeInTheDocument();
-    const makeWelcomeLive = await screen.findByRole("button", { name: /Make Welcome live/i });
+    expect(
+      await screen.findByRole("button", { name: /Follow live/i }),
+    ).toBeInTheDocument();
+    const makeWelcomeLive = await screen.findByRole("button", {
+      name: /Make Welcome live/i,
+    });
     await user.click(makeWelcomeLive);
-    await waitFor(() => expect(mockUpdateServicePlanPublicLive).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(mockUpdateServicePlanPublicLive).toHaveBeenCalledTimes(2),
+    );
     await user.click(screen.getByRole("tab", { name: "Rehearse" }));
-    await act(async () => resolveLiveUpdate?.({
-      success: true,
-      servicePlan: { ...initialPlan, publicLive: { mode: "manual", currentElementId: "welcome" } },
-    }));
-    await user.click(screen.getByRole("tab", { name: "Plan / Order of service" }));
-    expect(await screen.findByRole("button", { name: /Follow live/i })).toBeInTheDocument();
+    await act(async () =>
+      resolveLiveUpdate?.({
+        success: true,
+        servicePlan: {
+          ...initialPlan,
+          publicLive: { mode: "manual", currentElementId: "welcome" },
+        },
+      }),
+    );
+    await user.click(
+      screen.getByRole("tab", { name: "Plan / Order of service" }),
+    );
+    expect(
+      await screen.findByRole("button", { name: /Follow live/i }),
+    ).toBeInTheDocument();
     expect(keepInView).toHaveBeenCalledTimes(2);
 
     await user.click(screen.getByRole("button", { name: /Follow live/i }));
     await waitFor(() => expect(keepInView).toHaveBeenCalledTimes(3));
-    expect(keepInView.mock.calls[2][0].child).toHaveAttribute("id", "service-plan-element-welcome");
+    expect(keepInView.mock.calls[2][0].child).toHaveAttribute(
+      "id",
+      "service-plan-element-welcome",
+    );
     keepInView.mockRestore();
     layout.mockRestore();
   });
@@ -3830,54 +4658,96 @@ Opening Song to begin the worship experience.
         {
           id: "section-1",
           name: "Welcome",
-          elements: [{ id: "welcome", type: "free", title: plainTextToRichText("Welcome") }],
+          elements: [
+            {
+              id: "welcome",
+              type: "free",
+              title: plainTextToRichText("Welcome"),
+            },
+          ],
         },
         {
           id: "section-2",
           name: "Worship",
-          elements: [{ id: "song", type: "free", title: plainTextToRichText("Opening song") }],
+          elements: [
+            {
+              id: "song",
+              type: "free",
+              title: plainTextToRichText("Opening song"),
+            },
+          ],
         },
       ],
     };
-    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: initialPlan });
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: initialPlan,
+    });
     mockUpdateServicePlanPublicLive.mockResolvedValue({
       success: true,
-      servicePlan: { ...initialPlan, publicLive: { mode: "manual", currentElementId: "song" } },
+      servicePlan: {
+        ...initialPlan,
+        publicLive: { mode: "manual", currentElementId: "song" },
+      },
     });
-    const keepInView = jest.spyOn(generalUtils, "keepElementInView").mockReturnValue(true);
+    const keepInView = jest
+      .spyOn(generalUtils, "keepElementInView")
+      .mockReturnValue(true);
     const layout = mockPlanLayout();
     let transitionRunning = false;
-    const originalGetAnimations = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "getAnimations");
+    const originalGetAnimations = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      "getAnimations",
+    );
     Object.defineProperty(HTMLElement.prototype, "getAnimations", {
       configurable: true,
-      value: () => transitionRunning ? [{ playState: "running" }] : [],
+      value: () => (transitionRunning ? [{ playState: "running" }] : []),
     });
 
     try {
       renderEditor({ occurrence: todayOccurrence });
       await waitFor(() => expect(keepInView).toHaveBeenCalledTimes(1));
-      const makeSongLive = screen.getByRole("button", { name: /Make Opening song live/i });
-      const collapseButtons = screen.getAllByRole("button", { name: "Collapse section" });
+      const makeSongLive = screen.getByRole("button", {
+        name: /Make Opening song live/i,
+      });
+      const collapseButtons = screen.getAllByRole("button", {
+        name: "Collapse section",
+      });
       fireEvent.click(collapseButtons[1]);
 
       transitionRunning = true;
       fireEvent.click(makeSongLive);
-      await waitFor(() => expect(mockUpdateServicePlanPublicLive).toHaveBeenCalled());
+      await waitFor(() =>
+        expect(mockUpdateServicePlanPublicLive).toHaveBeenCalled(),
+      );
       await act(async () => {
-        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
-        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+        await new Promise<void>((resolve) =>
+          window.requestAnimationFrame(() => resolve()),
+        );
+        await new Promise<void>((resolve) =>
+          window.requestAnimationFrame(() => resolve()),
+        );
       });
       expect(keepInView).toHaveBeenCalledTimes(1);
 
       transitionRunning = false;
-      fireEvent.transitionEnd(screen.getByRole("region", { name: "Service plan" }));
+      fireEvent.transitionEnd(
+        screen.getByRole("region", { name: "Service plan" }),
+      );
       await waitFor(() => expect(keepInView).toHaveBeenCalledTimes(2));
-      expect(keepInView.mock.calls[1][0].child).toHaveAttribute("id", "service-plan-element-song");
+      expect(keepInView.mock.calls[1][0].child).toHaveAttribute(
+        "id",
+        "service-plan-element-song",
+      );
     } finally {
       keepInView.mockRestore();
       layout.mockRestore();
       if (originalGetAnimations) {
-        Object.defineProperty(HTMLElement.prototype, "getAnimations", originalGetAnimations);
+        Object.defineProperty(
+          HTMLElement.prototype,
+          "getAnimations",
+          originalGetAnimations,
+        );
       } else {
         delete (HTMLElement.prototype as Partial<HTMLElement>).getAnimations;
       }
@@ -3896,17 +4766,33 @@ Opening Song to begin the worship experience.
         name: target.name || "Easter Sunday",
         startsAt: target.startsAt,
         publicLive: { mode: "manual", currentElementId: "welcome" },
-        sections: [{
-          id: "section-1",
-          name: "Worship",
-          elements: [{ id: "welcome", type: "free", title: plainTextToRichText("Welcome") }],
-        }],
+        sections: [
+          {
+            id: "section-1",
+            name: "Worship",
+            elements: [
+              {
+                id: "welcome",
+                type: "free",
+                title: plainTextToRichText("Welcome"),
+              },
+            ],
+          },
+        ],
       };
     };
     mockGetServicePlan
-      .mockResolvedValueOnce({ success: true, servicePlan: planFor(occurrence) })
-      .mockResolvedValueOnce({ success: true, servicePlan: planFor(nextOccurrence) });
-    const keepInView = jest.spyOn(generalUtils, "keepElementInView").mockReturnValue(true);
+      .mockResolvedValueOnce({
+        success: true,
+        servicePlan: planFor(occurrence),
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        servicePlan: planFor(nextOccurrence),
+      });
+    const keepInView = jest
+      .spyOn(generalUtils, "keepElementInView")
+      .mockReturnValue(true);
     const layout = mockPlanLayout();
     const { rerender } = render(editorTree({ occurrence }));
 
@@ -3931,31 +4817,47 @@ Opening Song to begin the worship experience.
         {
           id: "section-1",
           name: "Worship",
-          elements: [{ id: "welcome", type: "free", title: plainTextToRichText("Welcome") }],
+          elements: [
+            {
+              id: "welcome",
+              type: "free",
+              title: plainTextToRichText("Welcome"),
+            },
+          ],
         },
       ],
     };
-    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: draftPlan });
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: draftPlan,
+    });
     mockPublishServicePlan.mockResolvedValue({
       success: true,
       servicePlan: { ...draftPlan, published: true },
       publicUrl: "https://www.worshipsync.net/#/services/share-token",
       teamPublicUrl: "https://www.worshipsync.net/#/services/share-token",
-      generalPublicUrl: "https://www.worshipsync.net/#/services/general-share-token",
+      generalPublicUrl:
+        "https://www.worshipsync.net/#/services/general-share-token",
     });
 
     const user = userEvent.setup();
     renderEditor();
 
-    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
-    await user.click(await screen.findByRole("button", { name: /Copy detailed view link/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Plan actions/i }),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: /Copy detailed view link/i }),
+    );
     await waitFor(() => {
       expect(mockPublishServicePlan).toHaveBeenCalledWith(
         "church-1",
         "service-1@2026-07-26",
       );
     });
-    expect(await screen.findByText(/Detailed view link copied/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Detailed view link copied/i),
+    ).toBeInTheDocument();
   });
 
   it("publishes and opens a view link for an unpublished plan", async () => {
@@ -3972,25 +4874,39 @@ Opening Song to begin the worship experience.
         {
           id: "section-1",
           name: "Worship",
-          elements: [{ id: "welcome", type: "free", title: plainTextToRichText("Welcome") }],
+          elements: [
+            {
+              id: "welcome",
+              type: "free",
+              title: plainTextToRichText("Welcome"),
+            },
+          ],
         },
       ],
     };
-    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: draftPlan });
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: draftPlan,
+    });
     mockPublishServicePlan.mockResolvedValue({
       success: true,
       servicePlan: { ...draftPlan, published: true },
       publicUrl: "https://www.worshipsync.net/#/services/share-token",
       teamPublicUrl: "https://www.worshipsync.net/#/services/share-token",
-      generalPublicUrl: "https://www.worshipsync.net/#/services/general-share-token",
+      generalPublicUrl:
+        "https://www.worshipsync.net/#/services/general-share-token",
     });
     const openSpy = jest.spyOn(window, "open").mockImplementation(() => null);
 
     const user = userEvent.setup();
     renderEditor();
 
-    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
-    await user.click(await screen.findByRole("button", { name: /View simple view/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Plan actions/i }),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: /View simple view/i }),
+    );
     await waitFor(() => {
       expect(mockPublishServicePlan).toHaveBeenCalledWith(
         "church-1",
@@ -4045,8 +4961,12 @@ Opening Song to begin the worship experience.
     const sectionName = await screen.findByDisplayValue("Worship");
     await user.clear(sectionName);
     await user.type(sectionName, "Opening");
-    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
-    await user.click(await screen.findByRole("button", { name: /Email detailed view/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Plan actions/i }),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: /Email detailed view/i }),
+    );
     await user.type(
       await screen.findByRole("textbox", { name: "To" }),
       "one@example.com",
@@ -4079,7 +4999,11 @@ Opening Song to begin the worship experience.
           {
             name: "Master",
             formattedLyrics: [
-              { id: "v1", name: "Verse 1", words: "Who am I that the highest King" },
+              {
+                id: "v1",
+                name: "Verse 1",
+                words: "Who am I that the highest King",
+              },
             ],
           },
         ],
@@ -4119,14 +5043,18 @@ Opening Song to begin the worship experience.
     renderEditor({ canEdit: false });
 
     await user.click(
-      await screen.findByRole("button", { name: /View song details for Living Hope/i }),
+      await screen.findByRole("button", {
+        name: /View song details for Living Hope/i,
+      }),
     );
 
     expect(
       await screen.findByText("Song details — Living Hope"),
     ).toBeInTheDocument();
     expect(screen.getByText("Verse 1")).toBeInTheDocument();
-    expect(screen.getByText("Who am I that the highest King")).toBeInTheDocument();
+    expect(
+      screen.getByText("Who am I that the highest King"),
+    ).toBeInTheDocument();
   });
 
   it("opens a status popover for a pending song without edit access", async () => {
@@ -4164,7 +5092,9 @@ Opening Song to begin the worship experience.
     renderEditor({ canEdit: false });
 
     const plan = await screen.findByRole("region", { name: "Service plan" });
-    expect(within(plan).getByRole("img", { name: /Not in library/i })).toBeInTheDocument();
+    expect(
+      within(plan).getByRole("img", { name: /Not in library/i }),
+    ).toBeInTheDocument();
     await user.click(
       within(plan).getByRole("button", {
         name: /View song status for Appeal Song/i,
@@ -4173,7 +5103,9 @@ Opening Song to begin the worship experience.
     expect(await screen.findByText("Song not found")).toBeInTheDocument();
     const statusPopover = screen.getByRole("dialog");
     expect(within(statusPopover).getByText("Appeal Song")).toBeInTheDocument();
-    expect(within(statusPopover).getByText("This song is not in the library.")).toBeInTheDocument();
+    expect(
+      within(statusPopover).getByText("This song is not in the library."),
+    ).toBeInTheDocument();
   });
 
   it("opens the status popover for a pending plan song in read mode", async () => {
@@ -4219,7 +5151,9 @@ Opening Song to begin the worship experience.
     expect(await screen.findByText("Song not found")).toBeInTheDocument();
     const statusPopover = screen.getByRole("dialog");
     expect(within(statusPopover).getByText("Appeal Song")).toBeInTheDocument();
-    expect(within(statusPopover).getByText("This song is not in the library.")).toBeInTheDocument();
+    expect(
+      within(statusPopover).getByText("This song is not in the library."),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Lyrics — Appeal Song")).not.toBeInTheDocument();
   });
 
@@ -4229,15 +5163,17 @@ Opening Song to begin the worship experience.
       title: "Appeal Song",
       lyricsText: "Come as you are",
     };
-    mockAllSongDocs = [{
-      _id: "created-song",
-      name: "Appeal Song",
-      type: "song",
-      selectedArrangement: 0,
-      arrangements: [],
-      slides: [],
-      shouldSendTo: { projector: true, monitor: true, stream: true },
-    }];
+    mockAllSongDocs = [
+      {
+        _id: "created-song",
+        name: "Appeal Song",
+        type: "song",
+        selectedArrangement: 0,
+        arrangements: [],
+        slides: [],
+        shouldSendTo: { projector: true, monitor: true, stream: true },
+      },
+    ];
     mockGetServicePlan.mockResolvedValue({
       success: true,
       servicePlan: {
@@ -4247,36 +5183,40 @@ Opening Song to begin the worship experience.
         serviceId: "service-1",
         date: "2026-07-26",
         name: "Easter Sunday",
-        sections: [{
-          id: "section-1",
-          name: "Response",
-          elements: [
-            {
-              id: "el-1",
-              type: "song",
-              title: plainTextToRichText("Appeal Song"),
-              songRef: pendingSong,
-            },
-            {
-              id: "el-2",
-              type: "free",
-              title: plainTextToRichText("Prayer"),
-            },
-            {
-              id: "el-3",
-              type: "song",
-              title: plainTextToRichText("Appeal Song continued"),
-              songRef: pendingSong,
-            },
-          ],
-        }],
+        sections: [
+          {
+            id: "section-1",
+            name: "Response",
+            elements: [
+              {
+                id: "el-1",
+                type: "song",
+                title: plainTextToRichText("Appeal Song"),
+                songRef: pendingSong,
+              },
+              {
+                id: "el-2",
+                type: "free",
+                title: plainTextToRichText("Prayer"),
+              },
+              {
+                id: "el-3",
+                type: "song",
+                title: plainTextToRichText("Appeal Song continued"),
+                songRef: pendingSong,
+              },
+            ],
+          },
+        ],
       },
     });
 
     const user = userEvent.setup();
     renderEditor();
     await user.click(await screen.findByRole("tab", { name: "Rehearse" }));
-    const setlist = await screen.findByRole("region", { name: "Rehearse songs" });
+    const setlist = await screen.findByRole("region", {
+      name: "Rehearse songs",
+    });
     expect(
       within(setlist).getAllByRole("button", {
         name: /Create Appeal Song in the library/i,
@@ -4303,11 +5243,17 @@ Opening Song to begin the worship experience.
         }),
       ).toHaveLength(1);
     });
-    expect(within(setlist).queryByText(/Not in library/i)).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("tab", { name: "Plan / Order of service" }));
     expect(
-      screen.getAllByRole("button", { name: /View song details for Appeal Song/i }),
+      within(setlist).queryByText(/Not in library/i),
+    ).not.toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("tab", { name: "Plan / Order of service" }),
+    );
+    expect(
+      screen.getAllByRole("button", {
+        name: /View song details for Appeal Song/i,
+      }),
     ).toHaveLength(2);
   });
 
@@ -4346,10 +5292,14 @@ Opening Song to begin the worship experience.
     renderEditor({ canEdit: false });
 
     await user.click(
-      await screen.findByRole("button", { name: /View song details for Missing Song/i }),
+      await screen.findByRole("button", {
+        name: /View song details for Missing Song/i,
+      }),
     );
 
-    expect(await screen.findByText("Lyrics — Missing Song")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Lyrics — Missing Song"),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(/This song is not in the library right now/i),
     ).toBeInTheDocument();

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { DBItem, SongMetadata } from "../../../types";
 import AddSongSectionsDrawer from "../AddSongSectionsDrawer";
 
@@ -323,4 +323,24 @@ describe("AddSongSectionsDrawer", () => {
       expect(onImport).toHaveBeenCalledWith(sections);
     });
   });
+  it("shares phrase relevance and typo retrieval while keeping paging and close reset", async () => {
+    const songs = [
+      makeSong({ _id: "weak", name: "Sound of Praise" }),
+      makeSong({ _id: "grace", name: "Amazing Grace", arrangements: [{ id: "arr", name: "Default", songOrder: [], slides: [],
+        formattedLyrics: [{ id: "v", name: "Verse", type: "Verse", slideSpan: 1, words: "how sweet the sound" }] }] }),
+    ];
+    const props = { songs, isOpen: true, isMobile: false, onImport: jest.fn(), onClose: jest.fn() };
+    const { rerender } = render(<AddSongSectionsDrawer {...props} />);
+    fireEvent.change(screen.getByLabelText(/Search songs/), { target: { value: "how sweet the sound" } });
+    await waitFor(() => expect(screen.getAllByRole("listitem").map((row) => within(row).getAllByRole("button")[0].textContent)).toEqual(["Amazing Grace", "Sound of Praise"]));
+    await waitFor(() => expect(screen.getByText("sweet")).toHaveClass("font-semibold"));
+    fireEvent.change(screen.getByLabelText(/Search songs/), { target: { value: "amzing grace" } });
+    expect(screen.getByText("sweet")).toHaveClass("font-semibold");
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Sound of Praise" })).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Amazing Grace" })).toBeInTheDocument();
+    rerender(<AddSongSectionsDrawer {...props} isOpen={false} />);
+    rerender(<AddSongSectionsDrawer {...props} />);
+    expect(screen.getByLabelText(/Search songs/)).toHaveValue("");
+  });
+
 });

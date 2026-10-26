@@ -141,9 +141,8 @@ export type ServicePlanAssignee = {
   iemIds?: string[];
 };
 
-/** Explicit opt-in for preparing participant overlays from one plan item. */
+/** Optional event label for participant overlays from one plan item. */
 export type ServicePlanParticipantOverlaySettings = {
-  enabled?: boolean;
   /** Blank or omitted uses the item title as the reusable overlay event. */
   eventLabel?: string;
 };
@@ -369,7 +368,7 @@ export type ServicePlanElement = {
   contentOrder?: string[];
   /** Everyone doing this item, and the microphones each of them carries. */
   assignees?: ServicePlanAssignee[];
-  /** Explicitly opts this item into the Controller's participant overlay preview. */
+  /** Optional label override for the Controller's participant overlay preview. */
   participantOverlay?: ServicePlanParticipantOverlaySettings;
   /**
    * @deprecated Superseded by `assignees`. Read only for plans saved before
@@ -626,6 +625,8 @@ export type ServicePlanSection = {
   id: string;
   /** See ServicePlanElement.sourcePlanningManaged. */
   sourcePlanningManaged?: boolean;
+  /** Service phase; omitted on legacy sections, which behave as main service. */
+  phase?: "pre" | "main" | "post";
   name: string;
   elements: ServicePlanElement[];
 };
@@ -661,7 +662,8 @@ export type ServicePlanTemplatePayload = {
 export type ServicePlanImportSource =
   | "servicePlanning"
   | "planningCenterPdf"
-  | "planningCenter";
+  | "planningCenter"
+  | "worshipSync";
 
 export type ServicePlanSourceImport = {
   source: ServicePlanImportSource;

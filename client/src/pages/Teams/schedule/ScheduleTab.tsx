@@ -4190,6 +4190,7 @@ const ScheduleTab = ({
       if (!profile.teamProfile.positionIds.includes(basePositionId)) {
         await updateTeamRosterMemberProfile(churchId, selectedTeam.teamId, existingMemberId, {
           positionIds: [...profile.teamProfile.positionIds, basePositionId],
+          baseProfile: { positionIds: profile.teamProfile.positionIds },
         });
         assertCurrent();
       }

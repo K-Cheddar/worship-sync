@@ -33,7 +33,7 @@ const streamConnections: Array<{
 }> = [];
 
 const serviceTimeZoneResult = (
-  serviceTimeZone: string,
+  serviceTimeZone: string | null,
   isConfigured = true,
   serviceTimeZoneRevision = "revision-1",
 ) => ({
@@ -142,9 +142,9 @@ describe("ChurchServiceTimeZoneProvider", () => {
     expect(result.current.refreshIssue).toBeNull();
   });
 
-  it("does not treat the API's unconfigured UTC display value as a service time zone", async () => {
+  it("keeps the time zone unavailable when the church has no configuration", async () => {
     mockGetChurchServiceTimeZone.mockResolvedValue(
-      serviceTimeZoneResult("UTC", false) as never,
+      serviceTimeZoneResult(null, false) as never,
     );
     const { result } = renderHook(() => useChurchServiceTimeZone(), { wrapper });
 

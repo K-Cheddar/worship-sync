@@ -182,6 +182,10 @@ import {
   type ServicePlanDraftSnapshot,
 } from "./useServicePlanDraftHistory";
 import ServicePlanConflictDialog from "./ServicePlanConflictDialog";
+import ConfirmDialog from "../../components/Modal/ConfirmDialog";
+import { shareIdFromPublicServiceUrl } from "../shareIdFromPublicServiceUrl";
+import { getPublicServiceFlow } from "../../services/serviceFlowApi";
+import { exportWorshipSyncPlan, importWorshipSyncPlan, publicServiceFlowToSections } from "./servicePlanNativeTransfer";
 import { mergeServicePlan, applyServicePlanMergeChoices, type ServicePlanMergeResult } from "./servicePlanMerge";
 import { clearServicePlanRecoveryDraft, readServicePlanRecoveryDraft, saveServicePlanRecoveryDraft } from "./servicePlanRecovery";
 import { logAuthDiagnostic } from "../../utils/authDiagnostics";
@@ -266,18 +270,21 @@ const centerServicePlanLiveItem = (item: HTMLElement, container: HTMLElement) =>
 const ALL_TEAMS_FILTER_VALUE = "__everyone__";
 
 const SERVICE_PLAN_IMPORT_SOURCE_OPTIONS = [
+  { value: "worshipSync", label: "WorshipSync" },
   { value: "servicePlanning", label: "Service Planning" },
   { value: "planningCenter", label: "Planning Center account" },
   { value: "planningCenterPdf", label: "Planning Center PDF" },
 ];
 
 const servicePlanImportSourceLabel = (source: ServicePlanImportSource): string => {
+  if (source === "worshipSync") return "WorshipSync";
   if (source === "planningCenterPdf") return "Planning Center PDF";
   if (source === "planningCenter") return "Planning Center";
   return "Service Planning";
 };
 
 const parseImportSourceValue = (value: string): ServicePlanImportSource => {
+  if (value === "worshipSync") return "worshipSync";
   if (value === "planningCenterPdf") return "planningCenterPdf";
   if (value === "planningCenter") return "planningCenter";
   return "servicePlanning";
@@ -652,6 +659,9 @@ const ServicePlanEditor = ({
   const [importPcoPlanId, setImportPcoPlanId] = useState("");
   const [importing, setImporting] = useState(false);
   const planningCenterPdfInputRef = useRef<HTMLInputElement>(null);
+  const worshipSyncJsonInputRef = useRef<HTMLInputElement>(null);
+  const [worshipSyncImportKind, setWorshipSyncImportKind] = useState<"link" | "file">("link");
+  const [pendingNativeSections, setPendingNativeSections] = useState<ServicePlanSection[] | null>(null);
   const [importPreview, setImportPreview] = useState<ServicePlanImportPreview | null>(null);
   const [ambiguityDialog, setAmbiguityDialog] = useState<{
     prompt: boolean;
@@ -1660,6 +1670,7 @@ const ServicePlanEditor = ({
 
   const openImportSourceForm = (source: ServicePlanImportSource) => {
     handleImportSourceChange(source);
+    if (source === "worshipSync") setWorshipSyncImportKind("link");
     if (source === "planningCenterPdf") {
       openPlanningCenterPdfPicker();
       return;
@@ -1822,6 +1833,18 @@ const ServicePlanEditor = ({
     setImporting(true);
     const sourceLabel = servicePlanImportSourceLabel(importSource);
     try {
+      if (importSource === "worshipSync") {
+        const importEditorIdentityKey = editorIdentityKey;
+        const shareId = shareIdFromPublicServiceUrl(trimmedUrl);
+        if (!shareId) throw new Error("Enter a public WorshipSync service-plan link.");
+        const snapshot = await getPublicServiceFlow(shareId);
+        if (currentEditorIdentityRef.current !== importEditorIdentityKey) return;
+        const nextSections = publicServiceFlowToSections(snapshot.service, allSongDocs);
+        if (hasPlanContent) setPendingNativeSections(nextSections);
+        else applyNativeImportedSections(nextSections);
+        setShowImport(false);
+        return;
+      }
       let data: ServicePlanningImportData;
       let nextSourceUrl = "";
       let sourceExtras: {
@@ -1856,6 +1879,49 @@ const ServicePlanEditor = ({
     } finally {
       setImporting(false);
     }
+  };
+
+  const applyNativeImportedSections = (nextSections: ServicePlanSection[]) => {
+    updateDraft({ sections: nextSections, sourceImport: undefined });
+    setPendingNativeSections(null);
+    setImportUrl("");
+    setShowImport(false);
+    setIsEditing(true);
+    showAllTeamNotesForReview();
+    showToast("Imported WorshipSync plan. Review the content.", "success");
+  };
+
+  const handleWorshipSyncJsonSelected = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    const importEditorIdentityKey = editorIdentityKey;
+    setImporting(true);
+    try {
+      const text = await file.text();
+      if (currentEditorIdentityRef.current !== importEditorIdentityKey) return;
+      const parsed: unknown = JSON.parse(text);
+      const nextSections = importWorshipSyncPlan(parsed, { targetChurchId: churchId, songs: allSongDocs });
+      setShowImport(false);
+      if (hasPlanContent) setPendingNativeSections(nextSections);
+      else applyNativeImportedSections(nextSections);
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not import this WorshipSync plan file.");
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const downloadWorshipSyncPlan = () => {
+    if (!sections) return;
+    const file = exportWorshipSyncPlan(sections, churchId, allSongDocs);
+    const blob = new Blob([JSON.stringify(file, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `worshipsync-plan-${plan?.date || planKey.split("@").at(-1) || "service"}.json`;
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
   };
 
   const applyImportedDraft = (draft: {
@@ -2875,6 +2941,12 @@ const ServicePlanEditor = ({
                 Save as template
               </DropdownMenuItem>
               {canEdit && hasSections ? (
+                <DropdownMenuItem onSelect={downloadWorshipSyncPlan}>
+                  <Upload aria-hidden className="rotate-180" />
+                  Export WorshipSync plan
+                </DropdownMenuItem>
+              ) : null}
+              {canEdit && hasSections ? (
                 <DropdownMenuItem
                   disabled={importing}
                   onSelect={openImportUpdates}
@@ -3657,7 +3729,44 @@ const ServicePlanEditor = ({
                   handleImportSourceChange(next);
                 }}
               />
-              {importSource === "planningCenterPdf" ? (
+              {importSource === "worshipSync" ? (
+                <>
+                  <ButtonGroup aria-label="WorshipSync import type">
+                    <ButtonGroupItem
+                      isActive={worshipSyncImportKind === "link"}
+                      onClick={() => setWorshipSyncImportKind("link")}
+                    >
+                      Paste public link
+                    </ButtonGroupItem>
+                    <ButtonGroupItem
+                      isActive={worshipSyncImportKind === "file"}
+                      onClick={() => {
+                        setWorshipSyncImportKind("file");
+                        worshipSyncJsonInputRef.current?.click();
+                      }}
+                    >
+                      Upload JSON file
+                    </ButtonGroupItem>
+                  </ButtonGroup>
+                  {worshipSyncImportKind === "link" ? (
+                    <Input
+                      label="Public service-plan link"
+                      placeholder="https://.../services/..."
+                      value={importUrl}
+                      disabled={importing}
+                      onChange={(value) => setImportUrl(String(value))}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void handleImportPlan();
+                        }
+                      }}
+                    />
+                  ) : (
+                    <p className="text-xs text-gray-400">Choose a WorshipSync JSON plan file to import.</p>
+                  )}
+                </>
+              ) : importSource === "planningCenterPdf" ? (
                 <div className="space-y-2">
                   <p className="text-xs text-gray-400">
                     Choose a Planning Center order-of-service PDF. WorshipSync
@@ -3705,7 +3814,7 @@ const ServicePlanEditor = ({
                   }}
                 />
               )}
-              {hasPlanContent && importSource !== "planningCenterPdf" ? (
+              {hasPlanContent && importSource !== "planningCenterPdf" && importSource !== "worshipSync" ? (
                 <fieldset className="space-y-2">
                   <legend className="text-sm font-medium text-gray-100">
                     Update from {servicePlanImportSourceLabel(importSource)}
@@ -3750,7 +3859,7 @@ const ServicePlanEditor = ({
                   </div>
                 </fieldset>
               ) : null}
-              {hasPlanContent && importSource !== "planningCenterPdf" ? (
+              {hasPlanContent && importSource !== "planningCenterPdf" && importSource !== "worshipSync" ? (
                 <p className="text-xs text-gray-400">
                   Removing items is off by default. Turn it on only when this
                   imported plan is the source of truth.
@@ -3763,7 +3872,7 @@ const ServicePlanEditor = ({
                   If you remove missing items, unmarked items are treated as source items.
                 </p>
               ) : null}
-              {importSource !== "planningCenterPdf" ? (
+              {importSource !== "planningCenterPdf" && !(importSource === "worshipSync" && worshipSyncImportKind === "file") ? (
                 <Button
                   variant="cta"
                   svg={hasPlanContent ? RefreshCw : Upload}
@@ -3782,7 +3891,7 @@ const ServicePlanEditor = ({
                 >
                   {importing
                     ? "Importing…"
-                    : hasPlanContent
+                    : hasPlanContent && importSource !== "worshipSync"
                       ? "Apply updates"
                       : "Import plan"}
                 </Button>
@@ -3800,6 +3909,27 @@ const ServicePlanEditor = ({
         aria-label="Planning Center PDF"
         onChange={(event) => void handlePlanningCenterPdfSelected(event)}
       />
+      <input
+        ref={worshipSyncJsonInputRef}
+        type="file"
+        accept="application/json,.json"
+        className="sr-only"
+        aria-label="WorshipSync JSON plan"
+        onChange={(event) => void handleWorshipSyncJsonSelected(event)}
+      />
+
+      <ConfirmDialog
+        open={Boolean(pendingNativeSections)}
+        title="Replace this plan's content?"
+        confirmLabel="Replace content"
+        destructive
+        onCancel={() => setPendingNativeSections(null)}
+        onConfirm={() => pendingNativeSections && applyNativeImportedSections(pendingNativeSections)}
+      >
+        <p className="text-sm text-gray-200">
+          This service already has plan items. Importing will replace its sections and items. The service date, occurrence, and publishing settings will stay the same.
+        </p>
+      </ConfirmDialog>
 
       {importPreview ? (
         <ServicePlanImportReviewWindow

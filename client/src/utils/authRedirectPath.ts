@@ -4,6 +4,8 @@ const AUTH_REDIRECT_EXACT_PATHS = new Set([
   "/",
   "/home",
   "/account",
+  "/teams",
+  "/teams-and-services",
   "/login",
   "/invite",
   "/auth/reset",
@@ -21,25 +23,55 @@ const AUTH_REDIRECT_EXACT_PATHS = new Set([
   "/overlay-controller",
   "/boards/controller",
   "/boards/display",
+  "/current-service",
+  "/current-service/view",
+  "/my-schedule",
+  "/resources",
 ]);
 
 // `/aux-controller/<id>` is a dynamic operator surface (same tier as `/controller`).
 // Omitting it sent booth restarts to the presentation controller after operator entry.
-const AUTH_REDIRECT_PREFIXES = ["/controller", "/aux-controller", "/boards/", "/device-pairing/approve/"];
+const AUTH_REDIRECT_PREFIXES = [
+  "/controller",
+  "/aux-controller",
+  "/boards/",
+  "/device-pairing/approve/",
+  "/account/",
+  "/teams/",
+  "/teams-and-services/",
+];
 
 /** Limit redirect query strings (deep links, filters) without allowing unbounded payloads. */
 const AUTH_REDIRECT_MAX_SEARCH_LENGTH = 8192;
+const AUTH_REDIRECT_MAX_HASH_LENGTH = 8192;
+
+const containsUnsafeUrlCharacter = (value: string) =>
+  value.includes("\\") ||
+  Array.from(value).some((character) => {
+    const code = character.charCodeAt(0);
+    return code <= 0x1f || code === 0x7f;
+  });
 
 export function sanitizeAuthRedirectPathname(pathname: unknown): string | null {
   if (typeof pathname !== "string") return null;
   const trimmedPath = pathname.trim();
-  if (!trimmedPath.startsWith("/") || trimmedPath.startsWith("//")) {
+  if (
+    !trimmedPath.startsWith("/") ||
+    trimmedPath.startsWith("//") ||
+    trimmedPath.includes("?") ||
+    trimmedPath.includes("#") ||
+    containsUnsafeUrlCharacter(trimmedPath)
+  ) {
     return null;
   }
   if (AUTH_REDIRECT_EXACT_PATHS.has(trimmedPath)) {
     return trimmedPath;
   }
-  return AUTH_REDIRECT_PREFIXES.some((prefix) => trimmedPath.startsWith(prefix))
+  return AUTH_REDIRECT_PREFIXES.some((prefix) =>
+    prefix.endsWith("/")
+      ? trimmedPath.startsWith(prefix)
+      : trimmedPath === prefix || trimmedPath.startsWith(`${prefix}/`),
+  )
     ? trimmedPath
     : null;
 }
@@ -49,14 +81,55 @@ export function sanitizeAuthRedirectSearch(search: unknown): string {
   if (typeof search !== "string") return "";
   const trimmed = search.trim();
   if (!trimmed) return "";
-  if (!trimmed.startsWith("?")) return "";
+  if (
+    !trimmed.startsWith("?") ||
+    trimmed.includes("#") ||
+    containsUnsafeUrlCharacter(trimmed)
+  ) return "";
   if (trimmed.length > AUTH_REDIRECT_MAX_SEARCH_LENGTH) return "";
   return trimmed;
 }
 
+export function sanitizeAuthRedirectHash(hash: unknown): string {
+  if (typeof hash !== "string") return "";
+  const trimmed = hash.trim();
+  if (!trimmed) return "";
+  if (
+    !trimmed.startsWith("#") ||
+    containsUnsafeUrlCharacter(trimmed) ||
+    trimmed.length > AUTH_REDIRECT_MAX_HASH_LENGTH
+  ) return "";
+  return trimmed;
+}
+
+/** Sanitize a complete in-app return destination read from storage or state. */
+export function sanitizeAuthRedirectTo(to: unknown): string | null {
+  if (typeof to !== "string") return null;
+  const trimmed = to.trim();
+  if (
+    !trimmed.startsWith("/") ||
+    trimmed.startsWith("//") ||
+    containsUnsafeUrlCharacter(trimmed)
+  ) return null;
+
+  const hashIndex = trimmed.indexOf("#");
+  const beforeHash = hashIndex === -1 ? trimmed : trimmed.slice(0, hashIndex);
+  const hash = sanitizeAuthRedirectHash(
+    hashIndex === -1 ? "" : trimmed.slice(hashIndex),
+  );
+  const searchIndex = beforeHash.indexOf("?");
+  const pathname = searchIndex === -1 ? beforeHash : beforeHash.slice(0, searchIndex);
+  const search = sanitizeAuthRedirectSearch(
+    searchIndex === -1 ? "" : beforeHash.slice(searchIndex),
+  );
+  const safePathname = sanitizeAuthRedirectPathname(pathname);
+  if (!safePathname) return null;
+  return `${safePathname}${search}${hash}`;
+}
+
 /**
- * Pathname + optional search from AuthGate `Navigate state={{ from: location }}`.
- * Preserves deep-link query strings (e.g. `/controller/bible?search=John%203:16`).
+ * Full safe destination from AuthGate `Navigate state={{ from: location }}`.
+ * Preserves query strings and fragments on in-app deep links.
  */
 export function getAuthRedirectToFromState(state: unknown): string | null {
   if (
@@ -68,22 +141,23 @@ export function getAuthRedirectToFromState(state: unknown): string | null {
   ) {
     return null;
   }
-  const from = (state as { from: { pathname?: unknown; search?: unknown } })
-    .from;
+  const from = (state as {
+    from: { pathname?: unknown; search?: unknown; hash?: unknown };
+  }).from;
   const pathname = sanitizeAuthRedirectPathname(from.pathname);
   if (!pathname) return null;
   const search = sanitizeAuthRedirectSearch(from.search);
-  return `${pathname}${search}`;
+  const hash = sanitizeAuthRedirectHash(from.hash);
+  return sanitizeAuthRedirectTo(`${pathname}${search}${hash}`);
 }
 
-/** Pathname only (no query). Prefer `getAuthRedirectToFromState` when the search string matters. */
+/** Pathname only (no query or fragment). Prefer `getAuthRedirectToFromState` for redirects. */
 export function getAuthRedirectPathnameFromState(
   state: unknown,
 ): string | null {
   const to = getAuthRedirectToFromState(state);
   if (!to) return null;
-  const q = to.indexOf("?");
-  return q === -1 ? to : to.slice(0, q);
+  return to.split(/[?#]/, 1)[0];
 }
 
 /**
@@ -94,12 +168,7 @@ export const PUBLIC_SHELL_AUTH_RETURN_KEY =
   "worshipsync_public_shell_auth_return";
 
 const sanitizeStoredAuthReturnPath = (raw: string): string | null => {
-  const q = raw.indexOf("?");
-  const pathname = q === -1 ? raw : raw.slice(0, q);
-  const search = q === -1 ? "" : raw.slice(q);
-  const safePath = sanitizeAuthRedirectPathname(pathname);
-  if (!safePath) return null;
-  return `${safePath}${sanitizeAuthRedirectSearch(search)}`;
+  return sanitizeAuthRedirectTo(raw);
 };
 
 export function setPublicShellAuthReturnPath(redirectTo: string): void {
@@ -145,13 +214,17 @@ export function getHumanPostAuthPath(location: Location): string {
   const fromState = getAuthRedirectToFromState(location.state);
   if (
     fromState &&
-    fromState !== "/" &&
-    fromState.split("?", 1)[0] !== "/login"
+    isPostAuthDestination(fromState)
   ) {
     return fromState;
   }
   const fromShell = takePublicShellAuthReturnPath();
-  return fromShell && fromShell !== "/" && fromShell.split("?", 1)[0] !== "/login"
+  return fromShell && isPostAuthDestination(fromShell)
     ? fromShell
     : "/home";
+}
+
+export function isPostAuthDestination(to: string): boolean {
+  const pathname = to.split(/[?#]/, 1)[0];
+  return pathname !== "/" && pathname !== "/login";
 }

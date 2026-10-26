@@ -1,5 +1,6 @@
 import type { OverlayInfo } from "../../types";
-import { findOverlayForServicePlanningCandidate } from "./findBestOverlayMatch";
+import type { OverlaySyncPlanItem } from "../../types/servicePlanningImport";
+import { findOverlayForServicePlanningCandidate, planNativeOverlaySync } from "./findBestOverlayMatch";
 
 const participant = (
   id: string,
@@ -89,5 +90,55 @@ describe("findOverlayForServicePlanningCandidate", () => {
     );
 
     expect(result).toEqual({ kind: "ambiguous", score: 100 });
+  });
+});
+
+
+describe("planNativeOverlaySync", () => {
+  const candidate = (patch: OverlaySyncPlanItem["patch"], isSong = false): OverlaySyncPlanItem => ({
+    sourceKind: "native", isSong, action: "create", sectionName: "Service", sourceRowIndex: 0,
+    elementType: patch.event || "", title: "", ledBy: "", personIndex: 0, rawNameToken: patch.name || "", patch,
+  });
+
+  it("reserves exact library and current songs before any same-event fallback, preferring current exact copies", () => {
+    const plan = [candidate({ name: "Praise Team", title: "New Song", event: "Song of Praise" }, true),
+      candidate({ name: "Praise Team", title: "God Is", event: "Song of Praise" }, true),
+      candidate({ name: "Praise Team", title: "Just Want to Praise You", event: "Song of Praise" }, true)];
+    const current = [
+      { ...participant("god-is", "Song of Praise"), name: "Praise Team", title: "God Is" },
+      { ...participant("spare", "Song of Praise"), name: "Previous", title: "Previous Song" },
+    ];
+    const library = [
+      { ...participant("saved-god-is", "Song of Praise"), name: "Praise Team", title: "God Is" },
+      { ...participant("saved-just", "Song of Praise"), name: "Praise Team", title: "Just Want to Praise You" },
+    ];
+    const result = planNativeOverlaySync(plan, current, library);
+    expect(result.map((item) => item.targetOverlayId)).toEqual(["spare", "god-is", "saved-just"]);
+    expect(result.map((item) => item.action)).toEqual(["update", "update", "clone"]);
+    expect(result[2].targetOverlaySource).toBe("library");
+  });
+
+  it("preserves the participant identity before event fallback even when their role title changes", () => {
+    const plan = [candidate({ name: "New Speaker", title: "", event: "Sermon" }), candidate({ name: "Samuel Muir", title: "Pastor", event: "Sermon" })];
+    const current = [
+      { ...participant("samuel", "Sermon"), name: "Samuel Muir", title: "Old role" },
+      { ...participant("ryann", "Sermon"), name: "Ryann" },
+    ];
+    const library = [{ ...participant("saved-samuel", "Sermon"), name: "Samuel Muir", title: "Pastor" }];
+    expect(planNativeOverlaySync(plan, current, library).map((item) => item.targetOverlayId)).toEqual(["ryann", "samuel"]);
+  });
+
+  it("does not match similar event text or a different overlay type", () => {
+    const result = planNativeOverlaySync([candidate({ name: "Guest", title: "", event: "Sermon" })], [
+      participant("similar-event", "Sermon Response"),
+      { id: "image", type: "image", event: "Sermon" },
+    ]);
+    expect(result[0]).toMatchObject({ action: "create", targetOverlayId: undefined });
+  });
+
+  it("uses stable distinct slots for repeated identical songs with normalized event identities", () => {
+    const plan = [0, 1, 2].map(() => candidate({ name: "Praise Team", title: "God Is", event: "Song of Praise" }, true));
+    const current = [0, 1, 2].map((index) => ({ ...participant(`song-${index}`, "  SONG of   praise "), name: "praise team", title: "god is" }));
+    expect(planNativeOverlaySync(plan, current).map((item) => item.targetOverlayId)).toEqual(["song-0", "song-1", "song-2"]);
   });
 });

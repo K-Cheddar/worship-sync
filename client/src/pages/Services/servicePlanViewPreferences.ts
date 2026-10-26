@@ -35,6 +35,7 @@ export const readServicePlanImportSource = (): ServicePlanImportSource => {
     if (
       stored === "planningCenterPdf" ||
       stored === "planningCenter" ||
+      stored === "worshipSync" ||
       stored === "servicePlanning"
     ) {
       return stored;

@@ -1,6 +1,6 @@
 import React from "react";
 import { configureStore } from "@reduxjs/toolkit";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Provider } from "react-redux";
 import {
@@ -830,4 +830,49 @@ describe("FilteredItems", () => {
       }),
     );
   });
+  it("ranks a strong lyric phrase above a weak title and keeps highlights tied to the result query", async () => {
+    const items = [
+      { _id: "weak", name: "Sound of Praise", type: "song", listId: "weak" },
+      { _id: "grace", name: "Amazing Grace", type: "song", listId: "grace" },
+      { _id: "indexed", name: "Holy Spirit", type: "song", listId: "indexed" },
+    ];
+    const docs = [{ ...items[1], arrangements: [{ formattedLyrics: [{ words: "how sweet the sound" }] }] }];
+    const Harness = () => {
+      const [query, setQuery] = React.useState("how sweet the sound");
+      return <FilteredItems list={items} allDocs={docs as never} type="all" heading="Items" label="item"
+        isLoading={false} searchValue={query} setSearchValue={setQuery} />;
+    };
+    render(<Provider store={createTestStore()}><MemoryRouter>
+      <ControllerInfoContext.Provider value={createMockControllerContext() as never}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext() as never}><Harness /></GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>
+    </MemoryRouter></Provider>);
+    const results = screen.getByTestId("filtered-items-results");
+    await waitFor(() => expect(results).toHaveAttribute("data-search-query", "how sweet the sound"));
+    expect(within(results).getAllByRole("listitem").map((row) => row.getAttribute("data-item-id"))).toEqual(["grace", "weak"]);
+    expect(within(results).getByText("sweet")).toHaveClass("font-semibold");
+    fireEvent.change(screen.getByLabelText(/Search/), { target: { value: "holy spirt" } });
+    expect(results).toHaveAttribute("data-search-query", "how sweet the sound");
+    expect(within(results).getByText("sweet")).toHaveClass("font-semibold");
+    await waitFor(() => expect(results).toHaveAttribute("data-search-query", "holy spirt"));
+    expect(within(results).getAllByRole("listitem").map((row) => row.getAttribute("data-item-id"))).toEqual(["indexed"]);
+    expect(within(results).getByText("Spirit")).toHaveClass("font-medium");
+    expect(within(results).queryByText("sweet")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/Search/), { target: { value: "" } });
+    await waitFor(() => expect(results).toHaveAttribute("data-search-query", ""));
+    expect(within(results).getAllByRole("listitem").map((row) => row.getAttribute("data-item-id"))).toEqual(["grace", "indexed", "weak"]);
+  });
+
+  it("resolves duplicate custom names by ID in the category-specific picker", async () => {
+    const items = ["first", "second"].map((_id) => ({ _id, name: "Announcements", type: "free", listId: _id }));
+    const docs = items.map((item, i) => ({ ...item, slides: [{ boxes: [{ words: i ? "volunteer meeting" : "community lunch" }] }] }));
+    render(<Provider store={createTestStore()}><MemoryRouter>
+      <FilteredItems list={items} allDocs={docs as never} type="free" heading="Custom" label="custom item"
+        isLoading={false} searchValue="volunteer" setSearchValue={jest.fn()} />
+    </MemoryRouter></Provider>);
+    const results = screen.getByTestId("filtered-items-results");
+    await waitFor(() => expect(results).toHaveAttribute("data-search-query", "volunteer"));
+    expect(within(results).getAllByRole("listitem").map((row) => row.getAttribute("data-item-id"))).toEqual(["second"]);
+  });
+
 });
