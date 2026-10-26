@@ -13,7 +13,7 @@ import {
   updateInitialList,
   updateList,
   updateOverlayInList,
-  updateOverlayListFromRemote,
+  updateOverlaysByIdFromRemote,
 } from "../../store/overlaysSlice";
 import { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import Overlay from "./Overlay";
@@ -29,6 +29,7 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import generateRandomId from "../../utils/generateRandomId";
 import { applyPouchAudit } from "../../utils/pouchAudit";
+import { persistExistingOverlayDoc } from "../../utils/persistOverlayDoc";
 import { keepElementInView } from "../../utils/generalUtils";
 import { RootState } from "../../store/store";
 import Drawer from "../../components/Drawer";
@@ -173,52 +174,34 @@ const Overlays = ({
   }, [selectedOverlay.id]);
 
   const updateOverlayFromExternal = useCallback(
-    async (event: CustomEventInit) => {
+    (event: CustomEventInit) => {
       try {
         const updates = event.detail;
-        for (const _update of updates) {
-          // check if the list we have selected was updated
-          if (_update._id?.startsWith("overlay-")) {
-            const update = _update as DBOverlay;
+        if (!Array.isArray(updates)) return;
+        const remoteOverlays = updates
+          .filter(
+            (_update): _update is DBOverlay =>
+              typeof _update?._id === "string" &&
+              _update._id.startsWith("overlay-"),
+          )
+          .map(normalizeOverlayForSync);
+        const getState = store.getState as () => OverlaySyncRootSlice;
+        const rowsToApply = remoteOverlays.filter(
+          (overlay) =>
+            !shouldKeepLocalListRowForRemoteOverlay(getState, overlay),
+        );
 
-            const overlayIndex = list.findIndex(
-              (overlay) => overlay.id === update.id,
-            );
-
-            if (overlayIndex === -1) {
-              continue;
-            }
-
-            const normalized = normalizeOverlayForSync(update);
-            const getState = store.getState as () => OverlaySyncRootSlice;
-            const keepLocalRow = shouldKeepLocalListRowForRemoteOverlay(
-              getState,
-              normalized,
-            );
-
-            const updatedOverlayList = list.map((overlay, index) => {
-              if (index === overlayIndex) {
-                if (keepLocalRow) {
-                  return overlay;
-                }
-                return update;
-              }
-              return overlay;
-            });
-
-            dispatch(updateOverlayListFromRemote(updatedOverlayList));
-            syncSelectedOverlayFromRemote(
-              dispatch,
-              store.getState as () => OverlaySyncRootSlice,
-              update,
-            );
-          }
+        if (rowsToApply.length > 0) {
+          dispatch(updateOverlaysByIdFromRemote(rowsToApply));
+        }
+        for (const overlay of remoteOverlays) {
+          syncSelectedOverlayFromRemote(dispatch, getState, overlay);
         }
       } catch (e) {
         console.error(e);
       }
     },
-    [dispatch, list, store],
+    [dispatch, store],
   );
 
   useEffect(() => {
@@ -321,16 +304,10 @@ const Overlays = ({
       // Draft flushes can arrive after selection swaps; persist by payload id so edits are not dropped.
       if (selectedOverlay.id && overlay.id !== selectedOverlay.id) {
         dispatch(updateOverlayInList(overlay));
-        if (!db) return;
+        const dbAtStart = db;
+        if (!dbAtStart) return;
         try {
-          const dbOverlay: DBOverlay = await db.get(`overlay-${overlay.id}`);
-          const updatedAt = new Date().toISOString();
-          const merged = applyPouchAudit(
-            dbOverlay,
-            { ...dbOverlay, ...overlay, updatedAt },
-            { isNew: false },
-          );
-          await db.put(merged);
+          await persistExistingOverlayDoc(dbAtStart, overlay);
         } catch (error) {
           console.error("Error persisting non-selected overlay", error);
         }

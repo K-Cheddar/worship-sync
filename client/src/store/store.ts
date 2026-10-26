@@ -61,7 +61,6 @@ import {
   DBCredit,
   DBCredits,
   DBItem,
-  DBItemListDetails,
   DBItemLists,
   DBOverlay,
   DBOverlayTemplates,
@@ -113,6 +112,10 @@ import { extractMediaUrlsFromBackgrounds } from "../utils/mediaCacheUtils";
 import { persistMediaStateChanges } from "../utils/mediaDocUtils";
 import { normalizeOverlayForSync } from "../utils/overlayUtils";
 import { persistExistingOverlayDoc } from "../utils/persistOverlayDoc";
+import {
+  persistServiceListItems,
+  persistServiceListOverlays,
+} from "../utils/persistServiceListField";
 import _ from "lodash";
 import { getChurchDataPath } from "../utils/firebasePaths";
 import {
@@ -816,6 +819,7 @@ const excludedActions: string[] = [
   itemSlice.actions.setRestoreFocusToBox.toString(),
   overlaysSlice.actions.initiateOverlayList.toString(),
   overlaysSlice.actions.updateOverlayListFromRemote.toString(),
+  overlaysSlice.actions.updateOverlaysByIdFromRemote.toString(),
   overlaysSlice.actions.setHasPendingUpdate.toString(),
   overlaysSlice.actions.forceUpdate.toString(),
   overlaysSlice.actions.updateInitialList.toString(),
@@ -872,6 +876,8 @@ const excludedActions: string[] = [
   preferencesSlice.actions.forceUpdate.toString(),
   overlaySlice.actions.setIsOverlayLoading.toString(),
   overlaySlice.actions.setHasPendingUpdate.toString(),
+  overlaySlice.actions.markOverlayDraftPending.toString(),
+  overlaySlice.actions.clearOverlayDraftPending.toString(),
   overlaySlice.actions.forceUpdate.toString(),
   overlaySlice.actions.selectOverlay.toString(),
   overlaySlice.actions.markOverlayPersisted.toString(),
@@ -1500,27 +1506,39 @@ listenerMiddleware.startListening({
       itemListSlice.actions.addToInitialItems,
       itemListSlice.actions.setIsInitialized,
     );
-    return (
+    const itemListChanged =
       (currentState as RootState).undoable.present.itemList !==
-        (previousState as RootState).undoable.present.itemList &&
+      (previousState as RootState).undoable.present.itemList;
+    const savingOutgoingOutline =
+      itemListsSlice.actions.selectItemList.match(action) &&
+      (currentState as RootState).undoable.present.itemLists.selectedList?._id !==
+        (previousState as RootState).undoable.present.itemLists.selectedList?._id &&
+      !!(previousState as RootState).undoable.present.itemList.hasPendingUpdate;
+    return (
+      (itemListChanged &&
       !excluded(action) &&
       !!(currentState as RootState).undoable.present.itemList
         .hasPendingUpdate &&
-      !isStoreResetAction(action)
+      !isStoreResetAction(action)) ||
+      savingOutgoingOutline
     );
   },
 
   effect: async (action, listenerApi) => {
     const dbAtStart = db;
+    const isSavingOutgoingOutline = itemListsSlice.actions.selectItemList.match(action);
 
-    if (!itemListsSlice.actions.selectItemList.match(action)) {
-      listenerApi.cancelActiveListeners();
+    listenerApi.cancelActiveListeners();
+    if (!isSavingOutgoingOutline) {
       await listenerApi.delay(1500);
     }
 
     // Always read post-debounce state so we never persist a closed-over
     // pre-delay snapshot after remote hydrate or a newer local edit.
-    const present = (listenerApi.getState() as RootState).undoable.present;
+    const present = (isSavingOutgoingOutline
+      ? (listenerApi.getOriginalState() as RootState)
+      : (listenerApi.getState() as RootState)
+    ).undoable.present;
     const { list, hasPendingUpdate, isInitialized } = present.itemList;
     const { selectedList } = present.itemLists;
 
@@ -1535,38 +1553,32 @@ listenerMiddleware.startListening({
     }
 
     try {
-      const db_itemList: DBItemListDetails = await dbAtStart.get(
+      const persisted = await persistServiceListItems(
+        dbAtStart,
         selectedList._id,
+        [...list],
       );
 
-      // A newer local edit or remote hydrate may have landed while awaiting get.
-      const latest = (listenerApi.getState() as RootState).undoable.present
-        .itemList;
-      if (db !== dbAtStart || !latest.hasPendingUpdate || latest.list !== list) {
-        return;
-      }
-
-      db_itemList.items = [...list];
-      db_itemList.updatedAt = new Date().toISOString();
-      const result = await dbAtStart.put(db_itemList);
-
-      // Only clear dirty after a successful write so failed puts can retry.
+      listenerApi.throwIfCancelled();
       if (db !== dbAtStart) return;
       const afterPutState = (listenerApi.getState() as RootState).undoable.present;
-      if (afterPutState.itemLists.selectedList?._id !== selectedList._id) return;
       const afterPut = afterPutState.itemList;
-      if (afterPut.list === list && afterPut.hasPendingUpdate) {
+      if (
+        afterPut.list === list &&
+        afterPut.hasPendingUpdate
+      ) {
         listenerApi.dispatch(itemListSlice.actions.setHasPendingUpdate(false));
       }
 
       safePostMessage({
         type: "update",
         data: {
-          docs: { ...db_itemList, _rev: result.rev },
+          docs: persisted,
           hostId: globalHostId,
         },
       });
     } catch (error) {
+      if (isListenerCancelledTaskError(error)) return;
       console.error("Failed to persist item list outline:", error);
     }
   },
@@ -1716,6 +1728,8 @@ listenerMiddleware.startListening({
       overlaySlice.actions.setIsOverlayLoading,
       overlaySlice.actions.markOverlayPersisted,
       overlaySlice.actions.bufferRemoteOverlayUpdate,
+      overlaySlice.actions.markOverlayDraftPending,
+      overlaySlice.actions.clearOverlayDraftPending,
     );
     return (
       (currentState as RootState).undoable.present.overlay !==
@@ -1804,6 +1818,7 @@ listenerMiddleware.startListening({
     const excluded = isAnyOf(
       overlaysSlice.actions.initiateOverlayList,
       overlaysSlice.actions.updateOverlayListFromRemote,
+      overlaysSlice.actions.updateOverlaysByIdFromRemote,
       overlaysSlice.actions.setHasPendingUpdate,
       overlaysSlice.actions.updateInitialList,
       overlaysSlice.actions.addToInitialList,
@@ -1812,51 +1827,71 @@ listenerMiddleware.startListening({
       overlaysSlice.actions.updateOverlayHistoryEntry,
       overlaysSlice.actions.mergeOverlayIntoHistory,
     );
-    return (
+    const overlaysChanged =
       (currentState as RootState).undoable.present.overlays !==
-        (previousState as RootState).undoable.present.overlays &&
+      (previousState as RootState).undoable.present.overlays;
+    const savingOutgoingOutline =
+      itemListsSlice.actions.selectItemList.match(action) &&
+      (currentState as RootState).undoable.present.itemLists.selectedList?._id !==
+        (previousState as RootState).undoable.present.itemLists.selectedList?._id &&
+      !!(previousState as RootState).undoable.present.overlays.hasPendingUpdate;
+    return (
+      ((overlaysChanged &&
       !excluded(action) &&
       !!(currentState as RootState).undoable.present.overlays
         .hasPendingUpdate &&
-      !isStoreResetAction(action)
+      !isStoreResetAction(action)) || savingOutgoingOutline)
     );
   },
 
   effect: async (action, listenerApi) => {
     const dbAtStart = db;
     if (!dbAtStart) return;
-    let state = listenerApi.getState() as RootState;
-    if (itemListsSlice.actions.selectItemList.match(action)) {
-      state = listenerApi.getOriginalState() as RootState;
-    } else {
-      listenerApi.cancelActiveListeners();
+    const isSavingOutgoingOutline = itemListsSlice.actions.selectItemList.match(action);
+    listenerApi.cancelActiveListeners();
+    if (!isSavingOutgoingOutline) {
       await listenerApi.delay(1500);
-      if (db !== dbAtStart) return;
     }
 
     if (db !== dbAtStart) return;
-    listenerApi.dispatch(overlaysSlice.actions.setHasPendingUpdate(false));
-
-    // update ItemList
+    const state = isSavingOutgoingOutline
+      ? (listenerApi.getOriginalState() as RootState)
+      : (listenerApi.getState() as RootState);
+    if (
+      !isSavingOutgoingOutline &&
+      !state.undoable.present.overlays.hasPendingUpdate
+    ) {
+      return;
+    }
     const { list } = state.undoable.present.overlays;
     const { selectedList } = state.undoable.present.itemLists;
 
     if (!selectedList) return;
-    const db_itemList: DBItemListDetails = await dbAtStart.get(selectedList._id);
+    const listId = selectedList._id;
+    try {
+      const persisted = await persistServiceListOverlays(
+        dbAtStart,
+        listId,
+        list.map((overlay) => overlay.id),
+      );
 
-    db_itemList.overlays = list.map((overlay) => overlay.id);
-    db_itemList.updatedAt = new Date().toISOString();
-    await dbAtStart.put(db_itemList);
-
-    // Local machine updates
-    if (db !== dbAtStart) return;
-    safePostMessage({
-      type: "update",
-      data: {
-        docs: db_itemList,
-        hostId: globalHostId,
-      },
-    });
+      listenerApi.throwIfCancelled();
+      if (db !== dbAtStart) return;
+      const latest = (listenerApi.getState() as RootState).undoable.present;
+      if (
+        latest.overlays.list === list &&
+        latest.overlays.hasPendingUpdate
+      ) {
+        listenerApi.dispatch(overlaysSlice.actions.setHasPendingUpdate(false));
+      }
+      safePostMessage({
+        type: "update",
+        data: { docs: persisted, hostId: globalHostId },
+      });
+    } catch (error) {
+      if (isListenerCancelledTaskError(error)) return;
+      console.error("Failed to persist overlay order:", error);
+    }
   },
 });
 

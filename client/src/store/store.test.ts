@@ -4860,6 +4860,8 @@ const loadStoreWithItemListPersistence = () => {
   let storeModule: any;
   let itemListSliceModule: any;
   let itemListsSliceModule: any;
+  let overlaySliceModule: any;
+  let overlaysSliceModule: any;
   const postMessage = jest.fn();
   const db = {
     get: jest.fn(),
@@ -4889,12 +4891,18 @@ const loadStoreWithItemListPersistence = () => {
     itemListSliceModule = require("./itemListSlice");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     itemListsSliceModule = require("./itemListsSlice");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    overlaySliceModule = require("./overlaySlice");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    overlaysSliceModule = require("./overlaysSlice");
   });
 
   return {
     store: storeModule.default,
     itemListSlice: itemListSliceModule.itemListSlice,
     itemListsSlice: itemListsSliceModule.itemListsSlice,
+    overlaySlice: overlaySliceModule.overlaySlice,
+    overlaysSlice: overlaysSliceModule.overlaysSlice,
     db,
     postMessage,
   };
@@ -4959,6 +4967,243 @@ describe("item list outline persistence", () => {
     expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(
       false,
     );
+  });
+
+  it("retries after an overlay-order write wins a shared-document revision conflict", async () => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, db } =
+      loadStoreWithItemListPersistence();
+    let currentDoc: Record<string, any> = {
+      _id: "outline-a",
+      _rev: "1-base",
+      items: [
+        createServiceItem({ name: "Current", _id: "song-1", listId: "l1" }),
+      ],
+      overlays: ["overlay-1"],
+    };
+    db.get.mockImplementation(async () => ({ ...currentDoc }));
+    db.put.mockImplementationOnce(async () => {
+      currentDoc = {
+        ...currentDoc,
+        _rev: "2-overlay-order",
+        overlays: ["overlay-2", "overlay-1"],
+      };
+      throw Object.assign(new Error("conflict"), { status: 409 });
+    });
+    db.put.mockImplementationOnce(async (document: Record<string, any>) => {
+      currentDoc = { ...document, _rev: "3-outline" };
+      return { ok: true, rev: "3-outline" };
+    });
+
+    hydrateOutline(store, itemListSlice, itemListsSlice);
+    store.dispatch(
+      itemListSlice.actions.updateItemList([
+        createServiceItem({ name: "Current", _id: "song-1", listId: "l1" }),
+        createServiceItem({ name: "Added", _id: "song-2", listId: "l2" }),
+      ]),
+    );
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.get).toHaveBeenCalledTimes(2);
+    expect(db.put).toHaveBeenCalledTimes(2);
+    expect(currentDoc).toEqual(
+      expect.objectContaining({
+        _rev: "3-outline",
+        overlays: ["overlay-2", "overlay-1"],
+        items: expect.arrayContaining([expect.objectContaining({ name: "Added" })]),
+      }),
+    );
+    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(
+      false,
+    );
+  });
+
+  it("keeps outline and overlay-order edits when their saves overlap", async () => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, overlaysSlice, db } =
+      loadStoreWithItemListPersistence();
+    let currentDoc: Record<string, any> = {
+      _id: "outline-a",
+      _rev: "1-base",
+      items: [
+        createServiceItem({ name: "Current", _id: "song-1", listId: "l1" }),
+      ],
+      overlays: ["overlay-1", "overlay-2"],
+    };
+    db.get.mockImplementation(async () => ({ ...currentDoc }));
+    db.put.mockImplementation(async (document: Record<string, any>) => {
+      if (document._rev !== currentDoc._rev) {
+        throw Object.assign(new Error("conflict"), { status: 409 });
+      }
+      const revision = `${Number(currentDoc._rev[0]) + 1}-saved`;
+      currentDoc = { ...document, _rev: revision };
+      return { ok: true, rev: revision };
+    });
+
+    hydrateOutline(store, itemListSlice, itemListsSlice);
+    store.dispatch(
+      overlaysSlice.actions.initiateOverlayList([
+        { id: "overlay-1", name: "First" },
+        { id: "overlay-2", name: "Second" },
+      ]),
+    );
+    store.dispatch(
+      itemListSlice.actions.updateItemList([
+        createServiceItem({ name: "Current", _id: "song-1", listId: "l1" }),
+        createServiceItem({ name: "Added", _id: "song-2", listId: "l2" }),
+      ]),
+    );
+    store.dispatch(
+      overlaysSlice.actions.updateOverlayList([
+        { id: "overlay-2", name: "Second" },
+        { id: "overlay-1", name: "First" },
+      ]),
+    );
+
+    await jest.advanceTimersByTimeAsync(1500);
+    for (let attempt = 0; attempt < 20; attempt += 1) await Promise.resolve();
+    await flushListenerEffects();
+
+    expect(currentDoc.items).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "Added" })]),
+    );
+    expect(currentDoc.overlays).toEqual(["overlay-2", "overlay-1"]);
+    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(
+      false,
+    );
+    expect(store.getState().undoable.present.overlays.hasPendingUpdate).toBe(
+      false,
+    );
+  });
+
+  it("persists pending fields to the outgoing outline before switching selection", async () => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, overlaysSlice, db } =
+      loadStoreWithItemListPersistence();
+    const currentDoc: Record<string, any> = {
+      _id: "outline-a",
+      _rev: "1-base",
+      items: [],
+      overlays: ["overlay-1", "overlay-2"],
+    };
+    const docs = new Map<string, Record<string, any>>([
+      ["outline-a", currentDoc],
+      ["itemLists", {
+        _id: "itemLists",
+        _rev: "1-lists",
+        itemLists: [
+          { _id: "outline-a", name: "Sunday" },
+          { _id: "outline-b", name: "Wednesday" },
+        ],
+        activeList: { _id: "outline-a", name: "Sunday" },
+      }],
+    ]);
+    db.get.mockImplementation(async (id: string) => {
+      const document = docs.get(id);
+      if (!document) throw Object.assign(new Error("missing"), { status: 404 });
+      return { ...document };
+    });
+    db.put.mockImplementation(async (document: Record<string, any>) => {
+      const current = docs.get(String(document._id));
+      if (!current || current._rev !== document._rev) {
+        throw Object.assign(new Error("conflict"), { status: 409 });
+      }
+      const revision = `${Number(current._rev[0]) + 1}-saved`;
+      docs.set(String(document._id), { ...document, _rev: revision });
+      return { ok: true, rev: revision };
+    });
+
+    store.dispatch(
+      itemListsSlice.actions.initiateItemLists([
+        { _id: "outline-a", name: "Sunday" },
+        { _id: "outline-b", name: "Wednesday" },
+      ]),
+    );
+    store.dispatch(
+      itemListSlice.actions.initiateItemList([
+        createServiceItem({ name: "Before", _id: "song-1", listId: "l1" }),
+      ]),
+    );
+    store.dispatch(
+      overlaysSlice.actions.initiateOverlayList([
+        { id: "overlay-1", name: "First" },
+        { id: "overlay-2", name: "Second" },
+      ]),
+    );
+    store.dispatch(
+      itemListSlice.actions.updateItemList([
+        createServiceItem({ name: "After", _id: "song-2", listId: "l2" }),
+      ]),
+    );
+    store.dispatch(
+      overlaysSlice.actions.updateOverlayList([
+        { id: "overlay-2", name: "Second" },
+        { id: "overlay-1", name: "First" },
+      ]),
+    );
+    store.dispatch(itemListsSlice.actions.selectItemList("outline-b"));
+
+    for (let attempt = 0; attempt < 50; attempt += 1) await Promise.resolve();
+    const savedOutline = docs.get("outline-a");
+    expect(savedOutline?.items).toEqual([
+      expect.objectContaining({ name: "After" }),
+    ]);
+    expect(savedOutline?.overlays).toEqual(["overlay-2", "overlay-1"]);
+    expect(store.getState().undoable.present.itemLists.selectedList?._id).toBe(
+      "outline-b",
+    );
+    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(
+      false,
+    );
+    expect(store.getState().undoable.present.overlays.hasPendingUpdate).toBe(
+      false,
+    );
+  });
+
+  it("keeps both pending flags when shared-outline writes fail", async () => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, overlaysSlice, db } =
+      loadStoreWithItemListPersistence();
+    db.get.mockResolvedValue({
+      _id: "outline-a",
+      _rev: "1-base",
+      items: [],
+      overlays: ["overlay-1", "overlay-2"],
+    });
+    db.put.mockRejectedValue(new Error("offline"));
+    const logError = jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+    hydrateOutline(store, itemListSlice, itemListsSlice);
+    store.dispatch(
+      overlaysSlice.actions.initiateOverlayList([
+        { id: "overlay-1", name: "First" },
+        { id: "overlay-2", name: "Second" },
+      ]),
+    );
+    store.dispatch(
+      itemListSlice.actions.updateItemList([
+        createServiceItem({ name: "Added", _id: "song-2", listId: "l2" }),
+      ]),
+    );
+    store.dispatch(
+      overlaysSlice.actions.updateOverlayList([
+        { id: "overlay-2", name: "Second" },
+        { id: "overlay-1", name: "First" },
+      ]),
+    );
+
+    await jest.advanceTimersByTimeAsync(1500);
+    for (let attempt = 0; attempt < 20; attempt += 1) await Promise.resolve();
+
+    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(
+      true,
+    );
+    expect(store.getState().undoable.present.overlays.hasPendingUpdate).toBe(
+      true,
+    );
+    logError.mockRestore();
   });
 
   it("discards a delayed outline save after a remote hydrate during debounce", async () => {
@@ -5026,6 +5271,78 @@ describe("item list outline persistence", () => {
         ]),
       }),
     );
+  });
+});
+
+describe("selected overlay persistence races", () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { createOverlay } = require("../test/fixtures");
+
+  it("keeps a newer edit and remote conflict when an older save finishes late", async () => {
+    jest.useFakeTimers();
+    const { store, overlaySlice, overlaysSlice, db } =
+      loadStoreWithItemListPersistence();
+    let persisted = {
+      _id: "overlay-overlay-1",
+      _rev: "1-base",
+      docType: "overlay",
+      ...createOverlay({ id: "overlay-1", name: "Original", duration: 7 }),
+    };
+    let finishFirstPut: (() => void) | undefined;
+    db.get.mockImplementation(async (id: string) => {
+      if (id !== persisted._id) throw new Error(`Unexpected document ${id}`);
+      return { ...persisted };
+    });
+    db.put.mockImplementation((document: Record<string, any>) => {
+      if (document.name === "First local edit") {
+        persisted = { ...document, _rev: "2-first" };
+        return new Promise((resolve) => {
+          finishFirstPut = () => resolve({ ok: true, rev: "2-first" });
+        }) as any;
+      }
+      persisted = { ...document, _rev: "3-newer" };
+      return Promise.resolve({ ok: true, rev: "3-newer" }) as any;
+    });
+
+    const base = createOverlay({ id: "overlay-1", name: "Original", duration: 7 });
+    store.dispatch(overlaysSlice.actions.initiateOverlayList([base]));
+    store.dispatch(overlaySlice.actions.selectOverlay(base));
+    store.dispatch(
+      overlaySlice.actions.updateOverlay({ id: "overlay-1", name: "First local edit" }),
+    );
+    store.dispatch(
+      overlaysSlice.actions.updateOverlayInList({ id: "overlay-1", name: "First local edit" }),
+    );
+
+    await jest.advanceTimersByTimeAsync(1500);
+    for (let attempt = 0; attempt < 20; attempt += 1) await Promise.resolve();
+    expect(db.put).toHaveBeenCalledTimes(1);
+
+    store.dispatch(
+      overlaySlice.actions.bufferRemoteOverlayUpdate(
+        createOverlay({ id: "overlay-1", name: "Remote edit", duration: 7 }),
+      ),
+    );
+    store.dispatch(
+      overlaySlice.actions.updateOverlay({ id: "overlay-1", name: "Newer local edit" }),
+    );
+    store.dispatch(
+      overlaysSlice.actions.updateOverlayInList({ id: "overlay-1", name: "Newer local edit" }),
+    );
+
+    await jest.advanceTimersByTimeAsync(1500);
+    for (let attempt = 0; attempt < 40; attempt += 1) await Promise.resolve();
+    expect(db.put).toHaveBeenCalledTimes(2);
+    expect(persisted.name).toBe("Newer local edit");
+
+    finishFirstPut?.();
+    for (let attempt = 0; attempt < 30; attempt += 1) await Promise.resolve();
+    const state = store.getState().undoable.present;
+    expect(persisted.name).toBe("Newer local edit");
+    expect(state.overlay.selectedOverlay?.name).toBe("Newer local edit");
+    expect(state.overlays.list[0]?.name).toBe("Newer local edit");
+    expect(state.overlay.hasRemoteUpdate).toBe(true);
+    expect(state.overlay.pendingRemoteOverlay?.name).toBe("Remote edit");
   });
 });
 

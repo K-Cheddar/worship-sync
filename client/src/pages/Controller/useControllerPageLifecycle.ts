@@ -1,6 +1,7 @@
 import { useCallback, useContext, useEffect, useRef } from "react";
 import { useStore } from "react-redux";
 import { useDispatch, useSelector } from "../../hooks";
+import _ from "lodash";
 import {
   initiateAllItemsList,
   updateAllItemsListFromRemote,
@@ -124,6 +125,24 @@ export const useControllerPageLifecycle = () => {
   const selectedList = useSelector(
     (state) => state.undoable.present.itemLists.selectedList,
   );
+  const databaseRef = useRef(db);
+  databaseRef.current = db;
+  const selectedOutlineIdentityRef = useRef({
+    listId: selectedList?._id,
+    controllerId: activeControllerId,
+    generation: 0,
+  });
+  if (
+    selectedOutlineIdentityRef.current.listId !== selectedList?._id ||
+    selectedOutlineIdentityRef.current.controllerId !== activeControllerId
+  ) {
+    selectedOutlineIdentityRef.current = {
+      listId: selectedList?._id,
+      controllerId: activeControllerId,
+      generation: selectedOutlineIdentityRef.current.generation + 1,
+    };
+  }
+  const serviceListSyncGenerationRef = useRef(0);
   const allControllerSlicesInitialized = useSelector((state: RootState) =>
     Boolean(
       state.allItems.isInitialized &&
@@ -178,10 +197,13 @@ export const useControllerPageLifecycle = () => {
         if (!Array.isArray(updates)) return;
         let refetchOverlayHistory = false;
         for (const _update of updates) {
-          if (selectedList && _update._id === selectedList._id) {
+          const currentState = store.getState() as RootState;
+          const currentSelectedList =
+            currentState.undoable.present.itemLists.selectedList;
+          if (currentSelectedList?._id && _update._id === currentSelectedList._id) {
             const update = _update as DBItemListDetails;
-            const itemList = update.items;
-            const overlaysIds = update.overlays || [];
+            const selectionIdentity = selectedOutlineIdentityRef.current;
+            const syncGeneration = ++serviceListSyncGenerationRef.current;
             dispatch(
               setStoredServicePlanningOutlineIfIdle(
                 update.serviceOutline ?? null,
@@ -193,26 +215,81 @@ export const useControllerPageLifecycle = () => {
               ),
             );
             if (cloud) {
-              dispatch(
-                updateItemListFromRemote(formatItemList(itemList, cloud)),
-              );
+              const remoteItems = formatItemList(update.items || [], cloud);
+              if (
+                !currentState.undoable.present.itemList.hasPendingUpdate &&
+                !_.isEqual(currentState.undoable.present.itemList.list, remoteItems)
+              ) {
+                dispatch(updateItemListFromRemote(remoteItems));
+              }
             }
-            const formattedOverlays = await getOverlaysByIds(db!, overlaysIds);
-            const mergedList = mergeRemoteOverlayListWithLocalBuffer(
-              formattedOverlays,
-              store.getState as () => OverlaySyncRootSlice,
-            );
-            dispatch(updateOverlayListFromRemote(mergedList));
-            const selectedOverlayId = (store.getState() as OverlaySyncRootSlice)
-              .undoable.present.overlay.selectedOverlay?.id;
-            if (selectedOverlayId) {
-              const match = mergedList.find((o) => o.id === selectedOverlayId);
-              if (match) {
-                syncSelectedOverlayFromRemote(
-                  dispatch,
-                  store.getState as () => OverlaySyncRootSlice,
-                  match,
-                );
+
+            const remoteOverlayIds = update.overlays || [];
+            const currentOverlayState = currentState.undoable.present.overlays;
+            const overlayIdsAtRead = currentOverlayState.list.map((o) => o.id);
+            if (
+              !currentOverlayState.hasPendingUpdate &&
+              !_.isEqual(overlayIdsAtRead, remoteOverlayIds)
+            ) {
+              const dbAtRead = databaseRef.current;
+              if (!dbAtRead) continue;
+              const overlaysAtRead = currentOverlayState.list;
+              const formattedOverlays = await getOverlaysByIds(
+                dbAtRead,
+                remoteOverlayIds,
+              );
+              const latestState = store.getState() as RootState;
+              const latestOverlays = latestState.undoable.present.overlays;
+              const latestSelectionIdentity = selectedOutlineIdentityRef.current;
+              if (
+                databaseRef.current !== dbAtRead ||
+                latestSelectionIdentity.generation !== selectionIdentity.generation ||
+                latestState.undoable.present.itemLists.selectedList?._id !== update._id ||
+                syncGeneration !== serviceListSyncGenerationRef.current ||
+                latestOverlays.hasPendingUpdate ||
+                !_.isEqual(
+                  latestOverlays.list.map((o) => o.id),
+                  overlayIdsAtRead,
+                )
+              ) {
+                continue;
+              }
+
+              const overlaysAtReadById = new Map(
+                overlaysAtRead.map((overlay) => [overlay.id, overlay]),
+              );
+              const latestOverlaysById = new Map(
+                latestOverlays.list.map((overlay) => [overlay.id, overlay]),
+              );
+              const changedWhileReading = new Set(
+                latestOverlays.list
+                  .filter((overlay) => {
+                    const previous = overlaysAtReadById.get(overlay.id);
+                    return previous && !_.isEqual(previous, overlay);
+                  })
+                  .map((overlay) => overlay.id),
+              );
+              const freshList = formattedOverlays.map((overlay) =>
+                changedWhileReading.has(overlay.id)
+                  ? latestOverlaysById.get(overlay.id) || overlay
+                  : overlay,
+              );
+              const mergedList = mergeRemoteOverlayListWithLocalBuffer(
+                freshList,
+                store.getState as () => OverlaySyncRootSlice,
+              );
+              dispatch(updateOverlayListFromRemote(mergedList));
+              const selectedOverlayId = (store.getState() as OverlaySyncRootSlice)
+                .undoable.present.overlay.selectedOverlay?.id;
+              if (selectedOverlayId) {
+                const match = freshList.find((o) => o.id === selectedOverlayId);
+                if (match) {
+                  syncSelectedOverlayFromRemote(
+                    dispatch,
+                    store.getState as () => OverlaySyncRootSlice,
+                    match,
+                  );
+                }
               }
             }
           }
@@ -225,15 +302,18 @@ export const useControllerPageLifecycle = () => {
           }
         }
         updateAllDocs(dispatch);
-        if (refetchOverlayHistory && db) {
-          const overlayHistory = await getAllOverlayHistory(db);
-          dispatch(mergeOverlayHistoryFromDb(overlayHistory));
+        const dbForHistory = databaseRef.current;
+        if (refetchOverlayHistory && dbForHistory) {
+          const overlayHistory = await getAllOverlayHistory(dbForHistory);
+          if (databaseRef.current === dbForHistory) {
+            dispatch(mergeOverlayHistoryFromDb(overlayHistory));
+          }
         }
       } catch (e) {
         console.error(e);
       }
     },
-    [dispatch, cloud, selectedList, db, store],
+    [dispatch, cloud, store],
   );
 
   const updateMediaFromExternal = useCallback(

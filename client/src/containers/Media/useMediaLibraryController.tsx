@@ -579,6 +579,7 @@ export function useMediaLibraryController({
   useMediaLibraryFocus({
     dispatch,
     focusMediaId,
+    selectedMediaId: selectedMedia.id,
     list,
     filteredList,
     isMediaLoading,
