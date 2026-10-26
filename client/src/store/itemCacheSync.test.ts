@@ -79,6 +79,27 @@ describe("item cache lifecycle", () => {
     expect(store.getState().allDocs.allSongDocs).toEqual([]);
   });
 
+  it("ignores unrelated live documents and uncached tombstones without changing the cache", async () => {
+    const { db, handles } = createDatabase(Promise.resolve({ update_seq: 1, rows: [{ doc: song() }] }));
+    const store = configureStore({ reducer: { allDocs } });
+    const dispatch = jest.spyOn(store, "dispatch");
+    const stop = startItemCacheSync(db, store.dispatch);
+    await settle();
+    const before = store.getState().allDocs;
+    dispatch.mockClear();
+    [
+      { _id: "outline", docType: "itemListDetails", items: [] },
+      { _id: "preferences", docType: "preferences", name: "Preferences" },
+      { _id: "overlay", docType: "overlay", type: "song", name: "Overlay" },
+      { _id: "config", docType: "configuration" },
+    ].forEach((doc, index) => handles[0].emit("change", { id: doc._id, seq: index + 2, doc }));
+    expect(dispatch).not.toHaveBeenCalled();
+    handles[0].emit("change", { id: "preferences", seq: 6, deleted: true, doc: { _id: "preferences", _deleted: true } });
+    expect(store.getState().allDocs).toBe(before);
+    expect(store.getState().allDocs.changeVersion).toBe(0);
+    stop();
+  });
+
   it("resumes after feed failure without replacing newer documents or resurrecting deletions", async () => {
     jest.useFakeTimers();
     const errorLog = jest.spyOn(console, "error").mockImplementation(() => {});
@@ -87,10 +108,13 @@ describe("item cache lifecycle", () => {
     const stop = startItemCacheSync(db, store.dispatch);
     await settle();
     handles[0].emit("change", { seq: 2, id: "song", deleted: true });
+    const afterDeletion = store.getState().allDocs;
+    handles[0].emit("change", { seq: 3, id: "outline", doc: { _id: "outline", docType: "itemListDetails" } });
+    expect(store.getState().allDocs).toBe(afterDeletion);
     handles[0].emit("error", new Error("connection interrupted"));
     await jest.advanceTimersByTimeAsync(1000);
     expect(calls.allDocs).toHaveBeenCalledTimes(1);
-    expect(calls.changes).toHaveBeenLastCalledWith({ since: 2, live: true, include_docs: true });
+    expect(calls.changes).toHaveBeenLastCalledWith({ since: 3, live: true, include_docs: true });
     expect(store.getState().allDocs.allSongDocs).toEqual([]);
     handles[0].emit("change", { seq: 1, id: "song", doc: song("Obsolete feed") });
     expect(store.getState().allDocs.allSongDocs).toEqual([]);

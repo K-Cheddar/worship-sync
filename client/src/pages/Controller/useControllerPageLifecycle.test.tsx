@@ -51,11 +51,9 @@ jest.mock("../../utils/formatItemList", () => ({
 }));
 
 jest.mock("../../utils/dbUtils", () => ({
-  deleteUnusedBibleItems: jest.fn(),
-  deleteUnusedHeadings: jest.fn(),
+  ...jest.requireActual("../../utils/dbUtils"),
   getAllOverlayHistory: jest.fn().mockResolvedValue([]),
   getOverlaysByIds: jest.fn().mockResolvedValue([]),
-  deleteUnusedOutlineItems: jest.fn().mockResolvedValue(undefined),
   migrateMediaLibraryFoldersFieldIfNeeded: jest.fn(),
 }));
 
@@ -101,6 +99,45 @@ describe("useControllerPageLifecycle selected outline loading", () => {
     jest.mocked(useGlobalBroadcast).mockClear();
     jest.mocked(getOverlaysByIds).mockReset().mockResolvedValue([]);
     jest.mocked(readMediaLibrary).mockResolvedValue({ list: [], folders: [] });
+  });
+
+  it.each([50, 100])("preserves newly created Bible and heading documents while outline references are pending (progress %s)", async (initialProgress) => {
+    const outline = deferred<ReturnType<typeof details>>();
+    const bible = { _id: "new-bible", _rev: "1-b", type: "bible", name: "John 3" };
+    const heading = { _id: "new-heading", _rev: "1-h", type: "heading", name: "Welcome" };
+    const persisted = new Map<string, unknown>([
+      ["ItemLists", { _id: "ItemLists", itemLists: [{ _id: "outline" }] }],
+      ["outline", { _id: "outline", docType: "itemListDetails", items: [] }],
+      [bible._id, bible], [heading._id, heading],
+    ]);
+    const db = {
+      ...createDb({ outline }),
+      allDocs: jest.fn(async () => ({ rows: [...persisted.values()].map((doc) => ({ doc })) })),
+      remove: jest.fn(async (doc: { _id: string }) => { persisted.delete(doc._id); }),
+    };
+    store.dispatch(itemListsSlice.actions.initiateItemLists([{ _id: "outline", name: "Sunday" }]));
+    let dbProgress = initialProgress;
+    const { rerender } = renderHook(() => useControllerPageLifecycle(), {
+      wrapper: ({ children }) => (
+        <Provider store={store}>
+          <ControllerInfoContext.Provider value={{ db, dbProgress, cloud: {} } as any}>
+            {children}
+          </ControllerInfoContext.Provider>
+        </Provider>
+      ),
+    });
+    await waitFor(() => expect(db.get).toHaveBeenCalledWith("outline"));
+    dbProgress = 100;
+    rerender();
+    await Promise.resolve();
+    expect(db.remove).not.toHaveBeenCalled();
+    expect(persisted.get(bible._id)).toEqual(bible);
+    expect(persisted.get(heading._id)).toEqual(heading);
+    await act(async () => { outline.resolve({ items: [bible, heading], overlays: [] }); });
+    await waitFor(() => expect(store.getState().undoable.present.itemList.list).toEqual([
+      expect.objectContaining(bible), expect.objectContaining(heading),
+    ]));
+    expect(db.remove).not.toHaveBeenCalled();
   });
 
   it("applies replicated media item changes to Redux outside the media route", () => {

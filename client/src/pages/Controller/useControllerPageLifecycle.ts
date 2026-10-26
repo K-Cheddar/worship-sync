@@ -28,7 +28,6 @@ import { formatItemList } from "../../utils/formatItemList";
 import { setMediaCacheMap } from "../../store/mediaCacheMapSlice";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import {
-  deleteUnusedOutlineItems,
   getAllOverlayHistory,
   getOverlaysByIds,
 } from "../../utils/dbUtils";
@@ -102,7 +101,7 @@ export const useControllerPageLifecycle = () => {
   const activeControllerId = useActiveControllerId();
   const activeControllerProfile = useActiveControllerProfile();
   const { showToast } = useToast();
-  const { db, dbProgress, cloud, updater, setIsMobile, setIsPhone, pullFromRemote } =
+  const { db, cloud, updater, setIsMobile, setIsPhone, pullFromRemote } =
     useContext(ControllerInfoContext) || {};
   const {
     access,
@@ -420,15 +419,6 @@ export const useControllerPageLifecycle = () => {
       refreshPresentationListeners?.();
     };
   }, [dispatch]);
-
-  useEffect(() => {
-    // Do not clean against a partially replicated outline/reference set.
-    if (!db || dbProgress !== 100) return;
-    void deleteUnusedOutlineItems({
-      db,
-      currentItems: (store.getState() as RootState).undoable.present.itemList.list,
-    }).catch(console.error);
-  }, [db, dbProgress, store]);
 
   // Firebase gives real-time service time updates (same mechanism as StreamInfo.tsx).
   // Falls back to a one-time DB load for guest / offline sessions.

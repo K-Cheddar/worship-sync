@@ -89,9 +89,13 @@ const Item = () => {
             response = cached as DBItem;
             break;
           }
+          const sequenceBeforeRead = (await db.info()).update_seq;
+          if (!isCurrentLoad()) return;
           const fetched = await db.get(decodedItemId) as DBItem;
           if (!isCurrentLoad()) return;
-          if (store.getState().allDocs === cacheAtRead) {
+          const sequenceAfterRead = (await db.info()).update_seq;
+          if (!isCurrentLoad()) return;
+          if (store.getState().allDocs === cacheAtRead && sequenceBeforeRead === sequenceAfterRead) {
             response = fetched;
             break;
           }

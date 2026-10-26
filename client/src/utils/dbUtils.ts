@@ -18,7 +18,6 @@ import {
   DBOverlayHistory,
   ItemSlideType,
   OverlayHistoryKey,
-  ServiceItem,
   getCreditHistoryDocId,
   getOverlayHistoryDocId,
   OVERLAY_HISTORY_ID_PREFIX,
@@ -39,45 +38,6 @@ import {
 } from "../types";
 import { formatItemInfo } from "./formatItemInfo";
 import { formatSong, getFormattedSections } from "./overflow";
-
-/** Inspect actual item docs and persisted outlines. Unknown references fail closed. */
-export const deleteUnusedOutlineItems = async ({
-  db,
-  currentItems = [],
-  type,
-}: {
-  db: PouchDB.Database;
-  currentItems?: ServiceItem[];
-  type?: "bible" | "heading";
-}) => {
-  const snapshot = await db.allDocs({ include_docs: true });
-  const docs = snapshot.rows.map((row) => row.doc).filter(Boolean) as unknown as Array<Record<string, unknown>>;
-  const registry = docs.find((doc) => doc._id === "ItemLists");
-  if (!registry || !Array.isArray(registry.itemLists)) return;
-  const referenced = new Set(currentItems.map((item) => item._id));
-  for (const entry of registry.itemLists as Array<{ _id: string }>) {
-    const outline = docs.find((doc) => doc._id === entry._id);
-    if (!outline || !Array.isArray(outline.items)) return;
-    for (const item of outline.items as ServiceItem[]) referenced.add(item._id);
-  }
-  // Include unindexed/new outlines too; the registry can lag an outline write.
-  for (const doc of docs) {
-    if (doc.docType === "itemListDetails" && Array.isArray(doc.items)) {
-      for (const item of doc.items as ServiceItem[]) referenced.add(item._id);
-    }
-  }
-  for (const doc of docs) {
-    if (!(doc.type === "bible" || doc.type === "heading") || (type && doc.type !== type)) continue;
-    if (referenced.has(String(doc._id))) continue;
-    // A concurrent edit conflicts instead of deleting a newer document revision.
-    await db.remove(doc as unknown as PouchDB.Core.RemoveDocument);
-  }
-};
-
-export const deleteUnusedBibleItems = (args: { db: PouchDB.Database; currentItems?: ServiceItem[] }) =>
-  deleteUnusedOutlineItems({ ...args, type: "bible" });
-export const deleteUnusedHeadings = (args: { db: PouchDB.Database; currentItems?: ServiceItem[] }) =>
-  deleteUnusedOutlineItems({ ...args, type: "heading" });
 
 /**
  * Returns a map of overlay id -> list of item list names that include that overlay.

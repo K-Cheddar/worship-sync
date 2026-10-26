@@ -8,8 +8,6 @@ import {
   getOverlayHistoryDocId,
 } from "../types";
 import {
-  deleteUnusedBibleItems,
-  deleteUnusedHeadings,
   ensureCreditsIndexDoc,
   getAllCreditDocsForOutline,
   getAllCreditsHistory,
@@ -1035,34 +1033,6 @@ describe("dbUtils", () => {
 
       expect(db.put).not.toHaveBeenCalled();
     });
-  });
-
-  it.each(["bible", "heading"] as const)("cleans unused %s documents while preserving outline references and the old index", async (type) => {
-    const db = createDb();
-    const kept = { _id: "kept", _rev: "1-a", type };
-    const removed = { _id: "removed", _rev: "1-b", type };
-    const current = { _id: "current", _rev: "1-c", type };
-    db.allDocs.mockResolvedValue({ rows: [
-      { doc: { _id: "allItems", items: [removed] } },
-      { doc: { _id: "ItemLists", itemLists: [{ _id: "outline" }] } },
-      { doc: { _id: "outline", items: [kept] } },
-      { doc: kept }, { doc: removed }, { doc: current },
-    ] });
-    const cleanup = type === "bible" ? deleteUnusedBibleItems : deleteUnusedHeadings;
-    await cleanup({ db: db as unknown as PouchDB.Database, currentItems: [current as never] });
-    expect(db.remove).toHaveBeenCalledTimes(1);
-    expect(db.remove).toHaveBeenCalledWith(removed);
-    expect(db.put).not.toHaveBeenCalled();
-  });
-
-  it("preserves all items when an outline reference cannot be verified", async () => {
-    const db = createDb();
-    db.allDocs.mockResolvedValue({ rows: [
-      { doc: { _id: "ItemLists", itemLists: [{ _id: "missing" }] } },
-      { doc: { _id: "bible", type: "bible" } },
-    ] });
-    await deleteUnusedBibleItems({ db: db as unknown as PouchDB.Database });
-    expect(db.remove).not.toHaveBeenCalled();
   });
 
   it("migrates font sizes to pixels for slides and arrangement slides", async () => {

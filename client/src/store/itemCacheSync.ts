@@ -1,15 +1,7 @@
 import type { Dispatch } from "@reduxjs/toolkit";
 import type { DBItem, DBHeading } from "../types";
-import { applyItemDocumentChange, hydrateItemCache, resetItemCache, setItemCacheError } from "./allDocsSlice";
-
-/** Legacy items may lack docType; explicit non-item discriminators win. */
-export const isItemDocument = (value: unknown): value is DBItem | DBHeading => {
-  if (!value || typeof value !== "object") return false;
-  const doc = value as Record<string, unknown>;
-  return typeof doc._id === "string" && typeof doc.name === "string" && !doc._id.startsWith("_") && !doc._deleted &&
-    (doc.docType === undefined || doc.docType === "item" || doc.docType === "heading") &&
-    ["song", "free", "timer", "bible", "heading"].includes(String(doc.type));
-};
+import { applyItemDocumentChange, hydrateItemCache, isItemDocument, resetItemCache, setItemCacheError } from "./allDocsSlice";
+export { isItemDocument } from "./allDocsSlice";
 
 /** One owner per database session. Cleanup invalidates every pending continuation. */
 export const startItemCacheSync = (db: PouchDB.Database, dispatch: Dispatch) => {
@@ -47,10 +39,12 @@ export const startItemCacheSync = (db: PouchDB.Database, dispatch: Dispatch) => 
       nextFeed.on("change", (change) => {
         if (!active || feed !== nextFeed) return;
         sequence = change.seq;
+        const doc = isItemDocument(change.doc) ? change.doc : undefined;
+        if (!doc && !change.deleted) return;
         dispatch(applyItemDocumentChange({
           id: change.id,
           deleted: change.deleted,
-          doc: isItemDocument(change.doc) ? change.doc : undefined,
+          doc,
         }));
       })
         .on("error", (error) => { if (feed === nextFeed) recover(error); });

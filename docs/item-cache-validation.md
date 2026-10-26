@@ -26,7 +26,7 @@ Pouch revision conflicts, captured autosave ownership, pending drafts, remote ed
 - Controller/Services index bootstrap and Controller/Services/Resources `updateAllDocs` refresh paths, including refreshes on item replication/broadcast events.
 - Manual allDocs upsert/remove/media-patch actions, category-wide refresh actions, the old `formatAllItems` writer and the extra preview-document cache/merger.
 
-Bible/heading cleanup now scans actual item documents and outline references. It preserves documents when the outline registry/references cannot be verified and uses snapshot revisions for deletions. Automatic startup cleanup waits until initial replication reaches completion. The historical index is never updated by this cleanup.
+The subsequent item-cache review removed automatic Bible/heading cleanup and its unused utilities. Startup and replication completion never infer deletion from absent outline references. Explicit deletion and the historical index's unchanged revision are preserved.
 
 ## Legacy data and compatibility
 
@@ -86,3 +86,45 @@ Full repository/server suites, live CouchDB deployment, physical multi-device/El
 ## Known follow-ups
 
 None required for this implementation. Audit actual historical data and coordinate upgrades when rolling out to churches running older clients.
+
+
+## Remaining review findings ? October 26, 2026
+
+Implementation status: COMPLETE. Scope: fix verification and affected workflow review, not branch-wide production readiness.
+
+Before behavior: Controller startup could delete a newly created Bible/heading before its outline reference arrived. Every unrelated live document and absent tombstone incremented the cache version.
+
+After behavior: No automatic Bible/heading scan or deletion remains. The feed filters non-item documents, and the reducer ignores unrelated payloads and tombstones without cached matches. Ignored events still advance the feed's resume sequence. Cached item tombstones still delete entries. Rare missing-document reads verify the PouchDB sequence before publishing, preserving stale-read protection without invalidating Redux for unrelated events. Loaded navigation still avoids database reads.
+
+Behavior intentionally unchanged: PouchDB remains authoritative; one provider-owned feed maintains allDocs. Initial hydration, owner retirement, replication, explicit deletion, outline synchronization, editor conflict handling, song migrations and persisted schemas retain their existing behavior.
+
+### Affected files
+
+- Cleanup removal: `client/src/utils/dbUtils.ts`, `client/src/pages/Controller/useControllerPageLifecycle.ts` and their adjacent tests. The unused Bible/heading wrappers and their obsolete cleanup expectations were removed; startup regressions replace them.
+- Filtering: `client/src/store/itemCacheSync.ts`, `client/src/store/allDocsSlice.ts`, `itemCacheSync.test.ts`, `itemCacheSync.pouch.test.ts`, `allDocsSlice.test.ts`. The existing item predicate is shared by the feed and reducer.
+- Preserve uncached deletion safety: `client/src/hooks/useOutlineItemDocs.ts`, `client/src/pages/Controller/Item.tsx`, their adjacent tests and `client/src/test/mocks.ts`. No event bus, secondary cache, middleware or reconciliation subsystem was added.
+- Contract and verification: `docs/features/item-document-storage.md`, this report. No release fragment added for these corrections to the unreleased refactor.
+
+### Verified (required)
+
+- Final selected Jest run: **14 suites / 286 tests passed**. Paths: `src/store/allDocsSlice.test.ts`, `src/store/itemCacheSync.test.ts`, `src/store/itemCacheSync.pouch.test.ts`, `src/utils/dbUtils.test.ts`, `src/pages/Controller/useControllerPageLifecycle.test.tsx`, `src/hooks/useOutlineItemDocs.test.tsx`, `src/pages/Controller/Item.test.tsx`, `src/components/FilteredItems/FilteredItems.test.tsx`, `src/context/controllerInfo.test.tsx`, `src/store/store.test.ts`, `src/containers/ServiceItems/ServiceItems.test.tsx`, `src/utils/outlineSlideSections.test.ts`, `src/store/itemLibrarySelectors.test.ts`, `src/store/songLibrarySelectors.test.ts`. Command: `npm.cmd test --prefix client -- --runInBand --runTestsByPath` followed by those paths.
+- `npm.cmd run type-check --prefix client`: passed.
+- `npm.cmd run lint:check --prefix client`: passed, zero warnings.
+- `git diff --check`: passed.
+- Production context: Pass. Traced `App.tsx -> ControllerContextWrapper -> ControllerInfoProvider`, its session-owned local PouchDB feed, all three Controller lifecycle callers (Controller, AuxController, OverlayController), explicit `FilteredItems` deletion, and both missing-document readers. Tests use the real lifecycle hook and Redux store, the real shared provider for session/reset coverage, and real IndexedDB-backed PouchDB for sequence checks and replication across independent handles. Browser and Electron share this storage path; no presentation renderer or authorization path changed.
+
+### Final review
+
+Findings: Critical / High / Medium / Low ? None outstanding within the reviewed scope. Product authorization: Authorized by the current remaining-findings request; the storage contract records the changed deletion/filtering guarantees. Open questions / assumptions: None. Pattern / learning opportunities: the existing missing-read guards required Pouch sequence verification once absent tombstones became Redux no-ops; no new enforcement or subsystem is needed.
+
+| Invariant | Adversarial scenario and evidence | Result |
+| --- | --- | --- |
+| Preserve new documents | Start at progress 100 or reach 100 while the outline read is pending; persisted Bible/heading documents survive before and after references arrive. `useControllerPageLifecycle.test.tsx` runs the real hook and available database utilities. | Pass |
+| Preserve explicit deletion | Real local Bible/heading removes produce 404s and update independent caches; the existing `FilteredItems` confirmation/deletion test also passes. | Pass |
+| No irrelevant cache invalidation | Unrelated live events dispatch no item upsert; absent tombstones preserve state identity/version; ignored events advance retry sequence. Reducer, feed and real replication tests cover these cases. | Pass |
+| No stale resurrection | Delete a missing item after its real Pouch snapshot, before publication; sequence verification re-reads instead of caching it. Also retire a prefetch while sequence verification is pending. `useOutlineItemDocs.test.tsx`; direct-route stale-read and navigation tests in `Item.test.tsx`. | Pass |
+| Hydration and ownership survive | Snapshot/feed gap, failed-feed resume, same-ID church switch, Redux reset, retired callbacks and retry cancellation retain coverage in `itemCacheSync`, `itemCacheSync.pouch` and `controllerInfo`. | Pass |
+
+Cross-boundary review, sibling/caller search, persisted compatibility, identity/lifetime tests, document-to-cache round trip, retry sequence authority, owner retirement and production/test composition comparison: performed. Validate/use security, external side-effect compensation and authorization projection changes: not applicable; these paths were not changed. Simplification check: the cleanup code is removed, the item classifier is reused, and additional production logic only filters events and preserves existing stale-read safety; most added lines are regressions.
+
+Verification gaps: No required gaps. Optional checks not run for this follow-up: full repository suite, production build, live CouchDB deployment or physical multi-device/Electron display sessions. Final readiness: Ready for the reviewed scope. Known follow-ups: None required.

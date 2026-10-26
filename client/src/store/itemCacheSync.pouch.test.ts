@@ -58,13 +58,22 @@ describe("item cache with real local PouchDB and replication", () => {
       await local.put({ _id: "bible", type: "bible", name: "John 3" });
       await local.put({ _id: "heading", type: "heading", name: "Worship" });
       await waitFor(() => expect(second.getState().allDocs.allSongDocs[0]).toMatchObject({ name: "Renamed offline", background: "local-image://image" }));
-      expect(first.getState().allDocs.allHeadingDocs).toHaveLength(1);
+      await waitFor(() => expect(first.getState().allDocs.allHeadingDocs).toHaveLength(1));
+      await waitFor(() => expect(second.getState().allDocs.allHeadingDocs).toHaveLength(1));
+      const firstVersion = first.getState().allDocs.changeVersion;
+      const secondVersion = second.getState().allDocs.changeVersion;
+      await local.put({ _id: "outline", docType: "itemListDetails", items: [] });
+      await local.put({ _id: "preferences", docType: "preferences" });
+      await local.remove(await local.get("preferences"));
       await local.replicate.to(remote);
+      await remote.put({ _id: "overlay", docType: "overlay", type: "song", name: "Not an item" });
       const remoteSong = await remote.get<DBItem>("song");
       await remote.put({ ...remoteSong, name: "Remote rename", background: "remote background" });
       await local.replicate.from(remote);
       await waitFor(() => expect(first.getState().allDocs.allSongDocs[0]?.name).toBe("Remote rename"));
       await waitFor(() => expect(second.getState().allDocs.allSongDocs[0]?.background).toBe("remote background"));
+      expect(first.getState().allDocs.changeVersion).toBe(firstVersion + 1);
+      expect(second.getState().allDocs.changeVersion).toBe(secondVersion + 1);
       await remote.remove(await remote.get("song"));
       await local.replicate.from(remote);
       await waitFor(() => expect(first.getState().allDocs.allSongDocs).toEqual([]));
@@ -75,6 +84,13 @@ describe("item cache with real local PouchDB and replication", () => {
       expect(first.getState().allDocs.allFreeFormDocs).toHaveLength(1);
       expect(first.getState().allDocs.allTimerDocs).toHaveLength(1);
       expect(first.getState().allDocs.allBibleDocs).toHaveLength(1);
+      // Explicit deletion still persists and reaches both independent caches.
+      await local.remove(await local.get("bible"));
+      await local.remove(await local.get("heading"));
+      await waitFor(() => expect(first.getState().allDocs.allBibleDocs).toEqual([]));
+      await waitFor(() => expect(second.getState().allDocs.allHeadingDocs).toEqual([]));
+      await expect(local.get("bible")).rejects.toMatchObject({ status: 404 });
+      await expect(local.get("heading")).rejects.toMatchObject({ status: 404 });
     } finally {
       stopFirst();
       stopSecond();

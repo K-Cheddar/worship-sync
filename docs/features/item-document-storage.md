@@ -8,7 +8,9 @@ One content-database subscription belongs to the shared application provider, in
 
 Presentation outlines independently own order, occurrence `listId`s and intentional overrides. Refreshing the library never replaces an existing outline background. Newly inserted references use current cached metadata, including local image/video references. Active editor drafts, revision checks and explicit remote-conflict decisions remain intact. Overlay synchronization and song schema migrations are outside this change.
 
-The next-service countdown remains generated from service-time state. It is not a saved timer-library entry. Bible/heading cleanup inspects actual documents and outline references, waits for initial replication to finish, and preserves items when outline references cannot be verified.
+The next-service countdown remains generated from service-time state. It is not a saved timer-library entry. Controller startup never deletes Bible or heading documents because they appear unreferenced. Document creation and outline saves or replication can arrive separately; temporary absence of a reference is not permission to delete content. Normal explicit item deletion remains available.
+
+Only actual item documents update the live item cache. Untyped deletion tombstones remove matching cached items; tombstones for absent IDs and unrelated document updates preserve the cache reference and change version. The live feed still starts at the snapshot sequence and advances its resume sequence across ignored events. Missing-document reads verify PouchDB's sequence before publishing, so an uncached deletion cannot let an older read resurrect content.
 
 ## Historical data
 
@@ -27,5 +29,6 @@ The report identifies document-backed rows, missing/deleted references, recovera
 - **Source ownership:** Documents replace index metadata precedence and index-only library search. Authorization: current request, October 26, 2026.
 - **Outline independence:** Existing occurrence overrides survive library changes; new occurrences use current document metadata. Authorization: current request, October 26, 2026.
 - **Historical safety:** Leave the old index untouched; report missing content explicitly rather than infer a restoration. Authorization: current request's legacy-data and no-deletion requirements.
+- **Automatic deletion and cache filtering:** Remove startup Bible/heading cleanup and ignore unrelated cache events while retaining explicit deletion and stale-read safety. Authorization: October 26, 2026 remaining item-cache review findings request.
 
 Regression coverage: `itemCacheSync.test.ts`, `itemCacheSync.pouch.test.ts`, `controllerInfo.test.tsx`, `useOutlineItemDocs.test.tsx`, `Item.test.tsx`, `store.test.ts`, `useServicePlanOutlinePush.test.tsx` and `scripts/audit-item-storage.test.mjs`.

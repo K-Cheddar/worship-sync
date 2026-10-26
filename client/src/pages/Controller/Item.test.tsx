@@ -93,12 +93,13 @@ describe("Controller Item page", () => {
     let finish!: (value: DBItem) => void;
     const pending = new Promise<DBItem>((resolve) => { finish = resolve; });
     const read = jest.fn().mockReturnValueOnce(pending).mockRejectedValue({ status: 404 });
+    const info = jest.fn().mockResolvedValueOnce({ update_seq: 0 }).mockResolvedValue({ update_seq: 1 });
     const store = createTestStore();
     const doc = { ...itemSlice.getInitialState(), _id: "item-b", name: "Old", type: "song" as const };
     const log = jest.spyOn(console, "error").mockImplementation(() => {});
     render(
       <Provider store={store}>
-        <ControllerInfoContext.Provider value={createMockControllerContext({ db: createMockPouchDB({ get: read }) }) as any}>
+        <ControllerInfoContext.Provider value={createMockControllerContext({ db: createMockPouchDB({ get: read, info }) }) as any}>
           <MemoryRouter initialEntries={[itemRoute("item-b", "list-b")]}>
             <Routes><Route path="/controller/item/:itemId/:listId" element={<Item />} /></Routes>
           </MemoryRouter>

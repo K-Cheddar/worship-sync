@@ -114,6 +114,34 @@ describe("allDocsSlice", () => {
   });
 
   describe("removeDoc", () => {
+    it.each(["song", "free", "timer", "bible", "heading"])("updates and deletes cached %s items, including untyped tombstones", (type) => {
+      const store = createStore();
+      const doc = makeDoc("item", type);
+      store.dispatch(hydrateItemCache([doc]));
+      store.dispatch(applyDoc({ ...doc, name: "Updated" }));
+      const updated = store.getState().allDocs;
+      expect(updated.changeVersion).toBe(1);
+      expect([...updated.allSongDocs, ...updated.allFreeFormDocs, ...updated.allTimerDocs, ...updated.allBibleDocs, ...updated.allHeadingDocs])
+        .toEqual([{ ...doc, name: "Updated" }]);
+      store.dispatch(applyItemDocumentChange({ id: doc._id, deleted: true }));
+      const deleted = store.getState().allDocs;
+      expect(deleted.changeVersion).toBe(2);
+      expect([...deleted.allSongDocs, ...deleted.allFreeFormDocs, ...deleted.allTimerDocs, ...deleted.allBibleDocs, ...deleted.allHeadingDocs])
+        .toEqual([]);
+    });
+
+    it("preserves the cache reference and version for unrelated documents and absent tombstones", () => {
+      const store = createStore();
+      store.dispatch(hydrateItemCache([makeDoc("song", "song")]));
+      const before = store.getState().allDocs;
+      store.dispatch(applyDoc(makeDoc("outline", "itemListDetails")));
+      store.dispatch(applyDoc({ ...makeDoc("overlay", "song"), docType: "overlay" } as unknown as DBItem));
+      store.dispatch(applyItemDocumentChange({ id: "preferences" }));
+      store.dispatch(applyItemDocumentChange({ id: "preferences", deleted: true }));
+      expect(store.getState().allDocs).toBe(before);
+      expect(store.getState().allDocs.changeVersion).toBe(0);
+    });
+
     it("removes only the matching document from its library", () => {
       const store = createStore();
       store.dispatch(

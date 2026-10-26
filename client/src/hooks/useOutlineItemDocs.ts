@@ -22,14 +22,19 @@ export const useOutlineItemDocs = (prefetchIds: string[]) => {
     let cancelled = false;
     const fetchMisses = async () => {
       try {
-        const result = await db.allDocs({ keys: missing, include_docs: true });
-        // Compare the actual store, not the last rendered props. A tombstone,
-        // newer feed event or session reset always invalidates an older read.
-        if (cancelled || store.getState().allDocs !== allDocs) return;
-        for (const row of result.rows) {
-          if ("doc" in row && isItemDocument(row.doc)) {
-            dispatch(applyItemDocumentChange({ id: row.doc._id, doc: row.doc }));
+        while (!cancelled && store.getState().allDocs === allDocs) {
+          const result = await db.allDocs({ keys: missing, include_docs: true, update_seq: true });
+          if (cancelled || store.getState().allDocs !== allDocs) return;
+          const { update_seq: currentSequence } = await db.info();
+          if (cancelled || store.getState().allDocs !== allDocs) return;
+          // An uncached tombstone is a Redux no-op, but must invalidate an older read.
+          if (result.update_seq !== currentSequence) continue;
+          for (const row of result.rows) {
+            if ("doc" in row && isItemDocument(row.doc)) {
+              dispatch(applyItemDocumentChange({ id: row.doc._id, doc: row.doc }));
+            }
           }
+          return;
         }
       } catch (error) {
         if (!cancelled) console.error(error);
