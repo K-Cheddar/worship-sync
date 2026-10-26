@@ -1,3 +1,4 @@
+import { selectItemEntries } from "../../store/itemLibrarySelectors";
 import Checkbox from "../../components/Checkbox/Checkbox";
 import {
   useRef,
@@ -55,7 +56,6 @@ import { createItemFromProps, createNewBible } from "../../utils/itemUtil";
 import generateRandomId from "../../utils/generateRandomId";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
-import { addItemToAllItemsList } from "../../store/allItemsSlice";
 import { resetCreateItem } from "../../store/createItemSlice";
 import { useStore } from "react-redux";
 import { RootState } from "../../store/store";
@@ -125,7 +125,7 @@ const Bible = () => {
     },
   } = useSelector((state: RootState) => state.undoable.present.preferences);
 
-  const { list } = useSelector((state: RootState) => state.allItems);
+  const list = useSelector(selectItemEntries);
 
   const [showVersesDisplaySection, setShowVersesDisplaySection] =
     useState(false);
@@ -395,7 +395,6 @@ const Bible = () => {
     };
 
     dispatch(addItemToItemList(itemForList));
-    dispatch(addItemToAllItemsList(itemForList));
     dispatch(setActiveItem(item));
     dispatch(resetCreateItem());
     setJustAdded(true);
@@ -522,7 +521,7 @@ const Bible = () => {
       },
       db,
       bibleDb,
-      allItems: list,
+      libraryItems: list,
       background: defaultBibleBackground.background,
       mediaInfo: defaultBibleBackground.mediaInfo,
       brightness: defaultBibleBackgroundBrightness,
@@ -539,7 +538,6 @@ const Bible = () => {
     };
 
     dispatch(addItemToItemList(itemForList));
-    dispatch(addItemToAllItemsList(itemForList));
     dispatch(setActiveItem(item));
   };
 

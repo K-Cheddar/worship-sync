@@ -4,7 +4,7 @@ import { Provider } from "react-redux";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import store from "../../store/store";
 import { setActiveItemInList } from "../../store/itemListSlice";
-import { updateAllFreeFormDocs, updateAllSongDocs } from "../../store/allDocsSlice";
+import { hydrateItemCache } from "../../store/allDocsSlice";
 import { getServiceFlowProgress } from "../../services/serviceFlowProgress";
 import FloatingWindow from "../../components/FloatingWindow/FloatingWindow";
 import { FloatingWindowZIndexProvider } from "../../components/FloatingWindow/FloatingWindowZIndexContext";
@@ -160,13 +160,13 @@ const makeSongDoc = (id: string, lyrics: string): DBItem => ({
 describe("ControllerServicePlanView", () => {
   beforeEach(() => {
     localStorage.clear();
-    store.dispatch(updateAllSongDocs([]));
-    store.dispatch(updateAllFreeFormDocs([]));
+    store.dispatch(hydrateItemCache([]));
+    store.dispatch(hydrateItemCache([]));
   });
   afterEach(() => {
     jest.restoreAllMocks();
-    store.dispatch(updateAllSongDocs([]));
-    store.dispatch(updateAllFreeFormDocs([]));
+    store.dispatch(hydrateItemCache([]));
+    store.dispatch(hydrateItemCache([]));
   });
 
   it("keeps quiet roster roles selectable while rendering compact controller rows", async () => {
@@ -508,7 +508,7 @@ describe("ControllerServicePlanView", () => {
     const user = userEvent.setup();
     const firstSong = makeSongDoc("song-first", "Lyrics for song-first");
     const secondSong = makeSongDoc("song-second", "Lyrics for song-second");
-    store.dispatch(updateAllSongDocs([firstSong, secondSong]));
+    store.dispatch(hydrateItemCache([firstSong, secondSong]));
     const element: ServicePlanElement = {
       id: "songs",
       type: "song",
@@ -742,7 +742,7 @@ describe("ControllerServicePlanView", () => {
         boxes: [{ id: "box-second", words: "Second document content", width: 80, height: 20, x: 10, y: 10 }],
       }],
     } as unknown as DBItem;
-    store.dispatch(updateAllFreeFormDocs([firstDocument, secondDocument]));
+    store.dispatch(hydrateItemCache([firstDocument, secondDocument]));
     const customPlan = makePlanWithElement({
       id: "custom-documents",
       type: "free",
@@ -898,7 +898,7 @@ describe("ControllerServicePlanView", () => {
       type: "free",
       slides: [],
     } as unknown as DBItem;
-    store.dispatch(updateAllFreeFormDocs([customDocument]));
+    store.dispatch(hydrateItemCache([customDocument]));
     const floatingPlan = makePlanWithElement({
       id: "floating-window-preview",
       type: "free",

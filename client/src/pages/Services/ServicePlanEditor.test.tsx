@@ -152,7 +152,7 @@ jest.mock("../../hooks", () => ({
   useSelector: (selector: (state: unknown) => unknown) =>
     selector({
       allDocs: { allSongDocs: mockAllSongDocs },
-      allItems: { list: [], isAllItemsLoading: false },
+
       undoable: { present: { preferences: { scrollbarWidth: "thin" } } },
     }),
   useDispatch: () => jest.fn(),

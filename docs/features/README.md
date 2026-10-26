@@ -22,6 +22,8 @@ The [Account Team Leads contract](account-team-leads.md) records account-scoped 
 
 The [Manual item-library search contract](item-library-search.md) records shared manual relevance, conservative typo retrieval, stable-ID content lookup, and preserved automatic song-identification safeguards confirmed October 24-25, 2026.
 
+The [Item document storage contract](item-document-storage.md) records document ownership, the shared PouchDB cache lifecycle, independent outlines and historical-index safety confirmed October 26, 2026.
+
 ## Feature inventory
 
 Only workflows specifically labeled as confirmed contracts are documented as owner-confirmed. All other registry workflows are **inventory only**: their broad labels are observed from current product surfaces and need product-owner validation before being treated as behavioral contracts. Implementation references help locate features; they are not requirements.

@@ -1,7 +1,8 @@
+import { allDocsSlice } from "../../../store/allDocsSlice";
 import React from "react";
 import { getCanvaStatus } from "../../../api/canva";
 import { fromLegacyPresentationShape } from "../../../store/presentationSlice";
-import { upsertItemInAllItemsList } from "../../../store/allItemsSlice";
+import { addItemToItemList } from "../../../store/itemListSlice";
 import {
   fireEvent,
   render,
@@ -375,9 +376,8 @@ const makeBaseState = (overrides: Partial<any> = {}) => {
     presentation: fromLegacyPresentationShape({
       isProjectorTransmitting: false,
     }),
-    allItems: {
-      list: [] as { name: string; _id: string; listId: string; type: string }[],
-    },
+    allDocs: allDocsSlice.getInitialState(),
+
     media: {
       list: [
         {
@@ -445,10 +445,7 @@ const makeBaseState = (overrides: Partial<any> = {}) => {
       ...base.presentation,
       ...((overrides as any).presentation || {}),
     },
-    allItems: {
-      ...base.allItems,
-      ...((overrides as any).allItems || {}),
-    },
+
     media: {
       ...base.media,
       ...(overrides as any).media,
@@ -685,13 +682,13 @@ describe("Media", () => {
 
     await waitFor(() => {
       expect(mockDispatch).toHaveBeenCalledWith(
-        upsertItemInAllItemsList({
+        expect.objectContaining({ type: addItemToItemList.type, payload: expect.objectContaining({
           _id: "media-presentation",
           name: "Sunrise Image",
           type: "free",
           background: "https://example.com/bg.jpg",
-          listId: "",
-        }),
+          listId: expect.any(String),
+        }) }),
       );
     });
   });

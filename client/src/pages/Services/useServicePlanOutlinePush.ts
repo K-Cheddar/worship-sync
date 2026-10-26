@@ -1,3 +1,4 @@
+import { selectItemEntries } from "../../store/itemLibrarySelectors";
 /**
  * Wraps the outline bridge with the live PouchDB/Redux plumbing it needs
  * (ControllerInfoContext's db, the currently-selected item list). Intended for
@@ -11,7 +12,6 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { useDispatch, useSelector } from "../../hooks";
 import { updateItemList } from "../../store/itemListSlice";
-import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
 import {
   buildServicePlanOutlineItem,
   placeServicePlanOutlineItem,
@@ -111,17 +111,20 @@ export const useServicePlanOutlinePush = () => {
         // Build only the item that is about to be shown. In particular, a stop
         // request must not pre-create Bible documents for later steps.
         // eslint-disable-next-line no-await-in-loop -- order and visible progress are intentional
-        const item = await buildServicePlanOutlineItem({ step, list: latestList, db, bibleDb });
+        const builtItem = await buildServicePlanOutlineItem({
+          step,
+          list: [...latestList, ...selectItemEntries(store.getState())],
+          db,
+          bibleDb,
+        });
+        const currentEntry = selectItemEntries(store.getState()).find((entry) => entry._id === builtItem._id);
+        const item = currentEntry ? { ...currentEntry, listId: builtItem.listId } : builtItem;
         assertCurrent();
         latestList = store.getState().undoable.present.itemList.list;
         if (latestList.some((existing) => existing.listId === item.listId)) continue;
         const placed = placeServicePlanOutlineItem(latestList, item, step);
         assertCurrent();
         dispatch(updateItemList(placed.list));
-        if (db && item.type === "bible") {
-          assertCurrent();
-          dispatch(upsertItemInAllItemsList({ ...item, listId: "" }));
-        }
         items.push(item);
         if (placed.fallback) placementFallbacks.push(placed.fallback);
         await onItemAdded?.(item, placed.fallback);

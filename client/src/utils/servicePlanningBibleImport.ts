@@ -180,7 +180,7 @@ export const createBibleItemFromParsedReference = async ({
   name,
   db,
   bibleDb,
-  allItems,
+  libraryItems,
   background,
   mediaInfo,
   brightness,
@@ -191,7 +191,7 @@ export const createBibleItemFromParsedReference = async ({
   name?: string;
   db: PouchDB.Database | undefined;
   bibleDb?: PouchLike | undefined;
-  allItems: ServiceItem[];
+  libraryItems: ServiceItem[];
   background: string;
   mediaInfo?: MediaType;
   brightness: number;
@@ -229,7 +229,7 @@ export const createBibleItemFromParsedReference = async ({
     version,
     verses,
     db,
-    list: allItems,
+    list: libraryItems,
     background,
     mediaInfo,
     brightness,

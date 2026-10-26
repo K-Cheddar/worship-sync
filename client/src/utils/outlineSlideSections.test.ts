@@ -13,7 +13,6 @@ import {
   getNonHeadingOutlineItems,
   getPinnedListIdFromRowOffsets,
   getPrefetchItemIds,
-  mergeDocsById,
   prepareItemForEditor,
   resolveOutlineScrollTopFromAnchor,
   resolveSlidesForOutlineItem,
@@ -673,30 +672,6 @@ describe("outlineSlideSections", () => {
     expect(findOutlineRowIndexForItem(rows, "l-2")).toBe(3); // section label
   });
 
-  it("merges extra pouch docs that allDocs does not hold", () => {
-    const merged = mergeDocsById(
-      {
-        allSongDocs: [songDoc("song-1", "1", [slide("a", "A")])],
-        allFreeFormDocs: [],
-        allTimerDocs: [],
-        allBibleDocs: [],
-      },
-      new Map([
-        [
-          "service-time",
-          {
-            _id: "service-time",
-            name: "Countdown",
-            type: "service-time",
-            slides: [slide("t", "Timer")],
-          } as DBItem,
-        ],
-      ]),
-    );
-
-    expect(merged.get("song-1")?._rev).toBe("1");
-    expect(merged.get("service-time")?.name).toBe("Countdown");
-  });
 
   it("backfills formatted sections when preparing a free item", () => {
     const prepared = prepareItemForEditor(

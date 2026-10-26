@@ -1,22 +1,15 @@
 import { createSelector } from "@reduxjs/toolkit";
 import type { RootState } from "./store";
-import { mergeSongLibraryItems } from "../utils/songLibrary";
+import { itemDocumentToLibraryEntry } from "../utils/itemLibrary";
+import { sortNamesInList } from "../utils/sort";
 
-const selectAllItems = (state: RootState) => state.allItems.list;
-const selectAllSongDocs = (state: RootState) => state.allDocs.allSongDocs;
-const selectAllItemsLoading = (state: RootState) =>
-  state.allItems.isAllItemsLoading;
-
-/** Canonical read model for every surface that lists library songs. */
+/** Song-specific view of the shared document cache. */
 export const selectSongLibrary = createSelector(
-  [selectAllItems, selectAllSongDocs, selectAllItemsLoading],
-  (allItems, documents, isAllItemsLoading) => {
-    const songs = mergeSongLibraryItems(allItems, documents);
-
-    return {
-      songs,
-      documents,
-      isLoading: isAllItemsLoading && songs.length === 0,
-    };
-  },
+  [(state: RootState) => state.allDocs.allSongDocs,
+    (state: RootState) => state.allDocs.isInitialized],
+  (documents, isInitialized) => ({
+    songs: sortNamesInList(documents.map(itemDocumentToLibraryEntry)),
+    documents,
+    isLoading: !isInitialized && documents.length === 0,
+  }),
 );

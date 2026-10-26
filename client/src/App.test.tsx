@@ -10,7 +10,7 @@ import { itemSlice } from "./store/itemSlice";
 import { overlaysSlice } from "./store/overlaysSlice";
 import { bibleSlice } from "./store/bibleSlice";
 import { itemListSlice } from "./store/itemListSlice";
-import { allItemsSlice } from "./store/allItemsSlice";
+import { itemLibraryUiSlice } from "./store/itemLibraryUiSlice";
 import { createItemSlice } from "./store/createItemSlice";
 import { preferencesSlice } from "./store/preferencesSlice";
 import { itemListsSlice } from "./store/itemListsSlice";
@@ -40,7 +40,7 @@ const createMockStore = () => {
       overlays: overlaysSlice.reducer,
       bible: bibleSlice.reducer,
       itemList: itemListSlice.reducer,
-      allItems: allItemsSlice.reducer,
+      itemLibraryUi: itemLibraryUiSlice.reducer,
       createItem: createItemSlice.reducer,
       preferences: preferencesSlice.reducer,
       itemLists: itemListsSlice.reducer,
@@ -54,7 +54,7 @@ const createMockStore = () => {
       overlays: overlaysSlice.getInitialState(),
       bible: bibleSlice.getInitialState(),
       itemList: itemListSlice.getInitialState(),
-      allItems: allItemsSlice.getInitialState(),
+      itemLibraryUi: itemLibraryUiSlice.getInitialState(),
       createItem: createItemSlice.getInitialState(),
       preferences: preferencesSlice.getInitialState(),
       itemLists: itemListsSlice.getInitialState(),

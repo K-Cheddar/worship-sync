@@ -27,11 +27,8 @@ import {
   listChurchResources,
   updateChurchResource,
 } from "../api/auth";
-import { useDispatch, useSelector } from "../hooks";
-import { upsertItemInAllDocs } from "../store/allDocsSlice";
-import { upsertItemInAllItemsList } from "../store/allItemsSlice";
+import { useSelector } from "../hooks";
 import { broadcastItemUpdate } from "../store/store";
-import { updateAllDocs } from "../utils/dbUtils";
 import { useChurchStorageQuota } from "../components/StorageUsage/useChurchStorageQuota";
 import { StorageUsageIndicators } from "../components/StorageUsage/StorageUsageIndicators";
 import {
@@ -73,7 +70,6 @@ const resourceSkeletonColumns = [
 const ResourcesPage = () => {
   const { churchId, churchName, access } = useContext(GlobalInfoContext) || {};
   const { db } = useContext(ControllerInfoContext) || {};
-  const dispatch = useDispatch();
   const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
   const scrollbarWidth = useSelector((state) => state.undoable.present.preferences.scrollbarWidth);
   const { containerRef, compact } = useResponsiveTableLayout();
@@ -93,9 +89,9 @@ const ResourcesPage = () => {
   const [deleteCandidates, setDeleteCandidates] = useState<ResourceLibraryEntry[] | null>(null);
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
   const [churchResourcesLoading, setChurchResourcesLoading] = useState(true);
-  const [songDocsLoading, setSongDocsLoading] = useState(true);
+  const songDocsLoading = useSelector((state) => !state.allDocs.isInitialized);
   const [churchResourcesError, setChurchResourcesError] = useState("");
-  const [songDocsError, setSongDocsError] = useState("");
+  const songDocsError = useSelector((state) => state.allDocs.error) || "";
   const [error, setError] = useState("");
 
   const canBrowse = access === "full" || access === "music" || access === "view";
@@ -133,30 +129,6 @@ const ResourcesPage = () => {
       active = false;
     };
   }, [canBrowse, churchId]);
-
-  useEffect(() => {
-    if (!canBrowse) {
-      setSongDocsLoading(false);
-      setSongDocsError("");
-      return;
-    }
-    if (!db) {
-      setSongDocsLoading(true);
-      return;
-    }
-
-    let active = true;
-    setSongDocsLoading(true);
-    setSongDocsError("");
-    void updateAllDocs(dispatch, db, () => active).then((loaded) => {
-      if (!active) return;
-      setSongDocsLoading(false);
-      if (!loaded) setSongDocsError("The song library could not be loaded. Try again.");
-    });
-    return () => {
-      active = false;
-    };
-  }, [canBrowse, db, dispatch]);
 
   const entries = useMemo(
     () =>
@@ -269,14 +241,6 @@ const ResourcesPage = () => {
             deleteAudio: () => deleteSongAudioWithRetry({ churchId, songId: entry.songId, audio: entry.audio }),
             clearMetadata: async () => {
               const saved = await persistSongAudioAttachment({ db, songId: entry.songId, audio: null });
-              dispatch(upsertItemInAllDocs(saved));
-              dispatch(upsertItemInAllItemsList({
-                _id: saved._id,
-                name: saved.name,
-                type: saved.type,
-                listId: saved._id,
-                background: typeof saved.background === "string" ? saved.background : "",
-              }));
               broadcastItemUpdate(saved);
               return saved;
             },

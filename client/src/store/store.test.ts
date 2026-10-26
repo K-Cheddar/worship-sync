@@ -332,6 +332,27 @@ describe("item content integrity investigation", () => {
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => jest.useRealTimers());
 
+  it("preserves newer unsaved input through an earlier local Pouch change and save acknowledgment", async () => {
+    const { select, edit, tick, db, commit, store, docs } = setup();
+    const held = deferred<void>();
+    db.put.mockImplementationOnce(async (doc: Fixture) => {
+      const result = await commit(doc);
+      await held.promise;
+      store.dispatch({ type: "allDocs/applyItemDocumentChange", payload: { id: doc._id, doc: docs.get(doc._id) } });
+      return result;
+    });
+    select("song-A");
+    edit("First edit");
+    await tick();
+    edit("Newer unsaved edit");
+    held.resolve();
+    await flushListenerEffects();
+    expect(store.getState().undoable.present.item.name).toBe("Newer unsaved edit");
+    await tick();
+    expect(docs.get("song-A")?.name).toBe("Newer unsaved edit");
+    expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(false);
+  });
+
   it("saves captured A under A after switching to B during debounce", async () => {
     const { docs, select, edit, tick, db } = setup();
     const beforeB = clone(docs.get("song-B"));
@@ -563,7 +584,7 @@ describe("item content integrity investigation", () => {
     select("song-A"); edit("Local edit");
     const remote = { ...fixture("song-A"), _rev: "2-remote", name: "Remote edit" };
     docs.set("song-A", remote);
-    store.dispatch({ type: "allDocs/updateAllSongDocs", payload: [remote, docs.get("song-B")] });
+    store.dispatch({ type: "allDocs/hydrateItemCache", payload: [remote, docs.get("song-B")] });
     expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(true);
     await tick();
     expect(docs.get("song-A")).toEqual(remote);
@@ -727,7 +748,7 @@ describe("store module", () => {
     });
 
     const store = storeModule.default;
-    const { updateAllSongDocs } = allDocsSliceModule;
+    const { hydrateItemCache } = allDocsSliceModule;
     const { setServicePlanningServiceOutline } =
       servicePlanningImportSliceModule;
     const unmatchedCandidate = {
@@ -761,7 +782,7 @@ describe("store module", () => {
     );
 
     store.dispatch(
-      updateAllSongDocs([
+      hydrateItemCache([
         createSongDoc({
           _id: "song-how-great",
           name: "How Great is Our God",
@@ -882,7 +903,7 @@ describe("store module", () => {
     jest.useFakeTimers();
     let storeModule: any;
     let itemSliceModule: any;
-    let allItemsSliceModule: any;
+    let allDocsSliceModule: any;
     let preferencesSliceModule: any;
     let itemListSliceModule: any;
     let itemListsSliceModule: any;
@@ -908,7 +929,7 @@ describe("store module", () => {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       itemSliceModule = require("./itemSlice");
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      allItemsSliceModule = require("./allItemsSlice");
+      allDocsSliceModule = require("./allDocsSlice");
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       preferencesSliceModule = require("./preferencesSlice");
       // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -933,7 +954,7 @@ describe("store module", () => {
       shouldSendTo: { projector: true, monitor: true, stream: true },
     };
 
-    store.dispatch(allItemsSliceModule.setIsInitialized(true));
+    store.dispatch(allDocsSliceModule.hydrateItemCache([]));
     store.dispatch(preferencesSliceModule.setIsInitialized(true));
     store.dispatch(itemListSliceModule.setIsInitialized(true));
     store.dispatch(itemListsSliceModule.setIsInitialized(true));
@@ -1254,7 +1275,7 @@ describe("store module", () => {
       const state = storeModule.default.getState();
       const readyExceptForMedia = {
         ...state,
-        allItems: { ...state.allItems, isInitialized: true },
+        allDocs: { ...state.allDocs, isInitialized: true },
         media: {
           ...state.media,
           isInitialized: false,
@@ -3037,7 +3058,7 @@ describe("store module", () => {
       itemSlice.actions.setActiveItem({ ...baseDoc, listId: "list-1" }),
     );
     store.dispatch(itemSlice.actions.setIsLyricsEditorOpen(true));
-    store.dispatch(allDocsSlice.actions.updateAllSongDocs([remoteDoc]));
+    store.dispatch(allDocsSlice.actions.applyItemDocumentChange({ id: remoteDoc._id, doc: remoteDoc }));
     await flushListenerEffects();
 
     const state = store.getState().undoable.present.item;
@@ -3096,7 +3117,7 @@ describe("store module", () => {
       itemSlice.actions.setActiveItem({ ...baseDoc, listId: "list-1" }),
     );
     store.dispatch(itemSlice.actions.setBackground("background-b.jpg"));
-    store.dispatch(allDocsSlice.actions.updateAllSongDocs([remoteDoc]));
+    store.dispatch(allDocsSlice.actions.applyItemDocumentChange({ id: remoteDoc._id, doc: remoteDoc }));
     await flushListenerEffects();
 
     const state = store.getState().undoable.present.item;
@@ -3166,7 +3187,7 @@ describe("store module", () => {
         selectedBox: 1,
       }),
     );
-    store.dispatch(allDocsSlice.actions.updateAllSongDocs([remoteDoc]));
+    store.dispatch(allDocsSlice.actions.applyItemDocumentChange({ id: remoteDoc._id, doc: remoteDoc }));
     await flushListenerEffects();
 
     const state = store.getState().undoable.present.item;
@@ -5346,93 +5367,37 @@ describe("selected overlay persistence races", () => {
   });
 });
 
-const loadStoreWithAllItemsPersistence = () => {
-  let storeModule: any;
-  let allItemsSliceModule: any;
-  const postMessage = jest.fn();
-  const db = {
-    get: jest.fn().mockResolvedValue({ _id: "allItems", items: [] }),
-    put: jest.fn().mockResolvedValue({ ok: true, id: "allItems", rev: "2" }),
-  };
-  let activeDb: any = db;
-
-  jest.isolateModules(() => {
-    jest.doMock("../context/controllerInfo", () => ({
-      get globalDb() { return activeDb; },
-      globalBroadcastRef: { postMessage },
-    }));
-    jest.doMock("../context/globalInfo", () => ({
-      globalFireDbInfo: { db: undefined, database: undefined },
-      globalHostId: "host-123",
-    }));
-    jest.doMock("firebase/database", () => ({
-      ref: jest.fn(),
-      set: jest.fn(),
-      get: jest.fn(),
-    }));
-
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    storeModule = require("./store");
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    allItemsSliceModule = require("./allItemsSlice");
+describe("document cache and library controls", () => {
+  it("preserves independent outline backgrounds and occurrence IDs through a library refresh and route reset", () => {
+    const { store, itemSlice } = loadStoreWithItemPersistence();
+    const outline = [
+      { _id: "song-1", type: "song", name: "Outline title", listId: "first", background: "operator-custom" },
+      { _id: "song-1", type: "song", name: "Other occurrence", listId: "second", background: "other-custom" },
+    ];
+    store.dispatch({ type: "itemList/updateItemList", payload: outline });
+    store.dispatch(itemSlice.actions.setActiveItem({ ...createSongDoc(), listId: "first" }));
+    store.dispatch({ type: "allDocs/applyItemDocumentChange", payload: { id: "song-1", doc: createSongDoc({ name: "Library rename", background: "library-current" }) } });
+    expect(store.getState().undoable.present.itemList.list).toEqual(outline);
+    expect(store.getState().undoable.present.item.listId).toBe("first");
+    const cached = store.getState().allDocs;
+    store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+    expect(store.getState().allDocs).toBe(cached);
+    expect(store.getState().allDocs.allSongDocs[0].background).toBe("library-current");
   });
 
-  return { store: storeModule.default, allItemsSlice: allItemsSliceModule, db, setGlobalDb: (next: unknown) => { activeDb = next; } };
-};
-
-describe("allItems persistence", () => {
-  it("keeps timer search changes UI-only while persisting library mutations", async () => {
+  it("does not persist library controls or cached documents as an index", async () => {
     jest.useFakeTimers();
-    const { store, allItemsSlice, db } = loadStoreWithAllItemsPersistence();
-    store.dispatch(allItemsSlice.setIsInitialized(true));
-
-    store.dispatch(allItemsSlice.setTimerSearchValue("countdown"));
+    const { store, db } = loadStoreWithControllerMediaFolders();
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const ui = require("./itemLibraryUiSlice");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const cache = require("./allDocsSlice");
+    store.dispatch(ui.setLibrarySearchValue("grace"));
+    store.dispatch(ui.setLibraryFilter("song"));
+    store.dispatch(cache.hydrateItemCache([{ _id: "song", type: "song", name: "Grace" }]));
     await jest.advanceTimersByTimeAsync(1500);
-    await flushListenerEffects();
     expect(db.put).not.toHaveBeenCalled();
-
-    store.dispatch(
-      allItemsSlice.addItemToAllItemsList({
-        _id: "timer-1",
-        name: "Countdown",
-        type: "timer",
-        listId: "timer-1",
-        background: "",
-      }),
-    );
-    await jest.advanceTimersByTimeAsync(1500);
-    await flushListenerEffects();
-
-    expect(db.put).toHaveBeenCalledWith(
-      expect.objectContaining({
-        _id: "allItems",
-        items: [expect.objectContaining({ _id: "timer-1" })],
-      }),
-    );
-    jest.useRealTimers();
-  });
-
-  it("abandons a delayed Church A all-items save after the active database switches", async () => {
-    jest.useFakeTimers();
-    const { store, allItemsSlice, db: dbA, setGlobalDb } = loadStoreWithAllItemsPersistence();
-    const dbB = { get: jest.fn(), put: jest.fn() };
-    store.dispatch(allItemsSlice.setIsInitialized(true));
-    store.dispatch(allItemsSlice.addItemToAllItemsList({
-      _id: "church-a-item",
-      name: "Church A item",
-      type: "song",
-      listId: "outline-a",
-      background: "",
-    }));
-    store.dispatch({ type: "RESET" });
-    setGlobalDb(dbB);
-
-    await jest.advanceTimersByTimeAsync(1500);
-    await flushListenerEffects();
-
-    expect(dbA.put).not.toHaveBeenCalled();
-    expect(dbB.get).not.toHaveBeenCalled();
-    expect(dbB.put).not.toHaveBeenCalled();
+    expect(store.getState()).not.toHaveProperty("allItems");
     jest.useRealTimers();
   });
 });

@@ -1,3 +1,4 @@
+import { selectItemEntries } from "../../store/itemLibrarySelectors";
 import Spinner from "@/components/Spinner/Spinner";
 import SongTxtImport from "./SongTxtImport";
 import { findSongDuplicates } from "../../utils/songTxtImport";
@@ -43,11 +44,6 @@ import {
 } from "../../utils/itemUtil";
 import { setActiveItem } from "../../store/itemSlice";
 import { addItemToItemList } from "../../store/itemListSlice";
-import {
-  addItemToAllItemsList,
-  upsertItemInAllItemsList,
-} from "../../store/allItemsSlice";
-import { upsertItemInAllDocs } from "../../store/allDocsSlice";
 import { selectSongLibrary } from "../../store/songLibrarySelectors";
 import { ItemState, ItemType, ServiceItem, ShouldSendTo } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
@@ -124,7 +120,7 @@ export type CreateItemProps = {
   onCancel?: () => void;
   /**
    * Embedded: called after a successful create instead of opening the item editor.
-   * The item is still written to the library (allItems + allDocs).
+   * The item is still written to the library (PouchDB item document).
    */
   onCreated?: (item: ItemState) => void;
   /** Embedded: select a library duplicate in the caller's context. Never creates a song. */
@@ -148,9 +144,8 @@ const CreateItem = ({
   const isEmbedded = variant === "embedded";
   const createItemDraft = useSelector((state: RootState) => state.createItem);
   const reduxStore = useStore<RootState>();
-  const { list, isInitialized: isAllItemsInitialized } = useSelector(
-    (state: RootState) => state.allItems,
-  );
+  const list = useSelector(selectItemEntries);
+  const isItemCacheInitialized = useSelector((state) => state.allDocs.isInitialized);
   const { songs: songLibrary, documents: songDocuments } = useSelector(selectSongLibrary);
   const [duplicateReview, setDuplicateReview] = useState(false);
 
@@ -218,7 +213,7 @@ const CreateItem = ({
   const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
   const currentDatabaseRef = useRef(db);
   currentDatabaseRef.current = db;
-  const canCreateEmbeddedItem = Boolean(db && isAllItemsInitialized);
+  const canCreateEmbeddedItem = Boolean(db && isItemCacheInitialized);
 
   const navigate = useNavigate();
   const controllerBasePath = useControllerBasePath();
@@ -611,12 +606,6 @@ const CreateItem = ({
       _id: item._id,
       listId: "",
     };
-    if (item.type === "free") {
-      dispatch(upsertItemInAllItemsList(listItem));
-    } else {
-      dispatch(addItemToAllItemsList(listItem));
-    }
-    dispatch(upsertItemInAllDocs(item));
 
     if (isEmbedded) {
       onCreated?.(item);

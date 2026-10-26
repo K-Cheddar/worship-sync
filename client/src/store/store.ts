@@ -41,7 +41,7 @@ import { overlaysSlice } from "./overlaysSlice";
 import { bibleSlice } from "./bibleSlice";
 import { isMonitorShowingTimerCountdownSlide } from "../utils/monitorTimerPresentation";
 import { itemListSlice } from "./itemListSlice";
-import { allItemsSlice } from "./allItemsSlice";
+import { itemLibraryUiSlice } from "./itemLibraryUiSlice";
 import { createItemSlice } from "./createItemSlice";
 import { preferencesSlice } from "./preferencesSlice";
 import { itemListsSlice } from "./itemListsSlice";
@@ -57,7 +57,6 @@ import { ref, set, get, runTransaction, update } from "firebase/database";
 import {
   BibleDisplayInfo,
   BoardPostStreamInfo,
-  DBAllItems,
   DBCredit,
   DBCredits,
   DBItem,
@@ -80,7 +79,7 @@ import {
   ServiceTime,
   TimerInfo,
 } from "../types";
-import { allDocsSlice, upsertItemInAllDocs } from "./allDocsSlice";
+import { allDocsSlice } from "./allDocsSlice";
 import { selectSongLibrary } from "./songLibrarySelectors";
 import { creditsSlice } from "./creditsSlice";
 import {
@@ -106,8 +105,6 @@ import { generatedCreditsSlice } from "./generatedCreditsSlice";
 import { displayOutputsSlice } from "./displayOutputsSlice";
 import { controllerProfilesSlice } from "./controllerProfilesSlice";
 import { mergeTimers } from "../utils/timerUtils";
-import { createSongLibraryIndexRepairMiddleware } from "./songLibraryIndexRepair";
-import { freeFormDocToServiceItem } from "../utils/freeFormLibrary";
 import { extractMediaUrlsFromBackgrounds } from "../utils/mediaCacheUtils";
 import { persistMediaStateChanges } from "../utils/mediaDocUtils";
 import { normalizeOverlayForSync } from "../utils/overlayUtils";
@@ -885,13 +882,6 @@ const excludedActions: string[] = [
   overlaySlice.actions.discardPendingRemoteOverlay.toString(),
   overlaySlice.actions.applyPendingRemoteOverlay.toString(),
   timersSlice.actions.setShouldUpdateTimers.toString(),
-  allDocsSlice.actions.updateAllBibleDocs.toString(),
-  allDocsSlice.actions.updateAllFreeFormDocs.toString(),
-  allDocsSlice.actions.updateAllSongDocs.toString(),
-  allDocsSlice.actions.updateAllTimerDocs.toString(),
-  allDocsSlice.actions.upsertItemInAllDocs.toString(),
-  allDocsSlice.actions.upsertItemsInAllDocs.toString(),
-  allItemsSlice.actions.initiateAllItemsList.toString(),
   overlayTemplatesSlice.actions.initiateTemplates.toString(),
   overlayTemplatesSlice.actions.updateTemplatesFromRemote.toString(),
   overlayTemplatesSlice.actions.setIsLoading.toString(),
@@ -903,7 +893,7 @@ const excludedPrefixes = [
   "debouncedUpdate",
   "timers/",
   "allDocs/",
-  "allItems/",
+  "itemLibraryUi/",
   "presentation/",
 ];
 
@@ -947,8 +937,6 @@ const undoableReducers = undoable(
 );
 
 const listenerMiddleware = createListenerMiddleware();
-const songLibraryIndexRepairMiddleware =
-  createSongLibraryIndexRepairMiddleware();
 
 type ItemAutosaveDebounce = {
   timer: ReturnType<typeof setTimeout>;
@@ -1286,19 +1274,6 @@ listenerMiddleware.startListening({
         : db === writeDatabase;
       if (!stillInOriginalDatabase) return;
 
-      listenerApi.dispatch(upsertItemInAllDocs(db_item));
-      if (db_item.type === "free") {
-        const indexedItem = latestState.allItems.list.find(
-          (candidate) => candidate._id === db_item._id,
-        );
-        listenerApi.dispatch(
-          allItemsSlice.actions.upsertItemInAllItemsList({
-            ...freeFormDocToServiceItem(db_item),
-            listId: indexedItem?.listId ?? db_item._id,
-          }),
-        );
-      }
-
       safePostMessage({
         type: "update",
         data: {
@@ -1310,15 +1285,11 @@ listenerMiddleware.startListening({
   },
 });
 
-// When allDocs is fully refreshed (e.g. after remote sync), sync the active item so the UI shows the latest.
-// We only run on full-refresh actions, NOT on upsertItemInAllDocs: the latter comes from our own thunks and
-// the active item is already that doc, so setActiveItem would be redundant and could contribute to loops.
+// Durable cache events update the editor through the existing draft/conflict checks.
 listenerMiddleware.startListening({
   predicate: isAnyOf(
-    allDocsSlice.actions.updateAllSongDocs,
-    allDocsSlice.actions.updateAllFreeFormDocs,
-    allDocsSlice.actions.updateAllTimerDocs,
-    allDocsSlice.actions.updateAllBibleDocs,
+    allDocsSlice.actions.hydrateItemCache,
+    allDocsSlice.actions.applyItemDocumentChange,
   ),
   effect: (action, listenerApi) => {
     const state = listenerApi.getState() as RootState;
@@ -1404,10 +1375,12 @@ listenerMiddleware.startListening({
 });
 
 listenerMiddleware.startListening({
-  actionCreator: allDocsSlice.actions.updateAllTimerDocs,
-  effect: (action, listenerApi) => {
+  predicate: (_, current, previous) =>
+    (current as RootState).allDocs.allTimerDocs !== (previous as RootState).allDocs.allTimerDocs,
+  effect: (_, listenerApi) => {
+    const documents = (listenerApi.getState() as RootState).allDocs.allTimerDocs;
     const previousState = listenerApi.getOriginalState() as RootState;
-    const timersFromDocs = action.payload
+    const timersFromDocs = documents
       .map((doc) => {
         if (!doc.timerInfo) return undefined;
         return {
@@ -1420,7 +1393,7 @@ listenerMiddleware.startListening({
     const knownDocIds = Array.from(
       new Set([
         ...previousState.allDocs.allTimerDocs.map((doc) => doc._id),
-        ...action.payload.map((doc) => doc._id),
+        ...documents.map((doc) => doc._id),
       ]),
     );
 
@@ -1650,70 +1623,6 @@ listenerMiddleware.startListening({
       listenerApi.dispatch(
         autosaveIndicatorSlice.actions.endKeyedDebouncedSave(
           AUTOSAVE_DEBOUNCE_KEYS.itemLists,
-        ),
-      );
-    }
-  },
-});
-
-// handle allItems updates
-listenerMiddleware.startListening({
-  predicate: (action, currentState, previousState) => {
-    const state = (currentState as RootState).allItems;
-    // Don't save until initialization is complete
-    if (!state.isInitialized) return false;
-
-    const excluded = isAnyOf(
-      allItemsSlice.actions.initiateAllItemsList,
-      allItemsSlice.actions.updateAllItemsListFromRemote,
-      allItemsSlice.actions.setSongSearchValue,
-      allItemsSlice.actions.setFreeFormSearchValue,
-      allItemsSlice.actions.setTimerSearchValue,
-      allItemsSlice.actions.setIsInitialized,
-    );
-    return (
-      (currentState as RootState).allItems !==
-        (previousState as RootState).allItems &&
-      !excluded(action) &&
-      !isStoreResetAction(action)
-    );
-  },
-
-  effect: async (action, listenerApi) => {
-    const dbAtStart = db;
-    if (!dbAtStart) return;
-    listenerApi.dispatch(
-      autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(
-        AUTOSAVE_DEBOUNCE_KEYS.allItems,
-      ),
-    );
-    try {
-      listenerApi.cancelActiveListeners();
-      await listenerApi.delay(1500);
-
-      if (db !== dbAtStart) return;
-
-      // update ItemList
-      const { list } = (listenerApi.getState() as RootState).allItems;
-
-      const db_allItems: DBAllItems = await dbAtStart.get("allItems");
-      db_allItems.items = [...list];
-      db_allItems.updatedAt = new Date().toISOString();
-      await dbAtStart.put(db_allItems);
-
-      // Local machine updates
-      if (db !== dbAtStart) return;
-      safePostMessage({
-        type: "update",
-        data: {
-          docs: db_allItems,
-          hostId: globalHostId,
-        },
-      });
-    } finally {
-      listenerApi.dispatch(
-        autosaveIndicatorSlice.actions.endKeyedDebouncedSave(
-          AUTOSAVE_DEBOUNCE_KEYS.allItems,
         ),
       );
     }
@@ -3848,7 +3757,7 @@ export const areControllerSlicesReady = (
   options: { includeOverlayState?: boolean } = {},
 ) => {
   const sharedSlicesReady =
-    state.allItems.isInitialized &&
+    state.allDocs.isInitialized &&
     state.undoable.present.preferences.isInitialized &&
     state.undoable.present.itemList.isInitialized &&
     state.undoable.present.itemLists.isInitialized &&
@@ -3919,7 +3828,7 @@ const combinedReducers = combineReducers({
   undoable: undoableReducers,
   presentation: presentationSlice.reducer,
   bible: bibleSlice.reducer,
-  allItems: allItemsSlice.reducer,
+  itemLibraryUi: itemLibraryUiSlice.reducer,
   createItem: createItemSlice.reducer,
   allDocs: allDocsSlice.reducer,
   timers: timersSlice.reducer,
@@ -3943,6 +3852,8 @@ const rootReducer: Reducer = (state: RootState, action: Action) => {
     state = {
       controllerProfiles: state?.controllerProfiles,
       displayOutputs: state?.displayOutputs,
+      allDocs: state?.allDocs,
+      itemLibraryUi: state?.itemLibraryUi,
     } as RootState;
   }
   return combinedReducers(state, action);
@@ -4035,7 +3946,6 @@ const store = configureStore({
       serializableCheck: false,
     }).prepend(
       itemOwnerTransitionMiddleware,
-      songLibraryIndexRepairMiddleware.middleware,
       listenerMiddleware.middleware,
     ),
 });
@@ -4051,22 +3961,10 @@ const refreshServicePlanningPreviewSongMatches = (listenerApi: {
   listenerApi.dispatch(refreshPreviewSongMatches(selectSongLibrary(state).songs));
 };
 
-// Keep an existing preview aligned with the canonical song library as either
-// the lightweight index or durable song documents become available.
+// Keep previews aligned only when durable song documents change.
 listenerMiddleware.startListening({
-  actionCreator: allItemsSlice.actions.addItemToAllItemsList,
-  effect: (action, listenerApi) => {
-    if (action.payload.type !== "song") return;
-    refreshServicePlanningPreviewSongMatches(listenerApi);
-  },
-});
-
-listenerMiddleware.startListening({
-  matcher: isAnyOf(
-    allDocsSlice.actions.updateAllSongDocs,
-    allDocsSlice.actions.upsertItemInAllDocs,
-    allDocsSlice.actions.upsertItemsInAllDocs,
-  ),
+  predicate: (_, current, previous) =>
+    (current as RootState).allDocs.allSongDocs !== (previous as RootState).allDocs.allSongDocs,
   effect: (_, listenerApi) => {
     refreshServicePlanningPreviewSongMatches(listenerApi);
   },

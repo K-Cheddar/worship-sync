@@ -34,7 +34,6 @@ import {
   putOverlayHistoryDocs,
   removeCreditHistoryDoc,
   removeOverlayHistoryDoc,
-  updateAllDocs,
 } from "./dbUtils";
 
 type MockDb = {
@@ -83,54 +82,6 @@ const createMutablePouchDb = (initialDocs: Record<string, unknown>[] = []) => {
 describe("dbUtils", () => {
   afterEach(() => {
     jest.restoreAllMocks();
-  });
-
-  it("loads complete song documents from the provided database", async () => {
-    const db = createDb();
-    const song = {
-      _id: "song-1",
-      name: "Trust and Obey",
-      type: "song",
-      songAudio: { id: "audio-1" },
-    };
-    db.allDocs.mockResolvedValue({ rows: [{ doc: song }] });
-    const dispatch = jest.fn();
-
-    await expect(updateAllDocs(dispatch, db as unknown as PouchDB.Database)).resolves.toBe(true);
-
-    expect(dispatch).toHaveBeenCalledWith({
-      type: "allDocs/updateAllSongDocs",
-      payload: [song],
-    });
-  });
-
-  it("loads durable custom documents from the same initialization scan", async () => {
-    const db = createDb();
-    const welcomeSlides = {
-      _id: "welcome-slides",
-      name: "Welcome Slides",
-      type: "free",
-      slides: [{ id: "slide-1" }, { id: "slide-2" }],
-    };
-    db.allDocs.mockResolvedValue({ rows: [{ doc: welcomeSlides }] });
-    const dispatch = jest.fn();
-
-    await expect(updateAllDocs(dispatch, db as unknown as PouchDB.Database)).resolves.toBe(true);
-
-    expect(dispatch).toHaveBeenCalledWith({
-      type: "allDocs/updateAllFreeFormDocs",
-      payload: [welcomeSlides],
-    });
-  });
-
-  it("does not dispatch a stale document load after its route is inactive", async () => {
-    const db = createDb();
-    db.allDocs.mockResolvedValue({ rows: [{ doc: { _id: "song-1", type: "song" } }] });
-    const dispatch = jest.fn();
-
-    await expect(updateAllDocs(dispatch, db as unknown as PouchDB.Database, () => false)).resolves.toBe(false);
-
-    expect(dispatch).not.toHaveBeenCalled();
   });
 
   it("builds overlay usage map from item lists and skips unreadable lists", async () => {
@@ -1086,43 +1037,32 @@ describe("dbUtils", () => {
     });
   });
 
-  it("deletes unused bible items from all-items and individual docs", async () => {
+  it.each(["bible", "heading"] as const)("cleans unused %s documents while preserving outline references and the old index", async (type) => {
     const db = createDb();
-    db.get.mockImplementation(async (id: string) => {
-      if (id === "ItemLists") {
-        return { itemLists: [{ _id: "list-1", name: "Main" }] };
-      }
-      if (id === "list-1") {
-        return { items: [{ _id: "bible-1", type: "bible" }] };
-      }
-      if (id === "bible-2") return { _id: "bible-2", _rev: "1-a" };
-      return {};
-    });
+    const kept = { _id: "kept", _rev: "1-a", type };
+    const removed = { _id: "removed", _rev: "1-b", type };
+    const current = { _id: "current", _rev: "1-c", type };
+    db.allDocs.mockResolvedValue({ rows: [
+      { doc: { _id: "allItems", items: [removed] } },
+      { doc: { _id: "ItemLists", itemLists: [{ _id: "outline" }] } },
+      { doc: { _id: "outline", items: [kept] } },
+      { doc: kept }, { doc: removed }, { doc: current },
+    ] });
+    const cleanup = type === "bible" ? deleteUnusedBibleItems : deleteUnusedHeadings;
+    await cleanup({ db: db as unknown as PouchDB.Database, currentItems: [current as never] });
+    expect(db.remove).toHaveBeenCalledTimes(1);
+    expect(db.remove).toHaveBeenCalledWith(removed);
+    expect(db.put).not.toHaveBeenCalled();
+  });
 
-    const allItems = {
-      _id: "all-items",
-      items: [
-        { _id: "bible-1", type: "bible" },
-        { _id: "bible-2", type: "bible" },
-        { _id: "song-1", type: "song" },
-      ],
-    } as any;
-
-    await deleteUnusedBibleItems({
-      db: db as unknown as PouchDB.Database,
-      allItems,
-    });
-
-    expect(db.put).toHaveBeenCalledWith(
-      expect.objectContaining({
-        _id: "all-items",
-        items: [
-          { _id: "bible-1", type: "bible" },
-          { _id: "song-1", type: "song" },
-        ],
-      }),
-    );
-    expect(db.remove).toHaveBeenCalledWith({ _id: "bible-2", _rev: "1-a" });
+  it("preserves all items when an outline reference cannot be verified", async () => {
+    const db = createDb();
+    db.allDocs.mockResolvedValue({ rows: [
+      { doc: { _id: "ItemLists", itemLists: [{ _id: "missing" }] } },
+      { doc: { _id: "bible", type: "bible" } },
+    ] });
+    await deleteUnusedBibleItems({ db: db as unknown as PouchDB.Database });
+    expect(db.remove).not.toHaveBeenCalled();
   });
 
   it("migrates font sizes to pixels for slides and arrangement slides", async () => {
@@ -1520,33 +1460,6 @@ describe("dbUtils", () => {
     const result = await getCreditsByIds(db as unknown as PouchDB.Database, "ol-1", []);
     expect(result).toEqual([]);
     expect(db.allDocs).not.toHaveBeenCalled();
-  });
-
-  it("deleteUnusedHeadings removes unused headings and keeps used ones", async () => {
-    const db = createDb();
-    db.get.mockImplementation(async (id: string) => {
-      if (id === "ItemLists") return { itemLists: [{ _id: "l1", name: "L1" }] };
-      if (id === "l1")
-        return { items: [{ _id: "heading-kept", type: "heading" }] };
-      if (id === "heading-removed") return { _id: "heading-removed", _rev: "1-a" };
-      return {};
-    });
-    const allItems = {
-      _id: "allItems",
-      items: [
-        { _id: "heading-kept", type: "heading" },
-        { _id: "heading-removed", type: "heading" },
-        { _id: "song-1", type: "song" },
-      ],
-    } as any;
-    await deleteUnusedHeadings({ db: db as unknown as PouchDB.Database, allItems });
-    expect(db.put).toHaveBeenCalledWith(
-      expect.objectContaining({ items: expect.arrayContaining([
-        expect.objectContaining({ _id: "heading-kept" }),
-        expect.objectContaining({ _id: "song-1" }),
-      ]) }),
-    );
-    expect(db.remove).toHaveBeenCalled();
   });
 
   it("ensureCreditsIndexDoc creates index when absent", async () => {

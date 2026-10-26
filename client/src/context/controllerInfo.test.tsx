@@ -1,6 +1,6 @@
 import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { Provider } from "react-redux";
+import { Provider, useSelector } from "react-redux";
 import { MemoryRouter } from "react-router-dom";
 import store from "../store/store";
 import ControllerInfoProvider, {
@@ -15,9 +15,12 @@ const mockPouchInstances: Array<{
   name: string;
   destroy: jest.Mock;
   bulkDocs: jest.Mock;
+  allDocs: jest.Mock;
+  changes: jest.Mock;
   sync: jest.Mock;
   replicate: { to: jest.Mock };
 }> = [];
+let mockLocalItemDocs: Array<Record<string, unknown>> = [];
 const liveSyncHandles: Array<{
   cancel: jest.Mock;
   emit: (event: string, value?: any) => void;
@@ -48,6 +51,7 @@ jest.mock("pouchdb-browser", () => {
       name,
       destroy: jest.fn().mockResolvedValue(undefined),
       bulkDocs: jest.fn().mockResolvedValue([]),
+      allDocs: jest.fn().mockImplementation(async () => ({ update_seq: 0, rows: mockLocalItemDocs.map((doc) => ({ doc })) })),
       sync: jest.fn((_remote: unknown, options?: Record<string, unknown>) => {
         liveSyncOwners.push(name);
         liveSyncOptions.push(options ?? {});
@@ -76,8 +80,10 @@ jest.mock("pouchdb-browser", () => {
 
 const Probe = () => {
   const context = React.useContext(ControllerInfoContext);
+  const itemName = useSelector((state: ReturnType<typeof store.getState>) => state.allDocs.allSongDocs[0]?.name);
   return (
     <div>
+      <div data-testid="cache-name">{itemName}</div>
       <div data-testid="progress">{context?.dbProgress}</div>
       <div data-testid="status">{context?.connectionStatus.status}</div>
       <div data-testid="message">{context?.connectionStatus.message}</div>
@@ -89,6 +95,7 @@ const Probe = () => {
 
 describe("ControllerInfoProvider", () => {
   beforeEach(() => {
+    mockLocalItemDocs = [];
     mockPouchInstances.length = 0;
     liveSyncHandles.length = 0;
     liveSyncBatchSizes.length = 0;
@@ -103,6 +110,38 @@ describe("ControllerInfoProvider", () => {
         addEventListener: jest.fn(),
         removeEventListener: jest.fn(),
       })) as unknown as typeof BroadcastChannel;
+  });
+
+  it("hydrates and listens on the Services route before the remote session resolves", async () => {
+    let resolveSession!: (value: unknown) => void;
+    (global.fetch as jest.Mock).mockReturnValue(new Promise((resolve) => { resolveSession = resolve; }));
+    mockLocalItemDocs = [{ _id: "song", type: "song", name: "Offline local song" }];
+    const view = render(
+      <Provider store={store}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext({ database: "offline-church" }) as any}>
+          <MemoryRouter initialEntries={["/teams/services"]}>
+            <ControllerInfoProvider><Probe /></ControllerInfoProvider>
+          </MemoryRouter>
+        </GlobalInfoContext.Provider>
+      </Provider>,
+    );
+    await waitFor(() => expect(screen.getByTestId("cache-name")).toHaveTextContent("Offline local song"));
+    expect(liveSyncHandles).toHaveLength(0);
+    const localDb = mockPouchInstances.find((instance) => instance.name === "worship-sync-offline-church")!;
+    expect(localDb.allDocs).toHaveBeenCalledTimes(1);
+    const feed = localDb.changes.mock.results[0].value;
+    act(() => feed.emit("change", { seq: 1, id: "song", doc: { _id: "song", type: "song", name: "Local edit" } }));
+    expect(screen.getByTestId("cache-name")).toHaveTextContent("Local edit");
+    mockLocalItemDocs = [{ _id: "song", type: "song", name: "New session" }];
+    act(() => { store.dispatch({ type: "RESET" }); });
+    await waitFor(() => expect(screen.getByTestId("cache-name")).toHaveTextContent("New session"));
+    expect(localDb.allDocs).toHaveBeenCalledTimes(2);
+    act(() => feed.emit("change", { seq: 2, id: "song", doc: { _id: "song", type: "song", name: "Retired session" } }));
+    expect(screen.getByTestId("cache-name")).toHaveTextContent("New session");
+    view.unmount();
+    expect(feed.cancel).toHaveBeenCalled();
+    expect(store.getState().allDocs.allSongDocs).toEqual([]);
+    await act(async () => { resolveSession({ headers: { get: () => "application/json" }, json: async () => ({ success: true }) }); });
   });
 
   it("sets up guest mode from the bundled seed without a server session", async () => {
@@ -141,7 +180,6 @@ describe("ControllerInfoProvider", () => {
     );
     expect(seededDb?.bulkDocs).toHaveBeenCalledWith(
       expect.arrayContaining([
-        expect.objectContaining({ _id: "allItems" }),
         expect.objectContaining({ _id: "ItemLists" }),
         expect.objectContaining({ _id: "offline-demo-outline" }),
       ]),
@@ -151,6 +189,7 @@ describe("ControllerInfoProvider", () => {
 
 describe("controller replication 413 batch policy", () => {
   beforeEach(() => {
+    mockLocalItemDocs = [];
     mockPouchInstances.length = 0;
     liveSyncHandles.length = 0;
     liveSyncBatchSizes.length = 0;

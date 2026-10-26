@@ -5,7 +5,6 @@ import {
   removeItemsFromList,
   setActiveItemInList,
 } from "../../store/itemListSlice";
-import { addItemToAllItemsList } from "../../store/allItemsSlice";
 import { useNavigate } from "react-router-dom";
 import { DndContext, useDroppable, DragEndEvent, DragStartEvent, DragOverlay } from "@dnd-kit/core";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
@@ -306,7 +305,6 @@ const ServiceItems = () => {
         listId: generateRandomId(),
       };
       dispatch(addItemToItemList(serviceItem));
-      dispatch(addItemToAllItemsList(serviceItem));
     } finally {
       setIsAddingHeading(false);
     }

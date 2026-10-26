@@ -22,7 +22,7 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import { searchLrclibTracks } from "../../api/lrclib";
 import { deleteSongAudioWithRetry } from "../../api/auth";
 import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
-import type { LibraryFilter } from "../../store/allItemsSlice";
+import type { LibraryFilter } from "../../store/itemLibraryUiSlice";
 
 jest.mock("../../api/lrclib", () => ({
   searchLrclibTracks: jest.fn(),

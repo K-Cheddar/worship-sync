@@ -62,16 +62,11 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { useChurchServiceTimeZone } from "../../context/churchServiceTimeZone";
 import { useToast } from "../../context/toastContext";
-import { useDispatch, useSelector } from "../../hooks";
-import { updateAllDocs } from "../../utils/dbUtils";
-import { initiateAllItemsList } from "../../store/allItemsSlice";
-import { upsertItemInAllDocs } from "../../store/allDocsSlice";
-import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
+import { useSelector } from "../../hooks";
 import { broadcastItemUpdate } from "../../store/store";
 import { applyPouchAudit } from "../../utils/pouchAudit";
-import { sortNamesInList } from "../../utils/sort";
 import { getYouTubeVideoReference } from "../../utils/youtube";
-import type { DBAllItems, DBItem } from "../../types";
+import type { DBItem } from "../../types";
 import {
   getServicePlan,
   getServicePlanAssignmentHistory,
@@ -545,13 +540,9 @@ const ServicePlanEditor = ({
   );
   const { db } = useContext(ControllerInfoContext) || {};
   const { showToast } = useToast();
-  const dispatch = useDispatch();
   const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
   const scrollbarWidth = useSelector(
     (state) => state.undoable.present.preferences.scrollbarWidth,
-  );
-  const isAllItemsInitialized = useSelector(
-    (state) => state.allItems?.isInitialized ?? false,
   );
   const [assignmentHistory, setAssignmentHistory] = useState<string[]>([]);
   const [microphones, setMicrophones] = useState<ServicePlanMicrophone[]>([]);
@@ -565,40 +556,6 @@ const ServicePlanEditor = ({
   const [pendingSongCreateRef, setPendingSongCreateRef] = useState<
     Extract<ServicePlanSongReference, { kind: "pending" }> | null
   >(null);
-
-  // The song library (allDocs.allSongDocs) is normally populated by the
-  // Controller page's own lifecycle hook — a session that opens straight to
-  // Teams and Services without ever visiting the Controller would otherwise
-  // see an empty library here (no search results, no import song matches).
-  useEffect(() => {
-    if (!db) return;
-    updateAllDocs(dispatch);
-  }, [db, dispatch]);
-
-  // Teams/Services can open without the Controller lifecycle. Initialize the
-  // shared lightweight index here too so embedded song creation can safely
-  // persist a complete list for older Controller clients.
-  useEffect(() => {
-    if (!db || isAllItemsInitialized) return;
-    let cancelled = false;
-
-    const initializeAllItems = async () => {
-      try {
-        const allItemsDoc = (await db.get("allItems")) as DBAllItems;
-        if (cancelled) return;
-        dispatch(
-          initiateAllItemsList(sortNamesInList(allItemsDoc.items || [])),
-        );
-      } catch (error) {
-        console.error("Could not initialize the song library index:", error);
-      }
-    };
-
-    initializeAllItems();
-    return () => {
-      cancelled = true;
-    };
-  }, [db, dispatch, isAllItemsInitialized]);
 
   const planKey = getServicePlanKey(occurrence);
   const editorIdentityKey = `${userId || ""}:${churchId || ""}:${planKey}`;
@@ -2392,19 +2349,9 @@ const ServicePlanEditor = ({
       );
       const savedResult = await db.put(audited);
       const saved = { ...audited, _rev: savedResult.rev };
-      dispatch(upsertItemInAllDocs(saved));
-      dispatch(
-        upsertItemInAllItemsList({
-          _id: saved._id,
-          name: saved.name,
-          type: saved.type,
-          listId: saved._id,
-          background: typeof saved.background === "string" ? saved.background : "",
-        }),
-      );
       broadcastItemUpdate(saved);
     },
-    [db, dispatch],
+    [db],
   );
   const viewLibrarySong = useMemo(() => {
     if (!viewSongRef || viewSongRef.kind !== "library") return null;

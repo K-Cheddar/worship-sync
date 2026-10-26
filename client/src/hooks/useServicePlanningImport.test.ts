@@ -26,7 +26,6 @@ import { normalizeOverlayForSync } from "../utils/overlayUtils";
 import { plainTextToRichText } from "../types/richText";
 
 type SyncTestState = {
-  allItems: { list: never[]; isAllItemsLoading: boolean };
   allDocs: { allSongDocs: never[]; allFreeFormDocs: never[] };
   undoable: {
     present: {
@@ -45,7 +44,6 @@ type SyncTestState = {
 };
 
 const initialSyncTestState: SyncTestState = {
-  allItems: { list: [], isAllItemsLoading: false },
   allDocs: { allSongDocs: [], allFreeFormDocs: [] },
   undoable: {
     present: {

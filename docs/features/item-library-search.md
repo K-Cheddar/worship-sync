@@ -33,7 +33,7 @@ Automatic identification and imported-plan Closest matches remain on conservativ
 
 - **Partial queries:** Retain useful partial hits, ranked below better coverage. Rejecting every incomplete query would hide songs when remembered wording is imperfect. Approved in the planning response, October 24, 2026.
 - **Import suggestions:** Preserve title-based Closest matches; use improved retrieval in the explicit Search library action. This preserves the identity-resolution workflow. Approved in the planning response, October 24, 2026.
-- **Stable identity and hydration:** Search indexed titles without inventing document content; use saved IDs for custom slides. Explicitly authorized by this task and the controller-content-viewing contract.
+- **Stable identity and hydration:** Use cached document titles and saved IDs for custom slides. The October 26 storage request supersedes index-only title retrieval. Explicitly authorized by this task and the controller-content-viewing contract.
 
 ## Important scenarios and regression evidence
 
@@ -42,14 +42,14 @@ Automatic identification and imported-plan Closest matches remain on conservativ
 | how sweet the sound | Amazing Grace lyric phrase beats weak sound title | songSearchUtils; FilteredItems; ServicePlanLibraryPicker; SongReferencePicker; AddSongSectionsDrawer |
 | amzing grace, how graet thou art, sheperd, halleluja, holy spirt, greta are you lord | Intended title/lyric hits retrieved with conservative token highlighting | songSearchUtils; HighlightWords |
 | Different sections/arrangements | Combined coverage; best real passage; no invented cross-section phrase | songSearchUtils |
-| Duplicate custom names / indexed-only title | Correct ID's content / title-only result without lyric excerpt | songSearchUtils; FilteredItems; SongReferencePicker |
+| Duplicate custom names / document-only library | Correct saved ID's content and current document title | songSearchUtils; FilteredItems; SongReferencePicker |
 | Rapid typing / library replacement / drawer close | Results and highlights share their query; latest document content; existing reset behavior | FilteredItems; SongReferencePicker; AddSongSectionsDrawer |
 | Manual lyric hit during import | Manual result does not become automatic identity evidence | findServicePlanningSongMatch |
 
 ## Implementation references and audit observations
 
 - Shared implementation: `client/src/utils/songSearchUtils.ts`. Song adapters preserve original selected documents; generic item results carry transient score/excerpt fields. No persisted/API types change.
-- Controller and library routes use ItemLibrary -> FilteredItems. Services Add Song and Custom Document modals also use FilteredItems. Add Song Sections uses useSongSearchPagedList. SongReferencePicker uses the canonical merged song selector; it currently has no production callers, but its exported behavior and tests remain supported.
+- Controller and library routes use ItemLibrary -> FilteredItems. Services Add Song and Custom Document modals also use FilteredItems. Add Song Sections uses useSongSearchPagedList. SongReferencePicker uses the canonical document-backed song selector; it currently has no production callers, but its exported behavior and tests remain supported.
 - External provider retrieval, automatic title matching, duplicate-song detection, and unrelated Bible/media/resource/member/plan filters are intentionally excluded.
 - Previously, compareItemSearchRanks forced every positive title match above every lyrics-only match. General string matching favored words earlier in a lyric section, did not retrieve fuzzy words, and highlighting independently used Levenshtein rules. FilteredItems duplicated content scoring and used custom names in category mode; indexed songs without documents had zero score. SongReferencePicker used title substring filtering.
 

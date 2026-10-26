@@ -1,3 +1,4 @@
+import { selectItemEntries } from "../store/itemLibrarySelectors";
 import { useCallback, useContext, useEffect, useRef } from "react";
 import { useStore } from "react-redux";
 import { useDispatch, useSelector } from "../hooks";
@@ -23,7 +24,6 @@ import {
   updateList as updateOverlayList,
   updateOverlayInList,
 } from "../store/overlaysSlice";
-import { addItemToAllItemsList } from "../store/allItemsSlice";
 import {
   buildClonedParticipantOverlay,
   buildNewParticipantOverlay,
@@ -65,7 +65,7 @@ import {
   getOverlayPlanLineItemKey,
 } from "../utils/servicePlanningSyncKeys";
 import { persistItemListServiceOutline } from "../utils/itemListImports";
-import { freeFormDocToServiceItem } from "../utils/freeFormLibrary";
+import { itemDocumentToLibraryEntry } from "../utils/itemLibrary";
 import { getChurchResource } from "../api/auth";
 import type { ChurchResource } from "../types/churchResource";
 import { getServicePlanElementContentResources } from "../types/servicePlan";
@@ -138,7 +138,7 @@ export const useServicePlanningImport = () => {
     churchId: string;
     byId: Map<string, Promise<ChurchResource | undefined>>;
   }>({ churchId: "", byId: new Map() });
-  const allItems = useSelector((s: RootState) => s.allItems.list);
+  const libraryItems = useSelector(selectItemEntries);
   const selectedItemList = useSelector(
     (s: RootState) =>
       s.undoable.present.itemLists.selectedList ??
@@ -181,7 +181,7 @@ export const useServicePlanningImport = () => {
       const songLibrary = selectSongLibrary(state).songs;
       const customDocumentLibrary = state.allDocs.allFreeFormDocs
         .filter((document) => document.type === "free" && Array.isArray(document.slides))
-        .map(freeFormDocToServiceItem);
+        .map(itemDocumentToLibraryEntry);
       const preview = buildServicePlanningPreview({
         importData,
         servicePlanning: sp,
@@ -310,7 +310,7 @@ export const useServicePlanningImport = () => {
       const songLibrary = selectSongLibrary(state).songs;
       const customDocumentLibrary = state.allDocs.allFreeFormDocs
         .filter((document) => document.type === "free" && Array.isArray(document.slides))
-        .map(freeFormDocToServiceItem);
+        .map(itemDocumentToLibraryEntry);
       const preview = buildServicePlanningPreview({
         importData,
         servicePlanning: sp,
@@ -498,7 +498,7 @@ export const useServicePlanningImport = () => {
       const customDocumentsById = new Map(
         store.getState().allDocs.allFreeFormDocs
           .filter((document) => document.type === "free" && Array.isArray(document.slides))
-          .map((document) => [document._id, freeFormDocToServiceItem(document)]),
+          .map((document) => [document._id, itemDocumentToLibraryEntry(document)]),
       );
       const currentCandidates = outlineCandidates.map((candidate) => {
         if (candidate.outlineItemType !== "custom-document" || !candidate.customDocumentId) {
@@ -516,7 +516,7 @@ export const useServicePlanningImport = () => {
       const result = await insertServicePlanningOutlineCandidates({
         outlineCandidates: currentCandidates,
         currentList,
-        allItems,
+        libraryItems,
         db,
         bibleDb,
         defaultBibleBackground: defaultBibleBackground.background,
@@ -529,16 +529,11 @@ export const useServicePlanningImport = () => {
         dispatch(updateItemList(result.newList));
       }
 
-      if (result.createdAllItems.length > 0) {
-        result.createdAllItems.forEach((item) => {
-          dispatch(addItemToAllItemsList(item));
-        });
-      }
 
       return { inserted: result.inserted };
     },
     [
-      allItems,
+      libraryItems,
       bibleDb,
       db,
       defaultBibleBackground.background,
@@ -658,7 +653,7 @@ export const useServicePlanningImport = () => {
       const result = await executeOutlineSyncUtilityStep({
         step,
         currentList,
-        allItems,
+        libraryItems,
         db,
         bibleDb,
         defaultBibleBackground: defaultBibleBackground.background,
@@ -671,11 +666,6 @@ export const useServicePlanningImport = () => {
         dispatch(updateItemList(result.newList));
       }
 
-      if (result.createdAllItems.length > 0) {
-        result.createdAllItems.forEach((item) => {
-          dispatch(addItemToAllItemsList(item));
-        });
-      }
 
       if (result.activeListId) {
         dispatch(setActiveItemInList(result.activeListId));
@@ -697,7 +687,7 @@ export const useServicePlanningImport = () => {
       };
     },
     [
-      allItems,
+      libraryItems,
       bibleDb,
       db,
       defaultBibleBackground.background,

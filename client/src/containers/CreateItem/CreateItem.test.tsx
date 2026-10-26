@@ -15,7 +15,7 @@ import {
   createItemSlice,
   initialCreateItemState,
 } from "../../store/createItemSlice";
-import { allItemsSlice } from "../../store/allItemsSlice";
+import { itemLibraryUiSlice } from "../../store/itemLibraryUiSlice";
 import { allDocsSlice } from "../../store/allDocsSlice";
 import { itemListSlice } from "../../store/itemListSlice";
 import { itemSlice } from "../../store/itemSlice";
@@ -120,21 +120,21 @@ const ItemRouteProbe = () => {
 
 const createTestStore = ({
   createItem = initialCreateItemState,
-  allItemsList = [],
+  libraryEntries = [],
   allSongDocs = [],
-  isAllItemsInitialized = true,
+  isItemCacheInitialized = true,
 }: {
   createItem?: ReturnType<typeof createItemSlice.reducer>;
-  allItemsList?: ServiceItem[];
+  libraryEntries?: ServiceItem[];
   allSongDocs?: ItemState[];
-  isAllItemsInitialized?: boolean;
+  isItemCacheInitialized?: boolean;
 } = {}) => {
   const undoableState = createUndoableState();
 
   return configureStore({
     reducer: {
       createItem: createItemSlice.reducer,
-      allItems: allItemsSlice.reducer,
+      itemLibraryUi: itemLibraryUiSlice.reducer,
       allDocs: allDocsSlice.reducer,
       itemList: itemListSlice.reducer,
       item: itemSlice.reducer,
@@ -145,15 +145,13 @@ const createTestStore = ({
     } as any,
     preloadedState: {
       createItem,
-      allItems: {
-        ...allItemsSlice.getInitialState(),
-        list: allItemsList,
-        isAllItemsLoading: false,
-        isInitialized: isAllItemsInitialized,
-      },
+      itemLibraryUi: itemLibraryUiSlice.getInitialState(),
       allDocs: {
         ...allDocsSlice.getInitialState(),
-        allSongDocs,
+        allSongDocs: allSongDocs.length ? allSongDocs : libraryEntries.filter((item) => item.type === "song"),
+        allFreeFormDocs: libraryEntries.filter((item) => item.type === "free"),
+        allTimerDocs: libraryEntries.filter((item) => item.type === "timer"),
+        isInitialized: isItemCacheInitialized,
       },
       itemList: itemListSlice.getInitialState(),
       item: itemSlice.getInitialState(),
@@ -626,17 +624,10 @@ describe("CreateItem", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create Custom Item" }));
 
     await waitFor(() => {
-      expect(store.getState().allItems.list).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            _id: "welcome-slides",
-            name: "Welcome Slides",
-            type: "free",
-          }),
-        ]),
-      );
+      expect(mockedCreateNewFreeForm).toHaveBeenCalledTimes(1);
     });
-    expect(store.getState().allItems.list).toHaveLength(1);
+    expect(store.getState().allDocs.allFreeFormDocs).toEqual([]);
+
   });
 
   it("navigates to the inserted outline row listId after creating a song", async () => {
@@ -903,7 +894,7 @@ describe("CreateItem", () => {
         name: "Amazing Grace",
         text: "Verse 1",
       },
-      allItemsList: [
+      libraryEntries: [
         {
           _id: "existing-song",
           listId: "list-1",
@@ -936,7 +927,7 @@ describe("CreateItem", () => {
         name: "Amazing Grace",
         text: "Verse 1",
       },
-      allItemsList: [
+      libraryEntries: [
         {
           _id: "existing-song",
           listId: "list-1",
@@ -1008,7 +999,7 @@ describe("CreateItem", () => {
         ...initialCreateItemState,
         name: "New Song",
       },
-      isAllItemsInitialized: false,
+      isItemCacheInitialized: false,
     });
 
     render(

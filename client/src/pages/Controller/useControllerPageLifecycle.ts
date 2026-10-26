@@ -3,11 +3,6 @@ import { useStore } from "react-redux";
 import { useDispatch, useSelector } from "../../hooks";
 import _ from "lodash";
 import {
-  initiateAllItemsList,
-  updateAllItemsListFromRemote,
-} from "../../store/allItemsSlice";
-import {
-  DBAllItems,
   DBItemListDetails,
   DBOverlayTemplates,
   isControllerMediaRouteFoldersDocId,
@@ -32,16 +27,12 @@ import {
 import { formatItemList } from "../../utils/formatItemList";
 import { setMediaCacheMap } from "../../store/mediaCacheMapSlice";
 import { GlobalInfoContext } from "../../context/globalInfo";
-import { sortNamesInList } from "../../utils/sort";
 import {
-  deleteUnusedBibleItems,
-  deleteUnusedHeadings,
+  deleteUnusedOutlineItems,
   getAllOverlayHistory,
   getOverlaysByIds,
-  updateAllDocs,
 } from "../../utils/dbUtils";
 import {
-  loadOrCreateAllItemsDoc,
   loadOrCreatePreferencesBundle,
 } from "../../utils/controllerBootstrapDocs";
 import {
@@ -79,7 +70,6 @@ import {
   parseMediaReplicationDoc,
   requireMediaLibraryV2,
 } from "../../utils/mediaDocUtils";
-import { setIsInitialized as setAllItemsIsInitialized } from "../../store/allItemsSlice";
 import { setIsInitialized as setOverlaysIsInitialized } from "../../store/overlaysSlice";
 import { setIsInitialized as setItemListsIsInitialized } from "../../store/itemListsSlice";
 import { initiateServices } from "../../store/serviceTimesSlice";
@@ -112,7 +102,7 @@ export const useControllerPageLifecycle = () => {
   const activeControllerId = useActiveControllerId();
   const activeControllerProfile = useActiveControllerProfile();
   const { showToast } = useToast();
-  const { db, cloud, updater, setIsMobile, setIsPhone, pullFromRemote } =
+  const { db, dbProgress, cloud, updater, setIsMobile, setIsPhone, pullFromRemote } =
     useContext(ControllerInfoContext) || {};
   const {
     access,
@@ -145,7 +135,7 @@ export const useControllerPageLifecycle = () => {
   const serviceListSyncGenerationRef = useRef(0);
   const allControllerSlicesInitialized = useSelector((state: RootState) =>
     Boolean(
-      state.allItems.isInitialized &&
+      state.allDocs.isInitialized &&
       state.undoable.present.preferences.isInitialized &&
       state.undoable.present.itemList.isInitialized &&
       state.undoable.present.itemLists.isInitialized &&
@@ -190,7 +180,7 @@ export const useControllerPageLifecycle = () => {
     };
   }, [refreshPresentationListeners, setIsMobile, setIsPhone]);
 
-  const updateAllItemsAndListFromExternal = useCallback(
+  const updateOutlineFromExternal = useCallback(
     async (event: CustomEventInit) => {
       try {
         const updates = event.detail;
@@ -293,15 +283,10 @@ export const useControllerPageLifecycle = () => {
               }
             }
           }
-          if (_update._id === "allItems") {
-            const update = _update as DBAllItems;
-            dispatch(updateAllItemsListFromRemote(update.items));
-          }
           if (_update.docType === "overlay-history") {
             refetchOverlayHistory = true;
           }
         }
-        updateAllDocs(dispatch);
         const dbForHistory = databaseRef.current;
         if (refetchOverlayHistory && dbForHistory) {
           const overlayHistory = await getAllOverlayHistory(dbForHistory);
@@ -351,7 +336,7 @@ export const useControllerPageLifecycle = () => {
     [dispatch],
   );
 
-  useGlobalBroadcast(updateAllItemsAndListFromExternal);
+  useGlobalBroadcast(updateOutlineFromExternal);
   useGlobalBroadcast(updateMediaFromExternal);
 
   const updatePreferencesFromExternal = useCallback(
@@ -425,7 +410,6 @@ export const useControllerPageLifecycle = () => {
       // Soft reset: clears presentation/session slices but keeps church
       // registries so Home does not flash built-in controller names.
       dispatch({ type: "RESET_CONTROLLER_SESSION" });
-      dispatch(setAllItemsIsInitialized(false));
       dispatch(setPreferencesIsInitialized(false));
       dispatch(setItemListIsInitialized(false));
       dispatch(setOverlaysIsInitialized(false));
@@ -436,6 +420,15 @@ export const useControllerPageLifecycle = () => {
       refreshPresentationListeners?.();
     };
   }, [dispatch]);
+
+  useEffect(() => {
+    // Do not clean against a partially replicated outline/reference set.
+    if (!db || dbProgress !== 100) return;
+    void deleteUnusedOutlineItems({
+      db,
+      currentItems: (store.getState() as RootState).undoable.present.itemList.list,
+    }).catch(console.error);
+  }, [db, dbProgress, store]);
 
   // Firebase gives real-time service time updates (same mechanism as StreamInfo.tsx).
   // Falls back to a one-time DB load for guest / offline sessions.
@@ -465,30 +458,6 @@ export const useControllerPageLifecycle = () => {
     };
     load();
   }, [db, loginState, dispatch]);
-
-  useEffect(() => {
-    const getAllItems = async () => {
-      if (!db) return;
-      try {
-        const allItems = await loadOrCreateAllItemsDoc(db);
-        const items = allItems.items || [];
-        const sortedItems = sortNamesInList(items);
-        dispatch(initiateAllItemsList(sortedItems));
-        updateAllDocs(dispatch);
-        deleteUnusedBibleItems({ db, allItems });
-        deleteUnusedHeadings({ db, allItems });
-      } catch (error) {
-        console.error(error);
-        // Non-404 failure: unblock UI for this session only — do not write empty docs.
-        dispatch(initiateAllItemsList([]));
-        showToast(
-          "Could not load the item library. Reload the page before editing songs or items.",
-          "error",
-        );
-      }
-    };
-    void getAllItems();
-  }, [dispatch, db, showToast]);
 
   useEffect(() => {
     if (!db) return;
@@ -702,10 +671,10 @@ export const useControllerPageLifecycle = () => {
 
   useEffect(() => {
     if (!updater) return;
-    updater.addEventListener("update", updateAllItemsAndListFromExternal);
+    updater.addEventListener("update", updateOutlineFromExternal);
     return () =>
-      updater.removeEventListener("update", updateAllItemsAndListFromExternal);
-  }, [updater, updateAllItemsAndListFromExternal]);
+      updater.removeEventListener("update", updateOutlineFromExternal);
+  }, [updater, updateOutlineFromExternal]);
 
   useEffect(() => {
     if (!updater) return;

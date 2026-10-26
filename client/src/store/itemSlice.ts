@@ -24,7 +24,6 @@ import {
   getIndexFromSelectionHint,
   getSelectionHint,
 } from "../utils/selectionHint";
-import { updateAllItemsList } from "./allItemsSlice";
 import { updateItemList } from "./itemListSlice";
 import {
   getServiceItemListBackgroundPatch,
@@ -698,7 +697,6 @@ const _updateItemInLists = ({
   dispatch,
 }: UpdateItemInListsType) => {
   const { list } = state.undoable.present.itemList;
-  const { list: allItemsList } = state.allItems;
   const { _id } = state.undoable.present.item;
 
   const updatedList = updateItemInList({
@@ -707,14 +705,6 @@ const _updateItemInLists = ({
     id: _id,
     list,
   });
-  const updatedAllItemsList = updateItemInList({
-    property,
-    value,
-    id: _id,
-    list: allItemsList,
-  });
-
-  dispatch(updateAllItemsList(updatedAllItemsList));
   dispatch(updateItemList(updatedList));
 };
 
@@ -728,12 +718,8 @@ const _patchItemInLists = ({
   dispatch: AppDispatch;
 }) => {
   const { list } = state.undoable.present.itemList;
-  const { list: allItemsList } = state.allItems;
   const { _id } = state.undoable.present.item;
 
-  dispatch(
-    updateAllItemsList(patchItemInList({ id: _id, list: allItemsList, patch })),
-  );
   dispatch(updateItemList(patchItemInList({ id: _id, list, patch })));
 };
 

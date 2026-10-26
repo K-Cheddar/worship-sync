@@ -1,3 +1,4 @@
+import allDocsReducer, { hydrateItemCache, applyItemDocumentChange } from "../../store/allDocsSlice";
 import { configureStore } from "@reduxjs/toolkit";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { act } from "react";
@@ -56,6 +57,7 @@ const createTestStore = () => {
   return configureStore({
     reducer: {
       undoable: undoableReducer,
+      allDocs: allDocsReducer,
     },
     preloadedState: {
       undoable: initialUndoableState,
@@ -64,6 +66,58 @@ const createTestStore = () => {
 };
 
 describe("Controller Item page", () => {
+  it("navigates between loaded items without additional PouchDB reads", async () => {
+    const dbGet = jest.fn();
+    const store = createTestStore();
+    store.dispatch(hydrateItemCache([
+      { _id: "item-b", name: "B", type: "song" as const, arrangements: [], slides: [] },
+      { _id: "item-c", name: "C current", type: "free" as const, background: "current background", slides: [] },
+    ].map((doc) => ({ ...itemSlice.getInitialState(), ...doc }))));
+    render(
+      <Provider store={store}>
+        <ControllerInfoContext.Provider value={createMockControllerContext({ db: createMockPouchDB({ get: dbGet }) }) as any}>
+          <MemoryRouter initialEntries={[itemRoute("item-b", "list-b")]}>
+            <Routes><Route path="/controller/item/:itemId/:listId" element={<><RouteDriver /><Item /></>} /></Routes>
+          </MemoryRouter>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+    await waitFor(() => expect(store.getState().undoable.present.item._id).toBe("item-b"));
+    fireEvent.click(screen.getByRole("button", { name: "Go to C" }));
+    await waitFor(() => expect(store.getState().undoable.present.item._id).toBe("item-c"));
+    expect(store.getState().undoable.present.item).toMatchObject({ name: "C current", background: "current background", listId: "list-c" });
+    expect(dbGet).not.toHaveBeenCalled();
+  });
+
+  it.each(["edit", "delete"] as const)("discards a stale fallback read when a live %s arrives", async (change) => {
+    let finish!: (value: DBItem) => void;
+    const pending = new Promise<DBItem>((resolve) => { finish = resolve; });
+    const read = jest.fn().mockReturnValueOnce(pending).mockRejectedValue({ status: 404 });
+    const store = createTestStore();
+    const doc = { ...itemSlice.getInitialState(), _id: "item-b", name: "Old", type: "song" as const };
+    const log = jest.spyOn(console, "error").mockImplementation(() => {});
+    render(
+      <Provider store={store}>
+        <ControllerInfoContext.Provider value={createMockControllerContext({ db: createMockPouchDB({ get: read }) }) as any}>
+          <MemoryRouter initialEntries={[itemRoute("item-b", "list-b")]}>
+            <Routes><Route path="/controller/item/:itemId/:listId" element={<Item />} /></Routes>
+          </MemoryRouter>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+    act(() => { store.dispatch(applyItemDocumentChange(change === "edit"
+      ? { id: "item-b", doc: { ...doc, name: "Newer" } }
+      : { id: "item-b", deleted: true })); });
+    await act(async () => { finish(doc); await pending; });
+    await waitFor(() => expect(store.getState().undoable.present.item._id).toBe(change === "edit" ? "item-b" : itemSlice.getInitialState()._id));
+    expect(store.getState().undoable.present.item.name).toBe(change === "edit" ? "Newer" : itemSlice.getInitialState().name);
+    expect(read).toHaveBeenCalledTimes(change === "edit" ? 1 : 2);
+    await waitFor(() => expect(Boolean(screen.queryByText("Item Not Found"))).toBe(change === "delete"));
+    expect(store.getState().allDocs.allSongDocs.map((item) => item.name)).toEqual(change === "edit" ? ["Newer"] : []);
+    log.mockRestore();
+  });
+
   it("clears loading when fetching the item fails", async () => {
     const dbGet = jest.fn().mockRejectedValue(new Error("load failed"));
     const controllerContext = createMockControllerContext({

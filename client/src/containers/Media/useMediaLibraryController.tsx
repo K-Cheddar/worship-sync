@@ -1,3 +1,4 @@
+import { selectItemEntries } from "../../store/itemLibrarySelectors";
 import {
   useCallback,
   useContext,
@@ -104,7 +105,6 @@ import {
   updateSlides,
 } from "../../store/itemSlice";
 import { addItemToItemList, ensureCanvaItemInItemList } from "../../store/itemListSlice";
-import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
 import { createNewFreeForm, runCanvaCustomItemCreationOnce } from "../../utils/itemUtil";
 import { createSlideFromMedia } from "../../utils/slideCreation";
 import { deleteMediaItemAtRevisionFromPouch, flushMediaLibraryDocToPouch } from "../../utils/flushMediaLibraryDoc";
@@ -421,9 +421,7 @@ export function useMediaLibraryController({
       (id) => selectOutputSlot(state, id, "projector").isTransmitting,
     ),
   );
-  const { list: allItemsList } = useSelector(
-    (state: RootState) => state.allItems,
-  );
+  const libraryItems = useSelector(selectItemEntries);
 
   const routeKey = getMediaRouteKey(location.pathname, pageMode, item.type);
   const selectedLibraryFilter =
@@ -838,7 +836,7 @@ export function useMediaLibraryController({
       const newItem = await createNewFreeForm({
         name: displayName,
         text: "",
-        list: allItemsList,
+        list: libraryItems,
         db,
         background: isLiveInput ? "" : m.background,
         mediaInfo: isLiveInput ? undefined : m,
@@ -871,7 +869,6 @@ export function useMediaLibraryController({
       };
       dispatch(setActiveItem(newItem));
       const addedAction = dispatch(addItemToItemList(listItem));
-      dispatch(upsertItemInAllItemsList(listItem));
       navigate(
         getControllerItemPath(
           { _id: newItem._id, listId: addedAction.payload.listId },
@@ -892,7 +889,7 @@ export function useMediaLibraryController({
     selectedMediaIds,
     list,
     db,
-    allItemsList,
+    libraryItems,
     defaultFreeFormBackgroundBrightness,
     defaultFreeFormFontMode,
     dispatch,
@@ -2517,7 +2514,7 @@ export function useMediaLibraryController({
           ...(options.idempotencyKey ? { id: options.idempotencyKey } : {}),
           name: designTitle || "Canva presentation",
           text: "",
-          list: allItemsList,
+          list: libraryItems,
           db,
           background: resolvedPages[0].background,
           mediaInfo: resolvedPages[0],
@@ -2546,9 +2543,6 @@ export function useMediaLibraryController({
           (entry) => entry._id === newItem._id,
         );
         if (!outlineItem) throw new Error("Could not confirm the custom item was added to the outline.");
-        if (!store.getState().allItems.list.some((entry) => entry._id === newItem._id)) {
-          dispatch(upsertItemInAllItemsList(listItem));
-        }
         const itemPath = getControllerItemPath(
           { _id: newItem._id, listId: outlineItem.listId },
           controllerBasePath,
@@ -2573,7 +2567,7 @@ export function useMediaLibraryController({
       return runCanvaCustomItemCreationOnce(canvaItemCreationsRef.current, key, create);
     },
     [
-      allItemsList,
+      libraryItems,
       churchId,
       controllerBasePath,
       db,

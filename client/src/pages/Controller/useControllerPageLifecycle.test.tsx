@@ -32,7 +32,6 @@ jest.mock("../../context/toastContext", () => ({
 }));
 
 jest.mock("../../utils/controllerBootstrapDocs", () => ({
-  loadOrCreateAllItemsDoc: jest.fn().mockResolvedValue({ items: [] }),
   loadOrCreatePreferencesBundle: jest.fn().mockResolvedValue({
     preferences: {},
     quickLinks: [],
@@ -56,7 +55,7 @@ jest.mock("../../utils/dbUtils", () => ({
   deleteUnusedHeadings: jest.fn(),
   getAllOverlayHistory: jest.fn().mockResolvedValue([]),
   getOverlaysByIds: jest.fn().mockResolvedValue([]),
-  updateAllDocs: jest.fn(),
+  deleteUnusedOutlineItems: jest.fn().mockResolvedValue(undefined),
   migrateMediaLibraryFoldersFieldIfNeeded: jest.fn(),
 }));
 

@@ -1,12 +1,7 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import { DBItem } from "../types";
-import {
-  attachCloudCopyToLocalImageItem,
-  updateLocalImageReferenceInItem,
-  type LocalImageReferencePatch,
-} from "../utils/localImageAssets";
+import { DBHeading, DBItem } from "../types";
 
-function getDocsKey(type: string): keyof AllDocsState | null {
+function getDocsKey(type: string): "allSongDocs" | "allFreeFormDocs" | "allTimerDocs" | "allBibleDocs" | null {
   if (type === "song") return "allSongDocs";
   if (type === "free") return "allFreeFormDocs";
   if (type === "timer") return "allTimerDocs";
@@ -14,132 +9,86 @@ function getDocsKey(type: string): keyof AllDocsState | null {
   return null;
 }
 
+let nextCacheSession = 0;
+
 type AllDocsState = {
+  session: number;
+  changeVersion: number;
   allSongDocs: DBItem[];
   allFreeFormDocs: DBItem[];
   allTimerDocs: DBItem[];
   allBibleDocs: DBItem[];
+  allHeadingDocs: DBHeading[];
+  isInitialized: boolean;
+  error: string | null;
 };
 
 const initialState: AllDocsState = {
+  session: 0,
+  changeVersion: 0,
   allSongDocs: [],
   allFreeFormDocs: [],
   allTimerDocs: [],
   allBibleDocs: [],
+  allHeadingDocs: [],
+  isInitialized: false,
+  error: null,
 };
 
 export const allDocsSlice = createSlice({
   name: "allDocs",
-  initialState,
+  initialState: () => ({ ...initialState, session: ++nextCacheSession }),
   reducers: {
-    updateAllSongDocs: (state, action: PayloadAction<DBItem[]>) => {
-      state.allSongDocs = action.payload;
-    },
-    updateAllFreeFormDocs: (state, action: PayloadAction<DBItem[]>) => {
-      state.allFreeFormDocs = action.payload;
-    },
-    updateAllTimerDocs: (state, action: PayloadAction<DBItem[]>) => {
-      state.allTimerDocs = action.payload;
-    },
-    updateAllBibleDocs: (state, action: PayloadAction<DBItem[]>) => {
-      state.allBibleDocs = action.payload;
-    },
-    upsertItemInAllDocs: (state, action: PayloadAction<DBItem>) => {
-      const doc = action.payload;
-      const key = getDocsKey(doc.type);
-      if (!key) return;
-      const arr = state[key];
-      const idx = arr.findIndex((d) => d._id === doc._id);
-      if (idx >= 0) {
-        arr[idx] = doc;
-      } else {
-        state[key] = [...arr, doc];
-      }
-    },
-    upsertItemsInAllDocs: (state, action: PayloadAction<DBItem[]>) => {
+    resetItemCache: (state) => ({ ...initialState, session: state.session }),
+    hydrateItemCache: (state, action: PayloadAction<Array<DBItem | DBHeading>>) => {
+      state.allSongDocs = [];
+      state.allFreeFormDocs = [];
+      state.allTimerDocs = [];
+      state.allBibleDocs = [];
+      state.allHeadingDocs = [];
       for (const doc of action.payload) {
-        const key = getDocsKey(doc.type);
-        if (!key) continue;
-        const arr = state[key];
-        const idx = arr.findIndex((candidate) => candidate._id === doc._id);
-        if (idx >= 0) arr[idx] = doc;
-        else state[key] = [...arr, doc];
+        if (doc.type === "heading") state.allHeadingDocs.push(doc as DBHeading);
+        else {
+          const key = getDocsKey(doc.type);
+          if (key) state[key].push(doc as DBItem);
+        }
       }
+      state.isInitialized = true;
+      state.error = null;
     },
-    removeItemFromAllDocs: (
-      state,
-      action: PayloadAction<{ _id: string; type: string }>,
-    ) => {
-      const key = getDocsKey(action.payload.type);
-      if (!key) return;
-      state[key] = state[key].filter((doc) => doc._id !== action.payload._id);
-    },
-    attachCloudCopyToLocalImageInAllDocs: (
-      state,
-      action: PayloadAction<{
-        itemId: string;
-        assetId: string;
-        mediaId: string;
-        url: string;
-      }>,
-    ) => {
-      for (const key of [
-        "allSongDocs",
-        "allFreeFormDocs",
-        "allTimerDocs",
-        "allBibleDocs",
-      ] as const) {
-        const index = state[key].findIndex(
-          (item) => item._id === action.payload.itemId,
-        );
-        if (index < 0) continue;
-        state[key][index] = attachCloudCopyToLocalImageItem(
-          state[key][index],
-          action.payload.assetId,
-          { mediaId: action.payload.mediaId, url: action.payload.url },
-        );
-        return;
+    applyItemDocumentChange: (state, action: PayloadAction<{
+      id: string;
+      doc?: DBItem | DBHeading;
+      deleted?: boolean;
+    }>) => {
+      const { id, doc, deleted } = action.payload;
+      // Invalidate pending cache misses even for tombstones not yet in the cache.
+      state.changeVersion += 1;
+      for (const key of ["allSongDocs", "allFreeFormDocs", "allTimerDocs", "allBibleDocs"] as const) {
+        const index = state[key].findIndex((item) => item._id === id);
+        if (!deleted && doc && getDocsKey(doc.type) === key) {
+          if (index < 0) state[key].push(doc as DBItem);
+          else state[key][index] = doc as DBItem;
+        } else if (index >= 0) state[key].splice(index, 1);
       }
+      const index = state.allHeadingDocs.findIndex((item) => item._id === id);
+      if (!deleted && doc?.type === "heading") {
+        if (index < 0) state.allHeadingDocs.push(doc as DBHeading);
+        else state.allHeadingDocs[index] = doc as DBHeading;
+      } else if (index >= 0) state.allHeadingDocs.splice(index, 1);
     },
-    updateLocalImageReferenceInAllDocs: (
-      state,
-      action: PayloadAction<{
-        itemId: string;
-        assetId: string;
-        patch: LocalImageReferencePatch;
-      }>,
-    ) => {
-      for (const key of [
-        "allSongDocs",
-        "allFreeFormDocs",
-        "allTimerDocs",
-        "allBibleDocs",
-      ] as const) {
-        const index = state[key].findIndex(
-          (item) => item._id === action.payload.itemId,
-        );
-        if (index < 0) continue;
-        state[key][index] = updateLocalImageReferenceInItem(
-          state[key][index],
-          action.payload.assetId,
-          action.payload.patch,
-        );
-        return;
-      }
+    setItemCacheError: (state, action: PayloadAction<string | null>) => {
+      state.error = action.payload;
     },
+
   },
 });
 
 export const {
-  updateAllSongDocs,
-  updateAllFreeFormDocs,
-  updateAllTimerDocs,
-  updateAllBibleDocs,
-  upsertItemInAllDocs,
-  upsertItemsInAllDocs,
-  removeItemFromAllDocs,
-  attachCloudCopyToLocalImageInAllDocs,
-  updateLocalImageReferenceInAllDocs,
+  resetItemCache,
+  hydrateItemCache,
+  applyItemDocumentChange,
+  setItemCacheError,
 } = allDocsSlice.actions;
 
 export default allDocsSlice.reducer;

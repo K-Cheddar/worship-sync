@@ -27,7 +27,6 @@ describe("autosaveIndicatorSlice", () => {
       expect(AUTOSAVE_DEBOUNCE_KEYS.preferences).toBe("debounced/preferences");
       expect(AUTOSAVE_DEBOUNCE_KEYS.serviceTimes).toBe("debounced/serviceTimes");
       expect(AUTOSAVE_DEBOUNCE_KEYS.itemLists).toBe("debounced/itemLists");
-      expect(AUTOSAVE_DEBOUNCE_KEYS.allItems).toBe("debounced/allItems");
     });
   });
 

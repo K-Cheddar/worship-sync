@@ -135,20 +135,6 @@ export const buildDocsById = (allDocs: AllDocsLookup | undefined) => {
   return map;
 };
 
-export const mergeDocsById = (
-  allDocs: AllDocsLookup | undefined,
-  extraDocs?: Map<string, DBItem> | Record<string, DBItem>,
-) => {
-  const map = buildDocsById(allDocs);
-  if (!extraDocs) return map;
-  const extras =
-    extraDocs instanceof Map ? extraDocs : Object.entries(extraDocs);
-  for (const [id, doc] of extras) {
-    if (!map.has(id) && doc?._id) map.set(id, doc);
-  }
-  return map;
-};
-
 const resolveSlidesFromDoc = (
   source: ActiveItemSlideSource | DBItem | undefined,
   fallbackType?: string,

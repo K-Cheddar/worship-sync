@@ -1,3 +1,5 @@
+import { useStore } from "react-redux";
+import { selectItemDocuments } from "../../store/itemLibrarySelectors";
 import { useParams } from "react-router-dom";
 import SlideEditor from "../../containers/ItemEditor/SlideEditor";
 import ItemSlides from "../../containers/ItemSlides/ItemSlides";
@@ -42,8 +44,10 @@ const Item = () => {
     "loading"
   );
   const dispatch = useDispatch();
+  const store = useStore<RootState>();
   const { isLoading, isSectionLoading, _id: activeItemId, listId: activeListId } =
     useSelector((state: RootState) => state.undoable.present.item);
+  const cacheSession = useSelector((state) => state.allDocs.session);
   const showSlidesLoadingOverlay = isSectionLoading && !isLoading;
   const { mode } = usePresentationControllerMode();
   const activeItemRef = useRef({ id: activeItemId, listId: activeListId });
@@ -52,9 +56,11 @@ const Item = () => {
 
   useEffect(() => {
     const loadSequence = ++loadSequenceRef.current;
+    const sessionAtStart = store.getState().allDocs.session;
     let cancelled = false;
     const isCurrentLoad = () =>
-      !cancelled && loadSequence === loadSequenceRef.current;
+      !cancelled && loadSequence === loadSequenceRef.current &&
+      store.getState().allDocs.session === sessionAtStart;
 
     const selectItem = async () => {
       if (!db || !cloud) return;
@@ -75,7 +81,23 @@ const Item = () => {
       try {
         setStatus("loading");
         dispatch(setItemIsLoading(true));
-        const response: DBItem | undefined = await db?.get(decodedItemId);
+        let response: DBItem | undefined;
+        while (isCurrentLoad()) {
+          const cacheAtRead = store.getState().allDocs;
+          const cached = selectItemDocuments(store.getState()).find((doc) => doc._id === decodedItemId);
+          if (cached) {
+            response = cached as DBItem;
+            break;
+          }
+          const fetched = await db.get(decodedItemId) as DBItem;
+          if (!isCurrentLoad()) return;
+          if (store.getState().allDocs === cacheAtRead) {
+            response = fetched;
+            break;
+          }
+          // A live update or tombstone raced the fallback read. Resolve from
+          // the current cache, or re-read the missing doc at its latest revision.
+        }
         if (!isCurrentLoad()) return;
         if (!response) return setStatus("error");
         const itemWithSections: DBItem =
@@ -127,7 +149,7 @@ const Item = () => {
     return () => {
       cancelled = true;
     };
-  }, [cloud, db, decodedItemId, decodedListId, dispatch]);
+  }, [cloud, db, decodedItemId, decodedListId, dispatch, store, cacheSession]);
 
   if (status === "error")
     return (

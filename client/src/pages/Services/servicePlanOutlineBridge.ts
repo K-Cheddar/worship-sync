@@ -1,3 +1,4 @@
+import { itemDocumentToLibraryEntry } from "../../utils/itemLibrary";
 /**
  * Converts a ServicePlan into real PouchDB outline items — the one piece of
  * this feature that touches the live show list, so it's kept narrow and
@@ -295,7 +296,7 @@ export const buildServicePlanOutlineItem = async ({
       },
       db,
       bibleDb,
-      allItems: list,
+      libraryItems: list,
       background: "",
       brightness: 100,
       fontMode: "fit",
@@ -311,9 +312,7 @@ export const buildServicePlanOutlineItem = async ({
 
   if (planned.kind === "custom-document") {
     return {
-      _id: planned.document._id,
-      name: planned.document.name,
-      type: "free",
+      ...itemDocumentToLibraryEntry(planned.document),
       listId: planned.listId,
     };
   }
