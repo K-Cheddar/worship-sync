@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-25-worshipsync-plan-transfer",
+  "date": "2026-10-25",
+  "type": "new",
+  "title": "Move plans with WorshipSync",
+  "description": "Export service plans as JSON or import a WorshipSync plan from a file or public link."
+}

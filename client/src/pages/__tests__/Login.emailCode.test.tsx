@@ -91,6 +91,7 @@ const CurrentRoute = () => {
     <div data-testid="current-route">
       {location.pathname}
       {location.search}
+      {location.hash}
     </div>
   );
 };
@@ -169,8 +170,9 @@ describe("Login email-code sign-in", () => {
         search: "?code=123456&pendingAuthId=pending-fresh-link",
         state: {
           from: {
-            pathname: "/controller/bible",
-            search: "?search=John%203%3A16",
+            pathname: "/current-service",
+            search: "?tab=plan",
+            hash: "#item-2",
           },
         },
       },
@@ -183,7 +185,7 @@ describe("Login email-code sign-in", () => {
     });
     await waitFor(() =>
       expect(screen.getByTestId("current-route")).toHaveTextContent(
-        "/controller/bible?search=John%203%3A16",
+        "/current-service?tab=plan#item-2",
       ),
     );
   });

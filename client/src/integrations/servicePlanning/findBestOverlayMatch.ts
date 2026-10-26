@@ -1,4 +1,5 @@
 import type { OverlayInfo } from "../../types";
+import type { OverlaySyncPlanItem } from "../../types/servicePlanningImport";
 import { normalizeElementTypeForMatch } from "./normalizeElementForMatch";
 
 const MIN_SCORE = 25;
@@ -7,6 +8,67 @@ const isParticipantOverlay = (overlay: OverlayInfo): boolean =>
 
 export const normalizeOverlayEvent = (event?: string): string =>
   (event || "").toLowerCase().replace(/\s+/g, " ").trim();
+
+/** Reserve exact identities across the whole batch before consuming event slots.
+ * Current-list order wins ties; library-only targets are copied, never edited.
+ * Reused by preview, run preparation, and the current-state readiness check.
+ */
+export const planNativeOverlaySync = (
+  plan: OverlaySyncPlanItem[],
+  current: OverlayInfo[],
+  library: OverlayInfo[] = [],
+): OverlaySyncPlanItem[] => {
+  const currentIds = new Set(current.map((overlay) => overlay.id));
+  const pool = [...current, ...library.filter((overlay) => !currentIds.has(overlay.id))]
+    .filter(isParticipantOverlay);
+  const claimed = new Set<string>();
+  const targets = new Map<OverlaySyncPlanItem, OverlayInfo>();
+  const candidates = plan.filter((item) => item.sourceKind === "native" && item.action !== "skip");
+  const sameEvent = (item: OverlaySyncPlanItem, overlay: OverlayInfo) =>
+    Boolean(normalizeOverlayEvent(item.patch.event)) &&
+    normalizeOverlayEvent(item.patch.event) === normalizeOverlayEvent(overlay.event);
+
+  for (const pass of ["identity", "song", "slot"] as const) {
+    for (const item of candidates) {
+      if (targets.has(item)) continue;
+      const target = pool.find((overlay) => {
+        if (claimed.has(overlay.id) || !sameEvent(item, overlay)) return false;
+        const sameName = normalizeOverlayEvent(item.patch.name) === normalizeOverlayEvent(overlay.name);
+        const sameTitle = normalizeOverlayEvent(item.patch.title) === normalizeOverlayEvent(overlay.title);
+        if (pass === "identity") return sameName && (!item.isSong || sameTitle);
+        if (pass === "song") return item.isSong === true && sameTitle;
+        return true;
+      });
+      if (target) {
+        targets.set(item, target);
+        claimed.add(target.id);
+      }
+    }
+  }
+
+  return plan.map((item) => {
+    if (item.sourceKind !== "native" || item.action === "skip") return item;
+    const target = targets.get(item);
+    const template = target ?? pool.find((overlay) => sameEvent(item, overlay));
+    const inCurrentList = Boolean(target && currentIds.has(target.id));
+    const alreadyCorrect = inCurrentList && target &&
+      (["name", "title", "event"] as const).every((field) =>
+        (target[field] ?? "") === (item.patch[field] ?? ""));
+    let action: OverlaySyncPlanItem["action"] = "create";
+    if (inCurrentList) action = "update";
+    else if (template) action = "clone";
+    return {
+      ...item,
+      action,
+      targetOverlayId: template?.id,
+      targetOverlayName: template?.name || undefined,
+      targetOverlayEvent: template?.event || undefined,
+      targetOverlaySource: template && !currentIds.has(template.id) ? "library" : undefined,
+      placementOnly: Boolean(alreadyCorrect),
+      reason: alreadyCorrect ? "Existing overlay is already up to date." : undefined,
+    };
+  });
+};
 
 export type OverlayMatchResolution =
   | { kind: "match"; overlay: OverlayInfo; score: number }

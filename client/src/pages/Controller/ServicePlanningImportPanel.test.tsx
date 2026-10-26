@@ -1,10 +1,11 @@
 import React from "react";
 import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import ServicePlanningImportPanel from "./ServicePlanningImportPanel";
+import overlaysReducer, { initiateOverlayList, updateOverlayInList } from "../../store/overlaysSlice";
 import servicePlanningImportReducer, {
   beginServicePlanningPlanSelection,
   setServicePlanningPlanOutline,
@@ -462,4 +463,31 @@ describe("ServicePlanningImportPanel", () => {
 
     expect(screen.getByRole("button", { name: "Open Service Plan" })).toBeEnabled();
   });
+
+  it("updates the expanded native overlay preview against current slots after synchronization", async () => {
+    const user = userEvent.setup();
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+        undoable: (state: { present: { overlays: ReturnType<typeof overlaysReducer> } } | undefined, action: Parameters<typeof overlaysReducer>[1]) => ({
+          present: { overlays: overlaysReducer(state?.present.overlays, action) },
+        }),
+      },
+    });
+    store.dispatch(initiateOverlayList([{ id: "slot", name: "Previous", event: "Offertory" }]));
+    store.dispatch(setServicePlanningServiceOutline(wrapImport({
+      overlayCandidates: [], outlineCandidates: [], lineItems: [],
+      nativeOverlaySummary: { status: "ready", selectedItemCount: 1, assignedParticipantCount: 1 },
+      overlayPlan: [{ sourceKind: "native", action: "update", sectionName: "Service", sourceRowIndex: 0, elementType: "Offertory", title: "Offertory", ledBy: "", personIndex: 0, rawNameToken: "Gorphine Tomlinson", targetOverlayId: "slot", patch: { name: "Gorphine Tomlinson", title: "", event: "Offertory" } }],
+    })));
+    render(<Provider store={store}><MemoryRouter><ServicePlanningImportPanel /></MemoryRouter></Provider>);
+    await user.click(screen.getByRole("button", { name: "Expand overlay sync summary" }));
+    expect(screen.getByText("Previous")).toBeInTheDocument();
+    expect(screen.getByText("1 update")).toBeInTheDocument();
+    act(() => { store.dispatch(updateOverlayInList({ id: "slot", name: "Gorphine Tomlinson", title: "" })); });
+    expect(screen.getByText("1 found")).toBeInTheDocument();
+    expect(screen.getByText("Found existing")).toBeInTheDocument();
+    expect(screen.queryByText("Previous")).not.toBeInTheDocument();
+  });
+
 });

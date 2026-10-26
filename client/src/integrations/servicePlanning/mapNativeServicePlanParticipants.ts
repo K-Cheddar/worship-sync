@@ -6,7 +6,6 @@ import type {
   ServicePlanParticipantOverlayProjection,
   ServicePlanSection,
 } from "../../types/servicePlan";
-import { normalizeOverlayEvent } from "./findBestOverlayMatch";
 import {
   effectiveRuleEventLabel,
   findBestMatchingElementRule,
@@ -71,11 +70,12 @@ export const mapNativeServicePlanParticipants = ({
     );
   });
   const overlayCandidates: ServicePlanningMappedRow[] = [];
-  const eventGroups = new Map<string, ServicePlanningMappedRow[]>();
   let selectedItemCount = 0;
   let assignedParticipantCount = 0;
 
   sections.forEach((section, sectionIndex) => {
+    // Sections without a stored phase use the editor's main-service default.
+    if ((section.phase ?? "main") !== "main") return;
     section.elements.forEach((element, sourceRowIndex) => {
       if (!getServicePlanElementAssignees(element).some(
         (assignee) => assignee.memberId?.trim() || assignee.name?.trim(),
@@ -92,16 +92,23 @@ export const mapNativeServicePlanParticipants = ({
       const eventOverride = element.participantOverlay?.eventLabel?.trim();
       const eventLabel =
         eventOverride || (rule ? effectiveRuleEventLabel(rule) : itemTitle);
+      const isSong = Boolean(source.songTitle?.trim() || element.type === "song");
+      const songTitle = source.songTitle?.trim() ||
+        (element.type === "song" ? source.contentTitle?.trim() : "") || "";
       const eventSuffixes = rule?.multiOverlay.mode === "split"
         ? normalizeEventSuffixList(rule.multiOverlay.eventSuffixByPersonIndex)
         : undefined;
-      const defaultSkipReason = !eventLabel
-        ? "Add an item title or event label before syncing this participant."
-        : undefined;
+      let defaultSkipReason: string | undefined;
+      if (!eventLabel) {
+        defaultSkipReason = "Add an item title or event label before syncing this participant.";
+      } else if (isSong && !songTitle) {
+        defaultSkipReason = "Add a song title to this item before syncing its overlay.";
+      }
       const planElementKey = `${sectionIndex}:${element.id}:${sourceRowIndex}`;
       const row: ServicePlanningMappedRow = {
         source,
         sourceKind: "native",
+        isSong,
         matchKey: planElementKey,
         candidates: [],
       };
@@ -114,12 +121,6 @@ export const mapNativeServicePlanParticipants = ({
           skipReason: getUnavailableProjectionReason(participantOverlay.status),
         });
         overlayCandidates.push(row);
-        const normalizedLabel = normalizeOverlayEvent(eventLabel);
-        if (normalizedLabel) {
-          const group = eventGroups.get(normalizedLabel) ?? [];
-          group.push(row);
-          eventGroups.set(normalizedLabel, group);
-        }
         return;
       }
 
@@ -137,12 +138,6 @@ export const mapNativeServicePlanParticipants = ({
             "Participant details for this item are unavailable. Refresh the plan before syncing.",
         });
         overlayCandidates.push(row);
-        const normalizedLabel = normalizeOverlayEvent(eventLabel);
-        if (normalizedLabel) {
-          const group = eventGroups.get(normalizedLabel) ?? [];
-          group.push(row);
-          eventGroups.set(normalizedLabel, group);
-        }
         return;
       }
 
@@ -156,12 +151,12 @@ export const mapNativeServicePlanParticipants = ({
                 rule?.multiOverlay.repeatLastEventSuffix,
               )?.trim()
             : undefined;
+          const participantTitle = assignee.memberStatus === "resolved" && assignee.roleStatus === "resolved"
+            ? assignee.roleTitle?.trim() ?? ""
+            : "";
           const patch: ServicePlanningFieldPatch = {
             name: assignee.name.trim(),
-            title:
-              assignee.roleStatus === "resolved"
-                ? assignee.roleTitle?.trim() ?? ""
-                : "",
+            title: isSong ? songTitle : participantTitle,
             event: suffix ? `${eventLabel} ${suffix}`.replace(/\s+/g, " ") : eventLabel,
           };
           const skipReason =
@@ -176,7 +171,7 @@ export const mapNativeServicePlanParticipants = ({
             rawNameToken: assignee.name,
             patch,
             ...(skipReason ? { skipReason } : {}),
-            ...(getRoleNotice(assignee.roleStatus)
+            ...(!isSong && getRoleNotice(assignee.roleStatus)
               ? { resolutionNotice: getRoleNotice(assignee.roleStatus) }
               : {}),
           };
@@ -184,29 +179,8 @@ export const mapNativeServicePlanParticipants = ({
       );
       row.candidates = candidates;
       overlayCandidates.push(row);
-
-      const candidateLabels = new Set(
-        candidates.map(({ patch }) => normalizeOverlayEvent(patch.event ?? "")),
-      );
-      for (const normalizedLabel of candidateLabels) {
-        if (!normalizedLabel) continue;
-        const group = eventGroups.get(normalizedLabel) ?? [];
-        group.push(row);
-        eventGroups.set(normalizedLabel, group);
-      }
     });
   });
-
-  for (const [eventLabel, rows] of eventGroups) {
-    const distinctItems = new Set(rows.map((row) => row.matchKey));
-    if (distinctItems.size < 2) continue;
-    for (const row of rows) {
-      row.candidates = row.candidates.map((candidate) => ({
-        ...candidate,
-        skipReason: `More than one plan item with assigned participants uses the event label "${eventLabel}". Give each item a unique event label before syncing.`,
-      }));
-    }
-  }
 
   return {
     overlayCandidates,

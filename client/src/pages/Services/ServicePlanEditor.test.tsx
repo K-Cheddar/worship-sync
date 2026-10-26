@@ -29,6 +29,7 @@ import {
   AuthApiError,
 } from "../../api/auth";
 import { getServicePlanningImportDataFromUrl } from "../../containers/Overlays/eventParser";
+import { getPublicServiceFlow } from "../../services/serviceFlowApi";
 import { extractTextFromPdfFile } from "./extractPdfText";
 import type {
   TeamPosition,
@@ -126,6 +127,9 @@ jest.mock("./ServicePlanLibraryPicker", () => ({
 jest.mock("../../containers/Overlays/eventParser", () => ({
   getServicePlanningImportDataFromUrl: jest.fn(),
 }));
+jest.mock("../../services/serviceFlowApi", () => ({
+  getPublicServiceFlow: jest.fn(),
+}));
 
 jest.mock("../../context/churchServiceTimeZone", () => ({
   useChurchServiceTimeZone: () => ({
@@ -165,6 +169,7 @@ const mockSaveServicePlanMicrophones = jest.mocked(saveServicePlanMicrophones);
 const mockGetServicePlanningImportDataFromUrl = jest.mocked(
   getServicePlanningImportDataFromUrl,
 );
+const mockGetPublicServiceFlow = jest.mocked(getPublicServiceFlow);
 const mockExtractTextFromPdfFile = jest.mocked(extractTextFromPdfFile);
 const mockPublishServicePlan = jest.mocked(publishServicePlan);
 const mockSaveServicePlan = jest.mocked(saveServicePlan);
@@ -421,6 +426,7 @@ describe("ServicePlanEditor", () => {
     mockAllSongDocs = [];
     mockExtractTextFromPdfFile.mockReset();
     mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: null });
+    mockGetPublicServiceFlow.mockReset();
     mockListServicePlanTemplates.mockResolvedValue({ success: true, templates: [] });
     mockSaveServicePlanTemplate.mockResolvedValue({
       success: true,
@@ -467,6 +473,40 @@ describe("ServicePlanEditor", () => {
       success: true,
       servicePlan: {} as ServicePlan,
     });
+  });
+
+  it("requires confirmation before a public WorshipSync plan replaces existing content", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "plan-1", churchId: "church-1", planKey: "service-1@2026-07-26",
+        serviceId: "service-1", date: "2026-07-26", name: "Easter Sunday",
+        published: true, revision: 3,
+        sections: [{ id: "old-section", name: "Current", elements: [{ id: "old-item", type: "free", title: plainTextToRichText("Keep this until confirmed") }] }],
+      } as ServicePlan,
+    });
+    mockGetPublicServiceFlow.mockResolvedValue({
+      service: {
+        shareId: "source-share", title: "Source", startsAt: "2026-07-26T14:00:00Z", timezone: "UTC", revision: 7,
+        sections: [{ id: "public-section", title: "Imported", items: [{ id: "public-item", title: "Public item", durationSeconds: 45, notes: { blocks: [] } }] }],
+        live: { mode: "schedule" },
+      },
+    } as never);
+    localStorage.setItem("worshipsyncServicePlanImportSource", "worshipSync");
+
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+    fireEvent.change(screen.getByLabelText(/Public service-plan link/i), { target: { value: "https://www.worshipsync.net/services/source-share" } });
+    await user.click(screen.getByRole("button", { name: /Import plan/i }));
+
+    expect(await screen.findByRole("heading", { name: "Replace this plan's content?" })).toBeInTheDocument();
+    expect(screen.getByText("Keep this until confirmed")).toBeInTheDocument();
+    expect(mockGetPublicServiceFlow).toHaveBeenCalledWith("source-share");
+    await user.click(screen.getByRole("button", { name: /Replace content/i }));
+    expect(await screen.findByDisplayValue("Imported")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Replace this plan's content?" })).not.toBeInTheDocument();
   });
 
   it("autosaves the canonical church-local plan date across a UTC date boundary", async () => {

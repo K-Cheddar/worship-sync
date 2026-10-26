@@ -625,6 +625,8 @@ export type ServicePlanSection = {
   id: string;
   /** See ServicePlanElement.sourcePlanningManaged. */
   sourcePlanningManaged?: boolean;
+  /** Service phase; omitted on legacy sections, which behave as main service. */
+  phase?: "pre" | "main" | "post";
   name: string;
   elements: ServicePlanElement[];
 };
@@ -660,7 +662,8 @@ export type ServicePlanTemplatePayload = {
 export type ServicePlanImportSource =
   | "servicePlanning"
   | "planningCenterPdf"
-  | "planningCenter";
+  | "planningCenter"
+  | "worshipSync";
 
 export type ServicePlanSourceImport = {
   source: ServicePlanImportSource;

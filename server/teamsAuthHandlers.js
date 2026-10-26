@@ -2872,6 +2872,9 @@ export const createTeamsAuthHandlers = ({
     ...(raw?.sourcePlanningManaged === true
       ? { sourcePlanningManaged: true }
       : {}),
+    ...(raw?.phase === "pre" || raw?.phase === "main" || raw?.phase === "post"
+      ? { phase: raw.phase }
+      : {}),
     name: normalizeShortText(raw?.name, { max: 200 }) || "Section",
     elements: Array.isArray(raw?.elements)
       ? raw.elements.map(normalizeServicePlanElement)

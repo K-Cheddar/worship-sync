@@ -39,8 +39,17 @@ export const getDisplayPairingDestination = (
   outputId?: string | null,
 ) => {
   const path = returnPath.trim();
-  if (!path || path === "/" || path === "/home" || path === "/login") {
+  const hashIndex = path.indexOf("#");
+  const pathAndSearch = hashIndex === -1 ? path : path.slice(0, hashIndex);
+  const hash = hashIndex === -1 ? "" : path.slice(hashIndex);
+  const pathname = pathAndSearch.split("?", 1)[0];
+  if (
+    !path ||
+    pathname === "/" ||
+    pathname === "/home" ||
+    pathname === "/login"
+  ) {
     return getDisplayHomePath(surfaceType, outputId);
   }
-  return withOutputParam(path, outputId);
+  return `${withOutputParam(pathAndSearch, outputId)}${hash}`;
 };

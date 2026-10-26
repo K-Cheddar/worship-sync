@@ -136,7 +136,11 @@ import {
   reloadElectronDisplayWindows,
 } from "../utils/environment";
 import { getTrustedDeviceLabel } from "../utils/deviceInfo";
-import { getHumanPostAuthPath } from "../utils/authRedirectPath";
+import {
+  getHumanPostAuthPath,
+  isPostAuthDestination,
+  sanitizeAuthRedirectTo,
+} from "../utils/authRedirectPath";
 import { resolveAccountDisplayNameForAudit } from "../utils/displayName";
 import { setAuditSnapshot } from "../utils/pouchAudit";
 import {
@@ -1149,9 +1153,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       }
       reloadElectronDisplayWindows();
       setAuthServerStatus("online");
+      const sanitizedPostAuthPath = sanitizeAuthRedirectTo(postAuthPath);
       const safePostAuthPath =
-        postAuthPath && postAuthPath.split("?", 1)[0] !== "/login"
-          ? postAuthPath
+        sanitizedPostAuthPath && isPostAuthDestination(sanitizedPostAuthPath)
+          ? sanitizedPostAuthPath
           : getHumanPostAuthPath(location);
       navigate(safePostAuthPath, { replace: true });
     },

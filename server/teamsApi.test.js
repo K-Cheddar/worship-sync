@@ -9690,6 +9690,7 @@ test("service plan elements round-trip scripture refs and raw source strings", a
       sections: [
         {
           id: "section-1",
+          phase: "pre",
           name: "Worship",
           elements: [
             {
@@ -9775,6 +9776,12 @@ test("service plan elements round-trip scripture refs and raw source strings", a
   });
 
   assert.equal(saved.statusCode, 200);
+  assert.equal(saved.payload.servicePlan.sections[0].phase, "pre");
+  const reloaded = await callHandler(authHandlers.getServicePlan, {
+    context,
+    params: { planKey },
+  });
+  assert.equal(reloaded.payload.servicePlan.sections[0].phase, "pre");
   const [first, second, third] = saved.payload.servicePlan.sections[0].elements;
   assert.deepEqual(first.scriptureRef, {
     label: "John 3:16-18 (NIV)",
@@ -9838,9 +9845,11 @@ test("service plan templates: create, update in place, list, scope, and delete",
   const sections = [
     {
       id: "section-1",
+      phase: "post",
       name: "Worship",
       elements: [{ id: "el-1", type: "free", title: richText("Welcome") }],
     },
+    { id: "legacy-section", name: "Legacy", phase: "before", elements: [] },
   ];
 
   const empty = await callHandler(authHandlers.listServicePlanTemplates, {
@@ -9857,7 +9866,9 @@ test("service plan templates: create, update in place, list, scope, and delete",
   const templateId = created.payload.template.templateId;
   assert.ok(templateId);
   assert.equal(created.payload.template.serviceId, "svc1");
+  assert.equal(created.payload.template.sections[0].phase, "post");
   assert.equal(created.payload.template.sections[0].elements.length, 1);
+  assert.equal(Object.hasOwn(created.payload.template.sections[1], "phase"), false);
 
   // A template with no serviceId is offered for every service.
   await callHandler(authHandlers.saveServicePlanTemplate, {
@@ -10032,6 +10043,7 @@ test("bulk template application creates fresh plans, skips existing plans, and p
         sections: [
           {
             id: "template-section",
+            phase: "pre",
             name: "Service",
             elements: [
               {
@@ -10080,6 +10092,8 @@ test("bulk template application creates fresh plans, skips existing plans, and p
   const sections = planDocs.map((plan) => plan.sections[0]);
   const elements = sections.map((section) => section.elements[0]);
   assert.equal(plans.payload.servicePlans.length, 2);
+  assert.equal(sections[0].phase, "pre");
+  assert.equal(sections[1].phase, "pre");
   assert.equal(planDocs[0].name, "Sabbath Service");
   assert.equal(planDocs[0].clonedFromPlanKey, templateId);
   assert.notEqual(sections[0].id, sections[1].id);

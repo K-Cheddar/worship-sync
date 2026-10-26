@@ -406,7 +406,9 @@ const ContextProbe = () => {
       <div data-testid="youtube-connected">
         {context.churchIntegrations.youtube.connected ? "yes" : "no"}
       </div>
-      <div data-testid="path">{location.pathname}</div>
+      <div data-testid="path">
+        {location.pathname}{location.search}{location.hash}
+      </div>
       <button type="button" onClick={() => void context.refreshAuthBootstrap()}>
         Refresh bootstrap
       </button>
@@ -434,7 +436,9 @@ const AuthActionsProbe = () => {
 
   return (
     <div>
-      <div data-testid="path">{location.pathname}</div>
+      <div data-testid="path">
+        {location.pathname}{location.search}{location.hash}
+      </div>
       <div data-testid="probe-auth-status">{context.authServerStatus}</div>
       <div data-testid="probe-auth-error">{context.authError || "none"}</div>
       <div data-testid="pending-email-verification-id">
@@ -2806,7 +2810,7 @@ describe("GlobalInfoProvider auth regression coverage", () => {
     };
     setPendingProviderRedirectState({
       method: "google",
-      returnPath: "/controller/bible?search=John%203:16",
+      returnPath: "/current-service?tab=plan#item-2",
     });
     getRedirectResultMock.mockResolvedValueOnce({ user: providerUser });
 
@@ -2827,7 +2831,7 @@ describe("GlobalInfoProvider auth regression coverage", () => {
     expect(getPendingProviderRedirectState()).toBeNull();
     await waitFor(() => {
       expect(screen.getByTestId("path")).toHaveTextContent(
-        "/controller/bible",
+        "/current-service?tab=plan#item-2",
       );
     });
   });
