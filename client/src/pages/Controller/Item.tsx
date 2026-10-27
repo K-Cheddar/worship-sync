@@ -17,6 +17,7 @@ import { SERVICE_TIME_COUNTDOWN_ID } from "../../constants/nextServiceTimer";
 import { buildServiceTimeItem } from "../../utils/itemUtil";
 import { applyPouchAudit } from "../../utils/pouchAudit";
 import { getFormattedSections } from "../../utils/overflow";
+import { readCurrentItemDocuments } from "../../utils/readCurrentItemDocuments";
 import { usePresentationControllerMode } from "../../context/presentationControllerMode";
 
 const Item = () => {
@@ -78,32 +79,48 @@ const Item = () => {
         dispatch(setItemIsLoading(false));
         return;
       }
-      try {
-        setStatus("loading");
-        dispatch(setItemIsLoading(true));
-        let response: DBItem | undefined;
-        while (isCurrentLoad()) {
-          const cacheAtRead = store.getState().allDocs;
-          const cached = selectItemDocuments(store.getState()).find((doc) => doc._id === decodedItemId);
-          if (cached) {
-            response = cached as DBItem;
-            break;
+      const activateServiceTimeItem = async () => {
+        const newItem = buildServiceTimeItem();
+        const now = new Date().toISOString();
+        const doc = applyPouchAudit(
+          null,
+          { ...newItem, createdAt: now, updatedAt: now },
+          { isNew: true },
+        );
+        try {
+          await db.put(doc);
+        } catch (putErr: unknown) {
+          // 409 = another window already created it; the document exists, carry on.
+          if ((putErr as { status?: number })?.status !== 409) {
+            console.error(putErr);
           }
-          const sequenceBeforeRead = (await db.info()).update_seq;
-          if (!isCurrentLoad()) return;
-          const fetched = await db.get(decodedItemId) as DBItem;
-          if (!isCurrentLoad()) return;
-          const sequenceAfterRead = (await db.info()).update_seq;
-          if (!isCurrentLoad()) return;
-          if (store.getState().allDocs === cacheAtRead && sequenceBeforeRead === sequenceAfterRead) {
-            response = fetched;
-            break;
-          }
-          // A live update or tombstone raced the fallback read. Resolve from
-          // the current cache, or re-read the missing doc at its latest revision.
         }
         if (!isCurrentLoad()) return;
-        if (!response) return setStatus("error");
+        dispatch(setActiveItem({ ...newItem, listId: decodedListId }));
+        dispatch(setActiveItemInList(decodedListId));
+        setStatus("success");
+      };
+      try {
+        let response: DBItem | undefined;
+        const cached = selectItemDocuments(store.getState()).find((doc) => doc._id === decodedItemId);
+        if (cached) response = cached as DBItem;
+        else {
+          setStatus("loading");
+          dispatch(setItemIsLoading(true));
+          const currentDocuments = await readCurrentItemDocuments(db, [decodedItemId]);
+          if (!isCurrentLoad()) return;
+          const cachedDuringRead = selectItemDocuments(store.getState()).find((doc) => doc._id === decodedItemId);
+          response = (cachedDuringRead ?? currentDocuments.get(decodedItemId)) as DBItem | undefined;
+        }
+        if (!isCurrentLoad()) return;
+        if (!response) {
+          if (decodedItemId === SERVICE_TIME_COUNTDOWN_ID) {
+            await activateServiceTimeItem();
+          } else {
+            setStatus("error");
+          }
+          return;
+        }
         const itemWithSections: DBItem =
           response.type === "free" &&
             (!response.formattedSections || response.formattedSections.length === 0)
@@ -118,25 +135,7 @@ const Item = () => {
         // Matches the pattern in createNewItemInDb: catch any error, fire-and-forget
         // the put, and immediately use the in-memory item. No await, no status check.
         if (decodedItemId === SERVICE_TIME_COUNTDOWN_ID) {
-          const newItem = buildServiceTimeItem();
-          const now = new Date().toISOString();
-          const doc = applyPouchAudit(
-            null,
-            { ...newItem, createdAt: now, updatedAt: now },
-            { isNew: true },
-          );
-          try {
-            await db.put(doc);
-          } catch (putErr: unknown) {
-            // 409 = another window already created it; the document exists, carry on.
-            if ((putErr as { status?: number })?.status !== 409) {
-              console.error(putErr);
-            }
-          }
-          if (!isCurrentLoad()) return;
-          dispatch(setActiveItem({ ...newItem, listId: decodedListId }));
-          dispatch(setActiveItemInList(decodedListId));
-          setStatus("success");
+          await activateServiceTimeItem();
           return;
         }
 

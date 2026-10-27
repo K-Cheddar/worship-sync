@@ -273,7 +273,7 @@ const AvailabilityVolunteersList = ({
         label="Availability volunteers"
         loadingLabel="Loading volunteers"
         compact={compact}
-        className="max-h-[58vh]"
+        className="max-h-[58vh] max-lg:max-h-none"
         minWidthClassName="min-w-[40rem]"
         columns={[
           { label: "Volunteer", widthClassName: "w-[35%]" },
@@ -284,7 +284,7 @@ const AvailabilityVolunteersList = ({
       /> : <ResponsiveDataTable
         label="Availability volunteers"
         compact={compact}
-        className="max-h-[58vh]"
+        className="max-h-[58vh] max-lg:max-h-none"
         minWidthClassName="min-w-[40rem]"
         desktopHeader={<tr><th scope="col" className="w-[35%] px-4 py-1.5">Volunteer</th><th scope="col" className="w-[30%] px-4 py-1.5">Request status</th><th scope="col" className="w-[25%] px-4 py-1.5">Availability</th><th scope="col" className="w-[10%] px-4 py-1.5">Actions</th></tr>}
         desktopRows={() => <>{pageRows.map((row) => {

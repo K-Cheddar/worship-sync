@@ -10,7 +10,7 @@ Presentation outlines independently own order, occurrence `listId`s and intentio
 
 The next-service countdown remains generated from service-time state. It is not a saved timer-library entry. Controller startup never deletes Bible or heading documents because they appear unreferenced. Document creation and outline saves or replication can arrive separately; temporary absence of a reference is not permission to delete content. Normal explicit item deletion remains available.
 
-Only actual item documents update the live item cache. Untyped deletion tombstones remove matching cached items; tombstones for absent IDs and unrelated document updates preserve the cache reference and change version. The live feed still starts at the snapshot sequence and advances its resume sequence across ignored events. Missing-document reads verify PouchDB's sequence before publishing, so an uncached deletion cannot let an older read resurrect content.
+Only actual item documents update the live item cache. Untyped deletion tombstones remove matching cached items; tombstones for absent IDs and unrelated document updates preserve the cache reference and change version. The live feed still starts at the snapshot sequence and advances its resume sequence across ignored events. Missing-document reads validate their keyed `allDocs` snapshot with a changes query filtered to the requested IDs, so unrelated writes do not retry item lookups and an uncached deletion cannot let an older read resurrect content.
 
 ## Historical data
 
