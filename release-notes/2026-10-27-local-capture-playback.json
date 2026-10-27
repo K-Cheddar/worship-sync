@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-27-local-capture-playback",
+  "date": "2026-10-27",
+  "type": "improved",
+  "title": "Local capture playback",
+  "description": "Local video inputs can use direct playback across desktop outputs and previews on supported capture hardware, while keeping compatibility playback available."
+}

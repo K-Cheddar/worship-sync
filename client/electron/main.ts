@@ -654,7 +654,8 @@ const destroyLocalVideoCaptureHost = (): void => {
 
 /**
  * Own USB capture outside the controller window so reloads and route changes do
- * not tear down the physical device or freeze live output windows.
+ * not tear down the physical device or freeze live output windows. Local views
+ * wait for this host's publisher before attempting Chromium capture sharing.
  */
 const createLocalVideoCaptureHost = (): void => {
   if (

@@ -49,6 +49,11 @@ type DiagnosticView = {
   fallbackFrom?: LocalVideoDiagnosticPath;
   fallbackReason?: string;
   fallbackAt?: string;
+  fallbackCount?: number;
+  captureSettings?: MediaTrackSettings;
+  presentedFrames?: number;
+  totalVideoFrames?: number;
+  droppedVideoFrames?: number;
   previewWarm?: boolean;
   startedAt?: number;
   firstFrameMs?: number;
@@ -299,6 +304,11 @@ const report = () => {
       fallbackFrom: view.fallbackFrom ?? "",
       fallbackReason: view.fallbackReason ?? "",
       fallbackAt: view.fallbackAt ?? "",
+      fallbackCount: view.fallbackCount ?? 0,
+      captureSettings: view.captureSettings,
+      presentedFrames: view.presentedFrames,
+      totalVideoFrames: view.totalVideoFrames,
+      droppedVideoFrames: view.droppedVideoFrames,
       previewWarm: view.previewWarm ?? false,
       firstFrame: view.firstFrameMs === undefined ? "pending" : `${view.firstFrameMs}ms`,
       canvas: view.canvasSize ?? "",
@@ -377,6 +387,8 @@ const report = () => {
         : "",
       qualityDemands: publisher.qualityDemands ?? [],
       subscribers: publisher.subscribers,
+      activeConsumers: publisher.qualityDemands?.length ?? 0,
+      activeViewsInWindow: consumers.length,
       consumers,
     };
     if (source.publisher) {
@@ -590,8 +602,15 @@ export const startLocalVideoView = (
   view: Omit<DiagnosticView, "startedAt" | "firstFrameMs" | "canvasSize" | "renderedFrames" | "renderedFramesTotal" | "decoder" | "decoderInterval" | "decoderInstanceActive" | "decoderInstanceResets" | "decoderInstanceCount" | "decoderInstancesDestroyed" | "decoderLifecycle">,
 ) => {
   if (!enabled()) return;
+  const previous = sourceFor(sourceId).views.get(viewId);
   sourceFor(sourceId).views.set(viewId, {
     ...view,
+    ...(view.path !== "DIRECT" && previous?.fallbackFrom ? {
+      fallbackFrom: previous.fallbackFrom,
+      fallbackReason: previous.fallbackReason,
+      fallbackAt: previous.fallbackAt,
+      fallbackCount: previous.fallbackCount,
+    } : {}),
     startedAt: performance.now(),
     renderedFrames: 0,
     renderedFramesTotal: 0,
@@ -610,6 +629,10 @@ export const updateLocalVideoView = (sourceId: string, viewId: string, values: P
   if (!enabled()) return;
   const view = sourceFor(sourceId).views.get(viewId);
   if (!view) return;
+  if (values.fallbackAt &&
+      (values.fallbackAt !== view.fallbackAt || values.fallbackFrom !== view.fallbackFrom)) {
+    view.fallbackCount = (view.fallbackCount ?? 0) + 1;
+  }
   Object.assign(view, values);
   ensureReporting();
 };

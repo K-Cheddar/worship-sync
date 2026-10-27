@@ -1081,6 +1081,29 @@ describe("ItemSlides", () => {
     expect(updateAction.payload.at(-1).boxes[0].mediaInfo.id).toBe("media-1");
   });
 
+  it("adds a media slide to an empty custom item", async () => {
+    mockState.undoable.present.item.slides = [];
+
+    const updateAction = await dropMediaAt(0, ["media-1"], "slide-container");
+
+    expect(updateAction.payload).toHaveLength(1);
+    expect(updateAction.payload[0].boxes[0].mediaInfo.id).toBe("media-1");
+    expect(updateAction.payload[0].boxes[1].words).toBe("");
+  });
+
+  it("can add a text slide to an empty custom item", async () => {
+    mockState.undoable.present.item.slides = [];
+    renderAncestorItemSlides();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+
+    const updateAction = mockDispatch.mock.calls
+      .map(([action]) => action)
+      .find((action) => action?.type === "item/_updateSlides");
+    expect(updateAction.payload).toHaveLength(1);
+    expect(updateAction.payload[0].name).toBe("Section 1");
+  });
+
   it("does not insert media dropped outside ItemSlides", async () => {
     const updateAction = await dropMediaAt(0, ["media-1"], null);
 

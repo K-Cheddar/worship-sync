@@ -701,6 +701,7 @@ const CreateItem = ({
             mediaInfo: defaultFreeFormBackground.mediaInfo,
             brightness: defaultFreeFormBackgroundBrightness,
             text: draftText,
+            emptyItem: !isEmbedded && !draftText.trim(),
             overflow: defaultFreeFormFontMode,
             shouldSendTo,
           });
@@ -765,6 +766,8 @@ const CreateItem = ({
   } else if (isEmbedded) {
     createButtonLabel = "Create and attach";
   }
+  const customTextLabel = isEmbedded ? "Text" : "Text (optional)";
+  const isCompactCustomText = selectedType === "free" && !isEmbedded;
 
   const lyricsImportPanel = (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-x-hidden">
@@ -1085,24 +1088,32 @@ const CreateItem = ({
 
             {!hideFreeFormPasteText && (selectedType === "song" || selectedType === "free") && (
               <TextArea
-                textareaClassName="min-h-56 rounded-md"
+                textareaClassName={
+                  isCompactCustomText
+                    ? "min-h-24 max-h-[40vh] overflow-y-auto rounded-md"
+                    : "min-h-56 rounded-md"
+                }
                 className={cn(
                   "min-h-auto w-full flex-1",
                   selectedType === "song" ? "mt-3" : "mt-2",
                 )}
-                label={selectedType === "song" ? "Lyrics" : "Text"}
+                label={selectedType === "song" ? "Lyrics" : customTextLabel}
                 description={
                   selectedType === "song"
                     ? "Paste lyrics here."
                     : "Paste text here."
                 }
+                rows={isCompactCustomText ? 2 : undefined}
+                autoResize={isCompactCustomText}
                 value={text}
                 onChange={(val) => updateCreateItemDraft({ text: val as string })}
                 data-ignore-undo="true"
               />
             )}
 
-            {(selectedType === "song" || selectedType === "free") && (
+            {(selectedType === "song" ||
+              (selectedType === "free" &&
+                (isEmbedded || Boolean(text.trim())))) && (
               <RemoveParentheticalsToggle
                 value={removeParentheticals}
                 onChange={setRemoveParentheticals}

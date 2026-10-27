@@ -624,13 +624,73 @@ describe("CreateItem", () => {
     });
 
     renderCreateItem({ store });
+    expect(
+      screen.getByLabelText("Remove ad-libs in parentheses:"),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Create Custom Item" }));
 
     await waitFor(() => {
       expect(mockedCreateNewFreeForm).toHaveBeenCalledTimes(1);
     });
+    expect(mockedCreateNewFreeForm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Welcome Slides",
+        text: "Welcome",
+        emptyItem: false,
+      }),
+    );
     expect(store.getState().allDocs.allFreeFormDocs).toEqual([]);
 
+  });
+
+  it("creates a custom item from its name without an initial slide", async () => {
+    mockedCreateNewFreeForm.mockResolvedValue(
+      createMockItem({
+        name: "Welcome Images",
+        _id: "welcome-images",
+        type: "free",
+        slides: [],
+      }),
+    );
+    const store = createTestStore({
+      createItem: {
+        ...initialCreateItemState,
+        type: "free",
+        hasUserSelectedType: true,
+        name: "Welcome Images",
+        text: "",
+      },
+    });
+
+    renderCreateItem({ store });
+
+    const textField = screen.getByLabelText("Text (optional):");
+    expect(textField).toHaveAttribute("rows", "2");
+    expect(textField).toHaveClass("min-h-24");
+    expect(
+      screen.queryByLabelText("Remove ad-libs in parentheses:"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Create Custom Item" }));
+
+    await waitFor(() => {
+      expect(mockedCreateNewFreeForm).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "Welcome Images",
+          text: "",
+          emptyItem: true,
+        }),
+      );
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("item-page")).toBeInTheDocument();
+    });
+    expect(store.getState().undoable.present.item.slides).toEqual([]);
+    expect(store.getState().itemList.list[0]).toMatchObject({
+      _id: "welcome-images",
+      name: "Welcome Images",
+      type: "free",
+    });
   });
 
   it("navigates to the inserted outline row listId after creating a song", async () => {
@@ -1058,7 +1118,11 @@ describe("CreateItem", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create and attach" }));
 
     await waitFor(() => expect(mockedCreateNewFreeForm).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "Prayer Guide" }),
+      expect.objectContaining({
+        name: "Prayer Guide",
+        text: "",
+        emptyItem: false,
+      }),
     ));
     expect(onCreated).toHaveBeenCalledWith(createdDocument);
   });

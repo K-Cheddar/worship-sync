@@ -171,6 +171,20 @@ const LocalVideoInputView = ({
     useState(false);
   const [captureOwnedElsewhere, setCaptureOwnedElsewhere] = useState(false);
   const [captureAttempt, setCaptureAttempt] = useState(0);
+  const captureLeaseGenerationRef = useRef(0);
+  const [documentVisible, setDocumentVisible] = useState(!document.hidden);
+  const isPreview = windowRole === "editor" || windowRole === "slide" ||
+    windowRole?.endsWith("-preview");
+  const suspendWhenHidden = Boolean(window.__ELECTRON__) && isPreview &&
+    !isDesktopCaptureKind(input.captureKind);
+  const viewActive = isActive && (!suspendWhenHidden || documentVisible);
+  useEffect(() => {
+    if (!suspendWhenHidden) return;
+    const syncVisibility = () => setDocumentVisible(!document.hidden);
+    syncVisibility();
+    document.addEventListener("visibilitychange", syncVisibility);
+    return () => document.removeEventListener("visibilitychange", syncVisibility);
+  }, [suspendWhenHidden]);
   const isDesktopShare = isDesktopCaptureKind(input.captureKind);
   const unavailableHeading = isDesktopShare
     ? `${input.captureKind === "window" ? "Window" : "Screen"} share unavailable`
@@ -190,17 +204,20 @@ const LocalVideoInputView = ({
   // that local MediaStream over encode/decode relays used for cameras.
   const useDirectElectronDesktopCapture =
     isLocal && isDesktopShare && supportsDirectElectronDesktopCapture();
+  const useSharedElectronDeviceCapture =
+    isLocal && !isDesktopShare && Boolean(window.__ELECTRON__);
   const effectiveCaptureEnabled =
     captureEnabled ||
+    useSharedElectronDeviceCapture ||
     (receiveHighQuality && useDirectElectronDesktopCapture);
   // When this window already holds (or shares) the capture, paint srcObject
   // directly. Use the realtime relay only for remote windows or after ownership
   // falls back to another app window.
   const canUseRealtimeRelay =
     isLocal &&
-    receiveHighQuality &&
+    (receiveHighQuality || useSharedElectronDeviceCapture) &&
     !useDirectElectronDesktopCapture &&
-    (!captureEnabled || captureOwnedElsewhere) &&
+    (!effectiveCaptureEnabled || captureOwnedElsewhere) &&
     supportsLocalVideoRealtimeRelay();
 
   useEffect(() => {
@@ -213,11 +230,11 @@ const LocalVideoInputView = ({
   }, [playAudio]);
 
   useEffect(() => {
-    if (!isActive || !isLocal || (!receiveHighQuality && !captureOwnedElsewhere)) return;
+    if (!viewActive || !isLocal || (!receiveHighQuality && !captureOwnedElsewhere)) return;
     // A local MediaStream in this window owns the video element; skip relays so
     // operator previews and editors mirror live output without encode/decode.
     if (
-      (useDirectElectronDesktopCapture || captureEnabled) &&
+      effectiveCaptureEnabled &&
       !captureOwnedElsewhere
     ) {
       return;
@@ -363,7 +380,7 @@ const LocalVideoInputView = ({
       subscribeBufferedRelay();
     }
 
-    if (receiveHighQuality) {
+    if (receiveHighQuality || useSharedElectronDeviceCapture) {
       observedOutputElement = canUseRealtimeRelay
         ? (realtimeCanvasRef.current ?? undefined)
         : (videoRef.current ?? undefined);
@@ -411,13 +428,14 @@ const LocalVideoInputView = ({
     };
   }, [
     canUseRealtimeRelay,
-    captureEnabled,
+    effectiveCaptureEnabled,
     captureOwnedElsewhere,
-    isActive,
+    viewActive,
     input.sourceId,
     isLocal,
     receiveHighQuality,
     useDirectElectronDesktopCapture,
+    useSharedElectronDeviceCapture,
     outputId,
     windowRole,
     laneRole,
@@ -426,8 +444,9 @@ const LocalVideoInputView = ({
   useEffect(() => {
     if (
       !isLocal ||
-      !isActive ||
-      (publishPreview && !captureOwnedElsewhere) ||
+      !viewActive ||
+      (publishPreview && !useSharedElectronDeviceCapture && !captureOwnedElsewhere) ||
+      (useSharedElectronDeviceCapture && !captureOwnedElsewhere) ||
       isDirectReady
     ) {
       return;
@@ -481,16 +500,17 @@ const LocalVideoInputView = ({
   }, [
     captureOwnedElsewhere,
     input.sourceId,
-    isActive,
+    viewActive,
     isDirectReady,
     isLocal,
     publishPreview,
+    useSharedElectronDeviceCapture,
     outputId,
     windowRole,
   ]);
 
   useEffect(() => {
-    if (!isActive || !isLocal || !effectiveCaptureEnabled) return;
+    if (!viewActive || !isLocal || !effectiveCaptureEnabled) return;
     if (!deviceId) {
       setErrorDetail(
         isDesktopCaptureKind(input.captureKind)
@@ -506,16 +526,46 @@ const LocalVideoInputView = ({
     let frameCallbackId: number | undefined;
     let diagnosticFrameCallbackId: number | undefined;
     let directPlaybackReady = false;
+    let directFailed = false;
+    let directStartTimer: number | undefined;
     let attachedVideo: HTMLVideoElement | null = null;
     let attachedStream: MediaStream | undefined;
     let markDirectReady: (() => void) | undefined;
     let targetSizeObserver: ResizeObserver | undefined;
     let profileSyncTimer: number | undefined;
-    const captureConsumerId = captureConsumerIdRef.current;
+    const captureConsumerId = `${captureConsumerIdRef.current}:${++captureLeaseGenerationRef.current}`;
+    let qualitySubscription: ReturnType<typeof subscribeLocalVideoCaptureQuality> | undefined;
+    const fallBackToRelay = (error: unknown) => {
+      if (!active || directFailed) return;
+      directFailed = true;
+      if (directStartTimer !== undefined) window.clearTimeout(directStartTimer);
+      if (playbackRecoveryTimer !== undefined) window.clearInterval(playbackRecoveryTimer);
+      qualitySubscription?.stop();
+      attachedStream?.getTracks().forEach((track) => {
+        track.removeEventListener?.("ended", handleVideoTrackEnded);
+        track.removeEventListener?.("ended", handleAudioTrackEnded);
+      });
+      void releaseWarmLocalVideoCapture(input.sourceId, captureConsumerId);
+      if (attachedVideo) attachedVideo.srcObject = null;
+      setIsDirectReady(false);
+      setCaptureOwnedElsewhere(true);
+      setErrorDetail(null);
+      updateLocalVideoView(input.sourceId, diagnosticViewId, {
+        fallbackFrom: "DIRECT",
+        fallbackReason: error instanceof Error ? error.name : "DIRECT_CAPTURE_FAILED",
+        fallbackAt: new Date().toISOString(),
+      });
+    };
     const DIRECT_PROFILE_DEBOUNCE_MS = 250;
     const syncDirectCaptureProfile = () => {
       if (!active || !attachedStream || !attachedVideo) return;
       const target = getRenderedPixelSize(attachedVideo);
+      if (useSharedElectronDeviceCapture) {
+        // Only the host renegotiates the physical mode. Direct clients report
+        // demand without letting a small preview lower the shared device mode.
+        qualitySubscription?.updateTargetSize(target.width, target.height);
+        return;
+      }
       void applyLocalVideoCaptureProfile(
         attachedStream,
         target.width,
@@ -540,6 +590,10 @@ const LocalVideoInputView = ({
     };
     const handleVideoTrackEnded = () => {
       if (!active) return;
+      if (useSharedElectronDeviceCapture) {
+        fallBackToRelay(new Error("Direct video track ended."));
+        return;
+      }
       setIsDirectReady(false);
       setErrorDetail(null);
       retryCapture();
@@ -555,6 +609,7 @@ const LocalVideoInputView = ({
     setIsDirectReady(false);
     setIsBufferedReady(false);
     setIsRealtimeFallbackPending(false);
+    if (useSharedElectronDeviceCapture) setCaptureOwnedElsewhere(false);
     startLocalVideoView(input.sourceId, diagnosticViewId, {
       outputId,
       windowRole,
@@ -565,13 +620,15 @@ const LocalVideoInputView = ({
       try {
         const captureBinding = resolveLocalVideoInputBinding(input.sourceId);
         if (!captureBinding) return;
-        const { stream, audioError } = await acquireWarmLocalVideoCapture(
-          input.sourceId,
-          captureBinding,
-          publishPreview,
-          captureConsumerId,
-        );
+        const captureArgs = [input.sourceId, captureBinding,
+          publishPreview && !useSharedElectronDeviceCapture, captureConsumerId] as const;
+        const { stream, audioError } = useSharedElectronDeviceCapture
+          ? await acquireWarmLocalVideoCapture(...captureArgs, { shared: true })
+          : await acquireWarmLocalVideoCapture(...captureArgs);
         if (!active) return;
+        if (useSharedElectronDeviceCapture && audioError && playAudioRef.current) {
+          throw audioError;
+        }
         reportedDesktopCaptureIssuesRef.current.delete(input.sourceId);
         setCaptureOwnedElsewhere(false);
         setRestartDetail(null);
@@ -595,14 +652,15 @@ const LocalVideoInputView = ({
         attachedVideo = video;
         attachedStream = stream;
         markDirectReady = () => {
-          if (!active || video.srcObject !== stream) return;
+          if (!active || directFailed || video.srcObject !== stream) return;
           if (
             video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA &&
-            video.videoWidth <= 0
+            (useSharedElectronDeviceCapture || video.videoWidth <= 0)
           ) {
             return;
           }
           directPlaybackReady = true;
+          if (directStartTimer !== undefined) window.clearTimeout(directStartTimer);
           video.volume = normalizedVolumeRef.current;
           setIsDirectReady(true);
           markLocalVideoViewFrame(input.sourceId, diagnosticViewId, `${video.videoWidth}x${video.videoHeight}`);
@@ -630,8 +688,20 @@ const LocalVideoInputView = ({
         };
         video.srcObject = stream;
         if (localVideoDiagnosticsEnabled() && "requestVideoFrameCallback" in video) {
-          const trackDirectFrame = () => {
+          let lastSampleAt = -Infinity;
+          const trackDirectFrame: VideoFrameRequestCallback = (now, metadata) => {
+            if (!active || directFailed) return;
             markLocalVideoViewFrame(input.sourceId, diagnosticViewId, `${video.videoWidth}x${video.videoHeight}`);
+            if (now - lastSampleAt >= 1_000) {
+              lastSampleAt = now;
+              const quality = video.getVideoPlaybackQuality?.();
+              updateLocalVideoView(input.sourceId, diagnosticViewId, {
+                captureSettings: stream.getVideoTracks()[0]?.getSettings?.(),
+                presentedFrames: metadata.presentedFrames,
+                totalVideoFrames: quality?.totalVideoFrames,
+                droppedVideoFrames: quality?.droppedVideoFrames,
+              });
+            }
             diagnosticFrameCallbackId = (
               video as HTMLVideoElement & { requestVideoFrameCallback: (callback: VideoFrameRequestCallback) => number }
             ).requestVideoFrameCallback(trackDirectFrame);
@@ -655,7 +725,7 @@ const LocalVideoInputView = ({
           });
         }
         const resumeDirectPlayback = () => {
-          if (!active || video.srcObject !== stream) return;
+          if (!active || directFailed || video.srcObject !== stream) return;
           markDirectReady?.();
           if (directPlaybackReady) return;
           // A detached Electron capture element can occasionally miss its
@@ -665,6 +735,11 @@ const LocalVideoInputView = ({
           void playPromise?.catch(() => undefined);
         };
         resumeDirectPlayback();
+        if (useSharedElectronDeviceCapture && !directPlaybackReady) {
+          directStartTimer = window.setTimeout(() => {
+            fallBackToRelay(new DOMException("Direct capture produced no frame.", "TimeoutError"));
+          }, 5_000);
+        }
         if (!directPlaybackReady) {
           playbackRecoveryTimer = window.setInterval(
             resumeDirectPlayback,
@@ -674,7 +749,14 @@ const LocalVideoInputView = ({
         // Match this window's rendered pixels. Electron screen shares skip the
         // shared quality relay when each output opens its own capture. Debounce
         // so layout thrash does not renegotiate the track every frame.
-        if (useDirectElectronDesktopCapture) {
+        if (useSharedElectronDeviceCapture) {
+          const target = getRenderedPixelSize(video);
+          qualitySubscription = subscribeLocalVideoCaptureQuality(
+            input.sourceId, target.width, target.height,
+            { frameRate: getLocalVideoCaptureFrameRateForRole(windowRole), outputId, windowRole, diagnosticViewId },
+          );
+        }
+        if (useDirectElectronDesktopCapture || useSharedElectronDeviceCapture) {
           syncDirectCaptureProfile();
           if (typeof ResizeObserver !== "undefined") {
             targetSizeObserver = new ResizeObserver(
@@ -692,6 +774,12 @@ const LocalVideoInputView = ({
       } catch (error) {
         await releaseWarmLocalVideoCapture(input.sourceId, captureConsumerId);
         if (!active) return;
+        if (useSharedElectronDeviceCapture) {
+          // Some drivers cannot join a live capture. One attempt per activation
+          // keeps the continuity host untouched and avoids capture/release loops.
+          fallBackToRelay(error);
+          return;
+        }
         if (error instanceof LocalVideoCaptureOwnedError) {
           setCaptureOwnedElsewhere(true);
           return;
@@ -749,10 +837,12 @@ const LocalVideoInputView = ({
     return () => {
       active = false;
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+      if (directStartTimer !== undefined) window.clearTimeout(directStartTimer);
       if (playbackRecoveryTimer !== undefined) {
         window.clearInterval(playbackRecoveryTimer);
       }
       targetSizeObserver?.disconnect();
+      qualitySubscription?.stop();
       window.removeEventListener("resize", scheduleDirectCaptureProfileSync);
       if (profileSyncTimer !== undefined) window.clearTimeout(profileSyncTimer);
       const video = attachedVideo;
@@ -777,8 +867,7 @@ const LocalVideoInputView = ({
         (video as HTMLVideoElement & { cancelVideoFrameCallback: (id: number) => void }).cancelVideoFrameCallback(diagnosticFrameCallbackId);
       }
       void releaseWarmLocalVideoCapture(input.sourceId, captureConsumerId);
-      const stream = video?.srcObject as MediaStream | null | undefined;
-      stream?.getTracks?.().forEach((track) => {
+      attachedStream?.getTracks().forEach((track) => {
         track.removeEventListener?.("ended", handleVideoTrackEnded);
         track.removeEventListener?.("ended", handleAudioTrackEnded);
       });
@@ -787,7 +876,7 @@ const LocalVideoInputView = ({
     };
   }, [
     audioDeviceId,
-    isActive,
+    viewActive,
     captureAttempt,
     effectiveCaptureEnabled,
     isDesktopShare,
@@ -798,6 +887,7 @@ const LocalVideoInputView = ({
     playAudio,
     publishPreview,
     useDirectElectronDesktopCapture,
+    useSharedElectronDeviceCapture,
     outputId,
     windowRole,
   ]);
@@ -805,7 +895,7 @@ const LocalVideoInputView = ({
   // Re-sharing in this window does not change any saved binding, so watch for
   // the replacement stream directly instead of waiting for a capture retry.
   useEffect(() => {
-    if (!isActive || !restartDetail) return;
+    if (!viewActive || !restartDetail) return;
     const unsubscribe = subscribeBrowserDesktopShares((sourceId) => {
       if (sourceId === input.sourceId) {
         setCaptureAttempt((attempt) => attempt + 1);
@@ -814,7 +904,7 @@ const LocalVideoInputView = ({
     return () => {
       unsubscribe();
     };
-  }, [input.sourceId, isActive, restartDetail]);
+  }, [input.sourceId, viewActive, restartDetail]);
 
   const isShowingPicture =
     isDirectReady ||
@@ -916,7 +1006,9 @@ const LocalVideoInputView = ({
               if (videoRef.current) videoRef.current.volume = normalizedVolume;
               setIsDirectReady(true);
             }}
-            onLoadedMetadata={() => setIsDirectReady(true)}
+            onLoadedMetadata={() => {
+              if (!useSharedElectronDeviceCapture) setIsDirectReady(true);
+            }}
             onPlaying={() => setIsDirectReady(true)}
             onError={() =>
               setErrorDetail(

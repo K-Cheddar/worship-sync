@@ -486,6 +486,93 @@ describe("ControllerServicePlanView", () => {
       .toBeInTheDocument();
   });
 
+  it("updates controller times and highlighting from a remote anchored snapshot", () => {
+    const nowMs = Date.parse("2026-09-25T18:01:00.000Z");
+    jest.spyOn(Date, "now").mockReturnValue(nowMs);
+    const scheduledPlan: ServicePlan = {
+      ...plan,
+      startsAt: "2026-09-25T18:00:00.000Z",
+      timezone: "UTC",
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        elements: [
+          {
+            id: "welcome",
+            type: "free",
+            title: plainTextToRichText("Welcome"),
+            startTime: "18:00",
+            durationSeconds: 120,
+          },
+          {
+            id: "song",
+            type: "free",
+            title: plainTextToRichText("Song"),
+            startTime: "18:02",
+            durationSeconds: 300,
+          },
+          {
+            id: "closing",
+            type: "free",
+            title: plainTextToRichText("Closing"),
+            startTime: "18:07",
+            durationSeconds: 60,
+          },
+        ],
+      }],
+    };
+    const scheduledSnapshot = buildServicePlanFlowSnapshot({
+      plan: scheduledPlan,
+      startsAt: scheduledPlan.startsAt!,
+      serverNowMs: nowMs,
+    });
+    const ui = (currentPlan: ServicePlan, currentSnapshot: typeof scheduledSnapshot) => (
+      <ControllerServicePlanView
+        {...brandColors}
+        plan={currentPlan}
+        snapshot={currentSnapshot}
+        churchId="church-1"
+        controllerProfileId="presentation"
+      />
+    );
+    const { rerender } = renderWithStore(ui(scheduledPlan, scheduledSnapshot));
+
+    expect(screen.getByText("18:00", { selector: "time" })).toHaveClass("text-zinc-400");
+    expect(screen.getByText("18:02", { selector: "time" })).toHaveClass("text-zinc-400");
+
+    const remotePlan = {
+      ...scheduledPlan,
+      publicLive: {
+        mode: "anchored" as const,
+        currentElementId: "song",
+        startedAt: "2026-09-25T17:58:00.000Z",
+      },
+    };
+    const remoteSnapshot = buildServicePlanFlowSnapshot({
+      plan: remotePlan,
+      startsAt: remotePlan.startsAt!,
+      serverNowMs: nowMs,
+    });
+    // The local plan still reflects the prior schedule; the fetched snapshot
+    // carries the live update received from the other browser.
+    rerender(ui(scheduledPlan, remoteSnapshot));
+
+    expect(screen.getByText("18:00", { selector: "time" })).toHaveClass("text-zinc-400");
+    const adjustedSongTime = screen.getByLabelText(
+      "Live-adjusted time 17:58; planned 18:02",
+    );
+    const adjustedClosingTime = screen.getByLabelText(
+      "Live-adjusted time 18:03; planned 18:07",
+    );
+    expect(adjustedSongTime).toHaveClass("text-blue-300");
+    expect(adjustedSongTime).toHaveAttribute("title", "Planned time: 18:02");
+    expect(adjustedClosingTime).toHaveClass("text-blue-300");
+    expect(within(screen.getByRole("listitem", { current: true })).getByRole("heading", { name: "Song" }))
+      .toBeInTheDocument();
+    expect(scheduledPlan.sections[0].elements.map((element) => element.startTime))
+      .toEqual(["18:00", "18:02", "18:07"]);
+  });
+
   it("filters the compact microphone cues by team while retaining shared notes", async () => {
     const user = userEvent.setup();
     renderWithStore(

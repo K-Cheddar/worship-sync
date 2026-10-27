@@ -409,6 +409,34 @@ const ServicePublicView = ({
     () => getServiceFlowProgress(serviceWithControllerLiveItem, clientNow + serverOffsetMs),
     [clientNow, serverOffsetMs, serviceWithControllerLiveItem],
   );
+  const displayedTimeline = useMemo(
+    () => getServiceFlowProgress(serviceWithControllerLiveItem, snapshot.serverNowMs),
+    [serviceWithControllerLiveItem, snapshot.serverNowMs],
+  );
+  const plannedTimeline = useMemo(
+    () => getServiceFlowProgress(
+      { ...serviceWithControllerLiveItem, live: { mode: "schedule" } },
+      snapshot.serverNowMs,
+    ),
+    [serviceWithControllerLiveItem, snapshot.serverNowMs],
+  );
+  const displayedTimesByItemId = useMemo(() => {
+    const plannedById = new Map(
+      plannedTimeline.items.map((timed) => [timed.item.id, timed]),
+    );
+    return new Map(displayedTimeline.items.map((timed) => {
+      const planned = plannedById.get(timed.item.id);
+      const displayedTime = formatServiceTime(timed.startsAtMs, serviceWithControllerLiveItem.timezone);
+      const plannedTime = planned
+        ? formatServiceTime(planned.startsAtMs, serviceWithControllerLiveItem.timezone)
+        : "";
+      return [timed.item.id, {
+        displayedTime,
+        plannedTime,
+        isAdjusted: Boolean(plannedTime && displayedTime !== plannedTime),
+      }];
+    }));
+  }, [displayedTimeline, plannedTimeline, serviceWithControllerLiveItem.timezone]);
   const currentItemId = progress?.current?.item.id ?? null;
   const {
     isFollowingLive,
@@ -757,6 +785,7 @@ const ServicePublicView = ({
                   <ol className={cn("overflow-hidden rounded-xl border shadow-lg", chrome.list)}>
                     {section.items.map((item) => {
                       const timed = progress?.items.find((candidate) => candidate.item.id === item.id);
+                      const timing = displayedTimesByItemId.get(item.id);
                       const isCurrent = progress?.current?.item.id === item.id;
                       const isPast = Boolean(timed && clientNow + serverOffsetMs >= timed.endsAtMs && !isCurrent);
                       const visibleAudienceNotes = !isGeneralView
@@ -796,10 +825,16 @@ const ServicePublicView = ({
                               <time
                                 className={cn(
                                   "text-xs font-medium tabular-nums sm:text-sm",
-                                  isCurrent ? (theme === "light" ? "text-emerald-700" : "text-emerald-300") : chrome.time,
+                                  timing?.isAdjusted
+                                    ? (theme === "light" ? "text-blue-700" : "text-blue-300")
+                                    : chrome.time,
                                 )}
+                                title={timing?.isAdjusted ? `Planned time: ${timing.plannedTime}` : undefined}
+                                aria-label={timing?.isAdjusted
+                                  ? `Live-adjusted time ${timing.displayedTime}; planned ${timing.plannedTime}`
+                                  : undefined}
                               >
-                                {timed ? formatServiceTime(timed.startsAtMs, service.timezone) : ""}
+                                {timing?.displayedTime || (timed ? formatServiceTime(timed.startsAtMs, service.timezone) : "")}
                               </time>
                               {durationLabel ? (
                                 <span className={cn("text-[11px] tabular-nums", chrome.duration)}>

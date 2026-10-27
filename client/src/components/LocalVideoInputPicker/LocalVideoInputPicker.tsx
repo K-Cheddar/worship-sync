@@ -351,6 +351,9 @@ const LocalVideoInputPicker = ({
     () => devices.filter((device) => device.kind === "audioinput"),
     [devices],
   );
+  const selectedVideoInput = videoInputs.find(
+    (device) => device.deviceId === videoDeviceId,
+  );
   const selectedDesktopSource = desktopSources.find(
     (entry) => entry.id === desktopSourceId,
   );
@@ -363,9 +366,17 @@ const LocalVideoInputPicker = ({
 
   useEffect(() => {
     if (isLabelEdited) return;
-    const suggested = selectedDesktopSource?.name ?? browserShare?.name;
+    const suggested = isDesktopMode
+      ? selectedDesktopSource?.name ?? browserShare?.name
+      : selectedVideoInput?.label;
     if (suggested) setLabel(suggested);
-  }, [browserShare?.name, isLabelEdited, selectedDesktopSource?.name]);
+  }, [
+    browserShare?.name,
+    isDesktopMode,
+    isLabelEdited,
+    selectedDesktopSource?.name,
+    selectedVideoInput?.label,
+  ]);
 
   let videoPlaceholderLabel = "Finding video inputs…";
   if (hasEnumeratedDevices) {
@@ -484,11 +495,14 @@ const LocalVideoInputPicker = ({
     nextCaptureKind: LocalVideoCaptureKind,
     audioEnabled: boolean,
   ) => {
-    const suggestedLabel = selectedDesktopSource?.name ?? browserShare?.name;
+    const suggestedLabel = isDesktopMode
+      ? selectedDesktopSource?.name ?? browserShare?.name
+      : selectedVideoInput?.label;
     onLinked({
       ...nextSource,
       label:
         (isLabelEdited ? label.trim() : suggestedLabel ?? label.trim()) ||
+        suggestedLabel ||
         nextSource.label,
       captureKind: nextCaptureKind,
       fit,
@@ -882,7 +896,10 @@ const LocalVideoInputPicker = ({
                 {error}
               </p>
             ) : null}
-            <div className="mt-auto flex justify-end border-t border-white/10 pt-5">
+            <div className="mt-auto flex justify-end gap-2 border-t border-white/10 pt-5">
+              <Button variant="secondary" onClick={() => setOpen(false)}>
+                Cancel
+              </Button>
               <Button
                 variant="cta"
                 disabled={!canSave}

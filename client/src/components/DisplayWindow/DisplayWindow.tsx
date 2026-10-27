@@ -277,9 +277,9 @@ type DisplayWindowProps = {
    */
   canCaptureLocalVideo?: boolean;
   /**
-   * Open or share the capture in this window (editor + controller previews).
-   * Fullscreen projector/monitor/stream leave this off so USB cameras stay
-   * exclusively owned by the capture host and arrive via relay.
+   * Allow browser capture in this window (editor + controller previews).
+   * Local Electron surfaces automatically try joining the continuity host's
+   * Chromium capture before using the compatibility relays.
    */
   directLocalVideoCapture?: boolean;
   /**

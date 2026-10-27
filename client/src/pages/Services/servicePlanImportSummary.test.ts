@@ -12,6 +12,7 @@ import {
   DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
   refreshServicePlanFromImport,
 } from "./servicePlanImportSync";
+import { applyPlanAnchorStartTime } from "./servicePlanTimingUtils";
 
 const element = (
   id: string,
@@ -37,6 +38,103 @@ const namedSection = (
 ): ServicePlanSection => ({ id, name, elements });
 
 describe("summarizeServicePlanImport", () => {
+  it("reports cascade-only start-time shifts as read-only schedule information", () => {
+    const current = [section([
+      element("song", "Song", { startTime: "09:00", durationSeconds: 300 }),
+      element("prayer", "Prayer", { startTime: "09:05", durationSeconds: 600 }),
+      element("message", "Message", { startTime: "09:15", durationSeconds: 900 }),
+    ])];
+    const changedDuration = [section([
+      element("song", "Song", { startTime: "09:00", durationSeconds: 480 }),
+      current[0].elements[1],
+      current[0].elements[2],
+    ])];
+    const proposed = applyPlanAnchorStartTime(changedDuration, "09:00");
+    const summary = summarizeServicePlanImport(current, proposed, {}, {
+      dependentTimingShifts: true,
+    });
+
+    expect(summary.changes.map(({ kind, id }) => [kind, id])).toEqual([
+      ["updated", "song"],
+      ["timing_shift", "prayer"],
+      ["timing_shift", "message"],
+    ]);
+    expect(summary.changes[1].fields).toEqual([{
+      label: "Resulting start time",
+      before: "09:05",
+      after: "09:08",
+    }]);
+
+    const appliedWithoutSelection = applySelectedServicePlanImportChanges(
+      current,
+      proposed,
+      summary,
+      new Set(summary.changes.filter(({ kind }) => kind === "timing_shift").map(servicePlanImportChangeKey)),
+    );
+    expect(appliedWithoutSelection).toBe(current);
+  });
+
+  it("recalculates a consistent selected result after added or removed items", () => {
+    const current = [
+      namedSection("one", "Praise", [
+        element("first", "Song", { sourcePlanningManaged: true, startTime: "09:00", durationSeconds: 300 }),
+        element("removed", "Removed item", { sourcePlanningManaged: true, startTime: "09:05", durationSeconds: 120 }),
+      ]),
+      namedSection("two", "Message", [
+        element("last", "Message", { sourcePlanningManaged: true, startTime: "09:07", durationSeconds: 600 }),
+      ]),
+    ];
+    const proposed = [
+      namedSection("one", "Praise", [
+        element("first", "Song", { sourcePlanningManaged: true, startTime: "09:00", durationSeconds: 300 }),
+        element("added", "New item", { sourcePlanningManaged: true, durationSeconds: 180 }),
+      ]),
+      namedSection("two", "Message", [
+        element("last", "Message", { sourcePlanningManaged: true, startTime: "09:03", durationSeconds: 600 }),
+      ]),
+    ];
+    const summary = summarizeServicePlanImport(current, proposed);
+    const selected = new Set(summary.changes
+      .filter(({ kind }) => kind === "added" || kind === "removed")
+      .map(servicePlanImportChangeKey));
+    const applied = applyPlanAnchorStartTime(
+      applySelectedServicePlanImportChanges(current, proposed, summary, selected),
+      "09:00",
+    );
+
+    expect(applied.flatMap((planSection) => planSection.elements).map(({ id, startTime }) => [id, startTime])).toEqual([
+      ["first", "09:00"],
+      ["added", "09:05"],
+      ["last", "09:08"],
+    ]);
+  });
+
+  it("applies only selected duration updates and cascades from the preserved anchor", () => {
+    const current = [section([
+      element("first", "First", { sourcePlanningManaged: true, startTime: "09:00", durationSeconds: 300 }),
+      element("second", "Second", { sourcePlanningManaged: true, startTime: "09:05", durationSeconds: 600 }),
+      element("third", "Third", { sourcePlanningManaged: true, startTime: "09:15", durationSeconds: 300 }),
+    ])];
+    const proposed = applyPlanAnchorStartTime([section([
+      element("first", "First", { sourcePlanningManaged: true, startTime: "09:00", durationSeconds: 480 }),
+      element("second", "Second", { sourcePlanningManaged: true, startTime: "09:08", durationSeconds: 720 }),
+      element("third", "Third", { sourcePlanningManaged: true, startTime: "09:20", durationSeconds: 300 }),
+    ])], "09:00");
+    const summary = summarizeServicePlanImport(current, proposed, {}, { dependentTimingShifts: true });
+    const firstUpdate = summary.changes.find(({ id, kind }) => id === "first" && kind === "updated");
+    const selected = new Set(firstUpdate ? [servicePlanImportChangeKey(firstUpdate)] : []);
+    const applied = applyPlanAnchorStartTime(
+      applySelectedServicePlanImportChanges(current, proposed, summary, selected),
+      "09:00",
+    );
+
+    expect(applied[0].elements.map(({ durationSeconds, startTime }) => [durationSeconds, startTime])).toEqual([
+      [480, "09:00"],
+      [600, "09:08"],
+      [300, "09:18"],
+    ]);
+  });
+
   it("surfaces semantic microphone and IEM equipment changes in review", () => {
     const current = [section([element("equipment", "Prayer", {
       assignees: [{ id: "jamie", name: "Jamie", iemIds: ["iem-1"], microphoneIds: ["mic-1"] }],

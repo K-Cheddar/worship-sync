@@ -532,6 +532,29 @@ Let Your fire fall`;
       expect(textBox?.words).toContain("Welcome and greeting");
     });
 
+    it("creates a named custom item without an initial slide", async () => {
+      const db = {
+        get: jest.fn().mockRejectedValue(Object.assign(new Error("missing"), { status: 404 })),
+        put: jest.fn().mockResolvedValue({ ok: true, id: "Welcome Slides", rev: "1-created" }),
+      };
+      const item = await createNewFreeForm({
+        name: "Welcome Slides",
+        text: "",
+        list: [],
+        db: db as never,
+        background: "#1a1a1a",
+        brightness: 100,
+        emptyItem: true,
+      });
+
+      expect(item.type).toBe("free");
+      expect(item.name).toBe("Welcome Slides");
+      expect(item.slides).toEqual([]);
+      expect(db.put).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "Welcome Slides", slides: [] }),
+      );
+    });
+
     it("reuses the full existing custom-item document without replacing edited slides or media", async () => {
       const persistedSlide = {
         id: "edited-slide",

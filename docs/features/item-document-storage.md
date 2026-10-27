@@ -30,5 +30,6 @@ The report identifies document-backed rows, missing/deleted references, recovera
 - **Outline independence:** Existing occurrence overrides survive library changes; new occurrences use current document metadata. Authorization: current request, October 26, 2026.
 - **Historical safety:** Leave the old index untouched; report missing content explicitly rather than infer a restoration. Authorization: current request's legacy-data and no-deletion requirements.
 - **Automatic deletion and cache filtering:** Remove startup Bible/heading cleanup and ignore unrelated cache events while retaining explicit deletion and stale-read safety. Authorization: October 26, 2026 remaining item-cache review findings request.
+- **Empty custom items:** The Presentation Controller may save a named custom item with no slides; text or media can be added later through the existing editor. The empty slide array uses the existing document and synchronization shape. Authorization: current request, October 27, 2026.
 
 Regression coverage: `itemCacheSync.test.ts`, `itemCacheSync.pouch.test.ts`, `controllerInfo.test.tsx`, `useOutlineItemDocs.test.tsx`, `Item.test.tsx`, `store.test.ts`, `useServicePlanOutlinePush.test.tsx` and `scripts/audit-item-storage.test.mjs`.

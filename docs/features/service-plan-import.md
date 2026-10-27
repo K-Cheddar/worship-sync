@@ -4,7 +4,7 @@
 
 **Approval source:** User requests, 2026-10-16 (cross-section matching, review, selection, and ordering) and 2026-10-18 (saved-plan outline fallbacks and whole-chapter Scripture)
 
-**Last reviewed:** 2026-10-18
+**Last reviewed:** 2026-10-27
 
 ## Purpose
 
@@ -32,6 +32,19 @@ An operator imports or refreshes a plan, reviews the proposed item changes, sele
 - An ambiguous match must not relocate, replace, or delete an existing item.
 - Import does not apply every item's position as a blanket reorder.
 - Changes beyond the selected additions, removals, updates, and moves remain untouched.
+
+## Live-adjusted timing display (confirmed 2026-10-27)
+
+The current user request confirms these live timing display rules across the Service Plan Editor, Current Service Workspace, Controller Service Plan, public service plan, and Current Service Viewer:
+
+- Use the existing service-flow timeline calculations for live and planned item times. An anchored **Make Live** action adjusts its selected item and later items; items before it keep their planned times.
+- Keep saved `startTime` values as the editable planned schedule. View mode may display adjusted times, but live timing is never written into those fields.
+- Continue showing normal planned times when no live adjustment is active. Use a blue time color only when its displayed value differs from the scheduled timeline, and expose the planned time as accessible context for changed values.
+- Reflect remote live-state updates in every view. Keep the existing live-item highlight and badge separate from the timing color.
+- Preserve automatic advancement, manual pinning, pause/resume, and Return to Planned Schedule behavior. Projected live times remain separate from recorded actual start times.
+- Public snapshots continue deriving their planned baseline from existing timeline utilities; no public data shape or persisted field changes are required.
+
+Regression coverage: `ServicePlanElementRow.test.tsx`, `ServicePlanEditor.test.tsx`, `ControllerServicePlanView.test.tsx`, `ServicePublicView.test.tsx`, and `CurrentServiceViewer.test.tsx`.
 
 ## Saved-plan outline sync (confirmed 2026-10-18)
 
@@ -74,6 +87,13 @@ Regression coverage: `servicePlanNativeTransfer.test.ts` and the public-link rep
 | Broader import, save/sync, and publication behavior | Existing behavior pending a complete workflow contract | Feature registry inventory | Open; outside this contract's confirmed scope |
 
 ## Product decisions
+
+- **Question/problem:** A Make Live timeline adjustment was visible on the public service plan, while internal plan views could keep showing the saved schedule or lose adjusted times after automatic advancement.
+- **Approved behavior:** Use the shared timeline calculations across the editor, current workspace, controller, public plan, and current viewer. Keep the original schedule editable and persisted, distinguish only visibly changed times in blue, and retain existing live-state controls and indicators.
+- **Why:** Operators and viewers need a consistent timeline while keeping the saved schedule available for editing and recovery.
+- **Material alternative rejected:** Persist projected times into the planned schedule or show blue merely because a plan is anchored.
+- **Approval source/date:** Current user request, 2026-10-27.
+- **Affected workflow/contract:** Service-plan live timing display.
 
 - **Question/problem:** An item present in the source plan changes sections, or a template-origin item has no durable external identity.
 - **Approved behavior:** Match uniquely by durable source identity first. For template-origin items without source IDs, match by normalized title and compatible type only when the match is unambiguous. Review relocation as an independent selectable change and place selected moves/additions from source-relative order.

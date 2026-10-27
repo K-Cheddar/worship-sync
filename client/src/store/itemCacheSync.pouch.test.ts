@@ -57,6 +57,16 @@ describe("item cache with real local PouchDB and replication", () => {
       await local.put({ _id: "timer", type: "timer", name: "Timer" });
       await local.put({ _id: "bible", type: "bible", name: "John 3" });
       await local.put({ _id: "heading", type: "heading", name: "Worship" });
+      await waitFor(() => expect(first.getState().allDocs.allFreeFormDocs[0]).toMatchObject({
+        _id: "custom",
+        name: "Custom",
+        slides: [],
+      }));
+      await waitFor(() => expect(second.getState().allDocs.allFreeFormDocs[0]).toMatchObject({
+        _id: "custom",
+        name: "Custom",
+        slides: [],
+      }));
       await waitFor(() => expect(second.getState().allDocs.allSongDocs[0]).toMatchObject({ name: "Renamed offline", background: "local-image://image" }));
       await waitFor(() => expect(first.getState().allDocs.allHeadingDocs).toHaveLength(1));
       await waitFor(() => expect(second.getState().allDocs.allHeadingDocs).toHaveLength(1));
@@ -66,6 +76,10 @@ describe("item cache with real local PouchDB and replication", () => {
       await local.put({ _id: "preferences", docType: "preferences" });
       await local.remove(await local.get("preferences"));
       await local.replicate.to(remote);
+      expect(await remote.get("custom")).toMatchObject({
+        name: "Custom",
+        slides: [],
+      });
       await remote.put({ _id: "overlay", docType: "overlay", type: "song", name: "Not an item" });
       const remoteSong = await remote.get<DBItem>("song");
       await remote.put({ ...remoteSong, name: "Remote rename", background: "remote background" });

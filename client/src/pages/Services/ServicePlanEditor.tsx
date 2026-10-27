@@ -121,6 +121,8 @@ import { getPlanningCenterPlanImport } from "../../api/planningCenter";
 import {
   DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
   getNewServicePlanImportAmbiguityIds,
+  orderPlanningCenterPdfRefresh,
+  preparePlanningCenterPdfImport,
   refreshServicePlanFromImport,
   type ServicePlanningRefreshOptions,
 } from "./servicePlanImportSync";
@@ -328,6 +330,8 @@ type ServicePlanImportPreview = {
   sections: ServicePlanSection[];
   sourceImport: ServicePlanSourceImport;
   summary: ServicePlanImportSummary;
+  recalculateTimeline: boolean;
+  timelineAnchorStartTime: string;
 };
 
 type ServicePlanEditorTab = "plan" | "setlist" | "equipment" | "serving";
@@ -338,6 +342,14 @@ const formatAdjustedTimelineTime = (timeMs: number, timezone: string): string =>
     minute: "2-digit",
     timeZone: timezone,
   }).format(new Date(timeMs));
+
+const formatAdjustedPlanStartTime = (timeMs: number, timezone: string): string =>
+  formatPlanStartTimeDisplay(new Intl.DateTimeFormat("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZone: timezone,
+  }).format(new Date(timeMs)));
 
 const formatServicePlanEmailDate = (startsAt: string, timezone?: string) => {
   if (!timezone) return "Date unavailable";
@@ -1672,7 +1684,7 @@ const ServicePlanEditor = ({
       planningCenterPlanId?: string;
     } = {},
   ) => {
-    const importedSections = buildServicePlanSectionsFromImport(data, allSongDocs, {
+    const parsedSections = buildServicePlanSectionsFromImport(data, allSongDocs, {
       classifyExternalTitle: source === "servicePlanning",
       knownPeople: [
         ...members.map((member) => memberName(member)),
@@ -1682,6 +1694,10 @@ const ServicePlanEditor = ({
         ]),
       ],
     });
+    const pdfRefreshSections = source === "planningCenterPdf"
+      ? preparePlanningCenterPdfImport(sections || [], parsedSections)
+      : undefined;
+    const importedSections = pdfRefreshSections?.importedSections || parsedSections;
     const hasElements = importedSections.some((section) => section.elements.length > 0);
     const hasSourceTiming = importedSections.some((section) =>
       section.elements.some((element) => Boolean(element.startTime)),
@@ -1700,18 +1716,35 @@ const ServicePlanEditor = ({
     // A plan with no items yet has nothing to reconcile — a draft started
     // from scratch carries one empty section, which would otherwise survive
     // the refresh and leave a stray blank section above the imported ones.
-    const nextSections =
+    let nextSections =
       hasPlanContent && sections
-        ? refreshServicePlanFromImport(sections, importedSections, {
-          ...refreshOptions,
-          suggestLegacyMatches: true,
-          // Only plans imported before item-level provenance existed can have
-          // their unmarked items regarded as source-owned, and then only when
-          // removal was chosen. On a tracked plan those are operator items.
-          treatUnmarkedItemsAsSource:
-            refreshOptions.removeMissing && isLegacyUntrackedImport,
-        })
+        ? refreshServicePlanFromImport(
+            pdfRefreshSections?.currentSections || sections,
+            importedSections,
+            {
+              ...refreshOptions,
+              suggestLegacyMatches: true,
+              planningCenterPdfMatch: source === "planningCenterPdf",
+              // Only plans imported before item-level provenance existed can have
+              // their unmarked items regarded as source-owned, and then only when
+              // removal was chosen. On a tracked plan those are operator items.
+              treatUnmarkedItemsAsSource:
+                refreshOptions.removeMissing && isLegacyUntrackedImport,
+            },
+        )
         : freshImportSections;
+    const recalculateTimeline = source === "planningCenterPdf" && !hasSourceTiming;
+    const existingAnchor = sections?.[0]?.elements?.[0]?.startTime || "";
+    const timelineAnchorStartTime = existingAnchor || occurrenceLocalTime(
+      occurrence.startsAt,
+      planTimezone || "UTC",
+    );
+    if (source === "planningCenterPdf" && hasPlanContent && sections) {
+      nextSections = orderPlanningCenterPdfRefresh(nextSections, importedSections);
+      if (recalculateTimeline && timelineAnchorStartTime) {
+        nextSections = applyPlanAnchorStartTime(nextSections, timelineAnchorStartTime);
+      }
+    }
     // One draft update, so undo reverts the whole import rather than peeling
     // it back a field at a time. The occurrence being planned names the plan
     // — the imported source's own plan label (its own date/service, not
@@ -1728,10 +1761,17 @@ const ServicePlanEditor = ({
         currentSections: sections,
         sections: nextSections,
         sourceImport: nextSourceImport,
-        summary: summarizeServicePlanImport(sections, nextSections, {
-          microphones,
-          iemEquipment,
-        }),
+        summary: summarizeServicePlanImport(
+          sections,
+          nextSections,
+          { microphones, iemEquipment },
+          {
+            dependentTimingShifts: recalculateTimeline,
+            trackSameSectionMoves: source === "planningCenterPdf",
+          },
+        ),
+        recalculateTimeline,
+        timelineAnchorStartTime,
       });
       setShowImport(false);
       return;
@@ -1891,12 +1931,20 @@ const ServicePlanEditor = ({
 
   const applyImportPreview = (selectedChangeKeys: string[]) => {
     if (!importPreview) return;
-    const selectedSections = applySelectedServicePlanImportChanges(
+    const actionableKeys = new Set(importPreview.summary.changes
+      .filter((change) => change.kind !== "timing_shift")
+      .map((change) => `${change.kind}:${change.id}`));
+    const hasSelectedChanges = selectedChangeKeys.some((key) => actionableKeys.has(key));
+    if (!hasSelectedChanges) return;
+    let selectedSections = applySelectedServicePlanImportChanges(
       importPreview.currentSections,
       importPreview.sections,
       importPreview.summary,
       new Set(selectedChangeKeys),
     );
+    if (importPreview.recalculateTimeline && importPreview.timelineAnchorStartTime) {
+      selectedSections = applyPlanAnchorStartTime(selectedSections, importPreview.timelineAnchorStartTime);
+    }
     applyImportedDraft({
       sections: selectedSections,
       planName: occurrence.name || service.name || "",
@@ -2490,6 +2538,20 @@ const ServicePlanEditor = ({
     plan && sections
       ? getServicePlanLiveProgress({ ...plan, sections }, nowMs)
       : null;
+  const adjustedTimelineProgress = useMemo(() => {
+    if (!plan || !sections) return null;
+    return getServicePlanLiveProgress(
+      { ...plan, sections },
+      Date.parse(plan.startsAt || ""),
+    );
+  }, [plan, sections]);
+  const plannedProgress = useMemo(() => {
+    if (!plan || !sections) return null;
+    return getServicePlanLiveProgress(
+      { ...plan, sections, publicLive: { mode: "schedule" } },
+      Date.parse(plan.startsAt || ""),
+    );
+  }, [plan, sections]);
   const liveElementId = liveProgress?.current?.item.id ?? null;
   const {
     isFollowingLive,
@@ -2584,19 +2646,29 @@ const ServicePlanEditor = ({
   const liveStartedAtLabel = liveStartedAt && planTimezone
     ? formatAdjustedTimelineTime(Date.parse(liveStartedAt), planTimezone)
     : null;
-  const adjustedStartTimes = useMemo(() => {
-    if (!planTimezone || !isTimelineAdjusted || !liveProgress || !liveElementId) return new Map<string, string>();
-    const liveIndex = liveProgress.items.findIndex(
-      (timed) => timed.item.id === liveElementId,
+  const { adjustedStartTimes, plannedStartTimes } = useMemo(() => {
+    if (!planTimezone || !isTimelineAdjusted || !adjustedTimelineProgress?.isAdjusted || !plannedProgress) {
+      return {
+        adjustedStartTimes: new Map<string, string>(),
+        plannedStartTimes: new Map<string, string>(),
+      };
+    }
+    const plannedItemsById = new Map(
+      plannedProgress.items.map((timed) => [timed.item.id, timed]),
     );
-    if (liveIndex < 0) return new Map<string, string>();
-    return new Map(
-      liveProgress.items.slice(liveIndex).map((timed) => [
-        timed.item.id,
-        formatAdjustedTimelineTime(timed.startsAtMs, planTimezone),
-      ]),
-    );
-  }, [isTimelineAdjusted, liveElementId, liveProgress, planTimezone]);
+    const adjustedTimes = new Map<string, string>();
+    const plannedTimes = new Map<string, string>();
+    adjustedTimelineProgress.items.forEach((timed) => {
+      const planned = plannedItemsById.get(timed.item.id);
+      if (!planned) return;
+      const adjustedTime = formatAdjustedPlanStartTime(timed.startsAtMs, planTimezone);
+      const plannedTime = formatAdjustedPlanStartTime(planned.startsAtMs, planTimezone);
+      if (adjustedTime === plannedTime) return;
+      adjustedTimes.set(timed.item.id, adjustedTime);
+      plannedTimes.set(timed.item.id, plannedTime);
+    });
+    return { adjustedStartTimes: adjustedTimes, plannedStartTimes: plannedTimes };
+  }, [adjustedTimelineProgress, isTimelineAdjusted, planTimezone, plannedProgress]);
   const shareActionsDisabled = !canEdit || publishing || !hasSections;
   const showLiveToolbarActions = Boolean(
     canEdit && !isEditing && isServiceDay && liveElementId,
@@ -3187,6 +3259,7 @@ const ServicePlanEditor = ({
               isManualLive={isManualLive}
               isTimelineAdjusted={isTimelineAdjusted}
               adjustedStartTimes={adjustedStartTimes}
+              plannedStartTimes={plannedStartTimes}
               liveStartedAtLabel={liveStartedAtLabel}
               publicLiveBusy={updatingPublicLive}
               onMakePublicLive={handleMakePublicLive}

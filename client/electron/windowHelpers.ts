@@ -2,7 +2,7 @@ import { BrowserWindow, shell, type WebContents } from "electron";
 import { join } from "node:path";
 import type { WindowType } from "./windowState";
 
-/** Persisted session partition; must match main process and any window.open / middle-click children. */
+/** Shared origin/device identity for capture joins, auth, and same-app children. */
 export const WORSHIPSYNC_SESSION_PARTITION = "persist:worshipsync";
 
 export type BrowserWindowRole =
