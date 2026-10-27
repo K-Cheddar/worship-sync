@@ -786,12 +786,20 @@ async function appendCreditIdToIndex(
   throw new Error("Could not update the credits index.");
 }
 
+const libraryRefreshVersions = new WeakMap<PouchDB.Database, number>();
+export const invalidateLibraryRefresh = (database: PouchDB.Database) => {
+  const version = (libraryRefreshVersions.get(database) ?? 0) + 1;
+  libraryRefreshVersions.set(database, version);
+  return version;
+};
+
 export const updateAllDocs = async (
   dispatch: Function,
   db: PouchDB.Database | undefined = globalDb,
   shouldApply: () => boolean = () => true,
 ): Promise<boolean> => {
   if (!db) return false;
+  const refreshVersion = invalidateLibraryRefresh(db);
   try {
     // Discover IDs first so a library refresh never reads authored v2 slide bodies.
     const manifest = await db.allDocs({ include_docs: false });
@@ -812,7 +820,7 @@ export const updateAllDocs = async (
       .filter((row) => (row.doc as any)?.type === "bible")
       .map((row) => row.doc as DBItem);
 
-    if (!shouldApply()) return false;
+    if (!shouldApply() || libraryRefreshVersions.get(db) !== refreshVersion) return false;
 
     dispatch(updateSongLibraryDiagnostics(diagnostics));
     if (diagnostics.length) console.warn("Incomplete v2 song library projections", diagnostics);

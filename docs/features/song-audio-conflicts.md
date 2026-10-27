@@ -12,6 +12,23 @@ Authorization: production correctness request, October 14, 2026.
 
 ## Implementation and verification
 
+### Concurrent lyric editing (October 26, 2026)
+
+Authorization: the Song v2 concurrent slide editing request.
+
+- Text typed during a formatting debounce is protected immediately. Remote
+  updates and save acknowledgments must not declare this input saved or replace it.
+- Ordinary lyric formatting preserves the identity of each section occurrence
+  and page, including title and blank slides. Overflow creates/removes pages
+  without borrowing another section's slide or box identities.
+- Disjoint canonical lyric edits use the authored baseline to merge against
+  the latest section before formatting. Ambiguous overlaps and concurrent
+  structural/layout changes retain the draft and use existing conflict choices.
+- Child-document replication refreshes the affected active song. Library
+  projections refresh for root/arrangement changes; slide-only notifications
+  must not scan the library. Revision-checked writes remain mandatory.
+- Song migrations, schema changes and v2 deletion remain outside this change.
+
 `persistSongAudioAttachment` reads the original database's latest document and uses Pouch revision checks to write the audio field while preserving unrelated data. It returns the exact written document and returned revision. A competing write can reject with 409; it is not silently overwritten.
 
 `applyPersistedSongAudio` patches audio and revision metadata without accepting a new lyric baseline. It patches audio in a pending remote document so either conflict decision retains the completed audio operation. The store reschedules pending local intent using the preserved baseline, retires superseded work before writes, and suppresses stale acknowledgments after newer intent/audio. Partial acknowledgments advance only the fields actually written. `SlideEditor` captures the database and mutation owner and suppresses publication after owner retirement.

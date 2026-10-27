@@ -184,6 +184,7 @@ const LyricsEditorPanel = ({
   const currentItemIdRef = useRef(item._id);
   const pendingRemoteItemRef = useRef(pendingRemoteItem);
   const remoteUpdateToastIdRef = useRef<string | null>(null);
+  const acceptedLocalDraftRef = useRef(false);
   const syncedItemIdRef = useRef(item._id);
   const wasLyricsEditorOpenRef = useRef(false);
   const baselineSelectedArrangementIdRef = useRef(localSelectedArrangementId);
@@ -277,6 +278,7 @@ const LyricsEditorPanel = ({
       setSelectedSectionId(null);
       setRecentlyMovedSectionId(null);
       setHasArrangementChanges(false);
+      acceptedLocalDraftRef.current = false;
       baselineSelectedArrangementIdRef.current = nextSelectedArrangementId;
     },
     []
@@ -284,6 +286,7 @@ const LyricsEditorPanel = ({
 
   const updateLocalArrangements = useCallback(
     (value: SetStateAction<Arrangment[]>) => {
+      acceptedLocalDraftRef.current = true;
       setHasArrangementChanges(true);
       setLocalArrangements((currentArrangements) => {
         const nextArrangements =
@@ -818,7 +821,8 @@ const LyricsEditorPanel = ({
     dispatch(keepLocalItemChanges());
   }, [dispatch]);
 
-  const handleReloadRemote = useCallback(() => {
+  const handleReloadRemote = useCallback((onlyIfClean = false) => {
+    if (onlyIfClean && acceptedLocalDraftRef.current) return;
     const remoteItem = pendingRemoteItemRef.current;
     const activeItemId = currentItemIdRef.current;
     if (!remoteItem || remoteItem._id !== activeItemId) return;
@@ -833,13 +837,13 @@ const LyricsEditorPanel = ({
       nextArrangementIndex,
       remoteItem.songMetadata,
     );
-    dispatch(applyPendingRemoteItem());
+    dispatch(applyPendingRemoteItem(onlyIfClean || undefined, true));
   }, [dispatch, localSelectedArrangement, resetLocalEditorState]);
 
   useEffect(() => {
     if (isLibraryEditor) return;
     if (isLyricsEditorOpen && hasRemoteUpdate && !hasPendingUpdate && !hasPendingChanges) {
-      handleReloadRemote();
+      handleReloadRemote(true);
       return;
     }
 

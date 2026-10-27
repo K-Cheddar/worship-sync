@@ -16,6 +16,7 @@ import { buildServiceTimeItem } from "../../utils/itemUtil";
 import { applyPouchAudit } from "../../utils/pouchAudit";
 import { getFormattedSections } from "../../utils/overflow";
 import { loadItemWithSongHydration } from "../../utils/songPersistence";
+import { SongV2ReplicationConflictError } from "../../utils/songV2ReplicationConflicts";
 import { usePresentationControllerMode } from "../../context/presentationControllerMode";
 
 const Item = () => {
@@ -42,6 +43,7 @@ const Item = () => {
   const [status, setStatus] = useState<"loading" | "success" | "error">(
     "loading"
   );
+  const [hasSongRevisionConflict, setHasSongRevisionConflict] = useState(false);
   const dispatch = useDispatch();
   const { isLoading, isSectionLoading, _id: activeItemId, listId: activeListId } =
     useSelector((state: RootState) => state.undoable.present.item);
@@ -75,6 +77,7 @@ const Item = () => {
       }
       try {
         setStatus("loading");
+        setHasSongRevisionConflict(false);
         dispatch(setItemIsLoading(true));
         const response: DBItem | undefined = await loadItemWithSongHydration(
           db,
@@ -92,6 +95,11 @@ const Item = () => {
         setStatus("success");
       } catch (e: unknown) {
         if (!isCurrentLoad()) return;
+        if (e instanceof SongV2ReplicationConflictError) {
+          setHasSongRevisionConflict(true);
+          setStatus("error");
+          return;
+        }
         // First access of the service-time item: no DB record yet — create it.
         // Matches the pattern in createNewItemInDb: catch any error, fire-and-forget
         // the put, and immediately use the in-memory item. No await, no status check.
@@ -135,7 +143,11 @@ const Item = () => {
 
   if (status === "error")
     return (
-      <h2 className="text-2xl text-center mt-4 font-bold">Item Not Found</h2>
+      <h2 className="text-2xl text-center mt-4 font-bold">
+        {hasSongRevisionConflict
+          ? "This song has conflicting edits. Saved versions are preserved. Use an editor with the draft still open to review the changes."
+          : "Item Not Found"}
+      </h2>
     );
 
   return (

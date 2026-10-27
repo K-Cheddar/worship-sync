@@ -360,6 +360,7 @@ export const itemSlice = createSlice({
       resetBackgroundTargetUi(state);
       state.baseItem = createItemSnapshot(action.payload);
       state.pendingRemoteItem = null;
+      state.pendingSongV2Conflicts = undefined;
       state.hasRemoteUpdate = false;
       state.remoteUpdateReason = null;
     },
@@ -604,46 +605,32 @@ export const itemSlice = createSlice({
     clearTransientState: (state) => {
       resetTransientItemState(state);
     },
-    markItemPersisted: (state, action: PayloadAction<DBItem>) => {
-      if (state._id !== action.payload._id) return;
-      const alreadyEditedFields = new Set(
-        state.baseItem
-          ? getItemPersistenceChanges(state, state.baseItem)
-          : [],
-      );
-      for (const field of ITEM_PERSISTED_FIELDS) {
-        if (alreadyEditedFields.has(field)) continue;
-        (state as unknown as Record<PersistedItemField, unknown>)[field] =
-          action.payload[field];
-      }
-      const persistedSnapshot = createItemSnapshot(action.payload);
-      state.baseItem = persistedSnapshot;
-      const hasUnappliedV2RemoteChange =
-        state.docType === "song-v2-root" &&
-        action.payload.docType === "song-v2-root" &&
-        !!persistedSnapshot &&
-        getItemPersistenceChanges(state, persistedSnapshot).length > 0;
-      if (hasUnappliedV2RemoteChange) {
-        // The v2 writer can merge a local slide edit with a remote sibling
-        // edit. The local draft is now saved, while the active editor still
-        // needs the merged sibling content applied from this snapshot.
-        state.pendingRemoteItem = action.payload;
-        state.hasRemoteUpdate = true;
-        state.hasPendingUpdate = false;
-        state.remoteUpdateReason = null;
-        return;
-      }
-      state.hasPendingUpdate = getItemPersistenceChanges(
-        state,
-        persistedSnapshot ?? action.payload,
-      ).length > 0;
-      if (!state.hasPendingUpdate) {
-        state.pendingRemoteItem = null;
-        state.hasRemoteUpdate = false;
-        state.remoteUpdateReason = null;
-      } else if (state.pendingRemoteItem) {
-        state.pendingRemoteItem = action.payload;
-      }
+    markItemPersisted: {
+      prepare: (persisted: DBItem, authored?: DBItem) => ({ payload: persisted, meta: { authored } }),
+      reducer: (state, action: PayloadAction<DBItem, string, { authored?: DBItem }>) => {
+        if (state._id !== action.payload._id) return;
+        const comparison = action.meta?.authored ?? state.baseItem;
+        const alreadyEditedFields = new Set(
+          comparison ? getItemPersistenceChanges(state, comparison) : [],
+        );
+        for (const field of ITEM_PERSISTED_FIELDS) {
+          if (alreadyEditedFields.has(field)) continue;
+          (state as unknown as Record<PersistedItemField, unknown>)[field] = action.payload[field];
+        }
+        const persistedSnapshot = createItemSnapshot(action.payload);
+        state.baseItem = persistedSnapshot;
+        state.hasPendingUpdate = getItemPersistenceChanges(
+          state, persistedSnapshot ?? action.payload,
+        ).length > 0 || !!state.pendingSongV2Conflicts?.length;
+        if (!state.hasPendingUpdate) {
+          state.pendingRemoteItem = null;
+          state.pendingSongV2Conflicts = undefined;
+          state.hasRemoteUpdate = false;
+          state.remoteUpdateReason = null;
+        } else if (state.pendingRemoteItem && !state.pendingSongV2Conflicts?.length) {
+          state.pendingRemoteItem = action.payload;
+        }
+      },
     },
     rebaseItemPersistence: (state, action: PayloadAction<DBItem>) => {
       if (state._id !== action.payload._id) return;
@@ -658,15 +645,28 @@ export const itemSlice = createSlice({
       state.pendingRemoteItem = action.payload;
       state.hasRemoteUpdate = true;
     },
+    bufferSongV2RevisionConflict: (state, action: PayloadAction<{
+      item: DBItem; conflicts: NonNullable<ItemState["pendingSongV2Conflicts"]>;
+    }>) => {
+      if (state._id !== action.payload.item._id) return;
+      state.pendingRemoteItem = action.payload.item;
+      state.pendingSongV2Conflicts = action.payload.conflicts;
+      state.hasRemoteUpdate = true;
+      state.hasPendingUpdate = true;
+    },
     setRemoteUpdateReason: (state, action: PayloadAction<ItemState["remoteUpdateReason"]>) => {
       state.remoteUpdateReason = action.payload ?? null;
     },
     discardPendingRemoteItem: (state) => {
       state.pendingRemoteItem = null;
+      state.pendingSongV2Conflicts = undefined;
       state.hasRemoteUpdate = false;
       state.remoteUpdateReason = null;
     },
-    applyPendingRemoteItem: (state) => {
+    applyPendingRemoteItem: {
+      prepare: (onlyIfClean?: boolean, allowLyricsEditorOpen = false) => ({ payload: onlyIfClean, meta: { allowLyricsEditorOpen } }),
+      reducer: (state, action: PayloadAction<boolean | undefined, string, { allowLyricsEditorOpen: boolean }>) => {
+      if (action.payload && (state.hasPendingUpdate || (state.isLyricsEditorOpen && !action.meta.allowLyricsEditorOpen))) return;
       if (!state.pendingRemoteItem) return;
       if (state.pendingRemoteItem._id !== state._id) {
         state.pendingRemoteItem = null;
@@ -683,15 +683,19 @@ export const itemSlice = createSlice({
       resetBackgroundTargetUi(state);
       state.baseItem = createItemSnapshot(state.pendingRemoteItem);
       state.pendingRemoteItem = null;
+      state.pendingSongV2Conflicts = undefined;
       state.hasRemoteUpdate = false;
       state.remoteUpdateReason = null;
+      },
     },
     keepLocalItemChanges: (state) => {
       if (!state.pendingRemoteItem) return;
+      const hasRevisionConflicts = !!state.pendingSongV2Conflicts?.length;
       state.baseItem = createItemSnapshot(state.pendingRemoteItem);
       state.pendingRemoteItem = null;
+      state.pendingSongV2Conflicts = undefined;
       state.hasRemoteUpdate = false;
-      state.hasPendingUpdate = !itemDocMatchesEditorState(
+      state.hasPendingUpdate = hasRevisionConflicts || !itemDocMatchesEditorState(
         state.baseItem!,
         state,
       );

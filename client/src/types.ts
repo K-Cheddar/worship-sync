@@ -402,6 +402,8 @@ export type ItemState = ItemProperties & {
   remoteUpdateReason?: "song-version-transition" | null;
   baseItem?: DBItem | null;
   pendingRemoteItem?: DBItem | null;
+  /** Runtime-only revision leaves shown with the current conflict decision. */
+  pendingSongV2Conflicts?: { documentId: string; revisions: string[] }[];
   /** When set, SlideEditor should focus this box index then clear. Used after format when slide count changes. */
   restoreFocusToBox?: number | null;
   /** Editor-only: slide ids selected for subset background apply/clear (media actions). */

@@ -1,5 +1,5 @@
 import type {
-  DBItem, SongV2RootDocument, SongV2ArrangementDocument,
+  Arrangment, DBItem, ItemState, SongV2RootDocument, SongV2ArrangementDocument,
   SongV2SlideDocument, SongV2Documents,
 } from "../types";
 import {
@@ -7,6 +7,8 @@ import {
   SongV2DocumentError, type SongV2Snapshot,
 } from "./songPersistence";
 import { applyPouchAudit } from "./pouchAudit";
+import { formatSong } from "./overflow";
+import { mergeLyricText } from "./mergeLyricText";
 
 type Document = SongV2RootDocument | SongV2ArrangementDocument | SongV2SlideDocument;
 type Update<T> = { current: T; next: T };
@@ -220,25 +222,91 @@ export function classifyIntendedDocument<T extends Document>({
   return "conflict";
 }
 
+const equalValue = (a: unknown, b: unknown) => JSON.stringify(canonicalValue(a)) === JSON.stringify(canonicalValue(b));
+const lyricStructure = (arr: Arrangment) => ({
+  ...arr, slides: undefined, monitorLayout: undefined,
+  formattedLyrics: arr.formattedLyrics.map(lyric => ({ ...lyric, words: undefined, slideSpan: undefined })),
+});
+const slideLayout = (slide: Arrangment["slides"][number]) => ({
+  ...slide, name: undefined,
+  boxes: slide.boxes.map((box, index) => ({ ...box, ...(index === 1 ? { words: undefined } : {}), slideIndex: undefined })),
+});
+
+/** Rebase only canonical text edits, never structural/layout intent or rich text. */
+function mergeConcurrentLyrics(baseline: DBItem, desired: DBItem, latest: DBItem): void {
+  for (let index = 0; index < desired.arrangements.length; index++) {
+    const local = desired.arrangements[index];
+    const base = baseline.arrangements.find(arr => arr.id === local.id);
+    const remote = latest.arrangements.find(arr => arr.id === local.id);
+    if (!base || !remote || !equalValue(lyricStructure(base), lyricStructure(local)) ||
+      !equalValue(lyricStructure(base), lyricStructure(remote))) continue;
+    const localTextChanged = base.formattedLyrics.some((lyric, i) => lyric.words !== local.formattedLyrics[i].words);
+    const remoteTextChanged = base.formattedLyrics.some((lyric, i) => lyric.words !== remote.formattedLyrics[i].words);
+    if (!localTextChanged || !remoteTextChanged) continue;
+    if (base.formattedLyrics.some(lyric => lyric.textDocument)) continue;
+    // Preserve the physical writer's conflict policy for styling and direct
+    // box edits. Only derived lyric pages may be rebuilt by this merge.
+    const sectionIndexFor = (slide: Arrangment["slides"][number]) => base.formattedLyrics.findIndex(lyric =>
+      slide.name === lyric.name || slide.name.startsWith(lyric.name + "\u200B"));
+    const layoutChanged = [local, remote].some(arr => {
+      const textChangedFor = (slide: Arrangment["slides"][number]) => {
+        const sectionIndex = sectionIndexFor(slide);
+        return sectionIndex >= 0 && base.formattedLyrics[sectionIndex].words !== arr.formattedLyrics[sectionIndex].words;
+      };
+      const retainedIds = new Set(arr.slides.map(slide => slide.id));
+      const baseIds = new Set(base.slides.map(slide => slide.id));
+      if (base.slides.some(slide => !retainedIds.has(slide.id) && !textChangedFor(slide)) ||
+        !equalValue(base.slides.filter(slide => retainedIds.has(slide.id)).map(slide => slide.id),
+          arr.slides.filter(slide => baseIds.has(slide.id)).map(slide => slide.id))) return true;
+      return arr.slides.some(slide => {
+        const old = base.slides.find(before => before.id === slide.id);
+        if (!old) return !textChangedFor(slide);
+        if (!equalValue(slideLayout(old), slideLayout(slide)) || sectionIndexFor(old) !== sectionIndexFor(slide)) return true;
+        // A noncanonical box edit (including title/blank text) must still be
+        // validated as physical intent, never folded into lyric formatting.
+        return old.boxes[1]?.words !== slide.boxes[1]?.words && !textChangedFor(slide);
+      });
+    });
+    if (layoutChanged) continue;
+    const formattedLyrics = local.formattedLyrics.map((lyric, i) => {
+      const words = mergeLyricText(base.formattedLyrics[i].words, lyric.words, remote.formattedLyrics[i].words);
+      if (words === null) throw new SongV2ConcurrentEditError(baseline._id,
+        getSongV2ArrangementDocId(baseline._id, local.id), "arrangement", "changed");
+      return { ...lyric, words };
+    });
+    const merged = formatSong({
+      ...latest, selectedArrangement: 0, selectedSlide: 1, selectedBox: 1,
+      arrangements: [{ ...remote, formattedLyrics }],
+    } as ItemState).arrangements[0];
+    // The original authored text was used above. Advance only this validated
+    // text intent; all other physical documents retain their authored baseline.
+    baseline.arrangements = baseline.arrangements.map(arr => arr.id === base.id ? remote : arr);
+    desired.arrangements[index] = merged;
+  }
+}
+
 /** Applies only baseline-to-desired intent after validating touched documents against current state. */
 export async function saveSongV2FromBaseline(
   db: PouchDB.Database, baselineSong: DBItem, desiredSong: DBItem,
+  snapshot?: SongV2Snapshot,
 ): Promise<SongV2WriteResult> {
   if (baselineSong.docType !== "song-v2-root") {
     throw new SongV2DocumentError("Song v2 interactive saves require a v2 authored baseline");
   }
   const baseline = JSON.parse(JSON.stringify(baselineSong)) as DBItem;
   const desired = JSON.parse(JSON.stringify(desiredSong)) as DBItem;
-  const intent = planSongV2Intent(baseline, desired);
   let current: SongV2Snapshot;
   try {
-    current = await loadSongV2Snapshot(db, baseline._id);
+    current = snapshot ?? await loadSongV2Snapshot(db, baseline._id);
+    if (current.root.songId !== baseline._id) throw new SongV2DocumentError("Snapshot owner mismatch");
   } catch (error) {
     if (typeof error === "object" && error !== null && "status" in error && error.status === 404) {
       throw new SongV2ConcurrentEditError(baseline._id, `song-v2:root:${encodeURIComponent(baseline._id)}`, "root", "missing");
     }
     throw error;
   }
+  mergeConcurrentLyrics(baseline, desired, current.hydrated);
+  const intent = planSongV2Intent(baseline, desired);
   const currentArrangements = new Map(current.arrangements.map(doc => [doc._id, doc]));
   const currentSlides = new Map(current.slides.map(doc => [doc._id, doc]));
   const baselineDocs = serializeSongToV2Documents(baseline);

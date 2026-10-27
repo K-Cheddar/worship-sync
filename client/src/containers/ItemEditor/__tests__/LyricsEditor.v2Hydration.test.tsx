@@ -55,7 +55,7 @@ describe("library lyrics editor exact v2 hydration", () => {
       arrangements: expect.arrayContaining([expect.objectContaining({ slides: fullSong().arrangements[0].slides })]),
       selectedArrangement: 0,
     })));
-    expect(db.get).toHaveBeenCalledWith(docs.root._id);
+    expect(db.get).toHaveBeenCalledWith(docs.root._id, { conflicts: true });
     expect(documents.get(docs.slides[0]._id)).toEqual(docs.slides[0]);
   });
 

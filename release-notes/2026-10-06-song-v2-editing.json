@@ -3,5 +3,5 @@
   "date": "2026-10-06",
   "type": "improved",
   "title": "Keep editing songs after migration",
-  "description": "Songs remain editable after moving to the newer song format. Update song details, lyrics, slides, and audio as usual."
+  "description": "Edit song details, lyrics, slides, and audio after migration, with independent lyric edits kept together across controllers and overlapping changes available for review."
 }

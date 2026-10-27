@@ -12,6 +12,7 @@ import { ActiveControllerProvider } from "../../context/activeController";
 import { useControllerPageLifecycle } from "./useControllerPageLifecycle";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import { upsertMediaItemFromRemote } from "../../store/mediaSlice";
+import { updateAllDocs } from "../../utils/dbUtils";
 
 jest.mock("../../hooks", () => ({
   useDispatch: () => store.dispatch,
@@ -49,6 +50,7 @@ jest.mock("../../utils/formatItemList", () => ({
 }));
 
 jest.mock("../../utils/dbUtils", () => ({
+  invalidateLibraryRefresh: jest.fn(),
   deleteUnusedBibleItems: jest.fn(),
   deleteUnusedHeadings: jest.fn(),
   getAllOverlayHistory: jest.fn().mockResolvedValue([]),
@@ -91,6 +93,30 @@ describe("useControllerPageLifecycle selected outline loading", () => {
     store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
     jest.mocked(useGlobalBroadcast).mockClear();
     jest.mocked(readMediaLibrary).mockResolvedValue({ list: [], folders: [] });
+    jest.mocked(updateAllDocs).mockClear();
+  });
+
+  it("does not scan the library for v2 slide/arrangement/cleanup notifications", () => {
+    const db = createDb({});
+    const updater = new EventTarget();
+    renderHook(() => useControllerPageLifecycle(), {
+      wrapper: ({ children }) => (
+        <Provider store={store}>
+          <ControllerInfoContext.Provider value={{ db, cloud: {}, updater } as any}>
+            {children}
+          </ControllerInfoContext.Provider>
+        </Provider>
+      ),
+    });
+    jest.mocked(updateAllDocs).mockClear();
+    act(() => updater.dispatchEvent(new CustomEvent("update", { detail: [
+      { _id: "song-v2:slide:better:master:verse-a", docType: "song-v2-slide" },
+      { _id: "song-v2:arrangement:better:master", docType: "song-v2-arrangement" },
+      { _id: "song-v2:cleanup:better:old", docType: "song-v2-cleanup" },
+    ] })));
+    expect(updateAllDocs).not.toHaveBeenCalled();
+    act(() => updater.dispatchEvent(new CustomEvent("update", { detail: [{ _id: "legacy", type: "free" }] })));
+    expect(updateAllDocs).toHaveBeenCalledTimes(1);
   });
 
   it("applies replicated media item changes to Redux outside the media route", () => {

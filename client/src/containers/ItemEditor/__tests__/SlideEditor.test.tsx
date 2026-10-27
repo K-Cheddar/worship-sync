@@ -71,6 +71,7 @@ jest.mock("../../../context/activeController", () => ({
 }));
 
 jest.mock("../../../store/itemSlice", () => ({
+  setHasPendingUpdate: (payload: boolean) => ({ type: "item/setHasPendingUpdate", payload }),
   setSelectedBox: jest.fn((value: number) => ({
     type: "item/setSelectedBox",
     payload: value,
@@ -2039,6 +2040,7 @@ describe("SlideEditor", () => {
 
       expect(mockFormatSong).not.toHaveBeenCalled();
       expect(mockUpdateArrangements).not.toHaveBeenCalled();
+      expect(mockDispatch).toHaveBeenCalledWith({ type: "item/setHasPendingUpdate", payload: true });
 
       act(() => {
         jest.advanceTimersByTime(200);

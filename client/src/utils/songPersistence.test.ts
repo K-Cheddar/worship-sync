@@ -418,6 +418,7 @@ describe("songPersistence", () => {
     ]);
     expect(db.allDocs).toHaveBeenCalledTimes(2);
     expect(db.allDocs).toHaveBeenNthCalledWith(1, {
+      conflicts: true,
       keys: [
         getSongV2ArrangementDocId(source._id, "arr-a"),
         getSongV2ArrangementDocId(source._id, "arr-b"),
@@ -425,6 +426,7 @@ describe("songPersistence", () => {
       include_docs: true,
     });
     expect(db.allDocs).toHaveBeenNthCalledWith(2, {
+      conflicts: true,
       keys: [
         getSongV2SlideDocId(source._id, "arr-a", "a-slide"),
         getSongV2SlideDocId(source._id, "arr-b", "b-slide"),

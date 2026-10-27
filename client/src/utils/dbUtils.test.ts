@@ -36,6 +36,7 @@ import {
   removeCreditHistoryDoc,
   removeOverlayHistoryDoc,
   updateAllDocs,
+  invalidateLibraryRefresh,
 } from "./dbUtils";
 import { serializeSongToV2Documents } from "./songPersistence";
 import { allDocsSlice } from "../store/allDocsSlice";
@@ -280,6 +281,18 @@ describe("dbUtils", () => {
 
     await expect(updateAllDocs(dispatch, db as unknown as PouchDB.Database, () => false)).resolves.toBe(false);
 
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("ignores a broad refresh invalidated by a newer targeted update", async () => {
+    const db = createDb();
+    let release!: (value: unknown) => void;
+    db.allDocs.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    const dispatch = jest.fn();
+    const pending = updateAllDocs(dispatch, db as unknown as PouchDB.Database);
+    invalidateLibraryRefresh(db as unknown as PouchDB.Database);
+    release({ rows: [] });
+    await expect(pending).resolves.toBe(false);
     expect(dispatch).not.toHaveBeenCalled();
   });
 

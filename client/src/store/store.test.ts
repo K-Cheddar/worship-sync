@@ -1,3 +1,5 @@
+import type { SongV2Documents } from "../types";
+
 const flushListenerEffects = async () => {
   for (let attempt = 0; attempt < 12; attempt += 1) await Promise.resolve();
 };
@@ -213,10 +215,13 @@ const loadStoreWithItemPersistence = () => {
   let storeModule: any;
   let itemSliceModule: any;
   let songPersistenceModule: any;
+  let deferredMutations: any;
+  let replicationConflicts: any;
   const postMessage = jest.fn();
   const db = {
     get: jest.fn(),
     put: jest.fn(),
+    allDocs: jest.fn(),
   };
   mockActiveItemDb = db;
 
@@ -248,6 +253,10 @@ const loadStoreWithItemPersistence = () => {
     itemSliceModule = require("./itemSlice");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     songPersistenceModule = require("../utils/songPersistence");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    deferredMutations = require("./deferredItemMutations");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    replicationConflicts = require("../utils/songV2ReplicationConflicts");
   });
 
   return {
@@ -258,8 +267,186 @@ const loadStoreWithItemPersistence = () => {
     postMessage,
     setGlobalDb: (next: unknown) => { mockActiveItemDb = next; },
     songPersistence: songPersistenceModule,
+    deferredMutations,
+    replicationConflicts,
+    songV2DocumentsChanged: storeModule.songV2DocumentsChanged,
   };
 };
+
+describe("v2 remote refresh and pending-input boundaries", () => {
+  const structuredClone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+  function setup() {
+    const env = loadStoreWithItemPersistence();
+    const source = createSongDoc({ arrangements: [{ id: "a", name: "Master", formattedLyrics: [], songOrder: [],
+      slides: ["A", "B"].map(id => ({ id, name: `Verse 1${id}`, type: "Verse", boxes: [{ id: `${id}-box`, words: id, width: 100, height: 100 }] })),
+    }] });
+    const physical: SongV2Documents = env.songPersistence.serializeSongToV2Documents(source);
+    const docs = new Map<string, any>([physical.root, ...physical.arrangements, ...physical.slides].map(doc => [doc._id, { ...doc, _rev: "1-base" }]));
+    env.db.get.mockImplementation(async id => {
+      const doc = docs.get(id);
+      if (!doc) throw Object.assign(new Error("missing"), { status: 404 });
+      return structuredClone(doc);
+    });
+    mockV2AllDocs(env.db, docs);
+    env.db.put.mockImplementation(async next => {
+      const old = docs.get(next._id);
+      if (old && old._rev !== next._rev) throw Object.assign(new Error("conflict"), { status: 409 });
+      const rev = `${Number(old?._rev.split("-")[0] ?? 0) + 1}-saved`;
+      docs.set(next._id, structuredClone({ ...next, _rev: rev }));
+      return { ok: true, id: next._id, rev };
+    });
+    const baseline = env.songPersistence.hydrateSongFromV2Documents(docs.get(physical.root._id), physical.arrangements.map(doc => docs.get(doc._id)), physical.slides.map(doc => docs.get(doc._id)), true);
+    env.store.dispatch(env.itemSlice.actions.setActiveItem(baseline));
+    const edit = (words: string) => {
+      const slides = structuredClone(env.store.getState().undoable.present.item.arrangements[0].slides);
+      slides[0].boxes[0].words = words;
+      env.store.dispatch(env.itemSlice.actions._updateSlides(slides));
+    };
+    return { ...env, docs, physical, baseline, edit };
+  }
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  it("ignores unrelated slides, coalesces active notifications, and uses only scoped reads", async () => {
+    const env = setup();
+    env.store.dispatch(env.songV2DocumentsChanged([{ songId: "unrelated", libraryChanged: false }]));
+    await jest.advanceTimersByTimeAsync(50);
+    expect(env.db.get).not.toHaveBeenCalled();
+    expect(env.db.allDocs).not.toHaveBeenCalled();
+    for (let i = 0; i < 3; i++) env.store.dispatch(env.songV2DocumentsChanged([{ songId: "song-1", libraryChanged: false }]));
+    await jest.advanceTimersByTimeAsync(50);
+    expect(env.db.get).toHaveBeenCalledTimes(1);
+    expect(env.db.allDocs).toHaveBeenCalledTimes(2);
+    expect(env.db.allDocs.mock.calls.every(([options]) => Array.isArray(options.keys))).toBe(true);
+  });
+
+  it("flushes accepted input during its 200ms debounce before buffering a remote update", async () => {
+    const env = setup();
+    const owner = env.deferredMutations.getItemMutationOwner(env.store.getState().undoable.present.item);
+    env.store.dispatch(env.itemSlice.actions.setHasPendingUpdate(true));
+    env.deferredMutations.scheduleOwnedItemMutation(owner, 200, () => env.edit("typed B"));
+    env.store.dispatch(env.itemSlice.actions.bufferRemoteItemUpdate({ ...env.baseline, name: "remote" }));
+    expect(env.store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words).toBe("typed B");
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    await jest.advanceTimersByTimeAsync(1700);
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("typed B");
+  });
+
+  it("flushes other owned pending mutations before a broad refresh decides the editor is clean", async () => {
+    const env = setup();
+    const owner = env.deferredMutations.getItemMutationOwner(env.store.getState().undoable.present.item);
+    env.deferredMutations.scheduleOwnedItemMutation(owner, 200, () => env.edit("accepted input"));
+    const remoteB = env.docs.get(env.physical.slides[1]._id);
+    env.docs.set(remoteB._id, { ...remoteB, _rev: "2-remote", boxes: [{ ...remoteB.boxes[0], words: "remote B" }] });
+    env.store.dispatch({ type: "allDocs/updateAllSongDocs", payload: [env.songPersistence.songToLibraryProjection(env.baseline)] });
+    await jest.advanceTimersByTimeAsync(0);
+    expect(env.store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words).toBe("accepted input");
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    await jest.advanceTimersByTimeAsync(1500);
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("accepted input");
+    expect(env.docs.get(env.physical.slides[1]._id).boxes[0].words).toBe("remote B");
+  });
+
+  it("rechecks cleanliness when a stale automatic adoption runs after new input was accepted", async () => {
+    const env = setup();
+    env.store.dispatch(env.itemSlice.actions.bufferRemoteItemUpdate(env.baseline));
+    env.store.dispatch(env.itemSlice.actions.setIsLyricsEditorOpen(true));
+    env.store.dispatch(env.itemSlice.actions.applyPendingRemoteItem(true));
+    expect(env.store.getState().undoable.present.item.hasRemoteUpdate).toBe(true);
+    env.store.dispatch(env.itemSlice.actions.applyPendingRemoteItem(true, true));
+    expect(env.store.getState().undoable.present.item.hasRemoteUpdate).toBe(false);
+    env.store.dispatch(env.itemSlice.actions.setIsLyricsEditorOpen(false));
+    env.store.dispatch(env.itemSlice.actions.bufferRemoteItemUpdate(env.baseline));
+    const owner = env.deferredMutations.getItemMutationOwner(env.store.getState().undoable.present.item);
+    env.deferredMutations.scheduleOwnedItemMutation(owner, 200, () => env.edit("typed after clean render"));
+    env.store.dispatch(env.itemSlice.actions.applyPendingRemoteItem(true));
+    expect(env.store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words).toBe("typed after clean render");
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    expect(env.store.getState().undoable.present.item.hasRemoteUpdate).toBe(true);
+    await jest.advanceTimersByTimeAsync(1500);
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("typed after clean render");
+  });
+
+  it("does not acknowledge text typed during an in-flight save until that text is written", async () => {
+    const env = setup();
+    const originalPut = env.db.put.getMockImplementation()!;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    env.db.put.mockImplementationOnce(async next => { await gate; return originalPut(next); });
+    env.edit("first");
+    await jest.advanceTimersByTimeAsync(1500);
+    const owner = env.deferredMutations.getItemMutationOwner(env.store.getState().undoable.present.item);
+    env.store.dispatch(env.itemSlice.actions.setHasPendingUpdate(true));
+    env.deferredMutations.scheduleOwnedItemMutation(owner, 200, () => env.edit("second typed"));
+    release();
+    await jest.advanceTimersByTimeAsync(0);
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    expect(env.store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words).toBe("second typed");
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("first");
+    await jest.advanceTimersByTimeAsync(1500);
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("second typed");
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+  });
+
+  it("re-reads an older remote response after a successful save instead of replacing the saved content", async () => {
+    const env = setup();
+    const read = env.db.allDocs.getMockImplementation()!;
+    let release!: () => void;
+    let calls = 0;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    env.db.allDocs.mockImplementation(async options => {
+      const result = structuredClone(await read(options));
+      if (++calls === 2) await gate;
+      return result;
+    });
+    env.store.dispatch(env.songV2DocumentsChanged([{ songId: "song-1", libraryChanged: false }]));
+    await jest.advanceTimersByTimeAsync(50);
+    env.edit("newest");
+    await jest.advanceTimersByTimeAsync(1500);
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+    release();
+    await jest.advanceTimersByTimeAsync(50);
+    const item = env.store.getState().undoable.present.item;
+    expect(item.arrangements[0].slides[0].boxes[0].words).toBe("newest");
+    expect(item.hasRemoteUpdate).toBe(false);
+    expect(item.pendingRemoteItem).toBeNull();
+  });
+
+  it("ignores a changed-song load after switching databases with the same item ID", async () => {
+    const env = setup();
+    let release!: (doc: unknown) => void;
+    env.db.get.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    env.store.dispatch(env.songV2DocumentsChanged([{ songId: "song-1", libraryChanged: true }]));
+    await jest.advanceTimersByTimeAsync(50);
+    const otherDb = { get: jest.fn(), put: jest.fn(), allDocs: jest.fn() };
+    env.setGlobalDb(otherDb);
+    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...env.baseline, name: "Other church" }));
+    release(env.docs.get(env.physical.root._id));
+    await jest.advanceTimersByTimeAsync(50);
+    expect(env.store.getState().undoable.present.item.name).toBe("Other church");
+    expect(env.store.getState().undoable.present.item.pendingRemoteItem).toBeNull();
+    expect(otherDb.get).not.toHaveBeenCalled();
+    expect(otherDb.put).not.toHaveBeenCalled();
+  });
+
+  it.each(["mine", "theirs"])("retains unresolved drafts through a late acknowledgment and resolves only displayed leaves for %s", async choice => {
+    const env = setup();
+    const approved = [{ documentId: env.physical.arrangements[0]._id, revisions: ["2-displayed"] }];
+    const remote = { ...env.baseline, name: "Remote version" };
+    const prune = jest.spyOn(env.replicationConflicts, "pruneResolvedSongV2Conflicts")
+      .mockImplementation(async (_db: unknown, adopted: unknown) => adopted);
+    env.store.dispatch(env.itemSlice.actions.bufferSongV2RevisionConflict({ item: remote, conflicts: approved }));
+    env.store.dispatch(env.itemSlice.actions.markItemPersisted(env.baseline, env.baseline));
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    expect(env.store.getState().undoable.present.item.pendingRemoteItem.name).toBe("Remote version");
+    env.store.dispatch(choice === "mine" ? env.itemSlice.actions.keepLocalItemChanges() : env.itemSlice.actions.applyPendingRemoteItem());
+    await jest.advanceTimersByTimeAsync(1500);
+    expect(prune).toHaveBeenCalledWith(env.db, expect.anything(), approved);
+    expect(env.store.getState().undoable.present.item.pendingSongV2Conflicts).toBeUndefined();
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+    prune.mockRestore();
+  });
+});
 
 const createOverlay = (id: string, name: string) => ({
   id,
@@ -1127,6 +1314,7 @@ describe("store module", () => {
       }));
       jest.doMock("../context/globalInfo", () => ({ globalFireDbInfo: fireInfo, globalHostId: "host-123" }));
       jest.doMock("../utils/dbUtils", () => ({
+        invalidateLibraryRefresh: jest.fn(),
         migrateLegacyCreditsToActiveOutlineIfNeeded: migrate,
         ensureCreditsIndexDoc: ensure,
         getCreditsByIds: getCredits,
@@ -2374,7 +2562,7 @@ describe("store module", () => {
 
     expect(db.put.mock.calls.map(([doc]: [any]) => doc._id)).toEqual([physical.slides[0]._id]);
     expect(store.getState().undoable.present.item.baseItem.arrangements[0].slides[1].boxes[0].words).toBe("B remote");
-    expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(true);
+    expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(false);
     expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
     const librarySong = store.getState().allDocs.allSongDocs.find((doc: any) => doc._id === "song-1");
     expect(librarySong.arrangements[0].slides).toEqual([]);

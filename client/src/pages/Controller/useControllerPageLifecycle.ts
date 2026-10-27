@@ -1,4 +1,5 @@
 import { useCallback, useContext, useEffect, useRef } from "react";
+import { songV2DocumentsChanged } from "../../store/store";
 import { useStore } from "react-redux";
 import { useDispatch, useSelector } from "../../hooks";
 import {
@@ -38,6 +39,7 @@ import {
   getAllOverlayHistory,
   getOverlaysByIds,
   updateAllDocs,
+  invalidateLibraryRefresh,
 } from "../../utils/dbUtils";
 import {
   loadOrCreateAllItemsDoc,
@@ -176,8 +178,23 @@ export const useControllerPageLifecycle = () => {
       try {
         const updates = event.detail;
         if (!Array.isArray(updates)) return;
+        const songs = new Map<string, boolean>();
+        let needsBroadRefresh = false;
         let refetchOverlayHistory = false;
         for (const _update of updates) {
+          if (typeof _update._id === "string" && _update._id.startsWith("song-v2:")) {
+            const match = /^song-v2:(root|arrangement|slide):([^:]+)/.exec(_update._id);
+            if (match) {
+              const songId = decodeURIComponent(match[2]);
+              songs.set(songId, (songs.get(songId) ?? false) || match[1] !== "slide");
+            }
+            continue;
+          }
+          if (_update.docType === "song-v2-root" && _update.type === "song") {
+            songs.set(_update._id, true);
+            continue;
+          }
+          needsBroadRefresh = true;
           if (selectedList && _update._id === selectedList._id) {
             const update = _update as DBItemListDetails;
             const itemList = update.items;
@@ -224,7 +241,11 @@ export const useControllerPageLifecycle = () => {
             refetchOverlayHistory = true;
           }
         }
-        updateAllDocs(dispatch);
+        if (songs.size) {
+          if (db) invalidateLibraryRefresh(db);
+          dispatch(songV2DocumentsChanged([...songs].map(([songId, libraryChanged]) => ({ songId, libraryChanged }))));
+        }
+        if (needsBroadRefresh) updateAllDocs(dispatch, db, () => mediaReplicationDbRef.current === db);
         if (refetchOverlayHistory && db) {
           const overlayHistory = await getAllOverlayHistory(db);
           dispatch(mergeOverlayHistoryFromDb(overlayHistory));

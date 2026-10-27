@@ -40,6 +40,7 @@ import {
   updateSlides,
   applyOwnedContentMutation,
   setRestoreFocusToBox,
+  setHasPendingUpdate,
 } from "../../store/itemSlice";
 import {
   flushPendingItemMutations,
@@ -319,7 +320,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
 
   useEffect(() => {
     if (hasRemoteUpdate && !isLyricsEditorOpen && !hasPendingUpdate) {
-      handleReloadRemote();
+      dispatch(applyPendingRemoteItem(true));
       return;
     }
 
@@ -370,6 +371,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
   }, [
     handleKeepLocalEdits,
     handleReloadRemote,
+    dispatch,
     hasRemoteUpdate,
     remoteUpdateReason,
     hasPendingUpdate,
@@ -968,6 +970,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       const owner = itemOwnerRef.current;
       if (!owner) return;
       pendingBoxEditRef.current = { changeInfo, owner };
+      dispatch(setHasPendingUpdate(true));
       setIsReformatting(true);
       boxEditTimeoutRef.current = scheduleOwnedItemMutation(owner, BOX_EDIT_DEBOUNCE_MS, () => {
         const pending = pendingBoxEditRef.current;
@@ -989,7 +992,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
         setIsReformatting(false);
       });
     },
-    [applyBoxChange, clearPendingBoxEdit]
+    [applyBoxChange, clearPendingBoxEdit, dispatch]
   );
 
   const onChange = useCallback((changeInfo: DisplayEditorChangeInfo) => {
@@ -1245,6 +1248,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       reformatTimeoutRef.current?.cancel();
 
       setIsReformatting(true);
+      dispatch(setHasPendingUpdate(true));
       reformatTimeoutRef.current = scheduleOwnedItemMutation(owner, 300, () => {
         void dispatch(applyOwnedContentMutation({ owner, mutation }))
           .unwrap()

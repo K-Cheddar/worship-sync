@@ -13,6 +13,8 @@ import {
   createMockPouchDB,
 } from "../../test/mocks";
 import type { DBItem } from "../../types";
+import * as songPersistence from "../../utils/songPersistence";
+import { SongV2ReplicationConflictError } from "../../utils/songV2ReplicationConflicts";
 
 jest.mock("../../containers/ItemEditor/SlideEditor", () => () => (
   <div data-testid="slide-editor" />
@@ -64,6 +66,27 @@ const createTestStore = () => {
 };
 
 describe("Controller Item page", () => {
+  it("reports preserved revision conflicts instead of silently opening a winning draft", async () => {
+    const load = jest.spyOn(songPersistence, "loadItemWithSongHydration")
+      .mockRejectedValueOnce(new SongV2ReplicationConflictError({} as songPersistence.SongV2Snapshot));
+    const db = createMockPouchDB();
+    const store = createTestStore();
+    render(
+      <Provider store={store}>
+        <ControllerInfoContext.Provider value={createMockControllerContext({ db }) as any}>
+          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+            <MemoryRouter initialEntries={[itemRoute("better", "list")] }>
+              <Routes><Route path="/controller/item/:itemId/:listId" element={<Item />} /></Routes>
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+    expect(await screen.findByText(/saved versions are preserved/i)).toBeInTheDocument();
+    expect(db.put).not.toHaveBeenCalled();
+    expect(store.getState().undoable.present.item.isLoading).toBe(false);
+    load.mockRestore();
+  });
   it("clears loading when fetching the item fails", async () => {
     const dbGet = jest.fn().mockRejectedValue(new Error("load failed"));
     const controllerContext = createMockControllerContext({

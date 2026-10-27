@@ -110,9 +110,10 @@ export const isPouchNotFoundError = (error: unknown) =>
 const getOptionalDocument = async <T,>(
   db: PouchDB.Database,
   id: string,
+  conflicts = false,
 ): Promise<T | null> => {
   try {
-    return (await db.get(id)) as T;
+    return (conflicts ? await db.get(id, { conflicts: true }) : await db.get(id)) as T;
   } catch (error) {
     if (isPouchNotFoundError(error)) return null;
     throw error;
@@ -125,19 +126,33 @@ const isSongV2Root = (song: DBItem | undefined): boolean =>
 const getReferencedDocuments = async <T,>(
   db: PouchDB.Database,
   ids: string[],
+  conflicts = false,
 ): Promise<T[]> => {
   if (!ids.length) return [];
-  const result = await db.allDocs({ keys: ids, include_docs: true });
+  const result = await db.allDocs({ keys: ids, include_docs: true, ...(conflicts ? { conflicts: true } : {}) });
   return result.rows.flatMap((row) =>
     "doc" in row && row.doc ? [row.doc as unknown as T] : [],
   );
 };
 
-export type SongV2Snapshot = SongV2Documents & { hydrated: DBItem };
+export type SongV2RevisionConflict = { documentId: string; revisions: string[] };
+export type SongV2Snapshot = SongV2Documents & { hydrated: DBItem; conflicts?: SongV2RevisionConflict[] };
+
+const snapshotFromDocuments = (documents: SongV2Documents): SongV2Snapshot => {
+  const conflicts: SongV2RevisionConflict[] = [];
+  for (const doc of [documents.root, ...documents.arrangements, ...documents.slides]) {
+    const physical = doc as typeof doc & { _conflicts?: string[] };
+    if (physical._conflicts?.length) conflicts.push({ documentId: doc._id, revisions: physical._conflicts });
+    delete physical._conflicts;
+  }
+  return { ...documents, ...(conflicts.length ? { conflicts } : {}),
+    hydrated: hydrateSongFromV2Documents(documents.root, documents.arrangements, documents.slides, true) };
+};
 
 const loadV2Documents = async (
   db: PouchDB.Database,
   root: SongV2RootDocument,
+  conflicts = false,
 ): Promise<SongV2Documents> => {
   const arrangementIds = root.arrangementIds.map((arrangementId) =>
     getSongV2ArrangementDocId(root.songId, arrangementId),
@@ -145,6 +160,7 @@ const loadV2Documents = async (
   const arrangements = await getReferencedDocuments<SongV2ArrangementDocument>(
     db,
     arrangementIds,
+    conflicts,
   );
   for (const arrangement of arrangements) {
     if (!Array.isArray(arrangement.slideIds)) {
@@ -158,7 +174,7 @@ const loadV2Documents = async (
       getSongV2SlideDocId(root.songId, arrangement.arrangementId, slideId),
     ),
   );
-  const slides = await getReferencedDocuments<SongV2SlideDocument>(db, slideIds);
+  const slides = await getReferencedDocuments<SongV2SlideDocument>(db, slideIds, conflicts);
   return { root, arrangements, slides };
 };
 
@@ -166,16 +182,16 @@ const loadV2Documents = async (
 export async function loadSongV2Snapshot(
   db: PouchDB.Database,
   songId: string,
+  includeConflicts = false,
 ): Promise<SongV2Snapshot> {
-  const root = await db.get<SongV2RootDocument>(getSongV2RootDocId(songId));
+  const root = includeConflicts
+    ? await db.get<SongV2RootDocument>(getSongV2RootDocId(songId), { conflicts: true })
+    : await db.get<SongV2RootDocument>(getSongV2RootDocId(songId));
   if (root.songId !== songId) throw new SongV2DocumentError("V2 snapshot song identity mismatch");
   if (root.deletedAt) throw new SongV2DeletedError(songId);
   assertValidV2Root(root);
-  const documents = await loadV2Documents(db, root);
-  return {
-    ...documents,
-    hydrated: hydrateSongFromV2Documents(documents.root, documents.arrangements, documents.slides, true),
-  };
+  const documents = await loadV2Documents(db, root, includeConflicts);
+  return snapshotFromDocuments(documents);
 }
 
 /** Loads a document and hydrates songs into the editor's canonical shape. */
@@ -196,6 +212,7 @@ export async function loadSong(
   const v2Root = await getOptionalDocument<SongV2RootDocument>(
     db,
     getSongV2RootDocId(songId),
+    true,
   );
   if (v2Root) {
     if (v2Root.deletedAt) throw new SongV2DeletedError(songId);
@@ -205,7 +222,13 @@ export async function loadSong(
       );
     }
     assertValidV2Root(v2Root);
-    const snapshot = await loadV2Documents(db, v2Root);
+    const snapshot = await loadV2Documents(db, v2Root, true);
+    if ([snapshot.root, ...snapshot.arrangements, ...snapshot.slides]
+      .some(doc => (doc as typeof doc & { _conflicts?: string[] })._conflicts?.length)) {
+      const { loadReconciledSongV2Snapshot } = await import("./songV2ReplicationConflicts");
+      const resolved = await loadReconciledSongV2Snapshot(db, songId, snapshotFromDocuments(snapshot));
+      return normalizeItemSlides(resolved.hydrated);
+    }
     return hydrateSongFromV2Documents(snapshot.root, snapshot.arrangements, snapshot.slides);
   }
   const document = (await db.get(songId)) as DBItem;
@@ -241,6 +264,7 @@ export async function saveSong(
   song: DBItem,
   currentSong?: DBItem,
   diagnostics?: SongSaveDiagnostics,
+  snapshot?: SongV2Snapshot,
 ): Promise<DBItem> {
   if (song.type !== "song") throw new Error("Only songs can be saved here");
   if (song.docType === "song-v2-root" || isSongV2Root(currentSong)) {
@@ -252,8 +276,16 @@ export async function saveSong(
       throw new SongV2BaselineRequiredError(song._id);
     }
     const { saveSongV2FromBaseline } = await import("./songV2Writer");
-    const result = await saveSongV2FromBaseline(db, currentSong, song);
-    await reportV2CleanupErrors(db, song._id, result.cleanupErrors, diagnostics);
+    let result;
+    try { result = await saveSongV2FromBaseline(db, currentSong, song, snapshot); }
+    catch (error) {
+      // Another writer can win between validation and put. Re-read once and
+      // recompute against the original authored baseline; never blind retry.
+      if (!(error instanceof Error && error.name === "SongV2WriteError" &&
+        "status" in error && error.status === 409)) throw error;
+      result = await saveSongV2FromBaseline(db, currentSong, song);
+    }
+    if (result.cleanupErrors.length) await reportV2CleanupErrors(db, song._id, result.cleanupErrors, diagnostics);
     return result.song;
   }
   const existing = currentSong ?? await loadSong(db, song._id);
@@ -262,8 +294,8 @@ export async function saveSong(
       throw new SongV2BaselineRequiredError(song._id);
     }
     const { saveSongV2FromBaseline } = await import("./songV2Writer");
-    const result = await saveSongV2FromBaseline(db, currentSong, song);
-    await reportV2CleanupErrors(db, song._id, result.cleanupErrors, diagnostics);
+    const result = await saveSongV2FromBaseline(db, currentSong, song, snapshot);
+    if (result.cleanupErrors.length) await reportV2CleanupErrors(db, song._id, result.cleanupErrors, diagnostics);
     return result.song;
   }
   if (existing.type !== "song") {
