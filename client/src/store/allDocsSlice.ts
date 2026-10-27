@@ -7,10 +7,11 @@ export const isItemDocument = (value: unknown): value is DBItem | DBHeading => {
   const doc = value as Record<string, unknown>;
   return typeof doc._id === "string" && typeof doc.name === "string" && !doc._id.startsWith("_") && !doc._deleted &&
     (doc.docType === undefined || doc.docType === "item" || doc.docType === "heading") &&
-    ["song", "free", "timer", "bible", "heading"].includes(String(doc.type));
+    ["song", "free", "timer", "bible", "heading", "service-time"].includes(String(doc.type));
 };
 
-function getDocsKey(type: string): "allSongDocs" | "allFreeFormDocs" | "allTimerDocs" | "allBibleDocs" | null {
+function getDocsKey(type: string): "allSongDocs" | "allFreeFormDocs" | "allTimerDocs" | "allBibleDocs" | "allServiceTimeDocs" | null {
+  if (type === "service-time") return "allServiceTimeDocs";
   if (type === "song") return "allSongDocs";
   if (type === "free") return "allFreeFormDocs";
   if (type === "timer") return "allTimerDocs";
@@ -27,6 +28,7 @@ type AllDocsState = {
   allFreeFormDocs: DBItem[];
   allTimerDocs: DBItem[];
   allBibleDocs: DBItem[];
+  allServiceTimeDocs: DBItem[];
   allHeadingDocs: DBHeading[];
   isInitialized: boolean;
   error: string | null;
@@ -39,6 +41,7 @@ const initialState: AllDocsState = {
   allFreeFormDocs: [],
   allTimerDocs: [],
   allBibleDocs: [],
+  allServiceTimeDocs: [],
   allHeadingDocs: [],
   isInitialized: false,
   error: null,
@@ -54,6 +57,7 @@ export const allDocsSlice = createSlice({
       state.allFreeFormDocs = [];
       state.allTimerDocs = [];
       state.allBibleDocs = [];
+      state.allServiceTimeDocs = [];
       state.allHeadingDocs = [];
       for (const doc of action.payload) {
         if (doc.type === "heading") state.allHeadingDocs.push(doc as DBHeading);
@@ -73,12 +77,12 @@ export const allDocsSlice = createSlice({
       const { id, doc, deleted } = action.payload;
       if (deleted) {
         // Tombstones need not retain their original item type.
-        const cached = [state.allSongDocs, state.allFreeFormDocs, state.allTimerDocs, state.allBibleDocs, state.allHeadingDocs]
+        const cached = [state.allSongDocs, state.allFreeFormDocs, state.allTimerDocs, state.allBibleDocs, state.allServiceTimeDocs, state.allHeadingDocs]
           .some((docs) => docs.some((item) => item._id === id));
         if (!cached) return;
       } else if (!isItemDocument(doc)) return;
       state.changeVersion += 1;
-      for (const key of ["allSongDocs", "allFreeFormDocs", "allTimerDocs", "allBibleDocs"] as const) {
+      for (const key of ["allSongDocs", "allFreeFormDocs", "allTimerDocs", "allBibleDocs", "allServiceTimeDocs"] as const) {
         const index = state[key].findIndex((item) => item._id === id);
         if (!deleted && doc && getDocsKey(doc.type) === key) {
           if (index < 0) state[key].push(doc as DBItem);

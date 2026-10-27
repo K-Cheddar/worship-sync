@@ -75,6 +75,7 @@ let state = {
   },
   undoable: {
     present: {
+      item: { _id: "", type: "" },
       itemLists: {
         currentLists: outlineLists,
         selectedIdByScope: { presentation: "outline-1", aux: "outline-aux" },
@@ -122,11 +123,11 @@ jest.mock("../../hooks/useMediaPreparationManifest", () => ({
   },
 }));
 
-const renderPublisher = (db?: object, currentItemId?: string) =>
+const renderPublisher = (db?: object) =>
   render(
     <GlobalInfoContext.Provider value={{ sessionKind: "human" } as never}>
       <ControllerInfoContext.Provider value={{ db } as never}>
-        <ControllerMediaPreparationPublisher currentItemId={currentItemId} />
+        <ControllerMediaPreparationPublisher />
       </ControllerInfoContext.Provider>
     </GlobalInfoContext.Provider>,
   );
@@ -137,6 +138,7 @@ describe("ControllerMediaPreparationPublisher", () => {
   });
 
   beforeEach(() => {
+    state.undoable.present.item = { _id: "", type: "" };
     activeProfile = profile;
     state = {
       ...state,
@@ -237,6 +239,7 @@ describe("ControllerMediaPreparationPublisher", () => {
       ...state,
       undoable: {
         present: {
+          item: state.undoable.present.item,
           itemLists: {
             currentLists: [
               { ...outlineLists[0], name: "Sabbath Service" },
@@ -260,6 +263,7 @@ describe("ControllerMediaPreparationPublisher", () => {
       ...state,
       undoable: {
         present: {
+          item: state.undoable.present.item,
           itemLists: {
             currentLists: [
               { ...outlineLists[0], name: "Sabbath Service" },
@@ -406,4 +410,16 @@ describe("ControllerMediaPreparationPublisher", () => {
     await waitFor(() => expect(imageSpy).toHaveBeenCalledTimes(1));
     imageSpy.mockRestore();
   });
+});
+
+it("follows Redux selection in the local preparation pool for main and auxiliary controllers", async () => {
+  (window as { electronAPI?: unknown }).electronAPI = {};
+  const view = renderPublisher();
+  state.undoable.present.item = { _id: "video-A", type: "free" };
+  view.rerender(<ControllerMediaPreparationPublisher />);
+  await waitFor(() => expect(mockLocalPool).toHaveBeenLastCalledWith(expect.objectContaining({ discovery: expect.objectContaining({ currentItemId: "video-A" }) })));
+  activeProfile = auxProfile;
+  state.undoable.present.item = { _id: "video-B", type: "free" };
+  view.rerender(<ControllerMediaPreparationPublisher />);
+  await waitFor(() => expect(mockLocalPool).toHaveBeenLastCalledWith(expect.objectContaining({ discovery: expect.objectContaining({ currentItemId: "video-B" }) })));
 });

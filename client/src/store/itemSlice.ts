@@ -276,7 +276,7 @@ const applyItemDataToState = (
   const slideCount = getSlideCount(payload, nextArrangement);
 
   state.name = payload.name || state.name;
-  state.type = payload.type || state.type;
+  state.type = payload.type ?? state.type;
   state._id = payload._id || state._id;
   state.contentOwner = options && "contentOwner" in options
     ? options.contentOwner ?? undefined
@@ -317,6 +317,9 @@ export const itemSlice = createSlice({
   name: "item",
   initialState,
   reducers: {
+    setActiveItemOccurrence: (state, action: PayloadAction<string>) => {
+      state.listId = action.payload;
+    },
     setActiveItem: (state, action: PayloadAction<Partial<ItemState>>) => {
       applyItemDataToState(state, action.payload);
       resetBackgroundTargetUi(state);
@@ -1274,6 +1277,7 @@ export const {
   _updateArrangements,
   clearTransientState,
   setActiveItem,
+  setActiveItemOccurrence,
   replaceMediaReferencesInActiveItem,
   attachCloudCopyToLocalImageInActiveItem,
   updateLocalImageReferenceInActiveItem,

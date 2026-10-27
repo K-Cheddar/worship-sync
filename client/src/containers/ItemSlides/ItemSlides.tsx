@@ -8,7 +8,6 @@ import {
   clearBackgroundTargetSelection,
   clearSlideBackgroundsOnSubset,
   removeSlidesByIds,
-  setActiveItem,
   setBackgroundTargetSlideIds,
   setBackgroundTargetRangeAnchorId,
   setMobileBackgroundTargetSelectMode,
@@ -26,7 +25,8 @@ import {
   setSlidesMobile,
   setMonitorTimerId,
 } from "../../store/preferencesSlice";
-import { setActiveItemInList } from "../../store/itemListSlice";
+import { selectControllerItem } from "../../store/controllerItemSelection";
+import { isControllerWorkspacePath } from "../../utils/controllerWorkspace";
 import { useDispatch, useSelector } from "../../hooks";
 import {
   selectOutputSlots,
@@ -73,12 +73,11 @@ import {
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import {
   useActiveControllerProfile,
-  useControllerBasePath,
 } from "../../context/activeController";
 import { keepElementInView } from "../../utils/generalUtils";
 import { RootState } from "../../store/store";
 import generateRandomId from "../../utils/generateRandomId";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { cn } from "../../utils/cnHelper";
 import { updateTimer } from "../../store/timersSlice";
@@ -136,9 +135,7 @@ import {
 import VideoBackgroundControls from "../../components/VideoBackgroundControls/VideoBackgroundControls";
 import { useOutlineItemDocs } from "../../hooks/useOutlineItemDocs";
 import {
-  getControllerItemPath,
   getNonHeadingOutlineItems,
-  prepareItemForEditor,
   resolveSlidesForOutlineItem,
 } from "../../utils/outlineSlideSections";
 import MediaDragPreview from "../Media/MediaDragPreview";
@@ -350,7 +347,7 @@ const ItemSlidesContent = () => {
 
   const mediaList = useSelector((state: RootState) => state.media.list);
 
-  const { isMobile } = useContext(ControllerInfoContext) || {};
+  const { isMobile, db } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
   const showToast = useContext(ToastContext)?.showToast;
 
@@ -575,8 +572,6 @@ const ItemSlidesContent = () => {
   ]);
 
   const isCollapsedContinuous = shouldShowItemEditor === false;
-  const navigate = useNavigate();
-  const controllerBasePath = useControllerBasePath();
   const outlineList = useSelector(
     (state: RootState) => state.undoable.present.itemList?.list,
   );
@@ -1282,29 +1277,16 @@ const ItemSlidesContent = () => {
         index: targetIndex,
       };
 
-      dispatch(setActiveItemInList(neighbor.listId));
-      const doc = neighborDocsById.get(neighbor._id);
-      if (doc) {
-        dispatch(
-          setActiveItem({
-            ...prepareItemForEditor(doc, neighbor.listId),
-            selectedSlide: targetIndex,
-          }),
-        );
-      }
-      navigate(getControllerItemPath(neighbor, controllerBasePath), {
-        replace: true,
-      });
+      void dispatch(selectControllerItem(neighbor, db, targetIndex));
       return true;
     },
     [
       _id,
-      controllerBasePath,
       dispatch,
       isCollapsedContinuous,
       listId,
-      navigate,
       neighborDocsById,
+      db,
       outlineItems,
     ],
   );
@@ -1343,7 +1325,7 @@ const ItemSlidesContent = () => {
         target.tagName === "INPUT" ||
         target.tagName === "TEXTAREA" ||
         target.isContentEditable;
-      if (!location.pathname.includes("item") || isLyricsEditorOpen || isTyping) return;
+      if (!isControllerWorkspacePath(location.pathname) || isLyricsEditorOpen || isTyping) return;
       if (e.key === " ") {
         e.preventDefault();
         if (e.shiftKey) {

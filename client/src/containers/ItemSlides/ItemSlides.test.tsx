@@ -6,7 +6,13 @@ import { PresentationControllerModeProvider } from "../../context/presentationCo
 import { ToastContext } from "../../context/toastContext";
 import * as localVideoCapturePool from "../../utils/localVideoCapturePool";
 
-const mockDispatch = jest.fn();
+const mockDispatch: jest.Mock = jest.fn((action) => {
+  if (typeof action === "function") return action(mockDispatch, () => ({
+    ...mockState,
+    allDocs: { ...mockState.allDocs, session: 1, allSongDocs: [...mockNeighborDocs.values()] },
+  }));
+  return action;
+});
 const mockOutlineScroller = jest.fn(({ cols }: { cols: number }) => (
   <div data-testid="outline-scroller" data-cols={cols} />
 ));
@@ -131,7 +137,7 @@ jest.mock("../../context/activeController", () => {
 
 const mockNavigate = jest.fn();
 jest.mock("react-router-dom", () => ({
-  useLocation: () => ({ pathname: "/controller/item/free-1/list-1" }),
+  useLocation: () => ({ pathname: "/controller" }),
   useNavigate: () => mockNavigate,
 }));
 
@@ -1322,10 +1328,7 @@ describe("ItemSlides", () => {
         }),
       }),
     );
-    expect(mockNavigate).toHaveBeenCalledWith(
-      expect.stringContaining("/controller/item/"),
-      { replace: true },
-    );
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 
   it("does not change songs with ArrowDown when the item editor is open", () => {

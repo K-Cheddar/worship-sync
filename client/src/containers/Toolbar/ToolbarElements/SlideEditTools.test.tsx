@@ -32,7 +32,7 @@ let mockState: {
   timers: { timers: any[] };
 };
 
-let mockPathname = "/controller/item/item-id/list-id";
+let mockPathname = "/controller";
 
 jest.mock("react-router-dom", () => ({
   useLocation: () => ({ pathname: mockPathname }),
@@ -120,7 +120,7 @@ describe("SlideEditTools", () => {
   beforeEach(() => {
     jest.useFakeTimers();
     jest.clearAllMocks();
-    mockPathname = "/controller/item/item-id/list-id";
+    mockPathname = "/controller";
     mockState = {
       undoable: {
         present: {
@@ -146,7 +146,7 @@ describe("SlideEditTools", () => {
   });
 
   it("renders tools on an auxiliary controller item route", () => {
-    mockPathname = "/aux-controller/ctrl_lobby/item/abc/list-1";
+    mockPathname = "/aux-controller/ctrl_lobby";
     render(<SlideEditTools />);
 
     expect(

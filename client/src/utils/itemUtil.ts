@@ -732,11 +732,11 @@ type CreateNewItemInDbType = {
 };
 
 /** Share one in-flight custom-item retry across repeated local clicks. */
-export async function runCanvaCustomItemCreationOnce(
-  inFlight: Map<string, Promise<string>>,
+export async function runCanvaCustomItemCreationOnce<T>(
+  inFlight: Map<string, Promise<T>>,
   idempotencyKey: string | undefined,
-  create: () => Promise<string>,
-): Promise<string> {
+  create: () => Promise<T>,
+): Promise<T> {
   if (!idempotencyKey) return create();
   const existing = inFlight.get(idempotencyKey);
   if (existing) return existing;

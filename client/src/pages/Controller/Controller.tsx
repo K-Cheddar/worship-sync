@@ -1,3 +1,5 @@
+import ControllerItemInitialization from "./ControllerItemInitialization";
+import { isControllerWorkspacePath } from "../../utils/controllerWorkspace";
 // import { Resizable } from "re-resizable";
 import { ArrowRightFromLine, ArrowLeftFromLine } from "lucide-react";
 import EditorButtons from "../../containers/PanelButtons/PanelButtons";
@@ -12,7 +14,7 @@ import Overlays from "../../containers/Overlays/Overlays";
 import Bible from "../../containers/Bible/Bible";
 import { useDispatch, useSelector } from "../../hooks";
 import Songs from "../../containers/Songs/Songs";
-import { Navigate, Route, Routes, useLocation, useMatch } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import Item from "./Item";
 import CreateItem from "../../containers/CreateItem/CreateItem";
@@ -47,16 +49,6 @@ import ControllerMediaPreparationPublisher from "../../containers/Media/Controll
 const Controller = () => {
   const dispatch = useDispatch();
   const location = useLocation();
-  const itemRoute = useMatch("/controller/item/:itemId/:listId");
-  const encodedItemId = itemRoute?.params.itemId;
-  let currentItemId: string | undefined;
-  if (encodedItemId) {
-    try {
-      currentItemId = decodeURI(window.atob(encodedItemId));
-    } catch {
-      currentItemId = undefined;
-    }
-  }
   const { layoutRef } = useControllerPageLifecycle();
   useServicePlanningSyncRunner();
 
@@ -93,7 +85,7 @@ const Controller = () => {
     ) {
       setIsLeftPanelOpen(true);
     }
-    if (!location.pathname.includes("/controller/item")) {
+    if (!isControllerWorkspacePath(location.pathname)) {
       dispatch(setIsLyricsEditorOpen(false));
     }
   }, [location.pathname, dispatch]);
@@ -140,7 +132,8 @@ const Controller = () => {
       onRootClick={handleElementClick}
       layoutRef={layoutRef}
     >
-      <ControllerMediaPreparationPublisher currentItemId={currentItemId} />
+      <ControllerItemInitialization />
+      <ControllerMediaPreparationPublisher />
       <ServicePlanningSyncFloatingWindow />
       {(access === "full" || access === "music") && <LyricsEditor />}
       <Button
@@ -166,15 +159,8 @@ const Controller = () => {
       <div className="relative flex h-full min-h-0 w-[60%] flex-1 flex-col overflow-hidden">
         <ControllerViewRouteGuard>
           <Routes>
-            <Route
-              path="/"
-              element={
-                <h2 className="text-2xl text-center mt-4 font-bold">
-                  No Item Selected
-                </h2>
-              }
-            />
-            <Route path="/item/:itemId/:listId" element={<Item />} />
+            <Route path="/" element={<Item />} />
+            <Route path="item/*" element={<Navigate to="/controller" replace />} />
             <Route path="overlays" element={<Overlays />} />
             <Route path="bible" element={<Bible />} />
             <Route path="songs" element={<Songs />} />

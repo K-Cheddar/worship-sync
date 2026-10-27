@@ -7,7 +7,6 @@ import servicePlanningImportReducer, {
   setServicePlanningFloatingWindowDismissed,
 } from "../../store/servicePlanningImportSlice";
 import { useServicePlanningSyncRunner } from "../Controller/useServicePlanningSyncRunner";
-import { getControllerItemPath } from "../../utils/outlineSlideSections";
 import {
   controllerProfilesSlice,
   setControllerProfilesFromRemote,
@@ -26,6 +25,7 @@ import type { AccessType } from "../../context/globalInfo";
 
 // The controller body pulls in the whole presentation stack; these tests are
 // about the guard in front of it.
+jest.mock("../Controller/ControllerItemInitialization", () => () => null);
 jest.mock("../Controller/useControllerPageLifecycle", () => ({
   useControllerPageLifecycle: () => ({ layoutRef: { current: null } }),
 }));
@@ -227,24 +227,7 @@ describe("the auxiliary controller route", () => {
   });
 });
 
-/**
- * Outline rows used to link to "/controller/item/…" regardless of which
- * controller rendered them, so clicking an item on an auxiliary controller
- * opened the presentation controller with that item.
- */
-describe("outline links stay on this controller", () => {
-  it("builds item routes under the controller's own path", () => {
-    const item = { _id: "song/1", listId: "list-2" };
-    expect(getControllerItemPath(item, "/aux-controller/ctrl_lobby")).toBe(
-      `/aux-controller/ctrl_lobby/item/${window.btoa(
-        encodeURI("song/1"),
-      )}/${window.btoa(encodeURI("list-2"))}`,
-    );
-  });
-
-  it("still defaults to the main controller for callers without one", () => {
-    expect(
-      getControllerItemPath({ _id: "a", listId: "b" }).startsWith("/controller/"),
-    ).toBe(true);
-  });
+it("redirects legacy item URLs to this auxiliary workspace", async () => {
+  renderRoute([LOBBY], "/aux-controller/ctrl_lobby/item/invalid/invalid");
+  expect(await screen.findByTestId("item")).toBeInTheDocument();
 });

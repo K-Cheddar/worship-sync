@@ -806,6 +806,7 @@ const excludedActions: string[] = [
   itemSlice.actions.applyPersistedSongAudio.toString(),
   itemSlice.actions.setSelectedBox.toString(),
   itemSlice.actions.setActiveItem.toString(),
+  itemSlice.actions.setActiveItemOccurrence.toString(),
   itemSlice.actions.clearTransientState.toString(),
   itemSlice.actions.toggleBackgroundTargetSlideId.toString(),
   itemSlice.actions.setBackgroundTargetSlideIds.toString(),
@@ -1062,6 +1063,7 @@ listenerMiddleware.startListening({
 
     const excluded = isAnyOf(
       itemSlice.actions.setSelectedSlide,
+      itemSlice.actions.setActiveItemOccurrence,
       itemSlice.actions.setSelectedBox,
       itemSlice.actions.setIsLyricsEditorOpen,
       itemSlice.actions.setItemIsLoading,
@@ -1298,24 +1300,27 @@ listenerMiddleware.startListening({
     const { _id: activeId, listId } = currentItem;
     if (!activeId) return;
 
-    const { allSongDocs, allFreeFormDocs, allTimerDocs, allBibleDocs } =
+    const { allSongDocs, allFreeFormDocs, allTimerDocs, allBibleDocs, allServiceTimeDocs } =
       state.allDocs;
     const {
       allSongDocs: previousSongDocs,
       allFreeFormDocs: previousFreeFormDocs,
       allTimerDocs: previousTimerDocs,
       allBibleDocs: previousBibleDocs,
+      allServiceTimeDocs: previousServiceTimeDocs,
     } = previousState.allDocs;
     const doc =
       allSongDocs.find((d) => d._id === activeId) ??
       allFreeFormDocs.find((d) => d._id === activeId) ??
       allTimerDocs.find((d) => d._id === activeId) ??
-      allBibleDocs.find((d) => d._id === activeId);
+      allBibleDocs.find((d) => d._id === activeId) ??
+      allServiceTimeDocs.find((d) => d._id === activeId);
     const previousDoc =
       previousSongDocs.find((d) => d._id === activeId) ??
       previousFreeFormDocs.find((d) => d._id === activeId) ??
       previousTimerDocs.find((d) => d._id === activeId) ??
-      previousBibleDocs.find((d) => d._id === activeId);
+      previousBibleDocs.find((d) => d._id === activeId) ??
+      previousServiceTimeDocs.find((d) => d._id === activeId);
 
     if (doc) {
       if (_.isEqual(doc, previousDoc)) {

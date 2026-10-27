@@ -1,3 +1,5 @@
+import { useSelector } from "../../hooks";
+import type { RootState } from "../../store/store";
 import React from "react";
 import userEvent from "@testing-library/user-event";
 import { configureStore } from "@reduxjs/toolkit";
@@ -7,7 +9,6 @@ import {
   MemoryRouter,
   Route,
   Routes,
-  useParams,
   useSearchParams,
 } from "react-router-dom";
 import CreateItem from "./CreateItem";
@@ -100,6 +101,8 @@ const createUndoableState = () => ({
   past: [],
   present: {
     preferences: preferencesSlice.getInitialState(),
+    item: itemSlice.getInitialState(),
+    itemList: itemListSlice.getInitialState(),
   },
   future: [],
 });
@@ -110,7 +113,7 @@ const BibleRouteProbe = () => {
 };
 
 const ItemRouteProbe = () => {
-  const { itemId, listId } = useParams();
+  const { _id: itemId, listId } = useSelector((state: RootState) => state.undoable.present.item);
   return (
     <div data-testid="item-page">
       {itemId}:{listId}
@@ -141,7 +144,7 @@ const createTestStore = ({
       timers: timersSlice.reducer,
       bible: bibleSlice.reducer,
       presentation: presentationSlice.reducer,
-      undoable: (state = undoableState) => state,
+      undoable: (state = undoableState, action: Parameters<typeof itemSlice.reducer>[1]) => ({ ...state, present: { ...state.present, item: itemSlice.reducer(state.present.item, action), itemList: itemListSlice.reducer(state.present.itemList, action) } }),
     } as any,
     preloadedState: {
       createItem,
@@ -187,7 +190,7 @@ const renderCreateItem = ({
       <Route path="/controller/create" element={<CreateItem />} />
       <Route path="/controller/bible" element={<BibleRouteProbe />} />
       <Route
-        path="/controller/item/:itemId/:listId"
+        path="/controller"
         element={<ItemRouteProbe />}
       />
       <Route
@@ -657,9 +660,7 @@ describe("CreateItem", () => {
 
     const insertedListId = store.getState().itemList.list[0].listId;
     expect(screen.getByTestId("item-page")).toHaveTextContent(
-      `${window.btoa(encodeURI("song-1"))}:${window.btoa(
-        encodeURI(insertedListId),
-      )}`,
+      `song-1:${insertedListId}`,
     );
   });
 

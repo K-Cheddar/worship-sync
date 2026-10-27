@@ -1,3 +1,4 @@
+import { isControllerWorkspacePath } from "../../utils/controllerWorkspace";
 import { useLocation } from "react-router-dom";
 import {
   Settings,
@@ -162,9 +163,9 @@ const Toolbar = ({
     },
     [dispatch]
   );
-  // Matches main and aux item routes (`/controller/item/...`, `/aux-controller/:id/item/...`).
+  // Tools belong to the active Redux item at either controller workspace.
   const onItemPage = useMemo(
-    () => /\/item\//.test(location.pathname),
+    () => isControllerWorkspacePath(location.pathname),
     [location.pathname]
   );
   const canShowSlideAndBoxTools = useMemo(

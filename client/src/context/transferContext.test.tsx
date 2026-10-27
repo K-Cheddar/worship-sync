@@ -8,6 +8,7 @@ import { CanvaMediaReconciliationRequiredError } from "../utils/canvaMediaReplac
 
 jest.mock("../hooks", () => ({ useDispatch: () => jest.fn() }));
 
+const mockViewPresentation = jest.fn();
 const result = { assets: [], skippedCount: 0, revision: 10 };
 const deferred = <T,>() => {
   let resolve!: (value: T) => void;
@@ -36,7 +37,7 @@ const Harness = () => {
       },
       finalize: async (_importResult, _signal, onPagesPersisted) => {
         onPagesPersisted([1, 2, 3]);
-        return { importedCount: 3, viewPath: "/controller/item-1" };
+        return { importedCount: 3, viewPresentation: { to: "/controller", onClick: mockViewPresentation } };
       },
     })}>Start Canva</button>
     <button onClick={() => updateTransfer({ id: "media-upload", type: "Media upload", name: "Video.mp4", status: "active", progress: 42, phase: { key: "uploading", label: "Uploading" } })}>Start upload</button>
@@ -59,7 +60,7 @@ test("keeps Canva jobs alive across route changes and shares the panel with medi
   await user.click(screen.getByRole("button", { name: "Navigate elsewhere" }));
   expect(screen.getByText("Route /elsewhere")).toBeInTheDocument();
   expect(await screen.findByText(/3 slides imported/)).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "View presentation" })).toHaveAttribute("href", "/controller/item-1");
+  expect(screen.getByRole("link", { name: "View presentation" })).toHaveAttribute("href", "/controller");
   expect(screen.getByRole("link", { name: "View presentation" })).toHaveClass("cursor-pointer");
 });
 

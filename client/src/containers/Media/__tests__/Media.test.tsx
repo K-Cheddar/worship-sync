@@ -1,3 +1,9 @@
+import { setActiveContentDatabase } from "../../../store/deferredItemMutations";
+import { renderHook } from "@testing-library/react";
+import { useMediaLibraryController } from "../useMediaLibraryController";
+import { itemSlice } from "../../../store/itemSlice";
+import { itemListSlice } from "../../../store/itemListSlice";
+import type { PresentationViewAction } from "../../../context/transferModel";
 import { allDocsSlice } from "../../../store/allDocsSlice";
 import React from "react";
 import { getCanvaStatus } from "../../../api/canva";
@@ -235,6 +241,7 @@ jest.mock("../../../store/preferencesSlice", () => ({
 }));
 
 jest.mock("../../../store/itemSlice", () => ({
+  ...jest.requireActual("../../../store/itemSlice"),
   updateAllSlideBackgrounds: jest.fn((payload: any) => ({
     type: "item/updateAllSlideBackgrounds",
     payload,
@@ -574,7 +581,7 @@ describe("Media", () => {
     mockSelectedMediaIds = new Set();
     mockNavigate.mockClear();
     mockShowToast.mockClear();
-    mockUseLocation.mockReturnValue({ pathname: "/item/123" });
+    mockUseLocation.mockReturnValue({ pathname: "/controller" });
     mockState = makeBaseState();
     mockSelectedMedia = { ...emptySelectedMedia };
     mockSelectedMediaIds = new Set();
@@ -691,6 +698,44 @@ describe("Media", () => {
         }) }),
       );
     });
+  });
+
+  it("retains Canva View selection after Media unmounts and after destination teardown, but rejects a retired church session", async () => {
+    const db = { get: jest.fn(), allDocs: jest.fn() };
+    const created = { ...itemSlice.getInitialState(), _id: "canva-deck", name: "Deck", type: "free" as const };
+    mockCreateNewFreeForm.mockResolvedValue(created);
+    mockState.undoable.present.itemList = { ...itemListSlice.getInitialState(), list: [{ _id: created._id, name: created.name, type: "free", listId: "deck-occurrence" }] };
+    const { result: controller, unmount } = renderHook(() => useMediaLibraryController(), { wrapper: ({ children }) => <ControllerInfoContext.Provider value={{ db } as never}><GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>{children}</GlobalInfoContext.Provider></ControllerInfoContext.Provider> });
+    let view!: PresentationViewAction;
+    await act(async () => { view = await controller.current.createCanvaDeckItemFromMedia(mockState.media.list, "Deck", { navigateToItem: false }); });
+    unmount();
+    mockState = { ...mockState, allDocs: { ...mockState.allDocs, allFreeFormDocs: [{ ...created, name: "Newest cached deck" }] } };
+    mockDispatch.mockImplementation((action) => {
+      if (typeof action === "function") return action(mockDispatch, () => mockState);
+      mockState.undoable.present.item = itemSlice.reducer(mockState.undoable.present.item, action);
+      mockState.undoable.present.itemList = itemListSlice.reducer(mockState.undoable.present.itemList, action);
+      return action;
+    });
+    mockNavigate.mockImplementation(() => { mockState.undoable.present.item = itemSlice.getInitialState(); });
+    const event = { preventDefault: jest.fn() } as unknown as React.MouseEvent;
+    act(() => view.onClick(event));
+    expect(mockState.undoable.present.item).toMatchObject({ _id: "canva-deck", listId: "deck-occurrence", name: "Newest cached deck" });
+    expect(mockNavigate).toHaveBeenCalledWith("/controller");
+    mockNavigate.mockClear();
+    mockDispatch.mockClear();
+    setActiveContentDatabase({ scopeId: "another-db", databaseKey: "another", churchId: "another-church" });
+    act(() => view.onClick(event));
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(mockDispatch).not.toHaveBeenCalled();
+    setActiveContentDatabase(null);
+    mockState.allDocs.session += 1;
+    mockNavigate.mockClear();
+    mockDispatch.mockClear();
+    act(() => view.onClick(event));
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(mockDispatch).not.toHaveBeenCalled();
+    mockDispatch.mockReset();
+    mockNavigate.mockReset();
   });
 
   it("hides other-device local files until Other devices is turned on", async () => {
@@ -1429,7 +1474,7 @@ describe("Media", () => {
     mockState = makeBaseState({
       media: { list: [mediaRow], folders: [{ id: "folder-1", name: "Sermon slides", parentId: null }] },
     });
-    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-default": "folder-1" };
+    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-item-song": "folder-1" };
     mockState.undoable.present.preferences.mediaRouteFoldersControllerProfileId = "presentation";
     let rejectProviderCleanup!: (error: Error) => void;
     mockDeleteCloudinaryMediaAsset
@@ -1468,7 +1513,7 @@ describe("Media", () => {
     const mediaA = { ...makeBaseState().media.list[0], id: "same-media", name: "A image", folderId: "same-folder" };
     const foldersA = [{ id: "same-folder", name: "A folder", parentId: null }];
     mockState = makeBaseState({ media: { list: [mediaA], folders: foldersA } });
-    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-default": "same-folder" };
+    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-item-song": "same-folder" };
     mockState.undoable.present.preferences.mediaRouteFoldersControllerProfileId = "presentation";
     const repair = deferred<any[]>();
     mockRepairPersistedMediaRouteFolders.mockReturnValueOnce(repair.promise);
@@ -1489,7 +1534,7 @@ describe("Media", () => {
     const navigationCountAtB = mockNavigate.mock.calls.length;
 
     await act(async () => {
-      repair.resolve([{ _id: "mediaRouteFolders:presentation", mediaRouteFolders: { "controller-default": "root" } }]);
+      repair.resolve([{ _id: "mediaRouteFolders:presentation", mediaRouteFolders: { "controller-item-song": "root" } }]);
       await repair.promise;
     });
 
@@ -1522,9 +1567,9 @@ describe("Media", () => {
     const media = { ...makeBaseState().media.list[0], id: "kept-media", folderId: "folder-1" };
     const folders = [{ id: "folder-1", name: "Sermon slides", parentId: null }];
     mockState = makeBaseState({ media: { list: [media], folders } });
-    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-default": "folder-1" };
+    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-item-song": "folder-1" };
     mockState.undoable.present.preferences.mediaRouteFoldersControllerProfileId = "presentation";
-    const docs = [{ _id: "mediaRouteFolders:presentation", controllerProfileId: "presentation", mediaRouteFolders: { "controller-default": MEDIA_LIBRARY_ROOT_VIEW } }];
+    const docs = [{ _id: "mediaRouteFolders:presentation", controllerProfileId: "presentation", mediaRouteFolders: { "controller-item-song": MEDIA_LIBRARY_ROOT_VIEW } }];
     mockRepairPersistedMediaRouteFolders.mockResolvedValueOnce(docs);
     const { db } = await renderMedia();
 
@@ -1559,7 +1604,7 @@ describe("Media", () => {
     const removedBeforeFinalize = { ...baseMedia, id: "removed-before-finalize", folderId: null };
     const folders = [{ id: "folder-1", name: "Sermon slides", parentId: null }];
     mockState = makeBaseState({ media: { list: [original, removedBeforeFinalize], folders } });
-    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-default": "folder-1" };
+    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-item-song": "folder-1" };
     mockState.undoable.present.preferences.mediaRouteFoldersControllerProfileId = "presentation";
     const repair = deferred<any[]>();
     mockRepairPersistedMediaRouteFolders.mockReturnValueOnce(repair.promise);
@@ -1616,7 +1661,7 @@ describe("Media", () => {
       { id: "outside-folder", name: "Outside", parentId: null },
     ];
     mockState = makeBaseState({ media: { list: [target, editedOutside, removedOutside], folders } });
-    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-default": "parent" };
+    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-item-song": "parent" };
     mockState.undoable.present.preferences.mediaRouteFoldersControllerProfileId = "presentation";
     const cleanup = deferred<void>();
     mockDeleteCloudinaryMediaAsset.mockReturnValueOnce(cleanup.promise);
@@ -1669,7 +1714,7 @@ describe("Media", () => {
     };
     const foldersA = [{ id: "same-folder", name: "A folder", parentId: null }];
     mockState = makeBaseState({ media: { list: [mediaA], folders: foldersA } });
-    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-default": "same-folder" };
+    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-item-song": "same-folder" };
     mockState.undoable.present.preferences.mediaRouteFoldersControllerProfileId = "presentation";
     const cleanup = deferred<void>();
     const flush = deferred<{ ok: true } | { ok: false; error: unknown }>();
@@ -1734,7 +1779,7 @@ describe("Media", () => {
     };
     const foldersA = [{ id: "same-folder", name: "A folder", parentId: null }];
     mockState = makeBaseState({ media: { list: [mediaA], folders: foldersA } });
-    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-default": "same-folder" };
+    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-item-song": "same-folder" };
     mockState.undoable.present.preferences.mediaRouteFoldersControllerProfileId = "presentation";
     mockFlushMediaLibraryDocToPouch
       .mockResolvedValueOnce({ ok: false, error: new Error("folder write failed") })
@@ -1902,7 +1947,7 @@ describe("Media", () => {
       },
     });
     mockState.undoable.present.preferences.mediaRouteFolders = {
-      "controller-default": "folder-1",
+      "controller-item-song": "folder-1",
     };
     mockState.undoable.present.preferences.mediaRouteFoldersControllerProfileId = "presentation";
     const { view } = await renderMedia();
@@ -1946,7 +1991,7 @@ describe("Media", () => {
         folders: [{ id: "folder-1", name: "Sermon slides", parentId: null }],
       },
     });
-    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-default": "folder-1" };
+    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-item-song": "folder-1" };
     mockState.undoable.present.preferences.mediaRouteFoldersControllerProfileId = "presentation";
     let rejectDelete!: (error: Error) => void;
     mockDeleteMediaItemAtRevisionFromPouch.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectDelete = reject; }));
@@ -1983,7 +2028,7 @@ describe("Media", () => {
         folders: [{ id: "folder-1", name: "Sermon slides", parentId: null }],
       },
     });
-    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-default": "folder-1" };
+    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-item-song": "folder-1" };
     mockState.undoable.present.preferences.mediaRouteFoldersControllerProfileId = "presentation";
     const tombstone = deferred<"deleted">();
     mockDeleteMediaItemAtRevisionFromPouch.mockReturnValueOnce(tombstone.promise);

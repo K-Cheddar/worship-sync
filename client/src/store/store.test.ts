@@ -213,6 +213,8 @@ let mockActiveItemDb: any;
 const loadStoreWithItemPersistence = () => {
   let storeModule: any;
   let itemSliceModule: any;
+  let mutationsModule: typeof import("./deferredItemMutations");
+  let selectionModule: typeof import("./controllerItemSelection");
   const postMessage = jest.fn();
   const db = {
     get: jest.fn(),
@@ -239,11 +241,17 @@ const loadStoreWithItemPersistence = () => {
     storeModule = require("./store");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     itemSliceModule = require("./itemSlice");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    selectionModule = require("./controllerItemSelection");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    mutationsModule = require("./deferredItemMutations");
   });
 
   return {
     store: storeModule.default,
     itemSlice: itemSliceModule.itemSlice,
+    selectControllerItem: selectionModule!.selectControllerItem,
+    deferredMutations: mutationsModule!,
     updateSlides: itemSliceModule.updateSlides,
     db,
     postMessage,
@@ -637,6 +645,46 @@ describe("item content integrity investigation", () => {
     expect(docs.get("song-A")?.name).toBe("A pending after failure");
     expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
     errors.mockRestore();
+  });
+
+  it("flushes an accepted debounced editor mutation before cached selection changes its owner", async () => {
+    const { store, docs, selectControllerItem, deferredMutations, itemSlice, tick } = setup();
+    store.dispatch({ type: "allDocs/hydrateItemCache", payload: [...docs.values()] });
+    store.dispatch(selectControllerItem({ _id: "song-A", listId: "A" }));
+    const owner = deferredMutations.getItemMutationOwner(store.getState().undoable.present.item)!;
+    const flush = jest.fn(() => store.dispatch(itemSlice.actions._setName("A deferred editor text")));
+    deferredMutations.scheduleOwnedItemMutation(owner, 5000, flush);
+    store.dispatch(selectControllerItem({ _id: "song-B", listId: "B" }));
+    expect(flush).toHaveBeenCalledTimes(1);
+    expect(store.getState().undoable.present.item._id).toBe("song-B");
+    await tick();
+    expect(docs.get("song-A")?.name).toBe("A deferred editor text");
+    expect(docs.get("song-B")?.name).toBe("song-B");
+  });
+
+  it("cached Redux selection preserves delayed A saves and restores pending A without writing into B", async () => {
+    const runtime = setup();
+    const { store, db, docs, edit, tick, selectControllerItem, itemSlice } = runtime;
+    store.dispatch({ type: "allDocs/hydrateItemCache", payload: [...docs.values()] });
+    const open = (id: string, listId = id) => store.dispatch(selectControllerItem({ _id: id, listId }));
+    open("song-A");
+    let finishRead!: (doc: Fixture) => void;
+    db.get.mockImplementationOnce(() => new Promise((done) => { finishRead = done; }));
+    edit("A owned draft");
+    await jest.advanceTimersByTimeAsync(1500);
+    open("song-B");
+    edit("B owned draft");
+    open("song-A", "A-repeat");
+    expect(store.getState().undoable.present.item).toMatchObject({ _id: "song-A", listId: "A-repeat", name: "A owned draft" });
+    finishRead(clone(docs.get("song-A")) as Fixture);
+    await tick();
+    expect(docs.get("song-A")?.name).toBe("A owned draft");
+    expect(docs.get("song-B")?.name).toBe("B owned draft");
+    expect(store.getState().undoable.present.item._id).toBe("song-A");
+    // Occurrence-only changes do not accept stale cached conflict baselines.
+    store.dispatch(itemSlice.actions.bufferRemoteItemUpdate({ ...docs.get("song-A"), name: "Competing controller" }));
+    open("song-A", "A-third");
+    expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(true);
   });
 
   it("rapid back-and-forth navigation saves each pending payload under its own ID", async () => {

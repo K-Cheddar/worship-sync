@@ -1,3 +1,4 @@
+import { selectControllerItem } from "../../store/controllerItemSelection";
 import { selectItemEntries } from "../../store/itemLibrarySelectors";
 import Spinner from "@/components/Spinner/Spinner";
 import SongTxtImport from "./SongTxtImport";
@@ -591,11 +592,8 @@ const CreateItem = ({
     : [];
 
   const goToItem = (itemId: string, listId: string) => {
-    navigate(
-      `${controllerBasePath}/item/${window.btoa(encodeURI(itemId))}/${window.btoa(
-        encodeURI(listId)
-      )}`
-    );
+    void dispatch(selectControllerItem({ _id: itemId, listId }, db));
+    navigate(controllerBasePath);
   };
 
   const dispatchNewItem = (item: ItemState) => {
@@ -612,9 +610,9 @@ const CreateItem = ({
       return;
     }
 
-    dispatch(setActiveItem(item));
     const addedAction = dispatch(addItemToItemList(listItem));
-    goToItem(item._id, addedAction.payload.listId);
+    dispatch(setActiveItem({ ...item, listId: addedAction.payload.listId }));
+    navigate(controllerBasePath);
   };
 
   const createItem = async (allowSeparateSong = false) => {

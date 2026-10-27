@@ -8,8 +8,9 @@ export const selectItemDocuments = createSelector(
     (state: RootState) => state.allDocs.allFreeFormDocs,
     (state: RootState) => state.allDocs.allTimerDocs,
     (state: RootState) => state.allDocs.allBibleDocs,
-    (state: RootState) => state.allDocs.allHeadingDocs],
-  (songs, custom, timers, bibles, headings) => [...(songs ?? []), ...(custom ?? []), ...(timers ?? []), ...(bibles ?? []), ...(headings ?? [])],
+    (state: RootState) => state.allDocs.allHeadingDocs,
+    (state: RootState) => state.allDocs.allServiceTimeDocs],
+  (songs, custom, timers, bibles, headings, serviceTimes) => [...(songs ?? []), ...(custom ?? []), ...(timers ?? []), ...(bibles ?? []), ...(headings ?? []), ...(serviceTimes ?? [])],
 );
 
 export const selectItemEntries = createSelector([selectItemDocuments], (docs) =>

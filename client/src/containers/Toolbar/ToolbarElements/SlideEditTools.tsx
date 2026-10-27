@@ -1,3 +1,4 @@
+import { isControllerWorkspacePath } from "../../../utils/controllerWorkspace";
 import Button from "../../../components/Button/Button";
 import {
   Plus,
@@ -567,8 +568,8 @@ const SlideEditTools = ({ className }: { className?: string }) => {
     [currentFontPx]
   );
 
-  // Main `/controller/item/...` and aux `/aux-controller/:id/item/...`.
-  if (!/\/item\//.test(location.pathname) || !slide) {
+  // Main and auxiliary presentation workspaces.
+  if (!isControllerWorkspacePath(location.pathname) || !slide) {
     return null;
   }
 

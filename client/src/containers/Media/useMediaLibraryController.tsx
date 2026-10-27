@@ -1,3 +1,6 @@
+import { getActiveContentDatabaseOwner } from "../../store/deferredItemMutations";
+import { flushSync } from "react-dom";
+import { isControllerWorkspacePath } from "../../utils/controllerWorkspace";
 import { selectItemEntries } from "../../store/itemLibrarySelectors";
 import {
   useCallback,
@@ -91,7 +94,8 @@ import {
 } from "../../context/activeController";
 import { getControllerOutputs } from "../../utils/controllerProfiles";
 import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
-import { getControllerItemPath } from "../../utils/outlineSlideSections";
+import { selectControllerItem } from "../../store/controllerItemSelection";
+import type { PresentationViewAction } from "../../context/transferModel";
 import { RootState } from "../../store/store";
 import { broadcastControllerMediaRouteFoldersUpdate, repairPersistedMediaRouteFolders } from "../../utils/controllerMediaRouteFolders";
 import { repairActiveMediaRouteFolders } from "../../store/preferencesSlice";
@@ -341,7 +345,7 @@ export function useMediaLibraryController({
   } = useSelector((state: RootState) => state.media);
   const currentMediaListRef = useRef(list);
   const currentMediaFoldersRef = useRef(folders);
-  const canvaItemCreationsRef = useRef(new Map<string, Promise<string>>());
+  const canvaItemCreationsRef = useRef(new Map<string, Promise<PresentationViewAction>>());
   const providerCleanupInFlightRef = useRef(new Map<string, Promise<boolean>>());
   currentMediaListRef.current = list;
   currentMediaFoldersRef.current = folders;
@@ -350,7 +354,7 @@ export function useMediaLibraryController({
   const isLoading = item.isLoading;
 
   const itemSlideContext = useMemo(() => {
-    if (!location.pathname.includes("item")) return undefined;
+    if (!isControllerWorkspacePath(location.pathname)) return undefined;
     const arrangement = item.arrangements[item.selectedArrangement];
     const slides = arrangement?.slides?.length
       ? arrangement.slides
@@ -867,14 +871,9 @@ export function useMediaLibraryController({
         _id: newItem._id,
         listId: "",
       };
-      dispatch(setActiveItem(newItem));
       const addedAction = dispatch(addItemToItemList(listItem));
-      navigate(
-        getControllerItemPath(
-          { _id: newItem._id, listId: addedAction.payload.listId },
-          controllerBasePath,
-        ),
-      );
+      dispatch(setActiveItem({ ...newItem, listId: addedAction.payload.listId }));
+      if (location.pathname.replace(/\/$/, "") !== controllerBasePath) navigate(controllerBasePath);
       showToast(
         isLiveInput
           ? `Live input item "${truncatedMediaToastLabel({ name: newItem.name })}" created. Select its slide to send the share to your displays.`
@@ -886,6 +885,7 @@ export function useMediaLibraryController({
     }
   }, [
     controllerBasePath,
+    location.pathname,
     selectedMediaIds,
     list,
     db,
@@ -2498,7 +2498,7 @@ export function useMediaLibraryController({
       options: { navigateToItem?: boolean; idempotencyKey?: string } = {},
     ) => {
       const key = options.idempotencyKey;
-      const create = async (): Promise<string> => {
+      const create = async (): Promise<PresentationViewAction> => {
       if (!activeScopeRef.current.active || activeScopeRef.current.db !== db || activeScopeRef.current.churchId !== churchId) {
         throw new Error("Media changed while Canva import was running. Reopen Media to create the custom item.");
       }
@@ -2537,24 +2537,33 @@ export function useMediaLibraryController({
           _id: newItem._id,
           listId: "",
         };
-        if (options.navigateToItem !== false) dispatch(setActiveItem(newItem));
         dispatch(ensureCanvaItemInItemList(listItem));
         const outlineItem = store.getState().undoable.present.itemList.list.find(
           (entry) => entry._id === newItem._id,
         );
         if (!outlineItem) throw new Error("Could not confirm the custom item was added to the outline.");
-        const itemPath = getControllerItemPath(
-          { _id: newItem._id, listId: outlineItem.listId },
-          controllerBasePath,
-        );
+        const session = store.getState().allDocs.session;
+        const contentOwner = getActiveContentDatabaseOwner();
+        const viewAction: PresentationViewAction = {
+          to: controllerBasePath,
+          onClick: (event) => {
+            if (store.getState().allDocs.session !== session || getActiveContentDatabaseOwner() !== contentOwner) { event.preventDefault(); return; }
+            event.preventDefault();
+            // Finish the previous controller's session teardown before selecting.
+            // The transfer action can outlive the Media route that created it.
+            flushSync(() => navigate(controllerBasePath));
+            void dispatch(selectControllerItem(outlineItem, db));
+          },
+        };
         if (options.navigateToItem !== false) {
-          navigate(itemPath);
+          dispatch(setActiveItem({ ...newItem, listId: outlineItem.listId }));
+          navigate(controllerBasePath);
           showToast(
             `Custom item "${truncatedMediaToastLabel({ name: newItem.name })}" created with ${resolvedPages.length} slides.`,
             "success",
           );
         }
-        return itemPath;
+        return viewAction;
       } catch (error) {
         showToast(
           "Canva media was imported, but the custom item could not be created. Try Create custom item from Media.",

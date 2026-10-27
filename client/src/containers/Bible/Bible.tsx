@@ -394,8 +394,8 @@ const Bible = () => {
       listId: generateRandomId(),
     };
 
-    dispatch(addItemToItemList(itemForList));
-    dispatch(setActiveItem(item));
+    const added = dispatch(addItemToItemList(itemForList));
+    dispatch(setActiveItem({ ...item, listId: added.payload.listId }));
     dispatch(resetCreateItem());
     setJustAdded(true);
 
@@ -537,8 +537,8 @@ const Bible = () => {
       listId: generateRandomId(),
     };
 
-    dispatch(addItemToItemList(itemForList));
-    dispatch(setActiveItem(item));
+    const added = dispatch(addItemToItemList(itemForList));
+    dispatch(setActiveItem({ ...item, listId: added.payload.listId }));
   };
 
   const handleAddSelectedBulkRows = async () => {

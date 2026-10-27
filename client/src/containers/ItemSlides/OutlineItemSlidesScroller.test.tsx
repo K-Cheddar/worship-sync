@@ -7,7 +7,13 @@ import { keepElementInView } from "../../utils/generalUtils";
 import { requestOutlineSelectionScroll } from "../../utils/outlineSelectionScroll";
 import type { DBItem, ItemSlideType, ServiceItem } from "../../types";
 
-const mockDispatch = jest.fn();
+const mockDispatch: jest.Mock = jest.fn((action) => {
+  if (typeof action === "function") return action(mockDispatch, () => ({
+    ...mockState,
+    allDocs: { ...mockState.allDocs, session: 1, allSongDocs: [...mockDocsById.values()] },
+  }));
+  return action;
+});
 const mockNavigate = jest.fn();
 const mockSelectSlide = jest.fn();
 const mockOnSlideGridClick = jest.fn();
@@ -29,6 +35,7 @@ jest.mock("../../hooks/useOutlineItemDocs", () => ({
 
 jest.mock("react-router-dom", () => ({
   useNavigate: () => mockNavigate,
+  useLocation: () => ({ pathname: "/controller" }),
 }));
 
 jest.mock("../../utils/generalUtils", () => ({

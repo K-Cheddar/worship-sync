@@ -2,21 +2,20 @@ import { useVirtualizer, type Virtualizer } from "@tanstack/react-virtual";
 import {
   memo,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import { useNavigate } from "react-router-dom";
 import { shallowEqual } from "react-redux";
 import { File } from "lucide-react";
 import { SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
 import { useDispatch, useSelector } from "../../hooks";
-import { setActiveItem } from "../../store/itemSlice";
-import { setActiveItemInList } from "../../store/itemListSlice";
+import { selectControllerItem } from "../../store/controllerItemSelection";
+import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useOutlineItemDocs } from "../../hooks/useOutlineItemDocs";
-import { useControllerBasePath } from "../../context/activeController";
 import type {
   Arrangment,
   FormattedSection,
@@ -38,12 +37,10 @@ import {
   captureOutlineScrollAnchor,
   captureOutlineSlideFocalPoint,
   findOutlineRowIndexForItem,
-  getControllerItemPath,
   getOutlineVirtualRowKey,
   getNonHeadingOutlineItems,
   getPinnedListIdFromVirtualItems,
   getPrefetchItemIds,
-  prepareItemForEditor,
   resolveOutlineScrollTopFromAnchor,
   type OutlineScrollAnchor,
   type OutlineSlideSection,
@@ -296,8 +293,7 @@ const OutlineItemSlidesScroller = ({
   thumbnailScaleFactor = 0,
 }: OutlineItemSlidesScrollerProps) => {
   const dispatch = useDispatch();
-  const navigate = useNavigate();
-  const controllerBasePath = useControllerBasePath();
+  const { db } = useContext(ControllerInfoContext) || {};
   const outlineList = useSelector(
     (state) => state.undoable.present.itemList?.list,
   );
@@ -661,29 +657,13 @@ const OutlineItemSlidesScroller = ({
         window.clearTimeout(browsePinTimerRef.current);
         browsePinTimerRef.current = null;
       }
-      dispatch(setActiveItemInList(listId));
-      const doc = docsById.get(item._id);
-      if (doc) {
-        const prepared = prepareItemForEditor(doc, listId);
-        dispatch(
-          setActiveItem(
-            options?.selectedSlide != null
-              ? { ...prepared, selectedSlide: options.selectedSlide }
-              : prepared,
-          ),
-        );
-      }
-      navigate(getControllerItemPath(item, controllerBasePath), {
-        replace: true,
-      });
+      void dispatch(selectControllerItem(item, db, options?.selectedSlide));
     },
     [
       beginIgnorePin,
       dispatch,
-      docsById,
-      navigate,
+      db,
       outlineItemByListId,
-      controllerBasePath,
     ],
   );
 

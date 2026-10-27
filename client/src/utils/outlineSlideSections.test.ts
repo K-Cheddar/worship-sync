@@ -7,7 +7,6 @@ import {
   captureOutlineScrollAnchorFromVirtualItems,
   captureOutlineScrollAnchor,
   captureOutlineSlideFocalPoint,
-  getControllerItemPath,
   getOutlineVirtualRowKey,
   getPinnedListIdFromVirtualItems,
   getNonHeadingOutlineItems,
@@ -715,15 +714,6 @@ describe("outlineSlideSections", () => {
         words: "Line one\nLine two",
         slideSpan: 2,
       }),
-    );
-  });
-
-  it("encodes controller item paths", () => {
-    const path = getControllerItemPath({ _id: "song/1", listId: "list 2" });
-    expect(path).toBe(
-      `/controller/item/${window.btoa(encodeURI("song/1"))}/${window.btoa(
-        encodeURI("list 2"),
-      )}`,
     );
   });
 

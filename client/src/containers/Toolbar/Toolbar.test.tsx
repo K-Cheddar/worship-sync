@@ -8,7 +8,7 @@ import type { ControllerConfigurationRoute } from "../../store/preferencesSlice"
 import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
 
 const mockDispatch = jest.fn();
-let mockPathname = "/controller/item/item-id/list-id";
+let mockPathname = "/controller";
 
 let mockState: {
   undoable: {
@@ -242,7 +242,7 @@ describe("Toolbar", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     localStorage.clear();
-    mockPathname = "/controller/item/item-id/list-id";
+    mockPathname = "/controller";
     mockControllerBasePath = "/controller";
   });
 
@@ -384,7 +384,7 @@ describe("Toolbar", () => {
 
   it("shows slide and item tools on an auxiliary controller item page", () => {
     mockControllerBasePath = "/aux-controller/ctrl_lobby";
-    mockPathname = "/aux-controller/ctrl_lobby/item/item-id/list-id";
+    mockPathname = "/aux-controller/ctrl_lobby";
     renderToolbar({
       access: "full",
       itemType: "song",
@@ -453,7 +453,7 @@ describe("Toolbar", () => {
     expect(screen.queryByText("Slide Tools Panel")).not.toBeInTheDocument();
     expect(screen.getByText("Item Tools Panel")).toBeInTheDocument();
 
-    mockPathname = "/controller/item/timer-id/list-id";
+    mockPathname = "/controller";
     mockState = {
       undoable: {
         present: {

@@ -65,28 +65,16 @@ describe("LeftPanelButton", () => {
     });
   });
 
-  it("uses the absolute route callers provide without prefixing /controller", () => {
-    render(
-      <LeftPanelButton
-        isSelected={false}
-        to="/aux-controller/abc/item/test/list-1"
-        title="Welcome"
-        type="song"
-        id="list-1"
-      />,
-    );
-
-    expect(screen.getByTestId("left-panel-link")).toHaveAttribute(
-      "data-to",
-      "/aux-controller/abc/item/test/list-1",
-    );
+  it("uses a local selection button without an item URL", () => {
+    render(<LeftPanelButton isSelected={false} title="Welcome" type="song" id="list-1" />);
+    expect(screen.getByTestId("left-panel-link")).not.toHaveAttribute("data-to");
   });
 
   it("shows a small type icon alongside the slide thumbnail", () => {
     render(
       <LeftPanelButton
         isSelected={false}
-        to="/controller/item/test/list-1"
+
         title="Welcome Slides"
         type="free"
         id="list-1"
@@ -107,7 +95,7 @@ describe("LeftPanelButton", () => {
     render(
       <LeftPanelButton
         isSelected={false}
-        to="/controller/item/test/list-1"
+
         title="Welcome Slides"
         type="free"
         id="list-1"
@@ -123,7 +111,7 @@ describe("LeftPanelButton", () => {
     render(
       <LeftPanelButton
         isSelected={false}
-        to="/controller/item/test/list-1"
+
         title="Local clip"
         type="free"
         id="list-1"
@@ -145,7 +133,7 @@ describe("LeftPanelButton", () => {
     render(
       <LeftPanelButton
         isSelected={false}
-        to="/controller/item/test/list-1"
+
         title="Local clip"
         type="free"
         id="list-1"
@@ -178,7 +166,7 @@ describe("LeftPanelButton", () => {
     render(
       <LeftPanelButton
         isSelected={false}
-        to="/controller/item/test/list-1"
+
         title="Welcome Slides"
         type="free"
         id="list-1"
@@ -201,7 +189,7 @@ describe("LeftPanelButton", () => {
     render(
       <LeftPanelButton
         isSelected={false}
-        to="/controller/item/test/list-1"
+
         title="Upcoming Service"
         type="service-time"
         id="list-1"
@@ -219,7 +207,7 @@ describe("LeftPanelButton", () => {
     render(
       <LeftPanelButton
         isSelected={false}
-        to="/controller/item/test/list-2"
+
         title="Countdown"
         type="timer"
         id="list-2"
