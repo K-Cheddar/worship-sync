@@ -31,7 +31,6 @@ jest.mock("../../containers/CreateItem/CreateItem", () => () => null);
 jest.mock("./Preferences", () => () => null);
 jest.mock("./QuickLinks", () => () => null);
 jest.mock("./Displays", () => () => null);
-jest.mock("./ServicePlanningImportPanel", () => () => null);
 jest.mock("./ServicePlanningSyncFloatingWindow", () => () => null);
 jest.mock("../../containers/Toolbar/ToolbarElements/Outlines", () => () => null);
 jest.mock("../../hooks/useDisplayedUpcomingService", () => () => null);

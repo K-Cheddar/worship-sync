@@ -147,7 +147,13 @@ const calendarDayName = (date: Date) => {
 
 const selectCalendarDay = async (user: ReturnType<typeof userEvent.setup>, date: Date) => {
   const calendar = screen.getByRole("dialog");
-  await user.click(within(calendar).getByRole("button", { name: calendarDayName(date) }));
+  const dayName = calendarDayName(date);
+  let day = within(calendar).queryByRole("button", { name: dayName });
+  if (!day) {
+    await user.click(within(calendar).getByRole("button", { name: "Go to the Next Month" }));
+    day = within(calendar).getByRole("button", { name: dayName });
+  }
+  await user.click(day);
 };
 
 // AppPageShell reads the scrollbar-width preference and renders the app menu,
