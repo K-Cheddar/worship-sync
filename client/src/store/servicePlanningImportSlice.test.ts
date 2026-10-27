@@ -13,6 +13,10 @@ import servicePlanningImportReducer, {
   resetServicePlanningImportPreview,
   setServicePlanningServiceOutline,
   setServicePlanningRestoredOutlineUnlessStale,
+  setStoredServicePlanningOutlineIfIdle,
+  setServicePlanningImportOutlinePreviewExpanded,
+  setServicePlanningImportOverlaySummaryExpanded,
+  setServicePlanningImportUrl,
   markServicePlanningPlanPreviewFresh,
   markServicePlanningPlanPreviewStale,
   setServicePlanningPlanOutline,
@@ -50,26 +54,46 @@ const serviceOutlineFixture: ServiceOutline = {
 };
 
 describe("servicePlanningImportSlice", () => {
-  it("keeps the shared preview used by Credits Editor", () => {
+  it("keeps the loaded url and preview until they are cleared", () => {
     const store = createStore();
 
+    store.dispatch(setServicePlanningImportUrl("https://example.com/plan"));
     store.dispatch(setServicePlanningServiceOutline(serviceOutlineFixture));
 
     const state = store.getState()
       .servicePlanningImport as ServicePlanningImportState;
+    expect(state.url).toBe("https://example.com/plan");
     expect(state.preview).toEqual(previewFixture);
     expect(state.serviceOutline).toEqual(serviceOutlineFixture);
   });
 
+  it("does not replace an active preview when a target outline loads", () => {
+    const store = createStore();
+    const storedOutline = {
+      ...serviceOutlineFixture,
+      sourceUrl: "https://example.com/stored-plan",
+      planLabel: "Stored plan",
+    };
 
-  it("clears the shared preview after reset", () => {
+    store.dispatch(setServicePlanningServiceOutline(serviceOutlineFixture));
+    store.dispatch(setStoredServicePlanningOutlineIfIdle(storedOutline));
+
+    const state = store.getState().servicePlanningImport;
+    expect(state.serviceOutline).toEqual(serviceOutlineFixture);
+    expect(state.preview).toEqual(serviceOutlineFixture.preview);
+    expect(state.url).toBe(serviceOutlineFixture.sourceUrl);
+  });
+
+  it("clears only the preview after sync so the last url stays available", () => {
     const store = createStore();
 
+    store.dispatch(setServicePlanningImportUrl("https://example.com/plan"));
     store.dispatch(setServicePlanningServiceOutline(serviceOutlineFixture));
     store.dispatch(resetServicePlanningImportPreview());
 
     const state = store.getState()
       .servicePlanningImport as ServicePlanningImportState;
+    expect(state.url).toBe("https://example.com/plan");
     expect(state.preview).toBeNull();
     expect(state.serviceOutline).toBeNull();
   });
@@ -84,6 +108,7 @@ describe("servicePlanningImportSlice", () => {
     expect(state.preview).toBeNull();
     expect(state.serviceOutline).toBeNull();
     expect(state.servicePlanKey).toBeNull();
+    expect(state.url).toBe(serviceOutlineFixture.sourceUrl);
   });
 
   it("does not trust an applied outline while the saved-plan preview is stale", () => {
@@ -152,7 +177,7 @@ describe("servicePlanningImportSlice", () => {
     };
 
     store.dispatch(markServicePlanningPlanPreviewStale(planKey));
-    store.dispatch(setServicePlanningRestoredOutlineUnlessStale(storedOutline));
+    store.dispatch(setStoredServicePlanningOutlineIfIdle(storedOutline));
 
     const state = store.getState().servicePlanningImport;
     expect(state.serviceOutline).toBeNull();
@@ -171,7 +196,7 @@ describe("servicePlanningImportSlice", () => {
         preservePreview: false,
       }),
     );
-    store.dispatch(setServicePlanningRestoredOutlineUnlessStale(serviceOutlineFixture));
+    store.dispatch(setStoredServicePlanningOutlineIfIdle(serviceOutlineFixture));
 
     const state = store.getState().servicePlanningImport;
     expect(state.servicePlanKey).toBe(planKey);
@@ -208,7 +233,7 @@ describe("servicePlanningImportSlice", () => {
   it("still restores a legacy outline when no saved-plan refresh is pending", () => {
     const store = createStore();
 
-    store.dispatch(setServicePlanningRestoredOutlineUnlessStale(serviceOutlineFixture));
+    store.dispatch(setStoredServicePlanningOutlineIfIdle(serviceOutlineFixture));
 
     expect(store.getState().servicePlanningImport.serviceOutline).toEqual(
       serviceOutlineFixture,
@@ -265,7 +290,43 @@ describe("servicePlanningImportSlice", () => {
     expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
   });
 
+  it("keeps an explicit URL import as a separate source choice", () => {
+    const store = createStore();
+    const urlOutline = {
+      ...serviceOutlineFixture,
+      sourceUrl: "https://example.com/operator-selected-plan",
+    };
 
+    store.dispatch(
+      beginServicePlanningPlanSelection({
+        planKey: "saved-plan",
+        preservePreview: false,
+      }),
+    );
+    store.dispatch(setStoredServicePlanningOutlineIfIdle(serviceOutlineFixture));
+    store.dispatch(setServicePlanningServiceOutline(urlOutline));
+
+    expect(store.getState().servicePlanningImport.serviceOutline).toEqual(
+      urlOutline,
+    );
+    expect(store.getState().servicePlanningImport.preview).toEqual(previewFixture);
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBeNull();
+  });
+
+  it("preserves expand/collapse flags when preview is cleared", () => {
+    const store = createStore();
+
+    store.dispatch(setServicePlanningImportOverlaySummaryExpanded(true));
+    store.dispatch(setServicePlanningImportOutlinePreviewExpanded(true));
+    store.dispatch(setServicePlanningServiceOutline(serviceOutlineFixture));
+    store.dispatch(resetServicePlanningImportPreview());
+
+    const state = store.getState()
+      .servicePlanningImport as ServicePlanningImportState;
+    expect(state.overlaySummaryExpanded).toBe(true);
+    expect(state.outlinePreviewExpanded).toBe(true);
+  });
 
   it("resolves the pending sync item for the active phase and sublabel", () => {
     const store = createStore();

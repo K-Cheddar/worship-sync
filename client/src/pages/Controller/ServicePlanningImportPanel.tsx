@@ -1,0 +1,774 @@
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { planNativeOverlaySync } from "../../integrations/servicePlanning/findBestOverlayMatch";
+import { ExternalLink, BookOpen, Plus, RefreshCcw, RefreshCw, PanelsTopLeft, Square } from "lucide-react";
+import Button from "../../components/Button/Button";
+import ExpandCollapseChevronButton from "../../components/ExpandCollapseChevronButton/ExpandCollapseChevronButton";
+import Input from "../../components/Input/Input";
+import Spinner from "../../components/Spinner/Spinner";
+import { useDispatch, useSelector } from "../../hooks";
+import { useToast } from "../../context/toastContext";
+import {
+  useServicePlanningImport,
+  overlayPlanHasExecutableChange,
+} from "../../hooks/useServicePlanningImport";
+import {
+  bibleRefToSearchString,
+} from "../../integrations/servicePlanning/parseBibleReference";
+import {
+  startServicePlanningSync,
+  cancelServicePlanningSync,
+  markServicePlanningUrlSelection,
+  setServicePlanningFloatingWindowDismissed,
+  setServicePlanningImportOutlinePreviewExpanded,
+  setServicePlanningImportOverlaySummaryExpanded,
+  setServicePlanningServiceOutline,
+  setServicePlanningImportUrl,
+} from "../../store/servicePlanningImportSlice";
+import type {
+  OutlineItemCandidate,
+  OverlaySyncPlanItem,
+} from "../../types/servicePlanningImport";
+import type { OverlayInfo } from "../../types";
+import cn from "classnames";
+
+const EMPTY_OVERLAY_LIST: OverlayInfo[] = [];
+
+const isSyncableOutlineCandidate = (candidate: OutlineItemCandidate): boolean =>
+  !candidate.outlineAlreadyPresent &&
+  (
+    (candidate.outlineItemType === "song" &&
+      Boolean(candidate.matchedLibraryItem)) ||
+    (candidate.outlineItemType === "bible" && Boolean(candidate.parsedRef)) ||
+    (candidate.outlineItemType === "custom-document" &&
+      candidate.matchedLibraryItem?.type === "free")
+  );
+
+const OverlayStatusBadge = ({ matched }: { matched: boolean }) =>
+  matched ? (
+    <span className="rounded-full bg-green-900/50 px-2 py-0.5 text-xs font-medium text-green-300">
+      Overlay ✓
+    </span>
+  ) : null;
+
+const OverlayPlanActionBadge = ({
+  action,
+  placementOnly,
+}: {
+  action: OverlaySyncPlanItem["action"];
+  placementOnly?: boolean;
+}) => {
+  const tone =
+    placementOnly
+      ? "bg-zinc-800 text-zinc-300"
+      : action === "update"
+      ? "bg-green-900/50 text-green-300"
+      : action === "clone"
+        ? "bg-cyan-900/50 text-cyan-300"
+        : action === "create"
+          ? "bg-blue-900/40 text-blue-300"
+          : "bg-red-900/40 text-red-300";
+  const label =
+    placementOnly
+      ? "Found existing"
+      : action === "update"
+      ? "Update existing"
+      : action === "clone"
+        ? "Copy participant"
+        : action === "create"
+          ? "Create new"
+          : "Skip";
+
+  return (
+    <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium", tone)}>
+      {label}
+    </span>
+  );
+};
+
+const OverlayFieldSummary = ({
+  label,
+  value,
+}: {
+  label: string;
+  value?: string;
+}) => (
+  <span className="rounded-md bg-gray-950/80 px-2 py-1 text-sm text-gray-300">
+    <span className="text-gray-500">{label}:</span>{" "}
+    {value?.trim() ? value : "—"}
+  </span>
+);
+
+const OverlaySummaryPanel = ({
+  items,
+  expanded,
+  onExpandedChange,
+}: {
+  items: OverlaySyncPlanItem[];
+  expanded: boolean;
+  onExpandedChange: (expanded: boolean) => void;
+}) => {
+  const updateCount = items.filter((item) => item.action === "update").length;
+  const foundCount = items.filter((item) => item.placementOnly).length;
+  const fieldUpdateCount = updateCount - foundCount;
+  const cloneCount = items.filter((item) => item.action === "clone").length;
+  const createCount = items.filter((item) => item.action === "create").length;
+  const skipCount = items.filter((item) => item.action === "skip").length;
+
+  return (
+    <section className="rounded-lg border border-gray-700 bg-gray-900/40">
+      <div className="flex items-start gap-2 border-b border-gray-700 px-4 py-3">
+        <ExpandCollapseChevronButton
+          expanded={expanded}
+          onExpandedChange={onExpandedChange}
+          expandLabel="Expand overlay sync summary"
+          collapseLabel="Collapse overlay sync summary"
+        />
+        <div className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-white">
+              Overlay preview
+            </h3>
+            <p className="mt-1 text-xs text-gray-400">
+              Review the exact overlay changes before you sync.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2 text-xs">
+            <span className="rounded-full bg-green-900/40 px-2 py-1 text-green-300">
+              {fieldUpdateCount} update{fieldUpdateCount === 1 ? "" : "s"}
+            </span>
+            {foundCount > 0 ? (
+              <span className="rounded-full bg-zinc-800 px-2 py-1 text-zinc-300">
+                {foundCount} found
+              </span>
+            ) : null}
+            <span className="rounded-full bg-cyan-900/40 px-2 py-1 text-cyan-300">
+              {cloneCount} clone{cloneCount === 1 ? "" : "s"}
+            </span>
+            <span className="rounded-full bg-blue-900/30 px-2 py-1 text-blue-300">
+              {createCount} create{createCount === 1 ? "" : "s"}
+            </span>
+            <span className="rounded-full bg-red-900/30 px-2 py-1 text-red-300">
+              {skipCount} skip{skipCount === 1 ? "" : "s"}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {expanded ? (
+        items.length === 0 ? (
+          <div className="px-4 py-3 text-sm text-gray-400">
+            No overlay changes are planned for this import.
+          </div>
+        ) : (
+          <ul className="divide-y divide-gray-800">
+            {items.map((item, index) => (
+              <li
+                key={`${item.sectionName}-${item.elementType}-${item.personIndex}-${index}`}
+                className="space-y-3 px-4 py-3"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <OverlayPlanActionBadge
+                        action={item.action}
+                        placementOnly={item.placementOnly}
+                      />
+                      <OverlayFieldSummary label="Name" value={item.patch.name} />
+                      <OverlayFieldSummary label="Title" value={item.patch.title} />
+                      <OverlayFieldSummary label="Event" value={item.patch.event} />
+                    </div>
+                  </div>
+                  <div className="text-right text-xs text-gray-400">
+                    {item.action === "skip" ? (
+                      <span>{item.reason}</span>
+                    ) : (
+                      <span>
+                        {item.action === "clone"
+                          ? "Template"
+                          : item.action === "create"
+                            ? "New overlay"
+                            : "Current"}
+                        :{" "}
+                        <span className="text-gray-200">
+                          {item.targetOverlayName?.trim() ||
+                            item.targetOverlayEvent?.trim() ||
+                            (item.action === "create"
+                              ? item.patch.event?.trim() || "Participant overlay"
+                              : "Unnamed overlay")}
+                        </span>
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+
+              </li>
+            ))}
+          </ul>
+        )
+      ) : null}
+    </section>
+  );
+};
+
+const OutlineStatusCell = ({
+  candidate,
+  onCreateClick,
+  onBibleClick,
+}: {
+  candidate: OutlineItemCandidate;
+  onCreateClick: (title: string) => void;
+  onBibleClick: (candidate: OutlineItemCandidate) => void;
+}) => {
+  const alreadyPresentBadge = candidate.outlineAlreadyPresent ? (
+    <span className="rounded-full bg-gray-800 px-2 py-0.5 text-xs font-medium text-gray-300">
+      Already in outline
+    </span>
+  ) : null;
+
+  if (candidate.outlineItemType === "song") {
+    if (candidate.matchedLibraryItem && candidate.outlineAlreadyPresent) {
+      return (
+        <span className="flex items-center gap-1">
+          <span className="rounded-full bg-green-900/50 px-2 py-0.5 text-xs font-medium text-green-300">
+            Song
+          </span>
+          {alreadyPresentBadge}
+        </span>
+      );
+    }
+    if (candidate.matchedLibraryItem) {
+      return (
+        <span className="rounded-full bg-green-900/50 px-2 py-0.5 text-xs font-medium text-green-300">
+          Song ✓
+        </span>
+      );
+    }
+    return (
+      <span className="flex items-center gap-1">
+        <span className="rounded-full bg-red-900/40 px-2 py-0.5 text-xs font-medium text-red-300">
+          Not found
+        </span>
+        <Button
+          type="button"
+          variant="tertiary"
+          svg={Plus}
+          iconSize="sm"
+          padding="px-1 py-0.5"
+          className="text-xs"
+          aria-label={`Create song ${candidate.cleanedTitle}`}
+          onClick={() => onCreateClick(candidate.cleanedTitle)}
+        >
+          Create
+        </Button>
+      </span>
+    );
+  }
+
+  if (candidate.outlineItemType === "bible") {
+    if (candidate.parsedRef && candidate.outlineAlreadyPresent) {
+      return (
+        <span className="flex items-center gap-1">
+          <span className="rounded-full bg-blue-900/40 px-2 py-0.5 text-xs font-medium text-blue-300">
+            Bible
+          </span>
+          {alreadyPresentBadge}
+          <Button
+            type="button"
+            variant="tertiary"
+            svg={BookOpen}
+            iconSize="sm"
+            padding="px-1 py-0.5"
+            className="text-xs"
+            aria-label={`Open ${candidate.title} in Bible`}
+            onClick={() => onBibleClick(candidate)}
+          >
+            Open
+          </Button>
+        </span>
+      );
+    }
+    if (candidate.parsedRef) {
+      return (
+        <span className="flex items-center gap-1">
+          <span className="rounded-full bg-blue-900/40 px-2 py-0.5 text-xs font-medium text-blue-300">
+            Bible
+          </span>
+          <Button
+            type="button"
+            variant="tertiary"
+            svg={BookOpen}
+            iconSize="sm"
+            padding="px-1 py-0.5"
+            className="text-xs"
+            aria-label={`Open ${candidate.title} in Bible`}
+            onClick={() => onBibleClick(candidate)}
+          >
+            Open
+          </Button>
+        </span>
+      );
+    }
+    return (
+      <span className="rounded-full bg-gray-800 px-2 py-0.5 text-xs text-gray-400">
+        Bible (unrecognized)
+      </span>
+    );
+  }
+
+  if (candidate.outlineItemType === "custom-document") {
+    const documentName = candidate.matchedLibraryItem?.name || candidate.title;
+    return (
+      <span className="flex items-center gap-1">
+        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${candidate.matchedLibraryItem ? "bg-violet-900/40 text-violet-300" : "bg-red-900/40 text-red-300"}`}>
+          {candidate.matchedLibraryItem ? "Document" : "Unavailable"}
+        </span>
+        {candidate.matchedLibraryItem ? alreadyPresentBadge : null}
+        <span className="max-w-48 truncate text-xs text-gray-300" title={documentName}>
+          {documentName}
+        </span>
+      </span>
+    );
+  }
+
+  return null;
+};
+
+const ServicePlanningImportPanel = () => {
+  const navigate = useNavigate();
+  const dispatch = useDispatch();
+  const { showToast } = useToast();
+  const {
+    loadPreview,
+    isServicePlanningEnabled,
+    servicePlanningAvailabilityMessage,
+  } = useServicePlanningImport();
+
+  const url = useSelector((s) => s.servicePlanningImport.url);
+  const preview = useSelector((s) => s.servicePlanningImport.preview);
+  const isPlanPreviewStale = useSelector(
+    (s) => s.servicePlanningImport.isPlanPreviewStale,
+  );
+  const overlayList = useSelector(
+    (s) => s.undoable?.present?.overlays?.list ?? EMPTY_OVERLAY_LIST,
+  );
+  const currentOverlayPlan = planNativeOverlaySync(
+    preview?.overlayPlan ?? [], overlayList, preview?.overlayLibrary,
+  );
+  const serviceOutline = useSelector(
+    (s) => s.servicePlanningImport.serviceOutline,
+  );
+  const overlaySummaryExpanded = useSelector(
+    (s) => s.servicePlanningImport.overlaySummaryExpanded,
+  );
+  const outlinePreviewExpanded = useSelector(
+    (s) => s.servicePlanningImport.outlinePreviewExpanded,
+  );
+  const sync = useSelector((s) => s.servicePlanningImport.sync);
+  const [isLoading, setIsLoading] = useState(false);
+  const isSyncing =
+    sync.status === "running" || sync.status === "cancelling";
+  const isSyncStopping = sync.status === "cancelling";
+  const matchedSongCount =
+    preview?.outlineCandidates.filter(
+      (candidate) =>
+        candidate.outlineItemType === "song" && Boolean(candidate.matchedLibraryItem),
+    ).length ?? 0;
+  const bibleCount =
+    preview?.outlineCandidates.filter(
+      (candidate) =>
+        candidate.outlineItemType === "bible" && Boolean(candidate.parsedRef),
+    ).length ?? 0;
+  const missingSongCount =
+    preview?.outlineCandidates.filter(
+      (candidate) =>
+        candidate.outlineItemType === "song" && !candidate.matchedLibraryItem,
+    ).length ?? 0;
+  const unrecognizedBibleCount =
+    preview?.outlineCandidates.filter(
+      (candidate) =>
+        candidate.outlineItemType === "bible" && !candidate.parsedRef,
+    ).length ?? 0;
+  const outlineAlreadyPresentCount =
+    preview?.outlineCandidates.filter(
+      (candidate) => candidate.outlineAlreadyPresent,
+    ).length ?? 0;
+
+  const getErrorMessage = (error: unknown, fallback: string) =>
+    error instanceof Error && error.message.trim() ? error.message : fallback;
+
+  const handleLoad = async () => {
+    const trimmed = url.trim();
+    if (!trimmed) return;
+    if (!trimmed.toLowerCase().startsWith("https://")) {
+      showToast("URL must start with https://", "error");
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const result = await loadPreview(trimmed);
+      dispatch(setServicePlanningServiceOutline(result));
+      dispatch(markServicePlanningUrlSelection());
+      dispatch(setServicePlanningFloatingWindowDismissed(false));
+      if (
+        result.preview.outlineCandidates.length === 0 &&
+        result.preview.overlayCandidates.length === 0
+      ) {
+        showToast("No rows matched the current integration rules.", "info");
+      }
+    } catch (error) {
+      showToast(
+        getErrorMessage(
+          error,
+          "Failed to load planning data. Check the URL and try again.",
+        ),
+        "error",
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSync = (overlays: boolean, outline: boolean) => {
+    if (!preview || isPlanPreviewStale) return;
+    const hasSyncableOverlays = overlayPlanHasExecutableChange(
+      preview.overlayPlan,
+      overlayList,
+    );
+    const hasSyncableOutline = preview.outlineCandidates.some(
+      isSyncableOutlineCandidate,
+    );
+    const shouldSyncOverlays = overlays && hasSyncableOverlays;
+    const shouldSyncOutline = outline && hasSyncableOutline;
+    if (!shouldSyncOverlays && !shouldSyncOutline) return;
+
+    const mode =
+      shouldSyncOverlays && shouldSyncOutline
+        ? "both"
+        : shouldSyncOverlays
+          ? "overlays"
+          : "outline";
+    dispatch(setServicePlanningFloatingWindowDismissed(false));
+    dispatch(startServicePlanningSync({ mode }));
+  };
+
+  const handleStopSync = () => {
+    dispatch(cancelServicePlanningSync());
+  };
+
+  const StopSyncButton = () => (
+    <Button
+      type="button"
+      variant="secondary"
+      color="#ef4444"
+      svg={Square}
+      disabled={isSyncStopping}
+      onClick={handleStopSync}
+    >
+      {isSyncStopping ? "Stopping..." : "Stop syncing"}
+    </Button>
+  );
+
+  const handleCreateClick = (title: string) => {
+    navigate(
+      `/controller/create?type=song&name=${encodeURIComponent(title)}`,
+    );
+  };
+
+  const handleBibleClick = (candidate: OutlineItemCandidate) => {
+    if (!candidate.parsedRef) return;
+    const params = new URLSearchParams();
+    params.set("search", bibleRefToSearchString(candidate.parsedRef));
+    if (candidate.parsedRef.version) {
+      params.set("version", candidate.parsedRef.version);
+    }
+    navigate(`/controller/bible?${params.toString()}`);
+  };
+
+  // Group outline candidates by section for display
+  const sectionMap = new Map<string, OutlineItemCandidate[]>();
+  if (preview) {
+    for (const c of preview.outlineCandidates) {
+      const key = c.sectionName || "(no section)";
+      if (!sectionMap.has(key)) sectionMap.set(key, []);
+      sectionMap.get(key)!.push(c);
+    }
+  }
+
+  const hasSyncableOutlineItems = Boolean(
+    preview?.outlineCandidates.some(isSyncableOutlineCandidate),
+  );
+  const hasOverlayPlan = Boolean(preview?.overlayPlan.length);
+  // Evaluate against the current overlays list (not just the stored plan) so an
+  // overlay that already exists doesn't keep the sync buttons enabled.
+  const hasSyncableOverlayItems = Boolean(
+    preview && overlayPlanHasExecutableChange(preview.overlayPlan, overlayList),
+  );
+  const hasAnySyncableItems = hasSyncableOverlayItems || hasSyncableOutlineItems;
+
+  return (
+    <div className="flex flex-col gap-4 p-4 h-full overflow-y-auto">
+      <h2 className="text-xl font-bold">Service Planning Import</h2>
+      {servicePlanningAvailabilityMessage ? (
+        <div className="rounded-lg border border-yellow-400/40 bg-yellow-500/10 p-3 text-sm text-yellow-50">
+          {servicePlanningAvailabilityMessage}
+        </div>
+      ) : null}
+
+      <div className="flex gap-2 items-end flex-wrap">
+        <Input
+          label="Planning URL"
+          value={url}
+          onChange={(v) => dispatch(setServicePlanningImportUrl(String(v || "")))}
+          disabled={isSyncing}
+          onFocus={(e) => e.currentTarget.select()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void handleLoad();
+          }}
+          placeholder="https://..."
+          className="flex-1 min-w-0"
+        />
+        <Button
+          type="button"
+          variant="cta"
+          svg={isLoading ? undefined : RefreshCcw}
+          isLoading={isLoading}
+          disabled={
+            isLoading || isSyncing || !url.trim() || !isServicePlanningEnabled
+          }
+          onClick={() => void handleLoad()}
+        >
+          {isLoading ? "Loading…" : "Load"}
+        </Button>
+      </div>
+
+      {isLoading && (
+        <div className="flex items-center gap-2 text-sm text-gray-400">
+          <Spinner width="16px" borderWidth="2px" className="border-cyan-400/80 border-b-transparent" />
+          <span>Fetching planning data…</span>
+        </div>
+      )}
+
+      {isPlanPreviewStale ? (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-500/40 bg-amber-950/30 px-3 py-2 text-sm text-amber-200"
+        >
+          <span>This saved plan hasn’t been verified. Open Service Plan and refresh before syncing.</span>
+          {!preview ? (
+            <Button
+              type="button"
+              variant="secondary"
+              svg={PanelsTopLeft}
+              onClick={() => dispatch(setServicePlanningFloatingWindowDismissed(false))}
+            >
+              Open Service Plan
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {preview && !isLoading && (
+        <>
+          <section className="px-4 py-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className="truncate text-base font-semibold text-white">
+                  {serviceOutline?.planLabel?.trim() || "Service Planning"}
+                </h3>
+                {serviceOutline?.loadedAt ? (
+                  <p className="mt-1 text-sm text-gray-400">
+                    Imported {new Date(serviceOutline.loadedAt).toLocaleString()}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          </section>
+          {hasOverlayPlan ? (
+            <OverlaySummaryPanel
+              items={currentOverlayPlan}
+              expanded={overlaySummaryExpanded}
+              onExpandedChange={(next) =>
+                dispatch(setServicePlanningImportOverlaySummaryExpanded(next))
+              }
+            />
+          ) : null}
+          {sectionMap.size === 0 && preview.overlayCandidates.length === 0 ? (
+            <p className="text-sm text-gray-400">No items matched the current integration rules.</p>
+          ) : (
+            <section className="rounded-lg border border-gray-700 bg-gray-900/40">
+              <div className="flex items-start gap-2 border-b border-gray-700 px-3 py-3">
+                <ExpandCollapseChevronButton
+                  expanded={outlinePreviewExpanded}
+                  onExpandedChange={(next) =>
+                    dispatch(setServicePlanningImportOutlinePreviewExpanded(next))
+                  }
+                  expandLabel="Expand outline preview"
+                  collapseLabel="Collapse outline preview"
+                />
+                <div className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-semibold text-white">
+                      Outline preview
+                    </h3>
+                    <p className="mt-1 text-xs text-gray-400">
+                      {preview.outlineCandidates.length} planning row
+                      {preview.outlineCandidates.length === 1 ? "" : "s"} · overlay
+                      match and library status
+                    </p>
+                  </div>
+                  {!outlinePreviewExpanded ? (
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      <span className="rounded-full bg-green-900/40 px-2 py-1 text-green-300">
+                        {matchedSongCount} song{matchedSongCount === 1 ? "" : "s"}
+                      </span>
+                      <span className="rounded-full bg-blue-900/30 px-2 py-1 text-blue-300">
+                        {bibleCount} bible{bibleCount === 1 ? "" : "s"}
+                      </span>
+                      <span className="rounded-full bg-red-900/30 px-2 py-1 text-red-300">
+                        {missingSongCount} not found
+                      </span>
+                      {unrecognizedBibleCount > 0 ? (
+                        <span className="rounded-full bg-gray-800 px-2 py-1 text-gray-300">
+                          {unrecognizedBibleCount} unrecognized
+                        </span>
+                      ) : null}
+                      {outlineAlreadyPresentCount > 0 ? (
+                        <span className="rounded-full bg-gray-800 px-2 py-1 text-gray-300">
+                          {outlineAlreadyPresentCount} already present
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+              {outlinePreviewExpanded ? (
+                <div className="space-y-4 p-3 pt-2">
+                  {Array.from(sectionMap.entries()).map(([sectionName, candidates]) => (
+                    <div key={sectionName} className="rounded-lg border border-gray-700 bg-gray-900/40">
+                      <div className="flex items-center gap-2 border-b border-gray-700 px-3 py-2">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+                          {sectionName}
+                        </span>
+                        {candidates[0]?.headingName && (
+                          <>
+                            <ExternalLink className="h-3 w-3 text-gray-500 shrink-0" />
+                            <span className="text-xs text-cyan-300">
+                              {candidates[0].headingName}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                      <ul className="divide-y divide-gray-800">
+                        {candidates.map((c, i) => (
+                          <li key={i} className="flex flex-wrap items-center gap-2 px-3 py-2">
+                            <span className="flex-1 min-w-0">
+                              <span className="text-sm text-gray-300">{c.elementType}</span>
+                              {c.title && (
+                                <span className="ml-2 text-xs text-gray-500">{c.title}</span>
+                              )}
+                            </span>
+                            <div className="flex flex-wrap items-center gap-1">
+                              <OverlayStatusBadge
+                                matched={c.overlayReady}
+                              />
+                              <OutlineStatusCell
+                                candidate={c}
+                                onCreateClick={handleCreateClick}
+                                onBibleClick={handleBibleClick}
+                              />
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </section>
+          )}
+
+          {preview && !hasAnySyncableItems && (
+            <p className="text-sm text-zinc-400 mt-2">
+              Everything is already up to date.
+            </p>
+          )}
+
+          <div className="flex flex-wrap gap-2 mt-2 pt-4 border-t border-gray-700">
+            {isSyncing && sync.mode === "overlays" ? (
+              <StopSyncButton />
+            ) : (
+              <Button
+                type="button"
+                variant="secondary"
+                svg={RefreshCw}
+                isLoading={isSyncing}
+                disabled={
+                  isSyncing ||
+                  isPlanPreviewStale ||
+                  !isServicePlanningEnabled ||
+                  !hasSyncableOverlayItems
+                }
+                onClick={() => void handleSync(true, false)}
+              >
+                Sync Overlays
+              </Button>
+            )}
+            {isSyncing && sync.mode === "outline" ? (
+              <StopSyncButton />
+            ) : (
+              <Button
+                type="button"
+                variant="secondary"
+                svg={RefreshCw}
+                isLoading={isSyncing}
+                disabled={
+                  isSyncing ||
+                  isPlanPreviewStale ||
+                  !isServicePlanningEnabled ||
+                  !hasSyncableOutlineItems
+                }
+                onClick={() => void handleSync(false, true)}
+              >
+                Sync Outline
+              </Button>
+            )}
+            {isSyncing && sync.mode === "both" ? (
+              <StopSyncButton />
+            ) : (
+              <Button
+                type="button"
+                variant="cta"
+                svg={RefreshCw}
+                isLoading={isSyncing}
+                disabled={
+                  isSyncing ||
+                  isPlanPreviewStale ||
+                  !isServicePlanningEnabled ||
+                  !hasAnySyncableItems
+                }
+                onClick={() => void handleSync(true, true)}
+              >
+                Sync All
+              </Button>
+            )}
+            <Button
+              variant="primary"
+              color="#22d3ee"
+              svg={PanelsTopLeft}
+              disabled={!serviceOutline}
+              onClick={() =>
+                dispatch(setServicePlanningFloatingWindowDismissed(false))
+              }
+            >
+              Open Service Plan
+            </Button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
+export default ServicePlanningImportPanel;

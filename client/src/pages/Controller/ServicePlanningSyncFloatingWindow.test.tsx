@@ -35,9 +35,6 @@ jest.mock("../../hooks/useServicePlanningImport", () => ({
   overlayPlanHasExecutableChange: (plan: Array<{ action: string }>) =>
     Array.isArray(plan) && plan.some((item) => item.action !== "skip"),
 }));
-jest.mock("../Services/useServicePlanSongLibrary", () => ({
-  useServicePlanSongLibrary: () => ({ songs: [], isLoading: false }),
-}));
 const mockPushPlanToOutline = jest.fn();
 const mockLoadPreview = jest.fn();
 jest.mock("../../context/toastContext", () => ({
@@ -137,31 +134,11 @@ const wrapImport = (preview: any) => ({
 });
 
 describe("ServicePlanningSyncFloatingWindow", () => {
-  it("never offers import controls or displays a historical URL preview without a selected saved plan", async () => {
-    mockPlanSource.selectedPlanKey = null;
-    mockPlanSource.isPlanSourced = false;
-    const store = configureStore({ reducer: {
-      servicePlanningImport: servicePlanningImportReducer, allDocs: allDocsReducer,
-    } });
-    store.dispatch(setServicePlanningServiceOutline(wrapImport({
-      overlayCandidates: [], overlayPlan: [], outlineCandidates: [], lineItems: [], teamAssignments: [],
-    })));
-    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
-    renderWindow(store);
-    expect(screen.queryByRole("button", { name: "Import" })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Planning URL")).not.toBeInTheDocument();
-    expect(screen.queryByText(/Updated .*2026/i)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Sync All" })).toBeDisabled();
-    expect(screen.getByText("Choose a saved plan to review it in the controller.")).toBeInTheDocument();
-    await userEvent.setup().click(screen.getByRole("button", { name: "Refresh" }));
-    expect(mockPlanSource.refreshPlans).toHaveBeenCalled();
-    expect(mockLoadPreview).not.toHaveBeenCalled();
-  });
-
   beforeEach(() => {
     mockPushPlanToOutline.mockReset();
     mockLoadPreview.mockReset();
     mockedUseServicePlanningImport.mockReturnValue({
+      loadPreview: mockLoadPreview,
       loadPlanPreview: jest.fn(),
       runImport: jest.fn(),
       planOutlineSyncSteps: jest.fn(),
@@ -180,8 +157,8 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     mockPlanSource.savedPlans = [];
     mockPlanSource.selectedPlan = null;
     mockPlanSource.selectedPlanDetails = null;
-    mockPlanSource.selectedPlanKey = "saved-plan";
-    mockPlanSource.isPlanSourced = true;
+    mockPlanSource.selectedPlanKey = null;
+    mockPlanSource.isPlanSourced = false;
     mockPlanSource.isPlanPreviewStale = false;
     mockPlanSource.refresh.mockReset();
     mockPlanSource.isLoading = false;
@@ -195,7 +172,6 @@ describe("ServicePlanningSyncFloatingWindow", () => {
   });
 
   it("stays hidden on initial hydration until the user explicitly opens it", () => {
-    mockPlanSource.selectedPlan = { planKey: "saved-plan", serviceId: "service", name: "May 2, 2026 - 10 AM", date: "2026-05-02" };
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
@@ -246,7 +222,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
 
     expect(
       screen.getByRole("button", {
-        name: /^Select service plan: May 2, 2026 - 10 AM/,
+        name: "Select service plan: May 2, 2026 - 10 AM",
       }),
     ).toBeInTheDocument();
   });
@@ -1327,7 +1303,6 @@ describe("ServicePlanningSyncFloatingWindow", () => {
   });
 
   it("shows every planning row in one list with selection badges", () => {
-    mockPlanSource.selectedPlan = { planKey: "saved-plan", serviceId: "service", name: "May 2, 2026 - 10 AM", date: "2026-05-02" };
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
@@ -1387,10 +1362,10 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     expect(screen.getByRole("tab", { name: "Plan" })).toBeInTheDocument();
     expect(
       screen.getByRole("button", {
-        name: /^Select service plan: May 2, 2026 - 10 AM/,
+        name: "Select service plan: May 2, 2026 - 10 AM",
       }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/Updated .*2026/i)).toBeInTheDocument();
+    expect(screen.getByText(/Imported .*2026/i)).toBeInTheDocument();
     expect(screen.getByText("Church Updates")).toBeInTheDocument();
     expect(screen.queryByText("free")).not.toBeInTheDocument();
     expect(screen.getByText("Assigned:")).toBeInTheDocument();

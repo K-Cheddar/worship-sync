@@ -8,25 +8,32 @@ import {
   useRef,
   useState,
 } from "react";
-import { AlertTriangle, Book, BookOpen, Check, ChevronDown, FileText, Music, Plus, RefreshCw, RotateCcw, Square, Users } from "lucide-react";
+import { AlertTriangle, Book, BookOpen, Check, ChevronDown, Download, FileText, Music, Plus, RefreshCw, RotateCcw, Square, Users } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { planNativeOverlaySync } from "../../integrations/servicePlanning/findBestOverlayMatch";
 import { useDispatch, useSelector } from "../../hooks";
 import {
   cancelServicePlanningSync,
   clearServicePlanningSyncState,
+  markServicePlanningUrlSelection,
   setServicePlanningFloatingWindowDismissed,
+  setServicePlanningImportUrl,
+  setServicePlanningServiceOutline,
   startServicePlanningSync,
 } from "../../store/servicePlanningImportSlice";
 import {
+  useServicePlanningImport,
   overlayPlanHasExecutableChange,
 } from "../../hooks/useServicePlanningImport";
 import type { OverlayInfo } from "../../types";
 import {
   Popover,
+  PopoverAnchor,
   PopoverContent,
+  PopoverClose,
   PopoverTrigger,
 } from "../../components/ui/Popover";
+import Input from "../../components/Input/Input";
 import { useToast } from "../../context/toastContext";
 import type { RootState } from "../../store/store";
 import Button from "../../components/Button/Button";
@@ -76,7 +83,6 @@ import {
   limitControllerServicePlans,
 } from "./controllerServicePlanSelection";
 import ControllerServicePlanView from "./ControllerServicePlanView";
-import ServicePlanOutlinePreview from "./ServicePlanOutlinePreview";
 import { useServicePlanOutlinePush } from "../Services/useServicePlanOutlinePush";
 
 const MARGIN = 16;
@@ -366,12 +372,16 @@ const ServicePlanningSyncFloatingWindow = ({
   const { churchBranding, churchId } = useContext(GlobalInfoContext) || {};
   const { timeZone: churchTimeZone } = useChurchServiceTimeZone();
   const planTimeZone = churchTimeZone;
+  const { loadPreview } = useServicePlanningImport();
   const { pushPlanToOutline } = useServicePlanOutlinePush();
   const { showToast } = useToast();
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isImportOpen, setIsImportOpen] = useState(false);
   const [isPlanPickerOpen, setIsPlanPickerOpen] = useState(false);
   const [planSearch, setPlanSearch] = useState("");
   const [activePlanKey, setActivePlanKey] = useState<string | null>(null);
+  const [importUrl, setImportUrl] = useState("");
+  const [isImporting, setIsImporting] = useState(false);
   const [isPushingSavedPlan, setIsPushingSavedPlan] = useState(false);
   const [isStoppingSavedPlan, setIsStoppingSavedPlan] = useState(false);
   const [lastSyncSummary, setLastSyncSummary] = useState<SyncSummary | null>(null);
@@ -413,8 +423,7 @@ const ServicePlanningSyncFloatingWindow = ({
   const planSyncEligibilityRef = useRef({ isLoading, isPlanPreviewStale });
   planSyncEligibilityRef.current = { isLoading, isPlanPreviewStale };
 
-  const storedPreview = useSelector((s: RootState) => s.servicePlanningImport.preview);
-  const preview = isPlanSourced && selectedPlanKey ? storedPreview : null;
+  const preview = useSelector((s: RootState) => s.servicePlanningImport.preview);
   const allFreeFormDocs = useSelector((s: RootState) => s.allDocs.allFreeFormDocs);
   const overlays = useSelector(
     (s: RootState) => s.undoable?.present?.overlays?.list ?? EMPTY_OVERLAY_LIST,
@@ -423,10 +432,10 @@ const ServicePlanningSyncFloatingWindow = ({
     preview?.overlayPlan ?? [], overlays, preview?.overlayLibrary,
   );
   const sync = useSelector((s: RootState) => s.servicePlanningImport.sync);
-  const storedServiceOutline = useSelector(
+  const url = useSelector((s: RootState) => s.servicePlanningImport.url);
+  const serviceOutline = useSelector(
     (s: RootState) => s.servicePlanningImport.serviceOutline,
   );
-  const serviceOutline = isPlanSourced && selectedPlanKey ? storedServiceOutline : null;
   const floatingWindowDismissed = useSelector(
     (s: RootState) => s.servicePlanningImport.floatingWindowDismissed,
   );
@@ -479,6 +488,35 @@ const ServicePlanningSyncFloatingWindow = ({
     }
   }, [floatingWindowRestoreId]);
 
+  const handleImport = useCallback(async () => {
+    const trimmed = importUrl.trim();
+    if (!trimmed) return;
+    if (!trimmed.toLowerCase().startsWith("https://")) {
+      showToast("URL must start with https://", "error");
+      return;
+    }
+    setIsImporting(true);
+    try {
+      const result = await loadPreview(trimmed);
+      dispatch(setServicePlanningImportUrl(trimmed));
+      dispatch(setServicePlanningServiceOutline(result));
+      dispatch(markServicePlanningUrlSelection());
+      dispatch(setServicePlanningFloatingWindowDismissed(false));
+      setIsImportOpen(false);
+      setImportUrl("");
+      showToast("Plan loaded", "success");
+    } catch (error) {
+      showToast(
+        error instanceof Error && error.message.trim()
+          ? error.message
+          : "Failed to load plan. Check the URL and try again.",
+        "error",
+      );
+    } finally {
+      setIsImporting(false);
+    }
+  }, [dispatch, importUrl, loadPreview, setImportUrl, showToast]);
+
   const handleRefresh = useCallback(async () => {
     if (
       isRefreshing ||
@@ -516,13 +554,33 @@ const ServicePlanningSyncFloatingWindow = ({
       return;
     }
 
-    await refreshPlans();
-  }, [isPlanSourced, isRefreshing, refreshPlan, refreshPlans, selectedPlanKey, showToast, sync.status]);
+    if (!url) return;
+    setIsRefreshing(true);
+    try {
+      const result = await loadPreview(url);
+      dispatch(setServicePlanningServiceOutline(result));
+      setMicrophoneRefreshVersion((version) => version + 1);
+      showToast("Plan refreshed", "success");
+    } catch {
+      showToast("Failed to refresh plan", "error");
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [
+    dispatch,
+    isPlanSourced,
+    isRefreshing,
+    loadPreview,
+    refreshPlan,
+    selectedPlanKey,
+    showToast,
+    sync.status,
+    url,
+  ]);
 
   const isContextChanging = isLoading || isPlanRefreshing || targetOutlineLoading;
   const canSyncOverlays =
     allowOverlaySync &&
-    isPlanSourced && Boolean(selectedPlanKey) &&
     !isPlanPreviewStale &&
     !isContextChanging &&
     !isRefreshingParticipants &&
@@ -531,7 +589,6 @@ const ServicePlanningSyncFloatingWindow = ({
   const canSyncOverlaysRef = useRef(canSyncOverlays);
   canSyncOverlaysRef.current = canSyncOverlays;
   const canSyncOutline =
-    isPlanSourced &&
     !isPlanPreviewStale &&
     !isContextChanging && Boolean(selectedList) && (isPlanSourced && selectedPlanDetails
       ? selectedPlanDetails.sections.some((section) => section.elements.some((element) =>
@@ -799,6 +856,26 @@ const ServicePlanningSyncFloatingWindow = ({
       ),
       onOverflowSelect: () => handleSync("outline"),
       renderOverflowItem: () => <><RefreshCw className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />Sync outline</>,
+    },
+    {
+      id: "import",
+      label: "Import",
+      disabled: isSyncActive,
+      renderButton: (isMeasure: boolean) => isMeasure ? (
+        <Button variant="tertiary" svg={Download} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} tabIndex={-1}>Import</Button>
+      ) : (
+        <Button
+          variant="tertiary"
+          svg={Download}
+          className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)}
+          disabled={isSyncActive}
+          onClick={() => setIsImportOpen(true)}
+        >
+          Import
+        </Button>
+      ),
+      onOverflowSelect: () => setIsImportOpen(true),
+      renderOverflowItem: () => <><Download className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />Import</>,
     },
     ];
     return allowOverlaySync
@@ -1210,6 +1287,8 @@ const ServicePlanningSyncFloatingWindow = ({
             </TabsList>
           </Tabs>
 
+          <Popover open={isImportOpen} onOpenChange={setIsImportOpen}>
+            <PopoverAnchor asChild>
               <div className="w-full">
                 <ActionBar items={actionBarItemDefs} className="mt-2" />
                 {lastSyncSummary && (
@@ -1240,9 +1319,42 @@ const ServicePlanningSyncFloatingWindow = ({
                   </section>
                 )}
               </div>
+            </PopoverAnchor>
+            <PopoverContent
+              align="start"
+              className="w-(--radix-popover-trigger-width) bg-gray-800 border-gray-700 text-white"
+            >
+              <div className="flex flex-col gap-3">
+                <p className="text-sm font-semibold">Load Service Plan</p>
+                <Input
+                  label="Planning URL"
+                  value={importUrl}
+                  onChange={(v) => setImportUrl(String(v))}
+                  placeholder="https://..."
+                  disabled={isImporting}
+                  onKeyDown={(e) => { if (e.key === "Enter") void handleImport(); }}
+                />
+                <div className="flex justify-end gap-2">
+                  <PopoverClose asChild>
+                    <Button variant="tertiary" className="text-sm" disabled={isImporting}>Cancel</Button>
+                  </PopoverClose>
+                  <Button
+                    variant="cta"
+                    className="text-sm"
+                    isLoading={isImporting}
+                    disabled={isImporting || !importUrl.trim()}
+                    onClick={() => void handleImport()}
+                  >
+                    {isImporting ? "Loading…" : "Load"}
+                  </Button>
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
+
           {serviceOutline?.loadedAt ? (
             <div className="mt-2 text-xs text-zinc-400">
-              Updated{" "}
+              {isPlanSourced ? "Updated" : "Imported"}{" "}
               {new Date(serviceOutline.loadedAt).toLocaleString()}
             </div>
           ) : null}
@@ -1263,9 +1375,6 @@ const ServicePlanningSyncFloatingWindow = ({
 
         {!isLoading && (preview || (isPlanSourced && selectedPlanDetails)) ? (
           <div className="flex flex-col gap-2">
-            {activeTab === "plan" && isPlanSourced && selectedPlanDetails ? (
-              <ServicePlanOutlinePreview key={`${churchId}:${controllerProfile.id}:${selectedPlanDetails.planKey}`} plan={selectedPlanDetails} />
-            ) : null}
             {activeTab === "plan" && preview?.nativeOverlaySummary ? (
               <ServicePlanningOverlayPreview
                 items={currentOverlayPlan}

@@ -30,6 +30,7 @@ import { RootState } from "../../store/store";
 import { useControllerPageLifecycle } from "./useControllerPageLifecycle";
 import ControllerPageShell from "../../components/ControllerPageShell/ControllerPageShell";
 import ControllerViewRouteGuard from "../../components/ControllerViewRouteGuard/ControllerViewRouteGuard";
+import ServicePlanningImportPanel from "./ServicePlanningImportPanel";
 import { sidePanelInteractionShouldRemainOpen } from "../../utils/sidePanelDismiss";
 import { useServicePlanningSyncRunner } from "./useServicePlanningSyncRunner";
 import ServicePlanningSyncFloatingWindow from "./ServicePlanningSyncFloatingWindow";
@@ -188,7 +189,7 @@ const Controller = () => {
               path="monitor-settings"
               element={<Navigate to="/controller/displays" replace />}
             />
-            <Route path="service-planning" element={<Navigate to="/controller" replace />} />
+            <Route path="service-planning" element={<ServicePlanningImportPanel />} />
           </Routes>
         </ControllerViewRouteGuard>
       </div>

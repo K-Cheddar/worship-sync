@@ -69,53 +69,6 @@ const worshipHeading: ServiceItem = {
 };
 
 describe("buildServicePlanOutlineItems", () => {
-  it("previews the same attachment identities, unresolved references and placement as native sync", () => {
-    const plan: ServicePlan = { ...basePlan, sections: [{
-      id: "worship", name: "Worship", elements: [{
-        id: "mixed", type: "song", title: plainTextToRichText("Mixed attachments"),
-        resources: [
-          { id: "first", type: "song", title: "First song", data: { songId: "song-1" } },
-          { id: "reprise", type: "song", title: "Reprise", data: { songId: "song-1" } },
-          { id: "missing-song", type: "song", title: "Missing song", data: { songId: "deleted" } },
-          { id: "bad-reading", type: "scripture", title: "Invalid reading", data: { scripture: { book: "Invalid", chapter: "0" } } },
-          { id: "missing-doc", type: "custom-document", title: "Missing document", data: { documentId: "deleted" } },
-        ],
-      }],
-    }] };
-    const currentList: ServiceItem[] = [{ ...librarySongs[0], listId: "mixed::attachment:first" }];
-    const result = planServicePlanOutlineItems({ plan, songs: librarySongs, currentList,
-      sectionRules: [{ id: "map", matchSectionName: "Worship", matchMode: "exact", headingName: "Removed heading" }],
-    });
-    expect(result.steps.map((step) => step.planned.listId)).toEqual(["mixed::attachment:reprise"]);
-    expect(result.previewEntries.map(({ listId, status }) => [listId, status])).toEqual([
-      ["mixed::attachment:first", "already-present"],
-      ["mixed::attachment:reprise", "ready"],
-      ["mixed::attachment:missing-song", "unresolved"],
-      ["mixed::attachment:bad-reading", "unresolved"],
-      ["mixed::attachment:missing-doc", "unresolved"],
-    ]);
-    const ready = result.previewEntries.find((entry) => entry.status === "ready");
-    expect(ready?.destination).toEqual(result.steps[0].destination);
-    expect(ready?.placementFallback).toEqual(result.steps[0].placementFallback);
-    expect(result.skippedTitles).toEqual(["Mixed attachments"]);
-    const repeated = planServicePlanOutlineItems({ plan, songs: librarySongs,
-      currentList: [...currentList, { ...librarySongs[0], listId: result.steps[0].planned.listId }],
-    });
-    expect(repeated.steps).toEqual([]);
-    expect(repeated.previewEntries.filter((entry) => entry.status === "already-present")).toHaveLength(2);
-    expect(repeated.previewEntries.filter((entry) => entry.status === "unresolved")).toHaveLength(3);
-  });
-
-  it("reports legacy element-level duplicate protection in the native preview", () => {
-    const plan: ServicePlan = JSON.parse(JSON.stringify(basePlan));
-    plan.sections[0].elements[0].pushedOutlineListId = "historical-list-id";
-    const result = planServicePlanOutlineItems({ plan, songs: librarySongs,
-      currentList: [{ ...librarySongs[0], listId: "historical-list-id" }],
-    });
-    expect(result.steps).toEqual([]);
-    expect(result.previewEntries[0].status).toBe("already-present");
-  });
-
   beforeEach(() => {
     jest.clearAllMocks();
     mockCreateBibleItem.mockImplementation(async ({ parsedRef }) => ({

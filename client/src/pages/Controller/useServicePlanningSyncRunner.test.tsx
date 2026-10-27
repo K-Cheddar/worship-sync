@@ -10,6 +10,7 @@ import servicePlanningImportReducer, {
   setServicePlanningPlanOutline,
   setServicePlanningRestoredOutlineUnlessStale,
   setServicePlanningServiceOutline,
+  setStoredServicePlanningOutlineIfIdle,
   startServicePlanningSync,
 } from "../../store/servicePlanningImportSlice";
 import itemListsReducer, {
@@ -207,7 +208,7 @@ describe("useServicePlanningSyncRunner", () => {
 
     render(
       <Provider store={store}>
-        <MemoryRouter initialEntries={["/controller"]}>
+        <MemoryRouter initialEntries={["/controller/service-planning"]}>
           <RunnerHarness />
         </MemoryRouter>
       </Provider>,
@@ -243,7 +244,7 @@ describe("useServicePlanningSyncRunner", () => {
       }),
     );
     store.dispatch(
-      setServicePlanningRestoredOutlineUnlessStale(serviceOutlineFixture as any),
+      setStoredServicePlanningOutlineIfIdle(serviceOutlineFixture as any),
     );
     store.dispatch(
       setServicePlanningRestoredOutlineUnlessStale(
@@ -258,7 +259,7 @@ describe("useServicePlanningSyncRunner", () => {
 
     render(
       <Provider store={store}>
-        <MemoryRouter initialEntries={["/controller"]}>
+        <MemoryRouter initialEntries={["/controller/service-planning"]}>
           <RunnerHarness />
         </MemoryRouter>
       </Provider>,
@@ -305,7 +306,7 @@ describe("useServicePlanningSyncRunner", () => {
 
     render(
       <Provider store={store}>
-        <MemoryRouter initialEntries={["/controller"]}>
+        <MemoryRouter initialEntries={["/controller/service-planning"]}>
           <RunnerHarness />
         </MemoryRouter>
       </Provider>,
@@ -389,7 +390,7 @@ describe("useServicePlanningSyncRunner", () => {
 
     render(
       <Provider store={store}>
-        <MemoryRouter initialEntries={["/controller"]}>
+        <MemoryRouter initialEntries={["/controller/service-planning"]}>
           <RunnerHarness />
         </MemoryRouter>
       </Provider>,
@@ -460,7 +461,7 @@ describe("useServicePlanningSyncRunner", () => {
     render(
       <Provider store={store}>
         <ControllerInfoContext.Provider value={{ db: {} } as any}>
-          <MemoryRouter initialEntries={["/controller"]}>
+          <MemoryRouter initialEntries={["/controller/service-planning"]}>
             <RunnerHarness />
           </MemoryRouter>
         </ControllerInfoContext.Provider>
@@ -771,7 +772,7 @@ describe("useServicePlanningSyncRunner", () => {
 
     render(
       <Provider store={store}>
-        <MemoryRouter initialEntries={["/controller"]}>
+        <MemoryRouter initialEntries={["/controller/service-planning"]}>
           <RunnerHarness />
         </MemoryRouter>
       </Provider>,

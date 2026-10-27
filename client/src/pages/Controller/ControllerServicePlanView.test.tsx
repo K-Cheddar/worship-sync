@@ -95,7 +95,7 @@ const RouteProbe = () => {
 
 const TestProviders = ({ children }: { children: React.ReactNode }) => (
   <Provider store={store}>
-    <MemoryRouter initialEntries={["/controller"]}>
+    <MemoryRouter initialEntries={["/controller/service-planning"]}>
       {children}
     </MemoryRouter>
   </Provider>
@@ -105,7 +105,7 @@ const renderWithStore = (ui: React.ReactElement) => render(ui, { wrapper: TestPr
 
 const renderInFloatingWindow = (ui: React.ReactNode) => render(
   <Provider store={store}>
-    <MemoryRouter initialEntries={["/controller"]}>
+    <MemoryRouter initialEntries={["/controller/service-planning"]}>
       <FloatingWindowZIndexProvider>
         <FloatingWindow
           title="Service Plan"

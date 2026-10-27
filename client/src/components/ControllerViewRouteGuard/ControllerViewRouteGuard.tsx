@@ -9,6 +9,7 @@ export const VIEW_BLOCKED_CONTROLLER_SEGMENTS = new Set([
   "preferences",
   "quick-links",
   "monitor-settings",
+  "service-planning",
 ]);
 
 type ControllerViewRouteGuardProps = {

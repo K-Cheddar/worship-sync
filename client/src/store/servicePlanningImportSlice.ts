@@ -67,16 +67,28 @@ export type ServicePlanningSyncSummary = {
 };
 
 export type ServicePlanningImportState = {
+  url: string;
   serviceOutline: ServiceOutline | null;
   preview: ServicePlanningPreview | null;
   /** True when the selected saved plan has no successfully reconciled preview. */
   isPlanPreviewStale: boolean;
-  /** Selected saved-plan source; null for historical Credits Editor previews. */
+  /** Selected saved-plan source, including a pending unverified selection;
+   * null for a URL-sourced preview. A plan-sourced preview follows the plan
+   * live, so Refresh must re-read the plan instead of re-scraping `url` (which
+   * may be stale or belong to a different service). */
   servicePlanKey: string | null;
+  /** Increments only when the operator explicitly loads a URL. Consumers use
+   * this event counter to distinguish a new choice from a stored import that
+   * was restored while entering a Controller surface. */
+  urlSelectionRevision: number;
   /** Plan deliberately associated with the currently selected outline. */
   outlinePlanBinding: ServicePlanOutlineBinding | null;
   floatingWindowDismissed: boolean;
   floatingWindowRestoreId: number;
+  /** Service Planning Import page: overlay sync summary list expanded. */
+  overlaySummaryExpanded: boolean;
+  /** Service Planning Import page: outline preview list expanded. */
+  outlinePreviewExpanded: boolean;
   sync: ServicePlanningSyncSummary;
 };
 
@@ -101,13 +113,17 @@ const initialServicePlanningSyncSummary: ServicePlanningSyncSummary = {
 };
 
 export const initialServicePlanningImportState: ServicePlanningImportState = {
+  url: "",
   serviceOutline: null,
   preview: null,
   isPlanPreviewStale: false,
   servicePlanKey: null,
+  urlSelectionRevision: 0,
   outlinePlanBinding: null,
   floatingWindowDismissed: true,
   floatingWindowRestoreId: 0,
+  overlaySummaryExpanded: false,
+  outlinePreviewExpanded: false,
   sync: initialServicePlanningSyncSummary,
 };
 
@@ -115,6 +131,12 @@ export const servicePlanningImportSlice = createSlice({
   name: "servicePlanningImport",
   initialState: initialServicePlanningImportState,
   reducers: {
+    setServicePlanningImportUrl: (state, action: PayloadAction<string>) => {
+      state.url = action.payload;
+    },
+    markServicePlanningUrlSelection: (state) => {
+      state.urlSelectionRevision += 1;
+    },
     setServicePlanningOutlinePlanBinding: (
       state,
       action: PayloadAction<ServicePlanOutlineBinding | null>,
@@ -128,13 +150,38 @@ export const servicePlanningImportSlice = createSlice({
       state.serviceOutline = action.payload;
       state.preview = action.payload?.preview ?? null;
       state.isPlanPreviewStale = false;
-      // Shared historical preview setter. Controller resolves saved plans independently.
+      // Pasting a URL is an explicit operator choice, so it takes over from a
+      // plan-sourced preview until the next plan load.
       state.servicePlanKey = null;
+      if (action.payload?.sourceUrl) {
+        state.url = action.payload.sourceUrl;
+      }
+    },
+    /**
+     * Restores an outline's legacy stored import only when the operator is not
+     * already reviewing a plan. Target-outline changes must not replace an
+     * explicit pasted-URL preview or an active saved-plan preview.
+     */
+    setStoredServicePlanningOutlineIfIdle: (
+      state,
+      action: PayloadAction<ServiceOutline | null>,
+    ) => {
+      // A selected saved plan may have failed before producing a preview. Do
+      // not let automatic legacy restoration replace that unresolved choice
+      // or clear its synchronization trust gate.
+      if (state.preview || state.isPlanPreviewStale) return;
+      state.serviceOutline = action.payload;
+      state.preview = action.payload?.preview ?? null;
+      state.isPlanPreviewStale = false;
+      state.servicePlanKey = null;
+      if (action.payload?.sourceUrl) {
+        state.url = action.payload.sourceUrl;
+      }
     },
     /**
      * Restores the selected outline's persisted import for Credits Editor,
      * preserving its existing replacement behavior only while the current
-     * plan preview is trusted.
+     * plan preview is trusted. URL imports use the explicit setter above.
      */
     setServicePlanningRestoredOutlineUnlessStale: (
       state,
@@ -145,9 +192,15 @@ export const servicePlanningImportSlice = createSlice({
       state.preview = action.payload?.preview ?? null;
       state.isPlanPreviewStale = false;
       state.servicePlanKey = null;
+      if (action.payload?.sourceUrl) {
+        state.url = action.payload.sourceUrl;
+      }
     },
     /**
-     * Applies a preview built from the saved Service Plan.
+     * Same as above but for a preview built from the Teams ServicePlan. Leaves
+     * `url` alone: the plan's original import URL is provenance, not something
+     * the operator pasted, and overwriting the box would make Import look like
+     * it had already been used for this service.
      * Applying the outline alone does not establish freshness: schedule-only
      * events can rebuild it from the currently cached plan.
      */
@@ -238,6 +291,18 @@ export const servicePlanningImportSlice = createSlice({
       if (!action.payload) {
         state.floatingWindowRestoreId += 1;
       }
+    },
+    setServicePlanningImportOverlaySummaryExpanded: (
+      state,
+      action: PayloadAction<boolean>,
+    ) => {
+      state.overlaySummaryExpanded = action.payload;
+    },
+    setServicePlanningImportOutlinePreviewExpanded: (
+      state,
+      action: PayloadAction<boolean>,
+    ) => {
+      state.outlinePreviewExpanded = action.payload;
     },
     startServicePlanningSync: (
       state,
@@ -401,8 +466,11 @@ export const servicePlanningImportSlice = createSlice({
 });
 
 export const {
+  setServicePlanningImportUrl,
+  markServicePlanningUrlSelection,
   setServicePlanningOutlinePlanBinding,
   setServicePlanningServiceOutline,
+  setStoredServicePlanningOutlineIfIdle,
   setServicePlanningRestoredOutlineUnlessStale,
   setServicePlanningPlanOutline,
   beginServicePlanningPlanSelection,
@@ -412,6 +480,8 @@ export const {
   clearServicePlanningPreview,
   resetServicePlanningImportPreview,
   setServicePlanningFloatingWindowDismissed,
+  setServicePlanningImportOverlaySummaryExpanded,
+  setServicePlanningImportOutlinePreviewExpanded,
   startServicePlanningSync,
   setServicePlanningSyncPlanInfo,
   setServicePlanningSyncActiveStep,
