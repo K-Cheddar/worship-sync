@@ -45,6 +45,15 @@ Standalone demand expires after ten seconds without a heartbeat, followed by
 the existing five-second release grace. Live output/list intents still keep
 their captures warm independently. Desktop preflights retain their old path.
 
+The Add Video Input picker uses the same host for a camera that already has a
+local hardware binding. It joins through a picker-owned pool lease with no
+quality subscription; refreshing releases and replaces only that lease. A
+camera with no local binding cannot already be owned by a WorshipSync output,
+so its unsaved preview keeps the browser-style capture path until the operator
+saves the binding. The preview becomes ready only after playback presents a
+frame, and a failed save restarts it while the dialog remains open. Browser
+camera capture and browser/Electron desktop sharing keep their existing paths.
+
 The host still acquires first, requests 1920x1080 at 60 fps with ideal
 constraints, and maintains an audience-quality floor for hardware capture.
 Ideal constraints are requests, not evidence of negotiated resolution or fps.
@@ -65,10 +74,11 @@ Audience windows keep running when the document is hidden.
 There was no confirmed capture-specific contract in `docs/features/`; the
 general live-presentation workflow is inventory only. The current request
 explicitly authorizes direct local Electron playback, host continuity,
-audience-quality priority, compatibility fallback and preview cleanup. It also
-requires existing audio, desktop-share and remote-device behavior to remain.
-There are no unresolved product choices. The three-second discovery bound and
-five-second first-frame bound are local implementation choices.
+audience-quality priority, compatibility fallback, reliable Add Video Input
+preview and cleanup. It also requires existing audio, desktop-share and
+remote-device behavior to remain. There are no unresolved product choices. The
+three-second discovery bound and five-second first-frame bound are local
+implementation choices.
 
 ## Behavior intentionally unchanged
 
@@ -77,11 +87,17 @@ bindings and synchronized presentation shapes; desktop sharing; output mute
 and volume; current/previous slide lifetimes; stream transparency; host crash
 recovery; audio warning behavior outside the new direct-join path. No new IPC,
 transport, codec, native library, or physical-device owner was introduced.
+Browser camera and desktop-share capture paths, sound selection and aspect-fit
+controls also retain their existing behavior.
 
 ## Acceptance criteria
 
 - Local Electron projector, monitor, stream, controller and Aux views prefer
   direct playback after host readiness, preserving one host owner.
+- The Electron Add Video Input picker joins an existing bound camera capture,
+  confirms a frame before showing it, and refreshes without resetting the host.
+- Unbound cameras can still be previewed and linked without assuming a saved
+  source ID.
 - Consumers reuse per-renderer capture and retire without stopping other leases.
 - Failed joins cannot reset the host; fallback is bounded and does not loop.
 - Successful direct clients create no application video encoders or decoders.
@@ -169,6 +185,12 @@ projector frames, followed by a forced failed Aux join and continued host frames
 Artifacts (including trace and actual settings) are printed under the system
 temporary directory. The fake source delivers 20 fps; this is not a 60 fps
 hardware test. The fixture does not exercise full application sign-in/UI.
+
+Picker regression coverage in
+`client/src/components/LocalVideoInputPicker/LocalVideoInputPicker.test.tsx`
+protects same-camera refresh, host sharing, frame readiness, playback recovery,
+failed-save recovery and pending request cleanup. Capture-pool tests protect
+shared lease ownership and native-size join constraints.
 
 ### Manual Windows capture-card acceptance
 

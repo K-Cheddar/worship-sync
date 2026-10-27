@@ -6,6 +6,8 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { isElectron } from "../../utils/environment";
+import * as localVideoCapturePool from "../../utils/localVideoCapturePool";
+import { bindLocalVideoInput } from "../../utils/localVideoInput";
 import LocalVideoInputPicker from "./LocalVideoInputPicker";
 
 const mockIsElectron = jest.mocked(isElectron);
@@ -22,21 +24,36 @@ const createDevice = (
   toJSON: () => ({}),
 });
 
+const createDeferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+};
+
 describe("LocalVideoInputPicker", () => {
   const enumerateDevices = jest.fn<Promise<MediaDeviceInfo[]>, []>();
   const getUserMedia = jest.fn<
     Promise<MediaStream>,
     [MediaStreamConstraints]
   >();
+  const play = jest.fn<Promise<void>, []>();
   let deviceChangeListener: EventListener | undefined;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    play.mockReset();
+    play.mockResolvedValue(undefined);
     mockIsElectron.mockReturnValue(false);
     deviceChangeListener = undefined;
+    localStorage.clear();
+    delete window.__ELECTRON__;
     Object.defineProperty(HTMLMediaElement.prototype, "play", {
       configurable: true,
-      value: jest.fn().mockResolvedValue(undefined),
+      value: play,
     });
     getUserMedia.mockResolvedValue({
       getTracks: () => [{ stop: jest.fn() }],
@@ -59,6 +76,19 @@ describe("LocalVideoInputPicker", () => {
       },
     });
   });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    delete window.__ELECTRON__;
+  });
+
+  const markPreviewFrame = (video = screen.getByLabelText("Input preview")) => {
+    Object.defineProperties(video, {
+      videoWidth: { configurable: true, value: 1280 },
+      videoHeight: { configurable: true, value: 720 },
+    });
+    fireEvent.loadedData(video);
+  };
 
   const openPicker = () => {
     render(<LocalVideoInputPicker onLinked={jest.fn()} />);
@@ -128,9 +158,7 @@ describe("LocalVideoInputPicker", () => {
       await screen.findByRole("button", { name: "Add to Media" }),
     ).toBeInTheDocument();
     expect(screen.getAllByRole("combobox")).toHaveLength(3);
-    expect(
-      await screen.findByLabelText("Input preview"),
-    ).toBeInTheDocument();
+    expect(await screen.findByLabelText("Input preview")).toBeInTheDocument();
   });
 
   it("previews the selected video input and stops it when the sheet closes", async () => {
@@ -157,6 +185,290 @@ describe("LocalVideoInputPicker", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
     await waitFor(() => expect(stopTrack).toHaveBeenCalled());
+  });
+
+  it("waits for a usable frame and restarts the same camera on refresh", async () => {
+    const first = createDeferred<MediaStream>();
+    const firstStop = jest.fn();
+    const secondStop = jest.fn();
+    enumerateDevices.mockResolvedValue([
+      createDevice("videoinput", "camera-1", "USB Capture"),
+    ]);
+    getUserMedia.mockReturnValueOnce(first.promise).mockResolvedValueOnce({
+      getTracks: () => [{ stop: secondStop }],
+    } as unknown as MediaStream);
+
+    openPicker();
+
+    const video = await screen.findByLabelText("Input preview");
+    await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(1));
+    Object.defineProperties(video, {
+      videoWidth: { configurable: true, value: 1280 },
+      videoHeight: { configurable: true, value: 720 },
+    });
+    first.resolve({
+      getTracks: () => [{ stop: firstStop }],
+    } as unknown as MediaStream);
+    await waitFor(() => expect(play).toHaveBeenCalledTimes(1));
+    expect(screen.getByText(/Starting preview/)).toBeInTheDocument();
+    expect(video).toHaveClass("opacity-0");
+
+    fireEvent.loadedData(video);
+    await waitFor(() =>
+      expect(screen.queryByText(/Starting preview/)).not.toBeInTheDocument(),
+    );
+    expect(video).toHaveClass("opacity-100");
+
+    Object.defineProperty(video, "videoWidth", {
+      configurable: true,
+      value: 0,
+    });
+    Object.defineProperty(video, "videoHeight", {
+      configurable: true,
+      value: 0,
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Refresh video inputs" }),
+    );
+
+    await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(2));
+    expect(firstStop).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/Starting preview/)).toBeInTheDocument();
+    markPreviewFrame(video);
+    await waitFor(() =>
+      expect(screen.queryByText(/Starting preview/)).not.toBeInTheDocument(),
+    );
+  });
+
+  it("shows playback errors and recovers after refresh", async () => {
+    const firstStop = jest.fn();
+    enumerateDevices.mockResolvedValue([
+      createDevice("videoinput", "camera-1", "USB Capture"),
+    ]);
+    getUserMedia.mockResolvedValue({
+      getTracks: () => [{ stop: firstStop }],
+    } as unknown as MediaStream);
+    play.mockRejectedValueOnce(new Error("autoplay failed"));
+
+    openPicker();
+
+    expect(
+      await screen.findByText(
+        "Camera preview could not start. Refresh the preview to try again.",
+      ),
+    ).toBeInTheDocument();
+    expect(firstStop).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Refresh video inputs" }),
+    );
+    const video = await screen.findByLabelText("Input preview");
+    await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(2));
+    markPreviewFrame(video);
+    await waitFor(() =>
+      expect(screen.queryByText(/Starting preview/)).not.toBeInTheDocument(),
+    );
+    expect(video).toHaveClass("opacity-100");
+  });
+
+  it("joins a camera already owned by the WorshipSync capture host", async () => {
+    mockIsElectron.mockReturnValue(true);
+    window.__ELECTRON__ = true;
+    enumerateDevices.mockResolvedValue([
+      createDevice("videoinput", "camera-1", "USB Capture"),
+    ]);
+    bindLocalVideoInput(
+      "live-source",
+      "camera-1",
+      "USB Capture",
+      "audio-1",
+      "USB Audio",
+    );
+    const stopTrack = jest.fn();
+    const stream = {
+      getTracks: () => [{ stop: stopTrack }],
+      getVideoTracks: () => [{ stop: stopTrack }],
+      getAudioTracks: () => [],
+    } as unknown as MediaStream;
+    const acquire = jest
+      .spyOn(localVideoCapturePool, "acquireWarmLocalVideoCapture")
+      .mockResolvedValue({ stream, audioError: undefined });
+    const release = jest
+      .spyOn(localVideoCapturePool, "releaseWarmLocalVideoCapture")
+      .mockResolvedValue(undefined);
+    const reset = jest.spyOn(
+      localVideoCapturePool,
+      "resetWarmLocalVideoCapture",
+    );
+
+    openPicker();
+
+    const video = await screen.findByLabelText("Input preview");
+    await waitFor(() => expect(acquire).toHaveBeenCalledTimes(1));
+    const [previewSourceId, binding, publish, consumerId, options] =
+      acquire.mock.calls[0];
+    expect(previewSourceId).toMatch(/^picker-preview:/);
+    expect(binding).toEqual(
+      expect.objectContaining({
+        sourceId: "live-source",
+        deviceId: "camera-1",
+      }),
+    );
+    expect(binding).not.toHaveProperty("audioDeviceId");
+    expect(publish).toBe(false);
+    expect(consumerId).toMatch(/^input-picker:/);
+    expect(options).toEqual({ shared: true });
+    expect(getUserMedia).not.toHaveBeenCalled();
+
+    markPreviewFrame(video);
+    await waitFor(() =>
+      expect(screen.queryByText(/Starting preview/)).not.toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(release).toHaveBeenCalledTimes(1));
+    expect(release).toHaveBeenCalledWith(previewSourceId, consumerId);
+    expect(reset).not.toHaveBeenCalled();
+    expect(stopTrack).not.toHaveBeenCalled();
+  });
+
+  it("previews a newly selected Electron camera before it has a saved binding", async () => {
+    mockIsElectron.mockReturnValue(true);
+    window.__ELECTRON__ = true;
+    enumerateDevices.mockResolvedValue([
+      createDevice("videoinput", "new-camera", "New USB Camera"),
+    ]);
+    const acquire = jest.spyOn(
+      localVideoCapturePool,
+      "acquireWarmLocalVideoCapture",
+    );
+
+    openPicker();
+
+    const video = await screen.findByLabelText("Input preview");
+    await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(1));
+    expect(getUserMedia).toHaveBeenCalledWith({
+      audio: false,
+      video: {
+        deviceId: { exact: "new-camera" },
+        width: { ideal: 640 },
+        height: { ideal: 360 },
+      },
+    });
+    expect(acquire).not.toHaveBeenCalled();
+    markPreviewFrame(video);
+    await waitFor(() =>
+      expect(screen.queryByText(/Starting preview/)).not.toBeInTheDocument(),
+    );
+  });
+
+  it("restores the camera preview when adding the input fails", async () => {
+    const firstStop = jest.fn();
+    enumerateDevices.mockResolvedValue([
+      createDevice("videoinput", "camera-1", "USB Capture"),
+    ]);
+    getUserMedia
+      .mockResolvedValueOnce({
+        getTracks: () => [{ stop: firstStop }],
+      } as unknown as MediaStream)
+      .mockResolvedValue({
+        getTracks: () => [{ stop: jest.fn() }],
+      } as unknown as MediaStream);
+    jest
+      .spyOn(localVideoCapturePool, "acquireWarmLocalVideoCapture")
+      .mockRejectedValue(new Error("capture setup failed"));
+
+    openPicker();
+    await screen.findByLabelText("Input preview");
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Add to Media" }),
+    );
+
+    expect(
+      await screen.findByRole("alert", {}, { timeout: 5_000 }),
+    ).toHaveTextContent("Check the input connection and camera permission");
+    expect(firstStop).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(2));
+    const video = screen.getByLabelText("Input preview");
+    markPreviewFrame(video);
+    await waitFor(() =>
+      expect(screen.queryByText(/Starting preview/)).not.toBeInTheDocument(),
+    );
+    expect(video).toHaveClass("opacity-100");
+  });
+
+  it("waits for an older device request before starting the newly selected camera", async () => {
+    const first = createDeferred<MediaStream>();
+    const second = createDeferred<MediaStream>();
+    const firstStop = jest.fn();
+    const secondStop = jest.fn();
+    enumerateDevices
+      .mockResolvedValueOnce([
+        createDevice("videoinput", "camera-1", "First Camera"),
+      ])
+      .mockResolvedValueOnce([
+        createDevice("videoinput", "camera-2", "Second Camera"),
+      ]);
+    getUserMedia
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+
+    openPicker();
+    await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      deviceChangeListener?.(new Event("devicechange"));
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("combobox", { name: "Video input:" }),
+      ).toHaveTextContent("Second Camera"),
+    );
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+
+    first.resolve({
+      getTracks: () => [{ stop: firstStop }],
+    } as unknown as MediaStream);
+    await waitFor(() => expect(firstStop).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(2));
+    expect(getUserMedia).toHaveBeenLastCalledWith({
+      audio: false,
+      video: {
+        deviceId: { exact: "camera-2" },
+        width: { ideal: 640 },
+        height: { ideal: 360 },
+      },
+    });
+
+    second.resolve({
+      getTracks: () => [{ stop: secondStop }],
+    } as unknown as MediaStream);
+    const video = await screen.findByLabelText("Input preview");
+    await waitFor(() => expect(play).toHaveBeenCalled());
+    markPreviewFrame(video);
+    await waitFor(() =>
+      expect(screen.queryByText(/Starting preview/)).not.toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(secondStop).toHaveBeenCalledTimes(1));
+  });
+
+  it("stops a late camera result when the picker closes during capture", async () => {
+    const pending = createDeferred<MediaStream>();
+    const stopTrack = jest.fn();
+    enumerateDevices.mockResolvedValue([
+      createDevice("videoinput", "camera-1", "USB Capture"),
+    ]);
+    getUserMedia.mockReturnValue(pending.promise);
+
+    openPicker();
+    await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+
+    pending.resolve({
+      getTracks: () => [{ stop: stopTrack }],
+    } as unknown as MediaStream);
+    await waitFor(() => expect(stopTrack).toHaveBeenCalledTimes(1));
+    expect(screen.queryByLabelText("Input preview")).not.toBeInTheDocument();
   });
 
   it("requests browser permission once and then refreshes the labeled devices", async () => {
@@ -300,7 +612,9 @@ describe("LocalVideoInputPicker", () => {
       ]);
       getUserMedia.mockResolvedValue({
         getTracks: () => [],
-        getVideoTracks: () => [{ addEventListener: jest.fn(), stop: jest.fn() }],
+        getVideoTracks: () => [
+          { addEventListener: jest.fn(), stop: jest.fn() },
+        ],
         getAudioTracks: () => [],
       } as unknown as MediaStream);
       const onLinked = openDesktopPicker();
@@ -309,7 +623,9 @@ describe("LocalVideoInputPicker", () => {
         await screen.findByRole("img", { name: "Preview of Screen 1" }),
       ).toBeInTheDocument();
       await waitFor(() =>
-        expect(screen.getByRole("button", { name: "Add to Media" })).toBeEnabled(),
+        expect(
+          screen.getByRole("button", { name: "Add to Media" }),
+        ).toBeEnabled(),
       );
       fireEvent.click(screen.getByRole("button", { name: "Add to Media" }));
 
@@ -340,7 +656,9 @@ describe("LocalVideoInputPicker", () => {
       expect(
         await screen.findByRole("button", { name: "Choose what to share" }),
       ).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Add to Media" })).toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: "Add to Media" }),
+      ).toBeDisabled();
     });
 
     it("keeps a browser share running for the outputs after saving", async () => {

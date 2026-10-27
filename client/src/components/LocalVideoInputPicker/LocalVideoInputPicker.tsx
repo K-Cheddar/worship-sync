@@ -19,12 +19,12 @@ import {
   getLocalVideoSourceErrorMessage,
   getVideoInputErrorMessage,
   resolveLocalVideoInputBinding,
+  resolveLocalVideoInputBindingForDevice,
 } from "../../utils/localVideoInput";
 import {
   acquireWarmLocalVideoCapture,
   LocalVideoCaptureOwnedError,
   releaseWarmLocalVideoCapture,
-  resetWarmLocalVideoCapture,
 } from "../../utils/localVideoCapturePool";
 import {
   type DesktopCaptureSource,
@@ -51,6 +51,114 @@ const PICKER_CAPTURE_CONSUMER_ID = "input-picker";
 const SYSTEM_AUDIO_VALUE = "__system_audio__";
 const PREVIEW_WIDTH = 640;
 const PREVIEW_HEIGHT = 360;
+const PREVIEW_FRAME_TIMEOUT_MS = 5_000;
+
+type DevicePreviewCapture = {
+  stream: MediaStream;
+  poolSourceId?: string;
+  consumerId: string;
+};
+
+type DevicePreviewSession = {
+  cancelled: boolean;
+  abortController: AbortController;
+  consumerId: string;
+  capture?: DevicePreviewCapture;
+  pendingCapture?: Promise<DevicePreviewCapture>;
+  releasePromise?: Promise<void>;
+};
+
+class PreviewPlaybackError extends Error {}
+class PreviewFrameTimeoutError extends Error {}
+
+const waitForUsablePreviewFrame = (
+  video: HTMLVideoElement,
+  signal: AbortSignal,
+) =>
+  new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let timeoutId: number | undefined;
+    let frameCallbackId: number | undefined;
+    const frameVideo = video as HTMLVideoElement & {
+      requestVideoFrameCallback?: (callback: () => void) => number;
+      cancelVideoFrameCallback?: (callbackId: number) => void;
+    };
+
+    const cleanup = () => {
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+      if (frameCallbackId !== undefined) {
+        frameVideo.cancelVideoFrameCallback?.(frameCallbackId);
+      }
+      video.removeEventListener("loadeddata", checkFrame);
+      video.removeEventListener("canplay", checkFrame);
+      video.removeEventListener("playing", checkFrame);
+      signal.removeEventListener("abort", abort);
+    };
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error);
+      else resolve();
+    };
+    const checkFrame = () => {
+      if (video.videoWidth > 0 && video.videoHeight > 0) finish();
+    };
+    const scheduleFrameCheck = () => {
+      frameCallbackId = frameVideo.requestVideoFrameCallback?.(() => {
+        checkFrame();
+        if (!settled) scheduleFrameCheck();
+      });
+    };
+    const abort = () =>
+      finish(new DOMException("Camera preview was cancelled.", "AbortError"));
+
+    if (signal.aborted) {
+      abort();
+      return;
+    }
+    video.addEventListener("loadeddata", checkFrame);
+    video.addEventListener("canplay", checkFrame);
+    video.addEventListener("playing", checkFrame);
+    signal.addEventListener("abort", abort, { once: true });
+    timeoutId = window.setTimeout(
+      () =>
+        finish(
+          new PreviewFrameTimeoutError(
+            "The camera did not produce a video frame in time.",
+          ),
+        ),
+      PREVIEW_FRAME_TIMEOUT_MS,
+    );
+    scheduleFrameCheck();
+    try {
+      void Promise.resolve(video.play()).catch(() =>
+        finish(new PreviewPlaybackError("Camera preview playback failed.")),
+      );
+    } catch {
+      finish(new PreviewPlaybackError("Camera preview playback failed."));
+    }
+  });
+
+const getDevicePreviewErrorMessage = (
+  error: unknown,
+  joinedCaptureHost: boolean,
+) => {
+  if (error instanceof PreviewPlaybackError) {
+    return "Camera preview could not start. Refresh the preview to try again.";
+  }
+  if (error instanceof PreviewFrameTimeoutError) {
+    return "The camera connected, but no video frame arrived. Refresh the preview to try again.";
+  }
+  if (joinedCaptureHost) {
+    return "WorshipSync could not connect to this camera preview. Check the camera connection, then refresh the preview.";
+  }
+  return getVideoInputErrorMessage(error);
+};
+
+const createPreviewInstanceId = () =>
+  globalThis.crypto?.randomUUID?.() ??
+  `picker-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 export type LocalVideoCaptureMode = "device" | "desktop";
 
@@ -143,63 +251,131 @@ const LocalVideoInputPicker = ({
   const [hasListedDesktopSources, setHasListedDesktopSources] = useState(false);
   const [previewStatus, setPreviewStatus] = useState<PreviewStatus>("idle");
   const [previewError, setPreviewError] = useState("");
+  const [previewRefreshKey, setPreviewRefreshKey] = useState(0);
+  const [previewPaused, setPreviewPaused] = useState(false);
+  const previewPausedRef = useRef(false);
   const refreshRequestRef = useRef(0);
   const desktopRequestRef = useRef(0);
   const linkedShareRef = useRef<MediaStream | undefined>(undefined);
   const previewVideoRef = useRef<HTMLVideoElement | null>(null);
   const previewStreamRef = useRef<MediaStream | undefined>(undefined);
+  const previewSessionRef = useRef<DevicePreviewSession | undefined>(undefined);
+  const previewReleaseRef = useRef<Promise<void>>(Promise.resolve());
+  const previewRequestRef = useRef(0);
+  const previewInstanceIdRef = useRef<string | undefined>(undefined);
+  if (!previewInstanceIdRef.current) {
+    previewInstanceIdRef.current = createPreviewInstanceId();
+  }
+  const previewInstanceId = previewInstanceIdRef.current;
+  const pickerCaptureConsumerId = `${PICKER_CAPTURE_CONSUMER_ID}:${previewInstanceId}`;
+  const pickerSourceId = source?.sourceId;
   const runningInElectron = isElectron();
 
-  const clearDevicePreview = useCallback(() => {
-    stopMediaStream(previewStreamRef.current);
-    previewStreamRef.current = undefined;
-    attachPreviewStream(previewVideoRef.current, undefined);
+  const retireDevicePreview = useCallback(
+    (session = previewSessionRef.current) => {
+      if (!session) return Promise.resolve();
+      session.cancelled = true;
+      session.abortController.abort();
+      if (previewSessionRef.current === session) {
+        previewSessionRef.current = undefined;
+      }
+      if (previewStreamRef.current === session.capture?.stream) {
+        previewStreamRef.current = undefined;
+        const video = previewVideoRef.current;
+        if (video && video.srcObject === session.capture?.stream) {
+          video.srcObject = null;
+        }
+      }
+      session.releasePromise ??= (async () => {
+        let capture = session.capture;
+        if (!capture && session.pendingCapture) {
+          capture = await session.pendingCapture.catch(() => undefined);
+        }
+        if (!capture) return;
+        if (capture.poolSourceId) {
+          await releaseWarmLocalVideoCapture(
+            capture.poolSourceId,
+            capture.consumerId,
+          ).catch((releaseError) => {
+            console.error(
+              "Camera preview lease could not be released:",
+              releaseError,
+            );
+            stopMediaStream(capture?.stream);
+          });
+          return;
+        }
+        stopMediaStream(capture.stream);
+      })();
+      return session.releasePromise;
+    },
+    [],
+  );
+
+  const clearDevicePreview = useCallback(async () => {
+    previewPausedRef.current = true;
+    setPreviewPaused(true);
+    const release = previewReleaseRef.current
+      .catch(() => undefined)
+      .then(() => retireDevicePreview());
+    previewReleaseRef.current = release;
+    await release;
     setPreviewStatus("idle");
     setPreviewError("");
-  }, []);
+  }, [retireDevicePreview]);
 
-  const refresh = useCallback(async () => {
-    const requestId = ++refreshRequestRef.current;
-    setError("");
-    setDeviceEnumerationFailed(false);
-    try {
-      const next = await enumerateInputs();
-      if (requestId !== refreshRequestRef.current) return;
-      setHasEnumeratedDevices(true);
-      setDevices(next);
-      const binding = source
-        ? resolveLocalVideoInputBinding(source.sourceId)
-        : undefined;
-      const videoInputs = next.filter((device) => device.kind === "videoinput");
-      const audioInputs = next.filter((device) => device.kind === "audioinput");
-      setVideoDeviceId((current) =>
-        videoInputs.some(
-          (device) => device.deviceId === (current || binding?.deviceId),
-        )
-          ? current || binding?.deviceId || ""
-          : videoInputs[0]?.deviceId || "",
-      );
-      setAudioDeviceId((current) => {
-        if (current === SYSTEM_AUDIO_VALUE) return current;
-        if (!current && binding?.systemAudio) return SYSTEM_AUDIO_VALUE;
-        return audioInputs.some(
-          (device) => device.deviceId === (current || binding?.audioDeviceId),
-        )
-          ? current || binding?.audioDeviceId || ""
-          : "";
-      });
-    } catch (nextError) {
-      if (requestId !== refreshRequestRef.current) return;
-      setHasEnumeratedDevices(true);
-      setDeviceEnumerationFailed(true);
-      setDevices([]);
-      setVideoDeviceId("");
-      setAudioDeviceId("");
-      // A desktop share only reads this list for optional sound; its own
-      // source list drives the sheet, so do not raise a hardware error there.
-      if (!isDesktopMode) setError(getVideoInputErrorMessage(nextError));
-    }
-  }, [isDesktopMode, source]);
+  const refresh = useCallback(
+    async (restartPreview = true) => {
+      const requestId = ++refreshRequestRef.current;
+      setError("");
+      setDeviceEnumerationFailed(false);
+      try {
+        const next = await enumerateInputs();
+        if (requestId !== refreshRequestRef.current) return;
+        setHasEnumeratedDevices(true);
+        setDevices(next);
+        const binding = source
+          ? resolveLocalVideoInputBinding(source.sourceId)
+          : undefined;
+        const videoInputs = next.filter(
+          (device) => device.kind === "videoinput",
+        );
+        const audioInputs = next.filter(
+          (device) => device.kind === "audioinput",
+        );
+        setVideoDeviceId((current) =>
+          videoInputs.some(
+            (device) => device.deviceId === (current || binding?.deviceId),
+          )
+            ? current || binding?.deviceId || ""
+            : videoInputs[0]?.deviceId || "",
+        );
+        setAudioDeviceId((current) => {
+          if (current === SYSTEM_AUDIO_VALUE) return current;
+          if (!current && binding?.systemAudio) return SYSTEM_AUDIO_VALUE;
+          return audioInputs.some(
+            (device) => device.deviceId === (current || binding?.audioDeviceId),
+          )
+            ? current || binding?.audioDeviceId || ""
+            : "";
+        });
+        if (restartPreview) {
+          setPreviewRefreshKey((current) => current + 1);
+        }
+      } catch (nextError) {
+        if (requestId !== refreshRequestRef.current) return;
+        setHasEnumeratedDevices(true);
+        setDeviceEnumerationFailed(true);
+        setDevices([]);
+        setVideoDeviceId("");
+        setAudioDeviceId("");
+        // A desktop share only reads this list for optional sound; its own
+        // source list drives the sheet, so do not raise a hardware error there.
+        if (!isDesktopMode) setError(getVideoInputErrorMessage(nextError));
+      }
+    },
+    [isDesktopMode, source],
+  );
 
   const refreshDesktopSources = useCallback(async () => {
     if (!canListDesktopSources) return;
@@ -232,13 +408,15 @@ const LocalVideoInputPicker = ({
 
   useEffect(() => {
     if (!open) return;
+    previewPausedRef.current = false;
+    setPreviewPaused(false);
     setLabel(
       source?.label ??
-      getDefaultLocalVideoInputLabel(isDesktopMode ? "screen" : "device"),
+        getDefaultLocalVideoInputLabel(isDesktopMode ? "screen" : "device"),
     );
     setIsLabelEdited(Boolean(source?.label));
     setFit(source?.fit ?? "contain");
-    void refresh();
+    void refresh(false);
     void refreshDesktopSources();
   }, [
     isDesktopMode,
@@ -268,18 +446,12 @@ const LocalVideoInputPicker = ({
       }
       return undefined;
     });
-    clearDevicePreview();
-  }, [clearDevicePreview, open]);
+  }, [open]);
 
-  // Live muted preview of the selected camera so operators confirm the right
-  // USB input before saving. Released before link() so the capture pool can
-  // open the device exclusively for presentation.
+  // Live muted preview of the selected camera. A shared Electron join and a
+  // browser-owned stream each retain a picker-specific cleanup path.
   useEffect(() => {
-    if (!open || isDesktopMode) return;
-    if (!videoDeviceId) {
-      clearDevicePreview();
-      return;
-    }
+    if (!open || isDesktopMode || !videoDeviceId || previewPaused) return;
     if (!navigator.mediaDevices?.getUserMedia) {
       setPreviewStatus("error");
       setPreviewError("Video inputs are not supported in this browser.");
@@ -287,46 +459,108 @@ const LocalVideoInputPicker = ({
     }
 
     let cancelled = false;
+    const previewRequest = ++previewRequestRef.current;
     const previewVideo = previewVideoRef.current;
+    const sourceBinding = pickerSourceId
+      ? resolveLocalVideoInputBinding(pickerSourceId)
+      : undefined;
+    const sharedBinding = runningInElectron
+      ? sourceBinding?.deviceId === videoDeviceId
+        ? sourceBinding
+        : resolveLocalVideoInputBindingForDevice(videoDeviceId)
+      : undefined;
+    const sharedPreviewBinding = sharedBinding
+      ? {
+          sourceId: sharedBinding.sourceId,
+          deviceId: sharedBinding.deviceId,
+          deviceLabel: sharedBinding.deviceLabel,
+          ...(sharedBinding.captureKind
+            ? { captureKind: sharedBinding.captureKind }
+            : {}),
+        }
+      : undefined;
+    const joinedCaptureHost = Boolean(sharedPreviewBinding);
+    const previewPoolSourceId = `picker-preview:${previewInstanceId}:${previewRequest}`;
+    const session: DevicePreviewSession = {
+      cancelled: false,
+      abortController: new AbortController(),
+      consumerId: `${pickerCaptureConsumerId}:${previewRequest}`,
+    };
     setPreviewStatus("loading");
     setPreviewError("");
-    stopMediaStream(previewStreamRef.current);
-    previewStreamRef.current = undefined;
-    attachPreviewStream(previewVideo, undefined);
+    const previousRelease = previewReleaseRef.current;
+    void (async () => {
+      await previousRelease.catch(() => undefined);
+      if (cancelled || previewPausedRef.current) return;
+      previewSessionRef.current = session;
+      const video = previewVideo;
+      if (!video) throw new Error("Camera preview is unavailable.");
+      video.srcObject = null;
 
-    void navigator.mediaDevices
-      .getUserMedia({
-        audio: false,
-        video: {
-          deviceId: { exact: videoDeviceId },
-          width: { ideal: PREVIEW_WIDTH },
-          height: { ideal: PREVIEW_HEIGHT },
-        },
-      })
-      .then((stream) => {
-        if (cancelled) {
-          stopMediaStream(stream);
-          return;
-        }
-        previewStreamRef.current = stream;
-        attachPreviewStream(previewVideoRef.current ?? previewVideo, stream);
-        setPreviewStatus("ready");
-      })
-      .catch((nextError) => {
-        if (cancelled) return;
-        previewStreamRef.current = undefined;
-        attachPreviewStream(previewVideoRef.current ?? previewVideo, undefined);
-        setPreviewStatus("error");
-        setPreviewError(getVideoInputErrorMessage(nextError));
-      });
+      const pendingCapture = sharedPreviewBinding
+        ? acquireWarmLocalVideoCapture(
+            previewPoolSourceId,
+            sharedPreviewBinding,
+            false,
+            session.consumerId,
+            { shared: true },
+          ).then(({ stream }) => ({
+            stream,
+            poolSourceId: previewPoolSourceId,
+            consumerId: session.consumerId,
+          }))
+        : navigator.mediaDevices
+            .getUserMedia({
+              audio: false,
+              video: {
+                deviceId: { exact: videoDeviceId },
+                width: { ideal: PREVIEW_WIDTH },
+                height: { ideal: PREVIEW_HEIGHT },
+              },
+            })
+            .then((stream) => ({ stream, consumerId: session.consumerId }));
+      session.pendingCapture = pendingCapture;
+      const capture = await pendingCapture;
+      session.capture = capture;
+      session.pendingCapture = undefined;
+      if (session.cancelled) {
+        await retireDevicePreview(session);
+        return;
+      }
+      previewStreamRef.current = capture.stream;
+      video.srcObject = capture.stream;
+      await waitForUsablePreviewFrame(video, session.abortController.signal);
+      if (cancelled || session.cancelled) return;
+      setPreviewStatus("ready");
+    })().catch((nextError: unknown) => {
+      if (cancelled || session.cancelled) return;
+      const release = retireDevicePreview(session);
+      previewReleaseRef.current = release;
+      if (previewVideo && previewVideo.srcObject === session.capture?.stream) {
+        previewVideo.srcObject = null;
+      }
+      setPreviewStatus("error");
+      setPreviewError(
+        getDevicePreviewErrorMessage(nextError, joinedCaptureHost),
+      );
+    });
 
     return () => {
       cancelled = true;
-      stopMediaStream(previewStreamRef.current);
-      previewStreamRef.current = undefined;
-      attachPreviewStream(previewVideo, undefined);
+      previewReleaseRef.current = retireDevicePreview(session);
     };
-  }, [clearDevicePreview, isDesktopMode, open, videoDeviceId]);
+  }, [
+    isDesktopMode,
+    open,
+    previewPaused,
+    previewRefreshKey,
+    retireDevicePreview,
+    runningInElectron,
+    pickerCaptureConsumerId,
+    pickerSourceId,
+    previewInstanceId,
+    videoDeviceId,
+  ]);
 
   // Browser shares keep their stream until save or dismiss; mirror it in the
   // preview so operators see the chosen screen or window.
@@ -367,7 +601,7 @@ const LocalVideoInputPicker = ({
   useEffect(() => {
     if (isLabelEdited) return;
     const suggested = isDesktopMode
-      ? selectedDesktopSource?.name ?? browserShare?.name
+      ? (selectedDesktopSource?.name ?? browserShare?.name)
       : selectedVideoInput?.label;
     if (suggested) setLabel(suggested);
   }, [
@@ -496,12 +730,12 @@ const LocalVideoInputPicker = ({
     audioEnabled: boolean,
   ) => {
     const suggestedLabel = isDesktopMode
-      ? selectedDesktopSource?.name ?? browserShare?.name
+      ? (selectedDesktopSource?.name ?? browserShare?.name)
       : selectedVideoInput?.label;
     onLinked({
       ...nextSource,
       label:
-        (isLabelEdited ? label.trim() : suggestedLabel ?? label.trim()) ||
+        (isLabelEdited ? label.trim() : (suggestedLabel ?? label.trim())) ||
         suggestedLabel ||
         nextSource.label,
       captureKind: nextCaptureKind,
@@ -514,7 +748,7 @@ const LocalVideoInputPicker = ({
   const linkDesktopShare = async (nextSource: LocalVideoInputMediaSource) => {
     if (!canListDesktopSources) {
       const share = browserShare;
-      if (!share) return;
+      if (!share) return false;
       const linked = bindLocalVideoInput(
         nextSource.sourceId,
         // Browser shares have no reusable handle; keep one binding per source.
@@ -528,7 +762,7 @@ const LocalVideoInputPicker = ({
         setError(
           "This share could not be saved locally. Check browser storage, then try again.",
         );
-        return;
+        return false;
       }
       linkedShareRef.current = share.stream;
       keepBrowserDesktopShare(nextSource.sourceId, share.stream);
@@ -537,11 +771,11 @@ const LocalVideoInputPicker = ({
         share.captureKind,
         share.stream.getAudioTracks().length > 0,
       );
-      return;
+      return true;
     }
 
     const desktopSource = selectedDesktopSource;
-    if (!desktopSource) return;
+    if (!desktopSource) return false;
     const linked = bindLocalVideoInput(
       nextSource.sourceId,
       desktopSource.id,
@@ -558,26 +792,27 @@ const LocalVideoInputPicker = ({
       setError(
         "This share could not be saved locally. Check app storage, then try again.",
       );
-      return;
+      return false;
     }
     await acquireWarmLocalVideoCapture(
       nextSource.sourceId,
       linked,
       true,
-      PICKER_CAPTURE_CONSUMER_ID,
+      pickerCaptureConsumerId,
     );
     finishLink(
       nextSource,
       desktopSource.kind,
       useSystemAudio || Boolean(selectedAudioInput),
     );
+    return true;
   };
 
   const linkVideoInput = async (nextSource: LocalVideoInputMediaSource) => {
     const video = videoInputs.find(
       (device) => device.deviceId === videoDeviceId,
     );
-    if (!video) return;
+    if (!video) return false;
     const linked = bindLocalVideoInput(
       nextSource.sourceId,
       video.deviceId,
@@ -589,15 +824,16 @@ const LocalVideoInputPicker = ({
       setError(
         "This input could not be saved locally. Check browser storage, then try again.",
       );
-      return;
+      return false;
     }
     await acquireWarmLocalVideoCapture(
       nextSource.sourceId,
       linked,
       true,
-      PICKER_CAPTURE_CONSUMER_ID,
+      pickerCaptureConsumerId,
     );
     finishLink(nextSource, "device", Boolean(selectedAudioInput));
+    return true;
   };
 
   const link = async () => {
@@ -609,15 +845,15 @@ const LocalVideoInputPicker = ({
       );
     setIsLoading(true);
     setError("");
-    // Free the preview capture before the pool opens the same device.
-    clearDevicePreview();
+    let linked = false;
     try {
-      await resetWarmLocalVideoCapture(nextSource.sourceId);
+      // Release only this picker's preview before the save preflight begins.
+      await clearDevicePreview();
       if (isDesktopMode) {
-        await linkDesktopShare(nextSource);
+        linked = await linkDesktopShare(nextSource);
         return;
       }
-      await linkVideoInput(nextSource);
+      linked = await linkVideoInput(nextSource);
     } catch (nextError) {
       if (nextError instanceof LocalVideoCaptureOwnedError) {
         finishLink(
@@ -625,6 +861,7 @@ const LocalVideoInputPicker = ({
           isDesktopMode ? captureKind : "device",
           useSystemAudio || Boolean(selectedAudioInput),
         );
+        linked = true;
         return;
       }
       setError(
@@ -636,7 +873,7 @@ const LocalVideoInputPicker = ({
     } finally {
       await releaseWarmLocalVideoCapture(
         nextSource.sourceId,
-        PICKER_CAPTURE_CONSUMER_ID,
+        pickerCaptureConsumerId,
       ).catch((releaseError) =>
         console.error(
           "Video input setup could not release capture:",
@@ -644,6 +881,11 @@ const LocalVideoInputPicker = ({
         ),
       );
       setIsLoading(false);
+      if (!linked && !isDesktopMode && open) {
+        previewPausedRef.current = false;
+        setPreviewPaused(false);
+        setPreviewRefreshKey((current) => current + 1);
+      }
     }
   };
 
@@ -712,11 +954,8 @@ const LocalVideoInputPicker = ({
   // getUserMedia finished while the element was still unmounted.
   useEffect(() => {
     if (!showDeviceOrBrowserPreview || previewStatus !== "ready") return;
-    const stream =
-      previewStreamRef.current ??
-      (isDesktopMode && !canListDesktopSources
-        ? browserShare?.stream
-        : undefined);
+    if (!isDesktopMode || canListDesktopSources) return;
+    const stream = browserShare?.stream;
     attachPreviewStream(previewVideoRef.current, stream);
   }, [
     browserShare?.stream,
@@ -792,7 +1031,9 @@ const LocalVideoInputPicker = ({
                   disabled={isLoading || !supportsDesktopCapture()}
                   onClick={() => void chooseBrowserShare()}
                 >
-                  {browserShare ? "Choose a different share" : "Choose what to share"}
+                  {browserShare
+                    ? "Choose a different share"
+                    : "Choose what to share"}
                 </Button>
                 <p className="text-sm text-neutral-300">
                   {browserShare
@@ -850,8 +1091,9 @@ const LocalVideoInputPicker = ({
                   playsInline
                   autoPlay
                   aria-label="Input preview"
-                  className={`h-full w-full ${previewObjectFit} ${previewStatus === "ready" ? "opacity-100" : "opacity-0"
-                    }`}
+                  className={`h-full w-full ${previewObjectFit} ${
+                    previewStatus === "ready" ? "opacity-100" : "opacity-0"
+                  }`}
                 />
                 {livePreviewStatusLabel ? (
                   <div
