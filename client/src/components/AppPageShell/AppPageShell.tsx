@@ -29,7 +29,7 @@ const AppPageShell = ({
   description,
   children,
   showAccountNavigation = true,
-  containerClassName,
+  contentClassName,
 }: {
   title: string;
   icon?: LucideIcon;
@@ -37,7 +37,7 @@ const AppPageShell = ({
   description?: string;
   children: ReactNode;
   showAccountNavigation?: boolean;
-  containerClassName?: string;
+  contentClassName?: string;
 }) => {
   const scrollbarWidth = useSelector(
     (state: RootState) => state.undoable.present.preferences.scrollbarWidth,
@@ -48,12 +48,7 @@ const AppPageShell = ({
       className="flex h-dvh min-h-0 flex-col overflow-hidden bg-homepage-canvas text-white"
       style={{ "--scrollbar-width": scrollbarWidth } as CSSProperties}
     >
-      <div
-        className={cn(
-          "mx-auto flex min-h-0 w-full flex-1 flex-col px-4 pb-6 lg:px-6",
-          containerClassName,
-        )}
-      >
+      <div className="mx-auto flex min-h-0 w-full flex-1 flex-col px-4 pb-6 lg:px-6">
         <div className="flex w-full shrink-0 flex-wrap items-center justify-between gap-4 border-b border-gray-700 py-3">
           <div className="flex flex-wrap items-center gap-3">
             {showAccountNavigation ? <HomeToolbarMenu /> : null}
@@ -72,7 +67,12 @@ const AppPageShell = ({
           {showAccountNavigation ? <UserSection /> : null}
         </div>
 
-        <section className="mt-3 flex min-h-0 w-full flex-1 flex-col overflow-y-auto overscroll-y-contain lg:mt-4">
+        <section
+          className={cn(
+            "mx-auto mt-3 flex min-h-0 w-full flex-1 flex-col overflow-y-auto overscroll-y-contain lg:mt-4",
+            contentClassName,
+          )}
+        >
           {children}
         </section>
       </div>

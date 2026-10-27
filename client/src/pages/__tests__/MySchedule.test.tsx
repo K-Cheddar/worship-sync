@@ -228,11 +228,14 @@ describe("MySchedule", () => {
     });
   });
 
-  it("uses the shared schedule identity in its page header", () => {
+  it("keeps its toolbar full width above centered schedule content", () => {
     respond([]);
     renderPage();
 
-    expect(screen.getByRole("main").firstElementChild).toHaveClass(
+    const shell = screen.getByRole("main").firstElementChild;
+    expect(shell?.firstElementChild).toHaveClass("w-full");
+    expect(shell?.firstElementChild).not.toHaveClass("max-w-[90rem]");
+    expect(shell?.lastElementChild).toHaveClass(
       "mx-auto",
       "w-full",
       "max-w-[90rem]",

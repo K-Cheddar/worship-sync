@@ -1448,7 +1448,7 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
       title="My schedule"
       {...PAGE_APPEARANCES.mySchedule}
       showAccountNavigation={!access}
-      containerClassName="max-w-[90rem]"
+      contentClassName="max-w-[90rem]"
     >
       <div className="flex w-full flex-col gap-4">
         {status === "loading" ? (
