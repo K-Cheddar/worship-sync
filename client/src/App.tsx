@@ -17,16 +17,26 @@ import TimerManager from "./components/TimerManager/TimerManager";
 import RoutePersistence from "./components/RoutePersistence/RoutePersistence";
 import DisplayOutputsSync from "./components/DisplayOutputsSync/DisplayOutputsSync";
 import ControllerProfilesSync from "./components/ControllerProfilesSync/ControllerProfilesSync";
-import { Suspense, useContext, useEffect, useLayoutEffect } from "react";
+import {
+  Suspense,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { useLocation } from "react-router-dom";
 import { delay } from "./utils/generalUtils";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { FloatingWindowZIndexProvider } from "./components/FloatingWindow/FloatingWindowZIndexContext";
 import AuthGate from "./components/AuthGate";
 import AuthScreenMain from "./components/AuthScreenMain";
+import BootstrapLoadingScreen, {
+  WorshipSyncLoadingLogo,
+} from "./components/BootstrapLoadingScreen";
 import ViewAccessBlockedRedirect from "./components/ViewAccessBlockedRedirect/ViewAccessBlockedRedirect";
 import { GlobalInfoContext } from "./context/globalInfo";
-import WorshipSyncIcon from "./assets/WorshipSyncIconNoBg.png";
 import { getAuthBootstrapLoadingDescription } from "./utils/authUserMessages";
 import TeamsAccessGuard from "./components/TeamsAccessGuard";
 import { lazyRoute } from "./utils/lazyRoute";
@@ -133,7 +143,7 @@ const Support = lazyRoute(() => import("./pages/Support"));
 gsap.registerPlugin(useGSAP, ScrollToPlugin);
 gsap.ticker.lagSmoothing(0);
 
-/** Connecting splash on entry and board/controller surfaces; display windows stay blank until ready. */
+/** Startup presentation on app routes; display windows stay blank until ready. */
 const isTeamsAdminRoute = (pathname: string) => {
   if (pathname === "/teams-and-services") return true;
   return [
@@ -189,20 +199,18 @@ const RedirectLegacyTeamsPath = () => {
 
 const BootstrapSplash = () => {
   const context = useContext(GlobalInfoContext);
+  if (context?.authServerStatus !== "offline") {
+    return <BootstrapLoadingScreen />;
+  }
+
   const description = getAuthBootstrapLoadingDescription(
-    context?.authServerStatus ?? "checking",
-    { retryCount: context?.authServerRetryCount ?? 0 }
+    context.authServerStatus,
+    { retryCount: context.authServerRetryCount ?? 0 }
   );
   return (
     <AuthScreenMain>
       <div className="flex max-w-md flex-col items-center gap-6">
-        <img
-          src={WorshipSyncIcon}
-          alt=""
-          className="h-28 w-28 animate-pulse"
-          width={112}
-          height={112}
-        />
+        <WorshipSyncLoadingLogo alt="" />
         <p
           className="text-center text-sm leading-relaxed text-gray-200"
           aria-live="polite"
@@ -214,29 +222,59 @@ const BootstrapSplash = () => {
   );
 };
 
-/**
- * Shown while a route chunk loads. Deliberately text-free so it reads as a
- * continuation of {@link BootstrapSplash} rather than a second loading state.
- */
-const RouteChunkSplash = () => (
-  // `route-chunk-splash` holds this invisible for 200ms, so a chunk served from
-  // the precache never flashes it. See globals.css.
-  <div className="route-chunk-splash">
-    <AuthScreenMain>
-      <img
-        src={WorshipSyncIcon}
-        alt=""
-        className="h-28 w-28 animate-pulse"
-        width={112}
-        height={112}
-      />
-    </AuthScreenMain>
-  </div>
-);
+/** Shared loading presentation while a lazy route chunk loads. */
+const RouteChunkSplash = ({
+  initialStartup,
+  onInitialFallbackShown,
+  onInitialRouteReady,
+}: {
+  initialStartup: boolean;
+  onInitialFallbackShown: () => void;
+  onInitialRouteReady: () => void;
+}) => {
+  const [isInitialStartup] = useState(initialStartup);
+  const mountedRef = useRef(false);
+
+  useLayoutEffect(() => {
+    if (isInitialStartup) onInitialFallbackShown();
+  }, [isInitialStartup, onInitialFallbackShown]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (!isInitialStartup) return;
+
+      // React Strict Mode replays effects on mount. Wait until that replay has
+      // finished before treating fallback removal as the first route loading.
+      queueMicrotask(() => {
+        if (!mountedRef.current) onInitialRouteReady();
+      });
+    };
+  }, [isInitialStartup, onInitialRouteReady]);
+
+  return (
+    <div
+      className={`route-chunk-splash${isInitialStartup ? " route-chunk-splash--initial" : ""}`}
+      data-testid="route-chunk-splash"
+    >
+      <BootstrapLoadingScreen />
+    </div>
+  );
+};
 
 export const AppRoutes = () => {
   const context = useContext(GlobalInfoContext);
   const location = useLocation();
+  const initialRoutePendingRef = useRef(true);
+  const initialRouteFallbackShownRef = useRef(false);
+
+  const markInitialFallbackShown = useCallback(() => {
+    initialRouteFallbackShownRef.current = true;
+  }, []);
+  const markInitialRouteReady = useCallback(() => {
+    initialRoutePendingRef.current = false;
+  }, []);
 
   useDocumentPageTitle();
 
@@ -258,6 +296,14 @@ export const AppRoutes = () => {
     !isTransparentDisplayRoute(location.pathname) &&
     isBootstrapSplashRoute(location.pathname);
 
+  useEffect(() => {
+    if (!showBootstrapSplash && !initialRouteFallbackShownRef.current) {
+      // Eager routes never mount a chunk fallback, so the first normal
+      // navigation can use the usual anti-flash delay.
+      initialRoutePendingRef.current = false;
+    }
+  }, [showBootstrapSplash]);
+
   if (showBootstrapSplash) {
     return <BootstrapSplash />;
   }
@@ -266,7 +312,11 @@ export const AppRoutes = () => {
   // it) while their chunk loads. A splash there would flash on the projector or
   // into a live stream.
   const chunkFallback = isTransparentDisplayRoute(location.pathname) ? null : (
-    <RouteChunkSplash />
+    <RouteChunkSplash
+      initialStartup={initialRoutePendingRef.current}
+      onInitialFallbackShown={markInitialFallbackShown}
+      onInitialRouteReady={markInitialRouteReady}
+    />
   );
 
   return (
