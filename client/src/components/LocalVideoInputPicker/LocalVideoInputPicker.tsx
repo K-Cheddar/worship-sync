@@ -65,11 +65,18 @@ type DevicePreviewSession = {
   consumerId: string;
   capture?: DevicePreviewCapture;
   pendingCapture?: Promise<DevicePreviewCapture>;
-  releasePromise?: Promise<void>;
+  captureReleasePromise?: Promise<void>;
 };
+
+// Camera acquisitions cannot be cancelled, so keep this gate beyond picker
+// unmount.
+let pendingDevicePreviewCapture: DevicePreviewSession | undefined;
+const PENDING_PREVIEW_CAPTURE_MESSAGE =
+  "A previous camera request is still pending. Respond to any permission prompt, then refresh to try again.";
 
 class PreviewPlaybackError extends Error {}
 class PreviewFrameTimeoutError extends Error {}
+class PreviewCapturePendingError extends Error {}
 
 const waitForUsablePreviewFrame = (
   video: HTMLVideoElement,
@@ -77,21 +84,22 @@ const waitForUsablePreviewFrame = (
 ) =>
   new Promise<void>((resolve, reject) => {
     let settled = false;
+    let playbackStarted = false;
     let timeoutId: number | undefined;
     let frameCallbackId: number | undefined;
     const frameVideo = video as HTMLVideoElement & {
       requestVideoFrameCallback?: (callback: () => void) => number;
       cancelVideoFrameCallback?: (callbackId: number) => void;
     };
+    const hasVideoFrameCallback =
+      typeof frameVideo.requestVideoFrameCallback === "function";
 
     const cleanup = () => {
       if (timeoutId !== undefined) window.clearTimeout(timeoutId);
       if (frameCallbackId !== undefined) {
         frameVideo.cancelVideoFrameCallback?.(frameCallbackId);
       }
-      video.removeEventListener("loadeddata", checkFrame);
-      video.removeEventListener("canplay", checkFrame);
-      video.removeEventListener("playing", checkFrame);
+      video.removeEventListener("loadeddata", checkFallbackFrame);
       signal.removeEventListener("abort", abort);
     };
     const finish = (error?: Error) => {
@@ -101,12 +109,21 @@ const waitForUsablePreviewFrame = (
       if (error) reject(error);
       else resolve();
     };
-    const checkFrame = () => {
-      if (video.videoWidth > 0 && video.videoHeight > 0) finish();
+    const hasUsableFrame = () =>
+      video.videoWidth > 0 && video.videoHeight > 0;
+    const checkFallbackFrame = () => {
+      if (
+        playbackStarted &&
+        !hasVideoFrameCallback &&
+        video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+        hasUsableFrame()
+      ) {
+        finish();
+      }
     };
     const scheduleFrameCheck = () => {
       frameCallbackId = frameVideo.requestVideoFrameCallback?.(() => {
-        checkFrame();
+        if (playbackStarted && hasUsableFrame()) finish();
         if (!settled) scheduleFrameCheck();
       });
     };
@@ -117,9 +134,9 @@ const waitForUsablePreviewFrame = (
       abort();
       return;
     }
-    video.addEventListener("loadeddata", checkFrame);
-    video.addEventListener("canplay", checkFrame);
-    video.addEventListener("playing", checkFrame);
+    if (!hasVideoFrameCallback) {
+      video.addEventListener("loadeddata", checkFallbackFrame);
+    }
     signal.addEventListener("abort", abort, { once: true });
     timeoutId = window.setTimeout(
       () =>
@@ -130,10 +147,15 @@ const waitForUsablePreviewFrame = (
         ),
       PREVIEW_FRAME_TIMEOUT_MS,
     );
-    scheduleFrameCheck();
     try {
-      void Promise.resolve(video.play()).catch(() =>
-        finish(new PreviewPlaybackError("Camera preview playback failed.")),
+      if (hasVideoFrameCallback) scheduleFrameCheck();
+      void Promise.resolve(video.play()).then(
+        () => {
+          playbackStarted = true;
+          checkFallbackFrame();
+        },
+        () =>
+          finish(new PreviewPlaybackError("Camera preview playback failed.")),
       );
     } catch {
       finish(new PreviewPlaybackError("Camera preview playback failed."));
@@ -193,6 +215,36 @@ const stopShare = (share: BrowserShare | undefined) =>
 
 const stopMediaStream = (stream: MediaStream | undefined) =>
   stream?.getTracks().forEach((track) => track.stop());
+
+const clearPendingDevicePreviewCapture = (session: DevicePreviewSession) => {
+  session.pendingCapture = undefined;
+  if (pendingDevicePreviewCapture === session) {
+    pendingDevicePreviewCapture = undefined;
+  }
+};
+
+const releaseDevicePreviewCapture = (session: DevicePreviewSession) => {
+  if (!session.capture) return Promise.resolve();
+  session.captureReleasePromise ??= (async () => {
+    const capture = session.capture;
+    if (!capture) return;
+    if (capture.poolSourceId) {
+      await releaseWarmLocalVideoCapture(
+        capture.poolSourceId,
+        capture.consumerId,
+      ).catch((releaseError) => {
+        console.error(
+          "Camera preview lease could not be released:",
+          releaseError,
+        );
+        stopMediaStream(capture.stream);
+      });
+      return;
+    }
+    stopMediaStream(capture.stream);
+  })();
+  return session.captureReleasePromise;
+};
 
 const attachPreviewStream = (
   video: HTMLVideoElement | null,
@@ -286,28 +338,11 @@ const LocalVideoInputPicker = ({
           video.srcObject = null;
         }
       }
-      session.releasePromise ??= (async () => {
-        let capture = session.capture;
-        if (!capture && session.pendingCapture) {
-          capture = await session.pendingCapture.catch(() => undefined);
-        }
-        if (!capture) return;
-        if (capture.poolSourceId) {
-          await releaseWarmLocalVideoCapture(
-            capture.poolSourceId,
-            capture.consumerId,
-          ).catch((releaseError) => {
-            console.error(
-              "Camera preview lease could not be released:",
-              releaseError,
-            );
-            stopMediaStream(capture?.stream);
-          });
-          return;
-        }
-        stopMediaStream(capture.stream);
-      })();
-      return session.releasePromise;
+      if (session.capture) return releaseDevicePreviewCapture(session);
+      if (!session.pendingCapture) {
+        clearPendingDevicePreviewCapture(session);
+      }
+      return Promise.resolve();
     },
     [],
   );
@@ -493,6 +528,11 @@ const LocalVideoInputPicker = ({
       await previousRelease.catch(() => undefined);
       if (cancelled || previewPausedRef.current) return;
       previewSessionRef.current = session;
+      if (pendingDevicePreviewCapture) {
+        setPreviewStatus("error");
+        setPreviewError(PENDING_PREVIEW_CAPTURE_MESSAGE);
+        return;
+      }
       const video = previewVideo;
       if (!video) throw new Error("Camera preview is unavailable.");
       video.srcObject = null;
@@ -520,20 +560,47 @@ const LocalVideoInputPicker = ({
             })
             .then((stream) => ({ stream, consumerId: session.consumerId }));
       session.pendingCapture = pendingCapture;
-      const capture = await pendingCapture;
+      pendingDevicePreviewCapture = session;
+      let capture: DevicePreviewCapture;
+      try {
+        capture = await pendingCapture;
+      } catch (captureError) {
+        clearPendingDevicePreviewCapture(session);
+        if (joinedCaptureHost) {
+          await releaseWarmLocalVideoCapture(
+            previewPoolSourceId,
+            session.consumerId,
+          ).catch(() => undefined);
+        }
+        throw captureError;
+      }
       session.capture = capture;
-      session.pendingCapture = undefined;
-      if (session.cancelled) {
-        await retireDevicePreview(session);
+      if (session.cancelled || previewSessionRef.current !== session) {
+        session.cancelled = true;
+        await releaseDevicePreviewCapture(session);
+        clearPendingDevicePreviewCapture(session);
         return;
       }
+      clearPendingDevicePreviewCapture(session);
       previewStreamRef.current = capture.stream;
       video.srcObject = capture.stream;
       await waitForUsablePreviewFrame(video, session.abortController.signal);
-      if (cancelled || session.cancelled) return;
+      if (
+        cancelled ||
+        session.cancelled ||
+        previewSessionRef.current !== session
+      ) {
+        return;
+      }
       setPreviewStatus("ready");
     })().catch((nextError: unknown) => {
-      if (cancelled || session.cancelled) return;
+      if (
+        cancelled ||
+        session.cancelled ||
+        previewSessionRef.current !== session
+      ) {
+        return;
+      }
       const release = retireDevicePreview(session);
       previewReleaseRef.current = release;
       if (previewVideo && previewVideo.srcObject === session.capture?.stream) {
@@ -849,6 +916,9 @@ const LocalVideoInputPicker = ({
     try {
       // Release only this picker's preview before the save preflight begins.
       await clearDevicePreview();
+      if (!isDesktopMode && pendingDevicePreviewCapture) {
+        throw new PreviewCapturePendingError();
+      }
       if (isDesktopMode) {
         linked = await linkDesktopShare(nextSource);
         return;
@@ -862,6 +932,10 @@ const LocalVideoInputPicker = ({
           useSystemAudio || Boolean(selectedAudioInput),
         );
         linked = true;
+        return;
+      }
+      if (nextError instanceof PreviewCapturePendingError) {
+        setError(PENDING_PREVIEW_CAPTURE_MESSAGE);
         return;
       }
       setError(
@@ -1091,13 +1165,11 @@ const LocalVideoInputPicker = ({
                   playsInline
                   autoPlay
                   aria-label="Input preview"
-                  className={`h-full w-full ${previewObjectFit} ${
-                    previewStatus === "ready" ? "opacity-100" : "opacity-0"
-                  }`}
+                  className={`h-full w-full ${previewObjectFit}`}
                 />
                 {livePreviewStatusLabel ? (
                   <div
-                    className="absolute inset-0 flex items-center justify-center px-4 text-center text-sm text-neutral-300"
+                    className="absolute inset-0 z-10 flex items-center justify-center bg-black px-4 text-center text-sm text-neutral-300"
                     role="status"
                   >
                     {livePreviewStatusLabel}
