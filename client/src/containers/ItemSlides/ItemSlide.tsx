@@ -17,6 +17,8 @@ import { RootState } from "../../store/store";
 import { useDroppable } from "@dnd-kit/core";
 import { type SlideDragData, type SlideInsertData } from "../../utils/presentationDnd";
 import StaticSlideThumbnail from "./StaticSlideThumbnail";
+import type { ThumbnailPreviewMode } from "../../context/thumbnailPreviewMode";
+import type { ResolvedDisplaySettings } from "../../utils/displaySettings";
 
 /** Stable empty list: a fresh [] re-renders every slide on any action. */
 const EMPTY_SLIDE_IDS: string[] = [];
@@ -37,7 +39,10 @@ type ItemSlideProps = {
   /** True when this slide matches last-sent presentation for enabled outputs. */
   isLive: boolean;
   isStaged?: boolean;
-  isStreamFormat: boolean;
+  previewMode: ThumbnailPreviewMode;
+  monitorSlide?: ItemSlideType;
+  nextSlide?: ItemSlideType;
+  monitorSettings?: ResolvedDisplaySettings;
   getBibleInfo: (index: number) => { title: string; text: string };
   borderWidth: string;
   hSize: string;
@@ -103,7 +108,10 @@ const ItemSlide = ({
   isMobile,
   timerInfo,
   draggedSection,
-  isStreamFormat,
+  previewMode,
+  monitorSlide,
+  nextSlide,
+  monitorSettings,
   getBibleInfo,
   borderWidth,
   hSize,
@@ -415,7 +423,10 @@ const ItemSlide = ({
         <StaticSlideThumbnail
           slide={slide}
           itemType={itemType}
-          isStreamFormat={isStreamFormat}
+          previewMode={previewMode}
+          monitorSlide={monitorSlide}
+          nextSlide={nextSlide}
+          monitorSettings={monitorSettings}
           timerInfo={timerInfo}
           scaleFactor={thumbnailScaleFactor}
           bibleInfo={

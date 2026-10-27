@@ -43,7 +43,6 @@ const {
   decreaseFormattedLyrics,
   setFormattedLyrics,
   setShouldShowItemEditor,
-  setShouldShowStreamFormat,
   setToolbarSection,
   setLastControllerConfigurationRoute,
   setOverlayControllerPanel,
@@ -387,12 +386,6 @@ describe("preferencesSlice", () => {
   });
 
   describe("flag setters", () => {
-    it("setShouldShowStreamFormat", () => {
-      const store = createStore();
-      store.dispatch(setShouldShowStreamFormat(true));
-      expect(store.getState().preferences.shouldShowStreamFormat).toBe(true);
-    });
-
     it("setToolbarSection", () => {
       const store = createStore();
       store.dispatch(setToolbarSection("media"));

@@ -3,6 +3,7 @@ import ItemSlides, { ItemSlidesDndContext } from "./ItemSlides";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
+import { ThumbnailPreviewModeProvider } from "../../context/thumbnailPreviewMode";
 import { ToastContext } from "../../context/toastContext";
 import * as localVideoCapturePool from "../../utils/localVideoCapturePool";
 
@@ -31,6 +32,7 @@ let mockDndState: { active: unknown; over: unknown } = {
 let mockState: any;
 const mockItemSlideProps: Array<{
   slideId?: string;
+  previewMode?: string;
   isLive?: boolean;
   isStaged?: boolean;
   onRenameSection?: unknown;
@@ -168,6 +170,7 @@ jest.mock("./ItemSlide", () => ({
     index,
     slide,
     selectSlide,
+    previewMode,
     onRenameSection,
     thumbnailScaleFactor,
     isLive,
@@ -176,6 +179,7 @@ jest.mock("./ItemSlide", () => ({
     index: number;
     slide: { id: string; name: string };
     selectSlide: (index: number) => void;
+    previewMode?: string;
     isLive?: boolean;
     isStaged?: boolean;
     onRenameSection?: unknown;
@@ -183,6 +187,7 @@ jest.mock("./ItemSlide", () => ({
   }) => {
     mockItemSlideProps.push({
       slideId: slide.id,
+      previewMode,
       isLive,
       isStaged,
       onRenameSection,
@@ -250,11 +255,12 @@ const mockGlobalInfoValue = {
 
 const mockControllerInfoValue = {
   isMobile: false,
-} as unknown as React.ContextType<typeof ControllerInfoContext>;
+} as NonNullable<React.ContextType<typeof ControllerInfoContext>>;
 
 describe("ItemSlides", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockControllerInfoValue.isMobile = false;
     mockAcquireWarmLocalVideoCaptureWithBusyRetry.mockReset();
     mockReleaseWarmLocalVideoCapture.mockReset().mockResolvedValue(undefined);
     jest
@@ -315,7 +321,6 @@ describe("ItemSlides", () => {
           preferences: {
             slidesPerRow: 3,
             slidesPerRowMobile: 2,
-            shouldShowStreamFormat: false,
             shouldShowItemEditor: true,
             monitorSettings: {
               showNextSlide: true,
@@ -384,15 +389,84 @@ describe("ItemSlides", () => {
 
   const renderAncestorItemSlides = (access = "full") => {
     return render(
-      <GlobalInfoContext.Provider value={{ access } as any}>
-        <ControllerInfoContext.Provider value={mockControllerInfoValue}>
-          <ItemSlidesDndContext.Provider value="ancestor">
-            <ItemSlides />
-          </ItemSlidesDndContext.Provider>
-        </ControllerInfoContext.Provider>
-      </GlobalInfoContext.Provider>,
+      <ThumbnailPreviewModeProvider>
+        <GlobalInfoContext.Provider value={{ access } as any}>
+          <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+            <ItemSlidesDndContext.Provider value="ancestor">
+              <ItemSlides />
+            </ItemSlidesDndContext.Provider>
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </ThumbnailPreviewModeProvider>,
     );
   };
+
+  it("changes thumbnail preview locally and keeps it across item navigation", () => {
+    const renderTree = () => (
+      <ThumbnailPreviewModeProvider>
+        <GlobalInfoContext.Provider value={{ access: "full" } as any}>
+          <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+            <ItemSlidesDndContext.Provider value="ancestor">
+              <ItemSlides />
+            </ItemSlidesDndContext.Provider>
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </ThumbnailPreviewModeProvider>
+    );
+    const originalSlides = JSON.parse(
+      JSON.stringify(mockState.undoable.present.item.slides),
+    );
+    const view = render(renderTree());
+
+    expect(
+      screen.getByRole("button", { name: "Projector" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    mockDispatch.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Stream" }));
+
+    expect(mockItemSlideProps[mockItemSlideProps.length - 1]?.previewMode).toBe(
+      "stream",
+    );
+    expect(mockDispatch).not.toHaveBeenCalled();
+    expect(mockState.undoable.present.item.slides).toEqual(originalSlides);
+    expect(mockState.undoable.present.item.selectedSlide).toBe(0);
+
+    mockState.undoable.present.item._id = "free-2";
+    mockState.undoable.present.item.listId = "list-2";
+    mockState.undoable.present.item.name = "Next Item";
+    view.rerender(renderTree());
+
+    expect(mockItemSlideProps[mockItemSlideProps.length - 1]?.previewMode).toBe(
+      "stream",
+    );
+  });
+
+  it("uses a compact mobile selector and only lists controller-supported views", () => {
+    mockControllerInfoValue.isMobile = true;
+    mockState.displayOutputs = {
+      list: [
+        {
+          id: "monitor",
+          type: "monitor",
+          name: "Stage",
+          order: 0,
+          enabled: true,
+        },
+      ],
+    };
+
+    renderAncestorItemSlides();
+
+    const selector = screen.getByRole("combobox", {
+      name: "Thumbnail view",
+    });
+    expect(selector).toHaveValue("monitor");
+    expect(
+      Array.from((selector as HTMLSelectElement).options).map(
+        (option) => option.value,
+      ),
+    ).toEqual(["monitor"]);
+  });
 
   const setFreeSlides = (slideDefinitions: Array<{ id: string; name: string }>) => {
     mockState.undoable.present.item.slides = slideDefinitions.map(
@@ -456,11 +530,13 @@ describe("ItemSlides", () => {
           removeToast: jest.fn(),
         }}
       >
-        <GlobalInfoContext.Provider value={mockGlobalInfoValue}>
-          <ControllerInfoContext.Provider value={mockControllerInfoValue}>
-            <ItemSlides />
-          </ControllerInfoContext.Provider>
-        </GlobalInfoContext.Provider>
+        <ThumbnailPreviewModeProvider>
+          <GlobalInfoContext.Provider value={mockGlobalInfoValue}>
+            <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+              <ItemSlides />
+            </ControllerInfoContext.Provider>
+          </GlobalInfoContext.Provider>
+        </ThumbnailPreviewModeProvider>
       </ToastContext.Provider>,
     );
 
@@ -1453,6 +1529,9 @@ describe("ItemSlides", () => {
     expect(screen.queryByRole("button", { name: "Clear background" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("group", { name: "Thumbnail view" }),
+    ).not.toBeInTheDocument();
     expect(mockItemSlideProps.every(({ onRenameSection }) => !onRenameSection)).toBe(true);
   });
 

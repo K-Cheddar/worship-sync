@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import type { ItemSlideType, MediaType } from "../../types";
 import DisplayBox from "../../components/DisplayWindow/DisplayBox";
 import StaticSlideThumbnail from "./StaticSlideThumbnail";
+import { resolveDisplaySettings } from "../../utils/displaySettings";
 
 jest.mock("../../hooks/useCachedMediaUrl", () => ({
   useCachedMediaUrl: (url?: string) => url,
@@ -57,7 +58,7 @@ describe("StaticSlideThumbnail", () => {
       <StaticSlideThumbnail
         slide={makeSlide()}
         itemType="song"
-        isStreamFormat={false}
+        previewMode="projector"
       />,
     );
 
@@ -112,7 +113,7 @@ describe("StaticSlideThumbnail", () => {
           },
         })}
         itemType="song"
-        isStreamFormat={false}
+        previewMode="projector"
       />,
     );
 
@@ -133,7 +134,7 @@ describe("StaticSlideThumbnail", () => {
           },
         })}
         itemType="free"
-        isStreamFormat
+        previewMode="stream"
       />,
     );
     expect(screen.getByText("Welcome")).toBeInTheDocument();
@@ -145,7 +146,7 @@ describe("StaticSlideThumbnail", () => {
       <StaticSlideThumbnail
         slide={makeSlide()}
         itemType="bible"
-        isStreamFormat
+        previewMode="stream"
         bibleInfo={{ title: "John 3:16", text: "For God so loved the world" }}
       />,
     );
@@ -157,6 +158,89 @@ describe("StaticSlideThumbnail", () => {
       fontSize: `${1920 / 55}px`,
     });
     expect(screen.queryByTestId("display-box")).not.toBeInTheDocument();
+  });
+
+  it("renders the configured static Monitor next-slide bands", () => {
+    const currentSlide = makeSlide({
+      monitorCurrentBandBoxes: [
+        {
+          id: "monitor-current",
+          width: 100,
+          height: 100,
+          words: "Monitor current",
+          monitorFontSizePx: 42,
+        },
+      ],
+    });
+    const nextSlide = makeSlide({
+      id: "slide-2",
+      monitorNextBandBoxes: [
+        {
+          id: "monitor-next",
+          width: 100,
+          height: 100,
+          words: "Monitor next",
+          monitorFontSizePx: 34,
+        },
+      ],
+    });
+
+    render(
+      <StaticSlideThumbnail
+        slide={currentSlide}
+        monitorSlide={currentSlide}
+        nextSlide={nextSlide}
+        itemType="song"
+        previewMode="monitor"
+        monitorSettings={
+          resolveDisplaySettings(
+            {
+              showNextSlide: true,
+              showClock: false,
+              showTimer: true,
+              showBackground: true,
+            },
+            undefined,
+            "monitor",
+          )
+        }
+      />,
+    );
+
+    expect(screen.getByTestId("static-slide-thumbnail")).toHaveAttribute(
+      "data-preview-mode",
+      "monitor",
+    );
+    expect(
+      screen.getByTestId("monitor-preview-next-slide-layout"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Monitor current")).toBeInTheDocument();
+    expect(screen.getByText("Monitor next")).toBeInTheDocument();
+    expect(screen.getByTestId("monitor-preview-timer")).toBeInTheDocument();
+    expect(screen.queryByRole("video")).not.toBeInTheDocument();
+  });
+
+  it("uses the static single-slide Monitor layout when next-slide is off", () => {
+    render(
+      <StaticSlideThumbnail
+        slide={makeSlide()}
+        itemType="song"
+        previewMode="monitor"
+        monitorSettings={
+          resolveDisplaySettings(
+            { showNextSlide: false, showClock: true, showTimer: false },
+            undefined,
+            "monitor",
+          )
+        }
+      />,
+    );
+
+    expect(
+      screen.getByTestId("monitor-preview-single-slide-layout"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("monitor-preview-clock")).toBeInTheDocument();
+    expect(screen.queryByTestId("monitor-preview-timer")).not.toBeInTheDocument();
   });
 
   it("uses the display local-image resource in static mode", () => {
@@ -201,7 +285,7 @@ describe("StaticSlideThumbnail", () => {
       <StaticSlideThumbnail
         slide={slide}
         itemType="song"
-        isStreamFormat={false}
+        previewMode="projector"
       />,
     );
 
@@ -234,7 +318,7 @@ describe("StaticSlideThumbnail", () => {
         <StaticSlideThumbnail
           slide={slide}
           itemType="song"
-          isStreamFormat={false}
+          previewMode="projector"
           scaleFactor={0.5}
         />
         <div data-testid="active-slide">

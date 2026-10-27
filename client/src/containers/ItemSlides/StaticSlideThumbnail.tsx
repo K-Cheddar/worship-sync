@@ -13,11 +13,20 @@ import {
   REFERENCE_WIDTH,
 } from "../../constants";
 import { resolveDisplayRenderProfile } from "../../components/DisplayWindow/displayRenderProfile";
+import StaticMonitorThumbnail from "./StaticMonitorThumbnail";
+import {
+  resolveDisplaySettings,
+  type ResolvedDisplaySettings,
+} from "../../utils/displaySettings";
+import type { ThumbnailPreviewMode } from "../../context/thumbnailPreviewMode";
 
 type StaticSlideThumbnailProps = {
   slide: ItemSlideType;
   itemType: string;
-  isStreamFormat: boolean;
+  previewMode: ThumbnailPreviewMode;
+  monitorSlide?: ItemSlideType;
+  nextSlide?: ItemSlideType;
+  monitorSettings?: ResolvedDisplaySettings;
   timerInfo?: TimerInfo;
   bibleInfo?: { title: string; text: string };
   scaleFactor?: number;
@@ -46,11 +55,32 @@ const getFormattedTextDisplayInfo = (
 const StaticSlideThumbnail = ({
   slide,
   itemType,
-  isStreamFormat,
+  previewMode,
+  monitorSlide,
+  nextSlide,
+  monitorSettings,
   timerInfo,
   bibleInfo,
   scaleFactor = 0,
 }: StaticSlideThumbnailProps) => {
+  if (previewMode === "monitor") {
+    return (
+      <StaticMonitorThumbnail
+        slide={slide}
+        monitorSlide={monitorSlide}
+        nextSlide={nextSlide}
+        itemType={itemType}
+        settings={
+          monitorSettings ?? resolveDisplaySettings(undefined, undefined, "monitor")
+        }
+        timerInfo={timerInfo}
+        scaleFactor={scaleFactor}
+      />
+    );
+  }
+
+  const isStreamFormat = previewMode === "stream";
+  // Preserve the historical `slide` profile for the default Projector preview.
   const displayType = isStreamFormat ? "stream" : "slide";
   const profile = resolveDisplayRenderProfile(displayType, slide.boxes);
   const formatted = getFormattedTextDisplayInfo(slide, itemType);
@@ -61,6 +91,7 @@ const StaticSlideThumbnail = ({
       }`}
       style={{ fontFamily: "Inter, sans-serif" }}
       data-testid="static-slide-thumbnail"
+      data-preview-mode={previewMode}
     >
       <div
         data-testid="static-slide-reference-canvas"

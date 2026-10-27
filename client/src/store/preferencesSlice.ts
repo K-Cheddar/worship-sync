@@ -61,7 +61,6 @@ type PreferencesState = {
   formattedLyricsPerRow: number;
   mediaItemsPerRow: number;
   shouldShowItemEditor: boolean;
-  shouldShowStreamFormat: boolean;
   toolbarSection: string;
   isMediaExpanded: boolean;
   quickLinks: QuickLinkType[];
@@ -144,7 +143,6 @@ const initialState: PreferencesState = {
   mediaItemsPerRow: 4,
   shouldShowItemEditor: true,
   isMediaExpanded: false,
-  shouldShowStreamFormat: false,
   toolbarSection: "settings",
   isLoading: true,
   selectedPreference: "",
@@ -594,9 +592,6 @@ export const preferencesSlice = createSlice({
     setShouldShowItemEditor: (state, action: PayloadAction<boolean>) => {
       state.shouldShowItemEditor = action.payload;
     },
-    setShouldShowStreamFormat: (state, action: PayloadAction<boolean>) => {
-      state.shouldShowStreamFormat = action.payload;
-    },
     setToolbarSection: (state, action: PayloadAction<string>) => {
       state.toolbarSection = action.payload;
     },
@@ -738,7 +733,6 @@ export const {
   decreaseFormattedLyrics,
   setFormattedLyrics,
   setShouldShowItemEditor,
-  setShouldShowStreamFormat,
   setToolbarSection,
   setLastControllerConfigurationRoute,
   setOverlayControllerPanel,

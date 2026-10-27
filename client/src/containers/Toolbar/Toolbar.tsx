@@ -34,7 +34,6 @@ import FormattedTextEditor from "./ToolbarElements/FormattedTextEditor";
 import {
   type ControllerConfigurationRoute,
   setLastControllerConfigurationRoute,
-  setShouldShowStreamFormat,
   setToolbarSection,
 } from "../../store/preferencesSlice";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
@@ -50,6 +49,7 @@ import { scrollToolbarTabIntoViewIfNeeded } from "../../utils/scrollToolbarTabIn
 import { isViewOnlyAccess } from "../../utils/accessTiers";
 import { useControllerBasePath } from "../../context/activeController";
 import { usePresentationControllerMode } from "../../context/presentationControllerMode";
+import { useThumbnailPreviewMode } from "../../context/thumbnailPreviewMode";
 import MediaSurfaceDiagnostics from "./ToolbarElements/MediaSurfaceDiagnostics";
 
 type sections =
@@ -121,6 +121,7 @@ const Toolbar = ({
   const { access } = useContext(GlobalInfoContext) || {};
   const dispatch = useDispatch();
   const { mode, setMode } = usePresentationControllerMode();
+  const { setPreviewMode } = useThumbnailPreviewMode();
 
   useEffect(() => {
     if (variant === "overlay" && mode === "present") {
@@ -238,11 +239,9 @@ const Toolbar = ({
   useEffect(() => {
     dispatch(setToolbarSection(section));
     if (section === "stream-format") {
-      dispatch(setShouldShowStreamFormat(true));
-    } else {
-      dispatch(setShouldShowStreamFormat(false));
+      setPreviewMode("stream");
     }
-  }, [section, dispatch]);
+  }, [section, dispatch, setPreviewMode]);
 
   useLayoutEffect(() => {
     scrollToolbarTabIntoViewIfNeeded(primaryToolbarTabRefs.current[section]);
