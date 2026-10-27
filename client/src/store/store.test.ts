@@ -332,6 +332,24 @@ describe("v2 remote refresh and pending-input boundaries", () => {
     expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("typed B");
   });
 
+  it("does not autosave ordinary item changes while v2 revision leaves await review", async () => {
+    const env = setup();
+    const conflict = {
+      documentId: env.physical.arrangements[0]._id,
+      winningRevision: "1-base",
+      revisions: ["2-competing"],
+    };
+    env.store.dispatch(env.itemSlice.actions.bufferSongV2RevisionConflict({
+      item: env.baseline,
+      conflicts: [conflict],
+    }));
+    env.store.dispatch(env.itemSlice.actions._setName("Unreviewed edit"));
+    await jest.advanceTimersByTimeAsync(1700);
+    expect(env.store.getState().undoable.present.item.name).toBe("Unreviewed edit");
+    expect(env.store.getState().undoable.present.item.pendingSongV2Conflicts).toEqual([conflict]);
+    expect(env.db.put).not.toHaveBeenCalled();
+  });
+
   it("flushes other owned pending mutations before a broad refresh decides the editor is clean", async () => {
     const env = setup();
     const owner = env.deferredMutations.getItemMutationOwner(env.store.getState().undoable.present.item);
@@ -431,7 +449,7 @@ describe("v2 remote refresh and pending-input boundaries", () => {
 
   it.each(["mine", "theirs"])("retains unresolved drafts through a late acknowledgment and resolves only displayed leaves for %s", async choice => {
     const env = setup();
-    const approved = [{ documentId: env.physical.arrangements[0]._id, revisions: ["2-displayed"] }];
+    const approved = [{ documentId: env.physical.arrangements[0]._id, winningRevision: "1-base", revisions: ["2-displayed"] }];
     const remote = { ...env.baseline, name: "Remote version" };
     const prune = jest.spyOn(env.replicationConflicts, "pruneResolvedSongV2Conflicts")
       .mockImplementation(async (_db: unknown, adopted: unknown) => adopted);
@@ -2610,7 +2628,62 @@ describe("store module", () => {
     expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
     expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(true);
     expect(store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words).toBe("local");
+    expect(store.getState().undoable.present.item.remoteUpdateReason).toBe("song-content-conflict");
+
+    // A late acknowledgment must not replace the unresolved remote choice or
+    // make the local draft look persisted.
+    store.dispatch(itemSlice.actions.markItemPersisted(baseline, baseline));
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(true);
+    expect(store.getState().undoable.present.item.remoteUpdateReason).toBe("song-content-conflict");
+    expect(store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words).toBe("local");
+    expect(store.getState().undoable.present.item.pendingRemoteItem.arrangements[0].slides[0].boxes[0].words).toBe("remote");
     expect(errorSpy).toHaveBeenCalledWith("Could not save active song draft", expect.objectContaining({ name: "SongV2ConcurrentEditError" }));
+  });
+
+  it("keeps a failed Song v2 network save pending without classifying it as a content conflict", async () => {
+    jest.useFakeTimers();
+    const { store, itemSlice, db } = loadStoreWithItemPersistence();
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const persistence = require("../utils/songPersistence");
+    const { serializeSongToV2Documents, hydrateSongFromV2Documents } = persistence;
+    const authored = createSongDoc({ arrangements: [{ id: "a", name: "A", formattedLyrics: [], songOrder: [], slides: [
+      { id: "a1", name: "A1", type: "Verse", boxes: [{ id: "box", words: "old", width: 1920, height: 1080 }] },
+    ] }] });
+    const physical = serializeSongToV2Documents(authored);
+    const docs = new Map<string, any>([
+      [physical.root._id, { ...physical.root, _rev: "1-root" }],
+      ...physical.arrangements.map((doc: any) => [doc._id, { ...doc, _rev: "1-arr" }]),
+      ...physical.slides.map((doc: any) => [doc._id, { ...doc, _rev: "1-slide" }]),
+    ]);
+    db.get.mockImplementation(async (id: string) => {
+      const found = docs.get(id);
+      if (!found) throw Object.assign(new Error("missing"), { status: 404, name: "not_found" });
+      return found;
+    });
+    mockV2AllDocs(db as any, docs);
+    db.put.mockRejectedValue(Object.assign(new Error("offline"), { status: 500 }));
+    const baseline = hydrateSongFromV2Documents(
+      docs.get(physical.root._id),
+      physical.arrangements.map((doc: any) => docs.get(doc._id)),
+      physical.slides.map((doc: any) => docs.get(doc._id)),
+    );
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    store.dispatch(itemSlice.actions.setActiveItem(baseline));
+    store.dispatch(itemSlice.actions._updateSlides([{
+      ...baseline.arrangements[0].slides[0],
+      boxes: [{ ...baseline.arrangements[0].slides[0].boxes[0], words: "local draft" }],
+    }]));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    const active = store.getState().undoable.present.item;
+    expect(docs.get(physical.slides[0]._id).boxes[0].words).toBe("old");
+    expect(active.arrangements[0].slides[0].boxes[0].words).toBe("local draft");
+    expect(active.hasPendingUpdate).toBe(true);
+    expect(active.remoteUpdateReason).toBeNull();
+    expect(active.hasRemoteUpdate).toBe(false);
+    errorSpy.mockRestore();
   });
 
   it("preserves an open v1 draft and surfaces a migration that wins at the commit check", async () => {

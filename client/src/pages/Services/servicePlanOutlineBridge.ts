@@ -126,6 +126,7 @@ type ElementOutlinePlan = {
   planned: PlannedOutlineItem[];
   /** An attached song still has no library doc, so it can't be pushed yet. */
   hasUnresolvedAttachment: boolean;
+  unresolvedAttachments: { listId: string; title: string }[];
 };
 
 export type ServicePlanOutlineStep = {
@@ -140,7 +141,18 @@ export type ServicePlanOutlineDestination =
   | { kind: "heading"; listId: string; name: string }
   | { kind: "outline-end" };
 
+export type ServicePlanOutlinePreviewEntry = {
+  listId: string;
+  title: string;
+  sectionName: string;
+  sectionId: string;
+  status: "already-present" | "ready" | "unresolved";
+  destination?: ServicePlanOutlineDestination;
+  placementFallback?: ServicePlanOutlinePlacementIssue;
+};
+
 export type ServicePlanOutlinePlan = {
+  previewEntries: ServicePlanOutlinePreviewEntry[];
   steps: ServicePlanOutlineStep[];
   skippedTitles: string[];
 };
@@ -183,6 +195,7 @@ const planElementOutlineItems = (
   const title = richTextToPlainText(element.title).trim() || "Untitled";
   const planned: PlannedOutlineItem[] = [];
   let hasUnresolvedAttachment = false;
+  const unresolvedAttachments: { listId: string; title: string }[] = [];
   // An element may legitimately attach the same song twice (a reprise); the
   // occurrence count keeps those from collapsing onto one listId.
   for (const [attachmentIndex, resource] of getServicePlanElementContentResources(element).entries()) {
@@ -208,6 +221,7 @@ const planElementOutlineItems = (
       // A saved-plan link is authoritative. Never substitute a same-titled
       // song when its id is missing or no longer resolves.
       hasUnresolvedAttachment = true;
+      unresolvedAttachments.push({ listId, title: resource.title || title });
       continue;
     }
     if (resource.type === "scripture") {
@@ -234,6 +248,7 @@ const planElementOutlineItems = (
         });
       } else {
         hasUnresolvedAttachment = true;
+      unresolvedAttachments.push({ listId, title: resource.title || title });
       }
       continue;
     }
@@ -244,6 +259,7 @@ const planElementOutlineItems = (
       );
       if (!documentId || !document) {
         hasUnresolvedAttachment = true;
+      unresolvedAttachments.push({ listId, title: resource.title || title });
         continue;
       }
       planned.push({ kind: "custom-document", listId, document });
@@ -253,7 +269,7 @@ const planElementOutlineItems = (
     // documents. Only explicit references above are actionable here.
   }
 
-  return { element, title, planned, hasUnresolvedAttachment };
+  return { element, title, planned, hasUnresolvedAttachment, unresolvedAttachments };
 };
 
 /** The planned items not already on the list — what a push would really add. */
@@ -338,6 +354,7 @@ export const planServicePlanOutlineItems = ({
   sectionRules?: ServicePlanningSectionRule[];
 }): ServicePlanOutlinePlan => {
   const steps: ServicePlanOutlineStep[] = [];
+  const previewEntries: ServicePlanOutlinePreviewEntry[] = [];
   const skippedTitles: string[] = [];
   let workingList = [...currentList];
 
@@ -362,6 +379,28 @@ export const planServicePlanOutlineItems = ({
     const sectionSteps: ServicePlanOutlineStep[] = [];
     for (const elementPlan of elementPlans) {
       const additions = missingPlannedItems(workingList, elementPlan);
+      const destination: ServicePlanOutlineDestination = placement.heading
+        ? { kind: "heading", listId: placement.heading.listId, name: placement.heading.name }
+        : { kind: "outline-end" };
+      const placementFallback = !placement.heading && placement.rule && placement.issue
+        ? { ...placement.issue, reason: "mapped-heading-missing" as const }
+        : undefined;
+      for (const planned of elementPlan.planned) {
+        previewEntries.push({
+          listId: planned.listId,
+          title: planned.kind === "song" ? planned.song.name
+            : planned.kind === "custom-document" ? planned.document.name
+              : planned.scriptureRef.label || `${planned.scriptureRef.book} ${planned.scriptureRef.chapter}${planned.scriptureRef.verseRange ? `:${planned.scriptureRef.verseRange}` : ""}`,
+          sectionName: section.name,
+          sectionId: section.id,
+          status: additions.includes(planned) ? "ready" : "already-present",
+          destination,
+          placementFallback,
+        });
+      }
+      previewEntries.push(...elementPlan.unresolvedAttachments.map((attachment) => ({
+        ...attachment, sectionName: section.name, sectionId: section.id, status: "unresolved" as const,
+      })));
       for (const planned of additions) {
         const step = {
           planned,
@@ -407,7 +446,7 @@ export const planServicePlanOutlineItems = ({
     if (sectionSteps.length) steps.push(...sectionSteps);
   }
 
-  return { steps, skippedTitles };
+  return { steps, skippedTitles, previewEntries };
 };
 
 /** Resolve placement against the latest outline, including a heading removed during a build. */

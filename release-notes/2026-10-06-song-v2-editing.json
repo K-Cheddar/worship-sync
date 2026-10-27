@@ -3,5 +3,5 @@
   "date": "2026-10-06",
   "type": "improved",
   "title": "Keep editing songs after migration",
-  "description": "Edit song details, lyrics, slides, and audio after migration, with independent lyric edits kept together across controllers and overlapping changes available for review."
+  "description": "After migration, edit song details, lyrics, slides, and audio. Independent lyric edits stay together across controllers, and overlapping saved versions can be reviewed and resolved later."
 }

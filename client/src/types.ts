@@ -399,11 +399,11 @@ export type ItemState = ItemProperties & {
   isItemFormatting?: boolean;
   hasPendingUpdate?: boolean;
   hasRemoteUpdate?: boolean;
-  remoteUpdateReason?: "song-version-transition" | null;
+  remoteUpdateReason?: "song-version-transition" | "song-content-conflict" | null;
   baseItem?: DBItem | null;
   pendingRemoteItem?: DBItem | null;
   /** Runtime-only revision leaves shown with the current conflict decision. */
-  pendingSongV2Conflicts?: { documentId: string; revisions: string[] }[];
+  pendingSongV2Conflicts?: { documentId: string; winningRevision: string; revisions: string[] }[];
   /** When set, SlideEditor should focus this box index then clear. Used after format when slide count changes. */
   restoreFocusToBox?: number | null;
   /** Editor-only: slide ids selected for subset background apply/clear (media actions). */

@@ -7,7 +7,11 @@ import { formatSong } from "./overflow";
 import { createSongV2 } from "./songV2Writer";
 import { loadSong, loadSongV2Snapshot, saveSong } from "./songPersistence";
 import { itemSlice } from "../store/itemSlice";
-import { loadReconciledSongV2Snapshot, pruneResolvedSongV2Conflicts, SongV2ReplicationConflictError } from "./songV2ReplicationConflicts";
+import {
+  buildSongV2RevisionSelection, loadReconciledSongV2Snapshot,
+  loadSongV2ConflictRevisionOptions, pruneResolvedSongV2Conflicts,
+  resolveSongV2ConflictReview, SongV2ConflictReviewStaleError, SongV2ReplicationConflictError,
+} from "./songV2ReplicationConflicts";
 
 jest.mock("./textMeasurement", () => ({
   getMaxLines: () => ({ maxLines: 2, lineHeight: 1 }),
@@ -51,6 +55,25 @@ describe("Better Verse 1A / Verse 1B through real formatting, state and PouchDB"
     await createSongV2(db, fixture());
   });
   afterEach(async () => { jest.restoreAllMocks(); await db.destroy(); });
+
+  it("opens a nonconflicting song with the existing reads and no warnings", async () => {
+    const get = jest.spyOn(db, "get");
+    const allDocs = jest.spyOn(db, "allDocs");
+    const put = jest.spyOn(db, "put");
+    const remove = jest.spyOn(db, "remove");
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const error = jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const loaded = await loadSong(db, "better-test");
+
+    expect(loaded.arrangements[0].formattedLyrics[0].words).toBe("alpha\nbeta\ngamma\ndelta");
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(allDocs).toHaveBeenCalledTimes(2);
+    expect(put).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+  });
 
   it("preserves Verse 1A and Verse 1B, stable identities, exact writes, and both reloads", async () => {
     const baseline = await loadSong(db, "better-test");
@@ -166,7 +189,7 @@ describe("Better Verse 1A / Verse 1B through real formatting, state and PouchDB"
         : await loadReconciledSongV2Snapshot(a, baseA._id);
       expect({ get: get.mock.calls.length, allDocs: allDocs.mock.calls.length,
         put: put.mock.calls.length, remove: remove.mock.calls.length })
-        .toEqual({ get: 5, allDocs: 2, put: 1, remove: 1 });
+        .toEqual({ get: 7, allDocs: 6, put: 1, remove: 1 });
       console.info("Eventual-branch reconciliation calls", { get: get.mock.calls.length, allDocs: allDocs.mock.calls.length,
         put: put.mock.calls.length, remove: remove.mock.calls.length });
       expect(reconciled.hydrated.arrangements[0].formattedLyrics[0].words).toBe("alpha\nbeta1\ngamma\ndelta1");
@@ -193,16 +216,103 @@ describe("Better Verse 1A / Verse 1B through real formatting, state and PouchDB"
       expect(put).not.toHaveBeenCalled();
       expect(remove).not.toHaveBeenCalled();
       expect(before.conflicts?.length).toBe(2);
-      const selected = choice === "mine" ? await saveSong(db, draft, before.hydrated) : before.hydrated;
-      const resolved = await pruneResolvedSongV2Conflicts(db, selected, before.conflicts!);
+      const versions = await loadSongV2ConflictRevisionOptions(db, before);
+      const selectedText = choice === "mine" ? "second" : "first";
+      const choices = Object.fromEntries(versions.map(entry => {
+        const selected = entry.options.find(option => {
+          const document = option.document;
+          return document.docType === "song-v2-arrangement"
+            ? document.formattedLyrics.some(lyric => lyric.words.includes(selectedText))
+            : document.docType === "song-v2-slide" &&
+              document.boxes.some(box => box.words?.includes(selectedText));
+        });
+        return [entry.conflict.documentId, selected?.revision ?? entry.conflict.winningRevision];
+      }));
+      const selection = await buildSongV2RevisionSelection(db, before, versions, choices);
+      const resolved = await resolveSongV2ConflictReview(
+        db, before, selection.song, before.conflicts!, selection.sourceRevisions,
+      );
+      expect(resolved.conflictsRetired).toBe(true);
+      expect(resolved.song.arrangements[0].formattedLyrics[0].words).toContain(selectedText);
       const loaded = await loadSongV2Snapshot(db, baseline._id, true);
       expect(loaded.conflicts).toBeUndefined();
-      expect(loaded.hydrated.arrangements).toEqual(resolved!.arrangements);
+      expect(loaded.hydrated.arrangements).toEqual(resolved.song.arrangements);
       expect(loaded.hydrated.arrangements[0].slides.filter(s => s.name.startsWith("Verse 1")).map(s => s.boxes[1].words).join(""))
         .toBe(loaded.hydrated.arrangements[0].formattedLyrics[0].words);
       await peer.replicate.from(db);
       expect((await loadSongV2Snapshot(peer, baseline._id, true)).conflicts).toBeUndefined();
     } finally { await peer.destroy(); }
+  });
+
+  it("lets a third browser review and resolve real revision leaves after both editors close", async () => {
+    const browserA = new PouchDB(`closed-browser-a-${Math.random()}`, { adapter: "idb" });
+    const browserB = new PouchDB(`closed-browser-b-${Math.random()}`, { adapter: "idb" });
+    const reviewer = new PouchDB(`conflict-reviewer-${Math.random()}`, { adapter: "idb" });
+    const observer = new PouchDB(`conflict-observer-${Math.random()}`, { adapter: "idb" });
+    try {
+      await Promise.all([browserA.replicate.from(db), browserB.replicate.from(db)]);
+      const baselineA = await loadSong(browserA, "better-test");
+      const baselineB = await loadSong(browserB, "better-test");
+      await saveSong(browserA, edit(baselineA, 0, "alpha\nfirst\n"), baselineA);
+      await saveSong(browserB, edit(baselineB, 0, "alpha\nsecond\n"), baselineB);
+      await browserA.replicate.to(db);
+      await browserB.replicate.to(db);
+
+      // The original editor databases are closed before the third browser arrives.
+      await browserA.destroy();
+      await browserB.destroy();
+      await Promise.all([reviewer.replicate.from(db), observer.replicate.from(db)]);
+
+      const reviewed = await loadSongV2Snapshot(reviewer, "better-test", true);
+      expect(reviewed.conflicts?.length).toBeGreaterThan(0);
+      const reads = jest.spyOn(reviewer, "get");
+      const puts = jest.spyOn(reviewer, "put");
+      const removes = jest.spyOn(reviewer, "remove");
+      await expect(loadSong(reviewer, "better-test")).rejects.toBeInstanceOf(SongV2ReplicationConflictError);
+      const revisionReadCount = reads.mock.calls.filter(([, options]) => options?.revs).length;
+      await expect(loadSong(reviewer, "better-test")).rejects.toBeInstanceOf(SongV2ReplicationConflictError);
+      expect(reads.mock.calls.filter(([, options]) => options?.revs)).toHaveLength(revisionReadCount);
+      expect(puts).not.toHaveBeenCalled();
+      expect(removes).not.toHaveBeenCalled();
+
+      const versions = await loadSongV2ConflictRevisionOptions(reviewer, reviewed);
+      expect(versions.every(entry => entry.options.length >= 2)).toBe(true);
+      expect(versions.some(entry => entry.options.some(option =>
+        option.document.docType === "song-v2-arrangement" &&
+        option.document.formattedLyrics.some(lyric => lyric.words.includes("first")),
+      ))).toBe(true);
+      expect(versions.some(entry => entry.options.some(option =>
+        option.document.docType === "song-v2-arrangement" &&
+        option.document.formattedLyrics.some(lyric => lyric.words.includes("second")),
+      ))).toBe(true);
+
+      const choices = Object.fromEntries(versions.map(entry => {
+        const chosen = entry.options.find(option => {
+          const doc = option.document;
+          return doc.docType === "song-v2-arrangement"
+            ? doc.formattedLyrics.some(lyric => lyric.words.includes("second"))
+            : doc.docType === "song-v2-slide" && doc.boxes.some(box => box.words?.includes("second"));
+        });
+        return [entry.conflict.documentId, chosen?.revision ?? entry.conflict.winningRevision];
+      }));
+      const selection = await buildSongV2RevisionSelection(reviewer, reviewed, versions, choices);
+      const resolved = await resolveSongV2ConflictReview(
+        reviewer, reviewed, selection.song, reviewed.conflicts!, selection.sourceRevisions,
+      );
+      expect(resolved.conflictsRetired).toBe(true);
+      expect(resolved.song.arrangements[0].formattedLyrics[0].words).toContain("second");
+      expect(resolved.song.arrangements[0].slides.filter(slide => slide.name.startsWith("Verse 1"))
+        .map(slide => slide.boxes[1].words).join(""))
+        .toBe(resolved.song.arrangements[0].formattedLyrics[0].words);
+      expect((await loadSongV2Snapshot(reviewer, "better-test", true)).conflicts).toBeUndefined();
+
+      await reviewer.replicate.to(db);
+      await observer.replicate.from(db);
+      expect((await loadSongV2Snapshot(observer, "better-test", true)).conflicts).toBeUndefined();
+      expect(await loadSong(reviewer, "better-test")).toEqual(await loadSong(observer, "better-test"));
+    } finally {
+      await Promise.all([browserA.destroy().catch(() => undefined), browserB.destroy().catch(() => undefined), reviewer.destroy(), observer.destroy()]);
+    }
   });
 
   it("does not discard an unseen revision that arrives after an explicit conflict decision", async () => {
@@ -222,6 +332,39 @@ describe("Better Verse 1A / Verse 1B through real formatting, state and PouchDB"
       const remaining = await loadSongV2Snapshot(db, baseline._id, true);
       expect(remaining.conflicts?.length).toBe(2);
       expect(remaining.hydrated.arrangements[0].formattedLyrics[0].words).toContain("chosen");
+    } finally { await peer.destroy(); await unseen.destroy(); }
+  });
+
+  it("rejects a reviewed choice when a newer branch arrives before the save", async () => {
+    const peer = new PouchDB(`review-race-peer-${Math.random()}`, { adapter: "idb" });
+    const unseen = new PouchDB(`review-race-unseen-${Math.random()}`, { adapter: "idb" });
+    try {
+      await Promise.all([peer.replicate.from(db), unseen.replicate.from(db)]);
+      const baseline = await loadSong(db, "better-test");
+      await saveSong(db, edit(baseline, 0, "alpha\nfirst\n"), baseline);
+      await saveSong(peer, edit(baseline, 0, "alpha\nsecond\n"), baseline);
+      await peer.replicate.to(db);
+      await peer.replicate.from(db);
+      const reviewed = await loadSongV2Snapshot(peer, baseline._id, true);
+      const versions = await loadSongV2ConflictRevisionOptions(peer, reviewed);
+      const choices = Object.fromEntries(versions.map(entry => [
+        entry.conflict.documentId, entry.conflict.winningRevision,
+      ]));
+      const selection = await buildSongV2RevisionSelection(peer, reviewed, versions, choices);
+
+      await saveSong(unseen, edit(baseline, 0, "alpha\nunseen\n"), baseline);
+      await unseen.replicate.to(db);
+      await peer.replicate.from(db);
+      const puts = jest.spyOn(peer, "put");
+      const removes = jest.spyOn(peer, "remove");
+      await expect(resolveSongV2ConflictReview(
+        peer, reviewed, selection.song, reviewed.conflicts!, selection.sourceRevisions,
+      )).rejects.toBeInstanceOf(SongV2ConflictReviewStaleError);
+      expect(puts).not.toHaveBeenCalled();
+      expect(removes).not.toHaveBeenCalled();
+      const remaining = (await loadSongV2Snapshot(peer, baseline._id, true)).conflicts ?? [];
+      expect(remaining.reduce((total, conflict) => total + conflict.revisions.length, 0))
+        .toBeGreaterThan(reviewed.conflicts!.reduce((total, conflict) => total + conflict.revisions.length, 0));
     } finally { await peer.destroy(); await unseen.destroy(); }
   });
 

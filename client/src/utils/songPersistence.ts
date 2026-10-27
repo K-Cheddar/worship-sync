@@ -135,14 +135,16 @@ const getReferencedDocuments = async <T,>(
   );
 };
 
-export type SongV2RevisionConflict = { documentId: string; revisions: string[] };
+export type SongV2RevisionConflict = { documentId: string; winningRevision: string; revisions: string[] };
 export type SongV2Snapshot = SongV2Documents & { hydrated: DBItem; conflicts?: SongV2RevisionConflict[] };
 
 const snapshotFromDocuments = (documents: SongV2Documents): SongV2Snapshot => {
   const conflicts: SongV2RevisionConflict[] = [];
   for (const doc of [documents.root, ...documents.arrangements, ...documents.slides]) {
     const physical = doc as typeof doc & { _conflicts?: string[] };
-    if (physical._conflicts?.length) conflicts.push({ documentId: doc._id, revisions: physical._conflicts });
+    if (physical._conflicts?.length) conflicts.push({
+      documentId: doc._id, winningRevision: doc._rev ?? "", revisions: physical._conflicts,
+    });
     delete physical._conflicts;
   }
   return { ...documents, ...(conflicts.length ? { conflicts } : {}),

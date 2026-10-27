@@ -92,7 +92,6 @@ import { useSyncOnReconnect } from "../../hooks";
 import { CONTROLLER_PAGE_READY, RootState } from "../../store/store";
 import {
   setServicePlanningOutlinePlanBinding,
-  setStoredServicePlanningOutlineIfIdle,
 } from "../../store/servicePlanningImportSlice";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useToast } from "../../context/toastContext";
@@ -199,11 +198,6 @@ export const useControllerPageLifecycle = () => {
             const update = _update as DBItemListDetails;
             const itemList = update.items;
             const overlaysIds = update.overlays || [];
-            dispatch(
-              setStoredServicePlanningOutlineIfIdle(
-                update.serviceOutline ?? null,
-              ),
-            );
             dispatch(
               setServicePlanningOutlinePlanBinding(
                 update.servicePlanBinding ?? null,
@@ -594,7 +588,6 @@ export const useControllerPageLifecycle = () => {
       if (!selectedList?._id) {
         if (cancelled) return;
         dispatch(initiateItemList([]));
-        dispatch(setStoredServicePlanningOutlineIfIdle(null));
         dispatch(setServicePlanningOutlinePlanBinding(null));
         dispatch(setItemListIsLoading(false));
         return;
@@ -607,11 +600,6 @@ export const useControllerPageLifecycle = () => {
         if (cancelled) return;
         const itemList = response?.items || [];
         const overlayIds = response?.overlays || [];
-        dispatch(
-          setStoredServicePlanningOutlineIfIdle(
-            response?.serviceOutline ?? null,
-          ),
-        );
         dispatch(
           setServicePlanningOutlinePlanBinding(
             response?.servicePlanBinding ?? null,
@@ -627,7 +615,6 @@ export const useControllerPageLifecycle = () => {
       } catch (e) {
         if (cancelled) return;
         console.error(e);
-        dispatch(setStoredServicePlanningOutlineIfIdle(null));
         dispatch(setServicePlanningOutlinePlanBinding(null));
       }
       if (!cancelled) {

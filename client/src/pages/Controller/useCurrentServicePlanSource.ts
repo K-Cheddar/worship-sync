@@ -118,17 +118,6 @@ export const useCurrentServicePlanSource = () => {
   const isPlanPreviewStale = useSelector(
     (state) => state.servicePlanningImport.isPlanPreviewStale,
   );
-  const hasUrlSourcedPreview = useSelector(
-    (state) =>
-      Boolean(
-        state.servicePlanningImport.preview &&
-          !state.servicePlanningImport.servicePlanKey,
-      ),
-  );
-  const urlSelectionRevision = useSelector(
-    (state) => state.servicePlanningImport.urlSelectionRevision,
-  );
-
   const [savedPlans, setSavedPlans] = useState<ServicePlanSummary[]>([]);
   const [selectedPlanKey, setSelectedPlanKey] = useState<string | null>(null);
   const [isLoadingPlans, setIsLoadingPlans] = useState(false);
@@ -172,12 +161,6 @@ export const useCurrentServicePlanSource = () => {
   const isMountedRef = useRef(false);
   const hasReceivedLiveConnectionRef = useRef(false);
   const manualSelectionRef = useRef(false);
-  // A URL preview already present when this hook mounts belongs to an earlier
-  // Controller visit and must not suppress the current occurrence's automatic
-  // selection. The revision changes only when the operator imports a URL in
-  // this visit.
-  const previousUrlSelectionRevisionRef = useRef(urlSelectionRevision);
-  const currentVisitUrlSelectionRef = useRef(false);
   const selectedOutlineIdRef = useRef<string | undefined>(selectedOutlineId);
   const activeControllerIdRef = useRef(activeControllerId);
   const manualBindingSequenceRef = useRef(0);
@@ -376,30 +359,6 @@ export const useCurrentServicePlanSource = () => {
     void refreshPlans();
   }, [dispatch, isEnabled, refreshPlans, returnOccurrenceToCurrent]);
 
-  // A URL pasted during this Controller visit is an explicit source choice.
-  // A URL preview carried in from an earlier visit intentionally does not take
-  // ownership here, allowing the current occurrence's saved plan to load
-  // instead.
-  useEffect(() => {
-    if (urlSelectionRevision === previousUrlSelectionRevisionRef.current) {
-      return;
-    }
-    previousUrlSelectionRevisionRef.current = urlSelectionRevision;
-    if (!hasUrlSourcedPreview) return;
-    currentVisitUrlSelectionRef.current = true;
-    generationRef.current += 1;
-    participantRequestIdRef.current += 1;
-    manualSelectionRef.current = false;
-    planRef.current = null;
-    setSelectedPlanSnapshot(null);
-    selectedPlanKeyRef.current = null;
-    setSelectedPlanKey(null);
-    setIsLoading(false);
-    setIsRefreshing(false);
-    setIsRefreshingParticipants(false);
-    setIsParticipantOverlayUnsafe(false);
-  }, [hasUrlSourcedPreview, urlSelectionRevision]);
-
   // A refresh can remove a plan without an SSE removal event (for example,
   // after reconnecting or resuming a sleeping device). Reconcile a pinned key
   // before automatic selection runs so the old preview cannot remain visible
@@ -428,7 +387,6 @@ export const useCurrentServicePlanSource = () => {
     if (
       !plansLoaded ||
       itemListLoading ||
-      (hasUrlSourcedPreview && currentVisitUrlSelectionRef.current) ||
       manualSelectionRef.current
     ) {
       return;
@@ -447,7 +405,6 @@ export const useCurrentServicePlanSource = () => {
     automaticSelectionContextRef.current = automaticContextKey;
     if (selectedPlanKeyRef.current === nextKey) return;
     if (nextKey) {
-      currentVisitUrlSelectionRef.current = false;
       // A saved-plan preview already associated with this plan is still
       // useful while a remounted Controller revalidates its authoritative
       // data. A different plan or URL preview must be cleared on selection.
@@ -467,7 +424,6 @@ export const useCurrentServicePlanSource = () => {
     currentOccurrencePlanKey,
     currentOccurrence,
     dispatch,
-    hasUrlSourcedPreview,
     itemListLoading,
     plansLoaded,
     savedPlans,
@@ -998,10 +954,7 @@ export const useCurrentServicePlanSource = () => {
       !isEnabled ||
       !selectedPlanKey ||
       !churchId ||
-      itemListLoading ||
-      (hasUrlSourcedPreview &&
-        currentVisitUrlSelectionRef.current &&
-        !manualSelectionRef.current)
+      itemListLoading
     ) {
       if (plansLoaded && !selectedPlanKeyRef.current) {
         planRef.current = null;
@@ -1019,19 +972,18 @@ export const useCurrentServicePlanSource = () => {
     activeControllerId,
     clearUnavailablePlan,
     dispatch,
-    hasUrlSourcedPreview,
     isEnabled,
     itemListLoading,
     plansLoaded,
     selectedOutlineId,
     selectedPlanKey,
+    servicePlanKey,
     reconcileSelectedPlan,
   ]);
 
   const selectPlan = useCallback(
     (planKey: string) => {
       manualSelectionRef.current = true;
-      currentVisitUrlSelectionRef.current = false;
       const matchingOccurrence = occurrences.find(
         (candidate) => getServicePlanKey(candidate) === planKey,
       );
@@ -1092,7 +1044,6 @@ export const useCurrentServicePlanSource = () => {
       if (!nextOccurrence) return;
 
       manualSelectionRef.current = true;
-      currentVisitUrlSelectionRef.current = false;
       // Selecting an occurrence always restores occurrence/plan alignment;
       // the plan may still be explicitly empty when no saved plan exists.
       generationRef.current += 1;
@@ -1126,7 +1077,6 @@ export const useCurrentServicePlanSource = () => {
 
   const returnToCurrentService = useCallback(() => {
     manualSelectionRef.current = false;
-    currentVisitUrlSelectionRef.current = false;
     generationRef.current += 1;
     participantRequestIdRef.current += 1;
     planRef.current = null;

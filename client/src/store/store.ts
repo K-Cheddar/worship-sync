@@ -815,6 +815,7 @@ const excludedActions: string[] = [
   itemSlice.actions.setSelectedSlide.toString(),
   itemSlice.actions.setIsLyricsEditorOpen.toString(),
   itemSlice.actions.setHasPendingUpdate.toString(),
+  itemSlice.actions.setRemoteUpdateReason.toString(),
   itemSlice.actions.forceUpdate.toString(),
   itemSlice.actions.markItemPersisted.toString(),
   itemSlice.actions.rebaseItemPersistence.toString(),
@@ -1093,6 +1094,7 @@ listenerMiddleware.startListening({
       itemSlice.actions.setItemIsLoading,
       itemSlice.actions.setSectionLoading,
       itemSlice.actions.setHasPendingUpdate,
+      itemSlice.actions.setRemoteUpdateReason,
       itemSlice.actions.setItemFormatting,
       itemSlice.actions.clearTransientState,
       itemSlice.actions.markItemPersisted,
@@ -1110,6 +1112,7 @@ listenerMiddleware.startListening({
       (currentItem !== previousItem || isExplicitPendingRetry) &&
       !excluded(action) &&
       !!currentItem.hasPendingUpdate &&
+      !currentItem.pendingSongV2Conflicts?.length &&
       !isStoreResetAction(action)
     );
   },
@@ -1225,6 +1228,9 @@ listenerMiddleware.startListening({
           )
         ) {
           listenerApi.dispatch(itemSlice.actions.bufferRemoteItemUpdate(db_item));
+          if (writeBaseline.docType === "song-v2-root") {
+            listenerApi.dispatch(itemSlice.actions.setRemoteUpdateReason("song-content-conflict"));
+          }
         }
         return;
       }
@@ -1284,9 +1290,12 @@ listenerMiddleware.startListening({
           db_item = { ...db_item, _rev: result.rev };
         }
       } catch (error) {
+        const errorName = error instanceof Error ? error.name : "";
+        const isSongV2ContentConflict = errorName === "SongV2ConcurrentEditError" ||
+          ((error as { status?: number })?.status === 409 && writeBaseline.docType === "song-v2-root");
+        const isSongV2VersionTransition = errorName === "SongV2VersionTransitionError";
         const isSongV2Conflict = error instanceof Error && (
-          error.name === "SongV2ConcurrentEditError" ||
-          error.name === "SongV2VersionTransitionError"
+          isSongV2ContentConflict || isSongV2VersionTransition
         );
         if ((error as { status?: number })?.status === 409 || isSongV2Conflict) {
           const latest = (await loadItemWithSongHydration(
@@ -1304,11 +1313,13 @@ listenerMiddleware.startListening({
             )
           ) {
             listenerApi.dispatch(itemSlice.actions.bufferRemoteItemUpdate(latest));
-            if (error instanceof Error && error.name === "SongV2VersionTransitionError") {
+            if (isSongV2VersionTransition) {
               listenerApi.dispatch(itemSlice.actions.setRemoteUpdateReason("song-version-transition"));
+            } else if (isSongV2ContentConflict) {
+              listenerApi.dispatch(itemSlice.actions.setRemoteUpdateReason("song-content-conflict"));
             }
           }
-          if (isSongV2Conflict) {
+          if (isSongV2Conflict || isSongV2ContentConflict) {
             console.error("Could not save active song draft", error);
             return;
           }

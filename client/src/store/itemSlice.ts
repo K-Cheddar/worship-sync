@@ -621,13 +621,13 @@ export const itemSlice = createSlice({
         state.baseItem = persistedSnapshot;
         state.hasPendingUpdate = getItemPersistenceChanges(
           state, persistedSnapshot ?? action.payload,
-        ).length > 0 || !!state.pendingSongV2Conflicts?.length;
+        ).length > 0 || !!state.pendingSongV2Conflicts?.length || !!state.remoteUpdateReason;
         if (!state.hasPendingUpdate) {
           state.pendingRemoteItem = null;
           state.pendingSongV2Conflicts = undefined;
           state.hasRemoteUpdate = false;
           state.remoteUpdateReason = null;
-        } else if (state.pendingRemoteItem && !state.pendingSongV2Conflicts?.length) {
+        } else if (state.pendingRemoteItem && !state.pendingSongV2Conflicts?.length && !state.remoteUpdateReason) {
           state.pendingRemoteItem = action.payload;
         }
       },
@@ -638,7 +638,7 @@ export const itemSlice = createSlice({
       state.hasPendingUpdate = getItemPersistenceChanges(
         state,
         action.payload,
-      ).length > 0;
+      ).length > 0 || !!state.pendingSongV2Conflicts?.length || !!state.remoteUpdateReason;
     },
     bufferRemoteItemUpdate: (state, action: PayloadAction<DBItem>) => {
       if (state._id !== action.payload._id) return;
@@ -695,6 +695,7 @@ export const itemSlice = createSlice({
       state.pendingRemoteItem = null;
       state.pendingSongV2Conflicts = undefined;
       state.hasRemoteUpdate = false;
+      state.remoteUpdateReason = null;
       state.hasPendingUpdate = hasRevisionConflicts || !itemDocMatchesEditorState(
         state.baseItem!,
         state,
@@ -1302,6 +1303,7 @@ export const applyOwnedContentMutation = createAsyncThunk(
     if (!sameItemMutationOwner(getItemMutationOwner(item), args.owner)) {
       return false;
     }
+    if (item.pendingSongV2Conflicts?.length) return false;
     const update = applyOwnedItemContentMutation(item, args.mutation);
     if (!update) return false;
     dispatch(itemSlice.actions.applyOwnedContentUpdate({
@@ -1345,6 +1347,7 @@ export const {
   setShouldSendTo,
   forceUpdate,
   bufferRemoteItemUpdate,
+  bufferSongV2RevisionConflict,
   discardPendingRemoteItem,
   applyPendingRemoteItem,
   keepLocalItemChanges,

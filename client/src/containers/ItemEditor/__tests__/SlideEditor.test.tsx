@@ -1141,6 +1141,67 @@ describe("SlideEditor", () => {
     expect(mockRemoveToast).toHaveBeenCalledWith("toast-1");
   });
 
+  it("does not show a conflict toast while a dirty Song v2 draft can reconcile automatically", () => {
+    mockState = makeStateWithItem({
+      type: "song",
+      docType: "song-v2-root",
+      hasRemoteUpdate: true,
+      hasPendingUpdate: true,
+      isLyricsEditorOpen: false,
+      remoteUpdateReason: null,
+    });
+
+    renderWithToastContext();
+
+    expect(mockShowToast).not.toHaveBeenCalled();
+    expect(mockApplyPendingRemoteItem).not.toHaveBeenCalled();
+  });
+
+  it("keeps confirmed Song v2 content conflicts actionable until the operator chooses", () => {
+    mockState = makeStateWithItem({
+      type: "song",
+      docType: "song-v2-root",
+      hasRemoteUpdate: true,
+      hasPendingUpdate: true,
+      isLyricsEditorOpen: false,
+      remoteUpdateReason: "song-content-conflict",
+      pendingRemoteItem: { _id: "default-item", type: "song", docType: "song-v2-root" },
+    });
+
+    renderWithToastContext();
+
+    expect(mockShowToast).toHaveBeenCalledWith(expect.objectContaining({
+      message: "Someone else updated this song.",
+      persist: true,
+      showCloseButton: false,
+    }));
+    const { children } = mockShowToast.mock.calls[0][0];
+    render(<>{children("toast-1")}</>);
+
+    fireEvent.click(screen.getByRole("button", { name: "Use Their Changes" }));
+
+    expect(mockApplyPendingRemoteItem).toHaveBeenCalled();
+    expect(mockRemoveToast).toHaveBeenCalledWith("toast-1");
+  });
+
+  it("still shows the Song v2 migration decision for a dirty draft", () => {
+    mockState = makeStateWithItem({
+      type: "song",
+      docType: "song",
+      hasRemoteUpdate: true,
+      hasPendingUpdate: true,
+      isLyricsEditorOpen: false,
+      remoteUpdateReason: "song-version-transition",
+    });
+
+    renderWithToastContext();
+
+    expect(mockShowToast).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.stringContaining("migrated while it was open"),
+      persist: true,
+    }));
+  });
+
   it("applies a buffered remote update immediately when the item is not dirty", () => {
     mockState = makeBaseState({
       undoable: {
@@ -1160,6 +1221,35 @@ describe("SlideEditor", () => {
     expect(mockDispatch).toHaveBeenCalledWith({
       type: "item/applyPendingRemoteItem",
     });
+    expect(mockShowToast).not.toHaveBeenCalled();
+  });
+
+  it("keeps the winning song view read-only while revision conflicts await review", () => {
+    const slide = {
+      id: "song-slide",
+      type: "Verse",
+      name: "Verse 1",
+      boxes: [
+        { id: "box-0", width: 100, height: 100, words: "" },
+        { id: "box-1", width: 100, height: 100, words: "Saved lyrics" },
+      ],
+    };
+    mockState = makeStateWithItem({
+      type: "song",
+      arrangements: [{
+        id: "arr-1",
+        name: "Master",
+        formattedLyrics: [{ id: "lyric-1", name: "Verse 1", words: "Saved lyrics" }],
+        songOrder: [{ name: "Verse 1" }],
+        slides: [slide],
+      }],
+      pendingSongV2Conflicts: [{ documentId: "song-v2:arrangement:x", winningRevision: "2-win", revisions: ["2-branch"] }],
+    });
+
+    renderWithToastContext();
+
+    expect(screen.getByRole("button", { name: "Edit Lyrics" })).toBeDisabled();
+    expect(screen.getByTestId("section-text-editor")).toHaveAttribute("data-disabled", "true");
     expect(mockShowToast).not.toHaveBeenCalled();
   });
 

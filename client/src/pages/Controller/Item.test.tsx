@@ -15,6 +15,7 @@ import {
 import type { DBItem } from "../../types";
 import * as songPersistence from "../../utils/songPersistence";
 import { SongV2ReplicationConflictError } from "../../utils/songV2ReplicationConflicts";
+import * as songV2ReplicationConflicts from "../../utils/songV2ReplicationConflicts";
 
 jest.mock("../../containers/ItemEditor/SlideEditor", () => () => (
   <div data-testid="slide-editor" />
@@ -66,9 +67,82 @@ const createTestStore = () => {
 };
 
 describe("Controller Item page", () => {
-  it("reports preserved revision conflicts instead of silently opening a winning draft", async () => {
+  it("opens a read-only song and lets a third editor review and explicitly choose a saved version", async () => {
+    const rawSong = {
+      _id: "better",
+      type: "song",
+      name: "Better",
+      selectedArrangement: 0,
+      slides: [],
+      arrangements: [{
+        id: "arr-1",
+        name: "Master",
+        songOrder: [],
+        formattedLyrics: [{ id: "lyrics-1", name: "Verse 1", type: "Verse", words: "winning lyrics", slideSpan: 1 }],
+        slides: [{
+          id: "slide-1",
+          type: "Verse",
+          name: "Verse 1",
+          boxes: [
+            { id: "box-0", words: "", width: 1920, height: 1080 },
+            { id: "box-1", words: "winning lyrics", width: 1920, height: 1080 },
+          ],
+        }],
+      }],
+    } as unknown as DBItem;
+    const documents = songPersistence.serializeSongToV2Documents(rawSong);
+    const winningArrangement = { ...documents.arrangements[0], _rev: "2-winning" };
+    const competingArrangement = {
+      ...winningArrangement,
+      _rev: "2-competing",
+      formattedLyrics: winningArrangement.formattedLyrics.map(lyric => ({ ...lyric, words: "competing lyrics" })),
+    };
+    const winningRoot = { ...documents.root, _rev: "1-root" };
+    const winningSlide = { ...documents.slides[0], _rev: "2-slide" };
+    const winningSong = songPersistence.hydrateSongFromV2Documents(
+      winningRoot, [winningArrangement], [winningSlide], true,
+    );
+    const competingSong = {
+      ...winningSong,
+      arrangements: winningSong.arrangements.map(arrangement => ({
+        ...arrangement,
+        formattedLyrics: arrangement.formattedLyrics.map(lyric => ({ ...lyric, words: "competing lyrics" })),
+        slides: arrangement.slides.map(slide => ({
+          ...slide,
+          boxes: slide.boxes.map(box => box.id === "box-1" ? { ...box, words: "competing lyrics" } : box),
+        })),
+      })),
+    };
+    const conflict = {
+      documentId: winningArrangement._id,
+      winningRevision: winningArrangement._rev,
+      revisions: [competingArrangement._rev],
+    };
+    const snapshot: songPersistence.SongV2Snapshot = {
+      root: winningRoot,
+      arrangements: [winningArrangement],
+      slides: [winningSlide],
+      hydrated: winningSong,
+      conflicts: [conflict],
+    };
+    const versions = [{
+      conflict,
+      options: [
+        { revision: winningArrangement._rev, document: winningArrangement },
+        { revision: competingArrangement._rev, document: competingArrangement },
+      ],
+    }];
+    const optionsSpy = jest.spyOn(songV2ReplicationConflicts, "loadSongV2ConflictRevisionOptions")
+      .mockResolvedValue(versions);
+    const buildSpy = jest.spyOn(songV2ReplicationConflicts, "buildSongV2RevisionSelection")
+      .mockImplementation(async (_db, _snapshot, _options, selected) => ({
+        song: selected[winningArrangement._id] === competingArrangement._rev ? competingSong : winningSong,
+        sourceRevisions: { [winningArrangement._id]: selected[winningArrangement._id] },
+      }));
+    const resolveSpy = jest.spyOn(songV2ReplicationConflicts, "resolveSongV2ConflictReview")
+      .mockResolvedValue({ song: competingSong, conflictsRetired: true });
     const load = jest.spyOn(songPersistence, "loadItemWithSongHydration")
-      .mockRejectedValueOnce(new SongV2ReplicationConflictError({} as songPersistence.SongV2Snapshot));
+      .mockRejectedValueOnce(new SongV2ReplicationConflictError(snapshot));
     const db = createMockPouchDB();
     const store = createTestStore();
     render(
@@ -82,9 +156,23 @@ describe("Controller Item page", () => {
         </ControllerInfoContext.Provider>
       </Provider>,
     );
-    expect(await screen.findByText(/saved versions are preserved/i)).toBeInTheDocument();
+    expect(await screen.findByText(/editing is paused until you review and save a resolution/i)).toBeInTheDocument();
+    expect(screen.getByTestId("slide-editor")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Review saved versions" }));
+    expect((await screen.findAllByText(/winning lyrics/)).length).toBeGreaterThan(0);
+    expect(screen.getByText(/competing lyrics/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: /revision 2-competing/ }));
+    await waitFor(() => expect(screen.queryByText("Loading selected version…")).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Save resolution" }));
+    await waitFor(() => expect(resolveSpy).toHaveBeenCalledWith(
+      db, snapshot, competingSong, [conflict], { [winningArrangement._id]: competingArrangement._rev },
+    ));
+    await waitFor(() => expect(screen.queryByText(/editing is paused/i)).not.toBeInTheDocument());
+    expect(screen.getByTestId("slide-editor")).toBeInTheDocument();
     expect(db.put).not.toHaveBeenCalled();
     expect(store.getState().undoable.present.item.isLoading).toBe(false);
+    expect(optionsSpy).toHaveBeenCalledTimes(1);
+    expect(buildSpy).toHaveBeenCalledTimes(2);
     load.mockRestore();
   });
   it("clears loading when fetching the item fails", async () => {

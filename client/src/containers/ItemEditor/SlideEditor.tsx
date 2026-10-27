@@ -169,6 +169,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     restoreFocusToBox,
     hasRemoteUpdate,
     remoteUpdateReason,
+    pendingSongV2Conflicts,
     hasPendingUpdate,
     songMetadata,
     songLinks,
@@ -197,9 +198,10 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     [outputSlots, slides, selectedSlide],
   );
 
-  const canEdit =
+  const canEdit = !pendingSongV2Conflicts?.length && (
     access === "full" ||
-    (access === "music" && (type === "song" || type === "free"));
+    (access === "music" && (type === "song" || type === "free"))
+  );
 
   const { shouldShowItemEditor, toolbarSection = "settings" } = useSelector(
     (state: RootState) => state.undoable.present.preferences
@@ -319,12 +321,22 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
   }, [dispatch]);
 
   useEffect(() => {
+    const isSongV2 = type === "song" && item.docType === "song-v2-root";
+    const hasActionableSongV2Update = remoteUpdateReason === "song-content-conflict" ||
+      remoteUpdateReason === "song-version-transition";
+    if (pendingSongV2Conflicts?.length) {
+      if (remoteUpdateToastIdRef.current && removeToast) {
+        removeToast(remoteUpdateToastIdRef.current);
+        remoteUpdateToastIdRef.current = null;
+      }
+      return;
+    }
     if (hasRemoteUpdate && !isLyricsEditorOpen && !hasPendingUpdate) {
       dispatch(applyPendingRemoteItem(true));
       return;
     }
 
-    if (!hasRemoteUpdate || isLyricsEditorOpen) {
+    if (!hasRemoteUpdate || isLyricsEditorOpen || (isSongV2 && !hasActionableSongV2Update)) {
       if (remoteUpdateToastIdRef.current && removeToast) {
         removeToast(remoteUpdateToastIdRef.current);
         remoteUpdateToastIdRef.current = null;
@@ -373,7 +385,10 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     handleReloadRemote,
     dispatch,
     hasRemoteUpdate,
+    item.docType,
+    type,
     remoteUpdateReason,
+    pendingSongV2Conflicts,
     hasPendingUpdate,
     itemTypeLabel,
     isLyricsEditorOpen,

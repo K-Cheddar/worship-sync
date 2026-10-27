@@ -1,7 +1,6 @@
 import { useCallback, useContext, useEffect, useRef } from "react";
 import { useStore } from "react-redux";
 import { useDispatch, useSelector } from "../hooks";
-import { getServicePlanningImportDataFromUrl } from "../containers/Overlays/eventParser";
 import { servicePlanToImportData } from "../integrations/servicePlanning/servicePlanToImportData";
 import { mapNativeServicePlanParticipants } from "../integrations/servicePlanning/mapNativeServicePlanParticipants";
 import type { ServicePlanningMappedRow } from "../integrations/servicePlanning/mapServicePlanningToOverlays";
@@ -64,7 +63,6 @@ import {
   getOutlineCandidateLineItemKey,
   getOverlayPlanLineItemKey,
 } from "../utils/servicePlanningSyncKeys";
-import { persistItemListServiceOutline } from "../utils/itemListImports";
 import { freeFormDocToServiceItem } from "../utils/freeFormLibrary";
 import { getChurchResource } from "../api/auth";
 import type { ChurchResource } from "../types/churchResource";
@@ -166,71 +164,8 @@ export const useServicePlanningImport = () => {
         ? null
         : SERVICE_PLANNING_DISABLED_MESSAGE;
 
-  const loadPreview = useCallback(
-    async (url: string): Promise<ServiceOutline> => {
-      if (churchIntegrationsStatus !== "ready" || !churchIntegrations) {
-        throw new Error(SERVICE_PLANNING_LOADING_MESSAGE);
-      }
-      const sp = churchIntegrations.servicePlanning;
-      if (!sp.enabled) {
-        throw new Error(SERVICE_PLANNING_DISABLED_MESSAGE);
-      }
-
-      const importData = await getServicePlanningImportDataFromUrl(url);
-      const state = store.getState();
-      const songLibrary = selectSongLibrary(state).songs;
-      const customDocumentLibrary = state.allDocs.allFreeFormDocs
-        .filter((document) => document.type === "free" && Array.isArray(document.slides))
-        .map(freeFormDocToServiceItem);
-      const preview = buildServicePlanningPreview({
-        importData,
-        servicePlanning: sp,
-        overlays: state.undoable.present.overlays.list,
-        songLibrary,
-        customDocumentLibrary,
-        activeOutlineList: state.undoable.present.itemList.list,
-      });
-
-      const serviceOutline: ServiceOutline = {
-        source: "servicePlanning",
-        loadedAt: new Date().toISOString(),
-        sourceUrl: url,
-        planLabel: importData.planLabel.trim() || "Imported plan",
-        preview,
-      };
-
-      try {
-        await persistItemListServiceOutline(
-          db,
-          selectedItemList?._id,
-          serviceOutline,
-        );
-      } catch (error) {
-        console.error("Failed to persist service outline:", error);
-      }
-
-      return serviceOutline;
-    },
-    [
-      churchIntegrations,
-      churchIntegrationsStatus,
-      db,
-      selectedItemList?._id,
-      store,
-    ],
-  );
-
-  /**
-   * The plan-sourced twin of `loadPreview`: same matching rules, same preview
-   * shape, but built from the Teams ServicePlan the Services page owns instead
-   * of a freshly scraped URL.
-   *
-   * Deliberately does *not* call `persistItemListServiceOutline`. A plan-sourced
-   * preview is rebuilt on every `service-plan-updated` event, and the Services
-   * editor autosaves as the operator types — mirroring each of those into a
-   * PouchDB write would put storage churn on a live surface for no gain, since
-   * the plan is already durable server-side and re-derived on mount.
-   */
+  // Saved plans are durable in Services. Rebuild their preview without writing
+  // every live update into the presentation outline's historical import data.
   const loadPlanPreview = useCallback(
     async (
       plan: Pick<ServicePlan, "name" | "sections" | "sourceImport"> & Partial<Pick<ServicePlan, "planKey">>,
@@ -983,7 +918,6 @@ export const useServicePlanningImport = () => {
   );
 
   return {
-    loadPreview,
     loadPlanPreview,
     runImport,
     planOutlineSyncSteps,
