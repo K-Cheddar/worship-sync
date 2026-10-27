@@ -27,8 +27,7 @@ export type ControllerConfigurationRoute =
   | "/controller/preferences"
   | "/controller/quick-links"
   | "/controller/displays"
-  | "/controller/monitor-settings"
-  | "/controller/service-planning";
+  | "/controller/monitor-settings";
 
 export type SelectedPreferenceType =
   | "defaultSongBackground"
@@ -599,7 +598,10 @@ export const preferencesSlice = createSlice({
       state,
       action: PayloadAction<ControllerConfigurationRoute>,
     ) => {
-      state.lastControllerConfigurationRoute = action.payload;
+      state.lastControllerConfigurationRoute =
+        (action.payload as string) === "/controller/service-planning"
+          ? "/controller/preferences"
+          : action.payload;
     },
     setOverlayControllerPanel: (
       state,

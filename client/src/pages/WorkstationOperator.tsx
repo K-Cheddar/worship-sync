@@ -1,6 +1,7 @@
 import { type FormEvent, useContext, useEffect, useState } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import AuthScreenMain from "../components/AuthScreenMain";
+import BootstrapLoadingScreen from "../components/BootstrapLoadingScreen";
 import Button from "../components/Button/Button";
 import Input from "../components/Input/Input";
 import WorkstationUnpairConfirmModal, {
@@ -46,16 +47,7 @@ const WorkstationOperator = () => {
     bootstrapStatus === "loading" ||
     loginState === "loading"
   ) {
-    return (
-      <AuthScreenMain>
-        <div className="max-w-md rounded-2xl border border-gray-500 bg-gray-800 p-8 text-center">
-          <h1 className="text-2xl font-semibold">Preparing this workstation...</h1>
-          <p className="mt-3 text-sm text-gray-200">
-            Please wait while WorshipSync validates this session.
-          </p>
-        </div>
-      </AuthScreenMain>
-    );
+    return <BootstrapLoadingScreen />;
   }
 
   if (context.sessionKind !== "workstation" || !deviceId) {

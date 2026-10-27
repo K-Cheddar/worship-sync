@@ -63,6 +63,7 @@ const mockPlanOutline = jest.mocked(planServicePlanOutlineItems);
 
 const setPlannedItems = (items: ServiceItem[], skippedTitles: string[] = []) => {
   mockPlanOutline.mockReturnValue({
+    previewEntries: [],
     steps: items.map((item) => ({
       planned: { listId: item.listId, kind: "song", songId: item._id, songName: item.name },
       element: { element: { id: item.listId, title: { blocks: [] }, type: "song" }, title: item.name, planned: [], hasUnresolvedAttachment: false },

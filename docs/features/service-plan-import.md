@@ -56,10 +56,25 @@ The current user request authorizes these rules for syncing a saved Service Plan
 - Recheck placement against the latest outline after asynchronous item creation. If the destination heading was removed, append to that same outline only while its original context remains valid. Stop requests finish the active item and leave later items untouched.
 - Count successful fallbacks as added content and explain the missing heading in the added item's summary. Report the fallback only after insertion, including in partial-success or combined outline/overlay summaries.
 - Accept whole-chapter Scripture such as Psalms 105 alongside explicit verse ranges. Use the existing Bible loader and requested version; invalid or unavailable passages must not produce empty items.
-- Retain stable attachment/list IDs and skip already-present items on repeated sync. Preserve saved Service Plan data. The independent Planning URL import keeps its existing heading-creation behavior.
+- Retain stable attachment/list IDs and skip already-present items on repeated sync. Preserve saved Service Plan data.
 - Library refreshes caused by indexing imported Bible items do not interrupt the remaining saved-plan attachments; outline, database, source-plan, and component ownership checks still apply.
 
 Regression coverage: `servicePlanOutlineBridge.test.ts`, `useServicePlanOutlinePush.test.tsx`, `ServicePlanningSyncFloatingWindow.test.tsx`.
+
+## Controller saved-plan source (confirmed 2026-10-27)
+
+**Approval source:** Current user request, 2026-10-27.
+
+- Services owns plan creation, import, and maintenance. Its Service Planning URL, Planning Center account, and Planning Center PDF imports remain available.
+- The Controller automatically selects the current service's saved plan and allows a deliberate selection of another saved plan. No saved plan means an empty Controller plan view, with no independent URL import.
+- Retire Configurations > Service Planning. Redirect `/controller/service-planning` to `/controller`; discard the removed route when remembering configuration navigation.
+- The Service Plan floating window keeps Refresh, Sync All, Sync Outline, Sync Overlays, overlay preview, and sync results. A compact Outline preview starts collapsed and reports native attachment identity, duplicate prevention, unresolved references, and section placement using `planServicePlanOutlineItems`.
+- Live updates, reconnects, and Refresh update previews only. Presentation outline and overlay changes require an explicit sync action. Native outline sync continues through `useServicePlanOutlinePush`; existing overlay sync rules remain unchanged.
+- Historical URL previews cannot become the Controller source or appear beneath an unrelated service. Preserve historical documents, outline content, `servicePlanBinding`, Credits Editor's historical data access, permissions, and independent controller profiles. No database migration is required.
+
+**Product decision:** Saved Services plans replace the independent Controller URL source. The rejected alternative is keeping a second Controller import workflow that can override the saved plan.
+
+Regression coverage: `useCurrentServicePlanSource.test.tsx`, `useCurrentServicePlanSource.stale.test.tsx`, `ServicePlanningSyncFloatingWindow.test.tsx`, `ServicePlanOutlinePreview.test.tsx`, route/navigation tests, and the native outline bridge/push tests.
 
 ## Native WorshipSync transfer (confirmed 2026-10-25)
 

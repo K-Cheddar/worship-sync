@@ -75,13 +75,29 @@ describe("AuthGate", () => {
       expect(container).toContainHTML('<div class="min-h-dvh w-full bg-transparent" aria-busy="true"></div>');
     },
   );
-  it("shows a loading screen while bootstrap or sign-in is loading", () => {
+  it("uses the shared loading screen while bootstrap or sign-in is loading", () => {
     renderWithGate(
       { bootstrapStatus: "loading", loginState: "loading" },
       ["human", "workstation"]
     );
-    expect(screen.getByText("Checking your access...")).toBeInTheDocument();
+    expect(screen.getByText("Getting WorshipSync ready")).toBeInTheDocument();
+    expect(screen.getByText("Preparing your workspace…")).toBeInTheDocument();
     expect(screen.queryByTestId("protected")).not.toBeInTheDocument();
+  });
+
+  it("keeps actionable connection guidance when bootstrap is offline", () => {
+    renderWithGate(
+      {
+        bootstrapStatus: "loading",
+        loginState: "loading",
+        authServerStatus: "offline",
+        authServerRetryCount: 2,
+      },
+      ["human", "workstation"],
+    );
+
+    expect(screen.getByText(/Trying again \(attempt 2\)/)).toBeInTheDocument();
+    expect(screen.queryByText("Getting WorshipSync ready")).not.toBeInTheDocument();
   });
 
   it("renders children when session kind is allowed", () => {

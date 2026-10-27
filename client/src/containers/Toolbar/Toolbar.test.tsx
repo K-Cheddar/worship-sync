@@ -377,11 +377,12 @@ describe("Toolbar", () => {
     renderToolbar({
       access: "full",
       itemType: "song",
-      lastControllerConfigurationRoute: "/controller/service-planning",
+      lastControllerConfigurationRoute: "/controller/service-planning" as any,
     });
 
     const settings = screen.getByRole("link", { name: "Configurations" });
-    expect(settings).toHaveAttribute("href", "/controller/service-planning");
+    expect(settings).toHaveAttribute("href", "/controller/preferences");
+    expect(screen.queryByRole("link", { name: "Service Planning" })).not.toBeInTheDocument();
   });
 
   it("falls back to preferences for Configurations when no other tab was saved", () => {

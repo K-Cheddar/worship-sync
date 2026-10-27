@@ -37,7 +37,7 @@ import BootstrapLoadingScreen, {
 } from "./components/BootstrapLoadingScreen";
 import ViewAccessBlockedRedirect from "./components/ViewAccessBlockedRedirect/ViewAccessBlockedRedirect";
 import { GlobalInfoContext } from "./context/globalInfo";
-import { getAuthBootstrapLoadingDescription } from "./utils/authUserMessages";
+import { getAuthBootstrapOfflineDescription } from "./utils/authUserMessages";
 import TeamsAccessGuard from "./components/TeamsAccessGuard";
 import { lazyRoute } from "./utils/lazyRoute";
 import { ChatProvider } from "./chat/ChatContext";
@@ -203,10 +203,9 @@ const BootstrapSplash = () => {
     return <BootstrapLoadingScreen />;
   }
 
-  const description = getAuthBootstrapLoadingDescription(
-    context.authServerStatus,
-    { retryCount: context.authServerRetryCount ?? 0 }
-  );
+  const description = getAuthBootstrapOfflineDescription({
+    retryCount: context.authServerRetryCount ?? 0,
+  });
   return (
     <AuthScreenMain>
       <div className="flex max-w-md flex-col items-center gap-6">

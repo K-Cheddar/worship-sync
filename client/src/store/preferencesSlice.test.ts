@@ -136,7 +136,7 @@ describe("preferencesSlice", () => {
       );
       expect(
         store.getState().preferences.lastControllerConfigurationRoute,
-      ).toBe("/controller/service-planning");
+      ).toBe("/controller/preferences");
     });
 
     it("setQuickLinks replaces quickLinks", () => {
