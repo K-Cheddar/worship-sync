@@ -5,6 +5,8 @@ import store from "../../store/store";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { itemListsSlice } from "../../store/itemListsSlice";
+import { overlaySlice } from "../../store/overlaySlice";
+import { overlaysSlice } from "../../store/overlaysSlice";
 import { markServicePlanningPlanPreviewStale } from "../../store/servicePlanningImportSlice";
 import { initiateMediaFromDoc } from "../../store/mediaSlice";
 import { loadMediaLibrary as readMediaLibrary } from "../../utils/mediaDocUtils";
@@ -12,7 +14,7 @@ import { ActiveControllerProvider } from "../../context/activeController";
 import { useControllerPageLifecycle } from "./useControllerPageLifecycle";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import { upsertMediaItemFromRemote } from "../../store/mediaSlice";
-import { updateAllDocs } from "../../utils/dbUtils";
+import { getOverlaysByIds } from "../../utils/dbUtils";
 
 jest.mock("../../hooks", () => ({
   useDispatch: () => store.dispatch,
@@ -30,7 +32,6 @@ jest.mock("../../context/toastContext", () => ({
 }));
 
 jest.mock("../../utils/controllerBootstrapDocs", () => ({
-  loadOrCreateAllItemsDoc: jest.fn().mockResolvedValue({ items: [] }),
   loadOrCreatePreferencesBundle: jest.fn().mockResolvedValue({
     preferences: {},
     quickLinks: [],
@@ -50,13 +51,16 @@ jest.mock("../../utils/formatItemList", () => ({
 }));
 
 jest.mock("../../utils/dbUtils", () => ({
-  invalidateLibraryRefresh: jest.fn(),
-  deleteUnusedBibleItems: jest.fn(),
-  deleteUnusedHeadings: jest.fn(),
+  ...jest.requireActual("../../utils/dbUtils"),
   getAllOverlayHistory: jest.fn().mockResolvedValue([]),
   getOverlaysByIds: jest.fn().mockResolvedValue([]),
-  updateAllDocs: jest.fn(),
   migrateMediaLibraryFoldersFieldIfNeeded: jest.fn(),
+}));
+
+jest.mock("../../utils/controllerMediaRouteFolders", () => ({
+  loadOrCreateControllerMediaRouteFolders: jest.fn().mockResolvedValue({
+    mediaRouteFolders: {},
+  }),
 }));
 
 jest.mock("firebase/database", () => ({
@@ -86,37 +90,54 @@ const createDb = (
   loads: Record<string, Deferred<ReturnType<typeof details>>>,
 ) => ({
   get: jest.fn((id: string) => loads[id]?.promise ?? Promise.resolve(undefined)),
+  put: jest.fn().mockResolvedValue({ ok: true, rev: "1-saved" }),
 } as any);
 
 describe("useControllerPageLifecycle selected outline loading", () => {
   beforeEach(() => {
     store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
     jest.mocked(useGlobalBroadcast).mockClear();
+    jest.mocked(getOverlaysByIds).mockReset().mockResolvedValue([]);
     jest.mocked(readMediaLibrary).mockResolvedValue({ list: [], folders: [] });
-    jest.mocked(updateAllDocs).mockClear();
   });
 
-  it("does not scan the library for v2 slide/arrangement/cleanup notifications", () => {
-    const db = createDb({});
-    const updater = new EventTarget();
-    renderHook(() => useControllerPageLifecycle(), {
+  it.each([50, 100])("preserves newly created Bible and heading documents while outline references are pending (progress %s)", async (initialProgress) => {
+    const outline = deferred<ReturnType<typeof details>>();
+    const bible = { _id: "new-bible", _rev: "1-b", type: "bible", name: "John 3" };
+    const heading = { _id: "new-heading", _rev: "1-h", type: "heading", name: "Welcome" };
+    const persisted = new Map<string, unknown>([
+      ["ItemLists", { _id: "ItemLists", itemLists: [{ _id: "outline" }] }],
+      ["outline", { _id: "outline", docType: "itemListDetails", items: [] }],
+      [bible._id, bible], [heading._id, heading],
+    ]);
+    const db = {
+      ...createDb({ outline }),
+      allDocs: jest.fn(async () => ({ rows: [...persisted.values()].map((doc) => ({ doc })) })),
+      remove: jest.fn(async (doc: { _id: string }) => { persisted.delete(doc._id); }),
+    };
+    store.dispatch(itemListsSlice.actions.initiateItemLists([{ _id: "outline", name: "Sunday" }]));
+    let dbProgress = initialProgress;
+    const { rerender } = renderHook(() => useControllerPageLifecycle(), {
       wrapper: ({ children }) => (
         <Provider store={store}>
-          <ControllerInfoContext.Provider value={{ db, cloud: {}, updater } as any}>
+          <ControllerInfoContext.Provider value={{ db, dbProgress, cloud: {} } as any}>
             {children}
           </ControllerInfoContext.Provider>
         </Provider>
       ),
     });
-    jest.mocked(updateAllDocs).mockClear();
-    act(() => updater.dispatchEvent(new CustomEvent("update", { detail: [
-      { _id: "song-v2:slide:better:master:verse-a", docType: "song-v2-slide" },
-      { _id: "song-v2:arrangement:better:master", docType: "song-v2-arrangement" },
-      { _id: "song-v2:cleanup:better:old", docType: "song-v2-cleanup" },
-    ] })));
-    expect(updateAllDocs).not.toHaveBeenCalled();
-    act(() => updater.dispatchEvent(new CustomEvent("update", { detail: [{ _id: "legacy", type: "free" }] })));
-    expect(updateAllDocs).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(db.get).toHaveBeenCalledWith("outline"));
+    dbProgress = 100;
+    rerender();
+    await Promise.resolve();
+    expect(db.remove).not.toHaveBeenCalled();
+    expect(persisted.get(bible._id)).toEqual(bible);
+    expect(persisted.get(heading._id)).toEqual(heading);
+    await act(async () => { outline.resolve({ items: [bible, heading], overlays: [] }); });
+    await waitFor(() => expect(store.getState().undoable.present.itemList.list).toEqual([
+      expect.objectContaining(bible), expect.objectContaining(heading),
+    ]));
+    expect(db.remove).not.toHaveBeenCalled();
   });
 
   it("applies replicated media item changes to Redux outside the media route", () => {
@@ -146,6 +167,231 @@ describe("useControllerPageLifecycle selected outline loading", () => {
     expect(store.getState().media.list).toEqual([
       { id: "existing", name: "Existing" },
       expect.objectContaining({ id: "new", name: "New item" }),
+    ]);
+  });
+
+  it("updates a remote outline without reloading unchanged overlay content", async () => {
+    const overlay = {
+      id: "overlay-1",
+      type: "participant",
+      name: "Current overlay",
+      title: "",
+      event: "",
+      duration: 7,
+    };
+    const db = {
+      get: jest.fn().mockResolvedValue({
+        _id: "outline",
+        items: [{ _id: "song-1", name: "Before", type: "song" }],
+        overlays: ["overlay-1"],
+      }),
+      put: jest.fn().mockResolvedValue({ ok: true, rev: "1-saved" }),
+    } as any;
+    const updater = new EventTarget();
+    jest.mocked(getOverlaysByIds).mockResolvedValue([overlay] as any);
+    store.dispatch(
+      itemListsSlice.actions.initiateItemLists([
+        { _id: "outline", name: "Sunday" },
+      ]),
+    );
+
+    renderHook(() => useControllerPageLifecycle(), {
+      wrapper: ({ children }) => (
+        <Provider store={store}>
+          <ControllerInfoContext.Provider value={{ db, cloud: {}, updater } as any}>
+            {children}
+          </ControllerInfoContext.Provider>
+        </Provider>
+      ),
+    });
+
+    await waitFor(() => {
+      expect(store.getState().undoable.present.overlays.list).toEqual([
+        expect.objectContaining({ id: "overlay-1", name: "Current overlay" }),
+      ]);
+    });
+    jest.mocked(getOverlaysByIds).mockClear();
+
+    await act(async () => {
+      updater.dispatchEvent(
+        new CustomEvent("update", {
+          detail: [
+            {
+              _id: "outline",
+              _rev: "2-items-only",
+              items: [{ _id: "song-2", name: "After", type: "song" }],
+              overlays: ["overlay-1"],
+            },
+          ],
+        }),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(store.getState().undoable.present.itemList.list).toEqual([
+      expect.objectContaining({ _id: "song-2", name: "After" }),
+    ]);
+    expect(store.getState().undoable.present.overlays.list).toEqual([
+      expect.objectContaining({ id: "overlay-1", name: "Current overlay" }),
+    ]);
+    expect(getOverlaysByIds).not.toHaveBeenCalled();
+  });
+
+  it("applies a remote overlay reorder while retaining a selected local draft", async () => {
+    const overlayA = {
+      id: "overlay-a",
+      type: "participant",
+      name: "Base A",
+      duration: 7,
+    };
+    const overlayB = {
+      id: "overlay-b",
+      type: "participant",
+      name: "Base B",
+      duration: 7,
+    };
+    const remoteA = { ...overlayA, name: "Remote A" };
+    const remoteB = { ...overlayB, name: "Remote B" };
+    const db = {
+      get: jest.fn().mockResolvedValue({
+        _id: "outline",
+        items: [{ _id: "Initial", name: "Initial", type: "song" }],
+        overlays: ["overlay-a", "overlay-b"],
+      }),
+      put: jest.fn().mockResolvedValue({ ok: true, rev: "1-saved" }),
+    } as any;
+    const updater = new EventTarget();
+    jest.mocked(getOverlaysByIds)
+      .mockReset()
+      .mockResolvedValueOnce([overlayA, overlayB] as any)
+      .mockResolvedValueOnce([remoteB, remoteA] as any);
+    store.dispatch(
+      itemListsSlice.actions.initiateItemLists([
+        { _id: "outline", name: "Sunday" },
+      ]),
+    );
+
+    renderHook(() => useControllerPageLifecycle(), {
+      wrapper: ({ children }) => (
+        <Provider store={store}>
+          <ControllerInfoContext.Provider value={{ db, cloud: {}, updater } as any}>
+            {children}
+          </ControllerInfoContext.Provider>
+        </Provider>
+      ),
+    });
+
+    await waitFor(() => {
+      expect(store.getState().undoable.present.overlays.list).toHaveLength(2);
+    });
+    act(() => {
+      store.dispatch(overlaySlice.actions.selectOverlay(overlayA as any));
+      store.dispatch(overlaySlice.actions.markOverlayDraftPending("overlay-a"));
+    });
+
+    await act(async () => {
+      updater.dispatchEvent(
+        new CustomEvent("update", {
+          detail: [
+            {
+              _id: "outline",
+              _rev: "2-reordered",
+              items: [{ _id: "Initial", name: "Initial", type: "song" }],
+              overlays: ["overlay-b", "overlay-a"],
+            },
+          ],
+        }),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(store.getState().undoable.present.overlays.list.map((o: { id: string }) => o.id)).toEqual([
+        "overlay-b",
+        "overlay-a",
+      ]);
+    });
+    expect(store.getState().undoable.present.overlays.list).toEqual([
+      expect.objectContaining({ id: "overlay-b", name: "Remote B" }),
+      expect.objectContaining({ id: "overlay-a", name: "Base A" }),
+    ]);
+    expect(store.getState().undoable.present.overlay.pendingRemoteOverlay).toEqual(
+      expect.objectContaining({ id: "overlay-a", name: "Remote A" }),
+    );
+  });
+
+  it("ignores a remote overlay read that settles after switching outlines", async () => {
+    const overlayA = {
+      id: "overlay-a",
+      type: "participant",
+      name: "Outline A overlay",
+    };
+    const overlayB = {
+      id: "overlay-b",
+      type: "participant",
+      name: "Outline A remote overlay",
+    };
+    const overlayC = {
+      id: "overlay-c",
+      type: "participant",
+      name: "Outline B overlay",
+    };
+    const pendingRead = deferred<any[]>();
+    const db = createDb({});
+    const updater = new EventTarget();
+    jest.mocked(getOverlaysByIds)
+      .mockReset()
+      .mockReturnValueOnce(pendingRead.promise);
+
+    store.dispatch(
+      itemListsSlice.actions.initiateItemLists([
+        { _id: "outline-a", name: "Sunday" },
+        { _id: "outline-b", name: "Wednesday" },
+      ]),
+    );
+    store.dispatch(overlaysSlice.actions.initiateOverlayList([overlayA] as any));
+
+    const { rerender } = renderHook(() => useControllerPageLifecycle(), {
+      wrapper: ({ children }) => (
+        <Provider store={store}>
+          <ControllerInfoContext.Provider value={{ db, updater } as any}>
+            {children}
+          </ControllerInfoContext.Provider>
+        </Provider>
+      ),
+    });
+
+    act(() => {
+      updater.dispatchEvent(
+        new CustomEvent("update", {
+          detail: [{
+            _id: "outline-a",
+            items: [],
+            overlays: ["overlay-b"],
+          }],
+        }),
+      );
+    });
+    await waitFor(() =>
+      expect(getOverlaysByIds).toHaveBeenCalledWith(db, ["overlay-b"]),
+    );
+
+    store.dispatch(itemListsSlice.actions.selectItemList("outline-b"));
+    store.dispatch(overlaysSlice.actions.initiateOverlayList([overlayC] as any));
+    rerender();
+
+    await act(async () => {
+      pendingRead.resolve([overlayB]);
+      await pendingRead.promise;
+    });
+
+    expect(store.getState().undoable.present.itemLists.selectedList?._id).toBe(
+      "outline-b",
+    );
+    expect(store.getState().undoable.present.overlays.list).toEqual([
+      expect.objectContaining({ id: "overlay-c", name: "Outline B overlay" }),
     ]);
   });
 

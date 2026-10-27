@@ -244,7 +244,7 @@ it("retains selected leads through invitation role and global-access changes and
   await user.type(screen.getByRole("textbox", { name: /Email/ }), "lead@example.test");
   await user.click(screen.getByRole("button", { name: "Send invite" }));
   await waitFor(() => expect(api.createAdminInvite).toHaveBeenCalledWith("church-1", expect.objectContaining({
-    email: "lead@example.test", permissions: { teams: "edit", services: "none", teamScopes: { media: "edit" } },
+    email: "lead@example.test", permissions: { teams: "edit", services: "view", teamScopes: { media: "edit" } },
   })));
 });
 
@@ -269,7 +269,7 @@ it("hydrates and saves pending admin invitations without losing leads or view-on
   await user.click(screen.getByRole("button", { name: "Save access" }));
   await waitFor(() => expect(api.updateChurchInviteAccess).toHaveBeenCalledWith("church-1", "pending", {
     role: "member", controllerAccess: "full", appAccess: "full",
-    permissions: { teams: "none", services: "none", teamScopes: { media: "edit", praise: "view" } },
+    permissions: { teams: "none", services: "view", teamScopes: { media: "edit", praise: "view" } },
   }));
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit access" })).not.toBeInTheDocument());
   await user.click(screen.getByRole("button", { name: "Actions for invite to pending@example.test" }));

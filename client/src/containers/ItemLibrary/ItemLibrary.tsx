@@ -5,11 +5,7 @@ import FilteredItems from "../../components/FilteredItems/FilteredItems";
 import NextServiceTimerItem from "../../components/FilteredItems/NextServiceTimerItem";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import { addItemToItemList } from "../../store/itemListSlice";
-import {
-  setLibraryFilter,
-  setLibrarySearchValue,
-  type LibraryFilter,
-} from "../../store/allItemsSlice";
+import { setLibraryFilter, setLibrarySearchValue, type LibraryFilter } from "../../store/itemLibraryUiSlice";
 import { selectUnifiedItemLibrary } from "../../store/itemLibrarySelectors";
 import { RootState } from "../../store/store";
 import { NEXT_SERVICE_UPCOMING_REFRESH_GRACE_MS, SERVICE_TIME_COUNTDOWN_ID } from "../../constants/nextServiceTimer";
@@ -43,11 +39,11 @@ const ItemLibrary = ({ routeFilter }: ItemLibraryProps) => {
   const dispatch = useDispatch();
   const location = useLocation();
   const library = useSelector(selectUnifiedItemLibrary);
+  const isItemCacheLoading = useSelector((state) => !state.allDocs.isInitialized);
   const {
-    isAllItemsLoading,
     libraryFilter,
     librarySearchValue,
-  } = useSelector((state: RootState) => state.allItems);
+  } = useSelector((state: RootState) => state.itemLibraryUi);
   const { allSongDocs, allFreeFormDocs, allTimerDocs } = useSelector(
     (state: RootState) => state.allDocs,
   );
@@ -101,7 +97,7 @@ const ItemLibrary = ({ routeFilter }: ItemLibraryProps) => {
         type="all"
         heading={filterHeading[libraryFilter]}
         label={filterLabel[libraryFilter]}
-        isLoading={isAllItemsLoading && library.length === 0}
+        isLoading={isItemCacheLoading && library.length === 0}
         allDocs={allDocs}
         searchValue={librarySearchValue}
         setSearchValue={(value) => dispatch(setLibrarySearchValue(value))}

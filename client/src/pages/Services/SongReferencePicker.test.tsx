@@ -12,7 +12,7 @@ const songDoc = (id: string, name: string) => ({ _id: id, name, type: "song" });
 
 beforeEach(() => {
   mockState = {
-    allItems: { list: [], isAllItemsLoading: false },
+
     allDocs: {
       allSongDocs: [
         songDoc("song-1", "Great Are You Lord"),
@@ -86,10 +86,11 @@ describe("SongReferencePicker", () => {
       expect.objectContaining({ kind: "pending", title: "New Song" }),
     );
   });
-  it("shares lyric-phrase ranking and finds indexed titles before hydration", async () => {
+  it("shares lyric-phrase ranking and finds document titles with minor spelling errors", async () => {
     mockState = {
-      allItems: { list: [{ _id: "indexed", name: "Holy Spirit", type: "song", listId: "indexed" }], isAllItemsLoading: false },
+
       allDocs: { allSongDocs: [
+        songDoc("indexed", "Holy Spirit"),
         songDoc("weak", "Sound of Praise"),
         { ...songDoc("grace", "Amazing Grace"), arrangements: [{ formattedLyrics: [{ words: "how sweet the sound" }] }] },
       ] },
@@ -115,7 +116,7 @@ describe("SongReferencePicker", () => {
     const input = screen.getByRole("textbox", { name: /Search songs/ });
     fireEvent.change(input, { target: { value: "grace" } });
     fireEvent.change(input, { target: { value: "sheperd" } });
-    mockState = { allItems: { list: [], isAllItemsLoading: false }, allDocs: {
+    mockState = {  allDocs: {
       allSongDocs: [{ ...songDoc("new", "Quiet Hymn"), arrangements: [{ formattedLyrics: [{ words: "my shepherd" }] }] }],
     } };
     rerender(<SongReferencePicker onChange={jest.fn()} />);

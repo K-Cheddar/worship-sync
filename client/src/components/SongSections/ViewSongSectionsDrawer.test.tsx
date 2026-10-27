@@ -1,10 +1,11 @@
+import { applyItemDocumentChange } from "../../store/allDocsSlice";
 import { configureStore } from "@reduxjs/toolkit";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Provider, useSelector } from "react-redux";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import allDocsReducer from "../../store/allDocsSlice";
-import allItemsReducer from "../../store/allItemsSlice";
+import itemLibraryUiReducer from "../../store/itemLibraryUiSlice";
 import {
   createMockControllerContext,
   createMockGlobalContext,
@@ -111,9 +112,15 @@ const renderDrawer = ({
   const store = configureStore({
     reducer: {
       allDocs: allDocsReducer,
-      allItems: allItemsReducer,
+      itemLibraryUi: itemLibraryUiReducer,
     },
   });
+  const originalPut = db.put;
+  db.put = jest.fn(async (doc: any) => {
+    const result = await originalPut(doc);
+    store.dispatch(applyItemDocumentChange({ id: doc._id, doc: { ...doc, _rev: result.rev } }));
+    return result;
+  }) as typeof db.put;
   const view = render(
     <Provider store={store}>
       <ControllerInfoContext.Provider
@@ -215,12 +222,6 @@ describe("ViewSongSectionsDrawer", () => {
       expect.objectContaining({
         _id: "song-1",
         _rev: "2-new",
-        name: "Living Hope (Acoustic)",
-      }),
-    );
-    expect(store.getState().allItems.list[0]).toEqual(
-      expect.objectContaining({
-        _id: "song-1",
         name: "Living Hope (Acoustic)",
       }),
     );
@@ -333,7 +334,7 @@ describe("ViewSongSectionsDrawer", () => {
     expect(put).toHaveBeenCalledWith(expect.objectContaining({ name: "Remote renamed song", arrangements: [], _rev: "2-remote" }));
   });
 
-  it("finishes an audio write on the original database without publishing into an unmounted drawer", async () => {
+  it("finishes an audio write on the original database while the shared cache stays current after the drawer unmounts", async () => {
     let resolveUpload!: (value: NonNullable<DBItem["songAudio"]>) => void;
     mockUploadSongAudio.mockReturnValue(new Promise((resolve) => { resolveUpload = resolve; }));
     const db = createMockPouchDB({ get: getLegacySong({ ...song, _rev: "1-old" }), put: jest.fn().mockResolvedValue({ rev: "2-audio" }) });
@@ -343,7 +344,7 @@ describe("ViewSongSectionsDrawer", () => {
     unmount();
     await act(async () => { resolveUpload(song.songAudio!); });
     expect(db.put).toHaveBeenCalledWith(expect.objectContaining({ _id: "song-1" }));
-    expect(store.getState().allDocs.allSongDocs).toEqual([]);
+    expect(store.getState().allDocs.allSongDocs[0]).toMatchObject({ _id: "song-1", _rev: "2-audio", songAudio: song.songAudio });
   });
 
   it("clears MP3 metadata only after storage deletion succeeds", async () => {

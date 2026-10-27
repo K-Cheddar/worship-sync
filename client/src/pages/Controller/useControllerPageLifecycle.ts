@@ -2,12 +2,8 @@ import { useCallback, useContext, useEffect, useRef } from "react";
 import { songV2DocumentsChanged } from "../../store/store";
 import { useStore } from "react-redux";
 import { useDispatch, useSelector } from "../../hooks";
+import _ from "lodash";
 import {
-  initiateAllItemsList,
-  updateAllItemsListFromRemote,
-} from "../../store/allItemsSlice";
-import {
-  DBAllItems,
   DBItemListDetails,
   DBOverlayTemplates,
   isControllerMediaRouteFoldersDocId,
@@ -32,17 +28,11 @@ import {
 import { formatItemList } from "../../utils/formatItemList";
 import { setMediaCacheMap } from "../../store/mediaCacheMapSlice";
 import { GlobalInfoContext } from "../../context/globalInfo";
-import { sortNamesInList } from "../../utils/sort";
 import {
-  deleteUnusedBibleItems,
-  deleteUnusedHeadings,
   getAllOverlayHistory,
   getOverlaysByIds,
-  updateAllDocs,
-  invalidateLibraryRefresh,
 } from "../../utils/dbUtils";
 import {
-  loadOrCreateAllItemsDoc,
   loadOrCreatePreferencesBundle,
 } from "../../utils/controllerBootstrapDocs";
 import {
@@ -80,7 +70,6 @@ import {
   parseMediaReplicationDoc,
   requireMediaLibraryV2,
 } from "../../utils/mediaDocUtils";
-import { setIsInitialized as setAllItemsIsInitialized } from "../../store/allItemsSlice";
 import { setIsInitialized as setOverlaysIsInitialized } from "../../store/overlaysSlice";
 import { setIsInitialized as setItemListsIsInitialized } from "../../store/itemListsSlice";
 import { initiateServices } from "../../store/serviceTimesSlice";
@@ -92,7 +81,6 @@ import { useSyncOnReconnect } from "../../hooks";
 import { CONTROLLER_PAGE_READY, RootState } from "../../store/store";
 import {
   setServicePlanningOutlinePlanBinding,
-  setStoredServicePlanningOutlineIfIdle,
 } from "../../store/servicePlanningImportSlice";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useToast } from "../../context/toastContext";
@@ -126,9 +114,27 @@ export const useControllerPageLifecycle = () => {
   const selectedList = useSelector(
     (state) => state.undoable.present.itemLists.selectedList,
   );
+  const databaseRef = useRef(db);
+  databaseRef.current = db;
+  const selectedOutlineIdentityRef = useRef({
+    listId: selectedList?._id,
+    controllerId: activeControllerId,
+    generation: 0,
+  });
+  if (
+    selectedOutlineIdentityRef.current.listId !== selectedList?._id ||
+    selectedOutlineIdentityRef.current.controllerId !== activeControllerId
+  ) {
+    selectedOutlineIdentityRef.current = {
+      listId: selectedList?._id,
+      controllerId: activeControllerId,
+      generation: selectedOutlineIdentityRef.current.generation + 1,
+    };
+  }
+  const serviceListSyncGenerationRef = useRef(0);
   const allControllerSlicesInitialized = useSelector((state: RootState) =>
     Boolean(
-      state.allItems.isInitialized &&
+      state.allDocs.isInitialized &&
       state.undoable.present.preferences.isInitialized &&
       state.undoable.present.itemList.isInitialized &&
       state.undoable.present.itemLists.isInitialized &&
@@ -173,13 +179,12 @@ export const useControllerPageLifecycle = () => {
     };
   }, [refreshPresentationListeners, setIsMobile, setIsPhone]);
 
-  const updateAllItemsAndListFromExternal = useCallback(
+  const updateOutlineFromExternal = useCallback(
     async (event: CustomEventInit) => {
       try {
         const updates = event.detail;
         if (!Array.isArray(updates)) return;
         const songs = new Map<string, boolean>();
-        let needsBroadRefresh = false;
         let refetchOverlayHistory = false;
         for (const _update of updates) {
           if (typeof _update._id === "string" && _update._id.startsWith("song-v2:")) {
@@ -194,67 +199,116 @@ export const useControllerPageLifecycle = () => {
             songs.set(_update._id, true);
             continue;
           }
-          needsBroadRefresh = true;
-          if (selectedList && _update._id === selectedList._id) {
+          const currentState = store.getState() as RootState;
+          const currentSelectedList =
+            currentState.undoable.present.itemLists.selectedList;
+          if (currentSelectedList?._id && _update._id === currentSelectedList._id) {
             const update = _update as DBItemListDetails;
-            const itemList = update.items;
-            const overlaysIds = update.overlays || [];
-            dispatch(
-              setStoredServicePlanningOutlineIfIdle(
-                update.serviceOutline ?? null,
-              ),
-            );
+            const selectionIdentity = selectedOutlineIdentityRef.current;
+            const syncGeneration = ++serviceListSyncGenerationRef.current;
             dispatch(
               setServicePlanningOutlinePlanBinding(
                 update.servicePlanBinding ?? null,
               ),
             );
             if (cloud) {
-              dispatch(
-                updateItemListFromRemote(formatItemList(itemList, cloud)),
-              );
-            }
-            const formattedOverlays = await getOverlaysByIds(db!, overlaysIds);
-            const mergedList = mergeRemoteOverlayListWithLocalBuffer(
-              formattedOverlays,
-              store.getState as () => OverlaySyncRootSlice,
-            );
-            dispatch(updateOverlayListFromRemote(mergedList));
-            const selectedOverlayId = (store.getState() as OverlaySyncRootSlice)
-              .undoable.present.overlay.selectedOverlay?.id;
-            if (selectedOverlayId) {
-              const match = mergedList.find((o) => o.id === selectedOverlayId);
-              if (match) {
-                syncSelectedOverlayFromRemote(
-                  dispatch,
-                  store.getState as () => OverlaySyncRootSlice,
-                  match,
-                );
+              const remoteItems = formatItemList(update.items || [], cloud);
+              if (
+                !currentState.undoable.present.itemList.hasPendingUpdate &&
+                !_.isEqual(currentState.undoable.present.itemList.list, remoteItems)
+              ) {
+                dispatch(updateItemListFromRemote(remoteItems));
               }
             }
-          }
-          if (_update._id === "allItems") {
-            const update = _update as DBAllItems;
-            dispatch(updateAllItemsListFromRemote(update.items));
+
+            const remoteOverlayIds = update.overlays || [];
+            const currentOverlayState = currentState.undoable.present.overlays;
+            const overlayIdsAtRead = currentOverlayState.list.map((o) => o.id);
+            if (
+              !currentOverlayState.hasPendingUpdate &&
+              !_.isEqual(overlayIdsAtRead, remoteOverlayIds)
+            ) {
+              const dbAtRead = databaseRef.current;
+              if (!dbAtRead) continue;
+              const overlaysAtRead = currentOverlayState.list;
+              const formattedOverlays = await getOverlaysByIds(
+                dbAtRead,
+                remoteOverlayIds,
+              );
+              const latestState = store.getState() as RootState;
+              const latestOverlays = latestState.undoable.present.overlays;
+              const latestSelectionIdentity = selectedOutlineIdentityRef.current;
+              if (
+                databaseRef.current !== dbAtRead ||
+                latestSelectionIdentity.generation !== selectionIdentity.generation ||
+                latestState.undoable.present.itemLists.selectedList?._id !== update._id ||
+                syncGeneration !== serviceListSyncGenerationRef.current ||
+                latestOverlays.hasPendingUpdate ||
+                !_.isEqual(
+                  latestOverlays.list.map((o) => o.id),
+                  overlayIdsAtRead,
+                )
+              ) {
+                continue;
+              }
+
+              const overlaysAtReadById = new Map(
+                overlaysAtRead.map((overlay) => [overlay.id, overlay]),
+              );
+              const latestOverlaysById = new Map(
+                latestOverlays.list.map((overlay) => [overlay.id, overlay]),
+              );
+              const changedWhileReading = new Set(
+                latestOverlays.list
+                  .filter((overlay) => {
+                    const previous = overlaysAtReadById.get(overlay.id);
+                    return previous && !_.isEqual(previous, overlay);
+                  })
+                  .map((overlay) => overlay.id),
+              );
+              const freshList = formattedOverlays.map((overlay) =>
+                changedWhileReading.has(overlay.id)
+                  ? latestOverlaysById.get(overlay.id) || overlay
+                  : overlay,
+              );
+              const mergedList = mergeRemoteOverlayListWithLocalBuffer(
+                freshList,
+                store.getState as () => OverlaySyncRootSlice,
+              );
+              dispatch(updateOverlayListFromRemote(mergedList));
+              const selectedOverlayId = (store.getState() as OverlaySyncRootSlice)
+                .undoable.present.overlay.selectedOverlay?.id;
+              if (selectedOverlayId) {
+                const match = freshList.find((o) => o.id === selectedOverlayId);
+                if (match) {
+                  syncSelectedOverlayFromRemote(
+                    dispatch,
+                    store.getState as () => OverlaySyncRootSlice,
+                    match,
+                  );
+                }
+              }
+            }
           }
           if (_update.docType === "overlay-history") {
             refetchOverlayHistory = true;
           }
         }
         if (songs.size) {
-          if (db) invalidateLibraryRefresh(db);
           dispatch(songV2DocumentsChanged([...songs].map(([songId, libraryChanged]) => ({ songId, libraryChanged }))));
         }
-        if (needsBroadRefresh) updateAllDocs(dispatch, db, () => mediaReplicationDbRef.current === db);
-        if (refetchOverlayHistory && db) {
-          const overlayHistory = await getAllOverlayHistory(db);
-          dispatch(mergeOverlayHistoryFromDb(overlayHistory));
+        const dbForHistory = databaseRef.current;
+        if (refetchOverlayHistory && dbForHistory) {
+          const overlayHistory = await getAllOverlayHistory(dbForHistory);
+          if (databaseRef.current === dbForHistory) {
+            dispatch(mergeOverlayHistoryFromDb(overlayHistory));
+        }
         }
       } catch (e) {
         console.error(e);
       }
     },
-    [dispatch, cloud, selectedList, db, store],
+    [dispatch, cloud, store],
   );
 
   const updateMediaFromExternal = useCallback(
@@ -292,7 +346,7 @@ export const useControllerPageLifecycle = () => {
     [dispatch],
   );
 
-  useGlobalBroadcast(updateAllItemsAndListFromExternal);
+  useGlobalBroadcast(updateOutlineFromExternal);
   useGlobalBroadcast(updateMediaFromExternal);
 
   const updatePreferencesFromExternal = useCallback(
@@ -366,7 +420,6 @@ export const useControllerPageLifecycle = () => {
       // Soft reset: clears presentation/session slices but keeps church
       // registries so Home does not flash built-in controller names.
       dispatch({ type: "RESET_CONTROLLER_SESSION" });
-      dispatch(setAllItemsIsInitialized(false));
       dispatch(setPreferencesIsInitialized(false));
       dispatch(setItemListIsInitialized(false));
       dispatch(setOverlaysIsInitialized(false));
@@ -406,30 +459,6 @@ export const useControllerPageLifecycle = () => {
     };
     load();
   }, [db, loginState, dispatch]);
-
-  useEffect(() => {
-    const getAllItems = async () => {
-      if (!db) return;
-      try {
-        const allItems = await loadOrCreateAllItemsDoc(db);
-        const items = allItems.items || [];
-        const sortedItems = sortNamesInList(items);
-        dispatch(initiateAllItemsList(sortedItems));
-        updateAllDocs(dispatch);
-        deleteUnusedBibleItems({ db, allItems });
-        deleteUnusedHeadings({ db, allItems });
-      } catch (error) {
-        console.error(error);
-        // Non-404 failure: unblock UI for this session only — do not write empty docs.
-        dispatch(initiateAllItemsList([]));
-        showToast(
-          "Could not load the item library. Reload the page before editing songs or items.",
-          "error",
-        );
-      }
-    };
-    void getAllItems();
-  }, [dispatch, db, showToast]);
 
   useEffect(() => {
     if (!db) return;
@@ -594,7 +623,6 @@ export const useControllerPageLifecycle = () => {
       if (!selectedList?._id) {
         if (cancelled) return;
         dispatch(initiateItemList([]));
-        dispatch(setStoredServicePlanningOutlineIfIdle(null));
         dispatch(setServicePlanningOutlinePlanBinding(null));
         dispatch(setItemListIsLoading(false));
         return;
@@ -607,11 +635,6 @@ export const useControllerPageLifecycle = () => {
         if (cancelled) return;
         const itemList = response?.items || [];
         const overlayIds = response?.overlays || [];
-        dispatch(
-          setStoredServicePlanningOutlineIfIdle(
-            response?.serviceOutline ?? null,
-          ),
-        );
         dispatch(
           setServicePlanningOutlinePlanBinding(
             response?.servicePlanBinding ?? null,
@@ -627,7 +650,6 @@ export const useControllerPageLifecycle = () => {
       } catch (e) {
         if (cancelled) return;
         console.error(e);
-        dispatch(setStoredServicePlanningOutlineIfIdle(null));
         dispatch(setServicePlanningOutlinePlanBinding(null));
       }
       if (!cancelled) {
@@ -643,10 +665,10 @@ export const useControllerPageLifecycle = () => {
 
   useEffect(() => {
     if (!updater) return;
-    updater.addEventListener("update", updateAllItemsAndListFromExternal);
+    updater.addEventListener("update", updateOutlineFromExternal);
     return () =>
-      updater.removeEventListener("update", updateAllItemsAndListFromExternal);
-  }, [updater, updateAllItemsAndListFromExternal]);
+      updater.removeEventListener("update", updateOutlineFromExternal);
+  }, [updater, updateOutlineFromExternal]);
 
   useEffect(() => {
     if (!updater) return;

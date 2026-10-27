@@ -8,8 +8,6 @@ import {
   getOverlayHistoryDocId,
 } from "../types";
 import {
-  deleteUnusedBibleItems,
-  deleteUnusedHeadings,
   ensureCreditsIndexDoc,
   formatAllDocs,
   getAllCreditDocsForOutline,
@@ -1249,45 +1247,6 @@ describe("dbUtils", () => {
     });
   });
 
-  it("deletes unused bible items from all-items and individual docs", async () => {
-    const db = createDb();
-    db.get.mockImplementation(async (id: string) => {
-      if (id === "ItemLists") {
-        return { itemLists: [{ _id: "list-1", name: "Main" }] };
-      }
-      if (id === "list-1") {
-        return { items: [{ _id: "bible-1", type: "bible" }] };
-      }
-      if (id === "bible-2") return { _id: "bible-2", _rev: "1-a" };
-      return {};
-    });
-
-    const allItems = {
-      _id: "all-items",
-      items: [
-        { _id: "bible-1", type: "bible" },
-        { _id: "bible-2", type: "bible" },
-        { _id: "song-1", type: "song" },
-      ],
-    } as any;
-
-    await deleteUnusedBibleItems({
-      db: db as unknown as PouchDB.Database,
-      allItems,
-    });
-
-    expect(db.put).toHaveBeenCalledWith(
-      expect.objectContaining({
-        _id: "all-items",
-        items: [
-          { _id: "bible-1", type: "bible" },
-          { _id: "song-1", type: "song" },
-        ],
-      }),
-    );
-    expect(db.remove).toHaveBeenCalledWith({ _id: "bible-2", _rev: "1-a" });
-  });
-
   it("migrates font sizes to pixels for slides and arrangement slides", async () => {
     const db = createDb();
     db.allDocs.mockResolvedValue({
@@ -1678,33 +1637,6 @@ describe("dbUtils", () => {
     const result = await getCreditsByIds(db as unknown as PouchDB.Database, "ol-1", []);
     expect(result).toEqual([]);
     expect(db.allDocs).not.toHaveBeenCalled();
-  });
-
-  it("deleteUnusedHeadings removes unused headings and keeps used ones", async () => {
-    const db = createDb();
-    db.get.mockImplementation(async (id: string) => {
-      if (id === "ItemLists") return { itemLists: [{ _id: "l1", name: "L1" }] };
-      if (id === "l1")
-        return { items: [{ _id: "heading-kept", type: "heading" }] };
-      if (id === "heading-removed") return { _id: "heading-removed", _rev: "1-a" };
-      return {};
-    });
-    const allItems = {
-      _id: "allItems",
-      items: [
-        { _id: "heading-kept", type: "heading" },
-        { _id: "heading-removed", type: "heading" },
-        { _id: "song-1", type: "song" },
-      ],
-    } as any;
-    await deleteUnusedHeadings({ db: db as unknown as PouchDB.Database, allItems });
-    expect(db.put).toHaveBeenCalledWith(
-      expect.objectContaining({ items: expect.arrayContaining([
-        expect.objectContaining({ _id: "heading-kept" }),
-        expect.objectContaining({ _id: "song-1" }),
-      ]) }),
-    );
-    expect(db.remove).toHaveBeenCalled();
   });
 
   it("ensureCreditsIndexDoc creates index when absent", async () => {

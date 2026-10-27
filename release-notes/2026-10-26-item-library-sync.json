@@ -1,0 +1,7 @@
+{
+  "id": "item-library-sync",
+  "date": "2026-10-26",
+  "type": "fixed",
+  "title": "More reliable item libraries",
+  "description": "Saved item names, backgrounds, and deletions now stay consistent across libraries, controllers, and service plans. Customized outline backgrounds stay in place."
+}

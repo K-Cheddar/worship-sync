@@ -1,6 +1,5 @@
 import {
   DEFAULT_BOOTSTRAP_OUTLINE,
-  loadOrCreateAllItemsDoc,
   loadOrCreateItemListsDoc,
   loadOrCreatePreferencesBundle,
 } from "./controllerBootstrapDocs";
@@ -15,69 +14,6 @@ import { preferencesClusterLoadFallback } from "../store/preferencesSlice";
 const notFound = { status: 404, name: "not_found" };
 
 describe("controllerBootstrapDocs", () => {
-  describe("loadOrCreateAllItemsDoc", () => {
-    it("returns an existing allItems document without writing", async () => {
-      const existing = {
-        _id: "allItems",
-        _rev: "1-a",
-        items: [{ _id: "song-1", name: "Song", type: "song" }],
-      };
-      const db = {
-        get: jest.fn().mockResolvedValue(existing),
-        put: jest.fn(),
-      } as unknown as PouchDB.Database;
-
-      await expect(loadOrCreateAllItemsDoc(db)).resolves.toBe(existing);
-      expect(db.put).not.toHaveBeenCalled();
-    });
-
-    it("creates an empty allItems document after a confirmed 404", async () => {
-      const created = { _id: "allItems", _rev: "1-created", items: [] };
-      const db = {
-        get: jest
-          .fn()
-          .mockRejectedValueOnce(notFound)
-          .mockResolvedValueOnce(created),
-        put: jest
-          .fn()
-          .mockResolvedValue({ ok: true, id: "allItems", rev: "1-created" }),
-      } as unknown as PouchDB.Database;
-
-      await expect(loadOrCreateAllItemsDoc(db)).resolves.toEqual(created);
-      expect(db.put).toHaveBeenCalledWith(
-        expect.objectContaining({
-          _id: "allItems",
-          items: [],
-          docType: "allItems",
-        }),
-      );
-    });
-
-    it("rethrows non-404 read errors without writing", async () => {
-      const readError = { status: 500, message: "boom" };
-      const db = {
-        get: jest.fn().mockRejectedValue(readError),
-        put: jest.fn(),
-      } as unknown as PouchDB.Database;
-
-      await expect(loadOrCreateAllItemsDoc(db)).rejects.toBe(readError);
-      expect(db.put).not.toHaveBeenCalled();
-    });
-
-    it("rereads after a create conflict", async () => {
-      const winning = { _id: "allItems", _rev: "2-win", items: [{ _id: "x" }] };
-      const db = {
-        get: jest
-          .fn()
-          .mockRejectedValueOnce(notFound)
-          .mockResolvedValueOnce(winning),
-        put: jest.fn().mockRejectedValue({ status: 409, name: "conflict" }),
-      } as unknown as PouchDB.Database;
-
-      await expect(loadOrCreateAllItemsDoc(db)).resolves.toBe(winning);
-    });
-  });
-
   describe("loadOrCreateItemListsDoc", () => {
     it("returns an existing non-empty ItemLists registry without writing", async () => {
       const existing = {

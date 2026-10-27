@@ -1096,6 +1096,8 @@ type ServicePlanElementRowProps = {
   isAdjustedLive?: boolean;
   /** Display time from the adjusted timeline, for this item and following items. */
   adjustedStartTime?: string;
+  /** Original scheduled display time shown when this row is adjusted. */
+  plannedStartTime?: string;
   /** Shown on the live item after a Make live timeline re-anchor. */
   liveStartedAtLabel?: string;
   /** Accessible-only timing context for an adjusted live item. */
@@ -1188,6 +1190,7 @@ const ServicePlanElementRow = ({
   isManualLive = false,
   isAdjustedLive = false,
   adjustedStartTime,
+  plannedStartTime,
   liveStartedAtLabel,
   liveStartedAtDescription,
   publicLiveBusy = false,
@@ -2725,10 +2728,24 @@ const ServicePlanElementRow = ({
           <span
             className={cn(
               SERVICE_PLAN_COL.timeView,
-              "whitespace-nowrap text-xs leading-5 tabular-nums text-gray-400 max-md:col-start-2 max-md:row-start-1 max-md:self-center max-md:text-sm max-md:leading-6",
+              "whitespace-nowrap text-xs leading-5 tabular-nums max-md:col-start-2 max-md:row-start-1 max-md:self-center max-md:text-sm max-md:leading-6",
             )}
           >
-            {formatPlanStartTimeDisplay(element.startTime) || "—"}
+            {adjustedStartTime ? (
+              <time
+                className="text-blue-300"
+                title={plannedStartTime ? `Planned time: ${plannedStartTime}` : undefined}
+                aria-label={plannedStartTime
+                  ? `Live-adjusted time ${adjustedStartTime}; planned ${plannedStartTime}`
+                  : `Live-adjusted time ${adjustedStartTime}`}
+              >
+                {adjustedStartTime}
+              </time>
+            ) : (
+              <time className="text-gray-400">
+                {formatPlanStartTimeDisplay(element.startTime) || "—"}
+              </time>
+            )}
           </span>
           <span
             className={cn(

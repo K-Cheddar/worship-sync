@@ -12,6 +12,7 @@ import {
   subscribeLocalVideoWarmIntent,
 } from "../../utils/localVideoWarmIntent";
 import LocalVideoCaptureManager from "./LocalVideoCaptureManager";
+import { subscribeLocalVideoCaptureDemand } from "../../utils/localVideoCaptureQualityRelay";
 
 const localVideoInput = {
   sourceId: "source-1",
@@ -56,6 +57,13 @@ let warmIntentListener:
   | ((intent: { sourceIds: string[]; updatedAt: number }) => void)
   | undefined;
 let warmSourceIds: string[] = [];
+let captureDemandListener: ((sourceId: string) => void) | undefined;
+jest.mock("../../utils/localVideoCaptureQualityRelay", () => ({
+  subscribeLocalVideoCaptureDemand: jest.fn((listener) => {
+    captureDemandListener = listener;
+    return () => { captureDemandListener = undefined; };
+  }),
+}));
 
 jest.mock("../../hooks", () => ({
   useSelector: (selector: (state: typeof mockState) => unknown) =>
@@ -131,7 +139,41 @@ describe("LocalVideoCaptureManager", () => {
   });
 
   afterEach(() => {
+    delete window.__ELECTRON__;
+    captureDemandListener = undefined;
     jest.useRealTimers();
+  });
+
+  it("warms a standalone Electron request and retires it after demand expires", async () => {
+    jest.useFakeTimers();
+    window.__ELECTRON__ = true;
+    mockState.presentation.outputs.projector.info.localVideoInput = undefined;
+    const view = render(<LocalVideoCaptureManager />);
+    expect(subscribeLocalVideoCaptureDemand).toHaveBeenCalled();
+    act(() => captureDemandListener?.("source-1"));
+    await act(async () => { await Promise.resolve(); });
+    expect(mockAcquireCapture).toHaveBeenCalledWith("source-1", expect.any(Object), true, "active-output-manager");
+    await act(async () => { await jest.advanceTimersByTimeAsync(9_000); });
+    act(() => captureDemandListener?.("source-1"));
+    await act(async () => { await jest.advanceTimersByTimeAsync(9_000); });
+    expect(mockReleaseCapture).not.toHaveBeenCalled();
+    await act(async () => { await jest.advanceTimersByTimeAsync(3_000); });
+    await act(async () => { await jest.advanceTimersByTimeAsync(5_000); });
+    expect(mockReleaseCapture).toHaveBeenCalledWith("source-1", "active-output-manager");
+    view.unmount();
+    expect(captureDemandListener).toBeUndefined();
+  });
+
+  it("does not acquire missing or desktop sources from Electron camera demand", async () => {
+    window.__ELECTRON__ = true;
+    mockState.presentation.outputs.projector.info.localVideoInput = undefined;
+    render(<LocalVideoCaptureManager />);
+    mockResolveBinding.mockReturnValue(undefined);
+    act(() => captureDemandListener?.("missing"));
+    mockResolveBinding.mockReturnValue({ sourceId: "screen", deviceId: "screen:0", deviceLabel: "Screen", captureKind: "screen" });
+    act(() => captureDemandListener?.("screen"));
+    await act(async () => { await Promise.resolve(); });
+    expect(mockAcquireCapture).not.toHaveBeenCalled();
   });
 
   it("restores and publishes a source already active on an output", async () => {

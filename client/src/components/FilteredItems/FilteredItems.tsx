@@ -18,7 +18,6 @@ import {
   addItemToItemList,
   removeItemFromListById,
 } from "../../store/itemListSlice";
-import { removeItemFromAllItemsList } from "../../store/allItemsSlice";
 import { DBItem, ServiceItem } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
@@ -34,7 +33,6 @@ import {
   type NormalizedLrclibTrack,
 } from "../../utils/lrclib";
 import { initialCreateItemState, setCreateItem } from "../../store/createItemSlice";
-import { removeItemFromAllDocs } from "../../store/allDocsSlice";
 import { ref, get, set } from "firebase/database";
 import { globalFireDbInfo } from "../../context/globalInfo";
 import { deleteTimer } from "../../store/timersSlice";
@@ -61,7 +59,7 @@ import {
 } from "./filteredItemsVirtualRowHeight";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
 import { usePresentationControllerMode } from "../../context/presentationControllerMode";
-import type { LibraryFilter } from "../../store/allItemsSlice";
+import type { LibraryFilter } from "../../store/itemLibraryUiSlice";
 
 type FilteredItemsProps = {
   list: ServiceItem[];
@@ -397,8 +395,6 @@ const FilteredItems = ({
       }
     }
 
-    dispatch(removeItemFromAllItemsList(item._id));
-    dispatch(removeItemFromAllDocs(item));
     dispatch(removeItemFromListById(item._id));
     dispatch(ActionCreators.clearHistory());
 

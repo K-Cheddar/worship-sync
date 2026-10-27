@@ -75,7 +75,7 @@ const EditorButtons = ({
   sections,
 }: EditorButtonsProps) => {
   const location = useLocation();
-  const libraryFilter = useSelector((state) => state.allItems.libraryFilter);
+  const libraryFilter = useSelector((state) => state.itemLibraryUi.libraryFilter);
   const routeSection = location.pathname.split("/").at(-1) ?? "";
   const isLibraryRoute = ["songs", "free", "timers"].includes(routeSection);
 

@@ -260,10 +260,10 @@ const MyScheduleBlockouts = ({
         className="h-auto w-full items-center justify-between gap-3 px-3 py-2 font-normal max-md:min-h-0"
         onClick={() => setOpen((current) => !current)}
       >
-        <span className="flex min-w-0 items-center gap-2">
+        <span className="flex min-w-0 flex-1 items-center gap-2">
           <Icon svg={CalendarOff} size="sm" className="shrink-0 text-orange-300" />
           <span className="text-sm font-semibold text-gray-100">Time off</span>
-          <span className="truncate text-xs text-gray-400">
+          <span className="min-w-0 truncate text-xs text-gray-400">
             {summarizeEntries(upcomingCount)}
           </span>
           {isDirty ? (
@@ -288,12 +288,7 @@ const MyScheduleBlockouts = ({
       </Button>
 
       {open ? (
-        <div className="space-y-3 border-t border-gray-800 px-3 py-3">
-          <p className="text-xs text-gray-400">
-            Add the dates you are away. Your team leads see these when they build
-            the schedule.
-          </p>
-
+        <div className="space-y-2 border-t border-gray-800 px-3 py-2">
           {hasConflict ? <div role="alert" className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-100">
             <p>Your saved information changed elsewhere. Your unsaved dates are kept.</p>
             {refreshing ? <p>Loading saved dates. Your unsaved dates are still here.</p> : null}
@@ -324,7 +319,6 @@ const MyScheduleBlockouts = ({
               showNotes
               onEditingChange={setHasOpenEditor}
               min={earliestEditableDate}
-              emptyLabel="No upcoming time off."
               value={editorRanges}
               onChange={handleDraftChange}
             />
@@ -389,26 +383,28 @@ const MyScheduleBlockouts = ({
             </div>
           ) : null}
 
-          <div className="flex flex-wrap justify-end gap-2">
-            <Button
-              type="button"
-              variant="tertiary"
-              className="max-md:min-h-0"
-              disabled={(!isDirty && !hasConflict) || saving || refreshing || (hasConflict && !canReviewSavedDates)}
-              onClick={discard}
-            >
-              Discard changes
-            </Button>
-            <Button
-              type="button"
-              variant="cta"
-              className="max-md:min-h-0"
-              disabled={!isDirty || hasIncompleteDraft || saving || hasConflict}
-              onClick={save}
-            >
-              {saving ? "Saving…" : "Save time off"}
-            </Button>
-          </div>
+          {isDirty || hasConflict ? (
+            <div className="max-w-3xl flex flex-wrap gap-2 pt-1">
+              <Button
+                type="button"
+                variant="tertiary"
+                className="max-md:min-h-0"
+                disabled={saving || refreshing || (hasConflict && !canReviewSavedDates)}
+                onClick={discard}
+              >
+                Discard changes
+              </Button>
+              <Button
+                type="button"
+                variant="cta"
+                className="max-md:min-h-0"
+                disabled={!isDirty || hasIncompleteDraft || saving || hasConflict}
+                onClick={save}
+              >
+                {saving ? "Saving…" : "Save time off"}
+              </Button>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </section>

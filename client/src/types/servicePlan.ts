@@ -327,6 +327,12 @@ export type ServicePlanElement = {
   sourceTemplateElementType?: ServicePlanElementType;
   /** Import-preview-only link from a proposed legacy match to its current item ID. */
   legacyImportMatchCandidateForId?: string;
+  /** Stable PDF-only matching evidence. Planning Center PDFs have no row IDs;
+   * duplicate-title rows use title and duration fingerprints, with ambiguous
+   * changed-duration pairs sent through the existing import review. */
+  planningCenterPdfMatchKey?: string;
+  /** Source row order from the latest Planning Center PDF import. */
+  planningCenterPdfSourcePosition?: number;
   /** Internal provenance flag used to safely reconcile later Service Planning
    * refreshes without treating operator-created items as source items. */
   sourcePlanningManaged?: boolean;

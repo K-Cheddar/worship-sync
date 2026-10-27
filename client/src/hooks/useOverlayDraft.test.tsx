@@ -62,4 +62,28 @@ describe("useOverlayDraft", () => {
     expect(result.current.draft.name).toBe("Remote Name");
     expect(onCommit).not.toHaveBeenCalled();
   });
+
+  it("marks a draft pending until the debounce commits it", () => {
+    const onCommit = jest.fn();
+    const onDraftPendingChange = jest.fn();
+    const { result } = renderHook(() =>
+      useOverlayDraft(baseOverlay, onCommit, onDraftPendingChange),
+    );
+
+    act(() => {
+      result.current.patchDraft({ name: "New local name" });
+    });
+
+    expect(onDraftPendingChange).toHaveBeenLastCalledWith("overlay-1", true);
+    expect(onCommit).not.toHaveBeenCalled();
+
+    act(() => {
+      jest.advanceTimersByTime(300);
+    });
+
+    expect(onDraftPendingChange).toHaveBeenLastCalledWith("overlay-1", false);
+    expect(onCommit).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "overlay-1", name: "New local name" }),
+    );
+  });
 });

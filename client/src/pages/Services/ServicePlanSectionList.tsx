@@ -110,6 +110,7 @@ type ServicePlanLiveRowState = {
   isManualLive?: boolean;
   isTimelineAdjusted?: boolean;
   adjustedStartTimes?: ReadonlyMap<string, string>;
+  plannedStartTimes?: ReadonlyMap<string, string>;
   liveStartedAtLabel?: string | null;
   publicLiveBusy?: boolean;
   onMakePublicLive?: (elementId: string) => void;
@@ -211,6 +212,7 @@ const SortableSectionCard = ({
   isManualLive = false,
   isTimelineAdjusted = false,
   adjustedStartTimes,
+  plannedStartTimes,
   liveStartedAtLabel = null,
   publicLiveBusy = false,
   onMakePublicLive,
@@ -370,6 +372,7 @@ const SortableSectionCard = ({
                   isManualLive={isManualLive && liveElementId === element.id}
                   isAdjustedLive={isTimelineAdjusted && liveElementId === element.id}
                   adjustedStartTime={adjustedStartTimes?.get(element.id)}
+                  plannedStartTime={plannedStartTimes?.get(element.id)}
                   liveStartedAtDescription={
                     liveElementId === element.id ? liveStartedAtLabel || undefined : undefined
                   }

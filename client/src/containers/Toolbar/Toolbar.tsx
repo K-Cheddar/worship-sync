@@ -1,3 +1,4 @@
+import { isControllerWorkspacePath } from "../../utils/controllerWorkspace";
 import { useLocation } from "react-router-dom";
 import {
   Settings,
@@ -6,7 +7,6 @@ import {
   RectangleEllipsis,
   Pencil,
   MonitorPlay,
-  CalendarDays,
 } from "lucide-react";
 import Menu from "./ToolbarElements/Menu";
 import ToolbarOverlay from "./ToolbarElements/ToolbarOverlay";
@@ -33,7 +33,6 @@ import FormattedTextEditor from "./ToolbarElements/FormattedTextEditor";
 import {
   type ControllerConfigurationRoute,
   setLastControllerConfigurationRoute,
-  setShouldShowStreamFormat,
   setToolbarSection,
 } from "../../store/preferencesSlice";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
@@ -50,6 +49,7 @@ import { scrollToolbarTabIntoViewIfNeeded } from "../../utils/scrollToolbarTabIn
 import { isViewOnlyAccess } from "../../utils/accessTiers";
 import { useControllerBasePath } from "../../context/activeController";
 import { usePresentationControllerMode } from "../../context/presentationControllerMode";
+import { useThumbnailPreviewMode } from "../../context/thumbnailPreviewMode";
 import MediaSurfaceDiagnostics from "./ToolbarElements/MediaSurfaceDiagnostics";
 
 type sections =
@@ -63,7 +63,7 @@ type sections =
  * "aux" is the presentation toolbar on an auxiliary controller. Same slide /
  * box / item tools and configurations as the main controller, but config links
  * stay under that controller's base path so the operator is not thrown onto
- * `/controller`. Stream Format and Service Planning stay main-only. Outline
+ * `/controller`. Stream Format stays main-only. Outline
  * picking stays in the left service panel — do not duplicate it here.
  */
 export type ToolbarVariant = "default" | "overlay" | "aux";
@@ -72,9 +72,6 @@ export type ToolbarVariant = "default" | "overlay" | "aux";
 const getControllerConfigurationRoute = (
   pathname: string,
 ): ControllerConfigurationRoute | null => {
-  if (pathname.includes("service-planning")) {
-    return "/controller/service-planning";
-  }
   if (pathname.includes("quick-links")) {
     return "/controller/quick-links";
   }
@@ -121,6 +118,7 @@ const Toolbar = ({
   const { access } = useContext(GlobalInfoContext) || {};
   const dispatch = useDispatch();
   const { mode, setMode } = usePresentationControllerMode();
+  const { setPreviewMode } = useThumbnailPreviewMode();
 
   useEffect(() => {
     if (variant === "overlay" && mode === "present") {
@@ -136,12 +134,10 @@ const Toolbar = ({
     preferences: HTMLButtonElement | HTMLAnchorElement | null;
     quickLinks: HTMLButtonElement | HTMLAnchorElement | null;
     displays: HTMLButtonElement | HTMLAnchorElement | null;
-    servicePlanning: HTMLButtonElement | HTMLAnchorElement | null;
   }>({
     preferences: null,
     quickLinks: null,
     displays: null,
-    servicePlanning: null,
   });
 
   const updateItem = useCallback(
@@ -162,9 +158,9 @@ const Toolbar = ({
     },
     [dispatch]
   );
-  // Matches main and aux item routes (`/controller/item/...`, `/aux-controller/:id/item/...`).
+  // Tools belong to the active Redux item at either controller workspace.
   const onItemPage = useMemo(
-    () => /\/item\//.test(location.pathname),
+    () => isControllerWorkspacePath(location.pathname),
     [location.pathname]
   );
   const canShowSlideAndBoxTools = useMemo(
@@ -179,14 +175,12 @@ const Toolbar = ({
     [location.pathname],
   );
   const configurationsHomePath = scopeConfigurationRoute(
-    variant === "aux" &&
-      lastControllerConfigurationRoute === "/controller/service-planning"
+    (lastControllerConfigurationRoute as string) === "/controller/service-planning"
       ? "/controller/preferences"
       : lastControllerConfigurationRoute,
     controllerBasePath,
   );
   const showStreamFormat = variant !== "aux";
-  const showServicePlanning = variant !== "aux";
 
   useEffect(() => {
     if (onItemPage) {
@@ -221,14 +215,6 @@ const Toolbar = ({
 
   useEffect(() => {
     if (!activeControllerConfigurationRoute) return;
-    // Prefer displays over a remembered service-planning tab when that tab is
-    // hidden on aux — otherwise Configurations would navigate nowhere useful.
-    if (
-      variant === "aux" &&
-      activeControllerConfigurationRoute === "/controller/service-planning"
-    ) {
-      return;
-    }
     dispatch(
       setLastControllerConfigurationRoute(activeControllerConfigurationRoute),
     );
@@ -237,11 +223,9 @@ const Toolbar = ({
   useEffect(() => {
     dispatch(setToolbarSection(section));
     if (section === "stream-format") {
-      dispatch(setShouldShowStreamFormat(true));
-    } else {
-      dispatch(setShouldShowStreamFormat(false));
+      setPreviewMode("stream");
     }
-  }, [section, dispatch]);
+  }, [section, dispatch, setPreviewMode]);
 
   useLayoutEffect(() => {
     scrollToolbarTabIntoViewIfNeeded(primaryToolbarTabRefs.current[section]);
@@ -250,9 +234,7 @@ const Toolbar = ({
   useLayoutEffect(() => {
     if (section !== "configurations") return;
     const path = location.pathname;
-    const subKey = path.includes("service-planning")
-      ? "servicePlanning"
-      : path.includes("quick-links")
+    const subKey = path.includes("quick-links")
         ? "quickLinks"
         : path.includes("displays") || path.includes("monitor-settings")
           ? "displays"
@@ -390,19 +372,6 @@ const Toolbar = ({
             }
           >
             Displays
-          </ToolbarButton>
-        )}
-        {access === "full" && showServicePlanning && (
-          <ToolbarButton
-            ref={(el) => {
-              configurationsSubTabRefs.current.servicePlanning = el;
-            }}
-            svg={CalendarDays}
-            to={`${controllerBasePath}/service-planning`}
-            hidden={section !== "configurations"}
-            isActive={location.pathname.includes("service-planning")}
-          >
-            Service Planning
           </ToolbarButton>
         )}
         <MediaSurfaceDiagnostics

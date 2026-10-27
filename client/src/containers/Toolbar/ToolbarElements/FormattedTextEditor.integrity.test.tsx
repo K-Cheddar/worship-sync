@@ -211,7 +211,7 @@ describe("delayed formatted text content integrity", () => {
     render(
       <Provider store={store}>
         <GlobalInfoContext.Provider value={createMockGlobalContext()}>
-          <MemoryRouter initialEntries={["/controller/item/a/list-a"]}>
+          <MemoryRouter initialEntries={["/controller"]}>
             <SlideEditTools />
           </MemoryRouter>
         </GlobalInfoContext.Provider>
@@ -442,7 +442,7 @@ describe("delayed formatted text content integrity", () => {
     render(
       <Provider store={store}>
         <GlobalInfoContext.Provider value={createMockGlobalContext()}>
-          <MemoryRouter initialEntries={["/controller/item/a/list-a"]}>
+          <MemoryRouter initialEntries={["/controller"]}>
             <SlideEditTools />
           </MemoryRouter>
         </GlobalInfoContext.Provider>
@@ -476,7 +476,7 @@ describe("delayed formatted text content integrity", () => {
     render(
       <Provider store={store}>
         <GlobalInfoContext.Provider value={createMockGlobalContext()}>
-          <MemoryRouter initialEntries={["/controller/item/a/list-a"]}>
+          <MemoryRouter initialEntries={["/controller"]}>
             <SlideEditTools />
           </MemoryRouter>
         </GlobalInfoContext.Provider>
@@ -496,7 +496,7 @@ describe("delayed formatted text content integrity", () => {
     render(
       <Provider store={store}>
         <GlobalInfoContext.Provider value={createMockGlobalContext()}>
-          <MemoryRouter initialEntries={["/controller/item/a/list-a"]}>
+          <MemoryRouter initialEntries={["/controller"]}>
             <SlideEditTools />
           </MemoryRouter>
         </GlobalInfoContext.Provider>
@@ -700,7 +700,7 @@ describe("delayed formatted text content integrity", () => {
     render(
       <Provider store={store}>
         <GlobalInfoContext.Provider value={createMockGlobalContext()}>
-          <MemoryRouter initialEntries={["/controller/item/a/list-a"]}>
+          <MemoryRouter initialEntries={["/controller"]}>
             <SlideEditTools />
           </MemoryRouter>
         </GlobalInfoContext.Provider>

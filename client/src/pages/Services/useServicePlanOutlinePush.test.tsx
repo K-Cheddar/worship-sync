@@ -1,3 +1,4 @@
+import { selectItemDocuments, selectItemEntries } from "../../store/itemLibrarySelectors";
 import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
@@ -5,7 +6,6 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import type { ServiceItem } from "../../types";
 import type { ServicePlan } from "../../types/servicePlan";
 import { plainTextToRichText } from "../../types/richText";
-import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
 import { updateItemList } from "../../store/itemListSlice";
 import { selectSongLibrary } from "../../store/songLibrarySelectors";
 import { useServicePlanOutlinePush } from "./useServicePlanOutlinePush";
@@ -18,10 +18,12 @@ const worshipHeading: ServiceItem = {
   type: "heading",
   listId: "heading-worship-list",
 };
-const mockState = {
-  allItems: { list: [] as ServiceItem[], isAllItemsLoading: false },
+let mockState = {
+
   allDocs: {
-    allSongDocs: [],
+    allSongDocs: [] as ServiceItem[],
+    allTimerDocs: [],
+    allBibleDocs: [] as ServiceItem[],
     allFreeFormDocs: [{ _id: "custom-doc-1", name: "Welcome Slides", type: "free" }],
   },
   undoable: {
@@ -61,6 +63,7 @@ const mockPlanOutline = jest.mocked(planServicePlanOutlineItems);
 
 const setPlannedItems = (items: ServiceItem[], skippedTitles: string[] = []) => {
   mockPlanOutline.mockReturnValue({
+    previewEntries: [],
     steps: items.map((item) => ({
       planned: { listId: item.listId, kind: "song", songId: item._id, songName: item.name },
       element: { element: { id: item.listId, title: { blocks: [] }, type: "song" }, title: item.name, planned: [], hasUnresolvedAttachment: false },
@@ -75,9 +78,12 @@ const setPlannedItems = (items: ServiceItem[], skippedTitles: string[] = []) => 
 describe("useServicePlanOutlinePush", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    selectItemDocuments.clearCache();
+    selectItemEntries.clearCache();
     mockState.undoable.present.itemList.list = [worshipHeading];
     mockState.undoable.present.itemLists.selectedList = { _id: "outline-1", name: "Sunday" };
-    mockState.allItems.list = [];
+    mockState.allDocs.allSongDocs = [];
+    mockState.allDocs.allBibleDocs = [];
   });
 
   it("does not send title-only Service Plan rows to allItems", async () => {
@@ -97,9 +103,7 @@ describe("useServicePlanOutlinePush", () => {
     expect(mockPlanOutline).toHaveBeenCalledWith(
       expect.objectContaining({ customDocuments: mockState.allDocs.allFreeFormDocs }),
     );
-    expect(mockDispatch).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: upsertItemInAllItemsList.type }),
-    );
+    expect(mockDispatch.mock.calls.every(([action]) => !action.type.startsWith("allItems/"))).toBe(true);
     expect(mockDispatch).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: updateItemList.type }),
     );
@@ -125,9 +129,7 @@ describe("useServicePlanOutlinePush", () => {
       await result.current.pushPlanToOutline({} as ServicePlan);
     });
 
-    expect(mockDispatch).toHaveBeenCalledWith(
-      upsertItemInAllItemsList({ ...bibleItem, listId: "" }),
-    );
+    expect(mockState.undoable.present.itemList.list).toContainEqual(bibleItem);
   });
 
   it("continues multiple scripture steps when indexing refreshes the library during a run", async () => {
@@ -146,9 +148,9 @@ describe("useServicePlanOutlinePush", () => {
     await act(async () => {
       pending = result.current.pushPlanToOutline({} as ServicePlan, () => true, onAdded);
     });
-    expect(mockDispatch).toHaveBeenCalledWith(upsertItemInAllItemsList({ ...first, listId: "" }));
-    // Reproduce the allItems update from Bible indexing and its selector refresh.
-    mockState.allItems.list = [{ ...first, listId: "" }];
+    expect(mockState.undoable.present.itemList.list).toContainEqual(first);
+    // Reproduce a document-feed update while Bible import is running.
+    mockState.allDocs.allBibleDocs = [{ ...first, listId: "" }];
     // This test harness mutates one state object; real Redux supplies a new
     // root, so invalidate the argument cache to reproduce its recomputation.
     selectSongLibrary.clearCache();
@@ -167,6 +169,7 @@ describe("useServicePlanOutlinePush", () => {
       name: "Welcome Slides",
       type: "free",
       listId: "outline-entry-1",
+      background: "",
     };
     setPlannedItems([customDocumentReference]);
     const db = {} as PouchDB.Database;
@@ -182,9 +185,7 @@ describe("useServicePlanOutlinePush", () => {
     });
 
     expect(mockDispatch).toHaveBeenCalledWith(updateItemList([worshipHeading, customDocumentReference]));
-    expect(mockDispatch).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: upsertItemInAllItemsList.type }),
-    );
+    expect(mockDispatch.mock.calls.every(([action]) => !action.type.startsWith("allItems/"))).toBe(true);
   });
 
   it("does not index outline-only custom items when no durable database exists", async () => {
@@ -193,6 +194,7 @@ describe("useServicePlanOutlinePush", () => {
       name: "Temporary",
       type: "free",
       listId: "outline-entry-1",
+      background: "",
     };
     setPlannedItems([customItem]);
     const wrapper = ({ children }: { children: ReactNode }) => (
@@ -206,9 +208,7 @@ describe("useServicePlanOutlinePush", () => {
       await result.current.pushPlanToOutline({} as ServicePlan);
     });
 
-    expect(mockDispatch).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: upsertItemInAllItemsList.type }),
-    );
+    expect(mockDispatch.mock.calls.every(([action]) => !action.type.startsWith("allItems/"))).toBe(true);
   });
 
   it("dispatches multiple actionable items one at a time in Service Plan order", async () => {
@@ -319,7 +319,7 @@ describe("useServicePlanOutlinePush", () => {
 
   it("plans the first sync from the current Redux outline when the rendered list is stale", async () => {
     const song: ServiceItem = { _id: "song-1", name: "Welcome song", type: "song", listId: "library-song-1" };
-    mockState.allItems.list = [song];
+    mockState.allDocs.allSongDocs = [song];
     const welcomeHeading: ServiceItem = { _id: "heading-welcome", name: "Welcome", type: "heading", listId: "heading-welcome" };
     const nextHeading: ServiceItem = { _id: "praise", name: "Praise & Worship", type: "heading", listId: "heading-praise" };
     const existing: ServiceItem = { _id: "existing", name: "Existing", type: "song", listId: "existing" };
@@ -372,7 +372,7 @@ describe("useServicePlanOutlinePush", () => {
   it("appends unmatched sections at the absolute outline end in plan order", async () => {
     const firstSong: ServiceItem = { _id: "song-first", name: "Video intro", type: "song", listId: "library-first" };
     const secondSong: ServiceItem = { _id: "song-second", name: "Feature song", type: "song", listId: "library-second" };
-    mockState.allItems.list = [firstSong, secondSong];
+    mockState.allDocs.allSongDocs = [firstSong, secondSong];
     const trailingItem: ServiceItem = { _id: "existing", name: "Existing tail", type: "song", listId: "existing" };
     mockState.undoable.present.itemList.list = [worshipHeading, trailingItem];
     const { result } = renderHook(() => useServicePlanOutlinePush());
@@ -581,4 +581,19 @@ describe("useServicePlanOutlinePush", () => {
     expect(onAdded).not.toHaveBeenCalled();
     expect(mockState.undoable.present.itemList.list).toEqual([song]);
   });
+  it("inserts current library metadata after an asynchronous build without refreshing existing outline overrides", async () => {
+    const existing: ServiceItem = { _id: "song", type: "song", name: "Existing", listId: "existing", background: "operator override" };
+    const planned: ServiceItem = { _id: "song", type: "song", name: "Stale name", listId: "new occurrence", background: "old" };
+    mockState.undoable.present.itemList.list = [worshipHeading, existing];
+    setPlannedItems([planned]);
+    mockBuildItem.mockImplementation(async () => {
+      mockState = { ...mockState, allDocs: { ...mockState.allDocs, allSongDocs: [{ ...planned, name: "Current name", background: "current background", localImage: { id: "local" } } as ServiceItem] } };
+      return planned;
+    });
+    const { result } = renderHook(() => useServicePlanOutlinePush());
+    await act(async () => { await result.current.pushPlanToOutline({} as ServicePlan); });
+    expect(mockState.undoable.present.itemList.list[1]).toEqual(existing);
+    expect(mockState.undoable.present.itemList.list[2]).toMatchObject({ name: "Current name", background: "current background", listId: "new occurrence", localImage: { id: "local" } });
+  });
+
 });

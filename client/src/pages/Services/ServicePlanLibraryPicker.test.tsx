@@ -15,12 +15,11 @@ import {
   createItemSlice,
   initialCreateItemState,
 } from "../../store/createItemSlice";
-import { allItemsSlice } from "../../store/allItemsSlice";
+import { itemLibraryUiSlice } from "../../store/itemLibraryUiSlice";
 import { allDocsSlice } from "../../store/allDocsSlice";
 import { itemListSlice } from "../../store/itemListSlice";
 import { itemSlice } from "../../store/itemSlice";
 import { preferencesSlice } from "../../store/preferencesSlice";
-import type { ServiceItem } from "../../types";
 
 jest.mock("../../utils/itemUtil", () => {
   const actual = jest.requireActual("../../utils/itemUtil");
@@ -66,23 +65,6 @@ const songDocs = [
   },
 ];
 
-const songItems: ServiceItem[] = [
-  {
-    _id: "song-1",
-    name: "Living Hope",
-    type: "song",
-    listId: "song-1",
-    background: "",
-  },
-  {
-    _id: "song-2",
-    name: "Great Are You Lord",
-    type: "song",
-    listId: "song-2",
-    background: "",
-  },
-];
-
 const createUndoableState = () => ({
   past: [],
   present: {
@@ -92,20 +74,18 @@ const createUndoableState = () => ({
 });
 
 const createPickerStore = ({
-  allItemsList = songItems,
   allSongDocs = songDocs,
-  isAllItemsLoading = false,
+  isItemCacheLoading = false,
 }: {
-  allItemsList?: ServiceItem[];
   allSongDocs?: typeof songDocs;
-  isAllItemsLoading?: boolean;
+  isItemCacheLoading?: boolean;
 } = {}) => {
   const undoableState = createUndoableState();
 
   return configureStore({
     reducer: {
       createItem: createItemSlice.reducer,
-      allItems: allItemsSlice.reducer,
+      itemLibraryUi: itemLibraryUiSlice.reducer,
       allDocs: allDocsSlice.reducer,
       itemList: itemListSlice.reducer,
       item: itemSlice.reducer,
@@ -113,15 +93,11 @@ const createPickerStore = ({
     } as never,
     preloadedState: {
       createItem: initialCreateItemState,
-      allItems: {
-        ...allItemsSlice.getInitialState(),
-        list: allItemsList,
-        isAllItemsLoading,
-        isInitialized: true,
-      },
+      itemLibraryUi: itemLibraryUiSlice.getInitialState(),
       allDocs: {
         ...allDocsSlice.getInitialState(),
         allSongDocs,
+        isInitialized: !isItemCacheLoading,
       },
       itemList: itemListSlice.getInitialState(),
       item: itemSlice.getInitialState(),
@@ -246,9 +222,9 @@ describe("ServicePlanLibraryPicker", () => {
     });
   });
 
-  it("shows songs from allSongDocs when allItems is still loading (Teams session)", async () => {
+  it("shows songs from allSongDocs before the cache loading flag settles (Teams session)", async () => {
     renderPicker(
-      createPickerStore({ allItemsList: [], isAllItemsLoading: true }),
+      createPickerStore({ isItemCacheLoading: true }),
     );
 
     await waitFor(() => {
@@ -257,23 +233,14 @@ describe("ServicePlanLibraryPicker", () => {
     expect(screen.queryByText(/Songs are loading/i)).not.toBeInTheDocument();
   });
 
-  it("keeps existing document-backed songs when allItems contains only a newly created song", async () => {
-    const partialSongItems = [
-      {
-        _id: "song-new",
-        name: "Brand New Song",
-        type: "song" as const,
-        listId: "",
-        background: "",
-      },
-    ];
-    const store = createPickerStore({ allItemsList: partialSongItems });
+  it("keeps existing document-backed songs when a newly created song arrives incrementally", async () => {
+    const store = createPickerStore();
     store.dispatch(
-      allDocsSlice.actions.upsertItemInAllDocs({
+      allDocsSlice.actions.applyItemDocumentChange({ id: "song-new", doc: {
         _id: "song-new",
         name: "Brand New Song",
         type: "song",
-      } as never),
+      } as never }),
     );
 
     renderPicker(store);
@@ -401,7 +368,7 @@ describe("ServicePlanLibraryPicker", () => {
     await user.click(await screen.findByRole("button", { name: "Apply TXT to draft" }));
     const draftBefore = store.getState().createItem;
     const docsBefore = JSON.parse(JSON.stringify(store.getState().allDocs.allSongDocs));
-    const indexBefore = store.getState().allItems.list;
+    const indexBefore = store.getState().allDocs.allSongDocs;
     await user.click(screen.getByRole("button", { name: "Create and attach" }));
     await user.click(screen.getByRole("button", { name: "Return to editing" }));
     expect(store.getState().createItem).toEqual(draftBefore);
@@ -414,7 +381,7 @@ describe("ServicePlanLibraryPicker", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(mockCreateNewSong).not.toHaveBeenCalled();
     expect(store.getState().allDocs.allSongDocs).toEqual(docsBefore);
-    expect(store.getState().allItems.list).toEqual(indexBefore);
+    expect(store.getState().allDocs.allSongDocs).toEqual(indexBefore);
     expect(store.getState().itemList.list).toHaveLength(0);
   });
 
@@ -442,7 +409,7 @@ describe("ServicePlanLibraryPicker", () => {
       { ...songDocs[0], name: "Amazing Grace", arrangements: [{ name: "Default", formattedLyrics: [{ name: "Verse 1", words: "how sweet the sound" }] }] },
       { ...songDocs[1], name: "Sound of Praise", arrangements: [] },
     ];
-    const { onSelectSong } = renderPicker(createPickerStore({ allSongDocs: docs, allItemsList: [] }), { initialQuery: "how sweet the sound" });
+    const { onSelectSong } = renderPicker(createPickerStore({ allSongDocs: docs }), { initialQuery: "how sweet the sound" });
     const results = await screen.findByTestId("filtered-items-results");
     await waitFor(() => expect(results).toHaveAttribute("data-search-query", "how sweet the sound"));
     expect(within(results).getAllByRole("listitem").map((row) => row.getAttribute("data-item-id"))).toEqual(["song-1", "song-2"]);

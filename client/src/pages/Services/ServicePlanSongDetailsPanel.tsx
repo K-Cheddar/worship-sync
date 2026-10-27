@@ -11,8 +11,7 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { deleteSongAudioWithRetry, getSongAudioUrl, uploadSongAudio } from "../../api/auth";
 import { useDispatch } from "../../hooks";
-import { upsertItemInAllDocs } from "../../store/allDocsSlice";
-import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
+import { applyItemDocumentChange } from "../../store/allDocsSlice";
 import { broadcastItemUpdate } from "../../store/store";
 import { deleteSongAudioBeforeClearingMetadata } from "../../utils/persistSongAudioAttachment";
 import { loadSong, saveSong, songToLibraryProjection } from "../../utils/songPersistence";
@@ -25,9 +24,9 @@ type ServicePlanSongDetailsPanelProps = {
 };
 
 const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }: ServicePlanSongDetailsPanelProps) => {
-  const dispatch = useDispatch();
   const { db } = useContext(ControllerInfoContext) || {};
   const { churchId } = useContext(GlobalInfoContext) || {};
+  const dispatch = useDispatch();
   const [arrangementIndex, setArrangementIndex] = useState(0);
   const [isEditing, setIsEditing] = useState(false);
   const [isEditingLyrics, setIsEditingLyrics] = useState(false);
@@ -51,14 +50,7 @@ const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }:
       else next.songAudio = patch.songAudioPatch;
     }
     const saved = await saveSong(db, next, existing);
-    dispatch(upsertItemInAllDocs(songToLibraryProjection(saved)));
-    dispatch(upsertItemInAllItemsList({
-      _id: saved._id,
-      name: saved.name,
-      type: saved.type,
-      listId: saved._id,
-      background: typeof saved.background === "string" ? saved.background : "",
-    }));
+    dispatch(applyItemDocumentChange({ id: saved._id, doc: songToLibraryProjection(saved) }));
     broadcastItemUpdate(saved);
   }, [db, dispatch, song._id]);
 
@@ -141,14 +133,7 @@ const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }:
     if (songMetadata === undefined) next.songMetadata = undefined;
     else next.songMetadata = songMetadata;
     const saved = await saveSong(db, next, saveBaseline);
-    dispatch(upsertItemInAllDocs(songToLibraryProjection(saved)));
-    dispatch(upsertItemInAllItemsList({
-      _id: saved._id,
-      name: saved.name,
-      type: saved.type,
-      listId: saved._id,
-      background: typeof saved.background === "string" ? saved.background : "",
-    }));
+    dispatch(applyItemDocumentChange({ id: saved._id, doc: songToLibraryProjection(saved) }));
     broadcastItemUpdate(saved);
   }, [db, dispatch]);
 

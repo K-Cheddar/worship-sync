@@ -24,7 +24,7 @@ const normalizeFrameRate = (value: number | undefined) =>
   );
 
 type CaptureQualityMessage = {
-  type: "subscribe" | "unsubscribe" | "publisher-ready";
+  type: "subscribe" | "unsubscribe" | "publisher-ready" | "query-publisher";
   sourceId: string;
   subscriberId?: string;
   targetWidth?: number;
@@ -90,18 +90,36 @@ const isCaptureQualityMessage = (
     typeof candidate.sourceId === "string" &&
     (candidate.type === "subscribe" ||
       candidate.type === "unsubscribe" ||
-      candidate.type === "publisher-ready")
+      candidate.type === "publisher-ready" ||
+      candidate.type === "query-publisher")
   );
+};
+
+/** Existing discovery/demand messages also warm standalone picker/media inputs. */
+export const subscribeLocalVideoCaptureDemand = (onDemand: (sourceId: string) => void) => {
+  if (typeof BroadcastChannel === "undefined") return () => undefined;
+  const channel = new BroadcastChannel(CHANNEL_NAME);
+  channel.addEventListener("message", (event: MessageEvent<unknown>) => {
+    if (isCaptureQualityMessage(event.data) &&
+        (event.data.type === "query-publisher" || event.data.type === "subscribe")) {
+      onDemand(event.data.sourceId);
+    }
+  });
+  return () => channel.close();
 };
 
 /** Applies the smallest shared capture profile that covers all live outputs. */
 export const publishLocalVideoCaptureQuality = (
   sourceId: string,
   stream: MediaStream,
+  preserveAudienceQuality = false,
 ) => {
   if (typeof BroadcastChannel === "undefined") return () => undefined;
   const videoTrack = stream.getVideoTracks()[0];
   if (!videoTrack) return () => undefined;
+  // Electron's continuity host establishes the physical device mode first.
+  // Preview-only demand must never renegotiate that shared device below 1080p60.
+  const audienceFloor = preserveAudienceQuality;
 
   const channel = new BroadcastChannel(CHANNEL_NAME);
   const subscribers = new Map<string, CaptureQualitySubscriber>();
@@ -127,17 +145,23 @@ export const publishLocalVideoCaptureQuality = (
 
   const resolveRequiredProfile = () =>
     resolveLocalVideoCaptureProfile(
-      [...subscribers.values()].map((subscriber) => ({
-        width: subscriber.targetWidth,
-        height: subscriber.targetHeight,
-      })),
+      [
+        ...(audienceFloor ? [DEFAULT_LOCAL_VIDEO_CAPTURE_PROFILE] : []),
+        ...[...subscribers.values()].map((subscriber) => ({
+          width: subscriber.targetWidth,
+          height: subscriber.targetHeight,
+        })),
+      ],
     );
 
   const resolveRequiredFrameRate = () =>
     resolveLocalVideoCaptureFrameRate(
-      [...subscribers.values()].map((subscriber) =>
-        normalizeFrameRate(subscriber.frameRate),
-      ),
+      [
+        ...(audienceFloor ? [DEFAULT_LOCAL_VIDEO_CAPTURE_FRAME_RATE] : []),
+        ...[...subscribers.values()].map((subscriber) =>
+          normalizeFrameRate(subscriber.frameRate),
+        ),
+      ],
     );
 
   const recordQualityDiagnostics = () => {
@@ -231,11 +255,12 @@ export const publishLocalVideoCaptureQuality = (
     if (
       !active ||
       !isCaptureQualityMessage(message) ||
-      message.sourceId !== sourceId ||
-      !message.subscriberId
+      message.sourceId !== sourceId
     ) {
       return;
     }
+    if (message.type === "query-publisher") postReady();
+    if (!message.subscriberId) return;
     if (message.type === "subscribe") {
       const next = {
         lastSeenAt: Date.now(),
@@ -300,6 +325,28 @@ export const publishLocalVideoCaptureQuality = (
     channel.close();
   };
 };
+
+/** Join only after the continuity host has acquired the device and its mode. */
+export const waitForLocalVideoCaptureHost = (sourceId: string) =>
+  new Promise<void>((resolve, reject) => {
+    if (typeof BroadcastChannel === "undefined") {
+      reject(new Error("Local capture host discovery is unavailable."));
+      return;
+    }
+    const channel = new BroadcastChannel(CHANNEL_NAME);
+    const timer = window.setTimeout(() => {
+      channel.close();
+      reject(new Error("Local capture host is not ready."));
+    }, 3_000);
+    channel.addEventListener("message", (event: MessageEvent<unknown>) => {
+      if (!isCaptureQualityMessage(event.data) ||
+          event.data.sourceId !== sourceId || event.data.type !== "publisher-ready") return;
+      window.clearTimeout(timer);
+      channel.close();
+      resolve();
+    });
+    channel.postMessage({ type: "query-publisher", sourceId } satisfies CaptureQualityMessage);
+  });
 
 /** Reports an output's real rendered pixel demand to the capture owner. */
 export const subscribeLocalVideoCaptureQuality = (

@@ -28,10 +28,8 @@ import {
   updateChurchResource,
 } from "../api/auth";
 import { useDispatch, useSelector } from "../hooks";
-import { upsertItemInAllDocs } from "../store/allDocsSlice";
-import { upsertItemInAllItemsList } from "../store/allItemsSlice";
+import { applyItemDocumentChange } from "../store/allDocsSlice";
 import { broadcastItemUpdate } from "../store/store";
-import { updateAllDocs } from "../utils/dbUtils";
 import { useChurchStorageQuota } from "../components/StorageUsage/useChurchStorageQuota";
 import { StorageUsageIndicators } from "../components/StorageUsage/StorageUsageIndicators";
 import {
@@ -72,9 +70,9 @@ const resourceSkeletonColumns = [
 ];
 
 const ResourcesPage = () => {
+  const dispatch = useDispatch();
   const { churchId, churchName, access } = useContext(GlobalInfoContext) || {};
   const { db } = useContext(ControllerInfoContext) || {};
-  const dispatch = useDispatch();
   const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
   const scrollbarWidth = useSelector((state) => state.undoable.present.preferences.scrollbarWidth);
   const { containerRef, compact } = useResponsiveTableLayout();
@@ -94,9 +92,9 @@ const ResourcesPage = () => {
   const [deleteCandidates, setDeleteCandidates] = useState<ResourceLibraryEntry[] | null>(null);
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
   const [churchResourcesLoading, setChurchResourcesLoading] = useState(true);
-  const [songDocsLoading, setSongDocsLoading] = useState(true);
+  const songDocsLoading = useSelector((state) => !state.allDocs.isInitialized);
   const [churchResourcesError, setChurchResourcesError] = useState("");
-  const [songDocsError, setSongDocsError] = useState("");
+  const songDocsError = useSelector((state) => state.allDocs.error) || "";
   const [error, setError] = useState("");
 
   const canBrowse = access === "full" || access === "music" || access === "view";
@@ -134,30 +132,6 @@ const ResourcesPage = () => {
       active = false;
     };
   }, [canBrowse, churchId]);
-
-  useEffect(() => {
-    if (!canBrowse) {
-      setSongDocsLoading(false);
-      setSongDocsError("");
-      return;
-    }
-    if (!db) {
-      setSongDocsLoading(true);
-      return;
-    }
-
-    let active = true;
-    setSongDocsLoading(true);
-    setSongDocsError("");
-    void updateAllDocs(dispatch, db, () => active).then((loaded) => {
-      if (!active) return;
-      setSongDocsLoading(false);
-      if (!loaded) setSongDocsError("The song library could not be loaded. Try again.");
-    });
-    return () => {
-      active = false;
-    };
-  }, [canBrowse, db, dispatch]);
 
   const entries = useMemo(
     () =>
@@ -271,14 +245,7 @@ const ResourcesPage = () => {
             const saved = await persistSongAudioAttachment({
               db, songId: entry.songId, audio: null, baselineSong,
             });
-            dispatch(upsertItemInAllDocs(songToLibraryProjection(saved)));
-            dispatch(upsertItemInAllItemsList({
-              _id: saved._id,
-              name: saved.name,
-              type: saved.type,
-              listId: saved._id,
-              background: typeof saved.background === "string" ? saved.background : "",
-            }));
+            dispatch(applyItemDocumentChange({ id: saved._id, doc: songToLibraryProjection(saved) }));
             broadcastItemUpdate(saved);
             try {
               await deleteSongAudioWithRetry({ churchId, songId: entry.songId, audio: baselineSong.songAudio ?? entry.audio });
@@ -292,14 +259,7 @@ const ResourcesPage = () => {
             deleteAudio: () => deleteSongAudioWithRetry({ churchId, songId: entry.songId, audio: entry.audio }),
             clearMetadata: async () => {
               const saved = await persistSongAudioAttachment({ db, songId: entry.songId, audio: null });
-              dispatch(upsertItemInAllDocs(songToLibraryProjection(saved)));
-              dispatch(upsertItemInAllItemsList({
-                _id: saved._id,
-                name: saved.name,
-                type: saved.type,
-                listId: saved._id,
-                background: typeof saved.background === "string" ? saved.background : "",
-              }));
+              dispatch(applyItemDocumentChange({ id: saved._id, doc: songToLibraryProjection(saved) }));
               broadcastItemUpdate(saved);
               return saved;
             },

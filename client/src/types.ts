@@ -1265,7 +1265,7 @@ export type MediaFolder = {
   _keepContentsRehomeOperationId?: string;
 };
 
-/** Last media folder when editing a specific item kind on `/controller/item/...`. */
+/** Last media folder when editing a specific item kind in a presentation workspace. */
 export type ControllerItemMediaRouteKey =
   | "controller-item-song"
   | "controller-item-free"

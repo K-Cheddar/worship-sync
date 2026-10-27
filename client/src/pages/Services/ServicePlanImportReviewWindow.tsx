@@ -23,6 +23,7 @@ const kindLabel: Record<ServicePlanImportChangeKind, string> = {
   moved: "Moved",
   legacy_match: "Moved",
   linked: "Linked",
+  timing_shift: "Schedule",
 };
 
 const kindClassName: Record<ServicePlanImportChangeKind, string> = {
@@ -32,6 +33,7 @@ const kindClassName: Record<ServicePlanImportChangeKind, string> = {
   moved: "bg-violet-400/10 text-violet-200",
   legacy_match: "bg-amber-400/10 text-amber-100",
   linked: "bg-indigo-400/10 text-indigo-200",
+  timing_shift: "bg-gray-400/10 text-gray-200",
 };
 
 /** Item type changes still apply with the import; omit them from the review UI. */
@@ -41,6 +43,7 @@ const visibleFields = (change: ServicePlanImportSummary["changes"][number]) =>
 const checkboxLabel = (change: ServicePlanImportSummary["changes"][number]) => {
   if (change.kind === "legacy_match") return `Confirm match for ${change.itemName}`;
   if (change.kind === "linked") return `Link ${change.itemName} to the import source`;
+  if (change.kind === "removed") return `Remove ${change.itemName}`;
   return `${change.kind === "moved" ? "Move" : "Update"} ${change.itemName}`;
 };
 
@@ -63,13 +66,13 @@ const ServicePlanImportReviewWindow = ({
 }: ServicePlanImportReviewWindowProps) => {
   const bulkChangeKeys = useMemo(
     () => summary.changes
-      .filter((change) => change.kind !== "legacy_match")
+      .filter((change) => change.kind !== "legacy_match" && change.kind !== "timing_shift")
       .map(servicePlanImportChangeKey),
     [summary.changes],
   );
   const [selectedChangeKeys, setSelectedChangeKeys] = useState<Set<string>>(
     () => new Set(summary.changes
-      .filter((change) => change.kind !== "legacy_match")
+      .filter((change) => change.kind !== "legacy_match" && change.kind !== "timing_shift")
       .map(servicePlanImportChangeKey)),
   );
   const selectedChanges = summary.changes.filter((change) =>
@@ -142,6 +145,11 @@ const ServicePlanImportReviewWindow = ({
               ? summaryParts.join(" · ")
               : "The current plan already matches the selected import options."}
           </p>
+          {summary.changes.some((change) => change.kind === "timing_shift") ? (
+            <p className="mt-1 text-xs text-gray-400">
+              Schedule shifts show the full proposed import; final times recalculate from the updates you select.
+            </p>
+          ) : null}
         </div>
 
         <div className="scrollbar-variable min-h-0 flex-1 overflow-y-auto p-3">
@@ -157,7 +165,7 @@ const ServicePlanImportReviewWindow = ({
               <ul className="space-y-3" aria-label="Service Planning changes">
                 {changesBySection.map((sectionChanges) => {
                   const sectionChangeKeys = sectionChanges
-                    .filter((change) => change.kind !== "legacy_match")
+                    .filter((change) => change.kind !== "legacy_match" && change.kind !== "timing_shift")
                     .map(servicePlanImportChangeKey);
                   const sectionName = sectionChanges[0]?.sectionName || "Untitled section";
                   return (
@@ -177,13 +185,17 @@ const ServicePlanImportReviewWindow = ({
                           return (
                             <li key={changeKey} className="rounded-md border border-gray-700/80 bg-gray-950/40 px-3 py-2">
                               <div className="flex items-start gap-2">
-                                <Checkbox
-                                  label={checkboxLabel(change)}
-                                  checked={selectedChangeKeys.has(changeKey)}
-                                  onCheckedChange={(checked) => setSelected([changeKey], checked)}
-                                  className="pt-0.5"
-                                  hideLabel
-                                />
+                                {change.kind === "timing_shift" ? (
+                                  <span className="mt-1.5 size-4 shrink-0" aria-hidden />
+                                ) : (
+                                  <Checkbox
+                                    label={checkboxLabel(change)}
+                                    checked={selectedChangeKeys.has(changeKey)}
+                                    onCheckedChange={(checked) => setSelected([changeKey], checked)}
+                                    className="pt-0.5"
+                                    hideLabel
+                                  />
+                                )}
                                 <span
                                   className={cn(
                                     "mt-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
@@ -196,7 +208,8 @@ const ServicePlanImportReviewWindow = ({
                                 </span>
                                 <div className="min-w-0 flex-1">
                                   <p className="truncate font-medium text-gray-100">{change.itemName}</p>
-                                  {change.kind === "moved" || change.kind === "legacy_match" ? (
+                                  {change.kind === "legacy_match" ||
+                                  (change.kind === "moved" && change.fromSectionId !== change.sectionId) ? (
                                     <p className="mt-1 text-xs text-violet-200">
                                       {change.fromSectionName || "Previous section"} → {change.sectionName}
                                     </p>

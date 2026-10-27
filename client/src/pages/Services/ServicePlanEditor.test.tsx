@@ -167,7 +167,7 @@ jest.mock("../../hooks", () => ({
   useSelector: (selector: (state: unknown) => unknown) =>
     selector({
       allDocs: { allSongDocs: mockAllSongDocs },
-      allItems: { list: [], isAllItemsLoading: false },
+
       undoable: { present: { preferences: { scrollbarWidth: "thin" } } },
     }),
   useDispatch: () => jest.fn(),
@@ -2646,6 +2646,10 @@ Opening Song to begin the worship experience.
     expect(body.sections?.[0]?.elements?.[0]?.assignees?.[0]?.name).toBe(
       "Host: Charmers Malcolm",
     );
+    expect(body.sections?.[0]?.elements?.map((item) => item.startTime)).toEqual([
+      "10:00",
+      "10:15",
+    ]);
     expect(body.sections?.[0]?.elements?.[1]?.songRef).toEqual({
       kind: "pending",
       title: "Come Before His Presence",
@@ -2663,6 +2667,264 @@ Opening Song to begin the worship experience.
     expect(localStorage.getItem("worshipsyncServicePlanImportSource")).toBe(
       "planningCenterPdf",
     );
+  });
+
+  it("refreshes a duration-only Planning Center PDF from the existing anchor and cascades reviewed times", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        sourceImport: {
+          source: "planningCenterPdf",
+          sourceUrl: "",
+          loadedAt: "2026-07-20T12:00:00.000Z",
+          planLabel: "Sunday worship",
+        },
+        sections: [{
+          id: "section-1",
+          sourcePlanningManaged: true,
+          name: "SMC Worship Experience",
+          elements: [
+            {
+              id: "welcome",
+              sourcePlanningManaged: true,
+              type: "free",
+              title: plainTextToRichText("Welcome"),
+              startTime: "09:00",
+              durationSeconds: 300,
+              durationMinutes: 5,
+            },
+            {
+              id: "prayer",
+              sourcePlanningManaged: true,
+              type: "free",
+              title: plainTextToRichText("Prayer"),
+              startTime: "09:05",
+              durationSeconds: 300,
+              durationMinutes: 5,
+            },
+          ],
+        }],
+      },
+    });
+    mockExtractTextFromPdfFile.mockResolvedValue(`Main Worship Service
+Length
+in mins
+SMC Worship Experience
+8:00 Welcome
+5:00 Prayer
+108:00`);
+
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+    expect(screen.getByRole("checkbox", { name: "Remove source items no longer listed" }))
+      .not.toBeChecked();
+    const file = new File(["%PDF-fake"], "updated-order.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByLabelText(/Planning Center PDF/i), { target: { files: [file] } });
+
+    expect(await screen.findByText(/1 change ready to apply/i)).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Update Welcome" })).toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "Update Prayer" })).not.toBeInTheDocument();
+    expect(screen.getByText("Resulting start time")).toBeInTheDocument();
+    expect(screen.getByText("09:08")).toBeInTheDocument();
+    expect(screen.getByText(/final times recalculate from the updates you select/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), { timeout: 2_500 });
+    const [, , body] = mockSaveServicePlan.mock.calls.at(-1)!;
+    expect(body.sections?.[0]?.elements?.map((item) => ({
+      id: item.id,
+      startTime: item.startTime,
+      durationSeconds: item.durationSeconds,
+    }))).toEqual([
+      { id: "welcome", startTime: "09:00", durationSeconds: 480 },
+      { id: "prayer", startTime: "09:08", durationSeconds: 300 },
+    ]);
+  });
+
+  it("reviews optional PDF removals and recalculates from a later section's start time", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        sourceImport: {
+          source: "planningCenterPdf",
+          sourceUrl: "",
+          loadedAt: "2026-07-20T12:00:00.000Z",
+          planLabel: "Sunday worship",
+        },
+        sections: [
+          { id: "empty-first", name: "Prelude", elements: [] },
+          {
+            id: "section-1",
+            sourcePlanningManaged: true,
+            name: "SMC Worship Experience",
+            elements: [
+              {
+                id: "opening",
+                sourcePlanningManaged: true,
+                type: "free",
+                title: plainTextToRichText("Opening"),
+                startTime: "09:00",
+                durationSeconds: 300,
+              },
+              {
+                id: "manual",
+                type: "free",
+                title: plainTextToRichText("Manual item"),
+                startTime: "09:05",
+                durationSeconds: 120,
+              },
+              {
+                id: "prayer",
+                sourcePlanningManaged: true,
+                type: "free",
+                title: plainTextToRichText("Prayer"),
+                startTime: "09:07",
+                durationSeconds: 300,
+              },
+              {
+                id: "song",
+                sourcePlanningManaged: true,
+                type: "free",
+                title: plainTextToRichText("Song"),
+                startTime: "09:12",
+                durationSeconds: 300,
+              },
+            ],
+          },
+        ],
+      },
+    });
+    mockExtractTextFromPdfFile.mockResolvedValue(`Main Worship Service
+Length
+in mins
+SMC Worship Experience
+5:00 Prayer
+5:00 Song
+108:00`);
+
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+    const removeMissing = screen.getByRole("checkbox", {
+      name: "Remove source items no longer listed",
+    });
+    expect(removeMissing).not.toBeChecked();
+    await user.click(removeMissing);
+
+    const file = new File(["%PDF-fake"], "updated-order.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByLabelText(/Planning Center PDF/i), { target: { files: [file] } });
+
+    expect(await screen.findByRole("checkbox", { name: "Remove Opening" })).toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name: "Select all updates" }));
+    await user.click(screen.getByRole("checkbox", { name: "Remove Opening" }));
+    expect(screen.getByRole("button", { name: "Apply 1 change" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
+
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), { timeout: 2_500 });
+    const [, , body] = mockSaveServicePlan.mock.calls.at(-1)!;
+    expect(body.sections?.[0]).toMatchObject({ id: "empty-first", elements: [] });
+    const refreshedItems = body.sections?.[1]?.elements || [];
+    expect(refreshedItems.map((item) => richTextToPlainText(item.title))).toEqual([
+      "Manual item",
+      "Prayer",
+      "Song",
+    ]);
+    expect(refreshedItems.map(({ id, startTime }) => ({ id, startTime }))).toEqual([
+      { id: "manual", startTime: "09:00" },
+      { id: "prayer", startTime: "09:02" },
+      { id: "song", startTime: "09:07" },
+    ]);
+  });
+
+  it("ignores a PDF import that finishes after switching to another plan", async () => {
+    const currentPlan: ServicePlan = {
+      planId: "church-1::service-1@2026-07-26",
+      churchId: "church-1",
+      planKey: "service-1@2026-07-26",
+      serviceId: "service-1",
+      date: "2026-07-26",
+      name: "Easter Sunday",
+      sourceImport: {
+        source: "planningCenterPdf",
+        sourceUrl: "",
+        loadedAt: "2026-07-20T12:00:00.000Z",
+        planLabel: "Sunday worship",
+      },
+      sections: [{
+        id: "current-section",
+        sourcePlanningManaged: true,
+        name: "Worship",
+        elements: [{
+          id: "current-item",
+          sourcePlanningManaged: true,
+          type: "free",
+          title: plainTextToRichText("Current item"),
+        }],
+      }],
+    };
+    const nextPlan: ServicePlan = {
+      ...currentPlan,
+      planId: "church-1::service-1@2026-08-02",
+      planKey: "service-1@2026-08-02",
+      date: "2026-08-02",
+      sections: [{
+        id: "next-section",
+        name: "Worship",
+        elements: [{
+          id: "next-item",
+          type: "free",
+          title: plainTextToRichText("Upcoming item"),
+        }],
+      }],
+    };
+    mockGetServicePlan
+      .mockResolvedValueOnce({ success: true, servicePlan: currentPlan })
+      .mockResolvedValueOnce({ success: true, servicePlan: nextPlan });
+    let resolvePdfText: ((text: string) => void) | undefined;
+    mockExtractTextFromPdfFile.mockReturnValue(new Promise((resolve) => {
+      resolvePdfText = resolve;
+    }));
+
+    const user = userEvent.setup();
+    const view = renderEditor();
+    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+    const file = new File(["%PDF-fake"], "slow-order.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByLabelText(/Planning Center PDF/i), { target: { files: [file] } });
+    await waitFor(() => expect(mockExtractTextFromPdfFile).toHaveBeenCalledWith(file));
+
+    view.rerender(editorTree({ occurrence: nextOccurrence }));
+    await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("Upcoming item")).toBeInTheDocument();
+
+    await act(async () => {
+      resolvePdfText?.(`Main Worship Service
+Length
+in mins
+SMC Worship Experience
+5:00 Stale item
+108:00`);
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText("Stale item")).not.toBeInTheDocument();
+    expect(screen.getByText("Upcoming item")).toBeInTheDocument();
+    expect(mockSaveServicePlan).not.toHaveBeenCalled();
   });
 
   it("refreshes an existing plan with only the selected Service Planning fields", async () => {
@@ -3779,6 +4041,93 @@ Opening Song to begin the worship experience.
     }
   });
 
+  it("shows remote Make Live times after the service plan refreshes on resume", async () => {
+    let nowMs = Date.parse("2026-07-26T14:01:00.000Z");
+    const nowSpy = jest.spyOn(Date, "now").mockImplementation(() => nowMs);
+    const initialPlan: ServicePlan = {
+      planId: "church-1::service-1@2026-07-26",
+      churchId: "church-1",
+      planKey: "service-1@2026-07-26",
+      serviceId: "service-1",
+      date: "2026-07-26",
+      name: "Easter Sunday",
+      startsAt: "2026-07-26T14:00:00.000Z",
+      timezone: "UTC",
+      revision: 4,
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        elements: [
+          {
+            id: "welcome",
+            type: "free",
+            title: plainTextToRichText("Welcome"),
+            startTime: "14:00",
+            durationSeconds: 300,
+          },
+          {
+            id: "message",
+            type: "free",
+            title: plainTextToRichText("Message"),
+            startTime: "14:05",
+            durationSeconds: 1_800,
+          },
+        ],
+      }],
+      publicLive: { mode: "schedule" },
+    };
+    const remoteLivePlan: ServicePlan = {
+      ...initialPlan,
+      publicLive: {
+        mode: "anchored",
+        currentElementId: "message",
+        startedAt: "2026-07-26T13:57:00.000Z",
+      },
+    };
+    let getServicePlanCallCount = 0;
+    mockGetServicePlan.mockImplementation(async () => ({
+      success: true,
+      servicePlan:
+        getServicePlanCallCount++ < 2 ? initialPlan : remoteLivePlan,
+    }));
+
+    try {
+      render(
+        <StrictMode>
+          {editorTree({})}
+        </StrictMode>,
+      );
+      expect(await screen.findByLabelText("Live on schedule: Welcome"))
+        .toBeInTheDocument();
+      await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(2));
+
+      act(() => {
+        Object.defineProperty(document, "visibilityState", {
+          configurable: true,
+          get: () => "hidden",
+        });
+        document.dispatchEvent(new Event("visibilitychange"));
+        nowMs += 10_001;
+        Object.defineProperty(document, "visibilityState", {
+          configurable: true,
+          get: () => "visible",
+        });
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+
+      await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(3));
+      expect(screen.getByLabelText("Live-adjusted time 01:57 PM; planned 02:05 PM"))
+        .toHaveClass("text-blue-300");
+      expect(screen.getByText("02:00 PM", { selector: "time" }))
+        .toHaveClass("text-gray-400");
+      expect(mockSaveServicePlan).not.toHaveBeenCalled();
+      expect(remoteLivePlan.sections[0].elements.map((element) => element.startTime))
+        .toEqual(["14:00", "14:05"]);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
   it("preserves an unsaved draft and merges an independent remote change on resume", async () => {
     let nowMs = Date.parse("2026-07-26T14:01:00.000Z");
     const nowSpy = jest.spyOn(Date, "now").mockImplementation(() => nowMs);
@@ -4123,6 +4472,15 @@ Opening Song to begin the worship experience.
         { mode: "anchored", currentElementId: "message" },
       );
     });
+    await user.click(screen.getByRole("button", { name: /Plan actions/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Return to planned schedule/i }));
+    await waitFor(() => {
+      expect(mockUpdateServicePlanPublicLive).toHaveBeenLastCalledWith(
+        "church-1",
+        planKey,
+        { mode: "schedule" },
+      );
+    });
   });
 
   it("offers an explicit publish for an unpublished plan", async () => {
@@ -4309,6 +4667,73 @@ Opening Song to begin the worship experience.
     });
     keepInView.mockRestore();
     layout.mockRestore();
+  });
+
+  it("keeps every adjusted time from the Make Live anchor after automatic advancement", async () => {
+    const nowMs = Date.parse("2026-07-26T14:06:00.000Z");
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(nowMs);
+    const livePlan: ServicePlan = {
+      planId: "church-1::service-1@2026-07-26",
+      churchId: "church-1",
+      planKey: "service-1@2026-07-26",
+      serviceId: "service-1",
+      date: "2026-07-26",
+      name: "Easter Sunday",
+      startsAt: "2026-07-26T14:00:00.000Z",
+      timezone: "UTC",
+      publicLive: {
+        mode: "anchored",
+        currentElementId: "song",
+        startedAt: "2026-07-26T14:02:00.000Z",
+      },
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        elements: [
+          {
+            id: "welcome",
+            type: "free",
+            title: plainTextToRichText("Welcome"),
+            startTime: "14:00",
+            durationSeconds: 300,
+          },
+          {
+            id: "song",
+            type: "free",
+            title: plainTextToRichText("Song"),
+            startTime: "14:05",
+            durationSeconds: 60,
+          },
+          {
+            id: "closing",
+            type: "free",
+            title: plainTextToRichText("Closing"),
+            startTime: "14:06",
+            durationSeconds: 600,
+          },
+        ],
+      }],
+    };
+    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: livePlan });
+
+    try {
+      const user = userEvent.setup();
+      renderEditor();
+
+      expect(await screen.findByLabelText("Live-adjusted time 02:02 PM; planned 02:05 PM"))
+        .toHaveClass("text-blue-300");
+      expect(screen.getByLabelText("Live-adjusted time 02:03 PM; planned 02:06 PM"))
+        .toHaveClass("text-blue-300");
+      expect(screen.getByText("02:00 PM", { selector: "time" })).toHaveClass("text-gray-400");
+      expect(screen.getByLabelText("Live, started 2:02 PM: Closing")).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: /^Edit$/i }));
+      expect(screen.getAllByLabelText("Time").map((input) => (input as HTMLInputElement).value))
+        .toEqual(["02:00 PM", "02:05 PM", "02:06 PM"]);
+      expect(mockSaveServicePlan).not.toHaveBeenCalled();
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it("follows by default and resumes the same live row inside the plan list", async () => {

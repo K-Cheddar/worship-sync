@@ -21,7 +21,6 @@ import {
   updateChurchResource,
   uploadChurchResource,
 } from "../api/auth";
-import { updateAllDocs } from "../utils/dbUtils";
 import { PAGE_APPEARANCES } from "./pageAppearances";
 import { getLucideIconInnerMarkup } from "../test/lucideIconTestUtils";
 
@@ -71,9 +70,6 @@ jest.mock("../api/auth", () => ({
   uploadChurchResource: jest.fn(),
 }));
 
-jest.mock("../utils/dbUtils", () => ({
-  updateAllDocs: jest.fn(),
-}));
 
 jest.mock("../utils/persistSongAudioAttachment", () => ({
   deleteSongAudioBeforeClearingMetadata: jest.fn(),
@@ -85,7 +81,7 @@ jest.mock("../store/store", () => ({
 }));
 
 let mockState: {
-  allDocs: { allSongDocs: DBItem[] };
+  allDocs: { allSongDocs: DBItem[]; isInitialized: boolean; error: string | null };
   undoable: { present: { preferences: { scrollbarWidth: number } } };
 };
 let mockSongDocs: DBItem[];
@@ -98,7 +94,6 @@ jest.mock("../hooks", () => ({
   useSelector: (selector: (state: unknown) => unknown) => selector(mockState),
 }));
 
-const mockUpdateAllDocs = jest.mocked(updateAllDocs);
 const mockDeleteChurchResource = jest.mocked(deleteChurchResource);
 const mockListChurchResources = jest.mocked(listChurchResources);
 const mockGetSongAudioUrl = jest.mocked(getSongAudioUrl);
@@ -171,8 +166,9 @@ const externalResource = (
   updatedBy: "user-1",
 });
 
-const renderPage = (access: "full" | "music" | "view" | "member" = "full") =>
-  render(
+const renderPage = (access: "full" | "music" | "view" | "member" = "full") => {
+  mockState.allDocs.allSongDocs = mockSongDocs;
+  return render(
     <TransferProvider>
       <AppGlobalInfoContext.Provider value={{ churchId: "church-1", churchName: "Church", access } as never}>
         <ControllerInfoContext.Provider value={{ db: mockDb } as never}>
@@ -181,6 +177,7 @@ const renderPage = (access: "full" | "music" | "view" | "member" = "full") =>
       </AppGlobalInfoContext.Provider>
     </TransferProvider>,
   );
+};
 
 const deferred = <T,>() => {
   let resolve!: (value: T) => void;
@@ -378,7 +375,7 @@ describe("Resources page", () => {
     });
 
     it("renders compact loading without a wide table", () => {
-      mockUpdateAllDocs.mockReturnValue(new Promise(() => {}));
+      mockState.allDocs.isInitialized = false;
       renderPage();
       expect(screen.getByRole("status")).toHaveTextContent("Loading resources");
       expect(screen.queryByRole("table")).not.toBeInTheDocument();
@@ -496,12 +493,12 @@ describe("Resources page", () => {
     mockSongDocs = [song()];
     mockResources = [];
     mockState = {
-      allDocs: { allSongDocs: [] },
+      allDocs: { allSongDocs: [], isInitialized: true, error: null },
       undoable: { present: { preferences: { scrollbarWidth: 0 } } },
     };
     mockDb = { allDocs: jest.fn() };
     mockDispatch = jest.fn((action: { type?: string; payload?: DBItem[] }) => {
-      if (action.type === "allDocs/updateAllSongDocs") {
+      if (action.type === "allDocs/hydrateItemCache") {
         mockState.allDocs.allSongDocs = action.payload || [];
       }
     });
@@ -517,12 +514,6 @@ describe("Resources page", () => {
     mockUploadChurchResource.mockResolvedValue(resource);
     mockCreateExternalChurchResource.mockReset();
     mockGetSongAudioUrl.mockResolvedValue({ url: "https://audio.test/rehearsal.mp3", expiresAt: "2026-09-22T00:00:00.000Z" });
-    mockUpdateAllDocs.mockImplementation(async (dispatch, _db, shouldApply) => {
-      if (shouldApply && !shouldApply()) return false;
-      mockState.allDocs.allSongDocs = mockSongDocs;
-      dispatch({ type: "allDocs/updateAllSongDocs", payload: mockSongDocs });
-      return true;
-    });
     jest.mocked(deleteChurchResource).mockReset();
     jest.mocked(deleteSongAudioWithRetry).mockReset();
     jest.mocked(getChurchResourceUrl).mockReset();
@@ -536,11 +527,7 @@ describe("Resources page", () => {
 
     expect(await screen.findByText("rehearsal.mp3")).toBeInTheDocument();
     expect(screen.getByText("Song attachment - Trust and Obey")).toBeInTheDocument();
-    expect(mockUpdateAllDocs).toHaveBeenCalledWith(
-      mockDispatch,
-      mockDb,
-      expect.any(Function),
-    );
+    expect(mockDb.allDocs).not.toHaveBeenCalled();
 
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Documents" }));
@@ -799,14 +786,15 @@ describe("Resources page", () => {
   });
 
   it("keeps loading while song documents are unresolved", async () => {
-    const songLoad = deferred<boolean>();
-    mockUpdateAllDocs.mockReturnValue(songLoad.promise);
-    renderPage();
+    mockState.allDocs.isInitialized = false;
+    const view = renderPage();
 
     expect(screen.getByRole("status")).toHaveTextContent("Loading resources");
     expect(screen.queryByText("No resources match this view.")).not.toBeInTheDocument();
 
-    songLoad.resolve(true);
+    mockState.allDocs.isInitialized = true;
+    mockState.allDocs.allSongDocs = [];
+    view.rerender(<TransferProvider><AppGlobalInfoContext.Provider value={{ churchId: "church-1", access: "full" } as never}><ControllerInfoContext.Provider value={{ db: mockDb } as never}><ResourcesPage /></ControllerInfoContext.Provider></AppGlobalInfoContext.Provider></TransferProvider>);
     expect(await screen.findByText("No resources match this view.")).toBeInTheDocument();
   });
 
@@ -834,7 +822,7 @@ describe("Resources page", () => {
   });
 
   it("surfaces a song-library failure without presenting a true-empty state", async () => {
-    mockUpdateAllDocs.mockResolvedValue(false);
+    mockState.allDocs.error = "The song library could not be loaded. Try again.";
     renderPage();
 
     expect(await screen.findByText("The song library could not be loaded. Try again.")).toBeInTheDocument();

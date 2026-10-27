@@ -351,7 +351,7 @@ export const openSongFromOutline = async (page: Page, title: string) => {
   const row = outlineSongRow(page, title);
   await expect(row).toHaveCount(1);
   await row.getByRole("link", { name: title, exact: true }).click();
-  await expect(page).toHaveURL(/#\/controller\/item\//);
+  await expect(page).toHaveURL(/#\/controller\/?$/);
   await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();
   await expect(page.locator("#item-slides-container")).toBeVisible();
   const listId = await row.getAttribute("data-list-id");

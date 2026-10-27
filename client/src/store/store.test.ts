@@ -215,8 +215,9 @@ const loadStoreWithItemPersistence = () => {
   let storeModule: any;
   let itemSliceModule: any;
   let songPersistenceModule: any;
-  let deferredMutations: any;
+  let deferredMutations: typeof import("./deferredItemMutations");
   let replicationConflicts: any;
+  let selectionModule: typeof import("./controllerItemSelection");
   const postMessage = jest.fn();
   const db = {
     get: jest.fn(),
@@ -257,11 +258,13 @@ const loadStoreWithItemPersistence = () => {
     deferredMutations = require("./deferredItemMutations");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     replicationConflicts = require("../utils/songV2ReplicationConflicts");
+    selectionModule = require("./controllerItemSelection");
   });
 
   return {
     store: storeModule.default,
     itemSlice: itemSliceModule.itemSlice,
+    selectControllerItem: selectionModule!.selectControllerItem,
     updateSlides: itemSliceModule.updateSlides,
     db,
     postMessage,
@@ -573,6 +576,27 @@ describe("item content integrity investigation", () => {
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => jest.useRealTimers());
 
+  it("preserves newer unsaved input through an earlier local Pouch change and save acknowledgment", async () => {
+    const { select, edit, tick, db, commit, store, docs } = setup();
+    const held = deferred<void>();
+    db.put.mockImplementationOnce(async (doc: Fixture) => {
+      const result = await commit(doc);
+      await held.promise;
+      store.dispatch({ type: "allDocs/applyItemDocumentChange", payload: { id: doc._id, doc: docs.get(doc._id) } });
+      return result;
+    });
+    select("song-A");
+    edit("First edit");
+    await tick();
+    edit("Newer unsaved edit");
+    held.resolve();
+    await flushListenerEffects();
+    expect(store.getState().undoable.present.item.name).toBe("Newer unsaved edit");
+    await tick();
+    expect(docs.get("song-A")?.name).toBe("Newer unsaved edit");
+    expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(false);
+  });
+
   it("saves captured A under A after switching to B during debounce", async () => {
     const { docs, select, edit, tick, db } = setup();
     const beforeB = clone(docs.get("song-B"));
@@ -814,7 +838,7 @@ describe("item content integrity investigation", () => {
     select("song-A"); edit("Local edit");
     const remote = { ...fixture("song-A"), _rev: "2-remote", name: "Remote edit" };
     docs.set("song-A", remote);
-    store.dispatch({ type: "allDocs/updateAllSongDocs", payload: [remote, docs.get("song-B")] });
+    store.dispatch({ type: "allDocs/hydrateItemCache", payload: [remote, docs.get("song-B")] });
     // Active songs use arrangement-owned slide content even when the remote
     // library row still has legacy root slides.
     const { normalizeItemSlides } = require("../utils/activeItemSlides");
@@ -872,6 +896,46 @@ describe("item content integrity investigation", () => {
     expect(docs.get("song-A")?.name).toBe("A pending after failure");
     expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
     errors.mockRestore();
+  });
+
+  it("flushes an accepted debounced editor mutation before cached selection changes its owner", async () => {
+    const { store, docs, selectControllerItem, deferredMutations, itemSlice, tick } = setup();
+    store.dispatch({ type: "allDocs/hydrateItemCache", payload: [...docs.values()] });
+    store.dispatch(selectControllerItem({ _id: "song-A", listId: "A" }));
+    const owner = deferredMutations.getItemMutationOwner(store.getState().undoable.present.item)!;
+    const flush = jest.fn(() => store.dispatch(itemSlice.actions._setName("A deferred editor text")));
+    deferredMutations.scheduleOwnedItemMutation(owner, 5000, flush);
+    store.dispatch(selectControllerItem({ _id: "song-B", listId: "B" }));
+    expect(flush).toHaveBeenCalledTimes(1);
+    expect(store.getState().undoable.present.item._id).toBe("song-B");
+    await tick();
+    expect(docs.get("song-A")?.name).toBe("A deferred editor text");
+    expect(docs.get("song-B")?.name).toBe("song-B");
+  });
+
+  it("cached Redux selection preserves delayed A saves and restores pending A without writing into B", async () => {
+    const runtime = setup();
+    const { store, db, docs, edit, tick, selectControllerItem, itemSlice } = runtime;
+    store.dispatch({ type: "allDocs/hydrateItemCache", payload: [...docs.values()] });
+    const open = (id: string, listId = id) => store.dispatch(selectControllerItem({ _id: id, listId }));
+    open("song-A");
+    let finishRead!: (doc: Fixture) => void;
+    db.get.mockImplementationOnce(() => new Promise((done) => { finishRead = done; }));
+    edit("A owned draft");
+    await jest.advanceTimersByTimeAsync(1500);
+    open("song-B");
+    edit("B owned draft");
+    open("song-A", "A-repeat");
+    expect(store.getState().undoable.present.item).toMatchObject({ _id: "song-A", listId: "A-repeat", name: "A owned draft" });
+    finishRead(clone(docs.get("song-A")) as Fixture);
+    await tick();
+    expect(docs.get("song-A")?.name).toBe("A owned draft");
+    expect(docs.get("song-B")?.name).toBe("B owned draft");
+    expect(store.getState().undoable.present.item._id).toBe("song-A");
+    // Occurrence-only changes do not accept stale cached conflict baselines.
+    store.dispatch(itemSlice.actions.bufferRemoteItemUpdate({ ...docs.get("song-A"), name: "Competing controller" }));
+    open("song-A", "A-third");
+    expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(true);
   });
 
   it("rapid back-and-forth navigation saves each pending payload under its own ID", async () => {
@@ -983,7 +1047,7 @@ describe("store module", () => {
     });
 
     const store = storeModule.default;
-    const { updateAllSongDocs } = allDocsSliceModule;
+    const { hydrateItemCache } = allDocsSliceModule;
     const { setServicePlanningServiceOutline } =
       servicePlanningImportSliceModule;
     const unmatchedCandidate = {
@@ -1017,7 +1081,7 @@ describe("store module", () => {
     );
 
     store.dispatch(
-      updateAllSongDocs([
+      hydrateItemCache([
         createSongDoc({
           _id: "song-how-great",
           name: "How Great is Our God",
@@ -1138,7 +1202,7 @@ describe("store module", () => {
     jest.useFakeTimers();
     let storeModule: any;
     let itemSliceModule: any;
-    let allItemsSliceModule: any;
+    let allDocsSliceModule: any;
     let preferencesSliceModule: any;
     let itemListSliceModule: any;
     let itemListsSliceModule: any;
@@ -1164,7 +1228,7 @@ describe("store module", () => {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       itemSliceModule = require("./itemSlice");
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      allItemsSliceModule = require("./allItemsSlice");
+      allDocsSliceModule = require("./allDocsSlice");
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       preferencesSliceModule = require("./preferencesSlice");
       // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -1189,7 +1253,7 @@ describe("store module", () => {
       shouldSendTo: { projector: true, monitor: true, stream: true },
     };
 
-    store.dispatch(allItemsSliceModule.setIsInitialized(true));
+    store.dispatch(allDocsSliceModule.hydrateItemCache([]));
     store.dispatch(preferencesSliceModule.setIsInitialized(true));
     store.dispatch(itemListSliceModule.setIsInitialized(true));
     store.dispatch(itemListsSliceModule.setIsInitialized(true));
@@ -1511,7 +1575,7 @@ describe("store module", () => {
       const state = storeModule.default.getState();
       const readyExceptForMedia = {
         ...state,
-        allItems: { ...state.allItems, isInitialized: true },
+        allDocs: { ...state.allDocs, isInitialized: true },
         media: {
           ...state.media,
           isInitialized: false,
@@ -3684,7 +3748,7 @@ describe("store module", () => {
       itemSlice.actions.setActiveItem({ ...baseDoc, listId: "list-1" }),
     );
     store.dispatch(itemSlice.actions.setIsLyricsEditorOpen(true));
-    store.dispatch(allDocsSlice.actions.updateAllSongDocs([remoteDoc]));
+    store.dispatch(allDocsSlice.actions.applyItemDocumentChange({ id: remoteDoc._id, doc: remoteDoc }));
     await flushListenerEffects();
 
     const state = store.getState().undoable.present.item;
@@ -3743,7 +3807,7 @@ describe("store module", () => {
       itemSlice.actions.setActiveItem({ ...baseDoc, listId: "list-1" }),
     );
     store.dispatch(itemSlice.actions.setBackground("background-b.jpg"));
-    store.dispatch(allDocsSlice.actions.updateAllSongDocs([remoteDoc]));
+    store.dispatch(allDocsSlice.actions.applyItemDocumentChange({ id: remoteDoc._id, doc: remoteDoc }));
     await flushListenerEffects();
 
     const state = store.getState().undoable.present.item;
@@ -3813,7 +3877,7 @@ describe("store module", () => {
         selectedBox: 1,
       }),
     );
-    store.dispatch(allDocsSlice.actions.updateAllSongDocs([remoteDoc]));
+    store.dispatch(allDocsSlice.actions.applyItemDocumentChange({ id: remoteDoc._id, doc: remoteDoc }));
     await flushListenerEffects();
 
     const state = store.getState().undoable.present.item;
@@ -5507,6 +5571,8 @@ const loadStoreWithItemListPersistence = () => {
   let storeModule: any;
   let itemListSliceModule: any;
   let itemListsSliceModule: any;
+  let overlaySliceModule: any;
+  let overlaysSliceModule: any;
   const postMessage = jest.fn();
   const db = {
     get: jest.fn(),
@@ -5536,12 +5602,18 @@ const loadStoreWithItemListPersistence = () => {
     itemListSliceModule = require("./itemListSlice");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     itemListsSliceModule = require("./itemListsSlice");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    overlaySliceModule = require("./overlaySlice");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    overlaysSliceModule = require("./overlaysSlice");
   });
 
   return {
     store: storeModule.default,
     itemListSlice: itemListSliceModule.itemListSlice,
     itemListsSlice: itemListsSliceModule.itemListsSlice,
+    overlaySlice: overlaySliceModule.overlaySlice,
+    overlaysSlice: overlaysSliceModule.overlaysSlice,
     db,
     postMessage,
   };
@@ -5606,6 +5678,243 @@ describe("item list outline persistence", () => {
     expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(
       false,
     );
+  });
+
+  it("retries after an overlay-order write wins a shared-document revision conflict", async () => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, db } =
+      loadStoreWithItemListPersistence();
+    let currentDoc: Record<string, any> = {
+      _id: "outline-a",
+      _rev: "1-base",
+      items: [
+        createServiceItem({ name: "Current", _id: "song-1", listId: "l1" }),
+      ],
+      overlays: ["overlay-1"],
+    };
+    db.get.mockImplementation(async () => ({ ...currentDoc }));
+    db.put.mockImplementationOnce(async () => {
+      currentDoc = {
+        ...currentDoc,
+        _rev: "2-overlay-order",
+        overlays: ["overlay-2", "overlay-1"],
+      };
+      throw Object.assign(new Error("conflict"), { status: 409 });
+    });
+    db.put.mockImplementationOnce(async (document: Record<string, any>) => {
+      currentDoc = { ...document, _rev: "3-outline" };
+      return { ok: true, rev: "3-outline" };
+    });
+
+    hydrateOutline(store, itemListSlice, itemListsSlice);
+    store.dispatch(
+      itemListSlice.actions.updateItemList([
+        createServiceItem({ name: "Current", _id: "song-1", listId: "l1" }),
+        createServiceItem({ name: "Added", _id: "song-2", listId: "l2" }),
+      ]),
+    );
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.get).toHaveBeenCalledTimes(2);
+    expect(db.put).toHaveBeenCalledTimes(2);
+    expect(currentDoc).toEqual(
+      expect.objectContaining({
+        _rev: "3-outline",
+        overlays: ["overlay-2", "overlay-1"],
+        items: expect.arrayContaining([expect.objectContaining({ name: "Added" })]),
+      }),
+    );
+    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(
+      false,
+    );
+  });
+
+  it("keeps outline and overlay-order edits when their saves overlap", async () => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, overlaysSlice, db } =
+      loadStoreWithItemListPersistence();
+    let currentDoc: Record<string, any> = {
+      _id: "outline-a",
+      _rev: "1-base",
+      items: [
+        createServiceItem({ name: "Current", _id: "song-1", listId: "l1" }),
+      ],
+      overlays: ["overlay-1", "overlay-2"],
+    };
+    db.get.mockImplementation(async () => ({ ...currentDoc }));
+    db.put.mockImplementation(async (document: Record<string, any>) => {
+      if (document._rev !== currentDoc._rev) {
+        throw Object.assign(new Error("conflict"), { status: 409 });
+      }
+      const revision = `${Number(currentDoc._rev[0]) + 1}-saved`;
+      currentDoc = { ...document, _rev: revision };
+      return { ok: true, rev: revision };
+    });
+
+    hydrateOutline(store, itemListSlice, itemListsSlice);
+    store.dispatch(
+      overlaysSlice.actions.initiateOverlayList([
+        { id: "overlay-1", name: "First" },
+        { id: "overlay-2", name: "Second" },
+      ]),
+    );
+    store.dispatch(
+      itemListSlice.actions.updateItemList([
+        createServiceItem({ name: "Current", _id: "song-1", listId: "l1" }),
+        createServiceItem({ name: "Added", _id: "song-2", listId: "l2" }),
+      ]),
+    );
+    store.dispatch(
+      overlaysSlice.actions.updateOverlayList([
+        { id: "overlay-2", name: "Second" },
+        { id: "overlay-1", name: "First" },
+      ]),
+    );
+
+    await jest.advanceTimersByTimeAsync(1500);
+    for (let attempt = 0; attempt < 20; attempt += 1) await Promise.resolve();
+    await flushListenerEffects();
+
+    expect(currentDoc.items).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "Added" })]),
+    );
+    expect(currentDoc.overlays).toEqual(["overlay-2", "overlay-1"]);
+    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(
+      false,
+    );
+    expect(store.getState().undoable.present.overlays.hasPendingUpdate).toBe(
+      false,
+    );
+  });
+
+  it("persists pending fields to the outgoing outline before switching selection", async () => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, overlaysSlice, db } =
+      loadStoreWithItemListPersistence();
+    const currentDoc: Record<string, any> = {
+      _id: "outline-a",
+      _rev: "1-base",
+      items: [],
+      overlays: ["overlay-1", "overlay-2"],
+    };
+    const docs = new Map<string, Record<string, any>>([
+      ["outline-a", currentDoc],
+      ["itemLists", {
+        _id: "itemLists",
+        _rev: "1-lists",
+        itemLists: [
+          { _id: "outline-a", name: "Sunday" },
+          { _id: "outline-b", name: "Wednesday" },
+        ],
+        activeList: { _id: "outline-a", name: "Sunday" },
+      }],
+    ]);
+    db.get.mockImplementation(async (id: string) => {
+      const document = docs.get(id);
+      if (!document) throw Object.assign(new Error("missing"), { status: 404 });
+      return { ...document };
+    });
+    db.put.mockImplementation(async (document: Record<string, any>) => {
+      const current = docs.get(String(document._id));
+      if (!current || current._rev !== document._rev) {
+        throw Object.assign(new Error("conflict"), { status: 409 });
+      }
+      const revision = `${Number(current._rev[0]) + 1}-saved`;
+      docs.set(String(document._id), { ...document, _rev: revision });
+      return { ok: true, rev: revision };
+    });
+
+    store.dispatch(
+      itemListsSlice.actions.initiateItemLists([
+        { _id: "outline-a", name: "Sunday" },
+        { _id: "outline-b", name: "Wednesday" },
+      ]),
+    );
+    store.dispatch(
+      itemListSlice.actions.initiateItemList([
+        createServiceItem({ name: "Before", _id: "song-1", listId: "l1" }),
+      ]),
+    );
+    store.dispatch(
+      overlaysSlice.actions.initiateOverlayList([
+        { id: "overlay-1", name: "First" },
+        { id: "overlay-2", name: "Second" },
+      ]),
+    );
+    store.dispatch(
+      itemListSlice.actions.updateItemList([
+        createServiceItem({ name: "After", _id: "song-2", listId: "l2" }),
+      ]),
+    );
+    store.dispatch(
+      overlaysSlice.actions.updateOverlayList([
+        { id: "overlay-2", name: "Second" },
+        { id: "overlay-1", name: "First" },
+      ]),
+    );
+    store.dispatch(itemListsSlice.actions.selectItemList("outline-b"));
+
+    for (let attempt = 0; attempt < 50; attempt += 1) await Promise.resolve();
+    const savedOutline = docs.get("outline-a");
+    expect(savedOutline?.items).toEqual([
+      expect.objectContaining({ name: "After" }),
+    ]);
+    expect(savedOutline?.overlays).toEqual(["overlay-2", "overlay-1"]);
+    expect(store.getState().undoable.present.itemLists.selectedList?._id).toBe(
+      "outline-b",
+    );
+    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(
+      false,
+    );
+    expect(store.getState().undoable.present.overlays.hasPendingUpdate).toBe(
+      false,
+    );
+  });
+
+  it("keeps both pending flags when shared-outline writes fail", async () => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, overlaysSlice, db } =
+      loadStoreWithItemListPersistence();
+    db.get.mockResolvedValue({
+      _id: "outline-a",
+      _rev: "1-base",
+      items: [],
+      overlays: ["overlay-1", "overlay-2"],
+    });
+    db.put.mockRejectedValue(new Error("offline"));
+    const logError = jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+    hydrateOutline(store, itemListSlice, itemListsSlice);
+    store.dispatch(
+      overlaysSlice.actions.initiateOverlayList([
+        { id: "overlay-1", name: "First" },
+        { id: "overlay-2", name: "Second" },
+      ]),
+    );
+    store.dispatch(
+      itemListSlice.actions.updateItemList([
+        createServiceItem({ name: "Added", _id: "song-2", listId: "l2" }),
+      ]),
+    );
+    store.dispatch(
+      overlaysSlice.actions.updateOverlayList([
+        { id: "overlay-2", name: "Second" },
+        { id: "overlay-1", name: "First" },
+      ]),
+    );
+
+    await jest.advanceTimersByTimeAsync(1500);
+    for (let attempt = 0; attempt < 20; attempt += 1) await Promise.resolve();
+
+    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(
+      true,
+    );
+    expect(store.getState().undoable.present.overlays.hasPendingUpdate).toBe(
+      true,
+    );
+    logError.mockRestore();
   });
 
   it("discards a delayed outline save after a remote hydrate during debounce", async () => {
@@ -5676,93 +5985,109 @@ describe("item list outline persistence", () => {
   });
 });
 
-const loadStoreWithAllItemsPersistence = () => {
-  let storeModule: any;
-  let allItemsSliceModule: any;
-  const postMessage = jest.fn();
-  const db = {
-    get: jest.fn().mockResolvedValue({ _id: "allItems", items: [] }),
-    put: jest.fn().mockResolvedValue({ ok: true, id: "allItems", rev: "2" }),
-  };
-  let activeDb: any = db;
+describe("selected overlay persistence races", () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { createOverlay } = require("../test/fixtures");
 
-  jest.isolateModules(() => {
-    jest.doMock("../context/controllerInfo", () => ({
-      get globalDb() { return activeDb; },
-      globalBroadcastRef: { postMessage },
-    }));
-    jest.doMock("../context/globalInfo", () => ({
-      globalFireDbInfo: { db: undefined, database: undefined },
-      globalHostId: "host-123",
-    }));
-    jest.doMock("firebase/database", () => ({
-      ref: jest.fn(),
-      set: jest.fn(),
-      get: jest.fn(),
-    }));
-
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    storeModule = require("./store");
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    allItemsSliceModule = require("./allItemsSlice");
-  });
-
-  return { store: storeModule.default, allItemsSlice: allItemsSliceModule, db, setGlobalDb: (next: unknown) => { activeDb = next; } };
-};
-
-describe("allItems persistence", () => {
-  it("keeps timer search changes UI-only while persisting library mutations", async () => {
+  it("keeps a newer edit and remote conflict when an older save finishes late", async () => {
     jest.useFakeTimers();
-    const { store, allItemsSlice, db } = loadStoreWithAllItemsPersistence();
-    store.dispatch(allItemsSlice.setIsInitialized(true));
+    const { store, overlaySlice, overlaysSlice, db } =
+      loadStoreWithItemListPersistence();
+    let persisted = {
+      _id: "overlay-overlay-1",
+      _rev: "1-base",
+      docType: "overlay",
+      ...createOverlay({ id: "overlay-1", name: "Original", duration: 7 }),
+    };
+    let finishFirstPut: (() => void) | undefined;
+    db.get.mockImplementation(async (id: string) => {
+      if (id !== persisted._id) throw new Error(`Unexpected document ${id}`);
+      return { ...persisted };
+    });
+    db.put.mockImplementation((document: Record<string, any>) => {
+      if (document.name === "First local edit") {
+        persisted = { ...document, _rev: "2-first" };
+        return new Promise((resolve) => {
+          finishFirstPut = () => resolve({ ok: true, rev: "2-first" });
+        }) as any;
+      }
+      persisted = { ...document, _rev: "3-newer" };
+      return Promise.resolve({ ok: true, rev: "3-newer" }) as any;
+    });
 
-    store.dispatch(allItemsSlice.setTimerSearchValue("countdown"));
+    const base = createOverlay({ id: "overlay-1", name: "Original", duration: 7 });
+    store.dispatch(overlaysSlice.actions.initiateOverlayList([base]));
+    store.dispatch(overlaySlice.actions.selectOverlay(base));
+    store.dispatch(
+      overlaySlice.actions.updateOverlay({ id: "overlay-1", name: "First local edit" }),
+    );
+    store.dispatch(
+      overlaysSlice.actions.updateOverlayInList({ id: "overlay-1", name: "First local edit" }),
+    );
+
     await jest.advanceTimersByTimeAsync(1500);
-    await flushListenerEffects();
-    expect(db.put).not.toHaveBeenCalled();
+    for (let attempt = 0; attempt < 20; attempt += 1) await Promise.resolve();
+    expect(db.put).toHaveBeenCalledTimes(1);
 
     store.dispatch(
-      allItemsSlice.addItemToAllItemsList({
-        _id: "timer-1",
-        name: "Countdown",
-        type: "timer",
-        listId: "timer-1",
-        background: "",
-      }),
+      overlaySlice.actions.bufferRemoteOverlayUpdate(
+        createOverlay({ id: "overlay-1", name: "Remote edit", duration: 7 }),
+      ),
     );
-    await jest.advanceTimersByTimeAsync(1500);
-    await flushListenerEffects();
+    store.dispatch(
+      overlaySlice.actions.updateOverlay({ id: "overlay-1", name: "Newer local edit" }),
+    );
+    store.dispatch(
+      overlaysSlice.actions.updateOverlayInList({ id: "overlay-1", name: "Newer local edit" }),
+    );
 
-    expect(db.put).toHaveBeenCalledWith(
-      expect.objectContaining({
-        _id: "allItems",
-        items: [expect.objectContaining({ _id: "timer-1" })],
-      }),
-    );
-    jest.useRealTimers();
+    await jest.advanceTimersByTimeAsync(1500);
+    for (let attempt = 0; attempt < 40; attempt += 1) await Promise.resolve();
+    expect(db.put).toHaveBeenCalledTimes(2);
+    expect(persisted.name).toBe("Newer local edit");
+
+    finishFirstPut?.();
+    for (let attempt = 0; attempt < 30; attempt += 1) await Promise.resolve();
+    const state = store.getState().undoable.present;
+    expect(persisted.name).toBe("Newer local edit");
+    expect(state.overlay.selectedOverlay?.name).toBe("Newer local edit");
+    expect(state.overlays.list[0]?.name).toBe("Newer local edit");
+    expect(state.overlay.hasRemoteUpdate).toBe(true);
+    expect(state.overlay.pendingRemoteOverlay?.name).toBe("Remote edit");
+  });
+});
+
+describe("document cache and library controls", () => {
+  it("preserves independent outline backgrounds and occurrence IDs through a library refresh and route reset", () => {
+    const { store, itemSlice } = loadStoreWithItemPersistence();
+    const outline = [
+      { _id: "song-1", type: "song", name: "Outline title", listId: "first", background: "operator-custom" },
+      { _id: "song-1", type: "song", name: "Other occurrence", listId: "second", background: "other-custom" },
+    ];
+    store.dispatch({ type: "itemList/updateItemList", payload: outline });
+    store.dispatch(itemSlice.actions.setActiveItem({ ...createSongDoc(), listId: "first" }));
+    store.dispatch({ type: "allDocs/applyItemDocumentChange", payload: { id: "song-1", doc: createSongDoc({ name: "Library rename", background: "library-current" }) } });
+    expect(store.getState().undoable.present.itemList.list).toEqual(outline);
+    expect(store.getState().undoable.present.item.listId).toBe("first");
+    const cached = store.getState().allDocs;
+    store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+    expect(store.getState().allDocs).toBe(cached);
+    expect(store.getState().allDocs.allSongDocs[0].background).toBe("library-current");
   });
 
-  it("abandons a delayed Church A all-items save after the active database switches", async () => {
+  it("does not persist library controls or cached documents as an index", async () => {
     jest.useFakeTimers();
-    const { store, allItemsSlice, db: dbA, setGlobalDb } = loadStoreWithAllItemsPersistence();
-    const dbB = { get: jest.fn(), put: jest.fn() };
-    store.dispatch(allItemsSlice.setIsInitialized(true));
-    store.dispatch(allItemsSlice.addItemToAllItemsList({
-      _id: "church-a-item",
-      name: "Church A item",
-      type: "song",
-      listId: "outline-a",
-      background: "",
-    }));
-    store.dispatch({ type: "RESET" });
-    setGlobalDb(dbB);
-
+    const { store, db } = loadStoreWithControllerMediaFolders();
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const ui = require("./itemLibraryUiSlice");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const cache = require("./allDocsSlice");
+    store.dispatch(ui.setLibrarySearchValue("grace"));
+    store.dispatch(ui.setLibraryFilter("song"));
+    store.dispatch(cache.hydrateItemCache([{ _id: "song", type: "song", name: "Grace" }]));
     await jest.advanceTimersByTimeAsync(1500);
-    await flushListenerEffects();
-
-    expect(dbA.put).not.toHaveBeenCalled();
-    expect(dbB.get).not.toHaveBeenCalled();
-    expect(dbB.put).not.toHaveBeenCalled();
+    expect(db.put).not.toHaveBeenCalled();
+    expect(store.getState()).not.toHaveProperty("allItems");
     jest.useRealTimers();
   });
 });

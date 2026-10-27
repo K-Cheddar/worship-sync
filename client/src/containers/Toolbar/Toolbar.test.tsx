@@ -6,9 +6,13 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import { preferencesSlice } from "../../store/preferencesSlice";
 import type { ControllerConfigurationRoute } from "../../store/preferencesSlice";
 import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
+import {
+  ThumbnailPreviewModeProvider,
+  useThumbnailPreviewMode,
+} from "../../context/thumbnailPreviewMode";
 
 const mockDispatch = jest.fn();
-let mockPathname = "/controller/item/item-id/list-id";
+let mockPathname = "/controller";
 
 let mockState: {
   undoable: {
@@ -155,6 +159,11 @@ jest.mock("../../context/activeController", () => ({
 
 let mockControllerBasePath = "/controller";
 
+const PreviewModeProbe = () => {
+  const { previewMode } = useThumbnailPreviewMode();
+  return <span data-testid="thumbnail-preview-mode">{previewMode}</span>;
+};
+
 const renderToolbar = ({
   access,
   itemType,
@@ -187,13 +196,16 @@ const renderToolbar = ({
 
   const toolbar = <Toolbar className="toolbar" variant={variant} />;
   return render(
-    <GlobalInfoContext.Provider value={{ access } as any}>
-      <ControllerInfoContext.Provider value={{ isPhone: false } as any}>
-        {workspaceMode ? (
-          <PresentationControllerModeProvider>{toolbar}</PresentationControllerModeProvider>
-        ) : toolbar}
-      </ControllerInfoContext.Provider>
-    </GlobalInfoContext.Provider>,
+    <ThumbnailPreviewModeProvider>
+      <GlobalInfoContext.Provider value={{ access } as any}>
+        <ControllerInfoContext.Provider value={{ isPhone: false } as any}>
+          {workspaceMode ? (
+            <PresentationControllerModeProvider>{toolbar}</PresentationControllerModeProvider>
+          ) : toolbar}
+          <PreviewModeProbe />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>
+    </ThumbnailPreviewModeProvider>,
   );
 };
 
@@ -228,13 +240,16 @@ const renderToolbarOverlay = ({
   };
 
   return render(
-    <GlobalInfoContext.Provider value={{ access } as any}>
-      <ControllerInfoContext.Provider value={{ isPhone: false } as any}>
-        <PresentationControllerModeProvider>
-          <Toolbar className="toolbar" variant="overlay" />
-        </PresentationControllerModeProvider>
-      </ControllerInfoContext.Provider>
-    </GlobalInfoContext.Provider>,
+    <ThumbnailPreviewModeProvider>
+      <GlobalInfoContext.Provider value={{ access } as any}>
+        <ControllerInfoContext.Provider value={{ isPhone: false } as any}>
+          <PresentationControllerModeProvider>
+            <Toolbar className="toolbar" variant="overlay" />
+          </PresentationControllerModeProvider>
+          <PreviewModeProbe />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>
+    </ThumbnailPreviewModeProvider>,
   );
 };
 
@@ -242,8 +257,29 @@ describe("Toolbar", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     localStorage.clear();
-    mockPathname = "/controller/item/item-id/list-id";
+    mockPathname = "/controller";
     mockControllerBasePath = "/controller";
+  });
+
+  it("enters Stream preview from Stream Format and keeps it when tabs change", () => {
+    renderToolbar({ access: "full", itemType: "song" });
+
+    expect(screen.getByTestId("thumbnail-preview-mode")).toHaveTextContent(
+      "projector",
+    );
+    act(() => {
+      screen.getByRole("button", { name: "Stream Format" }).click();
+    });
+    expect(screen.getByTestId("thumbnail-preview-mode")).toHaveTextContent(
+      "stream",
+    );
+
+    act(() => {
+      screen.getByRole("button", { name: "Slide Tools" }).click();
+    });
+    expect(screen.getByTestId("thumbnail-preview-mode")).toHaveTextContent(
+      "stream",
+    );
   });
 
   it("hides undo and secondary toolbar rows in Present mode", () => {
@@ -341,11 +377,12 @@ describe("Toolbar", () => {
     renderToolbar({
       access: "full",
       itemType: "song",
-      lastControllerConfigurationRoute: "/controller/service-planning",
+      lastControllerConfigurationRoute: "/controller/service-planning" as any,
     });
 
     const settings = screen.getByRole("link", { name: "Configurations" });
-    expect(settings).toHaveAttribute("href", "/controller/service-planning");
+    expect(settings).toHaveAttribute("href", "/controller/preferences");
+    expect(screen.queryByRole("link", { name: "Service Planning" })).not.toBeInTheDocument();
   });
 
   it("falls back to preferences for Configurations when no other tab was saved", () => {
@@ -384,7 +421,7 @@ describe("Toolbar", () => {
 
   it("shows slide and item tools on an auxiliary controller item page", () => {
     mockControllerBasePath = "/aux-controller/ctrl_lobby";
-    mockPathname = "/aux-controller/ctrl_lobby/item/item-id/list-id";
+    mockPathname = "/aux-controller/ctrl_lobby";
     renderToolbar({
       access: "full",
       itemType: "song",
@@ -453,7 +490,7 @@ describe("Toolbar", () => {
     expect(screen.queryByText("Slide Tools Panel")).not.toBeInTheDocument();
     expect(screen.getByText("Item Tools Panel")).toBeInTheDocument();
 
-    mockPathname = "/controller/item/timer-id/list-id";
+    mockPathname = "/controller";
     mockState = {
       undoable: {
         present: {

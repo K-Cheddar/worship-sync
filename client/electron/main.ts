@@ -77,6 +77,7 @@ import {
 } from "./updaterHelpers";
 import {
   isTrustedControllerIpcSender,
+  isTrustedDesktopCaptureIpcSender,
   isTrustedWorshipSyncIpcSender,
 } from "./ipcSenderAuthorization";
 import {
@@ -653,7 +654,8 @@ const destroyLocalVideoCaptureHost = (): void => {
 
 /**
  * Own USB capture outside the controller window so reloads and route changes do
- * not tear down the physical device or freeze live output windows.
+ * not tear down the physical device or freeze live output windows. Local views
+ * wait for this host's publisher before attempting Chromium capture sharing.
  */
 const createLocalVideoCaptureHost = (): void => {
   if (
@@ -1577,31 +1579,40 @@ ipcMain.handle("get-displays", () => {
 const DESKTOP_CAPTURE_THUMBNAIL_SIZE = { width: 320, height: 180 };
 
 /**
- * Lists screens and windows the operator can send to an output. Thumbnails are
- * only rendered for the picker, so background re-resolution of a saved share
- * stays cheap during live use.
+ * Lists sources for the controller picker and for restoring saved shares in
+ * trusted outputs and the hidden capture host. Only the picker contexts may
+ * request thumbnails; restore requests need source ids and names only.
  */
-/**
- * Desktop capture listing is used by the controller picker and by the hidden
- * capture host when re-resolving a saved screen/window share after handoff.
- */
-const assertDesktopCaptureIpcSender = (sender: WebContents): void => {
+const assertDesktopCaptureIpcSender = (
+  sender: WebContents,
+  withThumbnails: boolean,
+): void => {
+  const displayWindows = listDisplayWindowKeys().map(
+    (windowKey) => getDisplayWindow(windowKey) as BrowserWindow | null,
+  );
   if (
-    isTrustedControllerIpcSender(sender, mainWindow) ||
-    isTrustedControllerIpcSender(sender, localVideoCaptureHost)
+    isTrustedDesktopCaptureIpcSender(
+      sender,
+      mainWindow,
+      localVideoCaptureHost,
+      displayWindows,
+      withThumbnails,
+    )
   ) {
     return;
   }
   throw new Error(
-    "This action is only available from the controller or capture host window.",
+    withThumbnails
+      ? "Capture thumbnails are only available to the controller or capture host window."
+      : "This action is only available from a trusted WorshipSync window.",
   );
 };
 
 ipcMain.handle(
   "get-desktop-capture-sources",
   async (event, options?: { withThumbnails?: boolean }) => {
-    assertDesktopCaptureIpcSender(event.sender);
     const withThumbnails = options?.withThumbnails === true;
+    assertDesktopCaptureIpcSender(event.sender, withThumbnails);
     const sources = await desktopCapturer.getSources({
       types: ["screen", "window"],
       fetchWindowIcons: false,

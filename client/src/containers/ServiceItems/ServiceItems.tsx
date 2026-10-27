@@ -5,8 +5,7 @@ import {
   removeItemsFromList,
   setActiveItemInList,
 } from "../../store/itemListSlice";
-import { addItemToAllItemsList } from "../../store/allItemsSlice";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { DndContext, useDroppable, DragEndEvent, DragStartEvent, DragOverlay } from "@dnd-kit/core";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { PanelsTopLeft, Pencil, Plus, Trash2 } from "lucide-react";
@@ -31,7 +30,7 @@ import LeftPanelButton from "../../components/LeftPanelButton/LeftPanelButton";
 import ServiceOutlineSkeleton from "./ServiceOutlineSkeleton";
 import Outlines from "../Toolbar/ToolbarElements/Outlines";
 import { ServiceItem as ServiceItemType } from "../../types";
-import { getControllerItemPath } from "../../utils/outlineSlideSections";
+import { selectControllerItem } from "../../store/controllerItemSelection";
 import { requestOutlineSelectionScroll } from "../../utils/outlineSelectionScroll";
 import { useControllerBasePath } from "../../context/activeController";
 import { resolveServiceItemLocalImage } from "../../utils/resolveServiceItemLocalImage";
@@ -55,6 +54,7 @@ const EMPTY_SERVICE_TIMES: ServiceTime[] = [];
 const ServiceItems = () => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
+  const location = useLocation();
   const controllerBasePath = useControllerBasePath();
   const {
     list: serviceItems,
@@ -306,7 +306,6 @@ const ServiceItems = () => {
         listId: generateRandomId(),
       };
       dispatch(addItemToItemList(serviceItem));
-      dispatch(addItemToAllItemsList(serviceItem));
     } finally {
       setIsAddingHeading(false);
     }
@@ -340,6 +339,12 @@ const ServiceItems = () => {
     return -1;
   };
 
+  const openItem = (item: ServiceItemType) => {
+    if (item.type === "heading") return;
+    void dispatch(selectControllerItem(item, db));
+    if (location.pathname.replace(/\/$/, "") !== controllerBasePath) navigate(controllerBasePath);
+  };
+
   const handleItemListKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -352,8 +357,7 @@ const ServiceItems = () => {
         const nextItem = serviceItems[nextIndex];
         setSelectedListIds(new Set([nextItem.listId]));
         setAnchorListId(nextItem.listId);
-        dispatch(setActiveItemInList(nextItem.listId));
-        navigate(getControllerItemPath(nextItem, controllerBasePath));
+        openItem(nextItem);
         return;
       }
       const nextHeadingIdx = findNextHeadingIndex(currentIndex);
@@ -375,8 +379,7 @@ const ServiceItems = () => {
         const prevItem = serviceItems[prevIndex];
         setSelectedListIds(new Set([prevItem.listId]));
         setAnchorListId(prevItem.listId);
-        dispatch(setActiveItemInList(prevItem.listId));
-        navigate(getControllerItemPath(prevItem, controllerBasePath));
+        openItem(prevItem);
         return;
       }
       const prevHeadingIdx = findPrevHeadingIndex(currentIndex);
@@ -474,6 +477,7 @@ const ServiceItems = () => {
       setAnchorListId(listId);
       dispatch(setActiveItemInList(listId));
       revealSelectedOutlineItemIfReselected(listId);
+      if (row) openItem(row);
       return;
     }
     if (e.shiftKey) {
@@ -527,6 +531,7 @@ const ServiceItems = () => {
     setAnchorListId(listId);
     dispatch(setActiveItemInList(listId));
     revealSelectedOutlineItemIfReselected(listId);
+    if (row) openItem(row);
   };
 
   const handleEnterMultiSelectMode = useCallback(
@@ -905,7 +910,6 @@ const ServiceItems = () => {
             ) : (
               <LeftPanelButton
                 isSelected={false}
-                to={getControllerItemPath(item, controllerBasePath)}
                 title={item.name}
                 subtitle={arrangementSubtitlesByItemId.get(item._id)}
                 type={item.type}

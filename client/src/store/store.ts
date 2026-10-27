@@ -54,7 +54,7 @@ import { overlaysSlice } from "./overlaysSlice";
 import { bibleSlice } from "./bibleSlice";
 import { isMonitorShowingTimerCountdownSlide } from "../utils/monitorTimerPresentation";
 import { itemListSlice } from "./itemListSlice";
-import { allItemsSlice } from "./allItemsSlice";
+import { itemLibraryUiSlice } from "./itemLibraryUiSlice";
 import { createItemSlice } from "./createItemSlice";
 import { preferencesSlice } from "./preferencesSlice";
 import { itemListsSlice } from "./itemListsSlice";
@@ -70,11 +70,9 @@ import { ref, set, get, runTransaction, update } from "firebase/database";
 import {
   BibleDisplayInfo,
   BoardPostStreamInfo,
-  DBAllItems,
   DBCredit,
   DBCredits,
   DBItem,
-  DBItemListDetails,
   DBItemLists,
   DBOverlay,
   DBOverlayTemplates,
@@ -94,7 +92,7 @@ import {
   ServiceTime,
   TimerInfo,
 } from "../types";
-import { allDocsSlice, upsertItemInAllDocs } from "./allDocsSlice";
+import { allDocsSlice } from "./allDocsSlice";
 import { selectSongLibrary } from "./songLibrarySelectors";
 import { creditsSlice } from "./creditsSlice";
 import {
@@ -120,12 +118,14 @@ import { generatedCreditsSlice } from "./generatedCreditsSlice";
 import { displayOutputsSlice } from "./displayOutputsSlice";
 import { controllerProfilesSlice } from "./controllerProfilesSlice";
 import { mergeTimers } from "../utils/timerUtils";
-import { createSongLibraryIndexRepairMiddleware } from "./songLibraryIndexRepair";
-import { freeFormDocToServiceItem } from "../utils/freeFormLibrary";
 import { extractMediaUrlsFromBackgrounds } from "../utils/mediaCacheUtils";
 import { persistMediaStateChanges } from "../utils/mediaDocUtils";
 import { normalizeOverlayForSync } from "../utils/overlayUtils";
 import { persistExistingOverlayDoc } from "../utils/persistOverlayDoc";
+import {
+  persistServiceListItems,
+  persistServiceListOverlays,
+} from "../utils/persistServiceListField";
 import _ from "lodash";
 import { getChurchDataPath } from "../utils/firebasePaths";
 import {
@@ -137,7 +137,6 @@ import {
   ensureCreditsIndexDoc,
   getCreditsByIds,
   migrateLegacyCreditsToActiveOutlineIfNeeded,
-  invalidateLibraryRefresh,
 } from "../utils/dbUtils";
 import { applyPouchAudit } from "@/utils/pouchAudit";
 import {
@@ -826,6 +825,7 @@ const excludedActions: string[] = [
   itemSlice.actions.applyPersistedSongAudio.toString(),
   itemSlice.actions.setSelectedBox.toString(),
   itemSlice.actions.setActiveItem.toString(),
+  itemSlice.actions.setActiveItemOccurrence.toString(),
   itemSlice.actions.clearTransientState.toString(),
   itemSlice.actions.toggleBackgroundTargetSlideId.toString(),
   itemSlice.actions.setBackgroundTargetSlideIds.toString(),
@@ -836,6 +836,7 @@ const excludedActions: string[] = [
   itemSlice.actions.setRestoreFocusToBox.toString(),
   overlaysSlice.actions.initiateOverlayList.toString(),
   overlaysSlice.actions.updateOverlayListFromRemote.toString(),
+  overlaysSlice.actions.updateOverlaysByIdFromRemote.toString(),
   overlaysSlice.actions.setHasPendingUpdate.toString(),
   overlaysSlice.actions.forceUpdate.toString(),
   overlaysSlice.actions.updateInitialList.toString(),
@@ -872,7 +873,6 @@ const excludedActions: string[] = [
   preferencesSlice.actions.setIsLoading.toString(),
   preferencesSlice.actions.setSelectedPreference.toString(),
   preferencesSlice.actions.setShouldShowItemEditor.toString(),
-  preferencesSlice.actions.setShouldShowStreamFormat.toString(),
   preferencesSlice.actions.setOverlayControllerPanel.toString(),
   preferencesSlice.actions.setIsMediaExpanded.toString(),
   preferencesSlice.actions.increaseSlides.toString(),
@@ -892,6 +892,8 @@ const excludedActions: string[] = [
   preferencesSlice.actions.forceUpdate.toString(),
   overlaySlice.actions.setIsOverlayLoading.toString(),
   overlaySlice.actions.setHasPendingUpdate.toString(),
+  overlaySlice.actions.markOverlayDraftPending.toString(),
+  overlaySlice.actions.clearOverlayDraftPending.toString(),
   overlaySlice.actions.forceUpdate.toString(),
   overlaySlice.actions.selectOverlay.toString(),
   overlaySlice.actions.markOverlayPersisted.toString(),
@@ -899,13 +901,6 @@ const excludedActions: string[] = [
   overlaySlice.actions.discardPendingRemoteOverlay.toString(),
   overlaySlice.actions.applyPendingRemoteOverlay.toString(),
   timersSlice.actions.setShouldUpdateTimers.toString(),
-  allDocsSlice.actions.updateAllBibleDocs.toString(),
-  allDocsSlice.actions.updateAllFreeFormDocs.toString(),
-  allDocsSlice.actions.updateAllSongDocs.toString(),
-  allDocsSlice.actions.updateAllTimerDocs.toString(),
-  allDocsSlice.actions.upsertItemInAllDocs.toString(),
-  allDocsSlice.actions.upsertItemsInAllDocs.toString(),
-  allItemsSlice.actions.initiateAllItemsList.toString(),
   overlayTemplatesSlice.actions.initiateTemplates.toString(),
   overlayTemplatesSlice.actions.updateTemplatesFromRemote.toString(),
   overlayTemplatesSlice.actions.setIsLoading.toString(),
@@ -917,7 +912,7 @@ const excludedPrefixes = [
   "debouncedUpdate",
   "timers/",
   "allDocs/",
-  "allItems/",
+  "itemLibraryUi/",
   "presentation/",
 ];
 
@@ -961,8 +956,6 @@ const undoableReducers = undoable(
 );
 
 const listenerMiddleware = createListenerMiddleware();
-const songLibraryIndexRepairMiddleware =
-  createSongLibraryIndexRepairMiddleware();
 
 type ItemAutosaveDebounce = {
   timer: ReturnType<typeof setTimeout>;
@@ -1089,6 +1082,7 @@ listenerMiddleware.startListening({
 
     const excluded = isAnyOf(
       itemSlice.actions.setSelectedSlide,
+      itemSlice.actions.setActiveItemOccurrence,
       itemSlice.actions.setSelectedBox,
       itemSlice.actions.setIsLyricsEditorOpen,
       itemSlice.actions.setItemIsLoading,
@@ -1152,7 +1146,8 @@ listenerMiddleware.startListening({
         const active = (listenerApi.getState() as RootState).undoable.present.item;
         if (resolved && db === dbAtStart && !pendingItemAutosaves.has(saveKey) && sameItemMutationOwner(owner, getItemMutationOwner(active))) {
           listenerApi.dispatch(itemSlice.actions.markItemPersisted(resolved, item));
-          listenerApi.dispatch(upsertItemInAllDocs(songToLibraryProjection(resolved)));
+          const projection = songToLibraryProjection(resolved);
+          listenerApi.dispatch(allDocsSlice.actions.applyItemDocumentChange({ id: projection._id, doc: projection }));
         }
       }
       return;
@@ -1377,23 +1372,8 @@ listenerMiddleware.startListening({
           activeDatabaseOwner.churchId === contentOwner.churchId;
       if (!stillInOriginalDatabase) return;
 
-      invalidateLibraryRefresh(writeDatabase);
-
-      listenerApi.dispatch(upsertItemInAllDocs(
-        db_item.type === "song" ? songToLibraryProjection(db_item) : db_item,
-      ));
-      if (db_item.type === "free") {
-        const indexedItem = latestState.allItems.list.find(
-          (candidate) => candidate._id === db_item._id,
-        );
-        listenerApi.dispatch(
-          allItemsSlice.actions.upsertItemInAllItemsList({
-            ...freeFormDocToServiceItem(db_item),
-            listId: indexedItem?.listId ?? db_item._id,
-          }),
-        );
-      }
-
+      const cacheDoc = db_item.type === "song" ? songToLibraryProjection(db_item) : db_item;
+      listenerApi.dispatch(allDocsSlice.actions.applyItemDocumentChange({ id: cacheDoc._id, doc: cacheDoc }));
       if (!isSameActiveOwner) return;
       safePostMessage({
         type: "update",
@@ -1436,7 +1416,7 @@ listenerMiddleware.startListening({
           const projection = snapshot ? songToLibraryProjection(snapshot.hydrated)
             : await loadSongV2LibraryProjection(database, await database.get(getSongV2RootDocId(songId)));
           if (!stillCurrent()) return;
-          api.dispatch(upsertItemInAllDocs(projection));
+          api.dispatch(allDocsSlice.actions.applyItemDocumentChange({ id: projection._id, doc: projection }));
         }
         if (!snapshot || !stillCurrent()) return;
         const current = (api.getState() as RootState).undoable.present.item;
@@ -1465,15 +1445,12 @@ listenerMiddleware.startListening({
   },
 });
 
-// When allDocs is fully refreshed (e.g. after remote sync), sync the active item so the UI shows the latest.
-// We only run on full-refresh actions, NOT on upsertItemInAllDocs: the latter comes from our own thunks and
-// the active item is already that doc, so setActiveItem would be redundant and could contribute to loops.
+// Durable cache events update the editor through the existing draft/conflict checks.
 listenerMiddleware.startListening({
   predicate: isAnyOf(
     allDocsSlice.actions.updateAllSongDocs,
-    allDocsSlice.actions.updateAllFreeFormDocs,
-    allDocsSlice.actions.updateAllTimerDocs,
-    allDocsSlice.actions.updateAllBibleDocs,
+    allDocsSlice.actions.hydrateItemCache,
+    allDocsSlice.actions.applyItemDocumentChange,
   ),
   effect: async (action, listenerApi) => {
     const state = listenerApi.getState() as RootState;
@@ -1482,24 +1459,27 @@ listenerMiddleware.startListening({
     const { _id: activeId, listId } = currentItem;
     if (!activeId) return;
 
-    const { allSongDocs, allFreeFormDocs, allTimerDocs, allBibleDocs } =
+    const { allSongDocs, allFreeFormDocs, allTimerDocs, allBibleDocs, allServiceTimeDocs } =
       state.allDocs;
     const {
       allSongDocs: previousSongDocs,
       allFreeFormDocs: previousFreeFormDocs,
       allTimerDocs: previousTimerDocs,
       allBibleDocs: previousBibleDocs,
+      allServiceTimeDocs: previousServiceTimeDocs,
     } = previousState.allDocs;
     let doc =
       allSongDocs.find((d) => d._id === activeId) ??
       allFreeFormDocs.find((d) => d._id === activeId) ??
       allTimerDocs.find((d) => d._id === activeId) ??
-      allBibleDocs.find((d) => d._id === activeId);
+      allBibleDocs.find((d) => d._id === activeId) ??
+      allServiceTimeDocs.find((d) => d._id === activeId);
     const previousDoc =
       previousSongDocs.find((d) => d._id === activeId) ??
       previousFreeFormDocs.find((d) => d._id === activeId) ??
       previousTimerDocs.find((d) => d._id === activeId) ??
-      previousBibleDocs.find((d) => d._id === activeId);
+      previousBibleDocs.find((d) => d._id === activeId) ??
+      previousServiceTimeDocs.find((d) => d._id === activeId);
 
     if (doc) {
       if (doc.docType !== "song-v2-root" && _.isEqual(doc, previousDoc)) {
@@ -1507,7 +1487,7 @@ listenerMiddleware.startListening({
       }
 
       if (doc.docType === "song-v2-root") {
-        if (!allDocsSlice.actions.updateAllSongDocs.match(action) || !db) return;
+        if (!db) return;
         try {
           const projection = doc;
           const database = db;
@@ -1582,10 +1562,12 @@ listenerMiddleware.startListening({
 });
 
 listenerMiddleware.startListening({
-  actionCreator: allDocsSlice.actions.updateAllTimerDocs,
-  effect: (action, listenerApi) => {
+  predicate: (_, current, previous) =>
+    (current as RootState).allDocs.allTimerDocs !== (previous as RootState).allDocs.allTimerDocs,
+  effect: (_, listenerApi) => {
+    const documents = (listenerApi.getState() as RootState).allDocs.allTimerDocs;
     const previousState = listenerApi.getOriginalState() as RootState;
-    const timersFromDocs = action.payload
+    const timersFromDocs = documents
       .map((doc) => {
         if (!doc.timerInfo) return undefined;
         return {
@@ -1598,7 +1580,7 @@ listenerMiddleware.startListening({
     const knownDocIds = Array.from(
       new Set([
         ...previousState.allDocs.allTimerDocs.map((doc) => doc._id),
-        ...action.payload.map((doc) => doc._id),
+        ...documents.map((doc) => doc._id),
       ]),
     );
 
@@ -1684,27 +1666,39 @@ listenerMiddleware.startListening({
       itemListSlice.actions.addToInitialItems,
       itemListSlice.actions.setIsInitialized,
     );
-    return (
+    const itemListChanged =
       (currentState as RootState).undoable.present.itemList !==
-        (previousState as RootState).undoable.present.itemList &&
+      (previousState as RootState).undoable.present.itemList;
+    const savingOutgoingOutline =
+      itemListsSlice.actions.selectItemList.match(action) &&
+      (currentState as RootState).undoable.present.itemLists.selectedList?._id !==
+        (previousState as RootState).undoable.present.itemLists.selectedList?._id &&
+      !!(previousState as RootState).undoable.present.itemList.hasPendingUpdate;
+    return (
+      (itemListChanged &&
       !excluded(action) &&
       !!(currentState as RootState).undoable.present.itemList
         .hasPendingUpdate &&
-      !isStoreResetAction(action)
+      !isStoreResetAction(action)) ||
+      savingOutgoingOutline
     );
   },
 
   effect: async (action, listenerApi) => {
     const dbAtStart = db;
+    const isSavingOutgoingOutline = itemListsSlice.actions.selectItemList.match(action);
 
-    if (!itemListsSlice.actions.selectItemList.match(action)) {
-      listenerApi.cancelActiveListeners();
+    listenerApi.cancelActiveListeners();
+    if (!isSavingOutgoingOutline) {
       await listenerApi.delay(1500);
     }
 
     // Always read post-debounce state so we never persist a closed-over
     // pre-delay snapshot after remote hydrate or a newer local edit.
-    const present = (listenerApi.getState() as RootState).undoable.present;
+    const present = (isSavingOutgoingOutline
+      ? (listenerApi.getOriginalState() as RootState)
+      : (listenerApi.getState() as RootState)
+    ).undoable.present;
     const { list, hasPendingUpdate, isInitialized } = present.itemList;
     const { selectedList } = present.itemLists;
 
@@ -1719,38 +1713,32 @@ listenerMiddleware.startListening({
     }
 
     try {
-      const db_itemList: DBItemListDetails = await dbAtStart.get(
+      const persisted = await persistServiceListItems(
+        dbAtStart,
         selectedList._id,
+        [...list],
       );
 
-      // A newer local edit or remote hydrate may have landed while awaiting get.
-      const latest = (listenerApi.getState() as RootState).undoable.present
-        .itemList;
-      if (db !== dbAtStart || !latest.hasPendingUpdate || latest.list !== list) {
-        return;
-      }
-
-      db_itemList.items = [...list];
-      db_itemList.updatedAt = new Date().toISOString();
-      const result = await dbAtStart.put(db_itemList);
-
-      // Only clear dirty after a successful write so failed puts can retry.
+      listenerApi.throwIfCancelled();
       if (db !== dbAtStart) return;
       const afterPutState = (listenerApi.getState() as RootState).undoable.present;
-      if (afterPutState.itemLists.selectedList?._id !== selectedList._id) return;
       const afterPut = afterPutState.itemList;
-      if (afterPut.list === list && afterPut.hasPendingUpdate) {
+      if (
+        afterPut.list === list &&
+        afterPut.hasPendingUpdate
+      ) {
         listenerApi.dispatch(itemListSlice.actions.setHasPendingUpdate(false));
       }
 
       safePostMessage({
         type: "update",
         data: {
-          docs: { ...db_itemList, _rev: result.rev },
+          docs: persisted,
           hostId: globalHostId,
         },
       });
     } catch (error) {
+      if (isListenerCancelledTaskError(error)) return;
       console.error("Failed to persist item list outline:", error);
     }
   },
@@ -1828,70 +1816,6 @@ listenerMiddleware.startListening({
   },
 });
 
-// handle allItems updates
-listenerMiddleware.startListening({
-  predicate: (action, currentState, previousState) => {
-    const state = (currentState as RootState).allItems;
-    // Don't save until initialization is complete
-    if (!state.isInitialized) return false;
-
-    const excluded = isAnyOf(
-      allItemsSlice.actions.initiateAllItemsList,
-      allItemsSlice.actions.updateAllItemsListFromRemote,
-      allItemsSlice.actions.setSongSearchValue,
-      allItemsSlice.actions.setFreeFormSearchValue,
-      allItemsSlice.actions.setTimerSearchValue,
-      allItemsSlice.actions.setIsInitialized,
-    );
-    return (
-      (currentState as RootState).allItems !==
-        (previousState as RootState).allItems &&
-      !excluded(action) &&
-      !isStoreResetAction(action)
-    );
-  },
-
-  effect: async (action, listenerApi) => {
-    const dbAtStart = db;
-    if (!dbAtStart) return;
-    listenerApi.dispatch(
-      autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(
-        AUTOSAVE_DEBOUNCE_KEYS.allItems,
-      ),
-    );
-    try {
-      listenerApi.cancelActiveListeners();
-      await listenerApi.delay(1500);
-
-      if (db !== dbAtStart) return;
-
-      // update ItemList
-      const { list } = (listenerApi.getState() as RootState).allItems;
-
-      const db_allItems: DBAllItems = await dbAtStart.get("allItems");
-      db_allItems.items = [...list];
-      db_allItems.updatedAt = new Date().toISOString();
-      await dbAtStart.put(db_allItems);
-
-      // Local machine updates
-      if (db !== dbAtStart) return;
-      safePostMessage({
-        type: "update",
-        data: {
-          docs: db_allItems,
-          hostId: globalHostId,
-        },
-      });
-    } finally {
-      listenerApi.dispatch(
-        autosaveIndicatorSlice.actions.endKeyedDebouncedSave(
-          AUTOSAVE_DEBOUNCE_KEYS.allItems,
-        ),
-      );
-    }
-  },
-});
-
 // handle updating overlay
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
@@ -1900,6 +1824,8 @@ listenerMiddleware.startListening({
       overlaySlice.actions.setIsOverlayLoading,
       overlaySlice.actions.markOverlayPersisted,
       overlaySlice.actions.bufferRemoteOverlayUpdate,
+      overlaySlice.actions.markOverlayDraftPending,
+      overlaySlice.actions.clearOverlayDraftPending,
     );
     return (
       (currentState as RootState).undoable.present.overlay !==
@@ -1988,6 +1914,7 @@ listenerMiddleware.startListening({
     const excluded = isAnyOf(
       overlaysSlice.actions.initiateOverlayList,
       overlaysSlice.actions.updateOverlayListFromRemote,
+      overlaysSlice.actions.updateOverlaysByIdFromRemote,
       overlaysSlice.actions.setHasPendingUpdate,
       overlaysSlice.actions.updateInitialList,
       overlaysSlice.actions.addToInitialList,
@@ -1996,51 +1923,71 @@ listenerMiddleware.startListening({
       overlaysSlice.actions.updateOverlayHistoryEntry,
       overlaysSlice.actions.mergeOverlayIntoHistory,
     );
-    return (
+    const overlaysChanged =
       (currentState as RootState).undoable.present.overlays !==
-        (previousState as RootState).undoable.present.overlays &&
+      (previousState as RootState).undoable.present.overlays;
+    const savingOutgoingOutline =
+      itemListsSlice.actions.selectItemList.match(action) &&
+      (currentState as RootState).undoable.present.itemLists.selectedList?._id !==
+        (previousState as RootState).undoable.present.itemLists.selectedList?._id &&
+      !!(previousState as RootState).undoable.present.overlays.hasPendingUpdate;
+    return (
+      ((overlaysChanged &&
       !excluded(action) &&
       !!(currentState as RootState).undoable.present.overlays
         .hasPendingUpdate &&
-      !isStoreResetAction(action)
+      !isStoreResetAction(action)) || savingOutgoingOutline)
     );
   },
 
   effect: async (action, listenerApi) => {
     const dbAtStart = db;
     if (!dbAtStart) return;
-    let state = listenerApi.getState() as RootState;
-    if (itemListsSlice.actions.selectItemList.match(action)) {
-      state = listenerApi.getOriginalState() as RootState;
-    } else {
-      listenerApi.cancelActiveListeners();
+    const isSavingOutgoingOutline = itemListsSlice.actions.selectItemList.match(action);
+    listenerApi.cancelActiveListeners();
+    if (!isSavingOutgoingOutline) {
       await listenerApi.delay(1500);
-      if (db !== dbAtStart) return;
     }
 
     if (db !== dbAtStart) return;
-    listenerApi.dispatch(overlaysSlice.actions.setHasPendingUpdate(false));
-
-    // update ItemList
+    const state = isSavingOutgoingOutline
+      ? (listenerApi.getOriginalState() as RootState)
+      : (listenerApi.getState() as RootState);
+    if (
+      !isSavingOutgoingOutline &&
+      !state.undoable.present.overlays.hasPendingUpdate
+    ) {
+      return;
+    }
     const { list } = state.undoable.present.overlays;
     const { selectedList } = state.undoable.present.itemLists;
 
     if (!selectedList) return;
-    const db_itemList: DBItemListDetails = await dbAtStart.get(selectedList._id);
+    const listId = selectedList._id;
+    try {
+      const persisted = await persistServiceListOverlays(
+        dbAtStart,
+        listId,
+        list.map((overlay) => overlay.id),
+      );
 
-    db_itemList.overlays = list.map((overlay) => overlay.id);
-    db_itemList.updatedAt = new Date().toISOString();
-    await dbAtStart.put(db_itemList);
-
-    // Local machine updates
-    if (db !== dbAtStart) return;
-    safePostMessage({
-      type: "update",
-      data: {
-        docs: db_itemList,
-        hostId: globalHostId,
-      },
-    });
+      listenerApi.throwIfCancelled();
+      if (db !== dbAtStart) return;
+      const latest = (listenerApi.getState() as RootState).undoable.present;
+      if (
+        latest.overlays.list === list &&
+        latest.overlays.hasPendingUpdate
+      ) {
+        listenerApi.dispatch(overlaysSlice.actions.setHasPendingUpdate(false));
+      }
+      safePostMessage({
+        type: "update",
+        data: { docs: persisted, hostId: globalHostId },
+      });
+    } catch (error) {
+      if (isListenerCancelledTaskError(error)) return;
+      console.error("Failed to persist overlay order:", error);
+    }
   },
 });
 
@@ -2757,7 +2704,6 @@ listenerMiddleware.startListening({
       preferencesSlice.actions.setMediaItems,
       preferencesSlice.actions.setShouldShowItemEditor,
       preferencesSlice.actions.setIsMediaExpanded,
-      preferencesSlice.actions.setShouldShowStreamFormat,
       preferencesSlice.actions.setToolbarSection,
       preferencesSlice.actions.setLastControllerConfigurationRoute,
       preferencesSlice.actions.setOverlayControllerPanel,
@@ -4000,7 +3946,7 @@ export const areControllerSlicesReady = (
   options: { includeOverlayState?: boolean } = {},
 ) => {
   const sharedSlicesReady =
-    state.allItems.isInitialized &&
+    state.allDocs.isInitialized &&
     state.undoable.present.preferences.isInitialized &&
     state.undoable.present.itemList.isInitialized &&
     state.undoable.present.itemLists.isInitialized &&
@@ -4071,7 +4017,7 @@ const combinedReducers = combineReducers({
   undoable: undoableReducers,
   presentation: presentationSlice.reducer,
   bible: bibleSlice.reducer,
-  allItems: allItemsSlice.reducer,
+  itemLibraryUi: itemLibraryUiSlice.reducer,
   createItem: createItemSlice.reducer,
   allDocs: allDocsSlice.reducer,
   timers: timersSlice.reducer,
@@ -4095,6 +4041,8 @@ const rootReducer: Reducer = (state: RootState, action: Action) => {
     state = {
       controllerProfiles: state?.controllerProfiles,
       displayOutputs: state?.displayOutputs,
+      allDocs: state?.allDocs,
+      itemLibraryUi: state?.itemLibraryUi,
     } as RootState;
   }
   return combinedReducers(state, action);
@@ -4201,7 +4149,6 @@ const store = configureStore({
       serializableCheck: false,
     }).prepend(
       itemOwnerTransitionMiddleware,
-      songLibraryIndexRepairMiddleware.middleware,
       listenerMiddleware.middleware,
     ),
 });
@@ -4217,22 +4164,10 @@ const refreshServicePlanningPreviewSongMatches = (listenerApi: {
   listenerApi.dispatch(refreshPreviewSongMatches(selectSongLibrary(state).songs));
 };
 
-// Keep an existing preview aligned with the canonical song library as either
-// the lightweight index or durable song documents become available.
+// Keep previews aligned only when durable song documents change.
 listenerMiddleware.startListening({
-  actionCreator: allItemsSlice.actions.addItemToAllItemsList,
-  effect: (action, listenerApi) => {
-    if (action.payload.type !== "song") return;
-    refreshServicePlanningPreviewSongMatches(listenerApi);
-  },
-});
-
-listenerMiddleware.startListening({
-  matcher: isAnyOf(
-    allDocsSlice.actions.updateAllSongDocs,
-    allDocsSlice.actions.upsertItemInAllDocs,
-    allDocsSlice.actions.upsertItemsInAllDocs,
-  ),
+  predicate: (_, current, previous) =>
+    (current as RootState).allDocs.allSongDocs !== (previous as RootState).allDocs.allSongDocs,
   effect: (_, listenerApi) => {
     refreshServicePlanningPreviewSongMatches(listenerApi);
   },

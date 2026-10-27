@@ -1,474 +1,193 @@
-import { configureStore } from "@reduxjs/toolkit";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { act } from "react";
+import ControllerItemInitialization from "./ControllerItemInitialization";
+import { setActiveContentDatabase } from "../../store/deferredItemMutations";
+import { configureStore, combineReducers } from "@reduxjs/toolkit";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { Provider } from "react-redux";
-import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import Item from "./Item";
+import allDocs, { hydrateItemCache } from "../../store/allDocsSlice";
 import { itemSlice } from "../../store/itemSlice";
-import { ControllerInfoContext } from "../../context/controllerInfo";
-import { GlobalInfoContext } from "../../context/globalInfo";
-import {
-  createMockControllerContext,
-  createMockGlobalContext,
-  createMockPouchDB,
-} from "../../test/mocks";
+import { itemListSlice } from "../../store/itemListSlice";
+import { selectControllerItem } from "../../store/controllerItemSelection";
+import type { AppDispatch, RootState } from "../../store/store";
 import type { DBItem } from "../../types";
-import * as songPersistence from "../../utils/songPersistence";
-import { SongV2ReplicationConflictError } from "../../utils/songV2ReplicationConflicts";
-import * as songV2ReplicationConflicts from "../../utils/songV2ReplicationConflicts";
+import { ControllerInfoContext } from "../../context/controllerInfo";
+import { createMockControllerContext, createMockPouchDB } from "../../test/mocks";
+import { SERVICE_TIME_COUNTDOWN_ID } from "../../constants/nextServiceTimer";
+import { buildServiceTimeItem } from "../../utils/itemUtil";
 
-jest.mock("../../containers/ItemEditor/SlideEditor", () => () => (
-  <div data-testid="slide-editor" />
-));
+jest.mock("../../containers/ItemEditor/SlideEditor", () => () => <div data-testid="slide-editor" />);
+jest.mock("../../containers/ItemSlides/ItemSlides", () => () => <div data-testid="item-slides" />);
 
-jest.mock("../../containers/ItemSlides/ItemSlides", () => () => (
-  <div data-testid="item-slides" />
-));
-
-const itemRoute = (itemId: string, listId: string) =>
-  `/controller/item/${window.btoa(encodeURI(itemId))}/${window.btoa(
-    encodeURI(listId),
-  )}`;
-
-const RouteDriver = () => {
-  const navigate = useNavigate();
-  return (
-    <button type="button" onClick={() => navigate(itemRoute("item-c", "list-c"))}>
-      Go to C
-    </button>
-  );
+const doc = (id: string, overrides: Partial<DBItem> = {}): DBItem => ({
+  ...itemSlice.getInitialState(), _id: id, name: id, type: "free", ...overrides,
+});
+const row = (_id: string, listId = _id) => ({ _id, listId, name: _id, type: "free" });
+const present = combineReducers({ item: itemSlice.reducer, itemList: itemListSlice.reducer });
+const makeStore = () => {
+  const reducer = combineReducers({
+    allDocs,
+    undoable: (state: { present: ReturnType<typeof present> } | undefined, action: Parameters<typeof present>[1]) => ({ present: present(state?.present, action) }),
+  });
+  return configureStore({ reducer: (state: ReturnType<typeof reducer> | undefined, action: Parameters<typeof reducer>[1]) => reducer(action.type === "RESET" ? undefined : state, action) });
+};
+const Workspace = () => <><ControllerItemInitialization /><Item /></>;
+const Location = () => <span data-testid="location">{useLocation().pathname}</span>;
+const setup = (path = "/controller") => {
+  const store = makeStore();
+  const db = createMockPouchDB({
+    allDocs: jest.fn().mockResolvedValue({ rows: [], update_seq: 1 }),
+    changes: jest.fn().mockResolvedValue({ results: [] }),
+    put: jest.fn().mockResolvedValue({ ok: true }),
+  });
+  const select = (id: string, listId = id, slide?: number) => (store.dispatch as AppDispatch)(selectControllerItem(row(id, listId), db, slide));
+  const mount = () => render(<Provider store={store}>
+    <ControllerInfoContext.Provider value={createMockControllerContext({ db })}>
+      <MemoryRouter initialEntries={[path]}><Location /><Routes><Route path={path} element={<Workspace />} /></Routes></MemoryRouter>
+    </ControllerInfoContext.Provider>
+  </Provider>);
+  return { store, db, select, mount };
 };
 
-const createTestStore = () => {
-  const initialUndoableState = {
-    past: [],
-    present: {
-      item: itemSlice.getInitialState(),
-    },
-    future: [],
-  };
-
-  const undoableReducer = (state = initialUndoableState, action: any) => ({
-    ...state,
-    present: {
-      ...state.present,
-      item: itemSlice.reducer(state.present.item, action),
-    },
-  });
-
-  return configureStore({
-    reducer: {
-      undoable: undoableReducer,
-    },
-    preloadedState: {
-      undoable: initialUndoableState,
-    },
-  });
-};
-
-describe("Controller Item page", () => {
-  it("opens a read-only song and lets a third editor review and explicitly choose a saved version", async () => {
-    const rawSong = {
-      _id: "better",
-      type: "song",
-      name: "Better",
-      selectedArrangement: 0,
-      slides: [],
-      arrangements: [{
-        id: "arr-1",
-        name: "Master",
-        songOrder: [],
-        formattedLyrics: [{ id: "lyrics-1", name: "Verse 1", type: "Verse", words: "winning lyrics", slideSpan: 1 }],
-        slides: [{
-          id: "slide-1",
-          type: "Verse",
-          name: "Verse 1",
-          boxes: [
-            { id: "box-0", words: "", width: 1920, height: 1080 },
-            { id: "box-1", words: "winning lyrics", width: 1920, height: 1080 },
-          ],
-        }],
-      }],
-    } as unknown as DBItem;
-    const documents = songPersistence.serializeSongToV2Documents(rawSong);
-    const winningArrangement = { ...documents.arrangements[0], _rev: "2-winning" };
-    const competingArrangement = {
-      ...winningArrangement,
-      _rev: "2-competing",
-      formattedLyrics: winningArrangement.formattedLyrics.map(lyric => ({ ...lyric, words: "competing lyrics" })),
-    };
-    const winningRoot = { ...documents.root, _rev: "1-root" };
-    const winningSlide = { ...documents.slides[0], _rev: "2-slide" };
-    const winningSong = songPersistence.hydrateSongFromV2Documents(
-      winningRoot, [winningArrangement], [winningSlide], true,
-    );
-    const competingSong = {
-      ...winningSong,
-      arrangements: winningSong.arrangements.map(arrangement => ({
-        ...arrangement,
-        formattedLyrics: arrangement.formattedLyrics.map(lyric => ({ ...lyric, words: "competing lyrics" })),
-        slides: arrangement.slides.map(slide => ({
-          ...slide,
-          boxes: slide.boxes.map(box => box.id === "box-1" ? { ...box, words: "competing lyrics" } : box),
-        })),
-      })),
-    };
-    const conflict = {
-      documentId: winningArrangement._id,
-      winningRevision: winningArrangement._rev,
-      revisions: [competingArrangement._rev],
-    };
-    const snapshot: songPersistence.SongV2Snapshot = {
-      root: winningRoot,
-      arrangements: [winningArrangement],
-      slides: [winningSlide],
-      hydrated: winningSong,
-      conflicts: [conflict],
-    };
-    const versions = [{
-      conflict,
-      options: [
-        { revision: winningArrangement._rev, document: winningArrangement },
-        { revision: competingArrangement._rev, document: competingArrangement },
-      ],
-    }];
-    const optionsSpy = jest.spyOn(songV2ReplicationConflicts, "loadSongV2ConflictRevisionOptions")
-      .mockResolvedValue(versions);
-    const buildSpy = jest.spyOn(songV2ReplicationConflicts, "buildSongV2RevisionSelection")
-      .mockImplementation(async (_db, _snapshot, _options, selected) => ({
-        song: selected[winningArrangement._id] === competingArrangement._rev ? competingSong : winningSong,
-        sourceRevisions: { [winningArrangement._id]: selected[winningArrangement._id] },
-      }));
-    const resolveSpy = jest.spyOn(songV2ReplicationConflicts, "resolveSongV2ConflictReview")
-      .mockResolvedValue({ song: competingSong, conflictsRetired: true });
-    const load = jest.spyOn(songPersistence, "loadItemWithSongHydration")
-      .mockRejectedValueOnce(new SongV2ReplicationConflictError(snapshot));
-    const db = createMockPouchDB();
-    const store = createTestStore();
-    render(
-      <Provider store={store}>
-        <ControllerInfoContext.Provider value={createMockControllerContext({ db }) as any}>
-          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
-            <MemoryRouter initialEntries={[itemRoute("better", "list")] }>
-              <Routes><Route path="/controller/item/:itemId/:listId" element={<Item />} /></Routes>
-            </MemoryRouter>
-          </GlobalInfoContext.Provider>
-        </ControllerInfoContext.Provider>
-      </Provider>,
-    );
-    expect(await screen.findByText(/editing is paused until you review and save a resolution/i)).toBeInTheDocument();
-    expect(screen.getByTestId("slide-editor")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Review saved versions" }));
-    expect((await screen.findAllByText(/winning lyrics/)).length).toBeGreaterThan(0);
-    expect(screen.getByText(/competing lyrics/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("radio", { name: /revision 2-competing/ }));
-    await waitFor(() => expect(screen.queryByText("Loading selected version…")).not.toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: "Save resolution" }));
-    await waitFor(() => expect(resolveSpy).toHaveBeenCalledWith(
-      db, snapshot, competingSong, [conflict], { [winningArrangement._id]: competingArrangement._rev },
-    ));
-    await waitFor(() => expect(screen.queryByText(/editing is paused/i)).not.toBeInTheDocument());
-    expect(screen.getByTestId("slide-editor")).toBeInTheDocument();
-    expect(db.put).not.toHaveBeenCalled();
-    expect(store.getState().undoable.present.item.isLoading).toBe(false);
-    expect(optionsSpy).toHaveBeenCalledTimes(1);
-    expect(buildSpy).toHaveBeenCalledTimes(2);
-    load.mockRestore();
-  });
-  it("clears loading when fetching the item fails", async () => {
-    const dbGet = jest.fn().mockRejectedValue(new Error("load failed"));
-    const controllerContext = createMockControllerContext({
-      db: createMockPouchDB({ get: dbGet }),
-    });
-    const globalContext = createMockGlobalContext();
-    const store = createTestStore();
-    const consoleErrorSpy = jest
-      .spyOn(console, "error")
-      .mockImplementation(() => { });
-
-    const itemId = window.btoa(encodeURI("item-123"));
-    const listId = window.btoa(encodeURI("list-456"));
-
-    render(
-      <Provider store={store}>
-        <ControllerInfoContext.Provider value={controllerContext as any}>
-          <GlobalInfoContext.Provider value={globalContext as any}>
-            <MemoryRouter initialEntries={[`/controller/item/${itemId}/${listId}`]}>
-              <Routes>
-                <Route
-                  path="/controller/item/:itemId/:listId"
-                  element={<Item />}
-                />
-              </Routes>
-            </MemoryRouter>
-          </GlobalInfoContext.Provider>
-        </ControllerInfoContext.Provider>
-      </Provider>,
-    );
-
-    expect(await screen.findByText("Item Not Found")).toBeInTheDocument();
-
-    expect(dbGet).toHaveBeenCalledWith("item-123");
-    expect(store.getState().undoable.present.item.isLoading).toBe(false);
-
-    consoleErrorSpy.mockRestore();
-  });
-
-  it("hydrates exact song reads into arrangement slides", async () => {
-    const legacySong = {
-      _id: "song-123",
-      name: "Recovered Song",
-      type: "song",
-      selectedArrangement: 1,
-      slides: [{
-        id: "legacy-slide",
-        type: "Verse",
-        name: "Verse 1",
-        boxes: [],
-        monitorCurrentBandBoxes: [{ id: "current", fontSize: 30 }],
-        monitorNextBandBoxes: [{ id: "next", fontSize: 28 }],
-      }],
+describe("Redux presentation workspace", () => {
+  it.each(["/controller", "/aux-controller/lobby"])("activates cached items synchronously without reads, loading or remount at %s", async (path) => {
+    const { store, db, select, mount } = setup(path);
+    store.dispatch(hydrateItemCache([doc("A"), doc("B", { type: "song", selectedArrangement: 1,
+      slides: [{ id: "chosen-slide", type: "Verse", name: "Chosen", boxes: [] }],
       arrangements: [
-        {
-          id: "populated",
-          name: "Other",
-          formattedLyrics: [],
-          songOrder: [],
-          slides: [{ id: "other-slide", type: "Verse", name: "Verse", boxes: [] }],
-        },
-        {
-          id: "selected",
-          name: "Selected",
-          formattedLyrics: [],
-          songOrder: [],
-          slides: [],
-        },
+        { id: "first", name: "First", slides: [], formattedLyrics: [], songOrder: [] },
+        { id: "chosen", name: "Chosen", slides: [{ id: "chosen-slide", type: "Verse", name: "Chosen", boxes: [] }], formattedLyrics: [], songOrder: [] },
       ],
-    } as unknown as DBItem;
-    const dbGet = jest.fn(async (id: string) => {
-      if (id !== legacySong._id) throw Object.assign(new Error("Not found"), { status: 404 });
-      return legacySong;
-    });
-    const store = createTestStore();
-    const controllerContext = createMockControllerContext({
-      db: createMockPouchDB({ get: dbGet }),
-    });
-    const itemId = window.btoa(encodeURI("song-123"));
-    const listId = window.btoa(encodeURI("list-1"));
-
-    render(
-      <Provider store={store}>
-        <ControllerInfoContext.Provider value={controllerContext as any}>
-          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
-            <MemoryRouter initialEntries={[`/controller/item/${itemId}/${listId}`]}>
-              <Routes>
-                <Route path="/controller/item/:itemId/:listId" element={<Item />} />
-              </Routes>
-            </MemoryRouter>
-          </GlobalInfoContext.Provider>
-        </ControllerInfoContext.Provider>
-      </Provider>,
-    );
-
-    await screen.findByTestId("slide-editor");
-    const loaded = store.getState().undoable.present.item;
-    expect(dbGet).toHaveBeenCalledWith("song-123");
-    expect(loaded.slides).toEqual([]);
-    expect(loaded.arrangements[0].slides[0].id).toBe("other-slide");
-    expect(loaded.arrangements[1].slides[0].id).toBe("legacy-slide");
-    expect(loaded.arrangements[1].slides[0]).not.toHaveProperty("monitorCurrentBandBoxes");
-    expect(loaded.arrangements[1].monitorLayout).toEqual({
-      currentFontSizePx: 30,
-      nextFontSizePx: 28,
-    });
+    })]));
+    await select("A");
+    mount();
+    const editor = screen.getByTestId("slide-editor");
+    const grid = screen.getByTestId("item-slides");
+    const loading: boolean[] = [];
+    store.subscribe(() => loading.push(Boolean(store.getState().undoable.present.item.isLoading)));
+    act(() => { void select("B", "B-second"); });
+    expect(store.getState().undoable.present.item).toMatchObject({ _id: "B", listId: "B-second", selectedArrangement: 1, slides: [expect.objectContaining({ id: "chosen-slide" })] });
+    act(() => { void select("A", "A-second"); });
+    expect(store.getState().undoable.present.item).toMatchObject({ _id: "A", listId: "A-second" });
+    expect(screen.getByTestId("slide-editor")).toBe(editor);
+    expect(screen.getByTestId("item-slides")).toBe(grid);
+    expect(screen.getByTestId("location")).toHaveTextContent(path);
+    expect(db.allDocs).not.toHaveBeenCalled();
+    expect(db.changes).not.toHaveBeenCalled();
+    expect(db.get).not.toHaveBeenCalled();
+    expect(loading).not.toContain(true);
   });
 
-  it("backfills formatted sections for free items missing them", async () => {
-    const dbGet = jest.fn().mockResolvedValue({
-      _id: "item-123",
-      name: "Free item",
-      type: "free",
-      slides: [
-        {
-          name: "Section 1",
-          boxes: [
-            { words: "ignored" },
-            { words: "Line one" },
-          ],
-        },
-        {
-          name: "Section 1",
-          boxes: [
-            { words: "ignored" },
-            { words: "Line two" },
-          ],
-        },
-      ],
-      formattedSections: [],
-    } as unknown as DBItem);
-    const controllerContext = createMockControllerContext({
-      db: createMockPouchDB({ get: dbGet }),
-    });
-    const globalContext = createMockGlobalContext();
-    const store = createTestStore();
-    const itemId = window.btoa(encodeURI("item-123"));
-    const listId = window.btoa(encodeURI("list-456"));
-
-    render(
-      <Provider store={store}>
-        <ControllerInfoContext.Provider value={controllerContext as any}>
-          <GlobalInfoContext.Provider value={globalContext as any}>
-            <MemoryRouter initialEntries={[`/controller/item/${itemId}/${listId}`]}>
-              <Routes>
-                <Route
-                  path="/controller/item/:itemId/:listId"
-                  element={<Item />}
-                />
-              </Routes>
-            </MemoryRouter>
-          </GlobalInfoContext.Provider>
-        </ControllerInfoContext.Provider>
-      </Provider>,
-    );
-
-    await waitFor(() => {
-      expect(store.getState().undoable.present.item.isLoading).toBe(false);
-    });
-
-    const { formattedSections } = store.getState().undoable.present.item;
-    expect(formattedSections).toHaveLength(1);
-    expect(formattedSections?.[0]).toEqual(
-      expect.objectContaining({
-        sectionNum: 1,
-        words: "Line one\nLine two",
-        slideSpan: 2,
-      }),
-    );
+  it("preserves draft/conflict state when reselecting and switching occurrences of the same document", async () => {
+    const { store, select } = setup();
+    store.dispatch(hydrateItemCache([doc("A")]));
+    await select("A", "first");
+    store.dispatch(itemSlice.actions._setName("Unsaved"));
+    store.dispatch(itemSlice.actions.bufferRemoteItemUpdate(doc("A", { name: "Remote" })));
+    const before = store.getState().undoable.present.item;
+    await select("A", "first");
+    expect(store.getState().undoable.present.item).toEqual(before);
+    await select("A", "second");
+    expect(store.getState().undoable.present.item).toMatchObject({ listId: "second", name: "Unsaved", hasPendingUpdate: true, hasRemoteUpdate: true });
   });
 
-  it("skips re-fetch when Redux already has the route item loaded", async () => {
-    const dbGet = jest.fn().mockResolvedValue({
-      _id: "item-123",
-      name: "Should not load",
-      type: "song",
-      slides: [],
-      arrangements: [],
-      selectedArrangement: 0,
-    } as unknown as DBItem);
-    const controllerContext = createMockControllerContext({
-      db: createMockPouchDB({ get: dbGet }),
-    });
-    const globalContext = createMockGlobalContext();
-    const store = createTestStore();
-    store.dispatch(
-      itemSlice.actions.setActiveItem({
-        _id: "item-123",
-        listId: "list-456",
-        name: "Already loaded",
-        type: "song",
-        slides: [],
-        arrangements: [],
-        selectedArrangement: 0,
-      } as any),
-    );
-
-    const itemId = window.btoa(encodeURI("item-123"));
-    const listId = window.btoa(encodeURI("list-456"));
-
-    render(
-      <Provider store={store}>
-        <ControllerInfoContext.Provider value={controllerContext as any}>
-          <GlobalInfoContext.Provider value={globalContext as any}>
-            <MemoryRouter initialEntries={[`/controller/item/${itemId}/${listId}`]}>
-              <Routes>
-                <Route
-                  path="/controller/item/:itemId/:listId"
-                  element={<Item />}
-                />
-              </Routes>
-            </MemoryRouter>
-          </GlobalInfoContext.Provider>
-        </ControllerInfoContext.Provider>
-      </Provider>,
-    );
-
-    expect(await screen.findByTestId("item-slides")).toBeInTheDocument();
-    expect(dbGet).not.toHaveBeenCalled();
-    expect(store.getState().undoable.present.item.isLoading).toBe(false);
-    expect(store.getState().undoable.present.item.name).toBe("Already loaded");
+  it("waits for initialized outline and cache and restores only the established occurrence", async () => {
+    const { store, mount } = setup();
+    store.dispatch(itemListSlice.actions.setActiveItemInList("established"));
+    mount();
+    expect(screen.getByText("No Item Selected")).toBeInTheDocument();
+    act(() => { store.dispatch(itemListSlice.actions.initiateItemList([row("other")])); });
+    act(() => { store.dispatch(hydrateItemCache([doc("A"), doc("other")])); });
+    expect(screen.getByText("No Item Selected")).toBeInTheDocument();
+    act(() => { store.dispatch(itemListSlice.actions.updateItemListFromRemote([row("other"), row("A", "established")])); });
+    await waitFor(() => expect(store.getState().undoable.present.item).toMatchObject({ _id: "A", listId: "established" }));
+    act(() => { store.dispatch({ type: "RESET" }); });
+    expect(screen.getByText("No Item Selected")).toBeInTheDocument();
   });
 
-  it("does not commit an older item load after navigation moves to a newer item", async () => {
-    let resolveB: ((item: DBItem) => void) | undefined;
-    let resolveC: ((item: DBItem) => void) | undefined;
-    const pendingB = new Promise<DBItem>((resolve) => { resolveB = resolve; });
-    const pendingC = new Promise<DBItem>((resolve) => { resolveC = resolve; });
-    const dbGet = jest.fn((id: string) => {
-      if (id === "item-b") return pendingB;
-      if (id === "item-c") return pendingC;
-      return Promise.reject(Object.assign(new Error(`unexpected item ${id}`), { status: 404 }));
-    });
-    const controllerContext = createMockControllerContext({
-      db: createMockPouchDB({ get: dbGet }),
-    });
-    const globalContext = createMockGlobalContext();
-    const store = createTestStore();
-    const itemB = {
-      _id: "item-b",
-      name: "Item B",
-      type: "song",
-      slides: [],
-      arrangements: [],
-      selectedArrangement: 0,
-    } as unknown as DBItem;
-    const itemC = {
-      _id: "item-c",
-      name: "Item C",
-      type: "song",
-      slides: [],
-      arrangements: [],
-      selectedArrangement: 0,
-    } as unknown as DBItem;
-
-    render(
-      <Provider store={store}>
-        <ControllerInfoContext.Provider value={controllerContext as any}>
-          <GlobalInfoContext.Provider value={globalContext as any}>
-            <MemoryRouter initialEntries={[itemRoute("item-b", "list-b")]}>
-              <Routes>
-                <Route
-                  path="/controller/item/:itemId/:listId"
-                  element={
-                    <>
-                      <RouteDriver />
-                      <Item />
-                    </>
-                  }
-                />
-              </Routes>
-            </MemoryRouter>
-          </GlobalInfoContext.Provider>
-        </ControllerInfoContext.Provider>
-      </Provider>,
-    );
-
-    await waitFor(() => expect(dbGet).toHaveBeenCalledWith("item-b"));
-    fireEvent.click(screen.getByRole("button", { name: "Go to C" }));
-    await waitFor(() => expect(dbGet).toHaveBeenCalledWith("item-c"));
-
-    await act(async () => {
-      resolveB?.(itemB);
-      await Promise.resolve();
-    });
-    expect(store.getState().undoable.present.item._id).not.toBe("item-b");
-
-    await act(async () => {
-      resolveC?.(itemC);
-      await Promise.resolve();
-    });
-    await waitFor(() =>
-      expect(store.getState().undoable.present.item._id).toBe("item-c"),
-    );
-    expect(store.getState().undoable.present.item.listId).toBe("list-c");
+  it("discards a delayed miss after a cached selection and after a church reset", async () => {
+    const { store, db, select } = setup();
+    let resolve!: (value: unknown) => void;
+    (db.allDocs as jest.Mock).mockReturnValue(new Promise((done) => { resolve = done; }));
+    store.dispatch(hydrateItemCache([doc("B")]));
+    const missing = select("A");
+    await select("B");
+    resolve({ rows: [{ doc: doc("A") }], update_seq: 1 });
+    await missing;
+    expect(store.getState().undoable.present.item._id).toBe("B");
+    const oldSession = select("A");
+    store.dispatch({ type: "RESET" });
+    store.dispatch(hydrateItemCache([doc("A", { name: "New church" })]));
+    await select("A");
+    resolve({ rows: [{ doc: doc("A", { name: "Old church" }) }], update_seq: 1 });
+    await oldSession;
+    expect(store.getState().undoable.present.item.name).toBe("New church");
   });
+
+  it("uses the newest cache data arriving during a miss and prepares free sections", async () => {
+    const { store, db, select } = setup();
+    let resolve!: (value: unknown) => void;
+    (db.allDocs as jest.Mock).mockReturnValue(new Promise((done) => { resolve = done; }));
+    const pending = select("A");
+    store.dispatch(hydrateItemCache([doc("A", { name: "Newest" })]));
+    resolve({ rows: [{ doc: doc("A", { name: "Stale" }) }], update_seq: 1 });
+    await pending;
+    expect(store.getState().undoable.present.item.name).toBe("Newest");
+    expect(store.getState().undoable.present.item.formattedSections).toEqual([]);
+  });
+
+  it("selects cached timer and service-time documents without reads", async () => {
+    const { store, db, select } = setup();
+    store.dispatch(hydrateItemCache([doc("timer", { type: "timer" }), buildServiceTimeItem() as DBItem]));
+    await select("timer");
+    await select(SERVICE_TIME_COUNTDOWN_ID);
+    expect(store.getState().undoable.present.item.type).toBe("service-time");
+    expect(db.allDocs).not.toHaveBeenCalled();
+  });
+
+  it("creates the service-time item on first access and caches it", async () => {
+    const { store, db, select } = setup();
+    await select(SERVICE_TIME_COUNTDOWN_ID);
+    expect(store.getState().undoable.present.item.type).toBe("service-time");
+    expect(db.put).toHaveBeenCalled();
+    expect((store.getState() as RootState).allDocs.allServiceTimeDocs).toHaveLength(1);
+  });
+  it("shows Item Not Found on a miss and recovers through a cached selection", async () => {
+    const { store, select, mount } = setup();
+    store.dispatch(hydrateItemCache([doc("B")]));
+    await select("B");
+    mount();
+    await act(async () => { await select("missing"); });
+    expect(screen.getByText("Item Not Found")).toBeInTheDocument();
+    act(() => { void select("B"); });
+    expect(screen.getByTestId("item-slides")).toBeInTheDocument();
+  });
+
+  it("independent controller stores can select and edit separate items", async () => {
+    const main = setup();
+    const aux = setup("/aux-controller/lobby");
+    main.store.dispatch(hydrateItemCache([doc("A"), doc("B")]));
+    aux.store.dispatch(hydrateItemCache([doc("A"), doc("B")]));
+    await main.select("A");
+    await aux.select("B");
+    main.store.dispatch(itemSlice.actions._setName("Main draft"));
+    aux.store.dispatch(itemSlice.actions._setName("Aux draft"));
+    expect(main.store.getState().undoable.present.item).toMatchObject({ _id: "A", name: "Main draft" });
+    expect(aux.store.getState().undoable.present.item).toMatchObject({ _id: "B", name: "Aux draft" });
+  });
+
+  it("rejects an old database response even when cache session and occurrence IDs have not reset yet", async () => {
+    const { store, db, select } = setup();
+    let resolve!: (value: unknown) => void;
+    (db.allDocs as jest.Mock).mockReturnValue(new Promise((done) => { resolve = done; }));
+    const oldOwner = { scopeId: "old-db", databaseKey: "old", churchId: "old-church" };
+    setActiveContentDatabase(oldOwner, db);
+    const pending = select("A");
+    setActiveContentDatabase({ scopeId: "new-db", databaseKey: "new", churchId: "new-church" });
+    resolve({ rows: [{ doc: doc("A", { name: "Old database" }) }], update_seq: 1 });
+    await pending;
+    expect(store.getState().undoable.present.item.type).toBe("");
+    setActiveContentDatabase(null);
+  });
+
 });

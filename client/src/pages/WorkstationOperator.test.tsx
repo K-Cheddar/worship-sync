@@ -78,6 +78,29 @@ describe("WorkstationOperator", () => {
     jest.restoreAllMocks();
   });
 
+  it("uses the shared screen while the workstation session is loading", () => {
+    render(
+      <GlobalInfoContext.Provider
+        value={
+          createMockGlobalContext({
+            bootstrapStatus: "loading",
+            loginState: "loading",
+          }) as any
+        }
+      >
+        <MemoryRouter initialEntries={["/workstation/operator"]}>
+          <Routes>
+            <Route path="/workstation/operator" element={<WorkstationOperator />} />
+          </Routes>
+        </MemoryRouter>
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(screen.getByText("Getting WorshipSync ready")).toBeInTheDocument();
+    expect(screen.getByText("Preparing your workspace…")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /operator name/i })).not.toBeInTheDocument();
+  });
+
   it("auto focuses the operator name input for shared workstation login", () => {
     render(
       <GlobalInfoContext.Provider

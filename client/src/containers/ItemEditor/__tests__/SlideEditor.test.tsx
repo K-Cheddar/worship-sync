@@ -114,8 +114,8 @@ jest.mock("../../../store/store", () => ({
 }));
 
 jest.mock("../../../store/allDocsSlice", () => ({
-  upsertItemInAllDocs: jest.fn((payload: unknown) => ({
-    type: "allDocs/upsertItemInAllDocs",
+  applyItemDocumentChange: jest.fn((payload: unknown) => ({
+    type: "allDocs/applyItemDocumentChange",
     payload,
   })),
 }));

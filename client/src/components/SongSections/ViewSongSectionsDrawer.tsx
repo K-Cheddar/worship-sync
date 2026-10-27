@@ -14,8 +14,7 @@ import {
   uploadSongAudio,
 } from "../../api/auth";
 import { useDispatch } from "../../hooks";
-import { upsertItemInAllDocs } from "../../store/allDocsSlice";
-import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
+import { applyItemDocumentChange } from "../../store/allDocsSlice";
 import { broadcastItemUpdate } from "../../store/store";
 import { deleteSongAudioBeforeClearingMetadata } from "../../utils/persistSongAudioAttachment";
 import { loadSong, saveSong, songToLibraryProjection } from "../../utils/songPersistence";
@@ -130,17 +129,7 @@ const ViewSongSectionsDrawer = ({
       const saved = await saveSong(db, next, existing);
       if (!mountedRef.current || persistenceScopeRef.current.db !== db ||
         persistenceScopeRef.current.churchId !== churchId) return;
-      dispatch(upsertItemInAllDocs(songToLibraryProjection(saved)));
-      dispatch(
-        upsertItemInAllItemsList({
-          _id: saved._id,
-          name: saved.name,
-          type: saved.type,
-          listId: saved._id,
-          background:
-            typeof saved.background === "string" ? saved.background : "",
-        }),
-      );
+      dispatch(applyItemDocumentChange({ id: saved._id, doc: songToLibraryProjection(saved) }));
       broadcastItemUpdate(saved);
     },
     [db, dispatch, song, churchId],
@@ -174,17 +163,7 @@ const ViewSongSectionsDrawer = ({
       }
 
       const saved = await saveSong(db, next, baselineSong);
-      dispatch(upsertItemInAllDocs(songToLibraryProjection(saved)));
-      dispatch(
-        upsertItemInAllItemsList({
-          _id: saved._id,
-          name: saved.name,
-          type: saved.type,
-          listId: saved._id,
-          background:
-            typeof saved.background === "string" ? saved.background : "",
-        }),
-      );
+      dispatch(applyItemDocumentChange({ id: saved._id, doc: songToLibraryProjection(saved) }));
       broadcastItemUpdate(saved);
     },
     [db, dispatch, song],

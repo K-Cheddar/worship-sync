@@ -111,7 +111,7 @@ export const TransferProgress = ({ transfer, variant }: TransferProgressProps) =
       {transfer.result ? (
         <div className="mt-2 text-xs">
           {transfer.result.to
-          ? <Link to={transfer.result.to} className="flex cursor-pointer items-center gap-1 rounded text-cyan-200 underline outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-800">{transfer.result.label}</Link>
+          ? <Link to={transfer.result.to} onClick={transfer.result.onClick} className="flex cursor-pointer items-center gap-1 rounded text-cyan-200 underline outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-800">{transfer.result.label}</Link>
             : <span className="text-gray-300">{transfer.result.label}</span>}
         </div>
       ) : null}

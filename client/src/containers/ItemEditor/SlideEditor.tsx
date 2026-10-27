@@ -67,7 +67,7 @@ import {
   uploadSongAudio,
 } from "../../api/auth";
 import { broadcastItemUpdate, RootState } from "../../store/store";
-import { upsertItemInAllDocs } from "../../store/allDocsSlice";
+import { applyItemDocumentChange } from "../../store/allDocsSlice";
 import {
   deleteSongAudioBeforeClearingMetadata,
   persistSongAudioAttachment,
@@ -514,7 +514,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
         if (currentScope.itemId === _id) {
           dispatch(applyPersistedSongAudio({ songAudio: audio, persistedDoc: saved, owner }));
         }
-        dispatch(upsertItemInAllDocs(songToLibraryProjection(saved)));
+        dispatch(applyItemDocumentChange({ id: saved._id, doc: songToLibraryProjection(saved) }));
         broadcastItemUpdate(saved);
       }
 
@@ -567,7 +567,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       if (currentScope.itemId === _id) {
         dispatch(applyPersistedSongAudio({ songAudio: undefined, persistedDoc: saved, owner }));
       }
-      dispatch(upsertItemInAllDocs(songToLibraryProjection(saved)));
+      dispatch(applyItemDocumentChange({ id: saved._id, doc: songToLibraryProjection(saved) }));
       broadcastItemUpdate(saved);
       try {
         await deleteSongAudioWithRetry({ churchId, songId: _id, audio: audioToRemove });
@@ -595,7 +595,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     if (currentScope.itemId === _id) {
       dispatch(applyPersistedSongAudio({ songAudio: undefined, persistedDoc: saved, owner }));
     }
-    dispatch(upsertItemInAllDocs(songToLibraryProjection(saved)));
+    dispatch(applyItemDocumentChange({ id: saved._id, doc: songToLibraryProjection(saved) }));
     broadcastItemUpdate(saved);
     if (currentScope.itemId === _id) {
       showToast?.({ message: "MP3 removed.", variant: "success" });

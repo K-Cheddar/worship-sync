@@ -2,21 +2,20 @@ import { useVirtualizer, type Virtualizer } from "@tanstack/react-virtual";
 import {
   memo,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import { useNavigate } from "react-router-dom";
 import { shallowEqual } from "react-redux";
 import { File } from "lucide-react";
 import { SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
 import { useDispatch, useSelector } from "../../hooks";
-import { setActiveItem } from "../../store/itemSlice";
-import { setActiveItemInList } from "../../store/itemListSlice";
+import { selectControllerItem } from "../../store/controllerItemSelection";
+import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useOutlineItemDocs } from "../../hooks/useOutlineItemDocs";
-import { useControllerBasePath } from "../../context/activeController";
 import type {
   Arrangment,
   FormattedSection,
@@ -39,12 +38,10 @@ import {
   captureOutlineScrollAnchor,
   captureOutlineSlideFocalPoint,
   findOutlineRowIndexForItem,
-  getControllerItemPath,
   getOutlineVirtualRowKey,
   getNonHeadingOutlineItems,
   getPinnedListIdFromVirtualItems,
   getPrefetchItemIds,
-  prepareItemForEditor,
   resolveOutlineScrollTopFromAnchor,
   type OutlineScrollAnchor,
   type OutlineSlideSection,
@@ -55,6 +52,14 @@ import {
 import { subscribeOutlineSelectionScroll } from "../../utils/outlineSelectionScroll";
 import ItemSlide from "./ItemSlide";
 import ContinuousStaticItemSlide from "./ContinuousStaticItemSlide";
+import type { ThumbnailPreviewMode } from "../../context/thumbnailPreviewMode";
+import {
+  ensureSlidesHaveMonitorBandFormatting,
+} from "../../utils/overflow";
+import {
+  resolveDisplaySettings,
+  type ResolvedDisplaySettings,
+} from "../../utils/displaySettings";
 
 const SECTION_LABEL_HEIGHT = 36;
 const EMPTY_ROW_HEIGHT = 28;
@@ -74,7 +79,8 @@ type OutlineItemSlidesScrollerProps = {
   size: number;
   sizeConfig: SizeConfig;
   isMobile: boolean;
-  isStreamFormat: boolean;
+  previewMode: ThumbnailPreviewMode;
+  monitorSettings?: ResolvedDisplaySettings;
   canEdit: boolean;
   selectedSlide: number;
   liveSlideIds: Set<string>;
@@ -174,7 +180,8 @@ type OutlineVirtualSlideProps = {
   size: number;
   sizeConfig: SizeConfig;
   isMobile: boolean;
-  isStreamFormat: boolean;
+  previewMode: ThumbnailPreviewMode;
+  monitorSettings: ResolvedDisplaySettings;
   canEdit: boolean;
   draggedSection: string | null;
   timerInfo?: TimerInfo;
@@ -201,7 +208,8 @@ const OutlineVirtualSlide = memo(
     size,
     sizeConfig,
     isMobile,
-    isStreamFormat,
+    previewMode,
+    monitorSettings,
     canEdit,
     draggedSection,
     timerInfo,
@@ -222,6 +230,23 @@ const OutlineVirtualSlide = memo(
       section.type === "bible"
         ? getBibleInfoFromSlides(section.slides, index)
         : undefined;
+    const monitorSlides = useMemo(() => {
+      if (
+        previewMode !== "monitor" ||
+        section.type !== "free" ||
+        !monitorSettings.showNextSlide
+      ) {
+        return section.slides;
+      }
+      return ensureSlidesHaveMonitorBandFormatting(section.slides);
+    }, [
+      previewMode,
+      section.slides,
+      section.type,
+      monitorSettings.showNextSlide,
+    ]);
+    const monitorSlide = monitorSlides[index] ?? slide;
+    const nextSlide = monitorSlides[index + 1];
 
     if (!isActive) {
       return (
@@ -229,7 +254,10 @@ const OutlineVirtualSlide = memo(
           slide={slide}
           index={index}
           itemType={section.type}
-          isStreamFormat={isStreamFormat}
+          previewMode={previewMode}
+          monitorSlide={monitorSlide}
+          nextSlide={nextSlide}
+          monitorSettings={monitorSettings}
           timerInfo={timerInfo}
           formattedSections={section.formattedSections}
           isLive={isLive}
@@ -260,7 +288,10 @@ const OutlineVirtualSlide = memo(
         draggedSection={draggedSection}
         formattedSections={section.formattedSections}
         onRenameSection={onRenameSection}
-        isStreamFormat={isStreamFormat}
+        previewMode={previewMode}
+        monitorSlide={monitorSlide}
+        nextSlide={nextSlide}
+        monitorSettings={monitorSettings}
         getBibleInfo={getBibleInfoGetter(section.slides)}
         borderWidth={sizeConfig.borderWidth}
         hSize={sizeConfig.hSize}
@@ -283,7 +314,8 @@ const OutlineItemSlidesScroller = ({
   size,
   sizeConfig,
   isMobile,
-  isStreamFormat,
+  previewMode,
+  monitorSettings: monitorSettingsProp,
   canEdit,
   selectedSlide,
   liveSlideIds,
@@ -297,9 +329,10 @@ const OutlineItemSlidesScroller = ({
   onRenameSection,
   thumbnailScaleFactor = 0,
 }: OutlineItemSlidesScrollerProps) => {
+  const monitorSettings =
+    monitorSettingsProp ?? resolveDisplaySettings(undefined, undefined, "monitor");
   const dispatch = useDispatch();
-  const navigate = useNavigate();
-  const controllerBasePath = useControllerBasePath();
+  const { db } = useContext(ControllerInfoContext) || {};
   const outlineList = useSelector(
     (state) => state.undoable.present.itemList?.list,
   );
@@ -663,29 +696,13 @@ const OutlineItemSlidesScroller = ({
         window.clearTimeout(browsePinTimerRef.current);
         browsePinTimerRef.current = null;
       }
-      dispatch(setActiveItemInList(listId));
-      const doc = docsById.get(item._id);
-      if (doc) {
-        const prepared = prepareItemForEditor(doc, listId);
-        dispatch(
-          setActiveItem(
-            options?.selectedSlide != null
-              ? { ...prepared, selectedSlide: options.selectedSlide }
-              : prepared,
-          ),
-        );
-      }
-      navigate(getControllerItemPath(item, controllerBasePath), {
-        replace: true,
-      });
+      void dispatch(selectControllerItem(item, db, options?.selectedSlide));
     },
     [
       beginIgnorePin,
       dispatch,
-      docsById,
-      navigate,
+      db,
       outlineItemByListId,
-      controllerBasePath,
     ],
   );
 
@@ -1304,7 +1321,8 @@ const OutlineItemSlidesScroller = ({
                         size={size}
                         sizeConfig={sizeConfig}
                         isMobile={isMobile}
-                        isStreamFormat={isStreamFormat}
+                        previewMode={previewMode}
+                        monitorSettings={monitorSettings}
                         canEdit={isActive && canEdit}
                         draggedSection={isActive ? draggedSection : null}
                         timerInfo={timersByItemId.get(section.itemId)}

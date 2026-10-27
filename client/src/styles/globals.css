@@ -200,6 +200,8 @@
  * in tens of milliseconds, so the splash unmounts before it is ever visible —
  * only a genuinely slow load reveals it. Without the delay, every lazy
  * navigation would flash a full-screen panel.
+ * The first route after app bootstrap bypasses the delay because it continues
+ * the startup loading screen already on display.
  *
  * Never applied to projector/monitor/stream: those routes use a null fallback
  * so nothing can appear on a display or break stream transparency.
@@ -213,6 +215,126 @@
 .route-chunk-splash {
   opacity: 0;
   animation: route-chunk-splash-in 150ms ease-out 200ms forwards;
+}
+
+.route-chunk-splash--initial {
+  opacity: 1;
+  animation: none;
+}
+
+@keyframes loading-logo-reveal {
+  from {
+    clip-path: inset(100% 0 0);
+  }
+  to {
+    clip-path: inset(0);
+  }
+}
+
+@keyframes loading-logo-reveal-edge {
+  from {
+    background-position: 50% 37.5%;
+  }
+  to {
+    background-position: 50% 62.5%;
+  }
+}
+
+@keyframes loading-logo-reveal-edge-fade {
+  0%,
+  90% {
+    opacity: 0.46;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes loading-logo-sweep {
+  0%,
+  50% {
+    opacity: 0;
+    transform: rotate(45deg) translateX(-500%);
+  }
+  52% {
+    opacity: 0.44;
+    transform: rotate(45deg) translateX(-450%);
+  }
+  76% {
+    opacity: 0.44;
+    transform: rotate(45deg) translateX(450%);
+  }
+  80%,
+  100% {
+    opacity: 0;
+    transform: rotate(45deg) translateX(500%);
+  }
+}
+
+/* Keep the original PNG static when masks are unavailable or motion is reduced. */
+@supports (mask-image: linear-gradient(to top, #000, transparent)) or
+  (-webkit-mask-image: linear-gradient(to top, #000, transparent)) {
+  @media (prefers-reduced-motion: no-preference) {
+    .loading-logo__image {
+      -webkit-clip-path: inset(100% 0 0);
+      clip-path: inset(100% 0 0);
+      animation: loading-logo-reveal 1500ms cubic-bezier(0.22, 0.61, 0.36, 1)
+        both;
+      animation-delay: var(--loading-logo-reveal-delay);
+    }
+
+    .loading-logo__reveal-edge,
+    .loading-logo__sweep {
+      -webkit-mask-image: var(--loading-logo-mask);
+      mask-image: var(--loading-logo-mask);
+      mask-mode: alpha;
+      -webkit-mask-repeat: no-repeat;
+      mask-repeat: no-repeat;
+      -webkit-mask-size: 100% 100%;
+      mask-size: 100% 100%;
+    }
+
+    .loading-logo__reveal-edge {
+      background-image: linear-gradient(
+        to bottom,
+        transparent 47%,
+        rgba(255, 225, 160, 0.3) 49%,
+        rgba(255, 246, 220, 0.6) 50%,
+        rgba(255, 225, 160, 0.3) 51%,
+        transparent 53%
+      );
+      background-size: 100% 500%;
+      animation:
+        loading-logo-reveal-edge 1500ms cubic-bezier(0.22, 0.61, 0.36, 1) both,
+        loading-logo-reveal-edge-fade 1500ms linear both;
+      animation-delay:
+        var(--loading-logo-reveal-delay), var(--loading-logo-reveal-delay);
+    }
+
+    .loading-logo__sweep {
+      overflow: hidden;
+    }
+
+    .loading-logo__sweep::before {
+      position: absolute;
+      top: -40%;
+      left: 44%;
+      width: 12%;
+      height: 180%;
+      background-image: linear-gradient(
+        to right,
+        transparent,
+        rgba(255, 221, 153, 0.18) 25%,
+        rgba(255, 246, 218, 0.52) 50%,
+        rgba(255, 221, 153, 0.18) 75%,
+        transparent
+      );
+      content: "";
+      transform-origin: center;
+      animation: loading-logo-sweep 3s linear infinite;
+      animation-delay: var(--loading-logo-sweep-delay);
+    }
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

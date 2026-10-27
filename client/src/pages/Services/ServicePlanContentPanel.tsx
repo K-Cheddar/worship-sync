@@ -399,8 +399,12 @@ const ServicePlanContentPanel = ({
       setResourceError("Enter a valid http or https URL.");
       return;
     }
-    if (resourceEditorMode === "text" && isRichTextEmpty(resourceText)) {
-      setResourceError("Add a note before saving.");
+    if (resourceEditorMode === "text" && !title && isRichTextEmpty(resourceText)) {
+      setResourceError("Add a title or notes before saving.");
+      return;
+    }
+    if (resourceEditorMode === "generic" && !title && !url && isRichTextEmpty(resourceNotes)) {
+      setResourceError("Add a title, notes, or URL before saving.");
       return;
     }
     const nextResource = resourceEditorMode === "url"
@@ -661,25 +665,26 @@ const ServicePlanContentPanel = ({
         </Button>
         <div className="space-y-3">
           <h3 className="text-sm font-semibold text-gray-100">{resourceEditorLabel(resourceEditorMode)}</h3>
-          <Input label="Title" value={resourceTitle} onChange={(value) => setResourceTitle(String(value))} autoFocus />
+          <Input label="Title (optional)" value={resourceTitle} onChange={(value) => setResourceTitle(String(value))} placeholder="Resource title (optional)" autoFocus />
           {resourceEditorMode !== "text" ? (
-            <Input label="URL (optional)" value={resourceUrl} onChange={(value) => setResourceUrl(String(value))} placeholder="https://…" />
+            <Input label={resourceEditorMode === "url" ? "URL" : "URL (optional)"} value={resourceUrl} onChange={(value) => setResourceUrl(String(value))} placeholder="https://…" />
           ) : null}
           {resourceEditorMode === "text" ? (
             <RichTextEditor
-              label="Notes"
+              label="Notes (optional)"
               value={resourceText}
               onChange={setResourceText}
               placeholder="Notes for this item (optional)"
             />
-          ) : (
+          ) : null}
+          {resourceEditorMode === "generic" ? (
             <RichTextEditor
               label="Notes (optional)"
               value={resourceNotes}
               onChange={setResourceNotes}
               placeholder="Notes about this resource (optional)"
             />
-          )}
+          ) : null}
           {resourceError ? <p className="text-sm text-red-300" role="alert">{resourceError}</p> : null}
           <Button variant="cta" className="w-full cursor-pointer justify-center" onClick={saveResource}>
             {editingResourceId ? "Save resource" : "Add resource"}
