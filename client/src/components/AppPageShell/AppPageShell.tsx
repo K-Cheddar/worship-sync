@@ -5,6 +5,7 @@ import HomeToolbarMenu from "../HomeToolbarMenu/HomeToolbarMenu";
 import UserSection from "../../containers/Toolbar/ToolbarElements/UserSection";
 import { useSelector } from "../../hooks";
 import type { RootState } from "../../store/store";
+import { cn } from "../../utils/cnHelper";
 
 /**
  * Chrome for a signed-in, full-page product surface: the app menu, a title, and
@@ -28,6 +29,7 @@ const AppPageShell = ({
   description,
   children,
   showAccountNavigation = true,
+  containerClassName,
 }: {
   title: string;
   icon?: LucideIcon;
@@ -35,6 +37,7 @@ const AppPageShell = ({
   description?: string;
   children: ReactNode;
   showAccountNavigation?: boolean;
+  containerClassName?: string;
 }) => {
   const scrollbarWidth = useSelector(
     (state: RootState) => state.undoable.present.preferences.scrollbarWidth,
@@ -45,7 +48,12 @@ const AppPageShell = ({
       className="flex h-dvh min-h-0 flex-col overflow-hidden bg-homepage-canvas text-white"
       style={{ "--scrollbar-width": scrollbarWidth } as CSSProperties}
     >
-      <div className="mx-auto flex min-h-0 w-full flex-1 flex-col px-4 pb-6 lg:px-6">
+      <div
+        className={cn(
+          "mx-auto flex min-h-0 w-full flex-1 flex-col px-4 pb-6 lg:px-6",
+          containerClassName,
+        )}
+      >
         <div className="flex w-full shrink-0 flex-wrap items-center justify-between gap-4 border-b border-gray-700 py-3">
           <div className="flex flex-wrap items-center gap-3">
             {showAccountNavigation ? <HomeToolbarMenu /> : null}

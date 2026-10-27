@@ -232,6 +232,11 @@ describe("MySchedule", () => {
     respond([]);
     renderPage();
 
+    expect(screen.getByRole("main").firstElementChild).toHaveClass(
+      "mx-auto",
+      "w-full",
+      "max-w-[90rem]",
+    );
     const title = screen.getByRole("heading", { name: "My schedule" });
     const titleIcon = title.querySelector("svg");
     expect(titleIcon?.innerHTML).toBe(
