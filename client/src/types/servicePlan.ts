@@ -328,8 +328,8 @@ export type ServicePlanElement = {
   /** Import-preview-only link from a proposed legacy match to its current item ID. */
   legacyImportMatchCandidateForId?: string;
   /** Stable PDF-only matching evidence. Planning Center PDFs have no row IDs;
-   * duplicate-title rows use title and duration fingerprints to avoid an
-   * unsafe title/order match on refresh. */
+   * duplicate-title rows use title and duration fingerprints, with ambiguous
+   * changed-duration pairs sent through the existing import review. */
   planningCenterPdfMatchKey?: string;
   /** Source row order from the latest Planning Center PDF import. */
   planningCenterPdfSourcePosition?: number;

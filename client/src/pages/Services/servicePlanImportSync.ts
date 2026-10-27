@@ -128,14 +128,16 @@ const getElementImportIdentity = (
   element: ServicePlanElement,
   usePlanningCenterPdfMatchKey = false,
 ): string | undefined => element.sourceOccurrenceId?.trim() ||
-  (usePlanningCenterPdfMatchKey ? element.planningCenterPdfMatchKey?.trim() : undefined) || undefined;
+  (usePlanningCenterPdfMatchKey && element.sourcePlanningManaged
+    ? element.planningCenterPdfMatchKey?.trim()
+    : undefined) || undefined;
 
 /**
  * PDF rows have no durable Planning Center IDs. Add deterministic identity
- * only where duplicate titles make title/order matching unsafe. A duplicate
- * title row's duration is part of that identity: if it changes, the refresh
- * presents an addition instead of silently transferring local edits and
- * timing from another same-named occurrence.
+ * only where duplicate titles make title/order matching unsafe. Existing
+ * synthetic identities belong only to source-owned rows; a duration change
+ * can reuse an identity when it is the sole unmatched occurrence in the same
+ * section. When several occurrences remain, keep the proposed pair in review.
  */
 export const preparePlanningCenterPdfImport = (
   currentSections: ServicePlanSection[],
@@ -151,7 +153,18 @@ export const preparePlanningCenterPdfImport = (
       })),
     }));
   };
-  const current = decoratePositions(currentSections, false);
+  const current = decoratePositions(currentSections, false).map((section) => ({
+    ...section,
+    elements: section.elements.map((element) => {
+      if (element.sourcePlanningManaged) return element;
+      const {
+        planningCenterPdfMatchKey: _matchKey,
+        planningCenterPdfSourcePosition: _sourcePosition,
+        ...operatorOwnedElement
+      } = element;
+      return operatorOwnedElement;
+    }),
+  }));
   const imported = decoratePositions(importedSections, true);
   const currentByTitle = new Map<string, ServicePlanElement[]>();
   const importedByTitle = new Map<string, ServicePlanElement[]>();
@@ -160,12 +173,49 @@ export const preparePlanningCenterPdfImport = (
     group.push(element);
     map.set(title, group);
   };
-  current.forEach((section) => section.elements.forEach((element) =>
-    addToTitleMap(currentByTitle, element, planningCenterPdfMatchKeyTitle(element)),
-  ));
-  imported.forEach((section) => section.elements.forEach((element) =>
-    addToTitleMap(importedByTitle, element, planningCenterPdfMatchKeyTitle(element)),
-  ));
+  const currentSectionByElement = new Map<ServicePlanElement, string>();
+  const importedSectionByElement = new Map<ServicePlanElement, string>();
+  const currentNeighborContextByElement = new Map<ServicePlanElement, string>();
+  const importedNeighborContextByElement = new Map<ServicePlanElement, string>();
+  const addNeighborContexts = (
+    sections: ServicePlanSection[],
+    contexts: Map<ServicePlanElement, string>,
+    sourceOwnedOnly: boolean,
+  ) => {
+    sections.forEach((section) => section.elements.forEach((element, index) => {
+      if (sourceOwnedOnly && !element.sourcePlanningManaged) return;
+      const title = planningCenterPdfMatchKeyTitle(element);
+      const isContextItem = (candidate: ServicePlanElement) =>
+        (!sourceOwnedOnly || candidate.sourcePlanningManaged) &&
+        planningCenterPdfMatchKeyTitle(candidate) !== title;
+      const previous = section.elements.slice(0, index).reverse().find(isContextItem);
+      const next = section.elements.slice(index + 1).find(isContextItem);
+      const neighborKey = (neighbor: ServicePlanElement | undefined) => neighbor
+        ? JSON.stringify([
+            neighbor.sourceOccurrenceId?.trim() || "",
+            normalized(neighbor.sourceElementTypeRaw || neighbor.type),
+            normalized(richTextToPlainText(neighbor.title)),
+          ])
+        : "boundary";
+      contexts.set(element, JSON.stringify([
+        section.name,
+        neighborKey(previous),
+        neighborKey(next),
+      ]));
+    }));
+  };
+  addNeighborContexts(current, currentNeighborContextByElement, true);
+  addNeighborContexts(imported, importedNeighborContextByElement, false);
+  current.forEach((section) => section.elements.forEach((element) => {
+    currentSectionByElement.set(element, section.name);
+    if (element.sourcePlanningManaged) {
+      addToTitleMap(currentByTitle, element, planningCenterPdfMatchKeyTitle(element));
+    }
+  }));
+  imported.forEach((section) => section.elements.forEach((element) => {
+    importedSectionByElement.set(element, section.name);
+    addToTitleMap(importedByTitle, element, planningCenterPdfMatchKeyTitle(element));
+  }));
 
   const titles = new Set([...currentByTitle.keys(), ...importedByTitle.keys()]);
   titles.forEach((title) => {
@@ -197,7 +247,8 @@ export const preparePlanningCenterPdfImport = (
 
         const currentKeyModes = savedKeys.map((key) => key.mode);
         const shouldUseDuplicateKey = duplicateMode && (
-          elements.length > 1 || existing.length > 1 || currentKeyModes.includes("duplicate")
+          elements.length > 1 || existing.length > 1 || incoming.length > 1 ||
+          currentKeyModes.includes("duplicate")
         );
         element.planningCenterPdfMatchKey = makePlanningCenterPdfMatchKey(
           title,
@@ -209,6 +260,67 @@ export const preparePlanningCenterPdfImport = (
     };
     keyGroup(existing, "current");
     keyGroup(incoming, "imported");
+
+    if (!duplicateMode || !existing.length || !incoming.length) return;
+
+    const exactKeys = new Set(existing.flatMap((element) =>
+      element.planningCenterPdfMatchKey ? [element.planningCenterPdfMatchKey] : [],
+    ));
+    const matchedKeys = new Set(incoming.flatMap((element) =>
+      element.planningCenterPdfMatchKey && exactKeys.has(element.planningCenterPdfMatchKey)
+        ? [element.planningCenterPdfMatchKey]
+        : [],
+    ));
+    const unmatchedExisting = existing.filter((element) =>
+      !element.planningCenterPdfMatchKey || !matchedKeys.has(element.planningCenterPdfMatchKey),
+    );
+    const unmatchedIncoming = incoming.filter((element) =>
+      !element.planningCenterPdfMatchKey || !matchedKeys.has(element.planningCenterPdfMatchKey),
+    );
+    const matchedByNeighbor = new Set<ServicePlanElement>();
+    unmatchedIncoming.forEach((element) => {
+      const context = importedNeighborContextByElement.get(element);
+      if (!context) return;
+      const existingCandidates = unmatchedExisting.filter((candidate) =>
+        !matchedByNeighbor.has(candidate) && currentNeighborContextByElement.get(candidate) === context,
+      );
+      const incomingCandidates = unmatchedIncoming.filter((candidate) =>
+        !matchedByNeighbor.has(candidate) && importedNeighborContextByElement.get(candidate) === context,
+      );
+      if (existingCandidates.length !== 1 || incomingCandidates.length !== 1) return;
+      const existingCandidate = existingCandidates[0];
+      const incomingCandidate = incomingCandidates[0];
+      incomingCandidate.planningCenterPdfMatchKey = existingCandidate.planningCenterPdfMatchKey;
+      matchedByNeighbor.add(existingCandidate);
+      matchedByNeighbor.add(incomingCandidate);
+    });
+
+    const sectionNames = new Set(unmatchedIncoming
+      .filter((element) => !matchedByNeighbor.has(element))
+      .map((element) => importedSectionByElement.get(element)));
+    sectionNames.forEach((sectionName) => {
+      if (!sectionName) return;
+      const currentInSection = unmatchedExisting.filter((element) =>
+        !matchedByNeighbor.has(element) && currentSectionByElement.get(element) === sectionName,
+      );
+      const importedInSection = unmatchedIncoming.filter((element) =>
+        !matchedByNeighbor.has(element) && importedSectionByElement.get(element) === sectionName,
+      );
+      if (currentInSection.length === 1 && importedInSection.length === 1) {
+        importedInSection[0].planningCenterPdfMatchKey = currentInSection[0].planningCenterPdfMatchKey;
+        return;
+      }
+
+      // Retain the existing one-at-a-time review for duplicate pairs whose
+      // duration and occurrence identities both changed. Source order offers
+      // a reviewable suggestion, but never silently transfers local data.
+      const suggestedPairCount = Math.min(currentInSection.length, importedInSection.length);
+      if (suggestedPairCount > 0) {
+        importedInSection.slice(0, suggestedPairCount).forEach((element, index) => {
+          element.legacyImportMatchCandidateForId = currentInSection[index].id;
+        });
+      }
+    });
   });
 
   return { currentSections: current, importedSections: imported };
@@ -231,7 +343,8 @@ export const orderPlanningCenterPdfRefresh = (
   ));
   return sections.map((section) => {
     const indexedSourceElements = section.elements.flatMap((element, index) =>
-      element.sourcePlanningManaged && typeof element.planningCenterPdfSourcePosition === "number"
+      element.sourcePlanningManaged && !element.legacyImportMatchCandidateForId &&
+        typeof element.planningCenterPdfSourcePosition === "number"
         ? [{ element, index }]
         : [],
     );
@@ -1472,6 +1585,14 @@ export const refreshServicePlanFromImport = (
     const identity = getElementImportIdentity(element, options.planningCenterPdfMatch);
     if (identity) importedIdentityCounts.set(identity, (importedIdentityCounts.get(identity) || 0) + 1);
   }));
+  const asLegacyMatchCandidate = (
+    current: ServicePlanElement,
+    imported: ServicePlanElement,
+  ): ServicePlanElement => ({
+    ...mergeElement(current, imported, options),
+    id: imported.id,
+    legacyImportMatchCandidateForId: current.id,
+  });
   const templateMatchKey = (element: ServicePlanElement): string =>
     JSON.stringify([element.sourceTemplateElementType || element.type, normalized(richTextToPlainText(element.title))]);
   const templateCurrentCounts = new Map<string, number>();
@@ -1536,10 +1657,15 @@ export const refreshServicePlanFromImport = (
   });
   const safeImportedSections = importedSections.map((section) => ({
     ...section,
-    elements: section.elements.filter((element) =>
-      !getElementImportIdentity(element, options.planningCenterPdfMatch) ||
-      !ambiguousIdentities.has(getElementImportIdentity(element, options.planningCenterPdfMatch)!),
-    ),
+    elements: section.elements.flatMap((element) => {
+      const identity = getElementImportIdentity(element, options.planningCenterPdfMatch);
+      if (identity && ambiguousIdentities.has(identity)) return [];
+      const candidateId = element.legacyImportMatchCandidateForId;
+      if (!candidateId) return [element];
+      const candidate = currentSections.flatMap((currentSection) => currentSection.elements)
+        .find((currentElement) => currentElement.id === candidateId);
+      return candidate ? [asLegacyMatchCandidate(candidate, element)] : [element];
+    }),
   }));
   const importedSectionPairs = pairByLabelThenOrder(
     currentSections,
@@ -1558,7 +1684,11 @@ export const refreshServicePlanFromImport = (
   const movedElementKeys = new Set<string>();
   const movedElementIds = new Set<string>();
   const legacyMatchCandidatesBySection = new Map<number, Map<ServicePlanElement, ServicePlanElement>>();
-  const legacyMatchCandidateCurrentIds = new Set<string>();
+  const legacyMatchCandidateCurrentIds = new Set<string>(safeImportedSections.flatMap((section) =>
+    section.elements.flatMap((element) => element.legacyImportMatchCandidateForId
+      ? [element.legacyImportMatchCandidateForId]
+      : []),
+  ));
   safeImportedSections.forEach((section, importedSectionIndex) => {
     section.elements.forEach((importedElement) => {
       const identity = getElementImportIdentity(importedElement, options.planningCenterPdfMatch);
@@ -1622,14 +1752,6 @@ export const refreshServicePlanFromImport = (
       });
     });
   }
-  const asLegacyMatchCandidate = (
-    current: ServicePlanElement,
-    imported: ServicePlanElement,
-  ): ServicePlanElement => ({
-    ...mergeElement(current, imported, options),
-    id: imported.id,
-    legacyImportMatchCandidateForId: current.id,
-  });
   const currentWithMovedElements = currentSections.map((section, sectionIndex) => ({
     ...section,
     elements: section.elements.filter((_, elementIndex) =>

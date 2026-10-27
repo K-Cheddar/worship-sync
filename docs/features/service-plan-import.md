@@ -24,6 +24,8 @@ An operator imports or refreshes a plan, reviews the proposed item changes, sele
 - A matched item retains its WorshipSync item ID and operator-managed information. External fields continue to follow the existing import field ownership options.
 - Selecting a move also keeps its incoming source identity when field updates are skipped. For a same-section identity adoption with no move, review offers a separate **Linked** change.
 - A relocation appears as a selectable **Moved** change that names the prior and destination sections. Operators can select the move separately from updates to the item's fields.
+- Planning Center PDF duplicate-title identities are assigned only to source-owned items. A changed duration may reuse an identity when exact matches or unique neighboring items identify one occurrence in the same section; remaining duplicate pairs appear as individually confirmable review suggestions.
+- Planning Center PDF refresh preserves missing items by default. When removal review is enabled, only source-owned items absent from the PDF are proposed for removal. Unmarked items in a legacy PDF plan remain because their source ownership cannot be confirmed.
 - Selected moved and new items follow source order relative to confidently matched items. Existing item order stays intact unless a selected relocation requires placement.
 - A confidently matched relocation is not represented as a separate removal and addition. Skipped changes remain untouched.
 
@@ -101,6 +103,20 @@ Regression coverage: `servicePlanNativeTransfer.test.ts` and the public-link rep
 - **Material alternative rejected:** Treat the old item as removed and the incoming item as a new addition, or infer a title match against an arbitrary manual item.
 - **Approval source/date:** Current request, 2026-10-16.
 - **Affected workflow/contract:** Service-plan import and refresh.
+
+- **Question/problem:** Planning Center PDF duplicate-title rows have no durable source item IDs, and item durations can change between imports.
+- **Approved behavior:** Match duplicate rows by their stable duration identity when possible. If that evidence changes, reuse the identity only when unique neighboring items identify the source-owned occurrence within its section; otherwise show an individually confirmable match suggestion. Keep operator-created items outside PDF identity matching.
+- **Why:** A duration edit should not orphan local work, while an uncertain occurrence must not inherit notes, assignments, equipment, attachments, or identity without operator review.
+- **Material alternative rejected:** Treat every changed duplicate duration as an unrelated addition or silently choose one same-title occurrence.
+- **Approval source/date:** Current user request, 2026-10-27.
+- **Affected workflow/contract:** Planning Center PDF refresh.
+
+- **Question/problem:** Planning Center PDF refresh cannot remove source items that are no longer present, while automatic removal risks deleting local work.
+- **Approved behavior:** Keep removal off by default. When enabled, show source-owned missing items in the existing import review and apply only the removals the operator selects. Never propose unmarked legacy PDF items for removal because ownership is unknown.
+- **Why:** Operators can clean up a tracked source refresh without losing manually created items or legacy items whose ownership is not recorded.
+- **Material alternative rejected:** Delete missing rows automatically or infer source ownership for unmarked PDF items.
+- **Approval source/date:** Current user request, 2026-10-27.
+- **Affected workflow/contract:** Planning Center PDF refresh.
 
 - **Question/problem:** An operator selects a relocation but skips the imported field changes, or a matched item receives a new external identity without other visible changes.
 - **Approved behavior:** A selected move adopts the incoming source identity independently of field updates. A same-section identity-only adoption appears as a separately selectable **Linked** change.

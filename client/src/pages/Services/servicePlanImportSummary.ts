@@ -793,7 +793,9 @@ export const applySelectedServicePlanImportChanges = (
     const sourceOrder = nextSection?.elements.map((element) => {
       const legacyMatchForId = element.legacyImportMatchCandidateForId;
       const match = legacyMatchForId ? selectedChangeFor("legacy_match", legacyMatchForId) : undefined;
-      return match ? { ...element, id: match.id } : element;
+      return legacyMatchForId
+        ? { ...element, id: match?.id || legacyMatchForId }
+        : element;
     }) || [];
     const orderedElements = placements.length && nextSection
       ? placeServicePlanImportElements(elements, sourceOrder, placements)
@@ -847,7 +849,9 @@ export const applySelectedServicePlanImportChanges = (
       const sourceOrder = nextSection.elements.map((element) => {
         const legacyMatchForId = element.legacyImportMatchCandidateForId;
         const match = legacyMatchForId ? selectedChangeFor("legacy_match", legacyMatchForId) : undefined;
-        return match ? { ...element, id: match.id } : element;
+        return legacyMatchForId
+          ? { ...element, id: match?.id || legacyMatchForId }
+          : element;
       });
       newSectionByNextIndex.set(index, {
         ...nextSection,

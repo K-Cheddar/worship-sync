@@ -43,6 +43,7 @@ const visibleFields = (change: ServicePlanImportSummary["changes"][number]) =>
 const checkboxLabel = (change: ServicePlanImportSummary["changes"][number]) => {
   if (change.kind === "legacy_match") return `Confirm match for ${change.itemName}`;
   if (change.kind === "linked") return `Link ${change.itemName} to the import source`;
+  if (change.kind === "removed") return `Remove ${change.itemName}`;
   return `${change.kind === "moved" ? "Move" : "Update"} ${change.itemName}`;
 };
 

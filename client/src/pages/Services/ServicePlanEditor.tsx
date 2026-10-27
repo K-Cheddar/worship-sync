@@ -1641,7 +1641,8 @@ const ServicePlanEditor = ({
     handleImportSourceChange(source);
     if (source === "worshipSync") setWorshipSyncImportKind("link");
     if (source === "planningCenterPdf") {
-      openPlanningCenterPdfPicker();
+      if (hasPlanContent) setShowImport(true);
+      else openPlanningCenterPdfPicker();
       return;
     }
     setShowImport(true);
@@ -1654,10 +1655,6 @@ const ServicePlanEditor = ({
         sourceImport?.source === "servicePlanning"
         ? sourceImport.source
         : readServicePlanImportSource();
-    if (preferredSource === "planningCenterPdf") {
-      openPlanningCenterPdfPicker();
-      return;
-    }
     setImportSource(preferredSource);
     writeServicePlanImportSource(preferredSource);
     setImportUrl(
@@ -1727,14 +1724,18 @@ const ServicePlanEditor = ({
               planningCenterPdfMatch: source === "planningCenterPdf",
               // Only plans imported before item-level provenance existed can have
               // their unmarked items regarded as source-owned, and then only when
-              // removal was chosen. On a tracked plan those are operator items.
+              // removal was chosen. PDF refreshes cannot distinguish legacy source
+              // rows from manual rows, so leave every unmarked PDF-plan item alone.
               treatUnmarkedItemsAsSource:
-                refreshOptions.removeMissing && isLegacyUntrackedImport,
+                source !== "planningCenterPdf" && refreshOptions.removeMissing && isLegacyUntrackedImport,
             },
         )
         : freshImportSections;
     const recalculateTimeline = source === "planningCenterPdf" && !hasSourceTiming;
-    const existingAnchor = sections?.[0]?.elements?.[0]?.startTime || "";
+    const existingAnchor = sections
+      ?.flatMap((section) => section.elements)
+      .map((element) => element.startTime?.trim() || "")
+      .find((startTime) => /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(startTime)) || "";
     const timelineAnchorStartTime = existingAnchor || occurrenceLocalTime(
       occurrence.startsAt,
       planTimezone || "UTC",
@@ -1801,9 +1802,11 @@ const ServicePlanEditor = ({
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
+    const importEditorIdentityKey = editorIdentityKey;
     setImporting(true);
     try {
       const text = await extractTextFromPdfFile(file);
+      if (currentEditorIdentityRef.current !== importEditorIdentityKey) return;
       const data = parsePlanningCenterPdfText(text);
       applyImportedPlanData(data, "planningCenterPdf", "");
     } catch (error) {
@@ -3748,8 +3751,13 @@ const ServicePlanEditor = ({
                 onChange={(value) => {
                   const next = parseImportSourceValue(value);
                   if (next === "planningCenterPdf") {
-                    openPlanningCenterPdfPicker();
-                    setShowImport(false);
+                    handleImportSourceChange(next);
+                    if (hasPlanContent) {
+                      setShowImport(true);
+                    } else {
+                      openPlanningCenterPdfPicker();
+                      setShowImport(false);
+                    }
                     return;
                   }
                   handleImportSourceChange(next);
@@ -3885,6 +3893,22 @@ const ServicePlanEditor = ({
                   </div>
                 </fieldset>
               ) : null}
+              {hasPlanContent && importSource === "planningCenterPdf" ? (
+                <fieldset className="space-y-2">
+                  <legend className="text-sm font-medium text-gray-100">
+                    Update from Planning Center PDF
+                  </legend>
+                  <Checkbox
+                    label="Remove source items no longer listed"
+                    checked={refreshOptions.removeMissing}
+                    disabled={importing}
+                    onCheckedChange={(checked) => updateRefreshOption("removeMissing", checked)}
+                  />
+                  <p className="text-xs text-gray-400">
+                    Missing source items appear in the import review. Items without source tracking stay in the plan.
+                  </p>
+                </fieldset>
+              ) : null}
               {hasPlanContent && importSource !== "planningCenterPdf" && importSource !== "worshipSync" ? (
                 <p className="text-xs text-gray-400">
                   Removing items is off by default. Turn it on only when this
@@ -3895,7 +3919,9 @@ const ServicePlanEditor = ({
                 <p className="text-xs text-amber-200">
                   This plan predates source tracking. Possible cross-section
                   matches are offered one item at a time for your confirmation.
-                  If you remove missing items, unmarked items are treated as source items.
+                  {importSource === "planningCenterPdf"
+                    ? " Unmarked items stay in the plan because their source cannot be confirmed."
+                    : " If you remove missing items, unmarked items are treated as source items."}
                 </p>
               ) : null}
               {importSource !== "planningCenterPdf" && !(importSource === "worshipSync" && worshipSyncImportKind === "file") ? (

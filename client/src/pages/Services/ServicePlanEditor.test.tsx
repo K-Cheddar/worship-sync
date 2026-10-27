@@ -2114,6 +2114,8 @@ SMC Worship Experience
     renderEditor();
     await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
     await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+    expect(screen.getByRole("checkbox", { name: "Remove source items no longer listed" }))
+      .not.toBeChecked();
     const file = new File(["%PDF-fake"], "updated-order.pdf", { type: "application/pdf" });
     fireEvent.change(screen.getByLabelText(/Planning Center PDF/i), { target: { files: [file] } });
 
@@ -2135,6 +2137,184 @@ SMC Worship Experience
       { id: "welcome", startTime: "09:00", durationSeconds: 480 },
       { id: "prayer", startTime: "09:08", durationSeconds: 300 },
     ]);
+  });
+
+  it("reviews optional PDF removals and recalculates from a later section's start time", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        sourceImport: {
+          source: "planningCenterPdf",
+          sourceUrl: "",
+          loadedAt: "2026-07-20T12:00:00.000Z",
+          planLabel: "Sunday worship",
+        },
+        sections: [
+          { id: "empty-first", name: "Prelude", elements: [] },
+          {
+            id: "section-1",
+            sourcePlanningManaged: true,
+            name: "SMC Worship Experience",
+            elements: [
+              {
+                id: "opening",
+                sourcePlanningManaged: true,
+                type: "free",
+                title: plainTextToRichText("Opening"),
+                startTime: "09:00",
+                durationSeconds: 300,
+              },
+              {
+                id: "manual",
+                type: "free",
+                title: plainTextToRichText("Manual item"),
+                startTime: "09:05",
+                durationSeconds: 120,
+              },
+              {
+                id: "prayer",
+                sourcePlanningManaged: true,
+                type: "free",
+                title: plainTextToRichText("Prayer"),
+                startTime: "09:07",
+                durationSeconds: 300,
+              },
+              {
+                id: "song",
+                sourcePlanningManaged: true,
+                type: "free",
+                title: plainTextToRichText("Song"),
+                startTime: "09:12",
+                durationSeconds: 300,
+              },
+            ],
+          },
+        ],
+      },
+    });
+    mockExtractTextFromPdfFile.mockResolvedValue(`Main Worship Service
+Length
+in mins
+SMC Worship Experience
+5:00 Prayer
+5:00 Song
+108:00`);
+
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+    const removeMissing = screen.getByRole("checkbox", {
+      name: "Remove source items no longer listed",
+    });
+    expect(removeMissing).not.toBeChecked();
+    await user.click(removeMissing);
+
+    const file = new File(["%PDF-fake"], "updated-order.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByLabelText(/Planning Center PDF/i), { target: { files: [file] } });
+
+    expect(await screen.findByRole("checkbox", { name: "Remove Opening" })).toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name: "Select all updates" }));
+    await user.click(screen.getByRole("checkbox", { name: "Remove Opening" }));
+    expect(screen.getByRole("button", { name: "Apply 1 change" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
+
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), { timeout: 2_500 });
+    const [, , body] = mockSaveServicePlan.mock.calls.at(-1)!;
+    expect(body.sections?.[0]).toMatchObject({ id: "empty-first", elements: [] });
+    const refreshedItems = body.sections?.[1]?.elements || [];
+    expect(refreshedItems.map((item) => richTextToPlainText(item.title))).toEqual([
+      "Manual item",
+      "Prayer",
+      "Song",
+    ]);
+    expect(refreshedItems.map(({ id, startTime }) => ({ id, startTime }))).toEqual([
+      { id: "manual", startTime: "09:00" },
+      { id: "prayer", startTime: "09:02" },
+      { id: "song", startTime: "09:07" },
+    ]);
+  });
+
+  it("ignores a PDF import that finishes after switching to another plan", async () => {
+    const currentPlan: ServicePlan = {
+      planId: "church-1::service-1@2026-07-26",
+      churchId: "church-1",
+      planKey: "service-1@2026-07-26",
+      serviceId: "service-1",
+      date: "2026-07-26",
+      name: "Easter Sunday",
+      sourceImport: {
+        source: "planningCenterPdf",
+        sourceUrl: "",
+        loadedAt: "2026-07-20T12:00:00.000Z",
+        planLabel: "Sunday worship",
+      },
+      sections: [{
+        id: "current-section",
+        sourcePlanningManaged: true,
+        name: "Worship",
+        elements: [{
+          id: "current-item",
+          sourcePlanningManaged: true,
+          type: "free",
+          title: plainTextToRichText("Current item"),
+        }],
+      }],
+    };
+    const nextPlan: ServicePlan = {
+      ...currentPlan,
+      planId: "church-1::service-1@2026-08-02",
+      planKey: "service-1@2026-08-02",
+      date: "2026-08-02",
+      sections: [{
+        id: "next-section",
+        name: "Worship",
+        elements: [{
+          id: "next-item",
+          type: "free",
+          title: plainTextToRichText("Upcoming item"),
+        }],
+      }],
+    };
+    mockGetServicePlan
+      .mockResolvedValueOnce({ success: true, servicePlan: currentPlan })
+      .mockResolvedValueOnce({ success: true, servicePlan: nextPlan });
+    let resolvePdfText: ((text: string) => void) | undefined;
+    mockExtractTextFromPdfFile.mockReturnValue(new Promise((resolve) => {
+      resolvePdfText = resolve;
+    }));
+
+    const user = userEvent.setup();
+    const view = renderEditor();
+    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+    const file = new File(["%PDF-fake"], "slow-order.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByLabelText(/Planning Center PDF/i), { target: { files: [file] } });
+    await waitFor(() => expect(mockExtractTextFromPdfFile).toHaveBeenCalledWith(file));
+
+    view.rerender(editorTree({ occurrence: nextOccurrence }));
+    await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("Upcoming item")).toBeInTheDocument();
+
+    await act(async () => {
+      resolvePdfText?.(`Main Worship Service
+Length
+in mins
+SMC Worship Experience
+5:00 Stale item
+108:00`);
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText("Stale item")).not.toBeInTheDocument();
+    expect(screen.getByText("Upcoming item")).toBeInTheDocument();
+    expect(mockSaveServicePlan).not.toHaveBeenCalled();
   });
 
   it("refreshes an existing plan with only the selected Service Planning fields", async () => {

@@ -114,6 +114,45 @@ describe("ServicePlanImportReviewWindow", () => {
     expect(onApply).toHaveBeenCalledWith(["updated:prayer", "legacy_match:legacy-sermon"]);
   });
 
+  it("leaves ambiguous duplicate match suggestions unchecked until confirmed", async () => {
+    const user = userEvent.setup();
+    const onApply = jest.fn();
+    const summary: ServicePlanImportSummary = {
+      changes: ["short", "long"].map((id) => ({
+        id: `local-${id}`,
+        incomingElementId: `incoming-${id}`,
+        sectionId: "worship",
+        kind: "legacy_match" as const,
+        itemName: "Prayer",
+        sectionName: "Worship",
+        fields: [{
+          label: "Time or duration",
+          before: id === "short" ? "09:00 · 2m" : "09:02 · 7m",
+          after: id === "short" ? "09:00 · 3m" : "09:02 · 8m",
+        }],
+      })),
+      added: 0,
+      removed: 0,
+      updated: 0,
+      moved: 0,
+    };
+
+    render(
+      <FloatingWindowZIndexProvider>
+        <ServicePlanImportReviewWindow summary={summary} onApply={onApply} onClose={jest.fn()} />
+      </FloatingWindowZIndexProvider>,
+    );
+
+    const suggestions = screen.getAllByRole("checkbox", { name: "Confirm match for Prayer" });
+    expect(suggestions).toHaveLength(2);
+    suggestions.forEach((suggestion) => expect(suggestion).not.toBeChecked());
+    expect(screen.getByText("09:00 · 2m")).toBeInTheDocument();
+    expect(screen.getByText("09:00 · 3m")).toBeInTheDocument();
+    await user.click(suggestions[0]);
+    await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
+    expect(onApply).toHaveBeenCalledWith(["legacy_match:local-short"]);
+  });
+
   it("offers source linking independently of item field updates", async () => {
     const user = userEvent.setup();
     const onApply = jest.fn();
@@ -141,5 +180,38 @@ describe("ServicePlanImportReviewWindow", () => {
     expect(screen.getByRole("checkbox", { name: "Link Sermon to the import source" })).toBeChecked();
     await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
     expect(onApply).toHaveBeenCalledWith(["linked:sermon"]);
+  });
+
+  it("shows source removals as explicit selectable remove actions", async () => {
+    const user = userEvent.setup();
+    const onApply = jest.fn();
+    const summary: ServicePlanImportSummary = {
+      changes: [{
+        id: "old-prayer",
+        sectionId: "worship",
+        kind: "removed",
+        itemName: "Prayer",
+        sectionName: "Worship",
+        fields: [],
+      }],
+      added: 0,
+      removed: 1,
+      updated: 0,
+      moved: 0,
+    };
+
+    render(
+      <FloatingWindowZIndexProvider>
+        <ServicePlanImportReviewWindow summary={summary} onApply={onApply} onClose={jest.fn()} />
+      </FloatingWindowZIndexProvider>,
+    );
+
+    expect(screen.getByText("Removed")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Remove Prayer" })).toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name: "Remove Prayer" }));
+    expect(screen.getByRole("checkbox", { name: "Select all updates" })).not.toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name: "Remove Prayer" }));
+    await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
+    expect(onApply).toHaveBeenCalledWith(["removed:old-prayer"]);
   });
 });
