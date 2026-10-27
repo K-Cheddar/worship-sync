@@ -31,6 +31,7 @@ import {
   subscribeBrowserDesktopShares,
   supportsDirectElectronDesktopCapture,
 } from "../../utils/desktopCapture";
+import { reportLocalVideoIssue } from "../../utils/localVideoIssues";
 import {
   applyLocalVideoCaptureProfile,
   getLocalVideoCaptureFrameRateForRole,
@@ -153,6 +154,7 @@ const LocalVideoInputView = ({
   const previewFrameUrlRef = useRef<string | undefined>(undefined);
   const retiredPreviewFrameUrlsRef = useRef(new Set<string>());
   const previewFramePendingRef = useRef(false);
+  const reportedDesktopCaptureIssuesRef = useRef(new Set<string>());
   const [previewFrameUrl, setPreviewFrameUrl] = useState<string>();
   const [errorDetail, setErrorDetail] = useState<string | null>(null);
   /**
@@ -570,6 +572,7 @@ const LocalVideoInputView = ({
           captureConsumerId,
         );
         if (!active) return;
+        reportedDesktopCaptureIssuesRef.current.delete(input.sourceId);
         setCaptureOwnedElsewhere(false);
         setRestartDetail(null);
         stream
@@ -699,9 +702,18 @@ const LocalVideoInputView = ({
           error instanceof Error &&
           error.name === "DesktopCaptureShareEndedError"
         ) {
-          setRestartDetail(
-            getLocalVideoSourceErrorMessage(error, input.captureKind),
+          const detail = getLocalVideoSourceErrorMessage(
+            error,
+            input.captureKind,
           );
+          if (
+            isDesktopShare &&
+            !reportedDesktopCaptureIssuesRef.current.has(input.sourceId)
+          ) {
+            reportedDesktopCaptureIssuesRef.current.add(input.sourceId);
+            reportLocalVideoIssue(input.sourceId, detail);
+          }
+          setRestartDetail(detail);
           setCaptureOwnedElsewhere(true);
           return;
         }
@@ -716,9 +728,18 @@ const LocalVideoInputView = ({
           );
           return;
         }
-        setErrorDetail(
-          getLocalVideoSourceErrorMessage(error, input.captureKind),
+        const detail = getLocalVideoSourceErrorMessage(
+          error,
+          input.captureKind,
         );
+        if (
+          isDesktopShare &&
+          !reportedDesktopCaptureIssuesRef.current.has(input.sourceId)
+        ) {
+          reportedDesktopCaptureIssuesRef.current.add(input.sourceId);
+          reportLocalVideoIssue(input.sourceId, detail);
+        }
+        setErrorDetail(detail);
         updateLocalVideoView(input.sourceId, diagnosticViewId, { path: "UNAVAILABLE" });
         retryCapture(Math.min(1_000 * 2 ** Math.min(captureAttempt, 3), 8_000));
       }
@@ -769,6 +790,7 @@ const LocalVideoInputView = ({
     isActive,
     captureAttempt,
     effectiveCaptureEnabled,
+    isDesktopShare,
     deviceId,
     input.captureKind,
     input.sourceId,

@@ -20,6 +20,7 @@ import {
 } from "../../../utils/localVideoRealtimeRelay";
 import { subscribeLocalVideoCaptureQuality } from "../../../utils/localVideoCaptureQualityRelay";
 import { supportsDirectElectronDesktopCapture } from "../../../utils/desktopCapture";
+import { reportLocalVideoIssue } from "../../../utils/localVideoIssues";
 import { applyLocalVideoCaptureProfile } from "../../../utils/localVideoQuality";
 import {
   __getLocalVideoDiagnosticsForTests,
@@ -78,6 +79,9 @@ jest.mock("../../../utils/desktopCapture", () => ({
   subscribeBrowserDesktopShares: jest.fn(() => jest.fn()),
   supportsDirectElectronDesktopCapture: jest.fn(() => false),
 }));
+jest.mock("../../../utils/localVideoIssues", () => ({
+  reportLocalVideoIssue: jest.fn(),
+}));
 jest.mock("../../../utils/localVideoQuality", () => ({
   applyLocalVideoCaptureProfile: jest.fn(() => Promise.resolve()),
   getLocalVideoCaptureFrameRateForRole: jest.fn((windowRole?: string) =>
@@ -103,6 +107,7 @@ const mockSubscribeCaptureQuality = jest.mocked(
 const mockSupportsDirectElectronDesktop = jest.mocked(
   supportsDirectElectronDesktopCapture,
 );
+const mockReportLocalVideoIssue = jest.mocked(reportLocalVideoIssue);
 const mockApplyLocalVideoCaptureProfile = jest.mocked(
   applyLocalVideoCaptureProfile,
 );
@@ -227,6 +232,52 @@ describe("LocalVideoInputView", () => {
         "Choose the screen again on this computer, then try again.",
       ),
     ).not.toBeInTheDocument();
+  });
+
+  it("reports a direct desktop capture failure to the controller without audience error UI", async () => {
+    mockSupportsDirectElectronDesktop.mockReturnValue(true);
+    mockResolveBinding.mockReturnValue({
+      sourceId: "source-1",
+      deviceId: "screen:0:0",
+      deviceLabel: "Lyrics screen",
+      captureKind: "screen",
+      displaySourceName: "Lyrics screen",
+    });
+    mockAcquireWarmCapture.mockRejectedValue(
+      new Error("IPC authorization failed"),
+    );
+
+    render(
+      <LocalVideoInputView
+        input={{ ...input, captureKind: "screen", deviceLabel: "Lyrics screen" }}
+        captureEnabled={false}
+        receiveHighQuality
+        showErrors={false}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(mockReportLocalVideoIssue).toHaveBeenCalledWith(
+        "source-1",
+        "Choose the screen again on this computer, then try again.",
+      ),
+    );
+    expect(
+      screen.queryByText("Screen share unavailable"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps camera capture failures out of the desktop-share issue channel", async () => {
+    mockAcquireWarmCapture.mockRejectedValue(new Error("camera failure"));
+
+    render(<LocalVideoInputView input={input} />);
+
+    expect(
+      await screen.findByText(
+        "Check the input connection and camera permission, then try again.",
+      ),
+    ).toBeInTheDocument();
+    expect(mockReportLocalVideoIssue).not.toHaveBeenCalled();
   });
 
   it("shows no connecting chrome while the warm stream attaches", () => {
