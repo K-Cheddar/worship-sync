@@ -1054,6 +1054,9 @@ describe("MySchedule", () => {
       expect(
         screen.getByRole("button", { name: /Add single day/i }),
       ).toBeInTheDocument();
+      expect(screen.getAllByText("No upcoming time off")).toHaveLength(1);
+      expect(screen.queryByRole("button", { name: /Save time off/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Discard changes/i })).not.toBeInTheDocument();
     });
 
     it("keeps a dirty date and notes draft through collapse and reopen", async () => {
@@ -1139,13 +1142,14 @@ describe("MySchedule", () => {
       renderPage();
 
       await expandTimeOff(user);
-      const save = screen.getByRole("button", { name: /Save time off/i });
-      expect(save).toBeDisabled();
+      expect(screen.queryByRole("button", { name: /Save time off/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Discard changes/i })).not.toBeInTheDocument();
 
       const removeButtons = screen.getAllByRole("button", {
         name: /Remove blockout/i,
       });
       await user.click(removeButtons[0]);
+      const save = screen.getByRole("button", { name: /Save time off/i });
       expect(save).toBeEnabled();
 
       await user.click(save);
@@ -1183,7 +1187,8 @@ describe("MySchedule", () => {
           member: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: [] },
         } as unknown as Awaited<ReturnType<typeof updateMyBlockoutDates>>);
       });
-      await screen.findByRole("button", { name: /^Save time off$/i });
+      expect(screen.queryByRole("button", { name: /^Save time off$/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Discard changes/i })).not.toBeInTheDocument();
       expect(mockUpdateMyBlockoutDates).toHaveBeenCalledTimes(1);
     });
 
@@ -1241,7 +1246,7 @@ describe("MySchedule", () => {
       expect(
         screen.getAllByRole("button", { name: /Remove blockout/i }),
       ).toHaveLength(1);
-      expect(screen.getByRole("button", { name: "Save time off" })).toBeDisabled();
+      expect(screen.queryByRole("button", { name: "Save time off" })).not.toBeInTheDocument();
 
       await user.click(screen.getByRole("button", { name: "Show past dates" }));
       expect(screen.getByText("Jan 1, 2000 – Jan 5, 2000")).toBeInTheDocument();
@@ -1251,10 +1256,10 @@ describe("MySchedule", () => {
       expect(
         screen.getByRole("button", { name: "Hide past dates" }),
       ).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Save time off" })).toBeDisabled();
+      expect(screen.queryByRole("button", { name: "Save time off" })).not.toBeInTheDocument();
       await user.click(screen.getByRole("button", { name: "Hide past dates" }));
       expect(screen.queryByText("Jan 1, 2000 – Jan 5, 2000")).not.toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Save time off" })).toBeDisabled();
+      expect(screen.queryByRole("button", { name: "Save time off" })).not.toBeInTheDocument();
     });
 
     it.each([false, true])(
@@ -1291,7 +1296,7 @@ describe("MySchedule", () => {
         await user.click(screen.getByRole("button", { name: `Remove blockout ${selectedLabel}` }));
 
         expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-        expect(screen.getByRole("button", { name: "Save time off" })).toBeDisabled();
+        expect(screen.queryByRole("button", { name: "Save time off" })).not.toBeInTheDocument();
         expect(screen.getByRole("button", { name: /Edit time off: Nov 20, 2099/i })).toBeInTheDocument();
 
         await user.click(screen.getByRole("button", { name: /Remove blockout.*Nov 20, 2099/i }));
@@ -1621,7 +1626,8 @@ describe("MySchedule", () => {
         screen.getAllByRole("button", { name: /Remove blockout/i }),
       ).toHaveLength(2);
       // No user edit happened, so there is nothing to save.
-      expect(screen.getByRole("button", { name: /Save time off/i })).toBeDisabled();
+      expect(screen.queryByRole("button", { name: /Save time off/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Discard changes/i })).not.toBeInTheDocument();
 
       // And the refresh is not frozen by a phantom dirty flag.
       await returnToPage(60_000);
