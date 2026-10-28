@@ -43,12 +43,25 @@ jest.mock("../../components/Button/Button", () => ({
     children,
     className,
     onClick,
+    "aria-label": ariaLabel,
+    "aria-expanded": ariaExpanded,
+    disabled,
   }: {
     children?: ReactNode;
     className?: string;
     onClick?: () => void;
+    "aria-label"?: string;
+    "aria-expanded"?: boolean;
+    disabled?: boolean;
   }) => (
-    <button type="button" className={className} onClick={onClick}>
+    <button
+      type="button"
+      className={className}
+      onClick={onClick}
+      aria-label={ariaLabel}
+      aria-expanded={ariaExpanded}
+      disabled={disabled}
+    >
       {children}
     </button>
   ),
@@ -131,7 +144,28 @@ jest.mock("./ToolbarElements/MediaSurfaceDiagnostics", () => ({
 
 jest.mock("../../components/Drawer/Drawer", () => ({
   __esModule: true,
-  default: ({ children }: { children?: ReactNode }) => <>{children}</>,
+  default: ({
+    children,
+    title,
+    position,
+    size,
+    isOpen,
+  }: {
+    children?: ReactNode;
+    title?: string;
+    position?: string;
+    size?: string;
+    isOpen?: boolean;
+  }) => (
+    <div
+      data-testid={title === "All Tools" ? "all-tools-drawer" : "drawer"}
+      data-position={position}
+      data-size={size}
+      data-open={isOpen}
+    >
+      {children}
+    </div>
+  ),
 }));
 
 jest.mock("../../pages/Controller/QuickLinks", () => ({
@@ -170,12 +204,14 @@ const renderToolbar = ({
   lastControllerConfigurationRoute,
   variant,
   workspaceMode,
+  isMobile = false,
 }: {
   access: "full" | "music" | "view";
   itemType: string;
   lastControllerConfigurationRoute?: ControllerConfigurationRoute;
   variant?: "default" | "aux";
   workspaceMode?: "present" | "edit";
+  isMobile?: boolean;
 }) => {
   mockState = {
     undoable: {
@@ -198,7 +234,7 @@ const renderToolbar = ({
   return render(
     <ThumbnailPreviewModeProvider>
       <GlobalInfoContext.Provider value={{ access } as any}>
-        <ControllerInfoContext.Provider value={{ isPhone: false } as any}>
+        <ControllerInfoContext.Provider value={{ isPhone: false, isMobile } as any}>
           {workspaceMode ? (
             <PresentationControllerModeProvider>{toolbar}</PresentationControllerModeProvider>
           ) : toolbar}
@@ -261,24 +297,21 @@ describe("Toolbar", () => {
     mockControllerBasePath = "/controller";
   });
 
-  it("enters Stream preview from Stream Format and keeps it when tabs change", () => {
+  it("keeps Preview As independent when All Tools opens", () => {
     renderToolbar({ access: "full", itemType: "song" });
 
     expect(screen.getByTestId("thumbnail-preview-mode")).toHaveTextContent(
       "projector",
     );
     act(() => {
-      screen.getByRole("button", { name: "Stream Format" }).click();
+      screen.getByRole("button", { name: "All Tools" }).click();
     });
     expect(screen.getByTestId("thumbnail-preview-mode")).toHaveTextContent(
-      "stream",
+      "projector",
     );
-
-    act(() => {
-      screen.getByRole("button", { name: "Slide Tools" }).click();
-    });
-    expect(screen.getByTestId("thumbnail-preview-mode")).toHaveTextContent(
-      "stream",
+    expect(screen.getByRole("button", { name: "All Tools" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
     );
   });
 
@@ -332,34 +365,21 @@ describe("Toolbar", () => {
   it("hides slide and box tools for music access on non-song items", () => {
     renderToolbar({ access: "music", itemType: "bible" });
 
-    expect(
-      screen.queryByRole("button", { name: "Slide Tools" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Box Tools" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "All Tools" })).not.toBeInTheDocument();
   });
 
   it("shows slide and box tools for music access on song items", () => {
     renderToolbar({ access: "music", itemType: "song" });
 
-    expect(
-      screen.getByRole("button", { name: "Slide Tools" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Box Tools" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All Tools" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Slide Tools" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Box Tools" })).not.toBeInTheDocument();
   });
 
   it("shows slide and box tools for music access on free form items", () => {
     renderToolbar({ access: "music", itemType: "free" });
 
-    expect(
-      screen.getByRole("button", { name: "Slide Tools" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Box Tools" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All Tools" })).toBeInTheDocument();
   });
 
   it("hides quick links and displays for music access", () => {
@@ -419,7 +439,7 @@ describe("Toolbar", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows slide and item tools on an auxiliary controller item page", () => {
+  it("shows relevant tools on an auxiliary controller item page", () => {
     mockControllerBasePath = "/aux-controller/ctrl_lobby";
     mockPathname = "/aux-controller/ctrl_lobby";
     renderToolbar({
@@ -428,18 +448,10 @@ describe("Toolbar", () => {
       variant: "aux",
     });
 
-    expect(
-      screen.getByRole("button", { name: "Slide Tools" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Box Tools" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Item Tools" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Stream Format" }),
-    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All Tools" })).toBeInTheDocument();
+    expect(screen.getByText("Slide Tools Panel")).toBeInTheDocument();
+    expect(screen.getByText("Box Tools Panel")).toBeInTheDocument();
+    expect(screen.queryByText("Stream Formatting")).not.toBeInTheDocument();
   });
 
   it("supports Present and Edit modes on an auxiliary controller", () => {
@@ -455,7 +467,7 @@ describe("Toolbar", () => {
     expect(screen.getByTestId("toolbar-primary-row")).toBeInTheDocument();
     expect(screen.getByTestId("toolbar-user-section")).toBeInTheDocument();
     expect(screen.queryByText("Undo")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Slide Tools" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "All Tools" })).not.toBeInTheDocument();
     expect(screen.getByTestId("compact-user")).toBeInTheDocument();
 
     act(() => {
@@ -463,7 +475,7 @@ describe("Toolbar", () => {
     });
 
     expect(screen.getByText("Undo")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Slide Tools" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All Tools" })).toBeInTheDocument();
     expect(screen.getByTestId("full-user")).toBeInTheDocument();
   });
 
@@ -478,41 +490,42 @@ describe("Toolbar", () => {
     ).toBeInTheDocument();
   });
 
-  it("switches to Slide Tools when navigating to a timer item", () => {
-    const view = renderToolbar({ access: "full", itemType: "song" });
-
+  it("opens All Tools without category tabs and closes it in Present mode", () => {
+    renderToolbar({ access: "full", itemType: "song", workspaceMode: "edit" });
+    act(() => screen.getByRole("button", { name: "Edit" }).click());
+    act(() => screen.getByRole("button", { name: "All Tools" }).click());
     expect(screen.getByText("Slide Tools Panel")).toBeInTheDocument();
-
-    act(() => {
-      screen.getByRole("button", { name: "Item Tools" }).click();
-    });
-
-    expect(screen.queryByText("Slide Tools Panel")).not.toBeInTheDocument();
+    expect(screen.getByText("Box Tools Panel")).toBeInTheDocument();
     expect(screen.getByText("Item Tools Panel")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Slide Tools" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Box Tools" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stream Format" })).not.toBeInTheDocument();
 
-    mockPathname = "/controller";
-    mockState = {
-      undoable: {
-        present: {
-          item: {
-            isLyricsEditorOpen: false,
-            type: "timer",
-          },
-          preferences: preferencesSlice.getInitialState(),
-        },
-      },
-    };
+    act(() => screen.getByRole("button", { name: "Present" }).click());
+    expect(screen.queryByRole("button", { name: "All Tools" })).not.toBeInTheDocument();
+  });
 
-    view.rerender(
-      <GlobalInfoContext.Provider value={{ access: "full" } as any}>
-        <ControllerInfoContext.Provider value={{ isPhone: false } as any}>
-          <Toolbar className="toolbar" />
-        </ControllerInfoContext.Provider>
-      </GlobalInfoContext.Provider>,
+  it.each([
+    { isMobile: false, position: "right" },
+    { isMobile: true, position: "bottom" },
+  ])("uses the responsive All Tools $position drawer", ({ isMobile, position }) => {
+    renderToolbar({ access: "full", itemType: "song", workspaceMode: "edit", isMobile });
+    act(() => screen.getByRole("button", { name: "Edit" }).click());
+
+    expect(screen.getByTestId("all-tools-drawer")).toHaveAttribute(
+      "data-position",
+      position,
     );
+    expect(screen.getByTestId("all-tools-drawer")).toHaveAttribute(
+      "data-size",
+      "xl",
+    );
+  });
 
-    expect(screen.getByText("Slide Tools Panel")).toBeInTheDocument();
-    expect(screen.queryByText("Item Tools Panel")).not.toBeInTheDocument();
+  it("shows stream formatting only for supported main-controller custom items", () => {
+    renderToolbar({ access: "full", itemType: "free", workspaceMode: "edit" });
+    act(() => screen.getByRole("button", { name: "Edit" }).click());
+    expect(screen.getByText("Stream Formatting")).toBeInTheDocument();
   });
 
   it("overlay variant shows Overlays, Board Posts, Overlays & Posts, Credits Editor, and Service Times tabs", () => {

@@ -1,9 +1,9 @@
 import { isControllerWorkspacePath } from "../../../utils/controllerWorkspace";
 import Button from "../../../components/Button/Button";
+import { createPortal } from "react-dom";
 import {
   Plus,
   Minus,
-  Maximize2,
   ALargeSmall,
   SunMedium,
   Baseline,
@@ -27,7 +27,6 @@ import {
   useMemo,
   memo,
   type CSSProperties,
-  type MutableRefObject,
 } from "react";
 import { useDispatch, useSelector } from "../../../hooks";
 import { useLocation } from "react-router-dom";
@@ -45,6 +44,7 @@ import {
 import {
   flushPendingItemMutations,
   getItemMutationOwner,
+  getItemMutationOwnerKey,
   scheduleOwnedItemMutation,
   type ItemMutationOwner,
   type PendingItemMutationHandle,
@@ -94,11 +94,24 @@ function nearestPresetFontSize(px: number): number {
   return nearestFontSizePreset(clampFontSize(px), FONT_SIZE_PRESETS);
 }
 
+const slideEditorTargetKey = (
+  owner: ItemMutationOwner | null,
+  arrangementId: string | undefined,
+  slideId: string | undefined,
+  targetBoxId: string | undefined,
+  boxIndex: number | undefined,
+) =>
+  JSON.stringify([
+    owner ? getItemMutationOwnerKey(owner) : null,
+    arrangementId ?? null,
+    slideId ?? null,
+    targetBoxId ?? boxIndex ?? null,
+  ]);
+
 type SlideToolbarFontSizeFieldProps = {
   value: number | string;
   fontPresetHighlight: number;
   scrollbarWidth: string;
-  fontSizeDebounceRef: MutableRefObject<PendingItemMutationHandle | null>;
   onChange: (val: string) => void;
   onBlur: () => void;
   onPresetSelect: (px: number) => void;
@@ -109,7 +122,6 @@ const SlideToolbarFontSizeField = memo(function SlideToolbarFontSizeField({
   value,
   fontPresetHighlight,
   scrollbarWidth,
-  fontSizeDebounceRef,
   onChange,
   onBlur,
   onPresetSelect,
@@ -126,16 +138,7 @@ const SlideToolbarFontSizeField = memo(function SlideToolbarFontSizeField({
     });
   }, []);
 
-  const handlePresetSelect = useCallback(
-    (px: number) => {
-      if (fontSizeDebounceRef.current) {
-        fontSizeDebounceRef.current.cancel();
-        fontSizeDebounceRef.current = null;
-      }
-      onPresetSelect(px);
-    },
-    [fontSizeDebounceRef, onPresetSelect],
-  );
+  const handlePresetSelect = useCallback((px: number) => onPresetSelect(px), [onPresetSelect]);
 
   return (
     <Input
@@ -213,7 +216,13 @@ const SlideToolbarFontSizeField = memo(function SlideToolbarFontSizeField({
   );
 });
 
-const SlideEditTools = ({ className }: { className?: string }) => {
+const SlideEditTools = ({
+  quickToolbarTarget,
+  drawerTarget,
+}: {
+  quickToolbarTarget: HTMLElement | null;
+  drawerTarget: HTMLElement | null;
+}) => {
   const location = useLocation();
   const dispatch = useDispatch();
   const [fontSize, setFontSize] = useState<number | string>(DEFAULT_FONT_PX);
@@ -231,6 +240,10 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   const fontSizeTimeoutRef = useRef<PendingItemMutationHandle | null>(null);
   const fontSizeDebounceRef = useRef<PendingItemMutationHandle | null>(null);
   const timerColorTimeoutRef = useRef<PendingItemMutationHandle | null>(null);
+  const fontColorTimeoutTargetKeyRef = useRef<string | null>(null);
+  const timerColorTimeoutTargetKeyRef = useRef<string | null>(null);
+  const fontSizeTimeoutTargetKeyRef = useRef<string | null>(null);
+  const fontSizeDebounceTargetKeyRef = useRef<string | null>(null);
   const fontSizeInputRef = useRef<string | number>("");
   const globalInfo = useContext(GlobalInfoContext);
   const { hostId } = globalInfo || {};
@@ -256,14 +269,40 @@ const SlideEditTools = ({ className }: { className?: string }) => {
 
   const slide = slides[selectedSlide];
   const itemOwner = getItemMutationOwner(item);
+  const currentTargetKey = slideEditorTargetKey(
+    itemOwner,
+    type === "song" ? arrangements[selectedArrangement]?.id : undefined,
+    slide?.id,
+    slide?.boxes?.[selectedBox]?.id,
+    selectedBox,
+  );
+  const currentTargetKeyRef = useRef(currentTargetKey);
+  currentTargetKeyRef.current = currentTargetKey;
+  const previousTargetKeyRef = useRef(currentTargetKey);
   const itemOwnerRef = useRef(itemOwner);
   itemOwnerRef.current = itemOwner;
   const isMountedRef = useRef(true);
 
   useEffect(() => {
+    const targetChanged = previousTargetKeyRef.current !== currentTargetKey;
+    if (targetChanged) {
+      previousTargetKeyRef.current = currentTargetKey;
+      fontSizeDebounceRef.current?.flush();
+      fontSizeDebounceRef.current = null;
+      fontSizeDebounceTargetKeyRef.current = null;
+      fontSizeTimeoutRef.current?.flush();
+      fontSizeTimeoutRef.current = null;
+      fontSizeTimeoutTargetKeyRef.current = null;
+    }
+
     const fSize = slide?.boxes?.[selectedBox]?.fontSize ?? DEFAULT_FONT_PX;
-    setFontSize(fSize);
-    fontSizeInputRef.current = fSize;
+    if (
+      targetChanged ||
+      (!fontSizeDebounceRef.current && !fontSizeTimeoutRef.current)
+    ) {
+      setFontSize(fSize);
+      fontSizeInputRef.current = fSize;
+    }
     setBrightness(slide?.boxes?.[0]?.brightness || 100);
     setShouldKeepAspectRatio(slide?.boxes?.[0]?.shouldKeepAspectRatio || false);
     setFontColor(slide?.boxes?.[selectedBox]?.fontColor || "#ffffff");
@@ -271,7 +310,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
     setAlignment(slide?.boxes?.[selectedBox]?.align || "left");
     setIsBold(slide?.boxes?.[selectedBox]?.isBold || false);
     setIsItalic(slide?.boxes?.[selectedBox]?.isItalic || false);
-  }, [slide, selectedBox, timer]);
+  }, [currentTargetKey, slide, selectedBox, timer]);
 
   const updateItem = useCallback(
     (updatedItem: ItemState) => {
@@ -323,6 +362,19 @@ const SlideEditTools = ({ className }: { className?: string }) => {
     type,
   ]);
 
+  const isCurrentTarget = useCallback(
+    (target: NonNullable<ReturnType<typeof getSelectedTarget>>) =>
+      currentTargetKeyRef.current ===
+      slideEditorTargetKey(
+        target.owner,
+        target.arrangementId,
+        target.slideId,
+        target.targetBoxId,
+        target.boxIndex,
+      ),
+    [],
+  );
+
   const runWithFormatting = useCallback(
     (
       owner: ItemMutationOwner,
@@ -345,12 +397,35 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   const applyFontSize = useCallback(
     (val: number, target = getSelectedTarget()) => {
       if (!target) return;
-      fontSizeTimeoutRef.current?.cancel();
-      fontSizeDebounceRef.current?.cancel();
+      const targetKey = slideEditorTargetKey(
+        target.owner,
+        target.arrangementId,
+        target.slideId,
+        target.targetBoxId,
+        target.boxIndex,
+      );
+      const pendingInput = fontSizeDebounceRef.current;
+      const pendingInputKey = fontSizeDebounceTargetKeyRef.current;
+      fontSizeDebounceRef.current = null;
+      fontSizeDebounceTargetKeyRef.current = null;
+      if (pendingInput) {
+        if (pendingInputKey && pendingInputKey !== targetKey) pendingInput.flush();
+        else pendingInput.cancel();
+      }
+      const pendingButton = fontSizeTimeoutRef.current;
+      const pendingButtonKey = fontSizeTimeoutTargetKeyRef.current;
+      fontSizeTimeoutRef.current = null;
+      fontSizeTimeoutTargetKeyRef.current = null;
+      if (pendingButton) {
+        if (pendingButtonKey && pendingButtonKey !== targetKey) pendingButton.flush();
+        else pendingButton.cancel();
+      }
       fontSizeDebounceRef.current = null;
       const clamped = clampFontSize(val);
-      if (isMountedRef.current) setFontSize(clamped);
-      fontSizeInputRef.current = clamped;
+      if (isMountedRef.current && isCurrentTarget(target)) {
+        setFontSize(clamped);
+        fontSizeInputRef.current = clamped;
+      }
       runWithFormatting(target.owner, {
         kind: "boxProperties",
         ...target,
@@ -358,63 +433,121 @@ const SlideEditTools = ({ className }: { className?: string }) => {
         formatItem: true,
       });
     },
-    [getSelectedTarget, runWithFormatting]
+    [getSelectedTarget, isCurrentTarget, runWithFormatting]
   );
 
   const _updateFontSize = (val: number) => {
     const target = getSelectedTarget();
     if (!target) return;
-    fontSizeDebounceRef.current?.cancel();
+    const targetKey = slideEditorTargetKey(
+      target.owner,
+      target.arrangementId,
+      target.slideId,
+      target.targetBoxId,
+      target.boxIndex,
+    );
+    const pendingInput = fontSizeDebounceRef.current;
+    const pendingInputKey = fontSizeDebounceTargetKeyRef.current;
+    fontSizeDebounceRef.current = null;
+    fontSizeDebounceTargetKeyRef.current = null;
+    if (pendingInput) {
+      if (pendingInputKey && pendingInputKey !== targetKey) pendingInput.flush();
+      else pendingInput.cancel();
+    }
     fontSizeDebounceRef.current = null;
     const clamped = clampFontSize(val);
     if (isMountedRef.current) setFontSize(clamped);
     fontSizeInputRef.current = clamped;
-    fontSizeTimeoutRef.current?.cancel();
-    fontSizeTimeoutRef.current = scheduleOwnedItemMutation(
-      target.owner,
-      250,
-      () => applyFontSize(clamped, target),
-    );
+    const pendingButton = fontSizeTimeoutRef.current;
+    const pendingButtonKey = fontSizeTimeoutTargetKeyRef.current;
+    fontSizeTimeoutRef.current = null;
+    fontSizeTimeoutTargetKeyRef.current = null;
+    if (pendingButton) {
+      if (pendingButtonKey && pendingButtonKey !== targetKey) pendingButton.flush();
+      else pendingButton.cancel();
+    }
+    let handle: PendingItemMutationHandle;
+    handle = scheduleOwnedItemMutation(target.owner, 250, () => {
+      if (fontSizeTimeoutRef.current === handle) {
+        fontSizeTimeoutRef.current = null;
+        fontSizeTimeoutTargetKeyRef.current = null;
+      }
+      applyFontSize(clamped, target);
+    });
+    fontSizeTimeoutRef.current = handle;
+    fontSizeTimeoutTargetKeyRef.current = targetKey;
   };
 
-  const commitFontSizeFromInput = useCallback((target = getSelectedTarget()) => {
+  const commitFontSizeFromInput = useCallback((
+    target = getSelectedTarget(),
+    inputValue: number | string = fontSizeInputRef.current,
+    fallback = slide?.boxes?.[selectedBox]?.fontSize ?? DEFAULT_FONT_PX,
+  ) => {
     if (!target) return;
-    const inputVal = fontSizeInputRef.current;
     const raw =
-      typeof inputVal === "string"
-        ? parseInt(inputVal.trim(), 10)
-        : inputVal;
-    const fallback =
-      slide?.boxes?.[selectedBox]?.fontSize ?? DEFAULT_FONT_PX;
+      typeof inputValue === "string"
+        ? parseInt(inputValue.trim(), 10)
+        : inputValue;
     const val =
       Number.isNaN(raw) ||
-        inputVal === "" ||
-        (typeof inputVal === "string" && inputVal.trim() === "")
+        inputValue === "" ||
+        (typeof inputValue === "string" && inputValue.trim() === "")
         ? fallback
         : raw;
     const clamped = clampFontSize(val);
-    if (isMountedRef.current) setFontSize(clamped);
-    fontSizeInputRef.current = clamped;
+    if (isMountedRef.current && isCurrentTarget(target)) {
+      setFontSize(clamped);
+      fontSizeInputRef.current = clamped;
+    }
     applyFontSize(clamped, target);
-  }, [slide, selectedBox, applyFontSize, getSelectedTarget]);
+  }, [slide, selectedBox, applyFontSize, getSelectedTarget, isCurrentTarget]);
 
   const handleFontSizeBlur = () => {
     fontSizeDebounceRef.current?.cancel();
     fontSizeDebounceRef.current = null;
+    fontSizeDebounceTargetKeyRef.current = null;
     commitFontSizeFromInput(getSelectedTarget());
   };
 
   const handleFontSizeChange = (val: string) => {
     const target = getSelectedTarget();
     if (!target) return;
+    const targetKey = slideEditorTargetKey(
+      target.owner,
+      target.arrangementId,
+      target.slideId,
+      target.targetBoxId,
+      target.boxIndex,
+    );
+    const fallback = slide?.boxes?.[selectedBox]?.fontSize ?? DEFAULT_FONT_PX;
     setFontSize(val);
     fontSizeInputRef.current = val;
-    fontSizeDebounceRef.current?.cancel();
-    fontSizeDebounceRef.current = scheduleOwnedItemMutation(
-      target.owner,
-      1000,
-      () => commitFontSizeFromInput(target),
-    );
+    const pendingButton = fontSizeTimeoutRef.current;
+    const pendingButtonKey = fontSizeTimeoutTargetKeyRef.current;
+    fontSizeTimeoutRef.current = null;
+    fontSizeTimeoutTargetKeyRef.current = null;
+    if (pendingButton) {
+      if (pendingButtonKey && pendingButtonKey !== targetKey) pendingButton.flush();
+      else pendingButton.cancel();
+    }
+    const pendingInput = fontSizeDebounceRef.current;
+    const pendingInputKey = fontSizeDebounceTargetKeyRef.current;
+    fontSizeDebounceRef.current = null;
+    fontSizeDebounceTargetKeyRef.current = null;
+    if (pendingInput) {
+      if (pendingInputKey && pendingInputKey !== targetKey) pendingInput.flush();
+      else pendingInput.cancel();
+    }
+    let handle: PendingItemMutationHandle;
+    handle = scheduleOwnedItemMutation(target.owner, 1000, () => {
+      if (fontSizeDebounceRef.current === handle) {
+        fontSizeDebounceRef.current = null;
+        fontSizeDebounceTargetKeyRef.current = null;
+      }
+      commitFontSizeFromInput(target, val, fallback);
+    });
+    fontSizeDebounceRef.current = handle;
+    fontSizeDebounceTargetKeyRef.current = targetKey;
   };
 
   const _updateBrightness = (val: number) => {
@@ -446,12 +579,28 @@ const SlideEditTools = ({ className }: { className?: string }) => {
     }
     const target = getSelectedTarget();
     if (!target) return;
-    fontColorTimeoutRef.current?.cancel();
-    fontColorTimeoutRef.current = scheduleOwnedItemMutation(
+    const targetKey = slideEditorTargetKey(
       target.owner,
-      250,
-      () => {
-      if (isMountedRef.current) setFontColor(val);
+      target.arrangementId,
+      target.slideId,
+      target.targetBoxId,
+      target.boxIndex,
+    );
+    const pending = fontColorTimeoutRef.current;
+    const pendingKey = fontColorTimeoutTargetKeyRef.current;
+    fontColorTimeoutRef.current = null;
+    fontColorTimeoutTargetKeyRef.current = null;
+    if (pending) {
+      if (pendingKey && pendingKey !== targetKey) pending.flush();
+      else pending.cancel();
+    }
+    let handle: PendingItemMutationHandle;
+    handle = scheduleOwnedItemMutation(target.owner, 250, () => {
+      if (fontColorTimeoutRef.current === handle) {
+        fontColorTimeoutRef.current = null;
+        fontColorTimeoutTargetKeyRef.current = null;
+      }
+      if (isMountedRef.current && isCurrentTarget(target)) setFontColor(val);
       dispatch(applyOwnedContentMutation({
         owner: target.owner,
         mutation: {
@@ -461,8 +610,9 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           applyToAll: true,
         },
       }));
-      },
-    );
+    });
+    fontColorTimeoutRef.current = handle;
+    fontColorTimeoutTargetKeyRef.current = targetKey;
   };
 
   const _updateTimerColor = (val: string) => {
@@ -472,18 +622,41 @@ const SlideEditTools = ({ className }: { className?: string }) => {
 
     const target = getSelectedTarget();
     if (!target) return;
-    timerColorTimeoutRef.current?.cancel();
-    timerColorTimeoutRef.current = scheduleOwnedItemMutation(
+    const targetKey = slideEditorTargetKey(
       target.owner,
-      250,
-      () => {
-      if (isMountedRef.current) setTimerColor(val);
-
-      if (timerInfo?.id) {
-        dispatch(updateTimerColor({ id: timerInfo?.id, color: val, hostId }));
-      }
-      },
+      target.arrangementId,
+      target.slideId,
+      target.targetBoxId,
+      target.boxIndex,
     );
+    const timerId = timerInfo?.id;
+    const pending = timerColorTimeoutRef.current;
+    const pendingKey = timerColorTimeoutTargetKeyRef.current;
+    timerColorTimeoutRef.current = null;
+    timerColorTimeoutTargetKeyRef.current = null;
+    if (pending) {
+      if (pendingKey && pendingKey !== targetKey) pending.flush();
+      else pending.cancel();
+    }
+    let handle: PendingItemMutationHandle;
+    handle = scheduleOwnedItemMutation(target.owner, 250, () => {
+      if (timerColorTimeoutRef.current === handle) {
+        timerColorTimeoutRef.current = null;
+        timerColorTimeoutTargetKeyRef.current = null;
+      }
+      if (
+        isMountedRef.current &&
+        isCurrentTarget(target) &&
+        timerInfo?.id === timerId
+      ) {
+        setTimerColor(val);
+      }
+      if (timerId) {
+        dispatch(updateTimerColor({ id: timerId, color: val, hostId }));
+      }
+    });
+    timerColorTimeoutRef.current = handle;
+    timerColorTimeoutTargetKeyRef.current = targetKey;
   };
 
   const _updateIsBold = () => {
@@ -575,7 +748,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
 
   const canChangeAspectRatio = item.type === "free" || item.type === "image";
 
-  const controls = (
+  const fullControls = (
     <>
       <div className="flex gap-1 items-center flex-wrap md:flex-nowrap justify-center">
         <Icon svg={ALargeSmall} className="border-b border-black" />
@@ -595,7 +768,6 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           value={fontSize}
           fontPresetHighlight={fontPresetHighlight}
           scrollbarWidth={scrollbarWidth}
-          fontSizeDebounceRef={fontSizeDebounceRef}
           onChange={handleFontSizeChange}
           onBlur={handleFontSizeBlur}
           onPresetSelect={applyFontSize}
@@ -799,21 +971,104 @@ const SlideEditTools = ({ className }: { className?: string }) => {
     </>
   );
 
-  return (
-    <div className={`flex gap-2 items-center ${className || ""}`}>
-      {/* leaving this outer div in case more tools are added */}
-
-      <div className="max-lg:hidden flex gap-2 items-center">{controls}</div>
-      <PopoverPanel
-        TriggeringButton={
-          <Button className="lg:hidden" variant="tertiary" svg={Maximize2}>
-            Tools
-          </Button>
-        }
-      >
-        <div className="flex flex-col gap-4 items-center p-4">{controls}</div>
-      </PopoverPanel>
+  const quickControls = (
+    <div className="flex min-w-max shrink-0 items-center gap-2">
+      <div className="flex shrink-0 items-center gap-1">
+        <Button
+          svg={Minus}
+          aria-label="Decrease font size"
+          variant="tertiary"
+          onClick={() => {
+            const num =
+              typeof fontSize === "number"
+                ? fontSize
+                : parseInt(String(fontSize), 10) || DEFAULT_FONT_PX;
+            _updateFontSize(num - FONT_SIZE_BUTTON_STEP);
+          }}
+        />
+        <SlideToolbarFontSizeField
+          value={fontSize}
+          fontPresetHighlight={fontPresetHighlight}
+          scrollbarWidth={scrollbarWidth}
+          onChange={handleFontSizeChange}
+          onBlur={handleFontSizeBlur}
+          onPresetSelect={applyFontSize}
+        />
+        <Button
+          svg={Plus}
+          aria-label="Increase font size"
+          variant="tertiary"
+          onClick={() => {
+            const num =
+              typeof fontSize === "number"
+                ? fontSize
+                : parseInt(String(fontSize), 10) || DEFAULT_FONT_PX;
+            _updateFontSize(num + FONT_SIZE_BUTTON_STEP);
+          }}
+        />
+      </div>
+      <div className="flex shrink-0 items-center gap-1 border-l border-gray-600 pl-2">
+        <Icon size="xl" svg={SunMedium} color="#fbbf24" />
+        <Slider
+          className="w-24 shrink-0"
+          value={[brightness]}
+          min={10}
+          max={100}
+          step={1}
+          onValueChange={(value: number[]) =>
+            _updateBrightness(value[0] ?? brightness)
+          }
+          aria-label="Background brightness"
+        />
+        <Input
+          label="Brightness"
+          type="number"
+          value={brightness}
+          onChange={(value) => _updateBrightness(value as number)}
+          className="w-14 shrink-0"
+          inputTextSize="text-xs"
+          hideLabel
+          data-ignore-undo="true"
+          max={100}
+          min={10}
+        />
+      </div>
+      {type === "bible" && (
+        <div className="flex shrink-0 items-center gap-1 border-l border-gray-600 pl-2">
+          <Icon color={iconColorMap.get("bible")} svg={BookOpen} />
+          <span className="text-xs font-semibold">Mode</span>
+          <RadioGroup
+            value={item.bibleInfo?.fontMode ?? "fit"}
+            onValueChange={(value) => _updateBibleFontMode(value as BibleFontMode)}
+            className="flex items-center gap-1"
+          >
+            <RadioButton className="text-xs" optionValue="fit" label="Fit" />
+            <RadioButton
+              className="text-xs"
+              optionValue="separate"
+              label="Separate"
+            />
+            <RadioButton
+              className="text-xs"
+              optionValue="multiple"
+              label="Multiple"
+            />
+          </RadioGroup>
+        </div>
+      )}
     </div>
+  );
+
+  return (
+    <>
+      {quickToolbarTarget &&
+        createPortal(quickControls, quickToolbarTarget)}
+      {drawerTarget &&
+        createPortal(
+          <div className="flex flex-col gap-4">{fullControls}</div>,
+          drawerTarget,
+        )}
+    </>
   );
 };
 

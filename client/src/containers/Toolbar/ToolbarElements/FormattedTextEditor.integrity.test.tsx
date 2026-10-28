@@ -163,7 +163,7 @@ describe("delayed formatted text content integrity", () => {
     const { unmount } = render(
       <Provider store={store}>
         <GlobalInfoContext.Provider value={createMockGlobalContext()}>
-          <FormattedTextEditor />
+          <FormattedTextEditor drawerTarget={document.body} />
         </GlobalInfoContext.Provider>
       </Provider>,
     );
@@ -205,7 +205,7 @@ describe("delayed formatted text content integrity", () => {
       <Provider store={store}>
         <GlobalInfoContext.Provider value={createMockGlobalContext()}>
           <MemoryRouter initialEntries={["/controller"]}>
-            <SlideEditTools />
+            <SlideEditTools quickToolbarTarget={null} drawerTarget={document.body} />
           </MemoryRouter>
         </GlobalInfoContext.Provider>
       </Provider>,
@@ -393,7 +393,7 @@ describe("delayed formatted text content integrity", () => {
     render(
       <Provider store={store}>
         <GlobalInfoContext.Provider value={createMockGlobalContext()}>
-          <FormattedTextEditor />
+          <FormattedTextEditor drawerTarget={document.body} />
         </GlobalInfoContext.Provider>
       </Provider>,
     );
@@ -433,7 +433,7 @@ describe("delayed formatted text content integrity", () => {
       <Provider store={store}>
         <GlobalInfoContext.Provider value={createMockGlobalContext()}>
           <MemoryRouter initialEntries={["/controller"]}>
-            <SlideEditTools />
+            <SlideEditTools quickToolbarTarget={null} drawerTarget={document.body} />
           </MemoryRouter>
         </GlobalInfoContext.Provider>
       </Provider>,
@@ -467,7 +467,7 @@ describe("delayed formatted text content integrity", () => {
       <Provider store={store}>
         <GlobalInfoContext.Provider value={createMockGlobalContext()}>
           <MemoryRouter initialEntries={["/controller"]}>
-            <SlideEditTools />
+            <SlideEditTools quickToolbarTarget={null} drawerTarget={document.body} />
           </MemoryRouter>
         </GlobalInfoContext.Provider>
       </Provider>,
@@ -487,7 +487,7 @@ describe("delayed formatted text content integrity", () => {
       <Provider store={store}>
         <GlobalInfoContext.Provider value={createMockGlobalContext()}>
           <MemoryRouter initialEntries={["/controller"]}>
-            <SlideEditTools />
+            <SlideEditTools quickToolbarTarget={null} drawerTarget={document.body} />
           </MemoryRouter>
         </GlobalInfoContext.Provider>
       </Provider>,
@@ -515,7 +515,7 @@ describe("delayed formatted text content integrity", () => {
     render(
       <Provider store={store}>
         <GlobalInfoContext.Provider value={createMockGlobalContext()}>
-          <FormattedTextEditor />
+          <FormattedTextEditor drawerTarget={document.body} />
         </GlobalInfoContext.Provider>
       </Provider>,
     );
@@ -587,7 +587,7 @@ describe("delayed formatted text content integrity", () => {
     render(
       <Provider store={store}>
         <GlobalInfoContext.Provider value={createMockGlobalContext()}>
-          <FormattedTextEditor />
+          <FormattedTextEditor drawerTarget={document.body} />
         </GlobalInfoContext.Provider>
       </Provider>,
     );
@@ -691,7 +691,7 @@ describe("delayed formatted text content integrity", () => {
       <Provider store={store}>
         <GlobalInfoContext.Provider value={createMockGlobalContext()}>
           <MemoryRouter initialEntries={["/controller"]}>
-            <SlideEditTools />
+            <SlideEditTools quickToolbarTarget={null} drawerTarget={document.body} />
           </MemoryRouter>
         </GlobalInfoContext.Provider>
       </Provider>,
