@@ -2078,7 +2078,7 @@ const ItemSlidesContent = () => {
             />
           ) : null}
           {slideActionBarItems.length > 0 ? (
-            <div className="ml-auto flex shrink-0 items-center justify-end gap-2">
+            <div className="ml-auto flex shrink-0 items-center justify-end gap-2 md:min-w-11 md:flex-1 md:shrink">
               {isSlideSubsetSelecting ? (
                 <div
                   className="flex shrink-0 items-baseline gap-1 text-xs"

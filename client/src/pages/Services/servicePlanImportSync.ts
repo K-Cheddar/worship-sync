@@ -282,63 +282,152 @@ export const preparePlanningCenterPdfImport = (
       ),
     );
 
-    // Unique neighboring context is stronger than an occurrence number. Do
-    // this before matching synthetic keys so a duplicate-title reorder with
-    // distinct surrounding items keeps the right local occurrence identity.
-    const matchedByNeighbor = new Set<ServicePlanElement>();
-    incoming.forEach((element) => {
+    // Durable Planning Center occurrence IDs outrank PDF fingerprints. Reserve
+    // those rows before matching synthetic identities so neighbor context or
+    // occurrence rank cannot reassign a reliable source identity.
+    const hasReliableOccurrenceId = (element: ServicePlanElement) =>
+      Boolean(element.sourceOccurrenceId?.trim());
+    const claimedExisting = new Set(existing.filter(hasReliableOccurrenceId));
+    const claimedIncoming = new Set(incoming.filter(hasReliableOccurrenceId));
+    const claimedSyntheticIdentities = new Set<string>([
+      ...existing,
+      ...incoming,
+    ].flatMap((element) => hasReliableOccurrenceId(element) && element.planningCenterPdfMatchKey
+      ? [element.planningCenterPdfMatchKey]
+      : [],
+    ));
+
+    // Unique neighboring context is stronger than an occurrence number. Build
+    // the complete set of independent proposals before assigning keys; a
+    // sequential assignment could give one incoming row a key another row
+    // still owns by its generated occurrence number.
+    const neighborMatches = incoming.flatMap((element) => {
+      if (claimedIncoming.has(element)) return [];
       const context = importedNeighborContextByElement.get(element);
-      if (!context) return;
+      if (!context) return [];
       const existingCandidates = existing.filter((candidate) =>
-        !candidate.planningCenterPdfMatchReviewRequired &&
-        !matchedByNeighbor.has(candidate) && currentNeighborContextByElement.get(candidate) === context,
+        !claimedExisting.has(candidate) && !candidate.planningCenterPdfMatchReviewRequired &&
+        !hasReliableOccurrenceId(candidate) && currentNeighborContextByElement.get(candidate) === context,
       );
       const incomingCandidates = incoming.filter((candidate) =>
-        !matchedByNeighbor.has(candidate) && importedNeighborContextByElement.get(candidate) === context,
+        !claimedIncoming.has(candidate) && !hasReliableOccurrenceId(candidate) &&
+        importedNeighborContextByElement.get(candidate) === context,
       );
-      if (existingCandidates.length !== 1 || incomingCandidates.length !== 1) return;
+      if (existingCandidates.length !== 1 || incomingCandidates.length !== 1) return [];
       const existingCandidate = existingCandidates[0];
-      const incomingCandidate = incomingCandidates[0];
-      incomingCandidate.planningCenterPdfMatchKey = existingCandidate.planningCenterPdfMatchKey;
-      matchedByNeighbor.add(existingCandidate);
-      matchedByNeighbor.add(incomingCandidate);
+      const matchKey = existingCandidate.planningCenterPdfMatchKey;
+      if (!matchKey || claimedSyntheticIdentities.has(matchKey) ||
+        existing.filter((candidate) => candidate.planningCenterPdfMatchKey === matchKey).length !== 1) return [];
+      return [{ existing: existingCandidate, incoming: incomingCandidates[0], matchKey }];
+    });
+    const neighborIncoming = new Set(neighborMatches.map(({ incoming: element }) => element));
+    const neighborIdentities = new Set(neighborMatches.map(({ matchKey }) => matchKey));
+    incoming.forEach((element) => {
+      if (neighborIncoming.has(element) || hasReliableOccurrenceId(element) ||
+        !element.planningCenterPdfMatchKey || !neighborIdentities.has(element.planningCenterPdfMatchKey)) return;
+      // Release this occurrence's weaker source-order key before a confident
+      // context match takes ownership of it.
+      delete element.planningCenterPdfMatchKey;
+    });
+    // Apply neighbor changes together so a valid reorder can exchange synthetic
+    // identities without transiently assigning one key to two incoming rows.
+    neighborIncoming.forEach((element) => delete element.planningCenterPdfMatchKey);
+    neighborMatches.forEach(({ existing: existingCandidate, incoming: incomingCandidate, matchKey }) => {
+      if (claimedExisting.has(existingCandidate) || claimedIncoming.has(incomingCandidate) ||
+        claimedSyntheticIdentities.has(matchKey)) return;
+      incomingCandidate.planningCenterPdfMatchKey = matchKey;
+      claimedExisting.add(existingCandidate);
+      claimedIncoming.add(incomingCandidate);
+      claimedSyntheticIdentities.add(matchKey);
     });
 
-    const exactKeys = new Set(existing
-      .filter((element) => !element.planningCenterPdfMatchReviewRequired)
-      .flatMap((element) =>
-        element.planningCenterPdfMatchKey ? [element.planningCenterPdfMatchKey] : [],
-      ));
-    const matchedKeys = new Set(incoming.flatMap((element) => {
+    // A neighbor match may take a key that another incoming row received from
+    // its source-order fingerprint. Keep the stronger neighbor claim and make
+    // the displaced row eligible for the existing confirmable review path.
+    const incomingBySyntheticIdentity = new Map<string, ServicePlanElement[]>();
+    incoming.forEach((element) => {
+      if (hasReliableOccurrenceId(element) || !element.planningCenterPdfMatchKey) return;
+      const matches = incomingBySyntheticIdentity.get(element.planningCenterPdfMatchKey) || [];
+      matches.push(element);
+      incomingBySyntheticIdentity.set(element.planningCenterPdfMatchKey, matches);
+    });
+    incomingBySyntheticIdentity.forEach((matches, identity) => {
+      if (matches.length < 2) return;
+      const neighborOwners = matches.filter((element) => neighborIncoming.has(element));
+      const keep = neighborOwners.length === 1 ? neighborOwners[0] : undefined;
+      matches.forEach((element) => {
+        if (element === keep) return;
+        delete element.planningCenterPdfMatchKey;
+      });
+      claimedSyntheticIdentities.add(identity);
+    });
+
+    // Exact fingerprints also require a one-to-one occurrence and identity.
+    // If a saved identity is duplicated or was claimed by context, leave the
+    // incoming row unmatched so it can be reviewed instead of being dropped.
+    const existingBySyntheticIdentity = new Map<string, ServicePlanElement[]>();
+    existing.forEach((element) => {
+      if (claimedExisting.has(element) || element.planningCenterPdfMatchReviewRequired ||
+        hasReliableOccurrenceId(element) || !element.planningCenterPdfMatchKey) return;
+      const matches = existingBySyntheticIdentity.get(element.planningCenterPdfMatchKey) || [];
+      matches.push(element);
+      existingBySyntheticIdentity.set(element.planningCenterPdfMatchKey, matches);
+    });
+    const incomingByExactIdentity = new Map<string, ServicePlanElement[]>();
+    incoming.forEach((element) => {
+      if (claimedIncoming.has(element) || hasReliableOccurrenceId(element) ||
+        !element.planningCenterPdfMatchKey) return;
+      const matches = incomingByExactIdentity.get(element.planningCenterPdfMatchKey) || [];
+      matches.push(element);
+      incomingByExactIdentity.set(element.planningCenterPdfMatchKey, matches);
+    });
+    incomingByExactIdentity.forEach((matches, identity) => {
+      if ((existingBySyntheticIdentity.get(identity)?.length || 0) > 1) {
+        matches.forEach((element) => delete element.planningCenterPdfMatchKey);
+      }
+    });
+    incoming.forEach((element) => {
+      if (claimedIncoming.has(element) || hasReliableOccurrenceId(element)) return;
       const seconds = element.durationSeconds ?? Math.round((element.durationMinutes || 0) * 60);
-      return !matchedByNeighbor.has(element) &&
-        !changedOccurrenceCardinalities.has(seconds) &&
-        element.planningCenterPdfMatchKey && exactKeys.has(element.planningCenterPdfMatchKey)
-        ? [element.planningCenterPdfMatchKey]
-        : [];
-    }));
-    const unmatchedExisting = existing.filter((element) => !matchedByNeighbor.has(element) && (
-      !element.planningCenterPdfMatchKey || !matchedKeys.has(element.planningCenterPdfMatchKey)
-    ));
-    const unmatchedIncoming = incoming.filter((element) => !matchedByNeighbor.has(element) && (
-      !element.planningCenterPdfMatchKey || !matchedKeys.has(element.planningCenterPdfMatchKey)
-    ));
+      const identity = element.planningCenterPdfMatchKey;
+      if (!identity || changedOccurrenceCardinalities.has(seconds) ||
+        claimedSyntheticIdentities.has(identity)) return;
+      const existingCandidates = existingBySyntheticIdentity.get(identity) || [];
+      const incomingCandidates = incomingByExactIdentity.get(identity) || [];
+      if (existingCandidates.length !== 1 || incomingCandidates.length !== 1) return;
+      const existingCandidate = existingCandidates[0];
+      if (claimedExisting.has(existingCandidate)) return;
+      claimedExisting.add(existingCandidate);
+      claimedIncoming.add(element);
+      claimedSyntheticIdentities.add(identity);
+    });
+
+    const unmatchedExisting = existing.filter((element) => !claimedExisting.has(element));
+    const unmatchedIncoming = incoming.filter((element) => !claimedIncoming.has(element));
 
     const sectionNames = new Set(unmatchedIncoming
-      .filter((element) => !matchedByNeighbor.has(element))
       .map((element) => importedSectionByElement.get(element)));
     sectionNames.forEach((sectionName) => {
       if (!sectionName) return;
       const currentInSection = unmatchedExisting.filter((element) =>
-        !matchedByNeighbor.has(element) && currentSectionByElement.get(element) === sectionName,
+        !claimedExisting.has(element) && currentSectionByElement.get(element) === sectionName,
       );
       const importedInSection = unmatchedIncoming.filter((element) =>
-        !matchedByNeighbor.has(element) && importedSectionByElement.get(element) === sectionName,
+        !claimedIncoming.has(element) && importedSectionByElement.get(element) === sectionName,
       );
-      if (currentInSection.length === 1 && importedInSection.length === 1 &&
+      const durationChanged = currentInSection.length === 1 && importedInSection.length === 1 &&
+        (currentInSection[0].durationSeconds ?? Math.round((currentInSection[0].durationMinutes || 0) * 60)) !==
+          (importedInSection[0].durationSeconds ?? Math.round((importedInSection[0].durationMinutes || 0) * 60));
+      if (durationChanged &&
         !currentInSection[0].planningCenterPdfMatchReviewRequired) {
-        importedInSection[0].planningCenterPdfMatchKey = currentInSection[0].planningCenterPdfMatchKey;
-        return;
+        const matchKey = currentInSection[0].planningCenterPdfMatchKey;
+        if (matchKey && !claimedSyntheticIdentities.has(matchKey)) {
+          importedInSection[0].planningCenterPdfMatchKey = matchKey;
+          claimedExisting.add(currentInSection[0]);
+          claimedIncoming.add(importedInSection[0]);
+          claimedSyntheticIdentities.add(matchKey);
+          return;
+        }
       }
 
       // Retain the existing one-at-a-time review for duplicate pairs whose
@@ -348,6 +437,8 @@ export const preparePlanningCenterPdfImport = (
       if (suggestedPairCount > 0) {
         importedInSection.slice(0, suggestedPairCount).forEach((element, index) => {
           element.legacyImportMatchCandidateForId = currentInSection[index].id;
+          claimedExisting.add(currentInSection[index]);
+          claimedIncoming.add(element);
         });
       }
     });
@@ -1823,7 +1914,8 @@ export const refreshServicePlanFromImport = (
   );
 
   const isAmbiguousCurrentElement = (element: ServicePlanElement): boolean =>
-    (options.planningCenterPdfMatch && element.planningCenterPdfMatchReviewRequired === true) ||
+    (options.planningCenterPdfMatch && element.planningCenterPdfMatchReviewRequired === true &&
+      !element.sourceOccurrenceId?.trim()) ||
       Boolean(getElementImportIdentity(element, options.planningCenterPdfMatch) &&
         ambiguousIdentities.has(getElementImportIdentity(element, options.planningCenterPdfMatch)!));
   const isProtectedCurrentElement = (element: ServicePlanElement): boolean =>

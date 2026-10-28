@@ -2059,6 +2059,110 @@ Opening Song to begin the worship experience.
     );
   });
 
+  it("shows a collided duplicate Prayer as an unchecked review match and saves only its explicit approval", async () => {
+    const prayerKey = (occurrenceIndex: number) => JSON.stringify([
+      "planningCenterPdf", "prayer", "duplicate", 300, occurrenceIndex,
+    ]);
+    const localPrayerA = {
+      id: "local-prayer-a",
+      sourcePlanningManaged: true,
+      planningCenterPdfMatchKey: prayerKey(0),
+      planningCenterPdfSourcePosition: 1,
+      type: "free" as const,
+      title: plainTextToRichText("Prayer"),
+      startTime: "09:05",
+      durationSeconds: 300,
+      notes: plainTextToRichText("Keep note A"),
+      assignees: [{ id: "slot-a", name: "Avery", microphoneIds: ["mic-a"], iemIds: ["iem-a"] }],
+      resources: [{ id: "attachment-a", type: "text", title: "Local attachment A" }],
+    };
+    const localPrayerB = {
+      id: "local-prayer-b",
+      sourcePlanningManaged: true,
+      planningCenterPdfMatchKey: prayerKey(1),
+      planningCenterPdfSourcePosition: 3,
+      type: "free" as const,
+      title: plainTextToRichText("Prayer"),
+      startTime: "09:15",
+      durationSeconds: 300,
+      notes: plainTextToRichText("Keep note B"),
+      assignees: [{ id: "slot-b", name: "Jordan", microphoneIds: ["mic-b"], iemIds: ["iem-b"] }],
+      resources: [{ id: "attachment-b", type: "text", title: "Local attachment B" }],
+    };
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        sourceImport: {
+          source: "planningCenterPdf",
+          sourceUrl: "",
+          loadedAt: "2026-07-20T12:00:00.000Z",
+          planLabel: "Sunday worship",
+        },
+        sections: [{
+          id: "section-1",
+          sourcePlanningManaged: true,
+          name: "Worship",
+          elements: [
+            { id: "local-opening", sourcePlanningManaged: true, type: "free", title: plainTextToRichText("Opening"), startTime: "09:00", durationSeconds: 300 },
+            localPrayerA,
+            { id: "local-response", sourcePlanningManaged: true, type: "free", title: plainTextToRichText("Response"), startTime: "09:10", durationSeconds: 300 },
+            localPrayerB,
+            { id: "local-closing", sourcePlanningManaged: true, type: "free", title: plainTextToRichText("Closing"), startTime: "09:20", durationSeconds: 300 },
+          ],
+        }],
+      } as ServicePlan,
+    });
+    mockExtractTextFromPdfFile.mockResolvedValue(`Main Worship Service
+Length
+in mins
+Worship
+5:00 Response
+5:00 Prayer
+5:00 Closing
+5:00 Opening
+5:00 Prayer
+108:00`);
+
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+    fireEvent.change(screen.getByLabelText(/Planning Center PDF/i), {
+      target: { files: [new File(["%PDF-fake"], "duplicate-prayers.pdf", { type: "application/pdf" })] },
+    });
+
+    const reviewMatch = await screen.findByRole("checkbox", { name: "Confirm match for Prayer" });
+    expect(reviewMatch).not.toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name: "Select all updates" }));
+    await user.click(reviewMatch);
+    await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
+
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), { timeout: 2_500 });
+    const [, , body] = mockSaveServicePlan.mock.calls.at(-1)!;
+    const savedItems = body.sections?.flatMap(({ elements }) => elements) || [];
+    const savedPrayers = savedItems.filter(({ title }) => richTextToPlainText(title) === "Prayer");
+    expect(savedItems.map(({ id }) => id)).toHaveLength(new Set(savedItems.map(({ id }) => id)).size);
+    expect(savedPrayers.map(({ id }) => id)).toEqual(expect.arrayContaining(["local-prayer-a", "local-prayer-b"]));
+    expect(savedPrayers.find(({ id }) => id === "local-prayer-a")).toMatchObject({
+      planningCenterPdfSourcePosition: 4,
+      notes: plainTextToRichText("Keep note A"),
+      assignees: [{ id: "slot-a", microphoneIds: ["mic-a"], iemIds: ["iem-a"] }],
+      resources: [{ id: "attachment-a" }],
+    });
+    expect(savedPrayers.find(({ id }) => id === "local-prayer-b")).toMatchObject({
+      planningCenterPdfSourcePosition: 3,
+      notes: plainTextToRichText("Keep note B"),
+      assignees: [{ id: "slot-b", microphoneIds: ["mic-b"], iemIds: ["iem-b"] }],
+      resources: [{ id: "attachment-b" }],
+    });
+  });
+
   it("refreshes a duration-only Planning Center PDF from the existing anchor and cascades reviewed times", async () => {
     mockGetServicePlan.mockResolvedValue({
       success: true,
