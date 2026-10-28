@@ -99,13 +99,15 @@ const makeItem = (overrides: Partial<ItemState> = {}): ItemState =>
 describe("BoxEditor", () => {
   const renderEditor = (
     updateItem: (item: ItemState) => void,
-    quickToolbarTarget: HTMLElement | null = null,
+    quickBoxLayoutTarget: HTMLElement | null = null,
+    quickBoxHeightTarget: HTMLElement | null = null,
     drawerTarget: HTMLElement | null = document.body,
   ) =>
     render(
       <BoxEditor
         updateItem={updateItem}
-        quickToolbarTarget={quickToolbarTarget}
+        quickBoxLayoutTarget={quickBoxLayoutTarget}
+        quickBoxHeightTarget={quickBoxHeightTarget}
         drawerTarget={drawerTarget}
       />,
     );
@@ -259,7 +261,8 @@ describe("BoxEditor", () => {
     const { rerender } = render(
       <BoxEditor
         updateItem={updateItem}
-        quickToolbarTarget={null}
+        quickBoxLayoutTarget={null}
+        quickBoxHeightTarget={null}
         drawerTarget={document.body}
       />,
     );
@@ -275,7 +278,8 @@ describe("BoxEditor", () => {
     rerender(
       <BoxEditor
         updateItem={updateItem}
-        quickToolbarTarget={null}
+        quickBoxLayoutTarget={null}
+        quickBoxHeightTarget={null}
         drawerTarget={document.body}
       />,
     );
@@ -349,10 +353,15 @@ describe("BoxEditor", () => {
     ["Middle Third", { x: 0, y: 35, width: 100, height: 35 }],
     ["Match", { x: 0, y: 0, width: 50, height: 50 }],
   ])("applies the exact %s quick preset geometry", (label, dimensions) => {
-    renderEditor(jest.fn());
+    const quickLayoutTarget = document.createElement("div");
+    const quickHeightTarget = document.createElement("div");
+    document.body.append(quickLayoutTarget, quickHeightTarget);
+    const view = renderEditor(jest.fn(), quickLayoutTarget, quickHeightTarget, null);
 
     act(() => {
-      screen.getByRole("button", { name: `Apply ${label} box preset` }).click();
+      within(quickLayoutTarget)
+        .getByRole("button", { name: `Apply ${label} box preset` })
+        .click();
       jest.runAllTimers();
     });
 
@@ -365,6 +374,37 @@ describe("BoxEditor", () => {
         }),
       }),
     );
+
+    view.unmount();
+    quickLayoutTarget.remove();
+    quickHeightTarget.remove();
+  });
+
+  it("shows five icon presets under Layout with tooltips for the active scope", () => {
+    const quickLayoutTarget = document.createElement("div");
+    const quickHeightTarget = document.createElement("div");
+    document.body.append(quickLayoutTarget, quickHeightTarget);
+    const view = renderEditor(jest.fn(), quickLayoutTarget, quickHeightTarget, null);
+
+    expect(within(quickLayoutTarget).getByText("Layout")).toBeVisible();
+    for (const label of ["Full", "50% Middle", "Lower Third", "Middle Third", "Match"]) {
+      expect(
+        within(quickLayoutTarget).getByRole("button", {
+          name: `Apply ${label} box preset`,
+        }),
+      ).toBeInTheDocument();
+    }
+    expect(
+      within(quickLayoutTarget).getByRole("button", { name: "Apply Full box preset" }),
+    ).toHaveAttribute("title", "Apply Full box preset to all slides");
+    expect(
+      within(quickHeightTarget).getByRole("group", { name: "Height" }),
+    ).toBeInTheDocument();
+    expect(within(quickHeightTarget).getByText(/^Height:$/)).toBeVisible();
+
+    view.unmount();
+    quickLayoutTarget.remove();
+    quickHeightTarget.remove();
   });
 
   it("keeps the ten existing presets in All Tools and disables Match for Selected scope", () => {
@@ -392,11 +432,29 @@ describe("BoxEditor", () => {
     expect(match).toBeDisabled();
   });
 
-  it("shares geometry scope and height drafts between the quick row and drawer", () => {
-    const quickTarget = document.createElement("div");
+  it("wraps box controls inside a narrow All Tools drawer", () => {
     const drawerTarget = document.createElement("div");
-    document.body.append(quickTarget, drawerTarget);
-    const view = renderEditor(jest.fn(), quickTarget, drawerTarget);
+    drawerTarget.style.width = "240px";
+    document.body.append(drawerTarget);
+    const view = renderEditor(jest.fn(), null, null, drawerTarget);
+
+    expect(within(drawerTarget).getByTestId("box-layout-drawer-controls")).toHaveClass(
+      "min-w-0",
+    );
+    expect(within(drawerTarget).getByTestId("box-layout-drawer-presets")).toHaveClass(
+      "flex-wrap",
+    );
+
+    view.unmount();
+    drawerTarget.remove();
+  });
+
+  it("shares geometry scope and height drafts between the quick row and drawer", () => {
+    const quickLayoutTarget = document.createElement("div");
+    const quickHeightTarget = document.createElement("div");
+    const drawerTarget = document.createElement("div");
+    document.body.append(quickLayoutTarget, quickHeightTarget, drawerTarget);
+    const view = renderEditor(jest.fn(), quickLayoutTarget, quickHeightTarget, drawerTarget);
 
     act(() => {
       within(drawerTarget)
@@ -404,13 +462,13 @@ describe("BoxEditor", () => {
         .click();
     });
     expect(
-      within(quickTarget).getByRole("button", { name: "Apply Match box preset" }),
+      within(quickLayoutTarget).getByRole("button", { name: "Apply Match box preset" }),
     ).toBeDisabled();
 
     fireEvent.change(within(drawerTarget).getByRole("spinbutton", { name: /height/i }), {
       target: { value: "62" },
     });
-    expect(within(quickTarget).getByRole("spinbutton", { name: /height/i })).toHaveValue(62);
+    expect(within(quickHeightTarget).getByRole("spinbutton", { name: /height/i })).toHaveValue(62);
 
     act(() => jest.runAllTimers());
     expect(mockApplyOwnedContentMutation).toHaveBeenCalledWith(
@@ -424,7 +482,44 @@ describe("BoxEditor", () => {
     );
 
     view.unmount();
-    quickTarget.remove();
+    quickLayoutTarget.remove();
+    quickHeightTarget.remove();
+    drawerTarget.remove();
+  });
+
+  it("keeps a pending height edit when the All Tools target closes", () => {
+    const quickLayoutTarget = document.createElement("div");
+    const quickHeightTarget = document.createElement("div");
+    const drawerTarget = document.createElement("div");
+    document.body.append(quickLayoutTarget, quickHeightTarget, drawerTarget);
+    const view = renderEditor(jest.fn(), quickLayoutTarget, quickHeightTarget, drawerTarget);
+
+    fireEvent.change(within(drawerTarget).getByRole("spinbutton", { name: /height/i }), {
+      target: { value: "64" },
+    });
+    view.rerender(
+      <BoxEditor
+        updateItem={jest.fn()}
+        quickBoxLayoutTarget={quickLayoutTarget}
+        quickBoxHeightTarget={quickHeightTarget}
+        drawerTarget={null}
+      />,
+    );
+
+    expect(within(quickHeightTarget).getByRole("spinbutton", { name: /height/i })).toHaveValue(64);
+    act(() => jest.runAllTimers());
+    expect(mockApplyOwnedContentMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mutation: expect.objectContaining({
+          kind: "boxProperties",
+          properties: expect.objectContaining({ height: 64 }),
+        }),
+      }),
+    );
+
+    view.unmount();
+    quickLayoutTarget.remove();
+    quickHeightTarget.remove();
     drawerTarget.remove();
   });
 
@@ -454,7 +549,8 @@ describe("BoxEditor", () => {
     view.rerender(
       <BoxEditor
         updateItem={updateItem}
-        quickToolbarTarget={null}
+        quickBoxLayoutTarget={null}
+        quickBoxHeightTarget={null}
         drawerTarget={document.body}
       />,
     );
@@ -491,7 +587,8 @@ describe("BoxEditor", () => {
     view.rerender(
       <BoxEditor
         updateItem={updateItem}
-        quickToolbarTarget={null}
+        quickBoxLayoutTarget={null}
+        quickBoxHeightTarget={null}
         drawerTarget={document.body}
       />,
     );
@@ -527,7 +624,8 @@ describe("BoxEditor", () => {
     view.rerender(
       <BoxEditor
         updateItem={updateItem}
-        quickToolbarTarget={null}
+        quickBoxLayoutTarget={null}
+        quickBoxHeightTarget={null}
         drawerTarget={document.body}
       />,
     );

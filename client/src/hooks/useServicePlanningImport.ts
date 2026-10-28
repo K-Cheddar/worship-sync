@@ -48,6 +48,7 @@ import type {
   ServicePlan,
   ServicePlanParticipantOverlayProjection,
 } from "../types/servicePlan";
+import type { ServicePlanningConfig } from "../types/integrations";
 import {
   executeServicePlanningOutlineSyncStep as executeOutlineSyncUtilityStep,
   insertServicePlanningOutlineCandidates,
@@ -83,6 +84,8 @@ export type ServicePlanningImportResult = {
 
 export type ExecutableOverlaySyncPlanItem = OverlaySyncPlanItem & {
   action: "update" | "clone" | "create";
+  /** Binds this native step to the settings used to build its preview. */
+  nativeOverlayMappingKey?: string;
 };
 
 export type ServicePlanningOverlayStepExecutionResult = {
@@ -105,6 +108,29 @@ const SERVICE_PLANNING_DISABLED_MESSAGE =
 const SERVICE_PLANNING_LOADING_MESSAGE =
   "Integrations are still loading. Try again in a moment.";
 const OVERLAY_SELECTION_SCROLL_DELAY_MS = 500;
+const DEFAULT_SERVICE_PLANNING_CONFIG = createDefaultChurchIntegrations().servicePlanning;
+
+type NativeOverlayMappingState = { ready: boolean; key: string };
+
+const getNativeOverlayMappingKey = (
+  churchId: string | undefined,
+  ready: boolean,
+  servicePlanning: ServicePlanningConfig,
+): string => JSON.stringify([
+  churchId || "",
+  ready,
+  ready ? servicePlanning.elementRules.map((rule) => ({
+    matchElementType: rule.matchElementType,
+    matchMode: rule.matchMode,
+    overlaySyncEnabled: rule.overlaySyncEnabled,
+    displayName: rule.displayName,
+    multiOverlay: {
+      mode: rule.multiOverlay.mode,
+      eventSuffixByPersonIndex: rule.multiOverlay.eventSuffixByPersonIndex,
+      repeatLastEventSuffix: rule.multiOverlay.repeatLastEventSuffix,
+    },
+  })) : null,
+]);
 
 /**
  * These moved to buildServicePlanningPreview.ts so the preview can be built
@@ -132,6 +158,33 @@ export const useServicePlanningImport = () => {
   const { db, bibleDb } = useContext(ControllerInfoContext) || {};
   const { churchIntegrations, churchIntegrationsStatus, churchId } =
     useContext(GlobalInfoContext) || {};
+  const isNativeOverlayMappingReady =
+    churchIntegrationsStatus === "ready" && Boolean(churchIntegrations);
+  const currentServicePlanning = isNativeOverlayMappingReady
+    ? churchIntegrations!.servicePlanning
+    : DEFAULT_SERVICE_PLANNING_CONFIG;
+  const nativeOverlayMappingKey = getNativeOverlayMappingKey(
+    churchId,
+    isNativeOverlayMappingReady,
+    currentServicePlanning,
+  );
+  const nativeOverlayMappingRef = useRef<NativeOverlayMappingState>({
+    ready: isNativeOverlayMappingReady,
+    key: nativeOverlayMappingKey,
+  });
+  nativeOverlayMappingRef.current = {
+    ready: isNativeOverlayMappingReady,
+    key: nativeOverlayMappingKey,
+  };
+  const isNativeOverlayPreviewFresh = useCallback(
+    (preview: ServicePlanningPreview | null | undefined): boolean =>
+      Boolean(
+        preview?.nativeOverlaySummary &&
+        nativeOverlayMappingRef.current.ready &&
+        preview.nativeOverlayMappingKey === nativeOverlayMappingRef.current.key,
+      ),
+    [],
+  );
   const churchResourceLookupCacheRef = useRef<{
     churchId: string;
     byId: Map<string, Promise<ChurchResource | undefined>>;
@@ -178,8 +231,8 @@ export const useServicePlanningImport = () => {
       // A saved WorshipSync plan is native data. Build its controller model
       // even when the optional URL importer is disabled or its settings have
       // not loaded yet. Existing mapping rules are still honored when present.
-      const sp = churchIntegrations?.servicePlanning
-        ?? createDefaultChurchIntegrations().servicePlanning;
+      const sp = currentServicePlanning;
+      const mappingKey = nativeOverlayMappingKey;
       if (churchResourceLookupCacheRef.current.churchId !== churchId) {
         churchResourceLookupCacheRef.current = {
           churchId: churchId || "",
@@ -258,6 +311,12 @@ export const useServicePlanningImport = () => {
         overlayLibrary,
         nativeOverlaySummary: nativeOverlayMapping.summary,
       });
+      preview.nativeOverlayMappingKey = mappingKey;
+      preview.overlayPlan = preview.overlayPlan.map((step) =>
+        step.sourceKind === "native"
+          ? { ...step, nativeOverlayMappingKey: mappingKey }
+          : step,
+      );
 
       return {
         source: "servicePlanning",
@@ -268,7 +327,7 @@ export const useServicePlanningImport = () => {
         preview,
       };
     },
-    [churchId, churchIntegrations, db, store],
+    [churchId, currentServicePlanning, db, nativeOverlayMappingKey, store],
   );
 
   const applyPersistedOverlayUpdate = useCallback(
@@ -501,7 +560,9 @@ export const useServicePlanningImport = () => {
       );
       const steps = overlayPlan.filter(
         (item): item is ExecutableOverlaySyncPlanItem => item.action !== "skip",
-      );
+      ).map((item) => item.sourceKind === "native"
+        ? { ...item, nativeOverlayMappingKey: preview.nativeOverlayMappingKey }
+        : item);
       return {
         steps,
         skippedCount: skipped.length,
@@ -639,6 +700,7 @@ export const useServicePlanningImport = () => {
       step: ExecutableOverlaySyncPlanItem,
       options: {
         insertAfterId?: string;
+        nativeOverlayMappingKey?: string;
         /** Overlay ids already touched/created earlier in this run; excluded
          *  from the duplicate check so intentional same-event overlays
          *  (e.g. two co-hosts) are preserved while pre-existing ones are reused. */
@@ -650,6 +712,15 @@ export const useServicePlanningImport = () => {
       // synced overlays build up in plan order. Fall back to the template (clone)
       // or end of list (create) for the first step when there is no anchor yet.
       const { insertAfterId: anchorOverlayId, claimedOverlayIds } = options;
+      const assertNativeMappingFresh = () => {
+        if (step.sourceKind !== "native") return;
+        const current = nativeOverlayMappingRef.current;
+        const expectedKey = options.nativeOverlayMappingKey ?? step.nativeOverlayMappingKey;
+        if (!current.ready || !expectedKey || expectedKey !== current.key) {
+          throw new Error("Church overlay settings changed. Refresh the plan before syncing overlays.");
+        }
+      };
+      assertNativeMappingFresh();
       const skipStep = (
         reason: string,
         resultOverlayId?: string,
@@ -722,6 +793,7 @@ export const useServicePlanningImport = () => {
         await new Promise((resolve) =>
           setTimeout(resolve, OVERLAY_SELECTION_SCROLL_DELAY_MS),
         );
+        assertNativeMappingFresh();
         if (step.sourceKind === "native" && !isScopeCurrent()) {
           return skipStep("The Controller changed. Refresh the plan before syncing.");
         }
@@ -752,6 +824,7 @@ export const useServicePlanningImport = () => {
         if (step.targetOverlaySource === "library" && db && step.targetOverlayId) {
           template = normalizeOverlayForSync(await db.get(`overlay-${step.targetOverlayId}`) as DBOverlay);
         }
+        assertNativeMappingFresh();
         if (template) {
           if (step.sourceKind === "native" && (!isScopeCurrent() ||
               (template.type ?? "participant") !== "participant" ||
@@ -762,6 +835,7 @@ export const useServicePlanningImport = () => {
           await new Promise((resolve) =>
             setTimeout(resolve, OVERLAY_SELECTION_SCROLL_DELAY_MS),
           );
+          assertNativeMappingFresh();
           if (step.sourceKind === "native" && !isScopeCurrent()) {
             return skipStep("The Controller changed. Refresh the plan before syncing.");
           }
@@ -784,6 +858,7 @@ export const useServicePlanningImport = () => {
             delete built.servicePlanBaseline;
             delete built.servicePlanOverrides;
           }
+          assertNativeMappingFresh();
           await persistNewParticipantOverlay(db, built);
           if (step.sourceKind === "native" && !isScopeCurrent()) {
             return skipStep("The Controller changed. Refresh the plan before syncing.");
@@ -823,6 +898,7 @@ export const useServicePlanningImport = () => {
           defaultTemplateIdsByType,
         ),
       );
+      assertNativeMappingFresh();
       await persistNewParticipantOverlay(db, newOverlay);
       if (step.sourceKind === "native" && !isScopeCurrent()) {
         return skipStep("The Controller changed. Refresh the plan before syncing.");
@@ -853,6 +929,10 @@ export const useServicePlanningImport = () => {
       preview: ServicePlanningPreview,
       options: ServicePlanningImportOptions,
     ): Promise<ServicePlanningImportResult> => {
+      if (options.overlays && preview.nativeOverlaySummary &&
+        !isNativeOverlayPreviewFresh(preview)) {
+        throw new Error("Church overlay settings are still loading or changed. Refresh the plan before syncing overlays.");
+      }
       if (!preview.nativeOverlaySummary && (churchIntegrationsStatus !== "ready" || !churchIntegrations)) {
         throw new Error(SERVICE_PLANNING_LOADING_MESSAGE);
       }
@@ -873,7 +953,14 @@ export const useServicePlanningImport = () => {
           const claimedOverlayIds = new Set<string>();
           let insertAfterId: string | undefined;
           for (const step of planned.steps) {
-            const result = await executeOverlaySyncStep(step, { claimedOverlayIds, insertAfterId });
+            if (!isNativeOverlayPreviewFresh(preview)) {
+              throw new Error("Church overlay settings changed. Refresh the plan before syncing overlays.");
+            }
+            const result = await executeOverlaySyncStep(step, {
+              claimedOverlayIds,
+              insertAfterId,
+              nativeOverlayMappingKey: preview.nativeOverlayMappingKey,
+            });
             overlaysUpdated += result.overlaysUpdated + result.overlaysCloned + result.overlaysCreated;
             overlaysSkipped += result.overlaysSkipped;
             reasons.push(...result.reasons);
@@ -904,6 +991,7 @@ export const useServicePlanningImport = () => {
       planOverlaySyncSteps,
       executeOverlaySyncStep,
       runOutlineInsert,
+      isNativeOverlayPreviewFresh,
     ],
   );
 
@@ -915,6 +1003,9 @@ export const useServicePlanningImport = () => {
     planOverlaySyncSteps,
     executeOutlineSyncStep,
     executeOverlaySyncStep,
+    isNativeOverlayMappingReady,
+    nativeOverlayMappingKey,
+    isNativeOverlayPreviewFresh,
     isServicePlanningEnabled,
     servicePlanningAvailabilityMessage,
   };

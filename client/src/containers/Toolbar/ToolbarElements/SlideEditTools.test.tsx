@@ -118,12 +118,16 @@ const makeItem = (overrides: Partial<ItemState> = {}): ItemState =>
 
 describe("SlideEditTools", () => {
   const renderTools = (
-    quickToolbarTarget: HTMLElement | null = null,
+    quickFontSizeTarget: HTMLElement | null = null,
     drawerTarget: HTMLElement | null = document.body,
+    quickBrightnessTarget: HTMLElement | null = null,
+    quickBibleModeTarget: HTMLElement | null = null,
   ) =>
     render(
       <SlideEditTools
-        quickToolbarTarget={quickToolbarTarget}
+        quickFontSizeTarget={quickFontSizeTarget}
+        quickBrightnessTarget={quickBrightnessTarget}
+        quickBibleModeTarget={quickBibleModeTarget}
         drawerTarget={drawerTarget}
       />,
     );
@@ -194,6 +198,12 @@ describe("SlideEditTools", () => {
     document.body.append(quickTarget, drawerTarget);
     renderTools(quickTarget, drawerTarget);
 
+    expect(within(quickTarget).getByRole("group", { name: "Font Size" })).toHaveAttribute(
+      "title",
+      "Font Size",
+    );
+    expect(within(quickTarget).getByTestId("quick-toolbar-font-size-icon")).toBeInTheDocument();
+    expect(within(quickTarget).getByText(/^Font Size:$/)).toHaveClass("sr-only");
     fireEvent.change(within(drawerTarget).getByRole("textbox", { name: /Font Size/ }), {
       target: { value: "48" },
     });
@@ -244,6 +254,42 @@ describe("SlideEditTools", () => {
     expect(updatedSlides.slides.every((slide) => slide.boxes[0].brightness === 45)).toBe(true);
   });
 
+  it("uses the sun icon and accessible label for quick background brightness", () => {
+    const brightnessTarget = document.createElement("div");
+    document.body.append(brightnessTarget);
+    renderTools(null, null, brightnessTarget);
+
+    expect(
+      within(brightnessTarget).getByRole("group", { name: "Background brightness" }),
+    ).toHaveAttribute("title", "Adjust background brightness");
+    expect(
+      within(brightnessTarget).getByTestId("quick-toolbar-brightness-icon"),
+    ).toBeInTheDocument();
+    expect(within(brightnessTarget).getByText(/^Brightness:$/)).toHaveClass("sr-only");
+    brightnessTarget.remove();
+  });
+
+  it("wraps slide formatting controls inside a narrow All Tools drawer", () => {
+    const drawerTarget = document.createElement("div");
+    drawerTarget.style.width = "240px";
+    document.body.append(drawerTarget);
+    const view = renderTools(null, drawerTarget);
+
+    expect(
+      within(drawerTarget).getByTestId("slide-formatting-drawer-controls"),
+    ).toHaveClass("min-w-0");
+    for (const testId of [
+      "slide-formatting-text-controls",
+      "slide-formatting-mode-controls",
+      "slide-formatting-brightness-controls",
+    ]) {
+      expect(within(drawerTarget).getByTestId(testId)).toHaveClass("flex-wrap");
+    }
+
+    view.unmount();
+    drawerTarget.remove();
+  });
+
   it("shows Bible mode in the quick toolbar only for Bible items", () => {
     mockState.undoable.present.item = makeItem({
       type: "bible",
@@ -252,18 +298,23 @@ describe("SlideEditTools", () => {
     const quickTarget = document.createElement("div");
     const drawerTarget = document.createElement("div");
     document.body.append(quickTarget, drawerTarget);
-    const view = renderTools(quickTarget, drawerTarget);
-    expect(within(quickTarget).getByText("Mode")).toBeInTheDocument();
+    const view = renderTools(null, drawerTarget, null, quickTarget);
+    expect(within(quickTarget).getByRole("group", { name: "Bible mode" })).toBeInTheDocument();
     expect(within(quickTarget).getByRole("radio", { name: /Multiple/ })).toBeInTheDocument();
+    expect(within(quickTarget).getByTestId("quick-toolbar-bible-icon")).toBeInTheDocument();
 
     mockState.undoable.present.item = makeItem();
     view.rerender(
       <SlideEditTools
-        quickToolbarTarget={quickTarget}
+        quickFontSizeTarget={null}
+        quickBrightnessTarget={null}
+        quickBibleModeTarget={quickTarget}
         drawerTarget={drawerTarget}
       />,
     );
-    expect(within(quickTarget).queryByText("Mode")).not.toBeInTheDocument();
+    expect(
+      within(quickTarget).queryByRole("group", { name: "Bible mode" }),
+    ).not.toBeInTheDocument();
     quickTarget.remove();
     drawerTarget.remove();
   });

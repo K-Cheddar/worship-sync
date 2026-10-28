@@ -1,5 +1,5 @@
 import { act, render, screen, within } from "@testing-library/react";
-import type { ReactNode } from "react";
+import type { ComponentType, ReactNode, SVGProps } from "react";
 import Toolbar from "./Toolbar";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
@@ -46,6 +46,7 @@ jest.mock("../../components/Button/Button", () => ({
     "aria-label": ariaLabel,
     "aria-expanded": ariaExpanded,
     disabled,
+    svg,
   }: {
     children?: ReactNode;
     className?: string;
@@ -53,6 +54,7 @@ jest.mock("../../components/Button/Button", () => ({
     "aria-label"?: string;
     "aria-expanded"?: boolean;
     disabled?: boolean;
+    svg?: ComponentType<SVGProps<SVGSVGElement>>;
   }) => (
     <button
       type="button"
@@ -61,6 +63,7 @@ jest.mock("../../components/Button/Button", () => ({
       aria-label={ariaLabel}
       aria-expanded={ariaExpanded}
       disabled={disabled}
+      data-icon={svg?.displayName ?? svg?.name}
     >
       {children}
     </button>
@@ -150,18 +153,21 @@ jest.mock("../../components/Drawer/Drawer", () => ({
     position,
     size,
     isOpen,
+    contentClassName,
   }: {
     children?: ReactNode;
     title?: string;
     position?: string;
     size?: string;
     isOpen?: boolean;
+    contentClassName?: string;
   }) => (
     <div
       data-testid={title === "All Tools" ? "all-tools-drawer" : "drawer"}
       data-position={position}
       data-size={size}
       data-open={isOpen}
+      data-content-class={contentClassName}
     >
       {children}
     </div>
@@ -506,9 +512,9 @@ describe("Toolbar", () => {
   });
 
   it.each([
-    { isMobile: false, position: "right" },
-    { isMobile: true, position: "bottom" },
-  ])("uses the responsive All Tools $position drawer", ({ isMobile, position }) => {
+    { isMobile: false, position: "right", size: "md" },
+    { isMobile: true, position: "bottom", size: "lg" },
+  ])("uses the responsive All Tools $size $position drawer", ({ isMobile, position, size }) => {
     renderToolbar({ access: "full", itemType: "song", workspaceMode: "edit", isMobile });
     act(() => screen.getByRole("button", { name: "Edit" }).click());
 
@@ -518,7 +524,15 @@ describe("Toolbar", () => {
     );
     expect(screen.getByTestId("all-tools-drawer")).toHaveAttribute(
       "data-size",
-      "xl",
+      size,
+    );
+    expect(screen.getByTestId("all-tools-drawer")).toHaveAttribute(
+      "data-content-class",
+      expect.stringContaining("overflow-x-hidden"),
+    );
+    expect(screen.getByRole("button", { name: "All Tools" })).toHaveAttribute(
+      "data-icon",
+      "SlidersHorizontal",
     );
   });
 

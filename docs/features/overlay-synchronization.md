@@ -2,9 +2,9 @@
 
 **Contract status:** Confirmed for the Phase 1 native service-plan path. Legacy URL-import behavior and existing live-output behavior remain unchanged.
 
-**Approval source:** Product-owner requests, 2026-10-10, 2026-10-18, 2026-10-23, and 2026-10-25; the native-path decisions are recorded under **Product decisions**.
+**Approval source:** Product-owner requests, 2026-10-10, 2026-10-18, 2026-10-23, 2026-10-25, and 2026-10-27; the native-path decisions are recorded under **Product decisions**.
 
-**Last reviewed:** 2026-10-25
+**Last reviewed:** 2026-10-27
 
 ## Purpose
 
@@ -25,6 +25,9 @@ For a native saved plan, items with people assigned in **Led by** automatically 
 - The overlay preview starts collapsed with summary counts visible. Expanding it shows names, titles, event labels, and planned update, clone, create, and skip actions before an explicit sync.
 - Native roster data comes from a plan-scoped, contact-free server projection for items with assigned people. A restricted or failed lookup is distinguishable from an empty assignment and cannot produce executable overlay changes.
 - The participant projection carries the saved plan revision it read. If separate plan and assignment requests return different revisions, the Controller treats participant details as unavailable and blocks syncing until a refresh returns a matching revision.
+- Saved plan content remains available while church integration settings load. A preview built with internal default mapping rules is unverified and cannot drive overlay sync; outline sync remains available when its own requirements are met.
+- When relevant church mapping settings become ready or change, rebuild the native overlay preview with the current event labels, split suffixes, and disabled rules. Changes unrelated to native overlay mapping do not trigger a rebuild.
+- Overlay sync checks that the preview still matches the current church mapping when the action starts and as each native sync step executes. If settings change during an outline-first Sync All, the outline may finish, but overlay steps stop before acting on the stale mapping. Older plan, church, controller, or preview work cannot replace the current selection.
 - The existing overlay sync runner, persistence path, explicit action boundary, and live audience behavior are retained. Updating a participant overlay continues to patch only mapped name, title, and event fields, preserving unrelated formatting and properties.
 
 - If refreshing the selected saved plan fails, keep the last preview available for review but block overlay and outline sync until a successful refresh (owner decision, 2026-10-19, carried from in-progress-2).
@@ -55,6 +58,17 @@ The current product-owner request replaces the earlier Phase 1 duplicate-label r
 **Approval source/date:** Current user request, 2026-10-25.
 
 Regression coverage: `mapNativeServicePlanParticipants.test.ts`, `findBestOverlayMatch.test.ts`, and `useServicePlanningImport.test.ts` (production hook with Controller/Global contexts, Redux reducers, and persisted library reads; includes repeated sync, partial failure, database switch, and unmount).
+
+## Mapping readiness and preview freshness (confirmed 2026-10-27)
+
+- Loading or viewing a saved native plan does not require the optional URL importer or completed integration settings. Internal defaults may render a provisional preview, but the preview cannot enable or execute native overlay synchronization until the settings used to build it are verified.
+- Relevant mapping changes rebuild the selected plan's preview. The freshness identity is scoped to church and native mapping inputs, so unrelated integration edits and object-reference changes do not cause needless rebuilds.
+- Sync Overlays stays disabled while settings are unavailable or a preview is rebuilding. Sync Outline remains independently available. Sync All may sync the outline first, but rechecks mapping freshness before it starts the overlay phase and before each overlay step.
+- In-flight work checks plan, church, controller, outline, and current mapping ownership before it can publish a preview or continue a sync. A change after a database write has begun cannot undo that write; later steps are stopped.
+
+**Approval source/date:** Current user request, 2026-10-27.
+
+Regression coverage: `useServicePlanningImport.test.ts`, `useCurrentServicePlanSource.stale.test.tsx`, `ServicePlanningSyncFloatingWindow.test.tsx`, and `useServicePlanningSyncRunner.test.tsx`.
 
 ## Product decisions
 

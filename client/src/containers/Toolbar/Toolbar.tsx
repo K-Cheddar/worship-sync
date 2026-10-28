@@ -307,6 +307,7 @@ const Toolbar = ({
           onClose={() => setAllToolsOpen(false)}
           onToggle={() => setAllToolsOpen((open) => !open)}
           isMobile={isMobile}
+          showBibleMode={itemType === "bible"}
           showStreamFormatting={
             access === "full" && showStreamFormat && itemType === "free"
           }
@@ -315,12 +316,15 @@ const Toolbar = ({
           {(targets) => (
             <>
               <SlideEditTools
-                quickToolbarTarget={targets.quickToolbar}
+                quickFontSizeTarget={targets.quickFontSize}
+                quickBrightnessTarget={targets.quickBrightness}
+                quickBibleModeTarget={targets.quickBibleMode}
                 drawerTarget={targets.slideFormatting}
               />
               <BoxEditor
                 updateItem={updateItem}
-                quickToolbarTarget={targets.quickToolbar}
+                quickBoxLayoutTarget={targets.quickBoxLayout}
+                quickBoxHeightTarget={targets.quickBoxHeight}
                 drawerTarget={targets.boxLayout}
               />
               {access === "full" && showStreamFormat && itemType === "free" && (

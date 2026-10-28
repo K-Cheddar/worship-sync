@@ -2775,6 +2775,9 @@ export const createTeamsAuthHandlers = ({
       ...(raw?.sourcePlanningManaged === true
         ? { sourcePlanningManaged: true }
         : {}),
+      ...(raw?.planningCenterPdfMatchReviewRequired === true
+        ? { planningCenterPdfMatchReviewRequired: true }
+        : {}),
       ...(sourceOccurrenceId ? { sourceOccurrenceId } : {}),
       type: SERVICE_PLAN_ELEMENT_TYPES.has(raw?.type) ? raw.type : "free",
       title: normalizeRichTextDocument(raw?.title),

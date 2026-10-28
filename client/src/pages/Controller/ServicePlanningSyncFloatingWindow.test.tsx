@@ -102,6 +102,10 @@ const mockPlanSource = {
   plansError: null as string | null,
   isPlanSourced: false,
   isPlanPreviewStale: false,
+  isNativeOverlayMappingReady: true,
+  nativeOverlayMappingKey: "test-mapping",
+  nativeOverlayMappingFresh: true,
+  isNativeOverlayPreviewFresh: () => mockPlanSource.nativeOverlayMappingFresh,
   refresh: jest.fn(),
   refreshPlans: jest.fn(),
 };
@@ -176,6 +180,9 @@ describe("ServicePlanningSyncFloatingWindow", () => {
       planOverlaySyncSteps: jest.fn(),
       executeOutlineSyncStep: jest.fn(),
       executeOverlaySyncStep: jest.fn(),
+      isNativeOverlayMappingReady: true,
+      nativeOverlayMappingKey: "test-mapping",
+      isNativeOverlayPreviewFresh: jest.fn(() => true),
       isServicePlanningEnabled: true,
       servicePlanningAvailabilityMessage: null,
     });
@@ -190,6 +197,8 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     mockPlanSource.selectedPlanKey = "saved-plan";
     mockPlanSource.isPlanSourced = true;
     mockPlanSource.isPlanPreviewStale = false;
+    mockPlanSource.isNativeOverlayMappingReady = true;
+    mockPlanSource.nativeOverlayMappingFresh = true;
     mockPlanSource.refresh.mockReset();
     mockPlanSource.isLoading = false;
     mockPlanSource.isRefreshing = false;
@@ -2111,6 +2120,52 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     expect(
       screen.getByText(/refresh before syncing/i),
     ).toBeInTheDocument();
+  });
+
+  it("keeps outline sync available while native overlay mappings are unverified", () => {
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
+        undoable: () => ({
+          present: {
+            itemLists: { selectedList: { _id: "outline-1", name: "Sunday" } },
+            itemList: { isLoading: false, list: [] },
+          },
+        }),
+      },
+    });
+    mockPlanSource.selectedPlanKey = "service-1@2026-05-02";
+    mockPlanSource.selectedPlanDetails = {
+      planKey: mockPlanSource.selectedPlanKey,
+      name: "Saved service",
+      date: "2026-05-02",
+      sections: [{ id: "worship", name: "Worship", elements: [{
+        id: "song",
+        type: "song",
+        title: { blocks: [] },
+        songRef: { kind: "library", songId: "song-1", songName: "Song" },
+      }] }],
+    };
+    mockPlanSource.isNativeOverlayMappingReady = false;
+    mockPlanSource.nativeOverlayMappingFresh = false;
+    store.dispatch(setServicePlanningServiceOutline(wrapImport({
+      nativeOverlayMappingKey: "unverified",
+      nativeOverlaySummary: { selectedItemCount: 1 },
+      overlayCandidates: [],
+      overlayPlan: [{ action: "create", elementType: "Sermon" }],
+      outlineCandidates: [],
+      lineItems: [],
+      teamAssignments: [],
+    }) as any));
+    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+
+    renderWindow(store);
+
+    expect(screen.getByRole("button", { name: "Sync overlays" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Sync outline" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Sync All" })).toBeEnabled();
+    expect(screen.getByText(/settings are loading/i)).toBeInTheDocument();
   });
 
   it("keeps saved-plan sync disabled and retries the selected plan when no preview could be built", async () => {

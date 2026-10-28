@@ -24,7 +24,7 @@ An operator imports or refreshes a plan, reviews the proposed item changes, sele
 - A matched item retains its WorshipSync item ID and operator-managed information. External fields continue to follow the existing import field ownership options.
 - Selecting a move also keeps its incoming source identity when field updates are skipped. For a same-section identity adoption with no move, review offers a separate **Linked** change.
 - A relocation appears as a selectable **Moved** change that names the prior and destination sections. Operators can select the move separately from updates to the item's fields.
-- Planning Center PDF duplicate-title identities are assigned only to source-owned items. A changed duration may reuse an identity when exact matches or unique neighboring items identify one occurrence in the same section; remaining duplicate pairs appear as individually confirmable review suggestions.
+- Planning Center PDF duplicate-title identities are assigned only to source-owned items. A changed duration may reuse an identity when exact matches or unique neighboring items identify one occurrence in the same section. Occurrence index alone is not evidence when the count of an identical-title-and-duration group changes; uncertain occurrences remain in place and appear as individually confirmable review suggestions.
 - Planning Center PDF refresh preserves missing items by default. When removal review is enabled, only source-owned items absent from the PDF are proposed for removal. Unmarked items in a legacy PDF plan remain because their source ownership cannot be confirmed.
 - Selected moved and new items follow source order relative to confidently matched items. Existing item order stays intact unless a selected relocation requires placement.
 - A confidently matched relocation is not represented as a separate removal and addition. Skipped changes remain untouched.
@@ -120,9 +120,16 @@ Regression coverage: `servicePlanNativeTransfer.test.ts` and the public-link rep
 - **Affected workflow/contract:** Service-plan import and refresh.
 
 - **Question/problem:** Planning Center PDF duplicate-title rows have no durable source item IDs, and item durations can change between imports.
-- **Approved behavior:** Match duplicate rows by their stable duration identity when possible. If that evidence changes, reuse the identity only when unique neighboring items identify the source-owned occurrence within its section; otherwise show an individually confirmable match suggestion. Keep operator-created items outside PDF identity matching.
+- **Approved behavior:** Match duplicate rows by their stable duration identity when possible. If that evidence changes, reuse the identity only when unique neighboring items or another reliable existing identifier identify the source-owned occurrence within its section. When an identical-title-and-duration group changes in count, do not use shifted occurrence indices as a match; preserve existing rows and show uncertain matches individually for confirmation. Keep operator-created items outside PDF identity matching and exclude unconfirmed candidates from automatic ordering.
 - **Why:** A duration edit should not orphan local work, while an uncertain occurrence must not inherit notes, assignments, equipment, attachments, or identity without operator review.
-- **Material alternative rejected:** Treat every changed duplicate duration as an unrelated addition or silently choose one same-title occurrence.
+- **Material alternative rejected:** Treat every changed duplicate duration as an unrelated addition or silently choose one same-title occurrence based on its new position.
+- **Approval source/date:** Current user request, 2026-10-27.
+- **Affected workflow/contract:** Planning Center PDF refresh.
+
+- **Question/problem:** A declined ambiguous PDF match could be automatically associated on the next refresh, and an ordering pass could use a candidate omitted from its source-order calculation.
+- **Approved behavior:** Preserve the unconfirmed row at its existing location and carry its review-required state through save/reload. Repeated refreshes continue to offer that candidate individually until approved. Apply the same eligibility rule when selecting source-owned rows and when reordering them; manual rows and their relative positions remain intact.
+- **Why:** Each review choice must affect only its selected change, and repeated refreshes must neither duplicate nor lose existing or proposed items.
+- **Material alternative rejected:** Let a declined row fall back into exact-position matching or include it in one half of a reorder operation.
 - **Approval source/date:** Current user request, 2026-10-27.
 - **Affected workflow/contract:** Planning Center PDF refresh.
 

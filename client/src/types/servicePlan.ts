@@ -331,6 +331,8 @@ export type ServicePlanElement = {
    * duplicate-title rows use title and duration fingerprints, with ambiguous
    * changed-duration pairs sent through the existing import review. */
   planningCenterPdfMatchKey?: string;
+  /** Keeps a declined ambiguous PDF pair in individual review on later refreshes. */
+  planningCenterPdfMatchReviewRequired?: boolean;
   /** Source row order from the latest Planning Center PDF import. */
   planningCenterPdfSourcePosition?: number;
   /** Internal provenance flag used to safely reconcile later Service Planning

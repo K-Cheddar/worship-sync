@@ -38,6 +38,8 @@ const mockLoadPlanPreview = jest.fn();
 const mockPersistItemListServicePlanBinding = jest.fn();
 let mockLiveHandler: ((event: unknown) => void) | null = null;
 let mockServicePlanningEnabled = true;
+let mockNativeOverlayMappingReady = false;
+let mockNativeOverlayMappingKey = "church-1:unverified";
 
 jest.mock("../../api/auth", () => ({
   getServicePlan: (...args: unknown[]) => mockGetServicePlan(...args),
@@ -66,6 +68,10 @@ jest.mock("../../hooks/useServicePlanningImport", () => ({
   useServicePlanningImport: () => ({
     loadPlanPreview: mockLoadPlanPreview,
     isServicePlanningEnabled: mockServicePlanningEnabled,
+    isNativeOverlayMappingReady: mockNativeOverlayMappingReady,
+    nativeOverlayMappingKey: mockNativeOverlayMappingKey,
+    isNativeOverlayPreviewFresh: (preview: { nativeOverlayMappingKey?: string } | null) =>
+      Boolean(mockNativeOverlayMappingReady && preview?.nativeOverlayMappingKey === mockNativeOverlayMappingKey),
   }),
 }));
 
@@ -265,10 +271,10 @@ const renderHookWith = (
   controllerInfo: Record<string, unknown> = {},
   activeControllerId = "presentation",
 ) => {
-  return render(
+  const tree = (nextGlobalInfo: Record<string, unknown>) => (
     <Provider store={store}>
       <ActiveControllerContext.Provider value={activeControllerId}>
-        <GlobalInfoContext.Provider value={globalInfo as never}>
+        <GlobalInfoContext.Provider value={nextGlobalInfo as never}>
           <ControllerInfoContext.Provider value={controllerInfo as never}>
             <Harness
               onResult={(result) => {
@@ -278,8 +284,14 @@ const renderHookWith = (
           </ControllerInfoContext.Provider>
         </GlobalInfoContext.Provider>
       </ActiveControllerContext.Provider>
-    </Provider>,
+    </Provider>
   );
+  const view = render(tree(globalInfo));
+  return {
+    ...view,
+    rerenderWithGlobalInfo: (nextGlobalInfo: Record<string, unknown>) =>
+      view.rerender(tree(nextGlobalInfo)),
+  };
 };
 
 const enabledGlobalInfo = {
@@ -300,6 +312,8 @@ const setVisibility = (visibility: DocumentVisibilityState) => {
 describe("useCurrentServicePlanSource", () => {
   beforeEach(() => {
     mockServicePlanningEnabled = true;
+    mockNativeOverlayMappingReady = false;
+    mockNativeOverlayMappingKey = "church-1:unverified";
     jest.clearAllMocks();
     dispatchedTypes.length = 0;
     latestResult = null;
@@ -368,6 +382,64 @@ describe("useCurrentServicePlanSource", () => {
     expect(store.getState().servicePlanningImport.preview).toEqual(
       outlineFixture.preview,
     );
+  });
+
+  it("rebuilds the selected plan preview when verified overlay mappings arrive", async () => {
+    const store = makeStore();
+    const view = renderHookWith(store, enabledGlobalInfo);
+
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+        planFixture.planKey,
+      ),
+    );
+    expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1);
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
+
+    mockNativeOverlayMappingReady = true;
+    mockNativeOverlayMappingKey = "church-1:verified-custom-rules";
+    view.rerenderWithGlobalInfo(enabledGlobalInfo);
+
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(2));
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBe(planFixture.planKey);
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
+  });
+
+  it("does not rebuild the preview for unrelated context object changes", async () => {
+    const store = makeStore();
+    const view = renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+
+    view.rerenderWithGlobalInfo({ ...enabledGlobalInfo, unrelatedSetting: { revision: 2 } });
+    await act(async () => Promise.resolve());
+
+    expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1);
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
+  });
+
+  it("suppresses a pending preview built with settings from before a mapping change", async () => {
+    let resolveOldPreview: ((outline: typeof outlineFixture) => void) | undefined;
+    mockLoadPlanPreview
+      .mockReturnValueOnce(new Promise((resolve) => { resolveOldPreview = resolve; }))
+      .mockResolvedValueOnce({ ...outlineFixture, planLabel: "Current mapping preview" });
+    const store = makeStore();
+    const view = renderHookWith(store, enabledGlobalInfo);
+
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+    mockNativeOverlayMappingReady = true;
+    mockNativeOverlayMappingKey = "church-1:verified-custom-rules";
+    view.rerenderWithGlobalInfo(enabledGlobalInfo);
+
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.serviceOutline?.planLabel)
+        .toBe("Current mapping preview"),
+    );
+
+    resolveOldPreview?.({ ...outlineFixture, planLabel: "Stale default mapping preview" });
+    await act(async () => Promise.resolve());
+    expect(store.getState().servicePlanningImport.serviceOutline?.planLabel)
+      .toBe("Current mapping preview");
   });
 
   it("keeps a failed first saved-plan load protected from stored restoration until retry succeeds", async () => {

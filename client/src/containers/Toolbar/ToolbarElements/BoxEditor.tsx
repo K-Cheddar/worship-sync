@@ -132,13 +132,15 @@ const CleanupNewlinesToastAction = ({
 
 type BoxEditorProps = {
   updateItem: (item: ItemState, expectedOwner?: ItemMutationOwner) => void;
-  quickToolbarTarget: HTMLElement | null;
+  quickBoxLayoutTarget: HTMLElement | null;
+  quickBoxHeightTarget: HTMLElement | null;
   drawerTarget: HTMLElement | null;
 };
 
 const BoxEditor = ({
   updateItem,
-  quickToolbarTarget,
+  quickBoxLayoutTarget,
+  quickBoxHeightTarget,
   drawerTarget,
 }: BoxEditorProps) => {
   const dispatch = useDispatch();
@@ -465,7 +467,13 @@ const BoxEditor = ({
       variant="tertiary"
       className={compact ? "h-8 w-10 shrink-0 p-0" : "min-h-12 min-w-28 gap-2"}
       padding={compact ? "p-0" : undefined}
-      title={preset.label}
+      title={
+        compact
+          ? `Apply ${preset.label} box preset to ${
+              shouldApplyToAll ? "all slides" : "the selected slide"
+            }`
+          : `Apply ${preset.label} box preset`
+      }
       aria-label={`Apply ${preset.label} box preset`}
       onClick={() => applyPreset(preset.dimensions)}
     >
@@ -512,7 +520,10 @@ const BoxEditor = ({
   );
 
   const fullControls = (
-    <div className="flex flex-col gap-4">
+    <div
+      data-testid="box-layout-drawer-controls"
+      className="flex min-w-0 flex-col gap-4"
+    >
       <div className="flex flex-wrap items-center gap-2">
         {(["x", "y", "width", "height"] as const).map((field) => (
           <Input
@@ -531,7 +542,10 @@ const BoxEditor = ({
           />
         ))}
       </div>
-      <div className="flex flex-wrap items-center gap-2">
+      <div
+        data-testid="box-layout-drawer-presets"
+        className="flex flex-wrap items-center gap-2"
+      >
         {BOX_PRESETS.map((preset) => applyPresetButton(preset))}
         <Button
           type="button"
@@ -555,8 +569,14 @@ const BoxEditor = ({
     </div>
   );
 
-  const quickControls = (
-    <div className="flex min-w-max items-center gap-2 border-l border-gray-600 pl-2">
+  const quickLayoutControls = (
+    <div
+      className="flex shrink-0 items-center gap-1"
+      role="group"
+      aria-label="Layout"
+      title="Box layout presets"
+    >
+      <span className="text-xs font-semibold">Layout</span>
       {quickPresets.map((preset) =>
         preset.key === "match" ? (
           <Button
@@ -576,42 +596,62 @@ const BoxEditor = ({
           applyPresetButton(preset, true)
         ),
       )}
-      <div className="flex shrink-0 items-center gap-1 border-l border-gray-600 pl-2">
-        <Button
-          type="button"
-          variant="tertiary"
-          svg={Minus}
-          aria-label="Decrease box height"
-          onClick={() => handleInputChange("height", String(dimensions.height - 1))}
-        />
-        <Input
-          type="number"
-          value={dimensions.height}
-          onChange={(value) => handleInputChange("height", value.toString())}
-          label="Height"
-          labelLayout="inline"
-          labelFontSize="text-xs"
-          min={0}
-          max={100}
-          inputWidth="w-14"
-          inputTextSize="text-xs"
-          hideSpinButtons={false}
-        />
-        <Button
-          type="button"
-          variant="tertiary"
-          svg={Plus}
-          aria-label="Increase box height"
-          onClick={() => handleInputChange("height", String(dimensions.height + 1))}
-        />
-      </div>
+    </div>
+  );
+
+  const quickHeightControls = (
+    <div
+      className="flex shrink-0 items-center gap-1"
+      role="group"
+      aria-label="Height"
+    >
+      <Button
+        type="button"
+        variant="tertiary"
+        svg={Minus}
+        aria-label="Decrease box height"
+        title="Decrease box height"
+        onClick={() =>
+          handleInputChange("height", String(dimensions.height - 1))
+        }
+      />
+      <Input
+        type="number"
+        value={dimensions.height}
+        onChange={(value) => handleInputChange("height", value.toString())}
+        label="Height"
+        labelLayout="inline"
+        labelFontSize="text-xs"
+        min={0}
+        max={100}
+        inputWidth="w-14"
+        inputTextSize="text-xs"
+        hideSpinButtons={false}
+      />
+      <Button
+        type="button"
+        variant="tertiary"
+        svg={Plus}
+        aria-label="Increase box height"
+        title="Increase box height"
+        onClick={() =>
+          handleInputChange("height", String(dimensions.height + 1))
+        }
+      />
     </div>
   );
 
   return (
     <>
-      {quickToolbarTarget && createPortal(quickControls, quickToolbarTarget)}
-      {drawerTarget && createPortal(fullControls, drawerTarget)}
+      {quickBoxLayoutTarget &&
+        createPortal(quickLayoutControls, quickBoxLayoutTarget)}
+      {quickBoxHeightTarget &&
+        createPortal(quickHeightControls, quickBoxHeightTarget)}
+      {drawerTarget &&
+        createPortal(
+          <div className="flex min-w-0 flex-col gap-4">{fullControls}</div>,
+          drawerTarget,
+        )}
     </>
   );
 };

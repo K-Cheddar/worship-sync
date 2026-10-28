@@ -8353,6 +8353,7 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
               sourceSongReferenceDismissed: true,
               sourceSongReferenceDismissedFingerprint: "v1-fingerprint-a-b",
               sourceSongReferenceDismissedOccurrenceId: "source-occurrence-1",
+              planningCenterPdfMatchReviewRequired: true,
               type: "song",
               title: richText("Great Are You Lord"),
               sourceElementTypeRaw: "Special Music",
@@ -8517,6 +8518,10 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     created.payload.servicePlan.sections[0].elements[0].sourceSongReferenceDismissedOccurrenceId,
     "source-occurrence-1",
   );
+  assert.equal(
+    created.payload.servicePlan.sections[0].elements[0].planningCenterPdfMatchReviewRequired,
+    true,
+  );
 
   await flushAsyncWork();
   const createEvent = sseClient
@@ -8532,6 +8537,10 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   });
   assert.equal(fetched.statusCode, 200);
   assert.equal(fetched.payload.servicePlan.name, "Sunday Service");
+  assert.equal(
+    fetched.payload.servicePlan.sections[0].elements[0].planningCenterPdfMatchReviewRequired,
+    true,
+  );
   assert.equal(
     fetched.payload.servicePlan.sections[0].elements[0].importAmbiguity.status,
     "deferred",

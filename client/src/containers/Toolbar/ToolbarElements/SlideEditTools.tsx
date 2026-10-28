@@ -217,10 +217,14 @@ const SlideToolbarFontSizeField = memo(function SlideToolbarFontSizeField({
 });
 
 const SlideEditTools = ({
-  quickToolbarTarget,
+  quickFontSizeTarget,
+  quickBrightnessTarget,
+  quickBibleModeTarget,
   drawerTarget,
 }: {
-  quickToolbarTarget: HTMLElement | null;
+  quickFontSizeTarget: HTMLElement | null;
+  quickBrightnessTarget: HTMLElement | null;
+  quickBibleModeTarget: HTMLElement | null;
   drawerTarget: HTMLElement | null;
 }) => {
   const location = useLocation();
@@ -750,7 +754,10 @@ const SlideEditTools = ({
 
   const fullControls = (
     <>
-      <div className="flex gap-1 items-center flex-wrap md:flex-nowrap justify-center">
+      <div
+        data-testid="slide-formatting-text-controls"
+        className="flex min-w-0 max-w-full flex-wrap items-center justify-center gap-1"
+      >
         <Icon svg={ALargeSmall} className="border-b border-black" />
         <Button
           svg={Minus}
@@ -838,7 +845,10 @@ const SlideEditTools = ({
         </div>
       </div>
 
-      <div className="flex gap-1 items-center lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4">
+      <div
+        data-testid="slide-formatting-mode-controls"
+        className="flex min-w-0 max-w-full flex-wrap items-center gap-1 lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4"
+      >
         {type === "timer" && (
           <PopoverPanel
             TriggeringButton={
@@ -876,7 +886,7 @@ const SlideEditTools = ({
                   value: overflow,
                 });
               }}
-              className="flex flex-wrap md:flex-nowrap items-center gap-1"
+              className="flex flex-wrap items-center gap-1"
             >
               <RadioButton
                 className="text-xs"
@@ -893,14 +903,14 @@ const SlideEditTools = ({
         )}
         {type === "bible" && (
           <>
-            <Icon color={iconColorMap.get("bible")} svg={BookOpen} />
+            <Icon color={iconColorMap.get("bible")} svg={BookOpen} size="md" />
             <p className="text-sm font-semibold">Mode:</p>
             <RadioGroup
               value={item.bibleInfo?.fontMode ?? "fit"}
               onValueChange={(v) =>
                 _updateBibleFontMode(v as BibleFontMode)
               }
-              className="flex flex-wrap md:flex-nowrap items-center gap-1"
+              className="flex flex-wrap items-center gap-1"
             >
               <RadioButton className="text-xs" optionValue="fit" label="Fit" />
               <RadioButton
@@ -919,11 +929,10 @@ const SlideEditTools = ({
       </div>
 
       <div
-        className={
-          "flex gap-1 items-center lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4 lg:border-r-2 lg:pr-2 max-lg:border-b-2 max-lg:pb-4"
-        }
+        data-testid="slide-formatting-brightness-controls"
+        className="flex min-w-0 max-w-full flex-wrap items-center gap-1 lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4 lg:border-r-2 lg:pr-2 max-lg:border-b-2 max-lg:pb-4"
       >
-        <Icon size="xl" svg={SunMedium} color="#fbbf24" />
+        <Icon size="md" svg={SunMedium} color="#fbbf24" />
         <Slider
           className="w-24 shrink-0 md:w-28"
           value={[brightness]}
@@ -971,101 +980,144 @@ const SlideEditTools = ({
     </>
   );
 
-  const quickControls = (
-    <div className="flex min-w-max shrink-0 items-center gap-2">
-      <div className="flex shrink-0 items-center gap-1">
-        <Button
-          svg={Minus}
-          aria-label="Decrease font size"
-          variant="tertiary"
-          onClick={() => {
-            const num =
-              typeof fontSize === "number"
-                ? fontSize
-                : parseInt(String(fontSize), 10) || DEFAULT_FONT_PX;
-            _updateFontSize(num - FONT_SIZE_BUTTON_STEP);
-          }}
-        />
-        <SlideToolbarFontSizeField
-          value={fontSize}
-          fontPresetHighlight={fontPresetHighlight}
-          scrollbarWidth={scrollbarWidth}
-          onChange={handleFontSizeChange}
-          onBlur={handleFontSizeBlur}
-          onPresetSelect={applyFontSize}
-        />
-        <Button
-          svg={Plus}
-          aria-label="Increase font size"
-          variant="tertiary"
-          onClick={() => {
-            const num =
-              typeof fontSize === "number"
-                ? fontSize
-                : parseInt(String(fontSize), 10) || DEFAULT_FONT_PX;
-            _updateFontSize(num + FONT_SIZE_BUTTON_STEP);
-          }}
-        />
-      </div>
-      <div className="flex shrink-0 items-center gap-1 border-l border-gray-600 pl-2">
-        <Icon size="xl" svg={SunMedium} color="#fbbf24" />
-        <Slider
-          className="w-24 shrink-0"
-          value={[brightness]}
-          min={10}
-          max={100}
-          step={1}
-          onValueChange={(value: number[]) =>
-            _updateBrightness(value[0] ?? brightness)
-          }
-          aria-label="Background brightness"
-        />
-        <Input
-          label="Brightness"
-          type="number"
-          value={brightness}
-          onChange={(value) => _updateBrightness(value as number)}
-          className="w-14 shrink-0"
-          inputTextSize="text-xs"
-          hideLabel
-          data-ignore-undo="true"
-          max={100}
-          min={10}
-        />
-      </div>
-      {type === "bible" && (
-        <div className="flex shrink-0 items-center gap-1 border-l border-gray-600 pl-2">
-          <Icon color={iconColorMap.get("bible")} svg={BookOpen} />
-          <span className="text-xs font-semibold">Mode</span>
-          <RadioGroup
-            value={item.bibleInfo?.fontMode ?? "fit"}
-            onValueChange={(value) => _updateBibleFontMode(value as BibleFontMode)}
-            className="flex items-center gap-1"
-          >
-            <RadioButton className="text-xs" optionValue="fit" label="Fit" />
-            <RadioButton
-              className="text-xs"
-              optionValue="separate"
-              label="Separate"
-            />
-            <RadioButton
-              className="text-xs"
-              optionValue="multiple"
-              label="Multiple"
-            />
-          </RadioGroup>
-        </div>
-      )}
+  const quickFontSizeControls = (
+    <div
+      className="flex shrink-0 items-center gap-1"
+      role="group"
+      aria-label="Font Size"
+      title="Font Size"
+    >
+      <ALargeSmall
+        aria-hidden="true"
+        data-testid="quick-toolbar-font-size-icon"
+        className="size-5 shrink-0"
+      />
+      <Button
+        svg={Minus}
+        aria-label="Decrease font size"
+        variant="tertiary"
+        onClick={() => {
+          const num =
+            typeof fontSize === "number"
+              ? fontSize
+              : parseInt(String(fontSize), 10) || DEFAULT_FONT_PX;
+          _updateFontSize(num - FONT_SIZE_BUTTON_STEP);
+        }}
+      />
+      <SlideToolbarFontSizeField
+        value={fontSize}
+        fontPresetHighlight={fontPresetHighlight}
+        scrollbarWidth={scrollbarWidth}
+        onChange={handleFontSizeChange}
+        onBlur={handleFontSizeBlur}
+        onPresetSelect={applyFontSize}
+      />
+      <Button
+        svg={Plus}
+        aria-label="Increase font size"
+        variant="tertiary"
+        onClick={() => {
+          const num =
+            typeof fontSize === "number"
+              ? fontSize
+              : parseInt(String(fontSize), 10) || DEFAULT_FONT_PX;
+          _updateFontSize(num + FONT_SIZE_BUTTON_STEP);
+        }}
+      />
     </div>
   );
 
+  const quickBrightnessControls = (
+    <div
+      className="flex shrink-0 items-center gap-1"
+      role="group"
+      aria-label="Background brightness"
+      title="Adjust background brightness"
+    >
+      <SunMedium
+        aria-hidden="true"
+        data-testid="quick-toolbar-brightness-icon"
+        className="size-5 shrink-0"
+        color="#fbbf24"
+      />
+      <Slider
+        className="w-24 shrink-0"
+        value={[brightness]}
+        min={10}
+        max={100}
+        step={1}
+        onValueChange={(value: number[]) =>
+          _updateBrightness(value[0] ?? brightness)
+        }
+        aria-label="Background brightness"
+      />
+      <Input
+        label="Brightness"
+        type="number"
+        value={brightness}
+        onChange={(value) => _updateBrightness(value as number)}
+        className="w-14 shrink-0"
+        inputTextSize="text-xs"
+        hideLabel
+        data-ignore-undo="true"
+        max={100}
+        min={10}
+      />
+    </div>
+  );
+
+  const quickBibleModeControls =
+    type === "bible" ? (
+      <div
+        className="flex shrink-0 items-center gap-1"
+        role="group"
+        aria-label="Bible mode"
+        title="Bible mode"
+      >
+        <BookOpen
+          aria-hidden="true"
+          data-testid="quick-toolbar-bible-icon"
+          className="size-5 shrink-0"
+          color={iconColorMap.get("bible")}
+        />
+        <RadioGroup
+          value={item.bibleInfo?.fontMode ?? "fit"}
+          onValueChange={(value) => _updateBibleFontMode(value as BibleFontMode)}
+          className="flex items-center gap-1"
+          aria-label="Bible mode"
+        >
+          <RadioButton className="text-xs" optionValue="fit" label="Fit" />
+          <RadioButton
+            className="text-xs"
+            optionValue="separate"
+            label="Separate"
+          />
+          <RadioButton
+            className="text-xs"
+            optionValue="multiple"
+            label="Multiple"
+          />
+        </RadioGroup>
+      </div>
+    ) : null;
+
   return (
     <>
-      {quickToolbarTarget &&
-        createPortal(quickControls, quickToolbarTarget)}
+      {quickFontSizeTarget &&
+        createPortal(quickFontSizeControls, quickFontSizeTarget)}
+      {quickBrightnessTarget &&
+        createPortal(quickBrightnessControls, quickBrightnessTarget)}
+      {quickBibleModeTarget &&
+        quickBibleModeControls &&
+        createPortal(quickBibleModeControls, quickBibleModeTarget)}
       {drawerTarget &&
         createPortal(
-          <div className="flex flex-col gap-4">{fullControls}</div>,
+          <div
+            data-testid="slide-formatting-drawer-controls"
+            className="flex min-w-0 flex-col gap-4"
+          >
+            {fullControls}
+          </div>,
           drawerTarget,
         )}
     </>

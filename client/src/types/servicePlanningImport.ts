@@ -111,6 +111,8 @@ export type ServicePlanningTeamAssignment = {
 };
 
 export type ServicePlanningPreview = {
+  /** Mapping settings used by the native saved-plan overlay preview. */
+  nativeOverlayMappingKey?: string;
   /** Native library snapshot used by the same batch planner on explicit retry. */
   overlayLibrary?: OverlayInfo[];
   overlayCandidates: ServicePlanningMappedRow[];

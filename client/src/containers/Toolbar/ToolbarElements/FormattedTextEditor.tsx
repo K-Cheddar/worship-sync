@@ -240,7 +240,10 @@ const FormattedTextEditor = ({
 
   const controls = (
     <>
-      <section className="flex gap-1 items-center">
+      <section
+        data-testid="formatted-text-font-controls"
+        className="flex min-w-0 max-w-full flex-wrap items-center gap-1"
+      >
         <Icon svg={Image} className="border-b border-black" />
         <Button
           svg={Minus}
@@ -374,7 +377,10 @@ const FormattedTextEditor = ({
           onClick={() => handleChange("align", "right")}
         />
       </section>
-      <section className="flex gap-2 items-center lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4">
+      <section
+        data-testid="formatted-text-background-controls"
+        className="flex min-w-0 max-w-full flex-wrap items-center gap-2 lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4"
+      >
         <PopoverPanel
           TriggeringButton={
             <Button
@@ -422,11 +428,14 @@ const FormattedTextEditor = ({
         />
       </section>
 
-      <section className="flex gap-1 items-center">
+      <section
+        data-testid="formatted-text-scope-controls"
+        className="flex min-w-0 max-w-full flex-wrap items-center gap-1"
+      >
         <RadioGroup
           value={shouldApplyToAll ? "all" : "selected"}
           onValueChange={(v) => setShouldApplyToAll(v === "all")}
-          className="flex gap-1 items-center"
+          className="flex flex-wrap items-center gap-1"
         >
           <RadioButton
             className="text-xs w-fit"
@@ -446,7 +455,12 @@ const FormattedTextEditor = ({
   );
 
   return createPortal(
-    <div className={cn("flex flex-col items-start gap-4")}>{controls}</div>,
+    <div
+      data-testid="formatted-text-editor-drawer-controls"
+      className={cn("flex min-w-0 flex-col items-start gap-4")}
+    >
+      {controls}
+    </div>,
     drawerTarget,
   );
 };
