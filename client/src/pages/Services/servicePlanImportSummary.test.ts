@@ -719,6 +719,26 @@ describe("summarizeServicePlanImport", () => {
     expect(result[0].elements[0].title).toEqual(plainTextToRichText("New welcome"));
   });
 
+  it.each([
+    [0, true], [4, true], [undefined, undefined],
+  ] as const)("uses PDF provenance for a keyless review candidate at position %s", (planningCenterPdfSourcePosition, expectedReviewRequired) => {
+    const currentItem = element("prayer", "Prayer");
+    const current = [section([currentItem])];
+    const next = [section([
+      currentItem,
+      element("candidate", "Prayer", {
+        legacyImportMatchCandidateForId: currentItem.id,
+        planningCenterPdfSourcePosition,
+      }),
+      element("addition", "New item"),
+    ])];
+    const summary = summarizeServicePlanImport(current, next);
+    const applied = applySelectedServicePlanImportChanges(current, next, summary, new Set(["added:addition"]));
+    expect(applied[0].elements.find(({ id }) => id === currentItem.id)?.planningCenterPdfMatchReviewRequired)
+      .toBe(expectedReviewRequired);
+    expect(applied[0].elements.map(({ id }) => id)).toEqual([currentItem.id, "addition"]);
+  });
+
   it("preserves the complete refreshed result when every change is selected", () => {
     const current = [{
       ...section([element("welcome", "Old welcome")]),

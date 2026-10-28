@@ -714,7 +714,9 @@ export const applySelectedServicePlanImportChanges = (
   ));
   const declinedPdfMatchCandidateByCurrentId = new Map(
     nextSections.flatMap((section) => section.elements.flatMap((element) =>
-      element.legacyImportMatchCandidateForId && element.planningCenterPdfMatchKey
+      // Collision resolution may remove a PDF key; its source position still proves provenance.
+      element.legacyImportMatchCandidateForId && (element.planningCenterPdfMatchKey ||
+        typeof element.planningCenterPdfSourcePosition === "number")
         ? [[element.legacyImportMatchCandidateForId, element] as const]
         : [],
     )),

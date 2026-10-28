@@ -1155,6 +1155,62 @@ describe("Planning Center PDF refresh matching", () => {
     });
   });
 
+  it("keeps a declined keyless PDF match protected after an unrelated addition and server reload", () => {
+    const initial = [
+      element("opening", "Opening", { sourcePlanningManaged: true }),
+      element("prayer-a", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+      element("response", "Response", { sourcePlanningManaged: true }),
+      element("prayer-b", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+      element("closing", "Closing", { sourcePlanningManaged: true }),
+    ];
+    const declined = withLocalPrayerData(initial[1], 1);
+    const confident = withLocalPrayerData(initial[3], 2);
+    const current = [section("current", "Worship", [initial[0], declined, initial[2], confident, initial[4]])];
+    const addition = element("incoming-addition", "New item", { sourcePlanningManaged: true });
+    // Exercise the selected-apply boundary with an explicitly keyless PDF suggestion.
+    const preview = [section("current", "Worship", [
+      ...current[0].elements,
+      { ...declined, id: "incoming-review", legacyImportMatchCandidateForId: declined.id, planningCenterPdfSourcePosition: 4 },
+      addition,
+    ])];
+    const candidate = preview[0].elements.find(({ legacyImportMatchCandidateForId }) => legacyImportMatchCandidateForId === declined.id);
+    expect(candidate).toMatchObject({ planningCenterPdfSourcePosition: 4 });
+    expect(candidate?.planningCenterPdfMatchKey).toBeUndefined();
+    const summary = summarizeServicePlanImport(current, preview, {}, { trackSameSectionMoves: true });
+    expect(summary.changes.filter(({ kind }) => kind === "legacy_match").map(({ id }) => id)).toEqual([declined.id]);
+    const applied = applySelectedServicePlanImportChanges(current, preview, summary, new Set(["added:incoming-addition"]));
+    expect(applied[0].elements.find(({ id }) => id === declined.id)).toEqual({
+      ...declined, planningCenterPdfMatchReviewRequired: true,
+    });
+    expect(applied[0].elements.filter(({ id }) => id !== "incoming-addition" && id !== declined.id))
+      .toEqual(current[0].elements.filter(({ id }) => id !== declined.id));
+
+    // Server normalization retains the review flag, but drops PDF keys/positions.
+    const reloaded = JSON.parse(JSON.stringify(applied)) as ServicePlanSection[];
+    reloaded.forEach(({ elements }) => elements.forEach((item) => {
+      delete item.planningCenterPdfMatchKey;
+      delete item.planningCenterPdfSourcePosition;
+    }));
+    const subsequentIncoming = [section("next-import", "Worship", [
+      ...initial, addition,
+    ])];
+    const subsequent = preparePlanningCenterPdfImport(reloaded, subsequentIncoming);
+    const nextPreview = orderPlanningCenterPdfRefresh(
+      refreshServicePlanFromImport(subsequent.currentSections, subsequent.importedSections, pdfReviewOptions),
+      subsequent.importedSections,
+    );
+    const nextSummary = summarizeServicePlanImport(reloaded, nextPreview, {}, { trackSameSectionMoves: true });
+    expect(nextSummary.changes.map(servicePlanImportChangeKey)).toEqual([`legacy_match:${declined.id}`]);
+    expect(nextPreview[0].elements.find(({ id }) => id === declined.id)).toEqual(subsequent.currentSections[0].elements.find(({ id }) => id === declined.id));
+    expectUniqueElementIds(nextPreview);
+    expect(applySelectedServicePlanImportChanges(reloaded, nextPreview, nextSummary, new Set())).toEqual(reloaded);
+    const approved = applySelectedServicePlanImportChanges(reloaded, nextPreview, nextSummary, new Set([`legacy_match:${declined.id}`]));
+    expect(approved[0].elements.find(({ id }) => id === declined.id)?.planningCenterPdfMatchReviewRequired).toBeUndefined();
+    expect(approved[0].elements.find(({ id }) => id === declined.id)).toMatchObject({
+      notes: declined.notes, assignees: declined.assignees, resources: declined.resources,
+    });
+  });
+
   it.each([
     [false, false], [true, false], [false, true], [true, true],
   ])("reserves a review-only Prayer when a third identical occurrence has no identity (removeMissing=%s, serverReload=%s)", (removeMissing, serverReload) => {
