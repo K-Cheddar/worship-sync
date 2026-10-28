@@ -7,7 +7,6 @@ import {
   DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
   getNewServicePlanImportAmbiguityIds,
   mergeImportedAssignees,
-  orderPlanningCenterPdfRefresh,
   preparePlanningCenterPdfImport,
   resolveServicePlanImportNoteConflict,
   refreshServicePlanFromImport,
@@ -986,6 +985,18 @@ describe("Planning Center PDF refresh matching", () => {
   };
   const pdfReviewOptions = { ...pdfRefreshOptions, suggestLegacyMatches: true };
 
+  it("keeps a declined legacy singleton reviewable even when its old server lost all PDF keys", () => {
+    const current = [section("saved", "Worship", [element("local", "Prayer", {
+      sourcePlanningManaged: true, planningCenterPdfMatchReviewRequired: true, durationSeconds: 180,
+      assignees: [{ id: "slot", microphoneIds: ["mic"] }],
+    })])];
+    const prepared = preparePlanningCenterPdfImport(current, [section("source", "Worship", [element("incoming", "Prayer", { durationSeconds: 180 })])]);
+    const next = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfReviewOptions);
+    const summary = summarizeServicePlanImport(current, next);
+    expect(summary.changes.map(servicePlanImportChangeKey)).toEqual(["legacy_match:local"]);
+    expect(applySelectedServicePlanImportChanges(current, next, summary, new Set())).toBe(current);
+  });
+
   const withLocalPrayerData = (source: ServicePlanElement, index: number) => {
     const note = plainTextToRichText(`Local note ${index}`);
     const attachment = createServicePlanTextResource({
@@ -1121,10 +1132,7 @@ describe("Planning Center PDF refresh matching", () => {
     ])];
 
     const prepared = preparePlanningCenterPdfImport(current, incoming);
-    const preview = orderPlanningCenterPdfRefresh(
-      refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfReviewOptions),
-      prepared.importedSections,
-    );
+    const preview = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfReviewOptions);
     const specialMusic = preview.flatMap(({ elements }) => elements).find(({ id }) => id === "baseline-special-music");
     const newPrayer = preview.flatMap(({ elements }) => elements).find(({ id }) => id === "updated-prayer-peter");
 
@@ -1228,10 +1236,7 @@ describe("Planning Center PDF refresh matching", () => {
     })))];
     const runPdfRefresh = (sections: ServicePlanSection[], incoming: ServicePlanSection[]) => {
       const prepared = preparePlanningCenterPdfImport(sections, incoming);
-      const preview = orderPlanningCenterPdfRefresh(
-        refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfReviewOptions),
-        prepared.importedSections,
-      );
+      const preview = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfReviewOptions);
       return {
         preview,
         summary: summarizeServicePlanImport(sections, preview, {}, { trackSameSectionMoves: true }),
@@ -1344,10 +1349,7 @@ describe("Planning Center PDF refresh matching", () => {
       element("incoming-short", "Prayer", { durationSeconds: 120, sourcePlanningManaged: true }),
     ])];
     const prepared = preparePlanningCenterPdfImport(current, reordered);
-    const refreshed = orderPlanningCenterPdfRefresh(
-      refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfRefreshOptions),
-      prepared.importedSections,
-    );
+    const refreshed = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfRefreshOptions);
     const summary = summarizeServicePlanImport(current, refreshed, {}, {
       trackSameSectionMoves: true,
     });
@@ -1360,7 +1362,6 @@ describe("Planning Center PDF refresh matching", () => {
 
     expect(summary.changes.filter(({ kind }) => kind === "moved").map(({ id }) => id)).toEqual([
       "local-long",
-      "local-short",
     ]);
     expect(applied[0].elements.map(({ id }) => id)).toEqual(["local-long", "local-short"]);
     expect(applied[0].elements.map((item) => item.durationSeconds)).toEqual([420, 120]);
@@ -1407,10 +1408,7 @@ describe("Planning Center PDF refresh matching", () => {
     expect(preparedPrayers.map(({ planningCenterPdfMatchKey }) => planningCenterPdfMatchKey))
       .toHaveLength(new Set(preparedPrayers.map(({ planningCenterPdfMatchKey }) => planningCenterPdfMatchKey)).size);
 
-    const preview = orderPlanningCenterPdfRefresh(
-      refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfReviewOptions),
-      prepared.importedSections,
-    );
+    const preview = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfReviewOptions);
     const summary = summarizeServicePlanImport(current, preview, {}, { trackSameSectionMoves: true });
     const previewItems = preview.flatMap(({ elements }) => elements);
     const prayerSuggestions = summary.changes.filter(({ kind }) => kind === "legacy_match");
@@ -1482,10 +1480,7 @@ describe("Planning Center PDF refresh matching", () => {
       ...initial, addition,
     ])];
     const subsequent = preparePlanningCenterPdfImport(reloaded, subsequentIncoming);
-    const nextPreview = orderPlanningCenterPdfRefresh(
-      refreshServicePlanFromImport(subsequent.currentSections, subsequent.importedSections, pdfReviewOptions),
-      subsequent.importedSections,
-    );
+    const nextPreview = refreshServicePlanFromImport(subsequent.currentSections, subsequent.importedSections, pdfReviewOptions);
     const nextSummary = summarizeServicePlanImport(reloaded, nextPreview, {}, { trackSameSectionMoves: true });
     expect(nextSummary.changes.map(servicePlanImportChangeKey)).toEqual([`legacy_match:${declined.id}`]);
     expect(nextPreview[0].elements.find(({ id }) => id === declined.id)).toEqual(subsequent.currentSections[0].elements.find(({ id }) => id === declined.id));
@@ -1524,10 +1519,7 @@ describe("Planning Center PDF refresh matching", () => {
     ])];
     const refresh = (sections: ServicePlanSection[]) => {
       const prepared = preparePlanningCenterPdfImport(sections, incoming);
-      const preview = orderPlanningCenterPdfRefresh(
-        refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, { ...pdfReviewOptions, removeMissing }),
-        prepared.importedSections,
-      );
+      const preview = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, { ...pdfReviewOptions, removeMissing });
       return { prepared, preview, summary: summarizeServicePlanImport(sections, preview, {}, { trackSameSectionMoves: true }) };
     };
     const { prepared, preview, summary } = refresh(current);
@@ -1547,7 +1539,7 @@ describe("Planning Center PDF refresh matching", () => {
 
     const approvedMatch = applySelectedServicePlanImportChanges(current, preview, summary, new Set([`legacy_match:${reserved.id}`]));
     expect(approvedMatch[0].elements.map(({ id }) => id)).toEqual(current[0].elements.map(({ id }) => id));
-    expect(approvedMatch[0].elements.find(({ id }) => id === reserved.id)).toMatchObject(reserved);
+    expect(approvedMatch[0].elements.find(({ id }) => id === reserved.id)).toMatchObject({ ...reserved, planningCenterPdfMatchKey: expect.any(String) });
     expect(approvedMatch[0].elements.filter(({ id }) => id !== reserved.id)).toEqual(current[0].elements.filter(({ id }) => id !== reserved.id));
 
     const approvedAddition = applySelectedServicePlanImportChanges(current, preview, summary, new Set(["added:incoming-extra"]));
@@ -1570,11 +1562,9 @@ describe("Planning Center PDF refresh matching", () => {
     }));
     const repeated = refresh(reloaded);
     expectUniqueElementIds(repeated.preview);
-    // A keyless addition can make the draft's synthetic identities ambiguous.
-    // Every resulting association must still require individual confirmation.
-    expect(repeated.summary.changes.map(servicePlanImportChangeKey)).toEqual(serverReload
-      ? [`legacy_match:${reserved.id}`]
-      : [`legacy_match:${reserved.id}`, "legacy_match:incoming-extra", `legacy_match:${confident.id}`]);
+    // Confirmed/new rows now carry distinct durable evidence. Only the declined
+    // occurrence remains reserved, including after the older server round trip.
+    expect(repeated.summary.changes.map(servicePlanImportChangeKey)).toEqual([`legacy_match:${reserved.id}`]);
     expect(applySelectedServicePlanImportChanges(reloaded, repeated.preview, repeated.summary, new Set())).toEqual(reloaded);
     const acceptedAll = applySelectedServicePlanImportChanges(reloaded, repeated.preview, repeated.summary, new Set(repeated.summary.changes.map(servicePlanImportChangeKey)));
     const finalRefresh = refresh(acceptedAll);
@@ -1655,9 +1645,10 @@ describe("Planning Center PDF refresh matching", () => {
       element("review", "Prayer", { legacyImportMatchCandidateForId: reserved.id, planningCenterPdfSourcePosition: 1 }),
       first,
     ])];
-    const ordered = orderPlanningCenterPdfRefresh(current, incoming);
-    expect(ordered[0].elements).toEqual([last, reserved, first]);
-    expect(orderPlanningCenterPdfRefresh(ordered, incoming)).toEqual(ordered);
+    const ordered = refreshServicePlanFromImport(current, incoming, pdfReviewOptions);
+    expect(ordered[0].elements.filter((item) => !item.legacyImportMatchCandidateForId).map(({ id }) => id))
+      .toEqual([last.id, reserved.id, first.id]);
+    expect(ordered[0].elements.find(({ id }) => id === reserved.id)).toEqual(reserved);
   });
 
   it("resolves both identical-duration occurrences by their distinct context after reordering", () => {
@@ -1687,10 +1678,7 @@ describe("Planning Center PDF refresh matching", () => {
       element("incoming-anchor-b", "Anchor B", { sourcePlanningManaged: true }),
     ])];
     const prepared = preparePlanningCenterPdfImport(current, incoming);
-    const refreshed = orderPlanningCenterPdfRefresh(
-      refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfRefreshOptions),
-      prepared.importedSections,
-    );
+    const refreshed = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfRefreshOptions);
 
     expectUniqueElementIds(refreshed);
     expect(refreshed[0].elements.filter(({ id }) => id.startsWith("local-")).map(({ id, notes }) => ({
@@ -1772,10 +1760,7 @@ describe("Planning Center PDF refresh matching", () => {
       element("incoming-a", "Prayer", { sourceOccurrenceId: "pco-a", durationSeconds: 300 }),
     ])];
     const prepared = preparePlanningCenterPdfImport(current, incoming);
-    const refreshed = orderPlanningCenterPdfRefresh(
-      refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfRefreshOptions),
-      prepared.importedSections,
-    );
+    const refreshed = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfRefreshOptions);
 
     expectUniqueElementIds(refreshed);
     expect(refreshed[0].elements.map(({ id }) => id)).toEqual(["local-b", "local-a"]);
@@ -1834,10 +1819,7 @@ describe("Planning Center PDF refresh matching", () => {
       element("incoming-long", "Prayer", { durationSeconds: 420, sourcePlanningManaged: true }),
     ])];
     const prepared = preparePlanningCenterPdfImport(current, revised);
-    const refreshed = orderPlanningCenterPdfRefresh(
-      refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfRefreshOptions),
-      prepared.importedSections,
-    );
+    const refreshed = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfRefreshOptions);
 
     expect(refreshed[0].elements.find(({ id }) => id === "local-short")).toMatchObject({
       durationSeconds: 180,
@@ -1865,13 +1847,10 @@ describe("Planning Center PDF refresh matching", () => {
       element("incoming-long", "Prayer", { durationSeconds: 480, sourcePlanningManaged: true }),
     ])];
     const prepared = preparePlanningCenterPdfImport(current, revised);
-    const refreshed = orderPlanningCenterPdfRefresh(
-      refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, {
+    const refreshed = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, {
         ...pdfRefreshOptions,
         suggestLegacyMatches: true,
-      }),
-      prepared.importedSections,
-    );
+      });
     const summary = summarizeServicePlanImport(current, refreshed);
     const suggestions = summary.changes.filter(({ kind }) => kind === "legacy_match");
 
@@ -1946,10 +1925,7 @@ describe("Planning Center PDF refresh matching", () => {
       element("incoming-closing", "Closing", { sourcePlanningManaged: true }),
     ])];
     const prepared = preparePlanningCenterPdfImport(current, incoming);
-    const preview = orderPlanningCenterPdfRefresh(
-      refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfReviewOptions),
-      prepared.importedSections,
-    );
+    const preview = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfReviewOptions);
     const summary = summarizeServicePlanImport(current, preview);
     const matches = summary.changes.filter(({ kind }) => kind === "legacy_match");
 
@@ -1989,10 +1965,7 @@ describe("Planning Center PDF refresh matching", () => {
     });
 
     const repeatedPreparation = preparePlanningCenterPdfImport(accepted, incoming);
-    const repeated = orderPlanningCenterPdfRefresh(
-      refreshServicePlanFromImport(repeatedPreparation.currentSections, repeatedPreparation.importedSections, pdfReviewOptions),
-      repeatedPreparation.importedSections,
-    );
+    const repeated = refreshServicePlanFromImport(repeatedPreparation.currentSections, repeatedPreparation.importedSections, pdfReviewOptions);
     expectUniqueElementIds(repeated);
     const repeatedSummary = summarizeServicePlanImport(accepted, repeated);
     expect(repeatedSummary.changes.filter(({ kind }) => kind === "legacy_match").map(({ id }) => id))
@@ -2101,10 +2074,7 @@ describe("Planning Center PDF refresh matching", () => {
       element("incoming-a", "Prayer", { sourcePlanningManaged: true, sourceOccurrenceId: "pdf-a", durationSeconds: 300 }),
     ])];
     const prepared = preparePlanningCenterPdfImport(current, incoming);
-    const refreshed = orderPlanningCenterPdfRefresh(
-      refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfRefreshOptions),
-      prepared.importedSections,
-    );
+    const refreshed = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfRefreshOptions);
 
     expectUniqueElementIds(refreshed);
     expect(refreshed[0].elements.map(({ id }) => id)).toEqual(["local-b", "local-a"]);
@@ -2174,13 +2144,10 @@ describe("Planning Center PDF refresh matching", () => {
     ])];
     const prepared = preparePlanningCenterPdfImport(current, incoming);
     const preparedManual = prepared.currentSections[0].elements.find(({ id }) => id === "manual-prayer");
-    const refreshed = orderPlanningCenterPdfRefresh(
-      refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, {
+    const refreshed = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, {
         ...pdfRefreshOptions,
         suggestLegacyMatches: true,
-      }),
-      prepared.importedSections,
-    );
+      });
 
     expect(preparedManual).not.toHaveProperty("planningCenterPdfMatchKey");
     expect(preparedManual).not.toHaveProperty("planningCenterPdfSourcePosition");
@@ -2280,15 +2247,9 @@ describe("Planning Center PDF refresh matching", () => {
       startTime: index === 0 ? "09:00" : "09:02",
     })))];
     const prepared = preparePlanningCenterPdfImport(current, source);
-    const refreshed = orderPlanningCenterPdfRefresh(
-      refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfRefreshOptions),
-      prepared.importedSections,
-    );
+    const refreshed = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfRefreshOptions);
     const repeatedPreparation = preparePlanningCenterPdfImport(refreshed, source);
-    const repeated = orderPlanningCenterPdfRefresh(
-      refreshServicePlanFromImport(repeatedPreparation.currentSections, repeatedPreparation.importedSections, pdfRefreshOptions),
-      repeatedPreparation.importedSections,
-    );
+    const repeated = refreshServicePlanFromImport(repeatedPreparation.currentSections, repeatedPreparation.importedSections, pdfRefreshOptions);
 
     expect(summarizeServicePlanImport(refreshed, repeated).changes).toEqual([]);
   });

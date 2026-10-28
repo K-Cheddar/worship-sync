@@ -1,3 +1,4 @@
+import { normalizeServicePlanSourceImport, normalizePlanningCenterPdfMatchKey, normalizeServicePlanImportSourceState } from "../shared/servicePlanImportMetadata.ts";
 import crypto from "node:crypto";
 import { createVolunteerMutations } from "./volunteerMutations.js";
 import { createVolunteerPersonalAccess, DEFAULT_VOLUNTEER_ACCESS_TTL_MS } from "./volunteerPersonalAccess.js";
@@ -2413,6 +2414,7 @@ export const createTeamsAuthHandlers = ({
         kind: "library",
         songId,
         songName: normalizeShortText(raw.songName, { max: 300 }),
+        ...(normalizeShortText(raw.key, { max: 40 }) ? { key: normalizeShortText(raw.key, { max: 40 }) } : {}),
       };
     }
     if (raw.kind === "pending") {
@@ -2425,6 +2427,7 @@ export const createTeamsAuthHandlers = ({
         kind: "pending",
         title,
         lyricsText: normalizeLongText(raw.lyricsText, { max: 20000 }),
+        ...(normalizeShortText(raw.key, { max: 40 }) ? { key: normalizeShortText(raw.key, { max: 40 }) } : {}),
       };
     }
     return undefined;
@@ -2697,6 +2700,20 @@ export const createTeamsAuthHandlers = ({
           ...(noteConflictResolution ? { resolution: noteConflictResolution } : {}),
         }
       : undefined;
+    const songMappings = Array.isArray(raw.songMappings) ? raw.songMappings.slice(0, MAX_SERVICE_PLAN_ATTACHMENTS).flatMap((mapping) => {
+      const incoming = normalizeServicePlanSongRef(mapping?.incoming);
+      const candidateOccurrenceIds = normalizeIdArray(mapping?.candidateOccurrenceIds);
+      const sourceFingerprint = normalizeLongText(mapping?.sourceFingerprint, { max: 26000 });
+      if (incoming?.kind !== "pending" || !candidateOccurrenceIds.length || !sourceFingerprint) return [];
+      const mappingId = normalizeShortText(mapping.mappingId, { max: 160 });
+      const occurrenceId = normalizeShortText(mapping.resolution?.occurrenceId, { max: 160 });
+      const resolution = mapping.resolution?.kind === "keep" ? { kind: "keep" }
+        : mapping.resolution?.kind === "replace" && candidateOccurrenceIds.includes(occurrenceId)
+          ? { kind: "replace", occurrenceId } : undefined;
+      return [{ incoming, candidateOccurrenceIds, sourceFingerprint,
+        ...(mappingId ? { mappingId } : {}), ...(resolution ? { resolution } : {}),
+      }];
+    }) : [];
     return {
       source: "servicePlanning",
       sourceKey,
@@ -2713,46 +2730,10 @@ export const createTeamsAuthHandlers = ({
       status: raw.status,
       sourceFingerprint,
       ...(sourceNoteConflict ? { sourceNoteConflict } : {}),
+      ...(songMappings.length ? { songMappings } : {}),
       ...(raw.authorizationPending === true
         ? { authorizationPending: true }
         : {}),
-    };
-  };
-
-  const normalizeServicePlanningSourceState = (raw) => {
-    if (!raw || typeof raw !== "object") return undefined;
-    const normalizeSnapshot = (snapshot) => {
-      if (!snapshot || typeof snapshot !== "object") return undefined;
-      return {
-        elementType: normalizeShortText(snapshot.elementType, { max: 200 }),
-        title: normalizeLongText(snapshot.title, { max: 2000 }),
-        ledBy: normalizeLongText(snapshot.ledBy, { max: 2000 }),
-        note: normalizeLongText(snapshot.note, { max: 2000 }),
-      };
-    };
-    const observed = normalizeSnapshot(raw.observed);
-    const applied = normalizeSnapshot(raw.applied);
-    if (!observed || !applied) return undefined;
-    const fields = new Set(["elementType", "title", "ledBy", "note"]);
-    const pendingFields = Array.isArray(raw.pendingFields)
-      ? [
-          ...new Set(raw.pendingFields.filter((field) => fields.has(field))),
-        ].slice(0, 4)
-      : [];
-    const managedNotes = Array.isArray(raw.managedNotes)
-      ? raw.managedNotes
-          .flatMap((entry) => {
-            const id = normalizeShortText(entry?.id, { max: 160 });
-            const fingerprint = normalizeLongText(entry?.fingerprint, { max: 10000 });
-            return id && fingerprint ? [{ id, fingerprint }] : [];
-          })
-          .slice(0, 200)
-      : [];
-    return {
-      observed,
-      applied,
-      pendingFields,
-      ...(managedNotes.length ? { managedNotes } : {}),
     };
   };
 
@@ -2792,7 +2773,7 @@ export const createTeamsAuthHandlers = ({
     const importAmbiguity = normalizeServicePlanImportAmbiguity(
       raw?.importAmbiguity,
     );
-    const servicePlanningImport = normalizeServicePlanningSourceState(
+    const servicePlanningImport = normalizeServicePlanImportSourceState(
       raw?.servicePlanningImport,
     );
     const sourceOccurrenceId = normalizeShortText(raw?.sourceOccurrenceId, {
@@ -2817,6 +2798,12 @@ export const createTeamsAuthHandlers = ({
         ? { planningCenterPdfMatchReviewRequired: true }
         : {}),
       ...(sourceOccurrenceId ? { sourceOccurrenceId } : {}),
+      ...(normalizePlanningCenterPdfMatchKey(raw?.planningCenterPdfMatchKey)
+        ? { planningCenterPdfMatchKey: normalizePlanningCenterPdfMatchKey(raw.planningCenterPdfMatchKey) } : {}),
+      ...(normalizeShortText(raw?.sourceTemplateElementId, { max: 160 })
+        ? { sourceTemplateElementId: normalizeShortText(raw.sourceTemplateElementId, { max: 160 }) } : {}),
+      ...(SERVICE_PLAN_ELEMENT_TYPES.has(raw?.sourceTemplateElementType)
+        ? { sourceTemplateElementType: raw.sourceTemplateElementType } : {}),
       type: SERVICE_PLAN_ELEMENT_TYPES.has(raw?.type) ? raw.type : "free",
       title: normalizeRichTextDocument(raw?.title),
       ...(isRichTextDocEmpty(notes) ? {} : { notes }),
@@ -2947,20 +2934,7 @@ export const createTeamsAuthHandlers = ({
     const sections = Array.isArray(body?.sections)
       ? body.sections.map(normalizeServicePlanSection)
       : [];
-    const rawSourceImport = body?.sourceImport;
-    const sourceImport =
-      rawSourceImport && typeof rawSourceImport === "object"
-        ? {
-            source: "servicePlanning",
-            sourceUrl: normalizeShortText(rawSourceImport.sourceUrl, {
-              max: 2000,
-            }),
-            loadedAt: normalizeShortText(rawSourceImport.loadedAt, { max: 60 }),
-            planLabel: normalizeShortText(rawSourceImport.planLabel, {
-              max: 200,
-            }),
-          }
-        : undefined;
+    const sourceImport = normalizeServicePlanSourceImport(body?.sourceImport);
     // Optional fields are written as explicit nulls rather than omitted:
     // saves use `merge: true`, so an omitted key leaves the previous value in
     // place and an operator clearing a start time / group / import would

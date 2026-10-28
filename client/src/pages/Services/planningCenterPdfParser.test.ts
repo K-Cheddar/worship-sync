@@ -1,4 +1,4 @@
-import { parsePlanningCenterPdfText } from "./planningCenterPdfParser";
+import { normalizePlanningCenterPdfTitle, parsePlanningCenterPdfText } from "./planningCenterPdfParser";
 import { buildServicePlanSectionsFromImport } from "./servicePlanFromImport";
 
 const SAMPLE_PLANNING_CENTER_PDF = `Main Worship Service
@@ -38,6 +38,14 @@ A good ending time is 1:30pm, 1:45pm the latest so parents can retrieve their ki
 108:00`;
 
 describe("parsePlanningCenterPdfText", () => {
+  it("distinguishes song categories from an actual change to the song title", () => {
+    const opening = normalizePlanningCenterPdfTitle("Opening Song: How Great Thou Art");
+    expect(opening.rawTitle).toBe("Opening Song: How Great Thou Art");
+    expect(opening.displayTitle).toBe("How Great Thou Art");
+    expect(opening.matchingTitle).toBe(normalizePlanningCenterPdfTitle("Song: How Great Thou Art").matchingTitle);
+    expect(opening.matchingTitle).not.toBe(normalizePlanningCenterPdfTitle("Opening Song: Amazing Grace").matchingTitle);
+    expect(normalizePlanningCenterPdfTitle("Song of Hope").displayTitle).toBe("Song of Hope");
+  });
   it("extracts section, durations, titles, assignees, songs, scripture, and notes", () => {
     const data = parsePlanningCenterPdfText(SAMPLE_PLANNING_CENTER_PDF);
 

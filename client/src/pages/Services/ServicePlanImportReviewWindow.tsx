@@ -31,7 +31,6 @@ const kindLabel: Record<ServicePlanImportChangeKind, string> = {
   moved: "Moved",
   legacy_match: "Confirm Match",
   linked: "Linked",
-  timing_shift: "Timing Shift",
 };
 
 const kindClassName: Record<ServicePlanImportChangeKind, string> = {
@@ -41,7 +40,6 @@ const kindClassName: Record<ServicePlanImportChangeKind, string> = {
   moved: "bg-violet-400/10 text-violet-200",
   legacy_match: "bg-amber-400/10 text-amber-100",
   linked: "bg-indigo-400/10 text-indigo-200",
-  timing_shift: "bg-gray-400/10 text-gray-200",
 };
 
 /** Item type changes still apply with the import; omit them from the review UI. */
@@ -80,13 +78,13 @@ const ServicePlanImportReviewWindow = ({
 }: ServicePlanImportReviewWindowProps) => {
   const bulkChangeKeys = useMemo(
     () => summary.changes
-      .filter((change) => change.kind !== "legacy_match" && change.kind !== "timing_shift")
+      .filter((change) => change.kind !== "legacy_match")
       .map(servicePlanImportChangeKey),
     [summary.changes],
   );
   const [selectedChangeKeys, setSelectedChangeKeys] = useState<Set<string>>(
     () => new Set(summary.changes
-      .filter((change) => change.kind !== "legacy_match" && change.kind !== "timing_shift")
+      .filter((change) => change.kind !== "legacy_match")
       .map(servicePlanImportChangeKey)),
   );
   const selectedChanges = summary.changes.filter((change) =>
@@ -95,7 +93,7 @@ const ServicePlanImportReviewWindow = ({
   const changeCount = selectedChanges.length;
   const initialGeometry = useMemo(getInitialReviewWindowGeometry, []);
   const matches = summary.changes.filter((change) => change.kind === "legacy_match");
-  const ordinaryChanges = summary.changes.filter((change) => change.kind !== "legacy_match" && change.kind !== "timing_shift");
+  const ordinaryChanges = summary.changes.filter((change) => change.kind !== "legacy_match");
   const changesBySection = new Map<string, typeof summary.changes>();
   ordinaryChanges.forEach((change) => {
     const changes = changesBySection.get(change.sectionId) || [];
@@ -185,7 +183,7 @@ const ServicePlanImportReviewWindow = ({
                       const key = servicePlanImportChangeKey(change);
                       const reordered = change.kind === "moved" && change.fromSectionId === change.sectionId;
                       const current = findItem(currentSections, change.id);
-                      const incoming = findItem(proposedSections, change.id);
+                      const incoming = findItem(selectedChangeKeys.has(key) && selectedSections ? selectedSections : proposedSections, change.id);
                       return <li key={key} className="rounded-md border border-gray-700/80 bg-gray-950/40 px-3 py-2">
                         <div className="flex items-start gap-2">
                           <Checkbox label={checkboxLabel(change)} checked={selectedChangeKeys.has(key)} onCheckedChange={(checked) => setSelected([key], checked)} className="pt-0.5" hideLabel />

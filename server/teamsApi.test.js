@@ -22621,3 +22621,213 @@ test("service plan note conflict decisions and ownership fingerprints survive sa
   assert.deepEqual(reloaded.payload.servicePlan.sections[0].elements[0].servicePlanningImport.pendingFields, ["note"]);
   assert.deepEqual(reloaded.payload.servicePlan.sections[0].elements[0].importAmbiguity.sourceNoteConflict, noteConflict);
 });
+
+test("Planning Center PDF baseline save reload Update 1 preserves identity and proposes four operations", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const { readFile } = await import("node:fs/promises");
+  const { getDocument } = await import("../client/node_modules/pdfjs-dist/legacy/build/pdf.mjs");
+  const { reconstructPdfPageText } = await import("../client/src/pages/Services/pdfTextLayout.ts");
+  const { parsePlanningCenterPdfText } = await import("../client/src/pages/Services/planningCenterPdfParser.ts");
+  const { buildServicePlanSectionsFromImport, buildServicePlanSourceImport } = await import("../client/src/pages/Services/servicePlanFromImport.ts");
+  const { preparePlanningCenterPdfImport, refreshServicePlanFromImport, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS } = await import("../client/src/pages/Services/servicePlanImportSync.ts");
+  const { summarizeServicePlanImport, applySelectedServicePlanImportChanges, servicePlanImportChangeKey } = await import("../client/src/pages/Services/servicePlanImportSummary.ts");
+  const { applyPlanAnchorStartTime } = await import("../client/src/pages/Services/servicePlanTimingUtils.ts");
+  const { richTextToPlainText } = await import("../client/src/types/richText.ts");
+  const songNames = ["How Great Thou Art", "Great Is Thy Faithfulness", "I Surrender All"];
+  const songs = songNames.map((name, index) => ({ _id: `library-${index}`, name }));
+  const parse = async (filename) => {
+    const data = new Uint8Array(await readFile(new URL(`./fixtures/planning-center/${filename}.pdf`, import.meta.url)));
+    const pdf = await getDocument({ data, useSystemFonts: true }).promise;
+    const pages = [];
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+      const page = await pdf.getPage(pageNumber);
+      pages.push(reconstructPdfPageText((await page.getTextContent()).items));
+    }
+    await pdf.destroy();
+    return parsePlanningCenterPdfText(pages.join("\n"));
+  };
+  const context = await createAdminContext("pdf_reconciliation_lifecycle");
+  const planKey = "svc1@2026-10-25";
+  let revision = 0;
+  const saveReload = async (sections, sourceImport) => {
+    const saved = await callHandler(authHandlers.saveServicePlan, {
+      context, params: { planKey },
+      body: { serviceId: "svc1", date: "2026-10-25", name: "Sunday Worship", baseRevision: revision, sections, sourceImport },
+    });
+    assert.equal(saved.statusCode, 200, JSON.stringify(saved.payload));
+    revision = saved.payload.servicePlan.revision;
+    const loaded = await callHandler(authHandlers.getServicePlan, { context, params: { planKey } });
+    assert.equal(loaded.statusCode, 200);
+    const stored = await getDoc(COLLECTIONS.servicePlans, `${context.churchId}::${planKey}`);
+    assert.deepEqual(stored.sections, loaded.payload.servicePlan.sections);
+    return loaded.payload.servicePlan;
+  };
+  const baselineData = await parse("01_Planning_Center_Baseline");
+  const sourceImport = buildServicePlanSourceImport(baselineData, "", "planningCenterPdf");
+  let plan = await saveReload(applyPlanAnchorStartTime(preparePlanningCenterPdfImport([], buildServicePlanSectionsFromImport(baselineData, songs)).importedSections, "10:00"), sourceImport);
+  plan.sections[0].elements.forEach((element) => {
+    const index = songNames.indexOf(richTextToPlainText(element.title));
+    if (index >= 0) element.assignees = [{ id: `slot-${index}`, name: `Singer ${index}`, microphoneIds: [`mic-${index}`], iemIds: [`iem-${index}`] }];
+  });
+  plan = await saveReload(plan.sections, sourceImport);
+  const originalIds = plan.sections[0].elements.map(({ id }) => id);
+  const updateData = await parse("02_Planning_Center_Update_1");
+  const prepared = preparePlanningCenterPdfImport(plan.sections, buildServicePlanSectionsFromImport(updateData, songs));
+  const next = applyPlanAnchorStartTime(refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, {
+    ...DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS, suggestLegacyMatches: true, planningCenterPdfMatch: true,
+  }), "10:00");
+  const summary = summarizeServicePlanImport(plan.sections, next, {}, { dependentTimingShifts: true, trackSameSectionMoves: true });
+  t.diagnostic(JSON.stringify({ added: summary.added, updated: summary.updated, moved: summary.moved, order: next[0].elements.map((item) => richTextToPlainText(item.title)) }));
+  assert.deepEqual([summary.updated, summary.added, summary.removed, summary.moved], [3, 1, 0, 0]);
+  const selected = applyPlanAnchorStartTime(applySelectedServicePlanImportChanges(plan.sections, next, summary, new Set(summary.changes.map(servicePlanImportChangeKey))), "10:00");
+  assert.equal(selected[0].elements.length, 12);
+  assert.deepEqual(selected[0].elements.filter(({ id }) => originalIds.includes(id)).map(({ id }) => id), originalIds);
+  assert.equal(richTextToPlainText(selected[0].elements[10].title), "Ministry Spotlight — NEW");
+  assert.equal(richTextToPlainText(selected[0].elements[11].title), "Closing Prayer");
+  assert.deepEqual(selected[0].elements.filter((item) => item.songRef?.kind === "library").map((item) => item.assignees[0].microphoneIds), [["mic-0"], ["mic-1"], ["mic-2"]]);
+  assert.deepEqual(selected[0].elements.map(({ startTime }) => startTime), ["10:00", "10:07", "10:11", "10:14", "10:18", "10:21", "10:24", "10:29", "11:04", "11:08", "11:11", "11:15"]);
+  assert.equal(summary.changes.length, 4);
+  assert.deepEqual(selected[0].elements.filter((item) => item.songRef?.kind === "library").map((item) => item.songRef.songId), songs.map(({ _id }) => _id));
+  assert.equal(plan.sourceImport.source, "planningCenterPdf");
+  assert.equal(plan.sections[0].elements.some((element) => "planningCenterPdfSourcePosition" in element || "importMatchCurrentId" in element), false);
+  const review = (sections, data, removeMissing = false) => {
+    const prepared = preparePlanningCenterPdfImport(sections, buildServicePlanSectionsFromImport(data, songs));
+    const next = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, {
+      ...DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS, suggestLegacyMatches: true, planningCenterPdfMatch: true, removeMissing,
+    });
+    const summary = summarizeServicePlanImport(sections, next, {}, { dependentTimingShifts: true, trackSameSectionMoves: true });
+    const apply = (keys) => keys.length
+      ? applyPlanAnchorStartTime(applySelectedServicePlanImportChanges(sections, next, summary, new Set(keys)), "10:00") : sections;
+    return { next, summary, apply };
+  };
+  // Partial approvals: additions never reorder existing rows; an update never
+  // applies an unrelated addition or duration. No selection preserves identity.
+  const first = review(plan.sections, updateData);
+  assert.equal(first.apply([]), plan.sections);
+  const addition = first.summary.changes.find(({ kind }) => kind === "added");
+  const additionOnly = first.apply([servicePlanImportChangeKey(addition)]);
+  assert.deepEqual(additionOnly[0].elements.filter(({ id }) => originalIds.includes(id)).map(({ id }) => id), originalIds);
+  assert.equal(additionOnly[0].elements[0].durationSeconds, 300);
+  const sermon = first.summary.changes.find(({ kind, itemName }) => kind === "updated" && itemName === "Sermon");
+  const updateOnly = first.apply([servicePlanImportChangeKey(sermon)]);
+  assert.deepEqual(updateOnly[0].elements.map(({ id }) => id), originalIds);
+  assert.equal(updateOnly[0].elements[7].durationSeconds, 2100);
+  assert.deepEqual(updateOnly[0].elements.slice(0, 7), plan.sections[0].elements.slice(0, 7));
+  // Test B: persist the applied Update 1 then repeat the identical real PDF.
+  plan = await saveReload(selected, buildServicePlanSourceImport(updateData, "", "planningCenterPdf"));
+  assert.deepEqual(review(plan.sections, updateData).summary.changes, []);
+  const localSong = plan.sections[0].elements.find((element) => element.songRef?.songId === "library-2");
+  localSong.notes = richText("Local arrangement cue");
+  localSong.resources = [{ id: "local-chart", type: "url", title: "Local chart", url: "https://example.org/chart" }];
+  const manual = { id: "operator-item", type: "free", title: richText("Operator cue"), notes: richText("Keep my cue") };
+  plan.sections[0].elements.splice(4, 0, manual);
+  plan = await saveReload(plan.sections, plan.sourceImport);
+  const savedManual = plan.sections[0].elements.find(({ id }) => id === manual.id);
+  // Test C: duration, minimal reorder, optional removal, duplicate additions
+  // and an uncertain same-title occurrence in the second representative PDF.
+  const secondData = await parse("03_Planning_Center_Update_2");
+  const second = review(plan.sections, secondData, true);
+  const uncertain = second.summary.changes.filter(({ kind }) => kind === "legacy_match");
+  const moves = second.summary.changes.filter(({ kind }) => kind === "moved");
+  const removals = second.summary.changes.filter(({ kind }) => kind === "removed");
+  assert.equal(uncertain.length, 1);
+  assert.equal(moves.length, 1);
+  assert.deepEqual(removals.map(({ itemName }) => itemName), ["Special Music"]);
+  assert.equal(second.summary.changes.some(({ id }) => id === manual.id), false);
+  assert.equal(uncertain[0].itemName, "Prayer — Elder David Cole");
+  const moveOnly = second.apply(moves.map(servicePlanImportChangeKey));
+  const movedSong = moveOnly[0].elements.find(({ id }) => id === localSong.id);
+  assert.deepEqual([movedSong.notes, movedSong.resources, movedSong.assignees, movedSong.songRef], [localSong.notes, localSong.resources, localSong.assignees, localSong.songRef]);
+  assert.equal(moveOnly[0].elements[0].durationSeconds, 420);
+  assert.equal(moveOnly[0].elements.some(({ id }) => id === removals[0].id), true);
+  const removeOnly = second.apply(removals.map(servicePlanImportChangeKey));
+  assert.deepEqual(removeOnly[0].elements.map(({ id }) => id), plan.sections[0].elements.filter(({ id }) => id !== removals[0].id).map(({ id }) => id));
+  const ordinaryKeys = second.summary.changes.filter(({ kind }) => kind !== "legacy_match").map(servicePlanImportChangeKey);
+  const declined = second.apply(ordinaryKeys);
+  const originalDavid = plan.sections[0].elements.find(({ id }) => id === uncertain[0].id);
+  const declinedDavid = declined[0].elements.find(({ id }) => id === originalDavid.id);
+  assert.deepEqual(declinedDavid, { ...originalDavid, startTime: declinedDavid.startTime, planningCenterPdfMatchReviewRequired: true });
+  plan = await saveReload(declined, buildServicePlanSourceImport(secondData, "", "planningCenterPdf"));
+  assert.equal(plan.sections[0].elements.find(({ id }) => id === originalDavid.id).planningCenterPdfMatchReviewRequired, true);
+  const repeated = review(plan.sections, secondData, true);
+  assert.deepEqual(repeated.summary.changes.map(({ kind, id }) => [kind, id]), [["legacy_match", originalDavid.id]]);
+  const confirmed = repeated.apply(repeated.summary.changes.map(servicePlanImportChangeKey));
+  plan = await saveReload(confirmed, plan.sourceImport);
+  assert.deepEqual(review(plan.sections, secondData, true).summary.changes, []);
+  assert.equal(plan.sections[0].elements.length, 15); // 14 source rows + manual cue
+  const sourceTitles = buildServicePlanSectionsFromImport(secondData, songs)[0].elements.map((item) => richTextToPlainText(item.title));
+  assert.deepEqual(plan.sections[0].elements.filter(({ id }) => id !== manual.id).map((item) => richTextToPlainText(item.title)), sourceTitles);
+  assert.equal(plan.sections[0].elements.some((item) => item.id === removals[0].id && richTextToPlainText(item.title).startsWith("Prayer")), false);
+  assert.deepEqual(plan.sections[0].elements.find(({ id }) => id === localSong.id).notes, localSong.notes);
+  assert.deepEqual(plan.sections[0].elements.find(({ id }) => id === localSong.id).resources, localSong.resources);
+  assert.deepEqual(plan.sections[0].elements.find(({ id }) => id === localSong.id).assignees, localSong.assignees);
+  const finalManual = plan.sections[0].elements.find(({ id }) => id === manual.id);
+  assert.deepEqual(finalManual, { ...savedManual, startTime: finalManual.startTime });
+  // Older saved plans have no PDF keys/positions; marked rows still reconcile
+  // canonically without migration or claiming the operator-created row.
+  const legacy = structuredClone(plan.sections);
+  legacy[0].elements.forEach((element) => { delete element.planningCenterPdfMatchKey; delete element.planningCenterPdfSourcePosition; });
+  assert.deepEqual(review(legacy, secondData, true).summary.changes, []);
+});
+
+test("service plan import contract retains source types, ownership and review decisions and omits transient associations", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("import_metadata_contract");
+  const managedAssignees = [{ id: "singer", fields: ["title", "ledBy"], ledByIdentity: "pco-person", fingerprint: JSON.stringify({ name: "Avery" }) }];
+  const songMappings = [{ incoming: { kind: "pending", title: "Response", lyricsText: "Verse", key: "D" }, candidateOccurrenceIds: ["song-one", "song-two"], mappingId: "source-song", sourceFingerprint: "source-fingerprint", resolution: { kind: "replace", occurrenceId: "song-two" } }];
+  for (const source of ["planningCenterPdf", "planningCenter", "servicePlanning", "worshipSync"]) {
+    const planKey = `${source}@2026-10-25`;
+    const sourceImport = { source, sourceUrl: source === "planningCenterPdf" ? "" : "https://example.org/plan", loadedAt: "2026-10-25T10:00:00Z", planLabel: "Sunday Worship", planningCenterServiceTypeId: "type-1", planningCenterPlanId: "plan-1" };
+    const snapshot = { elementType: "Song", title: "Response", ledBy: "Avery", note: "Source note" };
+    const element = {
+      id: "response", type: "song", title: richText("Response"), sourcePlanningManaged: true,
+      sourceOccurrenceId: "pco-row", sourceTemplateElementId: "template-item", sourceTemplateElementType: "free",
+      planningCenterPdfMatchKey: JSON.stringify(["planningCenterPdf", "response", "duplicate", 240, 0]),
+      planningCenterPdfMatchReviewRequired: true, planningCenterPdfSourcePosition: 42,
+      importMatchCurrentId: "transient-association", legacyImportMatchCandidateForId: "transient-candidate",
+      assignees: [{ id: "singer", name: "Avery", memberId: "member-1", microphoneIds: ["mic-1"], iemIds: ["iem-1"] }],
+      servicePlanningImport: { observed: snapshot, applied: snapshot, pendingFields: [], managedAssignees },
+      importAmbiguity: { source: "servicePlanning", sourceKey: "Worship:1", sourceElementType: "Song", sourceTitle: "Response", sourceLedBy: "Avery", parts: [], reasons: [], status: "confirmed", sourceFingerprint: "original", songMappings },
+      songRefs: [{ id: "song-one", kind: "library", songId: "library-1", songName: "Response", key: "D" }],
+    };
+    const saved = await callHandler(authHandlers.saveServicePlan, { context, params: { planKey }, body: {
+      serviceId: "svc1", date: "2026-10-25", name: "Sunday Worship", sourceImport,
+      sections: [{ id: "worship", name: "Worship", sourcePlanningManaged: true, elements: [element] }],
+    } });
+    assert.equal(saved.statusCode, 200, JSON.stringify(saved.payload));
+    const loaded = await callHandler(authHandlers.getServicePlan, { context, params: { planKey } });
+    assert.equal(loaded.statusCode, 200);
+    assert.deepEqual(loaded.payload.servicePlan.sourceImport, sourceImport);
+    const persisted = loaded.payload.servicePlan.sections[0].elements[0];
+    assert.deepEqual(persisted.servicePlanningImport.managedAssignees, managedAssignees);
+    assert.deepEqual(persisted.importAmbiguity.songMappings, songMappings);
+    assert.equal(persisted.sourceTemplateElementId, element.sourceTemplateElementId);
+    assert.equal(persisted.sourceTemplateElementType, element.sourceTemplateElementType);
+    assert.equal(persisted.planningCenterPdfMatchKey, element.planningCenterPdfMatchKey);
+    assert.equal(persisted.sourceOccurrenceId, element.sourceOccurrenceId);
+    assert.equal(persisted.planningCenterPdfMatchReviewRequired, true);
+    assert.deepEqual(persisted.assignees, element.assignees);
+    assert.equal(persisted.songRefs[0].key, "D");
+    assert.equal(["planningCenterPdfSourcePosition", "legacyImportMatchCandidateForId", "importMatchCurrentId"].some((key) => key in persisted), false);
+    const stored = await getDoc(COLLECTIONS.servicePlans, `${context.churchId}::${planKey}`);
+    assert.deepEqual(stored.sections, loaded.payload.servicePlan.sections);
+    if (source === "planningCenter") {
+      const { mapPlanningCenterPlanToImportData } = await import("./planningCenterPlanImport.js");
+      const { buildServicePlanSectionsFromImport } = await import("../client/src/pages/Services/servicePlanFromImport.ts");
+      const { refreshServicePlanFromImport, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS } = await import("../client/src/pages/Services/servicePlanImportSync.ts");
+      const data = mapPlanningCenterPlanToImportData({ plan: { id: "plan-1", attributes: { title: "Sunday" } }, items: [
+        { id: "header", attributes: { item_type: "header", title: "Worship" } },
+        { id: "pco-row", attributes: { item_type: "song", title: "Response", length: 300 } },
+      ] });
+      const next = refreshServicePlanFromImport(loaded.payload.servicePlan.sections, buildServicePlanSectionsFromImport(data, []), DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+      assert.deepEqual(next.flatMap(({ elements }) => elements.map(({ id }) => id)), ["response"]);
+      assert.equal(next[0].elements[0].durationSeconds, 300);
+      assert.deepEqual(next[0].elements[0].assignees[0].microphoneIds, ["mic-1"]);
+      const updated = await callHandler(authHandlers.saveServicePlan, { context, params: { planKey }, body: {
+        serviceId: "svc1", date: "2026-10-25", name: "Sunday Worship", baseRevision: saved.payload.servicePlan.revision, sections: next, sourceImport,
+      } });
+      assert.equal(updated.statusCode, 200);
+      assert.equal(updated.payload.servicePlan.sourceImport.planningCenterPlanId, "plan-1");
+    }
+  }
+});

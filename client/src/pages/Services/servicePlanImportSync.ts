@@ -20,6 +20,7 @@ import {
   servicePlanImportAmbiguityShouldQueue,
 } from "./servicePlanningTitleClassifier";
 import { getServicePlanSongReferenceFingerprint } from "./servicePlanSongAttachmentUtils";
+import { normalizePlanningCenterPdfTitle } from "./planningCenterPdfParser";
 
 export type ServicePlanningRefreshOptions = {
   updateTitles: boolean;
@@ -37,15 +38,15 @@ export type ServicePlanningRefreshOptions = {
   planningCenterPdfMatch?: boolean;
 };
 
-const normalizedImportSourceValue = (value: string | undefined): string =>
+const normalizedSourceValue = (value: string | undefined): string =>
   (value || "").replace(/\r\n?/g, "\n").trim().replace(/\s+/g, " ");
 
 const ambiguityReviewFingerprint = (ambiguity: NonNullable<ServicePlanElement["importAmbiguity"]>) =>
   JSON.stringify({
-    sourceElementType: normalizedImportSourceValue(ambiguity.sourceElementType),
-    sourceTitle: normalizedImportSourceValue(ambiguity.sourceTitle),
-    sourceLedBy: normalizedImportSourceValue(ambiguity.sourceLedBy),
-    sourceNote: normalizedImportSourceValue(ambiguity.sourceNote),
+    sourceElementType: normalizedSourceValue(ambiguity.sourceElementType),
+    sourceTitle: normalizedSourceValue(ambiguity.sourceTitle),
+    sourceLedBy: normalizedSourceValue(ambiguity.sourceLedBy),
+    sourceNote: normalizedSourceValue(ambiguity.sourceNote),
     reasons: ambiguity.reasons,
     songMappings: (ambiguity.songMappings || []).map(({ incoming, candidateOccurrenceIds, sourceFingerprint, mappingId }) => ({
       incoming,
@@ -100,19 +101,11 @@ type ImportedSongMapping = NonNullable<NonNullable<ServicePlanElement["importAmb
 const normalized = (value: string): string =>
   value.trim().toLocaleLowerCase().replace(/\s+/g, " ");
 
-const planningCenterPdfMatchKeyTitle = (element: ServicePlanElement): string => {
-  const savedKey = element.planningCenterPdfMatchKey;
-  if (savedKey) {
-    try {
-      const parsed: unknown = JSON.parse(savedKey);
-      if (Array.isArray(parsed) && parsed[0] === "planningCenterPdf" && typeof parsed[1] === "string") {
-        return parsed[1];
-      }
-    } catch {
-      // Ignore malformed import metadata and fall back to the visible title.
-    }
-  }
-  return normalized(richTextToPlainText(element.title));
+const getPlanningCenterPdfMatchingTitle = (element: ServicePlanElement): string => {
+  return normalizePlanningCenterPdfTitle(
+    element.servicePlanningImport?.observed.title || element.sourceContentTitleRaw ||
+      richTextToPlainText(element.title),
+  ).matchingTitle;
 };
 
 const makePlanningCenterPdfMatchKey = (
@@ -132,385 +125,128 @@ const getElementImportIdentity = (
     ? element.planningCenterPdfMatchKey?.trim()
     : undefined) || undefined;
 
-/**
- * PDF rows have no durable Planning Center IDs. Add deterministic identity
- * only where duplicate titles make title/order matching unsafe. Existing
- * synthetic identities belong only to source-owned rows; a duration change
- * can reuse an identity when it is the sole unmatched occurrence in the same
- * section. When several occurrences remain, keep the proposed pair in review.
- */
+/** Normalize PDF evidence and resolve duplicate occurrences once. The result
+ * carries local IDs as transient associations, never source positions as IDs. */
 export const preparePlanningCenterPdfImport = (
   currentSections: ServicePlanSection[],
   importedSections: ServicePlanSection[],
 ): { currentSections: ServicePlanSection[]; importedSections: ServicePlanSection[] } => {
-  const decoratePositions = (sections: ServicePlanSection[], assignPosition: boolean) => {
-    let sourcePosition = 0;
-    return sections.map((section) => ({
-      ...section,
-      elements: section.elements.map((element) => ({
-        ...element,
-        ...(assignPosition ? { planningCenterPdfSourcePosition: sourcePosition++ } : {}),
-      })),
-    }));
-  };
-  const current = decoratePositions(currentSections, false).map((section) => ({
-    ...section,
-    elements: section.elements.map((element) => {
-      if (element.sourcePlanningManaged) return element;
-      const {
-        planningCenterPdfMatchKey: _matchKey,
-        planningCenterPdfSourcePosition: _sourcePosition,
-        ...operatorOwnedElement
-      } = element;
-      return operatorOwnedElement;
-    }),
-  }));
-  const imported = decoratePositions(importedSections, true);
-  const currentByTitle = new Map<string, ServicePlanElement[]>();
-  const importedByTitle = new Map<string, ServicePlanElement[]>();
-  const addToTitleMap = (map: Map<string, ServicePlanElement[]>, element: ServicePlanElement, title: string) => {
-    const group = map.get(title) || [];
-    group.push(element);
-    map.set(title, group);
-  };
-  const currentSectionByElement = new Map<ServicePlanElement, string>();
-  const importedSectionByElement = new Map<ServicePlanElement, string>();
-  const currentNeighborContextByElement = new Map<ServicePlanElement, string>();
-  const importedNeighborContextByElement = new Map<ServicePlanElement, string>();
-  const addNeighborContexts = (
-    sections: ServicePlanSection[],
-    contexts: Map<ServicePlanElement, string>,
-    sourceOwnedOnly: boolean,
-  ) => {
-    sections.forEach((section) => section.elements.forEach((element, index) => {
-      if (sourceOwnedOnly && !element.sourcePlanningManaged) return;
-      const title = planningCenterPdfMatchKeyTitle(element);
-      const isContextItem = (candidate: ServicePlanElement) =>
-        (!sourceOwnedOnly || candidate.sourcePlanningManaged) &&
-        planningCenterPdfMatchKeyTitle(candidate) !== title;
-      const previous = section.elements.slice(0, index).reverse().find(isContextItem);
-      const next = section.elements.slice(index + 1).find(isContextItem);
-      const neighborKey = (neighbor: ServicePlanElement | undefined) => neighbor
-        ? JSON.stringify([
-            neighbor.sourceOccurrenceId?.trim() || "",
-            normalized(neighbor.sourceElementTypeRaw || neighbor.type),
-            normalized(richTextToPlainText(neighbor.title)),
-          ])
-        : "boundary";
-      contexts.set(element, JSON.stringify([
-        section.name,
-        neighborKey(previous),
-        neighborKey(next),
-      ]));
-    }));
-  };
-  addNeighborContexts(current, currentNeighborContextByElement, true);
-  addNeighborContexts(imported, importedNeighborContextByElement, false);
-  current.forEach((section) => section.elements.forEach((element) => {
-    currentSectionByElement.set(element, section.name);
-    if (element.sourcePlanningManaged) {
-      addToTitleMap(currentByTitle, element, planningCenterPdfMatchKeyTitle(element));
+  let position = 0;
+  const current = currentSections.map((section) => ({ ...section, elements: section.elements.map((element) => {
+    const result = { ...element };
+    delete result.importMatchCurrentId;
+    if (!element.sourcePlanningManaged) {
+      delete result.planningCenterPdfMatchKey;
+      delete result.planningCenterPdfSourcePosition;
     }
-  }));
-  imported.forEach((section) => section.elements.forEach((element) => {
-    importedSectionByElement.set(element, section.name);
-    addToTitleMap(importedByTitle, element, planningCenterPdfMatchKeyTitle(element));
-  }));
-
-  const titles = new Set([...currentByTitle.keys(), ...importedByTitle.keys()]);
-  titles.forEach((title) => {
-    const existing = currentByTitle.get(title) || [];
-    const incoming = importedByTitle.get(title) || [];
-    const savedKeys = existing.flatMap((element) => {
-      if (!element.planningCenterPdfMatchKey) return [];
-      try {
-        const parsed: unknown = JSON.parse(element.planningCenterPdfMatchKey);
-        return Array.isArray(parsed) && parsed[0] === "planningCenterPdf" && parsed[1] === title
-          ? [{ mode: parsed[2], durationSeconds: parsed[3], occurrence: parsed[4] }]
-          : [];
-      } catch {
-        return [];
-      }
+    return result;
+  }) }));
+  const imported = importedSections.map((section) => ({ ...section, elements: section.elements.map((element) => {
+    const result = { ...element, planningCenterPdfSourcePosition: position++ };
+    delete result.importMatchCurrentId;
+    return result;
+  }) }));
+  const sectionByElement = new Map([...current, ...imported].flatMap((section) =>
+    section.elements.map((element) => [element, section.name] as const)));
+  const groups = (sections: ServicePlanSection[], managedOnly: boolean) => {
+    const result = new Map<string, ServicePlanElement[]>();
+    sections.forEach((section) => section.elements.forEach((element) => {
+      if (managedOnly && !element.sourcePlanningManaged) return;
+      const title = getPlanningCenterPdfMatchingTitle(element);
+      result.set(title, [...(result.get(title) || []), element]);
+    }));
+    return result;
+  };
+  const contexts = (sections: ServicePlanSection[], managedOnly: boolean) => {
+    const result = new Map<ServicePlanElement, string>();
+    sections.forEach((section) => {
+      const elements = section.elements.filter((element) => !managedOnly || element.sourcePlanningManaged);
+      elements.forEach((element, index) => {
+        const differentTitle = (candidate: ServicePlanElement) => getPlanningCenterPdfMatchingTitle(candidate) !== getPlanningCenterPdfMatchingTitle(element);
+        const previous = elements.slice(0, index).reverse().find(differentTitle);
+        const next = elements.slice(index + 1).find(differentTitle);
+        const key = (neighbor: ServicePlanElement | undefined) => neighbor
+          ? [neighbor.sourceOccurrenceId || "", normalized(neighbor.sourceElementTypeRaw || neighbor.type), getPlanningCenterPdfMatchingTitle(neighbor)] : "boundary";
+        result.set(element, JSON.stringify([section.name, key(previous), key(next)]));
+      });
     });
-    const duplicateMode = existing.length > 1 || incoming.length > 1 ||
-      savedKeys.some((key) => key.mode === "duplicate");
-    const hadSavedIdentity = savedKeys.length > 0;
-    if (!duplicateMode && !hadSavedIdentity) return;
-
-    const keyGroup = (elements: ServicePlanElement[], side: "current" | "imported") => {
-      const occurrenceByDuration = new Map<number, number>();
+    return result;
+  };
+  const currentGroups = groups(current, true);
+  const incomingGroups = groups(imported, false);
+  const currentContexts = contexts(current, true);
+  const incomingContexts = contexts(imported, false);
+  const seconds = (element: ServicePlanElement) => element.durationSeconds ?? Math.round((element.durationMinutes || 0) * 60);
+  const durationCounts = (elements: ServicePlanElement[], value: number) => elements.filter((element) => seconds(element) === value).length;
+  new Set([...currentGroups.keys(), ...incomingGroups.keys()]).forEach((title) => {
+    const existing = currentGroups.get(title) || [];
+    const incoming = incomingGroups.get(title) || [];
+    const duplicate = existing.length > 1 || incoming.length > 1 || existing.some((element) => {
+      try { return JSON.parse(element.planningCenterPdfMatchKey || "null")?.[2] === "duplicate"; }
+      catch { return false; }
+    });
+    if (!duplicate && !existing.some((element) => element.planningCenterPdfMatchKey || element.planningCenterPdfMatchReviewRequired)) return;
+    const initializeKeys = (elements: ServicePlanElement[]) => {
+      const occurrences = new Map<number, number>();
       elements.forEach((element) => {
-        const seconds = element.durationSeconds ?? Math.round((element.durationMinutes || 0) * 60);
-        const occurrence = occurrenceByDuration.get(seconds) || 0;
-        occurrenceByDuration.set(seconds, occurrence + 1);
-        if (side === "current" && element.planningCenterPdfMatchKey) return;
-
-        const currentKeyModes = savedKeys.map((key) => key.mode);
-        const shouldUseDuplicateKey = duplicateMode && (
-          elements.length > 1 || existing.length > 1 || incoming.length > 1 ||
-          currentKeyModes.includes("duplicate")
-        );
-        element.planningCenterPdfMatchKey = makePlanningCenterPdfMatchKey(
-          title,
-          seconds,
-          shouldUseDuplicateKey,
-          occurrence,
-        );
+        const duration = seconds(element);
+        const occurrence = occurrences.get(duration) || 0;
+        occurrences.set(duration, occurrence + 1);
+        element.planningCenterPdfMatchKey ||= makePlanningCenterPdfMatchKey(title, duration, duplicate, occurrence);
       });
     };
-    keyGroup(existing, "current");
-    keyGroup(incoming, "imported");
-
-    if (!duplicateMode || !existing.length || !incoming.length) return;
-
-    const countByDuration = (elements: ServicePlanElement[]) => {
-      const counts = new Map<number, number>();
-      elements.forEach((element) => {
-        const seconds = element.durationSeconds ?? Math.round((element.durationMinutes || 0) * 60);
-        counts.set(seconds, (counts.get(seconds) || 0) + 1);
-      });
-      return counts;
-    };
-    const currentDurationCounts = countByDuration(existing);
-    const importedDurationCounts = countByDuration(incoming);
-    const changedOccurrenceCardinalities = new Set(
-      [...currentDurationCounts].flatMap(([seconds, count]) =>
-        count > 0 && (importedDurationCounts.get(seconds) || 0) > 0 &&
-          count !== importedDurationCounts.get(seconds)
-          ? [seconds]
-          : [],
-      ),
-    );
-
-    // Durable Planning Center occurrence IDs outrank PDF fingerprints. Reserve
-    // those rows before matching synthetic identities so neighbor context or
-    // occurrence rank cannot reassign a reliable source identity.
-    const hasReliableOccurrenceId = (element: ServicePlanElement) =>
-      Boolean(element.sourceOccurrenceId?.trim());
-    const claimedExisting = new Set(existing.filter(hasReliableOccurrenceId));
-    const claimedIncoming = new Set(incoming.filter(hasReliableOccurrenceId));
-    const claimedSyntheticIdentities = new Set<string>([
-      ...existing,
-      ...incoming,
-    ].flatMap((element) => hasReliableOccurrenceId(element) && element.planningCenterPdfMatchKey
-      ? [element.planningCenterPdfMatchKey]
-      : [],
-    ));
-
-    // Unique neighboring context is stronger than an occurrence number. Build
-    // the complete set of independent proposals before assigning keys; a
-    // sequential assignment could give one incoming row a key another row
-    // still owns by its generated occurrence number.
-    const neighborMatches = incoming.flatMap((element) => {
-      if (claimedIncoming.has(element)) return [];
-      const context = importedNeighborContextByElement.get(element);
-      if (!context) return [];
-      const existingCandidates = existing.filter((candidate) =>
-        !claimedExisting.has(candidate) && !candidate.planningCenterPdfMatchReviewRequired &&
-        !hasReliableOccurrenceId(candidate) && currentNeighborContextByElement.get(candidate) === context,
-      );
-      const incomingCandidates = incoming.filter((candidate) =>
-        !claimedIncoming.has(candidate) && !hasReliableOccurrenceId(candidate) &&
-        importedNeighborContextByElement.get(candidate) === context,
-      );
-      if (existingCandidates.length !== 1 || incomingCandidates.length !== 1) return [];
-      const existingCandidate = existingCandidates[0];
-      const matchKey = existingCandidate.planningCenterPdfMatchKey;
-      if (!matchKey || claimedSyntheticIdentities.has(matchKey) ||
-        existing.filter((candidate) => candidate.planningCenterPdfMatchKey === matchKey).length !== 1) return [];
-      return [{ existing: existingCandidate, incoming: incomingCandidates[0], matchKey }];
-    });
-    const neighborIncoming = new Set(neighborMatches.map(({ incoming: element }) => element));
-    const neighborIdentities = new Set(neighborMatches.map(({ matchKey }) => matchKey));
-    incoming.forEach((element) => {
-      if (neighborIncoming.has(element) || hasReliableOccurrenceId(element) ||
-        !element.planningCenterPdfMatchKey || !neighborIdentities.has(element.planningCenterPdfMatchKey)) return;
-      // Release this occurrence's weaker source-order key before a confident
-      // context match takes ownership of it.
-      delete element.planningCenterPdfMatchKey;
-    });
-    // Apply neighbor changes together so a valid reorder can exchange synthetic
-    // identities without transiently assigning one key to two incoming rows.
-    neighborIncoming.forEach((element) => delete element.planningCenterPdfMatchKey);
-    neighborMatches.forEach(({ existing: existingCandidate, incoming: incomingCandidate, matchKey }) => {
-      if (claimedExisting.has(existingCandidate) || claimedIncoming.has(incomingCandidate) ||
-        claimedSyntheticIdentities.has(matchKey)) return;
-      incomingCandidate.planningCenterPdfMatchKey = matchKey;
-      claimedExisting.add(existingCandidate);
-      claimedIncoming.add(incomingCandidate);
-      claimedSyntheticIdentities.add(matchKey);
-    });
-
-    // A neighbor match may take a key that another incoming row received from
-    // its source-order fingerprint. Keep the stronger neighbor claim and make
-    // the displaced row eligible for the existing confirmable review path.
-    const incomingBySyntheticIdentity = new Map<string, ServicePlanElement[]>();
-    incoming.forEach((element) => {
-      if (hasReliableOccurrenceId(element) || !element.planningCenterPdfMatchKey) return;
-      const matches = incomingBySyntheticIdentity.get(element.planningCenterPdfMatchKey) || [];
-      matches.push(element);
-      incomingBySyntheticIdentity.set(element.planningCenterPdfMatchKey, matches);
-    });
-    incomingBySyntheticIdentity.forEach((matches, identity) => {
-      if (matches.length < 2) return;
-      const neighborOwners = matches.filter((element) => neighborIncoming.has(element));
-      const keep = neighborOwners.length === 1 ? neighborOwners[0] : undefined;
-      matches.forEach((element) => {
-        if (element === keep) return;
-        delete element.planningCenterPdfMatchKey;
-      });
-      claimedSyntheticIdentities.add(identity);
-    });
-
-    // Exact fingerprints also require a one-to-one occurrence and identity.
-    // If a saved identity is duplicated or was claimed by context, leave the
-    // incoming row unmatched so it can be reviewed instead of being dropped.
-    const existingBySyntheticIdentity = new Map<string, ServicePlanElement[]>();
-    existing.forEach((element) => {
-      if (claimedExisting.has(element) || element.planningCenterPdfMatchReviewRequired ||
-        hasReliableOccurrenceId(element) || !element.planningCenterPdfMatchKey) return;
-      const matches = existingBySyntheticIdentity.get(element.planningCenterPdfMatchKey) || [];
-      matches.push(element);
-      existingBySyntheticIdentity.set(element.planningCenterPdfMatchKey, matches);
-    });
-    const incomingByExactIdentity = new Map<string, ServicePlanElement[]>();
-    incoming.forEach((element) => {
-      if (claimedIncoming.has(element) || hasReliableOccurrenceId(element) ||
-        !element.planningCenterPdfMatchKey) return;
-      const matches = incomingByExactIdentity.get(element.planningCenterPdfMatchKey) || [];
-      matches.push(element);
-      incomingByExactIdentity.set(element.planningCenterPdfMatchKey, matches);
-    });
-    incomingByExactIdentity.forEach((matches, identity) => {
-      if ((existingBySyntheticIdentity.get(identity)?.length || 0) > 1) {
-        matches.forEach((element) => delete element.planningCenterPdfMatchKey);
-      }
-    });
-    incoming.forEach((element) => {
-      if (claimedIncoming.has(element) || hasReliableOccurrenceId(element)) return;
-      const seconds = element.durationSeconds ?? Math.round((element.durationMinutes || 0) * 60);
-      const identity = element.planningCenterPdfMatchKey;
-      if (!identity || changedOccurrenceCardinalities.has(seconds) ||
-        claimedSyntheticIdentities.has(identity)) return;
-      const existingCandidates = existingBySyntheticIdentity.get(identity) || [];
-      const incomingCandidates = incomingByExactIdentity.get(identity) || [];
-      if (existingCandidates.length !== 1 || incomingCandidates.length !== 1) return;
-      const existingCandidate = existingCandidates[0];
-      if (claimedExisting.has(existingCandidate)) return;
-      claimedExisting.add(existingCandidate);
+    initializeKeys(existing);
+    if (!existing.length) { initializeKeys(incoming); return; }
+    const claimedExisting = new Set(existing.filter((element) => element.sourceOccurrenceId));
+    const claimedIncoming = new Set(incoming.filter((element) => element.sourceOccurrenceId));
+    const safeExisting = (element: ServicePlanElement) => !claimedExisting.has(element) &&
+      !element.planningCenterPdfMatchReviewRequired && existing.filter((candidate) =>
+        candidate.planningCenterPdfMatchKey === element.planningCenterPdfMatchKey).length === 1;
+    const associate = (element: ServicePlanElement, candidate: ServicePlanElement) => {
+      element.importMatchCurrentId = candidate.id;
+      element.planningCenterPdfMatchKey = candidate.planningCenterPdfMatchKey;
+      claimedExisting.add(candidate);
       claimedIncoming.add(element);
-      claimedSyntheticIdentities.add(identity);
+    };
+    incoming.forEach((element) => {
+      if (claimedIncoming.has(element)) return;
+      const context = incomingContexts.get(element);
+      const candidates = existing.filter((candidate) => safeExisting(candidate) && currentContexts.get(candidate) === context);
+      if (candidates.length === 1 && incoming.filter((candidate) => incomingContexts.get(candidate) === context).length === 1) {
+        associate(element, candidates[0]);
+      }
     });
-
-    const unmatchedExisting = existing.filter((element) => !claimedExisting.has(element));
-    const unmatchedIncoming = incoming.filter((element) => !claimedIncoming.has(element));
-
-    const sectionNames = new Set(unmatchedIncoming
-      .map((element) => importedSectionByElement.get(element)));
-    sectionNames.forEach((sectionName) => {
-      if (!sectionName) return;
-      const currentInSection = unmatchedExisting.filter((element) =>
-        !claimedExisting.has(element) && currentSectionByElement.get(element) === sectionName,
-      );
-      const importedInSection = unmatchedIncoming.filter((element) =>
-        !claimedIncoming.has(element) && importedSectionByElement.get(element) === sectionName,
-      );
-      const durationChanged = currentInSection.length === 1 && importedInSection.length === 1 &&
-        (currentInSection[0].durationSeconds ?? Math.round((currentInSection[0].durationMinutes || 0) * 60)) !==
-          (importedInSection[0].durationSeconds ?? Math.round((importedInSection[0].durationMinutes || 0) * 60));
-      if (durationChanged &&
-        !currentInSection[0].planningCenterPdfMatchReviewRequired) {
-        const matchKey = currentInSection[0].planningCenterPdfMatchKey;
-        if (matchKey && !claimedSyntheticIdentities.has(matchKey)) {
-          importedInSection[0].planningCenterPdfMatchKey = matchKey;
-          claimedExisting.add(currentInSection[0]);
-          claimedIncoming.add(importedInSection[0]);
-          claimedSyntheticIdentities.add(matchKey);
-          return;
-        }
+    const occurrenceByDuration = new Map<number, number>();
+    incoming.forEach((element) => {
+      const duration = seconds(element);
+      const occurrence = occurrenceByDuration.get(duration) || 0;
+      occurrenceByDuration.set(duration, occurrence + 1);
+      if (claimedIncoming.has(element)) return;
+      // Occurrence rank is only evidence when the complete duration group is
+      // unchanged. A count change requires unique context or confirmation.
+      if (durationCounts(existing, duration) !== durationCounts(incoming, duration)) return;
+      const candidate = existing.filter((candidate) => seconds(candidate) === duration)[occurrence];
+      if (candidate && safeExisting(candidate)) associate(element, candidate);
+    });
+    new Set(incoming.map((element) => sectionByElement.get(element))).forEach((sectionName) => {
+      const oldRows = existing.filter((element) => !claimedExisting.has(element) && sectionByElement.get(element) === sectionName);
+      const newRows = incoming.filter((element) => !claimedIncoming.has(element) && sectionByElement.get(element) === sectionName);
+      if (oldRows.length === 1 && newRows.length === 1 && safeExisting(oldRows[0]) && seconds(oldRows[0]) !== seconds(newRows[0])) {
+        associate(newRows[0], oldRows[0]);
+        return;
       }
-
-      // Retain the existing one-at-a-time review for duplicate pairs whose
-      // duration and occurrence identities both changed. Source order offers
-      // a reviewable suggestion, but never silently transfers local data.
-      const suggestedPairCount = Math.min(currentInSection.length, importedInSection.length);
-      if (suggestedPairCount > 0) {
-        importedInSection.slice(0, suggestedPairCount).forEach((element, index) => {
-          element.legacyImportMatchCandidateForId = currentInSection[index].id;
-          claimedExisting.add(currentInSection[index]);
-          claimedIncoming.add(element);
-        });
-      }
+      newRows.slice(0, oldRows.length).forEach((element, index) => {
+        element.legacyImportMatchCandidateForId = oldRows[index].id;
+        claimedExisting.add(oldRows[index]);
+        claimedIncoming.add(element);
+      });
+    });
+    incoming.forEach((element) => {
+      if (!element.importMatchCurrentId && !element.sourceOccurrenceId) delete element.planningCenterPdfMatchKey;
     });
   });
-
   return { currentSections: current, importedSections: imported };
 };
-
-/** Reorders only source-owned item slots; operator-added items keep their slots. */
-export const orderPlanningCenterPdfRefresh = (
-  sections: ServicePlanSection[],
-  importedSections: ServicePlanSection[],
-): ServicePlanSection[] => {
-  // Keep the original occurrence fixed while its proposed association is unchecked.
-  const reservedCurrentIds = new Set(importedSections.flatMap((section) =>
-    section.elements.flatMap((element) => element.legacyImportMatchCandidateForId
-      ? [element.legacyImportMatchCandidateForId]
-      : []),
-  ));
-  const incomingPositions = new Map(importedSections.flatMap((section) =>
-    section.elements.flatMap((element) =>
-      typeof element.planningCenterPdfSourcePosition === "number"
-        ? [[element.planningCenterPdfSourcePosition, {
-            title: planningCenterPdfMatchKeyTitle(element),
-            matchKey: element.planningCenterPdfMatchKey,
-          }] as const]
-        : [],
-    ),
-  ));
-  return sections.map((section) => {
-    const indexedSourceElements = section.elements.flatMap((element, index) =>
-      element.sourcePlanningManaged && !element.legacyImportMatchCandidateForId && !reservedCurrentIds.has(element.id) &&
-        typeof element.planningCenterPdfSourcePosition === "number"
-        ? [{ element, index }]
-        : [],
-    );
-    if (indexedSourceElements.length < 2) return section;
-    const matchesIncomingPosition = ({ element }: { element: ServicePlanElement; index: number }) => {
-      const position = element.planningCenterPdfSourcePosition;
-      if (typeof position !== "number") return false;
-      const incoming = incomingPositions.get(position);
-      if (!incoming) return false;
-      if (element.planningCenterPdfMatchKey && incoming.matchKey &&
-        element.planningCenterPdfMatchKey !== incoming.matchKey) return false;
-      const observedTitle = element.servicePlanningImport?.observed.title ||
-        element.sourceContentTitleRaw || richTextToPlainText(element.title);
-      return normalized(observedTitle) === incoming.title;
-    };
-    const sourceOrder = [
-      ...indexedSourceElements
-        .filter(matchesIncomingPosition)
-        .sort((left, right) => left.element.planningCenterPdfSourcePosition! - right.element.planningCenterPdfSourcePosition!)
-        .map(({ element }) => element),
-      ...indexedSourceElements
-        .filter((entry) => !matchesIncomingPosition(entry))
-        .map(({ element }) => element),
-    ];
-    let sourceIndex = 0;
-    return {
-      ...section,
-      elements: section.elements.map((element) =>
-        element.sourcePlanningManaged && !element.legacyImportMatchCandidateForId && !reservedCurrentIds.has(element.id) &&
-          typeof element.planningCenterPdfSourcePosition === "number"
-          ? sourceOrder[sourceIndex++] || element
-          : element,
-      ),
-    };
-  });
-};
-
-const normalizedSourceValue = (value: string): string =>
-  value.replace(/\r\n?/g, "\n").trim().replace(/\s+/g, " ");
 
 const normalizedLyrics = (value: string): string =>
   value.replace(/\r\n?/g, "\n").split("\n").map((line) => line.trim()).join("\n").trim();
@@ -1787,19 +1523,12 @@ const managedImportedElement = (
   sourcePlanningManaged: true,
 });
 
-const managedImportedSection = (
-  section: ServicePlanSection,
-): ServicePlanSection => ({
-  ...section,
-  sourcePlanningManaged: true,
-  elements: section.elements.map(managedImportedElement),
-});
-
 /**
  * Reconciles a fresh Service Planning parse into an editable plan without
  * replacing locally-created IDs, notes, roster links, or outline-push state.
- * It keeps existing item order, placing only source additions and
- * confidently matched relocations relative to matched source rows.
+ * It resolves associations before merging fields. PDFs express their desired
+ * source sequence here; summary turns relative differences into operations.
+ * Other imports retain order and place only additions and section moves.
  */
 export const refreshServicePlanFromImport = (
   currentSections: ServicePlanSection[],
@@ -1807,390 +1536,173 @@ export const refreshServicePlanFromImport = (
   options: ServicePlanningRefreshOptions,
 ): ServicePlanSection[] => {
   const tracksSource = planTracksSource(currentSections);
-  /**
-   * A matching title is strong evidence, so it may also refresh an unmarked
-   * item — but only on a legacy plan, where nothing is marked and a title is
-   * all there is to go on. On a tracked plan an unmarked item is the
-   * operator's, and a source row with the same title must not consume it.
-   */
-  const canPairByLabel = (item: { sourcePlanningManaged?: boolean }): boolean =>
-    Boolean(item.sourcePlanningManaged) || !tracksSource ||
-    ("sourceTemplateElementId" in item && Boolean(item.sourceTemplateElementId) &&
-      safeTemplateMatchKeys.has(templateMatchKey(item as ServicePlanElement)));
-  /**
-   * Position alone is weak evidence, and the same predicate decides removal:
-   * only items the source demonstrably owns can be rewritten by order or
-   * dropped for being absent.
-   */
-  const isSourceOwned = (item: { sourcePlanningManaged?: boolean }): boolean =>
-    Boolean(item.sourcePlanningManaged) ||
+  const owned = (element: ServicePlanElement) => Boolean(element.sourcePlanningManaged) ||
     (!tracksSource && Boolean(options.treatUnmarkedItemsAsSource));
-
-  // A section is a named container, not a reusable slot. Residual order cannot
-  // prove that an unfamiliar incoming section is a renamed existing section:
-  // a newly-added late-service section would otherwise consume the first
-  // unmatched section and inherit its position and local content.
-  // A durable external row identity is plan-wide. Re-home a uniquely
-  // identified source-owned element into its new section before the ordinary
-  // section-local title/order reconciliation runs. Duplicate external IDs are
-  // deliberately excluded from reconciliation: neither row can safely claim
-  // the local state belonging to the other.
-  const importedIdentityCounts = new Map<string, number>();
-  importedSections.forEach((section) => section.elements.forEach((element) => {
-    if (element.legacyImportMatchCandidateForId) return;
-    const identity = getElementImportIdentity(element, options.planningCenterPdfMatch);
-    if (identity) importedIdentityCounts.set(identity, (importedIdentityCounts.get(identity) || 0) + 1);
+  const identity = (element: ServicePlanElement) => getElementImportIdentity(element, options.planningCenterPdfMatch);
+  const label = (element: ServicePlanElement) => options.planningCenterPdfMatch
+    ? [getPlanningCenterPdfMatchingTitle(element)]
+    : [richTextToPlainText(element.title), element.sourceElementTypeRaw || "", element.sourceContentTitleRaw || ""];
+  const templateKey = (element: ServicePlanElement) => JSON.stringify([
+    element.sourceTemplateElementType || element.type, normalized(richTextToPlainText(element.title)),
+  ]);
+  const current = currentSections.flatMap((section, sectionIndex) =>
+    section.elements.map((element) => ({ element, sectionIndex })));
+  const incoming = importedSections.flatMap((section, sectionIndex) =>
+    section.elements.map((element) => ({ element, sectionIndex })));
+  const sectionPairs = pairByLabelThenOrder(currentSections, importedSections, (section) => section.name,
+    (section) => Boolean(section.sourcePlanningManaged) || !tracksSource, () => false);
+  const destinationBySourceSection = new Map(sectionPairs.map(([existing, source]) => [source.index, existing.index]));
+  const sourceByCurrentSection = new Map(sectionPairs.map(([existing, source]) => [existing.index, source.index]));
+  const byIdentity = (items: typeof current) => {
+    const result = new Map<string, typeof current>();
+    items.forEach((item) => {
+      const key = identity(item.element);
+      if (key) result.set(key, [...(result.get(key) || []), item]);
+    });
+    return result;
+  };
+  const currentIdentities = byIdentity(current);
+  const incomingIdentities = byIdentity(incoming);
+  const ambiguousIdentities = new Set([...incomingIdentities].flatMap(([key, items]) =>
+    items.length > 1 || (currentIdentities.get(key)?.length || 0) > 1 ? [key] : []));
+  const protectedIds = new Set(current.flatMap(({ element }) => {
+    const conflictingIdentity = element.sourceOccurrenceId && !incomingIdentities.has(element.sourceOccurrenceId) && incoming.some(({ element: source }) =>
+      source.sourceOccurrenceId && source.sourceOccurrenceId !== element.sourceOccurrenceId &&
+      templateKey(source) === templateKey(element));
+    return conflictingIdentity || ambiguousIdentities.has(identity(element) || "") ||
+      (options.planningCenterPdfMatch && element.planningCenterPdfMatchReviewRequired && !element.sourceOccurrenceId)
+      ? [element.id] : [];
   }));
-  const asLegacyMatchCandidate = (
-    current: ServicePlanElement,
-    imported: ServicePlanElement,
-  ): ServicePlanElement => ({
-    ...mergeElement(current, imported, options),
-    id: imported.id,
-    legacyImportMatchCandidateForId: current.id,
+  type Association = { current: typeof current[number]; review: boolean };
+  const associations = new Map<ServicePlanElement, Association>();
+  const claimed = new Set<string>();
+  const associate = (source: ServicePlanElement, existing: typeof current[number], review = false) => {
+    if (claimed.has(existing.element.id)) return;
+    associations.set(source, { current: existing, review });
+    claimed.add(existing.element.id);
+    if (review) protectedIds.add(existing.element.id);
+  };
+  // Reserve uncertain suggestions before every automatic pass.
+  incoming.forEach(({ element }) => {
+    const candidate = current.find((item) => item.element.id === element.legacyImportMatchCandidateForId);
+    if (candidate) associate(element, candidate, true);
   });
-  const templateMatchKey = (element: ServicePlanElement): string =>
-    JSON.stringify([element.sourceTemplateElementType || element.type, normalized(richTextToPlainText(element.title))]);
-  const templateCurrentCounts = new Map<string, number>();
-  currentSections.forEach((section) => section.elements.forEach((element) => {
-    if (!element.sourceTemplateElementId) return;
-    const key = templateMatchKey(element);
-    templateCurrentCounts.set(key, (templateCurrentCounts.get(key) || 0) + 1);
-  }));
-  const templateImportedCounts = new Map<string, number>();
-  importedSections.forEach((section) => section.elements.forEach((element) => {
-    const key = templateMatchKey(element);
-    templateImportedCounts.set(key, (templateImportedCounts.get(key) || 0) + 1);
-  }));
-  const safeTemplateMatchKeys = new Set(
-    [...templateCurrentCounts].flatMap(([key, count]) =>
-      count === 1 && templateImportedCounts.get(key) === 1 ? [key] : [],
-    ),
-  );
-  const legacyMatchCurrentCounts = new Map<string, number>();
-  currentSections.forEach((section) => section.elements.forEach((element) => {
-    if (element.sourcePlanningManaged || element.sourceTemplateElementId ||
-      getElementImportIdentity(element, options.planningCenterPdfMatch)) return;
-    const key = templateMatchKey(element);
-    legacyMatchCurrentCounts.set(key, (legacyMatchCurrentCounts.get(key) || 0) + 1);
-  }));
-  const legacyMatchImportedCounts = new Map<string, number>();
-  importedSections.forEach((section) => section.elements.forEach((element) => {
-    const key = templateMatchKey(element);
-    legacyMatchImportedCounts.set(key, (legacyMatchImportedCounts.get(key) || 0) + 1);
-  }));
-  const safeLegacyMatchKeys = new Set(
-    [...legacyMatchCurrentCounts].flatMap(([key, count]) =>
-      count === 1 && legacyMatchImportedCounts.get(key) === 1 ? [key] : [],
-    ),
-  );
-  const legacyIdentityConflictCurrentIds = new Set<string>();
-  currentSections.forEach((section) => section.elements.forEach((currentElement) => {
-    const currentIdentity = currentElement.sourceOccurrenceId?.trim();
-    if (!currentIdentity) return;
-    const hasSameLabelWithDifferentIdentity = importedSections.some((importedSection) =>
-      importedSection.elements.some((importedElement) =>
-        importedElement.sourceOccurrenceId?.trim() &&
-        importedElement.sourceOccurrenceId.trim() !== currentIdentity &&
-        templateMatchKey(importedElement) === templateMatchKey(currentElement),
-      ),
-    );
-    if (hasSameLabelWithDifferentIdentity) legacyIdentityConflictCurrentIds.add(currentElement.id);
-  }));
-  const currentIdentityElements = new Map<string, Array<{ sectionIndex: number; elementIndex: number; element: ServicePlanElement }>>();
-  currentSections.forEach((section, sectionIndex) => section.elements.forEach((element, elementIndex) => {
-    const identity = getElementImportIdentity(element, options.planningCenterPdfMatch);
-    if (!identity) return;
-    const matches = currentIdentityElements.get(identity) || [];
-    matches.push({ sectionIndex, elementIndex, element });
-    currentIdentityElements.set(identity, matches);
-  }));
-  const ambiguousIdentities = new Set<string>();
-  importedIdentityCounts.forEach((count, identity) => {
-    if (count > 1 || (currentIdentityElements.get(identity)?.length || 0) > 1) {
-      ambiguousIdentities.add(identity);
+  incoming.forEach(({ element }) => {
+    if (associations.has(element) || element.legacyImportMatchCandidateForId) return;
+    const resolved = element.importMatchCurrentId
+      ? current.find((item) => item.element.id === element.importMatchCurrentId) : undefined;
+    if (resolved && !protectedIds.has(resolved.element.id)) {
+      associate(element, resolved);
+      return;
     }
+    const key = identity(element);
+    const matches = key ? currentIdentities.get(key) || [] : [];
+    if (key && !ambiguousIdentities.has(key) && matches.length === 1 &&
+      !protectedIds.has(matches[0].element.id)) associate(element, matches[0]);
   });
-  const safeImportedSections = importedSections.map((section) => ({
-    ...section,
-    elements: section.elements.flatMap((element) => {
-      const candidateId = element.legacyImportMatchCandidateForId;
-      if (candidateId) {
-        const candidate = currentSections.flatMap((currentSection) => currentSection.elements)
-          .find((currentElement) => currentElement.id === candidateId);
-        return candidate ? [asLegacyMatchCandidate(candidate, element)] : [element];
-      }
-      const identity = getElementImportIdentity(element, options.planningCenterPdfMatch);
-      if (identity && ambiguousIdentities.has(identity)) return [];
-      return [element];
-    }),
-  }));
-  const importedSectionPairs = pairByLabelThenOrder(
-    currentSections,
-    safeImportedSections,
-    (section) => section.name,
-    canPairByLabel,
-    () => false,
-  );
-  const currentSectionByImportedIndex = new Map(
-    importedSectionPairs.map(([current, imported]) => [imported.index, current.index]),
-  );
-  const movedElementsBySection = new Map<number, Array<{
-    current: ServicePlanElement;
-    imported: ServicePlanElement;
-  }>>();
-  const movedElementKeys = new Set<string>();
-  const movedElementIds = new Set<string>();
-  const legacyMatchCandidatesBySection = new Map<number, Map<ServicePlanElement, ServicePlanElement>>();
-  const legacyMatchCandidateCurrentIds = new Set<string>(safeImportedSections.flatMap((section) =>
-    section.elements.flatMap((element) => element.legacyImportMatchCandidateForId
-      ? [element.legacyImportMatchCandidateForId]
-      : []),
-  ));
-  safeImportedSections.forEach((section, importedSectionIndex) => {
-    section.elements.forEach((importedElement) => {
-      if (importedElement.legacyImportMatchCandidateForId) return;
-      const identity = getElementImportIdentity(importedElement, options.planningCenterPdfMatch);
-      let existing: { sectionIndex: number; elementIndex: number; element: ServicePlanElement } | undefined;
-      const identityMatches = identity ? currentIdentityElements.get(identity) || [] : [];
-      if (identity && !ambiguousIdentities.has(identity) && importedIdentityCounts.get(identity) === 1) {
-        if (identityMatches.length === 1) existing = identityMatches[0];
-      }
-      const mayUseTemplateFallback = !identity || identityMatches.length === 0;
-      if (!existing && mayUseTemplateFallback &&
-        safeTemplateMatchKeys.has(templateMatchKey(importedElement))) {
-        const matches = currentSections.flatMap((currentSection, sectionIndex) =>
-          currentSection.elements.flatMap((element, elementIndex) =>
-            element.sourceTemplateElementId &&
-              !getElementImportIdentity(element, options.planningCenterPdfMatch) &&
-              templateMatchKey(element) === templateMatchKey(importedElement)
-              ? [{ sectionIndex, elementIndex, element }]
-              : [],
-          ),
-        );
-        if (matches.length === 1) {
-          existing = matches[0];
-        }
-      }
-      if (!existing || legacyMatchCandidateCurrentIds.has(existing.element.id)) return;
-      const destinationIndex = currentSectionByImportedIndex.get(importedSectionIndex);
-      if (destinationIndex === existing.sectionIndex) return;
-      movedElementKeys.add(`${existing.sectionIndex}:${existing.elementIndex}`);
-      movedElementIds.add(existing.element.id);
-      const moved = movedElementsBySection.get(importedSectionIndex) || [];
-      moved.push({ current: existing.element, imported: importedElement });
-      movedElementsBySection.set(importedSectionIndex, moved);
-    });
-  });
-  if (options.suggestLegacyMatches) {
-    safeImportedSections.forEach((section, importedSectionIndex) => {
-      section.elements.forEach((importedElement) => {
-        if (importedElement.legacyImportMatchCandidateForId) return;
-        const identity = getElementImportIdentity(importedElement, options.planningCenterPdfMatch);
-        const identityMatches = identity ? currentIdentityElements.get(identity) || [] : [];
-        if (identity && (
-          ambiguousIdentities.has(identity) ||
-          importedIdentityCounts.get(identity) !== 1 ||
-          identityMatches.length > 0
-        )) return;
-        const key = templateMatchKey(importedElement);
-        if (!safeLegacyMatchKeys.has(key)) return;
-        const matches = currentSections.flatMap((currentSection, sectionIndex) =>
-          currentSection.elements.flatMap((element, elementIndex) =>
-            !element.sourcePlanningManaged && !element.sourceTemplateElementId &&
-              !getElementImportIdentity(element, options.planningCenterPdfMatch) && templateMatchKey(element) === key
-              ? [{ sectionIndex, elementIndex, element }]
-              : [],
-          ),
-        );
-        if (matches.length !== 1) return;
-        const candidate = matches[0];
-        const candidates = legacyMatchCandidatesBySection.get(importedSectionIndex) || new Map();
-        candidates.set(importedElement, candidate.element);
-        legacyMatchCandidatesBySection.set(importedSectionIndex, candidates);
-        legacyMatchCandidateCurrentIds.add(candidate.element.id);
-      });
-    });
-  }
-  const currentWithMovedElements = currentSections.map((section, sectionIndex) => ({
-    ...section,
-    elements: section.elements.filter((_, elementIndex) =>
-      !movedElementKeys.has(`${sectionIndex}:${elementIndex}`),
-    ),
-  }));
-  safeImportedSections.forEach((section, importedSectionIndex) => {
-    const moved = movedElementsBySection.get(importedSectionIndex);
-    if (!moved?.length) return;
-    const targetIndex = currentSectionByImportedIndex.get(importedSectionIndex);
-    if (targetIndex !== undefined) {
-      currentWithMovedElements[targetIndex] = {
-        ...currentWithMovedElements[targetIndex],
-        elements: [...currentWithMovedElements[targetIndex].elements, ...moved.map(({ current }) => current)],
-      };
+  // Template provenance and legacy confirmations use globally unique title/type
+  // evidence. An explicit conflicting identity is never replaced by a title.
+  incoming.forEach(({ element }) => {
+    if (associations.has(element) || ambiguousIdentities.has(identity(element) || "")) return;
+    const key = templateKey(element);
+    if (incoming.filter((item) => templateKey(item.element) === key).length !== 1) return;
+    const templateMatches = current.filter((item) => item.element.sourceTemplateElementId &&
+      !identity(item.element) && templateKey(item.element) === key);
+    if (templateMatches.length === 1) {
+      associate(element, templateMatches[0]);
+      return;
     }
+    if (!options.suggestLegacyMatches || (identity(element) && currentIdentities.has(identity(element)!))) return;
+    const legacyMatches = current.filter((item) => !item.element.sourcePlanningManaged &&
+      !item.element.sourceTemplateElementId && !identity(item.element) && templateKey(item.element) === key);
+    if (legacyMatches.length === 1) associate(element, legacyMatches[0], true);
   });
-
-  const safeSectionPairs = pairByLabelThenOrder(
-    currentWithMovedElements,
-    safeImportedSections,
-    (section) => section.name,
-    canPairByLabel,
-    () => false,
-  );
-  const importedByCurrentIndex = new Map(
-    safeSectionPairs.map(([current, imported]) => [current.index, imported]),
-  );
-  const pairedImportedSections = new Set(
-    safeSectionPairs.map(([, imported]) => imported.index),
-  );
-
-  const isAmbiguousCurrentElement = (element: ServicePlanElement): boolean =>
-    (options.planningCenterPdfMatch && element.planningCenterPdfMatchReviewRequired === true &&
-      !element.sourceOccurrenceId?.trim()) ||
-      Boolean(getElementImportIdentity(element, options.planningCenterPdfMatch) &&
-        ambiguousIdentities.has(getElementImportIdentity(element, options.planningCenterPdfMatch)!));
-  const isProtectedCurrentElement = (element: ServicePlanElement): boolean =>
-    isAmbiguousCurrentElement(element) || legacyIdentityConflictCurrentIds.has(element.id) ||
-      legacyMatchCandidateCurrentIds.has(element.id);
-  const refreshed = currentWithMovedElements.flatMap(
-    (currentSection, currentSectionIndex) => {
-      const importedSection = importedByCurrentIndex.get(currentSectionIndex);
-      if (!importedSection) {
-        if (!options.removeMissing || !currentSection.sourcePlanningManaged) return [currentSection];
-        const retainedElements = currentSection.elements.filter((element) =>
-          isProtectedCurrentElement(element) || !isSourceOwned(element),
-        );
-        return retainedElements.length ? [{ ...currentSection, elements: retainedElements }] : [];
-      }
-
-      const sourceSection = importedSection.value;
-      // Reservations gate every automatic pass, including durable/synthetic identity.
-      const elementPairs = pairByLabelThenOrder(
-        currentSection.elements,
-        sourceSection.elements,
-        (element) => [
-          richTextToPlainText(element.title),
-          element.sourceElementTypeRaw || "",
-          element.sourceContentTitleRaw || "",
-        ],
-        (element) => !isAmbiguousCurrentElement(element) && !legacyMatchCandidateCurrentIds.has(element.id) && canPairByLabel(element) &&
-          (!options.suggestLegacyMatches || Boolean(element.sourcePlanningManaged || element.sourceTemplateElementId)),
-        // Planning Center PDFs do not provide durable row IDs. Exact source
-        // identity and same-label matching above are evidence; residual order
-        // alone must not turn one source-managed item into a differently
-        // titled row. The PDF preparation pass can reserve uncertain pairs
-        // for individual confirmation through legacyImportMatchCandidateForId.
-        (element) => !options.planningCenterPdfMatch &&
-          !isAmbiguousCurrentElement(element) && !legacyMatchCandidateCurrentIds.has(element.id) && isSourceOwned(element) &&
-          (!options.suggestLegacyMatches || Boolean(element.sourcePlanningManaged || element.sourceTemplateElementId)),
-        (element) => !isAmbiguousCurrentElement(element) && !legacyMatchCandidateCurrentIds.has(element.id)
-          ? getElementImportIdentity(element, options.planningCenterPdfMatch)
-          : undefined,
-        (element) => !element.legacyImportMatchCandidateForId,
-      );
-      const importedByCurrentElementIndex = new Map(
-        elementPairs.map(([current, imported]) => [current.index, imported]),
-      );
-      const pairedImportedElements = new Set(
-        elementPairs.map(([, imported]) => imported.index),
-      );
-      const elements = currentSection.elements.flatMap(
-        (currentElement, currentElementIndex) => {
-          const importedElement =
-            importedByCurrentElementIndex.get(currentElementIndex);
-          if (importedElement)
-            return [
-              mergeElement(currentElement, importedElement.value, options),
-            ];
-          return options.removeMissing && isSourceOwned(currentElement) && !isProtectedCurrentElement(currentElement)
-            ? []
-            : [currentElement];
-        },
-      );
-
-      const elementsToPlace = currentSection.elements.flatMap(({ id }) => {
-        if (!movedElementIds.has(id)) return [];
-        const merged = elements.find((element) => element.id === id);
-        return merged ? [merged] : [];
-      });
-      for (const importedElement of sourceSection.elements) {
-        const sourceIndex = sourceSection.elements.indexOf(importedElement);
-        if (pairedImportedElements.has(sourceIndex)) continue;
-        const legacyMatch = legacyMatchCandidatesBySection.get(importedSection.index)?.get(importedElement);
-        if (!legacyMatch && !options.addMissing) continue;
-        const added = legacyMatch
-          ? asLegacyMatchCandidate(legacyMatch, importedElement)
-          : managedImportedElement(importedElement);
-        elements.push(added);
-        elementsToPlace.push(added);
-      }
-      const currentByImportedIndex = new Map(
-        elementPairs.map(([current, imported]) => [imported.index, current.value.id]),
-      );
-      const sourceOrder = sourceSection.elements.map((element, index) => {
-        const matchedId = currentByImportedIndex.get(index);
-        return matchedId ? elements.find((candidate) => candidate.id === matchedId) || element : element;
-      });
-      const placedElements = elementsToPlace.length
-        ? placeServicePlanImportElements(elements, sourceOrder, elementsToPlace)
-        : elements;
-
-      if (
-        options.removeMissing &&
-        currentSection.sourcePlanningManaged &&
-        placedElements.length === 0 &&
-        sourceSection.elements.length > 0
-      ) {
-        return [];
-      }
-      return [
-        {
-          ...currentSection,
-          sourcePlanningManaged: true,
-          name: options.updateTitles ? sourceSection.name : currentSection.name,
-          elements: placedElements,
-        },
-      ];
-    },
-  );
-
-  const currentSectionIdByImportedIndex = new Map(
-    safeSectionPairs.map(([current, imported]) => [
-      imported.index,
-      current.value.id,
-    ]),
-  );
-  const newSectionByImportedIndex = new Map<number, ServicePlanSection>();
-  safeImportedSections.forEach((section, index) => {
-    if (pairedImportedSections.has(index)) return;
-    const movedByImportedElement = new Map(
-      (movedElementsBySection.get(index) || []).map(({ current, imported }) => [imported, current] as const),
-    );
-    const legacyMatchesByImportedElement = legacyMatchCandidatesBySection.get(index) || new Map();
-    if (!options.addMissing && movedByImportedElement.size === 0 && legacyMatchesByImportedElement.size === 0) return;
-    const elements = section.elements.flatMap((importedElement) => {
-      const moved = movedByImportedElement.get(importedElement);
-      if (moved) return [mergeElement(moved, importedElement, options)];
-      const legacyMatch = legacyMatchesByImportedElement.get(importedElement);
-      if (legacyMatch) return [asLegacyMatchCandidate(legacyMatch, importedElement)];
-      return options.addMissing ? [managedImportedElement(importedElement)] : [];
-    });
-    const managedSection = managedImportedSection(section);
-    newSectionByImportedIndex.set(index, {
-      ...managedSection,
-      // Elements were constructed by walking section.elements in source order.
-      // Their stable local IDs can differ from the incoming IDs, so the shared
-      // placement helper cannot safely resolve their source-order anchors here.
-      elements,
+  // Section-local label matching is the final association pass. The residual
+  // positional fallback belongs only to the existing non-PDF import contract.
+  sectionPairs.forEach(([existing, source]) => {
+    const available = existing.value.elements.filter((element) => !claimed.has(element.id) &&
+      !protectedIds.has(element.id));
+    const sources = source.value.elements.filter((element) => !associations.has(element) &&
+      !element.legacyImportMatchCandidateForId && !ambiguousIdentities.has(identity(element) || ""));
+    pairByLabelThenOrder(available, sources, label,
+      (element) => (element.sourcePlanningManaged || !tracksSource) &&
+        (!options.suggestLegacyMatches || Boolean(element.sourcePlanningManaged || element.sourceTemplateElementId)),
+      (element) => !options.planningCenterPdfMatch && owned(element) &&
+        (!options.suggestLegacyMatches || Boolean(element.sourcePlanningManaged || element.sourceTemplateElementId)),
+      identity,
+    ).forEach(([existingItem, sourceItem]) => {
+      const item = current.find((item) => item.element === existingItem.value)!;
+      associate(sourceItem.value, item);
     });
   });
-  if (newSectionByImportedIndex.size > 0) {
-    return insertNewServicePlanSectionRuns(
-      refreshed,
-      safeImportedSections.length,
-      newSectionByImportedIndex,
-      currentSectionIdByImportedIndex,
-    );
-  }
-  return refreshed;
+  const sourceByCurrentId = new Map([...associations].filter(([, match]) => !match.review)
+    .map(([element, match]) => [match.current.element.id, element]));
+  const pdfEvidenceInUse = new Set(current.flatMap(({ element }) => element.planningCenterPdfMatchKey ? [element.planningCenterPdfMatchKey] : []));
+  const merged = new Map(incoming.map(({ element }) => {
+    const match = associations.get(element);
+    const result = match ? mergeElement(match.current.element, element, options) : managedImportedElement(element);
+    // New/confirmed occurrences receive distinct evidence. Never save the
+    // colliding temporary fingerprints that made the proposal uncertain.
+    if (options.planningCenterPdfMatch && (!match || match.review) && !element.planningCenterPdfMatchKey &&
+      incoming.filter((item) => getPlanningCenterPdfMatchingTitle(item.element) === getPlanningCenterPdfMatchingTitle(element)).length > 1) {
+      let occurrence = 0;
+      const key = () => makePlanningCenterPdfMatchKey(getPlanningCenterPdfMatchingTitle(element),
+        element.durationSeconds ?? Math.round((element.durationMinutes || 0) * 60), true, occurrence);
+      while (pdfEvidenceInUse.has(key())) occurrence += 1;
+      result.planningCenterPdfMatchKey = key();
+      pdfEvidenceInUse.add(key());
+    }
+    return [element, match?.review
+      ? { ...result, id: element.id, legacyImportMatchCandidateForId: match.current.element.id }
+      : result] as const;
+  }));
+  const buildSection = (sourceIndex: number, existing?: ServicePlanSection): ServicePlanSection => {
+    const source = importedSections[sourceIndex];
+    const placements: ServicePlanElement[] = [];
+    const elements = (existing?.elements || []).flatMap((element) => {
+      const incomingElement = sourceByCurrentId.get(element.id);
+      if (incomingElement) {
+        const sourceEntry = incoming.find((item) => item.element === incomingElement)!;
+        if (sourceEntry.sectionIndex !== sourceIndex) return [];
+        return [merged.get(incomingElement)!];
+      }
+      return options.removeMissing && owned(element) && !protectedIds.has(element.id) ? [] : [element];
+    });
+    const sourceOrder = source.elements.flatMap((element) => {
+      if (ambiguousIdentities.has(identity(element) || "") && !associations.has(element)) return [];
+      const match = associations.get(element);
+      if (!match && !options.addMissing) return [];
+      const result = merged.get(element)!;
+      if (!match || match.review || match.current.sectionIndex !== destinationBySourceSection.get(sourceIndex)) {
+        placements.push(result);
+      }
+      return [result];
+    });
+    if (options.planningCenterPdfMatch) {
+      // The resolved IDs, rather than a second title/position match, define the
+      // desired source sequence. Reserved and operator rows are never sorted.
+      const eligible = new Set(sourceOrder.filter((element) => !element.legacyImportMatchCandidateForId).map(({ id }) => id));
+      const ordered = sourceOrder.filter((element) => elements.some(({ id }) => id === element.id) && eligible.has(element.id));
+      let index = 0;
+      elements.forEach((element, slot) => { if (eligible.has(element.id)) elements[slot] = ordered[index++]; });
+    }
+    return { ...(existing || source), sourcePlanningManaged: true,
+      name: existing && !options.updateTitles ? existing.name : source.name,
+      elements: placeServicePlanImportElements(elements, sourceOrder, placements) };
+  };
+  const result = currentSections.flatMap((section, index) => {
+    const sourceIndex = sourceByCurrentSection.get(index);
+    if (sourceIndex !== undefined) return [buildSection(sourceIndex, section)];
+    const elements = section.elements.filter((element) => !sourceByCurrentId.has(element.id) &&
+      (!options.removeMissing || !section.sourcePlanningManaged || !owned(element) || protectedIds.has(element.id)));
+    return section.sourcePlanningManaged && options.removeMissing && !elements.length ? [] : [{ ...section, elements }];
+  });
+  const additions = new Map<number, ServicePlanSection>();
+  importedSections.forEach((_, index) => {
+    if (destinationBySourceSection.has(index)) return;
+    const section = buildSection(index);
+    if (section.elements.length) additions.set(index, section);
+  });
+  return insertNewServicePlanSectionRuns(result, importedSections.length, additions,
+    new Map(sectionPairs.map(([existing, source]) => [source.index, existing.value.id])));
 };

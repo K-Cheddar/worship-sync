@@ -2453,6 +2453,42 @@ SMC Worship Experience
     ]);
   });
 
+  it.each(["reading", "reviewing"])("preserves edits made while %s a PDF import", async (phase) => {
+    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: {
+      planId: "church-1::service-1@2026-07-26", churchId: "church-1", planKey: "service-1@2026-07-26",
+      serviceId: "service-1", date: "2026-07-26", name: "Sunday Worship",
+      sourceImport: { source: "planningCenterPdf", sourceUrl: "", loadedAt: "2026-07-20T12:00:00Z", planLabel: "Sunday" },
+      sections: [{ id: "worship", name: "Worship", sourcePlanningManaged: true, elements: [
+        { id: "welcome", type: "free", title: plainTextToRichText("Welcome"), sourcePlanningManaged: true, durationSeconds: 300 },
+      ] }],
+    } });
+    let resolvePdf!: (value: string) => void;
+    mockExtractTextFromPdfFile.mockReturnValue(new Promise((resolve) => { resolvePdf = resolve; }));
+    const user = userEvent.setup();
+    renderEditor({ initialEditing: true });
+    await screen.findByLabelText(/^Duration/i);
+    await user.click(screen.getByRole("button", { name: /Plan actions/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+    fireEvent.change(screen.getByLabelText(/Planning Center PDF/i), { target: { files: [new File(["pdf"], "updated.pdf", { type: "application/pdf" })] } });
+    const finishReading = async () => {
+      await act(async () => { resolvePdf("Sunday Worship\nWorship\n8:00 Welcome"); });
+    };
+    if (phase === "reviewing") {
+      await finishReading();
+      await screen.findByRole("button", { name: "Apply 1 change" });
+    }
+    const duration = screen.getByLabelText(/^Duration/i);
+    fireEvent.change(duration, { target: { value: "20" } });
+    await waitFor(() => expect(duration).toHaveValue("20"));
+    fireEvent.blur(duration);
+    if (phase === "reading") await finishReading();
+    else await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
+    expect(await screen.findByText("The plan changed. Import it again to review the latest draft.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Apply 1 change" })).not.toBeInTheDocument();
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), { timeout: 2500 });
+    expect(mockSaveServicePlan.mock.calls.at(-1)![2].sections?.[0].elements[0].durationSeconds).toBe(1200);
+  });
+
   it("ignores a PDF import that finishes after switching to another plan", async () => {
     const currentPlan: ServicePlan = {
       planId: "church-1::service-1@2026-07-26",

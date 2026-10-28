@@ -121,7 +121,6 @@ import { getPlanningCenterPlanImport } from "../../api/planningCenter";
 import {
   DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
   getNewServicePlanImportAmbiguityIds,
-  orderPlanningCenterPdfRefresh,
   preparePlanningCenterPdfImport,
   refreshServicePlanFromImport,
   type ServicePlanningRefreshOptions,
@@ -1742,7 +1741,6 @@ const ServicePlanEditor = ({
       planTimezone || "UTC",
     );
     if (source === "planningCenterPdf" && hasPlanContent && sections) {
-      nextSections = orderPlanningCenterPdfRefresh(nextSections, importedSections);
       if (recalculateTimeline && timelineAnchorStartTime) {
         nextSections = applyPlanAnchorStartTime(nextSections, timelineAnchorStartTime);
       }
@@ -1805,10 +1803,15 @@ const ServicePlanEditor = ({
     event.target.value = "";
     if (!file) return;
     const importEditorIdentityKey = editorIdentityKey;
+    const draftVersionAtStart = draftChangeVersionRef.current;
     setImporting(true);
     try {
       const text = await extractTextFromPdfFile(file);
       if (currentEditorIdentityRef.current !== importEditorIdentityKey) return;
+      if (draftChangeVersionRef.current !== draftVersionAtStart) {
+        showToast("The plan changed. Import it again to review the latest draft.");
+        return;
+      }
       const data = parsePlanningCenterPdfText(text);
       applyImportedPlanData(data, "planningCenterPdf", "");
     } catch (error) {
@@ -1832,6 +1835,8 @@ const ServicePlanEditor = ({
     if (usingPcoAccount && (!churchId || !importPcoServiceTypeId || !importPcoPlanId))
       return;
     if (!usingPcoAccount && !trimmedUrl) return;
+    const importEditorIdentityKey = editorIdentityKey;
+    const draftVersionAtStart = draftChangeVersionRef.current;
     setImporting(true);
     const sourceLabel = servicePlanImportSourceLabel(importSource);
     try {
@@ -1875,6 +1880,11 @@ const ServicePlanEditor = ({
         nextSourceUrl = trimmedUrl;
       }
 
+      if (currentEditorIdentityRef.current !== importEditorIdentityKey) return;
+      if (draftChangeVersionRef.current !== draftVersionAtStart) {
+        showToast("The plan changed. Import it again to review the latest draft.");
+        return;
+      }
       applyImportedPlanData(data, importSource, nextSourceUrl, sourceExtras);
     } catch (error) {
       showApiErrorToast(showToast, error, `Could not import from ${sourceLabel}.`);
@@ -1946,8 +1956,12 @@ const ServicePlanEditor = ({
 
   const applyImportPreview = (selectedChangeKeys: string[]) => {
     if (!importPreview) return;
+    if (JSON.stringify(sections) !== JSON.stringify(importPreview.currentSections)) {
+      setImportPreview(null);
+      showToast("The plan changed. Import it again to review the latest draft.");
+      return;
+    }
     const actionableKeys = new Set(importPreview.summary.changes
-      .filter((change) => change.kind !== "timing_shift")
       .map((change) => `${change.kind}:${change.id}`));
     const hasSelectedChanges = selectedChangeKeys.some((key) => actionableKeys.has(key));
     if (!hasSelectedChanges) return;

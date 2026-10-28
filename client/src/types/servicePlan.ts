@@ -11,8 +11,10 @@
  * TeamSchedule pattern — see server/teamsAuthHandlers.js and
  * client/src/api/auth.ts (getServicePlan/saveServicePlan/deleteServicePlan).
  */
+import type { ServicePlanSourceImport, ServicePlanImportSourceState } from "../../../shared/servicePlanImportMetadata";
 import type { RichTextDocument } from "./richText";
 import { getServicePlanScriptureResourceTitle } from "../../../shared/servicePlanScripture";
+export type { ServicePlanImportSource, ServicePlanSourceImport, ServicePlanningSourceSnapshot, ServicePlanImportSourceState } from "../../../shared/servicePlanImportMetadata";
 
 // Mirrors ServiceItem.type (client/src/types.ts) minus the presentation-only
 // "timer"/"service-time" kinds, so pushing a plan into the outline is 1:1.
@@ -225,31 +227,6 @@ export type ServicePlanImportAmbiguity = {
   authorizationPending?: boolean;
 };
 
-export type ServicePlanningSourceSnapshot = {
-  elementType: string;
-  title: string;
-  ledBy: string;
-  note: string;
-};
-
-export type ServicePlanImportSourceState = {
-  observed: ServicePlanningSourceSnapshot;
-  applied: ServicePlanningSourceSnapshot;
-  pendingFields: Array<"elementType" | "title" | "ledBy" | "note">;
-  /** Exact imported assignee occurrences and their source fields. */
-  managedAssignees?: Array<{
-    id: string;
-    fields: Array<"title" | "ledBy">;
-    ledByIdentity?: string;
-    fingerprint: string;
-  }>;
-  /** Exact source-created shared Note paragraphs; older imports may omit provenance. */
-  managedNotes?: Array<{
-    id: string;
-    fingerprint: string;
-  }>;
-};
-
 /**
  * Either a link to a real song already in the presentation-controller library,
  * or a not-yet-created song captured as raw lyrics text. The "pending" case
@@ -333,13 +310,15 @@ export type ServicePlanElement = {
   sourceTemplateElementType?: ServicePlanElementType;
   /** Import-preview-only link from a proposed legacy match to its current item ID. */
   legacyImportMatchCandidateForId?: string;
+  /** Transient confident PDF association, resolved once before field merging. */
+  importMatchCurrentId?: string;
   /** Stable PDF-only matching evidence. Planning Center PDFs have no row IDs;
    * duplicate-title rows use title and duration fingerprints, with ambiguous
    * changed-duration pairs sent through the existing import review. */
   planningCenterPdfMatchKey?: string;
   /** Keeps a declined ambiguous PDF pair in individual review on later refreshes. */
   planningCenterPdfMatchReviewRequired?: boolean;
-  /** Source row order from the latest Planning Center PDF import. */
+  /** Transient source order within the current PDF review; never a durable identity. */
   planningCenterPdfSourcePosition?: number;
   /** Internal provenance flag used to safely reconcile later Service Planning
    * refreshes without treating operator-created items as source items. */
@@ -671,22 +650,6 @@ export type ServicePlanTemplatePayload = {
   name: string;
   serviceId?: string;
   sections: ServicePlanSection[];
-};
-
-export type ServicePlanImportSource =
-  | "servicePlanning"
-  | "planningCenterPdf"
-  | "planningCenter"
-  | "worshipSync";
-
-export type ServicePlanSourceImport = {
-  source: ServicePlanImportSource;
-  /** Planning URL for Service Planning / PCO account; empty for pasted PDF text. */
-  sourceUrl: string;
-  loadedAt: string;
-  planLabel: string;
-  planningCenterServiceTypeId?: string;
-  planningCenterPlanId?: string;
 };
 
 export type ServicePlan = {
