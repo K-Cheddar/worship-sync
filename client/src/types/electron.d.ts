@@ -276,7 +276,7 @@ export interface ElectronAPI {
   setTaskbarUploadProgress: (progress: number | null) => Promise<boolean>;
   setChatTaskbarUnreadState?: (state: {
     scope: { churchId: string; actorId: string } | null;
-    unread: boolean;
+    unreadCount: number;
     revision: number;
   }) => Promise<boolean>;
   requestChatTaskbarAttention?: (scope: {
