@@ -81,10 +81,12 @@ import {
   isTrustedWorshipSyncIpcSender,
 } from "./ipcSenderAuthorization";
 import {
+  CHAT_TASKBAR_OVERLAY_BADGES,
   bindChatTaskbarLifecycle,
   createChatTaskbarController,
   findChatTaskbarOverlayIconPath,
   registerChatTaskbarIpcHandlers,
+  type ChatTaskbarOverlayIcons,
 } from "./chatTaskbar";
 import { createLyricsImportService } from "../../lyricsImport.js";
 import {
@@ -185,29 +187,53 @@ const getIconPath = (): string | undefined => {
   return undefined;
 };
 
-const getChatTaskbarOverlayIcon = (): NativeImage | null => {
-  if (process.platform !== "win32") return null;
-  const iconPath = findChatTaskbarOverlayIconPath({
-    resourcesPath: process.resourcesPath,
-    appPath: app.getAppPath(),
-    mainDirectory: __dirname,
-    exists: existsSync,
-  });
-  if (!iconPath) {
-    console.warn("Chat taskbar overlay icon was not found in build resources.");
-    return null;
-  }
-  try {
-    const overlayIcon = nativeImage.createFromPath(iconPath);
-    if (overlayIcon.isEmpty()) {
-      console.warn(`Chat taskbar overlay icon could not be loaded: ${iconPath}`);
-      return null;
+const getChatTaskbarOverlayIcons = (): ChatTaskbarOverlayIcons => {
+  const overlayIcons: ChatTaskbarOverlayIcons = {
+    "1": null,
+    "2": null,
+    "3": null,
+    "4": null,
+    "5": null,
+    "6": null,
+    "7": null,
+    "8": null,
+    "9": null,
+    "9+": null,
+  };
+  if (process.platform !== "win32") return overlayIcons;
+
+  for (const badge of CHAT_TASKBAR_OVERLAY_BADGES) {
+    const iconPath = findChatTaskbarOverlayIconPath(
+      {
+        resourcesPath: process.resourcesPath,
+        appPath: app.getAppPath(),
+        mainDirectory: __dirname,
+        exists: existsSync,
+      },
+      badge,
+    );
+    if (!iconPath) {
+      console.warn(
+        `Chat taskbar overlay icon ${badge} was not found in build resources.`,
+      );
+      continue;
     }
-    return overlayIcon;
-  } catch {
-    console.warn(`Chat taskbar overlay icon could not be loaded: ${iconPath}`);
-    return null;
+
+    try {
+      const overlayIcon = nativeImage.createFromPath(iconPath);
+      if (overlayIcon.isEmpty()) {
+        console.warn(
+          `Chat taskbar overlay icon could not be loaded: ${iconPath}`,
+        );
+        continue;
+      }
+      overlayIcons[badge] = overlayIcon;
+    } catch {
+      console.warn(`Chat taskbar overlay icon could not be loaded: ${iconPath}`);
+    }
   }
+
+  return overlayIcons;
 };
 
 /** Attach cut, copy, paste, select all context menu to a window's webContents. */
@@ -288,7 +314,7 @@ let mainWindow: BrowserWindow | null = null;
 const chatTaskbarController = createChatTaskbarController({
   platform: process.platform,
   getWindow: () => mainWindow,
-  overlayIcon: getChatTaskbarOverlayIcon(),
+  overlayIcons: getChatTaskbarOverlayIcons(),
 });
 let windowStateManager: WindowStateManager;
 let mediaCacheManager: MediaCacheManager;

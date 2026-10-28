@@ -712,6 +712,13 @@ export const applySelectedServicePlanImportChanges = (
   const currentItemsById = new Map(currentSections.flatMap((section) =>
     section.elements.map((element) => [element.id, element] as const),
   ));
+  const declinedPdfMatchCandidateByCurrentId = new Map(
+    nextSections.flatMap((section) => section.elements.flatMap((element) =>
+      element.legacyImportMatchCandidateForId && element.planningCenterPdfMatchKey
+        ? [[element.legacyImportMatchCandidateForId, element] as const]
+        : [],
+    )),
+  );
   const withSourceAssociation = (
     element: ServicePlanElement,
     current: ServicePlanElement,
@@ -772,15 +779,18 @@ export const applySelectedServicePlanImportChanges = (
         )];
       }
       if (linked) return [withSourceAssociation(currentElement, currentElement, nextItemsById.get(currentElement.id), true)];
-      return [currentElement];
+      return declinedPdfMatchCandidateByCurrentId.has(currentElement.id)
+        ? [{ ...currentElement, planningCenterPdfMatchReviewRequired: true }]
+        : [currentElement];
     });
     const placements = (nextSection?.elements || []).flatMap((nextElement) => {
       const legacyMatchForId = nextElement.legacyImportMatchCandidateForId;
       if (legacyMatchForId) {
         const match = selectedChangeFor("legacy_match", legacyMatchForId);
-        return match
-          ? [{ ...nextElement, id: match.id, legacyImportMatchCandidateForId: undefined }]
-          : [];
+        if (!match) return [];
+        const confirmed = { ...nextElement, id: match.id, legacyImportMatchCandidateForId: undefined };
+        delete confirmed.planningCenterPdfMatchReviewRequired;
+        return [confirmed];
       }
       if (selectedChangeFor("added", nextElement.id)) return [nextElement];
       const move = selectedChangeFor("moved", nextElement.id);
@@ -834,9 +844,10 @@ export const applySelectedServicePlanImportChanges = (
       const legacyMatchForId = element.legacyImportMatchCandidateForId;
       if (legacyMatchForId) {
         const match = selectedChangeFor("legacy_match", legacyMatchForId);
-        return match
-          ? [{ ...element, id: match.id, legacyImportMatchCandidateForId: undefined }]
-          : [];
+        if (!match) return [];
+        const confirmed = { ...element, id: match.id, legacyImportMatchCandidateForId: undefined };
+        delete confirmed.planningCenterPdfMatchReviewRequired;
+        return [confirmed];
       }
       if (selectedChangeFor("added", element.id)) return [element];
       const move = selectedChangeFor("moved", element.id);

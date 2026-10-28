@@ -388,6 +388,8 @@ const ServicePlanningSyncFloatingWindow = ({
     isParticipantOverlayUnsafe,
     isLoadingPlans,
     isPlanPreviewStale,
+    isNativeOverlayMappingReady,
+    isNativeOverlayPreviewFresh,
     plansError,
     isPlanSourced,
     refresh: refreshPlan,
@@ -514,6 +516,7 @@ const ServicePlanningSyncFloatingWindow = ({
     allowOverlaySync &&
     isPlanSourced && Boolean(selectedPlanKey) &&
     !isPlanPreviewStale &&
+    isNativeOverlayPreviewFresh(preview) &&
     !isContextChanging &&
     !isRefreshingParticipants &&
     !isParticipantOverlayUnsafe &&
@@ -1173,6 +1176,16 @@ const ServicePlanningSyncFloatingWindow = ({
             {preview
               ? "The plan could not be refreshed. Refresh before syncing."
               : "The plan and its assignments could not be fully loaded. Retry before syncing."}
+          </p>
+        ) : null}
+        {isPlanSourced && preview?.nativeOverlaySummary && !isNativeOverlayPreviewFresh(preview) ? (
+          <p
+            role="status"
+            className="rounded border border-amber-500/40 bg-amber-950/30 px-2 py-1.5 text-xs text-amber-200"
+          >
+            {isNativeOverlayMappingReady
+              ? "Refreshing the overlay preview with the latest church settings. Overlay sync is paused until it finishes."
+              : "Church integration settings are loading. The plan is available, but overlay sync will wait until the settings are verified."}
           </p>
         ) : null}
 

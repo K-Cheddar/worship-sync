@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { MemoryRouter } from "react-router-dom";
 import { GlobalInfoContext } from "../../../context/globalInfo";
@@ -164,13 +164,40 @@ describe("delayed formatted text content integrity", () => {
   });
   afterEach(() => jest.useRealTimers());
 
+  it("wraps stream formatting controls inside a narrow All Tools drawer", () => {
+    const drawerTarget = document.createElement("div");
+    drawerTarget.style.width = "240px";
+    document.body.append(drawerTarget);
+    const view = render(
+      <Provider store={store}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext()}>
+          <FormattedTextEditor drawerTarget={drawerTarget} />
+        </GlobalInfoContext.Provider>
+      </Provider>,
+    );
+
+    expect(
+      within(drawerTarget).getByTestId("formatted-text-editor-drawer-controls"),
+    ).toHaveClass("min-w-0");
+    for (const testId of [
+      "formatted-text-font-controls",
+      "formatted-text-background-controls",
+      "formatted-text-scope-controls",
+    ]) {
+      expect(within(drawerTarget).getByTestId(testId)).toHaveClass("flex-wrap");
+    }
+
+    view.unmount();
+    drawerTarget.remove();
+  });
+
   it.each([false, true])("preserves a pending rich-text color change for A, unmounted=%s", async (unmountBeforeTimer) => {
     const beforeA = clone(mockDocs.get("free-A"));
     const beforeB = clone(mockDocs.get("free-B"));
     const { unmount } = render(
       <Provider store={store}>
         <GlobalInfoContext.Provider value={createMockGlobalContext()}>
-          <FormattedTextEditor />
+          <FormattedTextEditor drawerTarget={document.body} />
         </GlobalInfoContext.Provider>
       </Provider>,
     );
@@ -212,7 +239,7 @@ describe("delayed formatted text content integrity", () => {
       <Provider store={store}>
         <GlobalInfoContext.Provider value={createMockGlobalContext()}>
           <MemoryRouter initialEntries={["/controller"]}>
-            <SlideEditTools />
+            <SlideEditTools quickFontSizeTarget={null} quickBrightnessTarget={null} quickBibleModeTarget={null} drawerTarget={document.body} />
           </MemoryRouter>
         </GlobalInfoContext.Provider>
       </Provider>,
@@ -403,7 +430,7 @@ describe("delayed formatted text content integrity", () => {
     render(
       <Provider store={store}>
         <GlobalInfoContext.Provider value={createMockGlobalContext()}>
-          <FormattedTextEditor />
+          <FormattedTextEditor drawerTarget={document.body} />
         </GlobalInfoContext.Provider>
       </Provider>,
     );
@@ -443,7 +470,7 @@ describe("delayed formatted text content integrity", () => {
       <Provider store={store}>
         <GlobalInfoContext.Provider value={createMockGlobalContext()}>
           <MemoryRouter initialEntries={["/controller"]}>
-            <SlideEditTools />
+            <SlideEditTools quickFontSizeTarget={null} quickBrightnessTarget={null} quickBibleModeTarget={null} drawerTarget={document.body} />
           </MemoryRouter>
         </GlobalInfoContext.Provider>
       </Provider>,
@@ -477,7 +504,7 @@ describe("delayed formatted text content integrity", () => {
       <Provider store={store}>
         <GlobalInfoContext.Provider value={createMockGlobalContext()}>
           <MemoryRouter initialEntries={["/controller"]}>
-            <SlideEditTools />
+            <SlideEditTools quickFontSizeTarget={null} quickBrightnessTarget={null} quickBibleModeTarget={null} drawerTarget={document.body} />
           </MemoryRouter>
         </GlobalInfoContext.Provider>
       </Provider>,
@@ -497,7 +524,7 @@ describe("delayed formatted text content integrity", () => {
       <Provider store={store}>
         <GlobalInfoContext.Provider value={createMockGlobalContext()}>
           <MemoryRouter initialEntries={["/controller"]}>
-            <SlideEditTools />
+            <SlideEditTools quickFontSizeTarget={null} quickBrightnessTarget={null} quickBibleModeTarget={null} drawerTarget={document.body} />
           </MemoryRouter>
         </GlobalInfoContext.Provider>
       </Provider>,
@@ -525,7 +552,7 @@ describe("delayed formatted text content integrity", () => {
     render(
       <Provider store={store}>
         <GlobalInfoContext.Provider value={createMockGlobalContext()}>
-          <FormattedTextEditor />
+          <FormattedTextEditor drawerTarget={document.body} />
         </GlobalInfoContext.Provider>
       </Provider>,
     );
@@ -597,7 +624,7 @@ describe("delayed formatted text content integrity", () => {
     render(
       <Provider store={store}>
         <GlobalInfoContext.Provider value={createMockGlobalContext()}>
-          <FormattedTextEditor />
+          <FormattedTextEditor drawerTarget={document.body} />
         </GlobalInfoContext.Provider>
       </Provider>,
     );
@@ -701,7 +728,7 @@ describe("delayed formatted text content integrity", () => {
       <Provider store={store}>
         <GlobalInfoContext.Provider value={createMockGlobalContext()}>
           <MemoryRouter initialEntries={["/controller"]}>
-            <SlideEditTools />
+            <SlideEditTools quickFontSizeTarget={null} quickBrightnessTarget={null} quickBibleModeTarget={null} drawerTarget={document.body} />
           </MemoryRouter>
         </GlobalInfoContext.Provider>
       </Provider>,

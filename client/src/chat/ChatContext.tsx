@@ -847,7 +847,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
     taskbarRevisionRef.current = revision;
     const state = {
       scope,
-      unread: Boolean(scope && unreadCount > 0),
+      unreadCount: scope ? unreadCount : 0,
       revision,
     };
     invokeTaskbarBridge(() =>

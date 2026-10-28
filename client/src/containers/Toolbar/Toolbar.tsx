@@ -2,7 +2,6 @@ import { isControllerWorkspacePath } from "../../utils/controllerWorkspace";
 import { useLocation } from "react-router-dom";
 import {
   Settings,
-  SquarePen,
   MonitorCog,
   RectangleEllipsis,
   Pencil,
@@ -30,6 +29,7 @@ import QuickLinksPage from "../../pages/Controller/QuickLinks";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import cn from "classnames";
 import FormattedTextEditor from "./ToolbarElements/FormattedTextEditor";
+import AllToolsDrawer from "./ToolbarElements/AllToolsDrawer";
 import {
   type ControllerConfigurationRoute,
   setLastControllerConfigurationRoute,
@@ -45,19 +45,16 @@ import {
 } from "../../store/itemSlice";
 import { ItemState } from "../../types";
 import { getActiveItemSlides } from "../../utils/activeItemSlides";
+import type { ItemMutationOwner } from "../../store/deferredItemMutations";
 import { scrollToolbarTabIntoViewIfNeeded } from "../../utils/scrollToolbarTabIntoView";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
 import { useControllerBasePath } from "../../context/activeController";
 import { usePresentationControllerMode } from "../../context/presentationControllerMode";
-import { useThumbnailPreviewMode } from "../../context/thumbnailPreviewMode";
 import MediaSurfaceDiagnostics from "./ToolbarElements/MediaSurfaceDiagnostics";
 
 type sections =
   | "configurations"
-  | "slide-tools"
-  | "stream-format"
-  | "item-tools"
-  | "box-tools";
+  | "editing";
 
 /**
  * "aux" is the presentation toolbar on an auxiliary controller. Same slide /
@@ -114,21 +111,17 @@ const Toolbar = ({
       state.undoable.present.preferences.lastControllerConfigurationRoute,
   );
   const [section, setSection] = useState<sections>("configurations");
+  const [allToolsOpen, setAllToolsOpen] = useState(false);
   const { isMobile = false } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
   const dispatch = useDispatch();
   const { mode, setMode } = usePresentationControllerMode();
-  const { setPreviewMode } = useThumbnailPreviewMode();
 
   useEffect(() => {
     if (variant === "overlay" && mode === "present") {
       setQuickLinksDrawerOpen(false);
     }
   }, [mode, variant]);
-
-  const primaryToolbarTabRefs = useRef<
-    Partial<Record<sections, HTMLButtonElement | HTMLAnchorElement | null>>
-  >({});
 
   const configurationsSubTabRefs = useRef<{
     preferences: HTMLButtonElement | HTMLAnchorElement | null;
@@ -141,19 +134,20 @@ const Toolbar = ({
   });
 
   const updateItem = useCallback(
-    (updatedItem: ItemState) => {
+    (updatedItem: ItemState, expectedOwner?: ItemMutationOwner) => {
       if (updatedItem.type === "song") {
-        dispatch(updateArrangements({ arrangements: updatedItem.arrangements }));
+        dispatch(updateArrangements({ arrangements: updatedItem.arrangements, expectedOwner }));
       } else {
         dispatch(
           updateSlides({
             slides: getActiveItemSlides(updatedItem),
             formattedSections: updatedItem.formattedSections,
+            expectedOwner,
           })
         );
       }
       if (updatedItem.bibleInfo) {
-        dispatch(updateBibleInfo({ bibleInfo: updatedItem.bibleInfo }));
+        dispatch(updateBibleInfo({ bibleInfo: updatedItem.bibleInfo, expectedOwner }));
       }
     },
     [dispatch]
@@ -187,31 +181,24 @@ const Toolbar = ({
       setSection(
         isViewOnlyAccess(access) || !canShowSlideAndBoxTools
           ? "configurations"
-          : "slide-tools"
+          : "editing"
       );
     } else {
       setSection("configurations");
     }
   }, [onItemPage, access, canShowSlideAndBoxTools]);
 
-  // Timer controls live under Slide Tools; always surface them when opening a timer.
   useEffect(() => {
     if (
       !onItemPage ||
-      itemType !== "timer" ||
+      mode === "present" ||
+      section !== "editing" ||
       isViewOnlyAccess(access) ||
       !canShowSlideAndBoxTools
     ) {
-      return;
+      setAllToolsOpen(false);
     }
-    setSection("slide-tools");
-  }, [
-    onItemPage,
-    itemType,
-    access,
-    canShowSlideAndBoxTools,
-    location.pathname,
-  ]);
+  }, [onItemPage, mode, section, access, canShowSlideAndBoxTools]);
 
   useEffect(() => {
     if (!activeControllerConfigurationRoute) return;
@@ -221,15 +208,10 @@ const Toolbar = ({
   }, [activeControllerConfigurationRoute, dispatch, variant]);
 
   useEffect(() => {
-    dispatch(setToolbarSection(section));
-    if (section === "stream-format") {
-      setPreviewMode("stream");
-    }
-  }, [section, dispatch, setPreviewMode]);
-
-  useLayoutEffect(() => {
-    scrollToolbarTabIntoViewIfNeeded(primaryToolbarTabRefs.current[section]);
-  }, [section]);
+    // SlideEditor uses the legacy preference to choose its text editing panel.
+    // Editing tools now share one toolbar surface, so keep that panel behavior.
+    dispatch(setToolbarSection(section === "editing" ? "slide-tools" : section));
+  }, [section, dispatch]);
 
   useLayoutEffect(() => {
     if (section !== "configurations") return;
@@ -242,24 +224,19 @@ const Toolbar = ({
     scrollToolbarTabIntoViewIfNeeded(configurationsSubTabRefs.current[subKey]);
   }, [section, location.pathname]);
 
-  const renderPrimaryToolbarTabs = () => (
+  const renderConfigurationsButton = () => (
     <div className="flex min-w-max shrink-0 gap-0 overflow-x-auto scrollbar-variable">
         {!isViewOnlyAccess(access) ? (
           <ToolbarButton
-            ref={(el) => {
-              primaryToolbarTabRefs.current.configurations = el;
-            }}
             svg={Settings}
             to={configurationsHomePath}
             isActive={section === "configurations"}
+            onClick={() => setAllToolsOpen(false)}
           >
             Configurations
           </ToolbarButton>
         ) : (
           <ToolbarButton
-            ref={(el) => {
-              primaryToolbarTabRefs.current.configurations = el;
-            }}
             svg={Settings}
             onClick={() => setSection("configurations")}
             isActive={section === "configurations"}
@@ -267,134 +244,100 @@ const Toolbar = ({
             Configurations
           </ToolbarButton>
         )}
-        <ToolbarButton
-          ref={(el) => {
-            primaryToolbarTabRefs.current["slide-tools"] = el;
-          }}
-          svg={SquarePen}
-          onClick={() => setSection("slide-tools")}
-          hidden={!onItemPage || isViewOnlyAccess(access) || !canShowSlideAndBoxTools}
-          isActive={section === "slide-tools"}
-        >
-          Slide Tools
-        </ToolbarButton>
-        <ToolbarButton
-          ref={(el) => {
-            primaryToolbarTabRefs.current["box-tools"] = el;
-          }}
-          svg={Pencil}
-          onClick={() => setSection("box-tools")}
-          hidden={!onItemPage || isViewOnlyAccess(access) || !canShowSlideAndBoxTools}
-          isActive={section === "box-tools"}
-        >
-          Box Tools
-        </ToolbarButton>
-        {access === "full" && (
-          <>
-            {showStreamFormat && (
-              <ToolbarButton
-                ref={(el) => {
-                  primaryToolbarTabRefs.current["stream-format"] = el;
-                }}
-                svg={MonitorPlay}
-                onClick={() => setSection("stream-format")}
-                hidden={!onItemPage}
-                isActive={section === "stream-format"}
-              >
-                Stream Format
-              </ToolbarButton>
-            )}
-            <ToolbarButton
-              ref={(el) => {
-                primaryToolbarTabRefs.current["item-tools"] = el;
-              }}
-              svg={SquarePen}
-              onClick={() => setSection("item-tools")}
-              hidden={!onItemPage}
-              isActive={section === "item-tools"}
-            >
-              Item Tools
-            </ToolbarButton>
-          </>
-        )}
     </div>
   );
 
   const renderContextualToolbar = () => (
-    <>
-      <div
-        className={cn(
-          "flex min-h-0 w-full flex-1 items-center overflow-x-auto px-2 scrollbar-variable",
-          "[&_[data-slot=input]]:!h-8 [&_[data-slot=input]]:!min-h-8 [&_[data-slot=select-trigger]]:!h-8 [&_[data-slot=select-trigger]]:!min-h-8",
-          isLyricsEditorOpen && "hidden"
-        )}
-      >
-        {!isViewOnlyAccess(access) && (
-          <ToolbarButton
-            ref={(el) => {
-              configurationsSubTabRefs.current.preferences = el;
-            }}
-            svg={Settings}
-            to={`${controllerBasePath}/preferences`}
-            hidden={section !== "configurations"}
-            isActive={
-              location.pathname.includes("preferences") &&
-              !location.pathname.includes("quick-links")
-            }
-          >
-            Preferences
-          </ToolbarButton>
-        )}
-        {access === "full" && (
-          <ToolbarButton
-            ref={(el) => {
-              configurationsSubTabRefs.current.quickLinks = el;
-            }}
-            svg={RectangleEllipsis}
-            hidden={section !== "configurations"}
-            isActive={location.pathname.includes("quick-links")}
-            to={`${controllerBasePath}/quick-links`}
-          >
-            Quick Links
-          </ToolbarButton>
-        )}
-        {access === "full" && (
-          <ToolbarButton
-            ref={(el) => {
-              configurationsSubTabRefs.current.displays = el;
-            }}
-            svg={MonitorCog}
-            to={`${controllerBasePath}/displays`}
-            hidden={section !== "configurations"}
-            isActive={
-              location.pathname.includes("displays") ||
-              location.pathname.includes("monitor-settings")
-            }
-          >
-            Displays
-          </ToolbarButton>
-        )}
-        <MediaSurfaceDiagnostics
-          className={section !== "configurations" ? "hidden" : undefined}
-        />
-        <SlideEditTools
-          className={cn(section !== "slide-tools" && "hidden")}
-        />
-        {showStreamFormat && (
-          <FormattedTextEditor
-            className={cn(section !== "stream-format" && "hidden")}
-          />
-        )}
-        <ItemEditTools
-          className={cn(section !== "item-tools" && "hidden")}
-        />
-        <BoxEditor
-          className={cn(section !== "box-tools" && "hidden")}
-          updateItem={updateItem}
+    <div
+      className={cn(
+        "flex min-h-0 w-full min-w-0 flex-1 items-center px-2",
+        "[&_[data-slot=input]]:!h-8 [&_[data-slot=input]]:!min-h-8 [&_[data-slot=select-trigger]]:!h-8 [&_[data-slot=select-trigger]]:!min-h-8",
+        isLyricsEditorOpen && "hidden",
+      )}
+    >
+      {section === "configurations" ? (
+        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto scrollbar-variable">
+          {!isViewOnlyAccess(access) && (
+            <ToolbarButton
+              ref={(el) => {
+                configurationsSubTabRefs.current.preferences = el;
+              }}
+              svg={Settings}
+              to={`${controllerBasePath}/preferences`}
+              isActive={
+                location.pathname.includes("preferences") &&
+                !location.pathname.includes("quick-links")
+              }
+            >
+              Preferences
+            </ToolbarButton>
+          )}
+          {access === "full" && (
+            <ToolbarButton
+              ref={(el) => {
+                configurationsSubTabRefs.current.quickLinks = el;
+              }}
+              svg={RectangleEllipsis}
+              isActive={location.pathname.includes("quick-links")}
+              to={`${controllerBasePath}/quick-links`}
+            >
+              Quick Links
+            </ToolbarButton>
+          )}
+          {access === "full" && (
+            <ToolbarButton
+              ref={(el) => {
+                configurationsSubTabRefs.current.displays = el;
+              }}
+              svg={MonitorCog}
+              to={`${controllerBasePath}/displays`}
+              isActive={
+                location.pathname.includes("displays") ||
+                location.pathname.includes("monitor-settings")
+              }
+            >
+              Displays
+            </ToolbarButton>
+          )}
+          <MediaSurfaceDiagnostics />
+        </div>
+      ) : onItemPage && !isViewOnlyAccess(access) && canShowSlideAndBoxTools ? (
+        <AllToolsDrawer
+          isOpen={allToolsOpen && mode === "edit"}
+          onClose={() => setAllToolsOpen(false)}
+          onToggle={() => setAllToolsOpen((open) => !open)}
           isMobile={isMobile}
-        />
-      </div>
-    </>
+          showBibleMode={itemType === "bible"}
+          showStreamFormatting={
+            access === "full" && showStreamFormat && itemType === "free"
+          }
+          showOutputTargets={access === "full"}
+        >
+          {(targets) => (
+            <>
+              <SlideEditTools
+                quickFontSizeTarget={targets.quickFontSize}
+                quickBrightnessTarget={targets.quickBrightness}
+                quickBibleModeTarget={targets.quickBibleMode}
+                drawerTarget={targets.slideFormatting}
+              />
+              <BoxEditor
+                updateItem={updateItem}
+                quickBoxLayoutTarget={targets.quickBoxLayout}
+                quickBoxHeightTarget={targets.quickBoxHeight}
+                drawerTarget={targets.boxLayout}
+              />
+              {access === "full" && showStreamFormat && itemType === "free" && (
+                <FormattedTextEditor drawerTarget={targets.streamFormatting} />
+              )}
+              {access === "full" && (
+                <ItemEditTools drawerTarget={targets.outputTargets} />
+              )}
+            </>
+          )}
+        </AllToolsDrawer>
+      ) : null}
+    </div>
   );
 
   const modeToggle = (
@@ -408,7 +351,10 @@ const Toolbar = ({
           svg={option === "present" ? MonitorPlay : Pencil}
           isActive={mode === option}
           className="rounded-none first:rounded-l-md last:rounded-r-md"
-          onClick={() => setMode(option)}
+          onClick={() => {
+            if (option === "present") setAllToolsOpen(false);
+            setMode(option);
+          }}
         >
           {option === "present" ? "Present" : "Edit"}
         </ToolbarButton>
@@ -434,7 +380,7 @@ const Toolbar = ({
                 </div>
                 {modeToggle}
                 {mode === "edit" && !isLyricsEditorOpen && !isViewOnlyAccess(access) && <Undo />}
-                {mode === "edit" && renderPrimaryToolbarTabs()}
+                {mode === "edit" && renderConfigurationsButton()}
               </div>
             </div>
             {mode === "edit" && (

@@ -1,11 +1,13 @@
 import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
+import { createPortal } from "react-dom";
 import { useDispatch, useSelector } from "../../../hooks";
 import { applyOwnedContentMutation } from "../../../store/itemSlice";
 import { getActiveItemSlides } from "../../../utils/activeItemSlides";
 import {
   flushPendingItemMutations,
   getItemMutationOwner,
+  getItemMutationOwnerKey,
   scheduleOwnedItemMutation,
   type PendingItemMutationHandle,
 } from "../../../store/deferredItemMutations";
@@ -14,7 +16,6 @@ import RadioButton, {
   RadioGroup,
 } from "../../../components/RadioButton/RadioButton";
 import { PaintBucket } from "lucide-react";
-import { ChevronsUpDown } from "lucide-react";
 import { Image } from "lucide-react";
 import { Plus } from "lucide-react";
 import { Minus } from "lucide-react";
@@ -67,7 +68,11 @@ type fieldType =
   | "isBold"
   | "isItalic";
 
-const FormattedTextEditor = ({ className }: { className?: string }) => {
+const FormattedTextEditor = ({
+  drawerTarget,
+}: {
+  drawerTarget: HTMLElement | null;
+}) => {
   const item = useSelector((state) => state.undoable.present.item);
 
   const { selectedSlide, type } = item;
@@ -100,10 +105,30 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
   const brandColors = globalInfo?.churchBranding.colors || [];
 
   const owner = getItemMutationOwner(item);
+  const selectedItemSlide = slides[selectedSlide];
+  const selectedTargetKey = JSON.stringify([
+    owner ? getItemMutationOwnerKey(owner) : null,
+    selectedItemSlide?.id ?? null,
+    selectedItemSlide?.boxes?.[item.selectedBox]?.id ?? item.selectedBox,
+  ]);
+  const selectedTargetKeyRef = useRef(selectedTargetKey);
+  selectedTargetKeyRef.current = selectedTargetKey;
+  const lastTargetKeyRef = useRef(selectedTargetKey);
   const ownerRef = useRef(owner);
   ownerRef.current = owner;
   const isMountedRef = useRef(true);
   const timeoutRefs = useRef<Partial<Record<"textColor" | "backgroundColor", PendingItemMutationHandle>>>({});
+  const timeoutTargetKeysRef = useRef<Partial<Record<"textColor" | "backgroundColor", string>>>({});
+
+  useEffect(() => {
+    if (lastTargetKeyRef.current === selectedTargetKey) return;
+    lastTargetKeyRef.current = selectedTargetKey;
+    for (const field of ["textColor", "backgroundColor"] as const) {
+      timeoutRefs.current[field]?.flush();
+      timeoutRefs.current[field] = undefined;
+      timeoutTargetKeysRef.current[field] = undefined;
+    }
+  }, [selectedTargetKey]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -160,9 +185,24 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
       const selectedSlide = slides[item.selectedSlide];
       if (!owner || !selectedSlide?.id) return;
       const sectionNum = selectedSlide.name.match(/Section (\d+)/)?.[1];
-      timeoutRefs.current[field]?.cancel();
-      timeoutRefs.current[field] = scheduleOwnedItemMutation(owner, 250, () => {
-        if (isMountedRef.current) {
+      const targetKey = selectedTargetKey;
+      const pending = timeoutRefs.current[field];
+      if (pending) {
+        if (timeoutTargetKeysRef.current[field] === targetKey) pending.cancel();
+        else pending.flush();
+      }
+      const targetBoxId = selectedSlide.boxes?.[item.selectedBox]?.id;
+      const applyToAll = shouldApplyToAll;
+      let handle: PendingItemMutationHandle;
+      handle = scheduleOwnedItemMutation(owner, 250, () => {
+        if (timeoutRefs.current[field] === handle) {
+          timeoutRefs.current[field] = undefined;
+          timeoutTargetKeysRef.current[field] = undefined;
+        }
+        if (
+          isMountedRef.current &&
+          selectedTargetKeyRef.current === targetKey
+        ) {
           setFormattedTextState((current) => ({
             ...current,
             [field]: updatedValue,
@@ -173,14 +213,16 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
           mutation: {
             kind: "formattedText",
             slideId: selectedSlide.id,
-            targetBoxId: selectedSlide.boxes?.[item.selectedBox]?.id,
+            targetBoxId,
             sectionNum: sectionNum ? parseInt(sectionNum, 10) : undefined,
             field,
             value: updatedValue,
-            applyToAll: shouldApplyToAll,
+            applyToAll,
           },
         }));
       });
+      timeoutRefs.current[field] = handle;
+      timeoutTargetKeysRef.current[field] = targetKey;
     } else if (field === "fontSize") {
       setFormattedTextState({
         ...formattedTextState,
@@ -196,16 +238,14 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
     }
   };
 
-  if (type !== "free")
-    return (
-      <section className="flex flex-wrap max-lg:pb-4 invisible">
-        <Button svg={Image} iconSize="lg" padding="py-1 px-0" className="w-0" />
-      </section>
-    );
+  if (type !== "free" || !drawerTarget) return null;
 
   const controls = (
     <>
-      <section className="flex gap-1 items-center">
+      <section
+        data-testid="formatted-text-font-controls"
+        className="flex min-w-0 max-w-full flex-wrap items-center gap-1"
+      >
         <Icon svg={Image} className="border-b border-black" />
         <Button
           svg={Minus}
@@ -339,7 +379,10 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
           onClick={() => handleChange("align", "right")}
         />
       </section>
-      <section className="flex gap-2 items-center lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4">
+      <section
+        data-testid="formatted-text-background-controls"
+        className="flex min-w-0 max-w-full flex-wrap items-center gap-2 lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4"
+      >
         <PopoverPanel
           TriggeringButton={
             <Button
@@ -387,11 +430,14 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
         />
       </section>
 
-      <section className="flex gap-1 items-center">
+      <section
+        data-testid="formatted-text-scope-controls"
+        className="flex min-w-0 max-w-full flex-wrap items-center gap-1"
+      >
         <RadioGroup
           value={shouldApplyToAll ? "all" : "selected"}
           onValueChange={(v) => setShouldApplyToAll(v === "all")}
-          className="flex gap-1 items-center"
+          className="flex flex-wrap items-center gap-1"
         >
           <RadioButton
             className="text-xs w-fit"
@@ -410,19 +456,14 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
     </>
   );
 
-  return (
-    <section className={cn("flex gap-1 items-center", className)}>
-      <div className="max-lg:hidden flex gap-2 items-center">{controls}</div>
-      <PopoverPanel
-        TriggeringButton={
-          <Button className="lg:hidden" variant="tertiary" svg={ChevronsUpDown}>
-            Tools
-          </Button>
-        }
-      >
-        <div className="flex flex-col gap-4 items-center p-4">{controls}</div>
-      </PopoverPanel>
-    </section>
+  return createPortal(
+    <div
+      data-testid="formatted-text-editor-drawer-controls"
+      className={cn("flex min-w-0 flex-col items-start gap-4")}
+    >
+      {controls}
+    </div>,
+    drawerTarget,
   );
 };
 

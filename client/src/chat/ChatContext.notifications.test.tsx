@@ -355,7 +355,10 @@ describe("ChatProvider incoming notifications", () => {
 
     await waitFor(() =>
       expect(setTaskbarUnread).toHaveBeenLastCalledWith(
-        expect.objectContaining({ scope: { churchId: "church-1", actorId: "user_1" }, unread: true }),
+        expect.objectContaining({
+          scope: { churchId: "church-1", actorId: "user_1" },
+          unreadCount: 1,
+        }),
       ),
     );
     expect(requestTaskbarAttention).not.toHaveBeenCalled();
@@ -363,7 +366,7 @@ describe("ChatProvider incoming notifications", () => {
     fireEvent.click(screen.getByRole("button", { name: "Mark latest read (1)" }));
     await waitFor(() =>
       expect(setTaskbarUnread).toHaveBeenLastCalledWith(
-        expect.objectContaining({ unread: false }),
+        expect.objectContaining({ unreadCount: 0 }),
       ),
     );
   });
@@ -420,19 +423,25 @@ describe("ChatProvider incoming notifications", () => {
     });
     await waitFor(() =>
       expect(setTaskbarUnread).toHaveBeenLastCalledWith(
-        expect.objectContaining({ scope: { churchId: "church-1", actorId: "user_1" }, unread: true }),
+        expect.objectContaining({
+          scope: { churchId: "church-1", actorId: "user_1" },
+          unreadCount: 1,
+        }),
       ),
     );
 
     view.rerender(renderChat(createMockGlobalInfo({ churchId: "church-2" })));
     await waitFor(() =>
       expect(setTaskbarUnread).toHaveBeenLastCalledWith(
-        expect.objectContaining({ scope: { churchId: "church-2", actorId: "user_1" }, unread: false }),
+        expect.objectContaining({
+          scope: { churchId: "church-2", actorId: "user_1" },
+          unreadCount: 0,
+        }),
       ),
     );
     expect(
       setTaskbarUnread.mock.calls.some(
-        ([state]) => state.scope === null && state.unread === false,
+        ([state]) => state.scope === null && state.unreadCount === 0,
       ),
     ).toBe(true);
 
@@ -441,7 +450,7 @@ describe("ChatProvider incoming notifications", () => {
     );
     await waitFor(() =>
       expect(setTaskbarUnread).toHaveBeenLastCalledWith(
-        expect.objectContaining({ scope: null, unread: false }),
+        expect.objectContaining({ scope: null, unreadCount: 0 }),
       ),
     );
   });
@@ -513,9 +522,43 @@ describe("ChatProvider incoming notifications", () => {
     expect(await screen.findByTestId("live-unread-count")).toHaveTextContent("1");
     await waitFor(() =>
       expect(setTaskbarUnread).toHaveBeenLastCalledWith(
-        expect.objectContaining({ unread: true }),
+        expect.objectContaining({ unreadCount: 1 }),
       ),
     );
+
+    const secondIncoming = message({
+      messageId: "background-chat-second",
+      clientMessageId: "client-background-chat-second",
+      text: "Another message while another app is active",
+      createdAt: 3,
+    });
+    act(() => {
+      onStreamEvent?.({ type: "message-updated", message: secondIncoming });
+    });
+    await waitFor(() =>
+      expect(setTaskbarUnread).toHaveBeenLastCalledWith(
+        expect.objectContaining({ unreadCount: 2 }),
+      ),
+    );
+
+    const thirdIncoming = message({
+      messageId: "background-chat-third",
+      clientMessageId: "client-background-chat-third",
+      text: "One more message while another app is active",
+      createdAt: 4,
+    });
+    act(() => {
+      onStreamEvent?.({ type: "message-updated", message: thirdIncoming });
+    });
+    await waitFor(() =>
+      expect(setTaskbarUnread).toHaveBeenLastCalledWith(
+        expect.objectContaining({ unreadCount: 3 }),
+      ),
+    );
+    expect(
+      setTaskbarUnread.mock.calls.slice(-3).map(([state]) => state.unreadCount),
+    ).toEqual([1, 2, 3]);
+
     expect(requestTaskbarAttention).toHaveBeenCalledWith({
       churchId: "church-1",
       actorId: "user_1",
@@ -525,11 +568,11 @@ describe("ChatProvider incoming notifications", () => {
     act(() => window.dispatchEvent(new Event("focus")));
     await waitFor(() =>
       expect(setTaskbarUnread).toHaveBeenLastCalledWith(
-        expect.objectContaining({ unread: false }),
+        expect.objectContaining({ unreadCount: 0 }),
       ),
     );
     expect(localStorage.getItem("worshipsync-chat-read:church-1:user_1")).toBe(
-      String(incomingMessage.createdAt),
+      String(thirdIncoming.createdAt),
     );
   });
 
@@ -604,7 +647,7 @@ describe("ChatProvider incoming notifications", () => {
     expect(await screen.findByTestId("live-unread-count")).toHaveTextContent("1");
     await waitFor(() =>
       expect(setTaskbarUnread).toHaveBeenLastCalledWith(
-        expect.objectContaining({ unread: true }),
+        expect.objectContaining({ unreadCount: 1 }),
       ),
     );
     expect(localStorage.getItem("worshipsync-chat-read:church-1:user_1")).toBeNull();
@@ -612,7 +655,7 @@ describe("ChatProvider incoming notifications", () => {
     fireEvent.click(screen.getByRole("button", { name: "Restore window" }));
     await waitFor(() =>
       expect(setTaskbarUnread).toHaveBeenLastCalledWith(
-        expect.objectContaining({ unread: false }),
+        expect.objectContaining({ unreadCount: 0 }),
       ),
     );
     expect(localStorage.getItem("worshipsync-chat-read:church-1:user_1")).toBe(

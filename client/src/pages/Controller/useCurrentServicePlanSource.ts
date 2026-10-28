@@ -99,7 +99,12 @@ export const useCurrentServicePlanSource = () => {
   const { canViewServices, canViewTeams, canUseTeamsLiveSync, churchId, loginState } =
     useContext(GlobalInfoContext) || {};
   const { db } = useContext(ControllerInfoContext) || {};
-  const { loadPlanPreview } = useServicePlanningImport();
+  const {
+    loadPlanPreview,
+    isNativeOverlayMappingReady,
+    nativeOverlayMappingKey,
+    isNativeOverlayPreviewFresh,
+  } = useServicePlanningImport();
   const serviceTimes = useSelector(
     (state) => state.undoable.present.serviceTimes.list,
   );
@@ -151,6 +156,7 @@ export const useCurrentServicePlanSource = () => {
     selectedOutlineId: string | undefined;
     planKey: string | null;
     generation: number;
+    overlayMappingKey: string;
     refreshPlanList: boolean;
     promise: Promise<ReconciliationResult>;
   } | null>(null);
@@ -162,12 +168,19 @@ export const useCurrentServicePlanSource = () => {
   const hasReceivedLiveConnectionRef = useRef(false);
   const manualSelectionRef = useRef(false);
   const selectedOutlineIdRef = useRef<string | undefined>(selectedOutlineId);
+  const overlayMappingKeyRef = useRef(nativeOverlayMappingKey);
+  const previousOverlayMappingKeyRef = useRef(nativeOverlayMappingKey);
+  const planAssignmentsRef = useRef<ServicePlanningTeamAssignment[]>([]);
+  const participantOverlayProjectionRef = useRef<ServicePlanParticipantOverlayProjection>(
+    failedParticipantOverlayProjection(),
+  );
   const activeControllerIdRef = useRef(activeControllerId);
   const manualBindingSequenceRef = useRef(0);
   const previousControllerIdRef = useRef(activeControllerId);
   const previousOutlineIdRef = useRef<string | undefined>(selectedOutlineId);
   const automaticSelectionContextRef = useRef<string | undefined>(undefined);
   selectedOutlineIdRef.current = selectedOutlineId;
+  overlayMappingKeyRef.current = nativeOverlayMappingKey;
   activeControllerIdRef.current = activeControllerId;
   const loadPlanPreviewRef = useRef(loadPlanPreview);
   useEffect(() => {
@@ -511,6 +524,7 @@ export const useCurrentServicePlanSource = () => {
       const churchIdAtStart = churchId;
       const controllerIdAtStart = activeControllerId;
       const selectedOutlineIdAtStart = selectedOutlineId;
+      const overlayMappingKeyAtStart = nativeOverlayMappingKey;
       if (!isEnabled || !churchIdAtStart) return "failed";
       const planKeyAtStart = selectedPlanKeyRef.current;
       const existing = reconciliationInFlightRef.current;
@@ -520,6 +534,7 @@ export const useCurrentServicePlanSource = () => {
         existing.controllerId === controllerIdAtStart &&
         existing.selectedOutlineId === selectedOutlineIdAtStart &&
         existing.planKey === planKeyAtStart &&
+        existing.overlayMappingKey === overlayMappingKeyAtStart &&
         existing.generation === generationRef.current &&
         (existing.refreshPlanList || !refreshPlanList)
       ) {
@@ -551,6 +566,7 @@ export const useCurrentServicePlanSource = () => {
         selectedOutlineIdRef.current === selectedOutlineIdAtStart &&
         selectedPlanKeyRef.current === planKeyAtStart &&
         churchIdRef.current === churchIdAtStart &&
+        overlayMappingKeyRef.current === overlayMappingKeyAtStart &&
         isEnabledRef.current &&
         isMountedRef.current;
 
@@ -690,6 +706,8 @@ export const useCurrentServicePlanSource = () => {
               ? assignmentsResult.result.participantOverlay
               : undefined,
           );
+          planAssignmentsRef.current = assignmentsResult.result.assignments;
+          participantOverlayProjectionRef.current = participantOverlay;
           setIsParticipantOverlayUnsafe(participantOverlay.status === "failed");
           const appliedOutline = await applyPlan(
             plan,
@@ -744,13 +762,70 @@ export const useCurrentServicePlanSource = () => {
         selectedOutlineId: selectedOutlineIdAtStart,
         planKey: planKeyAtStart,
         generation,
+        overlayMappingKey: overlayMappingKeyAtStart,
         refreshPlanList,
         promise: request,
       };
       return request;
     },
-    [activeControllerId, applyPlan, churchId, clearUnavailablePlan, dispatch, isEnabled, selectedOutlineId],
+    [activeControllerId, applyPlan, churchId, clearUnavailablePlan, dispatch, isEnabled, nativeOverlayMappingKey, selectedOutlineId],
   );
+
+  const rebuildSelectedPlanPreviewForMapping = useCallback(async () => {
+    const planKey = selectedPlanKeyRef.current;
+    if (!planKey || !isEnabled || !churchId) return;
+    const plan = planRef.current;
+    if (plan?.planKey !== planKey || reconciliationInFlightRef.current) {
+      await reconcileSelectedPlan();
+      return;
+    }
+
+    const churchIdAtStart = churchId;
+    const controllerIdAtStart = activeControllerId;
+    const outlineIdAtStart = selectedOutlineId;
+    const mappingKeyAtStart = nativeOverlayMappingKey;
+    const generation = ++generationRef.current;
+    participantRequestIdRef.current += 1;
+    reconciliationInFlightRef.current = null;
+    const isCurrentRequest = () =>
+      generation === generationRef.current &&
+      activeControllerIdRef.current === controllerIdAtStart &&
+      selectedOutlineIdRef.current === outlineIdAtStart &&
+      selectedPlanKeyRef.current === planKey &&
+      churchIdRef.current === churchIdAtStart &&
+      overlayMappingKeyRef.current === mappingKeyAtStart &&
+      planRef.current === plan &&
+      isEnabledRef.current &&
+      isMountedRef.current;
+
+    try {
+      const outline = await loadPlanPreviewRef.current(
+        plan,
+        planAssignmentsRef.current,
+        participantOverlayProjectionRef.current,
+      );
+      if (!isCurrentRequest()) return;
+      dispatch(setServicePlanningPlanOutline({ outline, planKey }));
+    } catch (error) {
+      if (!isCurrentRequest()) return;
+      console.error("Could not rebuild the saved-plan overlay preview:", error);
+    }
+  }, [
+    activeControllerId,
+    churchId,
+    dispatch,
+    isEnabled,
+    nativeOverlayMappingKey,
+    reconcileSelectedPlan,
+    selectedOutlineId,
+  ]);
+
+  useEffect(() => {
+    if (previousOverlayMappingKeyRef.current === nativeOverlayMappingKey) return;
+    previousOverlayMappingKeyRef.current = nativeOverlayMappingKey;
+    if (!selectedPlanKeyRef.current) return;
+    void rebuildSelectedPlanPreviewForMapping();
+  }, [nativeOverlayMappingKey, rebuildSelectedPlanPreviewForMapping]);
 
   const refreshScheduleParticipants = useCallback(
     async (planKey: string, waitForPlanRead?: Promise<unknown>) => {
@@ -1223,6 +1298,9 @@ export const useCurrentServicePlanSource = () => {
     isEnabled,
     isLoading,
     isPlanPreviewStale,
+    isNativeOverlayMappingReady,
+    nativeOverlayMappingKey,
+    isNativeOverlayPreviewFresh,
     isRefreshing,
     isRefreshingParticipants,
     isParticipantOverlayUnsafe,

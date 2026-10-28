@@ -59,7 +59,7 @@ describe("FormattedTextEditor", () => {
   });
 
   it("keeps Stream Format controls hidden for songs", () => {
-    render(<FormattedTextEditor />);
+    render(<FormattedTextEditor drawerTarget={document.body} />);
 
     expect(screen.queryByLabelText(/Padding X/i)).not.toBeInTheDocument();
     expect(screen.queryByDisplayValue("52")).not.toBeInTheDocument();
@@ -89,7 +89,7 @@ describe("FormattedTextEditor", () => {
       }],
       arrangements: [],
     } as ItemState;
-    render(<FormattedTextEditor />);
+    render(<FormattedTextEditor drawerTarget={document.body} />);
 
     expect(screen.getByLabelText(/Padding X/i)).toHaveValue(4);
     expect(screen.getByLabelText(/Padding Y/i)).toHaveValue(3);

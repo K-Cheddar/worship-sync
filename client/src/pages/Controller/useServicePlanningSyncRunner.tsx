@@ -42,6 +42,7 @@ type PreparedSyncRun = {
   targetOutlineId?: string;
   servicePlanKey?: string;
   servicePlanName?: string;
+  nativeOverlayMappingKey?: string;
 };
 
 const delay = (ms: number) =>
@@ -126,6 +127,7 @@ export const useServicePlanningSyncRunner = ({
     planOverlaySyncSteps,
     executeOutlineSyncStep,
     executeOverlaySyncStep,
+    isNativeOverlayPreviewFresh,
   } = useServicePlanningImport();
 
   const preparedRunRef = useRef<PreparedSyncRun | null>(null);
@@ -186,6 +188,15 @@ export const useServicePlanningSyncRunner = ({
       );
       return;
     }
+    if (sync.mode !== "outline" && preview.nativeOverlaySummary &&
+      !isNativeOverlayPreviewFresh(preview)) {
+      dispatch(
+        failServicePlanningSync(
+          "Church overlay settings are still loading or changed. Refresh the plan before syncing overlays.",
+        ),
+      );
+      return;
+    }
     if (preparedRunRef.current?.runId === sync.runId) return;
 
     const outlineSteps =
@@ -230,6 +241,7 @@ export const useServicePlanningSyncRunner = ({
       servicePlanKey: state.servicePlanningImport.servicePlanKey ?? undefined,
       servicePlanName:
         state.servicePlanningImport.serviceOutline?.planLabel ?? undefined,
+      nativeOverlayMappingKey: preview.nativeOverlayMappingKey,
     };
     overlayAnchorIdRef.current = undefined;
     overlayClaimedIdsRef.current = new Set();
@@ -255,6 +267,7 @@ export const useServicePlanningSyncRunner = ({
     sync.runId,
     sync.status,
     isPlanPreviewStale,
+    isNativeOverlayPreviewFresh,
     store,
   ]);
 
@@ -378,6 +391,13 @@ export const useServicePlanningSyncRunner = ({
         }
 
         if (sync.phase === "overlays") {
+          const currentPreview = store.getState().servicePlanningImport.preview;
+          if (run.nativeOverlayMappingKey && (
+            currentPreview?.nativeOverlayMappingKey !== run.nativeOverlayMappingKey ||
+            !isNativeOverlayPreviewFresh(currentPreview)
+          )) {
+            throw new Error("Church overlay settings changed. Refresh the plan before syncing overlays.");
+          }
           if (!overlayRouteReady) {
             navigate(`${controllerBasePath}/overlays`);
             return;
@@ -401,6 +421,7 @@ export const useServicePlanningSyncRunner = ({
           const result = await executeOverlaySyncStep(step, {
             insertAfterId: overlayAnchorIdRef.current,
             claimedOverlayIds: overlayClaimedIdsRef.current,
+            nativeOverlayMappingKey: run.nativeOverlayMappingKey,
           });
           if (result.resultOverlayId) {
             overlayAnchorIdRef.current = result.resultOverlayId;
@@ -457,6 +478,7 @@ export const useServicePlanningSyncRunner = ({
     dispatch,
     executeOutlineSyncStep,
     executeOverlaySyncStep,
+    isNativeOverlayPreviewFresh,
     navigate,
     controllerBasePath,
     overlayRouteReady,

@@ -14,6 +14,7 @@ import { buildServicePlanningPreview } from "../integrations/servicePlanning/bui
 import type { OutlineItemCandidate } from "../types/servicePlanningImport";
 import type { OverlayInfo } from "../types";
 import type { ServicePlanningConfig } from "../types/integrations";
+import { createDefaultChurchIntegrations } from "../types/integrations";
 import { ControllerInfoContext } from "../context/controllerInfo";
 import { GlobalInfoContext } from "../context/globalInfo";
 import overlaysReducer, {
@@ -24,9 +25,10 @@ import overlaysReducer, {
 import { overlaySlice } from "../store/overlaySlice";
 import { normalizeOverlayForSync } from "../utils/overlayUtils";
 import { plainTextToRichText } from "../types/richText";
+import allDocsReducer from "../store/allDocsSlice";
 
 type SyncTestState = {
-  allDocs: { allSongDocs: never[]; allFreeFormDocs: never[] };
+  allDocs: ReturnType<typeof allDocsReducer>;
   undoable: {
     present: {
       overlays: ReturnType<typeof overlaysReducer>;
@@ -44,7 +46,7 @@ type SyncTestState = {
 };
 
 const initialSyncTestState: SyncTestState = {
-  allDocs: { allSongDocs: [], allFreeFormDocs: [] },
+  allDocs: allDocsReducer(undefined, { type: "test/init" }),
   undoable: {
     present: {
       overlays: overlaysReducer(undefined, { type: "test/init" }),
@@ -90,9 +92,18 @@ const createSyncTestStore = (initialOverlays: OverlayInfo[]) => {
 const servicePlanningHookWrapper = (
   store: ReturnType<typeof createSyncTestStore>,
   db: { get: (id: string) => Promise<unknown>; put: (doc: unknown) => Promise<unknown> },
-  globalInfo: Record<string, unknown> = {},
+  globalInfo: Record<string, unknown> | (() => Record<string, unknown>) = {},
 ) => {
   const contextDb = { allDocs: jest.fn(async () => ({ rows: [] })), ...db };
+  const getGlobalInfo = typeof globalInfo === "function"
+    ? globalInfo
+    : () => Object.keys(globalInfo).length
+      ? globalInfo
+      : {
+          churchId: "test-church",
+          churchIntegrationsStatus: "ready",
+          churchIntegrations: createDefaultChurchIntegrations(),
+        };
   return ({ children }: PropsWithChildren) => React.createElement(
     Provider,
     {
@@ -102,7 +113,7 @@ const servicePlanningHookWrapper = (
         { value: { db: contextDb } as never },
         React.createElement(
           GlobalInfoContext.Provider,
-          { value: globalInfo as never },
+          { value: getGlobalInfo() as never },
           children,
         ),
       ),
@@ -806,6 +817,222 @@ describe("useServicePlanningImport overlay execution", () => {
 });
 
 
+describe("native overlay mapping readiness", () => {
+  afterEach(() => jest.useRealTimers());
+
+  const makeNativePlan = () => ({
+    planKey: "service-1@2026-10-25",
+    name: "Sabbath Service",
+    sourceImport: undefined,
+    sections: [{
+      id: "worship",
+      name: "Worship",
+      elements: [
+        {
+          id: "sermon",
+          type: "free" as const,
+          title: plainTextToRichText("Sermon"),
+          sourceElementTypeRaw: "Sermon",
+          assignees: [
+            { id: "speaker-a", name: "Avery" },
+            { id: "speaker-b", name: "Jordan" },
+          ],
+        },
+        {
+          id: "prayer",
+          type: "free" as const,
+          title: plainTextToRichText("Prayer"),
+          sourceElementTypeRaw: "Prayer",
+          assignees: [{ id: "reader", name: "Casey" }],
+        },
+      ],
+    }],
+  });
+
+  const makeProjection = () => ({
+    status: "ready" as const,
+    elements: [
+      {
+        elementId: "sermon",
+        assignees: ["Avery", "Jordan"].map((name) => ({
+          name,
+          memberStatus: "guest" as const,
+          roleStatus: "not-applicable" as const,
+        })),
+      },
+      {
+        elementId: "prayer",
+        assignees: [{
+          name: "Casey",
+          memberStatus: "guest" as const,
+          roleStatus: "not-applicable" as const,
+        }],
+      },
+    ],
+  });
+
+  const makeIntegrationSettings = (eventLabel = "Custom Event") => {
+    const integrations = createDefaultChurchIntegrations();
+    integrations.servicePlanning.elementRules = [
+      {
+        id: "sermon-rule",
+        matchElementType: "Sermon",
+        matchMode: "exact",
+        overlaySyncEnabled: true,
+        displayName: eventLabel,
+        nameSources: ["ledBy"],
+        multiOverlay: {
+          mode: "split",
+          eventSuffixByPersonIndex: ["First", "Second"],
+        },
+      },
+      {
+        id: "prayer-rule",
+        matchElementType: "Prayer",
+        matchMode: "exact",
+        overlaySyncEnabled: false,
+        displayName: "Disabled Prayer",
+        nameSources: ["ledBy"],
+        multiOverlay: { mode: "single" },
+      },
+    ];
+    return integrations;
+  };
+
+  const makeDb = (allDocs = jest.fn(async () => ({ rows: [] }))) => ({
+    allDocs,
+    get: jest.fn(async (id: string) => ({ _id: id, _rev: "1-a", docType: "overlay" })),
+    put: jest.fn(async () => ({ rev: "2-b" })),
+  });
+
+  it("keeps default preview internal until settings arrive, then syncs only the latest mapping", async () => {
+    const store = createSyncTestStore([]);
+    const db = makeDb();
+    const sourcePlan = makeNativePlan();
+    let globalInfo: Record<string, unknown> = {
+      churchId: "church-1",
+      churchIntegrationsStatus: "loading",
+    };
+    const { result, rerender } = renderHook(() => useServicePlanningImport(), {
+      wrapper: servicePlanningHookWrapper(store, db, () => globalInfo),
+    });
+
+    let defaultPreview!: Awaited<ReturnType<typeof result.current.loadPlanPreview>>["preview"];
+    await act(async () => {
+      defaultPreview = (await result.current.loadPlanPreview(sourcePlan, [], makeProjection())).preview;
+    });
+    expect(defaultPreview.overlayCandidates.flatMap((row) => row.candidates.map((candidate) => candidate.patch.event)))
+      .toEqual(["Sermon", "Sermon", "Prayer"]);
+    expect(result.current.isNativeOverlayPreviewFresh(defaultPreview)).toBe(false);
+    await expect(result.current.runImport(defaultPreview, { overlays: true, outline: false }))
+      .rejects.toThrow(/settings are still loading/i);
+    await expect(result.current.runImport(defaultPreview, { overlays: false, outline: true }))
+      .resolves.toMatchObject({ outlineInserted: 0, overlaysUpdated: 0 });
+    expect(db.put).not.toHaveBeenCalled();
+
+    globalInfo = {
+      churchId: "church-1",
+      churchIntegrationsStatus: "ready",
+      churchIntegrations: makeIntegrationSettings(),
+    };
+    rerender();
+    let configuredPreview!: Awaited<ReturnType<typeof result.current.loadPlanPreview>>["preview"];
+    await act(async () => {
+      configuredPreview = (await result.current.loadPlanPreview(sourcePlan, [], makeProjection())).preview;
+    });
+    expect(result.current.isNativeOverlayPreviewFresh(configuredPreview)).toBe(true);
+    expect(configuredPreview.overlayCandidates.flatMap((row) => row.candidates.map((candidate) => candidate.patch.event)))
+      .toEqual(["Custom Event First", "Custom Event Second"]);
+    expect(configuredPreview.nativeOverlaySummary?.selectedItemCount).toBe(1);
+    expect(result.current.planOverlaySyncSteps(configuredPreview).steps).toHaveLength(2);
+
+    await act(async () => {
+      await result.current.runImport(configuredPreview, { overlays: true, outline: false });
+    });
+    expect(store.getState().undoable.present.overlays.list.map(({ event }) => event))
+      .toEqual(["Custom Event First", "Custom Event Second"]);
+    expect(db.put).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a preview or pending overlay step after mapping settings change", async () => {
+    jest.useFakeTimers();
+    const store = createSyncTestStore([{
+      id: "target",
+      type: "participant",
+      name: "Old name",
+      event: "Custom Event First",
+    }]);
+    const db = makeDb();
+    const sourcePlan = makeNativePlan();
+    let globalInfo: Record<string, unknown> = {
+      churchId: "church-1",
+      churchIntegrationsStatus: "ready",
+      churchIntegrations: makeIntegrationSettings(),
+    };
+    const { result, rerender } = renderHook(() => useServicePlanningImport(), {
+      wrapper: servicePlanningHookWrapper(store, db, () => globalInfo),
+    });
+    let preview!: Awaited<ReturnType<typeof result.current.loadPlanPreview>>["preview"];
+    await act(async () => {
+      preview = (await result.current.loadPlanPreview(sourcePlan, [], makeProjection())).preview;
+    });
+
+    let pending!: Promise<unknown>;
+    await act(async () => {
+      pending = result.current.runImport(preview, { overlays: true, outline: false });
+      await Promise.resolve();
+    });
+    const pendingResult = pending.then(
+      () => new Error("Expected the stale overlay sync to reject."),
+      (error: unknown) => error as Error,
+    );
+    expect(db.put).not.toHaveBeenCalled();
+
+    globalInfo = {
+      churchId: "church-1",
+      churchIntegrationsStatus: "ready",
+      churchIntegrations: makeIntegrationSettings("Changed Event"),
+    };
+    rerender();
+    await act(async () => { await jest.runAllTimersAsync(); });
+    expect((await pendingResult).message).toMatch(/settings changed/i);
+    expect(db.put).not.toHaveBeenCalled();
+    expect(store.getState().undoable.present.overlays.list[0]).toMatchObject({
+      id: "target",
+      name: "Old name",
+      event: "Custom Event First",
+    });
+    expect(result.current.isNativeOverlayPreviewFresh(preview)).toBe(false);
+  });
+
+  it("keeps native preview freshness when an unrelated rule option changes", async () => {
+    const store = createSyncTestStore([]);
+    const db = makeDb();
+    const integrations = makeIntegrationSettings();
+    let globalInfo: Record<string, unknown> = {
+      churchId: "church-1",
+      churchIntegrationsStatus: "ready",
+      churchIntegrations: integrations,
+    };
+    const { result, rerender } = renderHook(() => useServicePlanningImport(), {
+      wrapper: servicePlanningHookWrapper(store, db, () => globalInfo),
+    });
+    let preview!: Awaited<ReturnType<typeof result.current.loadPlanPreview>>["preview"];
+    await act(async () => {
+      preview = (await result.current.loadPlanPreview(makeNativePlan(), [], makeProjection())).preview;
+    });
+    const mappingKey = result.current.nativeOverlayMappingKey;
+
+    const changedIntegrations = makeIntegrationSettings();
+    changedIntegrations.servicePlanning.elementRules[0].dedupeRepeatedOverlays = true;
+    globalInfo = { ...globalInfo, churchIntegrations: changedIntegrations };
+    rerender();
+
+    expect(result.current.nativeOverlayMappingKey).toBe(mappingKey);
+    expect(result.current.isNativeOverlayPreviewFresh(preview)).toBe(true);
+  });
+});
+
 describe("native overlay synchronization batches", () => {
   afterEach(() => jest.useRealTimers());
 
@@ -912,7 +1139,10 @@ describe("native overlay synchronization batches", () => {
     expect(preview.overlayPlan[2]).toMatchObject({ action: "clone", targetOverlaySource: "library", patch: { title: "Just Want to Praise You" } });
     expect(preview.nativeOverlaySummary?.selectedItemCount).toBe(11);
     const planned = result.current.planOverlaySyncSteps(preview);
-    expect(planned.steps).toEqual(preview.overlayPlan);
+    expect(planned.steps)
+      .toEqual(preview.overlayPlan.filter((step) => step.action !== "skip"));
+    expect(planned.steps.every((step) => step.nativeOverlayMappingKey === preview.nativeOverlayMappingKey))
+      .toBe(true);
 
     await act(async () => {
       const pending = result.current.runImport(preview, { overlays: true, outline: false });
@@ -1034,10 +1264,14 @@ describe("native overlay synchronization batches", () => {
     let context = { db: dbA, churchId: "church-a" };
     const wrapper = ({ children }: PropsWithChildren) => React.createElement(Provider, { store, children:
       React.createElement(ControllerInfoContext.Provider, { value: { db: context.db } as never },
-        React.createElement(GlobalInfoContext.Provider, { value: { churchId: context.churchId } as never }, children)),
+        React.createElement(GlobalInfoContext.Provider, { value: {
+          churchId: context.churchId,
+          churchIntegrationsStatus: "ready",
+          churchIntegrations: createDefaultChurchIntegrations(),
+        } as never }, children)),
     });
     const { result, rerender } = renderHook(() => useServicePlanningImport(), { wrapper });
-    const step: ExecutableOverlaySyncPlanItem = { sourceKind: "native", action: "update", targetOverlayId: "same-id", sectionName: "", sourceRowIndex: 0, elementType: "Sermon", title: "Sermon", ledBy: "", personIndex: 0, rawNameToken: "New", patch: { name: "New", title: "", event: "Sermon" } };
+    const step: ExecutableOverlaySyncPlanItem = { sourceKind: "native", nativeOverlayMappingKey: result.current.nativeOverlayMappingKey, action: "update", targetOverlayId: "same-id", sectionName: "", sourceRowIndex: 0, elementType: "Sermon", title: "Sermon", ledBy: "", personIndex: 0, rawNameToken: "New", patch: { name: "New", title: "", event: "Sermon" } };
     let pending!: ReturnType<typeof result.current.executeOverlaySyncStep>;
     await act(async () => { pending = result.current.executeOverlaySyncStep(step); await jest.advanceTimersByTimeAsync(500); });
     expect(dbA.put).toHaveBeenCalledTimes(1);
@@ -1058,7 +1292,7 @@ describe("native overlay synchronization batches", () => {
     db.get.mockImplementationOnce(() => new Promise((resolve) => { resolveRead = resolve; }));
     const store = createSyncTestStore([]);
     const { result, unmount } = renderHook(() => useServicePlanningImport(), { wrapper: servicePlanningHookWrapper(store, db) });
-    const step: ExecutableOverlaySyncPlanItem = { sourceKind: "native", action: "clone", targetOverlaySource: "library", targetOverlayId: "library", sectionName: "", sourceRowIndex: 0, elementType: "Sermon", title: "Sermon", ledBy: "", personIndex: 0, rawNameToken: "Guest", patch: { name: "Guest", title: "", event: "Sermon" } };
+    const step: ExecutableOverlaySyncPlanItem = { sourceKind: "native", nativeOverlayMappingKey: result.current.nativeOverlayMappingKey, action: "clone", targetOverlaySource: "library", targetOverlayId: "library", sectionName: "", sourceRowIndex: 0, elementType: "Sermon", title: "Sermon", ledBy: "", personIndex: 0, rawNameToken: "Guest", patch: { name: "Guest", title: "", event: "Sermon" } };
     const pending = result.current.executeOverlaySyncStep(step);
     unmount();
     resolveRead(db.docs.get("overlay-library")!);

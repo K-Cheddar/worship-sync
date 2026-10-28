@@ -89,6 +89,56 @@ describe("owned item slide targeting", () => {
     expect(result?.slides?.[1].boxes[1].fontColor).toBe("#00ff00");
   });
 
+  it("applies matched geometry across every slide in the selected scope", () => {
+    const currentItem = {
+      ...makeItem([
+        makeSlide("slide-a", "Section 1A", "background-a", "body-a", "A words"),
+        makeSlide("slide-b", "Section 1B", "background-b", "body-b", "B words"),
+      ]),
+      type: "image",
+      arrangements: [],
+    } as ItemState;
+
+    const result = applyOwnedItemContentMutation(currentItem, {
+      kind: "boxProperties",
+      slideId: "slide-a",
+      targetBoxId: "body-a",
+      sectionNum: 1,
+      boxIndex: 1,
+      properties: { x: 0, y: 35, width: 100, height: 35 },
+      applyToAll: true,
+    });
+
+    expect(result?.slides?.map((slide) => slide.boxes[1])).toEqual([
+      expect.objectContaining({ x: 0, y: 35, width: 100, height: 35 }),
+      expect.objectContaining({ x: 0, y: 35, width: 100, height: 35 }),
+    ]);
+  });
+
+  it("limits selected-scope geometry changes to the original slide", () => {
+    const currentItem = makeItem([
+      makeSlide("slide-a", "Section 1A", "background-a", "body-a", "A words"),
+      makeSlide("slide-b", "Section 1B", "background-b", "body-b", "B words"),
+    ]);
+
+    const result = applyOwnedItemContentMutation(currentItem, {
+      kind: "boxProperties",
+      slideId: "slide-a",
+      targetBoxId: "body-a",
+      sectionNum: 1,
+      boxIndex: 1,
+      properties: { x: 0, y: 65, width: 100, height: 35 },
+      applyToAll: false,
+    });
+
+    expect(result?.slides?.[0].boxes[1]).toEqual(
+      expect.objectContaining({ x: 0, y: 65, width: 100, height: 35 }),
+    );
+    expect(result?.slides?.[1].boxes[1]).toEqual(
+      expect.objectContaining({ width: 100, height: 100 }),
+    );
+  });
+
   it("resolves a regenerated overflow slide through its retained box identity", () => {
     const originalSlides = [
       makeSlide("old-slide-a", "Section 1A", "background-a", "body-a", "Line A\n"),
