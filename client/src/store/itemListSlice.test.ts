@@ -13,6 +13,7 @@ import itemListReducer, {
   recordOutlineConflict,
   markItemListPersisted,
   resolveOutlineConflict,
+  failOutlineResolution,
 } from "./itemListSlice";
 import { createServiceItem } from "../test/fixtures";
 import type { ServiceItem } from "../types";
@@ -147,6 +148,50 @@ describe("itemListSlice", () => {
         "Remote addition",
       ]);
       expect(store.getState().itemList.hasPendingUpdate).toBe(false);
+    });
+
+    it.each(["draft", "revision"])("rejects a rendered row decision after the %s changes before dispatch", (changed) => {
+      const store = createStore();
+      const original = [createServiceItem({ _id: "a", listId: "a", name: "Welcome A" })];
+      const saved = [{ ...original[0], name: "Welcome B" }];
+      const reviewed = { graph: { winningRevision: "2-a", conflictRevisions: ["2-b"], histories: {} },
+        versions: [{ revision: "2-a", items: original }, { revision: "2-b", items: saved }],
+        itemReview: { baselineItems: [{ ...original[0], name: "Welcome" }], localItems: original, remoteItems: saved },
+      };
+      store.dispatch(initiateItemList({ outlineId: "outline", items: original }));
+      store.dispatch(recordOutlineConflict({ outlineId: "outline", baselineItems: original, localItems: original, remoteItems: saved, revisionConflict: reviewed }));
+      if (changed === "draft") store.dispatch(updateItemList([...original, createServiceItem({ _id: "new", listId: "new", name: "New draft row" })]));
+      else store.dispatch(recordOutlineConflict({ outlineId: "outline", baselineItems: original, localItems: original, remoteItems: saved,
+        revisionConflict: { ...reviewed, graph: { ...reviewed.graph, winningRevision: "3-new" } } }));
+      const before = store.getState().itemList;
+      store.dispatch(resolveOutlineConflict({ outlineId: "outline", choice: "keep-local", draftItems: original,
+        reviewedRevisionConflict: reviewed, reviewedItems: saved,
+        revisionSelection: { kind: "rows", review: reviewed.itemReview, choices: { '["a","name"]': "remote" } },
+      }));
+      expect(store.getState().itemList.pendingRevisionResolutions).toEqual({});
+      expect(store.getState().itemList.list).toEqual(before.list);
+      expect(store.getState().itemList.remoteConflicts.outline.resolutionChoice).toBeUndefined();
+    });
+
+    it("keeps the editable draft until a reviewed selection is acknowledged, including a failed save", () => {
+      const store = createStore();
+      const draft = [createServiceItem({ _id: "a", listId: "a", name: "Unsaved private draft" })];
+      const remote = [{ ...draft[0], name: "Saved version" }];
+      const revision = { graph: { winningRevision: "2-a", conflictRevisions: ["2-b"], histories: {} },
+        versions: [{ revision: "2-a", items: remote }, { revision: "2-b", items: draft }],
+      };
+      store.dispatch(initiateItemList({ outlineId: "outline", items: draft }));
+      store.dispatch(recordOutlineConflict({ outlineId: "outline", baselineItems: draft, localItems: draft, remoteItems: remote, revisionConflict: revision }));
+      store.dispatch(resolveOutlineConflict({ outlineId: "outline", choice: "keep-local", draftItems: draft,
+        reviewedRevisionConflict: revision, reviewedItems: remote, revisionSelection: { kind: "whole", revision: "2-a" },
+      }));
+      expect(store.getState().itemList.list).toEqual(draft);
+      expect(store.getState().itemList.pendingRevisionResolutions.outline.items).toEqual(remote);
+      store.dispatch(failOutlineResolution("outline"));
+      expect(store.getState().itemList.list).toEqual(draft);
+      expect(store.getState().itemList.remoteConflicts.outline.localItems).toEqual(draft);
+      expect(store.getState().itemList.remoteConflicts.outline.saveError).toBe(true);
+      expect(store.getState().itemList.pendingRevisionResolutions).toEqual({});
     });
 
     it("keeps edits made after the conflict banner appeared", () => {

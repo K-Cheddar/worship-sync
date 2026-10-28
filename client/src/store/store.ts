@@ -1710,7 +1710,7 @@ listenerMiddleware.startListening({
       ].resolutionChoice,
     );
     return (
-      (itemListChanged &&
+      ((itemListChanged || itemListSlice.actions.forceUpdate.match(action)) &&
       (!excluded(action) || restoringResolution) &&
       !!(currentState as RootState).undoable.present.itemList
         .hasPendingUpdate &&
@@ -1722,6 +1722,8 @@ listenerMiddleware.startListening({
 
   effect: async (action, listenerApi) => {
     const dbAtStart = db;
+    const sessionAtStart = outlineAccountSession;
+    const sessionIsCurrent = () => sessionAtStart === outlineAccountSession;
     const isSavingOutgoingOutline = itemListsSlice.actions.selectItemList.match(action);
 
     listenerApi.cancelActiveListeners();
@@ -1752,6 +1754,7 @@ listenerMiddleware.startListening({
 
     if (
       !dbAtStart ||
+      !sessionIsCurrent() ||
       db !== dbAtStart ||
       !isInitialized ||
       !hasPendingUpdate ||
@@ -1762,33 +1765,43 @@ listenerMiddleware.startListening({
       return;
     }
 
+    const revisionResolution = present.itemList.pendingRevisionResolutions?.[selectedList._id];
+    const submittedItems = revisionResolution?.items ?? list;
     try {
-      const revisionResolution = present.itemList.pendingRevisionResolutions?.[
-        selectedList._id
-      ];
       const persisted = revisionResolution
         ? await resolveServiceListRevisionConflict(
             dbAtStart,
             selectedList._id,
-            [...list],
+            [...submittedItems],
             revisionResolution.conflict,
+            revisionResolution.selection,
+            sessionIsCurrent,
           )
         : await persistServiceListItems(
             dbAtStart,
             selectedList._id,
             [...list],
             [...baseline],
+            sessionIsCurrent,
           );
 
-      if (db !== dbAtStart) return;
+      if (db !== dbAtStart || !sessionIsCurrent()) return;
       const afterPutState = (listenerApi.getState() as RootState).undoable.present;
       const afterPut = afterPutState.itemList;
       if (conflictReviewIsCurrent() && (!afterPut.loadedOutlineId || afterPut.loadedOutlineId === selectedList._id || afterPut.remoteConflicts?.[selectedList._id]?.resolutionChoice)) {
         listenerApi.dispatch(itemListSlice.actions.markItemListPersisted({
           outlineId: selectedList._id,
           items: [...persisted.items],
-          submittedItems: [...list],
+          submittedItems: [...(revisionResolution?.draftItems ?? submittedItems)],
         }));
+        const latest = (listenerApi.getState() as RootState).undoable.present;
+        if (revisionResolution && latest.itemList.loadedOutlineId === selectedList._id &&
+          latest.itemLists.selectedList?._id === selectedList._id && latest.itemList.hasPendingUpdate &&
+          !latest.itemList.remoteConflicts[selectedList._id]) {
+          // Save edits made after the preview as an ordinary mutation, once
+          // the reviewed choices have been acknowledged and retired safely.
+          listenerApi.dispatch(itemListSlice.actions.forceUpdate());
+        }
       }
 
       safePostMessage({
@@ -1799,6 +1812,7 @@ listenerMiddleware.startListening({
         },
       });
     } catch (error) {
+      if (!sessionIsCurrent()) return;
       if (isListenerCancelledTaskError(error)) return;
       if (!conflictReviewIsCurrent()) return;
       if (error instanceof ServiceListConflictError) {
@@ -2031,12 +2045,14 @@ listenerMiddleware.startListening({
     const dbAtStart = db;
     if (!dbAtStart) return;
     const isSavingOutgoingOutline = itemListsSlice.actions.selectItemList.match(action);
+    const sessionAtStart = outlineAccountSession;
+    const sessionIsCurrent = () => sessionAtStart === outlineAccountSession;
     listenerApi.cancelActiveListeners();
     if (!isSavingOutgoingOutline) {
       await listenerApi.delay(1500);
     }
 
-    if (db !== dbAtStart) return;
+    if (db !== dbAtStart || !sessionIsCurrent()) return;
     const state = isSavingOutgoingOutline
       ? (listenerApi.getOriginalState() as RootState)
       : (listenerApi.getState() as RootState);
@@ -2056,10 +2072,11 @@ listenerMiddleware.startListening({
         dbAtStart,
         listId,
         list.map((overlay) => overlay.id),
+        sessionIsCurrent,
       );
 
       listenerApi.throwIfCancelled();
-      if (db !== dbAtStart) return;
+      if (db !== dbAtStart || !sessionIsCurrent()) return;
       const latest = (listenerApi.getState() as RootState).undoable.present;
       if (
         latest.overlays.list === list &&
@@ -2072,6 +2089,7 @@ listenerMiddleware.startListening({
         data: { docs: persisted, hostId: globalHostId },
       });
     } catch (error) {
+      if (!sessionIsCurrent()) return;
       if (isListenerCancelledTaskError(error)) return;
       console.error("Failed to persist overlay order:", error);
       const message = error instanceof ServiceListConflictError
@@ -4126,12 +4144,18 @@ type RetainedOutlineState = Pick<RootState["undoable"]["present"]["itemList"], "
 const outlineDraftsByDb = new Map<object | string, RetainedOutlineState>();
 const outlineDraftDatabaseKey = (database: NonNullable<typeof db>) => database.name || database;
 let outlineStateDatabase = db;
+let outlineAccountSession = 0;
 
 const rootReducer: Reducer = (state: RootState, action: Action) => {
   const historyOutline = action.type === "@@redux-undo/UNDO" || action.type === "@@redux-undo/REDO"
     ? state?.undoable.present.itemList : undefined;
   const databaseChanged = outlineStateDatabase !== db;
-  if (outlineStateDatabase && state?.undoable?.present.itemList) {
+  if (action.type === "RESET") {
+    // Clear before caching/reducing: logout must never save or rehydrate the
+    // previous account's unsaved drafts, even with the same database handle.
+    outlineDraftsByDb.clear();
+    outlineAccountSession += 1;
+  } else if (outlineStateDatabase && state?.undoable?.present.itemList) {
     const { remoteConflicts, pendingRevisionResolutions } = state.undoable.present.itemList;
     const key = outlineDraftDatabaseKey(outlineStateDatabase);
     if (Object.keys(remoteConflicts).length) outlineDraftsByDb.set(key, { remoteConflicts, pendingRevisionResolutions });
@@ -4152,7 +4176,7 @@ const rootReducer: Reducer = (state: RootState, action: Action) => {
     } as RootState;
   }
   const reduced = combinedReducers(state, action);
-  const retained = historyOutline ? {
+  const retained = action.type === "RESET" ? undefined : historyOutline ? {
     remoteConflicts: historyOutline.remoteConflicts,
     pendingRevisionResolutions: historyOutline.pendingRevisionResolutions,
   } : db && (isStoreResetAction(action) || databaseChanged)

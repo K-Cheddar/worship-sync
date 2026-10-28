@@ -6,6 +6,17 @@ export type OutlineMergeResult =
   | { kind: "merged"; items: ServiceItem[]; remoteItems: ServiceItem[] }
   | { kind: "conflict"; items: ServiceItem[]; remoteItems: ServiceItem[] };
 
+export type OutlineItemConflict = {
+  key: string;
+  listId?: string;
+  field?: string;
+  reason: "field" | "row" | "delete-edit" | "order" | "replacement";
+  localRow?: ServiceItem;
+  remoteRow?: ServiceItem;
+};
+export type OutlineItemChoices = Record<string, "local" | "remote">;
+type ChooseConflict = (conflict: OutlineItemConflict) => "local" | "remote" | undefined;
+
 const stableRows = (
   rows: ServiceItem[],
   knownRows: ServiceItem[],
@@ -42,13 +53,14 @@ const mergeRow = (
   base: ServiceItem,
   local: ServiceItem,
   remote: ServiceItem,
+  choose?: ChooseConflict,
 ): { item: ServiceItem; conflict: boolean } => {
   const merged: Record<string, unknown> = { ...remote };
   let conflict = false;
   const keys = new Set([...Object.keys(base), ...Object.keys(local), ...Object.keys(remote)]);
 
   keys.forEach((key) => {
-    if (key === "listId" || key === "_id") return;
+    if (key === "listId") return;
     const hadBase = Object.prototype.hasOwnProperty.call(base, key);
     const hasLocal = Object.prototype.hasOwnProperty.call(local, key);
     const hasRemote = Object.prototype.hasOwnProperty.call(remote, key);
@@ -60,7 +72,12 @@ const mergeRow = (
 
     if (!localChanged) return;
     if (remoteChanged && (hasLocal !== hasRemote || !isEqual(localValue, remoteValue))) {
-      conflict = true;
+      const choice = choose?.({
+        key: JSON.stringify([local.listId, key]), listId: local.listId,
+        field: key, reason: "field", localRow: local, remoteRow: remote,
+      });
+      if (choice === "remote") return;
+      if (!choice) conflict = true;
     }
     if (hasLocal) merged[key] = localValue;
     else delete merged[key];
@@ -105,6 +122,7 @@ export const reconcileOutlineItems = (
   baseline: ServiceItem[],
   localItems: ServiceItem[],
   remoteItems: ServiceItem[],
+  choose?: ChooseConflict,
 ): OutlineMergeResult => {
   const knownRows = [...baseline, ...localItems];
   const base = stableRows(baseline, knownRows);
@@ -135,9 +153,19 @@ export const reconcileOutlineItems = (
   const overlappingReplacements = [...localRemovedIds].some((id) =>
     remoteRemovedIds.has(id),
   ) && localAddedIds.size > 0 && remoteAddedIds.size > 0;
-  let conflict =
-    (localOrderChanged && remoteOrderChanged && commonOrderDiffers) ||
-    overlappingReplacements;
+  const orderConflict = localOrderChanged && remoteOrderChanged && commonOrderDiffers;
+  const orderChoice = orderConflict ? choose?.({ key: "order", reason: "order" }) : undefined;
+  // Replacing the same removed rows with different identities is ambiguous.
+  // Keep the existing whole-version review for that case.
+  if (overlappingReplacements) choose?.({ key: "replacement", reason: "replacement" });
+  let conflict = (orderConflict && !orderChoice) || overlappingReplacements;
+  const chooseRow = (id: string, localRow?: ServiceItem, remoteRow?: ServiceItem, reason: "row" | "delete-edit" = "delete-edit") => {
+    const choice = choose?.({
+      key: JSON.stringify([id]), listId: id, reason, localRow, remoteRow,
+    });
+    if (!choice) conflict = true;
+    return choice === "remote" ? remoteRow : localRow;
+  };
 
   const rowsById = new Map<string, ServiceItem>();
   const allIds = new Set([...baseById.keys(), ...localById.keys(), ...remoteById.keys()]);
@@ -148,8 +176,8 @@ export const reconcileOutlineItems = (
 
     if (!baseRow) {
       if (localRow && remoteRow) {
-        if (!rowEqual(localRow, remoteRow)) conflict = true;
-        rowsById.set(id, localRow);
+        const item = rowEqual(localRow, remoteRow) ? localRow : chooseRow(id, localRow, remoteRow, "row");
+        if (item) rowsById.set(id, item);
       } else if (localRow || remoteRow) {
         rowsById.set(id, (localRow ?? remoteRow)!);
       }
@@ -158,17 +186,20 @@ export const reconcileOutlineItems = (
 
     if (!localRow && !remoteRow) return;
     if (!localRow) {
-      if (remoteRow && !rowEqual(remoteRow, baseRow)) conflict = true;
+      if (remoteRow && !rowEqual(remoteRow, baseRow)) {
+        const item = chooseRow(id, localRow, remoteRow);
+        if (item) rowsById.set(id, item);
+      }
       return;
     }
     if (!remoteRow) {
       if (rowEqual(localRow, baseRow)) return;
-      conflict = true;
-      rowsById.set(id, localRow);
+      const item = chooseRow(id, localRow, remoteRow);
+      if (item) rowsById.set(id, item);
       return;
     }
 
-    const merged = mergeRow(baseRow, localRow, remoteRow);
+    const merged = mergeRow(baseRow, localRow, remoteRow, choose);
     conflict ||= merged.conflict;
     rowsById.set(id, merged.item);
   });
@@ -182,16 +213,17 @@ export const reconcileOutlineItems = (
     if (!localRow && !remoteRow) deletedIds.add(row.listId);
   });
 
-  const preferredOrder = conflict || localOrderChanged
-    ? local.map((row) => row.listId).filter((id) => !deletedIds.has(id) && rowsById.has(id))
-    : remoteOrderChanged
-      ? remote.map((row) => row.listId).filter((id) => !deletedIds.has(id) && rowsById.has(id))
-      : base.map((row) => row.listId).filter((id) => !deletedIds.has(id) && rowsById.has(id));
+  let preferredRows = base;
+  if (orderChoice === "remote") preferredRows = remote;
+  else if (conflict || localOrderChanged) preferredRows = local;
+  else if (remoteOrderChanged) preferredRows = remote;
+  const preferredOrder = preferredRows.map((row) => row.listId)
+    .filter((id) => !deletedIds.has(id) && rowsById.has(id));
   const order = [...preferredOrder];
   // Even when a field conflicts, keep unrelated remote insertions in the
-  // local candidate. For competing order/replacement edits, the operator's
-  // chosen side owns those rows until the conflict is resolved.
-  if (!commonOrderDiffers && !overlappingReplacements) {
+  // candidate, including when the operator chooses an order. Ambiguous
+  // replacements still need an explicit whole-version review.
+  if (!overlappingReplacements) {
     insertAddedRows(order, remote, remoteAddedIds);
   }
   insertAddedRows(order, local, localAddedIds);
@@ -199,7 +231,7 @@ export const reconcileOutlineItems = (
     if (
       !deletedIds.has(id) &&
       !order.includes(id) &&
-      (!conflict || localById.has(id))
+      (!overlappingReplacements || localById.has(id))
     ) order.push(id);
   });
 
@@ -209,4 +241,15 @@ export const reconcileOutlineItems = (
   return conflict
     ? { kind: "conflict", items, remoteItems: remote }
     : { kind: "merged", items, remoteItems: remote };
+};
+
+export const getOutlineItemConflicts = (
+  baseline: ServiceItem[], local: ServiceItem[], remote: ServiceItem[],
+): OutlineItemConflict[] => {
+  const conflicts: OutlineItemConflict[] = [];
+  reconcileOutlineItems(baseline, local, remote, (conflict) => {
+    conflicts.push(conflict);
+    return undefined;
+  });
+  return conflicts;
 };

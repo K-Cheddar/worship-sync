@@ -3,5 +3,5 @@
   "date": "2026-10-27",
   "type": "improved",
   "title": "Outline synchronization",
-  "description": "Keep conflicting drafts while moving between controllers, retry outline loads directly, and review or retry outline list changes without losing your work. Unsaved drafts remain available for the current app session."
+  "description": "Review conflicting outline rows while keeping compatible changes, preview whole-version choices, and retain unsaved drafts during controller navigation. Signing out clears unsaved drafts from that account session."
 }

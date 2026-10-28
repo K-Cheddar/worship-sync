@@ -1,7 +1,7 @@
 import isEqual from "lodash/isEqual";
 import type { DBItemListDetails, ServiceItem } from "../types";
 import { isPouchConflict } from "./persistOverlayDoc";
-import { reconcileOutlineItems } from "./outlineSync";
+import { getOutlineItemConflicts, reconcileOutlineItems, type OutlineItemChoices } from "./outlineSync";
 
 const SERVICE_LIST_PUT_MAX_ATTEMPTS = 4;
 
@@ -16,9 +16,52 @@ export type OutlineRevisionGraph = {
 
 export type OutlineRevisionConflict = {
   graph: OutlineRevisionGraph;
-  versions: Array<{ revision: string; items: ServiceItem[] }>;
-  /** Baseline-proven merge of the saved branches, when all document fields agreed. */
+  versions: Array<{ revision: string; items: ServiceItem[]; document?: DBItemListDetails }>;
+  /** Baseline-proven merge of non-item fields; items may still need review. */
   remoteDocument?: DBItemListDetails;
+  itemReview?: OutlineItemReview;
+  documentConflicts?: string[];
+};
+
+export type OutlineItemReview = {
+  baselineItems: ServiceItem[];
+  localItems: ServiceItem[];
+  remoteItems: ServiceItem[];
+};
+export type OutlineRevisionSelection =
+  | { kind: "rows"; review: OutlineItemReview; choices: OutlineItemChoices }
+  | { kind: "whole"; revision?: string };
+
+/** Whole-version fallback still retains baseline-proven independent metadata. */
+export const outlineRevisionChoiceDocument = (
+  reviewed: OutlineRevisionConflict,
+  selected: DBItemListDetails,
+): DBItemListDetails => {
+  if (!reviewed.remoteDocument) return selected;
+  const document = { ...reviewed.remoteDocument } as unknown as Record<string, unknown>;
+  const source = selected as unknown as Record<string, unknown>;
+  for (const field of reviewed.documentConflicts ?? []) {
+    if (Object.prototype.hasOwnProperty.call(source, field)) document[field] = source[field];
+    else delete document[field];
+  }
+  return document as unknown as DBItemListDetails;
+};
+
+/** Incorporate a draft only when it can be rebased onto the first saved
+ * version without another unresolved choice. Otherwise preview whole versions. */
+export const outlineRevisionItemReview = (
+  conflict: OutlineRevisionConflict,
+  draft: ServiceItem[],
+  draftBaseline: ServiceItem[],
+): OutlineItemReview | undefined => {
+  const review = conflict.itemReview;
+  if (!review || !hasStableRowIds(draft) || !hasStableRowIds(draftBaseline)) return undefined;
+  const local = reconcileOutlineItems(draftBaseline, draft, review.localItems);
+  if (local.kind === "conflict") return undefined;
+  const combined = { ...review, localItems: local.items };
+  if (getOutlineItemConflicts(combined.baselineItems, combined.localItems, combined.remoteItems)
+    .some((entry) => entry.reason === "replacement")) return undefined;
+  return combined;
 };
 
 export type ServiceListFieldDb = {
@@ -94,13 +137,18 @@ const sameRevisionGraph = (left: OutlineRevisionGraph, right: OutlineRevisionGra
 const conflictDetails = (
   branches: RevisionBranchSet,
   remoteDocument?: DBItemListDetails,
+  itemReview?: OutlineItemReview,
+  documentConflicts?: string[],
 ): OutlineRevisionConflict => ({
   graph: branches.graph,
   versions: branches.versions.map((version) => ({
     revision: version._rev ?? "",
     items: (version.items ?? []).map((item) => ({ ...item })),
+    document: version,
   })),
   ...(remoteDocument ? { remoteDocument } : {}),
+  ...(itemReview ? { itemReview } : {}),
+  ...(documentConflicts?.length ? { documentConflicts } : {}),
 });
 
 const hasStableRowIds = (items: ServiceItem[]) => {
@@ -198,7 +246,7 @@ const mergeRevisionBranches = async (
   } catch {
     return undefined;
   }
-  if (!hasStableRowIds(baseline.items ?? [])) return undefined;
+  if (!hasStableRowIds(baseline.items ?? []) || !hasStableRowIds(branches.winner.items ?? [])) return undefined;
 
   let merged = { ...branches.winner } as DBItemListDetails;
   const conflictingFields = new Set<string>();
@@ -208,14 +256,17 @@ const mergeRevisionBranches = async (
     merged = result.document;
     result.conflictingFields.forEach((field) => conflictingFields.add(field));
   }
-  const nonItemConflicts = [...conflictingFields].some((field) => field !== "items");
-  if (nonItemConflicts) return undefined;
-  const itemConflict = conflictingFields.has("items");
-  if (itemConflict) merged.items = (branches.winner.items ?? []) as ServiceItem[];
+  const documentConflicts = [...conflictingFields].filter((field) => field !== "items");
+  const requiresReview = conflictingFields.size > 0;
   delete (merged as RevisionDoc)._conflicts;
   delete (merged as RevisionDoc)._revisions;
   merged._rev = branches.graph.winningRevision;
-  return { document: merged, itemConflict };
+  const itemReview = conflictingFields.has("items") && !documentConflicts.length && branches.versions.length === 2 ? {
+    baselineItems: baseline.items ?? [],
+    localItems: branches.winner.items ?? [],
+    remoteItems: branches.versions[1].items ?? [],
+  } : undefined;
+  return { document: merged, requiresReview, itemReview, documentConflicts };
 };
 
 const updatedDocument = <K extends "items" | "overlays">(
@@ -243,12 +294,14 @@ const retireReviewedBranches = async (
   listId: string,
   reviewed: OutlineRevisionGraph,
   committedRevision: string,
+  expected: DBItemListDetails,
+  isCurrent = () => true,
 ) => {
-  if (!db.remove) return false;
+  if (!db.remove || !isCurrent()) return false;
   const current = await readRevisionBranchSet(db, listId);
   const winnerHistory = current.graph.histories[current.graph.winningRevision] ?? [];
   if (
-    current.graph.winningRevision !== committedRevision ||
+    !isCurrent() || current.graph.winningRevision !== committedRevision ||
     !winnerHistory.includes(reviewed.winningRevision) ||
     !isEqual(current.graph.conflictRevisions, reviewed.conflictRevisions)
   ) return false;
@@ -256,7 +309,14 @@ const retireReviewedBranches = async (
     !isEqual(current.graph.histories[revision], reviewed.histories[revision]),
   )) return false;
 
+  // Verify the acknowledged body, including non-item fields, before deleting
+  // any reviewed leaf. A successful put response alone does not prove content.
+  const { _rev: _expectedRev, _revisions: _expectedHistory, _conflicts: _expectedConflicts, ...expectedBody } = expected as RevisionDoc;
+  const { _rev: _actualRev, _revisions: _actualHistory, _conflicts: _actualConflicts, ...actualBody } = current.winner;
+  if (!isEqual(expectedBody, actualBody)) return false;
+
   for (const revision of reviewed.conflictRevisions) {
+    if (!isCurrent()) return false;
     await db.remove(listId, revision);
   }
   const verified = await db.get(listId, { conflicts: true }) as RevisionDoc;
@@ -269,10 +329,12 @@ async function persistServiceListField<K extends "items" | "overlays">(
   field: K,
   value: K extends "items" ? ServiceItem[] : string[],
   baseline?: ServiceItem[],
+  isCurrent = () => true,
 ): Promise<DBItemListDetails> {
   let lastError: unknown;
 
   for (let attempt = 0; attempt < SERVICE_LIST_PUT_MAX_ATTEMPTS; attempt += 1) {
+    if (!isCurrent()) throw new Error("The outline save session ended");
     let current = await db.get(listId, { conflicts: true }) as RevisionDoc;
     let reviewedGraph: OutlineRevisionGraph | undefined;
     let revisionConflict: OutlineRevisionConflict | undefined;
@@ -286,10 +348,10 @@ async function persistServiceListField<K extends "items" | "overlays">(
           conflictDetails(branches),
         );
       }
-      if (mergedRemote.itemConflict) {
+      if (mergedRemote.requiresReview) {
         throw new ServiceListConflictError(
-          (branches.winner.items ?? []) as ServiceItem[],
-          conflictDetails(branches, mergedRemote.document),
+          mergedRemote.document.items ?? [],
+          conflictDetails(branches, mergedRemote.document, mergedRemote.itemReview, mergedRemote.documentConflicts),
         );
       }
       const latestBranches = await readRevisionBranchSet(db, listId);
@@ -361,6 +423,7 @@ async function persistServiceListField<K extends "items" | "overlays">(
           );
         }
       }
+      if (!isCurrent()) throw new Error("The outline save session ended");
       const result = await db.put(next);
       const rev = resultRevision(result);
       if (reviewedGraph && !rev) {
@@ -368,7 +431,7 @@ async function persistServiceListField<K extends "items" | "overlays">(
       }
       const saved = rev ? { ...next, _rev: rev } : next;
       if (reviewedGraph && rev) {
-        const retired = await retireReviewedBranches(db, listId, reviewedGraph, rev);
+        const retired = await retireReviewedBranches(db, listId, reviewedGraph, rev, saved, isCurrent);
         if (!retired) {
           const latestBranches = await readRevisionBranchSet(db, listId);
           throw new ServiceListConflictError(
@@ -400,13 +463,15 @@ export const persistServiceListItems = (
   listId: string,
   items: ServiceItem[],
   baseline?: ServiceItem[],
-) => persistServiceListField(db, listId, "items", items, baseline);
+  isCurrent?: () => boolean,
+) => persistServiceListField(db, listId, "items", items, baseline, isCurrent);
 
 export const persistServiceListOverlays = (
   db: ServiceListFieldDb,
   listId: string,
   overlays: string[],
-) => persistServiceListField(db, listId, "overlays", overlays);
+  isCurrent?: () => boolean,
+) => persistServiceListField(db, listId, "overlays", overlays, undefined, isCurrent);
 
 /** The normal read requests only leaf metadata. Branch bodies/history are
  * inspected only when the database reports competing saved versions. */
@@ -422,7 +487,7 @@ export const inspectServiceListRevisions = async (
     const merged = await mergeRevisionBranches(db, listId, branches);
     return { document: branches.winner, conflict: new ServiceListConflictError(
       (merged?.document.items ?? branches.winner.items ?? []) as ServiceItem[],
-      conflictDetails(branches, merged?.document),
+      conflictDetails(branches, merged?.document, merged?.itemReview, merged?.documentConflicts),
     ) };
   }
   try {
@@ -433,14 +498,17 @@ export const inspectServiceListRevisions = async (
   }
 };
 
-/** Commits an explicit whole-outline choice after rechecking the reviewed graph. */
+/** Commits the previewed row or whole-version choice after graph validation. */
 export const resolveServiceListRevisionConflict = async (
   db: ServiceListFieldDb,
   listId: string,
   selectedItems: ServiceItem[],
   reviewed: OutlineRevisionConflict,
+  selection?: OutlineRevisionSelection,
+  isCurrent = () => true,
 ): Promise<DBItemListDetails> => {
   const current = await readRevisionBranchSet(db, listId);
+  if (!isCurrent()) throw new Error("The outline review session ended");
   const winnerHistory = current.graph.histories[current.graph.winningRevision] ?? [];
   if (
     current.graph.conflictRevisions.length === 0 &&
@@ -453,30 +521,54 @@ export const resolveServiceListRevisionConflict = async (
       current.graph.conflictRevisions.length ? conflictDetails(current) : undefined,
     );
   }
-  if (!db.remove) {
+  if (!db.remove || current.versions.length !== current.graph.conflictRevisions.length + 1 ||
+    reviewed.versions.length !== current.versions.length ||
+    reviewed.versions.some((version) => !current.versions.some((latest) =>
+      latest._rev === version.revision && isEqual(latest.items ?? [], version.items)))) {
     throw new ServiceListConflictError(
       (current.winner.items ?? []) as ServiceItem[],
       conflictDetails(current),
     );
   }
 
+  if (selection?.kind === "rows") {
+    const fresh = await mergeRevisionBranches(db, listId, current);
+    const review = selection.review;
+    const result = reconcileOutlineItems(review.baselineItems, review.localItems, review.remoteItems,
+      (conflict) => selection.choices[conflict.key]);
+    if (!fresh?.itemReview ||
+      !isEqual(review.baselineItems, fresh.itemReview.baselineItems) ||
+      !isEqual(review.remoteItems, fresh.itemReview.remoteItems) ||
+      result.kind === "conflict" || !isEqual(result.items, selectedItems) || !hasStableRowIds(selectedItems)) {
+      throw new Error("The outline choices no longer match the reviewed result");
+    }
+  }
+
   const commitChoice = async () => {
     const latest = await readRevisionBranchSet(db, listId);
-    if (!sameRevisionGraph(reviewed.graph, latest.graph)) {
+    if (!isCurrent() || !sameRevisionGraph(reviewed.graph, latest.graph)) {
       throw new ServiceListConflictError(
         (latest.winner.items ?? []) as ServiceItem[],
         conflictDetails(latest),
       );
     }
-    const choiceDocument = reviewed.remoteDocument
-      ? { ...latest.winner, ...reviewed.remoteDocument, _rev: latest.winner._rev }
-      : latest.winner;
+    const selectedVersion = selection?.kind === "whole" && selection.revision
+      ? latest.versions.find((version) => version._rev === selection.revision)
+      : undefined;
+    if (selection?.kind === "whole" && selection.revision &&
+      (!selectedVersion || !isEqual(selectedVersion.items ?? [], selectedItems))) {
+      throw new Error("The selected outline version no longer matches its preview");
+    }
+    const choiceDocument = {
+      ...outlineRevisionChoiceDocument(reviewed, selectedVersion ?? latest.winner),
+      _rev: latest.winner._rev,
+    };
     const next = updatedDocument(choiceDocument, "items", selectedItems);
     const result = await db.put(next);
     const rev = resultRevision(result);
     if (!rev) throw new Error("The outline resolution was not acknowledged with a revision");
     const saved = { ...next, _rev: rev };
-    const retired = await retireReviewedBranches(db, listId, reviewed.graph, rev);
+    const retired = await retireReviewedBranches(db, listId, reviewed.graph, rev, saved, isCurrent);
     if (!retired) {
       const changed = await readRevisionBranchSet(db, listId);
       throw new ServiceListConflictError(

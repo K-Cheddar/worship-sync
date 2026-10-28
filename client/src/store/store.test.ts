@@ -5677,7 +5677,6 @@ describe("item list outline persistence", () => {
     hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
     env.store.dispatch(env.itemListSlice.actions.updateItemList([createServiceItem({ name: "Local A", listId: "l1", _id: "song-1" })]));
     env.store.dispatch(env.itemListSlice.actions.updateItemListFromRemote({ outlineId: "outline-a", items: [createServiceItem({ name: "Remote A", listId: "l1", _id: "song-1" })] }));
-    const draftA = env.store.getState().undoable.present.itemList.list;
     const otherDb = { get: jest.fn(), put: jest.fn() };
     env.setGlobalDb(otherDb);
     env.store.dispatch({ type: "RESET" });
@@ -5687,7 +5686,8 @@ describe("item list outline persistence", () => {
     env.setGlobalDb(env.db);
     env.store.dispatch({ type: "RESET" });
     hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
-    expect(env.store.getState().undoable.present.itemList.list).toEqual(draftA);
+    expect(env.store.getState().undoable.present.itemList.list[0].name).toBe("Current");
+    expect(env.store.getState().undoable.present.itemList.remoteConflicts).toEqual({});
     expect(otherDb.put).not.toHaveBeenCalled();
   });
 
@@ -5712,6 +5712,68 @@ describe("item list outline persistence", () => {
     expect(redone.list).toEqual(latest);
     expect(redone.remoteConflicts["outline-a"].localItems).toEqual(latest);
     expect(env.db.put).not.toHaveBeenCalled();
+    jest.useRealTimers();
+  });
+
+  it("clears all retained databases, pending revision choices and undo history on full account RESET", () => {
+    const env = loadStoreWithItemListPersistence();
+    const firstDb = env.db;
+    const secondDb = { name: "another-church", get: jest.fn(), put: jest.fn() };
+    const row = createServiceItem({ name: "Private draft", listId: "l1", _id: "song-1" });
+    for (const database of [firstDb, secondDb]) {
+      env.setGlobalDb(database);
+      env.store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+      hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+      env.store.dispatch(env.itemListSlice.actions.updateItemList([row]));
+      env.store.dispatch(env.itemListSlice.actions.recordOutlineConflict({
+        outlineId: "outline-a", baselineItems: [], localItems: [row], remoteItems: [{ ...row, name: "Saved" }],
+        revisionConflict: { graph: { winningRevision: "2-a", conflictRevisions: ["2-b"], histories: {} }, versions: [] },
+      }));
+      env.store.dispatch(env.itemListSlice.actions.resolveOutlineConflict({ outlineId: "outline-a", choice: "keep-local" }));
+    }
+    expect(env.store.getState().undoable.present.itemList.pendingRevisionResolutions["outline-a"]).toBeDefined();
+    env.store.dispatch({ type: "RESET" });
+    expect(env.store.getState().undoable.past).toEqual([]);
+    expect(env.store.getState().undoable.future).toEqual([]);
+    expect(env.store.getState().undoable.present.itemList.remoteConflicts).toEqual({});
+    expect(env.store.getState().undoable.present.itemList.pendingRevisionResolutions).toEqual({});
+    for (const database of [secondDb, firstDb]) {
+      env.setGlobalDb(database);
+      // Simulate the next authenticated account reopening the same databases.
+      env.store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+      hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+      env.store.dispatch({ type: "@@redux-undo/UNDO" });
+      env.store.dispatch({ type: "@@redux-undo/REDO" });
+      expect(env.store.getState().undoable.present.itemList.remoteConflicts).toEqual({});
+      expect(env.store.getState().undoable.present.itemList.pendingRevisionResolutions).toEqual({});
+      expect(env.store.getState().undoable.present.itemList.list[0].name).toBe("Current");
+    }
+    expect(env.db.put).not.toHaveBeenCalled();
+    expect(secondDb.put).not.toHaveBeenCalled();
+  });
+
+  it.each(["read", "write"])("ignores a late outline %s after logout and sign-in with the same database handle", async (stage) => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    const row = createServiceItem({ name: "Old account draft", listId: "l1", _id: "song-1" });
+    let finish!: (value: unknown) => void;
+    const pending = new Promise((resolve) => { finish = resolve; });
+    env.db.get.mockResolvedValue({ _id: "outline-a", _rev: "1-base", items: [createServiceItem({ name: "Current", listId: "l1", _id: "song-1" })], overlays: [] });
+    if (stage === "read") env.db.get.mockReturnValueOnce(pending);
+    else env.db.put.mockReturnValueOnce(pending);
+    env.store.dispatch(env.itemListSlice.actions.updateItemList([row]));
+    await jest.advanceTimersByTimeAsync(1500);
+    env.store.dispatch({ type: "RESET" });
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    finish(stage === "read" ? { _id: "outline-a", _rev: "2-remote", items: [{ ...row, name: "Old account remote" }] } : { rev: "2-saved" });
+    await flushListenerEffects();
+    env.store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    expect(env.store.getState().undoable.present.itemList.remoteConflicts).toEqual({});
+    expect(env.store.getState().undoable.present.itemList.list[0].name).toBe("Current");
+    expect(env.postMessage).not.toHaveBeenCalled();
+    expect(env.db.put).toHaveBeenCalledTimes(stage === "read" ? 0 : 1);
     jest.useRealTimers();
   });
 
@@ -5768,14 +5830,68 @@ describe("item list outline persistence", () => {
     const row = createServiceItem({ name: "Local A", listId: "l1", _id: "song-1" });
     env.store.dispatch(env.itemListSlice.actions.updateItemList([row]));
     env.store.dispatch(env.itemListSlice.actions.updateItemListFromRemote({ outlineId: "outline-a", items: [{ ...row, name: "Remote A" }] }));
-    env.setGlobalDb({ name: "church-b-content", get: jest.fn(), put: jest.fn() });
-    env.store.dispatch({ type: "RESET" });
-    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
-    expect(env.store.getState().undoable.present.itemList.remoteConflicts).toEqual({});
     env.setGlobalDb({ name: "church-a-content", get: jest.fn(), put: jest.fn() });
-    env.store.dispatch({ type: "RESET" });
+    env.store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
     hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
     expect(env.store.getState().undoable.present.itemList.list).toEqual([row]);
+  });
+
+  it.each(["debounce", "write"])("saves the reviewed rows before edits during %s and then autosaves the newer draft", async (stage) => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    const base = [createServiceItem({ _id: "welcome", listId: "a", name: "Welcome" })];
+    const first = [{ ...base[0], name: "Welcome A" }];
+    const second = [{ ...base[0], name: "Welcome B" }, createServiceItem({ _id: "closing", listId: "c", name: "Closing Song" })];
+    const later = createServiceItem({ _id: "later", listId: "later", name: "Added while saving" });
+    const common = { _id: "outline-a", name: "Sunday", overlays: ["overlay"] };
+    let current: Record<string, any> = { ...common, items: first, _rev: "2-first", _revisions: { start: 2, ids: ["first", "base"] } };
+    let conflicts = ["2-second"];
+    let acknowledge!: () => void;
+    const acknowledgement = new Promise<void>((resolve) => { acknowledge = resolve; });
+    const other = { ...common, items: second, _rev: "2-second", _revisions: { start: 2, ids: ["second", "base"] } };
+    env.db.get.mockImplementation(async (_id: string, options?: { rev?: string }) => {
+      if (options?.rev === "1-base") return { ...common, items: base, _rev: "1-base" };
+      if (options?.rev === "2-second") return other;
+      return { ...current, _conflicts: conflicts };
+    });
+    env.db.put.mockImplementation(async (doc: Record<string, any>) => {
+      current = { ...doc, _rev: "3-saved", _revisions: { start: 3, ids: ["saved", "first", "base"] } };
+      if (stage === "write" && env.db.put.mock.calls.length === 1) await acknowledgement;
+      return { rev: current._rev };
+    });
+    const remove = jest.fn(async () => { conflicts = []; });
+    Object.assign(env.db, { remove });
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    env.store.dispatch(env.itemListSlice.actions.initiateItemList({ outlineId: "outline-a", items: first }));
+    const review = { baselineItems: base, localItems: first, remoteItems: second };
+    env.store.dispatch(env.itemListSlice.actions.recordOutlineConflict({
+      outlineId: "outline-a", baselineItems: first, localItems: first, remoteItems: first,
+      revisionConflict: { graph: { winningRevision: "2-first", conflictRevisions: ["2-second"], histories: { "2-first": ["2-first", "1-base"], "2-second": ["2-second", "1-base"] } },
+        versions: [{ revision: "2-first", items: first }, { revision: "2-second", items: second }], itemReview: review,
+        remoteDocument: { ...common, _rev: "2-first", items: [first[0], second[1]] },
+      },
+    }));
+    env.store.dispatch(env.itemListSlice.actions.resolveOutlineConflict({
+      outlineId: "outline-a", choice: "keep-local", draftItems: first, reviewedItems: second,
+      revisionSelection: { kind: "rows", review, choices: { '["a","name"]': "remote" } },
+      reviewedRevisionConflict: env.store.getState().undoable.present.itemList.remoteConflicts["outline-a"].revisionConflict,
+    }));
+    // Editing during debounce must not change the previewed commit or prevent
+    // the subsequent ordinary autosave of newer work.
+    if (stage === "write") await jest.advanceTimersByTimeAsync(1500);
+    env.store.dispatch(env.itemListSlice.actions.updateItemList([...second, later]));
+    if (stage === "debounce") await jest.advanceTimersByTimeAsync(1500);
+    else acknowledge();
+    await flushListenerEffects();
+    expect(env.db.put.mock.calls[0][0].items).toEqual(second);
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect({ stage: "after resolution", items: env.store.getState().undoable.present.itemList.list }).toEqual({ stage: "after resolution", items: [...second, later] });
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect({ stage: "after autosave", items: current.items, pending: env.store.getState().undoable.present.itemList.hasPendingUpdate }).toEqual({ stage: "after autosave", items: [...second, later], pending: false });
+    expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
+    expect(env.store.getState().undoable.present.itemList.remoteConflicts).toEqual({});
+    jest.useRealTimers();
   });
 
   it("allows registry Retry save after the creating controller session has unmounted", async () => {

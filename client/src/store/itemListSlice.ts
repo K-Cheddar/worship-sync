@@ -7,7 +7,7 @@ import {
   type LocalImageReferencePatch,
 } from "../utils/localImageAssets";
 import { reconcileOutlineItems } from "../utils/outlineSync";
-import type { OutlineRevisionConflict } from "../utils/persistServiceListField";
+import type { OutlineRevisionConflict, OutlineRevisionSelection } from "../utils/persistServiceListField";
 
 export type OutlineRemoteConflict = {
   baselineItems: ServiceItem[];
@@ -15,6 +15,7 @@ export type OutlineRemoteConflict = {
   originalLocalItems?: ServiceItem[];
   remoteItems: ServiceItem[];
   revisionConflict?: OutlineRevisionConflict;
+  draftBaselineItems?: ServiceItem[];
   /** Keep the retained draft until the selected resolution is acknowledged. */
   resolutionChoice?: "keep-local" | "use-remote";
   saveError?: boolean;
@@ -23,6 +24,9 @@ export type OutlineRemoteConflict = {
 type PendingOutlineRevisionResolution = {
   choice: "keep-local" | "use-remote";
   conflict: OutlineRevisionConflict;
+  selection?: OutlineRevisionSelection;
+  items?: ServiceItem[];
+  draftItems?: ServiceItem[];
 };
 
 type InitiateItemListPayload =
@@ -172,7 +176,7 @@ export const itemListSlice = createSlice({
             unresolvedConflict.localItems.map((item) => ({ ...item })),
           remoteItems: result.remoteItems,
           ...(unresolvedConflict.revisionConflict
-            ? { revisionConflict: unresolvedConflict.revisionConflict }
+            ? { revisionConflict: unresolvedConflict.revisionConflict, draftBaselineItems: unresolvedConflict.draftBaselineItems }
             : {}),
           ...(isSameRows(unresolvedConflict.remoteItems, result.remoteItems)
             ? { resolutionChoice: unresolvedConflict.resolutionChoice }
@@ -198,12 +202,20 @@ export const itemListSlice = createSlice({
     },
     resolveOutlineConflict: (
       state,
-      action: PayloadAction<{ outlineId: string; choice: "keep-local" | "use-remote" }>,
+      action: PayloadAction<{
+        outlineId: string; choice: "keep-local" | "use-remote";
+        reviewedItems?: ServiceItem[];
+        draftItems?: ServiceItem[];
+        revisionSelection?: OutlineRevisionSelection;
+        reviewedRevisionConflict?: OutlineRevisionConflict;
+      }>,
     ) => {
       if (!state.remoteConflicts) state.remoteConflicts = {};
       if (!state.pendingRevisionResolutions) state.pendingRevisionResolutions = {};
       const conflict = state.remoteConflicts[action.payload.outlineId];
       if (!conflict || state.loadedOutlineId !== action.payload.outlineId) return;
+      if (action.payload.draftItems && !isSameRows(action.payload.draftItems, state.list)) return;
+      if (action.payload.revisionSelection && !isEqual(action.payload.reviewedRevisionConflict, conflict.revisionConflict)) return;
       delete conflict.saveError;
       if (action.payload.choice === "keep-local") {
         // The current list stays editable while the banner is visible. Use it
@@ -219,6 +231,9 @@ export const itemListSlice = createSlice({
         state.pendingRevisionResolutions[action.payload.outlineId] = {
           choice: action.payload.choice,
           conflict: conflict.revisionConflict,
+          selection: action.payload.revisionSelection,
+          items: action.payload.reviewedItems,
+          draftItems: action.payload.draftItems,
         };
         state.hasPendingUpdate = true;
       } else {
@@ -267,6 +282,7 @@ export const itemListSlice = createSlice({
           originalLocalItems: state.remoteConflicts[action.payload.outlineId]?.originalLocalItems ?? retainedLocal.map((item) => ({ ...item })),
           remoteItems,
           revisionConflict: action.payload.revisionConflict,
+          draftBaselineItems: action.payload.baselineItems,
         };
         if (state.loadedOutlineId === action.payload.outlineId) {
           state.list = retainedLocal;

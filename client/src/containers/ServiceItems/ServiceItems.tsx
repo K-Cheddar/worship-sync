@@ -51,6 +51,7 @@ import type { ServiceTime } from "../../types";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
 import { usePresentationControllerMode } from "../../context/presentationControllerMode";
 import isEqual from "lodash/isEqual";
+import OutlineRevisionReview from "./OutlineRevisionReview";
 
 const EMPTY_SERVICE_TIMES: ServiceTime[] = [];
 
@@ -68,6 +69,7 @@ const ServiceItems = () => {
     initialItems,
     selectedItemListId,
     insertPointIndex,
+    pendingRevisionResolutions,
   } = useSelector((state) => state.undoable.present.itemList);
   const loadedOutlineId = useSelector(
     (state) => state.undoable.present.itemList.loadedOutlineId,
@@ -800,21 +802,23 @@ const ServiceItems = () => {
               {isViewOnlyAccess(access) ? "This outline has conflicting saved versions. Ask a controller operator to review them." : conflictMessage}
             </p>
             <p className="w-full text-xs text-amber-100/90">
-              Unsaved drafts stay available while this app is open. Closing or reloading the app clears them.
+              Unsaved drafts stay available during controller navigation. Signing out, closing or reloading the app clears them.
             </p>
             {remoteOutlineConflict.revisionConflict && !isViewOnlyAccess(access) && (
-              <p className="w-full text-xs text-amber-100/90">
-                {remoteOutlineConflict.revisionConflict.remoteDocument
-                  ? `${remoteOutlineConflict.revisionConflict.graph.conflictRevisions.length + 1} saved versions were combined where their changes were compatible. Keeping your draft saves this outline; using the remote version keeps the combined saved outline.`
-                  : `${remoteOutlineConflict.revisionConflict.graph.conflictRevisions.length + 1} saved versions could not be merged safely. Keeping your draft replaces those revisions; using the remote version keeps the database winner and retires the other branches.`}
-              </p>
+              <OutlineRevisionReview conflict={remoteOutlineConflict} draft={serviceItems}
+                pendingItems={pendingRevisionResolutions?.[loadedOutlineId]?.items}
+                onSave={(items, selection) => dispatch(resolveOutlineConflict({
+                  outlineId: loadedOutlineId, choice: "keep-local", reviewedItems: items,
+                  draftItems: serviceItems, revisionSelection: selection,
+                  reviewedRevisionConflict: remoteOutlineConflict.revisionConflict,
+                }))} />
             )}
-            {hasDraftChangesSinceConflict && (
+            {hasDraftChangesSinceConflict && !remoteOutlineConflict.revisionConflict && (
               <p className="w-full text-xs text-amber-100/90">
                 Using the remote version will discard your edits made since this notice appeared.
               </p>
             )}
-            {!isViewOnlyAccess(access) && <div className="flex shrink-0 gap-2">
+            {!isViewOnlyAccess(access) && !remoteOutlineConflict.revisionConflict && <div className="flex shrink-0 gap-2">
               <Button
                 variant="secondary"
                 disabled={Boolean(remoteOutlineConflict.resolutionChoice)}
