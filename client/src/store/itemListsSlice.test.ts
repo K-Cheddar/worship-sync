@@ -95,6 +95,51 @@ describe("itemListsSlice", () => {
       expect(state.currentLists[0]._id).toBe("id-1");
     });
 
+    it("keeps a local registry edit while applying unrelated remote registry changes", () => {
+      const store = createStore();
+      store.dispatch(
+        initiateItemLists({
+          itemLists: [
+            outline("A", "id-a"),
+            outline("B", "id-b"),
+          ],
+          selectedIdByScope: { presentation: "id-a", aux: "id-b" },
+        }),
+      );
+      store.dispatch(updateItemLists([
+        outline("A local rename", "id-a"),
+        outline("B", "id-b"),
+      ]));
+
+      store.dispatch(updateItemListsFromRemote({
+        itemLists: [
+          outline("A", "id-a"),
+          outline("B remote rename", "id-b"),
+          { ...outline("C remote addition", "id-c"), controllerScope: "aux" },
+        ],
+        activeListId: "id-b",
+        selectedIdByScope: {
+          presentation: "id-b",
+          aux: "id-c",
+          anotherController: "id-z",
+        },
+      }));
+
+      const state = store.getState().itemLists;
+      expect(state.currentLists).toEqual([
+        outline("A local rename", "id-a"),
+        outline("B remote rename", "id-b"),
+        { ...outline("C remote addition", "id-c"), controllerScope: "aux" },
+      ]);
+      expect(state.selectedList?._id).toBe("id-a");
+      expect(state.activeList?._id).toBe("id-b");
+      expect(state.selectedIdByScope).toEqual({
+        presentation: "id-a",
+        aux: "id-c",
+        anotherController: "id-z",
+      });
+    });
+
     it("removeFromItemLists deletes an outline", () => {
       const store = createStore({
         itemLists: {

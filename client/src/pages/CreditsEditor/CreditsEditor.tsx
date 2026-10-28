@@ -352,6 +352,7 @@ const CreditsEditor = ({
               updateItemListsFromRemote({
                 itemLists: lists,
                 activeListId: response?.activeList?._id,
+                selectedIdByScope: response?.selectedIdByScope,
               }),
             );
           }

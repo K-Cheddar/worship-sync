@@ -5,6 +5,7 @@ import store from "../../store/store";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { itemListsSlice } from "../../store/itemListsSlice";
+import { setItemListIsLoading } from "../../store/itemListSlice";
 import { overlaySlice } from "../../store/overlaySlice";
 import { overlaysSlice } from "../../store/overlaysSlice";
 import { markServicePlanningPlanPreviewStale } from "../../store/servicePlanningImportSlice";
@@ -236,6 +237,57 @@ describe("useControllerPageLifecycle selected outline loading", () => {
       expect.objectContaining({ id: "overlay-1", name: "Current overlay" }),
     ]);
     expect(getOverlaysByIds).not.toHaveBeenCalled();
+  });
+
+  it("does not reread or show a loading skeleton when the selected outline is only renamed remotely", async () => {
+    const db = {
+      get: jest.fn(async (id: string) =>
+        id === "outline" ? details("Loaded outline") : undefined,
+      ),
+      put: jest.fn().mockResolvedValue({ ok: true, rev: "1-saved" }),
+    } as any;
+    store.dispatch(
+      itemListsSlice.actions.initiateItemLists([
+        { _id: "outline", name: "Sunday" },
+      ]),
+    );
+    const dispatchSpy = jest.spyOn(store, "dispatch");
+    const { rerender } = renderHook(() => useControllerPageLifecycle(), {
+      wrapper: ({ children }) => (
+        <Provider store={store}>
+          <ControllerInfoContext.Provider value={{ db, cloud: {} } as any}>
+            {children}
+          </ControllerInfoContext.Provider>
+        </Provider>
+      ),
+    });
+
+    await waitFor(() => expect(db.get).toHaveBeenCalledWith("outline"));
+    await waitFor(() =>
+      expect(store.getState().undoable.present.itemList.isLoading).toBe(false),
+    );
+    dispatchSpy.mockClear();
+    db.get.mockClear();
+
+    act(() => {
+      store.dispatch(
+        itemListsSlice.actions.updateItemListsFromRemote({
+          itemLists: [{ _id: "outline", name: "Renamed Sunday" }],
+        }),
+      );
+    });
+    rerender();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(db.get).not.toHaveBeenCalledWith("outline");
+    expect(dispatchSpy).not.toHaveBeenCalledWith(setItemListIsLoading(true));
+    expect(store.getState().undoable.present.itemList.list).toEqual([
+      expect.objectContaining({ name: "Loaded outline" }),
+    ]);
+    dispatchSpy.mockRestore();
   });
 
   it("applies a remote overlay reorder while retaining a selected local draft", async () => {

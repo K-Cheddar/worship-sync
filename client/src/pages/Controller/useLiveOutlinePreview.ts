@@ -36,6 +36,7 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
       listId: string | undefined,
       requestId: number,
       requestScope: string,
+      showLoading: boolean,
     ) => {
       if (!db || !cloud || !listId) {
         if (
@@ -47,6 +48,7 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
         }
         return;
       }
+      if (showLoading) setIsLoading(true);
       try {
         const response: DBItemListDetails | undefined = await db.get(listId);
         if (
@@ -61,7 +63,7 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
           requestIdRef.current === requestId &&
           scopeRef.current === requestScope
         ) {
-          setItems([]);
+          if (showLoading) setItems([]);
         }
       } finally {
         if (requestIdRef.current === requestId && scopeRef.current === requestScope) {
@@ -80,7 +82,12 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
       setIsLoading(false);
       return;
     }
-    setIsLoading(true);
+    if (
+      activeListIdRef.current !== undefined &&
+      activeListScopeRef.current !== requestScope
+    ) {
+      setIsLoading(true);
+    }
     try {
       const response: ItemLists | undefined = await db.get("ItemLists");
       if (
@@ -97,10 +104,13 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
             ? response?.activeList?._id
             : undefined),
       )?._id;
-      if (activeListIdRef.current !== activeId) setItems([]);
+      const selectionChanged =
+        activeListScopeRef.current !== requestScope ||
+        activeListIdRef.current !== activeId;
+      if (selectionChanged) setIsLoading(true);
       activeListIdRef.current = activeId;
       activeListScopeRef.current = requestScope;
-      await loadOutlineItems(activeId, requestId, requestScope);
+      await loadOutlineItems(activeId, requestId, requestScope, selectionChanged);
     } catch {
       if (
         requestIdRef.current === requestId &&
@@ -125,11 +135,44 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
     (event: CustomEventInit) => {
       const updates = event.detail;
       if (!Array.isArray(updates)) return;
-      // When an active-list change and a detail update arrive in one PouchDB
-      // batch, the new ItemLists selection owns this refresh. Fetching the old
-      // detail in the same batch must not invalidate the newer selection read.
-      if (updates.some((update) => update._id === "ItemLists")) {
-        void loadActiveList();
+      const registryUpdate = updates.find(
+        (update) => update?._id === "ItemLists",
+      ) as ItemLists | undefined;
+      if (registryUpdate) {
+        const requestScope = scopeRef.current;
+        const activeId = resolveOutlineForScope(
+          registryUpdate.itemLists ?? [],
+          requestScope,
+          registryUpdate.selectedIdByScope?.[requestScope] ??
+            (requestScope === DEFAULT_OUTLINE_SCOPE
+              ? registryUpdate.activeList?._id
+              : undefined),
+        )?._id;
+        const selectionChanged =
+          activeListScopeRef.current !== requestScope ||
+          activeListIdRef.current !== activeId;
+        if (selectionChanged) {
+          const requestId = ++requestIdRef.current;
+          if (!activeId) {
+            activeListIdRef.current = undefined;
+            activeListScopeRef.current = requestScope;
+            setItems([]);
+            setIsLoading(false);
+            return;
+          }
+          setIsLoading(true);
+          activeListIdRef.current = activeId;
+          activeListScopeRef.current = requestScope;
+          void loadOutlineItems(activeId, requestId, requestScope, true);
+          return;
+        }
+        const changedOutline = updates.some(
+          (update) => update?._id === activeId,
+        );
+        if (changedOutline && activeId) {
+          const requestId = ++requestIdRef.current;
+          void loadOutlineItems(activeId, requestId, requestScope, false);
+        }
         return;
       }
       if (
@@ -141,10 +184,11 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
           activeListIdRef.current,
           requestId,
           scopeRef.current,
+          false,
         );
       }
     },
-    [loadActiveList, loadOutlineItems],
+    [loadOutlineItems],
   );
 
   useEffect(() => {

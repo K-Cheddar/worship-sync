@@ -5634,9 +5634,12 @@ describe("item list outline persistence", () => {
       ]),
     );
     store.dispatch(
-      itemListSlice.actions.initiateItemList([
-        createServiceItem({ name: "Current", _id: "song-1", listId: "l1" }),
-      ]),
+      itemListSlice.actions.initiateItemList({
+        outlineId: "outline-a",
+        items: [
+          createServiceItem({ name: "Current", _id: "song-1", listId: "l1" }),
+        ],
+      }),
     );
   };
 
@@ -5917,7 +5920,7 @@ describe("item list outline persistence", () => {
     logError.mockRestore();
   });
 
-  it("discards a delayed outline save after a remote hydrate during debounce", async () => {
+  it("preserves both drafts and pauses autosave after conflicting remote content arrives during debounce", async () => {
     jest.useFakeTimers();
     const { store, itemListSlice, itemListsSlice, db } =
       loadStoreWithItemListPersistence();
@@ -5943,11 +5946,138 @@ describe("item list outline persistence", () => {
 
     expect(db.put).not.toHaveBeenCalled();
     expect(store.getState().undoable.present.itemList.list[0].name).toBe(
-      "Remote Current",
+      "Stale Local",
     );
-    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(
-      false,
+    expect(store.getState().undoable.present.itemList.remoteConflicts["outline-a"]).toEqual(
+      expect.objectContaining({
+        localItems: [expect.objectContaining({ name: "Stale Local" })],
+        remoteItems: [expect.objectContaining({ name: "Remote Current" })],
+      }),
     );
+  });
+
+  it("merges a remote row edit into local work that is still in autosave debounce", async () => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, db } =
+      loadStoreWithItemListPersistence();
+    const baseline = [
+      createServiceItem({ name: "A", _id: "song-a", listId: "row-a" }),
+      createServiceItem({ name: "B", _id: "song-b", listId: "row-b" }),
+    ];
+    const remote = [baseline[0], { ...baseline[1], name: "B remote" }];
+    db.get.mockResolvedValue({
+      _id: "outline-a",
+      _rev: "2-remote",
+      items: remote,
+      overlays: [],
+    });
+    store.dispatch(
+      itemListsSlice.actions.initiateItemLists([
+        { _id: "outline-a", name: "Sunday" },
+      ]),
+    );
+    store.dispatch(itemListSlice.actions.initiateItemList({
+      outlineId: "outline-a",
+      items: baseline,
+    }));
+    store.dispatch(itemListSlice.actions.updateItemList([
+      { ...baseline[0], name: "A local" },
+      baseline[1],
+    ]));
+    store.dispatch(itemListSlice.actions.updateItemListFromRemote({
+      outlineId: "outline-a",
+      items: remote,
+    }));
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(store.getState().undoable.present.itemList.list).toEqual([
+      expect.objectContaining({ listId: "row-a", name: "A local" }),
+      expect.objectContaining({ listId: "row-b", name: "B remote" }),
+    ]);
+    expect(db.put).toHaveBeenCalledWith(expect.objectContaining({
+      _id: "outline-a",
+      items: expect.arrayContaining([
+        expect.objectContaining({ name: "A local" }),
+        expect.objectContaining({ name: "B remote" }),
+      ]),
+    }));
+    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
+  });
+
+  it("keeps merged remote rows when a newer local draft arrives before save acknowledgment", async () => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, db } =
+      loadStoreWithItemListPersistence();
+    const baseline = [
+      createServiceItem({ name: "A", _id: "song-a", listId: "row-a" }),
+      createServiceItem({ name: "B", _id: "song-b", listId: "row-b" }),
+    ];
+    let currentDoc: Record<string, any> = {
+      _id: "outline-a",
+      _rev: "2-remote",
+      items: [baseline[0], { ...baseline[1], name: "B remote" }],
+      overlays: [],
+    };
+    let submittedDoc: Record<string, any> | undefined;
+    let finishFirstPut!: (result: { ok: boolean; rev: string }) => void;
+    db.get.mockImplementation(async () => ({ ...currentDoc }));
+    db.put.mockImplementation(async (document: Record<string, any>) => {
+      if (!submittedDoc) {
+        submittedDoc = { ...document };
+        return new Promise((resolve) => {
+          finishFirstPut = resolve;
+        });
+      }
+      currentDoc = { ...document, _rev: "4-newer-draft" };
+      return { ok: true, rev: "4-newer-draft" };
+    });
+
+    store.dispatch(itemListsSlice.actions.initiateItemLists([
+      { _id: "outline-a", name: "Sunday" },
+    ]));
+    store.dispatch(itemListSlice.actions.initiateItemList({
+      outlineId: "outline-a",
+      items: baseline,
+    }));
+    const submittedItems = [
+      { ...baseline[0], name: "A saved" },
+      baseline[1],
+    ];
+    store.dispatch(itemListSlice.actions.updateItemList(submittedItems));
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(submittedDoc?.items).toEqual([
+      expect.objectContaining({ name: "A saved", listId: "row-a" }),
+      expect.objectContaining({ name: "B remote", listId: "row-b" }),
+    ]);
+
+    store.dispatch(itemListSlice.actions.updateItemList([
+      { ...submittedItems[0], name: "A newer draft" },
+      baseline[1],
+    ]));
+    currentDoc = { ...submittedDoc!, _rev: "3-first-save" };
+    finishFirstPut({ ok: true, rev: "3-first-save" });
+    await flushListenerEffects();
+
+    expect(store.getState().undoable.present.itemList.list).toEqual([
+      expect.objectContaining({ name: "A newer draft", listId: "row-a" }),
+      expect.objectContaining({ name: "B remote", listId: "row-b" }),
+    ]);
+    expect(store.getState().undoable.present.itemList.syncBaseline).toEqual(
+      submittedDoc?.items,
+    );
+    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(true);
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(currentDoc.items).toEqual([
+      expect.objectContaining({ name: "A newer draft", listId: "row-a" }),
+      expect.objectContaining({ name: "B remote", listId: "row-b" }),
+    ]);
+    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
   });
 
   it("still persists after selection changes during debounce", async () => {
@@ -5982,6 +6112,84 @@ describe("item list outline persistence", () => {
         ]),
       }),
     );
+  });
+
+  it("rebases a debounced local registry rename over independent replicated changes", async () => {
+    jest.useFakeTimers();
+    const { store, itemListsSlice, db, postMessage } =
+      loadStoreWithItemListPersistence();
+    let current: Record<string, any> = {
+      _id: "ItemLists",
+      _rev: "1-base",
+      itemLists: [
+        { _id: "outline-a", name: "A" },
+        { _id: "outline-b", name: "B" },
+      ],
+      activeList: { _id: "outline-a", name: "A" },
+      selectedIdByScope: { presentation: "outline-a", aux: "outline-b" },
+    };
+    db.get.mockImplementation(async (id: string) => {
+      if (id !== "ItemLists") throw new Error(`Unexpected document ${id}`);
+      return { ...current };
+    });
+    db.put.mockImplementation(async (document: Record<string, any>) => {
+      if (document._rev !== current._rev) {
+        throw Object.assign(new Error("conflict"), { status: 409 });
+      }
+      current = { ...document, _rev: "2-saved" };
+      return { ok: true, rev: "2-saved" };
+    });
+    store.dispatch(itemListsSlice.actions.initiateItemLists({
+      itemLists: current.itemLists,
+      selectedIdByScope: current.selectedIdByScope,
+    }));
+    store.dispatch(itemListsSlice.actions.updateItemLists([
+      { _id: "outline-a", name: "A local rename" },
+      current.itemLists[1],
+    ]));
+    current = {
+      ...current,
+      _rev: "2-remote",
+      itemLists: [
+        current.itemLists[0],
+        { _id: "outline-b", name: "B remote rename" },
+        { _id: "outline-c", name: "Remote addition", controllerScope: "aux" },
+      ],
+      activeList: { _id: "outline-b", name: "B remote rename" },
+      selectedIdByScope: {
+        presentation: "outline-b",
+        aux: "outline-c",
+        anotherController: "outline-z",
+      },
+    };
+    store.dispatch(itemListsSlice.actions.updateItemListsFromRemote({
+      itemLists: current.itemLists,
+      activeListId: current.activeList._id,
+      selectedIdByScope: current.selectedIdByScope,
+    }));
+
+    expect(store.getState().undoable.present.itemLists.currentLists).toEqual([
+      { _id: "outline-a", name: "A local rename" },
+      { _id: "outline-b", name: "B remote rename" },
+      { _id: "outline-c", name: "Remote addition", controllerScope: "aux" },
+    ]);
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.get).toHaveBeenCalledWith("ItemLists");
+    expect(db.put).toHaveBeenCalledTimes(1);
+    expect(current.itemLists).toEqual([
+      { _id: "outline-a", name: "A local rename" },
+      { _id: "outline-b", name: "B remote rename" },
+      { _id: "outline-c", name: "Remote addition", controllerScope: "aux" },
+    ]);
+    expect(current.selectedIdByScope).toEqual({
+      presentation: "outline-b",
+      aux: "outline-c",
+      anotherController: "outline-z",
+    });
+    expect(current.activeList._id).toBe("outline-b");
+    expect(postMessage).toHaveBeenCalled();
   });
 });
 

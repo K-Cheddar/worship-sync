@@ -4,6 +4,7 @@ import ServiceItems from "./ServiceItems";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
+import { resolveOutlineConflict } from "../../store/itemListSlice";
 
 const mockDispatch: jest.Mock = jest.fn((action) => {
   if (typeof action === "function") return action(mockDispatch, () => ({ ...mockState, undoable: { present: { ...mockState.undoable.present, item: {} } } }));
@@ -258,6 +259,34 @@ describe("ServiceItems", () => {
       "90",
     );
     expect(screen.getByTestId("timer-text-timer")).toBeEmptyDOMElement();
+  });
+
+  it("offers explicit actions for a conflicting remote outline draft", () => {
+    mockState.undoable.present.itemList.loadedOutlineId = "outline-1";
+    mockState.undoable.present.itemList.remoteConflicts = {
+      "outline-1": { baselineItems: [], localItems: [], remoteItems: [] },
+    };
+    render(
+      <ControllerInfoContext.Provider
+        value={{ access: "view", isMobile: false } as any}
+      >
+        <GlobalInfoContext.Provider value={{ access: "view" } as any}>
+          <ServiceItems />
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>,
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "This outline changed on another device while you had unsaved edits.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Keep my draft" }));
+    expect(mockDispatch).toHaveBeenCalledWith(
+      resolveOutlineConflict({ outlineId: "outline-1", choice: "keep-local" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Use remote version" }));
+    expect(mockDispatch).toHaveBeenCalledWith(
+      resolveOutlineConflict({ outlineId: "outline-1", choice: "use-remote" }),
+    );
   });
 
   it("syncs cyan list selection when selectedItemListId changes externally", () => {

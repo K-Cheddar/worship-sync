@@ -6,6 +6,10 @@ import {
   isOutlineInScope,
   resolveOutlineForScope,
 } from "../utils/outlineScope";
+import {
+  mergeItemListsRegistrySnapshot,
+  type ItemListsRegistrySnapshot,
+} from "../utils/persistItemListsRegistry";
 
 type ItemListState = {
   currentLists: ItemList[];
@@ -25,6 +29,8 @@ type ItemListState = {
    * Also persisted on the ItemLists doc so reload restores each controller.
    */
   selectedIdByScope: Record<string, string>;
+  /** Last ItemLists snapshot received from or committed to PouchDB. */
+  registryBaseline: ItemListsRegistrySnapshot;
   isInitialized: boolean;
 };
 
@@ -41,6 +47,7 @@ export type UpdateItemListsFromRemotePayload =
       itemLists: ItemList[];
       /** Remote church-wide active outline id, when the ItemLists doc carried one. */
       activeListId?: string;
+      selectedIdByScope?: Record<string, string>;
     };
 
 const initialState: ItemListState = {
@@ -49,6 +56,11 @@ const initialState: ItemListState = {
   selectedList: undefined,
   scope: DEFAULT_OUTLINE_SCOPE,
   selectedIdByScope: {},
+  registryBaseline: {
+    currentLists: [],
+    activeList: undefined,
+    selectedIdByScope: {},
+  },
   isInitialized: false,
 };
 
@@ -67,7 +79,20 @@ const normalizeItemListsPayload = (
 const ensureScopeState = (state: ItemListState) => {
   if (!state.scope) state.scope = DEFAULT_OUTLINE_SCOPE;
   if (!state.selectedIdByScope) state.selectedIdByScope = {};
+  if (!state.registryBaseline) {
+    state.registryBaseline = {
+      currentLists: state.currentLists.map((item) => ({ ...item })),
+      activeList: state.activeList ? { ...state.activeList } : undefined,
+      selectedIdByScope: { ...state.selectedIdByScope },
+    };
+  }
 };
+
+const snapshotRegistry = (state: ItemListState): ItemListsRegistrySnapshot => ({
+  currentLists: state.currentLists.map((item) => ({ ...item })),
+  activeList: state.activeList ? { ...state.activeList } : undefined,
+  selectedIdByScope: { ...state.selectedIdByScope },
+});
 
 /**
  * Move `selectedList` to a sound outline within `state.scope`.
@@ -100,6 +125,7 @@ export const itemListsSlice = createSlice({
   initialState,
   reducers: {
     updateItemLists: (state, action: PayloadAction<ItemList[]>) => {
+      ensureScopeState(state);
       state.currentLists = action.payload;
     },
 
@@ -117,6 +143,7 @@ export const itemListsSlice = createSlice({
       }
       state.currentLists = lists;
       state.activeList = presentationActiveFallback(lists);
+      state.registryBaseline = snapshotRegistry(state);
       reselectWithinScope(state);
       state.isInitialized = true;
     },
@@ -142,19 +169,45 @@ export const itemListsSlice = createSlice({
       const remoteActiveId = Array.isArray(action.payload)
         ? undefined
         : action.payload.activeListId;
-      state.currentLists = lists;
-      if (lists.length === 0) {
+      const remoteSnapshot: ItemListsRegistrySnapshot = {
+        currentLists: lists,
+        activeList:
+          lists.find((list) => list._id === remoteActiveId) ??
+          (remoteActiveId ? undefined : state.registryBaseline.activeList) ??
+          presentationActiveFallback(lists),
+        selectedIdByScope: Array.isArray(action.payload)
+          ? { ...state.registryBaseline.selectedIdByScope }
+          : {
+              ...(action.payload.selectedIdByScope ??
+                state.registryBaseline.selectedIdByScope),
+            },
+      };
+      const selectedId = state.selectedList?._id;
+      const merged = mergeItemListsRegistrySnapshot(remoteSnapshot, {
+        before: state.registryBaseline,
+        after: snapshotRegistry(state),
+      });
+      state.registryBaseline = {
+        currentLists: remoteSnapshot.currentLists.map((item) => ({ ...item })),
+        activeList: remoteSnapshot.activeList
+          ? { ...remoteSnapshot.activeList }
+          : undefined,
+        selectedIdByScope: { ...remoteSnapshot.selectedIdByScope },
+      };
+      state.currentLists = merged.currentLists;
+      state.activeList = merged.activeList;
+      state.selectedIdByScope = merged.selectedIdByScope;
+      if (state.currentLists.length === 0) {
         state.activeList = undefined;
         state.selectedList = undefined;
         return;
       }
-      const ids = new Set(lists.map((l) => l._id));
+      const ids = new Set(state.currentLists.map((l) => l._id));
 
       // Keep the current selection if it survived, otherwise fall back — but
       // only ever to an outline in the same scope.
-      const selectedId = state.selectedList?._id;
       if (selectedId && ids.has(selectedId)) {
-        const current = lists.find((l) => l._id === selectedId)!;
+        const current = state.currentLists.find((l) => l._id === selectedId)!;
         if (isOutlineInScope(current, state.scope)) {
           state.selectedList = current;
           state.selectedIdByScope[state.scope] = current._id;
@@ -166,17 +219,25 @@ export const itemListsSlice = createSlice({
         reselectWithinScope(state);
       }
 
-      if (remoteActiveId && ids.has(remoteActiveId)) {
-        state.activeList = lists.find((l) => l._id === remoteActiveId)!;
-      } else {
-        const activeId = state.activeList?._id;
-        state.activeList =
-          activeId && ids.has(activeId)
-            ? lists.find((l) => l._id === activeId)!
-            : presentationActiveFallback(lists);
-      }
+      const activeId = state.activeList?._id;
+      state.activeList = activeId && ids.has(activeId)
+        ? state.currentLists.find((list) => list._id === activeId)
+        : presentationActiveFallback(state.currentLists);
+    },
+    markItemListsPersisted: (
+      state,
+      action: PayloadAction<ItemListsRegistrySnapshot>,
+    ) => {
+      state.registryBaseline = {
+        currentLists: action.payload.currentLists.map((item) => ({ ...item })),
+        activeList: action.payload.activeList
+          ? { ...action.payload.activeList }
+          : undefined,
+        selectedIdByScope: { ...action.payload.selectedIdByScope },
+      };
     },
     removeFromItemLists: (state, action: PayloadAction<string>) => {
+      ensureScopeState(state);
       state.currentLists = state.currentLists.filter((item) => {
         return item._id !== action.payload;
       });
@@ -196,6 +257,7 @@ export const itemListsSlice = createSlice({
       if (next) state.selectedIdByScope[state.scope] = next._id;
     },
     setActiveItemList: (state, action: PayloadAction<string>) => {
+      ensureScopeState(state);
       state.activeList = state.currentLists.find(
         (item) => item._id === action.payload,
       );
@@ -216,6 +278,10 @@ export const itemListsSlice = createSlice({
       } else {
         reselectWithinScope(state);
       }
+      state.registryBaseline.activeList = state.activeList
+        ? { ...state.activeList }
+        : undefined;
+      state.registryBaseline.selectedIdByScope = { ...state.selectedIdByScope };
     },
     forceUpdate: () => {},
   },
@@ -231,6 +297,7 @@ export const {
   setInitialItemList,
   setOutlineScope,
   updateItemListsFromRemote,
+  markItemListsPersisted,
   forceUpdate,
 } = itemListsSlice.actions;
 

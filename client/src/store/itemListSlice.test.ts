@@ -10,6 +10,9 @@ import itemListReducer, {
   setItemListIsLoading,
   setHasPendingUpdate,
   updateItemListFromRemote,
+  recordOutlineConflict,
+  markItemListPersisted,
+  resolveOutlineConflict,
 } from "./itemListSlice";
 import { createServiceItem } from "../test/fixtures";
 import type { ServiceItem } from "../types";
@@ -18,25 +21,12 @@ import generateRandomId from "../utils/generateRandomId";
 jest.mock("../utils/generateRandomId");
 const mockGenerateRandomId = jest.mocked(generateRandomId);
 
-type ItemListState = {
-  list: ServiceItem[];
-  isLoading: boolean;
-  selectedItemListId: string;
-  insertPointIndex: number;
-  hasPendingUpdate: boolean;
-  initialItems: string[];
-  isInitialized: boolean;
-};
+type TestRootState = { itemList: ReturnType<typeof itemListReducer> };
 
-type ItemListSliceState = { itemList: ItemListState };
-
-const createStore = (preloadedState?: Partial<ItemListSliceState>) =>
+const createStore = (preloadedState?: any) =>
   configureStore({
     reducer: { itemList: itemListReducer },
-    ...(preloadedState != null &&
-      Object.keys(preloadedState).length > 0 && {
-        preloadedState: preloadedState as ItemListSliceState,
-      }),
+    preloadedState: preloadedState as TestRootState | undefined,
   });
 
 describe("itemListSlice", () => {
@@ -63,26 +53,179 @@ describe("itemListSlice", () => {
       expect(state.hasPendingUpdate).toBe(false);
     });
 
-    it("updateItemListFromRemote clears pending dirty flag", () => {
+    it("merges independent remote row edits without clearing pending local work", () => {
+      const baseline = [
+        createServiceItem({ name: "A", _id: "a", listId: "l1" }),
+        createServiceItem({ name: "B", _id: "b", listId: "l2" }),
+      ];
       const store = createStore({
         itemList: {
-          list: [createServiceItem({ name: "Old", _id: "old", listId: "l1" })],
+          list: [
+            createServiceItem({ name: "A local", _id: "a", listId: "l1" }),
+            baseline[1],
+          ],
           isLoading: false,
           selectedItemListId: "",
-          insertPointIndex: -1,
+          insertPointIndex: 1,
           hasPendingUpdate: true,
-          initialItems: ["l1"],
+          initialItems: ["l1", "l2"],
           isInitialized: true,
+          syncBaseline: baseline,
+          loadedOutlineId: "outline",
+          remoteConflicts: {},
         },
       });
       store.dispatch(
         updateItemListFromRemote([
-          createServiceItem({ name: "New", _id: "new", listId: "l2" }),
+          baseline[0],
+          createServiceItem({ name: "B remote", _id: "b", listId: "l2" }),
         ]),
       );
       const state = store.getState().itemList;
-      expect(state.list[0].name).toBe("New");
-      expect(state.hasPendingUpdate).toBe(false);
+      expect(state.list.map((item) => item.name)).toEqual(["A local", "B remote"]);
+      expect(state.list.map((item) => item.listId)).toEqual(["l1", "l2"]);
+      expect(state.syncBaseline.map((item) => item.name)).toEqual(["A", "B remote"]);
+      expect(state.hasPendingUpdate).toBe(true);
+      expect(state.insertPointIndex).toBe(1);
+    });
+
+    it("retains both drafts when the same row changes concurrently and resolves explicitly", () => {
+      const baseline = [createServiceItem({ name: "Base", _id: "a", listId: "l1" })];
+      const local = createServiceItem({ name: "Local draft", _id: "a", listId: "l1" });
+      const remote = createServiceItem({ name: "Remote draft", _id: "a", listId: "l1" });
+      const store = createStore({
+        itemList: {
+          list: [local],
+          isLoading: false,
+          selectedItemListId: "l1",
+          insertPointIndex: 0,
+          hasPendingUpdate: true,
+          initialItems: ["l1"],
+          isInitialized: true,
+          syncBaseline: baseline,
+          loadedOutlineId: "outline",
+          remoteConflicts: {},
+        },
+      });
+
+      store.dispatch(updateItemListFromRemote([remote]));
+      expect(store.getState().itemList.list[0].name).toBe("Local draft");
+      expect(store.getState().itemList.remoteConflicts.outline.remoteItems[0].name).toBe("Remote draft");
+      expect(store.getState().itemList.hasPendingUpdate).toBe(true);
+
+      const remoteAddition = createServiceItem({
+        name: "Remote addition",
+        _id: "b",
+        listId: "l2",
+      });
+      store.dispatch(updateItemListFromRemote({
+        outlineId: "outline",
+        items: [remote, remoteAddition],
+      }));
+      expect(store.getState().itemList.remoteConflicts.outline.localItems).toEqual([
+        expect.objectContaining({ name: "Local draft" }),
+        expect.objectContaining({ name: "Remote addition" }),
+      ]);
+      expect(store.getState().itemList.remoteConflicts.outline.remoteItems).toEqual([
+        remote,
+        remoteAddition,
+      ]);
+      store.dispatch(markItemListPersisted({
+        outlineId: "outline",
+        submittedItems: [local],
+        items: [remote, remoteAddition],
+      }));
+      expect(store.getState().itemList.remoteConflicts.outline).toBeDefined();
+      expect(store.getState().itemList.hasPendingUpdate).toBe(true);
+
+      store.dispatch(resolveOutlineConflict({
+        outlineId: "outline",
+        choice: "use-remote",
+      }));
+      expect(store.getState().itemList.list.map((item) => item.name)).toEqual([
+        "Remote draft",
+        "Remote addition",
+      ]);
+      expect(store.getState().itemList.hasPendingUpdate).toBe(false);
+    });
+
+    it("rebases a newer local draft over remote rows included by an earlier save acknowledgment", () => {
+      const submitted = [
+        createServiceItem({ name: "A saved", _id: "a", listId: "l1" }),
+      ];
+      const newerLocal = [
+        createServiceItem({ name: "A newer draft", _id: "a", listId: "l1" }),
+      ];
+      const persisted = [
+        submitted[0],
+        createServiceItem({ name: "Remote addition", _id: "b", listId: "l2" }),
+      ];
+      const store = createStore({
+        itemList: {
+          list: newerLocal,
+          isLoading: false,
+          selectedItemListId: "l1",
+          insertPointIndex: 0,
+          hasPendingUpdate: true,
+          initialItems: ["l1"],
+          isInitialized: true,
+          syncBaseline: [createServiceItem({ name: "A", _id: "a", listId: "l1" })],
+          loadedOutlineId: "outline",
+          remoteConflicts: {},
+        },
+      });
+
+      store.dispatch(markItemListPersisted({
+        outlineId: "outline",
+        submittedItems: submitted,
+        items: persisted,
+      }));
+
+      expect(store.getState().itemList.list).toEqual([
+        expect.objectContaining({ name: "A newer draft", listId: "l1" }),
+        expect.objectContaining({ name: "Remote addition", listId: "l2" }),
+      ]);
+      expect(store.getState().itemList.syncBaseline).toEqual(persisted);
+      expect(store.getState().itemList.hasPendingUpdate).toBe(true);
+    });
+
+    it("keeps a save conflict by outline when it arrives after switching outlines", () => {
+      const baseline = [createServiceItem({ name: "Base", _id: "a", listId: "l1" })];
+      const local = [createServiceItem({ name: "Local draft", _id: "a", listId: "l1" })];
+      const remote = [createServiceItem({ name: "Remote draft", _id: "a", listId: "l1" })];
+      const currentOutline = [createServiceItem({ name: "Other outline", _id: "b", listId: "l2" })];
+      const store = createStore({
+        itemList: {
+          list: currentOutline,
+          isLoading: false,
+          selectedItemListId: "l2",
+          insertPointIndex: 0,
+          hasPendingUpdate: false,
+          initialItems: ["l2"],
+          isInitialized: true,
+          syncBaseline: currentOutline,
+          loadedOutlineId: "outline-b",
+          remoteConflicts: {},
+        },
+      });
+
+      store.dispatch(recordOutlineConflict({
+        outlineId: "outline-a",
+        baselineItems: baseline,
+        localItems: local,
+        remoteItems: remote,
+      }));
+      expect(store.getState().itemList.list).toEqual(currentOutline);
+      expect(store.getState().itemList.remoteConflicts["outline-a"]).toEqual(
+        expect.objectContaining({
+          localItems: [expect.objectContaining({ name: "Local draft" })],
+          remoteItems: [expect.objectContaining({ name: "Remote draft" })],
+        }),
+      );
+
+      store.dispatch(initiateItemList({ outlineId: "outline-a", items: remote }));
+      expect(store.getState().itemList.list[0].name).toBe("Local draft");
+      expect(store.getState().itemList.hasPendingUpdate).toBe(true);
     });
 
     it("updateItemList replaces list and sets hasPendingUpdate", () => {

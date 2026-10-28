@@ -153,6 +153,7 @@ const Services = ({
             updateItemListsFromRemote({
               itemLists: _itemLists,
               activeListId: _activeList?._id,
+              selectedIdByScope: response.selectedIdByScope,
             }),
           );
         }
@@ -226,6 +227,7 @@ const Services = ({
               updateItemListsFromRemote({
                 itemLists: update.itemLists,
                 activeListId: update.activeList?._id,
+                selectedIdByScope: update.selectedIdByScope,
               }),
             );
           }

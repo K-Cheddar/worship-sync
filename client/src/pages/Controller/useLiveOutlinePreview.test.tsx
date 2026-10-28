@@ -120,7 +120,7 @@ describe("useLiveOutlinePreview", () => {
     act(() => {
       updater.dispatchEvent(
         new CustomEvent("update", {
-          detail: [{ _id: "ItemLists" }, { _id: "aux-list" }],
+          detail: [itemListsDoc, { _id: "aux-list" }],
         }),
       );
     });
@@ -134,5 +134,74 @@ describe("useLiveOutlinePreview", () => {
       );
     });
     expect(db.get).toHaveBeenCalledTimes(readsAfterUnmount);
+  });
+
+  it("keeps preview data and avoids outline reads for an unchanged registry selection", async () => {
+    const itemListsDoc = makeItemListsDoc();
+    const db = {
+      get: jest.fn(async (id: string) =>
+        id === "ItemLists"
+          ? itemListsDoc
+          : { _id: id, items: [makeItem("Current aux item")] },
+      ),
+    };
+    const updater = new EventTarget();
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <ControllerInfoContext.Provider
+        value={{ db, cloud: {} as never, updater } as never}
+      >
+        {children}
+      </ControllerInfoContext.Provider>
+    );
+    const { result } = renderHook(() => useLiveOutlinePreview("aux-a"), { wrapper });
+    await waitFor(() => expect(result.current.items[0]?.name).toBe("Current aux item"));
+    const readsBefore = db.get.mock.calls.length;
+    itemListsDoc.itemLists[0].name = "Renamed main outline";
+
+    act(() => updater.dispatchEvent(new CustomEvent("update", {
+      detail: [itemListsDoc],
+    })));
+
+    expect(db.get).toHaveBeenCalledTimes(readsBefore);
+    expect(result.current.items[0]?.name).toBe("Current aux item");
+    expect(result.current.isLoading).toBe(false);
+  });
+
+  it("retains displayed data without a skeleton while the same outline refreshes", async () => {
+    let resolveRefresh!: (value: { _id: string; items: ReturnType<typeof makeItem>[] }) => void;
+    let auxReads = 0;
+    const db = {
+      get: jest.fn((id: string) => {
+        if (id === "ItemLists") return Promise.resolve(makeItemListsDoc());
+        auxReads += 1;
+        if (auxReads === 1) {
+          return Promise.resolve({ _id: id, items: [makeItem("Before refresh")] });
+        }
+        return new Promise((resolve) => { resolveRefresh = resolve; });
+      }),
+    };
+    const updater = new EventTarget();
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <ControllerInfoContext.Provider
+        value={{ db, cloud: {} as never, updater } as never}
+      >
+        {children}
+      </ControllerInfoContext.Provider>
+    );
+    const { result } = renderHook(() => useLiveOutlinePreview("aux-a"), { wrapper });
+    await waitFor(() => expect(result.current.items[0]?.name).toBe("Before refresh"));
+
+    act(() => updater.dispatchEvent(new CustomEvent("update", {
+      detail: [{ _id: "aux-list", _rev: "2-content" }],
+    })));
+    expect(result.current.items[0]?.name).toBe("Before refresh");
+    expect(result.current.isLoading).toBe(false);
+
+    await act(async () => {
+      resolveRefresh({ _id: "aux-list", items: [makeItem("After refresh")] });
+      await Promise.resolve();
+    });
+    expect(result.current.items[0]?.name).toBe("After refresh");
+    expect(result.current.isLoading).toBe(false);
   });
 });

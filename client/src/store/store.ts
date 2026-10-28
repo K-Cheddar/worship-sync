@@ -125,7 +125,12 @@ import { persistExistingOverlayDoc } from "../utils/persistOverlayDoc";
 import {
   persistServiceListItems,
   persistServiceListOverlays,
+  ServiceListConflictError,
 } from "../utils/persistServiceListField";
+import {
+  persistItemListsRegistry,
+  type ItemListsRegistryIntent,
+} from "../utils/persistItemListsRegistry";
 import _ from "lodash";
 import { getChurchDataPath } from "../utils/firebasePaths";
 import {
@@ -1661,26 +1666,38 @@ listenerMiddleware.startListening({
       itemListSlice.actions.initiateItemList,
       itemListSlice.actions.setItemListIsLoading,
       itemListSlice.actions.setActiveItemInList,
-      itemListSlice.actions.updateItemListFromRemote,
       itemListSlice.actions.setHasPendingUpdate,
       itemListSlice.actions.addToInitialItems,
       itemListSlice.actions.setIsInitialized,
+      itemListSlice.actions.markItemListPersisted,
+      itemListSlice.actions.recordOutlineConflict,
     );
     const itemListChanged =
       (currentState as RootState).undoable.present.itemList !==
       (previousState as RootState).undoable.present.itemList;
+    const selectedId = (currentState as RootState).undoable.present.itemLists.selectedList?._id;
+    const hasOutlineConflict = Boolean(
+      selectedId && state.remoteConflicts?.[selectedId],
+    );
     const savingOutgoingOutline =
       itemListsSlice.actions.selectItemList.match(action) &&
       (currentState as RootState).undoable.present.itemLists.selectedList?._id !==
         (previousState as RootState).undoable.present.itemLists.selectedList?._id &&
       !!(previousState as RootState).undoable.present.itemList.hasPendingUpdate;
+    const outgoingHasConflict = Boolean(
+      (previousState as RootState).undoable.present.itemLists.selectedList?._id &&
+      (previousState as RootState).undoable.present.itemList.remoteConflicts?.[
+        (previousState as RootState).undoable.present.itemLists.selectedList!._id
+      ],
+    );
     return (
       (itemListChanged &&
       !excluded(action) &&
       !!(currentState as RootState).undoable.present.itemList
         .hasPendingUpdate &&
+      !hasOutlineConflict &&
       !isStoreResetAction(action)) ||
-      savingOutgoingOutline
+      (savingOutgoingOutline && !outgoingHasConflict)
     );
   },
 
@@ -1701,13 +1718,20 @@ listenerMiddleware.startListening({
     ).undoable.present;
     const { list, hasPendingUpdate, isInitialized } = present.itemList;
     const { selectedList } = present.itemLists;
+    const baseline = present.itemList.syncBaseline ?? [];
+    const loadedOutlineId = present.itemList.loadedOutlineId;
+    const outgoingConflict = Boolean(
+      selectedList && present.itemList.remoteConflicts?.[selectedList._id],
+    );
 
     if (
       !dbAtStart ||
       db !== dbAtStart ||
       !isInitialized ||
       !hasPendingUpdate ||
-      !selectedList
+      !selectedList ||
+      (loadedOutlineId && loadedOutlineId !== selectedList._id) ||
+      outgoingConflict
     ) {
       return;
     }
@@ -1717,17 +1741,18 @@ listenerMiddleware.startListening({
         dbAtStart,
         selectedList._id,
         [...list],
+        [...baseline],
       );
 
-      listenerApi.throwIfCancelled();
       if (db !== dbAtStart) return;
       const afterPutState = (listenerApi.getState() as RootState).undoable.present;
       const afterPut = afterPutState.itemList;
-      if (
-        afterPut.list === list &&
-        afterPut.hasPendingUpdate
-      ) {
-        listenerApi.dispatch(itemListSlice.actions.setHasPendingUpdate(false));
+      if (!afterPut.loadedOutlineId || afterPut.loadedOutlineId === selectedList._id) {
+        listenerApi.dispatch(itemListSlice.actions.markItemListPersisted({
+          outlineId: selectedList._id,
+          items: [...persisted.items],
+          submittedItems: [...list],
+        }));
       }
 
       safePostMessage({
@@ -1739,12 +1764,32 @@ listenerMiddleware.startListening({
       });
     } catch (error) {
       if (isListenerCancelledTaskError(error)) return;
+      if (error instanceof ServiceListConflictError) {
+        if (db === dbAtStart && selectedList) {
+          listenerApi.dispatch(itemListSlice.actions.recordOutlineConflict({
+            outlineId: selectedList._id,
+            baselineItems: [...baseline],
+            localItems: [...list],
+            remoteItems: error.remoteItems,
+          }));
+        }
+      }
       console.error("Failed to persist item list outline:", error);
     }
   },
 });
 
 // handle itemLists updates
+const pendingRegistryIntentsByDb = new WeakMap<object, ItemListsRegistryIntent[]>();
+
+const snapshotItemListsRegistry = (
+  state: RootState["undoable"]["present"]["itemLists"],
+) => ({
+  currentLists: state.currentLists.map((item) => ({ ...item })),
+  activeList: state.activeList ? { ...state.activeList } : undefined,
+  selectedIdByScope: { ...(state.selectedIdByScope ?? {}) },
+});
+
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     const state = (currentState as RootState).undoable.present.itemLists;
@@ -1755,6 +1800,7 @@ listenerMiddleware.startListening({
       itemListsSlice.actions.setInitialItemList,
       itemListsSlice.actions.initiateItemLists,
       itemListsSlice.actions.updateItemListsFromRemote,
+      itemListsSlice.actions.markItemListsPersisted,
       itemListsSlice.actions.setIsInitialized,
       itemListsSlice.actions.setOutlineScope,
     );
@@ -1767,17 +1813,19 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
-    // Snapshot before debounce: leaving a controller page resets itemLists to
-    // initial state, which would otherwise make the delayed write bail out and
-    // drop active outline / selection persistence.
-    const snapshot = (listenerApi.getState() as RootState).undoable.present
-      .itemLists;
-    const { currentLists, activeList, selectedIdByScope } = snapshot;
+    const rootBefore = listenerApi.getOriginalState() as RootState;
+    const rootAfter = listenerApi.getState() as RootState;
+    const intent: ItemListsRegistryIntent = {
+      before: snapshotItemListsRegistry(rootBefore.undoable.present.itemLists),
+      after: snapshotItemListsRegistry(rootAfter.undoable.present.itemLists),
+    };
     const dbAtStart = db;
     if (!dbAtStart) return;
-    // Selection can still be worth persisting when activeList is momentarily
-    // empty; skip only when there is nothing at all to write.
-    if (!activeList && currentLists.length === 0) return;
+    if (!intent.after.activeList && intent.after.currentLists.length === 0) return;
+
+    const pendingIntents = pendingRegistryIntentsByDb.get(dbAtStart) ?? [];
+    pendingIntents.push(intent);
+    pendingRegistryIntentsByDb.set(dbAtStart, pendingIntents);
 
     listenerApi.dispatch(
       autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(
@@ -1787,18 +1835,30 @@ listenerMiddleware.startListening({
     try {
       listenerApi.cancelActiveListeners();
       await listenerApi.delay(1500);
+      listenerApi.throwIfCancelled();
 
-      const db_itemLists: DBItemLists = await dbAtStart.get("ItemLists");
-      db_itemLists.itemLists = [...currentLists];
-      if (activeList) {
-        db_itemLists.activeList = activeList;
+      const intentsToCommit = [...pendingIntents];
+      if (intentsToCommit.length === 0) return;
+      const db_itemLists: DBItemLists = await persistItemListsRegistry(
+        dbAtStart,
+        intentsToCommit,
+      );
+      const latestQueue = pendingRegistryIntentsByDb.get(dbAtStart) ?? [];
+      if (
+        intentsToCommit.every((queuedIntent, index) =>
+          latestQueue[index] === queuedIntent,
+        )
+      ) {
+        latestQueue.splice(0, intentsToCommit.length);
       }
-      db_itemLists.selectedIdByScope = { ...selectedIdByScope };
-      db_itemLists.updatedAt = new Date().toISOString();
-      await dbAtStart.put(db_itemLists);
 
       // Local machine updates
       if (db !== dbAtStart) return;
+      listenerApi.dispatch(itemListsSlice.actions.markItemListsPersisted({
+        currentLists: db_itemLists.itemLists,
+        activeList: db_itemLists.activeList,
+        selectedIdByScope: db_itemLists.selectedIdByScope ?? {},
+      }));
       safePostMessage({
         type: "update",
         data: {
@@ -1806,6 +1866,9 @@ listenerMiddleware.startListening({
           hostId: globalHostId,
         },
       });
+    } catch (error) {
+      if (isListenerCancelledTaskError(error)) return;
+      console.error("Failed to persist ItemLists registry:", error);
     } finally {
       listenerApi.dispatch(
         autosaveIndicatorSlice.actions.endKeyedDebouncedSave(

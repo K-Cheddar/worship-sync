@@ -3,6 +3,7 @@ import {
   updateItemList,
   addItemToItemList,
   removeItemsFromList,
+  resolveOutlineConflict,
   setActiveItemInList,
 } from "../../store/itemListSlice";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -63,6 +64,15 @@ const ServiceItems = () => {
     selectedItemListId,
     insertPointIndex,
   } = useSelector((state) => state.undoable.present.itemList);
+  const loadedOutlineId = useSelector(
+    (state) => state.undoable.present.itemList.loadedOutlineId,
+  );
+  const remoteOutlineConflict = useSelector((state) => {
+    const itemList = state.undoable.present.itemList;
+    return itemList.loadedOutlineId
+      ? itemList.remoteConflicts?.[itemList.loadedOutlineId]
+      : undefined;
+  });
   const mediaList = useSelector((state) => state.media.list);
   const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
   const serviceTimes = useSelector(
@@ -763,6 +773,36 @@ const ServiceItems = () => {
         <div className="min-h-0 border-b-2 border-white/25 bg-black/55 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)]">
           <Outlines servicePanel className="w-full min-w-0" />
         </div>
+        {remoteOutlineConflict && loadedOutlineId && (
+          <div
+            className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-400/40 bg-amber-950/40 px-3 py-2 text-sm"
+            role="alert"
+          >
+            <p className="min-w-0 flex-1">
+              This outline changed on another device while you had unsaved edits. Your draft is still open; choose which version to keep.
+            </p>
+            <div className="flex shrink-0 gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => dispatch(resolveOutlineConflict({
+                  outlineId: loadedOutlineId,
+                  choice: "keep-local",
+                }))}
+              >
+                Keep my draft
+              </Button>
+              <Button
+                variant="tertiary"
+                onClick={() => dispatch(resolveOutlineConflict({
+                  outlineId: loadedOutlineId,
+                  choice: "use-remote",
+                }))}
+              >
+                Use remote version
+              </Button>
+            </div>
+          </div>
+        )}
         {visibleActionBarItemDefs.length > 0 && (
           <div className="border-b border-white/10 px-2 py-1 min-w-0">
             <ActionBar items={visibleActionBarItemDefs} overflowMenuClassName="min-w-48" />

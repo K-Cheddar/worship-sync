@@ -12,6 +12,8 @@ Selecting an outline item activates its current cached document in Redux. The ex
 - Shift, Ctrl/Cmd, long press and selection-only actions do not activate an item. Library Add and read-only View details retain their established behavior. Explicit item creation/open actions select the actual occurrence in Redux.
 - Initial entry restores only an established occurrence after outline/cache initialization. Missing or temporarily unavailable selection does not choose a replacement. Church resets and auxiliary controller scopes retain isolation.
 - Standard mutation-owner middleware, autosave revisions/conflicts and undo policy remain authoritative. Cached selection never replaces the cache with outline snapshots.
+- Cross-device outline sync merges independent row edits against the last synchronized baseline. If both devices change the same row field, delete and edit the same row, or make incompatible reorders, the local draft is retained and the operator must choose which version to keep.
+- `selectedIdByScope` is persisted in the shared `ItemLists` registry. Runtime operator selection remains local to each controller, while restored selection follows the shared saved value for that scope; concurrent saved selections for the same scope are last-writer-wins.
 - Media preparation follows the active Redux document, including local video input, without changing display transmission or introducing media caches.
 - Thumbnail rendering and virtualization are outside this change.
 
