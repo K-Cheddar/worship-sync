@@ -5907,12 +5907,11 @@ describe("item list outline persistence", () => {
     env.store.dispatch(env.itemListsSlice.actions.updateItemLists([{ _id: "outline-a", name: "Unsaved rename" }]));
     await jest.advanceTimersByTimeAsync(1500);
     await flushListenerEffects();
-    expect(env.store.getState().undoable.present.itemLists.registrySave.status).toBe("review");
+    expect(env.store.getState().undoable.present.itemLists.registrySave.status).toBe("error");
     env.store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
     env.store.dispatch(env.itemListsSlice.actions.initiateItemLists(current.itemLists));
-    env.store.dispatch(env.itemListsSlice.actions.reviewRegistryRevisions(false));
     await flushListenerEffects();
-    expect(env.store.getState().undoable.present.itemLists.registrySave.status).toBe("review");
+    expect(env.store.getState().undoable.present.itemLists.registrySave.status).toBe("error");
     env.store.dispatch(env.itemListsSlice.actions.retryRegistrySave());
     await flushListenerEffects();
     expect(current.itemLists[0].name).toBe("Unsaved rename");
@@ -6443,7 +6442,6 @@ describe("item list outline persistence", () => {
     });
     store.dispatch(itemListsSlice.actions.initiateItemLists({
       itemLists: current.itemLists,
-      selectedIdByScope: current.selectedIdByScope,
     }));
     store.dispatch(itemListsSlice.actions.updateItemLists([
       { _id: "outline-a", name: "A local rename" },
@@ -6467,7 +6465,6 @@ describe("item list outline persistence", () => {
     store.dispatch(itemListsSlice.actions.updateItemListsFromRemote({
       itemLists: current.itemLists,
       activeListId: current.activeList._id,
-      selectedIdByScope: current.selectedIdByScope,
     }));
 
     expect(store.getState().undoable.present.itemLists.currentLists).toEqual([
@@ -6478,59 +6475,41 @@ describe("item list outline persistence", () => {
     await jest.advanceTimersByTimeAsync(1500);
     await flushListenerEffects();
 
-    expect(db.get).toHaveBeenCalledWith("ItemLists", { conflicts: true });
+    expect(db.get).toHaveBeenCalledWith("ItemLists");
     expect(db.put).toHaveBeenCalledTimes(1);
     expect(current.itemLists).toEqual([
       { _id: "outline-a", name: "A local rename" },
       { _id: "outline-b", name: "B remote rename" },
       { _id: "outline-c", name: "Remote addition", controllerScope: "aux" },
     ]);
-    expect(current.selectedIdByScope).toEqual({
-      presentation: "outline-b",
-      aux: "outline-c",
-      anotherController: "outline-z",
-    });
+    expect(current.selectedIdByScope).toEqual({ presentation: "outline-b", aux: "outline-c", anotherController: "outline-z" });
     expect(current.activeList._id).toBe("outline-b");
     expect(postMessage).toHaveBeenCalled();
   });
 
-  it("notifies the operator and retains local registry edits when branches conflict", async () => {
+  it("keeps outline selection local and does not save selection-only changes", async () => {
     jest.useFakeTimers();
-    const { store, itemListsSlice, db, registerPresentationSyncErrorHandler } =
+    const { store, itemListsSlice, db } =
       loadStoreWithItemListPersistence();
-    const notify = jest.fn();
-    const unregister = registerPresentationSyncErrorHandler(notify);
-    const current = {
-      _id: "ItemLists",
-      _rev: "2-winner",
-      _conflicts: ["2-losing"],
-      itemLists: [
-        { _id: "outline-a", name: "Remote version" },
-        { _id: "outline-b", name: "B" },
-      ],
-      activeList: { _id: "outline-a", name: "Remote version" },
-      selectedIdByScope: { presentation: "outline-a" },
-    };
-    db.get.mockResolvedValue(current);
+    const current = [{ _id: "outline-a", name: "A" }, { _id: "outline-b", name: "B" }];
     store.dispatch(itemListsSlice.actions.initiateItemLists([
-      { _id: "outline-a", name: "A" },
-      { _id: "outline-b", name: "B" },
+      ...current,
     ]));
-    store.dispatch(itemListsSlice.actions.updateItemLists([
-      { _id: "outline-a", name: "Local version" },
-      { _id: "outline-b", name: "B" },
-    ]));
+    store.dispatch(itemListsSlice.actions.selectItemList("outline-b"));
 
     await jest.advanceTimersByTimeAsync(1500);
     await flushListenerEffects();
 
-    expect(db.get).toHaveBeenCalledWith("ItemLists", { conflicts: true });
+    expect(db.get).not.toHaveBeenCalled();
     expect(db.put).not.toHaveBeenCalled();
-    expect(store.getState().undoable.present.itemLists.currentLists[0].name)
-      .toBe("Local version");
-    expect(store.getState().undoable.present.itemLists.registrySave.status).toBe("review");
-    expect(store.getState().undoable.present.itemLists.registrySave.conflicts).toEqual(expect.any(Array));
-    unregister();
+    expect(store.getState().undoable.present.itemLists.selectedList?._id).toBe("outline-b");
+    expect(store.getState().undoable.present.itemLists.activeList?._id).toBe("outline-a");
+
+    store.dispatch(itemListsSlice.actions.updateItemListsFromRemote({
+      itemLists: current,
+      activeListId: "outline-a",
+    }));
+    expect(store.getState().undoable.present.itemLists.selectedList?._id).toBe("outline-b");
     jest.useRealTimers();
   });
 });

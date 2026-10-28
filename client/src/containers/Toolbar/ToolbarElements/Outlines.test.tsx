@@ -90,13 +90,17 @@ describe("Outlines", () => {
     mockRegistrySave = { status: "idle" };
   });
 
-  it("keeps registry choices read-only for viewers", () => {
-    mockRegistrySave = { status: "review", reviewId: 1, hasBranches: true, conflicts: [{ key: "saved-1:outline-1:name", outlineId: "outline-1", field: "name", reason: "same-field", localValue: "Local name", remoteValue: "Saved name" }] };
-    render(<GlobalInfoContext.Provider value={{ access: "view" } as never}><Outlines /></GlobalInfoContext.Provider>);
-    expect(screen.getByRole("button", { name: "Keep: Local name" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Use saved: Saved name" })).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "Save choices" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Retry save" })).not.toBeInTheDocument();
+  it("shows a concise error for current edits without historical branch comparisons", () => {
+    mockRegistrySave = { status: "error", hasCurrentConflicts: true };
+    render(<GlobalInfoContext.Provider value={{ access: "full" } as never}><Outlines /></GlobalInfoContext.Provider>);
+    expect(screen.getByRole("region", { name: "Outline save error" })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Your unsaved outline changes remain available");
+    expect(screen.getByRole("button", { name: "Retry save" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Keep my changes" })).toBeEnabled();
+    expect(screen.queryByText("Keep: Local name")).not.toBeInTheDocument();
+    expect(screen.queryByText("Use saved: Saved name")).not.toBeInTheDocument();
+    expect(screen.queryByText(/competing saved versions/i)).not.toBeInTheDocument();
+    expect(mockShowToast).toHaveBeenCalledWith(expect.stringContaining("Another saved edit overlaps"), "error");
   });
 
   it("allows outline selection in present mode without showing management actions", () => {
@@ -136,7 +140,7 @@ describe("Outlines", () => {
     expect(screen.getByRole("button", { name: "Add New Service" })).toBeInTheDocument();
   });
 
-  it("checks registry branches once for a changed sync revision and reports them", async () => {
+  it("refreshes from the winner after a losing-revision event without branch review", async () => {
     const base = {
       _id: "ItemLists",
       _rev: "1-base",
@@ -174,11 +178,14 @@ describe("Outlines", () => {
       }));
       await Promise.resolve();
     });
-    await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith(
-      expect.stringContaining("competing saved versions. Open the outline picker"),
-      "error",
-    ));
-    expect(db.get).toHaveBeenLastCalledWith("ItemLists", { conflicts: true });
+    await waitFor(() => expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      type: expect.stringContaining("updateItemListsFromRemote"),
+      payload: expect.objectContaining({
+        itemLists: [{ _id: "outline-1", name: "Remote rename" }],
+      }),
+    })));
+    expect(mockShowToast).not.toHaveBeenCalledWith(expect.stringContaining("competing saved versions"), "error");
+    expect(db.get).toHaveBeenLastCalledWith("ItemLists");
     expect(db.get).toHaveBeenCalledTimes(2);
 
     await act(async () => {

@@ -127,9 +127,6 @@ import {
   resolveServiceListRevisionConflict,
   ServiceListConflictError,
 } from "../utils/persistServiceListField";
-import {
-  registrySnapshot,
-} from "../utils/persistItemListsRegistry";
 import { ItemListsRegistryQueue } from "../utils/itemListsRegistryQueue";
 import _ from "lodash";
 import { getChurchDataPath } from "../utils/firebasePaths";
@@ -882,9 +879,7 @@ const excludedActions: string[] = [
   itemListsSlice.actions.setOutlineScope.toString(),
   itemListsSlice.actions.setRegistrySaveState.toString(),
   itemListsSlice.actions.retryRegistrySave.toString(),
-  itemListsSlice.actions.resolveRegistrySave.toString(),
-  itemListsSlice.actions.reviewRegistryRevisions.toString(),
-  itemListsSlice.actions.applyRegistryRecovery.toString(),
+  itemListsSlice.actions.keepRegistryChanges.toString(),
   preferencesSlice.actions.initiatePreferences.toString(),
   preferencesSlice.actions.setIsLoading.toString(),
   preferencesSlice.actions.setSelectedPreference.toString(),
@@ -1843,22 +1838,22 @@ const snapshotItemListsRegistry = (
 ) => ({
   currentLists: state.currentLists.map((item) => ({ ...item })),
   activeList: state.activeList ? { ...state.activeList } : undefined,
-  selectedIdByScope: { ...(state.selectedIdByScope ?? {}) },
 });
 
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
-    if (isAnyOf(itemListsSlice.actions.retryRegistrySave, itemListsSlice.actions.resolveRegistrySave,
-      itemListsSlice.actions.reviewRegistryRevisions)(action)) return true;
+    if (isAnyOf(itemListsSlice.actions.retryRegistrySave, itemListsSlice.actions.keepRegistryChanges)(action)) return true;
+    if (itemListsSlice.actions.initiateItemLists.match(action)) {
+      return Boolean(db && pendingRegistryIntentsByDb.has(db));
+    }
     const state = (currentState as RootState).undoable.present.itemLists;
     if (!state.isInitialized || isStoreResetAction(action)) return false;
     const previous = (previousState as RootState).undoable.present.itemLists;
     if (state === previous) return false;
     const excluded = isAnyOf(
       itemListsSlice.actions.setInitialItemList, itemListsSlice.actions.initiateItemLists,
-      itemListsSlice.actions.updateItemListsFromRemote, itemListsSlice.actions.markItemListsPersisted,
+      itemListsSlice.actions.updateItemListsFromRemote,
       itemListsSlice.actions.setIsInitialized, itemListsSlice.actions.setOutlineScope,
-      itemListsSlice.actions.applyRegistryRecovery,
       itemListsSlice.actions.setRegistrySaveState,
     );
     return !excluded(action) && !_.isEqual(snapshotItemListsRegistry(previous), snapshotItemListsRegistry(state));
@@ -1868,32 +1863,28 @@ listenerMiddleware.startListening({
     if (!dbAtStart) return;
     let queue = pendingRegistryIntentsByDb.get(dbAtStart);
     if (!queue) {
-      queue = new ItemListsRegistryQueue(dbAtStart, (document, pending) => {
+      queue = new ItemListsRegistryQueue(dbAtStart, (document) => {
         if (db !== dbAtStart) return;
-        listenerApi.dispatch(itemListsSlice.actions.applyRegistryRecovery({ snapshot: registrySnapshot(document), pending }));
+        listenerApi.dispatch(itemListsSlice.actions.updateItemListsFromRemote({
+          itemLists: document.itemLists ?? [],
+          activeListId: document.activeList?._id,
+        }));
         safePostMessage({ type: "update", data: { docs: document, hostId: globalHostId } });
       }, (status) => {
         if (db === dbAtStart) listenerApi.dispatch(itemListsSlice.actions.setRegistrySaveState(status));
       });
       pendingRegistryIntentsByDb.set(dbAtStart, queue);
     }
-    if (itemListsSlice.actions.reviewRegistryRevisions.match(action)) {
-      await queue.observeRevisionConflict(action.payload);
-      if (db === dbAtStart) {
-        if (queue.pendingIntents.length) {
-          const registry = (listenerApi.getState() as RootState).undoable.present.itemLists;
-          listenerApi.dispatch(itemListsSlice.actions.applyRegistryRecovery({ snapshot: registry.registryBaseline, pending: queue.pendingIntents }));
-        }
-        listenerApi.dispatch(itemListsSlice.actions.setRegistrySaveState(queue.state));
-      }
-      return;
-    }
-    if (itemListsSlice.actions.resolveRegistrySave.match(action)) {
-      await queue.resolve(action.payload.reviewId, action.payload.choices);
+    if (itemListsSlice.actions.initiateItemLists.match(action)) {
+      if (db === dbAtStart) listenerApi.dispatch(itemListsSlice.actions.setRegistrySaveState(queue.state));
       return;
     }
     if (itemListsSlice.actions.retryRegistrySave.match(action)) {
       await queue.flush(true);
+      return;
+    }
+    if (itemListsSlice.actions.keepRegistryChanges.match(action)) {
+      await queue.flush(true, true);
       return;
     }
     const rootBefore = listenerApi.getOriginalState() as RootState;

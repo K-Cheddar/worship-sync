@@ -1,30 +1,27 @@
 import isEqual from "lodash/isEqual";
 import type { DBItemLists } from "../types";
 import {
+  ItemListsRegistryConflictError,
   mergeItemListsRegistrySnapshot,
   persistItemListsRegistry,
-  resolveItemListsRegistry,
-  reviewItemListsRegistry,
   type ItemListsRegistryDb,
   type ItemListsRegistryIntent,
-  type RegistryRecoveryReview,
-  registrySnapshot,
-  RegistryReviewChangedError,
 } from "./persistItemListsRegistry";
 
 export type RegistrySaveState = {
-  status: "idle" | "saving" | "error" | "review";
-  conflicts?: RegistryRecoveryReview["conflicts"];
-  reviewId?: number;
-  hasBranches?: boolean;
-  choices?: Record<string, "local" | "remote">;
-  reviewChanged?: boolean;
+  status: "idle" | "saving" | "error";
+  hasCurrentConflicts?: boolean;
 };
 
-type Entry = { key: string; outlineId?: string; intent: ItemListsRegistryIntent; failed?: boolean };
+type Entry = {
+  key: string;
+  outlineId?: string;
+  intent: ItemListsRegistryIntent;
+  failed?: boolean;
+  conflict?: boolean;
+};
 
-/** Separate independent properties so one overlapping rename cannot block a
- * selection or another outline's safe edit. Each entry still uses a baseline. */
+/** Split changes so a conflicting outline field does not block unrelated saves. */
 const splitIntent = (intent: ItemListsRegistryIntent): Entry[] => {
   const { before, after } = intent;
   const result: Entry[] = [];
@@ -54,12 +51,13 @@ const splitIntent = (intent: ItemListsRegistryIntent): Entry[] => {
       } } });
     });
   });
-  const desiredExistingOrder = after.currentLists.filter((list) => before.currentLists.some((base) => base._id === list._id));
-  const baseKeptOrder = before.currentLists.filter((list) => after.currentLists.some((desired) => desired._id === list._id));
-  if (!isEqual(baseKeptOrder.map((list) => list._id), desiredExistingOrder.map((list) => list._id))) {
+
+  const desiredOrder = after.currentLists.filter((list) => before.currentLists.some((base) => base._id === list._id));
+  const baseOrder = before.currentLists.filter((list) => after.currentLists.some((desired) => desired._id === list._id));
+  if (!isEqual(baseOrder.map((list) => list._id), desiredOrder.map((list) => list._id))) {
     result.push({ key: "order", intent: { before, after: {
       ...before, currentLists: [
-        ...desiredExistingOrder.map((list) => before.currentLists.find((base) => base._id === list._id)!),
+        ...desiredOrder.map((list) => before.currentLists.find((base) => base._id === list._id)!),
         ...before.currentLists.filter((list) => !after.currentLists.some((desired) => desired._id === list._id)),
       ],
     } } });
@@ -67,33 +65,18 @@ const splitIntent = (intent: ItemListsRegistryIntent): Entry[] => {
   if (before.activeList?._id !== after.activeList?._id) {
     result.push({ key: "activeList", intent: { before, after: { ...before, activeList: after.activeList } } });
   }
-  const scopes = new Set([...Object.keys(before.selectedIdByScope), ...Object.keys(after.selectedIdByScope)]);
-  scopes.forEach((scope) => {
-    if (before.selectedIdByScope[scope] === after.selectedIdByScope[scope]) return;
-    const selected = { ...before.selectedIdByScope };
-    if (after.selectedIdByScope[scope]) selected[scope] = after.selectedIdByScope[scope];
-    else delete selected[scope];
-    result.push({ key: `selection:${scope}`, intent: { before, after: { ...before, selectedIdByScope: selected } } });
-  });
   return result;
 };
 
-/** Owned by the concrete database, not by a picker component or debounce task.
- * Failed entries are parked until explicit retry/review or a superseding edit. */
+/** A database-owned queue keeps unsaved registry edits alive across controller unmounts. */
 export class ItemListsRegistryQueue {
   private entries: Entry[] = [];
   private running?: Promise<void>;
-  private review?: { value: RegistryRecoveryReview; entries: Entry[]; id: number };
-  private version = 0;
-  private reviewVersion = 0;
-  private observedBranches = false;
   state: RegistrySaveState = { status: "idle" };
-
-  get pendingIntents() { return this.entries.map((entry) => entry.intent); }
 
   constructor(
     private readonly db: ItemListsRegistryDb,
-    private readonly saved: (doc: DBItemLists, pending: ItemListsRegistryIntent[]) => void,
+    private readonly saved: (doc: DBItemLists) => void,
     private readonly status: (state: RegistrySaveState) => void,
   ) {}
 
@@ -105,8 +88,6 @@ export class ItemListsRegistryQueue {
   private trackRun(operation: Promise<void>): Promise<void> {
     this.running = operation.finally(async () => {
       this.running = undefined;
-      // An edit may arrive during the final review read, after the drain loop
-      // ended. Resume those new entries; parked failures stay parked.
       if (this.entries.some((entry) => !entry.failed)) await this.flush();
     });
     return this.running;
@@ -124,8 +105,6 @@ export class ItemListsRegistryQueue {
           before: previous.intent.before,
           after: mergeItemListsRegistrySnapshot(previous.intent.after, entry.intent, () => "local"),
         };
-        // Replace the object so acknowledgment of a running old entry cannot
-        // remove the newer intent.
         this.entries.splice(this.entries.indexOf(previous), 1);
       }
       if (entry.outlineId && entry.key === `outline:${entry.outlineId}`) {
@@ -133,31 +112,15 @@ export class ItemListsRegistryQueue {
       }
       this.entries.push(entry);
     }
-    this.version += 1;
-    this.review = undefined;
   }
 
-  private async prepareReview(observe = false, changed = false) {
-    const version = this.version;
-    const entries = [...this.entries];
-    if (!entries.length && !observe) { this.publish({ status: "idle" }); return; }
-    try {
-      const value = await reviewItemListsRegistry(this.db, entries.map((entry) => entry.intent));
-      if (version !== this.version) return;
-      this.observedBranches = value.hasBranches;
-      if (!entries.length && !value.hasBranches) { this.publish({ status: "idle" }); return; }
-      this.review = { value, entries, id: ++this.reviewVersion };
-      this.publish({ status: "review", conflicts: value.conflicts, reviewId: this.review.id, hasBranches: value.hasBranches, reviewChanged: changed });
-    } catch {
-      if (version === this.version) this.publish({ status: "error" });
-    }
-  }
-
-  flush(retry = false): Promise<void> {
+  /** Retry transient failures, or explicitly keep current edits after a field conflict. */
+  flush(retry = false, keepCurrentConflicts = false): Promise<void> {
     if (this.running) return this.running;
     if (retry) this.entries.forEach((entry) => { entry.failed = false; });
-    const observeBranches = this.observedBranches;
-    const nextEntry = () => this.entries.find((entry) => !entry.failed && entry.key !== "order") ?? this.entries.find((entry) => !entry.failed);
+
+    const nextEntry = () => this.entries.find((entry) => !entry.failed && entry.key !== "order") ??
+      this.entries.find((entry) => !entry.failed);
     const run = async () => {
       this.publish({ status: "saving" });
       let entry = nextEntry();
@@ -169,64 +132,33 @@ export class ItemListsRegistryQueue {
           continue;
         }
         try {
-          const doc = await persistItemListsRegistry(this.db, [entry.intent]);
-          const savedEntry = entry;
+          const doc = await persistItemListsRegistry(
+            this.db,
+            [entry.intent],
+            keepCurrentConflicts && entry.conflict === true,
+          );
           this.entries = this.entries.filter((candidate) => candidate !== currentEntry);
           this.entries.forEach((candidate) => {
-            if (candidate.key !== savedEntry.key) return;
-            const before = registrySnapshot(doc);
-            candidate.intent = { before, after: mergeItemListsRegistrySnapshot(before, candidate.intent, () => "local") };
+            if (candidate.key !== currentEntry.key) return;
+            const before = { currentLists: doc.itemLists ?? [], activeList: doc.activeList };
+            candidate.intent = {
+              before,
+              after: mergeItemListsRegistrySnapshot(before, candidate.intent, () => "local"),
+            };
           });
-          this.saved(doc, this.entries.map((candidate) => candidate.intent));
-        } catch {
+          this.saved(doc);
+        } catch (error) {
           entry.failed = true;
+          entry.conflict = error instanceof ItemListsRegistryConflictError;
         }
         entry = nextEntry();
       }
-      await this.prepareReview(observeBranches);
+
+      const hasCurrentConflicts = this.entries.some((entry) => entry.failed && entry.conflict);
+      this.publish(this.entries.some((entry) => entry.failed)
+        ? { status: "error", hasCurrentConflicts }
+        : { status: "idle" });
     };
     return this.trackRun(run());
-  }
-
-  resolve(reviewId: number, choices: Record<string, "local" | "remote">): Promise<void> {
-    if (this.running) return this.running;
-    const review = this.review;
-    if (!review || review.id !== reviewId) return this.flush();
-    const version = this.version;
-    const run = async () => {
-      this.publish({ status: "saving" });
-      try {
-        const doc = await resolveItemListsRegistry(this.db, review.entries.map((entry) => entry.intent), review.value, choices);
-        this.entries = this.entries.filter((entry) => !review.entries.includes(entry));
-        this.review = undefined;
-        this.observedBranches = false;
-        this.saved(doc, this.entries.map((entry) => entry.intent));
-      } catch (error) {
-        if (error instanceof RegistryReviewChangedError && version === this.version) {
-          this.review = { ...review, value: error.review, id: ++this.reviewVersion };
-          this.publish({ status: "review", conflicts: error.review.conflicts, reviewId: this.review.id,
-            hasBranches: error.review.hasBranches, choices: error.review.choices, reviewChanged: true });
-          return;
-        }
-        // Stale graph/choices require another review, never a forced retry.
-      }
-      if (version !== this.version) this.review = undefined;
-      if (this.entries.some((entry) => !entry.failed)) return;
-      await this.prepareReview(this.observedBranches, true);
-    };
-    return this.trackRun(run());
-  }
-
-  /** Revision branches can be detected before any local registry edit. */
-  observeRevisionConflict(hasBranches: boolean) {
-    this.observedBranches = hasBranches;
-    if (this.entries.length || this.running) return this.running;
-    if (!hasBranches) {
-      this.review = undefined;
-      this.publish({ status: "idle" });
-      return;
-    }
-    if (this.review) return;
-    return this.trackRun(this.prepareReview(true));
   }
 }

@@ -1,5 +1,8 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
+import { Provider } from "react-redux";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import store from "../../store/store";
+import { initiateItemLists, selectItemList, setOutlineScope, updateItemLists } from "../../store/itemListsSlice";
 import { useLiveOutlinePreview } from "./useLiveOutlinePreview";
 
 jest.mock("../../utils/formatItemList", () => ({
@@ -23,29 +26,39 @@ const makeItemListsDoc = () => ({
   selectedIdByScope: { presentation: "main-list", "aux-a": "aux-list" },
 });
 
+const initializeLocalRegistry = () => {
+  store.dispatch({ type: "RESET" });
+  store.dispatch(initiateItemLists(makeItemListsDoc().itemLists));
+};
+
+afterEach(() => store.dispatch({ type: "RESET" }));
+
 describe("useLiveOutlinePreview", () => {
   it("loads a controller's persisted selected outline without its controller page", async () => {
+    initializeLocalRegistry();
     const db = {
       get: jest.fn(async (id: string) =>
-        id === "ItemLists"
-          ? makeItemListsDoc()
-          : { _id: id, items: [makeItem(id === "aux-list" ? "Aux item" : "Main item")] },
+        ({ _id: id, items: [makeItem(id === "aux-list" ? "Aux item" : "Main item")] }),
       ),
     };
     const wrapper = ({ children }: { children: React.ReactNode }) => (
-      <ControllerInfoContext.Provider
-        value={{ db, cloud: {} as never, updater: new EventTarget() } as never}
-      >
-        {children}
-      </ControllerInfoContext.Provider>
+      <Provider store={store}>
+        <ControllerInfoContext.Provider
+          value={{ db, cloud: {} as never, updater: new EventTarget() } as never}
+        >
+          {children}
+        </ControllerInfoContext.Provider>
+      </Provider>
     );
 
     const { result } = renderHook(() => useLiveOutlinePreview("aux-a"), { wrapper });
     await waitFor(() => expect(result.current.items[0]?.name).toBe("Aux item"));
+    expect(db.get).toHaveBeenCalledTimes(1);
     expect(db.get).toHaveBeenCalledWith("aux-list");
   });
 
   it("ignores a stale outline response after switching controller scopes", async () => {
+    initializeLocalRegistry();
     let resolveMain!: (value: { _id: string; items: ReturnType<typeof makeItem>[] }) => void;
     const db = {
       get: jest.fn((id: string) => {
@@ -60,11 +73,11 @@ describe("useLiveOutlinePreview", () => {
     };
     const updater = new EventTarget();
     const wrapper = ({ children }: { children: React.ReactNode }) => (
-      <ControllerInfoContext.Provider
-        value={{ db, cloud: {} as never, updater } as never}
-      >
-        {children}
-      </ControllerInfoContext.Provider>
+      <Provider store={store}>
+        <ControllerInfoContext.Provider value={{ db, cloud: {} as never, updater } as never}>
+          {children}
+        </ControllerInfoContext.Provider>
+      </Provider>
     );
     const { result, rerender } = renderHook(
       ({ scope }) => useLiveOutlinePreview(scope),
@@ -81,6 +94,7 @@ describe("useLiveOutlinePreview", () => {
   });
 
   it("refreshes only the selected outline and removes its listener on unmount", async () => {
+    initializeLocalRegistry();
     const itemListsDoc = makeItemListsDoc();
     const db = {
       get: jest.fn(async (id: string) =>
@@ -92,11 +106,11 @@ describe("useLiveOutlinePreview", () => {
     const updater = new EventTarget();
     const removeSpy = jest.spyOn(updater, "removeEventListener");
     const wrapper = ({ children }: { children: React.ReactNode }) => (
-      <ControllerInfoContext.Provider
-        value={{ db, cloud: {} as never, updater } as never}
-      >
-        {children}
-      </ControllerInfoContext.Provider>
+      <Provider store={store}>
+        <ControllerInfoContext.Provider value={{ db, cloud: {} as never, updater } as never}>
+          {children}
+        </ControllerInfoContext.Provider>
+      </Provider>
     );
     const { unmount } = renderHook(() => useLiveOutlinePreview("aux-a"), { wrapper });
     await waitFor(() => expect(db.get).toHaveBeenCalledWith("aux-list"));
@@ -116,13 +130,21 @@ describe("useLiveOutlinePreview", () => {
       name: "Aux next",
       controllerScope: "aux-a",
     });
-    itemListsDoc.selectedIdByScope["aux-a"] = "aux-next";
     act(() => {
       updater.dispatchEvent(
         new CustomEvent("update", {
-          detail: [itemListsDoc, { _id: "aux-list" }],
+          detail: [
+            { ...itemListsDoc, itemLists: [...itemListsDoc.itemLists, { _id: "aux-next", name: "Aux next", controllerScope: "aux-a" }], selectedIdByScope: { "aux-a": "aux-next" } },
+            { _id: "aux-list" },
+          ],
         }),
       );
+    });
+    expect(db.get).not.toHaveBeenCalledWith("aux-next");
+    act(() => {
+      store.dispatch(setOutlineScope("aux-a"));
+      store.dispatch(updateItemLists([...itemListsDoc.itemLists, { _id: "aux-next", name: "Aux next", controllerScope: "aux-a" }]));
+      store.dispatch(selectItemList("aux-next"));
     });
     await waitFor(() => expect(db.get).toHaveBeenCalledWith("aux-next"));
     unmount();
@@ -137,6 +159,7 @@ describe("useLiveOutlinePreview", () => {
   });
 
   it("keeps preview data and avoids outline reads for an unchanged registry selection", async () => {
+    initializeLocalRegistry();
     const itemListsDoc = makeItemListsDoc();
     const db = {
       get: jest.fn(async (id: string) =>
@@ -147,11 +170,11 @@ describe("useLiveOutlinePreview", () => {
     };
     const updater = new EventTarget();
     const wrapper = ({ children }: { children: React.ReactNode }) => (
-      <ControllerInfoContext.Provider
-        value={{ db, cloud: {} as never, updater } as never}
-      >
-        {children}
-      </ControllerInfoContext.Provider>
+      <Provider store={store}>
+        <ControllerInfoContext.Provider value={{ db, cloud: {} as never, updater } as never}>
+          {children}
+        </ControllerInfoContext.Provider>
+      </Provider>
     );
     const { result } = renderHook(() => useLiveOutlinePreview("aux-a"), { wrapper });
     await waitFor(() => expect(result.current.items[0]?.name).toBe("Current aux item"));
@@ -168,6 +191,7 @@ describe("useLiveOutlinePreview", () => {
   });
 
   it("retains displayed data without a skeleton while the same outline refreshes", async () => {
+    initializeLocalRegistry();
     let resolveRefresh!: (value: { _id: string; items: ReturnType<typeof makeItem>[] }) => void;
     let auxReads = 0;
     const db = {
@@ -182,11 +206,11 @@ describe("useLiveOutlinePreview", () => {
     };
     const updater = new EventTarget();
     const wrapper = ({ children }: { children: React.ReactNode }) => (
-      <ControllerInfoContext.Provider
-        value={{ db, cloud: {} as never, updater } as never}
-      >
-        {children}
-      </ControllerInfoContext.Provider>
+      <Provider store={store}>
+        <ControllerInfoContext.Provider value={{ db, cloud: {} as never, updater } as never}>
+          {children}
+        </ControllerInfoContext.Provider>
+      </Provider>
     );
     const { result } = renderHook(() => useLiveOutlinePreview("aux-a"), { wrapper });
     await waitFor(() => expect(result.current.items[0]?.name).toBe("Before refresh"));

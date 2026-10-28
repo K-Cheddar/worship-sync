@@ -1,5 +1,6 @@
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import { useSelector } from "../../hooks";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import { formatItemList } from "../../utils/formatItemList";
 import {
@@ -8,7 +9,6 @@ import {
 } from "../../utils/outlineScope";
 import type {
   DBItemListDetails,
-  ItemLists,
   ServiceItem as ServiceItemType,
 } from "../../types";
 
@@ -23,6 +23,18 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
   isLoading: boolean;
 } => {
   const { db, cloud, updater } = useContext(ControllerInfoContext) || {};
+  const outlines = useSelector((state) => state.undoable.present.itemLists.currentLists);
+  const selectedId = useSelector((state) =>
+    state.undoable.present.itemLists.selectedIdByScope[outlineScope],
+  );
+  const liveOutlineId = useSelector((state) =>
+    state.undoable.present.itemLists.activeList?._id,
+  );
+  const outlineId = resolveOutlineForScope(
+    outlines,
+    outlineScope,
+    selectedId ?? (outlineScope === DEFAULT_OUTLINE_SCOPE ? liveOutlineId : undefined),
+  )?._id;
   const [items, setItems] = useState<ServiceItemType[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const activeListIdRef = useRef<string | undefined>(undefined);
@@ -77,52 +89,20 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
   const loadActiveList = useCallback(async () => {
     const requestId = ++requestIdRef.current;
     const requestScope = outlineScope;
-    if (!db || !cloud) {
-      setItems([]);
-      setIsLoading(false);
-      return;
-    }
     if (
       activeListIdRef.current !== undefined &&
       activeListScopeRef.current !== requestScope
     ) {
       setIsLoading(true);
     }
-    try {
-      const response: ItemLists | undefined = await db.get("ItemLists");
-      if (
-        requestIdRef.current !== requestId ||
-        scopeRef.current !== requestScope
-      ) {
-        return;
-      }
-      const activeId = resolveOutlineForScope(
-        response?.itemLists ?? [],
-        requestScope,
-        response?.selectedIdByScope?.[requestScope] ??
-          (requestScope === DEFAULT_OUTLINE_SCOPE
-            ? response?.activeList?._id
-            : undefined),
-      )?._id;
-      const selectionChanged =
-        activeListScopeRef.current !== requestScope ||
-        activeListIdRef.current !== activeId;
-      if (selectionChanged) setIsLoading(true);
-      activeListIdRef.current = activeId;
-      activeListScopeRef.current = requestScope;
-      await loadOutlineItems(activeId, requestId, requestScope, selectionChanged);
-    } catch {
-      if (
-        requestIdRef.current === requestId &&
-        scopeRef.current === requestScope
-      ) {
-        activeListIdRef.current = undefined;
-        activeListScopeRef.current = undefined;
-        setItems([]);
-        setIsLoading(false);
-      }
-    }
-  }, [cloud, db, loadOutlineItems, outlineScope]);
+    const selectionChanged =
+      activeListScopeRef.current !== requestScope ||
+      activeListIdRef.current !== outlineId;
+    if (selectionChanged) setIsLoading(true);
+    activeListIdRef.current = outlineId;
+    activeListScopeRef.current = requestScope;
+    await loadOutlineItems(outlineId, requestId, requestScope, selectionChanged);
+  }, [loadOutlineItems, outlineId, outlineScope]);
 
   useEffect(() => {
     void loadActiveList();
@@ -135,46 +115,6 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
     (event: CustomEventInit) => {
       const updates = event.detail;
       if (!Array.isArray(updates)) return;
-      const registryUpdate = updates.find(
-        (update) => update?._id === "ItemLists",
-      ) as ItemLists | undefined;
-      if (registryUpdate) {
-        const requestScope = scopeRef.current;
-        const activeId = resolveOutlineForScope(
-          registryUpdate.itemLists ?? [],
-          requestScope,
-          registryUpdate.selectedIdByScope?.[requestScope] ??
-            (requestScope === DEFAULT_OUTLINE_SCOPE
-              ? registryUpdate.activeList?._id
-              : undefined),
-        )?._id;
-        const selectionChanged =
-          activeListScopeRef.current !== requestScope ||
-          activeListIdRef.current !== activeId;
-        if (selectionChanged) {
-          const requestId = ++requestIdRef.current;
-          if (!activeId) {
-            activeListIdRef.current = undefined;
-            activeListScopeRef.current = requestScope;
-            setItems([]);
-            setIsLoading(false);
-            return;
-          }
-          setIsLoading(true);
-          activeListIdRef.current = activeId;
-          activeListScopeRef.current = requestScope;
-          void loadOutlineItems(activeId, requestId, requestScope, true);
-          return;
-        }
-        const changedOutline = updates.some(
-          (update) => update?._id === activeId,
-        );
-        if (changedOutline && activeId) {
-          const requestId = ++requestIdRef.current;
-          void loadOutlineItems(activeId, requestId, requestScope, false);
-        }
-        return;
-      }
       if (
         activeListScopeRef.current === scopeRef.current &&
         updates.some((update) => update._id === activeListIdRef.current)

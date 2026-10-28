@@ -341,7 +341,6 @@ const CreditsEditor = ({
             dispatch(
               initiateItemLists({
                 itemLists: lists,
-                selectedIdByScope: response?.selectedIdByScope,
               }),
             );
             if (response?.activeList) {
@@ -352,7 +351,6 @@ const CreditsEditor = ({
               updateItemListsFromRemote({
                 itemLists: lists,
                 activeListId: response?.activeList?._id,
-                selectedIdByScope: response?.selectedIdByScope,
               }),
             );
           }

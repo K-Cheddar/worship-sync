@@ -103,7 +103,6 @@ describe("itemListsSlice", () => {
             outline("A", "id-a"),
             outline("B", "id-b"),
           ],
-          selectedIdByScope: { presentation: "id-a", aux: "id-b" },
         }),
       );
       store.dispatch(updateItemLists([
@@ -118,11 +117,6 @@ describe("itemListsSlice", () => {
           { ...outline("C remote addition", "id-c"), controllerScope: "aux" },
         ],
         activeListId: "id-b",
-        selectedIdByScope: {
-          presentation: "id-b",
-          aux: "id-c",
-          anotherController: "id-z",
-        },
       }));
 
       const state = store.getState().itemLists;
@@ -133,11 +127,7 @@ describe("itemListsSlice", () => {
       ]);
       expect(state.selectedList?._id).toBe("id-a");
       expect(state.activeList?._id).toBe("id-b");
-      expect(state.selectedIdByScope).toEqual({
-        presentation: "id-a",
-        aux: "id-c",
-        anotherController: "id-z",
-      });
+      expect(state.selectedIdByScope).toEqual({ presentation: "id-a" });
     });
 
     it("removeFromItemLists deletes an outline", () => {
@@ -243,6 +233,7 @@ describe("itemListsSlice", () => {
     const mixed = [
       scoped("Sunday AM", "sun-am"),
       scoped("Lobby Loop", "lobby-1", "ctrl_lobby"),
+      scoped("Lobby Backup", "lobby-2", "ctrl_lobby"),
       scoped("Sunday PM", "sun-pm"),
     ];
 
@@ -314,21 +305,17 @@ describe("itemListsSlice", () => {
       expect(state.selectedList?._id).toBe("lobby-1");
     });
 
-    it("restores each scope's last selection from a persisted map on initiate", () => {
+    it("keeps each controller scope's selection local while switching scopes", () => {
       const store = createStore();
       store.dispatch(setOutlineScope("ctrl_lobby"));
-      store.dispatch(
-        initiateItemLists({
-          itemLists: mixed,
-          selectedIdByScope: {
-            presentation: "sun-pm",
-            ctrl_lobby: "lobby-1",
-          },
-        }),
-      );
+      store.dispatch(initiateItemLists(mixed));
       expect(store.getState().itemLists.selectedList?._id).toBe("lobby-1");
+      store.dispatch(selectItemList("lobby-2"));
       store.dispatch(setOutlineScope("presentation"));
-      expect(store.getState().itemLists.selectedList?._id).toBe("sun-pm");
+      expect(store.getState().itemLists.selectedList?._id).toBe("sun-am");
+      store.dispatch(selectItemList("sun-pm"));
+      store.dispatch(setOutlineScope("ctrl_lobby"));
+      expect(store.getState().itemLists.selectedList?._id).toBe("lobby-2");
     });
 
     it("applies a remote active outline id without leaving the local scope", () => {

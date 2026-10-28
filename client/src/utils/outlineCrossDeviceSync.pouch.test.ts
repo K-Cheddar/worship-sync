@@ -2,10 +2,7 @@ import "core-js/stable/structured-clone";
 import "fake-indexeddb/auto";
 import PouchDB from "pouchdb-browser";
 import type { DBItemListDetails, DBItemLists, ServiceItem } from "../types";
-import {
-  ItemListsRegistryConflictError,
-  persistItemListsRegistry,
-} from "./persistItemListsRegistry";
+import { persistItemListsRegistry, registrySnapshot } from "./persistItemListsRegistry";
 import {
   persistServiceListItems,
   persistServiceListOverlays,
@@ -71,15 +68,12 @@ describe("two-client outline synchronization with replicated PouchDB state", () 
           before: {
             currentLists: registryB.itemLists,
             activeList: registryB.activeList,
-            selectedIdByScope: registryB.selectedIdByScope ?? {},
           },
           after: {
-            currentLists: registryB.itemLists,
+            currentLists: registryB.itemLists.map((list) =>
+              list._id === "outline-b" ? { ...list, name: "B renamed by B" } : list,
+            ),
             activeList: registryB.activeList,
-            selectedIdByScope: {
-              ...(registryB.selectedIdByScope ?? {}),
-              aux: "outline-a",
-            },
           },
         }],
       );
@@ -104,7 +98,6 @@ describe("two-client outline synchronization with replicated PouchDB state", () 
         before: {
           currentLists: registryA.itemLists,
           activeList: registryA.activeList,
-          selectedIdByScope: registryA.selectedIdByScope ?? {},
         },
         after: {
           currentLists: [
@@ -113,10 +106,6 @@ describe("two-client outline synchronization with replicated PouchDB state", () 
             { _id: "outline-c", name: "Added by A", controllerScope: "aux" },
           ],
           activeList: registryA.activeList,
-          selectedIdByScope: {
-            ...(registryA.selectedIdByScope ?? {}),
-            presentation: "outline-b",
-          },
         },
       };
       const mergedRegistry = await persistItemListsRegistry(
@@ -135,13 +124,10 @@ describe("two-client outline synchronization with replicated PouchDB state", () 
       ]);
       expect(mergedRegistry.itemLists).toEqual([
         { _id: "outline-a", name: "A renamed by A" },
-        { _id: "outline-b", name: "B" },
+        { _id: "outline-b", name: "B renamed by B" },
         { _id: "outline-c", name: "Added by A", controllerScope: "aux" },
       ]);
-      expect(mergedRegistry.selectedIdByScope).toEqual({
-        presentation: "outline-b",
-        aux: "outline-a",
-      });
+      expect(mergedRegistry.selectedIdByScope).toEqual(initialRegistry.selectedIdByScope);
 
       await clientA.replicate.to(shared);
       await clientB.replicate.from(shared);
@@ -451,7 +437,7 @@ describe("two-client outline synchronization with replicated PouchDB state", () 
     }
   });
 
-  it("preserves unresolved ItemLists registry branches instead of writing over the winner", async () => {
+  it("writes a safe edit on the winner while preserving unresolved ItemLists branches", async () => {
     const suffix = `${Date.now()}-${Math.random()}`;
     const shared = new PouchDB(`registry-branches-shared-${suffix}`);
     const clientA = new PouchDB(`registry-branches-a-${suffix}`);
@@ -463,7 +449,6 @@ describe("two-client outline synchronization with replicated PouchDB state", () 
     const before = {
       currentLists,
       activeList: currentLists[0],
-      selectedIdByScope: { presentation: "outline-a", aux: "outline-b" },
     };
     const intentA = {
       before,
@@ -484,7 +469,6 @@ describe("two-client outline synchronization with replicated PouchDB state", () 
         _id: "ItemLists",
         itemLists: currentLists,
         activeList: currentLists[0],
-        selectedIdByScope: before.selectedIdByScope,
       });
       await Promise.all([clientA.replicate.from(shared), clientB.replicate.from(shared)]);
       await Promise.all([
@@ -500,22 +484,30 @@ describe("two-client outline synchronization with replicated PouchDB state", () 
       await clientA.replicate.to(shared);
       await clientB.replicate.to(shared);
       await clientA.replicate.from(shared);
+      const winner = await clientA.get<DBItemLists & { _conflicts?: string[] }>("ItemLists", { conflicts: true });
+      expect(winner._conflicts).toHaveLength(1);
+      const losingRev = winner._conflicts![0];
+      const losing = await clientA.get<DBItemLists>("ItemLists", { rev: losingRev });
+      const intentBefore = registrySnapshot(winner);
       const put = jest.spyOn(clientA, "put");
-      await expect(persistItemListsRegistry(
+      const saved = await persistItemListsRegistry(
         clientA as unknown as Parameters<typeof persistItemListsRegistry>[0],
-        [intentA],
-      )).rejects.toBeInstanceOf(ItemListsRegistryConflictError);
-      expect(put).not.toHaveBeenCalled();
-      const branches = await clientA.get<DBItemLists & { _conflicts?: string[] }>(
-        "ItemLists",
-        { conflicts: true },
+        [{
+          before: intentBefore,
+          after: {
+            ...intentBefore,
+            currentLists: intentBefore.currentLists.map((item) =>
+              item._id === "outline-b" ? { ...item, name: "B saved on winner" } : item,
+            ),
+          },
+        }],
       );
-      expect(branches._conflicts).toHaveLength(1);
-      const losing = await clientA.get<DBItemLists>("ItemLists", {
-        rev: branches._conflicts![0],
-      });
-      expect([branches.itemLists[0].name, losing.itemLists[0].name])
-        .toEqual(expect.arrayContaining(["A from A", "A from B"]));
+      expect(put).toHaveBeenCalledTimes(1);
+      expect(saved.itemLists[1].name).toBe("B saved on winner");
+      expect(saved.itemLists[0].name).toBe(winner.itemLists[0].name);
+      const branchesAfterSave = await clientA.get<DBItemLists & { _conflicts?: string[] }>("ItemLists", { conflicts: true });
+      expect(branchesAfterSave._conflicts).toContain(losingRev);
+      expect(await clientA.get("ItemLists", { rev: losingRev })).toMatchObject({ itemLists: losing.itemLists });
     } finally {
       await Promise.all([shared.destroy(), clientA.destroy(), clientB.destroy()]);
     }

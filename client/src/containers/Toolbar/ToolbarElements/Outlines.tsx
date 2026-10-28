@@ -9,9 +9,8 @@ import {
   updateItemLists,
   updateItemListsFromRemote,
   setActiveItemList,
-  reviewRegistryRevisions,
   retryRegistrySave,
-  resolveRegistrySave,
+  keepRegistryChanges,
 } from "../../../store/itemListsSlice";
 import PopoverPanel from "../../../components/PopOver/PopoverPanel";
 import Button from "../../../components/Button/Button";
@@ -50,10 +49,6 @@ const OUTLINE_POPOVER_CONTENT =
   "min-w-[18rem] max-w-[min(26rem,calc(100vw-1.5rem))] overflow-x-visible border-gray-600 bg-gray-800 text-white shadow-md";
 const OUTLINE_POPOVER_HEADER = "px-5 pt-2 pb-1.5";
 const OUTLINE_POPOVER_BODY = "px-5 pb-3 pt-1.5";
-const REGISTRY_FIELD_LABELS: Record<string, string> = {
-  activeList: "Live outline", name: "Outline name", controllerScope: "Controller", order: "Outline order",
-};
-
 type OutlinesProps = {
   className?: string;
   /** Full-width header-style trigger for the service outline column (vs compact toolbar). */
@@ -75,6 +70,8 @@ const Services = ({
     isInitialized: itemListsReady,
     registrySave = { status: "idle" },
   } = useSelector((state) => state.undoable.present.itemLists);
+  const itemListsReadyRef = useRef(itemListsReady);
+  itemListsReadyRef.current = itemListsReady;
 
   const scopedLists = useMemo(
     () => filterOutlinesByScope(currentLists, scope),
@@ -87,8 +84,6 @@ const Services = ({
 
   const dispatch = useDispatch();
   const [outlinePopoverOpen, setOutlinePopoverOpen] = useState(false);
-  const [registryChoices, setRegistryChoices] = useState<Record<string, "local" | "remote">>({});
-  useEffect(() => { setRegistryChoices(registrySave.choices ?? {}); }, [registrySave.reviewId, registrySave.choices]);
   const activeControllerProfile = useActiveControllerProfile();
   const selectOutline = useCallback(
     (outlineId: string) => {
@@ -111,7 +106,6 @@ const Services = ({
   const currentDatabaseRef = useRef(db);
   currentDatabaseRef.current = db;
   const { access } = useContext(GlobalInfoContext) || {};
-  const canResolveRegistry = access === "full";
   const { showToast } = useToast();
   const [justAdded, setJustAdded] = useState(false);
   const currentListsRef = useRef(currentLists);
@@ -120,14 +114,12 @@ const Services = ({
     database: db,
     processedRevisions: new Set<string>(),
     pendingRevisions: new Set<string>(),
-    conflictFingerprint: null as string | null,
   });
   if (registrySyncTrackerRef.current.database !== db) {
     registrySyncTrackerRef.current = {
       database: db,
       processedRevisions: new Set<string>(),
       pendingRevisions: new Set<string>(),
-      conflictFingerprint: null,
     };
   }
   const rememberRegistryRevision = useCallback((revision?: string) => {
@@ -139,21 +131,15 @@ const Services = ({
       if (oldestRevision) revisions.delete(oldestRevision);
     }
   }, []);
-  const observeRegistryConflict = useCallback((document: DBItemLists & { _conflicts?: string[] }) => {
-    dispatch(reviewRegistryRevisions(Boolean(document._conflicts?.length)));
-    const tracker = registrySyncTrackerRef.current;
-    if (!document._conflicts?.length) {
-      tracker.conflictFingerprint = null;
-      return;
-    }
-    const fingerprint = [document._rev, ...[...document._conflicts].sort()].join(":");
-    if (tracker.conflictFingerprint === fingerprint) return;
-    tracker.conflictFingerprint = fingerprint;
+  useEffect(() => {
+    if (registrySave.status !== "error") return;
     showToast(
-      "The outline list has competing saved versions. Open the outline picker to review them. Unsaved changes stay available while this app is open.",
+      registrySave.hasCurrentConflicts
+        ? "Another saved edit overlaps your outline changes. Your changes remain open here; review the save options in the outline picker."
+        : "Could not save outline changes. Your edits are still here; retry the save before closing or reloading this app.",
       "error",
     );
-  }, [dispatch, showToast]);
+  }, [registrySave.hasCurrentConflicts, registrySave.status, showToast]);
   /** One aux bootstrap create per scope — avoids duplicate empties under Strict Mode / remount. */
   const bootstrapInFlightByScopeRef = useRef(new Set<string>());
 
@@ -192,11 +178,10 @@ const Services = ({
         rememberRegistryRevision(response._rev);
         const _itemLists = response.itemLists || [];
         const _activeList = response.activeList;
-        if (!itemListsReady) {
+        if (!itemListsReadyRef.current) {
           dispatch(
             initiateItemLists({
               itemLists: _itemLists,
-              selectedIdByScope: response.selectedIdByScope,
             }),
           );
           if (_activeList?._id) {
@@ -207,15 +192,13 @@ const Services = ({
             updateItemListsFromRemote({
               itemLists: _itemLists,
               activeListId: _activeList?._id,
-              selectedIdByScope: response.selectedIdByScope,
             }),
           );
         }
-        observeRegistryConflict(response);
       } catch (e) {
         if (cancelled || currentDatabaseRef.current !== dbAtStart) return;
         console.error(e);
-        if (!itemListsReady) {
+        if (!itemListsReadyRef.current) {
           dispatch(initiateItemLists([]));
           showToast(
             "Could not load service outlines. Reload the page before editing outlines.",
@@ -229,7 +212,7 @@ const Services = ({
     return () => {
       cancelled = true;
     };
-  }, [db, dispatch, itemListsReady, observeRegistryConflict, rememberRegistryRevision, showToast]);
+  }, [db, dispatch, rememberRegistryRevision, showToast]);
 
   /**
    * Aux controllers with no outlines in their scope get one empty outline so
@@ -293,7 +276,7 @@ const Services = ({
             )) continue;
             if (incoming._rev) tracker.pendingRevisions.add(incoming._rev);
             try {
-              const update = await dbAtStart.get("ItemLists", { conflicts: true }) as DBItemLists & { _conflicts?: string[] };
+              const update = await dbAtStart.get("ItemLists") as DBItemLists;
               if (currentDatabaseRef.current !== dbAtStart) continue;
               rememberRegistryRevision(incoming._rev);
               rememberRegistryRevision(update._rev);
@@ -301,10 +284,8 @@ const Services = ({
                 updateItemListsFromRemote({
                   itemLists: update.itemLists,
                   activeListId: update.activeList?._id,
-                  selectedIdByScope: update.selectedIdByScope,
                 }),
               );
-              observeRegistryConflict(update);
             } finally {
               if (incoming._rev) tracker.pendingRevisions.delete(incoming._rev);
             }
@@ -313,12 +294,12 @@ const Services = ({
       } catch (e) {
         console.error(e);
         showToast(
-          "Could not check for conflicting outline list versions. Your current outline list is still open.",
+          "Could not refresh the outline list from this device. Your current outline list is still open.",
           "error",
         );
       }
     },
-    [db, dispatch, observeRegistryConflict, rememberRegistryRevision, showToast],
+    [db, dispatch, rememberRegistryRevision, showToast],
   );
 
   useEffect(() => {
@@ -419,7 +400,7 @@ const Services = ({
               className={triggerClass}
               truncate
             >
-              {selectedList?.name}{registrySave.status === "error" || registrySave.status === "review" ? " · Needs attention" : ""}
+              {selectedList?.name}{registrySave.status === "error" ? " · Save failed" : ""}
             </Button>
           }
           align="start"
@@ -428,52 +409,29 @@ const Services = ({
           bodyClassName={OUTLINE_POPOVER_BODY}
         >
           <div className="flex min-w-0 flex-col gap-1.5">
-            {registrySave.status !== "idle" && (
-              <section className="space-y-2 border-b border-amber-400/40 pb-3 text-sm" aria-label="Outline list recovery" aria-busy={registrySave.status === "saving"}>
-                <p role="status">{registrySave.status === "saving" ? "Saving outline list…" : "Some outline list changes need your attention."}</p>
-                {registrySave.status !== "saving" && (
-                  <>
-                    <p className="text-xs text-amber-100">Unsaved changes stay available while this app is open. Closing or reloading the app clears them.</p>
-                    {!canResolveRegistry && (registrySave.hasBranches || Boolean(registrySave.conflicts?.length)) && <p className="text-xs text-amber-100">Ask someone with full controller access to resolve these saved versions.</p>}
-                    {registrySave.reviewChanged && <p className="text-xs text-amber-100">Some values changed during review. Check your choices before saving.</p>}
-                    <div className="max-h-56 space-y-3 overflow-y-auto">
-                      {registrySave.conflicts?.map((conflict) => {
-                        const outline = currentLists.find((list) => list._id === conflict.outlineId);
-                        const field = REGISTRY_FIELD_LABELS[conflict.field ?? ""] ??
-                          (conflict.field?.startsWith("selection:") ? "Last opened outline" : conflict.field ?? "Outline");
-                        const describe = (value: unknown): string => {
-                          if (value === undefined || value === null) return "Removed";
-                          if (Array.isArray(value)) return value.map(describe).join(", ");
-                          if (typeof value === "object") {
-                            if ("name" in value && typeof value.name === "string") return value.name;
-                            return "Saved value";
-                          }
-                          if (conflict.field?.startsWith("selection:")) return currentLists.find((list) => list._id === value)?.name ?? "Outline no longer available";
-                          return String(value);
-                        };
-                        return <fieldset key={conflict.key} className="space-y-1">
-                          <legend className="font-semibold">{outline?.name ? `${outline.name}: ` : ""}{field}</legend>
-                          <p className="text-xs text-gray-300">{conflict.key.startsWith("saved-") ? "Compare saved versions" : "Compare your changes with the saved value"}</p>
-                          {conflict.field === "activeList" && <p className="text-xs text-amber-100">This choice sets the live outline for the church.</p>}
-                          <Button disabled={!canResolveRegistry} aria-pressed={registryChoices[conflict.key] === "local"} variant={registryChoices[conflict.key] === "local" ? "secondary" : "tertiary"} className="w-full justify-start whitespace-normal" onClick={() => setRegistryChoices((choices) => ({ ...choices, [conflict.key]: "local" }))}>
-                            Keep: {describe(conflict.localValue)}
-                          </Button>
-                          <Button disabled={!canResolveRegistry} aria-pressed={registryChoices[conflict.key] === "remote"} variant={registryChoices[conflict.key] === "remote" ? "secondary" : "tertiary"} className="w-full justify-start whitespace-normal" onClick={() => setRegistryChoices((choices) => ({ ...choices, [conflict.key]: "remote" }))}>
-                            Use saved: {describe(conflict.remoteValue)}
-                          </Button>
-                        </fieldset>;
-                      })}
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {(canResolveRegistry || (!registrySave.hasBranches && !registrySave.conflicts?.length)) && <Button variant="secondary" onClick={() => dispatch(retryRegistrySave())}>Retry save</Button>}
-                      {canResolveRegistry && registrySave.status === "review" && registrySave.reviewId !== undefined && (registrySave.hasBranches || Boolean(registrySave.conflicts?.length)) && (
-                        <Button variant="secondary" disabled={Boolean(registrySave.conflicts?.some((conflict) => !registryChoices[conflict.key]))} onClick={() => dispatch(resolveRegistrySave({ reviewId: registrySave.reviewId!, choices: registryChoices }))}>
-                          {registrySave.conflicts?.length ? "Save choices" : "Save combined list"}
-                        </Button>
-                      )}
-                    </div>
-                  </>
+            {registrySave.status === "saving" && (
+              <p className="border-b border-gray-600 pb-2 text-sm" role="status">
+                Saving outline changes…
+              </p>
+            )}
+            {registrySave.status === "error" && (
+              <section className="space-y-2 border-b border-amber-400/40 pb-3 text-sm" aria-label="Outline save error">
+                <p role="alert">Your unsaved outline changes remain available in this app session.</p>
+                {registrySave.hasCurrentConflicts && (
+                  <p className="text-xs text-amber-100">
+                    Keeping your changes can replace overlapping saved values, including the church-wide live outline. Historical revisions remain untouched.
+                  </p>
                 )}
+                <div className="flex flex-wrap gap-2">
+                  <Button disabled={access !== "full"} variant="secondary" onClick={() => dispatch(retryRegistrySave())}>
+                    Retry save
+                  </Button>
+                  {registrySave.hasCurrentConflicts && (
+                    <Button disabled={access !== "full"} variant="secondary" onClick={() => dispatch(keepRegistryChanges())}>
+                      Keep my changes
+                    </Button>
+                  )}
+                </div>
               </section>
             )}
             <div className="flex min-w-0 flex-1 gap-4">

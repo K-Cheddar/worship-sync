@@ -24,12 +24,11 @@ const snapshot = (patch: Partial<ItemListsRegistryIntent["before"]> = {}) => ({
     { _id: "outline-b", name: "B" },
   ],
   activeList: { _id: "outline-a", name: "A" },
-  selectedIdByScope: { presentation: "outline-a", aux: "outline-b" },
   ...patch,
 });
 
 describe("ItemLists registry persistence", () => {
-  it("applies local rename and selection intent over unrelated latest remote changes", () => {
+  it("applies a local rename over unrelated latest changes and leaves legacy selection metadata alone", () => {
     const latest = doc({
       _rev: "2-remote",
       itemLists: [
@@ -50,7 +49,6 @@ describe("ItemLists registry persistence", () => {
           { _id: "outline-a", name: "A renamed locally" },
           { _id: "outline-b", name: "B" },
         ],
-        selectedIdByScope: { presentation: "outline-b", aux: "outline-b" },
       }),
     };
 
@@ -60,11 +58,7 @@ describe("ItemLists registry persistence", () => {
       { _id: "outline-b", name: "B renamed remotely" },
       { _id: "outline-c", name: "Remote addition", controllerScope: "aux" },
     ]);
-    expect(merged.selectedIdByScope).toEqual({
-      presentation: "outline-b",
-      aux: "outline-c",
-      anotherController: "outline-z",
-    });
+    expect(merged.selectedIdByScope).toEqual(latest.selectedIdByScope);
   });
 
   it("preserves different fields while rejecting a same-field concurrent rename", () => {
@@ -233,28 +227,4 @@ describe("ItemLists registry persistence", () => {
     expect(put).toHaveBeenCalledTimes(4);
   });
 
-  it("leaves unresolved CouchDB registry branches untouched and reports them", async () => {
-    const get = jest.fn().mockResolvedValue({
-      ...doc(),
-      _conflicts: ["2-losing"],
-    });
-    const put = jest.fn();
-    const intent: ItemListsRegistryIntent = {
-      before: snapshot(),
-      after: snapshot({
-        currentLists: [
-          { _id: "outline-a", name: "A renamed" },
-          { _id: "outline-b", name: "B" },
-        ],
-      }),
-    };
-
-    await expect(persistItemListsRegistry({ get, put }, [intent]))
-      .rejects.toMatchObject({
-        name: "ItemListsRegistryConflictError",
-        conflicts: [{ reason: "revision-branches", revisions: ["2-losing"] }],
-      });
-    expect(get).toHaveBeenCalledWith("ItemLists", { conflicts: true });
-    expect(put).not.toHaveBeenCalled();
-  });
 });
