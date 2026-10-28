@@ -38,6 +38,16 @@ Authorization: the “WorshipSync Song v2 — Fix Blocking Conflict Screen and R
 - Automatic reconciliation is limited to provably disjoint lyric text changes with revision-safe writes. Unresolved conflict fingerprints are not retried on every render or replication notification.
 - A later browser can recover the song after the original editors close. Unconflicted songs keep their normal opening and editing flow; migrations and unrelated songs are unchanged.
 
+### Song v2 semantic conflict review (October 27, 2026)
+
+Authorization: the current “Improve Song v2 Conflict Review with Semantic Change Comparisons” request.
+
+- Compare every alternative against the same currently saved version. Inspecting an alternative does not select it for saving; document-level version selection remains the resolution unit.
+- Describe section and slide additions, removals, movement, lyric edits, formatting, media, and arrangement settings in operator language. Treat regenerated slide IDs as equivalent only when authored slide content matches; identify reflow only when the lyric content is verified in the selected arrangement. Mark missing or ambiguous structural relationships as uncertain.
+- Show the selected hydrated song's lyrics, section/slide orders, remaining slides, and possible content loss before committing a resolution.
+- Offer manual lyric editing only when lyric differences are present or the operator has opened the editor. Preserve pending manual text across version selection and surface edits that cannot apply to the selected version.
+- Keep revision validation, stale-review handling, conflict retirement, automatic lyric-merge rules, normal song autosave, and the Song v2 schema unchanged.
+
 `persistSongAudioAttachment` reads the original database's latest document and uses Pouch revision checks to write the audio field while preserving unrelated data. It returns the exact written document and returned revision. A competing write can reject with 409; it is not silently overwritten.
 
 `applyPersistedSongAudio` patches audio and revision metadata without accepting a new lyric baseline. It patches audio in a pending remote document so either conflict decision retains the completed audio operation. The store reschedules pending local intent using the preserved baseline, retires superseded work before writes, and suppresses stale acknowledgments after newer intent/audio. Partial acknowledgments advance only the fields actually written. `SlideEditor` captures the database and mutation owner and suppresses publication after owner retirement.

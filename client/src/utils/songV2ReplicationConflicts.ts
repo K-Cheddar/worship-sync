@@ -18,6 +18,12 @@ export type SongV2ConflictRevisionOptions = {
   conflict: SongV2RevisionConflict;
   options: SongV2ConflictRevisionOption[];
 };
+export type SongV2ConflictComparisonDocuments = {
+  arrangements: SongV2ArrangementDocument[];
+  slides: SongV2SlideDocument[];
+  missingArrangementIds: string[];
+  missingSlideIds: string[];
+};
 export type SongV2RevisionSelection = { song: DBItem; sourceRevisions: Record<string, string> };
 
 export class SongV2ReplicationConflictError extends Error {
@@ -141,6 +147,92 @@ export async function loadSongV2ConflictRevisionOptions(
     options.push({ conflict, options: versions });
   }
   return options;
+}
+
+/** Loads only arrangement and slide documents referenced by the reviewed revisions. */
+export async function loadSongV2ConflictComparisonDocuments(
+  db: PouchDB.Database,
+  snapshot: SongV2Snapshot,
+  revisionOptions: SongV2ConflictRevisionOptions[],
+): Promise<SongV2ConflictComparisonDocuments> {
+  const rootOptions = revisionOptions.flatMap(entry => entry.options.flatMap(option =>
+    option.document.docType === "song-v2-root" ? [option.document] : [],
+  ));
+  const arrangementOptions = revisionOptions.flatMap(entry => entry.options.flatMap(option =>
+    option.document.docType === "song-v2-arrangement" ? [option.document] : [],
+  ));
+  const slideOptions = revisionOptions.flatMap(entry => entry.options.flatMap(option =>
+    option.document.docType === "song-v2-slide" ? [option.document] : [],
+  ));
+  const arrangementsById = new Map<string, SongV2ArrangementDocument>();
+  for (const arrangement of [...snapshot.arrangements, ...arrangementOptions]) {
+    if (!arrangementsById.has(arrangement.arrangementId)) arrangementsById.set(arrangement.arrangementId, arrangement);
+  }
+  const arrangementIds = [...new Set([
+    ...snapshot.root.arrangementIds,
+    ...rootOptions.flatMap(root => root.arrangementIds),
+    ...arrangementOptions.map(arrangement => arrangement.arrangementId),
+  ])];
+  const missingArrangementIds = arrangementIds.filter(id => !arrangementsById.has(id));
+  if (missingArrangementIds.length) {
+    try {
+      const result = await db.allDocs({
+        keys: missingArrangementIds.map(id => getSongV2ArrangementDocId(snapshot.root.songId, id)),
+        include_docs: true,
+      });
+      for (const row of result.rows) {
+        if (!("doc" in row) || !row.doc) continue;
+        const document = row.doc as unknown as SongV2ArrangementDocument;
+        if (document.docType === "song-v2-arrangement" && document.songId === snapshot.root.songId) {
+          arrangementsById.set(document.arrangementId, document);
+        }
+      }
+    } catch {
+      // Missing comparison context is reported as uncertain in the review UI.
+    }
+  }
+  const slideReferences = [...new Map([
+    ...snapshot.arrangements.flatMap(arrangement => arrangement.slideIds.map(id => [
+      `${arrangement.arrangementId}:${id}`, { arrangementId: arrangement.arrangementId, id },
+    ] as const)),
+    ...arrangementOptions.flatMap(arrangement => arrangement.slideIds.map(id => [
+      `${arrangement.arrangementId}:${id}`, { arrangementId: arrangement.arrangementId, id },
+    ] as const)),
+    ...[...rootOptions.flatMap(root => root.arrangementIds), ...snapshot.root.arrangementIds]
+      .flatMap(id => (arrangementsById.get(id)?.slideIds ?? []).map(slideId => [
+        `${id}:${slideId}`, { arrangementId: id, id: slideId },
+      ] as const)),
+  ]).values()];
+  const slidesById = new Map<string, SongV2SlideDocument>();
+  for (const slide of [...snapshot.slides, ...slideOptions]) {
+    const key = `${slide.arrangementId}:${slide.id}`;
+    if (!slidesById.has(key)) slidesById.set(key, slide);
+  }
+  const missingSlideIds = slideReferences.filter(({ arrangementId, id }) => !slidesById.has(`${arrangementId}:${id}`));
+  if (missingSlideIds.length) {
+    try {
+      const result = await db.allDocs({
+        keys: missingSlideIds.map(({ arrangementId, id }) => getSongV2SlideDocId(snapshot.root.songId, arrangementId, id)),
+        include_docs: true,
+      });
+      for (const row of result.rows) {
+        if (!("doc" in row) || !row.doc) continue;
+        const document = row.doc as unknown as SongV2SlideDocument;
+        if (document.docType === "song-v2-slide" && document.songId === snapshot.root.songId) {
+          slidesById.set(`${document.arrangementId}:${document.id}`, document);
+        }
+      }
+    } catch {
+      // Missing comparison context is reported as uncertain in the review UI.
+    }
+  }
+  return {
+    arrangements: [...arrangementsById.values()],
+    slides: [...slidesById.values()],
+    missingArrangementIds: missingArrangementIds.filter(id => !arrangementsById.has(id)),
+    missingSlideIds: missingSlideIds.filter(({ arrangementId, id }) => !slidesById.has(`${arrangementId}:${id}`))
+      .map(({ arrangementId, id }) => `${arrangementId}:${id}`),
+  };
 }
 
 /** Builds a complete canonical song from explicit physical revision choices. */
