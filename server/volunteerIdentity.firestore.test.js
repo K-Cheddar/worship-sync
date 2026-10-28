@@ -50,6 +50,44 @@ test("Firestore transaction aborts during roster linking are retryable conflicts
   );
 });
 
+test("Firestore roster linking retries an aborted transaction and surfaces the refreshed result", async () => {
+  let attempts = 0;
+  const operations = createVolunteerIdentityOperations({
+    COLLECTIONS: {},
+    requireFirestore: () => ({
+      runTransaction: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw Object.assign(new Error("Transaction contention."), {
+            code: "aborted",
+          });
+        }
+        throw Object.assign(new Error("That account is not active."), {
+          statusCode: 404,
+        });
+      },
+    }),
+    getDoc: async () => null,
+    queryDocs: async () => [],
+    setDoc: async () => {},
+    deleteDoc: async () => {},
+    nowIso: () => "2026-10-23T00:00:00.000Z",
+  });
+
+  await assert.rejects(
+    operations.linkRosterMember({
+      churchId: "church",
+      memberId: "member",
+      userId: "user",
+    }),
+    (error) => {
+      assert.equal(error.statusCode, 404);
+      return true;
+    },
+  );
+  assert.equal(attempts, 2);
+});
+
 const createRes = () => ({
   statusCode: 200,
   payload: null,
