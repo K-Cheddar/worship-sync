@@ -32,6 +32,7 @@ An operator imports or refreshes a plan, reviews the proposed item changes, sele
 ## Behavioral boundaries
 
 - An ambiguous match must not relocate, replace, or delete an existing item.
+- An existing item reserved for an individual match review is excluded from automatic identity, title, order, and cross-section matching, removal, and PDF ordering. Only its selected `legacy_match` suggestion may associate it with an incoming row. Each existing item participates in at most one proposed association. (Confirmed by the current request, 2026-10-27.)
 - Import does not apply every item's position as a blanket reorder.
 - Changes beyond the selected additions, removals, updates, and moves remain untouched.
 

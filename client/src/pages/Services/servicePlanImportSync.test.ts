@@ -1155,6 +1155,168 @@ describe("Planning Center PDF refresh matching", () => {
     });
   });
 
+  it.each([
+    [false, false], [true, false], [false, true], [true, true],
+  ])("reserves a review-only Prayer when a third identical occurrence has no identity (removeMissing=%s, serverReload=%s)", (removeMissing, serverReload) => {
+    const initial = preparePlanningCenterPdfImport([], [section("pdf", "Worship", [
+      element("opening", "Opening", { sourcePlanningManaged: true }),
+      element("prayer-a", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+      element("response", "Response", { sourcePlanningManaged: true }),
+      element("prayer-b", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+      element("closing", "Closing", { sourcePlanningManaged: true }),
+    ])]).importedSections[0].elements;
+    const reserved = withLocalPrayerData(initial[1], 1);
+    const confident = withLocalPrayerData(initial[3], 2);
+    const current = [section("section", "Worship", [initial[0], reserved, initial[2], confident, initial[4]])];
+    const incoming = [section("pdf-next", "Worship", [
+      element("incoming-opening", "Opening", { sourcePlanningManaged: true }),
+      element("incoming-review", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+      element("incoming-extra", "Prayer", {
+        durationSeconds: 300, sourcePlanningManaged: true,
+        sourceNoteRaw: "New occurrence note", notes: plainTextToRichText("New occurrence note"),
+      }),
+      element("incoming-response", "Response", { sourcePlanningManaged: true }),
+      element("incoming-confident", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+      element("incoming-closing", "Closing", { sourcePlanningManaged: true }),
+    ])];
+    const refresh = (sections: ServicePlanSection[]) => {
+      const prepared = preparePlanningCenterPdfImport(sections, incoming);
+      const preview = orderPlanningCenterPdfRefresh(
+        refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, { ...pdfReviewOptions, removeMissing }),
+        prepared.importedSections,
+      );
+      return { prepared, preview, summary: summarizeServicePlanImport(sections, preview, {}, { trackSameSectionMoves: true }) };
+    };
+    const { prepared, preview, summary } = refresh(current);
+    const preparedItems = prepared.importedSections[0].elements;
+    expect(preparedItems[1].legacyImportMatchCandidateForId).toBe(reserved.id);
+    expect(preparedItems[2].planningCenterPdfMatchKey).toBeUndefined();
+    expect(preparedItems[4].planningCenterPdfMatchKey).toBe(confident.planningCenterPdfMatchKey);
+    expect(preview[0].elements.find(({ id }) => id === confident.id)).toMatchObject({
+      ...confident, planningCenterPdfSourcePosition: 4,
+    });
+    expect(preview[0].elements.find(({ id }) => id === reserved.id)).toEqual(reserved);
+    expect(summary.changes.map(servicePlanImportChangeKey)).toEqual([
+      `legacy_match:${reserved.id}`, "added:incoming-extra",
+    ]);
+    expectUniqueElementIds(preview);
+    expect(applySelectedServicePlanImportChanges(current, preview, summary, new Set())).toEqual(current);
+
+    const approvedMatch = applySelectedServicePlanImportChanges(current, preview, summary, new Set([`legacy_match:${reserved.id}`]));
+    expect(approvedMatch[0].elements.map(({ id }) => id)).toEqual(current[0].elements.map(({ id }) => id));
+    expect(approvedMatch[0].elements.find(({ id }) => id === reserved.id)).toMatchObject(reserved);
+    expect(approvedMatch[0].elements.filter(({ id }) => id !== reserved.id)).toEqual(current[0].elements.filter(({ id }) => id !== reserved.id));
+
+    const approvedAddition = applySelectedServicePlanImportChanges(current, preview, summary, new Set(["added:incoming-extra"]));
+    expectUniqueElementIds(approvedAddition);
+    expect(approvedAddition[0].elements.find(({ id }) => id === reserved.id)).toEqual({
+      ...reserved, planningCenterPdfMatchReviewRequired: true,
+    });
+    expect(approvedAddition[0].elements.find(({ id }) => id === confident.id)).toEqual(confident);
+    expect(approvedAddition[0].elements.find(({ id }) => id === "incoming-extra")).toMatchObject({
+      notes: plainTextToRichText("New occurrence note"),
+    });
+    const addition = approvedAddition[0].elements.find(({ id }) => id === "incoming-extra");
+    expect([addition?.assignees, addition?.resources]).toEqual([undefined, undefined]);
+    const reloaded = JSON.parse(JSON.stringify(approvedAddition)) as ServicePlanSection[];
+    // The server persists the review-required flag but omits these transient
+    // PDF fingerprints and source positions; recovery drafts retain both.
+    if (serverReload) reloaded.forEach(({ elements }) => elements.forEach((item) => {
+      delete item.planningCenterPdfMatchKey;
+      delete item.planningCenterPdfSourcePosition;
+    }));
+    const repeated = refresh(reloaded);
+    expectUniqueElementIds(repeated.preview);
+    // A keyless addition can make the draft's synthetic identities ambiguous.
+    // Every resulting association must still require individual confirmation.
+    expect(repeated.summary.changes.map(servicePlanImportChangeKey)).toEqual(serverReload
+      ? [`legacy_match:${reserved.id}`]
+      : [`legacy_match:${reserved.id}`, "legacy_match:incoming-extra", `legacy_match:${confident.id}`]);
+    expect(applySelectedServicePlanImportChanges(reloaded, repeated.preview, repeated.summary, new Set())).toEqual(reloaded);
+    const acceptedAll = applySelectedServicePlanImportChanges(reloaded, repeated.preview, repeated.summary, new Set(repeated.summary.changes.map(servicePlanImportChangeKey)));
+    const finalRefresh = refresh(acceptedAll);
+    expect(finalRefresh.summary.changes).toEqual([]);
+    expect(applySelectedServicePlanImportChanges(acceptedAll, finalRefresh.preview, finalRefresh.summary, new Set())).toEqual(acceptedAll);
+  });
+
+  it.each(["label", "order", "identity"] as const)("excludes a reserved current item from same-section %s matching", (matchBy) => {
+    const reserved = withLocalPrayerData(element("source", "Prayer", {
+      durationSeconds: 300, sourcePlanningManaged: true,
+      planningCenterPdfMatchKey: "reserved-key", planningCenterPdfSourcePosition: 0,
+    }), 1);
+    const current = [section("current", "Worship", [reserved])];
+    const incoming = [section("incoming", "Worship", [
+      element("review", "Prayer", { legacyImportMatchCandidateForId: reserved.id, planningCenterPdfMatchKey: "review-key" }),
+      element("extra", matchBy === "order" ? "New item" : "Prayer", {
+        ...(matchBy === "identity" ? { planningCenterPdfMatchKey: reserved.planningCenterPdfMatchKey } : {}),
+        sourcePlanningManaged: true,
+      }),
+    ])];
+    const preview = refreshServicePlanFromImport(current, incoming, { ...pdfReviewOptions, removeMissing: true });
+    expect(preview[0].elements.find(({ id }) => id === reserved.id)).toEqual(reserved);
+    expect(summarizeServicePlanImport(current, preview).changes.map(servicePlanImportChangeKey)).toEqual([
+      `legacy_match:${reserved.id}`, "added:extra",
+    ]);
+  });
+
+  it.each([
+    ["pdf", false], ["pdf", true], ["template", false], ["template", true],
+  ] as const)("protects a review reservation from %s relocation to a new section=%s", (identityKind, newSection) => {
+    const identity = identityKind === "pdf"
+      ? { planningCenterPdfMatchKey: "reserved-key" }
+      : { sourceTemplateElementId: "template-prayer" };
+    const reserved = withLocalPrayerData(element("source", "Prayer", { sourcePlanningManaged: true, ...identity }), 1);
+    const independent = element("independent", "Response", { sourcePlanningManaged: true, sourceOccurrenceId: "pco-response" });
+    const current = [
+      section("origin", "Worship", [reserved, independent]),
+      ...(!newSection ? [section("destination", "Closing", [])] : []),
+    ];
+    const incoming = [section("incoming-destination", "Closing", [
+      element("review", "Reviewed Prayer", {
+        sourcePlanningManaged: true, legacyImportMatchCandidateForId: reserved.id,
+        planningCenterPdfMatchKey: "review-key",
+      }),
+      element("extra", "Prayer", {
+        sourcePlanningManaged: true,
+        ...(identityKind === "pdf" ? identity : {}),
+      }),
+      element("incoming-independent", "Response", { sourceOccurrenceId: "pco-response" }),
+    ])];
+    const preview = refreshServicePlanFromImport(current, incoming, { ...pdfReviewOptions, removeMissing: true });
+    const summary = summarizeServicePlanImport(current, preview);
+    expect(preview.find(({ id }) => id === "origin")?.elements).toEqual([reserved]);
+    expect(preview.find(({ name }) => name === "Closing")?.elements.map(({ id }) => id)).toEqual(["review", "extra", independent.id]);
+    expect(summary.changes.map(servicePlanImportChangeKey)).toEqual([
+      `legacy_match:${reserved.id}`, "added:extra", `moved:${independent.id}`,
+    ]);
+    expect(applySelectedServicePlanImportChanges(current, preview, summary, new Set())).toEqual(current);
+    const acceptedMove = applySelectedServicePlanImportChanges(current, preview, summary, new Set([`moved:${independent.id}`]));
+    expect(acceptedMove.find(({ id }) => id === "origin")?.elements).toEqual([{ ...reserved, planningCenterPdfMatchReviewRequired: true }]);
+    const acceptedReview = applySelectedServicePlanImportChanges(current, preview, summary, new Set([`legacy_match:${reserved.id}`]));
+    expect(acceptedReview.find(({ id }) => id === "origin")?.elements).toEqual([independent]);
+    expect(acceptedReview.find(({ name }) => name === "Closing")?.elements).toEqual([
+      expect.objectContaining({ ...reserved, title: plainTextToRichText("Reviewed Prayer"), planningCenterPdfMatchKey: "review-key" }),
+    ]);
+    expectUniqueElementIds(acceptedReview);
+  });
+
+  it("keeps reserved current slots fixed during PDF ordering", () => {
+    const reserved = withLocalPrayerData(element("source", "Prayer", {
+      sourcePlanningManaged: true, planningCenterPdfMatchKey: "reserved-key", planningCenterPdfSourcePosition: 8,
+    }), 1);
+    const first = element("first", "Opening", { sourcePlanningManaged: true, planningCenterPdfSourcePosition: 2 });
+    const last = element("last", "Closing", { sourcePlanningManaged: true, planningCenterPdfSourcePosition: 0 });
+    const current = [section("current", "Worship", [first, reserved, last])];
+    const incoming = [section("incoming", "Worship", [
+      last,
+      element("review", "Prayer", { legacyImportMatchCandidateForId: reserved.id, planningCenterPdfSourcePosition: 1 }),
+      first,
+    ])];
+    const ordered = orderPlanningCenterPdfRefresh(current, incoming);
+    expect(ordered[0].elements).toEqual([last, reserved, first]);
+    expect(orderPlanningCenterPdfRefresh(ordered, incoming)).toEqual(ordered);
+  });
+
   it("resolves both identical-duration occurrences by their distinct context after reordering", () => {
     const initial = preparePlanningCenterPdfImport([], [section("pdf", "Worship", [
       element("anchor-a", "Anchor A", { sourcePlanningManaged: true }),

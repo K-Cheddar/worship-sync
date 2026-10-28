@@ -452,6 +452,12 @@ export const orderPlanningCenterPdfRefresh = (
   sections: ServicePlanSection[],
   importedSections: ServicePlanSection[],
 ): ServicePlanSection[] => {
+  // Keep the original occurrence fixed while its proposed association is unchecked.
+  const reservedCurrentIds = new Set(importedSections.flatMap((section) =>
+    section.elements.flatMap((element) => element.legacyImportMatchCandidateForId
+      ? [element.legacyImportMatchCandidateForId]
+      : []),
+  ));
   const incomingPositions = new Map(importedSections.flatMap((section) =>
     section.elements.flatMap((element) =>
       typeof element.planningCenterPdfSourcePosition === "number"
@@ -464,7 +470,7 @@ export const orderPlanningCenterPdfRefresh = (
   ));
   return sections.map((section) => {
     const indexedSourceElements = section.elements.flatMap((element, index) =>
-      element.sourcePlanningManaged && !element.legacyImportMatchCandidateForId &&
+      element.sourcePlanningManaged && !element.legacyImportMatchCandidateForId && !reservedCurrentIds.has(element.id) &&
         typeof element.planningCenterPdfSourcePosition === "number"
         ? [{ element, index }]
         : [],
@@ -494,7 +500,7 @@ export const orderPlanningCenterPdfRefresh = (
     return {
       ...section,
       elements: section.elements.map((element) =>
-        element.sourcePlanningManaged && !element.legacyImportMatchCandidateForId &&
+        element.sourcePlanningManaged && !element.legacyImportMatchCandidateForId && !reservedCurrentIds.has(element.id) &&
           typeof element.planningCenterPdfSourcePosition === "number"
           ? sourceOrder[sourceIndex++] || element
           : element,
@@ -1819,6 +1825,7 @@ export const refreshServicePlanFromImport = (
   ));
   safeImportedSections.forEach((section, importedSectionIndex) => {
     section.elements.forEach((importedElement) => {
+      if (importedElement.legacyImportMatchCandidateForId) return;
       const identity = getElementImportIdentity(importedElement, options.planningCenterPdfMatch);
       let existing: { sectionIndex: number; elementIndex: number; element: ServicePlanElement } | undefined;
       const identityMatches = identity ? currentIdentityElements.get(identity) || [] : [];
@@ -1841,7 +1848,7 @@ export const refreshServicePlanFromImport = (
           existing = matches[0];
         }
       }
-      if (!existing) return;
+      if (!existing || legacyMatchCandidateCurrentIds.has(existing.element.id)) return;
       const destinationIndex = currentSectionByImportedIndex.get(importedSectionIndex);
       if (destinationIndex === existing.sectionIndex) return;
       movedElementKeys.add(`${existing.sectionIndex}:${existing.elementIndex}`);
@@ -1933,6 +1940,7 @@ export const refreshServicePlanFromImport = (
       }
 
       const sourceSection = importedSection.value;
+      // Reservations gate every automatic pass, including durable/synthetic identity.
       const elementPairs = pairByLabelThenOrder(
         currentSection.elements,
         sourceSection.elements,
@@ -1941,11 +1949,11 @@ export const refreshServicePlanFromImport = (
           element.sourceElementTypeRaw || "",
           element.sourceContentTitleRaw || "",
         ],
-        (element) => !isAmbiguousCurrentElement(element) && canPairByLabel(element) &&
+        (element) => !isAmbiguousCurrentElement(element) && !legacyMatchCandidateCurrentIds.has(element.id) && canPairByLabel(element) &&
           (!options.suggestLegacyMatches || Boolean(element.sourcePlanningManaged || element.sourceTemplateElementId)),
-        (element) => !isAmbiguousCurrentElement(element) && isSourceOwned(element) &&
+        (element) => !isAmbiguousCurrentElement(element) && !legacyMatchCandidateCurrentIds.has(element.id) && isSourceOwned(element) &&
           (!options.suggestLegacyMatches || Boolean(element.sourcePlanningManaged || element.sourceTemplateElementId)),
-        (element) => !isAmbiguousCurrentElement(element)
+        (element) => !isAmbiguousCurrentElement(element) && !legacyMatchCandidateCurrentIds.has(element.id)
           ? getElementImportIdentity(element, options.planningCenterPdfMatch)
           : undefined,
         (element) => !element.legacyImportMatchCandidateForId,

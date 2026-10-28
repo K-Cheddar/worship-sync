@@ -2059,7 +2059,11 @@ Opening Song to begin the worship experience.
     );
   });
 
-  it("shows a collided duplicate Prayer as an unchecked review match and saves only its explicit approval", async () => {
+  it.each([
+    ["two rows", "review"],
+    ["three rows", "review"],
+    ["three rows", "addition"],
+  ] as const)("keeps a collided Prayer review-only and saves only the selected %s / %s change", async (scenario, selection) => {
     const prayerKey = (occurrenceIndex: number) => JSON.stringify([
       "planningCenterPdf", "prayer", "duplicate", 300, occurrenceIndex,
     ]);
@@ -2118,15 +2122,14 @@ Opening Song to begin the worship experience.
         }],
       } as ServicePlan,
     });
+    const pdfRows = scenario === "two rows"
+      ? "5:00 Response\n5:00 Prayer\n5:00 Closing\n5:00 Opening\n5:00 Prayer"
+      : "5:00 Opening\n5:00 Prayer\n5:00 Prayer\nNew occurrence note\n5:00 Response\n5:00 Prayer\n5:00 Closing";
     mockExtractTextFromPdfFile.mockResolvedValue(`Main Worship Service
 Length
 in mins
 Worship
-5:00 Response
-5:00 Prayer
-5:00 Closing
-5:00 Opening
-5:00 Prayer
+${pdfRows}
 108:00`);
 
     const user = userEvent.setup();
@@ -2140,7 +2143,10 @@ Worship
     const reviewMatch = await screen.findByRole("checkbox", { name: "Confirm match for Prayer" });
     expect(reviewMatch).not.toBeChecked();
     await user.click(screen.getByRole("checkbox", { name: "Select all updates" }));
-    await user.click(reviewMatch);
+    const selectedChange = selection === "review"
+      ? reviewMatch
+      : screen.getByRole("checkbox", { name: "Update Prayer" });
+    await user.click(selectedChange);
     await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
 
     await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), { timeout: 2_500 });
@@ -2148,9 +2154,10 @@ Worship
     const savedItems = body.sections?.flatMap(({ elements }) => elements) || [];
     const savedPrayers = savedItems.filter(({ title }) => richTextToPlainText(title) === "Prayer");
     expect(savedItems.map(({ id }) => id)).toHaveLength(new Set(savedItems.map(({ id }) => id)).size);
+    expect(savedPrayers).toHaveLength(selection === "addition" ? 3 : 2);
     expect(savedPrayers.map(({ id }) => id)).toEqual(expect.arrayContaining(["local-prayer-a", "local-prayer-b"]));
     expect(savedPrayers.find(({ id }) => id === "local-prayer-a")).toMatchObject({
-      planningCenterPdfSourcePosition: 4,
+      planningCenterPdfSourcePosition: scenario === "two rows" ? 4 : 1,
       notes: plainTextToRichText("Keep note A"),
       assignees: [{ id: "slot-a", microphoneIds: ["mic-a"], iemIds: ["iem-a"] }],
       resources: [{ id: "attachment-a" }],
@@ -2161,6 +2168,10 @@ Worship
       assignees: [{ id: "slot-b", microphoneIds: ["mic-b"], iemIds: ["iem-b"] }],
       resources: [{ id: "attachment-b" }],
     });
+    const addedPrayers = savedPrayers.filter(({ id }) => id !== "local-prayer-a" && id !== "local-prayer-b");
+    expect(addedPrayers.map(({ notes }) => richTextToPlainText(notes))).toEqual(selection === "addition" ? ["New occurrence note"] : []);
+    expect(savedPrayers.find(({ id }) => id === "local-prayer-a")?.planningCenterPdfMatchReviewRequired)
+      .toBe(selection === "addition" ? true : undefined);
   });
 
   it("refreshes a duration-only Planning Center PDF from the existing anchor and cascades reviewed times", async () => {
