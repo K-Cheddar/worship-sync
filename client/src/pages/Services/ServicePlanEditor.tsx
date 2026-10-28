@@ -1683,6 +1683,7 @@ const ServicePlanEditor = ({
   ) => {
     const parsedSections = buildServicePlanSectionsFromImport(data, allSongDocs, {
       classifyExternalTitle: source === "servicePlanning",
+      preserveSourceTitle: source === "planningCenterPdf",
       knownPeople: [
         ...members.map((member) => memberName(member)),
         ...(churchIntegrations?.servicePlanning?.people || []).flatMap((person) => [

@@ -1992,8 +1992,9 @@ in mins
 SMC Worship Experience
 15:00 SML
 Host: Charmers Malcolm
-4:00 Opening Song: Come Before His Presence
-Opening Song to begin the worship experience.
+4:00 Opening Song: How Great Thou Art
+4:00 Song: Great Is Thy Faithfulness
+4:00 Appeal Song: I Surrender All
 108:00`);
 
     const user = userEvent.setup();
@@ -2018,7 +2019,9 @@ Opening Song to begin the worship experience.
 
     expect(await screen.findByDisplayValue("SMC Worship Experience")).toBeInTheDocument();
     expect(screen.getByDisplayValue("SML")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("Come Before His Presence")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Opening Song: How Great Thou Art")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Song: Great Is Thy Faithfulness")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Appeal Song: I Surrender All")).toBeInTheDocument();
 
     await waitFor(() => {
       expect(mockExtractTextFromPdfFile).toHaveBeenCalledWith(file);
@@ -2039,12 +2042,19 @@ Opening Song to begin the worship experience.
     expect(body.sections?.[0]?.elements?.map((item) => item.startTime)).toEqual([
       "10:00",
       "10:15",
+      "10:19",
+      "10:23",
     ]);
-    expect(body.sections?.[0]?.elements?.[1]?.songRef).toEqual({
+    expect(body.sections?.[0]?.elements?.[2]?.songRef).toEqual({
       kind: "pending",
-      title: "Come Before His Presence",
+      title: "Great Is Thy Faithfulness",
       lyricsText: "",
     });
+    expect(body.sections?.[0]?.elements?.slice(1, 4).map(({ title }) => richTextToPlainText(title))).toEqual([
+      "Opening Song: How Great Thou Art",
+      "Song: Great Is Thy Faithfulness",
+      "Appeal Song: I Surrender All",
+    ]);
 
     view.unmount();
     renderEditor();

@@ -17,6 +17,7 @@ import {
   summarizeServicePlanImport,
 } from "./servicePlanImportSummary";
 import { buildServicePlanSectionsFromImport } from "./servicePlanFromImport";
+import { parsePlanningCenterPdfText } from "./planningCenterPdfParser";
 import { applyReviewedServicePlanParts, reconcileReviewedServicePlanParts, servicePlanNoteFingerprint, servicePlanResourceFingerprint } from "./servicePlanImportOwnership";
 import { createServicePlanLinkResource, createServicePlanTextResource } from "./servicePlanResources";
 import { getServicePlanSongReferenceFingerprint } from "./servicePlanSongAttachmentUtils";
@@ -984,6 +985,110 @@ describe("Planning Center PDF refresh matching", () => {
     planningCenterPdfMatch: true,
   };
   const pdfReviewOptions = { ...pdfRefreshOptions, suggestLegacyMatches: true };
+
+  it("restores legacy PDF prefixes and applies one insertion without losing song or local equipment data", () => {
+    const songs = [
+      { _id: "how-great", name: "How Great Thou Art" },
+      { _id: "faithfulness", name: "Great Is Thy Faithfulness" },
+      { _id: "surrender", name: "I Surrender All" },
+    ];
+    const buildPdfSections = (text: string) => buildServicePlanSectionsFromImport(
+      parsePlanningCenterPdfText(text),
+      songs,
+      { preserveSourceTitle: true },
+    );
+    const baseline = buildPdfSections(`Sunday Worship
+Worship
+5:00 Opening Song: How Great Thou Art
+5:00 Song: Great Is Thy Faithfulness
+5:00 Appeal Song: I Surrender All
+5:00 Closing Prayer`);
+    const saved = [section("saved", "Worship", baseline[0].elements.map((item, index) => ({
+      ...item,
+      id: `saved-${index}`,
+      // Reproduce a plan saved before the PDF title mapping fix.
+      ...(index < 3 ? { title: plainTextToRichText(item.sourceContentTitleRaw || "") } : {}),
+      ...(index < 3 ? {
+        assignees: [{ id: `slot-${index}`, name: `Singer ${index}`, microphoneIds: [`mic-${index}`], iemIds: [`iem-${index}`] }],
+      } : {}),
+    })))];
+    const update = buildPdfSections(`Sunday Worship
+Worship
+5:00 Opening Song: How Great Thou Art
+5:00 Song: Great Is Thy Faithfulness
+5:00 Appeal Song: I Surrender All
+3:00 Ministry Spotlight
+5:00 Closing Prayer`);
+    const prepared = preparePlanningCenterPdfImport(saved, update);
+    const preview = refreshServicePlanFromImport(
+      prepared.currentSections,
+      prepared.importedSections,
+      pdfReviewOptions,
+    );
+    const summary = summarizeServicePlanImport(saved, preview, {}, { trackSameSectionMoves: true });
+
+    expect(summary.changes).toHaveLength(4);
+    expect(summary.changes.filter(({ kind }) => kind === "updated")).toHaveLength(3);
+    expect(summary.changes.filter(({ kind }) => kind === "added")).toHaveLength(1);
+    const applied = applySelectedServicePlanImportChanges(
+      saved,
+      preview,
+      summary,
+      new Set(summary.changes.map(servicePlanImportChangeKey)),
+    );
+    const elements = applied[0].elements;
+    expect(elements.slice(0, 3).map(({ id, title, songRef, assignees }) => ({
+      id,
+      title: richTextToPlainText(title),
+      songRef,
+      assignees,
+    }))).toEqual([
+      {
+        id: "saved-0",
+        title: "Opening Song: How Great Thou Art",
+        songRef: { kind: "library", songId: "how-great", songName: "How Great Thou Art" },
+        assignees: [{ id: "slot-0", name: "Singer 0", microphoneIds: ["mic-0"], iemIds: ["iem-0"] }],
+      },
+      {
+        id: "saved-1",
+        title: "Song: Great Is Thy Faithfulness",
+        songRef: { kind: "library", songId: "faithfulness", songName: "Great Is Thy Faithfulness" },
+        assignees: [{ id: "slot-1", name: "Singer 1", microphoneIds: ["mic-1"], iemIds: ["iem-1"] }],
+      },
+      {
+        id: "saved-2",
+        title: "Appeal Song: I Surrender All",
+        songRef: { kind: "library", songId: "surrender", songName: "I Surrender All" },
+        assignees: [{ id: "slot-2", name: "Singer 2", microphoneIds: ["mic-2"], iemIds: ["iem-2"] }],
+      },
+    ]);
+    expect(elements.map(({ title }) => richTextToPlainText(title))).toEqual([
+      "Opening Song: How Great Thou Art",
+      "Song: Great Is Thy Faithfulness",
+      "Appeal Song: I Surrender All",
+      "Ministry Spotlight",
+      "Closing Prayer",
+    ]);
+    expect(elements[3].id).not.toBe("saved-3");
+
+    const correctedSaved = [section("saved", "Worship", saved[0].elements.map((item, index) => ({
+      ...item,
+      title: baseline[0].elements[index].title,
+    })))];
+    const correctedPreparation = preparePlanningCenterPdfImport(correctedSaved, update);
+    const correctedPreview = refreshServicePlanFromImport(
+      correctedPreparation.currentSections,
+      correctedPreparation.importedSections,
+      pdfReviewOptions,
+    );
+    const correctedSummary = summarizeServicePlanImport(
+      correctedSaved,
+      correctedPreview,
+      {},
+      { trackSameSectionMoves: true },
+    );
+    expect(correctedSummary.changes.map(({ kind }) => kind)).toEqual(["added"]);
+  });
 
   it("keeps a declined legacy singleton reviewable even when its old server lost all PDF keys", () => {
     const current = [section("saved", "Worship", [element("local", "Prayer", {
