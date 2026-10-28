@@ -1,13 +1,8 @@
 import { configureStore } from "@reduxjs/toolkit";
 import allDocsReducer, {
   allDocsSlice,
-  updateAllSongDocs,
-  updateAllFreeFormDocs,
-  updateAllTimerDocs,
-  updateAllBibleDocs,
   upsertItemInAllDocs,
   upsertItemsInAllDocs,
-  removeItemFromAllDocs,
 } from "./allDocsSlice";
 import { hydrateItemCache, applyItemDocumentChange } from "./allDocsSlice";
 import type { DBItem } from "../types";
@@ -19,7 +14,7 @@ const createStore = () =>
   configureStore({ reducer: { allDocs: allDocsReducer } });
 
 const makeDoc = (id: string, type: string): DBItem =>
-  ({ _id: id, type, name: id } as DBItem);
+  ({ _id: id, type, name: id, ...(type === "song" ? { arrangements: [], selectedArrangement: 0 } : {}) } as unknown as DBItem);
 
 describe("allDocsSlice", () => {
   describe("initial state", () => {

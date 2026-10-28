@@ -10,7 +10,9 @@ import {
   ItemListsRegistryConflictError,
   mergeItemListsRegistrySnapshot,
   type ItemListsRegistrySnapshot,
+  type ItemListsRegistryIntent,
 } from "../utils/persistItemListsRegistry";
+import type { RegistrySaveState } from "../utils/itemListsRegistryQueue";
 
 type ItemListState = {
   currentLists: ItemList[];
@@ -33,6 +35,7 @@ type ItemListState = {
   /** Last ItemLists snapshot received from or committed to PouchDB. */
   registryBaseline: ItemListsRegistrySnapshot;
   isInitialized: boolean;
+  registrySave: RegistrySaveState;
 };
 
 export type InitiateItemListsPayload =
@@ -63,6 +66,7 @@ const initialState: ItemListState = {
     selectedIdByScope: {},
   },
   isInitialized: false,
+  registrySave: { status: "idle" },
 };
 
 const normalizeItemListsPayload = (
@@ -125,6 +129,26 @@ export const itemListsSlice = createSlice({
   name: "itemLists",
   initialState,
   reducers: {
+    setRegistrySaveState: (state, action: PayloadAction<RegistrySaveState>) => {
+      state.registrySave = action.payload;
+    },
+    retryRegistrySave: () => {},
+    reviewRegistryRevisions: (_state, _action: PayloadAction<boolean>) => {},
+    resolveRegistrySave: (_state, _action: PayloadAction<{ reviewId: number; choices: Record<string, "local" | "remote"> }>) => {},
+    applyRegistryRecovery: (state, action: PayloadAction<{ snapshot: ItemListsRegistrySnapshot; pending: ItemListsRegistryIntent[] }>) => {
+      ensureScopeState(state);
+      const selected = state.selectedList?._id;
+      let visible = action.payload.snapshot;
+      action.payload.pending.forEach((intent) => {
+        visible = mergeItemListsRegistrySnapshot(visible, intent, () => "local");
+      });
+      state.registryBaseline = action.payload.snapshot;
+      state.currentLists = visible.currentLists;
+      state.activeList = visible.activeList;
+      state.selectedIdByScope = visible.selectedIdByScope;
+      state.selectedList = visible.currentLists.find((list) => list._id === selected && isOutlineInScope(list, state.scope));
+      if (!state.selectedList) reselectWithinScope(state);
+    },
     updateItemLists: (state, action: PayloadAction<ItemList[]>) => {
       ensureScopeState(state);
       state.currentLists = action.payload;
@@ -314,6 +338,11 @@ export const {
   setOutlineScope,
   updateItemListsFromRemote,
   markItemListsPersisted,
+  setRegistrySaveState,
+  retryRegistrySave,
+  resolveRegistrySave,
+  reviewRegistryRevisions,
+  applyRegistryRecovery,
   forceUpdate,
 } = itemListsSlice.actions;
 

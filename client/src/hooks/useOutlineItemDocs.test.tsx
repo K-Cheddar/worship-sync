@@ -10,7 +10,7 @@ import allDocs, { applyItemDocumentChange, hydrateItemCache } from "../store/all
 import type { DBItem } from "../types";
 import { createMockControllerContext, createMockPouchDB } from "../test/mocks";
 
-const song = (id: string, name = id) => ({ _id: id, name, type: "song", arrangements: [], slides: [] }) as unknown as DBItem;
+const song = (id: string, name = id) => ({ _id: id, name, type: "song", arrangements: [], selectedArrangement: 0 }) as unknown as DBItem;
 const setup = (read: jest.Mock, changes = jest.fn().mockResolvedValue({ results: [] })) => {
   const store = configureStore({ reducer: { allDocs } });
   store.dispatch(hydrateItemCache([song("cached")]));

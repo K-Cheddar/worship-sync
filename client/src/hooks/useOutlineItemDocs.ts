@@ -90,7 +90,7 @@ export const useOutlineItemDocs = (prefetchIds: string[]) => {
           }
           const doc = load.value;
           if (!doc?._id) return;
-          if (doc.docType === "song-v2-root") {
+          if (doc.docType === "song-v2-root" && doc.type === "song") {
             // Exact v2 content is local to this preview and never enters the library cache.
             const projection = projections.get(id);
             const currentProjection = latestCache.allSongDocs.find((candidate) => candidate._id === id);

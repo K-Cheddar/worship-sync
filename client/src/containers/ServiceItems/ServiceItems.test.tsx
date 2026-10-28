@@ -4,7 +4,7 @@ import ServiceItems from "./ServiceItems";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
-import { resolveOutlineConflict } from "../../store/itemListSlice";
+import { resolveOutlineConflict, retryItemListLoad } from "../../store/itemListSlice";
 
 const mockDispatch: jest.Mock = jest.fn((action) => {
   if (typeof action === "function") return action(mockDispatch, () => ({ ...mockState, undoable: { present: { ...mockState.undoable.present, item: {} } } }));
@@ -134,6 +134,33 @@ jest.mock("./ServiceOutlineSkeleton", () => ({
 }));
 
 describe("ServiceItems", () => {
+  it("offers Try again for the current outline and keeps usable content visible", () => {
+    mockState.undoable.present.itemList.loadedOutlineId = "outline-1";
+    mockState.undoable.present.itemList.loadError = "Could not load this outline.";
+    render(<ServiceItems />);
+    expect(screen.getByRole("button", { name: "Timer" })).toBeInTheDocument();
+    expect(screen.queryByTestId("outline-skeleton")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(mockDispatch).toHaveBeenCalledWith(retryItemListLoad());
+  });
+
+  it("blocks duplicate retries while a background attempt is pending", () => {
+    mockState.undoable.present.itemList.loadedOutlineId = "outline-1";
+    mockState.undoable.present.itemList.isRetrying = true;
+    render(<ServiceItems />);
+    expect(screen.getByRole("button", { name: "Try again" })).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("Trying again");
+  });
+
+  it("does not offer conflict decisions for the outgoing outline during navigation", () => {
+    mockState.undoable.present.itemList.loadedOutlineId = "previous-outline";
+    mockState.undoable.present.itemList.remoteConflicts = {
+      "previous-outline": { localItems: [], remoteItems: [], baselineItems: [] },
+    };
+    render(<ServiceItems />);
+    expect(screen.queryByRole("button", { name: "Keep my draft" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Use remote version" })).not.toBeInTheDocument();
+  });
   beforeEach(() => {
     jest.clearAllMocks();
     mockState = {
@@ -282,14 +309,14 @@ describe("ServiceItems", () => {
       <ControllerInfoContext.Provider
         value={{ access: "view", isMobile: false } as any}
       >
-        <GlobalInfoContext.Provider value={{ access: "view" } as any}>
+        <GlobalInfoContext.Provider value={{ access: "full" } as any}>
           <ServiceItems />
         </GlobalInfoContext.Provider>
       </ControllerInfoContext.Provider>,
     );
 
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "This outline changed on another device while you had unsaved edits.",
+      "This outline has conflicting changes.",
     );
     expect(screen.getByRole("alert")).toHaveTextContent(
       "2 saved versions could not be merged safely",
@@ -308,6 +335,17 @@ describe("ServiceItems", () => {
     expect(mockDispatch).toHaveBeenCalledWith(
       resolveOutlineConflict({ outlineId: "outline-1", choice: "use-remote" }),
     );
+  });
+
+  it("shows saved-version conflicts to viewers without exposing write decisions", () => {
+    mockState.undoable.present.itemList.loadedOutlineId = "outline-1";
+    mockState.undoable.present.itemList.remoteConflicts = {
+      "outline-1": { localItems: [], remoteItems: [], baselineItems: [] },
+    };
+    render(<GlobalInfoContext.Provider value={{ access: "view" } as any}><ServiceItems /></GlobalInfoContext.Provider>);
+    expect(screen.getByRole("alert")).toHaveTextContent("Ask a controller operator to review them");
+    expect(screen.queryByRole("button", { name: "Keep my draft" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Use remote version" })).not.toBeInTheDocument();
   });
 
   it("syncs cyan list selection when selectedItemListId changes externally", () => {

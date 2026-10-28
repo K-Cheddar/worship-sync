@@ -1,11 +1,14 @@
 import React from "react";
+import "core-js/stable/structured-clone";
+import "fake-indexeddb/auto";
+import PouchDB from "pouchdb-browser";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { Provider } from "react-redux";
-import store from "../../store/store";
+import store, { type RootState } from "../../store/store";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { itemListsSlice } from "../../store/itemListsSlice";
-import { setItemListIsLoading } from "../../store/itemListSlice";
+import { setItemListIsLoading, retryItemListLoad, initiateItemList } from "../../store/itemListSlice";
 import { overlaySlice } from "../../store/overlaySlice";
 import { overlaysSlice } from "../../store/overlaysSlice";
 import { markServicePlanningPlanPreviewStale } from "../../store/servicePlanningImportSlice";
@@ -99,7 +102,7 @@ describe("useControllerPageLifecycle selected outline loading", () => {
     store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
     jest.mocked(useGlobalBroadcast).mockClear();
     jest.mocked(getOverlaysByIds).mockReset().mockResolvedValue([]);
-    jest.mocked(readMediaLibrary).mockResolvedValue({ list: [], folders: [] });
+    jest.mocked(readMediaLibrary).mockReset().mockResolvedValue({ list: [], folders: [] });
   });
 
   it.each([50, 100])("preserves newly created Bible and heading documents while outline references are pending (progress %s)", async (initialProgress) => {
@@ -127,7 +130,7 @@ describe("useControllerPageLifecycle selected outline loading", () => {
         </Provider>
       ),
     });
-    await waitFor(() => expect(db.get).toHaveBeenCalledWith("outline"));
+    await waitFor(() => expect(db.get).toHaveBeenCalledWith("outline", { conflicts: true }));
     dbProgress = 100;
     rerender();
     await Promise.resolve();
@@ -213,6 +216,7 @@ describe("useControllerPageLifecycle selected outline loading", () => {
     });
     jest.mocked(getOverlaysByIds).mockClear();
 
+    db.get.mockResolvedValue({ _id: "outline", items: [{ _id: "song-2", name: "After", type: "song" }], overlays: ["overlay-1"] });
     await act(async () => {
       updater.dispatchEvent(
         new CustomEvent("update", {
@@ -262,7 +266,7 @@ describe("useControllerPageLifecycle selected outline loading", () => {
       ),
     });
 
-    await waitFor(() => expect(db.get).toHaveBeenCalledWith("outline"));
+    await waitFor(() => expect(db.get).toHaveBeenCalledWith("outline", { conflicts: true }));
     await waitFor(() =>
       expect(store.getState().undoable.present.itemList.isLoading).toBe(false),
     );
@@ -282,7 +286,7 @@ describe("useControllerPageLifecycle selected outline loading", () => {
       await Promise.resolve();
     });
 
-    expect(db.get).not.toHaveBeenCalledWith("outline");
+    expect(db.get).not.toHaveBeenCalledWith("outline", { conflicts: true });
     expect(dispatchSpy).not.toHaveBeenCalledWith(setItemListIsLoading(true));
     expect(store.getState().undoable.present.itemList.list).toEqual([
       expect.objectContaining({ name: "Loaded outline" }),
@@ -292,10 +296,10 @@ describe("useControllerPageLifecycle selected outline loading", () => {
 
   it("does not initialize an empty outline after repeated invalidated reads", async () => {
     const reads = Array.from({ length: 5 }, () => deferred<ReturnType<typeof details>>());
-    let readIndex = 0;
+    const readState = { index: 0, isNotificationRead: false };
     const db = {
       get: jest.fn((id: string) => id === "outline"
-        ? reads[readIndex++].promise
+        ? readState.isNotificationRead ? Promise.resolve({ _id: "outline", items: [], overlays: [] }) : reads[readState.index++].promise
         : Promise.resolve(undefined)),
       put: jest.fn().mockResolvedValue({ ok: true, rev: "1-saved" }),
     } as any;
@@ -315,12 +319,13 @@ describe("useControllerPageLifecycle selected outline loading", () => {
     });
 
     for (let attempt = 0; attempt < reads.length; attempt += 1) {
-      await waitFor(() => expect(db.get.mock.calls.filter((call: [string]) => call[0] === "outline"))
-        .toHaveLength(attempt + 1));
+      await waitFor(() => expect(readState.index).toBe(attempt + 1));
       await act(async () => {
+        readState.isNotificationRead = true;
         updater.dispatchEvent(new CustomEvent("update", {
           detail: [{ _id: "outline", items: [], overlays: [] }],
         }));
+        readState.isNotificationRead = false;
         reads[attempt].resolve(details(`stale-${attempt}`));
         await Promise.resolve();
         await Promise.resolve();
@@ -328,7 +333,7 @@ describe("useControllerPageLifecycle selected outline loading", () => {
     }
 
     await waitFor(() => expect(store.getState().undoable.present.itemList.isLoading).toBe(false));
-    expect(db.get.mock.calls.filter((call: [string]) => call[0] === "outline")).toHaveLength(5);
+    expect(readState.index).toBe(5);
     expect(store.getState().undoable.present.itemList.isInitialized).toBe(false);
     expect(store.getState().undoable.present.itemList.list).toEqual([]);
     expect(store.getState().undoable.present.itemList.loadError).toMatch(/kept changing while it loaded/);
@@ -357,6 +362,80 @@ describe("useControllerPageLifecycle selected outline loading", () => {
     expect(store.getState().undoable.present.itemList.isInitialized).toBe(true);
     expect(store.getState().undoable.present.itemList.list).toEqual([]);
     expect(store.getState().undoable.present.itemList.loadError).toBeNull();
+  });
+
+  it.each([
+    { compatible: false, onUpdate: false, viewOnly: false }, { compatible: true, onUpdate: false, viewOnly: false },
+    { compatible: false, onUpdate: true, viewOnly: false }, { compatible: true, onUpdate: true, viewOnly: false },
+    { compatible: true, onUpdate: false, viewOnly: true }, { compatible: true, onUpdate: true, viewOnly: true },
+  ])("detects offline saved revisions without a local edit (compatible: $compatible, on update: $onUpdate, view-only: $viewOnly)", async ({ compatible, onUpdate, viewOnly }) => {
+    const id = `lifecycle-branches-${Date.now()}-${Math.random()}`;
+    const a = new PouchDB(`${id}-a`);
+    const b = new PouchDB(`${id}-b`);
+    const rows = [{ _id: "a", listId: "row-a", name: "A", type: "song" }, { _id: "b", listId: "row-b", name: "B", type: "song" }];
+    let unmount: (() => void) | undefined;
+    try {
+      await a.put({ _id: "outline", items: rows, overlays: [] });
+      await b.replicate.from(a);
+      const base = await a.get<{ items: typeof rows }>("outline");
+      await a.put({ ...base, items: [{ ...rows[0], name: "A from device A" }, rows[1]] });
+      await b.put({ ...base, items: compatible ? [rows[0], { ...rows[1], name: "B from device B" }] : [{ ...rows[0], name: "A from device B" }, rows[1]] });
+      if (!onUpdate) await b.replicate.from(a);
+      const reads = jest.spyOn(b, "get");
+      const writes = jest.spyOn(b, "put");
+      const updater = new EventTarget();
+      store.dispatch(itemListsSlice.actions.initiateItemLists([{ _id: "outline", name: "Sunday" }]));
+      const view = renderHook(() => useControllerPageLifecycle(), { wrapper: ({ children }) => (
+        <Provider store={store}><GlobalInfoContext.Provider value={{ access: viewOnly ? "view" : "full" } as any}><ControllerInfoContext.Provider value={{ db: b, cloud: {}, updater } as any}>{children}</ControllerInfoContext.Provider></GlobalInfoContext.Provider></Provider>
+      ) });
+      unmount = view.unmount;
+      await waitFor(() => expect(store.getState().undoable.present.itemList.isLoading).toBe(false));
+      if (onUpdate) await b.replicate.from(a);
+      // For the update case, replication introduced the graph only after the
+      // initial conflict-free outline was already open on the controller.
+      const head = await b.get("outline", { conflicts: true });
+      const eventRevision = head._conflicts?.[0] ?? head._rev;
+      if (onUpdate) {
+        await act(async () => {
+          updater.dispatchEvent(new CustomEvent("update", { detail: [{ _id: "outline", _rev: eventRevision }] }));
+        });
+      }
+      const shouldMerge = compatible && !viewOnly;
+      await waitFor(() => expect(Boolean(store.getState().undoable.present.itemList.remoteConflicts.outline?.revisionConflict)).toBe(!shouldMerge));
+      await waitFor(() => {
+        const current: RootState["undoable"]["present"]["itemList"] = store.getState().undoable.present.itemList;
+        const names = shouldMerge ? current.list.map((item) => item.name) :
+          current.remoteConflicts.outline?.revisionConflict?.versions.flatMap((version) => version.items.map((item) => item.name)) ?? [];
+        expect(names).toEqual(expect.arrayContaining(compatible ? ["A from device A", "B from device B"] : ["A from device A", "A from device B"]));
+      });
+      const state: RootState["undoable"]["present"]["itemList"] = store.getState().undoable.present.itemList;
+      const inspections = reads.mock.calls.filter(([, options]) => options && "revs" in options).length;
+      await act(async () => {
+        updater.dispatchEvent(new CustomEvent("update", { detail: [{ _id: "outline", _rev: eventRevision }] }));
+      });
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      const afterFirstEvent = reads.mock.calls.length;
+      await act(async () => {
+        updater.dispatchEvent(new CustomEvent("update", { detail: [{ _id: "outline", _rev: eventRevision }] }));
+      });
+      expect(reads).toHaveBeenCalledTimes(afterFirstEvent);
+      const saved = await b.get("outline", { conflicts: true });
+      const outcome = {
+        hasConflict: Boolean(state.remoteConflicts.outline?.revisionConflict),
+        savedBranches: saved._conflicts?.length ?? 0,
+        names: state.list.map((item) => item.name),
+      };
+      const expectedNames = shouldMerge ? ["A from device A", "B from device B"] : state.list.map((item) => item.name);
+      expect(outcome).toEqual({ hasConflict: !shouldMerge, savedBranches: shouldMerge ? 0 : 1, names: expectedNames });
+      expect(writes.mock.calls.filter(([document]) => document._id === "outline")).toHaveLength(shouldMerge ? 1 : 0);
+      // Repeated unresolved graphs use cached branch review, with only metadata
+      // checked for the first new replication event.
+      const branchReadsAfter = reads.mock.calls.filter(([, options]) => options && "revs" in options).length;
+      expect(branchReadsAfter).toBe(inspections);
+    } finally {
+      unmount?.();
+      await Promise.all([a.destroy(), b.destroy()]);
+    }
   });
 
   it("shows a load error instead of initializing empty content after a failed read", async () => {
@@ -408,7 +487,7 @@ describe("useControllerPageLifecycle selected outline loading", () => {
         </Provider>
       ),
     });
-    await waitFor(() => expect(db.get).toHaveBeenCalledWith("outline-a"));
+    await waitFor(() => expect(db.get).toHaveBeenCalledWith("outline-a", { conflicts: true }));
 
     act(() => store.dispatch(itemListsSlice.actions.selectItemList("outline-b")));
     rerender();
@@ -420,6 +499,62 @@ describe("useControllerPageLifecycle selected outline loading", () => {
     expect(store.getState().undoable.present.itemList.list).toEqual([
       expect.objectContaining({ name: "Outline B" }),
     ]);
+  });
+
+  it("retries the same selected outline without initializing libraries or overlays again", async () => {
+    let fails = true;
+    const db = {
+      get: jest.fn(async (id: string) => {
+        if (id !== "outline") return undefined;
+        if (fails) throw new Error("offline");
+        return { _id: "outline", ...details("Recovered") };
+      }),
+      put: jest.fn(),
+    } as any;
+    store.dispatch(itemListsSlice.actions.initiateItemLists([{ _id: "outline", name: "Sunday" }]));
+    const view = renderHook(() => useControllerPageLifecycle(), { wrapper: ({ children }) => (
+      <Provider store={store}><ControllerInfoContext.Provider value={{ db, cloud: {} } as any}>{children}</ControllerInfoContext.Provider></Provider>
+    ) });
+    await waitFor(() => expect(store.getState().undoable.present.itemList.loadError).toMatch(/Could not load/));
+    expect(store.getState().undoable.present.itemList.isInitialized).toBe(false);
+    const libraries = jest.mocked(readMediaLibrary).mock.calls.length;
+    const otherReads = db.get.mock.calls.filter(([id]: [string]) => id !== "outline").length;
+    fails = false;
+    act(() => store.dispatch(retryItemListLoad()));
+    view.rerender();
+    await waitFor(() => expect(store.getState().undoable.present.itemList.list[0]?.name).toBe("Recovered"));
+    expect(store.getState().undoable.present.itemList.loadError).toBeNull();
+    expect(store.getState().undoable.present.itemList.isRetrying).toBe(false);
+    expect(jest.mocked(readMediaLibrary).mock.calls.length).toBe(libraries);
+    expect(db.get.mock.calls.filter(([id]: [string]) => id !== "outline")).toHaveLength(otherReads);
+    expect(store.getState().undoable.present.itemLists.selectedList?._id).toBe("outline");
+  });
+
+  it("preserves usable rows after a failed background retry and ignores retry results after selection changes", async () => {
+    const retry = deferred<ReturnType<typeof details>>();
+    const db = {
+      get: jest.fn(async (id: string) => id === "outline" ? Promise.reject(new Error("offline")) : { _id: id, ...details("New outline") }),
+      put: jest.fn(),
+    } as any;
+    store.dispatch(itemListsSlice.actions.initiateItemLists([{ _id: "outline", name: "Sunday" }, { _id: "b", name: "B" }]));
+    store.dispatch(initiateItemList({ outlineId: "outline", items: [{ _id: "usable", name: "Usable draft", type: "song", listId: "row" }] }));
+    store.dispatch(setItemListIsLoading(false));
+    const view = renderHook(() => useControllerPageLifecycle(), { wrapper: ({ children }) => (
+      <Provider store={store}><ControllerInfoContext.Provider value={{ db, cloud: {} } as any}>{children}</ControllerInfoContext.Provider></Provider>
+    ) });
+    await waitFor(() => expect(store.getState().undoable.present.itemList.loadError).toMatch(/Could not load/));
+    expect(store.getState().undoable.present.itemList.list[0].name).toBe("Usable draft");
+    db.get.mockImplementation((id: string) => id === "outline" ? retry.promise : Promise.resolve({ _id: id, ...details("New outline") }));
+    act(() => store.dispatch(retryItemListLoad()));
+    view.rerender();
+    expect(store.getState().undoable.present.itemList.isLoading).toBe(false);
+    expect(store.getState().undoable.present.itemList.list[0].name).toBe("Usable draft");
+    act(() => store.dispatch(itemListsSlice.actions.selectItemList("b")));
+    view.rerender();
+    await waitFor(() => expect(store.getState().undoable.present.itemList.loadedOutlineId).toBe("b"));
+    await act(async () => { retry.resolve(details("Obsolete")); });
+    expect(store.getState().undoable.present.itemList.list[0].name).toBe("New outline");
+    expect(store.getState().undoable.present.itemList.loadError).toBeNull();
   });
 
   it("applies a remote overlay reorder while retaining a selected local draft", async () => {
@@ -474,6 +609,7 @@ describe("useControllerPageLifecycle selected outline loading", () => {
       store.dispatch(overlaySlice.actions.markOverlayDraftPending("overlay-a"));
     });
 
+    db.get.mockResolvedValue({ _id: "outline", items: [{ _id: "Initial", name: "Initial", type: "song" }], overlays: ["overlay-b", "overlay-a"] });
     await act(async () => {
       updater.dispatchEvent(
         new CustomEvent("update", {
@@ -547,6 +683,7 @@ describe("useControllerPageLifecycle selected outline loading", () => {
       ),
     });
 
+    db.get.mockResolvedValue({ _id: "outline-a", items: [], overlays: ["overlay-b"] });
     act(() => {
       updater.dispatchEvent(
         new CustomEvent("update", {
@@ -618,7 +755,7 @@ describe("useControllerPageLifecycle selected outline loading", () => {
       ),
     });
 
-    await waitFor(() => expect(db.get).toHaveBeenCalledWith("outline"));
+    await waitFor(() => expect(db.get).toHaveBeenCalledWith("outline", { conflicts: true }));
     await act(async () => {
       outlineRead.resolve({ ...details("Loaded outline"), serviceOutline: storedOutline });
       await outlineRead.promise;

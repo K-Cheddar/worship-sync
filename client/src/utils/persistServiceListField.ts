@@ -408,6 +408,31 @@ export const persistServiceListOverlays = (
   overlays: string[],
 ) => persistServiceListField(db, listId, "overlays", overlays);
 
+/** The normal read requests only leaf metadata. Branch bodies/history are
+ * inspected only when the database reports competing saved versions. */
+export const inspectServiceListRevisions = async (
+  db: ServiceListFieldDb,
+  listId: string,
+  head: DBItemListDetails & { _conflicts?: string[] },
+  allowReconciliation = true,
+): Promise<{ document: DBItemListDetails; conflict?: ServiceListConflictError }> => {
+  if (!head._conflicts?.length) return { document: head };
+  if (!allowReconciliation) {
+    const branches = await readRevisionBranchSet(db, listId);
+    const merged = await mergeRevisionBranches(db, listId, branches);
+    return { document: branches.winner, conflict: new ServiceListConflictError(
+      (merged?.document.items ?? branches.winner.items ?? []) as ServiceItem[],
+      conflictDetails(branches, merged?.document),
+    ) };
+  }
+  try {
+    return { document: await persistServiceListItems(db, listId, head.items ?? [], head.items ?? []) };
+  } catch (error) {
+    if (!(error instanceof ServiceListConflictError)) throw error;
+    return { document: head, conflict: error };
+  }
+};
+
 /** Commits an explicit whole-outline choice after rechecking the reviewed graph. */
 export const resolveServiceListRevisionConflict = async (
   db: ServiceListFieldDb,

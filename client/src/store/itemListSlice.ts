@@ -15,6 +15,9 @@ export type OutlineRemoteConflict = {
   originalLocalItems?: ServiceItem[];
   remoteItems: ServiceItem[];
   revisionConflict?: OutlineRevisionConflict;
+  /** Keep the retained draft until the selected resolution is acknowledged. */
+  resolutionChoice?: "keep-local" | "use-remote";
+  saveError?: boolean;
 };
 
 type PendingOutlineRevisionResolution = {
@@ -34,6 +37,8 @@ type ItemListState = {
   list: ServiceItem[];
   isLoading: boolean;
   loadError: string | null;
+  loadAttempt: number;
+  isRetrying: boolean;
   selectedItemListId: string; // each item has a unique listId even if their ids are the same
   insertPointIndex: number; // index of item after which new items are inserted (-1 = none)
   hasPendingUpdate: boolean;
@@ -52,6 +57,8 @@ const initialState: ItemListState = {
   list: [],
   isLoading: true,
   loadError: null,
+  loadAttempt: 0,
+  isRetrying: false,
   selectedItemListId: "",
   insertPointIndex: -1,
   hasPendingUpdate: false,
@@ -124,8 +131,10 @@ export const itemListSlice = createSlice({
         const latestLocal = previouslyLoadedOutlineId === payload.outlineId
           ? previousList
           : conflict.localItems;
-        state.list = latestLocal.map((item) => ({ ...item }));
-        state.syncBaseline = conflict.baselineItems.map((item) => ({ ...item }));
+        const refreshed = reconcileOutlineItems(conflict.baselineItems, latestLocal, state.list);
+        state.list = refreshed.items;
+        state.syncBaseline = refreshed.remoteItems;
+        conflict.remoteItems = refreshed.remoteItems;
         state.initialItems = state.list.map((item) => item.listId);
         state.hasPendingUpdate = true;
       } else {
@@ -165,6 +174,9 @@ export const itemListSlice = createSlice({
           ...(unresolvedConflict.revisionConflict
             ? { revisionConflict: unresolvedConflict.revisionConflict }
             : {}),
+          ...(isSameRows(unresolvedConflict.remoteItems, result.remoteItems)
+            ? { resolutionChoice: unresolvedConflict.resolutionChoice }
+            : {}),
         };
         state.syncBaseline = result.remoteItems.map((item) => ({ ...item }));
         state.hasPendingUpdate = true;
@@ -192,6 +204,7 @@ export const itemListSlice = createSlice({
       if (!state.pendingRevisionResolutions) state.pendingRevisionResolutions = {};
       const conflict = state.remoteConflicts[action.payload.outlineId];
       if (!conflict || state.loadedOutlineId !== action.payload.outlineId) return;
+      delete conflict.saveError;
       if (action.payload.choice === "keep-local") {
         // The current list stays editable while the banner is visible. Use it
         // directly so resolving the notice cannot roll back later edits.
@@ -211,8 +224,21 @@ export const itemListSlice = createSlice({
       } else {
         delete state.pendingRevisionResolutions[action.payload.outlineId];
       }
-      delete state.remoteConflicts[action.payload.outlineId];
+      if (action.payload.choice === "use-remote" && !conflict.revisionConflict) {
+        // Explicit discard needs no write when the authoritative saved version
+        // has no competing leaves.
+        delete state.remoteConflicts[action.payload.outlineId];
+      } else {
+        conflict.resolutionChoice = action.payload.choice;
+      }
       preserveCursor(state);
+    },
+    failOutlineResolution: (state, action: PayloadAction<string>) => {
+      const conflict = state.remoteConflicts?.[action.payload];
+      if (!conflict) return;
+      delete conflict.resolutionChoice;
+      conflict.saveError = true;
+      delete state.pendingRevisionResolutions[action.payload];
     },
     recordOutlineConflict: (
       state,
@@ -232,13 +258,13 @@ export const itemListSlice = createSlice({
       const localItems =
         state.loadedOutlineId === action.payload.outlineId
           ? state.list
-          : action.payload.localItems;
+          : state.remoteConflicts[action.payload.outlineId]?.localItems ?? action.payload.localItems;
       if (action.payload.revisionConflict) {
         const retainedLocal = localItems.map((item) => ({ ...item }));
         state.remoteConflicts[action.payload.outlineId] = {
           baselineItems: remoteItems.map((item) => ({ ...item })),
           localItems: retainedLocal,
-          originalLocalItems: retainedLocal.map((item) => ({ ...item })),
+          originalLocalItems: state.remoteConflicts[action.payload.outlineId]?.originalLocalItems ?? retainedLocal.map((item) => ({ ...item })),
           remoteItems,
           revisionConflict: action.payload.revisionConflict,
         };
@@ -255,11 +281,12 @@ export const itemListSlice = createSlice({
         localItems,
         remoteItems,
       );
-      if (result.kind === "conflict") {
+      if (result.kind === "conflict" || state.remoteConflicts[action.payload.outlineId]) {
+        const previous = state.remoteConflicts[action.payload.outlineId];
         state.remoteConflicts[action.payload.outlineId] = {
           baselineItems: result.remoteItems.map((item) => ({ ...item })),
           localItems: result.items,
-          originalLocalItems: localItems.map((item) => ({ ...item })),
+          originalLocalItems: previous?.originalLocalItems ?? localItems.map((item) => ({ ...item })),
           remoteItems: result.remoteItems,
         };
         if (state.loadedOutlineId === action.payload.outlineId) {
@@ -285,10 +312,24 @@ export const itemListSlice = createSlice({
     ) => {
       if (!state.remoteConflicts) state.remoteConflicts = {};
       if (!state.pendingRevisionResolutions) state.pendingRevisionResolutions = {};
-      if (state.loadedOutlineId && state.loadedOutlineId !== action.payload.outlineId) {
+      const retained = state.remoteConflicts[action.payload.outlineId];
+      if (state.loadedOutlineId !== action.payload.outlineId && (state.loadedOutlineId !== undefined || retained)) {
+        if (retained?.resolutionChoice) {
+          const result = reconcileOutlineItems(action.payload.submittedItems, retained.localItems, action.payload.items);
+          if (result.kind !== "conflict" && isSameRows(result.items, action.payload.items)) {
+            delete state.remoteConflicts[action.payload.outlineId];
+            delete state.pendingRevisionResolutions[action.payload.outlineId];
+          } else {
+            retained.localItems = result.items;
+            retained.baselineItems = action.payload.items;
+            retained.remoteItems = action.payload.items;
+            delete retained.revisionConflict;
+            delete state.pendingRevisionResolutions[action.payload.outlineId];
+          }
+        }
         return;
       }
-      if (state.remoteConflicts[action.payload.outlineId]) return;
+      if (retained && !retained.resolutionChoice) return;
       const persistedItems = normalizeRows(action.payload.items);
       const result = reconcileOutlineItems(
         action.payload.submittedItems,
@@ -463,6 +504,15 @@ export const itemListSlice = createSlice({
     setItemListLoadError: (state, action: PayloadAction<string | null>) => {
       state.loadError = action.payload;
     },
+    retryItemListLoad: (state) => {
+      if (state.isRetrying) return;
+      state.loadAttempt = (state.loadAttempt ?? 0) + 1;
+      state.isRetrying = true;
+      state.loadError = null;
+    },
+    setItemListIsRetrying: (state, action: PayloadAction<boolean>) => {
+      state.isRetrying = action.payload;
+    },
     setHasPendingUpdate: (state, action: PayloadAction<boolean>) => {
       state.hasPendingUpdate = action.payload;
     },
@@ -472,6 +522,17 @@ export const itemListSlice = createSlice({
     addToInitialItems: (state, action: PayloadAction<string[]>) => {
       state.initialItems = [...state.initialItems, ...action.payload];
     },
+  },
+  extraReducers: (builder) => {
+    // Runs after every row mutation, including image/heading helpers. There is
+    // one latest draft per outline, rather than a snapshot from notice time.
+    builder.addMatcher((action) => action.type.startsWith("itemList/"), (state) => {
+      const conflict = state.loadedOutlineId && state.remoteConflicts?.[state.loadedOutlineId];
+      if (conflict) {
+        conflict.localItems = state.list;
+        conflict.baselineItems = state.syncBaseline;
+      }
+    });
   },
 });
 
@@ -490,9 +551,12 @@ export const {
   setActiveItemInList,
   setItemListIsLoading,
   setItemListLoadError,
+  retryItemListLoad,
+  setItemListIsRetrying,
   removeItemFromListById,
   updateItemListFromRemote,
   resolveOutlineConflict,
+  failOutlineResolution,
   recordOutlineConflict,
   markItemListPersisted,
   setHasPendingUpdate,

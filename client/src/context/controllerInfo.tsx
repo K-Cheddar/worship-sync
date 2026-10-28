@@ -803,7 +803,7 @@ const ControllerInfoProvider = ({ children }: any) => {
     };
     void connectRemote();
     return () => { cancelled = true; replicateRef.current?.cancel(); };
-  }, [db, hasCouchSession, isAuthenticatedSession, databaseSessionKey, activeDatabaseKey, isGuestSession, syncDb, getCouchSession]);
+  }, [db, hasCouchSession, isAuthenticatedSession, databaseSessionKey, activeDatabaseKey, broadcastDatabaseKey, isGuestSession, syncDb, getCouchSession]);
 
   useEffect(() => {
     const setupBibleDb = async () => {

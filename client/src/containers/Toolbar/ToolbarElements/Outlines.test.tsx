@@ -5,10 +5,12 @@ import { GlobalInfoContext } from "../../../context/globalInfo";
 import { ControllerInfoContext } from "../../../context/controllerInfo";
 import { PresentationControllerModeProvider } from "../../../context/presentationControllerMode";
 import * as preparedMediaContext from "../../../utils/preparedMediaContext";
+import type { RegistrySaveState } from "../../../utils/itemListsRegistryQueue";
 
 const mockDispatch = jest.fn();
 const mockShowToast = jest.fn();
 let mockMode: "present" | "edit" = "present";
+let mockRegistrySave: RegistrySaveState = { status: "idle" };
 
 jest.mock("../../../hooks", () => ({
   useDispatch: () => mockDispatch,
@@ -22,6 +24,7 @@ jest.mock("../../../hooks", () => ({
             selectedList: { _id: "outline-1", name: "Sunday Service" },
             scope: "presentation",
             isInitialized: true,
+            registrySave: mockRegistrySave,
           },
         },
       },
@@ -84,6 +87,16 @@ describe("Outlines", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockMode = "present";
+    mockRegistrySave = { status: "idle" };
+  });
+
+  it("keeps registry choices read-only for viewers", () => {
+    mockRegistrySave = { status: "review", reviewId: 1, hasBranches: true, conflicts: [{ key: "saved-1:outline-1:name", outlineId: "outline-1", field: "name", reason: "same-field", localValue: "Local name", remoteValue: "Saved name" }] };
+    render(<GlobalInfoContext.Provider value={{ access: "view" } as never}><Outlines /></GlobalInfoContext.Provider>);
+    expect(screen.getByRole("button", { name: "Keep: Local name" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Use saved: Saved name" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Save choices" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry save" })).not.toBeInTheDocument();
   });
 
   it("allows outline selection in present mode without showing management actions", () => {
@@ -162,7 +175,7 @@ describe("Outlines", () => {
       await Promise.resolve();
     });
     await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith(
-      expect.stringContaining("competing saved versions, so changes cannot be saved"),
+      expect.stringContaining("competing saved versions. Open the outline picker"),
       "error",
     ));
     expect(db.get).toHaveBeenLastCalledWith("ItemLists", { conflicts: true });

@@ -73,7 +73,6 @@ import {
   DBCredit,
   DBCredits,
   DBItem,
-  DBItemLists,
   DBOverlay,
   DBOverlayTemplates,
   DBPreferences,
@@ -129,10 +128,9 @@ import {
   ServiceListConflictError,
 } from "../utils/persistServiceListField";
 import {
-  persistItemListsRegistry,
-  ItemListsRegistryConflictError,
-  type ItemListsRegistryIntent,
+  registrySnapshot,
 } from "../utils/persistItemListsRegistry";
+import { ItemListsRegistryQueue } from "../utils/itemListsRegistryQueue";
 import _ from "lodash";
 import { getChurchDataPath } from "../utils/firebasePaths";
 import {
@@ -871,11 +869,22 @@ const excludedActions: string[] = [
   itemListSlice.actions.setHasPendingUpdate.toString(),
   itemListSlice.actions.forceUpdate.toString(),
   itemListSlice.actions.setActiveItemInList.toString(),
+  itemListSlice.actions.setItemListLoadError.toString(),
+  itemListSlice.actions.retryItemListLoad.toString(),
+  itemListSlice.actions.setItemListIsRetrying.toString(),
+  itemListSlice.actions.recordOutlineConflict.toString(),
+  itemListSlice.actions.markItemListPersisted.toString(),
+  itemListSlice.actions.failOutlineResolution.toString(),
   itemListsSlice.actions.initiateItemLists.toString(),
   itemListsSlice.actions.updateItemListsFromRemote.toString(),
   itemListsSlice.actions.setInitialItemList.toString(),
   itemListsSlice.actions.selectItemList.toString(),
   itemListsSlice.actions.setOutlineScope.toString(),
+  itemListsSlice.actions.setRegistrySaveState.toString(),
+  itemListsSlice.actions.retryRegistrySave.toString(),
+  itemListsSlice.actions.resolveRegistrySave.toString(),
+  itemListsSlice.actions.reviewRegistryRevisions.toString(),
+  itemListsSlice.actions.applyRegistryRecovery.toString(),
   preferencesSlice.actions.initiatePreferences.toString(),
   preferencesSlice.actions.setIsLoading.toString(),
   preferencesSlice.actions.setSelectedPreference.toString(),
@@ -1673,14 +1682,20 @@ listenerMiddleware.startListening({
       itemListSlice.actions.setIsInitialized,
       itemListSlice.actions.markItemListPersisted,
       itemListSlice.actions.recordOutlineConflict,
+      itemListSlice.actions.retryItemListLoad,
+      itemListSlice.actions.setItemListLoadError,
+      itemListSlice.actions.setItemListIsRetrying,
     );
     const itemListChanged =
       (currentState as RootState).undoable.present.itemList !==
       (previousState as RootState).undoable.present.itemList;
     const selectedId = (currentState as RootState).undoable.present.itemLists.selectedList?._id;
     const hasOutlineConflict = Boolean(
-      selectedId && state.remoteConflicts?.[selectedId],
+      selectedId && state.remoteConflicts?.[selectedId] &&
+      !state.remoteConflicts[selectedId].resolutionChoice,
     );
+    const restoringResolution = itemListSlice.actions.initiateItemList.match(action) &&
+      Boolean(selectedId && state.remoteConflicts?.[selectedId]?.resolutionChoice);
     const savingOutgoingOutline =
       itemListsSlice.actions.selectItemList.match(action) &&
       (currentState as RootState).undoable.present.itemLists.selectedList?._id !==
@@ -1690,11 +1705,13 @@ listenerMiddleware.startListening({
       (previousState as RootState).undoable.present.itemLists.selectedList?._id &&
       (previousState as RootState).undoable.present.itemList.remoteConflicts?.[
         (previousState as RootState).undoable.present.itemLists.selectedList!._id
-      ],
+      ] && !(previousState as RootState).undoable.present.itemList.remoteConflicts[
+        (previousState as RootState).undoable.present.itemLists.selectedList!._id
+      ].resolutionChoice,
     );
     return (
       (itemListChanged &&
-      !excluded(action) &&
+      (!excluded(action) || restoringResolution) &&
       !!(currentState as RootState).undoable.present.itemList
         .hasPendingUpdate &&
       !hasOutlineConflict &&
@@ -1723,8 +1740,15 @@ listenerMiddleware.startListening({
     const baseline = present.itemList.syncBaseline ?? [];
     const loadedOutlineId = present.itemList.loadedOutlineId;
     const outgoingConflict = Boolean(
-      selectedList && present.itemList.remoteConflicts?.[selectedList._id],
+      selectedList && present.itemList.remoteConflicts?.[selectedList._id] &&
+      !present.itemList.remoteConflicts[selectedList._id].resolutionChoice,
     );
+    const submittedConflict = selectedList && present.itemList.remoteConflicts?.[selectedList._id];
+    const conflictReviewIsCurrent = () => {
+      const current = (listenerApi.getState() as RootState).undoable.present.itemList.remoteConflicts?.[selectedList!._id];
+      return !current || (_.isEqual(current.revisionConflict, submittedConflict?.revisionConflict) &&
+        _.isEqual(current.remoteItems, submittedConflict?.remoteItems) && current.resolutionChoice === submittedConflict?.resolutionChoice);
+    };
 
     if (
       !dbAtStart ||
@@ -1759,7 +1783,7 @@ listenerMiddleware.startListening({
       if (db !== dbAtStart) return;
       const afterPutState = (listenerApi.getState() as RootState).undoable.present;
       const afterPut = afterPutState.itemList;
-      if (!afterPut.loadedOutlineId || afterPut.loadedOutlineId === selectedList._id) {
+      if (conflictReviewIsCurrent() && (!afterPut.loadedOutlineId || afterPut.loadedOutlineId === selectedList._id || afterPut.remoteConflicts?.[selectedList._id]?.resolutionChoice)) {
         listenerApi.dispatch(itemListSlice.actions.markItemListPersisted({
           outlineId: selectedList._id,
           items: [...persisted.items],
@@ -1776,6 +1800,7 @@ listenerMiddleware.startListening({
       });
     } catch (error) {
       if (isListenerCancelledTaskError(error)) return;
+      if (!conflictReviewIsCurrent()) return;
       if (error instanceof ServiceListConflictError) {
         if (db === dbAtStart && selectedList) {
           listenerApi.dispatch(itemListSlice.actions.recordOutlineConflict({
@@ -1788,14 +1813,16 @@ listenerMiddleware.startListening({
               : {}),
           }));
         }
+      } else if (db === dbAtStart) {
+        listenerApi.dispatch(itemListSlice.actions.failOutlineResolution(selectedList._id));
       }
       console.error("Failed to persist item list outline:", error);
     }
   },
 });
 
-// handle itemLists updates
-const pendingRegistryIntentsByDb = new WeakMap<object, ItemListsRegistryIntent[]>();
+// Registry runtimes outlive picker/controller mounts and are bound to one DB.
+const pendingRegistryIntentsByDb = new WeakMap<object, ItemListsRegistryQueue>();
 
 const snapshotItemListsRegistry = (
   state: RootState["undoable"]["present"]["itemLists"],
@@ -1807,97 +1834,71 @@ const snapshotItemListsRegistry = (
 
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    if (isAnyOf(itemListsSlice.actions.retryRegistrySave, itemListsSlice.actions.resolveRegistrySave,
+      itemListsSlice.actions.reviewRegistryRevisions)(action)) return true;
     const state = (currentState as RootState).undoable.present.itemLists;
-    // Don't save until initialization is complete
-    if (!state.isInitialized) return false;
-
+    if (!state.isInitialized || isStoreResetAction(action)) return false;
+    const previous = (previousState as RootState).undoable.present.itemLists;
+    if (state === previous) return false;
     const excluded = isAnyOf(
-      itemListsSlice.actions.setInitialItemList,
-      itemListsSlice.actions.initiateItemLists,
-      itemListsSlice.actions.updateItemListsFromRemote,
-      itemListsSlice.actions.markItemListsPersisted,
-      itemListsSlice.actions.setIsInitialized,
-      itemListsSlice.actions.setOutlineScope,
+      itemListsSlice.actions.setInitialItemList, itemListsSlice.actions.initiateItemLists,
+      itemListsSlice.actions.updateItemListsFromRemote, itemListsSlice.actions.markItemListsPersisted,
+      itemListsSlice.actions.setIsInitialized, itemListsSlice.actions.setOutlineScope,
+      itemListsSlice.actions.applyRegistryRecovery,
+      itemListsSlice.actions.setRegistrySaveState,
     );
-    return (
-      (currentState as RootState).undoable.present.itemLists !==
-        (previousState as RootState).undoable.present.itemLists &&
-      !excluded(action) &&
-      !isStoreResetAction(action)
-    );
+    return !excluded(action) && !_.isEqual(snapshotItemListsRegistry(previous), snapshotItemListsRegistry(state));
   },
-
   effect: async (action, listenerApi) => {
-    const rootBefore = listenerApi.getOriginalState() as RootState;
-    const rootAfter = listenerApi.getState() as RootState;
-    const intent: ItemListsRegistryIntent = {
-      before: snapshotItemListsRegistry(rootBefore.undoable.present.itemLists),
-      after: snapshotItemListsRegistry(rootAfter.undoable.present.itemLists),
-    };
     const dbAtStart = db;
     if (!dbAtStart) return;
-    if (!intent.after.activeList && intent.after.currentLists.length === 0) return;
-
-    const pendingIntents = pendingRegistryIntentsByDb.get(dbAtStart) ?? [];
-    pendingIntents.push(intent);
-    pendingRegistryIntentsByDb.set(dbAtStart, pendingIntents);
-
-    listenerApi.dispatch(
-      autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(
-        AUTOSAVE_DEBOUNCE_KEYS.itemLists,
-      ),
-    );
+    let queue = pendingRegistryIntentsByDb.get(dbAtStart);
+    if (!queue) {
+      queue = new ItemListsRegistryQueue(dbAtStart, (document, pending) => {
+        if (db !== dbAtStart) return;
+        listenerApi.dispatch(itemListsSlice.actions.applyRegistryRecovery({ snapshot: registrySnapshot(document), pending }));
+        safePostMessage({ type: "update", data: { docs: document, hostId: globalHostId } });
+      }, (status) => {
+        if (db === dbAtStart) listenerApi.dispatch(itemListsSlice.actions.setRegistrySaveState(status));
+      });
+      pendingRegistryIntentsByDb.set(dbAtStart, queue);
+    }
+    if (itemListsSlice.actions.reviewRegistryRevisions.match(action)) {
+      await queue.observeRevisionConflict(action.payload);
+      if (db === dbAtStart) {
+        if (queue.pendingIntents.length) {
+          const registry = (listenerApi.getState() as RootState).undoable.present.itemLists;
+          listenerApi.dispatch(itemListsSlice.actions.applyRegistryRecovery({ snapshot: registry.registryBaseline, pending: queue.pendingIntents }));
+        }
+        listenerApi.dispatch(itemListsSlice.actions.setRegistrySaveState(queue.state));
+      }
+      return;
+    }
+    if (itemListsSlice.actions.resolveRegistrySave.match(action)) {
+      await queue.resolve(action.payload.reviewId, action.payload.choices);
+      return;
+    }
+    if (itemListsSlice.actions.retryRegistrySave.match(action)) {
+      await queue.flush(true);
+      return;
+    }
+    const rootBefore = listenerApi.getOriginalState() as RootState;
+    const rootAfter = listenerApi.getState() as RootState;
+    queue.enqueue({
+      before: snapshotItemListsRegistry(rootBefore.undoable.present.itemLists),
+      after: snapshotItemListsRegistry(rootAfter.undoable.present.itemLists),
+    });
+    listenerApi.dispatch(autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(AUTOSAVE_DEBOUNCE_KEYS.itemLists));
     try {
+      // Cancellation owns only this debounce; a started database queue runs to
+      // completion independently and never submits the same entry twice.
       listenerApi.cancelActiveListeners();
       await listenerApi.delay(1500);
-      listenerApi.throwIfCancelled();
-
-      const intentsToCommit = [...pendingIntents];
-      if (intentsToCommit.length === 0) return;
-      const db_itemLists: DBItemLists = await persistItemListsRegistry(
-        dbAtStart,
-        intentsToCommit,
-      );
-      const latestQueue = pendingRegistryIntentsByDb.get(dbAtStart) ?? [];
-      if (
-        intentsToCommit.every((queuedIntent, index) =>
-          latestQueue[index] === queuedIntent,
-        )
-      ) {
-        latestQueue.splice(0, intentsToCommit.length);
-      }
-
-      // Local machine updates
-      if (db !== dbAtStart) return;
-      listenerApi.dispatch(itemListsSlice.actions.markItemListsPersisted({
-        currentLists: db_itemLists.itemLists,
-        activeList: db_itemLists.activeList,
-        selectedIdByScope: db_itemLists.selectedIdByScope ?? {},
-      }));
-      safePostMessage({
-        type: "update",
-        data: {
-          docs: db_itemLists,
-          hostId: globalHostId,
-        },
-      });
+      await queue.flush();
     } catch (error) {
-      if (isListenerCancelledTaskError(error)) return;
-      console.error("Failed to persist ItemLists registry:", error);
-      const hasRevisionBranches = error instanceof ItemListsRegistryConflictError &&
-        error.conflicts.some((conflict) => conflict.reason === "revision-branches");
-      const message = error instanceof ItemListsRegistryConflictError
-        ? hasRevisionBranches
-          ? "The outline list has competing saved revisions, so these changes were not saved. Your current list remains on this device; copy your intended changes before closing this controller."
-          : "Another device changed the same outline list field. Your changes were not saved. Copy your intended changes before closing this controller."
-        : "Could not save outline list changes. Your changes are still on this device. Check the connection and try again.";
-      notifyPresentationSyncError(message);
+      if (!isListenerCancelledTaskError(error)) console.error("Outline list save failed:", error);
     } finally {
-      listenerApi.dispatch(
-        autosaveIndicatorSlice.actions.endKeyedDebouncedSave(
-          AUTOSAVE_DEBOUNCE_KEYS.itemLists,
-        ),
-      );
+      listenerApi.dispatch(autosaveIndicatorSlice.actions.endKeyedDebouncedSave(AUTOSAVE_DEBOUNCE_KEYS.itemLists));
     }
   },
 });
@@ -4121,7 +4122,22 @@ const combinedReducers = combineReducers({
   controllerProfiles: controllerProfilesSlice.reducer,
 });
 
+type RetainedOutlineState = Pick<RootState["undoable"]["present"]["itemList"], "remoteConflicts" | "pendingRevisionResolutions">;
+const outlineDraftsByDb = new Map<object | string, RetainedOutlineState>();
+const outlineDraftDatabaseKey = (database: NonNullable<typeof db>) => database.name || database;
+let outlineStateDatabase = db;
+
 const rootReducer: Reducer = (state: RootState, action: Action) => {
+  const historyOutline = action.type === "@@redux-undo/UNDO" || action.type === "@@redux-undo/REDO"
+    ? state?.undoable.present.itemList : undefined;
+  const databaseChanged = outlineStateDatabase !== db;
+  if (outlineStateDatabase && state?.undoable?.present.itemList) {
+    const { remoteConflicts, pendingRevisionResolutions } = state.undoable.present.itemList;
+    const key = outlineDraftDatabaseKey(outlineStateDatabase);
+    if (Object.keys(remoteConflicts).length) outlineDraftsByDb.set(key, { remoteConflicts, pendingRevisionResolutions });
+    else outlineDraftsByDb.delete(key);
+  }
+  outlineStateDatabase = db;
   if (action.type === "RESET") {
     state = {} as RootState;
   } else if (action.type === "RESET_CONTROLLER_SESSION") {
@@ -4135,7 +4151,32 @@ const rootReducer: Reducer = (state: RootState, action: Action) => {
       itemLibraryUi: state?.itemLibraryUi,
     } as RootState;
   }
-  return combinedReducers(state, action);
+  const reduced = combinedReducers(state, action);
+  const retained = historyOutline ? {
+    remoteConflicts: historyOutline.remoteConflicts,
+    pendingRevisionResolutions: historyOutline.pendingRevisionResolutions,
+  } : db && (isStoreResetAction(action) || databaseChanged)
+    ? outlineDraftsByDb.get(outlineDraftDatabaseKey(db)) ?? (databaseChanged ? { remoteConflicts: {}, pendingRevisionResolutions: {} } : undefined)
+    : undefined;
+  if (!retained) return reduced;
+  const itemList = { ...reduced.undoable.present.itemList, ...retained };
+  const outlineId = itemList.loadedOutlineId;
+  if (historyOutline && outlineId && retained.remoteConflicts[outlineId]) {
+    const conflict = retained.remoteConflicts[outlineId];
+    itemList.remoteConflicts = { ...retained.remoteConflicts, [outlineId]: { ...conflict, localItems: itemList.list } };
+    itemList.syncBaseline = conflict.baselineItems;
+    itemList.hasPendingUpdate = true;
+  }
+  return {
+    ...reduced,
+    undoable: {
+      ...reduced.undoable,
+      present: {
+        ...reduced.undoable.present,
+        itemList,
+      },
+    },
+  };
 };
 
 const itemOwnerTransitionMiddleware: Middleware = (api) => (next) => (action: any) => {
