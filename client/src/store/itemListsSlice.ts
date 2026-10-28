@@ -9,6 +9,7 @@ import {
 import {
   ItemListsRegistryConflictError,
   mergeItemListsRegistrySnapshot,
+  type ItemListsRegistryIntent,
   type ItemListsRegistrySnapshot,
 } from "../utils/persistItemListsRegistry";
 import type { RegistrySaveState } from "../utils/itemListsRegistryQueue";
@@ -126,6 +127,23 @@ export const itemListsSlice = createSlice({
     },
     retryRegistrySave: () => {},
     keepRegistryChanges: () => {},
+    restorePendingRegistryChanges: (state, action: PayloadAction<ItemListsRegistryIntent[]>) => {
+      ensureScopeState(state);
+      const selectedId = state.selectedList?._id;
+      const restored = action.payload.reduce(
+        (snapshot, intent) => mergeItemListsRegistrySnapshot(snapshot, intent, () => "local"),
+        snapshotRegistry(state),
+      );
+      state.currentLists = restored.currentLists;
+      state.activeList = restored.activeList;
+      const selected = selectedId && state.currentLists.find((list) => list._id === selectedId);
+      if (selected && isOutlineInScope(selected, state.scope)) {
+        state.selectedList = selected;
+        state.selectedIdByScope[state.scope] = selected._id;
+      } else {
+        reselectWithinScope(state);
+      }
+    },
     updateItemLists: (state, action: PayloadAction<ItemList[]>) => {
       ensureScopeState(state);
       state.currentLists = action.payload;
@@ -292,6 +310,7 @@ export const {
   setRegistrySaveState,
   retryRegistrySave,
   keepRegistryChanges,
+  restorePendingRegistryChanges,
   forceUpdate,
 } = itemListsSlice.actions;
 

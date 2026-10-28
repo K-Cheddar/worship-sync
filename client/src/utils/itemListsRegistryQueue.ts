@@ -74,6 +74,19 @@ export class ItemListsRegistryQueue {
   private running?: Promise<void>;
   state: RegistrySaveState = { status: "idle" };
 
+  get pendingIntents(): ItemListsRegistryIntent[] {
+    return this.entries.map(({ intent }) => ({
+      before: {
+        currentLists: intent.before.currentLists.map((list) => ({ ...list })),
+        activeList: intent.before.activeList ? { ...intent.before.activeList } : undefined,
+      },
+      after: {
+        currentLists: intent.after.currentLists.map((list) => ({ ...list })),
+        activeList: intent.after.activeList ? { ...intent.after.activeList } : undefined,
+      },
+    }));
+  }
+
   constructor(
     private readonly db: ItemListsRegistryDb,
     private readonly saved: (doc: DBItemLists) => void,

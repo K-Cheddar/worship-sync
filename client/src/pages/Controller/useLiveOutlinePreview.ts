@@ -8,6 +8,7 @@ import {
   resolveOutlineForScope,
 } from "../../utils/outlineScope";
 import type {
+  DBItemLists,
   DBItemListDetails,
   ServiceItem as ServiceItemType,
 } from "../../types";
@@ -23,20 +24,76 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
   isLoading: boolean;
 } => {
   const { db, cloud, updater } = useContext(ControllerInfoContext) || {};
-  const outlines = useSelector((state) => state.undoable.present.itemLists.currentLists);
-  const selectedId = useSelector((state) =>
+  const reduxOutlines = useSelector((state) => state.undoable.present.itemLists.currentLists);
+  const registryInitialized = useSelector((state) => state.undoable.present.itemLists.isInitialized);
+  const reduxSelectedId = useSelector((state) =>
     state.undoable.present.itemLists.selectedIdByScope[outlineScope],
   );
-  const liveOutlineId = useSelector((state) =>
+  const reduxLiveOutlineId = useSelector((state) =>
     state.undoable.present.itemLists.activeList?._id,
   );
+  const [fallbackRegistry, setFallbackRegistry] = useState<{
+    database: typeof db;
+    document?: DBItemLists;
+  }>();
+  const [items, setItems] = useState<ServiceItemType[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const registryReadRef = useRef<{
+    database: typeof db;
+    promise: Promise<DBItemLists>;
+  } | undefined>(undefined);
+  const fallbackDocument = fallbackRegistry && fallbackRegistry.database === db
+    ? fallbackRegistry.document
+    : undefined;
+
+  useEffect(() => {
+    if (registryInitialized || !db || fallbackRegistry?.database === db) return;
+    let cancelled = false;
+    let request = registryReadRef.current;
+    if (request?.database !== db) {
+      request = {
+        database: db,
+        promise: db.get("ItemLists") as Promise<DBItemLists>,
+      };
+      registryReadRef.current = request;
+    }
+    request.promise.then(
+      (document) => {
+        if (cancelled) return;
+        const fallbackOutlineId = resolveOutlineForScope(
+          document.itemLists ?? [],
+          outlineScope,
+          outlineScope === DEFAULT_OUTLINE_SCOPE ? document.activeList?._id : undefined,
+        )?._id;
+        setIsLoading(Boolean(fallbackOutlineId));
+        setFallbackRegistry({ database: db, document });
+      },
+      () => {
+        if (cancelled) return;
+        setIsLoading(false);
+        setFallbackRegistry({ database: db });
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [db, fallbackRegistry?.database, outlineScope, registryInitialized]);
+
+  const outlines = registryInitialized
+    ? reduxOutlines
+    : fallbackDocument?.itemLists ?? [];
+  const selectedId = registryInitialized ? reduxSelectedId : undefined;
+  const liveOutlineId = registryInitialized
+    ? reduxLiveOutlineId
+    : fallbackDocument?.activeList?._id;
   const outlineId = resolveOutlineForScope(
     outlines,
     outlineScope,
     selectedId ?? (outlineScope === DEFAULT_OUTLINE_SCOPE ? liveOutlineId : undefined),
   )?._id;
-  const [items, setItems] = useState<ServiceItemType[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const isLoadingRegistry = Boolean(
+    db && !registryInitialized && fallbackRegistry?.database !== db,
+  );
   const activeListIdRef = useRef<string | undefined>(undefined);
   const activeListScopeRef = useRef<string | undefined>(undefined);
   const requestIdRef = useRef(0);
@@ -139,5 +196,5 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
 
   useGlobalBroadcast(handleExternalUpdate);
 
-  return { items, isLoading };
+  return { items, isLoading: isLoading || isLoadingRegistry };
 };

@@ -34,7 +34,48 @@ const initializeLocalRegistry = () => {
 afterEach(() => store.dispatch({ type: "RESET" }));
 
 describe("useLiveOutlinePreview", () => {
-  it("loads a controller's persisted selected outline without its controller page", async () => {
+  it("loads the winning active outline when the workspace opens before Redux initializes outlines", async () => {
+    store.dispatch({ type: "RESET" });
+    expect(store.getState().undoable.present.itemLists.isInitialized).toBe(false);
+    let resolveRegistry!: (value: ReturnType<typeof makeItemListsDoc>) => void;
+    let resolveOutline!: (value: { _id: string; items: ReturnType<typeof makeItem>[] }) => void;
+    const db = {
+      get: jest.fn((id: string) => id === "ItemLists"
+        ? new Promise<ReturnType<typeof makeItemListsDoc>>((resolve) => { resolveRegistry = resolve; })
+        : new Promise<{ _id: string; items: ReturnType<typeof makeItem>[] }>((resolve) => { resolveOutline = resolve; })),
+    };
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <Provider store={store}>
+        <ControllerInfoContext.Provider
+          value={{ db, cloud: {} as never, updater: new EventTarget() } as never}
+        >
+          {children}
+        </ControllerInfoContext.Provider>
+      </Provider>
+    );
+
+    const { result, rerender } = renderHook(() => useLiveOutlinePreview(), { wrapper });
+    await waitFor(() => expect(db.get).toHaveBeenCalledWith("ItemLists"));
+    expect(result.current.isLoading).toBe(true);
+    await act(async () => {
+      resolveRegistry(makeItemListsDoc());
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(db.get).toHaveBeenCalledWith("main-list"));
+    expect(result.current.isLoading).toBe(true);
+    await act(async () => {
+      resolveOutline({ _id: "main-list", items: [makeItem("Main item")] });
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(result.current.items[0]?.name).toBe("Main item"));
+    expect(result.current.isLoading).toBe(false);
+    rerender();
+
+    expect(db.get.mock.calls.filter(([id]) => id === "ItemLists")).toHaveLength(1);
+    expect(db.get).toHaveBeenCalledWith("main-list");
+  });
+
+  it("uses the local outline registry for an initialized auxiliary scope", async () => {
     initializeLocalRegistry();
     const db = {
       get: jest.fn(async (id: string) =>
@@ -55,6 +96,7 @@ describe("useLiveOutlinePreview", () => {
     await waitFor(() => expect(result.current.items[0]?.name).toBe("Aux item"));
     expect(db.get).toHaveBeenCalledTimes(1);
     expect(db.get).toHaveBeenCalledWith("aux-list");
+    expect(db.get).not.toHaveBeenCalledWith("ItemLists");
   });
 
   it("ignores a stale outline response after switching controller scopes", async () => {

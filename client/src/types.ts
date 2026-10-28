@@ -936,8 +936,8 @@ export type ItemLists = {
   itemLists: ItemList[];
   activeList: ItemList;
   /**
-   * Last outline opened per controller scope. Survives reload so each
-   * controller returns to its own place; absent on legacy docs.
+   * Legacy last-opened metadata from older clients. Current clients keep
+   * outline selection locally and preserve this field only on unrelated writes.
    */
   selectedIdByScope?: Record<string, string>;
   _id: string;

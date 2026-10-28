@@ -873,6 +873,7 @@ const excludedActions: string[] = [
   itemListSlice.actions.markItemListPersisted.toString(),
   itemListSlice.actions.failOutlineResolution.toString(),
   itemListsSlice.actions.initiateItemLists.toString(),
+  itemListsSlice.actions.restorePendingRegistryChanges.toString(),
   itemListsSlice.actions.updateItemListsFromRemote.toString(),
   itemListsSlice.actions.setInitialItemList.toString(),
   itemListsSlice.actions.selectItemList.toString(),
@@ -1852,6 +1853,7 @@ listenerMiddleware.startListening({
     if (state === previous) return false;
     const excluded = isAnyOf(
       itemListsSlice.actions.setInitialItemList, itemListsSlice.actions.initiateItemLists,
+      itemListsSlice.actions.restorePendingRegistryChanges,
       itemListsSlice.actions.updateItemListsFromRemote,
       itemListsSlice.actions.setIsInitialized, itemListsSlice.actions.setOutlineScope,
       itemListsSlice.actions.setRegistrySaveState,
@@ -1876,7 +1878,12 @@ listenerMiddleware.startListening({
       pendingRegistryIntentsByDb.set(dbAtStart, queue);
     }
     if (itemListsSlice.actions.initiateItemLists.match(action)) {
+      const pending = queue.pendingIntents;
+      if (pending.length) {
+        listenerApi.dispatch(itemListsSlice.actions.restorePendingRegistryChanges(pending));
+      }
       if (db === dbAtStart) listenerApi.dispatch(itemListsSlice.actions.setRegistrySaveState(queue.state));
+      if (pending.length && queue.state.status !== "error") void queue.flush();
       return;
     }
     if (itemListsSlice.actions.retryRegistrySave.match(action)) {

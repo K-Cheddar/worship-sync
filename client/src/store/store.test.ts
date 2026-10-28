@@ -5912,6 +5912,8 @@ describe("item list outline persistence", () => {
     env.store.dispatch(env.itemListsSlice.actions.initiateItemLists(current.itemLists));
     await flushListenerEffects();
     expect(env.store.getState().undoable.present.itemLists.registrySave.status).toBe("error");
+    expect(env.store.getState().undoable.present.itemLists.currentLists[0].name).toBe("Unsaved rename");
+    expect(env.store.getState().undoable.present.itemLists.selectedList?.name).toBe("Unsaved rename");
     env.store.dispatch(env.itemListsSlice.actions.retryRegistrySave());
     await flushListenerEffects();
     expect(current.itemLists[0].name).toBe("Unsaved rename");
