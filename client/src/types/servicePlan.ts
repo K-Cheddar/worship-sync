@@ -206,6 +206,12 @@ export type ServicePlanImportAmbiguity = {
   reasons: string[];
   status: "unresolved" | "deferred" | "confirmed" | "acknowledged";
   sourceFingerprint: string;
+  /** A changed source note that could not be reconciled without an operator decision. */
+  sourceNoteConflict?: {
+    sourceFingerprint: string;
+    existingNotesFingerprint: string;
+    resolution?: "keepExisting" | "useUpdated";
+  };
   /** Pending source songs that may correspond to more than one existing library occurrence. */
   songMappings?: Array<{
     incoming: Extract<ServicePlanSongReference, { kind: "pending" }>;

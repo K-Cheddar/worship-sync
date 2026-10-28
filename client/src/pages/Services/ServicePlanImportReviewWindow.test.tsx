@@ -3,6 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { FloatingWindowZIndexProvider } from "../../components/FloatingWindow/FloatingWindowZIndexContext";
 import type { ServicePlanImportSummary } from "./servicePlanImportSummary";
 import ServicePlanImportReviewWindow from "./ServicePlanImportReviewWindow";
+import { plainTextToRichText } from "../../types/richText";
+import type { ServicePlanElement, ServicePlanSection } from "../../types/servicePlan";
+import { applySelectedServicePlanImportChanges, summarizeServicePlanImport } from "./servicePlanImportSummary";
+import { applyPlanAnchorStartTime } from "./servicePlanTimingUtils";
 
 describe("ServicePlanImportReviewWindow", () => {
   it("selects all changes by default and can omit an individual element", async () => {
@@ -98,7 +102,7 @@ describe("ServicePlanImportReviewWindow", () => {
       </FloatingWindowZIndexProvider>,
     );
 
-    expect(screen.getByText("Moved")).toBeInTheDocument();
+    expect(screen.getByText("Confirm match for Sermon")).toBeInTheDocument();
     expect(screen.getByText("Message → Response & Celebration")).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Confirm match for Sermon" })).not.toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Update Prayer" })).toBeChecked();
@@ -214,4 +218,35 @@ describe("ServicePlanImportReviewWindow", () => {
     await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
     expect(onApply).toHaveBeenCalledWith(["removed:old-prayer"]);
   });
+  it("compares duplicate possible matches using the actual current and incoming items", () => {
+    const item = (id: string, startTime: string, notes: string, candidate?: string): ServicePlanElement => ({
+      id, type: "free", title: plainTextToRichText("Prayer"), startTime, durationMinutes: 2,
+      notes: plainTextToRichText(notes), legacyImportMatchCandidateForId: candidate,
+    });
+    const current: ServicePlanSection[] = [{ id: "w", name: "Worship", elements: [item("a", "09:00", "Opening"), item("b", "09:10", "Closing")] }];
+    const proposed: ServicePlanSection[] = [{ id: "w", name: "Worship", elements: [item("x", "09:01", "Opening updated", "a"), item("y", "09:11", "Closing updated", "b")] }];
+    const summary = summarizeServicePlanImport(current, proposed);
+    render(<FloatingWindowZIndexProvider><ServicePlanImportReviewWindow summary={summary} currentSections={current} proposedSections={proposed} onApply={jest.fn()} onClose={jest.fn()} /></FloatingWindowZIndexProvider>);
+    expect(screen.getAllByText("Current plan")).toHaveLength(2);
+    expect(screen.getByText("Opening updated")).toBeInTheDocument();
+    expect(screen.getByText("Closing")).toBeInTheDocument();
+    expect(screen.queryByText("Worship \u2192 Worship")).not.toBeInTheDocument();
+    expect(screen.getByText("2 changes selected \u00b7 2 possible matches")).toBeInTheDocument();
+  });
+
+  it("updates schedule impact from the selected application result", async () => {
+    const user = userEvent.setup();
+    const item = (id: string, title: string, time: string, durationMinutes: number): ServicePlanElement => ({ id, type: "free", title: plainTextToRichText(title), startTime: time, durationMinutes });
+    const current: ServicePlanSection[] = [{ id: "w", name: "Worship", elements: [item("song", "Song", "09:00", 5), item("prayer", "Prayer", "09:05", 2)] }];
+    const proposed: ServicePlanSection[] = [{ id: "w", name: "Worship", elements: [item("song", "Song", "09:00", 8), item("prayer", "Prayer", "09:08", 2)] }];
+    const summary = summarizeServicePlanImport(current, proposed, {}, { dependentTimingShifts: true });
+    const getSelectedSections = (keys: string[]) => keys.length ? applyPlanAnchorStartTime(applySelectedServicePlanImportChanges(current, proposed, summary, new Set(keys)), "09:00") : current;
+    render(<FloatingWindowZIndexProvider><ServicePlanImportReviewWindow summary={summary} currentSections={current} proposedSections={proposed} getSelectedSections={getSelectedSections} onApply={jest.fn()} onClose={jest.fn()} /></FloatingWindowZIndexProvider>);
+    await user.click(screen.getByText("Schedule impact (1)"));
+    expect(screen.getByText("Prayer \u00b7 09:05 \u2192 09:08")).toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: "Update Song" }));
+    expect(screen.getByText("Schedule impact (0)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Apply no changes" })).toBeDisabled();
+  });
+
 });

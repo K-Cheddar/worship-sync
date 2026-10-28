@@ -2674,6 +2674,29 @@ export const createTeamsAuthHandlers = ({
           .filter(Boolean)
           .slice(0, 20)
       : [];
+    const noteConflictSource = raw.sourceNoteConflict;
+    const noteConflictSourceFingerprint = normalizeLongText(
+      noteConflictSource?.sourceFingerprint,
+      { max: 3000 },
+    );
+    const existingNotesFingerprint = normalizeShortText(
+      noteConflictSource?.existingNotesFingerprint,
+      { max: 160 },
+    );
+    const noteConflictResolution = ["keepExisting", "useUpdated"].includes(
+      noteConflictSource?.resolution,
+    )
+      ? noteConflictSource.resolution
+      : undefined;
+    const sourceNoteConflict = noteConflictSource &&
+      typeof noteConflictSource === "object" &&
+      noteConflictSourceFingerprint && existingNotesFingerprint
+      ? {
+          sourceFingerprint: noteConflictSourceFingerprint,
+          existingNotesFingerprint,
+          ...(noteConflictResolution ? { resolution: noteConflictResolution } : {}),
+        }
+      : undefined;
     return {
       source: "servicePlanning",
       sourceKey,
@@ -2689,6 +2712,7 @@ export const createTeamsAuthHandlers = ({
       reasons,
       status: raw.status,
       sourceFingerprint,
+      ...(sourceNoteConflict ? { sourceNoteConflict } : {}),
       ...(raw.authorizationPending === true
         ? { authorizationPending: true }
         : {}),
@@ -2715,7 +2739,21 @@ export const createTeamsAuthHandlers = ({
           ...new Set(raw.pendingFields.filter((field) => fields.has(field))),
         ].slice(0, 4)
       : [];
-    return { observed, applied, pendingFields };
+    const managedNotes = Array.isArray(raw.managedNotes)
+      ? raw.managedNotes
+          .flatMap((entry) => {
+            const id = normalizeShortText(entry?.id, { max: 160 });
+            const fingerprint = normalizeLongText(entry?.fingerprint, { max: 10000 });
+            return id && fingerprint ? [{ id, fingerprint }] : [];
+          })
+          .slice(0, 200)
+      : [];
+    return {
+      observed,
+      applied,
+      pendingFields,
+      ...(managedNotes.length ? { managedNotes } : {}),
+    };
   };
 
   const normalizeServicePlanElement = (raw) => {

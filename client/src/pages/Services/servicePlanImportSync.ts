@@ -1,4 +1,4 @@
-import { richTextSemanticEqual, richTextToPlainText } from "../../types/richText";
+import { multilineTextToRichText, richTextSemanticEqual, richTextToPlainText } from "../../types/richText";
 import {
   getServicePlanElementType,
   getServicePlanElementAssignees,
@@ -1258,6 +1258,123 @@ const reconcileImportedSourceNotes = (
   };
 };
 
+const SOURCE_NOTE_CONFLICT_REASON = "The external Note changed, but existing Notes lack reliable source provenance or were edited locally. Review Notes before applying the update.";
+
+const sourceNoteFingerprint = (note: string) => JSON.stringify(normalizedSourceValue(note));
+
+const servicePlanNotesFingerprint = (element: ServicePlanElement) => {
+  const serialized = servicePlanNoteFingerprint({ blocks: element.notes?.blocks || [] });
+  let first = 2166136261;
+  let second = 5381;
+  for (let index = 0; index < serialized.length; index += 1) {
+    const code = serialized.charCodeAt(index);
+    first = Math.imul(first ^ code, 16777619);
+    second = Math.imul(second, 33) ^ code;
+  }
+  return `${serialized.length.toString(36)}:${(first >>> 0).toString(36)}:${(second >>> 0).toString(36)}`;
+};
+
+/** Apply an explicit choice for a source-note conflict without guessing note ownership. */
+export const resolveServicePlanImportNoteConflict = (
+  element: ServicePlanElement,
+  resolution: "keepExisting" | "useUpdated",
+): ServicePlanElement => {
+  const ambiguity = element.importAmbiguity;
+  const conflict = ambiguity?.sourceNoteConflict;
+  if (!ambiguity || !conflict) return element;
+
+  const sourceNote = element.servicePlanningImport?.observed.note ?? ambiguity.sourceNote ?? "";
+  const currentBlocks = element.notes?.blocks || [];
+  const managedNotes = element.servicePlanningImport?.managedNotes || [];
+  let nextBlocks = currentBlocks;
+  let replacements = sourceNote.trim() ? multilineTextToRichText(sourceNote).blocks : [];
+  let nextManagedNotes = managedNotes;
+
+  if (resolution === "useUpdated") {
+    if (managedNotes.length) {
+      const managedById = new Map(managedNotes.map((managed, index) => [managed.id, { ...managed, index }]));
+      const currentById = new Map(currentBlocks.flatMap((block) => block.id ? [[block.id, block] as const] : []));
+      replacements = replacements.map((block, index) => {
+        const prior = managedNotes[index];
+        const existing = prior ? currentById.get(prior.id) : undefined;
+        const unchanged = Boolean(existing && servicePlanNoteFingerprint(existing) === prior?.fingerprint);
+        const id = prior && (!existing || unchanged)
+          ? prior.id
+          : block.id && !currentById.has(block.id) ? block.id : generateRandomId();
+        return { ...block, id };
+      });
+      const placedSourceIndexes = new Set<number>();
+      nextBlocks = currentBlocks.flatMap((block) => {
+        const managed = block.id ? managedById.get(block.id) : undefined;
+        if (!managed) return [block];
+        const unchanged = servicePlanNoteFingerprint(block) === managed.fingerprint;
+        const replacement = replacements[managed.index];
+        if (!unchanged) {
+          // A tracked paragraph edited locally remains operator-owned. Keep it
+          // beside the explicitly accepted source update instead of deleting it.
+          if (!replacement) return [block];
+          placedSourceIndexes.add(managed.index);
+          return [block, replacement];
+        }
+        if (!replacement) return [];
+        placedSourceIndexes.add(managed.index);
+        return [replacement];
+      });
+      nextBlocks.push(...replacements.filter((_, index) => !placedSourceIndexes.has(index)));
+    } else {
+      replacements = replacements.map((block) => ({
+        ...block,
+        id: block.id || generateRandomId(),
+      }));
+      // With no note provenance, the operator explicitly chose to replace the
+      // full note document. The review shows the existing content and warns
+      // about this consequence before this action is available.
+      nextBlocks = replacements;
+    }
+    nextManagedNotes = replacements.flatMap((block) => block.id &&
+      richTextToPlainText({ blocks: [block] }).trim()
+      ? [{ id: block.id, fingerprint: servicePlanNoteFingerprint(block) }]
+      : []);
+  }
+
+  const next: ServicePlanElement = { ...element };
+  if (nextBlocks.length) next.notes = { blocks: nextBlocks };
+  else delete next.notes;
+  if (resolution === "useUpdated" && sourceNote.trim()) next.sourceNoteRaw = sourceNote;
+  else if (resolution === "useUpdated") delete next.sourceNoteRaw;
+
+  if (element.servicePlanningImport) {
+    const state = element.servicePlanningImport;
+    const applied = resolution === "useUpdated"
+      ? { ...state.applied, note: sourceNote }
+      : state.applied;
+    const pendingFields = (["elementType", "title", "ledBy", "note"] as const)
+      .filter((field) => !sameSourceValue(state.observed[field], applied[field]));
+    next.servicePlanningImport = {
+      ...state,
+      applied,
+      pendingFields,
+      ...(nextManagedNotes.length ? { managedNotes: nextManagedNotes } : {}),
+    };
+    if (!nextManagedNotes.length) delete next.servicePlanningImport.managedNotes;
+  }
+
+  const reasons = ambiguity.reasons.filter((reason) => reason !== SOURCE_NOTE_CONFLICT_REASON);
+  const unresolved = ambiguity.authorizationPending || ambiguity.parts.length > 0 ||
+    Boolean(ambiguity.songMappings?.some((mapping) => !mapping.resolution)) || reasons.length > 0;
+  next.importAmbiguity = {
+    ...ambiguity,
+    reasons,
+    sourceNoteConflict: {
+      sourceFingerprint: sourceNoteFingerprint(sourceNote),
+      existingNotesFingerprint: servicePlanNotesFingerprint(next),
+      resolution,
+    },
+    status: unresolved ? "unresolved" : resolution === "keepExisting" ? "acknowledged" : "confirmed",
+  };
+  return next;
+};
+
 const mergeElement = (
   current: ServicePlanElement,
   imported: ServicePlanElement,
@@ -1301,7 +1418,11 @@ const mergeElement = (
       : incomingObserved.note,
   };
   const changedObservedNote = options.updateNotes && !sameSourceValue(currentState.applied.note, observed.note);
-  const noteReconciliation = changedObservedNote
+  const priorNoteDecision = current.importAmbiguity?.sourceNoteConflict;
+  const acknowledgedKeep = priorNoteDecision?.resolution === "keepExisting" &&
+    priorNoteDecision.sourceFingerprint === sourceNoteFingerprint(observed.note) &&
+    priorNoteDecision.existingNotesFingerprint === servicePlanNotesFingerprint(current);
+  const noteReconciliation = changedObservedNote && !acknowledgedKeep
     ? reconcileImportedSourceNotes(current, imported, currentState.applied.note)
     : undefined;
   const noteUpdateConflict = Boolean(noteReconciliation?.conflict);
@@ -1315,7 +1436,7 @@ const mergeElement = (
   if (options.updateAssignments && !sameSourceValue(applied.ledBy, observed.ledBy)) {
     applied.ledBy = observed.ledBy;
   }
-  if (changedObservedNote && !noteUpdateConflict) {
+  if (changedObservedNote && !noteUpdateConflict && !acknowledgedKeep) {
     applied.note = observed.note;
   }
   const pendingFields = (["elementType", "title", "ledBy", "note"] as const)
@@ -1331,7 +1452,7 @@ const mergeElement = (
     !sameSourceValue(currentState.applied.title, observed.title) ||
     !sameSourceValue(currentState.applied.elementType, observed.elementType)
   );
-  const changedAcceptedNote = changedObservedNote && !noteUpdateConflict;
+  const changedAcceptedNote = changedObservedNote && !noteUpdateConflict && !acknowledgedKeep;
   const changedAcceptedTitleOrNote = changedAcceptedTitle || changedAcceptedNote;
   const confirmed = current.importAmbiguity?.status === "confirmed" ||
     current.importAmbiguity?.status === "acknowledged";
@@ -1627,11 +1748,14 @@ const mergeElement = (
       status: "unresolved" as const,
       sourceFingerprint: JSON.stringify(observed),
     };
-    const reason = "The external Note changed, but existing Notes lack reliable source provenance or were edited locally. Review Notes before applying the update.";
     next.importAmbiguity = {
       ...base,
       sourceNote: observed.note,
-      reasons: [...new Set([...base.reasons, reason])],
+      reasons: [...new Set([...base.reasons, SOURCE_NOTE_CONFLICT_REASON])],
+      sourceNoteConflict: {
+        sourceFingerprint: sourceNoteFingerprint(observed.note),
+        existingNotesFingerprint: servicePlanNotesFingerprint(current),
+      },
       status: "unresolved",
     };
   }
@@ -1951,7 +2075,13 @@ export const refreshServicePlanFromImport = (
         ],
         (element) => !isAmbiguousCurrentElement(element) && !legacyMatchCandidateCurrentIds.has(element.id) && canPairByLabel(element) &&
           (!options.suggestLegacyMatches || Boolean(element.sourcePlanningManaged || element.sourceTemplateElementId)),
-        (element) => !isAmbiguousCurrentElement(element) && !legacyMatchCandidateCurrentIds.has(element.id) && isSourceOwned(element) &&
+        // Planning Center PDFs do not provide durable row IDs. Exact source
+        // identity and same-label matching above are evidence; residual order
+        // alone must not turn one source-managed item into a differently
+        // titled row. The PDF preparation pass can reserve uncertain pairs
+        // for individual confirmation through legacyImportMatchCandidateForId.
+        (element) => !options.planningCenterPdfMatch &&
+          !isAmbiguousCurrentElement(element) && !legacyMatchCandidateCurrentIds.has(element.id) && isSourceOwned(element) &&
           (!options.suggestLegacyMatches || Boolean(element.sourcePlanningManaged || element.sourceTemplateElementId)),
         (element) => !isAmbiguousCurrentElement(element) && !legacyMatchCandidateCurrentIds.has(element.id)
           ? getElementImportIdentity(element, options.planningCenterPdfMatch)

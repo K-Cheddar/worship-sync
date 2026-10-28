@@ -5,9 +5,9 @@ import { plainTextToRichText, richTextToPlainText } from "../../types/richText";
 import type { ServicePlanElement, ServicePlanSection } from "../../types/servicePlan";
 import type { ServicePlanningImportData } from "../../containers/Overlays/eventParser";
 import { createServicePlanTextResource, getServicePlanResourceText } from "./servicePlanResources";
-import { applyReviewedServicePlanParts, reconcileReviewedServicePlanParts, servicePlanResourceFingerprint } from "./servicePlanImportOwnership";
+import { applyReviewedServicePlanParts, reconcileReviewedServicePlanParts, servicePlanNoteFingerprint, servicePlanResourceFingerprint } from "./servicePlanImportOwnership";
 import { buildServicePlanSectionsFromImport } from "./servicePlanFromImport";
-import { DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS, refreshServicePlanFromImport } from "./servicePlanImportSync";
+import { DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS, refreshServicePlanFromImport, resolveServicePlanImportNoteConflict } from "./servicePlanImportSync";
 import { applySelectedServicePlanImportChanges, servicePlanImportChangeKey, summarizeServicePlanImport } from "./servicePlanImportSummary";
 import ServicePlanAmbiguityReview from "./ServicePlanAmbiguityReview";
 
@@ -604,5 +604,236 @@ describe("ServicePlanAmbiguityReview", () => {
     expect(repeated.element.scriptureRefs?.map(({ id }) => id)).toEqual(["manual-ref"]);
     expect(richTextToPlainText(repeated.element.notes)).toBe("John 3:16 NIV");
     expect(repeated.parts).toEqual(moved.parts);
+  });
+
+  it("requires a real choice for a source-note conflict and keeps the source update pending when declined", async () => {
+    const user = userEvent.setup();
+    const onResolve = jest.fn();
+    const oldNote = "Choir selection before the message";
+    const updatedNote = "Dedication prayer for incoming ministry volunteers";
+    const element: ServicePlanElement = {
+      id: "note-conflict",
+      type: "free",
+      title: plainTextToRichText("Special Music"),
+      notes: plainTextToRichText(oldNote),
+      servicePlanningImport: {
+        observed: { elementType: "Special Music", title: "Special Music", ledBy: "Youth Choir", note: updatedNote },
+        applied: { elementType: "Special Music", title: "Special Music", ledBy: "Youth Choir", note: oldNote },
+        pendingFields: ["note"],
+      },
+      importAmbiguity: {
+        source: "servicePlanning",
+        sourceKey: "Worship:1",
+        sourceElementType: "Special Music",
+        sourceTitle: "Special Music",
+        sourceLedBy: "Youth Choir",
+        sourceNote: updatedNote,
+        parts: [],
+        reasons: ["The external Note changed, but existing Notes lack reliable source provenance or were edited locally. Review Notes before applying the update."],
+        status: "unresolved",
+        sourceFingerprint: "note-conflict",
+        sourceNoteConflict: { sourceFingerprint: JSON.stringify(updatedNote), existingNotesFingerprint: "old-notes" },
+      },
+    };
+    const currentSections: ServicePlanSection[] = [{ id: "worship", name: "Worship", elements: [element] }];
+    render(<ServicePlanAmbiguityReview sections={currentSections} elementIds={[element.id]} prompt={false} onLater={jest.fn()} onResolve={onResolve} />);
+
+    expect(screen.getByText("Existing notes")).toBeInTheDocument();
+    expect(screen.getByText(oldNote)).toBeInTheDocument();
+    expect(screen.getByText("Updated source note")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Note conflict" })).getByText(updatedNote)).toBeInTheDocument();
+    expect(screen.queryByText("No mapping is needed for this item.")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Resolve note conflict & finish" })).toBeDisabled();
+
+    await user.click(screen.getByRole("radio", { name: /Keep existing notes/ }));
+    await user.click(screen.getByRole("button", { name: "Resolve note conflict & finish" }));
+
+    const changes = onResolve.mock.calls[0][1] as Partial<ServicePlanElement>;
+    expect(changes.notes).toEqual(element.notes);
+    expect(changes.servicePlanningImport).toMatchObject({
+      observed: { note: updatedNote },
+      applied: { note: oldNote },
+      pendingFields: ["note"],
+    });
+    expect(changes.importAmbiguity).toMatchObject({
+      status: "acknowledged",
+      sourceNoteConflict: { resolution: "keepExisting" },
+    });
+  });
+
+  it("shows the replacement consequence before applying an updated PDF note", async () => {
+    const user = userEvent.setup();
+    const onResolve = jest.fn();
+    const oldNote = "Choir selection before the message";
+    const updatedNote = "Dedication prayer for incoming ministry volunteers";
+    const element: ServicePlanElement = {
+      id: "note-conflict",
+      type: "free",
+      title: plainTextToRichText("Special Music"),
+      notes: plainTextToRichText(oldNote),
+      servicePlanningImport: {
+        observed: { elementType: "Special Music", title: "Special Music", ledBy: "Youth Choir", note: updatedNote },
+        applied: { elementType: "Special Music", title: "Special Music", ledBy: "Youth Choir", note: oldNote },
+        pendingFields: ["note"],
+      },
+      importAmbiguity: {
+        source: "servicePlanning",
+        sourceKey: "Worship:1",
+        sourceElementType: "Special Music",
+        sourceTitle: "Special Music",
+        sourceLedBy: "Youth Choir",
+        sourceNote: updatedNote,
+        parts: [],
+        reasons: ["The external Note changed, but existing Notes lack reliable source provenance or were edited locally. Review Notes before applying the update."],
+        status: "unresolved",
+        sourceFingerprint: "note-conflict",
+        sourceNoteConflict: { sourceFingerprint: JSON.stringify(updatedNote), existingNotesFingerprint: "old-notes" },
+      },
+    };
+    const currentSections: ServicePlanSection[] = [{ id: "worship", name: "Worship", elements: [element] }];
+    render(<ServicePlanAmbiguityReview sections={currentSections} elementIds={[element.id]} prompt={false} updatedNoteLabel="Updated PDF note" onLater={jest.fn()} onResolve={onResolve} />);
+
+    expect(screen.getByText("The existing notes have no reliable source markers. Using the updated note replaces all existing notes shown here.")).toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: /Use updated PDF note/ }));
+    await user.click(screen.getByRole("button", { name: "Resolve note conflict & finish" }));
+
+    const changes = onResolve.mock.calls[0][1] as Partial<ServicePlanElement>;
+    expect(richTextToPlainText(changes.notes)).toBe(updatedNote);
+    expect(changes.sourceNoteRaw).toBe(updatedNote);
+    expect(changes.servicePlanningImport).toMatchObject({
+      applied: { note: updatedNote },
+      pendingFields: [],
+      managedNotes: [expect.objectContaining({ id: expect.any(String), fingerprint: expect.any(String) })],
+    });
+    expect(changes.importAmbiguity).toMatchObject({
+      status: "confirmed",
+      sourceNoteConflict: { resolution: "useUpdated" },
+    });
+
+    const resolved = { ...element, ...changes } as ServicePlanElement;
+    expect(resolveServicePlanImportNoteConflict(resolved, "useUpdated")).toEqual(resolved);
+  });
+
+  it("explains that locally edited imported paragraphs are kept beside the updated PDF note", async () => {
+    const user = userEvent.setup();
+    const onResolve = jest.fn();
+    const oldNote = "Choir selection before the message";
+    const updatedNote = "Dedication prayer for incoming ministry volunteers";
+    const originalSourceBlock = { ...plainTextToRichText(oldNote).blocks[0], id: "source-note" };
+    const element: ServicePlanElement = {
+      id: "note-conflict-edited-source",
+      type: "free",
+      title: plainTextToRichText("Special Music"),
+      notes: { blocks: [
+        { ...plainTextToRichText("Locally edited source paragraph").blocks[0], id: "source-note" },
+        { ...plainTextToRichText("Operator-only note").blocks[0], id: "operator-note" },
+      ] },
+      servicePlanningImport: {
+        observed: { elementType: "Special Music", title: "Special Music", ledBy: "Youth Choir", note: updatedNote },
+        applied: { elementType: "Special Music", title: "Special Music", ledBy: "Youth Choir", note: oldNote },
+        pendingFields: ["note"],
+        managedNotes: [{ id: "source-note", fingerprint: servicePlanNoteFingerprint(originalSourceBlock) }],
+      },
+      importAmbiguity: {
+        source: "servicePlanning",
+        sourceKey: "Worship:1",
+        sourceElementType: "Special Music",
+        sourceTitle: "Special Music",
+        sourceLedBy: "Youth Choir",
+        sourceNote: updatedNote,
+        parts: [],
+        reasons: ["The external Note changed, but existing Notes lack reliable source provenance or were edited locally. Review Notes before applying the update."],
+        status: "unresolved",
+        sourceFingerprint: "note-conflict-edited-source",
+        sourceNoteConflict: { sourceFingerprint: JSON.stringify(updatedNote), existingNotesFingerprint: "edited-notes" },
+      },
+    };
+    render(<ServicePlanAmbiguityReview
+      sections={[{ id: "worship", name: "Worship", elements: [element] }]}
+      elementIds={[element.id]}
+      prompt={false}
+      updatedNoteLabel="Updated PDF note"
+      onLater={jest.fn()}
+      onResolve={onResolve}
+    />);
+
+    expect(screen.getByText(/keeps paragraphs edited locally/)).toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: /Use updated PDF note/ }));
+    await user.click(screen.getByRole("button", { name: "Resolve note conflict & finish" }));
+
+    const changes = onResolve.mock.calls[0][1] as Partial<ServicePlanElement>;
+    expect(richTextToPlainText(changes.notes)).toContain(updatedNote);
+    expect(richTextToPlainText(changes.notes)).toContain("Locally edited source paragraph");
+    expect(richTextToPlainText(changes.notes)).toContain("Operator-only note");
+    expect(changes.servicePlanningImport?.managedNotes?.[0].id).not.toBe("source-note");
+  });
+
+  it("does not carry one note conflict choice into the next item in the review queue", async () => {
+    const user = userEvent.setup();
+    const makeConflict = (id: string, oldNote: string, updatedNote: string): ServicePlanElement => ({
+      id,
+      type: "free",
+      title: plainTextToRichText(id),
+      notes: plainTextToRichText(oldNote),
+      servicePlanningImport: {
+        observed: { elementType: "Free", title: id, ledBy: "", note: updatedNote },
+        applied: { elementType: "Free", title: id, ledBy: "", note: oldNote },
+        pendingFields: ["note"],
+      },
+      importAmbiguity: {
+        source: "servicePlanning",
+        sourceKey: `Worship:${id}`,
+        sourceElementType: "Free",
+        sourceTitle: id,
+        sourceLedBy: "",
+        sourceNote: updatedNote,
+        parts: [],
+        reasons: ["The external Note changed, but existing Notes lack reliable source provenance or were edited locally. Review Notes before applying the update."],
+        status: "unresolved",
+        sourceFingerprint: id,
+        sourceNoteConflict: { sourceFingerprint: updatedNote, existingNotesFingerprint: id },
+      },
+    });
+    const initialSections: ServicePlanSection[] = [{
+      id: "worship",
+      name: "Worship",
+      elements: [
+        makeConflict("first", "First existing note", "First updated note"),
+        makeConflict("second", "Second existing note", "Second updated note"),
+      ],
+    }];
+    const ReviewQueue = () => {
+      const [elementIds, setElementIds] = useState(["first", "second"]);
+      const [currentSections, setCurrentSections] = useState(initialSections);
+      const [completedCount, setCompletedCount] = useState(0);
+      return <ServicePlanAmbiguityReview
+        sections={currentSections}
+        elementIds={elementIds}
+        batchTotal={2}
+        completedCount={completedCount}
+        prompt={false}
+        onLater={jest.fn()}
+        onResolve={(elementId, changes) => {
+          setCurrentSections((current) => current.map((section) => ({
+            ...section,
+            elements: section.elements.map((element) => element.id === elementId
+              ? { ...element, ...changes }
+              : element),
+          })));
+          setElementIds((current) => current.filter((id) => id !== elementId));
+          setCompletedCount((current) => current + 1);
+        }}
+      />;
+    };
+    render(<ReviewQueue />);
+
+    expect(screen.getByText("Item 1 of 2")).toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: /Keep existing notes/ }));
+    await user.click(screen.getByRole("button", { name: "Resolve note conflict & next" }));
+
+    expect(screen.getByText("Item 2 of 2")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /Keep existing notes/ })).not.toBeChecked();
+    expect(screen.getByRole("radio", { name: /Use updated source note/ })).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Resolve note conflict & finish" })).toBeDisabled();
   });
 });

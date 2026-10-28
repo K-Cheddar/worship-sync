@@ -34,6 +34,8 @@ An operator imports or refreshes a plan, reviews the proposed item changes, sele
 - An ambiguous match must not relocate, replace, or delete an existing item.
 - An existing item reserved for an individual match review is excluded from automatic identity, title, order, and cross-section matching, removal, and PDF ordering. Only its selected `legacy_match` suggestion may associate it with an incoming row. Each existing item participates in at most one proposed association. (Confirmed by the current request, 2026-10-27.)
 - When another change is approved, an unapproved PDF match retains its review-required protection through save/reload even if collision resolution removed its synthetic key. PDF source position identifies keyless review candidates. (Confirmed by the current request, 2026-10-28.)
+- For Planning Center PDFs without durable row IDs, exact source identities and same-title evidence may match automatically; remaining position alone must not associate differently titled rows. An uncertain match may be offered as an unchecked, individual review suggestion. Local information stays with the existing item until its match is selected. (Confirmed by the current request, 2026-10-28.)
+- A changed source note that cannot be reconciled safely requires an explicit **Keep existing notes** or **Use updated source note** decision. Keeping notes leaves the source note pending; using it replaces unchanged tracked source paragraphs while retaining locally edited and independent notes where provenance allows. If note ownership is unknown, the review must show the existing content and explain that using the update replaces it. (Confirmed by the current request, 2026-10-28.)
 - Import does not apply every item's position as a blanket reorder.
 - Changes beyond the selected additions, removals, updates, and moves remain untouched.
 
@@ -148,6 +150,13 @@ Regression coverage: `servicePlanNativeTransfer.test.ts` and the public-link rep
 - **Material alternative rejected:** Couple external identity adoption to the visible field update, making the selected move lose its future source match when that update is skipped.
 - **Approval source/date:** Current request, 2026-10-16.
 - **Affected workflow/contract:** Service-plan import and refresh.
+
+- **Question/problem:** Planning Center PDF rows without durable identities could inherit local item data from a different row at the same position, and a source-note conflict had no way to resolve the note decision.
+- **Approved behavior:** Do not pair differently titled PDF rows by position alone. Preserve local data with its existing item, and present note-ownership conflicts with explicit keep-existing or use-updated choices. Keeping notes leaves the source change pending; using it follows stored note provenance and preserves locally edited tracked paragraphs, or clearly replaces the full note when ownership cannot be distinguished.
+- **Why:** Source order can change while local notes, assignments, equipment, and attachments still belong to the previous item. Operators need to choose how a genuine note conflict is handled without losing unrelated local notes.
+- **Material alternative rejected:** Guess that rows at similar positions are the same item, or let a generic acknowledgment mark an unresolved note conflict as handled.
+- **Approval source/date:** Current user request, 2026-10-28.
+- **Affected workflow/contract:** Planning Center PDF refresh and source-note reconciliation.
 
 - **Question/problem:** A plan created from a template before item provenance was stored has an unmarked same-title item, which may instead be manual.
 - **Approved behavior:** Leave unmarked items untouched rather than using title/type alone to relocate them across sections.

@@ -22558,3 +22558,66 @@ test("team updates preserve omitted equipment flags and honor explicit enable an
   assert.equal(disabled.payload.team.usesMicrophoneAssignments, false);
   assert.equal(disabled.payload.team.usesIemAssignments, false);
 });
+
+test("service plan note conflict decisions and ownership fingerprints survive save and reload", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("service_plan_note_conflict_round_trip");
+  const planKey = "svc1@2026-07-26";
+  const noteOwnership = [{ id: "source-note", fingerprint: "managed-note-fingerprint" }];
+  const noteConflict = {
+    sourceFingerprint: "updated-source-note-fingerprint",
+    existingNotesFingerprint: "existing-notes-fingerprint",
+    resolution: "keepExisting",
+  };
+  const saved = await callHandler(authHandlers.saveServicePlan, {
+    context,
+    params: { planKey },
+    body: {
+      serviceId: "svc1",
+      date: "2026-07-26",
+      name: "Sunday Service",
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        elements: [{
+          id: "special-music",
+          type: "free",
+          title: richText("Special Music"),
+          notes: richText("Choir selection before the message"),
+          sourcePlanningManaged: true,
+          servicePlanningImport: {
+            observed: { elementType: "Special Music", title: "Special Music", ledBy: "Youth Choir", note: "Updated PDF note" },
+            applied: { elementType: "Special Music", title: "Special Music", ledBy: "Youth Choir", note: "Old source note" },
+            pendingFields: ["note"],
+            managedNotes: noteOwnership,
+          },
+          importAmbiguity: {
+            source: "servicePlanning",
+            sourceKey: "Worship:1",
+            sourceElementType: "Special Music",
+            sourceTitle: "Special Music",
+            sourceLedBy: "Youth Choir",
+            sourceNote: "Updated PDF note",
+            parts: [],
+            reasons: [],
+            status: "acknowledged",
+            sourceFingerprint: "note-conflict-round-trip",
+            sourceNoteConflict: noteConflict,
+          },
+        }],
+      }],
+    },
+  });
+  assert.equal(saved.statusCode, 200);
+  assert.deepEqual(saved.payload.servicePlan.sections[0].elements[0].servicePlanningImport.managedNotes, noteOwnership);
+  assert.deepEqual(saved.payload.servicePlan.sections[0].elements[0].importAmbiguity.sourceNoteConflict, noteConflict);
+
+  const reloaded = await callHandler(authHandlers.getServicePlan, {
+    context,
+    params: { planKey },
+  });
+  assert.equal(reloaded.statusCode, 200);
+  assert.deepEqual(reloaded.payload.servicePlan.sections[0].elements[0].servicePlanningImport.managedNotes, noteOwnership);
+  assert.deepEqual(reloaded.payload.servicePlan.sections[0].elements[0].servicePlanningImport.pendingFields, ["note"]);
+  assert.deepEqual(reloaded.payload.servicePlan.sections[0].elements[0].importAmbiguity.sourceNoteConflict, noteConflict);
+});

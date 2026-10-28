@@ -1951,7 +1951,7 @@ describe("ServicePlanEditor", () => {
     await user.click(screen.getByRole("button", { name: /Apply updates/i }));
 
     expect(await screen.findByRole("checkbox", { name: "Confirm match for Sermon" })).not.toBeChecked();
-    expect(screen.getByText("Moved")).toBeInTheDocument();
+    expect(screen.getByText("Possible matches")).toBeInTheDocument();
     expect(screen.getByText("Message → Response & Celebration")).toBeInTheDocument();
     expect(screen.queryByText("Added")).not.toBeInTheDocument();
   });
@@ -2059,6 +2059,103 @@ Opening Song to begin the worship experience.
     );
   });
 
+  it("resolves a PDF note conflict in the editor and autosaves the selected note decision", async () => {
+    const oldNote = "Choir selection before the message";
+    const updatedNote = "Dedication prayer for incoming ministry volunteers";
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        revision: 1,
+        sourceImport: {
+          source: "planningCenterPdf",
+          sourceUrl: "",
+          loadedAt: "2026-07-20T12:00:00.000Z",
+          planLabel: "Sunday worship",
+        },
+        sections: [{
+          id: "section-1",
+          sourcePlanningManaged: true,
+          name: "SMC Worship Experience",
+          elements: [{
+            id: "local-prayer",
+            sourcePlanningManaged: true,
+            type: "free",
+            title: plainTextToRichText("Prayer"),
+            notes: plainTextToRichText(oldNote),
+            sourceNoteRaw: oldNote,
+            assignees: [{ id: "local-assignee", name: "Elder Naomi Brooks", microphoneIds: ["mic-1", "mic-2", "mic-3"], iemIds: ["iem-1"] }],
+            servicePlanningImport: {
+              observed: { elementType: "Prayer", title: "Prayer", ledBy: "Elder Naomi Brooks", note: oldNote },
+              applied: { elementType: "Prayer", title: "Prayer", ledBy: "Elder Naomi Brooks", note: oldNote },
+              pendingFields: [],
+            },
+          }],
+        }],
+      } as ServicePlan,
+    });
+    mockExtractTextFromPdfFile.mockResolvedValue(`Main Worship Service
+Length
+in mins
+SMC Worship Experience
+5:00 Prayer
+${updatedNote}
+108:00`);
+
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+    fireEvent.change(screen.getByLabelText(/Planning Center PDF/i), {
+      target: { files: [new File(["%PDF-fake"], "updated-note.pdf", { type: "application/pdf" })] },
+    });
+
+    await screen.findByText(/change selected/i);
+    expect(await screen.findByRole("checkbox", { name: "Update Prayer" })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
+    expect(await screen.findByText(/1 imported item needs a quick interpretation review/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Review items" }));
+
+    const noteConflict = screen.getByRole("region", { name: "Note conflict" });
+    expect(within(noteConflict).getByText("Existing notes")).toBeInTheDocument();
+    expect(within(noteConflict).getByText(oldNote)).toBeInTheDocument();
+    expect(within(noteConflict).getByText("Updated PDF note")).toBeInTheDocument();
+    expect(within(noteConflict).getByText(updatedNote)).toBeInTheDocument();
+    expect(screen.queryByText("No mapping is needed for this item.")).not.toBeInTheDocument();
+    expect(within(noteConflict).getByText(/Using the updated note replaces all existing notes shown here/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("radio", { name: /Use updated PDF note/ }));
+    await user.click(screen.getByRole("button", { name: "Resolve note conflict & finish" }));
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), { timeout: 2_500 });
+
+    const [, , saved] = mockSaveServicePlan.mock.calls.at(-1)!;
+    const savedPrayer = saved.sections?.flatMap(({ elements }) => elements).find(({ id }) => id === "local-prayer");
+    expect(savedPrayer).toMatchObject({
+      notes: plainTextToRichText(updatedNote),
+      sourceNoteRaw: updatedNote,
+      servicePlanningImport: {
+        observed: { note: updatedNote },
+        applied: { note: updatedNote },
+        pendingFields: [],
+        managedNotes: [expect.objectContaining({ id: expect.any(String), fingerprint: expect.any(String) })],
+      },
+      importAmbiguity: {
+        status: "confirmed",
+        sourceNoteConflict: { resolution: "useUpdated" },
+      },
+    });
+    expect(savedPrayer?.assignees).toEqual([expect.objectContaining({
+      id: "local-assignee",
+      microphoneIds: ["mic-1", "mic-2", "mic-3"],
+      iemIds: ["iem-1"],
+    })]);
+  });
+
   it.each([
     ["two rows", "review"],
     ["three rows", "review"],
@@ -2145,7 +2242,7 @@ ${pdfRows}
     await user.click(screen.getByRole("checkbox", { name: "Select all updates" }));
     const selectedChange = selection === "review"
       ? reviewMatch
-      : screen.getByRole("checkbox", { name: "Update Prayer" });
+      : screen.getByRole("checkbox", { name: "Add Prayer" });
     await user.click(selectedChange);
     await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
 
@@ -2234,12 +2331,12 @@ SMC Worship Experience
     const file = new File(["%PDF-fake"], "updated-order.pdf", { type: "application/pdf" });
     fireEvent.change(screen.getByLabelText(/Planning Center PDF/i), { target: { files: [file] } });
 
-    expect(await screen.findByText(/1 change ready to apply/i)).toBeInTheDocument();
+    expect(await screen.findByText(/1 change selected/i)).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Update Welcome" })).toBeChecked();
     expect(screen.queryByRole("checkbox", { name: "Update Prayer" })).not.toBeInTheDocument();
-    expect(screen.getByText("Resulting start time")).toBeInTheDocument();
-    expect(screen.getByText("09:08")).toBeInTheDocument();
-    expect(screen.getByText(/final times recalculate from the updates you select/i)).toBeInTheDocument();
+    await user.click(screen.getByText("Schedule impact (1)"));
+    expect(screen.getByText(/Prayer.*09:05.*09:08/)).toBeInTheDocument();
+    expect(screen.getByText(/Timing reflects the selected changes/i)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
     await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), { timeout: 2_500 });
@@ -2489,7 +2586,7 @@ SMC Worship Experience
     expect(screen.getByRole("checkbox", { name: /Titles and content/i })).toBeChecked();
     await user.click(screen.getByRole("checkbox", { name: /Start times and durations/i }));
     await user.click(screen.getByRole("button", { name: /Apply updates/i }));
-    expect(await screen.findByText(/1 change ready to apply/i)).toBeInTheDocument();
+    expect(await screen.findByText(/1 change selected/i)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Apply 1 change/i }));
 
     await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), { timeout: 2_500 });
