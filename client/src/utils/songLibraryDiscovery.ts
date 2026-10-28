@@ -26,8 +26,15 @@ export function discoverSongLibrary(documents: unknown[]): {
       group.push(arrangement);
       arrangements.set(arrangement.songId, group);
     }
-    else if (doc.type === "song" && !doc.docType?.toString().startsWith("song-v2-")) {
-      songs.set(String(doc._id), input as DBItem);
+    else if (
+      typeof doc._id === "string" &&
+      !doc._id.startsWith("_") &&
+      typeof doc.name === "string" &&
+      !doc._deleted &&
+      doc.type === "song" &&
+      (doc.docType === undefined || doc.docType === "item")
+    ) {
+      songs.set(doc._id, input as DBItem);
     }
   }
   const diagnostics: SongLibraryDiagnostic[] = [];

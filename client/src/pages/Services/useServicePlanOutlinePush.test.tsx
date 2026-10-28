@@ -22,6 +22,7 @@ let mockState = {
 
   allDocs: {
     allSongDocs: [] as ServiceItem[],
+    songLibraryDiagnostics: [],
     allTimerDocs: [],
     allBibleDocs: [] as ServiceItem[],
     allFreeFormDocs: [{ _id: "custom-doc-1", name: "Welcome Slides", type: "free" }],

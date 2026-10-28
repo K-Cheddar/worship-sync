@@ -27,3 +27,7 @@ Digests retain the 20-minute window and private individual sends. Provider confi
 Provider acceptance is not proof of inbox delivery. Stable provider idempotency protects uncertain outcomes only within the provider's retention window (currently documented in the sender as 24 hours); no real provider/inbox verification is implied by automated transport tests.
 
 Implementation: `authService.js`, `server/intakeNotifyRecipients.js`, `server/notificationPreferences.js`, Account access drawer/draft helpers, People-page actions, and the two roster editors. Verification: `server/accountTeamLeads.test.js`, `server/scheduleResponseDigest.test.js`, `server/intakeSubmissionDigest.test.js`, existing auth/team authorization suites, and `AccountPeoplePage.teamLeads.test.tsx` through the actual account provider and controls.
+
+## Product decisions
+
+- **Invitation role changes:** In new and pending invite drafts, choosing Admin sets Teams and Services access to edit. Switching back to Member clears global Teams access, restores read-only Services access, and retains the selected team scopes. Authorization: explicit product-owner confirmation, October 28, 2026.

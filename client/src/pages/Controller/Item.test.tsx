@@ -66,7 +66,9 @@ describe("Redux presentation workspace", () => {
     const loading: boolean[] = [];
     store.subscribe(() => loading.push(Boolean(store.getState().undoable.present.item.isLoading)));
     act(() => { void select("B", "B-second"); });
-    expect(store.getState().undoable.present.item).toMatchObject({ _id: "B", listId: "B-second", selectedArrangement: 1, slides: [expect.objectContaining({ id: "chosen-slide" })] });
+    const activeSong = store.getState().undoable.present.item;
+    expect(activeSong).toMatchObject({ _id: "B", listId: "B-second", selectedArrangement: 1 });
+    expect(activeSong.arrangements[1].slides).toEqual([expect.objectContaining({ id: "chosen-slide" })]);
     act(() => { void select("A", "A-second"); });
     expect(store.getState().undoable.present.item).toMatchObject({ _id: "A", listId: "A-second" });
     expect(screen.getByTestId("slide-editor")).toBe(editor);
