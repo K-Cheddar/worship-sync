@@ -121,14 +121,14 @@ const AllToolsDrawer = ({
         contentClassName="min-h-0 flex flex-col gap-6 overflow-x-hidden overflow-y-auto"
       >
         <section className="flex min-w-0 flex-col gap-3 border-b border-gray-700 pb-5">
-          <h2 className="text-base font-semibold">Slide Formatting</h2>
+          <h2 className="text-base font-semibold">Text &amp; Appearance</h2>
           <div
             ref={setSlideFormatting}
             className="flex min-w-0 flex-col gap-4"
           />
         </section>
         <section className="flex min-w-0 flex-col gap-3 border-b border-gray-700 pb-5">
-          <h2 className="text-base font-semibold">Box &amp; Layout</h2>
+          <h2 className="text-base font-semibold">Position &amp; Size</h2>
           <div ref={setBoxLayout} className="flex min-w-0 flex-col gap-4" />
         </section>
         {showStreamFormatting && (
@@ -142,7 +142,12 @@ const AllToolsDrawer = ({
         )}
         {showOutputTargets && (
           <section className="flex min-w-0 flex-col gap-3">
-            <h2 className="text-base font-semibold">Output Targets</h2>
+            <div className="flex flex-col gap-1">
+              <h2 className="text-base font-semibold">Show On</h2>
+              <p className="text-xs text-gray-400">
+                Choose where this item appears when sent live.
+              </p>
+            </div>
             <div
               ref={setOutputTargets}
               className="flex min-w-0 flex-col gap-4"

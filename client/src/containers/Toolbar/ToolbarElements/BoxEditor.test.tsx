@@ -407,7 +407,7 @@ describe("BoxEditor", () => {
     quickHeightTarget.remove();
   });
 
-  it("keeps the ten existing presets in All Tools and disables Match for Selected scope", () => {
+  it("keeps the ten existing presets in All Tools and disables Match for This slide scope", () => {
     renderEditor(jest.fn());
 
     for (const label of [
@@ -428,8 +428,57 @@ describe("BoxEditor", () => {
 
     const match = screen.getByRole("button", { name: "Apply Match box preset" });
     expect(match).toBeEnabled();
-    act(() => screen.getByRole("radio", { name: /Apply to Selected/ }).click());
+    expect(screen.getByText("Layouts")).toBeVisible();
+    const presetContainer = screen.getByTestId("box-layout-drawer-presets");
+    expect(presetContainer).toBeInTheDocument();
+    expect(
+      within(presetContainer)
+        .getAllByRole("button")
+        .map((button) => button.getAttribute("aria-label")),
+    ).toEqual([
+      "Apply Full box preset",
+      "Apply 50% Middle box preset",
+      "Apply 90% Middle box preset",
+      "Apply Top 20% box preset",
+      "Apply Left Half box preset",
+      "Apply Right Half box preset",
+      "Apply Lower Third box preset",
+      "Apply Middle Third box preset",
+      "Apply Upper Third box preset",
+      "Apply Match box preset",
+    ]);
+    expect(
+      screen.getByRole("radiogroup", { name: "Apply changes to" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "All slides" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.queryByText(/Geometry applies to/)).not.toBeInTheDocument();
+    act(() => screen.getByRole("radio", { name: "This slide" }).click());
     expect(match).toBeDisabled();
+    expect(screen.getByRole("radio", { name: "This slide" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+  });
+
+  it("keeps custom items scoped to This slide by default", () => {
+    mockState.undoable.present.item = makeItem({
+      type: "free",
+      arrangements: [],
+    });
+
+    renderEditor(jest.fn());
+
+    expect(screen.getByRole("radio", { name: "This slide" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.getByRole("radio", { name: "All slides" })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
   });
 
   it("wraps box controls inside a narrow All Tools drawer", () => {
@@ -458,7 +507,7 @@ describe("BoxEditor", () => {
 
     act(() => {
       within(drawerTarget)
-        .getByRole("radio", { name: /Apply to Selected/ })
+        .getByRole("radio", { name: "This slide" })
         .click();
     });
     expect(

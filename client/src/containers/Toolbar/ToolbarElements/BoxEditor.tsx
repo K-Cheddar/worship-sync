@@ -500,23 +500,29 @@ const BoxEditor = ({
   ];
 
   const scopeControls = (
-    <RadioGroup
-      value={shouldApplyToAll ? "all" : "selected"}
-      onValueChange={(value) => setShouldApplyToAll(value === "all")}
-      className="flex flex-wrap items-center gap-2"
-      aria-label="Box geometry editing scope"
-    >
-      <RadioButton
-        className="w-fit text-xs"
-        optionValue="selected"
-        label="Apply to Selected"
-      />
-      <RadioButton
-        className="w-fit text-xs"
-        optionValue="all"
-        label="Apply to All"
-      />
-    </RadioGroup>
+    <div className="flex flex-col gap-1">
+      <p className="text-xs font-medium">Apply changes to</p>
+      <RadioGroup
+        value={shouldApplyToAll ? "all" : "selected"}
+        onValueChange={(value) => setShouldApplyToAll(value === "all")}
+        className="flex flex-wrap items-center gap-2"
+        aria-label="Apply changes to"
+        title="All slides applies this box's position and size across this item"
+      >
+        <RadioButton
+          className="w-fit text-xs"
+          optionValue="selected"
+          label="This slide"
+          hideLabelColon
+        />
+        <RadioButton
+          className="w-fit text-xs"
+          optionValue="all"
+          label="All slides"
+          hideLabelColon
+        />
+      </RadioGroup>
+    </div>
   );
 
   const fullControls = (
@@ -542,30 +548,28 @@ const BoxEditor = ({
           />
         ))}
       </div>
-      <div
-        data-testid="box-layout-drawer-presets"
-        className="flex flex-wrap items-center gap-2"
-      >
-        {BOX_PRESETS.map((preset) => applyPresetButton(preset))}
-        <Button
-          type="button"
-          variant="tertiary"
-          className="min-h-12 min-w-28 gap-2"
-          title="Match the selected box geometry across the chosen scope"
-          aria-label="Apply Match box preset"
-          disabled={!shouldApplyToAll}
-          onClick={() => applyPreset(matchPreset.dimensions)}
+      <div className="flex flex-col gap-1">
+        <p className="text-xs font-medium">Layouts</p>
+        <div
+          data-testid="box-layout-drawer-presets"
+          className="flex flex-wrap items-center gap-2"
         >
-          <PresetIcon {...matchPreset.dimensions} label="MATCH" />
-          <span className="text-xs">Match</span>
-        </Button>
+          {BOX_PRESETS.map((preset) => applyPresetButton(preset))}
+          <Button
+            type="button"
+            variant="tertiary"
+            className="min-h-12 min-w-28 gap-2"
+            title="Match the selected box geometry across the chosen scope"
+            aria-label="Apply Match box preset"
+            disabled={!shouldApplyToAll}
+            onClick={() => applyPreset(matchPreset.dimensions)}
+          >
+            <PresetIcon {...matchPreset.dimensions} label="MATCH" />
+            <span className="text-xs">Match</span>
+          </Button>
+        </div>
       </div>
-      <div className="flex flex-col gap-2">
-        <p className="text-xs text-gray-300">
-          Geometry applies to {shouldApplyToAll ? "all slides" : "the selected slide"}.
-        </p>
-        {scopeControls}
-      </div>
+      {scopeControls}
     </div>
   );
 
