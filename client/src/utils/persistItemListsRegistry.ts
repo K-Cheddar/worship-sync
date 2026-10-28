@@ -16,9 +16,23 @@ export type ItemListsRegistryIntent = {
 };
 
 export type ItemListsRegistryDb = {
-  get: (id: string) => Promise<unknown>;
+  get: (id: string, options?: { conflicts?: boolean }) => Promise<unknown>;
   put: (doc: unknown) => Promise<{ rev?: string } | unknown>;
 };
+
+export type ItemListsRegistryConflict = {
+  outlineId?: string;
+  field?: string;
+  reason: "same-field" | "delete-versus-edit" | "revision-branches";
+  revisions?: string[];
+};
+
+export class ItemListsRegistryConflictError extends Error {
+  constructor(readonly conflicts: ItemListsRegistryConflict[]) {
+    super("The ItemLists registry changed in another session. Local changes were retained.");
+    this.name = "ItemListsRegistryConflictError";
+  }
+}
 
 const longestCommonSubsequenceIds = (left: string[], right: string[]) => {
   const lengths = Array.from({ length: left.length + 1 }, () =>
@@ -53,6 +67,13 @@ const changedKeys = <T extends Record<string, unknown>>(before: T, after: T) =>
     (key) => !isEqual(before[key], after[key]),
   );
 
+const sameField = <T extends Record<string, unknown>>(
+  left: T,
+  right: T,
+  key: string,
+) => Object.prototype.hasOwnProperty.call(left, key) ===
+  Object.prototype.hasOwnProperty.call(right, key) && isEqual(left[key], right[key]);
+
 const patchChangedFields = <T extends Record<string, unknown>>(
   base: T,
   desired: T,
@@ -60,6 +81,13 @@ const patchChangedFields = <T extends Record<string, unknown>>(
 ) => {
   const result: Record<string, unknown> = { ...current };
   changedKeys(base, desired).forEach((key) => {
+    if (!sameField(base, current, key) && !sameField(desired, current, key)) {
+      throw new ItemListsRegistryConflictError([{
+        outlineId: typeof desired._id === "string" ? desired._id : undefined,
+        field: key,
+        reason: "same-field",
+      }]);
+    }
     if (Object.prototype.hasOwnProperty.call(desired, key)) {
       result[key] = desired[key];
     } else {
@@ -79,7 +107,16 @@ const applyListIntent = (
   const currentById = new Map(latestLists.map((item) => [item._id, item]));
 
   beforeLists.forEach((item) => {
-    if (!afterById.has(item._id)) currentById.delete(item._id);
+    if (!afterById.has(item._id)) {
+      const current = currentById.get(item._id);
+      if (current && !isEqual(current, item)) {
+        throw new ItemListsRegistryConflictError([{
+          outlineId: item._id,
+          reason: "delete-versus-edit",
+        }]);
+      }
+      currentById.delete(item._id);
+    }
   });
 
   afterLists.forEach((desired) => {
@@ -87,9 +124,23 @@ const applyListIntent = (
     const current = currentById.get(desired._id);
     if (!base) {
       if (!current) currentById.set(desired._id, desired);
+      else if (!isEqual(current, desired)) {
+        throw new ItemListsRegistryConflictError([{
+          outlineId: desired._id,
+          reason: "same-field",
+        }]);
+      }
       return;
     }
-    if (!current) return; // A remote deletion wins over a stale local rename.
+    if (!current) {
+      if (!isEqual(base, desired)) {
+        throw new ItemListsRegistryConflictError([{
+          outlineId: desired._id,
+          reason: "delete-versus-edit",
+        }]);
+      }
+      return;
+    }
     currentById.set(
       desired._id,
       patchChangedFields(
@@ -169,6 +220,16 @@ export const mergeItemListsRegistrySnapshot = (
   const beforeActiveId = intent.before.activeList?._id;
   const desiredActiveId = intent.after.activeList?._id;
   const latestActiveId = latest.activeList?._id;
+  if (
+    desiredActiveId !== beforeActiveId &&
+    latestActiveId !== beforeActiveId &&
+    latestActiveId !== desiredActiveId
+  ) {
+    throw new ItemListsRegistryConflictError([{
+      field: "activeList",
+      reason: "same-field",
+    }]);
+  }
   const activeId = desiredActiveId !== beforeActiveId
     ? desiredActiveId
     : latestActiveId;
@@ -207,7 +268,13 @@ export const persistItemListsRegistry = async (
 ): Promise<DBItemLists> => {
   let lastError: unknown;
   for (let attempt = 0; attempt < MAX_REGISTRY_PUT_ATTEMPTS; attempt += 1) {
-    const latest = (await db.get("ItemLists")) as DBItemLists;
+    const latest = (await db.get("ItemLists", { conflicts: true })) as DBItemLists & { _conflicts?: string[] };
+    if (latest._conflicts?.length) {
+      throw new ItemListsRegistryConflictError([{
+        reason: "revision-branches",
+        revisions: [...latest._conflicts],
+      }]);
+    }
     const next = intents.reduce(applyItemListsRegistryIntent, latest);
     try {
       const result = await db.put(next);

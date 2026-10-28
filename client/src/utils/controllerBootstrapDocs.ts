@@ -42,6 +42,8 @@ export const DEFAULT_BOOTSTRAP_OUTLINE: ItemList = {
   name: "New Outline",
 };
 
+export type ItemListsBootstrapDocument = DBItemLists & { _conflicts?: string[] };
+
 async function ensureEmptyOutlineDetailDoc(
   db: PouchDB.Database,
   outline: ItemList,
@@ -67,15 +69,15 @@ async function ensureEmptyOutlineDetailDoc(
  */
 export async function loadOrCreateItemListsDoc(
   db: PouchDB.Database,
-): Promise<DBItemLists> {
-  let existing: DBItemLists | undefined;
+): Promise<ItemListsBootstrapDocument> {
+  let existing: ItemListsBootstrapDocument | undefined;
   try {
-    existing = (await db.get("ItemLists")) as DBItemLists;
+    existing = (await db.get("ItemLists", { conflicts: true })) as ItemListsBootstrapDocument;
   } catch (error) {
     if (!isPouchNotFound(error)) throw error;
   }
 
-  if (existing && (existing.itemLists?.length ?? 0) > 0) {
+  if (existing && ((existing.itemLists?.length ?? 0) > 0 || existing._conflicts?.length)) {
     return existing;
   }
 
@@ -110,7 +112,7 @@ export async function loadOrCreateItemListsDoc(
     }
   }
 
-  return (await db.get("ItemLists")) as DBItemLists;
+  return (await db.get("ItemLists", { conflicts: true })) as ItemListsBootstrapDocument;
 }
 
 const putIfMissing = async (

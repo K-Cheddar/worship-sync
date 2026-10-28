@@ -49,6 +49,7 @@ import NextServiceCountdownText from "../../components/NextServiceCountdownText/
 import type { ServiceTime } from "../../types";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
 import { usePresentationControllerMode } from "../../context/presentationControllerMode";
+import isEqual from "lodash/isEqual";
 
 const EMPTY_SERVICE_TIMES: ServiceTime[] = [];
 
@@ -60,6 +61,7 @@ const ServiceItems = () => {
   const {
     list: serviceItems,
     isLoading,
+    loadError,
     initialItems,
     selectedItemListId,
     insertPointIndex,
@@ -73,6 +75,13 @@ const ServiceItems = () => {
       ? itemList.remoteConflicts?.[itemList.loadedOutlineId]
       : undefined;
   });
+  const hasDraftChangesSinceConflict = Boolean(
+    remoteOutlineConflict &&
+    !isEqual(
+      serviceItems,
+      remoteOutlineConflict.originalLocalItems ?? remoteOutlineConflict.localItems,
+    ),
+  );
   const mediaList = useSelector((state) => state.media.list);
   const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
   const serviceTimes = useSelector(
@@ -781,6 +790,18 @@ const ServiceItems = () => {
             <p className="min-w-0 flex-1">
               This outline changed on another device while you had unsaved edits. Your draft is still open; choose which version to keep.
             </p>
+            {remoteOutlineConflict.revisionConflict && (
+              <p className="w-full text-xs text-amber-100/90">
+                {remoteOutlineConflict.revisionConflict.remoteDocument
+                  ? `${remoteOutlineConflict.revisionConflict.graph.conflictRevisions.length + 1} saved versions were combined where their changes were compatible. Keeping your draft saves this outline; using the remote version keeps the combined saved outline.`
+                  : `${remoteOutlineConflict.revisionConflict.graph.conflictRevisions.length + 1} saved versions could not be merged safely. Keeping your draft replaces those revisions; using the remote version keeps the database winner and retires the other branches.`}
+              </p>
+            )}
+            {hasDraftChangesSinceConflict && (
+              <p className="w-full text-xs text-amber-100/90">
+                Using the remote version will discard your edits made since this notice appeared.
+              </p>
+            )}
             <div className="flex shrink-0 gap-2">
               <Button
                 variant="secondary"
@@ -853,7 +874,12 @@ const ServiceItems = () => {
             </form>
           </FloatingWindow>
         ) : null}
-        {!isLoading && serviceItems.length === 0 && (
+        {!isLoading && loadError && (
+          <p className="text-sm p-3 text-amber-100" role="alert">
+            {loadError}
+          </p>
+        )}
+        {!isLoading && !loadError && serviceItems.length === 0 && (
           <p className="text-sm p-2">
             {!isViewOnlyAccess(access)
               ? "This outline is empty. Create a new item or add an existing one using the buttons above."
@@ -862,7 +888,7 @@ const ServiceItems = () => {
         )}
         {isLoading ? (
           <ServiceOutlineSkeleton />
-        ) : (
+        ) : loadError ? null : (
           <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
             <ul
               ref={setNodeRef}

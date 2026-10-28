@@ -13,7 +13,7 @@ import {
 import PopoverPanel from "../../../components/PopOver/PopoverPanel";
 import Button from "../../../components/Button/Button";
 import Outline from "./Outline";
-import { DBItemListDetails, ItemLists, ItemList } from "../../../types";
+import { DBItemListDetails, DBItemLists, ItemLists, ItemList } from "../../../types";
 import { ControllerInfoContext } from "../../../context/controllerInfo";
 import {
   createItemListFromExisting,
@@ -99,11 +99,50 @@ const Services = ({
   );
 
   const { db, updater } = useContext(ControllerInfoContext) || {};
+  const currentDatabaseRef = useRef(db);
+  currentDatabaseRef.current = db;
   const { access } = useContext(GlobalInfoContext) || {};
   const { showToast } = useToast();
   const [justAdded, setJustAdded] = useState(false);
   const currentListsRef = useRef(currentLists);
   currentListsRef.current = currentLists;
+  const registrySyncTrackerRef = useRef({
+    database: db,
+    processedRevisions: new Set<string>(),
+    pendingRevisions: new Set<string>(),
+    conflictFingerprint: null as string | null,
+  });
+  if (registrySyncTrackerRef.current.database !== db) {
+    registrySyncTrackerRef.current = {
+      database: db,
+      processedRevisions: new Set<string>(),
+      pendingRevisions: new Set<string>(),
+      conflictFingerprint: null,
+    };
+  }
+  const rememberRegistryRevision = useCallback((revision?: string) => {
+    if (!revision) return;
+    const revisions = registrySyncTrackerRef.current.processedRevisions;
+    revisions.add(revision);
+    if (revisions.size > 100) {
+      const oldestRevision = revisions.values().next().value;
+      if (oldestRevision) revisions.delete(oldestRevision);
+    }
+  }, []);
+  const observeRegistryConflict = useCallback((document: DBItemLists & { _conflicts?: string[] }) => {
+    const tracker = registrySyncTrackerRef.current;
+    if (!document._conflicts?.length) {
+      tracker.conflictFingerprint = null;
+      return;
+    }
+    const fingerprint = [document._rev, ...[...document._conflicts].sort()].join(":");
+    if (tracker.conflictFingerprint === fingerprint) return;
+    tracker.conflictFingerprint = fingerprint;
+    showToast(
+      "The outline list has competing saved versions, so changes cannot be saved yet. Your current list remains on this device; copy intended changes before closing this controller.",
+      "error",
+    );
+  }, [showToast]);
   /** One aux bootstrap create per scope — avoids duplicate empties under Strict Mode / remount. */
   const bootstrapInFlightByScopeRef = useRef(new Set<string>());
 
@@ -132,10 +171,15 @@ const Services = ({
   };
 
   useEffect(() => {
+    let cancelled = false;
     const getItemLists = async () => {
       if (!db) return;
+      const dbAtStart = db;
       try {
-        const response = await loadOrCreateItemListsDoc(db);
+        const response = await loadOrCreateItemListsDoc(dbAtStart);
+        if (cancelled || currentDatabaseRef.current !== dbAtStart) return;
+        rememberRegistryRevision(response._rev);
+        observeRegistryConflict(response);
         const _itemLists = response.itemLists || [];
         const _activeList = response.activeList;
         if (!itemListsReady) {
@@ -158,6 +202,7 @@ const Services = ({
           );
         }
       } catch (e) {
+        if (cancelled || currentDatabaseRef.current !== dbAtStart) return;
         console.error(e);
         if (!itemListsReady) {
           dispatch(initiateItemLists([]));
@@ -170,7 +215,10 @@ const Services = ({
     };
 
     void getItemLists();
-  }, [db, dispatch, itemListsReady, showToast]);
+    return () => {
+      cancelled = true;
+    };
+  }, [db, dispatch, itemListsReady, observeRegistryConflict, rememberRegistryRevision, showToast]);
 
   /**
    * Aux controllers with no outlines in their scope get one empty outline so
@@ -220,23 +268,46 @@ const Services = ({
     async (event: CustomEventInit) => {
       try {
         const updates = event.detail;
+        if (!Array.isArray(updates)) return;
         for (const _update of updates) {
           if (_update._id === "ItemLists") {
-            const update = _update as ItemLists;
-            dispatch(
-              updateItemListsFromRemote({
-                itemLists: update.itemLists,
-                activeListId: update.activeList?._id,
-                selectedIdByScope: update.selectedIdByScope,
-              }),
-            );
+            const incoming = _update as ItemLists & { _rev?: string };
+            const dbAtStart = db;
+            if (!dbAtStart) continue;
+            const tracker = registrySyncTrackerRef.current;
+            if (tracker.database !== dbAtStart) continue;
+            if (incoming._rev && (
+              tracker.processedRevisions.has(incoming._rev) ||
+              tracker.pendingRevisions.has(incoming._rev)
+            )) continue;
+            if (incoming._rev) tracker.pendingRevisions.add(incoming._rev);
+            try {
+              const update = await dbAtStart.get("ItemLists", { conflicts: true }) as DBItemLists & { _conflicts?: string[] };
+              if (currentDatabaseRef.current !== dbAtStart) continue;
+              rememberRegistryRevision(incoming._rev);
+              rememberRegistryRevision(update._rev);
+              observeRegistryConflict(update);
+              dispatch(
+                updateItemListsFromRemote({
+                  itemLists: update.itemLists,
+                  activeListId: update.activeList?._id,
+                  selectedIdByScope: update.selectedIdByScope,
+                }),
+              );
+            } finally {
+              if (incoming._rev) tracker.pendingRevisions.delete(incoming._rev);
+            }
           }
         }
       } catch (e) {
         console.error(e);
+        showToast(
+          "Could not check for conflicting outline list versions. Your current outline list is still open.",
+          "error",
+        );
       }
     },
-    [dispatch],
+    [db, dispatch, observeRegistryConflict, rememberRegistryRevision, showToast],
   );
 
   useEffect(() => {

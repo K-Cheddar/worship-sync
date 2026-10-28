@@ -16,6 +16,7 @@ import {
 } from "../../types";
 import {
   initiateItemList,
+  setItemListLoadError,
   setIsInitialized as setItemListIsInitialized,
   setItemListIsLoading,
   updateItemListFromRemote,
@@ -125,15 +126,21 @@ export const useControllerPageLifecycle = () => {
   const selectedOutlineIdentityRef = useRef({
     listId: selectedListId,
     controllerId: activeControllerId,
+    scope: outlineScope,
+    database: db,
     generation: 0,
   });
   if (
     selectedOutlineIdentityRef.current.listId !== selectedListId ||
-    selectedOutlineIdentityRef.current.controllerId !== activeControllerId
+    selectedOutlineIdentityRef.current.controllerId !== activeControllerId ||
+    selectedOutlineIdentityRef.current.scope !== outlineScope ||
+    selectedOutlineIdentityRef.current.database !== db
   ) {
     selectedOutlineIdentityRef.current = {
       listId: selectedListId,
       controllerId: activeControllerId,
+      scope: outlineScope,
+      database: db,
       generation: selectedOutlineIdentityRef.current.generation + 1,
     };
   }
@@ -649,9 +656,16 @@ export const useControllerPageLifecycle = () => {
     const getItemList = async () => {
       if (!db || !cloudRef.current) return;
       const cloudAtLoad = cloudRef.current;
+      const selectionAtLoad = selectedOutlineIdentityRef.current;
+      const isCurrentLoad = () =>
+        !cancelled &&
+        databaseRef.current === db &&
+        selectedOutlineIdentityRef.current.generation === selectionAtLoad.generation &&
+        selectedOutlineIdentityRef.current.listId === selectedListId &&
+        selectedOutlineIdentityRef.current.scope === outlineScope;
       // No selected outline (empty registry): leave empty state, never keep skeletons.
       if (!selectedListId) {
-        if (cancelled) return;
+        if (!isCurrentLoad()) return;
         dispatch(initiateItemList({ items: [], outlineId: null }));
         lastLoadedOutlineContextRef.current = null;
         dispatch(setServicePlanningOutlinePlanBinding(null));
@@ -675,21 +689,31 @@ export const useControllerPageLifecycle = () => {
       const shouldLoadOutlineOverlays =
         !hasUsableContent || !currentState.undoable.present.overlays.isInitialized;
       if (!hasUsableContent) dispatch(setItemListIsLoading(true));
+      dispatch(setItemListLoadError(null));
       try {
         let response: DBItemListDetails | undefined;
         let contentSyncGeneration = serviceListSyncGenerationRef.current;
-        for (let attempt = 0; attempt < 3; attempt += 1) {
+        let readWasStable = false;
+        for (let attempt = 0; attempt < 5; attempt += 1) {
           contentSyncGeneration = serviceListSyncGenerationRef.current;
           response = await db.get(selectedListId);
-          if (cancelled) return;
-          if (serviceListSyncGenerationRef.current === contentSyncGeneration) break;
+          if (!isCurrentLoad()) return;
+          if (serviceListSyncGenerationRef.current === contentSyncGeneration) {
+            readWasStable = true;
+            break;
+          }
         }
-        if (serviceListSyncGenerationRef.current !== contentSyncGeneration) {
+        if (!readWasStable || serviceListSyncGenerationRef.current !== contentSyncGeneration) {
           if (!hasUsableContent) {
-            dispatch(initiateItemList({ items: [], outlineId: selectedListId }));
+            dispatch(setItemListLoadError(
+              "This outline kept changing while it loaded. Wait for updates to finish, then select it again.",
+            ));
           }
           dispatch(setItemListIsLoading(false));
           return;
+        }
+        if (!response || typeof response !== "object") {
+          throw new Error("The selected outline document was not returned by the database");
         }
         const itemList = response?.items || [];
         const overlayIds = response?.overlays || [];
@@ -701,6 +725,7 @@ export const useControllerPageLifecycle = () => {
         }
 
         const formattedItems = formatItemList(itemList, cloudAtLoad);
+        if (!isCurrentLoad()) return;
         if (hasUsableContent) {
           dispatch(updateItemListFromRemote({
             outlineId: selectedListId,
@@ -721,30 +746,26 @@ export const useControllerPageLifecycle = () => {
 
         if (shouldLoadOutlineOverlays) {
           const formattedOverlays = await getOverlaysByIds(db, overlayIds);
-          if (cancelled) return;
+          if (!isCurrentLoad()) return;
           if (serviceListSyncGenerationRef.current === contentSyncGeneration) {
             dispatch(initiateOverlayList(formattedOverlays));
             const overlayHistory = await getAllOverlayHistory(db);
-            if (cancelled) return;
+            if (!isCurrentLoad()) return;
             if (serviceListSyncGenerationRef.current === contentSyncGeneration) {
               dispatch(mergeOverlayHistoryFromDb(overlayHistory));
             }
           }
         }
       } catch (e) {
-        if (cancelled) return;
+        if (!isCurrentLoad()) return;
         console.error(e);
         if (!hasUsableContent) {
-          dispatch(initiateItemList({
-            items: [],
-            outlineId: selectedListId,
-          }));
-        }
-        if (!hasUsableContent) {
-          dispatch(setServicePlanningOutlinePlanBinding(null));
+          dispatch(setItemListLoadError(
+            "Could not load this outline. Check the connection and try again.",
+          ));
         }
       }
-      if (!cancelled) {
+      if (isCurrentLoad()) {
         dispatch(setItemListIsLoading(false));
       }
     };

@@ -2,6 +2,7 @@ import type { DBItemLists } from "../types";
 import {
   applyItemListsRegistryIntent,
   persistItemListsRegistry,
+  ItemListsRegistryConflictError,
   type ItemListsRegistryIntent,
 } from "./persistItemListsRegistry";
 
@@ -66,6 +67,64 @@ describe("ItemLists registry persistence", () => {
     });
   });
 
+  it("preserves different fields while rejecting a same-field concurrent rename", () => {
+    const intent: ItemListsRegistryIntent = {
+      before: snapshot(),
+      after: snapshot({
+        currentLists: [
+          { _id: "outline-a", name: "Local rename" },
+          { _id: "outline-b", name: "B" },
+        ],
+      }),
+    };
+    const latest = doc({
+      itemLists: [
+        { _id: "outline-a", name: "Remote rename", controllerScope: "aux" },
+        { _id: "outline-b", name: "B" },
+      ],
+    });
+
+    expect(() => applyItemListsRegistryIntent(latest, intent)).toThrow(ItemListsRegistryConflictError);
+    const independent = applyItemListsRegistryIntent(doc({
+      itemLists: [
+        { _id: "outline-a", name: "A", controllerScope: "aux" },
+        { _id: "outline-b", name: "B" },
+      ],
+    }), intent);
+    expect(independent.itemLists).toEqual([
+      { _id: "outline-a", name: "Local rename", controllerScope: "aux" },
+      { _id: "outline-b", name: "B" },
+    ]);
+  });
+
+  it("rejects delete-versus-edit registry intents in either direction", () => {
+    const deletion: ItemListsRegistryIntent = {
+      before: snapshot(),
+      after: snapshot({
+        currentLists: [{ _id: "outline-b", name: "B" }],
+      }),
+    };
+    const rename: ItemListsRegistryIntent = {
+      before: snapshot(),
+      after: snapshot({
+        currentLists: [
+          { _id: "outline-a", name: "A renamed" },
+          { _id: "outline-b", name: "B" },
+        ],
+      }),
+    };
+
+    expect(() => applyItemListsRegistryIntent(doc({
+      itemLists: [
+        { _id: "outline-a", name: "Remote rename" },
+        { _id: "outline-b", name: "B" },
+      ],
+    }), deletion)).toThrow(ItemListsRegistryConflictError);
+    expect(() => applyItemListsRegistryIntent(doc({
+      itemLists: [{ _id: "outline-b", name: "B" }],
+    }), rename)).toThrow(ItemListsRegistryConflictError);
+  });
+
   it("preserves local additions, ordering, and active selection", () => {
     const intent: ItemListsRegistryIntent = {
       before: snapshot(),
@@ -104,7 +163,7 @@ describe("ItemLists registry persistence", () => {
     };
     const latest = doc({
       itemLists: [
-        { _id: "outline-a", name: "A renamed remotely" },
+        { _id: "outline-a", name: "A" },
         { _id: "outline-b", name: "B" },
         { _id: "outline-r", name: "Remote addition" },
       ],
@@ -172,5 +231,30 @@ describe("ItemLists registry persistence", () => {
     await expect(persistItemListsRegistry({ get, put }, [intent])).rejects.toBe(conflict);
     expect(get).toHaveBeenCalledTimes(4);
     expect(put).toHaveBeenCalledTimes(4);
+  });
+
+  it("leaves unresolved CouchDB registry branches untouched and reports them", async () => {
+    const get = jest.fn().mockResolvedValue({
+      ...doc(),
+      _conflicts: ["2-losing"],
+    });
+    const put = jest.fn();
+    const intent: ItemListsRegistryIntent = {
+      before: snapshot(),
+      after: snapshot({
+        currentLists: [
+          { _id: "outline-a", name: "A renamed" },
+          { _id: "outline-b", name: "B" },
+        ],
+      }),
+    };
+
+    await expect(persistItemListsRegistry({ get, put }, [intent]))
+      .rejects.toMatchObject({
+        name: "ItemListsRegistryConflictError",
+        conflicts: [{ reason: "revision-branches", revisions: ["2-losing"] }],
+      });
+    expect(get).toHaveBeenCalledWith("ItemLists", { conflicts: true });
+    expect(put).not.toHaveBeenCalled();
   });
 });

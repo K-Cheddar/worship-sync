@@ -1,11 +1,13 @@
 import type { ReactNode } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import Outlines from "./Outlines";
 import { GlobalInfoContext } from "../../../context/globalInfo";
+import { ControllerInfoContext } from "../../../context/controllerInfo";
 import { PresentationControllerModeProvider } from "../../../context/presentationControllerMode";
 import * as preparedMediaContext from "../../../utils/preparedMediaContext";
 
 const mockDispatch = jest.fn();
+const mockShowToast = jest.fn();
 let mockMode: "present" | "edit" = "present";
 
 jest.mock("../../../hooks", () => ({
@@ -40,7 +42,7 @@ jest.mock("../../../context/activeController", () => ({
 }));
 
 jest.mock("../../../context/toastContext", () => ({
-  useToast: () => ({ showToast: jest.fn() }),
+  useToast: () => ({ showToast: mockShowToast }),
 }));
 
 jest.mock("../../../hooks/useGlobalBroadcast", () => ({ useGlobalBroadcast: jest.fn() }));
@@ -119,5 +121,122 @@ describe("Outlines", () => {
 
     expect(screen.getByRole("button", { name: "Edit outline" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add New Service" })).toBeInTheDocument();
+  });
+
+  it("checks registry branches once for a changed sync revision and reports them", async () => {
+    const base = {
+      _id: "ItemLists",
+      _rev: "1-base",
+      itemLists: [{ _id: "outline-1", name: "Sunday Service" }],
+      activeList: { _id: "outline-1", name: "Sunday Service" },
+    };
+    const conflicted = {
+      ...base,
+      _rev: "2-winner",
+      _conflicts: ["2-losing"],
+      itemLists: [{ _id: "outline-1", name: "Remote rename" }],
+      activeList: { _id: "outline-1", name: "Remote rename" },
+    };
+    const db = { get: jest.fn().mockResolvedValueOnce(base).mockResolvedValue(conflicted) } as any;
+    const updater = new EventTarget();
+    render(
+      <ControllerInfoContext.Provider value={{ db, updater } as never}>
+        <PresentationControllerModeProvider>
+          <GlobalInfoContext.Provider value={{ access: "full" } as never}>
+            <Outlines />
+          </GlobalInfoContext.Provider>
+        </PresentationControllerModeProvider>
+      </ControllerInfoContext.Provider>,
+    );
+    await waitFor(() => expect(db.get).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      updater.dispatchEvent(new CustomEvent("update", {
+        detail: [{
+          _id: "ItemLists",
+          _rev: "2-losing",
+          itemLists: [{ _id: "outline-1", name: "Losing rename" }],
+          activeList: { _id: "outline-1", name: "Losing rename" },
+        }],
+      }));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith(
+      expect.stringContaining("competing saved versions, so changes cannot be saved"),
+      "error",
+    ));
+    expect(db.get).toHaveBeenLastCalledWith("ItemLists", { conflicts: true });
+    expect(db.get).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      updater.dispatchEvent(new CustomEvent("update", {
+        detail: [{
+          _id: "ItemLists",
+          _rev: "2-losing",
+          itemLists: [{ _id: "outline-1", name: "Losing rename" }],
+        }],
+      }));
+      await Promise.resolve();
+    });
+    expect(db.get).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores a registry read that settles after the database changes", async () => {
+    const base = {
+      _id: "ItemLists",
+      _rev: "1-base",
+      itemLists: [{ _id: "outline-1", name: "Sunday Service" }],
+      activeList: { _id: "outline-1", name: "Sunday Service" },
+    };
+    const oldRemote = {
+      ...base,
+      _rev: "2-old-database",
+      itemLists: [{ _id: "outline-1", name: "Stale database value" }],
+      activeList: { _id: "outline-1", name: "Stale database value" },
+    };
+    const newRemote = {
+      ...base,
+      _rev: "2-new-database",
+      itemLists: [{ _id: "outline-1", name: "Current database value" }],
+      activeList: { _id: "outline-1", name: "Current database value" },
+    };
+    let resolveOldRead!: (doc: typeof oldRemote) => void;
+    const oldRead = new Promise<typeof oldRemote>((resolve) => { resolveOldRead = resolve; });
+    const dbA = { get: jest.fn().mockResolvedValueOnce(base).mockReturnValueOnce(oldRead) } as any;
+    const dbB = { get: jest.fn().mockResolvedValue(newRemote) } as any;
+    const updaterA = new EventTarget();
+    const updaterB = new EventTarget();
+    const renderWith = (db: unknown, updater: EventTarget) => (
+      <ControllerInfoContext.Provider value={{ db, updater } as never}>
+        <PresentationControllerModeProvider>
+          <GlobalInfoContext.Provider value={{ access: "full" } as never}>
+            <Outlines />
+          </GlobalInfoContext.Provider>
+        </PresentationControllerModeProvider>
+      </ControllerInfoContext.Provider>
+    );
+    const view = render(renderWith(dbA, updaterA));
+    await waitFor(() => expect(dbA.get).toHaveBeenCalledTimes(1));
+
+    act(() => updaterA.dispatchEvent(new CustomEvent("update", {
+      detail: [{ _id: "ItemLists", _rev: "2-old-database" }],
+    })));
+    await waitFor(() => expect(dbA.get).toHaveBeenCalledTimes(2));
+    mockDispatch.mockClear();
+
+    view.rerender(renderWith(dbB, updaterB));
+    await waitFor(() => expect(dbB.get).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      payload: expect.objectContaining({
+        itemLists: [{ _id: "outline-1", name: "Current database value" }],
+      }),
+    })));
+
+    await act(async () => { resolveOldRead(oldRemote); });
+    expect(mockDispatch).not.toHaveBeenCalledWith(expect.objectContaining({
+      payload: expect.objectContaining({
+        itemLists: [{ _id: "outline-1", name: "Stale database value" }],
+      }),
+    }));
   });
 });

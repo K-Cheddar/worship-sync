@@ -346,6 +346,29 @@ describe("itemListsSlice", () => {
       expect(state.selectedList?._id).toBe("lobby-1");
     });
 
+    it("retains the local registry draft when a remote update changed the same field", () => {
+      const store = createStore();
+      store.dispatch(initiateItemLists([
+        { _id: "outline-a", name: "A" },
+        { _id: "outline-b", name: "B" },
+      ]));
+      store.dispatch(updateItemLists([
+        { _id: "outline-a", name: "Local rename" },
+        { _id: "outline-b", name: "B" },
+      ]));
+
+      expect(() => store.dispatch(updateItemListsFromRemote({
+        itemLists: [
+          { _id: "outline-a", name: "Remote rename" },
+          { _id: "outline-b", name: "B" },
+        ],
+        activeListId: "outline-a",
+      }))).not.toThrow();
+      expect(store.getState().itemLists.currentLists[0].name).toBe("Local rename");
+      expect(store.getState().itemLists.registryBaseline.currentLists[0].name)
+        .toBe("Remote rename");
+    });
+
     it("falls active back to a presentation outline when the active one is removed", () => {
       const store = createStore();
       store.dispatch(

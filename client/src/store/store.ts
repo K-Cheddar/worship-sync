@@ -125,10 +125,12 @@ import { persistExistingOverlayDoc } from "../utils/persistOverlayDoc";
 import {
   persistServiceListItems,
   persistServiceListOverlays,
+  resolveServiceListRevisionConflict,
   ServiceListConflictError,
 } from "../utils/persistServiceListField";
 import {
   persistItemListsRegistry,
+  ItemListsRegistryConflictError,
   type ItemListsRegistryIntent,
 } from "../utils/persistItemListsRegistry";
 import _ from "lodash";
@@ -1737,12 +1739,22 @@ listenerMiddleware.startListening({
     }
 
     try {
-      const persisted = await persistServiceListItems(
-        dbAtStart,
-        selectedList._id,
-        [...list],
-        [...baseline],
-      );
+      const revisionResolution = present.itemList.pendingRevisionResolutions?.[
+        selectedList._id
+      ];
+      const persisted = revisionResolution
+        ? await resolveServiceListRevisionConflict(
+            dbAtStart,
+            selectedList._id,
+            [...list],
+            revisionResolution.conflict,
+          )
+        : await persistServiceListItems(
+            dbAtStart,
+            selectedList._id,
+            [...list],
+            [...baseline],
+          );
 
       if (db !== dbAtStart) return;
       const afterPutState = (listenerApi.getState() as RootState).undoable.present;
@@ -1771,6 +1783,9 @@ listenerMiddleware.startListening({
             baselineItems: [...baseline],
             localItems: [...list],
             remoteItems: error.remoteItems,
+            ...(error.revisionConflict
+              ? { revisionConflict: error.revisionConflict }
+              : {}),
           }));
         }
       }
@@ -1869,6 +1884,14 @@ listenerMiddleware.startListening({
     } catch (error) {
       if (isListenerCancelledTaskError(error)) return;
       console.error("Failed to persist ItemLists registry:", error);
+      const hasRevisionBranches = error instanceof ItemListsRegistryConflictError &&
+        error.conflicts.some((conflict) => conflict.reason === "revision-branches");
+      const message = error instanceof ItemListsRegistryConflictError
+        ? hasRevisionBranches
+          ? "The outline list has competing saved revisions, so these changes were not saved. Your current list remains on this device; copy your intended changes before closing this controller."
+          : "Another device changed the same outline list field. Your changes were not saved. Copy your intended changes before closing this controller."
+        : "Could not save outline list changes. Your changes are still on this device. Check the connection and try again.";
+      notifyPresentationSyncError(message);
     } finally {
       listenerApi.dispatch(
         autosaveIndicatorSlice.actions.endKeyedDebouncedSave(
@@ -2050,6 +2073,10 @@ listenerMiddleware.startListening({
     } catch (error) {
       if (isListenerCancelledTaskError(error)) return;
       console.error("Failed to persist overlay order:", error);
+      const message = error instanceof ServiceListConflictError
+        ? "Another saved outline version has a different overlay order. Your current order is still here and has not been saved."
+        : "Could not save the overlay order. Your current order is still here. Check the connection and try again.";
+      notifyPresentationSyncError(message);
     }
   },
 });

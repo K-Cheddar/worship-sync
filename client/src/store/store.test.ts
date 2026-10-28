@@ -5573,6 +5573,7 @@ const loadStoreWithItemListPersistence = () => {
   let itemListsSliceModule: any;
   let overlaySliceModule: any;
   let overlaysSliceModule: any;
+  let presentationSyncErrorBusModule: any;
   const postMessage = jest.fn();
   const db = {
     get: jest.fn(),
@@ -5606,6 +5607,8 @@ const loadStoreWithItemListPersistence = () => {
     overlaySliceModule = require("./overlaySlice");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     overlaysSliceModule = require("./overlaysSlice");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    presentationSyncErrorBusModule = require("../utils/presentationSyncErrorBus");
   });
 
   return {
@@ -5614,6 +5617,8 @@ const loadStoreWithItemListPersistence = () => {
     itemListsSlice: itemListsSliceModule.itemListsSlice,
     overlaySlice: overlaySliceModule.overlaySlice,
     overlaysSlice: overlaysSliceModule.overlaysSlice,
+    registerPresentationSyncErrorHandler:
+      presentationSyncErrorBusModule.registerPresentationSyncErrorHandler,
     db,
     postMessage,
   };
@@ -6176,7 +6181,7 @@ describe("item list outline persistence", () => {
     await jest.advanceTimersByTimeAsync(1500);
     await flushListenerEffects();
 
-    expect(db.get).toHaveBeenCalledWith("ItemLists");
+    expect(db.get).toHaveBeenCalledWith("ItemLists", { conflicts: true });
     expect(db.put).toHaveBeenCalledTimes(1);
     expect(current.itemLists).toEqual([
       { _id: "outline-a", name: "A local rename" },
@@ -6190,6 +6195,45 @@ describe("item list outline persistence", () => {
     });
     expect(current.activeList._id).toBe("outline-b");
     expect(postMessage).toHaveBeenCalled();
+  });
+
+  it("notifies the operator and retains local registry edits when branches conflict", async () => {
+    jest.useFakeTimers();
+    const { store, itemListsSlice, db, registerPresentationSyncErrorHandler } =
+      loadStoreWithItemListPersistence();
+    const notify = jest.fn();
+    const unregister = registerPresentationSyncErrorHandler(notify);
+    const current = {
+      _id: "ItemLists",
+      _rev: "2-winner",
+      _conflicts: ["2-losing"],
+      itemLists: [
+        { _id: "outline-a", name: "Remote version" },
+        { _id: "outline-b", name: "B" },
+      ],
+      activeList: { _id: "outline-a", name: "Remote version" },
+      selectedIdByScope: { presentation: "outline-a" },
+    };
+    db.get.mockResolvedValue(current);
+    store.dispatch(itemListsSlice.actions.initiateItemLists([
+      { _id: "outline-a", name: "A" },
+      { _id: "outline-b", name: "B" },
+    ]));
+    store.dispatch(itemListsSlice.actions.updateItemLists([
+      { _id: "outline-a", name: "Local version" },
+      { _id: "outline-b", name: "B" },
+    ]));
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.get).toHaveBeenCalledWith("ItemLists", { conflicts: true });
+    expect(db.put).not.toHaveBeenCalled();
+    expect(store.getState().undoable.present.itemLists.currentLists[0].name)
+      .toBe("Local version");
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining("these changes were not saved"));
+    unregister();
+    jest.useRealTimers();
   });
 });
 

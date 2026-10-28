@@ -7,6 +7,7 @@ import {
   resolveOutlineForScope,
 } from "../utils/outlineScope";
 import {
+  ItemListsRegistryConflictError,
   mergeItemListsRegistrySnapshot,
   type ItemListsRegistrySnapshot,
 } from "../utils/persistItemListsRegistry";
@@ -183,10 +184,25 @@ export const itemListsSlice = createSlice({
             },
       };
       const selectedId = state.selectedList?._id;
-      const merged = mergeItemListsRegistrySnapshot(remoteSnapshot, {
-        before: state.registryBaseline,
-        after: snapshotRegistry(state),
-      });
+      let merged: ItemListsRegistrySnapshot;
+      try {
+        merged = mergeItemListsRegistrySnapshot(remoteSnapshot, {
+          before: state.registryBaseline,
+          after: snapshotRegistry(state),
+        });
+      } catch (error) {
+        if (!(error instanceof ItemListsRegistryConflictError)) throw error;
+        // Keep the operator's visible registry intact while the queued save
+        // reports the overlap. The remote snapshot is still the next baseline.
+        state.registryBaseline = {
+          currentLists: remoteSnapshot.currentLists.map((item) => ({ ...item })),
+          activeList: remoteSnapshot.activeList
+            ? { ...remoteSnapshot.activeList }
+            : undefined,
+          selectedIdByScope: { ...remoteSnapshot.selectedIdByScope },
+        };
+        return;
+      }
       state.registryBaseline = {
         currentLists: remoteSnapshot.currentLists.map((item) => ({ ...item })),
         activeList: remoteSnapshot.activeList

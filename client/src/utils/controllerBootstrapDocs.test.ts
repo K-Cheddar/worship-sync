@@ -98,6 +98,24 @@ describe("controllerBootstrapDocs", () => {
         }),
       );
     });
+
+    it("does not seed a new outline over an unresolved empty registry branch", async () => {
+      const conflicted = {
+        _id: "ItemLists",
+        _rev: "2-winner",
+        _conflicts: ["2-losing"],
+        itemLists: [],
+        activeList: { _id: "", name: "" },
+      };
+      const db = {
+        get: jest.fn().mockResolvedValue(conflicted),
+        put: jest.fn(),
+      } as unknown as PouchDB.Database;
+
+      await expect(loadOrCreateItemListsDoc(db)).resolves.toBe(conflicted);
+      expect(db.get).toHaveBeenCalledTimes(1);
+      expect(db.put).not.toHaveBeenCalled();
+    });
   });
 
   describe("loadOrCreatePreferencesBundle", () => {

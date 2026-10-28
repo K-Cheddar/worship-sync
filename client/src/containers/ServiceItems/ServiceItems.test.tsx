@@ -264,7 +264,19 @@ describe("ServiceItems", () => {
   it("offers explicit actions for a conflicting remote outline draft", () => {
     mockState.undoable.present.itemList.loadedOutlineId = "outline-1";
     mockState.undoable.present.itemList.remoteConflicts = {
-      "outline-1": { baselineItems: [], localItems: [], remoteItems: [] },
+      "outline-1": {
+        baselineItems: [],
+        localItems: [],
+        remoteItems: [],
+        revisionConflict: {
+          graph: {
+            winningRevision: "2-winner",
+            conflictRevisions: ["2-other"],
+            histories: { "2-winner": ["2-winner", "1-base"], "2-other": ["2-other", "1-base"] },
+          },
+          versions: [],
+        },
+      },
     };
     render(
       <ControllerInfoContext.Provider
@@ -278,6 +290,15 @@ describe("ServiceItems", () => {
 
     expect(screen.getByRole("alert")).toHaveTextContent(
       "This outline changed on another device while you had unsaved edits.",
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "2 saved versions could not be merged safely",
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "the database winner and retires the other branches",
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Using the remote version will discard your edits made since this notice appeared.",
     );
     fireEvent.click(screen.getByRole("button", { name: "Keep my draft" }));
     expect(mockDispatch).toHaveBeenCalledWith(
