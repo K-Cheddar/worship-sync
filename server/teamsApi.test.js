@@ -22635,6 +22635,7 @@ test("Planning Center PDF baseline save reload Update 1 preserves identity and p
   const { richTextToPlainText } = await import("../client/src/types/richText.ts");
   const songNames = ["How Great Thou Art", "Great Is Thy Faithfulness", "I Surrender All"];
   const songs = songNames.map((name, index) => ({ _id: `library-${index}`, name }));
+  const pdfBuildOptions = { preserveSourceTitle: true };
   const parse = async (filename) => {
     const data = new Uint8Array(await readFile(new URL(`./fixtures/planning-center/${filename}.pdf`, import.meta.url)));
     const pdf = await getDocument({ data, useSystemFonts: true }).promise;
@@ -22664,15 +22665,25 @@ test("Planning Center PDF baseline save reload Update 1 preserves identity and p
   };
   const baselineData = await parse("01_Planning_Center_Baseline");
   const sourceImport = buildServicePlanSourceImport(baselineData, "", "planningCenterPdf");
-  let plan = await saveReload(applyPlanAnchorStartTime(preparePlanningCenterPdfImport([], buildServicePlanSectionsFromImport(baselineData, songs)).importedSections, "10:00"), sourceImport);
+  let plan = await saveReload(applyPlanAnchorStartTime(preparePlanningCenterPdfImport([], buildServicePlanSectionsFromImport(baselineData, songs, pdfBuildOptions)).importedSections, "10:00"), sourceImport);
+  const expectedSongTitles = ["Opening Song: How Great Thou Art", "Song: Great Is Thy Faithfulness", "Appeal Song: I Surrender All"];
+  const expectedUpdate1Order = [
+    "Prelude & Welcome", expectedSongTitles[0], "Prayer — Elder Naomi Brooks", expectedSongTitles[1],
+    "Scripture Reading", "Prayer — Elder David Cole", "Special Music", "Sermon", expectedSongTitles[2],
+    "Offering", "Ministry Spotlight — NEW", "Closing Prayer",
+  ];
+  assert.deepEqual(plan.sections[0].elements.filter((element) => element.songRef?.kind === "library").map((element) => richTextToPlainText(element.title)), expectedSongTitles);
+  assert.deepEqual(plan.sections[0].elements.filter((element) => element.songRef?.kind === "library").map((element) => element.songRef.songId), songs.map(({ _id }) => _id));
+  assert.deepEqual(plan.sections[0].elements.filter((element) => element.songRef?.kind === "library").map((element) => element.songRef.songName), songNames);
   plan.sections[0].elements.forEach((element) => {
-    const index = songNames.indexOf(richTextToPlainText(element.title));
+    const index = songs.findIndex(({ _id }) => element.songRef?.kind === "library" && element.songRef.songId === _id);
     if (index >= 0) element.assignees = [{ id: `slot-${index}`, name: `Singer ${index}`, microphoneIds: [`mic-${index}`], iemIds: [`iem-${index}`] }];
   });
   plan = await saveReload(plan.sections, sourceImport);
+  assert.deepEqual(plan.sections[0].elements.filter((element) => element.songRef?.kind === "library").map((element) => richTextToPlainText(element.title)), expectedSongTitles);
   const originalIds = plan.sections[0].elements.map(({ id }) => id);
   const updateData = await parse("02_Planning_Center_Update_1");
-  const prepared = preparePlanningCenterPdfImport(plan.sections, buildServicePlanSectionsFromImport(updateData, songs));
+  const prepared = preparePlanningCenterPdfImport(plan.sections, buildServicePlanSectionsFromImport(updateData, songs, pdfBuildOptions));
   const next = applyPlanAnchorStartTime(refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, {
     ...DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS, suggestLegacyMatches: true, planningCenterPdfMatch: true,
   }), "10:00");
@@ -22685,13 +22696,15 @@ test("Planning Center PDF baseline save reload Update 1 preserves identity and p
   assert.equal(richTextToPlainText(selected[0].elements[10].title), "Ministry Spotlight — NEW");
   assert.equal(richTextToPlainText(selected[0].elements[11].title), "Closing Prayer");
   assert.deepEqual(selected[0].elements.filter((item) => item.songRef?.kind === "library").map((item) => item.assignees[0].microphoneIds), [["mic-0"], ["mic-1"], ["mic-2"]]);
+  assert.deepEqual(selected[0].elements.filter((item) => item.songRef?.kind === "library").map((item) => item.assignees[0].iemIds), [["iem-0"], ["iem-1"], ["iem-2"]]);
   assert.deepEqual(selected[0].elements.map(({ startTime }) => startTime), ["10:00", "10:07", "10:11", "10:14", "10:18", "10:21", "10:24", "10:29", "11:04", "11:08", "11:11", "11:15"]);
+  assert.deepEqual(selected[0].elements.map((item) => richTextToPlainText(item.title)), expectedUpdate1Order);
   assert.equal(summary.changes.length, 4);
   assert.deepEqual(selected[0].elements.filter((item) => item.songRef?.kind === "library").map((item) => item.songRef.songId), songs.map(({ _id }) => _id));
   assert.equal(plan.sourceImport.source, "planningCenterPdf");
   assert.equal(plan.sections[0].elements.some((element) => "planningCenterPdfSourcePosition" in element || "importMatchCurrentId" in element), false);
   const review = (sections, data, removeMissing = false) => {
-    const prepared = preparePlanningCenterPdfImport(sections, buildServicePlanSectionsFromImport(data, songs));
+    const prepared = preparePlanningCenterPdfImport(sections, buildServicePlanSectionsFromImport(data, songs, pdfBuildOptions));
     const next = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, {
       ...DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS, suggestLegacyMatches: true, planningCenterPdfMatch: true, removeMissing,
     });
@@ -22715,6 +22728,11 @@ test("Planning Center PDF baseline save reload Update 1 preserves identity and p
   assert.deepEqual(updateOnly[0].elements.slice(0, 7), plan.sections[0].elements.slice(0, 7));
   // Test B: persist the applied Update 1 then repeat the identical real PDF.
   plan = await saveReload(selected, buildServicePlanSourceImport(updateData, "", "planningCenterPdf"));
+  assert.deepEqual(plan.sections[0].elements.filter((item) => item.songRef?.kind === "library").map((item) => richTextToPlainText(item.title)), expectedSongTitles);
+  assert.deepEqual(plan.sections[0].elements.map((item) => richTextToPlainText(item.title)), expectedUpdate1Order);
+  assert.deepEqual(plan.sections[0].elements.filter((item) => item.songRef?.kind === "library").map((item) => item.songRef.songId), songs.map(({ _id }) => _id));
+  assert.deepEqual(plan.sections[0].elements.filter((item) => item.songRef?.kind === "library").map((item) => item.songRef.songName), songNames);
+  assert.deepEqual(plan.sections[0].elements.filter((item) => item.songRef?.kind === "library").map((item) => [item.assignees[0].microphoneIds[0], item.assignees[0].iemIds[0]]), [["mic-0", "iem-0"], ["mic-1", "iem-1"], ["mic-2", "iem-2"]]);
   assert.deepEqual(review(plan.sections, updateData).summary.changes, []);
   const localSong = plan.sections[0].elements.find((element) => element.songRef?.songId === "library-2");
   localSong.notes = richText("Local arrangement cue");
@@ -22755,7 +22773,7 @@ test("Planning Center PDF baseline save reload Update 1 preserves identity and p
   plan = await saveReload(confirmed, plan.sourceImport);
   assert.deepEqual(review(plan.sections, secondData, true).summary.changes, []);
   assert.equal(plan.sections[0].elements.length, 15); // 14 source rows + manual cue
-  const sourceTitles = buildServicePlanSectionsFromImport(secondData, songs)[0].elements.map((item) => richTextToPlainText(item.title));
+  const sourceTitles = buildServicePlanSectionsFromImport(secondData, songs, pdfBuildOptions)[0].elements.map((item) => richTextToPlainText(item.title));
   assert.deepEqual(plan.sections[0].elements.filter(({ id }) => id !== manual.id).map((item) => richTextToPlainText(item.title)), sourceTitles);
   assert.equal(plan.sections[0].elements.some((item) => item.id === removals[0].id && richTextToPlainText(item.title).startsWith("Prayer")), false);
   assert.deepEqual(plan.sections[0].elements.find(({ id }) => id === localSong.id).notes, localSong.notes);
