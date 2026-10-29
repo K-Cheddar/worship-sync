@@ -67,3 +67,44 @@ export const persistDownloadedVideoMedia = async ({
     throw new Error("The cloud video registration could not be confirmed. Retry to finish the upload.");
   }
 };
+
+/**
+ * Delete an imported permanent asset only after the captured Media Library has
+ * been read successfully and confirms that no item references it. A failed or
+ * uncertain registration can already have committed its Pouch write, so an
+ * unreadable database or ambiguous reference must preserve the file.
+ */
+export const removeDownloadedVideoAssetIfUnreferenced = async ({
+  media,
+  assetId,
+  owner,
+  deleteAsset,
+  isOwnerCurrent,
+}: {
+  media: MediaType | undefined;
+  assetId: string | undefined;
+  owner: DesktopVideoDownloadOwner;
+  deleteAsset: (assetId: string) => Promise<unknown>;
+  isOwnerCurrent: (owner: DesktopVideoDownloadOwner) => boolean;
+}): Promise<MediaType | undefined> => {
+  if (!assetId) return undefined;
+  const db = owner.dbAtStart as PouchDB.Database | undefined;
+  if (!db) throw new Error("Cannot verify Media Library references; the local video was kept.");
+  if (!isOwnerCurrent(owner)) {
+    throw new Error("The active church changed; the local video was kept until its Media Library reference can be checked.");
+  }
+
+  const { list } = await loadMediaLibrary(db);
+  if (!isOwnerCurrent(owner)) {
+    throw new Error("The active church changed; the local video was kept until its Media Library reference can be checked.");
+  }
+  const references = list.filter((item) => item.localVideoFile?.id === assetId);
+  const matchingItem = references.find((item) => item.id === media?.id);
+  if (matchingItem) return matchingItem;
+  if (references.length > 0) {
+    return references[0];
+  }
+
+  await deleteAsset(assetId);
+  return undefined;
+};

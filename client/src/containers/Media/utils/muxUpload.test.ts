@@ -116,6 +116,7 @@ describe("church-scoped Mux upload and temporary conversion", () => {
 
   it("streams a disk-backed download through the native transport and the existing Mux registration workflow", async () => {
     const uploadDownloadedVideo = jest.fn().mockResolvedValue(undefined);
+    const setCancelUpload = jest.fn();
     window.electronAPI = {
       uploadDownloadedVideoToMux: uploadDownloadedVideo,
     } as unknown as typeof window.electronAPI;
@@ -124,6 +125,7 @@ describe("church-scoped Mux upload and temporary conversion", () => {
       "job-1",
       "Sunday Opener.mp4",
       { churchId: "church-1", mediaId: "media-1", title: "Sunday Opener" },
+      { setCancelUpload },
     );
 
     expect(uploadDownloadedVideo).toHaveBeenCalledWith("job-1", "https://upload");
@@ -133,6 +135,7 @@ describe("church-scoped Mux upload and temporary conversion", () => {
       temporary: undefined,
     });
     expect(result).toMatchObject({ playbackId: "playback-1", name: "Sunday Opener" });
+    expect(setCancelUpload).toHaveBeenLastCalledWith(undefined);
   });
 
   it("cleans a newly-created Mux upload without starting disk streaming if cancellation arrived during upload creation", async () => {

@@ -14,7 +14,7 @@ import { createLocalMediaFromDownloadedVideo } from "../../containers/Media/loca
 import { uploadDownloadedVideoToMux } from "../../containers/Media/utils/muxUpload";
 import { MEDIA_STORAGE_CHANGED_EVENT } from "../../containers/Media/mediaStorageEvents";
 import { DesktopVideoDownloadManager as DesktopVideoDownloadController, type DesktopVideoDownloadInput, type DesktopVideoDownloadOwner } from "./desktopVideoDownloadController";
-import { persistDownloadedVideoMedia } from "./persistDownloadedVideoMedia";
+import { persistDownloadedVideoMedia, removeDownloadedVideoAssetIfUnreferenced } from "./persistDownloadedVideoMedia";
 
 type DesktopVideoDownloadContextValue = {
   start: (input: DesktopVideoDownloadInput) => string;
@@ -65,9 +65,14 @@ const DesktopVideoDownloadManager = ({ children }: { children: ReactNode }) => {
         }),
       registerLocalMedia: (media, owner) => persistMediaItem(media, owner),
       registerCloudMedia: (media, patch, owner) => persistMediaItem(media, owner, patch),
-      removeUnregisteredLocalMedia: async (_media, assetId) => {
-        if (assetId) await deleteLocalVideoFile(assetId);
-      },
+      removeUnregisteredLocalMedia: (media, assetId, owner) =>
+        removeDownloadedVideoAssetIfUnreferenced({
+          media,
+          assetId,
+          owner,
+          deleteAsset: deleteLocalVideoFile,
+          isOwnerCurrent,
+        }),
       uploadToCloud: uploadDownloadedVideoToMux,
       buildCloudPatch: buildLocalVideoCloudSharePatch,
       viewMedia: (media, owner) => {

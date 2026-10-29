@@ -45,7 +45,13 @@ export type DesktopVideoDownloadDependencies = {
   }) => Promise<MediaType>;
   registerLocalMedia: (media: MediaType, owner: DesktopVideoDownloadOwner) => Promise<void>;
   registerCloudMedia: (media: MediaType, patch: Partial<MediaType>, owner: DesktopVideoDownloadOwner) => Promise<void>;
-  removeUnregisteredLocalMedia: (media: MediaType | undefined, assetId: string | undefined) => Promise<void>;
+  /** Reconcile against the captured Media Library before deleting an imported local asset.
+   * Returns the persisted media item if the asset is already registered. */
+  removeUnregisteredLocalMedia: (
+    media: MediaType | undefined,
+    assetId: string | undefined,
+    owner: DesktopVideoDownloadOwner,
+  ) => Promise<MediaType | undefined>;
   uploadToCloud: (
     jobId: string,
     fileName: string,
@@ -355,7 +361,7 @@ export class DesktopVideoDownloadManager {
         if (!runtime.cloudResult) {
           this.assertCurrentOwner(runtime);
           this.publish(runtime, "active", "Uploading", 0, "Uploading video to WorshipSync");
-          runtime.cloudResult = await this.deps.uploadToCloud(
+          const cloudResult = await this.deps.uploadToCloud(
             runtime.jobId,
             `${runtime.displayName}.mp4`,
             { churchId: runtime.owner.churchId, mediaId: runtime.media.id, title: runtime.displayName },
@@ -366,8 +372,11 @@ export class DesktopVideoDownloadManager {
               onStatusUpdate: (status) => this.publish(runtime, "active", "Uploading", null, status),
             },
           );
+          // The provider asset is now successful and must survive cancellation
+          // while its Media Library reference is being persisted.
+          runtime.cloudResult = cloudResult;
+          runtime.cancelCloudUpload = undefined;
         }
-        if (runtime.cancelRequested) throw new Error("Upload cancelled.");
         this.assertCurrentOwner(runtime);
         const patch = this.deps.buildCloudPatch(runtime.media, runtime.cloudResult, runtime.owner.churchId);
         await this.deps.registerCloudMedia(runtime.media, patch, runtime.owner);
@@ -377,7 +386,12 @@ export class DesktopVideoDownloadManager {
       }
       if (runtime.cancelRequested) {
         await this.cleanupNative(runtime);
-        return this.finishCancellation(runtime);
+        if (runtime.destination === "cloud" && runtime.cloudMediaRegistered) {
+          this.publish(runtime, "complete", "Complete", 100, "Upload finished and is available in Media Library");
+        } else {
+          return this.finishCancellation(runtime);
+        }
+        return;
       }
       await this.cleanupNative(runtime);
       this.publish(runtime, "complete", "Complete", 100, runtime.destination === "cloud" ? "Uploaded and added to Media Library" : "Added to Media Library");
@@ -385,6 +399,15 @@ export class DesktopVideoDownloadManager {
       const failedStage = runtime.stage;
       const cleanup = error && typeof error === "object" ? (error as { retryCleanup?: () => Promise<void> }).retryCleanup : undefined;
       if (cleanup) runtime.retryMuxCleanup = cleanup;
+      if (runtime.cancelRequested && runtime.destination === "cloud" && runtime.cloudResult && !runtime.cloudMediaRegistered) {
+        runtime.error = messageOf(error, "The uploaded video still needs to be registered in Media Library.");
+        await this.cleanupNative(runtime).catch((cleanupError) => {
+          runtime.cleanupError = messageOf(cleanupError, "Temporary download cleanup is pending.");
+        });
+        this.publish(runtime, "failed", "Failed", null,
+          "Upload finished, but Media Library registration needs to be retried.", runtime.error);
+        return;
+      }
       if (runtime.cancelRequested) {
         if (!runtime.localMediaRegistered) await this.removeUnregisteredAsset(runtime).catch(() => undefined);
         await this.cleanupNative(runtime).catch((cleanupError) => {
@@ -394,6 +417,8 @@ export class DesktopVideoDownloadManager {
           this.publish(runtime, "failed", "Failed", null, "The church changed while the video was being processed. Switch back to the original church to retry.", "This job belongs to a different church.");
         } else if (runtime.cleanupError) {
           this.publish(runtime, "failed", "Failed", null, "Cleanup failed", runtime.cleanupError);
+        } else if (runtime.destination === "cloud" && runtime.cloudMediaRegistered) {
+          this.publish(runtime, "complete", "Complete", 100, "Upload finished and is available in Media Library");
         } else {
           await this.finishCancellation(runtime);
         }
@@ -456,10 +481,13 @@ export class DesktopVideoDownloadManager {
       }
       if (!runtime.localMediaRegistered) {
         await this.removeUnregisteredAsset(runtime);
-        await this.cleanupNative(runtime);
-        runtime.downloadFinished = false;
-        runtime.mediaInfo = undefined;
-      } else if (runtime.destination === "computer" || runtime.cloudMediaRegistered) {
+        if (!runtime.localMediaRegistered) {
+          await this.cleanupNative(runtime);
+          runtime.downloadFinished = false;
+          runtime.mediaInfo = undefined;
+        }
+      }
+      if (runtime.localMediaRegistered && (runtime.destination === "computer" || runtime.cloudMediaRegistered || runtime.cloudResult)) {
         await this.cleanupNative(runtime);
       }
       runtime.cleanupError = undefined;
@@ -489,6 +517,9 @@ export class DesktopVideoDownloadManager {
         runtime.cancelCloudUpload?.(),
       ].filter(Boolean) as Promise<unknown>[]);
       await runtime.operation?.catch(() => undefined);
+      if (runtime.destination === "cloud" && runtime.cloudResult && !runtime.cloudMediaRegistered && runtime.status === "failed") {
+        return;
+      }
       if (!runtime.localMediaRegistered) {
         try {
           await this.removeUnregisteredAsset(runtime);
@@ -506,7 +537,11 @@ export class DesktopVideoDownloadManager {
       } else if (runtime.cleanupError) {
         this.publish(runtime, "failed", "Failed", null, "Cleanup failed", runtime.cleanupError);
       } else {
-        await this.finishCancellation(runtime);
+        if (runtime.destination === "cloud" && runtime.cloudMediaRegistered) {
+          this.publish(runtime, "complete", "Complete", 100, "Upload finished and is available in Media Library");
+        } else {
+          await this.finishCancellation(runtime);
+        }
       }
     })();
     runtime.cancelPromise = cancellation;
@@ -546,7 +581,14 @@ export class DesktopVideoDownloadManager {
     if (runtime.assetCleanupPromise) return runtime.assetCleanupPromise;
     const assetId = runtime.media?.localVideoFile?.id ?? runtime.asset?.assetId;
     const cleanup = (async () => {
-      if (assetId) await this.deps.removeUnregisteredLocalMedia(runtime.media, assetId);
+      const persistedMedia = assetId
+        ? await this.deps.removeUnregisteredLocalMedia(runtime.media, assetId, runtime.owner)
+        : undefined;
+      if (persistedMedia) {
+        runtime.media = persistedMedia;
+        runtime.localMediaRegistered = true;
+        return;
+      }
       runtime.media = undefined;
       runtime.asset = undefined;
     })();

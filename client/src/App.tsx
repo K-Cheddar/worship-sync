@@ -435,17 +435,17 @@ export const AppRoutes = () => {
                   </AuthGate>
                 }
               />
+              <Route
+                path="/boards/controller"
+                element={
+                  <AuthGate allowedKinds={["human", "workstation"]}>
+                    <ViewAccessBlockedRedirect>
+                      <BoardController />
+                    </ViewAccessBlockedRedirect>
+                  </AuthGate>
+                }
+              />
             </Route>
-            <Route
-              path="/boards/controller"
-              element={
-                <AuthGate allowedKinds={["human", "workstation"]}>
-                  <ViewAccessBlockedRedirect>
-                    <BoardController />
-                  </ViewAccessBlockedRedirect>
-                </AuthGate>
-              }
-            />
             <Route
               path="/boards/display"
               element={

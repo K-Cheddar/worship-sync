@@ -196,6 +196,42 @@ describe("desktop video download lifecycle manager", () => {
     expect(harness.transfers.get(`video-download-${jobId}`)?.status).toBe("complete");
   });
 
+  it("reconciles an uncertain local registration before cancelling and preserves the committed asset", async () => {
+    let rejectRegistration!: (error: Error) => void;
+    let markRegistrationStarted!: () => void;
+    const registrationStarted = new Promise<void>((resolve) => { markRegistrationStarted = resolve; });
+    const registerLocalMedia = jest.fn(() => {
+      markRegistrationStarted();
+      return new Promise<void>((_resolve, reject) => { rejectRegistration = reject; });
+    });
+    const reconcileAsset = jest.fn(async () => media);
+    const harness = makeHarness({ registerLocalMedia, removeUnregisteredLocalMedia: reconcileAsset });
+    const jobId = harness.start();
+    const pipeline = harness.manager.handleProgress(completion(jobId));
+    await registrationStarted;
+
+    const cancellation = harness.action(jobId, "cancel");
+    rejectRegistration(new Error("Pouch write acknowledgement was lost."));
+    await Promise.all([pipeline, cancellation]);
+
+    expect(reconcileAsset).toHaveBeenCalledWith(expect.objectContaining({ id: media.id }), asset.assetId, expect.objectContaining({ churchId: "church-a" }));
+    expect(harness.transfers.get(`video-download-${jobId}`)).toMatchObject({ status: "cancelled", detail: expect.stringContaining("Local video remains") });
+    expect(harness.native.cleanupVideoDownload).toHaveBeenCalledWith(jobId);
+  });
+
+  it("reconciles a failed registration before dismissing and does not discard its persisted media reference", async () => {
+    const registerLocalMedia = jest.fn().mockRejectedValue(new Error("Confirmation failed after write."));
+    const reconcileAsset = jest.fn(async () => media);
+    const harness = makeHarness({ registerLocalMedia, removeUnregisteredLocalMedia: reconcileAsset });
+    const jobId = harness.start();
+    await harness.manager.handleProgress(completion(jobId));
+    await harness.action(jobId, "dismiss");
+
+    expect(reconcileAsset).toHaveBeenCalledWith(expect.objectContaining({ id: media.id }), asset.assetId, expect.objectContaining({ churchId: "church-a" }));
+    expect(harness.native.cleanupVideoDownload).toHaveBeenCalledWith(jobId);
+    expect(harness.transfers.has(`video-download-${jobId}`)).toBe(false);
+  });
+
   it("ignores duplicate completion events while one import operation is still settling", async () => {
     let resolveCreatedMedia!: (value: MediaType) => void;
     let markCreateStarted!: () => void;
@@ -246,6 +282,68 @@ describe("desktop video download lifecycle manager", () => {
     expect(harness.transfers.get(`video-download-${jobId}`)?.status).toBe("complete");
   });
 
+  it("does not cancel or delete a successful Mux asset while its Media Library reference is saving", async () => {
+    let resolveRegistration!: () => void;
+    let markRegistrationStarted!: () => void;
+    const registrationStarted = new Promise<void>((resolve) => { markRegistrationStarted = resolve; });
+    const registerCloudMedia = jest.fn(() => {
+      markRegistrationStarted();
+      return new Promise<void>((resolve) => { resolveRegistration = resolve; });
+    });
+    const cancelMuxUpload = jest.fn(async () => undefined);
+    const uploadToCloud = jest.fn(async (_jobId, _fileName, _options, callbacks) => {
+      callbacks.setCancelUpload?.(cancelMuxUpload);
+      return muxResult;
+    });
+    const harness = makeHarness({ registerCloudMedia, uploadToCloud });
+    const jobId = harness.start("cloud");
+    const pipeline = harness.manager.handleProgress(completion(jobId));
+    await registrationStarted;
+
+    const cancellation = harness.action(jobId, "cancel");
+    expect(cancelMuxUpload).not.toHaveBeenCalled();
+    resolveRegistration();
+    await Promise.all([pipeline, cancellation]);
+
+    expect(cancelMuxUpload).not.toHaveBeenCalled();
+    expect(registerCloudMedia).toHaveBeenCalledTimes(1);
+    expect(harness.transfers.get(`video-download-${jobId}`)?.status).toBe("complete");
+  });
+
+  it("keeps a successful Mux result retryable if cloud registration fails after cancellation", async () => {
+    let rejectRegistration!: (error: Error) => void;
+    let markRegistrationStarted!: () => void;
+    const registrationStarted = new Promise<void>((resolve) => { markRegistrationStarted = resolve; });
+    const registerCloudMedia = jest.fn()
+      .mockImplementationOnce(() => {
+        markRegistrationStarted();
+        return new Promise<void>((_resolve, reject) => { rejectRegistration = reject; });
+      })
+      .mockResolvedValue(undefined);
+    const cancelMuxUpload = jest.fn(async () => undefined);
+    const uploadToCloud = jest.fn(async (_jobId, _fileName, _options, callbacks) => {
+      callbacks.setCancelUpload?.(cancelMuxUpload);
+      return muxResult;
+    });
+    const harness = makeHarness({ registerCloudMedia, uploadToCloud });
+    const jobId = harness.start("cloud");
+    const pipeline = harness.manager.handleProgress(completion(jobId));
+    await registrationStarted;
+    const cancellation = harness.action(jobId, "cancel");
+    rejectRegistration(new Error("Cloud record acknowledgement was lost."));
+    await Promise.all([pipeline, cancellation]);
+
+    expect(cancelMuxUpload).not.toHaveBeenCalled();
+    expect(harness.transfers.get(`video-download-${jobId}`)).toMatchObject({
+      status: "failed",
+      actions: expect.arrayContaining([expect.objectContaining({ key: "retry" })]),
+    });
+    await harness.action(jobId, "retry");
+    expect(uploadToCloud).toHaveBeenCalledTimes(1);
+    expect(registerCloudMedia).toHaveBeenCalledTimes(2);
+    expect(harness.transfers.get(`video-download-${jobId}`)?.status).toBe("complete");
+  });
+
   it("never registers a late completion into the church selected after the job started", async () => {
     let currentChurch = "church-a";
     const isOwnerCurrent = jest.fn((owner: DesktopVideoDownloadOwner) => currentChurch === owner.churchId);
@@ -290,7 +388,7 @@ describe("desktop video download lifecycle manager", () => {
     const jobId = harness.start();
     await harness.manager.handleProgress(completion(jobId));
     await harness.action(jobId, "dismiss");
-    expect(harness.deps.removeUnregisteredLocalMedia).toHaveBeenCalledWith(expect.objectContaining({ id: media.id, folderId: "folder-one" }), asset.assetId);
+    expect(harness.deps.removeUnregisteredLocalMedia).toHaveBeenCalledWith(expect.objectContaining({ id: media.id, folderId: "folder-one" }), asset.assetId, expect.objectContaining({ churchId: "church-a" }));
     expect(harness.native.cleanupVideoDownload).toHaveBeenCalledWith(jobId);
     expect(harness.transfers.has(`video-download-${jobId}`)).toBe(false);
     expect(harness.handlers.has(`video-download-${jobId}:retry`)).toBe(false);

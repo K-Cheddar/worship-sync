@@ -3,7 +3,7 @@ import type { RootState, AppDispatch } from "../../store/store";
 import { addItemToMediaList, updateMediaItemFields } from "../../store/mediaSlice";
 import * as mediaDocs from "../../utils/mediaDocUtils";
 import * as mediaFlush from "../../utils/flushMediaLibraryDoc";
-import { persistDownloadedVideoMedia } from "./persistDownloadedVideoMedia";
+import { persistDownloadedVideoMedia, removeDownloadedVideoAssetIfUnreferenced } from "./persistDownloadedVideoMedia";
 import type { DesktopVideoDownloadOwner } from "./desktopVideoDownloadController";
 
 const media: MediaType = {
@@ -112,5 +112,60 @@ describe("persistDownloadedVideoMedia", () => {
     expect(loadMediaLibrary).not.toHaveBeenCalled();
     expect(dispatch).not.toHaveBeenCalled();
     expect(flushMediaLibraryDocToPouch).not.toHaveBeenCalled();
+  });
+
+  it("preserves a local asset when an uncertain Media Library write is now present in Pouch", async () => {
+    const db = owner.dbAtStart as PouchDB.Database;
+    const deleteAsset = jest.fn(async () => undefined);
+    loadMediaLibrary.mockResolvedValue({ list: [media], folders: [] });
+
+    const persisted = await removeDownloadedVideoAssetIfUnreferenced({
+      media,
+      assetId: media.localVideoFile!.id,
+      owner,
+      deleteAsset,
+      isOwnerCurrent: () => true,
+    });
+
+    expect(loadMediaLibrary).toHaveBeenCalledWith(db);
+    expect(persisted).toEqual(media);
+    expect(deleteAsset).not.toHaveBeenCalled();
+  });
+
+  it("deletes an unreferenced local asset only after a successful authoritative read", async () => {
+    const deleteAsset = jest.fn(async () => undefined);
+    loadMediaLibrary.mockResolvedValue({ list: [], folders: [] });
+
+    await removeDownloadedVideoAssetIfUnreferenced({
+      media,
+      assetId: media.localVideoFile!.id,
+      owner,
+      deleteAsset,
+      isOwnerCurrent: () => true,
+    });
+
+    expect(deleteAsset).toHaveBeenCalledWith(media.localVideoFile!.id);
+  });
+
+  it("keeps the asset when the authoritative reference check fails or changes scope", async () => {
+    const deleteAsset = jest.fn(async () => undefined);
+    loadMediaLibrary.mockRejectedValueOnce(new Error("Pouch is unavailable."));
+
+    await expect(removeDownloadedVideoAssetIfUnreferenced({
+      media,
+      assetId: media.localVideoFile!.id,
+      owner,
+      deleteAsset,
+      isOwnerCurrent: () => true,
+    })).rejects.toThrow("Pouch is unavailable.");
+
+    await expect(removeDownloadedVideoAssetIfUnreferenced({
+      media,
+      assetId: media.localVideoFile!.id,
+      owner,
+      deleteAsset,
+      isOwnerCurrent: () => false,
+    })).rejects.toThrow(/church changed/i);
+    expect(deleteAsset).not.toHaveBeenCalled();
   });
 });

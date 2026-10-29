@@ -17,7 +17,7 @@ type PollingCallbacks = {
 
 export type MuxUploadCallbacks = PollingCallbacks & {
   setXhr?: (xhr: XMLHttpRequest) => void;
-  setCancelUpload?: (cancel: () => Promise<void>) => void;
+  setCancelUpload?: (cancel: (() => Promise<void>) | undefined) => void;
 };
 
 export type MuxUploadOptions = {
@@ -286,7 +286,7 @@ const uploadVideoToMuxFromSource = async (
     const playbackUrl = `https://stream.mux.com/${playbackId}.m3u8`;
     const thumbnailUrl = `https://image.mux.com/${playbackId}/thumbnail.png?width=250&height=141&fit_mode=pad&time=1`;
     const name = fileName.replace(/\.[^/.]+$/, "");
-    return {
+    const result = {
       playbackId,
       assetId: finalAssetId,
       playbackUrl,
@@ -295,6 +295,10 @@ const uploadVideoToMuxFromSource = async (
       name,
       durationSeconds,
     };
+    // Once Mux has finished creating the asset, cancellation must not delete
+    // it while the caller persists the Media Library reference.
+    callbacks.setCancelUpload?.(undefined);
+    return result;
   } catch (error) {
     try {
       await cancelAndCleanUpload();
@@ -307,8 +311,10 @@ const uploadVideoToMuxFromSource = async (
         ...(assetId ? { assetId } : {}),
         retryCleanup: cancelAndCleanUpload,
       });
+      callbacks.setCancelUpload?.(undefined);
       throw failure;
     }
+    callbacks.setCancelUpload?.(undefined);
     throw error;
   }
 };
