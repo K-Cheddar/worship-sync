@@ -193,12 +193,13 @@ const Toolbar = ({
       !onItemPage ||
       mode === "present" ||
       section !== "editing" ||
+      !itemType ||
       isViewOnlyAccess(access) ||
       !canShowSlideAndBoxTools
     ) {
       setAllToolsOpen(false);
     }
-  }, [onItemPage, mode, section, access, canShowSlideAndBoxTools]);
+  }, [onItemPage, mode, section, access, canShowSlideAndBoxTools, itemType]);
 
   useEffect(() => {
     if (!activeControllerConfigurationRoute) return;
@@ -249,10 +250,11 @@ const Toolbar = ({
 
   const renderContextualToolbar = () => (
     <div
+      data-testid="toolbar-contextual-row"
       className={cn(
         "flex min-h-0 w-full min-w-0 flex-1 items-center px-2",
         "[&_[data-slot=input]]:!h-8 [&_[data-slot=input]]:!min-h-8 [&_[data-slot=select-trigger]]:!h-8 [&_[data-slot=select-trigger]]:!min-h-8",
-        isLyricsEditorOpen && "hidden",
+        (isLyricsEditorOpen || (section === "editing" && !itemType)) && "hidden",
       )}
     >
       {section === "configurations" ? (
@@ -303,7 +305,7 @@ const Toolbar = ({
         </div>
       ) : onItemPage && !isViewOnlyAccess(access) && canShowSlideAndBoxTools ? (
         <AllToolsDrawer
-          isOpen={allToolsOpen && mode === "edit"}
+          isOpen={allToolsOpen && mode === "edit" && Boolean(itemType)}
           onClose={() => setAllToolsOpen(false)}
           onToggle={() => setAllToolsOpen((open) => !open)}
           isMobile={isMobile}
@@ -385,7 +387,7 @@ const Toolbar = ({
             </div>
             {mode === "edit" && (
               <>
-                <div className="w-full border-t border-gray-600" />
+                <div className={cn("w-full border-t border-gray-600", section === "editing" && !itemType && "hidden")} />
                 {renderContextualToolbar()}
               </>
             )}

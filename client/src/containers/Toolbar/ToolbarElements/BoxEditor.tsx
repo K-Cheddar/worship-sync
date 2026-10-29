@@ -532,13 +532,13 @@ const BoxEditor = ({
       className="flex min-w-0 flex-col gap-4"
     >
       <div className="flex flex-wrap items-center gap-2">
-        {(["x", "y", "width", "height"] as const).map((field) => (
+        {(["x", "y"] as const).map((field) => (
           <Input
             key={field}
             type="number"
             value={dimensions[field]}
             onChange={(value) => handleInputChange(field, value.toString())}
-            label={field === "x" || field === "y" ? field.toUpperCase() : field}
+            label={field.toUpperCase()}
             labelLayout="inline"
             labelFontSize="text-xs"
             min={0}
@@ -548,6 +548,24 @@ const BoxEditor = ({
             hideSpinButtons={false}
           />
         ))}
+        <div className="flex items-center gap-2">
+          {(["width", "height"] as const).map((field) => (
+            <Input
+              key={field}
+              type="number"
+              value={dimensions[field]}
+              onChange={(value) => handleInputChange(field, value.toString())}
+              label={field === "width" ? "Width" : "Height"}
+              labelLayout="inline"
+              labelFontSize="text-xs"
+              min={0}
+              max={100}
+              inputWidth="w-16"
+              inputTextSize="text-xs"
+              hideSpinButtons={false}
+            />
+          ))}
+        </div>
       </div>
       <div className="flex flex-col gap-1">
         <p className="text-xs font-medium">Layouts</p>

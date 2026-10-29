@@ -383,6 +383,34 @@ describe("Toolbar", () => {
     expect(screen.queryByRole("button", { name: "All Tools" })).not.toBeInTheDocument();
   });
 
+  it("hides item tools and closes the drawer when the active item is cleared", () => {
+    const { rerender } = renderToolbar({ access: "full", itemType: "song", workspaceMode: "edit" });
+    act(() => screen.getByRole("button", { name: "Edit" }).click());
+    act(() => screen.getByRole("button", { name: "All Tools" }).click());
+    expect(screen.getByTestId("all-tools-drawer")).toHaveAttribute("data-open", "true");
+
+    const refresh = () => rerender(
+      <ThumbnailPreviewModeProvider>
+        <GlobalInfoContext.Provider value={{ access: "full" } as any}>
+          <ControllerInfoContext.Provider value={{ isPhone: false, isMobile: false } as any}>
+            <PresentationControllerModeProvider><Toolbar className="toolbar" /></PresentationControllerModeProvider>
+            <PreviewModeProbe />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </ThumbnailPreviewModeProvider>,
+    );
+    mockState.undoable.present.item.type = "";
+    refresh();
+    expect(screen.getByTestId("toolbar-contextual-row")).toHaveClass("hidden");
+    expect(screen.getByTestId("all-tools-drawer")).toHaveAttribute("data-open", "false");
+
+    mockState.undoable.present.item.type = "song";
+    refresh();
+    expect(screen.getByTestId("toolbar-contextual-row")).not.toHaveClass("hidden");
+    expect(screen.getByTestId("all-tools-drawer")).toHaveAttribute("data-open", "false");
+    expect(screen.getByRole("button", { name: "All Tools" })).toBeInTheDocument();
+  });
+
   it("shows slide and box tools for music access on song items", () => {
     renderToolbar({ access: "music", itemType: "song" });
 
