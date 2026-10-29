@@ -630,7 +630,14 @@ const ServicePlanEditor = ({
   const planningCenterPdfInputRef = useRef<HTMLInputElement>(null);
   const worshipSyncJsonInputRef = useRef<HTMLInputElement>(null);
   const [worshipSyncImportKind, setWorshipSyncImportKind] = useState<"link" | "file">("link");
-  const [pendingNativeSections, setPendingNativeSections] = useState<ServicePlanSection[] | null>(null);
+  const importOperationRef = useRef<symbol | null>(null);
+  type NativeImportProposal = {
+    sections: ServicePlanSection[];
+    editorIdentity: string;
+    draftVersion: number;
+    operation: symbol;
+  };
+  const [pendingNativeImport, setPendingNativeImport] = useState<NativeImportProposal | null>(null);
   const [importPreview, setImportPreview] = useState<ServicePlanImportPreview | null>(null);
   const [ambiguityDialog, setAmbiguityDialog] = useState<{
     prompt: boolean;
@@ -845,6 +852,9 @@ const ServicePlanEditor = ({
     setSourceImport(undefined);
     setTemplateModal(null);
     setPendingSongCreateRef(null);
+    importOperationRef.current = null;
+    setImporting(false);
+    setPendingNativeImport(null);
     setShowImport(false);
     setImportUrl("");
     setRefreshOptions(DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
@@ -1797,18 +1807,30 @@ const ServicePlanEditor = ({
     );
   };
 
+  const beginPlanImport = () => {
+    const importEditorIdentityKey = editorIdentityKey;
+    const draftVersionAtStart = draftChangeVersionRef.current;
+    const operation = Symbol("plan-import");
+    importOperationRef.current = operation;
+    setImporting(true);
+    return {
+      importEditorIdentityKey, draftVersionAtStart, operation,
+      isCurrentImport: () => isMountedRef.current
+        && currentEditorIdentityRef.current === importEditorIdentityKey
+        && importOperationRef.current === operation,
+    };
+  };
+
   const handlePlanningCenterPdfSelected = async (
     event: ChangeEvent<HTMLInputElement>,
   ) => {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
-    const importEditorIdentityKey = editorIdentityKey;
-    const draftVersionAtStart = draftChangeVersionRef.current;
-    setImporting(true);
+    const { draftVersionAtStart, isCurrentImport } = beginPlanImport();
     try {
       const text = await extractTextFromPdfFile(file);
-      if (currentEditorIdentityRef.current !== importEditorIdentityKey) return;
+      if (!isCurrentImport()) return;
       if (draftChangeVersionRef.current !== draftVersionAtStart) {
         showToast("The plan changed. Import it again to review the latest draft.");
         return;
@@ -1816,13 +1838,14 @@ const ServicePlanEditor = ({
       const data = parsePlanningCenterPdfText(text);
       applyImportedPlanData(data, "planningCenterPdf", "");
     } catch (error) {
+      if (!isCurrentImport()) return;
       showApiErrorToast(
         showToast,
         error,
         "Could not import from Planning Center PDF.",
       );
     } finally {
-      setImporting(false);
+      if (isCurrentImport()) setImporting(false);
     }
   };
 
@@ -1836,20 +1859,21 @@ const ServicePlanEditor = ({
     if (usingPcoAccount && (!churchId || !importPcoServiceTypeId || !importPcoPlanId))
       return;
     if (!usingPcoAccount && !trimmedUrl) return;
-    const importEditorIdentityKey = editorIdentityKey;
-    const draftVersionAtStart = draftChangeVersionRef.current;
-    setImporting(true);
+    const { importEditorIdentityKey, draftVersionAtStart, operation, isCurrentImport } = beginPlanImport();
     const sourceLabel = servicePlanImportSourceLabel(importSource);
     try {
       if (importSource === "worshipSync") {
-        const importEditorIdentityKey = editorIdentityKey;
         const shareId = shareIdFromPublicServiceUrl(trimmedUrl);
         if (!shareId) throw new Error("Enter a public WorshipSync service-plan link.");
         const snapshot = await getPublicServiceFlow(shareId);
-        if (currentEditorIdentityRef.current !== importEditorIdentityKey) return;
-        const nextSections = publicServiceFlowToSections(snapshot.service, allSongDocs);
-        if (hasPlanContent) setPendingNativeSections(nextSections);
-        else applyNativeImportedSections(nextSections);
+        if (!isCurrentImport()) return;
+        const proposal: NativeImportProposal = {
+          sections: publicServiceFlowToSections(snapshot.service, allSongDocs),
+          editorIdentity: importEditorIdentityKey, draftVersion: draftVersionAtStart, operation,
+        };
+        if (!validateNativeImport(proposal)) return;
+        if (hasPlanContent) setPendingNativeImport(proposal);
+        else applyNativeImportedSections(proposal);
         setShowImport(false);
         return;
       }
@@ -1881,22 +1905,35 @@ const ServicePlanEditor = ({
         nextSourceUrl = trimmedUrl;
       }
 
-      if (currentEditorIdentityRef.current !== importEditorIdentityKey) return;
+      if (!isCurrentImport()) return;
       if (draftChangeVersionRef.current !== draftVersionAtStart) {
         showToast("The plan changed. Import it again to review the latest draft.");
         return;
       }
       applyImportedPlanData(data, importSource, nextSourceUrl, sourceExtras);
     } catch (error) {
+      if (!isCurrentImport()) return;
       showApiErrorToast(showToast, error, `Could not import from ${sourceLabel}.`);
     } finally {
-      setImporting(false);
+      if (isCurrentImport()) setImporting(false);
     }
   };
 
-  const applyNativeImportedSections = (nextSections: ServicePlanSection[]) => {
-    updateDraft({ sections: nextSections, sourceImport: undefined });
-    setPendingNativeSections(null);
+  const validateNativeImport = (proposal: NativeImportProposal) => {
+    if (!isMountedRef.current || currentEditorIdentityRef.current !== proposal.editorIdentity
+      || importOperationRef.current !== proposal.operation) return false;
+    if (draftChangeVersionRef.current !== proposal.draftVersion) {
+      setPendingNativeImport(null);
+      showToast("The plan changed. Import it again to review the latest draft.");
+      return false;
+    }
+    return true;
+  };
+
+  const applyNativeImportedSections = (proposal: NativeImportProposal) => {
+    if (!validateNativeImport(proposal)) return;
+    updateDraft({ sections: proposal.sections, sourceImport: undefined });
+    setPendingNativeImport(null);
     setImportUrl("");
     setShowImport(false);
     setIsEditing(true);
@@ -1908,20 +1945,24 @@ const ServicePlanEditor = ({
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
-    const importEditorIdentityKey = editorIdentityKey;
-    setImporting(true);
+    const { importEditorIdentityKey, draftVersionAtStart, operation, isCurrentImport } = beginPlanImport();
     try {
       const text = await file.text();
-      if (currentEditorIdentityRef.current !== importEditorIdentityKey) return;
+      if (!isCurrentImport()) return;
       const parsed: unknown = JSON.parse(text);
-      const nextSections = importWorshipSyncPlan(parsed, { targetChurchId: churchId, songs: allSongDocs });
+      const proposal: NativeImportProposal = {
+        sections: importWorshipSyncPlan(parsed, { targetChurchId: churchId, songs: allSongDocs }),
+        editorIdentity: importEditorIdentityKey, draftVersion: draftVersionAtStart, operation,
+      };
+      if (!validateNativeImport(proposal)) return;
       setShowImport(false);
-      if (hasPlanContent) setPendingNativeSections(nextSections);
-      else applyNativeImportedSections(nextSections);
+      if (hasPlanContent) setPendingNativeImport(proposal);
+      else applyNativeImportedSections(proposal);
     } catch (error) {
+      if (!isCurrentImport()) return;
       showApiErrorToast(showToast, error, "Could not import this WorshipSync plan file.");
     } finally {
-      setImporting(false);
+      if (isCurrentImport()) setImporting(false);
     }
   };
 
@@ -3991,12 +4032,12 @@ const ServicePlanEditor = ({
       />
 
       <ConfirmDialog
-        open={Boolean(pendingNativeSections)}
+        open={Boolean(pendingNativeImport)}
         title="Replace this plan's content?"
         confirmLabel="Replace content"
         destructive
-        onCancel={() => setPendingNativeSections(null)}
-        onConfirm={() => pendingNativeSections && applyNativeImportedSections(pendingNativeSections)}
+        onCancel={() => setPendingNativeImport(null)}
+        onConfirm={() => pendingNativeImport && applyNativeImportedSections(pendingNativeImport)}
       >
         <p className="text-sm text-gray-200">
           This service already has plan items. Importing will replace its sections and items. The service date, occurrence, and publishing settings will stay the same.

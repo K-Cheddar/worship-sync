@@ -4949,10 +4949,12 @@ const loadStoreWithItemListPersistence = (
     bulkDocs: jest.fn(),
   };
 
+  let activeDb = db;
+  let activePostMessage = postMessage;
   jest.isolateModules(() => {
     jest.doMock("../context/controllerInfo", () => ({
-      globalDb: db,
-      globalBroadcastRef: { postMessage },
+      get globalDb() { return activeDb; },
+      get globalBroadcastRef() { return { postMessage: activePostMessage }; },
     }));
     jest.doMock("../context/globalInfo", () => ({
       globalFireDbInfo: {
@@ -5008,6 +5010,7 @@ const loadStoreWithItemListPersistence = (
     contentDatabaseSession,
     db,
     postMessage,
+    switchDatabase: (next: typeof db, publish: typeof postMessage) => { activeDb = next; activePostMessage = publish; },
   };
 };
 
@@ -5687,6 +5690,106 @@ describe("item list outline persistence", () => {
     await flushBibleCleanup();
     expect(db.bulkDocs).not.toHaveBeenCalled();
     presence.release();
+  });
+
+  it.each(["items", "overlays"])("serializes superseded %s saves and acknowledges only the latest persisted draft", async (field) => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, overlaysSlice, db, postMessage } = loadStoreWithItemListPersistence();
+    hydrateOutline(store, itemListSlice, itemListsSlice);
+    store.dispatch(overlaysSlice.actions.initiateOverlayList([{ id: "base", name: "Base" }]));
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    let doc: Record<string, any> = { _id: "outline-a", _rev: "1-base", items: [], overlays: [] };
+    db.get.mockImplementation(async () => ({ ...doc }));
+    db.put.mockImplementation(async (next: Record<string, any>) => {
+      const name = field === "items" ? next.items[0].name : next.overlays[0];
+      if (name === "A") { entered(); await gate; }
+      if (doc._rev !== next._rev) throw Object.assign(new Error("conflict"), { status: 409 });
+      doc = { ...next, _rev: `${Number(doc._rev[0]) + 1}-saved` };
+      return { rev: doc._rev };
+    });
+    const edit = (name: string) => field === "items"
+      ? store.dispatch(itemListSlice.actions.updateItemList([createServiceItem({ _id: name, name, listId: name })]))
+      : store.dispatch(overlaysSlice.actions.updateOverlayList([{ id: name, name }]));
+    edit("A");
+    await jest.advanceTimersByTimeAsync(1500);
+    await started;
+    edit("B");
+    await jest.advanceTimersByTimeAsync(1500);
+    expect(store.getState().undoable.present[field === "items" ? "itemList" : "overlays"].hasPendingUpdate).toBe(true);
+    expect(postMessage).not.toHaveBeenCalled();
+    release();
+    await jest.advanceTimersByTimeAsync(0);
+    await flushListenerEffects();
+    expect(field === "items" ? doc.items[0].name : doc.overlays[0]).toBe("B");
+    expect(store.getState().undoable.present[field === "items" ? "itemList" : "overlays"].hasPendingUpdate).toBe(false);
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(postMessage.mock.calls[0][0].data.docs[field][0]).toEqual(field === "items" ? expect.objectContaining({ name: "B" }) : "B");
+  });
+
+  it("finishes an outgoing outline save even when another outline starts saving", async () => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, db } = loadStoreWithItemListPersistence();
+    store.dispatch(itemListsSlice.actions.initiateItemLists([{ _id: "outline-a", name: "A" }, { _id: "outline-b", name: "B" }]));
+    store.dispatch(itemListSlice.actions.initiateItemList([]));
+    const docs = new Map<string, Record<string, any>>([
+      ["outline-a", { _id: "outline-a", _rev: "1-a", items: [], overlays: [] }],
+      ["outline-b", { _id: "outline-b", _rev: "1-b", items: [], overlays: [] }],
+    ]);
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    db.get.mockImplementation(async (id: string) => ({ ...docs.get(id) }));
+    db.put.mockImplementation(async (doc: Record<string, any>) => {
+      if (doc._id === "outline-a") { entered(); await gate; }
+      docs.set(doc._id, { ...doc, _rev: "2-saved" });
+      return { rev: "2-saved" };
+    });
+    store.dispatch(itemListSlice.actions.updateItemList([createServiceItem({ name: "Outgoing edit" })]));
+    store.dispatch(itemListsSlice.actions.selectItemList("outline-b"));
+    await started;
+    store.dispatch(itemListSlice.actions.initiateItemList([]));
+    store.dispatch(itemListSlice.actions.updateItemList([createServiceItem({ name: "New outline edit" })]));
+    await jest.advanceTimersByTimeAsync(1500);
+    expect(docs.get("outline-b")?.items[0].name).toBe("New outline edit");
+    release();
+    await jest.advanceTimersByTimeAsync(0);
+    expect(docs.get("outline-a")?.items[0].name).toBe("Outgoing edit");
+    expect(store.getState().undoable.present.itemList.list[0].name).toBe("New outline edit");
+  });
+
+  it("keeps same-ID database saves, acknowledgments and broadcasts with their original owner", async () => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, db, switchDatabase, postMessage } = loadStoreWithItemListPersistence();
+    hydrateOutline(store, itemListSlice, itemListsSlice);
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    db.get.mockResolvedValue({ _id: "outline-a", _rev: "1-a", items: [], overlays: [] });
+    db.put.mockImplementation(async () => { entered(); await gate; return { rev: "2-a" }; });
+    store.dispatch(itemListSlice.actions.updateItemList([createServiceItem({ name: "Church A edit" })]));
+    await jest.advanceTimersByTimeAsync(1500);
+    await started;
+    const publishB = jest.fn();
+    const dbB = { ...db, name: "church-b", get: jest.fn().mockResolvedValue({ _id: "outline-a", _rev: "1-b", items: [], overlays: [] }), put: jest.fn().mockResolvedValue({ rev: "2-b" }) };
+    switchDatabase(dbB, publishB);
+    hydrateOutline(store, itemListSlice, itemListsSlice);
+    store.dispatch(itemListSlice.actions.updateItemList([createServiceItem({ name: "Church B edit" })]));
+    // A finishes while B is still pending. It must not acknowledge or publish B.
+    release();
+    await jest.advanceTimersByTimeAsync(0);
+    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(true);
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(publishB).not.toHaveBeenCalled();
+    expect(dbB.put).not.toHaveBeenCalled();
+    await jest.advanceTimersByTimeAsync(1500);
+    expect(dbB.put).toHaveBeenCalledWith(expect.objectContaining({ items: [expect.objectContaining({ name: "Church B edit" })] }));
+    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
+    expect(publishB).toHaveBeenCalledTimes(1);
   });
 
   it("retries after an overlay-order write wins a shared-document revision conflict", async () => {

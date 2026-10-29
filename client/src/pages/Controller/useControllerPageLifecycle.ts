@@ -104,7 +104,7 @@ export const useControllerPageLifecycle = () => {
   const activeControllerId = useActiveControllerId();
   const activeControllerProfile = useActiveControllerProfile();
   const { showToast } = useToast();
-  const { db, cloud, updater, setIsMobile, setIsPhone, pullFromRemote } =
+  const { db, cloud, updater, setIsMobile, setIsPhone, pullFromRemote, bootstrapReady, canCreateBootstrapDocuments } =
     useContext(ControllerInfoContext) || {};
   const {
     access,
@@ -135,6 +135,10 @@ export const useControllerPageLifecycle = () => {
     };
   }
   const serviceListSyncGenerationRef = useRef(0);
+  const loadedPreferencesRef = useRef<{
+    db: PouchDB.Database;
+    baseline: RootState["undoable"]["present"]["preferences"];
+  } | null>(null);
   const allControllerSlicesInitialized = useSelector((state: RootState) =>
     Boolean(
       state.allDocs.isInitialized &&
@@ -491,13 +495,32 @@ export const useControllerPageLifecycle = () => {
 
   useEffect(() => {
     if (!db) return;
+    let cancelled = false;
+    if (loadedPreferencesRef.current?.db !== db) {
+      loadedPreferencesRef.current = { db, baseline: (store.getState() as RootState).undoable.present.preferences };
+    }
+    const baseline = loadedPreferencesRef.current.baseline;
     const getPreferences = async () => {
       try {
-        const bundle = await loadOrCreatePreferencesBundle(db);
-        dispatch(initiatePreferences({ preferences: bundle.preferences, isMusic: access === "music" }));
-        dispatch(initiateQuickLinks(bundle.quickLinks));
-        dispatch(initiateMonitorSettings(bundle.monitorSettings));
+        const bundle = await loadOrCreatePreferencesBundle(db, canCreateBootstrapDocuments);
+        if (cancelled || !bundle) return;
+        // Reverification refreshes saved data, while edits made since the last
+        // hydration still belong to the operator's current draft.
+        const current = (store.getState() as RootState).undoable.present.preferences;
+        const preferences = {
+          ...bundle.preferences,
+          ..._.pickBy(current.preferences, (value, key) => !_.isEqual(value, _.get(baseline.preferences, key))),
+        };
+        const monitorSettings = {
+          ...bundle.monitorSettings,
+          ..._.pickBy(current.monitorSettings, (value, key) => !_.isEqual(value, _.get(baseline.monitorSettings, key))),
+        };
+        dispatch(initiatePreferences({ preferences, isMusic: access === "music" }));
+        dispatch(initiateQuickLinks(_.isEqual(current.quickLinks, baseline.quickLinks) ? bundle.quickLinks : current.quickLinks));
+        dispatch(initiateMonitorSettings(monitorSettings));
+        loadedPreferencesRef.current = { db, baseline: (store.getState() as RootState).undoable.present.preferences };
       } catch (e) {
+        if (cancelled) return;
         console.error(e);
         const fb = preferencesClusterLoadFallback;
         dispatch(
@@ -513,21 +536,24 @@ export const useControllerPageLifecycle = () => {
           "error",
         );
       } finally {
-        dispatch(setIsLoading(false));
-        dispatch(setPreferencesIsInitialized(true));
+        if (!cancelled) {
+          dispatch(setIsLoading(false));
+          dispatch(setPreferencesIsInitialized(true));
+        }
       }
     };
     void getPreferences();
-  }, [dispatch, db, access, showToast]);
+    return () => { cancelled = true; };
+  }, [dispatch, db, bootstrapReady, canCreateBootstrapDocuments, access, showToast, store]);
 
   useEffect(() => {
     if (!db || !activeControllerId) return;
     let isCurrent = true;
     const controllerProfileId = activeControllerId;
     dispatch(initiateMediaRouteFolders({ controllerProfileId, mediaRouteFolders: {} }));
-    void loadOrCreateControllerMediaRouteFolders(db, controllerProfileId).then(
+    void loadOrCreateControllerMediaRouteFolders(db, controllerProfileId, canCreateBootstrapDocuments).then(
       (doc) => {
-        if (isCurrent) dispatch(initiateMediaRouteFolders({
+        if (isCurrent) dispatch(updateControllerMediaRouteFoldersFromRemote({
           controllerProfileId,
           mediaRouteFolders: doc.mediaRouteFolders,
         }));
@@ -536,14 +562,16 @@ export const useControllerPageLifecycle = () => {
       console.error("Could not load controller media folder preferences", error);
     });
     return () => { isCurrent = false; };
-  }, [dispatch, db, activeControllerId]);
+  }, [dispatch, db, bootstrapReady, canCreateBootstrapDocuments, activeControllerId]);
 
   useEffect(() => {
     if (!db) return;
+    let cancelled = false;
     const getTemplates = async () => {
       try {
         const templates: DBOverlayTemplates | undefined =
           await db.get("overlay-templates");
+        if (cancelled || (store.getState() as RootState).undoable.present.overlayTemplates.hasPendingUpdate) return;
         const templatesByType: TemplatesByType | undefined =
           templates?.templatesByType;
         dispatch(
@@ -553,11 +581,13 @@ export const useControllerPageLifecycle = () => {
           }),
         );
       } catch (e) {
+        if (cancelled || (store.getState() as RootState).undoable.present.overlayTemplates.hasPendingUpdate) return;
         dispatch(initiateTemplates(undefined));
       }
     };
     getTemplates();
-  }, [dispatch, db]);
+    return () => { cancelled = true; };
+  }, [dispatch, db, bootstrapReady, store]);
 
   useEffect(() => {
     if (db && access !== "full") {
@@ -669,10 +699,14 @@ export const useControllerPageLifecycle = () => {
             response?.servicePlanBinding ?? null,
           ),
         );
-        dispatch(initiateItemList(formatItemList(itemList, cloud)));
+        if (!(store.getState() as RootState).undoable.present.itemList.hasPendingUpdate) {
+          dispatch(initiateItemList(formatItemList(itemList, cloud)));
+        }
         const formattedOverlays = await getOverlaysByIds(db, overlayIds);
         if (cancelled) return;
-        dispatch(initiateOverlayList(formattedOverlays));
+        if (!(store.getState() as RootState).undoable.present.overlays.hasPendingUpdate) {
+          dispatch(initiateOverlayList(formattedOverlays));
+        }
         const overlayHistory = await getAllOverlayHistory(db);
         if (cancelled) return;
         dispatch(mergeOverlayHistoryFromDb(overlayHistory));
@@ -690,7 +724,7 @@ export const useControllerPageLifecycle = () => {
     return () => {
       cancelled = true;
     };
-  }, [dispatch, db, selectedList, cloud]);
+  }, [dispatch, db, selectedList, cloud, bootstrapReady, store]);
 
   useEffect(() => {
     if (!updater) return;

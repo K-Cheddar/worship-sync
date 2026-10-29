@@ -5,6 +5,48 @@ import {
 import type { DBItemListDetails } from "../types";
 
 describe("persistServiceListField", () => {
+  it.each(["read", "put", "conflict"])("keeps the latest same-field intent when the older %s is delayed", async (boundary) => {
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    let current = { _id: "outline", _rev: "1-base", items: [], overlays: [] as string[] };
+    let firstRead = true;
+    const db = {
+      get: jest.fn(async () => {
+        const snapshot = { ...current };
+        if (firstRead && boundary === "read") {
+          firstRead = false;
+          entered();
+          await gate;
+        }
+        return snapshot;
+      }),
+      put: jest.fn(async (raw: unknown) => {
+        const doc = raw as typeof current;
+        if (doc.overlays[0] === "A" && boundary !== "read") {
+          entered();
+          await gate;
+          if (boundary === "conflict") throw Object.assign(new Error("conflict"), { status: 409 });
+        }
+        if (doc._rev !== current._rev) throw Object.assign(new Error("conflict"), { status: 409 });
+        current = { ...doc, _rev: `${Number(current._rev[0]) + 1}-saved` };
+        return { rev: current._rev };
+      }),
+    };
+    const older = persistServiceListOverlays(db, "outline", ["A"]);
+    await started;
+    const newer = persistServiceListOverlays(db, "outline", ["B"]);
+    // A serialized writer must keep B behind an already entered A put.
+    // Let independent microtasks finish before releasing the blocked operation.
+    await Promise.resolve();
+    await Promise.resolve();
+    release();
+    await Promise.all([older, newer]);
+    expect(current.overlays).toEqual(["B"]);
+    expect(db.put.mock.calls.filter(([doc]) => (doc as typeof current).overlays[0] === "A")).toHaveLength(boundary === "read" ? 0 : 1);
+  });
+
   it("preserves independent outline and overlay-order writes across a revision conflict", async () => {
     let current: DBItemListDetails = {
       _id: "outline-1",

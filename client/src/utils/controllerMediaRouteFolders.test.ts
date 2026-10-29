@@ -37,6 +37,15 @@ function makeDb(seed: Record<string, Record<string, unknown>> = {}) {
 }
 
 describe("controller media route folder documents", () => {
+  it("waits for verification before seeding scoped routes from a delayed legacy map", async () => {
+    const { db, docs, put } = makeDb();
+    await expect(loadOrCreateControllerMediaRouteFolders(db, "presentation")).resolves.toMatchObject({ mediaRouteFolders: {} });
+    expect(put).not.toHaveBeenCalled();
+    docs.set(MEDIA_ROUTE_FOLDERS_POUCH_ID, { _id: MEDIA_ROUTE_FOLDERS_POUCH_ID, mediaRouteFolders: { "controller-default": "remote-folder" } });
+    const loaded = await loadOrCreateControllerMediaRouteFolders(db, "presentation", () => true);
+    expect(loaded.mediaRouteFolders).toEqual({ "controller-default": "remote-folder" });
+    expect(put).toHaveBeenCalledTimes(1);
+  });
   it("does not broadcast an original owner's docs after the UI scope changes", () => {
     const churchBBroadcast = { postMessage: jest.fn() };
     mockBroadcastRef = churchBBroadcast;
@@ -58,8 +67,8 @@ describe("controller media route folder documents", () => {
     const { db, docs } = makeDb({
       [MEDIA_ROUTE_FOLDERS_POUCH_ID]: { _id: MEDIA_ROUTE_FOLDERS_POUCH_ID, mediaRouteFolders: legacyMap },
     });
-    const presentation = await loadOrCreateControllerMediaRouteFolders(db, "presentation");
-    const aux = await loadOrCreateControllerMediaRouteFolders(db, "aux/1");
+    const presentation = await loadOrCreateControllerMediaRouteFolders(db, "presentation", () => true);
+    const aux = await loadOrCreateControllerMediaRouteFolders(db, "aux/1", () => true);
     expect(presentation.mediaRouteFolders["controller-item-image"]).toBe("legacy-image-override");
     expect(presentation.mediaRouteFolders["controller-item-song"]).toBe("legacy-image");
     expect(aux.mediaRouteFolders).toEqual(presentation.mediaRouteFolders);
@@ -77,10 +86,10 @@ describe("controller media route folder documents", () => {
     await patchControllerMediaRouteFolder(db, "aux:1", "controller-item-image", "announcements");
     await patchControllerMediaRouteFolder(db, "overlay", "overlay-controller", "overlays");
     await patchControllerMediaRouteFolder(db, "aux 1", "controller-item-song", "songs");
-    const aux = await loadOrCreateControllerMediaRouteFolders(db, "aux 1");
+    const aux = await loadOrCreateControllerMediaRouteFolders(db, "aux 1", () => true);
     expect(aux.mediaRouteFolders).toEqual({ "controller-item-image": "videos", "controller-item-song": "songs" });
-    expect((await loadOrCreateControllerMediaRouteFolders(db, "aux:1")).mediaRouteFolders["controller-item-image"]).toBe("announcements");
-    expect((await loadOrCreateControllerMediaRouteFolders(db, "overlay")).mediaRouteFolders["overlay-controller"]).toBe("overlays");
+    expect((await loadOrCreateControllerMediaRouteFolders(db, "aux:1", () => true)).mediaRouteFolders["controller-item-image"]).toBe("announcements");
+    expect((await loadOrCreateControllerMediaRouteFolders(db, "overlay", () => true)).mediaRouteFolders["overlay-controller"]).toBe("overlays");
     expect(getControllerMediaRouteFoldersDocId("aux 1")).toBe("mediaRouteFolders:aux%201");
   });
 
@@ -91,10 +100,11 @@ describe("controller media route folder documents", () => {
       docs.set(id, { _id: id, controllerProfileId: "presentation", mediaRouteFolders: { "controller-default": "race-folder" }, _rev: "1-race" });
       throw Object.assign(new Error("conflict"), { status: 409, name: "conflict" });
     });
-    const loaded = await loadOrCreateControllerMediaRouteFolders(db, "presentation");
+    const loaded = await loadOrCreateControllerMediaRouteFolders(db, "presentation", () => true);
     expect(loaded.mediaRouteFolders).toEqual({ "controller-default": "race-folder" });
     const fresh = makeDb();
-    expect((await loadOrCreateControllerMediaRouteFolders(fresh.db, "brand-new")).mediaRouteFolders).toEqual({});
+    expect((await loadOrCreateControllerMediaRouteFolders(fresh.db, "brand-new", () => true)).mediaRouteFolders).toEqual({});
+    expect(fresh.put).toHaveBeenCalledTimes(1);
   });
 
   it("re-reads route patches after conflict and preserves the other client's route", async () => {

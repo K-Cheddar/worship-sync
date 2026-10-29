@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 
 import PouchDB from "pouchdb-browser";
@@ -30,6 +31,8 @@ import {
   trackContentReplication,
   beginContentDatabaseSession,
   type ContentReplicationActivity,
+  hasSuccessfulInitialContentReplication,
+  subscribeToContentActivity,
 } from "../utils/contentReplicationActivity";
 import { cancelBibleItemCleanupRetry } from "../utils/bibleItemCleanup";
 
@@ -53,6 +56,8 @@ export const describeControllerSyncError = (error: unknown) => {
 
 type ControllerInfoContextType = {
   db: PouchDB.Database | undefined;
+  bootstrapReady: boolean;
+  canCreateBootstrapDocuments: () => boolean;
   bibleDb: PouchDB.Database | undefined;
   cloud: Cloudinary;
   updater: EventTarget;
@@ -644,6 +649,18 @@ const ControllerInfoProvider = ({ children }: any) => {
   const contentDatabaseSessionRef = useRef<
     ReturnType<typeof beginContentDatabaseSession> | null
   >(null);
+  const canCreateBootstrapDocuments = useCallback(() => {
+    if (!isAuthenticatedSession && !isGuestSession) return false;
+    if (!db || globalDb !== db || databaseSessionRef.current !== databaseSessionKey || dbSessionRef.current !== databaseSessionKey) return false;
+    if (isGuestSession) return true;
+    const session = contentDatabaseSessionRef.current;
+    return Boolean(session && hasSuccessfulInitialContentReplication(db.name, session.token));
+  }, [db, databaseSessionKey, isGuestSession, isAuthenticatedSession]);
+  const bootstrapReady = useSyncExternalStore(
+    subscribeToContentActivity,
+    canCreateBootstrapDocuments,
+    () => false,
+  );
   useEffect(() => {
     if (!db || !isAuthenticatedSession || dbSessionRef.current !== databaseSessionKey) {
       return;
@@ -675,6 +692,7 @@ const ControllerInfoProvider = ({ children }: any) => {
     if (!contentDatabaseSession) return;
     const connectRemote = async () => {
       let pullActivity: ContentReplicationActivity | null = null;
+      let pullFailed = false;
       try {
         const remoteSourceDbName = `worship-sync-${isGuestSession ? DEMO_DATABASE_KEY : activeDatabaseKey
           }`;
@@ -722,6 +740,7 @@ const ControllerInfoProvider = ({ children }: any) => {
           })
           .on("error", async (error: any) => {
             if (!isCurrentSession()) return;
+            pullFailed = true;
             console.error("Replication error:", error);
             if (error.status === 401 || error.status === 403) {
               setHasCouchSession(false);
@@ -752,8 +771,8 @@ const ControllerInfoProvider = ({ children }: any) => {
               // Do not reset replicateRetryRef here; allow cap to stop the loop
             }
           })
-          .on("complete", () => {
-            if (!isCurrentSession()) return;
+          .on("complete", (result: { status?: string; ok?: boolean; errors?: unknown[] }) => {
+            if (!isCurrentSession() || pullFailed || result?.status === "cancelled" || result?.ok === false || result?.errors?.length) return;
             contentDatabaseSession.markInitialReplicationComplete();
             activePullActivity.release();
             if (initialContentReplicationActivityRef.current === activePullActivity) {
@@ -1006,7 +1025,9 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   const value = useMemo(
     () => ({
-      db,
+      db: dbSessionRef.current === databaseSessionKey ? db : undefined,
+      bootstrapReady,
+      canCreateBootstrapDocuments,
       cloud,
       updater: updater.current,
       isGuestSession,
@@ -1024,6 +1045,9 @@ const ControllerInfoProvider = ({ children }: any) => {
     }),
     [
       db,
+      databaseSessionKey,
+      bootstrapReady,
+      canCreateBootstrapDocuments,
       bibleDb,
       bibleDbProgress,
       dbProgress,

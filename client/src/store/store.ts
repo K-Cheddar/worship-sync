@@ -1798,6 +1798,7 @@ listenerMiddleware.startListening({
   effect: async (action, listenerApi) => {
     const dbAtStart = db;
     const isSavingOutgoingOutline = itemListsSlice.actions.selectItemList.match(action);
+    const churchAtStart = globalFireDbInfo?.churchId;
 
     listenerApi.cancelActiveListeners();
     if (!isSavingOutgoingOutline) {
@@ -1816,6 +1817,7 @@ listenerMiddleware.startListening({
     if (
       !dbAtStart ||
       db !== dbAtStart ||
+      globalFireDbInfo?.churchId !== churchAtStart ||
       !isInitialized ||
       !hasPendingUpdate ||
       !selectedList
@@ -1831,10 +1833,11 @@ listenerMiddleware.startListening({
         selectedList._id,
         [...list],
       );
+      if (!persisted) return;
       persistenceSucceeded = true;
 
       listenerApi.throwIfCancelled();
-      if (db !== dbAtStart) return;
+      if (db !== dbAtStart || globalFireDbInfo?.churchId !== churchAtStart) return;
       const afterPutState = (listenerApi.getState() as RootState).undoable.present;
       const afterPut = afterPutState.itemList;
       if (
@@ -1861,7 +1864,11 @@ listenerMiddleware.startListening({
         dbAtStart,
         selectedList._id,
       );
-      if (persistenceSucceeded || !pendingBibleCleanup) {
+      if (
+        db === dbAtStart &&
+        globalFireDbInfo?.churchId === churchAtStart &&
+        (persistenceSucceeded || !pendingBibleCleanup)
+      ) {
         listenerApi.dispatch(
           bibleCleanupOpportunity({
             immediate: persistenceSucceeded && pendingBibleCleanup,
@@ -2072,12 +2079,13 @@ listenerMiddleware.startListening({
     const dbAtStart = db;
     if (!dbAtStart) return;
     const isSavingOutgoingOutline = itemListsSlice.actions.selectItemList.match(action);
+    const churchAtStart = globalFireDbInfo?.churchId;
     listenerApi.cancelActiveListeners();
     if (!isSavingOutgoingOutline) {
       await listenerApi.delay(1500);
     }
 
-    if (db !== dbAtStart) return;
+    if (db !== dbAtStart || globalFireDbInfo?.churchId !== churchAtStart) return;
     const state = isSavingOutgoingOutline
       ? (listenerApi.getOriginalState() as RootState)
       : (listenerApi.getState() as RootState);
@@ -2098,9 +2106,10 @@ listenerMiddleware.startListening({
         listId,
         list.map((overlay) => overlay.id),
       );
+      if (!persisted) return;
 
       listenerApi.throwIfCancelled();
-      if (db !== dbAtStart) return;
+      if (db !== dbAtStart || globalFireDbInfo?.churchId !== churchAtStart) return;
       const latest = (listenerApi.getState() as RootState).undoable.present;
       if (
         latest.overlays.list === list &&

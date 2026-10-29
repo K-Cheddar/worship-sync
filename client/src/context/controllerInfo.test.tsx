@@ -93,6 +93,7 @@ const Probe = () => {
       <div data-testid="status">{context?.connectionStatus.status}</div>
       <div data-testid="message">{context?.connectionStatus.message}</div>
       <div data-testid="has-db">{context?.db ? "yes" : "no"}</div>
+      <div data-testid="bootstrap-ready">{context?.bootstrapReady ? "yes" : "no"}</div>
       <button type="button" onClick={() => context?.pullFromRemote()}>Pull</button>
     </div>
   );
@@ -330,10 +331,46 @@ describe("controller replication 413 batch policy", () => {
 
     await waitFor(() => expect(initialPullHandles.length).toBeGreaterThan(0));
     expect(hasSuccessfulInitialContentReplication(databaseName)).toBe(false);
+    expect(screen.getByTestId("has-db")).toHaveTextContent("yes");
+    act(() => initialPullHandles.at(-1)!.emit("change", { pending: 0 }));
+    expect(screen.getByTestId("progress")).toHaveTextContent("100");
+    expect(screen.getByTestId("bootstrap-ready")).toHaveTextContent("no");
     act(() => initialPullHandles[initialPullHandles.length - 1].emit("complete"));
     await waitFor(() => {
       expect(hasSuccessfulInitialContentReplication(databaseName)).toBe(true);
     });
+    expect(screen.getByTestId("bootstrap-ready")).toHaveTextContent("yes");
+  });
+
+  it.each(["cancelled", "failed"])("does not enable bootstrap defaults after a %s initial pull", async (outcome) => {
+    completeInitialPullAutomatically = false;
+    (global.fetch as jest.Mock).mockResolvedValue({ headers: { get: () => "application/json" }, json: async () => ({ success: true }) });
+    render(<Provider store={store}><GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+      <MemoryRouter initialEntries={["/controller"]}><ControllerInfoProvider><Probe /></ControllerInfoProvider></MemoryRouter>
+    </GlobalInfoContext.Provider></Provider>);
+    await waitFor(() => expect(initialPullHandles.length).toBeGreaterThan(0));
+    act(() => initialPullHandles.at(-1)!.emit("complete", outcome === "cancelled" ? { status: "cancelled" } : { ok: false, errors: [{ status: 500 }] }));
+    expect(screen.getByTestId("bootstrap-ready")).toHaveTextContent("no");
+    expect(liveSyncHandles).toHaveLength(0);
+  });
+
+  it("ignores a previous church's delayed initial pull", async () => {
+    completeInitialPullAutomatically = false;
+    (global.fetch as jest.Mock).mockResolvedValue({ headers: { get: () => "application/json" }, json: async () => ({ success: true }) });
+    const tree = (church: string) => <Provider store={store}><GlobalInfoContext.Provider value={createMockGlobalContext({ churchId: church, database: church }) as any}>
+      <MemoryRouter initialEntries={["/controller"]}><ControllerInfoProvider><Probe /></ControllerInfoProvider></MemoryRouter>
+    </GlobalInfoContext.Provider></Provider>;
+    const view = render(tree("a"));
+    await waitFor(() => expect(initialPullHandles).toHaveLength(1));
+    const oldPull = initialPullHandles[0];
+    view.rerender(tree("b"));
+    await waitFor(() => expect(initialPullHandles).toHaveLength(2));
+    act(() => oldPull.emit("complete", { ok: true }));
+    expect(screen.getByTestId("bootstrap-ready")).toHaveTextContent("no");
+    expect(liveSyncHandles).toHaveLength(0);
+    act(() => initialPullHandles[1].emit("complete", { ok: true }));
+    expect(screen.getByTestId("bootstrap-ready")).toHaveTextContent("yes");
+    expect(liveSyncOwners).toEqual(["worship-sync-b"]);
   });
 
   it("does not resume an old church sync after renewal finishes", async () => {

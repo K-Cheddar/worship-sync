@@ -475,7 +475,7 @@ describe("ServicePlanEditor", () => {
     });
   });
 
-  it("requires confirmation before a public WorshipSync plan replaces existing content", async () => {
+  it.each(["link", "file"])("requires confirmation before a native %s plan replaces existing content", async (source) => {
     mockGetServicePlan.mockResolvedValue({
       success: true,
       servicePlan: {
@@ -496,17 +496,163 @@ describe("ServicePlanEditor", () => {
 
     const user = userEvent.setup();
     renderEditor();
-    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
-    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
-    fireEvent.change(screen.getByLabelText(/Public service-plan link/i), { target: { value: "https://www.worshipsync.net/services/source-share" } });
-    await user.click(screen.getByRole("button", { name: /Import plan/i }));
+    await screen.findByText("Keep this until confirmed");
+    if (source === "link") {
+      await user.click(screen.getByRole("button", { name: /Plan actions/i }));
+      await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+      fireEvent.change(screen.getByLabelText(/Public service-plan link/i), { target: { value: "https://www.worshipsync.net/services/source-share" } });
+      await user.click(screen.getByRole("button", { name: /Import plan/i }));
+    } else {
+      const file = new File(["{}"], "plan.json", { type: "application/json" });
+      Object.defineProperty(file, "text", { value: async () => JSON.stringify({
+        format: "worshipsync-service-plan", version: 1, sections: [{ id: "source", name: "Imported", elements: [{ id: "source-item", type: "free", title: plainTextToRichText("Public item") }] }],
+      }) });
+      fireEvent.change(screen.getByLabelText("WorshipSync JSON plan"), { target: { files: [file] } });
+    }
 
     expect(await screen.findByRole("heading", { name: "Replace this plan's content?" })).toBeInTheDocument();
     expect(screen.getByText("Keep this until confirmed")).toBeInTheDocument();
-    expect(mockGetPublicServiceFlow).toHaveBeenCalledWith("source-share");
+    expect(mockGetPublicServiceFlow.mock.calls).toEqual(source === "link" ? [["source-share"]] : []);
     await user.click(screen.getByRole("button", { name: /Replace content/i }));
     expect(await screen.findByDisplayValue("Imported")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Replace this plan's content?" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["link", "loading edit"], ["file", "loading edit"],
+    ["link", "confirmation edit"], ["file", "confirmation edit"],
+    ["link", "loading switch"], ["file", "loading switch"],
+    ["link", "confirmation switch"], ["file", "confirmation switch"],
+  ])("protects native %s imports across a %s", async (source, boundary) => {
+    const currentPlan: ServicePlan = {
+      planId: "plan-1", churchId: "church-1", planKey: "service-1@2026-07-26",
+      serviceId: "service-1", date: "2026-07-26", name: "Sunday",
+      sections: [{ id: "section", name: "Worship", elements: [{
+        id: "item", type: "free", title: plainTextToRichText("Current item"), durationSeconds: 300,
+      }] }],
+    };
+    mockGetServicePlan.mockResolvedValueOnce({ success: true, servicePlan: currentPlan })
+      .mockResolvedValue({ success: true, servicePlan: {
+        ...currentPlan, planId: "plan-2", planKey: "service-1@2026-08-02", date: "2026-08-02",
+        sections: [{ ...currentPlan.sections[0], elements: [{ ...currentPlan.sections[0].elements[0], title: plainTextToRichText("Upcoming item") }] }],
+      } });
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => { finish = resolve; });
+    const importedTitle = "Stale imported item";
+    mockGetPublicServiceFlow.mockReturnValue(gate.then(() => ({ service: {
+      shareId: "source", title: "Source", startsAt: occurrence.startsAt, timezone: "UTC", revision: 1,
+      sections: [{ id: "source", title: "Imported", items: [{ id: "source-item", title: importedTitle, durationSeconds: 45, notes: { blocks: [] } }] }],
+      live: { mode: "schedule" },
+    } })) as never);
+    const file = new File(["{}"], "plan.json", { type: "application/json" });
+    Object.defineProperty(file, "text", { value: () => gate.then(() => JSON.stringify({
+      format: "worshipsync-service-plan", version: 1, sections: [{ id: "source", name: "Imported", elements: [{ id: "source-item", type: "free", title: plainTextToRichText(importedTitle) }] }],
+    })) });
+    localStorage.setItem("worshipsyncServicePlanImportSource", "worshipSync");
+    const user = userEvent.setup();
+    const view = renderEditor({ initialEditing: true });
+    await screen.findByLabelText(/^Duration/i);
+    if (source === "link") {
+      await user.click(screen.getByRole("button", { name: /Plan actions/i }));
+      await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+      fireEvent.change(screen.getByLabelText(/Public service-plan link/i), { target: { value: "https://www.worshipsync.net/services/source" } });
+      await user.click(screen.getByRole("button", { name: /Import plan/i }));
+    } else {
+      fireEvent.change(screen.getByLabelText("WorshipSync JSON plan"), { target: { files: [file] } });
+    }
+    if (boundary.startsWith("confirmation")) {
+      await act(async () => { finish(); });
+      await screen.findByRole("heading", { name: "Replace this plan's content?" });
+    }
+    if (boundary.endsWith("switch")) {
+      view.rerender(editorTree({ occurrence: nextOccurrence }));
+      await screen.findByText("Upcoming item");
+    } else {
+      const duration = screen.getByLabelText(/^Duration/i);
+      fireEvent.change(duration, { target: { value: "20" } });
+      fireEvent.blur(duration);
+    }
+    if (boundary.startsWith("loading")) await act(async () => { finish(); });
+    if (boundary === "confirmation edit") await user.click(screen.getByRole("button", { name: /Replace content/i }));
+    expect(screen.queryByRole("heading", { name: "Replace this plan's content?" })).not.toBeInTheDocument();
+    expect(screen.queryByText(importedTitle)).not.toBeInTheDocument();
+    const switched = boundary.endsWith("switch");
+    if (!switched) await screen.findByText("The plan changed. Import it again to review the latest draft.");
+    expect(Boolean(screen.queryByText("Upcoming item"))).toBe(switched);
+    expect(Boolean(screen.queryByDisplayValue("20 min"))).toBe(!switched);
+    const savedElements = mockSaveServicePlan.mock.calls.flatMap(([, , body]) => body.sections ?? []).flatMap((section) => section.elements);
+    expect(savedElements.some((element) => richTextToPlainText(element.title) === importedTitle)).toBe(false);
+  });
+
+  it.each(["link", "file"])("keeps the current plan's import pending after a stale %s completion", async (source) => {
+    const plan: ServicePlan = {
+      planId: "a", churchId: "church-1", planKey: "service-1@2026-07-26", serviceId: "service-1", date: "2026-07-26", name: "Sunday",
+      sections: [{ id: "section", name: "Worship", elements: [{ id: "item", type: "free", title: plainTextToRichText("Current item") }] }],
+    };
+    mockGetServicePlan.mockResolvedValueOnce({ success: true, servicePlan: plan }).mockResolvedValue({ success: true, servicePlan: { ...plan, planId: "b", planKey: "service-1@2026-08-02", date: "2026-08-02" } });
+    let rejectOld!: (error: Error) => void;
+    const oldRead = new Promise<string>((_resolve, reject) => { rejectOld = reject; });
+    const pendingCurrentRead = new Promise<never>(() => undefined);
+    mockGetPublicServiceFlow.mockReturnValueOnce(oldRead as never).mockReturnValue(pendingCurrentRead);
+    localStorage.setItem("worshipsyncServicePlanImportSource", "worshipSync");
+    const user = userEvent.setup();
+    const view = renderEditor();
+    await screen.findByText("Current item");
+    const startLink = async () => {
+      await user.click(screen.getByRole("button", { name: /Plan actions/i }));
+      await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+      fireEvent.change(screen.getByLabelText(/Public service-plan link/i), { target: { value: "https://www.worshipsync.net/services/source" } });
+      await user.click(screen.getByRole("button", { name: /Import plan/i }));
+    };
+    if (source === "link") await startLink();
+    else {
+      const file = new File(["{}"], "slow.json", { type: "application/json" });
+      Object.defineProperty(file, "text", { value: () => oldRead });
+      fireEvent.change(screen.getByLabelText("WorshipSync JSON plan"), { target: { files: [file] } });
+      mockGetPublicServiceFlow.mockReset().mockReturnValue(pendingCurrentRead);
+    }
+    view.rerender(editorTree({ occurrence: nextOccurrence }));
+    await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(2));
+    await screen.findByText("Current item");
+    await startLink();
+    expect(screen.getByRole("button", { name: /Importing/ })).toBeDisabled();
+    await act(async () => { rejectOld(new Error("Previous plan download failed")); });
+    expect(screen.getByRole("button", { name: /Importing/ })).toBeDisabled();
+    expect(screen.queryByText(/Previous plan download failed/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Imported WorshipSync plan. Review the content.")).not.toBeInTheDocument();
+  });
+
+  it.each([["link", false], ["file", false], ["link", true], ["file", true]] as const)("protects direct native %s imports into an empty draft (edited: %s)", async (source, editDuringLoad) => {
+    const importedSections = [{ id: "source", name: "Imported", elements: [{ id: "source-item", type: "free", title: plainTextToRichText("New imported item") }] }];
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => { finish = resolve; });
+    mockGetPublicServiceFlow.mockReturnValue(gate.then(() => ({ service: {
+      shareId: "source", title: "Source", startsAt: occurrence.startsAt, timezone: "UTC", revision: 1,
+      sections: [{ id: "source", title: "Imported", items: [{ id: "source-item", title: "New imported item", durationSeconds: 45, notes: { blocks: [] } }] }], live: { mode: "schedule" },
+    } })) as never);
+    localStorage.setItem("worshipsyncServicePlanImportSource", "worshipSync");
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(await screen.findByRole("button", { name: /Start from scratch/i }));
+    if (source === "file") {
+      const file = new File(["{}"], "plan.json", { type: "application/json" });
+      Object.defineProperty(file, "text", { value: () => gate.then(() => JSON.stringify({ format: "worshipsync-service-plan", version: 1, sections: importedSections })) });
+      fireEvent.change(screen.getByLabelText("WorshipSync JSON plan"), { target: { files: [file] } });
+    } else {
+      await user.click(screen.getByRole("button", { name: /Plan actions/i }));
+      await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+      fireEvent.change(screen.getByLabelText(/Public service-plan link/i), { target: { value: "https://www.worshipsync.net/services/source" } });
+      await user.click(screen.getByRole("button", { name: /Import plan/i }));
+    }
+    if (editDuringLoad) {
+      const name = screen.getByDisplayValue("Service");
+      fireEvent.change(name, { target: { value: "Edited empty draft" } });
+      fireEvent.blur(name);
+    }
+    await act(async () => { finish(); });
+    expect(await screen.findByDisplayValue(editDuringLoad ? "Edited empty draft" : "Imported")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Replace this plan's content?" })).not.toBeInTheDocument();
+    expect(await screen.findByText(editDuringLoad ? "The plan changed. Import it again to review the latest draft." : "Imported WorshipSync plan. Review the content.")).toBeInTheDocument();
   });
 
   it("autosaves the canonical church-local plan date across a UTC date boundary", async () => {
