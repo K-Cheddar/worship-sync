@@ -102,6 +102,15 @@ const Services = ({
   const { access } = useContext(GlobalInfoContext) || {};
   const { showToast } = useToast();
   const [justAdded, setJustAdded] = useState(false);
+  const [isCreatingOutline, setIsCreatingOutline] = useState(false);
+  const creationOwnerRef = useRef<{ db: typeof db; scope: string } | null>(null);
+  useEffect(() => {
+    const owner = { db, scope };
+    creationOwnerRef.current = owner;
+    setIsCreatingOutline(false);
+    setJustAdded(false);
+    return () => { creationOwnerRef.current = null; };
+  }, [db, scope]);
   const currentListsRef = useRef(currentLists);
   currentListsRef.current = currentLists;
   const selectOutlineRef = useRef(selectOutline);
@@ -272,16 +281,30 @@ const Services = ({
   };
 
   const addOutline = async () => {
-    const newList = await createNewItemList({
-      db,
-      name: "New Outline",
-      currentLists,
-      controllerScope: scope,
-    });
-    setJustAdded(true);
-    dispatch(updateItemLists([...currentLists, newList]));
-    selectOutline(newList._id);
-    setTimeout(() => setJustAdded(false), 2000);
+    const owner = creationOwnerRef.current;
+    if (!owner || isCreatingOutline) return;
+    setIsCreatingOutline(true);
+    try {
+      const newList = await createNewItemList({
+        db,
+        name: "New Outline",
+        currentLists,
+        controllerScope: scope,
+      });
+      if (creationOwnerRef.current !== owner) return;
+      setJustAdded(true);
+      dispatch(updateItemLists([...currentListsRef.current, newList]));
+      selectOutline(newList._id);
+      setTimeout(() => {
+        if (creationOwnerRef.current === owner) setJustAdded(false);
+      }, 2000);
+    } catch (error) {
+      if (creationOwnerRef.current !== owner) return;
+      console.error(error);
+      showToast("Could not create service outline. Try again.", "error");
+    } finally {
+      if (creationOwnerRef.current === owner) setIsCreatingOutline(false);
+    }
   };
 
   const triggerIconSize = "md";
@@ -452,7 +475,8 @@ const Services = ({
                 color={justAdded ? "#84cc16" : "#22d3ee"}
                 className="w-full justify-center py-2 text-xs font-semibold"
                 variant="primary"
-                disabled={justAdded}
+                disabled={justAdded || isCreatingOutline}
+                isLoading={isCreatingOutline}
                 onClick={() => {
                   void addOutline();
                 }}

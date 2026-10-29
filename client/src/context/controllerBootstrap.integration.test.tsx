@@ -140,6 +140,41 @@ describe("controller bootstrap production consumers", () => {
     expect(store.getState().undoable.present.itemLists.selectedList?.controllerScope).toBe("aux");
   });
 
+  it("does not register or select an auxiliary outline before its detail write succeeds", async () => {
+    seedSaved();
+    const originalPut = mockPut.getMockImplementation()!;
+    let entered!: () => void;
+    let rejectWrite!: (error: Error) => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const gate = new Promise<void>((_resolve, reject) => { rejectWrite = reject; });
+    const error = new Error("Auxiliary outline detail write failed");
+    const log = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    mockPut.mockImplementation((doc) => {
+      if (doc._id !== "New Outline") return originalPut(doc);
+      entered();
+      const write = gate.then(() => originalPut(doc));
+      void write.catch(() => undefined);
+      return write;
+    });
+    const view = mount();
+    await screen.findAllByRole("button", { name: "Saved Sunday" });
+    act(() => { store.dispatch(itemListsSlice.actions.setOutlineScope("aux")); });
+    const before = store.getState().undoable.present.itemLists;
+    act(() => mockPulls[0].emit("complete", { ok: true }));
+    await act(async () => { await started; await Promise.resolve(); });
+    const pending = store.getState().undoable.present.itemLists;
+    await act(async () => { rejectWrite(error); await gate.catch(() => undefined); });
+    const after = store.getState().undoable.present.itemLists;
+    view.unmount();
+    mockPut.mockImplementation(originalPut);
+    log.mockRestore();
+    expect(pending.currentLists).toEqual(before.currentLists);
+    expect(pending.selectedList).toEqual(before.selectedList);
+    expect(after.currentLists).toEqual(before.currentLists);
+    expect(after.selectedList).toEqual(before.selectedList);
+    expect(mockDocs.has("New Outline")).toBe(false);
+  });
+
   it("refreshes saved values after the pull while preserving operator edits made offline", async () => {
     jest.useFakeTimers();
     seedSaved();

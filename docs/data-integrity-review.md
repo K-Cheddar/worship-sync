@@ -68,3 +68,28 @@ The revised code-review skill requires an evidence table naming entry/authority,
 - External side-effect adoption/compensation reviewed: Not applicable; no new external resources or compensation workflow.
 - Authorization/data-projection reviewed: Yes (destination ownership stripping and unchanged public projection).
 - Production entry point, runtime context, and test composition compared: Yes.
+
+## Follow-up review: outline creation durability
+
+**Findings:** The prior review missed the detached final detail writes in `createNewItemList` and its copy-outline sibling. Both are corrected. No remaining blocking finding in this follow-up's full diff against `in-progress` HEAD `ffa2947f`.
+
+**Product authorization:** Authorized by the current follow-up request and the controller startup/save contract. Only confirmed missing-document reads permit new-outline creation. Existing naming, scopes, no-database helper behavior, initial-pull eligibility, and reuse of existing documents remain unchanged. Copied outlines retain their existing null-on-failure API. The manual Add caller exposes pending state, handles failure, and retires stale UI completion on scope/database change or unmount.
+
+**Open questions / assumptions:** None blocking. This is a workflow/fix review of outline creation, not a full branch production-readiness review. Copying overlays can commit before the final copied outline fails; existing partial-side-effect behavior is retained, without adding cleanup or a new transaction framework.
+
+**Verification gaps:** Required gaps: none. Entire follow-up diff inspected, including helper consumers and the adjacent copy helper; no capped comparison. Inspected and executed tests are identified below. The same persisted-mutation-safety, reliable-state-mutations, React-quality, and adversarial-review guidance was applied.
+
+| Invariant | Production entry / authoritative owner | Consumer and writer | Boundary / adversarial sequence | Exact executed evidence | Result |
+| --- | --- | --- | --- | --- | --- |
+| Auxiliary registration follows durable detail success | ControllerInfoProvider -> Outlines; concrete PouchDB detail document | Redux registry/selection; createNewItemList | Verified pull -> empty aux scope -> detail put starts -> inspect pending registry -> put rejects -> inspect registry/selection | `controllerBootstrap.integration.test.tsx`: “does not register or select an auxiliary outline before its detail write succeeds”. Uses actual provider, Outlines, helper and Redux with a controlled PouchDB put; both pending and failed states remain unchanged. | Pass |
+| Missing reads and completed writes are distinct | itemUtil; PouchDB get/put | Both new-outline callers; createNewItemList | Hold put success/failure; separately reject get with 401/403/500 | `itemUtil.test.ts`: “waits for the detail write before returning a new outline (failure: %s)”; non-404 rejection cases; existing-document reuse and no-database scope cases. | Pass |
+| Copy success cannot precede its final detail write | Outlines copy action; original concrete DB | Registry caller conditional on non-null result; createItemListFromExisting | Source read -> final copy detail put rejects -> helper must return null | `itemUtil.test.ts`: “does not return a copied outline when its final detail write fails”. | Pass |
+| Manual creation reports pending/failure only for its current owner | Outlines Add action; DB/scope operation owner | Shared Button, toast, registry and selection; shared creation helper | Click -> helper pending -> reject, or change scope/unmount -> resolve old success | `Outlines.test.tsx`: pending/failure case plus scope-switch and unmount cases. Button disabled/busy while pending; failure enables retry without Redux mutation; retired success does not dispatch. | Pass |
+
+Before correction, seven new helper/integration regressions failed. After correction, **100 tests passed in 3 focused suites**: `src/utils/itemUtil.test.ts`, `src/context/controllerBootstrap.integration.test.tsx`, and `src/containers/Toolbar/ToolbarElements/Outlines.test.tsx`, using `node node_modules/jest/bin/jest.js --runInBand --silent --runTestsByPath ...` from `client/`. Client `lint:check`, `type-check`, production `build`, and `git diff --check` passed. The full repository suite and live-device smoke were not run; these are optional additional-confidence checks.
+
+**Second adversarial pass:** Re-derived “helper resolves -> Redux registers -> detached put fails” from the durable-success contract, then inspected the real caller and sibling writer. The corrected helper cannot resolve success until put fulfills; a non-404 read cannot enter creation; the auxiliary catch therefore receives failure before registry/selection mutation. Separately traced scope retirement and late manual completion, and verified its owner guard suppresses UI commits. Additional production complexity is limited to awaiting existing writes, a missing-read check, and manual pending/ownership feedback; most additions are controlled regression tests.
+
+**Pattern / learning:** The existing evidence gate must trace through the committing writer, including whether its promise actually represents the durable step; awaiting a helper call is insufficient evidence. Added regression enforcement rather than another generic skill checklist.
+
+**Final readiness:** Ready for this follow-up's stated scope. Cross-boundary, sibling, compatibility, identity/lifetime, retry authority, ownership retirement, and production/test-composition passes completed. No new external-resource compensation or data-projection boundary applies. No required follow-up remains.

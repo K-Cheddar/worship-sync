@@ -10,6 +10,7 @@ An existing church opens its saved content safely, including offline, and overla
 - A local 404 before successful initial replication is unverified absence. It cannot authorize persistent defaults, including outline registry/details, preferences, controller media folders, or auxiliary-outline seeding.
 - Use the existing content replication session to grant bootstrap eligibility only after successful completion for that concrete database/church session. Connectivity, cache availability, and progress percentages do not establish it. Cancelled/failed or retired pulls cannot grant eligibility.
 - Refresh bootstrap readers after verification. Show replicated content without navigation, retain operator edits, and create defaults only when the post-pull authoritative state still lacks the document. Preserve guest/demo seeding.
+- Register/select a newly created outline only after its detail document is saved successfully. Only a genuine missing-document read permits creation; other read failures must propagate without writing. This durable-success boundary also applies to copied outlines. (Current follow-up request, 2026-10-29.)
 
 ## Saving
 - Capture concrete database and outline ownership at operation start. Serialize local writes by database, outline, and field; independent items and overlay order remain concurrent.

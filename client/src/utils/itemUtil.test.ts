@@ -18,6 +18,7 @@ import {
   buildServiceTimeItem,
   removeParentheticalPhrases,
   createNewItemList,
+  createItemListFromExisting,
 } from "./itemUtil";
 import type { MediaType, ServiceItem, BibleInfo, verseType } from "../types";
 import { isBibleDocumentActivityIdle } from "./contentReplicationActivity";
@@ -1243,6 +1244,49 @@ Let Your fire fall`;
   });
 
   describe("createNewItemList", () => {
+    it.each([false, true])("waits for the detail write before returning a new outline (failure: %s)", async (fail) => {
+      let finish!: () => void;
+      let entered!: () => void;
+      const gate = new Promise<void>((resolve) => { finish = resolve; });
+      const started = new Promise<void>((resolve) => { entered = resolve; });
+      const writeError = new Error("Detail write failed");
+      const db = {
+        get: jest.fn().mockRejectedValue({ status: 404 }),
+        put: jest.fn(() => {
+          entered();
+          const write = gate.then(() => { if (fail) throw writeError; return { rev: "1-new" }; });
+          void write.catch(() => undefined);
+          return write;
+        }),
+      };
+      let settled = false;
+      const result = createNewItemList({ db: db as never, name: "New Outline", currentLists: [], controllerScope: "aux" }).then(
+        (list) => { settled = true; return { list, error: undefined }; },
+        (error: unknown) => { settled = true; return { list: undefined, error }; },
+      );
+      await started;
+      await Promise.resolve();
+      const finishedBeforeWrite = settled;
+      finish();
+      const outcome = await result;
+      expect(finishedBeforeWrite).toBe(false);
+      expect(outcome.error).toBe(fail ? writeError : undefined);
+      expect(outcome.list).toEqual(fail ? undefined : { _id: "New Outline", name: "New Outline", controllerScope: "aux" });
+    });
+
+    it.each([401, 403, 500])("does not create an outline after a %s read failure", async (status) => {
+      const error = Object.assign(new Error("Read failed"), { status });
+      const db = { get: jest.fn().mockRejectedValue(error), put: jest.fn().mockResolvedValue({ rev: "1-new" }) };
+      await expect(createNewItemList({ db: db as never, name: "New Outline", currentLists: [] })).rejects.toBe(error);
+      expect(db.put).not.toHaveBeenCalled();
+    });
+
+    it("reuses an existing outline without writing", async () => {
+      const db = { get: jest.fn().mockResolvedValue({ _id: "New Outline", name: "Saved" }), put: jest.fn() };
+      await expect(createNewItemList({ db: db as never, name: "New Outline", currentLists: [], controllerScope: "aux" })).resolves.toEqual({ _id: "New Outline", name: "Saved", controllerScope: "aux" });
+      expect(db.put).not.toHaveBeenCalled();
+    });
+
     it("leaves presentation-scoped outlines unscoped on the registry entry", async () => {
       const list = await createNewItemList({
         db: undefined,
@@ -1267,5 +1311,22 @@ Let Your fire fall`;
         controllerScope: "ctrl_lobby",
       });
     });
+  });
+
+  it("does not return a copied outline when its final detail write fails", async () => {
+    const error = new Error("Copied outline write failed");
+    const log = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const db = {
+      get: jest.fn().mockResolvedValue({ _id: "source", name: "Source", items: [], overlays: [] }),
+      put: jest.fn(() => {
+        const write = Promise.reject(error);
+        void write.catch(() => undefined);
+        return write;
+      }),
+    };
+    const result = await createItemListFromExisting({ db: db as never, currentLists: [], list: { _id: "source", name: "Source" } });
+    expect(result).toBeNull();
+    expect(log).toHaveBeenCalledWith(error);
+    log.mockRestore();
   });
 });

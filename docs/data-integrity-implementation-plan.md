@@ -35,3 +35,19 @@ None.
 
 ## Verification
 Add deterministic deferred-promise regressions, record fail-before/pass-after when practical, run focused bootstrap/provider/consumer, persistence/listener, native editor/transfer and PDF tests; client lint, type-check diagnostics, and build. Review the complete diff, targeted siblings and production composition, then independently derive and trace the four adversarial review scenarios. Record exact results and gaps in the final review.
+
+## Follow-up: durable outline creation
+### Goal / Existing architecture
+Outlines awaits createNewItemList before registering/selecting an auxiliary outline. Its detail put is currently detached; the adjacent copy helper has the same final-write defect. PouchDB owns the durable detail; Redux must consume success only after that write succeeds.
+### Before behavior / After behavior
+Before: any failed get is treated as absence and a pending/failed put can still yield a registry entry. After: only a genuine 404 permits creation, and helper success waits for the detail write. Copy creation keeps its existing null-on-failure result, now including final-write failures.
+### Product Decision Check / Behavior intentionally unchanged
+Authorized by the current follow-up request and controller-startup-and-saves contract. Preserve naming, scope, existing-document reuse, no-database behavior, initial replication eligibility, and the caller's ownership/cancellation guards. No unresolved product decision or new shared state framework. Manual Add uses the existing Button loading treatment and a local operation owner so failures and retired completions cannot register/select an outline or clear another scope's pending state.
+### Acceptance criteria / Proposed implementation
+Await both outline helpers' final puts; rethrow non-404 reads in createNewItemList. Prove a rejected auxiliary detail write cannot advance Redux's registry or selection, including while the put is pending.
+### Affected surfaces / Risks / edge cases
+Automatic auxiliary creation and explicit new/copy actions in Outlines; browser/Electron local PouchDB and Redux. Test pending/success/failure, existing docs and read failures. Copying may already have saved overlay documents before a later failure; do not introduce unrelated cleanup behavior.
+### Questions requiring user input
+None.
+### Verification
+Deferred helper tests and the real provider/Outlines/Redux integration must fail before and pass after correction. Run itemUtil, controller bootstrap integration and Outlines tests, client lint/type/build, complete-diff review and the adversarial failed-put sequence. Manual live-device checks are optional.
