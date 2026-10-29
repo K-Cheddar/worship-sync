@@ -1,3 +1,36 @@
+# [2.48.0](https://github.com/K-Cheddar/worship-sync/compare/v2.47.1...v2.48.0) (2026-10-29)
+
+
+### Bug Fixes
+
+* authorize desktop capture in display outputs ([4531aca](https://github.com/K-Cheddar/worship-sync/commit/4531aca2f6967874f69bf218afe74e5cb9c65ea8))
+* Improve media interactions ([9cda01a](https://github.com/K-Cheddar/worship-sync/commit/9cda01a2f6bbf8df7246d8912d23c213a1a66ec4))
+* improve video input picker preview reliability ([7ff3d19](https://github.com/K-Cheddar/worship-sync/commit/7ff3d19ea4e57188eef8f4eeb974665a6d9fd269))
+* Improving search functionality ([3b473e4](https://github.com/K-Cheddar/worship-sync/commit/3b473e4750842e63ef80e0f9f197757a7617d6cd))
+* Multiple fixes for service plan synchronization ([81a372d](https://github.com/K-Cheddar/worship-sync/commit/81a372d338f8fd763935208bce812debcf5aa651))
+* persist outline details before registration ([d8f75e9](https://github.com/K-Cheddar/worship-sync/commit/d8f75e996aa2e0beb53f842ff4bab3f3b64afcfd))
+* **schedule:** keep toolbar full width ([5bf7e7b](https://github.com/K-Cheddar/worship-sync/commit/5bf7e7b20e211c0e766966a1d4eb2597fcce070b))
+* service plan permission ([2b1cfb1](https://github.com/K-Cheddar/worship-sync/commit/2b1cfb1804b26a3bed35b3bafd12a3f4463f4bb2))
+* **service-plans:** preserve keyless PDF match review protection ([810bbbf](https://github.com/K-Cheddar/worship-sync/commit/810bbbff50c2bb0190bb5c7f892e9bfe608bbf06))
+* **services:** allow title-only service plan resources ([702b181](https://github.com/K-Cheddar/worship-sync/commit/702b181da0f9bf9d9019291d61cd7d348d0c685b))
+* **services:** correct Planning Center PDF re-imports ([668967b](https://github.com/K-Cheddar/worship-sync/commit/668967b97b6714751af3bdcbbb8e386e9a32b031))
+* **services:** simplify Planning Center PDF reconciliation ([845877b](https://github.com/K-Cheddar/worship-sync/commit/845877b1750b50dd7ac4b3715471fe9f57605b66))
+
+
+### Features
+
+* **client:** animate startup loading logo ([8cff0a5](https://github.com/K-Cheddar/worship-sync/commit/8cff0a512d9b4c67912035102cb54f3440bec94f))
+* **controller:** add display view selector to thumbnails ([cf221bd](https://github.com/K-Cheddar/worship-sync/commit/cf221bdf71333ce05c5d83f584e170284f6cb0dc))
+* **controller:** consolidate editing tools ([510d70e](https://github.com/K-Cheddar/worship-sync/commit/510d70e119bd73fccdff870b3be417772b99e334))
+* **schedule:** center My Schedule content on wide screens ([4dd94c4](https://github.com/K-Cheddar/worship-sync/commit/4dd94c47505dd697b10988de7fb99c37c2bef915))
+* **schedule:** compact My Schedule time off section ([2559bbe](https://github.com/K-Cheddar/worship-sync/commit/2559bbe959cceac9ca7cc429b4672fdff8c8cb89))
+* show numeric unread chat taskbar badges ([412fd37](https://github.com/K-Cheddar/worship-sync/commit/412fd378b2557955a8eece2ea93ead1222fc089f))
+
+
+### Performance Improvements
+
+* improvements to performance on songs ([a7083d4](https://github.com/K-Cheddar/worship-sync/commit/a7083d460b723439114b4f8585318e78e0dc8692))
+
 ## [2.47.1](https://github.com/K-Cheddar/worship-sync/compare/v2.47.0...v2.47.1) (2026-10-23)
 
 
