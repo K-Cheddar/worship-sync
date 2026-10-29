@@ -112,6 +112,25 @@ export interface ElectronLocalAsset {
   url: string;
 }
 
+export type DesktopVideoInspection = {
+  inspectionId: string;
+  title: string;
+  thumbnail: string;
+  duration: number;
+  heights: number[];
+  defaultQuality: number | "best";
+};
+
+export type DesktopVideoDownloadEvent = {
+  jobId: string;
+  stage: "preparing" | "downloading" | "processing" | "uploading" | "complete" | "failed" | "cancelled";
+  progress: number | null;
+  downloadedBytes?: number;
+  totalBytes?: number;
+  error?: string;
+  result?: { width: number; height: number; duration: number; size: number };
+};
+
 export interface ElectronAPI {
   getAppVersion: () => Promise<string>;
   getPlatform: () => Promise<string>;
@@ -261,6 +280,27 @@ export interface ElectronAPI {
   getLocalAsset: (assetId: string) => Promise<ElectronLocalAsset | undefined>;
   deleteLocalAsset: (assetId: string) => Promise<boolean>;
 
+  // Native desktop video download. Job output paths remain in the main process.
+  isVideoDownloaderAvailable: () => Promise<boolean>;
+  inspectVideoUrl: (url: string) => Promise<DesktopVideoInspection>;
+  startVideoDownload: (input: {
+    jobId: string;
+    inspectionId: string;
+    quality: number | "best";
+  }) => Promise<{ jobId: string }>;
+  cancelVideoDownload: (jobId: string) => Promise<boolean>;
+  importDownloadedVideo: (input: {
+    jobId: string;
+    workspaceId: string;
+    width: number;
+    height: number;
+  }) => Promise<ElectronLocalAsset>;
+  uploadDownloadedVideoToMux: (jobId: string, url: string) => Promise<void>;
+  cleanupVideoDownload: (jobId: string) => Promise<boolean>;
+  onVideoDownloadProgress: (
+    callback: (event: DesktopVideoDownloadEvent) => void,
+  ) => () => void;
+
   // Screen and window capture sources on this computer
   getDesktopCaptureSources: (options?: {
     withThumbnails?: boolean;
@@ -287,7 +327,7 @@ export interface ElectronAPI {
 
 declare global {
   interface Window {
-    electronAPI?: ElectronAPI;
+    electronAPI?: import("./electron").ElectronAPI;
     __ELECTRON__?: boolean;
   }
 }

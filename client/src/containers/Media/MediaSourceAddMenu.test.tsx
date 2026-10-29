@@ -23,7 +23,24 @@ it("keeps all Media source actions available while a shared upload is active", a
   expect(screen.getByRole("menuitem", { name: "Add files" })).toBeInTheDocument();
   expect(screen.getByRole("menuitem", { name: "Add video input" })).toBeInTheDocument();
   expect(screen.getByRole("menuitem", { name: "Import from Canva" })).toBeInTheDocument();
+  expect(screen.queryByRole("menuitem", { name: "Download Video" })).not.toBeInTheDocument();
 
   await user.click(screen.getByRole("menuitem", { name: "Add files" }));
   expect(onAddMedia).toHaveBeenCalledTimes(1);
+});
+
+it("exposes Download Video only when the desktop caller provides the native action", async () => {
+  const user = userEvent.setup();
+  const onDownloadVideo = jest.fn();
+  const onAddMedia = jest.fn();
+  const onImportFromCanva = jest.fn();
+  const Harness = () => <MediaSourceAddMenu
+    onAddMedia={onAddMedia}
+    onImportFromCanva={onImportFromCanva}
+    onDownloadVideo={onDownloadVideo}
+  />;
+  render(<MemoryRouter><TransferProvider><Harness /></TransferProvider></MemoryRouter>);
+  await user.click(screen.getByRole("button", { name: "Add media" }));
+  await user.click(screen.getByRole("menuitem", { name: "Download Video" }));
+  expect(onDownloadVideo).toHaveBeenCalledTimes(1);
 });

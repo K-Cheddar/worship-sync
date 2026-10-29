@@ -8,6 +8,7 @@ import {
 import {
   convertMuxVideoToLocalMp4,
   pollUploadStatus,
+  uploadDownloadedVideoToMux,
 } from "./muxUpload";
 
 jest.mock("../../../api/providerStorage", () => ({
@@ -111,6 +112,27 @@ describe("church-scoped Mux upload and temporary conversion", () => {
     expect(mockCreateUpload).toHaveBeenCalledWith("church-1", expect.objectContaining({ temporary: true }));
     expect(mockGetAsset).toHaveBeenCalledWith("church-1", "asset-1");
     expect(mockDeleteAsset).toHaveBeenCalledWith("church-1", "asset-1");
+  });
+
+  it("streams a disk-backed download through the native transport and the existing Mux registration workflow", async () => {
+    const uploadDownloadedVideo = jest.fn().mockResolvedValue(undefined);
+    window.electronAPI = {
+      uploadDownloadedVideoToMux: uploadDownloadedVideo,
+    } as unknown as typeof window.electronAPI;
+
+    const result = await uploadDownloadedVideoToMux(
+      "job-1",
+      "Sunday Opener.mp4",
+      { churchId: "church-1", mediaId: "media-1", title: "Sunday Opener" },
+    );
+
+    expect(uploadDownloadedVideo).toHaveBeenCalledWith("job-1", "https://upload");
+    expect(mockCreateUpload).toHaveBeenCalledWith("church-1", {
+      mediaId: "media-1",
+      title: "Sunday Opener",
+      temporary: undefined,
+    });
+    expect(result).toMatchObject({ playbackId: "playback-1", name: "Sunday Opener" });
   });
 
   it("removes an uncommitted asset after rendition polling is cancelled", async () => {

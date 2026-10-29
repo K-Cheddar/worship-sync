@@ -286,6 +286,28 @@ interface ElectronAPI {
   ) => Promise<ElectronLocalAsset>;
   getLocalAsset: (assetId: string) => Promise<ElectronLocalAsset | undefined>;
   deleteLocalAsset: (assetId: string) => Promise<boolean>;
+
+  // Native desktop video download. Job output paths remain in the main process.
+  isVideoDownloaderAvailable: () => Promise<boolean>;
+  inspectVideoUrl: (url: string) => Promise<import("./src/types/electron").DesktopVideoInspection>;
+  startVideoDownload: (input: {
+    jobId: string;
+    inspectionId: string;
+    quality: number | "best";
+  }) => Promise<{ jobId: string }>;
+  cancelVideoDownload: (jobId: string) => Promise<boolean>;
+  importDownloadedVideo: (input: {
+    jobId: string;
+    workspaceId: string;
+    width: number;
+    height: number;
+  }) => Promise<ElectronLocalAsset>;
+  uploadDownloadedVideoToMux: (jobId: string, url: string) => Promise<void>;
+  cleanupVideoDownload: (jobId: string) => Promise<boolean>;
+  onVideoDownloadProgress: (
+    callback: (event: import("./src/types/electron").DesktopVideoDownloadEvent) => void,
+  ) => () => void;
+
   getDesktopCaptureSources: (options?: {
     withThumbnails?: boolean;
   }) => Promise<ElectronDesktopCaptureSource[]>;

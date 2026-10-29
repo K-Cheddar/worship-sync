@@ -9,6 +9,7 @@ import {
 } from "../../utils/localVideoFileAssets";
 import {
   createLocalMediaFromFile,
+  createLocalMediaFromDownloadedVideo,
   LocalImagePlaybackError,
 } from "./localMediaImport";
 
@@ -147,5 +148,43 @@ describe("createLocalMediaFromFile", () => {
       createLocalMediaFromFile(file, "church-1", "local-only"),
     ).rejects.toThrow(/cannot be played on this device/i);
     expect(mockedSaveLocalVideoFile).not.toHaveBeenCalled();
+  });
+
+  it("registers a downloaded file under its stable local asset id without loading video bytes", async () => {
+    window.electronAPI = { getLocalAsset: jest.fn() } as unknown as typeof window.electronAPI;
+    const asset = {
+      assetId: "local_video_download_12345678-1234-4123-8123-123456789abc",
+      workspaceId: "church-1",
+      kind: "video" as const,
+      fileName: "downloaded-video.mp4",
+      contentType: "video/mp4",
+      size: 12345,
+      width: 1920,
+      height: 1080,
+      createdAt: "2026-10-29T12:00:00.000Z",
+      updatedAt: "2026-10-29T12:00:01.000Z",
+      url: "worshipsync-local-asset://video",
+    };
+    const media = await createLocalMediaFromDownloadedVideo({
+      asset,
+      workspaceId: "church-1",
+      displayName: "Sunday Opener",
+      duration: 42,
+      storagePolicy: "local-only",
+    });
+
+    expect(mockedSaveLocalVideoFile).toHaveBeenCalledWith(expect.objectContaining({
+      id: asset.assetId,
+      fileName: "Sunday Opener.mp4",
+      duration: 42,
+    }));
+    expect(mockedSaveLocalVideoFile.mock.calls[0][0]).not.toHaveProperty("blob");
+    expect(media).toMatchObject({
+      id: asset.assetId,
+      name: "Sunday Opener",
+      duration: 42,
+      background: `local-video-file://${encodeURIComponent(asset.assetId)}`,
+      localVideoFile: { id: asset.assetId, storagePolicy: "local-only" },
+    });
   });
 });

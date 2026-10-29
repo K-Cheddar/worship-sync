@@ -1,4 +1,5 @@
 import type { LocalAssetStoragePolicy, MediaType } from "../../types";
+import type { ElectronLocalAsset } from "../../types/electron";
 import { getOrCreateDeviceId } from "../../utils/authStorage";
 import { getTrustedDeviceLabel } from "../../utils/deviceInfo";
 import generateRandomId from "../../utils/generateRandomId";
@@ -58,6 +59,77 @@ export const createLocalMediaFromFile = async (
     storagePolicy,
     options.displayName,
   );
+};
+
+/** Register a completed native download without loading its video bytes in React. */
+export const createLocalMediaFromDownloadedVideo = async ({
+  asset,
+  workspaceId,
+  displayName,
+  duration,
+  storagePolicy,
+}: {
+  asset: ElectronLocalAsset;
+  workspaceId: string;
+  displayName: string;
+  duration: number;
+  storagePolicy: LocalAssetStoragePolicy;
+}): Promise<MediaType> => {
+  if (
+    asset.kind !== "video" || asset.contentType !== "video/mp4" ||
+    !asset.assetId.startsWith("local_video_download_") ||
+    !Number.isFinite(asset.size) || asset.size <= 0 ||
+    !Number.isFinite(asset.width) || !asset.width || asset.width <= 0 ||
+    !Number.isFinite(asset.height) || !asset.height || asset.height <= 0 ||
+    !Number.isFinite(duration) || duration <= 0
+  ) {
+    throw new Error("The downloaded video details are invalid.");
+  }
+  if (!window.electronAPI?.getLocalAsset) {
+    throw new Error("Downloaded videos can only be imported in the desktop app.");
+  }
+  const now = asset.createdAt || new Date().toISOString();
+  const fileName = `${normalizeMediaLibraryDisplayName(displayName) || "Downloaded video"}.mp4`;
+  await saveLocalVideoFile({
+    id: asset.assetId,
+    workspaceId,
+    fileName,
+    contentType: "video/mp4",
+    size: asset.size,
+    width: asset.width,
+    height: asset.height,
+    duration,
+    createdAt: now,
+  });
+  const contentRevision = asset.updatedAt || now;
+  return {
+    path: "",
+    createdAt: now,
+    updatedAt: now,
+    format: "mp4",
+    height: asset.height,
+    width: asset.width,
+    name: normalizeMediaLibraryDisplayName(displayName) || "Downloaded video",
+    publicId: asset.assetId,
+    type: "video",
+    id: asset.assetId,
+    background: buildLocalVideoFileUrl(asset.assetId),
+    thumbnail: "",
+    placeholderImage: "",
+    duration,
+    hasAudio: true,
+    source: "local",
+    localVideoFile: {
+      id: asset.assetId,
+      contentRevision,
+      ownerDeviceId: getOrCreateDeviceId(),
+      ownerLabel: getTrustedDeviceLabel(),
+      fileName,
+      contentType: "video/mp4",
+      storagePolicy,
+      audioEnabled: true,
+    },
+  };
 };
 
 const createLocalImageMedia = async (
