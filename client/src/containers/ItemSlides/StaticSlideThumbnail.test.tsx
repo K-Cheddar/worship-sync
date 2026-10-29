@@ -216,7 +216,7 @@ describe("StaticSlideThumbnail", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Monitor current")).toBeInTheDocument();
     expect(screen.getByText("Monitor next")).toBeInTheDocument();
-    expect(screen.getByTestId("monitor-preview-timer")).toBeInTheDocument();
+    expect(screen.getByTestId("monitor-preview-timer")).toHaveTextContent("05:00");
     expect(screen.queryByRole("video")).not.toBeInTheDocument();
   });
 
@@ -239,7 +239,9 @@ describe("StaticSlideThumbnail", () => {
     expect(
       screen.getByTestId("monitor-preview-single-slide-layout"),
     ).toBeInTheDocument();
-    expect(screen.getByTestId("monitor-preview-clock")).toBeInTheDocument();
+    expect(screen.getByTestId("monitor-preview-clock")).toHaveTextContent(
+      new Date(2000, 0, 1, 10, 30).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+    );
     expect(screen.queryByTestId("monitor-preview-timer")).not.toBeInTheDocument();
   });
 

@@ -87,12 +87,20 @@ jest.mock("../../components/Button/Button", () => ({
     disabled,
     title,
     "aria-label": ariaLabel,
+    "aria-pressed": ariaPressed,
+    className,
+    onPointerDown,
+    onKeyDown,
   }: {
     children?: React.ReactNode;
     onClick?: () => void;
     disabled?: boolean;
     title?: string;
     "aria-label"?: string;
+    "aria-pressed"?: boolean;
+    className?: string;
+    onPointerDown?: React.PointerEventHandler<HTMLButtonElement>;
+    onKeyDown?: React.KeyboardEventHandler<HTMLButtonElement>;
   }) => (
     <button
       type="button"
@@ -100,6 +108,10 @@ jest.mock("../../components/Button/Button", () => ({
       disabled={disabled}
       title={title}
       aria-label={ariaLabel}
+      aria-pressed={ariaPressed}
+      className={className}
+      onPointerDown={onPointerDown}
+      onKeyDown={onKeyDown}
     >
       {children}
     </button>
@@ -421,8 +433,11 @@ describe("ItemSlides", () => {
     expect(
       screen.getByRole("button", { name: "Projector" }),
     ).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("group", { name: "Thumbnail view" })).toHaveClass("bg-gray-900", "p-0.5");
+    expect(screen.getByRole("button", { name: "Projector" })).toHaveClass("bg-cyan-600");
     mockDispatch.mockClear();
     fireEvent.click(screen.getByRole("button", { name: "Stream" }));
+    expect(screen.getByRole("button", { name: "Stream" })).toHaveClass("bg-cyan-600");
 
     expect(mockItemSlideProps[mockItemSlideProps.length - 1]?.previewMode).toBe(
       "stream",
@@ -460,12 +475,34 @@ describe("ItemSlides", () => {
     const selector = screen.getByRole("combobox", {
       name: "Thumbnail view",
     });
-    expect(selector).toHaveValue("monitor");
-    expect(
-      Array.from((selector as HTMLSelectElement).options).map(
-        (option) => option.value,
-      ),
-    ).toEqual(["monitor"]);
+    expect(selector).toHaveTextContent("Monitor");
+    fireEvent.keyDown(selector, { key: "ArrowDown" });
+    expect(screen.getByRole("option", { name: "Monitor" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Projector" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Stream" })).not.toBeInTheDocument();
+  });
+
+  it("changes the mobile thumbnail view without transmitting", () => {
+    mockControllerInfoValue.isMobile = true;
+    renderAncestorItemSlides();
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Thumbnail view" }), { key: "ArrowDown" });
+    mockDispatch.mockClear();
+    fireEvent.click(screen.getByRole("option", { name: "Stream" }));
+    expect(screen.getByRole("combobox", { name: "Thumbnail view" })).toHaveTextContent("Stream");
+    expect(mockItemSlideProps[mockItemSlideProps.length - 1]?.previewMode).toBe("stream");
+    expect(mockDispatch).not.toHaveBeenCalled();
+  });
+
+  it("keeps thumbnail actions in the mobile overflow menu", () => {
+    mockControllerInfoValue.isMobile = true;
+    renderAncestorItemSlides();
+    expect(screen.getByTestId("slide-thumbnail-toolbar")).toHaveClass("flex-nowrap");
+    expect(screen.getByRole("combobox", { name: "Thumbnail view" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Slide thumbnail zoom")).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("button", { name: "More slide actions" }), { key: "Enter" });
+    expect(screen.getByRole("menuitem", { name: "Clear background" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Clear background" }));
+    expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({ type: "item/clearSlideBackgroundsOnSubset/pending" }));
   });
 
   const setFreeSlides = (slideDefinitions: Array<{ id: string; name: string }>) => {

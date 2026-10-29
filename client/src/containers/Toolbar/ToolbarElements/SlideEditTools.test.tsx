@@ -290,6 +290,17 @@ describe("SlideEditTools", () => {
     drawerTarget.remove();
   });
 
+  it("does not render an empty separator between text and brightness for songs", () => {
+    mockState.undoable.present.item = makeItem({ type: "song" });
+    const drawerTarget = document.createElement("div");
+    document.body.append(drawerTarget);
+    const view = renderTools(null, drawerTarget);
+    expect(within(drawerTarget).queryByTestId("slide-formatting-mode-controls")).not.toBeInTheDocument();
+    expect(within(drawerTarget).getByTestId("slide-formatting-brightness-controls")).toHaveClass("border-t", "border-gray-600");
+    view.unmount();
+    drawerTarget.remove();
+  });
+
   it("shows Bible mode in the quick toolbar only for Bible items", () => {
     mockState.undoable.present.item = makeItem({
       type: "bible",

@@ -1,4 +1,7 @@
-import { ImageOff, Plus, Trash2, Copy, ZoomIn, ZoomOut } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../../components/ui/DropdownMenu";
+import SegmentedControl from "../../components/SegmentedControl/SegmentedControl";
+import Select from "../../components/Select/Select";
+import { ImageOff, Plus, Trash2, Copy, ZoomIn, ZoomOut, MoreHorizontal } from "lucide-react";
 import ActionBar, {
   type ActionBarItem as ActionBarItemDef,
 } from "../../components/ActionBar/ActionBar";
@@ -1981,55 +1984,40 @@ const ItemSlidesContent = () => {
             />
           </div>
         ) : null}
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 px-2 py-1 max-md:content-start">
+        <div className={cn("flex min-w-0 flex-1 items-center gap-2 px-2 py-1", isMobile && !isPresentMode ? "flex-nowrap" : "flex-wrap max-md:content-start")} data-testid="slide-thumbnail-toolbar">
           {!isPresentMode && availablePreviewModes.length > 0 && (
             isMobile ? (
-              <label className="flex shrink-0 items-center gap-1 text-xs text-gray-300">
+              <div className="flex shrink-0 items-center gap-1 text-xs text-gray-300">
                 <span>View</span>
-                <select
+                <Select
                   aria-label="Thumbnail view"
-                  className="h-7 max-w-28 rounded-md border border-gray-600 bg-gray-800 px-1.5 text-white"
+                  size="sm"
+                  className="w-24"
                   value={effectivePreviewMode}
-                  onChange={(event) =>
-                    setPreviewMode(event.target.value as ThumbnailPreviewMode)
-                  }
-                >
-                  {availablePreviewModes.map((option) => (
-                    <option key={option} value={option}>
-                      {THUMBNAIL_PREVIEW_LABELS[option]}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  onChange={(value) => setPreviewMode(value as ThumbnailPreviewMode)}
+                  options={availablePreviewModes.map((option) => ({
+                    value: option,
+                    label: THUMBNAIL_PREVIEW_LABELS[option],
+                  }))}
+                />
+              </div>
             ) : (
               <div className="flex shrink-0 items-center gap-1 text-xs text-gray-300">
                 <span>View</span>
-                <div
-                  role="group"
-                  aria-label="Thumbnail view"
-                  className="flex h-7 items-center overflow-hidden rounded-md border border-gray-600"
-                >
-                  {availablePreviewModes.map((option) => (
-                    <button
-                      key={option}
-                      type="button"
-                      aria-pressed={effectivePreviewMode === option}
-                      className={cn(
-                        "h-full cursor-pointer px-2 text-xs text-white first:rounded-l-md last:rounded-r-md",
-                        effectivePreviewMode === option
-                          ? "bg-gray-600"
-                          : "bg-gray-800 hover:bg-gray-700",
-                      )}
-                      onClick={() => setPreviewMode(option)}
-                    >
-                      {THUMBNAIL_PREVIEW_LABELS[option]}
-                    </button>
-                  ))}
-                </div>
+                <SegmentedControl
+                  ariaLabel="Thumbnail view"
+                  variant="compact"
+                  value={effectivePreviewMode}
+                  onChange={setPreviewMode}
+                  options={availablePreviewModes.map((option) => ({
+                    value: option,
+                    label: THUMBNAIL_PREVIEW_LABELS[option],
+                  }))}
+                />
               </div>
             )
           )}
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="flex min-w-0 flex-1 items-center gap-1 md:flex-none">
             <Button
               variant="tertiary"
               className="min-h-0 h-7 w-7 justify-center p-0"
@@ -2039,7 +2027,7 @@ const ItemSlidesContent = () => {
               disabled={size >= slidesGridColsMax}
               onClick={() => setSlideGridSize(size + 1)}
             />
-            <div className="w-36 shrink-0">
+            <div className="w-36 min-w-5 flex-1 md:shrink-0">
               <Slider
                 className="w-full"
                 value={[slideZoomSliderValue]}
@@ -2077,7 +2065,20 @@ const ItemSlidesContent = () => {
               className="min-w-0 flex-1 max-md:order-3 max-md:basis-full md:rounded-none md:border-0 md:bg-transparent md:p-0"
             />
           ) : null}
-          {slideActionBarItems.length > 0 ? (
+          {slideActionBarItems.length > 0 && isMobile && !isPresentMode ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="tertiary" svg={MoreHorizontal} aria-label="More slide actions" title="More slide actions" className="shrink-0" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-40">
+                {slideActionBarItems.map((action) => (
+                  <DropdownMenuItem key={action.id} disabled={action.disabled} className={action.overflowMenuItemClassName} onSelect={() => action.onOverflowSelect?.()}>
+                    {action.renderOverflowItem ? action.renderOverflowItem() : action.label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : slideActionBarItems.length > 0 ? (
             <div className="ml-auto flex shrink-0 items-center justify-end gap-2 md:min-w-11 md:flex-1 md:shrink">
               {isSlideSubsetSelecting ? (
                 <div

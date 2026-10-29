@@ -371,13 +371,13 @@ const Toolbar = ({
               className="flex w-full min-w-0 items-center"
               data-testid="toolbar-primary-row"
             >
+              <div className="shrink-0 bg-homepage-canvas">
+                <Menu variant="default" />
+              </div>
               <div
-                className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-2 scrollbar-variable"
+                className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto pr-2 scrollbar-variable"
                 data-testid="toolbar-scroll-controls"
               >
-                <div className="sticky left-0 z-10 shrink-0 bg-homepage-canvas">
-                  <Menu variant="default" />
-                </div>
                 {modeToggle}
                 {mode === "edit" && !isLyricsEditorOpen && !isViewOnlyAccess(access) && <Undo />}
                 {mode === "edit" && renderConfigurationsButton()}

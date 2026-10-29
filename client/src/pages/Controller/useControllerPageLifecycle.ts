@@ -4,6 +4,7 @@ import { useDispatch, useSelector } from "../../hooks";
 import _ from "lodash";
 import {
   DBItemListDetails,
+  DBOverlay,
   DBOverlayTemplates,
   isControllerMediaRouteFoldersDocId,
   getControllerMediaRouteFoldersDocId,
@@ -23,6 +24,7 @@ import {
   initiateOverlayList,
   mergeOverlayHistoryFromDb,
   updateOverlayListFromRemote,
+  updateOverlaysByIdFromRemote,
 } from "../../store/overlaysSlice";
 import { formatItemList } from "../../utils/formatItemList";
 import { setMediaCacheMap } from "../../store/mediaCacheMapSlice";
@@ -36,9 +38,11 @@ import {
 } from "../../utils/controllerBootstrapDocs";
 import {
   mergeRemoteOverlayListWithLocalBuffer,
+  shouldKeepLocalListRowForRemoteOverlay,
   syncSelectedOverlayFromRemote,
   type OverlaySyncRootSlice,
 } from "../../utils/overlayRemoteSync";
+import { normalizeOverlayForSync } from "../../utils/overlayUtils";
 import { getMediaUrlsFromMediaDoc } from "../../utils/mediaCacheUtils";
 import {
   initiateMonitorSettings,
@@ -362,6 +366,48 @@ export const useControllerPageLifecycle = () => {
   );
 
   useGlobalBroadcast(updatePreferencesFromExternal);
+
+  const updateOverlayFromExternal = useCallback(
+    (event: CustomEventInit) => {
+      try {
+        const updates = event.detail;
+        if (!Array.isArray(updates)) return;
+        const remoteOverlays = updates
+          .filter(
+            (_update): _update is DBOverlay =>
+              typeof _update?._id === "string" &&
+              _update._id.startsWith("overlay-"),
+          )
+          .map(normalizeOverlayForSync);
+        const getState = store.getState as () => OverlaySyncRootSlice;
+        const rowsToApply = remoteOverlays.filter(
+          (overlay) =>
+            !shouldKeepLocalListRowForRemoteOverlay(getState, overlay),
+        );
+
+        if (rowsToApply.length > 0) {
+          dispatch(updateOverlaysByIdFromRemote(rowsToApply));
+        }
+        for (const overlay of remoteOverlays) {
+          syncSelectedOverlayFromRemote(dispatch, getState, overlay);
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    },
+    [dispatch, store],
+  );
+
+  useEffect(() => {
+    if (!updater) return;
+
+    updater.addEventListener("update", updateOverlayFromExternal);
+
+    return () =>
+      updater.removeEventListener("update", updateOverlayFromExternal);
+  }, [updater, updateOverlayFromExternal]);
+
+  useGlobalBroadcast(updateOverlayFromExternal);
 
   useSyncOnReconnect(pullFromRemote);
 

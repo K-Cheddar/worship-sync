@@ -1,6 +1,8 @@
 import React from "react";
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { Provider } from "react-redux";
+import { Link, MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
 import store from "../../store/store";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
@@ -15,6 +17,14 @@ import { useControllerPageLifecycle } from "./useControllerPageLifecycle";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import { upsertMediaItemFromRemote } from "../../store/mediaSlice";
 import { getOverlaysByIds } from "../../utils/dbUtils";
+import Overlays from "../../containers/Overlays/Overlays";
+import type { OverlayInfo } from "../../types";
+
+jest.mock("../../containers/Overlays/OverlayEditor", () => () => null);
+jest.mock("../../containers/Overlays/ExistingOverlaysDrawer", () => () => null);
+jest.mock("../../containers/Overlays/OverlayHistoryDrawer", () => () => null);
+jest.mock("../../containers/Overlays/OverlayTemplatesDrawer", () => () => null);
+jest.mock("../../components/StyleEditor", () => () => null);
 
 jest.mock("../../hooks", () => ({
   useDispatch: () => store.dispatch,
@@ -98,7 +108,7 @@ describe("useControllerPageLifecycle selected outline loading", () => {
     store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
     jest.mocked(useGlobalBroadcast).mockClear();
     jest.mocked(getOverlaysByIds).mockReset().mockResolvedValue([]);
-    jest.mocked(readMediaLibrary).mockResolvedValue({ list: [], folders: [] });
+    jest.mocked(readMediaLibrary).mockReset().mockResolvedValue({ list: [], folders: [] });
   });
 
   it.each([50, 100])("preserves newly created Bible and heading documents while outline references are pending (progress %s)", async (initialProgress) => {
@@ -236,6 +246,113 @@ describe("useControllerPageLifecycle selected outline loading", () => {
       expect.objectContaining({ id: "overlay-1", name: "Current overlay" }),
     ]);
     expect(getOverlaysByIds).not.toHaveBeenCalled();
+  });
+
+  it("refreshes overlay content on /controller before navigating to the Overlays page", async () => {
+    const user = userEvent.setup();
+    const overlay: OverlayInfo = { id: "participant", type: "participant", name: "Before", title: "Host" };
+    const db = createDb({});
+    const updater = new EventTarget();
+    const Session = () => {
+      useControllerPageLifecycle();
+      return <><Link to="/controller/overlays">Open overlays</Link><Outlet /></>;
+    };
+    render(
+      <Provider store={store}>
+        <ControllerInfoContext.Provider value={{ db, cloud: {}, updater } as any}>
+          <GlobalInfoContext.Provider value={{ access: "full" } as any}>
+            <MemoryRouter initialEntries={["/controller"]}>
+              <Routes>
+                <Route path="/controller" element={<Session />}>
+                  <Route index element={<p>Song workspace</p>} />
+                  <Route path="overlays" element={<Overlays />} />
+                </Route>
+              </Routes>
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+    act(() => {
+      store.dispatch(overlaysSlice.actions.initiateOverlayList([overlay]));
+      updater.dispatchEvent(new CustomEvent("update", { detail: [{
+        ...overlay, _id: "overlay-participant", name: "Remote name", title: "Remote title",
+      }] }));
+    });
+    expect(screen.getByText("Song workspace")).toBeInTheDocument();
+    expect(store.getState().undoable.present.overlays.list).toEqual([
+      expect.objectContaining({ id: "participant", name: "Remote name", title: "Remote title" }),
+    ]);
+    await user.click(screen.getByRole("link", { name: "Open overlays" }));
+    expect(screen.getByText("Remote name")).toBeInTheDocument();
+    expect(screen.getByText("Remote title")).toBeInTheDocument();
+    expect(screen.queryByText("Before")).not.toBeInTheDocument();
+    expect(db.get).not.toHaveBeenCalledWith("overlay-participant");
+    expect(getOverlaysByIds).not.toHaveBeenCalled();
+  });
+
+  it.each(["editor draft", "Redux edit"])("buffers remote content against a selected %s outside Overlays", (pendingKind) => {
+    const overlay: OverlayInfo = { id: "participant", type: "participant", name: "Local", title: "Host" };
+    const other: OverlayInfo = { id: "other", type: "participant", name: "Other" };
+    const updater = new EventTarget();
+    renderHook(() => useControllerPageLifecycle(), {
+      wrapper: ({ children }) => (
+        <Provider store={store}>
+          <ControllerInfoContext.Provider value={{ updater } as any}>{children}</ControllerInfoContext.Provider>
+        </Provider>
+      ),
+    });
+    act(() => {
+      store.dispatch(overlaysSlice.actions.initiateOverlayList([overlay, other]));
+      store.dispatch(overlaySlice.actions.selectOverlay(overlay));
+      store.dispatch(overlaysSlice.actions.setHasPendingUpdate(true));
+      store.dispatch(pendingKind === "editor draft"
+        ? overlaySlice.actions.markOverlayDraftPending(overlay.id)
+        : overlaySlice.actions.updateOverlay({ ...overlay, name: "Unsaved" }));
+      const docs = [
+        { ...overlay, _id: "overlay-participant", name: "Remote" },
+        { ...other, _id: "overlay-other", name: "Remote other" },
+        { ...other, _id: "overlay-library-only", id: "library-only" },
+      ];
+      updater.dispatchEvent(new CustomEvent("update", { detail: docs }));
+      updater.dispatchEvent(new CustomEvent("update", { detail: docs }));
+    });
+    const { overlays, overlay: selected } = store.getState().undoable.present;
+    expect(overlays.list).toEqual([
+      expect.objectContaining({ id: "participant", name: "Local" }),
+      expect.objectContaining({ id: "other", name: "Remote other" }),
+    ]);
+    expect(overlays.hasPendingUpdate).toBe(true);
+    expect(selected.selectedOverlay?.name).toBe(pendingKind === "editor draft" ? "Local" : "Unsaved");
+    expect(selected.hasRemoteUpdate).toBe(true);
+    expect(selected.pendingRemoteOverlay).toEqual(expect.objectContaining({ id: "participant", name: "Remote" }));
+  });
+
+  it("syncs a clean selection from a broadcast and removes the replication listener on unmount", () => {
+    const overlay: OverlayInfo = { id: "participant", type: "participant", name: "Before" };
+    const updater = new EventTarget();
+    const { unmount } = renderHook(() => useControllerPageLifecycle(), {
+      wrapper: ({ children }) => (
+        <Provider store={store}>
+          <ControllerInfoContext.Provider value={{ updater } as any}>{children}</ControllerInfoContext.Provider>
+        </Provider>
+      ),
+    });
+    const broadcastHandler = jest.mocked(useGlobalBroadcast).mock.calls[3][0];
+    act(() => {
+      store.dispatch(overlaysSlice.actions.initiateOverlayList([overlay]));
+      store.dispatch(overlaySlice.actions.selectOverlay(overlay));
+      broadcastHandler({ detail: [{ ...overlay, _id: "overlay-participant", name: "Broadcast name" }] });
+    });
+    expect(store.getState().undoable.present.overlay.selectedOverlay?.name).toBe("Broadcast name");
+    expect(store.getState().undoable.present.overlays.list[0].name).toBe("Broadcast name");
+    expect(store.getState().undoable.present.overlay.hasPendingUpdate).toBe(false);
+    unmount();
+    act(() => {
+      store.dispatch(overlaysSlice.actions.initiateOverlayList([overlay]));
+      updater.dispatchEvent(new CustomEvent("update", { detail: [{ ...overlay, _id: "overlay-participant", name: "Too late" }] }));
+    });
+    expect(store.getState().undoable.present.overlays.list[0].name).toBe("Before");
   });
 
   it("applies a remote overlay reorder while retaining a selected local draft", async () => {

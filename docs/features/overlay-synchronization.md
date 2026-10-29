@@ -2,9 +2,9 @@
 
 **Contract status:** Confirmed for the Phase 1 native service-plan path. Legacy URL-import behavior and existing live-output behavior remain unchanged.
 
-**Approval source:** Product-owner requests, 2026-10-10, 2026-10-18, 2026-10-23, 2026-10-25, and 2026-10-27; the native-path decisions are recorded under **Product decisions**.
+**Approval source:** Product-owner requests, 2026-10-10, 2026-10-18, 2026-10-23, 2026-10-25, 2026-10-27, and 2026-10-28; decisions are recorded under **Product decisions**.
 
-**Last reviewed:** 2026-10-27
+**Last reviewed:** 2026-10-28
 
 ## Purpose
 
@@ -71,6 +71,11 @@ Regression coverage: `mapNativeServicePlanParticipants.test.ts`, `findBestOverla
 Regression coverage: `useServicePlanningImport.test.ts`, `useCurrentServicePlanSource.stale.test.tsx`, `ServicePlanningSyncFloatingWindow.test.tsx`, and `useServicePlanningSyncRunner.test.tsx`.
 
 ## Product decisions
+
+- **Question/problem:** Should overlay content replication depend on visiting the Overlays page?
+  - **Approved behavior:** Handle overlay-document replication and cross-window updates throughout the controller session, including while the operator is working on a song. Update existing list rows by ID without changing membership or order; preserve selected local drafts through the existing conflict buffer. Opening Overlays shows the already refreshed values without requiring another event or selection.
+  - **Approval source/date:** Product-owner correctness request, 2026-10-28.
+  - **Regression coverage:** `useControllerPageLifecycle.test.tsx` covers replication on `/controller` followed by navigation to `/controller/overlays`, duplicate events during local drafts, clean selected-overlay broadcasts, and listener cleanup.
 
 - **Question/problem:** Should a previous plan's source association block reuse of an overlay for the same event?
   - **Approved behavior:** No. Event/role identity is reusable across plan occurrences.

@@ -431,6 +431,11 @@ describe("BoxEditor", () => {
     expect(screen.getByText("Layouts")).toBeVisible();
     const presetContainer = screen.getByTestId("box-layout-drawer-presets");
     expect(presetContainer).toBeInTheDocument();
+    for (const button of within(presetContainer).getAllByRole("button")) {
+      expect(within(button).getByTestId("box-preset-icon")).toHaveClass("w-16", "md:w-10", "aspect-video");
+      expect(button).toHaveClass("min-h-12");
+    }
+    expect(within(presetContainer).queryByText("Full")).not.toBeInTheDocument();
     expect(
       within(presetContainer)
         .getAllByRole("button")

@@ -341,6 +341,15 @@ describe("Toolbar", () => {
     expect(screen.queryByTestId("toolbar-status-area")).not.toBeInTheDocument();
   });
 
+  it.each(["default", "aux"] as const)("keeps the %s controller menu outside the scrolling controls", (variant) => {
+    renderToolbar({ access: "full", itemType: "song", variant });
+    const row = screen.getByTestId("toolbar-primary-row");
+    const scroll = screen.getByTestId("toolbar-scroll-controls");
+    expect(within(row).getByText("Menu")).toBeInTheDocument();
+    expect(within(scroll).queryByText("Menu")).not.toBeInTheDocument();
+    expect(within(scroll).getByRole("button", { name: "Edit" })).toBeInTheDocument();
+  });
+
   it("keeps undo and full toolbar content in Edit mode", () => {
     renderToolbar({ access: "full", itemType: "song", workspaceMode: "present" });
     act(() => {

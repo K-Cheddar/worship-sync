@@ -3,7 +3,7 @@ import { selectOverlayTargetIds } from "../../store/selectLiveOutputs";
 import { Plus, Check, FolderOpen, History } from "lucide-react";
 
 import { useDispatch, useSelector } from "../../hooks";
-import { shallowEqual, useStore } from "react-redux";
+import { shallowEqual } from "react-redux";
 import {
   addOverlayToList,
   deleteOverlayFromList,
@@ -13,7 +13,6 @@ import {
   updateInitialList,
   updateList,
   updateOverlayInList,
-  updateOverlaysByIdFromRemote,
 } from "../../store/overlaysSlice";
 import { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import Overlay from "./Overlay";
@@ -57,14 +56,8 @@ import OverlaysListSkeleton from "./OverlaysListSkeleton";
 import {
   getConfiguredDefaultFormatting,
   getDefaultFormatting,
-  normalizeOverlayForSync,
   loadOverlayForSelection,
 } from "../../utils/overlayUtils";
-import {
-  shouldKeepLocalListRowForRemoteOverlay,
-  syncSelectedOverlayFromRemote,
-  type OverlaySyncRootSlice,
-} from "../../utils/overlayRemoteSync";
 import { putOverlayHistoryDocs } from "../../utils/dbUtils";
 import { DBOverlayTemplates } from "../../types";
 import { createPortal } from "react-dom";
@@ -130,8 +123,7 @@ const Overlays = ({
   const selectedOverlay = _selectedOverlay ?? defaultSelectedOverlay;
 
   const dispatch = useDispatch();
-  const store = useStore();
-  const { isMobile, db, updater } = useContext(ControllerInfoContext) || {
+  const { isMobile, db } = useContext(ControllerInfoContext) || {
     isMobile: false,
   };
   const { access } = useContext(GlobalInfoContext) || {};
@@ -172,48 +164,6 @@ const Overlays = ({
       setIsTemplateDrawerOpen(false);
     }
   }, [selectedOverlay.id]);
-
-  const updateOverlayFromExternal = useCallback(
-    (event: CustomEventInit) => {
-      try {
-        const updates = event.detail;
-        if (!Array.isArray(updates)) return;
-        const remoteOverlays = updates
-          .filter(
-            (_update): _update is DBOverlay =>
-              typeof _update?._id === "string" &&
-              _update._id.startsWith("overlay-"),
-          )
-          .map(normalizeOverlayForSync);
-        const getState = store.getState as () => OverlaySyncRootSlice;
-        const rowsToApply = remoteOverlays.filter(
-          (overlay) =>
-            !shouldKeepLocalListRowForRemoteOverlay(getState, overlay),
-        );
-
-        if (rowsToApply.length > 0) {
-          dispatch(updateOverlaysByIdFromRemote(rowsToApply));
-        }
-        for (const overlay of remoteOverlays) {
-          syncSelectedOverlayFromRemote(dispatch, getState, overlay);
-        }
-      } catch (e) {
-        console.error(e);
-      }
-    },
-    [dispatch, store],
-  );
-
-  useEffect(() => {
-    if (!updater) return;
-
-    updater.addEventListener("update", updateOverlayFromExternal);
-
-    return () =>
-      updater.removeEventListener("update", updateOverlayFromExternal);
-  }, [updater, updateOverlayFromExternal]);
-
-  useGlobalBroadcast(updateOverlayFromExternal);
 
   const updateTemplatesFromExternal = useCallback(
     async (event: CustomEventInit) => {
