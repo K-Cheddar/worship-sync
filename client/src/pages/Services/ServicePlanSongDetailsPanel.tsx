@@ -1,4 +1,4 @@
-import { useCallback, useContext, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { Music, Pencil } from "lucide-react";
 import { Button } from "../../components/Button";
 import Icon from "../../components/Icon/Icon";
@@ -27,6 +27,13 @@ const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }:
   const { db } = useContext(ControllerInfoContext) || {};
   const { churchId } = useContext(GlobalInfoContext) || {};
   const dispatch = useDispatch();
+  const persistenceScopeRef = useRef({ db, churchId });
+  persistenceScopeRef.current = { db, churchId };
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   const [arrangementIndex, setArrangementIndex] = useState(0);
   const [isEditing, setIsEditing] = useState(false);
   const [isEditingLyrics, setIsEditingLyrics] = useState(false);
@@ -50,9 +57,11 @@ const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }:
       else next.songAudio = patch.songAudioPatch;
     }
     const saved = await saveSong(db, next, existing);
+    if (!mountedRef.current || persistenceScopeRef.current.db !== db ||
+      persistenceScopeRef.current.churchId !== churchId) return;
     dispatch(applyItemDocumentChange({ id: saved._id, doc: songToLibraryProjection(saved) }));
     broadcastItemUpdate(saved);
-  }, [db, dispatch, song._id]);
+  }, [db, dispatch, song._id, churchId]);
 
   const uploadSongAudioForEdit = useCallback(async (file: File) => {
     if (!churchId || !db) throw new Error("Sign in to attach an MP3.");
@@ -133,9 +142,11 @@ const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }:
     if (songMetadata === undefined) next.songMetadata = undefined;
     else next.songMetadata = songMetadata;
     const saved = await saveSong(db, next, saveBaseline);
+    if (!mountedRef.current || persistenceScopeRef.current.db !== db ||
+      persistenceScopeRef.current.churchId !== churchId) return;
     dispatch(applyItemDocumentChange({ id: saved._id, doc: songToLibraryProjection(saved) }));
     broadcastItemUpdate(saved);
-  }, [db, dispatch]);
+  }, [db, dispatch, churchId]);
 
   return (
     <div className="space-y-4" aria-label={`Song details for ${song.name}`}>

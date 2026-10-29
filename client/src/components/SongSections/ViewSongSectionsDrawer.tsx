@@ -163,10 +163,12 @@ const ViewSongSectionsDrawer = ({
       }
 
       const saved = await saveSong(db, next, baselineSong);
+      if (!mountedRef.current || persistenceScopeRef.current.db !== db ||
+        persistenceScopeRef.current.churchId !== churchId) return;
       dispatch(applyItemDocumentChange({ id: saved._id, doc: songToLibraryProjection(saved) }));
       broadcastItemUpdate(saved);
     },
-    [db, dispatch, song],
+    [db, dispatch, song, churchId],
   );
 
   const resolveSongAudioUrl = useCallback(

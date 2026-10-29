@@ -1,6 +1,8 @@
 import { applyItemDocumentChange } from "../../store/allDocsSlice";
 import { configureStore } from "@reduxjs/toolkit";
+import type { ComponentProps } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { Provider, useSelector } from "react-redux";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
@@ -14,6 +16,9 @@ import {
 import type { DBItem } from "../../types";
 import { deleteSongAudioWithRetry, uploadSongAudio } from "../../api/auth";
 import * as songPersistence from "../../utils/songPersistence";
+import * as appStore from "../../store/store";
+import type LyricsEditor from "../../containers/ItemEditor/LyricsEditor";
+import ServicePlanSongDetailsPanel from "../../pages/Services/ServicePlanSongDetailsPanel";
 import ViewSongSectionsDrawer from "./ViewSongSectionsDrawer";
 
 jest.mock("../../api/auth", () => ({
@@ -25,14 +30,21 @@ jest.mock("../../api/auth", () => ({
 jest.mock("../../containers/ItemEditor/LyricsEditor", () => ({
   __esModule: true,
   default: ({
+    song,
     isOpen,
     onClose,
-  }: {
-    isOpen?: boolean;
-    onClose?: () => void;
-  }) =>
-    isOpen ? (
+    onSaveLyrics,
+  }: ComponentProps<typeof LyricsEditor>) =>
+    isOpen && song ? (
       <div role="dialog" aria-label="Lyrics editor">
+        <button type="button" onClick={() => onSaveLyrics?.({
+          baselineSong: song,
+          arrangements: song.arrangements,
+          selectedArrangement: song.selectedArrangement ?? 0,
+          songMetadata: song.songMetadata,
+        })}>
+          Save lyrics
+        </button>
         <button type="button" onClick={onClose}>
           Close lyrics editor
         </button>
@@ -142,6 +154,71 @@ describe("ViewSongSectionsDrawer", () => {
     jest.clearAllMocks();
     mockDeleteSongAudio.mockResolvedValue({ success: true });
   });
+
+  it.each(["drawer", "service plan"].flatMap((entry) =>
+    ["lyrics", "details"].flatMap((operation) =>
+      ["unchanged", "church", "database", "church and database", "unmount"].map((transition) => [entry, operation, transition]),
+    ),
+  ))(
+    "scopes pending save publication in %s for %s after %s",
+    async (entry, operation, transition) => {
+      const user = userEvent.setup();
+      const db = createMockPouchDB();
+      const nextDb = transition.includes("database") ? createMockPouchDB() : db;
+      const nextChurchId = transition.includes("church") ? "church-2" : "church-1";
+      const store = configureStore({
+        reducer: { allDocs: allDocsReducer, itemLibraryUi: itemLibraryUiReducer },
+      });
+      let resolveSave!: (saved: DBItem) => void;
+      const save = jest.spyOn(songPersistence, "saveSong").mockReturnValue(
+        new Promise<DBItem>((resolve) => { resolveSave = resolve; }),
+      );
+      const broadcast = jest.spyOn(appStore, "broadcastItemUpdate").mockImplementation(() => {});
+      const load = jest.spyOn(songPersistence, "loadSong").mockResolvedValue(song);
+      const scopedDrawer = (activeDb: typeof db, churchId: string, activeSong = song) => (
+        <Provider store={store}>
+          <ControllerInfoContext.Provider value={createMockControllerContext({ db: activeDb }) as never}>
+            <GlobalInfoContext.Provider value={createMockGlobalContext({ churchId, access: "full" }) as never}>
+              {entry === "drawer" ? (
+                <ViewSongSectionsDrawer song={activeSong} isOpen onClose={jest.fn()} />
+              ) : <ServicePlanSongDetailsPanel song={activeSong} canEdit />}
+            </GlobalInfoContext.Provider>
+          </ControllerInfoContext.Provider>
+        </Provider>
+      );
+      try {
+        const view = render(scopedDrawer(db, "church-1"));
+        await user.click(screen.getByRole("button", { name: `Edit ${operation}` }));
+        if (operation === "details") await user.type(screen.getByLabelText(/Artist/i), " and team");
+        await user.click(screen.getByRole("button", { name: operation === "lyrics" ? "Save lyrics" : "Save" }));
+        expect(save).toHaveBeenCalledTimes(1);
+        expect(save).toHaveBeenCalledWith(db, expect.objectContaining({ _id: song._id, name: song.name }), song);
+        expect(store.getState().allDocs.allSongDocs).toEqual([]);
+        expect(broadcast).not.toHaveBeenCalled();
+
+        // Use the same document ID in the successor scope to expose overwrites.
+        const activeSong = transition === "unchanged" ? song : { ...song, name: "Church B song" };
+        act(() => { store.dispatch(applyItemDocumentChange({ id: song._id, doc: activeSong })); });
+        if (transition === "unmount") view.unmount();
+        else view.rerender(scopedDrawer(nextDb, nextChurchId, activeSong));
+        const activeDocs = store.getState().allDocs.allSongDocs;
+
+        const saved = { ...song, _rev: "2-lyrics" };
+        await act(async () => { resolveSave(saved); });
+        const shouldPublish = transition === "unchanged";
+        expect(store.getState().allDocs.allSongDocs).toEqual(
+          shouldPublish ? [expect.objectContaining({ _id: song._id, _rev: "2-lyrics", name: song.name })] : activeDocs,
+        );
+        expect(broadcast.mock.calls).toEqual(shouldPublish ? [[saved]] : []);
+        expect(save).toHaveBeenCalledTimes(1);
+        expect(nextDb.put).not.toHaveBeenCalled();
+      } finally {
+        save.mockRestore();
+        broadcast.mockRestore();
+        load.mockRestore();
+      }
+    },
+  );
 
   it("shows song resources above lyrics and arrangements", () => {
     renderDrawer();
