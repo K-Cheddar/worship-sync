@@ -16,7 +16,7 @@ export const DEFAULT_INVITE_ACCESS_DRAFT: InviteAccessDraft = {
   role: "member",
   controllerAccess: "full",
   teamsAccess: "none",
-  servicesAccess: "none",
+  servicesAccess: "view",
   teamScopeIds: [],
 };
 

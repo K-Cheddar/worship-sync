@@ -43,6 +43,7 @@ async function getOptional(db: PouchDB.Database, id: string): Promise<Record<str
 export async function loadOrCreateControllerMediaRouteFolders(
   db: PouchDB.Database,
   controllerProfileId: string,
+  canCreate: () => boolean = () => false,
 ): Promise<DBControllerMediaRouteFoldersDoc> {
   const id = getControllerMediaRouteFoldersDocId(controllerProfileId);
   const existing = await getOptional(db, id);
@@ -52,6 +53,7 @@ export async function loadOrCreateControllerMediaRouteFolders(
   const seed = migrateLegacyMediaRouteFolders(
     (legacy?.mediaRouteFolders ?? {}) as Partial<Record<string, string | null>>,
   );
+  if (!canCreate()) return normalizeScopedDoc({ mediaRouteFolders: seed }, controllerProfileId);
   const timestamp = now();
   try {
     await db.put({
@@ -94,7 +96,9 @@ export async function patchControllerMediaRouteFolder(
 ): Promise<DBControllerMediaRouteFoldersDoc> {
   const id = getControllerMediaRouteFoldersDocId(controllerProfileId);
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    const current = await loadOrCreateControllerMediaRouteFolders(db, controllerProfileId);
+    // Explicit route selections may create a document; automatic loads must
+    // instead pass the current replication session's bootstrap eligibility.
+    const current = await loadOrCreateControllerMediaRouteFolders(db, controllerProfileId, () => true);
     const next = {
       ...current,
       mediaRouteFolders: { ...current.mediaRouteFolders, [key]: folderId },

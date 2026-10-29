@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { getChurchResource, getChurchResourceUrl, listChurchResources } from "../../api/auth";
 import ServicePlanContentPanel from "./ServicePlanContentPanel";
-import { plainTextToRichText } from "../../types/richText";
+import { EMPTY_RICH_TEXT, plainTextToRichText } from "../../types/richText";
 import type { ServicePlanElement } from "../../types/servicePlan";
 
 let mockSongDocs: Array<Record<string, unknown>> = [];
@@ -108,6 +108,130 @@ describe("ServicePlanContentPanel resources", () => {
     expect(onUpdate).toHaveBeenLastCalledWith({ participantOverlay: undefined });
   });
 
+  it.each([
+    ["Title only", ""],
+    ["", "Notes only"],
+    ["Title and notes", "With notes"],
+  ])("saves text with title %j and notes %j", async (title, notes) => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    const { rerender } = render(<ServicePlanContentPanel element={element()} allowEdit onUpdate={onUpdate} />);
+    await user.click(screen.getByRole("button", { name: "Add resource" }));
+    await user.click(screen.getByRole("menuitem", { name: "Text / Notes" }));
+    if (title) await user.type(screen.getByRole("textbox", { name: /Title \(optional\)/ }), title);
+    if (notes) await user.type(screen.getByRole("textbox", { name: "Notes (optional)" }), notes);
+    await user.click(screen.getByRole("button", { name: "Add resource" }));
+
+    const resources = onUpdate.mock.calls.at(-1)?.[0].resources;
+    expect(resources).toEqual([expect.objectContaining({
+      id: expect.any(String), type: "text", title: title || "Notes",
+      data: { text: notes ? plainTextToRichText(notes) : EMPTY_RICH_TEXT },
+    })]);
+    rerender(<ServicePlanContentPanel element={element({ resources })} allowEdit onUpdate={onUpdate} />);
+    expect(screen.getByTitle(title || "Notes")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Attached resources" })).toHaveTextContent(notes || title);
+    await user.click(screen.getByRole("button", { name: `Edit resource ${title || "Notes"}` }));
+    await user.click(screen.getByRole("button", { name: "Save resource" }));
+    expect(onUpdate).toHaveBeenLastCalledWith({ resources });
+  });
+
+  it.each(["", "   "])("rejects text with an empty title and notes (%j)", async (blank) => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    render(<ServicePlanContentPanel element={element()} allowEdit onUpdate={onUpdate} />);
+    await user.click(screen.getByRole("button", { name: "Add resource" }));
+    await user.click(screen.getByRole("menuitem", { name: "Text / Notes" }));
+    if (blank) {
+      await user.type(screen.getByRole("textbox", { name: /Title \(optional\)/ }), blank);
+      await user.type(screen.getByRole("textbox", { name: "Notes (optional)" }), blank);
+      await user.click(screen.getByRole("button", { name: "Bold" }));
+    }
+    await user.click(screen.getByRole("button", { name: "Add resource" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Add a title or notes before saving.");
+    expect(onUpdate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["Title only", "", ""],
+    ["", "Notes only", ""],
+    ["", "", "https://example.com"],
+    ["Title and notes", "With notes", ""],
+  ])("validates generic title %j, notes %j, URL %j", async (title, notes, url) => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    render(<ServicePlanContentPanel element={element({ resources: [
+      { id: "generic-1", type: "generic", title: "Original title" },
+    ] })} allowEdit onUpdate={onUpdate} />);
+    await user.click(screen.getByRole("button", { name: "Edit resource Original title" }));
+    const titleInput = screen.getByRole("textbox", { name: /Title \(optional\)/ });
+    await user.clear(titleInput);
+    if (title) await user.type(titleInput, title);
+    if (notes) await user.type(screen.getByRole("textbox", { name: "Notes (optional)" }), notes);
+    if (url) await user.type(screen.getByRole("textbox", { name: /URL \(optional\)/ }), url);
+    await user.click(screen.getByRole("button", { name: "Save resource" }));
+    expect(onUpdate).toHaveBeenCalledWith({ resources: [{
+      id: "generic-1", type: "generic", title: title || "Untitled resource",
+      ...(notes ? { data: { notes: plainTextToRichText(notes) } } : {}),
+      ...(url ? { url } : {}),
+    }] });
+  });
+
+  it.each(["", "   "])("rejects a completely empty generic resource (%j)", async (blank) => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    render(<ServicePlanContentPanel element={element({ resources: [
+      { id: "generic-1", type: "generic", title: "Original title" },
+    ] })} allowEdit onUpdate={onUpdate} />);
+    await user.click(screen.getByRole("button", { name: "Edit resource Original title" }));
+    await user.clear(screen.getByRole("textbox", { name: /Title \(optional\)/ }));
+    if (blank) {
+      await user.type(screen.getByRole("textbox", { name: /Title \(optional\)/ }), blank);
+      await user.type(screen.getByRole("textbox", { name: "Notes (optional)" }), blank);
+      await user.type(screen.getByRole("textbox", { name: /URL \(optional\)/ }), blank);
+    }
+    await user.click(screen.getByRole("button", { name: "Save resource" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Add a title, notes, or URL before saving.");
+    expect(onUpdate).not.toHaveBeenCalled();
+  });
+
+  it.each(["text", "generic"])("preserves an existing %s resource's title, rich notes, and identity", async (type) => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    const richNotes = { blocks: [{ type: "paragraph" as const, spans: [{ text: "Keep formatting", bold: true, italic: true }] }] };
+    const resource = { id: "existing-1", type, title: "Existing title", data: { [type === "text" ? "text" : "notes"]: richNotes } };
+    render(<ServicePlanContentPanel element={element({ resources: [resource] })} allowEdit onUpdate={onUpdate} />);
+    await user.click(screen.getByRole("button", { name: "Edit resource Existing title" }));
+    expect(screen.getByRole("textbox", { name: /Title \(optional\)/ })).toHaveValue("Existing title");
+    expect(screen.getByRole("textbox", { name: "Notes (optional)" })).toHaveTextContent("Keep formatting");
+    await user.click(screen.getByRole("button", { name: "Save resource" }));
+    expect(onUpdate).toHaveBeenCalledWith({ resources: [resource] });
+  });
+
+  it.each(["http://example.com", "https://example.com"])("saves a web link without a title: %j", async (url) => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    render(<ServicePlanContentPanel element={element()} allowEdit onUpdate={onUpdate} />);
+    await user.click(screen.getByRole("button", { name: "Add resource" }));
+    await user.click(screen.getByRole("menuitem", { name: "Link" }));
+    expect(screen.queryByRole("textbox", { name: /Notes/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("toolbar", { name: "Note formatting" })).not.toBeInTheDocument();
+    await user.type(screen.getByRole("textbox", { name: /^URL:/ }), url);
+    await user.click(screen.getByRole("button", { name: "Add resource" }));
+    expect(onUpdate).toHaveBeenCalledWith({ resources: [expect.objectContaining({ type: "url", title: url, url })] });
+  });
+
+  it.each(["", "invalid", "ftp://example.com"])("rejects a web link without an HTTP/HTTPS URL: %j", async (url) => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    render(<ServicePlanContentPanel element={element()} allowEdit onUpdate={onUpdate} />);
+    await user.click(screen.getByRole("button", { name: "Add resource" }));
+    await user.click(screen.getByRole("menuitem", { name: "Link" }));
+    if (url) await user.type(screen.getByRole("textbox", { name: /^URL:/ }), url);
+    await user.click(screen.getByRole("button", { name: "Add resource" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Enter a valid http or https URL.");
+    expect(onUpdate).not.toHaveBeenCalled();
+  });
+
   it("uses the shared rich-text toolbar while editing a text resource", async () => {
     const user = userEvent.setup();
     render(<ServicePlanContentPanel element={element()} allowEdit onUpdate={jest.fn()} />);
@@ -128,7 +252,7 @@ describe("ServicePlanContentPanel resources", () => {
 
     await user.click(screen.getByRole("button", { name: "Add resource" }));
     await user.click(screen.getByRole("menuitem", { name: "Text / Notes" }));
-    const editor = screen.getByRole("textbox", { name: "Notes" });
+    const editor = screen.getByRole("textbox", { name: "Notes (optional)" });
     await user.type(editor, "Important note");
     await user.keyboard("{Control>}a{/Control}");
     await user.click(screen.getByRole("button", { name: "Bold" }));
@@ -192,7 +316,7 @@ describe("ServicePlanContentPanel resources", () => {
     await user.click(screen.getByRole("button", { name: "Add resource" }));
     await user.click(screen.getByRole("menuitem", { name: "Text / Notes" }));
     await user.type(screen.getByLabelText(/Title/), "Sermon notes");
-    await user.type(screen.getByRole("textbox", { name: "Notes" }), "Welcome the guest speaker.");
+    await user.type(screen.getByRole("textbox", { name: "Notes (optional)" }), "Welcome the guest speaker.");
     await user.click(screen.getByRole("button", { name: "Add resource" }));
 
     const firstResources = onUpdate.mock.calls.at(-1)?.[0].resources;

@@ -29,7 +29,7 @@ jest.mock("../../../hooks", () => ({
   useSelector: (selector: (state: unknown) => unknown) =>
     selector({
       allDocs: { allSongDocs: [] },
-      allItems: { list: [], isAllItemsLoading: false },
+
     }),
   useDispatch: () => jest.fn(),
 }));

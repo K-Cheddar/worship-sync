@@ -213,6 +213,8 @@ let mockActiveItemDb: any;
 const loadStoreWithItemPersistence = () => {
   let storeModule: any;
   let itemSliceModule: any;
+  let mutationsModule: typeof import("./deferredItemMutations");
+  let selectionModule: typeof import("./controllerItemSelection");
   const postMessage = jest.fn();
   const db = {
     get: jest.fn(),
@@ -239,11 +241,17 @@ const loadStoreWithItemPersistence = () => {
     storeModule = require("./store");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     itemSliceModule = require("./itemSlice");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    selectionModule = require("./controllerItemSelection");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    mutationsModule = require("./deferredItemMutations");
   });
 
   return {
     store: storeModule.default,
     itemSlice: itemSliceModule.itemSlice,
+    selectControllerItem: selectionModule!.selectControllerItem,
+    deferredMutations: mutationsModule!,
     updateSlides: itemSliceModule.updateSlides,
     db,
     postMessage,
@@ -331,6 +339,27 @@ describe("item content integrity investigation", () => {
   };
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => jest.useRealTimers());
+
+  it("preserves newer unsaved input through an earlier local Pouch change and save acknowledgment", async () => {
+    const { select, edit, tick, db, commit, store, docs } = setup();
+    const held = deferred<void>();
+    db.put.mockImplementationOnce(async (doc: Fixture) => {
+      const result = await commit(doc);
+      await held.promise;
+      store.dispatch({ type: "allDocs/applyItemDocumentChange", payload: { id: doc._id, doc: docs.get(doc._id) } });
+      return result;
+    });
+    select("song-A");
+    edit("First edit");
+    await tick();
+    edit("Newer unsaved edit");
+    held.resolve();
+    await flushListenerEffects();
+    expect(store.getState().undoable.present.item.name).toBe("Newer unsaved edit");
+    await tick();
+    expect(docs.get("song-A")?.name).toBe("Newer unsaved edit");
+    expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(false);
+  });
 
   it("saves captured A under A after switching to B during debounce", async () => {
     const { docs, select, edit, tick, db } = setup();
@@ -563,7 +592,7 @@ describe("item content integrity investigation", () => {
     select("song-A"); edit("Local edit");
     const remote = { ...fixture("song-A"), _rev: "2-remote", name: "Remote edit" };
     docs.set("song-A", remote);
-    store.dispatch({ type: "allDocs/updateAllSongDocs", payload: [remote, docs.get("song-B")] });
+    store.dispatch({ type: "allDocs/hydrateItemCache", payload: [remote, docs.get("song-B")] });
     expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(true);
     await tick();
     expect(docs.get("song-A")).toEqual(remote);
@@ -616,6 +645,46 @@ describe("item content integrity investigation", () => {
     expect(docs.get("song-A")?.name).toBe("A pending after failure");
     expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
     errors.mockRestore();
+  });
+
+  it("flushes an accepted debounced editor mutation before cached selection changes its owner", async () => {
+    const { store, docs, selectControllerItem, deferredMutations, itemSlice, tick } = setup();
+    store.dispatch({ type: "allDocs/hydrateItemCache", payload: [...docs.values()] });
+    store.dispatch(selectControllerItem({ _id: "song-A", listId: "A" }));
+    const owner = deferredMutations.getItemMutationOwner(store.getState().undoable.present.item)!;
+    const flush = jest.fn(() => store.dispatch(itemSlice.actions._setName("A deferred editor text")));
+    deferredMutations.scheduleOwnedItemMutation(owner, 5000, flush);
+    store.dispatch(selectControllerItem({ _id: "song-B", listId: "B" }));
+    expect(flush).toHaveBeenCalledTimes(1);
+    expect(store.getState().undoable.present.item._id).toBe("song-B");
+    await tick();
+    expect(docs.get("song-A")?.name).toBe("A deferred editor text");
+    expect(docs.get("song-B")?.name).toBe("song-B");
+  });
+
+  it("cached Redux selection preserves delayed A saves and restores pending A without writing into B", async () => {
+    const runtime = setup();
+    const { store, db, docs, edit, tick, selectControllerItem, itemSlice } = runtime;
+    store.dispatch({ type: "allDocs/hydrateItemCache", payload: [...docs.values()] });
+    const open = (id: string, listId = id) => store.dispatch(selectControllerItem({ _id: id, listId }));
+    open("song-A");
+    let finishRead!: (doc: Fixture) => void;
+    db.get.mockImplementationOnce(() => new Promise((done) => { finishRead = done; }));
+    edit("A owned draft");
+    await jest.advanceTimersByTimeAsync(1500);
+    open("song-B");
+    edit("B owned draft");
+    open("song-A", "A-repeat");
+    expect(store.getState().undoable.present.item).toMatchObject({ _id: "song-A", listId: "A-repeat", name: "A owned draft" });
+    finishRead(clone(docs.get("song-A")) as Fixture);
+    await tick();
+    expect(docs.get("song-A")?.name).toBe("A owned draft");
+    expect(docs.get("song-B")?.name).toBe("B owned draft");
+    expect(store.getState().undoable.present.item._id).toBe("song-A");
+    // Occurrence-only changes do not accept stale cached conflict baselines.
+    store.dispatch(itemSlice.actions.bufferRemoteItemUpdate({ ...docs.get("song-A"), name: "Competing controller" }));
+    open("song-A", "A-third");
+    expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(true);
   });
 
   it("rapid back-and-forth navigation saves each pending payload under its own ID", async () => {
@@ -727,7 +796,7 @@ describe("store module", () => {
     });
 
     const store = storeModule.default;
-    const { updateAllSongDocs } = allDocsSliceModule;
+    const { hydrateItemCache } = allDocsSliceModule;
     const { setServicePlanningServiceOutline } =
       servicePlanningImportSliceModule;
     const unmatchedCandidate = {
@@ -761,7 +830,7 @@ describe("store module", () => {
     );
 
     store.dispatch(
-      updateAllSongDocs([
+      hydrateItemCache([
         createSongDoc({
           _id: "song-how-great",
           name: "How Great is Our God",
@@ -882,7 +951,7 @@ describe("store module", () => {
     jest.useFakeTimers();
     let storeModule: any;
     let itemSliceModule: any;
-    let allItemsSliceModule: any;
+    let allDocsSliceModule: any;
     let preferencesSliceModule: any;
     let itemListSliceModule: any;
     let itemListsSliceModule: any;
@@ -908,7 +977,7 @@ describe("store module", () => {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       itemSliceModule = require("./itemSlice");
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      allItemsSliceModule = require("./allItemsSlice");
+      allDocsSliceModule = require("./allDocsSlice");
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       preferencesSliceModule = require("./preferencesSlice");
       // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -933,7 +1002,7 @@ describe("store module", () => {
       shouldSendTo: { projector: true, monitor: true, stream: true },
     };
 
-    store.dispatch(allItemsSliceModule.setIsInitialized(true));
+    store.dispatch(allDocsSliceModule.hydrateItemCache([]));
     store.dispatch(preferencesSliceModule.setIsInitialized(true));
     store.dispatch(itemListSliceModule.setIsInitialized(true));
     store.dispatch(itemListsSliceModule.setIsInitialized(true));
@@ -1254,7 +1323,7 @@ describe("store module", () => {
       const state = storeModule.default.getState();
       const readyExceptForMedia = {
         ...state,
-        allItems: { ...state.allItems, isInitialized: true },
+        allDocs: { ...state.allDocs, isInitialized: true },
         media: {
           ...state.media,
           isInitialized: false,
@@ -3037,7 +3106,7 @@ describe("store module", () => {
       itemSlice.actions.setActiveItem({ ...baseDoc, listId: "list-1" }),
     );
     store.dispatch(itemSlice.actions.setIsLyricsEditorOpen(true));
-    store.dispatch(allDocsSlice.actions.updateAllSongDocs([remoteDoc]));
+    store.dispatch(allDocsSlice.actions.applyItemDocumentChange({ id: remoteDoc._id, doc: remoteDoc }));
     await flushListenerEffects();
 
     const state = store.getState().undoable.present.item;
@@ -3096,7 +3165,7 @@ describe("store module", () => {
       itemSlice.actions.setActiveItem({ ...baseDoc, listId: "list-1" }),
     );
     store.dispatch(itemSlice.actions.setBackground("background-b.jpg"));
-    store.dispatch(allDocsSlice.actions.updateAllSongDocs([remoteDoc]));
+    store.dispatch(allDocsSlice.actions.applyItemDocumentChange({ id: remoteDoc._id, doc: remoteDoc }));
     await flushListenerEffects();
 
     const state = store.getState().undoable.present.item;
@@ -3166,7 +3235,7 @@ describe("store module", () => {
         selectedBox: 1,
       }),
     );
-    store.dispatch(allDocsSlice.actions.updateAllSongDocs([remoteDoc]));
+    store.dispatch(allDocsSlice.actions.applyItemDocumentChange({ id: remoteDoc._id, doc: remoteDoc }));
     await flushListenerEffects();
 
     const state = store.getState().undoable.present.item;
@@ -4856,25 +4925,44 @@ describe("store module", () => {
   });
 });
 
-const loadStoreWithItemListPersistence = () => {
+const loadStoreWithItemListPersistence = (
+  { initialReplicationComplete = true }: { initialReplicationComplete?: boolean } = {},
+) => {
   let storeModule: any;
   let itemListSliceModule: any;
   let itemListsSliceModule: any;
+  let overlaySliceModule: any;
+  let overlaysSliceModule: any;
+  let allDocsSliceModule: any;
+  let servicePlanningImportSliceModule: any;
+  let activeControllerPresenceModule: any;
+  let contentReplicationActivityModule: any;
   const postMessage = jest.fn();
   const db = {
+    name: "outline-persistence-test-db",
     get: jest.fn(),
     put: jest
       .fn()
       .mockResolvedValue({ ok: true, id: "outline-a", rev: "2-saved" }),
+    allDocs: jest.fn(),
+    info: jest.fn(),
+    bulkDocs: jest.fn(),
   };
 
+  let activeDb = db;
+  let activePostMessage = postMessage;
   jest.isolateModules(() => {
     jest.doMock("../context/controllerInfo", () => ({
-      globalDb: db,
-      globalBroadcastRef: { postMessage },
+      get globalDb() { return activeDb; },
+      get globalBroadcastRef() { return { postMessage: activePostMessage }; },
     }));
     jest.doMock("../context/globalInfo", () => ({
-      globalFireDbInfo: { db: undefined, database: undefined },
+      globalFireDbInfo: {
+        db: undefined,
+        database: "outline-persistence-test-db",
+        churchId: "church-test",
+        isConnected: true,
+      },
       globalHostId: "host-123",
     }));
     jest.doMock("firebase/database", () => ({
@@ -4889,14 +4977,40 @@ const loadStoreWithItemListPersistence = () => {
     itemListSliceModule = require("./itemListSlice");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     itemListsSliceModule = require("./itemListsSlice");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    overlaySliceModule = require("./overlaySlice");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    overlaysSliceModule = require("./overlaysSlice");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    allDocsSliceModule = require("./allDocsSlice");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    servicePlanningImportSliceModule = require("./servicePlanningImportSlice");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    activeControllerPresenceModule = require("../utils/activeControllerPresence");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    contentReplicationActivityModule = require("../utils/contentReplicationActivity");
   });
+
+  const contentDatabaseSession =
+    contentReplicationActivityModule.beginContentDatabaseSession(db.name);
+  if (initialReplicationComplete) {
+    contentDatabaseSession.markInitialReplicationComplete();
+  }
 
   return {
     store: storeModule.default,
     itemListSlice: itemListSliceModule.itemListSlice,
     itemListsSlice: itemListsSliceModule.itemListsSlice,
+    overlaySlice: overlaySliceModule.overlaySlice,
+    overlaysSlice: overlaysSliceModule.overlaysSlice,
+    allDocsSlice: allDocsSliceModule.allDocsSlice,
+    servicePlanningImportSlice: servicePlanningImportSliceModule.servicePlanningImportSlice,
+    activeControllerPresence: activeControllerPresenceModule,
+    contentReplicationActivity: contentReplicationActivityModule,
+    contentDatabaseSession,
     db,
     postMessage,
+    switchDatabase: (next: typeof db, publish: typeof postMessage) => { activeDb = next; activePostMessage = publish; },
   };
 };
 
@@ -4919,6 +5033,80 @@ describe("item list outline persistence", () => {
         createServiceItem({ name: "Current", _id: "song-1", listId: "l1" }),
       ]),
     );
+  };
+
+  const configureBibleCleanupDatabase = (
+    db: any,
+    bibleDoc: Record<string, any>,
+    savedOutlineItems: Array<Record<string, any>> = [],
+  ) => {
+    let sequence = 1;
+    let outlineDoc: Record<string, any> = {
+      _id: "outline-a",
+      _rev: "1-outline",
+      items: [...savedOutlineItems],
+      overlays: [],
+    };
+    const deletedIds = new Set<string>();
+    const registry = {
+      _id: "ItemLists",
+      _rev: "1-registry",
+      itemLists: [{ _id: "outline-a", name: "Sunday" }],
+    };
+    db.get.mockImplementation(async (id: string) =>
+      id === "ItemLists" ? { ...registry } : { ...outlineDoc },
+    );
+    db.put.mockImplementation(async (doc: Record<string, any>) => {
+      sequence += 1;
+      outlineDoc = { ...doc, _rev: `${sequence}-outline` };
+      return { ok: true, rev: outlineDoc._rev };
+    });
+    db.allDocs.mockImplementation(async ({ keys }: { keys: string[] }) => ({
+      rows: keys.map((key) => {
+        if (key === "outline-a") return { id: key, doc: { ...outlineDoc } };
+        if (key === bibleDoc._id && !deletedIds.has(key)) {
+          return { id: key, doc: { ...bibleDoc } };
+        }
+        return { key, error: "not_found" };
+      }),
+      update_seq: sequence,
+    }));
+    db.info.mockImplementation(async () => ({ update_seq: sequence }));
+    db.bulkDocs.mockImplementation(async (docs: Array<{ _id: string }>) => {
+      docs.forEach(({ _id }) => {
+        deletedIds.add(_id);
+        sequence += 1;
+      });
+      return docs.map((doc) => ({ id: doc._id, ok: true }));
+    });
+    return {
+      getOutline: () => outlineDoc,
+      setOutlineItems: (items: Array<Record<string, any>>) => {
+        outlineDoc = { ...outlineDoc, items: [...items], _rev: `${sequence + 1}-outline` };
+        sequence += 1;
+      },
+      isDeleted: () => deletedIds.has(bibleDoc._id),
+    };
+  };
+
+  const initializeBibleCleanupState = (
+    store: any,
+    itemListSlice: any,
+    itemListsSlice: any,
+    allDocsSlice: any,
+    bibleDoc: Record<string, any>,
+  ) => {
+    store.dispatch(allDocsSlice.actions.hydrateItemCache([bibleDoc]));
+    store.dispatch(
+      itemListsSlice.actions.initiateItemLists([
+        { _id: "outline-a", name: "Sunday" },
+      ]),
+    );
+    store.dispatch(itemListSlice.actions.initiateItemList([]));
+  };
+
+  const flushBibleCleanup = async () => {
+    for (let attempt = 0; attempt < 40; attempt += 1) await Promise.resolve();
   };
 
   it("persists the post-debounce outline list onto the latest document rev", async () => {
@@ -4959,6 +5147,1013 @@ describe("item list outline persistence", () => {
     expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(
       false,
     );
+  });
+
+  it("cleans Bible items only after a successful outline save and while sync is idle", async () => {
+    jest.useFakeTimers();
+    const {
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      activeControllerPresence,
+      db,
+    } =
+      loadStoreWithItemListPersistence();
+    const presence = activeControllerPresence.beginActiveControllerPresence(
+      activeControllerPresence.getControllerPresenceScope(
+        "church-test",
+        "outline-persistence-test-db",
+      ),
+    );
+    presence.publish(["host-123"]);
+    expect(
+      activeControllerPresence.isOnlyActiveController(
+        activeControllerPresence.getControllerPresenceScope(
+          "church-test",
+          "outline-persistence-test-db",
+        ),
+        "host-123",
+      ),
+    ).toBe(true);
+    const bibleDoc = createServiceItem({
+      name: "Genesis 1",
+      _id: "bible-1",
+      _rev: "1-bible",
+      listId: "bible-link",
+      type: "bible",
+      createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+      updatedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+    });
+    const registry = {
+      _id: "ItemLists",
+      _rev: "1-registry",
+      itemLists: [{ _id: "outline-a", name: "Sunday" }],
+    };
+    let sequence = 1;
+    let savedOutline: Record<string, any> = {
+      _id: "outline-a",
+      _rev: "1-outline",
+      items: [bibleDoc],
+      overlays: [],
+    };
+    db.get.mockImplementation(async (id: string) =>
+      id === "ItemLists" ? { ...registry } : { ...savedOutline },
+    );
+    db.put.mockImplementation(async (doc: Record<string, any>) => {
+      sequence += 1;
+      savedOutline = { ...doc, _rev: "2-outline" };
+      return { ok: true, rev: "2-outline" };
+    });
+    db.allDocs.mockImplementation(async ({ keys }: { keys: string[] }) => ({
+      rows: keys.map((key) => key === "outline-a"
+        ? { id: key, doc: { ...savedOutline } }
+        : { id: key, doc: { ...bibleDoc } }),
+      update_seq: sequence,
+    }));
+    db.info.mockImplementation(async () => ({ update_seq: sequence }));
+    db.bulkDocs.mockImplementation(async (docs: Array<{ _id: string }>) => {
+      sequence += 1;
+      return docs.map((doc) => ({ id: doc._id, ok: true }));
+    });
+
+    store.dispatch(allDocsSlice.actions.hydrateItemCache([bibleDoc]));
+    store.dispatch(
+      itemListsSlice.actions.initiateItemLists([
+        { _id: "outline-a", name: "Sunday" },
+      ]),
+    );
+    store.dispatch(itemListSlice.actions.initiateItemList([bibleDoc]));
+    expect(store.getState().undoable.present.itemList.list[0].type).toBe("bible");
+    store.dispatch(itemListSlice.actions.updateItemList([]));
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushBibleCleanup();
+
+    expect(savedOutline.items).toEqual([]);
+    expect(db.bulkDocs).toHaveBeenCalledWith([
+      { _id: "bible-1", _rev: expect.any(String), _deleted: true },
+    ]);
+  });
+
+  it("defers cleanup while another Controller is active and retries when it leaves", async () => {
+    jest.useFakeTimers();
+    const {
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      activeControllerPresence,
+      db,
+    } = loadStoreWithItemListPersistence();
+    const presence = activeControllerPresence.beginActiveControllerPresence(
+      activeControllerPresence.getControllerPresenceScope(
+        "church-test",
+        db.name,
+      ),
+    );
+    presence.publish(["host-123", "host-456"]);
+    const oldDate = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const bibleDoc = {
+      _id: "bible-other-controller",
+      _rev: "1-bible",
+      type: "bible",
+      name: "Genesis 1",
+      createdAt: oldDate,
+      updatedAt: oldDate,
+    };
+    const inventory = configureBibleCleanupDatabase(db, bibleDoc);
+    initializeBibleCleanupState(
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      bibleDoc,
+    );
+
+    await jest.advanceTimersByTimeAsync(1501);
+    await flushBibleCleanup();
+
+    expect(db.allDocs).not.toHaveBeenCalled();
+    expect(db.bulkDocs).not.toHaveBeenCalled();
+    presence.publish(["host-123"]);
+    await flushBibleCleanup();
+    expect(inventory.isDeleted()).toBe(true);
+    expect(db.bulkDocs).toHaveBeenCalledTimes(1);
+    presence.release();
+  });
+
+  it("defers Bible cleanup when Service Plan synchronization is active", async () => {
+    jest.useFakeTimers();
+    const {
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      servicePlanningImportSlice,
+      db,
+    } = loadStoreWithItemListPersistence();
+    const bibleDoc = createServiceItem({
+      name: "Genesis 1",
+      _id: "bible-active-sync",
+      listId: "bible-link",
+      type: "bible",
+    });
+    db.get.mockResolvedValue({
+      _id: "outline-a",
+      _rev: "1-outline",
+      items: [bibleDoc],
+      overlays: [],
+    });
+    store.dispatch(allDocsSlice.actions.hydrateItemCache([bibleDoc]));
+    store.dispatch(
+      itemListsSlice.actions.initiateItemLists([
+        { _id: "outline-a", name: "Sunday" },
+      ]),
+    );
+    store.dispatch(itemListSlice.actions.initiateItemList([bibleDoc]));
+    store.dispatch(
+      servicePlanningImportSlice.actions.startServicePlanningSync({ mode: "outline" }),
+    );
+    store.dispatch(itemListSlice.actions.updateItemList([]));
+
+    await jest.advanceTimersByTimeAsync(1500);
+    for (let attempt = 0; attempt < 30; attempt += 1) await Promise.resolve();
+
+    expect(db.put).toHaveBeenCalledTimes(1);
+    expect(db.allDocs).not.toHaveBeenCalled();
+    expect(db.bulkDocs).not.toHaveBeenCalled();
+  });
+
+  it("reconciles previously orphaned Bible documents once after initial replication and cache hydration", async () => {
+    jest.useFakeTimers();
+    const {
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      activeControllerPresence,
+      db,
+    } = loadStoreWithItemListPersistence();
+    const presence = activeControllerPresence.beginActiveControllerPresence(
+      activeControllerPresence.getControllerPresenceScope(
+        "church-test",
+        db.name,
+      ),
+    );
+    presence.publish(["host-123"]);
+    const oldDate = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const bibleDoc = {
+      _id: "previously-orphaned-bible",
+      _rev: "1-bible",
+      type: "bible",
+      name: "Genesis 1",
+      createdAt: oldDate,
+      updatedAt: oldDate,
+    };
+    const inventory = configureBibleCleanupDatabase(db, bibleDoc);
+    initializeBibleCleanupState(
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      bibleDoc,
+    );
+
+    await flushBibleCleanup();
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushBibleCleanup();
+    expect(inventory.isDeleted()).toBe(true);
+    expect(db.bulkDocs).toHaveBeenCalledTimes(1);
+
+    presence.publish(["host-123"]);
+    presence.publish(["host-123"]);
+    await flushBibleCleanup();
+    expect(db.allDocs).toHaveBeenCalledTimes(1);
+    expect(db.bulkDocs).toHaveBeenCalledTimes(1);
+    presence.release();
+  });
+
+  it("waits for successful initial replication before reconciliation", async () => {
+    jest.useFakeTimers();
+    const {
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      activeControllerPresence,
+      contentDatabaseSession,
+      db,
+    } = loadStoreWithItemListPersistence({ initialReplicationComplete: false });
+    const presence = activeControllerPresence.beginActiveControllerPresence(
+      activeControllerPresence.getControllerPresenceScope("church-test", db.name),
+    );
+    presence.publish(["host-123"]);
+    const oldDate = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const bibleDoc = {
+      _id: "initial-sync-gated-bible",
+      _rev: "1-bible",
+      type: "bible",
+      name: "Genesis 1",
+      createdAt: oldDate,
+      updatedAt: oldDate,
+    };
+    const inventory = configureBibleCleanupDatabase(db, bibleDoc);
+    initializeBibleCleanupState(
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      bibleDoc,
+    );
+    await flushBibleCleanup();
+    await jest.advanceTimersByTimeAsync(5000);
+    await flushBibleCleanup();
+    expect(db.allDocs).not.toHaveBeenCalled();
+    expect(inventory.isDeleted()).toBe(false);
+
+    contentDatabaseSession.markInitialReplicationComplete();
+    await flushBibleCleanup();
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushBibleCleanup();
+    expect(inventory.isDeleted()).toBe(true);
+    expect(db.bulkDocs).toHaveBeenCalledTimes(1);
+    presence.release();
+  });
+
+  it("defers reconciliation while Controller presence is unknown", async () => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, allDocsSlice, db } =
+      loadStoreWithItemListPersistence();
+    const oldDate = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const bibleDoc = {
+      _id: "presence-unknown-bible",
+      _rev: "1-bible",
+      type: "bible",
+      name: "Genesis 1",
+      createdAt: oldDate,
+      updatedAt: oldDate,
+    };
+    configureBibleCleanupDatabase(db, bibleDoc);
+    initializeBibleCleanupState(
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      bibleDoc,
+    );
+
+    await flushBibleCleanup();
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushBibleCleanup();
+    expect(db.allDocs).not.toHaveBeenCalled();
+    expect(db.bulkDocs).not.toHaveBeenCalled();
+  });
+
+  it("retries a temporary Bible-creation activity without another outline edit", async () => {
+    jest.useFakeTimers();
+    const {
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      activeControllerPresence,
+      contentReplicationActivity,
+      db,
+    } = loadStoreWithItemListPersistence();
+    const presence = activeControllerPresence.beginActiveControllerPresence(
+      activeControllerPresence.getControllerPresenceScope("church-test", db.name),
+    );
+    presence.publish(["host-123"]);
+    const oldDate = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const bibleDoc = {
+      _id: "deferred-bible-cleanup",
+      _rev: "1-bible",
+      type: "bible",
+      name: "Genesis 1",
+      createdAt: oldDate,
+      updatedAt: oldDate,
+    };
+    const inventory = configureBibleCleanupDatabase(db, bibleDoc);
+    const endActivity = contentReplicationActivity.trackBibleDocumentActivity(db.name);
+    initializeBibleCleanupState(
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      bibleDoc,
+    );
+
+    await flushBibleCleanup();
+    await jest.advanceTimersByTimeAsync(1501);
+    await flushBibleCleanup();
+    expect(db.allDocs).not.toHaveBeenCalled();
+    expect(db.bulkDocs).not.toHaveBeenCalled();
+
+    endActivity();
+    await flushBibleCleanup();
+    expect(inventory.isDeleted()).toBe(true);
+    expect(db.bulkDocs).toHaveBeenCalledTimes(1);
+    expect(store.getState().undoable.present.itemList.list).toEqual([]);
+    presence.release();
+  });
+
+  it("retries a recent orphan after its grace period without an outline edit", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-10-29T12:00:00.000Z"));
+    const {
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      activeControllerPresence,
+      db,
+    } = loadStoreWithItemListPersistence();
+    const presence = activeControllerPresence.beginActiveControllerPresence(
+      activeControllerPresence.getControllerPresenceScope("church-test", db.name),
+    );
+    presence.publish(["host-123"]);
+    const recentDate = new Date(Date.now() - 60 * 60 * 1000 + 3000).toISOString();
+    const bibleDoc = {
+      _id: "recent-bible-cleanup",
+      _rev: "1-bible",
+      type: "bible",
+      name: "Genesis 1",
+      createdAt: recentDate,
+      updatedAt: recentDate,
+    };
+    const inventory = configureBibleCleanupDatabase(db, bibleDoc);
+    initializeBibleCleanupState(
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      bibleDoc,
+    );
+
+    await flushBibleCleanup();
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushBibleCleanup();
+    expect(inventory.isDeleted()).toBe(false);
+    expect(db.allDocs).toHaveBeenCalledTimes(1);
+
+    await jest.advanceTimersByTimeAsync(1501);
+    await flushBibleCleanup();
+    expect(inventory.isDeleted()).toBe(true);
+    expect(db.allDocs).toHaveBeenCalledTimes(2);
+    expect(db.bulkDocs).toHaveBeenCalledTimes(1);
+    presence.release();
+  });
+
+  it("cancels a recent-orphan timer when its database session ends", async () => {
+    jest.useFakeTimers();
+    const {
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      activeControllerPresence,
+      contentDatabaseSession,
+      db,
+    } = loadStoreWithItemListPersistence();
+    const presence = activeControllerPresence.beginActiveControllerPresence(
+      activeControllerPresence.getControllerPresenceScope("church-test", db.name),
+    );
+    presence.publish(["host-123"]);
+    const recentDate = new Date(Date.now() - 60 * 60 * 1000 + 3000).toISOString();
+    const bibleDoc = {
+      _id: "session-owned-recent-bible",
+      _rev: "1-bible",
+      type: "bible",
+      name: "Genesis 1",
+      createdAt: recentDate,
+      updatedAt: recentDate,
+    };
+    const inventory = configureBibleCleanupDatabase(db, bibleDoc);
+    initializeBibleCleanupState(
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      bibleDoc,
+    );
+    await flushBibleCleanup();
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushBibleCleanup();
+    expect(db.allDocs).toHaveBeenCalledTimes(1);
+
+    contentDatabaseSession.release();
+    await flushBibleCleanup();
+    await jest.advanceTimersByTimeAsync(5000);
+    await flushBibleCleanup();
+    expect(db.allDocs).toHaveBeenCalledTimes(1);
+    expect(inventory.isDeleted()).toBe(false);
+    presence.release();
+  });
+
+  it("preserves a newly created Bible document until its outline reference is saved", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-10-29T12:00:00.000Z"));
+    const {
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      activeControllerPresence,
+      contentReplicationActivity,
+      db,
+    } = loadStoreWithItemListPersistence();
+    const presence = activeControllerPresence.beginActiveControllerPresence(
+      activeControllerPresence.getControllerPresenceScope("church-test", db.name),
+    );
+    presence.publish(["host-123"]);
+    const bibleDoc = {
+      _id: "newly-created-bible",
+      _rev: "1-bible",
+      type: "bible",
+      name: "Genesis 1",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const inventory = configureBibleCleanupDatabase(db, bibleDoc);
+    const endCreation = contentReplicationActivity.trackBibleDocumentActivity(db.name);
+    initializeBibleCleanupState(
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      bibleDoc,
+    );
+    await flushBibleCleanup();
+    await jest.advanceTimersByTimeAsync(1501);
+    await flushBibleCleanup();
+    expect(db.allDocs).not.toHaveBeenCalled();
+
+    endCreation();
+    await flushBibleCleanup();
+    expect(inventory.isDeleted()).toBe(false);
+    expect(db.bulkDocs).not.toHaveBeenCalled();
+
+    inventory.setOutlineItems([{ _id: bibleDoc._id, type: "bible" }]);
+    await jest.advanceTimersByTimeAsync(30 * 60 * 1000);
+    presence.publish(["host-123"]);
+    await jest.advanceTimersByTimeAsync(10 * 60 * 1000);
+    presence.publish(["host-123"]);
+    await jest.advanceTimersByTimeAsync(10 * 60 * 1000);
+    presence.publish(["host-123"]);
+    await jest.advanceTimersByTimeAsync(10 * 60 * 1000 + 5_000);
+    await flushBibleCleanup();
+    expect(inventory.isDeleted()).toBe(false);
+    expect(db.bulkDocs).not.toHaveBeenCalled();
+    presence.release();
+  });
+
+  it("invalidates cleanup when the database session changes during inventory verification", async () => {
+    jest.useFakeTimers();
+    const {
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      activeControllerPresence,
+      contentDatabaseSession,
+      db,
+    } = loadStoreWithItemListPersistence();
+    const presence = activeControllerPresence.beginActiveControllerPresence(
+      activeControllerPresence.getControllerPresenceScope("church-test", db.name),
+    );
+    presence.publish(["host-123"]);
+    const oldDate = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const bibleDoc = {
+      _id: "session-switch-during-cleanup",
+      _rev: "1-bible",
+      type: "bible",
+      name: "Genesis 1",
+      createdAt: oldDate,
+      updatedAt: oldDate,
+    };
+    configureBibleCleanupDatabase(db, bibleDoc);
+    db.info.mockImplementationOnce(async () => {
+      contentDatabaseSession.release();
+      return { update_seq: 1 };
+    });
+    initializeBibleCleanupState(
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      bibleDoc,
+    );
+
+    await flushBibleCleanup();
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushBibleCleanup();
+    expect(db.bulkDocs).not.toHaveBeenCalled();
+    presence.release();
+  });
+
+  it.each(["items", "overlays"])("serializes superseded %s saves and acknowledges only the latest persisted draft", async (field) => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, overlaysSlice, db, postMessage } = loadStoreWithItemListPersistence();
+    hydrateOutline(store, itemListSlice, itemListsSlice);
+    store.dispatch(overlaysSlice.actions.initiateOverlayList([{ id: "base", name: "Base" }]));
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    let doc: Record<string, any> = { _id: "outline-a", _rev: "1-base", items: [], overlays: [] };
+    db.get.mockImplementation(async () => ({ ...doc }));
+    db.put.mockImplementation(async (next: Record<string, any>) => {
+      const name = field === "items" ? next.items[0].name : next.overlays[0];
+      if (name === "A") { entered(); await gate; }
+      if (doc._rev !== next._rev) throw Object.assign(new Error("conflict"), { status: 409 });
+      doc = { ...next, _rev: `${Number(doc._rev[0]) + 1}-saved` };
+      return { rev: doc._rev };
+    });
+    const edit = (name: string) => field === "items"
+      ? store.dispatch(itemListSlice.actions.updateItemList([createServiceItem({ _id: name, name, listId: name })]))
+      : store.dispatch(overlaysSlice.actions.updateOverlayList([{ id: name, name }]));
+    edit("A");
+    await jest.advanceTimersByTimeAsync(1500);
+    await started;
+    edit("B");
+    await jest.advanceTimersByTimeAsync(1500);
+    expect(store.getState().undoable.present[field === "items" ? "itemList" : "overlays"].hasPendingUpdate).toBe(true);
+    expect(postMessage).not.toHaveBeenCalled();
+    release();
+    await jest.advanceTimersByTimeAsync(0);
+    await flushListenerEffects();
+    expect(field === "items" ? doc.items[0].name : doc.overlays[0]).toBe("B");
+    expect(store.getState().undoable.present[field === "items" ? "itemList" : "overlays"].hasPendingUpdate).toBe(false);
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(postMessage.mock.calls[0][0].data.docs[field][0]).toEqual(field === "items" ? expect.objectContaining({ name: "B" }) : "B");
+  });
+
+  it("finishes an outgoing outline save even when another outline starts saving", async () => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, db } = loadStoreWithItemListPersistence();
+    store.dispatch(itemListsSlice.actions.initiateItemLists([{ _id: "outline-a", name: "A" }, { _id: "outline-b", name: "B" }]));
+    store.dispatch(itemListSlice.actions.initiateItemList([]));
+    const docs = new Map<string, Record<string, any>>([
+      ["outline-a", { _id: "outline-a", _rev: "1-a", items: [], overlays: [] }],
+      ["outline-b", { _id: "outline-b", _rev: "1-b", items: [], overlays: [] }],
+    ]);
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    db.get.mockImplementation(async (id: string) => ({ ...docs.get(id) }));
+    db.put.mockImplementation(async (doc: Record<string, any>) => {
+      if (doc._id === "outline-a") { entered(); await gate; }
+      docs.set(doc._id, { ...doc, _rev: "2-saved" });
+      return { rev: "2-saved" };
+    });
+    store.dispatch(itemListSlice.actions.updateItemList([createServiceItem({ name: "Outgoing edit" })]));
+    store.dispatch(itemListsSlice.actions.selectItemList("outline-b"));
+    await started;
+    store.dispatch(itemListSlice.actions.initiateItemList([]));
+    store.dispatch(itemListSlice.actions.updateItemList([createServiceItem({ name: "New outline edit" })]));
+    await jest.advanceTimersByTimeAsync(1500);
+    expect(docs.get("outline-b")?.items[0].name).toBe("New outline edit");
+    release();
+    await jest.advanceTimersByTimeAsync(0);
+    expect(docs.get("outline-a")?.items[0].name).toBe("Outgoing edit");
+    expect(store.getState().undoable.present.itemList.list[0].name).toBe("New outline edit");
+  });
+
+  it("keeps same-ID database saves, acknowledgments and broadcasts with their original owner", async () => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, db, switchDatabase, postMessage } = loadStoreWithItemListPersistence();
+    hydrateOutline(store, itemListSlice, itemListsSlice);
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    db.get.mockResolvedValue({ _id: "outline-a", _rev: "1-a", items: [], overlays: [] });
+    db.put.mockImplementation(async () => { entered(); await gate; return { rev: "2-a" }; });
+    store.dispatch(itemListSlice.actions.updateItemList([createServiceItem({ name: "Church A edit" })]));
+    await jest.advanceTimersByTimeAsync(1500);
+    await started;
+    const publishB = jest.fn();
+    const dbB = { ...db, name: "church-b", get: jest.fn().mockResolvedValue({ _id: "outline-a", _rev: "1-b", items: [], overlays: [] }), put: jest.fn().mockResolvedValue({ rev: "2-b" }) };
+    switchDatabase(dbB, publishB);
+    hydrateOutline(store, itemListSlice, itemListsSlice);
+    store.dispatch(itemListSlice.actions.updateItemList([createServiceItem({ name: "Church B edit" })]));
+    // A finishes while B is still pending. It must not acknowledge or publish B.
+    release();
+    await jest.advanceTimersByTimeAsync(0);
+    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(true);
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(publishB).not.toHaveBeenCalled();
+    expect(dbB.put).not.toHaveBeenCalled();
+    await jest.advanceTimersByTimeAsync(1500);
+    expect(dbB.put).toHaveBeenCalledWith(expect.objectContaining({ items: [expect.objectContaining({ name: "Church B edit" })] }));
+    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
+    expect(publishB).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries after an overlay-order write wins a shared-document revision conflict", async () => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, db } =
+      loadStoreWithItemListPersistence();
+    let currentDoc: Record<string, any> = {
+      _id: "outline-a",
+      _rev: "1-base",
+      items: [
+        createServiceItem({ name: "Current", _id: "song-1", listId: "l1" }),
+      ],
+      overlays: ["overlay-1"],
+    };
+    db.get.mockImplementation(async () => ({ ...currentDoc }));
+    db.put.mockImplementationOnce(async () => {
+      currentDoc = {
+        ...currentDoc,
+        _rev: "2-overlay-order",
+        overlays: ["overlay-2", "overlay-1"],
+      };
+      throw Object.assign(new Error("conflict"), { status: 409 });
+    });
+    db.put.mockImplementationOnce(async (document: Record<string, any>) => {
+      currentDoc = { ...document, _rev: "3-outline" };
+      return { ok: true, rev: "3-outline" };
+    });
+
+    hydrateOutline(store, itemListSlice, itemListsSlice);
+    store.dispatch(
+      itemListSlice.actions.updateItemList([
+        createServiceItem({ name: "Current", _id: "song-1", listId: "l1" }),
+        createServiceItem({ name: "Added", _id: "song-2", listId: "l2" }),
+      ]),
+    );
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.get).toHaveBeenCalledTimes(2);
+    expect(db.put).toHaveBeenCalledTimes(2);
+    expect(currentDoc).toEqual(
+      expect.objectContaining({
+        _rev: "3-outline",
+        overlays: ["overlay-2", "overlay-1"],
+        items: expect.arrayContaining([expect.objectContaining({ name: "Added" })]),
+      }),
+    );
+    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(
+      false,
+    );
+  });
+
+  it("keeps outline and overlay-order edits when their saves overlap", async () => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, overlaysSlice, db } =
+      loadStoreWithItemListPersistence();
+    let currentDoc: Record<string, any> = {
+      _id: "outline-a",
+      _rev: "1-base",
+      items: [
+        createServiceItem({ name: "Current", _id: "song-1", listId: "l1" }),
+      ],
+      overlays: ["overlay-1", "overlay-2"],
+    };
+    db.get.mockImplementation(async () => ({ ...currentDoc }));
+    db.put.mockImplementation(async (document: Record<string, any>) => {
+      if (document._rev !== currentDoc._rev) {
+        throw Object.assign(new Error("conflict"), { status: 409 });
+      }
+      const revision = `${Number(currentDoc._rev[0]) + 1}-saved`;
+      currentDoc = { ...document, _rev: revision };
+      return { ok: true, rev: revision };
+    });
+
+    hydrateOutline(store, itemListSlice, itemListsSlice);
+    store.dispatch(
+      overlaysSlice.actions.initiateOverlayList([
+        { id: "overlay-1", name: "First" },
+        { id: "overlay-2", name: "Second" },
+      ]),
+    );
+    store.dispatch(
+      itemListSlice.actions.updateItemList([
+        createServiceItem({ name: "Current", _id: "song-1", listId: "l1" }),
+        createServiceItem({ name: "Added", _id: "song-2", listId: "l2" }),
+      ]),
+    );
+    store.dispatch(
+      overlaysSlice.actions.updateOverlayList([
+        { id: "overlay-2", name: "Second" },
+        { id: "overlay-1", name: "First" },
+      ]),
+    );
+
+    await jest.advanceTimersByTimeAsync(1500);
+    for (let attempt = 0; attempt < 20; attempt += 1) await Promise.resolve();
+    await flushListenerEffects();
+
+    expect(currentDoc.items).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "Added" })]),
+    );
+    expect(currentDoc.overlays).toEqual(["overlay-2", "overlay-1"]);
+    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(
+      false,
+    );
+    expect(store.getState().undoable.present.overlays.hasPendingUpdate).toBe(
+      false,
+    );
+  });
+
+  it("persists pending fields to the outgoing outline before switching selection", async () => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, overlaysSlice, db } =
+      loadStoreWithItemListPersistence();
+    const currentDoc: Record<string, any> = {
+      _id: "outline-a",
+      _rev: "1-base",
+      items: [],
+      overlays: ["overlay-1", "overlay-2"],
+    };
+    const docs = new Map<string, Record<string, any>>([
+      ["outline-a", currentDoc],
+      ["itemLists", {
+        _id: "itemLists",
+        _rev: "1-lists",
+        itemLists: [
+          { _id: "outline-a", name: "Sunday" },
+          { _id: "outline-b", name: "Wednesday" },
+        ],
+        activeList: { _id: "outline-a", name: "Sunday" },
+      }],
+    ]);
+    db.get.mockImplementation(async (id: string) => {
+      const document = docs.get(id);
+      if (!document) throw Object.assign(new Error("missing"), { status: 404 });
+      return { ...document };
+    });
+    db.put.mockImplementation(async (document: Record<string, any>) => {
+      const current = docs.get(String(document._id));
+      if (!current || current._rev !== document._rev) {
+        throw Object.assign(new Error("conflict"), { status: 409 });
+      }
+      const revision = `${Number(current._rev[0]) + 1}-saved`;
+      docs.set(String(document._id), { ...document, _rev: revision });
+      return { ok: true, rev: revision };
+    });
+
+    store.dispatch(
+      itemListsSlice.actions.initiateItemLists([
+        { _id: "outline-a", name: "Sunday" },
+        { _id: "outline-b", name: "Wednesday" },
+      ]),
+    );
+    store.dispatch(
+      itemListSlice.actions.initiateItemList([
+        createServiceItem({ name: "Before", _id: "song-1", listId: "l1" }),
+      ]),
+    );
+    store.dispatch(
+      overlaysSlice.actions.initiateOverlayList([
+        { id: "overlay-1", name: "First" },
+        { id: "overlay-2", name: "Second" },
+      ]),
+    );
+    store.dispatch(
+      itemListSlice.actions.updateItemList([
+        createServiceItem({ name: "After", _id: "song-2", listId: "l2" }),
+      ]),
+    );
+    store.dispatch(
+      overlaysSlice.actions.updateOverlayList([
+        { id: "overlay-2", name: "Second" },
+        { id: "overlay-1", name: "First" },
+      ]),
+    );
+    store.dispatch(itemListsSlice.actions.selectItemList("outline-b"));
+
+    for (let attempt = 0; attempt < 50; attempt += 1) await Promise.resolve();
+    const savedOutline = docs.get("outline-a");
+    expect(savedOutline?.items).toEqual([
+      expect.objectContaining({ name: "After" }),
+    ]);
+    expect(savedOutline?.overlays).toEqual(["overlay-2", "overlay-1"]);
+    expect(store.getState().undoable.present.itemLists.selectedList?._id).toBe(
+      "outline-b",
+    );
+    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(
+      false,
+    );
+    expect(store.getState().undoable.present.overlays.hasPendingUpdate).toBe(
+      false,
+    );
+  });
+
+  it("defers Bible cleanup until an outgoing outline save settles and checks its reference", async () => {
+    jest.useFakeTimers();
+    const {
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      activeControllerPresence,
+      db,
+    } = loadStoreWithItemListPersistence();
+    const presence = activeControllerPresence.beginActiveControllerPresence(
+      activeControllerPresence.getControllerPresenceScope(
+        "church-test",
+        db.name,
+      ),
+    );
+    presence.publish(["host-123"]);
+
+    const oldDate = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const bibleDoc = {
+      _id: "bible-outgoing-save",
+      _rev: "1-bible",
+      type: "bible",
+      name: "Genesis 1",
+      createdAt: oldDate,
+      updatedAt: oldDate,
+    };
+    const bibleReference = createServiceItem({
+      _id: bibleDoc._id,
+      name: bibleDoc.name,
+      type: "bible",
+      listId: "bible-link",
+      createdAt: oldDate,
+      updatedAt: oldDate,
+    });
+    let sequence = 1;
+    let outlineA: Record<string, any> = {
+      _id: "outline-a",
+      _rev: "1-outline-a",
+      items: [],
+      overlays: [],
+    };
+    const outlineB = {
+      _id: "outline-b",
+      _rev: "1-outline-b",
+      items: [],
+      overlays: [],
+    };
+    let registry: Record<string, any> = {
+      _id: "ItemLists",
+      _rev: "1-registry",
+      itemLists: [
+        { _id: "outline-a", name: "Sunday" },
+        { _id: "outline-b", name: "Wednesday" },
+      ],
+      activeList: { _id: "outline-a", name: "Sunday" },
+    };
+    let signalOutgoingSaveStarted!: () => void;
+    const outgoingSaveStarted = new Promise<void>((resolve) => {
+      signalOutgoingSaveStarted = resolve;
+    });
+    let finishOutgoingSave!: () => void;
+    const outgoingSaveGate = new Promise<void>((resolve) => {
+      finishOutgoingSave = resolve;
+    });
+
+    db.get.mockImplementation(async (id: string) => {
+      if (id === "ItemLists") return { ...registry };
+      if (id === "outline-a") return { ...outlineA };
+      if (id === "outline-b") return { ...outlineB };
+      throw Object.assign(new Error("missing"), { status: 404 });
+    });
+    db.put.mockImplementation(async (document: Record<string, any>) => {
+      if (document._id === "outline-a") {
+        signalOutgoingSaveStarted();
+        await outgoingSaveGate;
+        sequence += 1;
+        outlineA = { ...document, _rev: `${sequence}-outline-a` };
+        return { ok: true, rev: outlineA._rev };
+      }
+      sequence += 1;
+      registry = { ...document, _rev: `${sequence}-registry` };
+      return { ok: true, rev: registry._rev };
+    });
+    db.allDocs.mockImplementation(async ({ keys }: { keys: string[] }) => ({
+      rows: keys.map((key) => {
+        if (key === "outline-a") return { id: key, doc: { ...outlineA } };
+        if (key === "outline-b") return { id: key, doc: { ...outlineB } };
+        if (key === bibleDoc._id) return { id: key, doc: { ...bibleDoc } };
+        return { key, error: "not_found" };
+      }),
+      update_seq: sequence,
+    }));
+    db.info.mockImplementation(async () => ({ update_seq: sequence }));
+    db.bulkDocs.mockResolvedValue([]);
+
+    store.dispatch(allDocsSlice.actions.hydrateItemCache([bibleDoc]));
+    store.dispatch(itemListsSlice.actions.initiateItemLists(registry.itemLists));
+    store.dispatch(itemListSlice.actions.initiateItemList([]));
+    store.dispatch(itemListSlice.actions.updateItemList([bibleReference]));
+    store.dispatch(itemListsSlice.actions.selectItemList("outline-b"));
+    store.dispatch(itemListSlice.actions.initiateItemList([]));
+    await outgoingSaveStarted;
+    await flushListenerEffects();
+
+    expect(store.getState().undoable.present.itemLists.selectedList?._id).toBe(
+      "outline-b",
+    );
+    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(
+      false,
+    );
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushBibleCleanup();
+    expect(db.allDocs).not.toHaveBeenCalled();
+    expect(db.bulkDocs).not.toHaveBeenCalled();
+
+    finishOutgoingSave();
+    await flushBibleCleanup();
+    expect(outlineA.items).toEqual([expect.objectContaining({ _id: bibleDoc._id })]);
+    expect(db.allDocs).toHaveBeenCalledTimes(1);
+    expect(db.bulkDocs).not.toHaveBeenCalled();
+
+    presence.release();
+    jest.useRealTimers();
+  });
+
+  it("keeps both pending flags when shared-outline writes fail", async () => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, overlaysSlice, db } =
+      loadStoreWithItemListPersistence();
+    db.get.mockResolvedValue({
+      _id: "outline-a",
+      _rev: "1-base",
+      items: [],
+      overlays: ["overlay-1", "overlay-2"],
+    });
+    db.put.mockRejectedValue(new Error("offline"));
+    const logError = jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+    hydrateOutline(store, itemListSlice, itemListsSlice);
+    store.dispatch(
+      overlaysSlice.actions.initiateOverlayList([
+        { id: "overlay-1", name: "First" },
+        { id: "overlay-2", name: "Second" },
+      ]),
+    );
+    store.dispatch(
+      itemListSlice.actions.updateItemList([
+        createServiceItem({ name: "Added", _id: "song-2", listId: "l2" }),
+      ]),
+    );
+    store.dispatch(
+      overlaysSlice.actions.updateOverlayList([
+        { id: "overlay-2", name: "Second" },
+        { id: "overlay-1", name: "First" },
+      ]),
+    );
+
+    await jest.advanceTimersByTimeAsync(1500);
+    for (let attempt = 0; attempt < 20; attempt += 1) await Promise.resolve();
+
+    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(
+      true,
+    );
+    expect(store.getState().undoable.present.overlays.hasPendingUpdate).toBe(
+      true,
+    );
+    logError.mockRestore();
   });
 
   it("discards a delayed outline save after a remote hydrate during debounce", async () => {
@@ -5029,93 +6224,109 @@ describe("item list outline persistence", () => {
   });
 });
 
-const loadStoreWithAllItemsPersistence = () => {
-  let storeModule: any;
-  let allItemsSliceModule: any;
-  const postMessage = jest.fn();
-  const db = {
-    get: jest.fn().mockResolvedValue({ _id: "allItems", items: [] }),
-    put: jest.fn().mockResolvedValue({ ok: true, id: "allItems", rev: "2" }),
-  };
-  let activeDb: any = db;
+describe("selected overlay persistence races", () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { createOverlay } = require("../test/fixtures");
 
-  jest.isolateModules(() => {
-    jest.doMock("../context/controllerInfo", () => ({
-      get globalDb() { return activeDb; },
-      globalBroadcastRef: { postMessage },
-    }));
-    jest.doMock("../context/globalInfo", () => ({
-      globalFireDbInfo: { db: undefined, database: undefined },
-      globalHostId: "host-123",
-    }));
-    jest.doMock("firebase/database", () => ({
-      ref: jest.fn(),
-      set: jest.fn(),
-      get: jest.fn(),
-    }));
-
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    storeModule = require("./store");
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    allItemsSliceModule = require("./allItemsSlice");
-  });
-
-  return { store: storeModule.default, allItemsSlice: allItemsSliceModule, db, setGlobalDb: (next: unknown) => { activeDb = next; } };
-};
-
-describe("allItems persistence", () => {
-  it("keeps timer search changes UI-only while persisting library mutations", async () => {
+  it("keeps a newer edit and remote conflict when an older save finishes late", async () => {
     jest.useFakeTimers();
-    const { store, allItemsSlice, db } = loadStoreWithAllItemsPersistence();
-    store.dispatch(allItemsSlice.setIsInitialized(true));
+    const { store, overlaySlice, overlaysSlice, db } =
+      loadStoreWithItemListPersistence();
+    let persisted = {
+      _id: "overlay-overlay-1",
+      _rev: "1-base",
+      docType: "overlay",
+      ...createOverlay({ id: "overlay-1", name: "Original", duration: 7 }),
+    };
+    let finishFirstPut: (() => void) | undefined;
+    db.get.mockImplementation(async (id: string) => {
+      if (id !== persisted._id) throw new Error(`Unexpected document ${id}`);
+      return { ...persisted };
+    });
+    db.put.mockImplementation((document: Record<string, any>) => {
+      if (document.name === "First local edit") {
+        persisted = { ...document, _rev: "2-first" };
+        return new Promise((resolve) => {
+          finishFirstPut = () => resolve({ ok: true, rev: "2-first" });
+        }) as any;
+      }
+      persisted = { ...document, _rev: "3-newer" };
+      return Promise.resolve({ ok: true, rev: "3-newer" }) as any;
+    });
 
-    store.dispatch(allItemsSlice.setTimerSearchValue("countdown"));
+    const base = createOverlay({ id: "overlay-1", name: "Original", duration: 7 });
+    store.dispatch(overlaysSlice.actions.initiateOverlayList([base]));
+    store.dispatch(overlaySlice.actions.selectOverlay(base));
+    store.dispatch(
+      overlaySlice.actions.updateOverlay({ id: "overlay-1", name: "First local edit" }),
+    );
+    store.dispatch(
+      overlaysSlice.actions.updateOverlayInList({ id: "overlay-1", name: "First local edit" }),
+    );
+
     await jest.advanceTimersByTimeAsync(1500);
-    await flushListenerEffects();
-    expect(db.put).not.toHaveBeenCalled();
+    for (let attempt = 0; attempt < 20; attempt += 1) await Promise.resolve();
+    expect(db.put).toHaveBeenCalledTimes(1);
 
     store.dispatch(
-      allItemsSlice.addItemToAllItemsList({
-        _id: "timer-1",
-        name: "Countdown",
-        type: "timer",
-        listId: "timer-1",
-        background: "",
-      }),
+      overlaySlice.actions.bufferRemoteOverlayUpdate(
+        createOverlay({ id: "overlay-1", name: "Remote edit", duration: 7 }),
+      ),
     );
-    await jest.advanceTimersByTimeAsync(1500);
-    await flushListenerEffects();
+    store.dispatch(
+      overlaySlice.actions.updateOverlay({ id: "overlay-1", name: "Newer local edit" }),
+    );
+    store.dispatch(
+      overlaysSlice.actions.updateOverlayInList({ id: "overlay-1", name: "Newer local edit" }),
+    );
 
-    expect(db.put).toHaveBeenCalledWith(
-      expect.objectContaining({
-        _id: "allItems",
-        items: [expect.objectContaining({ _id: "timer-1" })],
-      }),
-    );
-    jest.useRealTimers();
+    await jest.advanceTimersByTimeAsync(1500);
+    for (let attempt = 0; attempt < 40; attempt += 1) await Promise.resolve();
+    expect(db.put).toHaveBeenCalledTimes(2);
+    expect(persisted.name).toBe("Newer local edit");
+
+    finishFirstPut?.();
+    for (let attempt = 0; attempt < 30; attempt += 1) await Promise.resolve();
+    const state = store.getState().undoable.present;
+    expect(persisted.name).toBe("Newer local edit");
+    expect(state.overlay.selectedOverlay?.name).toBe("Newer local edit");
+    expect(state.overlays.list[0]?.name).toBe("Newer local edit");
+    expect(state.overlay.hasRemoteUpdate).toBe(true);
+    expect(state.overlay.pendingRemoteOverlay?.name).toBe("Remote edit");
+  });
+});
+
+describe("document cache and library controls", () => {
+  it("preserves independent outline backgrounds and occurrence IDs through a library refresh and route reset", () => {
+    const { store, itemSlice } = loadStoreWithItemPersistence();
+    const outline = [
+      { _id: "song-1", type: "song", name: "Outline title", listId: "first", background: "operator-custom" },
+      { _id: "song-1", type: "song", name: "Other occurrence", listId: "second", background: "other-custom" },
+    ];
+    store.dispatch({ type: "itemList/updateItemList", payload: outline });
+    store.dispatch(itemSlice.actions.setActiveItem({ ...createSongDoc(), listId: "first" }));
+    store.dispatch({ type: "allDocs/applyItemDocumentChange", payload: { id: "song-1", doc: createSongDoc({ name: "Library rename", background: "library-current" }) } });
+    expect(store.getState().undoable.present.itemList.list).toEqual(outline);
+    expect(store.getState().undoable.present.item.listId).toBe("first");
+    const cached = store.getState().allDocs;
+    store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+    expect(store.getState().allDocs).toBe(cached);
+    expect(store.getState().allDocs.allSongDocs[0].background).toBe("library-current");
   });
 
-  it("abandons a delayed Church A all-items save after the active database switches", async () => {
+  it("does not persist library controls or cached documents as an index", async () => {
     jest.useFakeTimers();
-    const { store, allItemsSlice, db: dbA, setGlobalDb } = loadStoreWithAllItemsPersistence();
-    const dbB = { get: jest.fn(), put: jest.fn() };
-    store.dispatch(allItemsSlice.setIsInitialized(true));
-    store.dispatch(allItemsSlice.addItemToAllItemsList({
-      _id: "church-a-item",
-      name: "Church A item",
-      type: "song",
-      listId: "outline-a",
-      background: "",
-    }));
-    store.dispatch({ type: "RESET" });
-    setGlobalDb(dbB);
-
+    const { store, db } = loadStoreWithControllerMediaFolders();
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const ui = require("./itemLibraryUiSlice");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const cache = require("./allDocsSlice");
+    store.dispatch(ui.setLibrarySearchValue("grace"));
+    store.dispatch(ui.setLibraryFilter("song"));
+    store.dispatch(cache.hydrateItemCache([{ _id: "song", type: "song", name: "Grace" }]));
     await jest.advanceTimersByTimeAsync(1500);
-    await flushListenerEffects();
-
-    expect(dbA.put).not.toHaveBeenCalled();
-    expect(dbB.get).not.toHaveBeenCalled();
-    expect(dbB.put).not.toHaveBeenCalled();
+    expect(db.put).not.toHaveBeenCalled();
+    expect(store.getState()).not.toHaveProperty("allItems");
     jest.useRealTimers();
   });
 });

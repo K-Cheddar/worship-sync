@@ -1,5 +1,4 @@
 import type {
-  DBAllItems,
   DBCredits,
   DBItem,
   DBItemListDetails,
@@ -656,13 +655,6 @@ export const createOfflineGuestSeedDocs = (now = new Date().toISOString()) => {
   ];
 
   const docs: SeedDoc[] = [
-    {
-      _id: "allItems",
-      items: serviceItems,
-      createdAt: now,
-      updatedAt: now,
-      docType: "allItems",
-    } satisfies Omit<DBAllItems, "_rev">,
     {
       _id: "ItemLists",
       itemLists: [outline],

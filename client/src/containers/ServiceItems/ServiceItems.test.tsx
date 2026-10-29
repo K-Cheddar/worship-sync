@@ -5,7 +5,10 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
 
-const mockDispatch = jest.fn();
+const mockDispatch: jest.Mock = jest.fn((action) => {
+  if (typeof action === "function") return action(mockDispatch, () => ({ ...mockState, undoable: { present: { ...mockState.undoable.present, item: {} } } }));
+  return action;
+});
 const mockUseDisplayedUpcomingService = jest.fn();
 const mockUseNextServiceCountdownText = jest.fn();
 const mockNavigate = jest.fn();
@@ -46,6 +49,7 @@ jest.mock("@dnd-kit/sortable", () => ({
 jest.mock("react-router-dom", () => ({
   ...jest.requireActual("react-router-dom"),
   useNavigate: () => mockNavigate,
+  useLocation: () => ({ pathname: "/controller" }),
 }));
 
 jest.mock("../../utils/outlineSelectionScroll", () => ({

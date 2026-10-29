@@ -5,7 +5,7 @@ import { ChevronsDownUp } from "lucide-react";
 import { FileQuestion } from "lucide-react";
 import { Pencil } from "lucide-react";
 import { PencilLine } from "lucide-react";
-import { Headphones } from "lucide-react";
+import { Headphones, Type, Layers } from "lucide-react";
 
 import {
   CSSProperties,
@@ -66,7 +66,6 @@ import {
   uploadSongAudio,
 } from "../../api/auth";
 import { broadcastItemUpdate, RootState } from "../../store/store";
-import { upsertItemInAllDocs } from "../../store/allDocsSlice";
 import {
   deleteSongAudioBeforeClearingMetadata,
   persistSongAudioAttachment,
@@ -77,6 +76,7 @@ import { AccessType } from "../../context/globalInfo";
 import { ToastContext } from "../../context/toastContext";
 import SectionTextEditor from "../../components/SectionTextEditor/SectionTextEditor";
 import SlideBoxes from "../../components/SlideBoxes/SlideBoxes";
+import SegmentedControl from "../../components/SegmentedControl/SegmentedControl";
 import LocalVideoInputDetails from "../../components/LocalVideoInputDetails/LocalVideoInputDetails";
 import LocalVideoInputPicker, {
   type LocalVideoCaptureMode,
@@ -198,7 +198,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     access === "full" ||
     (access === "music" && (type === "song" || type === "free"));
 
-  const { shouldShowItemEditor, toolbarSection = "settings" } = useSelector(
+  const { shouldShowItemEditor } = useSelector(
     (state: RootState) => state.undoable.present.preferences
   );
   const isPresentMode = presentationMode === "present";
@@ -489,7 +489,6 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
         if (currentScope.itemId === _id) {
           dispatch(applyPersistedSongAudio({ songAudio: audio, persistedDoc: saved, owner }));
         }
-        dispatch(upsertItemInAllDocs(saved));
         broadcastItemUpdate(saved);
       }
 
@@ -546,7 +545,6 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     if (currentScope.itemId === _id) {
       dispatch(applyPersistedSongAudio({ songAudio: undefined, persistedDoc: saved, owner }));
     }
-    dispatch(upsertItemInAllDocs(saved));
     broadcastItemUpdate(saved);
     if (currentScope.itemId === _id) {
       showToast?.({ message: "MP3 removed.", variant: "success" });
@@ -1346,6 +1344,12 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     ],
   );
 
+  const [editorView, setEditorView] = useState<{ itemId: string; view: "text" | "boxes" }>({ itemId: _id, view: "text" });
+  if (editorView.itemId !== _id) {
+    setEditorView({ itemId: _id, view: "text" });
+  }
+  const activeEditorView = editorView.itemId === _id ? editorView.view : "text";
+
   const leftColumnContent = useMemo(() => {
     if (isPresentMode) {
       if (selectedSlideMediaSource) {
@@ -1360,17 +1364,6 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       }
       if (type === "timer") return <TimerControls variant="controlsOnly" className="w-full" />;
       return null;
-    }
-    if (toolbarSection === "box-tools") {
-      return (
-        <SlideBoxes
-          className="lg:flex-[0_0_30%] w-full"
-          canEdit={canEdit}
-          canDeleteBox={canDeleteBox}
-          isBoxLocked={isBoxLocked}
-          setIsBoxLocked={setIsBoxLocked}
-        />
-      );
     }
     if (selectedSlideMediaSource) {
       return (
@@ -1397,19 +1390,15 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
           (type !== "song" && type !== "free") ||
           ((type === "song" && arrangement?.slides ? arrangement.slides : slides)?.[selectedSlide]?.type === "Blank")
         }
-        sectionName={sectionName}
+        sectionName={isMobile && (type === "song" || type === "free") ? undefined : sectionName}
         sectionColor={sectionColor}
         isReformatting={isReformatting}
       />
     );
   }, [
-    toolbarSection,
     type,
     item,
     canEdit,
-    canDeleteBox,
-    isBoxLocked,
-    setIsBoxLocked,
     sectionText,
     handleSectionTextChange,
     sectionName,
@@ -1421,6 +1410,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     selectedSlideMediaSource,
     isPresentMode,
     canRelinkVideoInputInPresentMode,
+    isMobile,
   ]);
 
   const editorWrapperStyle = {
@@ -1435,14 +1425,33 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
         <SlideEditorSkeleton mode={presentationMode} />
       ) : !isEmpty ? (
         <div className="flex flex-col lg:flex-row gap-2 w-full px-2">
-          {leftColumnContent ? <div className="lg:flex-[0_0_30%] w-full min-h-0 min-w-0">
+          {(leftColumnContent || !isPresentMode) ? <div className="lg:flex-[0_0_30%] w-full min-h-0 min-w-0">
             <div className="flex h-full min-h-0 w-full flex-col gap-1">
               <LastUpdatedByline
                 updatedBy={baseItem?.updatedBy}
                 updatedAt={baseItem?.updatedAt}
                 className="px-1"
               />
-              <div className="min-h-0 flex-1">{leftColumnContent}</div>
+              {!isPresentMode && (
+                <SegmentedControl
+                  ariaLabel="Slide editor view"
+                  variant="compact"
+                  fullWidth
+                  className="[&_button]:justify-center [&>button:first-of-type]:flex-[2] lg:[&>button]:py-0"
+                  value={activeEditorView}
+                  onChange={(view) => setEditorView({ itemId: _id, view })}
+                  options={[
+                    { value: "text", label: isMobile && (type === "song" || type === "free") && !selectedSlideMediaSource ? <span className="block min-w-0 max-w-full truncate">{sectionName}</span> : <><Type size={16} aria-hidden="true" />Text</> },
+                    { value: "boxes", label: <><Layers size={16} aria-hidden="true" />Boxes</> },
+                  ]}
+                />
+              )}
+              <div className="min-h-0 flex-1" hidden={!isPresentMode && activeEditorView !== "text"}>{leftColumnContent}</div>
+              {!isPresentMode && activeEditorView === "boxes" && (
+                <div className="min-h-0 flex-1">
+                  <SlideBoxes canEdit={canEdit} canDeleteBox={canDeleteBox} isBoxLocked={isBoxLocked} setIsBoxLocked={setIsBoxLocked} />
+                </div>
+              )}
             </div>
           </div> : null}
 

@@ -47,7 +47,7 @@ const ServicePlanCustomDocumentPreviewDialog = ({
             <StaticSlideThumbnail
               slide={slide}
               itemType="free"
-              isStreamFormat={false}
+              previewMode="projector"
               scaleFactor={scaleFactor}
             />
             <figcaption className="mt-1 text-xs text-gray-400">

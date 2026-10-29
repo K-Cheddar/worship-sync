@@ -1,14 +1,18 @@
 import { act, render, screen, within } from "@testing-library/react";
-import type { ReactNode } from "react";
+import type { ComponentType, ReactNode, SVGProps } from "react";
 import Toolbar from "./Toolbar";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { preferencesSlice } from "../../store/preferencesSlice";
 import type { ControllerConfigurationRoute } from "../../store/preferencesSlice";
 import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
+import {
+  ThumbnailPreviewModeProvider,
+  useThumbnailPreviewMode,
+} from "../../context/thumbnailPreviewMode";
 
 const mockDispatch = jest.fn();
-let mockPathname = "/controller/item/item-id/list-id";
+let mockPathname = "/controller";
 
 let mockState: {
   undoable: {
@@ -39,12 +43,28 @@ jest.mock("../../components/Button/Button", () => ({
     children,
     className,
     onClick,
+    "aria-label": ariaLabel,
+    "aria-expanded": ariaExpanded,
+    disabled,
+    svg,
   }: {
     children?: ReactNode;
     className?: string;
     onClick?: () => void;
+    "aria-label"?: string;
+    "aria-expanded"?: boolean;
+    disabled?: boolean;
+    svg?: ComponentType<SVGProps<SVGSVGElement>>;
   }) => (
-    <button type="button" className={className} onClick={onClick}>
+    <button
+      type="button"
+      className={className}
+      onClick={onClick}
+      aria-label={ariaLabel}
+      aria-expanded={ariaExpanded}
+      disabled={disabled}
+      data-icon={svg?.displayName ?? svg?.name}
+    >
       {children}
     </button>
   ),
@@ -127,7 +147,31 @@ jest.mock("./ToolbarElements/MediaSurfaceDiagnostics", () => ({
 
 jest.mock("../../components/Drawer/Drawer", () => ({
   __esModule: true,
-  default: ({ children }: { children?: ReactNode }) => <>{children}</>,
+  default: ({
+    children,
+    title,
+    position,
+    size,
+    isOpen,
+    contentClassName,
+  }: {
+    children?: ReactNode;
+    title?: string;
+    position?: string;
+    size?: string;
+    isOpen?: boolean;
+    contentClassName?: string;
+  }) => (
+    <div
+      data-testid={title === "All Tools" ? "all-tools-drawer" : "drawer"}
+      data-position={position}
+      data-size={size}
+      data-open={isOpen}
+      data-content-class={contentClassName}
+    >
+      {children}
+    </div>
+  ),
 }));
 
 jest.mock("../../pages/Controller/QuickLinks", () => ({
@@ -155,18 +199,25 @@ jest.mock("../../context/activeController", () => ({
 
 let mockControllerBasePath = "/controller";
 
+const PreviewModeProbe = () => {
+  const { previewMode } = useThumbnailPreviewMode();
+  return <span data-testid="thumbnail-preview-mode">{previewMode}</span>;
+};
+
 const renderToolbar = ({
   access,
   itemType,
   lastControllerConfigurationRoute,
   variant,
   workspaceMode,
+  isMobile = false,
 }: {
   access: "full" | "music" | "view";
   itemType: string;
   lastControllerConfigurationRoute?: ControllerConfigurationRoute;
   variant?: "default" | "aux";
   workspaceMode?: "present" | "edit";
+  isMobile?: boolean;
 }) => {
   mockState = {
     undoable: {
@@ -187,13 +238,16 @@ const renderToolbar = ({
 
   const toolbar = <Toolbar className="toolbar" variant={variant} />;
   return render(
-    <GlobalInfoContext.Provider value={{ access } as any}>
-      <ControllerInfoContext.Provider value={{ isPhone: false } as any}>
-        {workspaceMode ? (
-          <PresentationControllerModeProvider>{toolbar}</PresentationControllerModeProvider>
-        ) : toolbar}
-      </ControllerInfoContext.Provider>
-    </GlobalInfoContext.Provider>,
+    <ThumbnailPreviewModeProvider>
+      <GlobalInfoContext.Provider value={{ access } as any}>
+        <ControllerInfoContext.Provider value={{ isPhone: false, isMobile } as any}>
+          {workspaceMode ? (
+            <PresentationControllerModeProvider>{toolbar}</PresentationControllerModeProvider>
+          ) : toolbar}
+          <PreviewModeProbe />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>
+    </ThumbnailPreviewModeProvider>,
   );
 };
 
@@ -228,13 +282,16 @@ const renderToolbarOverlay = ({
   };
 
   return render(
-    <GlobalInfoContext.Provider value={{ access } as any}>
-      <ControllerInfoContext.Provider value={{ isPhone: false } as any}>
-        <PresentationControllerModeProvider>
-          <Toolbar className="toolbar" variant="overlay" />
-        </PresentationControllerModeProvider>
-      </ControllerInfoContext.Provider>
-    </GlobalInfoContext.Provider>,
+    <ThumbnailPreviewModeProvider>
+      <GlobalInfoContext.Provider value={{ access } as any}>
+        <ControllerInfoContext.Provider value={{ isPhone: false } as any}>
+          <PresentationControllerModeProvider>
+            <Toolbar className="toolbar" variant="overlay" />
+          </PresentationControllerModeProvider>
+          <PreviewModeProbe />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>
+    </ThumbnailPreviewModeProvider>,
   );
 };
 
@@ -242,8 +299,26 @@ describe("Toolbar", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     localStorage.clear();
-    mockPathname = "/controller/item/item-id/list-id";
+    mockPathname = "/controller";
     mockControllerBasePath = "/controller";
+  });
+
+  it("keeps Preview As independent when All Tools opens", () => {
+    renderToolbar({ access: "full", itemType: "song" });
+
+    expect(screen.getByTestId("thumbnail-preview-mode")).toHaveTextContent(
+      "projector",
+    );
+    act(() => {
+      screen.getByRole("button", { name: "All Tools" }).click();
+    });
+    expect(screen.getByTestId("thumbnail-preview-mode")).toHaveTextContent(
+      "projector",
+    );
+    expect(screen.getByRole("button", { name: "All Tools" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
   });
 
   it("hides undo and secondary toolbar rows in Present mode", () => {
@@ -264,6 +339,15 @@ describe("Toolbar", () => {
   ])("does not render a content hidden toolbar indicator for the $name layout", ({ renderLayout }) => {
     renderLayout();
     expect(screen.queryByTestId("toolbar-status-area")).not.toBeInTheDocument();
+  });
+
+  it.each(["default", "aux"] as const)("keeps the %s controller menu outside the scrolling controls", (variant) => {
+    renderToolbar({ access: "full", itemType: "song", variant });
+    const row = screen.getByTestId("toolbar-primary-row");
+    const scroll = screen.getByTestId("toolbar-scroll-controls");
+    expect(within(row).getByText("Menu")).toBeInTheDocument();
+    expect(within(scroll).queryByText("Menu")).not.toBeInTheDocument();
+    expect(within(scroll).getByRole("button", { name: "Edit" })).toBeInTheDocument();
   });
 
   it("keeps undo and full toolbar content in Edit mode", () => {
@@ -296,34 +380,49 @@ describe("Toolbar", () => {
   it("hides slide and box tools for music access on non-song items", () => {
     renderToolbar({ access: "music", itemType: "bible" });
 
-    expect(
-      screen.queryByRole("button", { name: "Slide Tools" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Box Tools" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "All Tools" })).not.toBeInTheDocument();
+  });
+
+  it("hides item tools and closes the drawer when the active item is cleared", () => {
+    const { rerender } = renderToolbar({ access: "full", itemType: "song", workspaceMode: "edit" });
+    act(() => screen.getByRole("button", { name: "Edit" }).click());
+    act(() => screen.getByRole("button", { name: "All Tools" }).click());
+    expect(screen.getByTestId("all-tools-drawer")).toHaveAttribute("data-open", "true");
+
+    const refresh = () => rerender(
+      <ThumbnailPreviewModeProvider>
+        <GlobalInfoContext.Provider value={{ access: "full" } as any}>
+          <ControllerInfoContext.Provider value={{ isPhone: false, isMobile: false } as any}>
+            <PresentationControllerModeProvider><Toolbar className="toolbar" /></PresentationControllerModeProvider>
+            <PreviewModeProbe />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </ThumbnailPreviewModeProvider>,
+    );
+    mockState.undoable.present.item.type = "";
+    refresh();
+    expect(screen.getByTestId("toolbar-contextual-row")).toHaveClass("hidden");
+    expect(screen.getByTestId("all-tools-drawer")).toHaveAttribute("data-open", "false");
+
+    mockState.undoable.present.item.type = "song";
+    refresh();
+    expect(screen.getByTestId("toolbar-contextual-row")).not.toHaveClass("hidden");
+    expect(screen.getByTestId("all-tools-drawer")).toHaveAttribute("data-open", "false");
+    expect(screen.getByRole("button", { name: "All Tools" })).toBeInTheDocument();
   });
 
   it("shows slide and box tools for music access on song items", () => {
     renderToolbar({ access: "music", itemType: "song" });
 
-    expect(
-      screen.getByRole("button", { name: "Slide Tools" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Box Tools" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All Tools" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Slide Tools" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Box Tools" })).not.toBeInTheDocument();
   });
 
   it("shows slide and box tools for music access on free form items", () => {
     renderToolbar({ access: "music", itemType: "free" });
 
-    expect(
-      screen.getByRole("button", { name: "Slide Tools" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Box Tools" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All Tools" })).toBeInTheDocument();
   });
 
   it("hides quick links and displays for music access", () => {
@@ -341,11 +440,12 @@ describe("Toolbar", () => {
     renderToolbar({
       access: "full",
       itemType: "song",
-      lastControllerConfigurationRoute: "/controller/service-planning",
+      lastControllerConfigurationRoute: "/controller/service-planning" as any,
     });
 
     const settings = screen.getByRole("link", { name: "Configurations" });
-    expect(settings).toHaveAttribute("href", "/controller/service-planning");
+    expect(settings).toHaveAttribute("href", "/controller/preferences");
+    expect(screen.queryByRole("link", { name: "Service Planning" })).not.toBeInTheDocument();
   });
 
   it("falls back to preferences for Configurations when no other tab was saved", () => {
@@ -382,27 +482,19 @@ describe("Toolbar", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows slide and item tools on an auxiliary controller item page", () => {
+  it("shows relevant tools on an auxiliary controller item page", () => {
     mockControllerBasePath = "/aux-controller/ctrl_lobby";
-    mockPathname = "/aux-controller/ctrl_lobby/item/item-id/list-id";
+    mockPathname = "/aux-controller/ctrl_lobby";
     renderToolbar({
       access: "full",
       itemType: "song",
       variant: "aux",
     });
 
-    expect(
-      screen.getByRole("button", { name: "Slide Tools" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Box Tools" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Item Tools" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Stream Format" }),
-    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All Tools" })).toBeInTheDocument();
+    expect(screen.getByText("Slide Tools Panel")).toBeInTheDocument();
+    expect(screen.getByText("Box Tools Panel")).toBeInTheDocument();
+    expect(screen.queryByText("Stream Formatting")).not.toBeInTheDocument();
   });
 
   it("supports Present and Edit modes on an auxiliary controller", () => {
@@ -418,7 +510,7 @@ describe("Toolbar", () => {
     expect(screen.getByTestId("toolbar-primary-row")).toBeInTheDocument();
     expect(screen.getByTestId("toolbar-user-section")).toBeInTheDocument();
     expect(screen.queryByText("Undo")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Slide Tools" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "All Tools" })).not.toBeInTheDocument();
     expect(screen.getByTestId("compact-user")).toBeInTheDocument();
 
     act(() => {
@@ -426,7 +518,7 @@ describe("Toolbar", () => {
     });
 
     expect(screen.getByText("Undo")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Slide Tools" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All Tools" })).toBeInTheDocument();
     expect(screen.getByTestId("full-user")).toBeInTheDocument();
   });
 
@@ -441,41 +533,50 @@ describe("Toolbar", () => {
     ).toBeInTheDocument();
   });
 
-  it("switches to Slide Tools when navigating to a timer item", () => {
-    const view = renderToolbar({ access: "full", itemType: "song" });
-
+  it("opens All Tools without category tabs and closes it in Present mode", () => {
+    renderToolbar({ access: "full", itemType: "song", workspaceMode: "edit" });
+    act(() => screen.getByRole("button", { name: "Edit" }).click());
+    act(() => screen.getByRole("button", { name: "All Tools" }).click());
     expect(screen.getByText("Slide Tools Panel")).toBeInTheDocument();
-
-    act(() => {
-      screen.getByRole("button", { name: "Item Tools" }).click();
-    });
-
-    expect(screen.queryByText("Slide Tools Panel")).not.toBeInTheDocument();
+    expect(screen.getByText("Box Tools Panel")).toBeInTheDocument();
     expect(screen.getByText("Item Tools Panel")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Slide Tools" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Box Tools" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stream Format" })).not.toBeInTheDocument();
 
-    mockPathname = "/controller/item/timer-id/list-id";
-    mockState = {
-      undoable: {
-        present: {
-          item: {
-            isLyricsEditorOpen: false,
-            type: "timer",
-          },
-          preferences: preferencesSlice.getInitialState(),
-        },
-      },
-    };
+    act(() => screen.getByRole("button", { name: "Present" }).click());
+    expect(screen.queryByRole("button", { name: "All Tools" })).not.toBeInTheDocument();
+  });
 
-    view.rerender(
-      <GlobalInfoContext.Provider value={{ access: "full" } as any}>
-        <ControllerInfoContext.Provider value={{ isPhone: false } as any}>
-          <Toolbar className="toolbar" />
-        </ControllerInfoContext.Provider>
-      </GlobalInfoContext.Provider>,
+  it.each([
+    { isMobile: false, position: "right", size: "md" },
+    { isMobile: true, position: "bottom", size: "lg" },
+  ])("uses the responsive All Tools $size $position drawer", ({ isMobile, position, size }) => {
+    renderToolbar({ access: "full", itemType: "song", workspaceMode: "edit", isMobile });
+    act(() => screen.getByRole("button", { name: "Edit" }).click());
+
+    expect(screen.getByTestId("all-tools-drawer")).toHaveAttribute(
+      "data-position",
+      position,
     );
+    expect(screen.getByTestId("all-tools-drawer")).toHaveAttribute(
+      "data-size",
+      size,
+    );
+    expect(screen.getByTestId("all-tools-drawer")).toHaveAttribute(
+      "data-content-class",
+      expect.stringContaining("overflow-x-hidden"),
+    );
+    expect(screen.getByRole("button", { name: "All Tools" })).toHaveAttribute(
+      "data-icon",
+      "SlidersHorizontal",
+    );
+  });
 
-    expect(screen.getByText("Slide Tools Panel")).toBeInTheDocument();
-    expect(screen.queryByText("Item Tools Panel")).not.toBeInTheDocument();
+  it("shows stream formatting only for supported main-controller custom items", () => {
+    renderToolbar({ access: "full", itemType: "free", workspaceMode: "edit" });
+    act(() => screen.getByRole("button", { name: "Edit" }).click());
+    expect(screen.getByText("Stream Formatting")).toBeInTheDocument();
   });
 
   it("overlay variant shows Overlays, Board Posts, Overlays & Posts, Credits Editor, and Service Times tabs", () => {

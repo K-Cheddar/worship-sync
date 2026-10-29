@@ -1,12 +1,11 @@
+import { isControllerWorkspacePath } from "../../utils/controllerWorkspace";
 import { useLocation } from "react-router-dom";
 import {
   Settings,
-  SquarePen,
   MonitorCog,
   RectangleEllipsis,
   Pencil,
   MonitorPlay,
-  CalendarDays,
 } from "lucide-react";
 import Menu from "./ToolbarElements/Menu";
 import ToolbarOverlay from "./ToolbarElements/ToolbarOverlay";
@@ -30,10 +29,10 @@ import QuickLinksPage from "../../pages/Controller/QuickLinks";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import cn from "classnames";
 import FormattedTextEditor from "./ToolbarElements/FormattedTextEditor";
+import AllToolsDrawer from "./ToolbarElements/AllToolsDrawer";
 import {
   type ControllerConfigurationRoute,
   setLastControllerConfigurationRoute,
-  setShouldShowStreamFormat,
   setToolbarSection,
 } from "../../store/preferencesSlice";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
@@ -45,6 +44,7 @@ import {
   updateSlides,
 } from "../../store/itemSlice";
 import { ItemState } from "../../types";
+import type { ItemMutationOwner } from "../../store/deferredItemMutations";
 import { scrollToolbarTabIntoViewIfNeeded } from "../../utils/scrollToolbarTabIntoView";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
 import { useControllerBasePath } from "../../context/activeController";
@@ -53,16 +53,13 @@ import MediaSurfaceDiagnostics from "./ToolbarElements/MediaSurfaceDiagnostics";
 
 type sections =
   | "configurations"
-  | "slide-tools"
-  | "stream-format"
-  | "item-tools"
-  | "box-tools";
+  | "editing";
 
 /**
  * "aux" is the presentation toolbar on an auxiliary controller. Same slide /
  * box / item tools and configurations as the main controller, but config links
  * stay under that controller's base path so the operator is not thrown onto
- * `/controller`. Stream Format and Service Planning stay main-only. Outline
+ * `/controller`. Stream Format stays main-only. Outline
  * picking stays in the left service panel — do not duplicate it here.
  */
 export type ToolbarVariant = "default" | "overlay" | "aux";
@@ -71,9 +68,6 @@ export type ToolbarVariant = "default" | "overlay" | "aux";
 const getControllerConfigurationRoute = (
   pathname: string,
 ): ControllerConfigurationRoute | null => {
-  if (pathname.includes("service-planning")) {
-    return "/controller/service-planning";
-  }
   if (pathname.includes("quick-links")) {
     return "/controller/quick-links";
   }
@@ -116,6 +110,7 @@ const Toolbar = ({
       state.undoable.present.preferences.lastControllerConfigurationRoute,
   );
   const [section, setSection] = useState<sections>("configurations");
+  const [allToolsOpen, setAllToolsOpen] = useState(false);
   const { isMobile = false } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
   const dispatch = useDispatch();
@@ -127,44 +122,39 @@ const Toolbar = ({
     }
   }, [mode, variant]);
 
-  const primaryToolbarTabRefs = useRef<
-    Partial<Record<sections, HTMLButtonElement | HTMLAnchorElement | null>>
-  >({});
-
   const configurationsSubTabRefs = useRef<{
     preferences: HTMLButtonElement | HTMLAnchorElement | null;
     quickLinks: HTMLButtonElement | HTMLAnchorElement | null;
     displays: HTMLButtonElement | HTMLAnchorElement | null;
-    servicePlanning: HTMLButtonElement | HTMLAnchorElement | null;
   }>({
     preferences: null,
     quickLinks: null,
     displays: null,
-    servicePlanning: null,
   });
 
   const updateItem = useCallback(
-    (updatedItem: ItemState) => {
+    (updatedItem: ItemState, expectedOwner?: ItemMutationOwner) => {
       dispatch(
         updateSlides({
           slides: updatedItem.slides,
           formattedSections: updatedItem.formattedSections,
+          expectedOwner,
         })
       );
       if (updatedItem.arrangements.length > 0) {
         dispatch(
-          updateArrangements({ arrangements: updatedItem.arrangements })
+          updateArrangements({ arrangements: updatedItem.arrangements, expectedOwner })
         );
       }
       if (updatedItem.bibleInfo) {
-        dispatch(updateBibleInfo({ bibleInfo: updatedItem.bibleInfo }));
+        dispatch(updateBibleInfo({ bibleInfo: updatedItem.bibleInfo, expectedOwner }));
       }
     },
     [dispatch]
   );
-  // Matches main and aux item routes (`/controller/item/...`, `/aux-controller/:id/item/...`).
+  // Tools belong to the active Redux item at either controller workspace.
   const onItemPage = useMemo(
-    () => /\/item\//.test(location.pathname),
+    () => isControllerWorkspacePath(location.pathname),
     [location.pathname]
   );
   const canShowSlideAndBoxTools = useMemo(
@@ -179,80 +169,55 @@ const Toolbar = ({
     [location.pathname],
   );
   const configurationsHomePath = scopeConfigurationRoute(
-    variant === "aux" &&
-      lastControllerConfigurationRoute === "/controller/service-planning"
+    (lastControllerConfigurationRoute as string) === "/controller/service-planning"
       ? "/controller/preferences"
       : lastControllerConfigurationRoute,
     controllerBasePath,
   );
   const showStreamFormat = variant !== "aux";
-  const showServicePlanning = variant !== "aux";
 
   useEffect(() => {
     if (onItemPage) {
       setSection(
         isViewOnlyAccess(access) || !canShowSlideAndBoxTools
           ? "configurations"
-          : "slide-tools"
+          : "editing"
       );
     } else {
       setSection("configurations");
     }
   }, [onItemPage, access, canShowSlideAndBoxTools]);
 
-  // Timer controls live under Slide Tools; always surface them when opening a timer.
   useEffect(() => {
     if (
       !onItemPage ||
-      itemType !== "timer" ||
+      mode === "present" ||
+      section !== "editing" ||
+      !itemType ||
       isViewOnlyAccess(access) ||
       !canShowSlideAndBoxTools
     ) {
-      return;
+      setAllToolsOpen(false);
     }
-    setSection("slide-tools");
-  }, [
-    onItemPage,
-    itemType,
-    access,
-    canShowSlideAndBoxTools,
-    location.pathname,
-  ]);
+  }, [onItemPage, mode, section, access, canShowSlideAndBoxTools, itemType]);
 
   useEffect(() => {
     if (!activeControllerConfigurationRoute) return;
-    // Prefer displays over a remembered service-planning tab when that tab is
-    // hidden on aux — otherwise Configurations would navigate nowhere useful.
-    if (
-      variant === "aux" &&
-      activeControllerConfigurationRoute === "/controller/service-planning"
-    ) {
-      return;
-    }
     dispatch(
       setLastControllerConfigurationRoute(activeControllerConfigurationRoute),
     );
   }, [activeControllerConfigurationRoute, dispatch, variant]);
 
   useEffect(() => {
-    dispatch(setToolbarSection(section));
-    if (section === "stream-format") {
-      dispatch(setShouldShowStreamFormat(true));
-    } else {
-      dispatch(setShouldShowStreamFormat(false));
-    }
+    // SlideEditor uses the legacy preference to choose its text editing panel.
+    // Editing tools now share one toolbar surface, so keep that panel behavior.
+    dispatch(setToolbarSection(section === "editing" ? "slide-tools" : section));
   }, [section, dispatch]);
-
-  useLayoutEffect(() => {
-    scrollToolbarTabIntoViewIfNeeded(primaryToolbarTabRefs.current[section]);
-  }, [section]);
 
   useLayoutEffect(() => {
     if (section !== "configurations") return;
     const path = location.pathname;
-    const subKey = path.includes("service-planning")
-      ? "servicePlanning"
-      : path.includes("quick-links")
+    const subKey = path.includes("quick-links")
         ? "quickLinks"
         : path.includes("displays") || path.includes("monitor-settings")
           ? "displays"
@@ -260,24 +225,19 @@ const Toolbar = ({
     scrollToolbarTabIntoViewIfNeeded(configurationsSubTabRefs.current[subKey]);
   }, [section, location.pathname]);
 
-  const renderPrimaryToolbarTabs = () => (
+  const renderConfigurationsButton = () => (
     <div className="flex min-w-max shrink-0 gap-0 overflow-x-auto scrollbar-variable">
         {!isViewOnlyAccess(access) ? (
           <ToolbarButton
-            ref={(el) => {
-              primaryToolbarTabRefs.current.configurations = el;
-            }}
             svg={Settings}
             to={configurationsHomePath}
             isActive={section === "configurations"}
+            onClick={() => setAllToolsOpen(false)}
           >
             Configurations
           </ToolbarButton>
         ) : (
           <ToolbarButton
-            ref={(el) => {
-              primaryToolbarTabRefs.current.configurations = el;
-            }}
             svg={Settings}
             onClick={() => setSection("configurations")}
             isActive={section === "configurations"}
@@ -285,147 +245,101 @@ const Toolbar = ({
             Configurations
           </ToolbarButton>
         )}
-        <ToolbarButton
-          ref={(el) => {
-            primaryToolbarTabRefs.current["slide-tools"] = el;
-          }}
-          svg={SquarePen}
-          onClick={() => setSection("slide-tools")}
-          hidden={!onItemPage || isViewOnlyAccess(access) || !canShowSlideAndBoxTools}
-          isActive={section === "slide-tools"}
-        >
-          Slide Tools
-        </ToolbarButton>
-        <ToolbarButton
-          ref={(el) => {
-            primaryToolbarTabRefs.current["box-tools"] = el;
-          }}
-          svg={Pencil}
-          onClick={() => setSection("box-tools")}
-          hidden={!onItemPage || isViewOnlyAccess(access) || !canShowSlideAndBoxTools}
-          isActive={section === "box-tools"}
-        >
-          Box Tools
-        </ToolbarButton>
-        {access === "full" && (
-          <>
-            {showStreamFormat && (
-              <ToolbarButton
-                ref={(el) => {
-                  primaryToolbarTabRefs.current["stream-format"] = el;
-                }}
-                svg={MonitorPlay}
-                onClick={() => setSection("stream-format")}
-                hidden={!onItemPage}
-                isActive={section === "stream-format"}
-              >
-                Stream Format
-              </ToolbarButton>
-            )}
-            <ToolbarButton
-              ref={(el) => {
-                primaryToolbarTabRefs.current["item-tools"] = el;
-              }}
-              svg={SquarePen}
-              onClick={() => setSection("item-tools")}
-              hidden={!onItemPage}
-              isActive={section === "item-tools"}
-            >
-              Item Tools
-            </ToolbarButton>
-          </>
-        )}
     </div>
   );
 
   const renderContextualToolbar = () => (
-    <>
-      <div
-        className={cn(
-          "flex min-h-0 w-full flex-1 items-center overflow-x-auto px-2 scrollbar-variable",
-          "[&_[data-slot=input]]:!h-8 [&_[data-slot=input]]:!min-h-8 [&_[data-slot=select-trigger]]:!h-8 [&_[data-slot=select-trigger]]:!min-h-8",
-          isLyricsEditorOpen && "hidden"
-        )}
-      >
-        {!isViewOnlyAccess(access) && (
-          <ToolbarButton
-            ref={(el) => {
-              configurationsSubTabRefs.current.preferences = el;
-            }}
-            svg={Settings}
-            to={`${controllerBasePath}/preferences`}
-            hidden={section !== "configurations"}
-            isActive={
-              location.pathname.includes("preferences") &&
-              !location.pathname.includes("quick-links")
-            }
-          >
-            Preferences
-          </ToolbarButton>
-        )}
-        {access === "full" && (
-          <ToolbarButton
-            ref={(el) => {
-              configurationsSubTabRefs.current.quickLinks = el;
-            }}
-            svg={RectangleEllipsis}
-            hidden={section !== "configurations"}
-            isActive={location.pathname.includes("quick-links")}
-            to={`${controllerBasePath}/quick-links`}
-          >
-            Quick Links
-          </ToolbarButton>
-        )}
-        {access === "full" && (
-          <ToolbarButton
-            ref={(el) => {
-              configurationsSubTabRefs.current.displays = el;
-            }}
-            svg={MonitorCog}
-            to={`${controllerBasePath}/displays`}
-            hidden={section !== "configurations"}
-            isActive={
-              location.pathname.includes("displays") ||
-              location.pathname.includes("monitor-settings")
-            }
-          >
-            Displays
-          </ToolbarButton>
-        )}
-        {access === "full" && showServicePlanning && (
-          <ToolbarButton
-            ref={(el) => {
-              configurationsSubTabRefs.current.servicePlanning = el;
-            }}
-            svg={CalendarDays}
-            to={`${controllerBasePath}/service-planning`}
-            hidden={section !== "configurations"}
-            isActive={location.pathname.includes("service-planning")}
-          >
-            Service Planning
-          </ToolbarButton>
-        )}
-        <MediaSurfaceDiagnostics
-          className={section !== "configurations" ? "hidden" : undefined}
-        />
-        <SlideEditTools
-          className={cn(section !== "slide-tools" && "hidden")}
-        />
-        {showStreamFormat && (
-          <FormattedTextEditor
-            className={cn(section !== "stream-format" && "hidden")}
-          />
-        )}
-        <ItemEditTools
-          className={cn(section !== "item-tools" && "hidden")}
-        />
-        <BoxEditor
-          className={cn(section !== "box-tools" && "hidden")}
-          updateItem={updateItem}
+    <div
+      data-testid="toolbar-contextual-row"
+      className={cn(
+        "flex min-h-0 w-full min-w-0 flex-1 items-center px-2",
+        "[&_[data-slot=input]]:!h-8 [&_[data-slot=input]]:!min-h-8 [&_[data-slot=select-trigger]]:!h-8 [&_[data-slot=select-trigger]]:!min-h-8",
+        (isLyricsEditorOpen || (section === "editing" && !itemType)) && "hidden",
+      )}
+    >
+      {section === "configurations" ? (
+        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto scrollbar-variable">
+          {!isViewOnlyAccess(access) && (
+            <ToolbarButton
+              ref={(el) => {
+                configurationsSubTabRefs.current.preferences = el;
+              }}
+              svg={Settings}
+              to={`${controllerBasePath}/preferences`}
+              isActive={
+                location.pathname.includes("preferences") &&
+                !location.pathname.includes("quick-links")
+              }
+            >
+              Preferences
+            </ToolbarButton>
+          )}
+          {access === "full" && (
+            <ToolbarButton
+              ref={(el) => {
+                configurationsSubTabRefs.current.quickLinks = el;
+              }}
+              svg={RectangleEllipsis}
+              isActive={location.pathname.includes("quick-links")}
+              to={`${controllerBasePath}/quick-links`}
+            >
+              Quick Links
+            </ToolbarButton>
+          )}
+          {access === "full" && (
+            <ToolbarButton
+              ref={(el) => {
+                configurationsSubTabRefs.current.displays = el;
+              }}
+              svg={MonitorCog}
+              to={`${controllerBasePath}/displays`}
+              isActive={
+                location.pathname.includes("displays") ||
+                location.pathname.includes("monitor-settings")
+              }
+            >
+              Displays
+            </ToolbarButton>
+          )}
+          <MediaSurfaceDiagnostics />
+        </div>
+      ) : onItemPage && !isViewOnlyAccess(access) && canShowSlideAndBoxTools ? (
+        <AllToolsDrawer
+          isOpen={allToolsOpen && mode === "edit" && Boolean(itemType)}
+          onClose={() => setAllToolsOpen(false)}
+          onToggle={() => setAllToolsOpen((open) => !open)}
           isMobile={isMobile}
-        />
-      </div>
-    </>
+          showBibleMode={itemType === "bible"}
+          showStreamFormatting={
+            access === "full" && showStreamFormat && itemType === "free"
+          }
+          showOutputTargets={access === "full"}
+        >
+          {(targets) => (
+            <>
+              <SlideEditTools
+                quickFontSizeTarget={targets.quickFontSize}
+                quickBrightnessTarget={targets.quickBrightness}
+                quickBibleModeTarget={targets.quickBibleMode}
+                drawerTarget={targets.slideFormatting}
+              />
+              <BoxEditor
+                updateItem={updateItem}
+                quickBoxLayoutTarget={targets.quickBoxLayout}
+                quickBoxHeightTarget={targets.quickBoxHeight}
+                drawerTarget={targets.boxLayout}
+              />
+              {access === "full" && showStreamFormat && itemType === "free" && (
+                <FormattedTextEditor drawerTarget={targets.streamFormatting} />
+              )}
+              {access === "full" && (
+                <ItemEditTools drawerTarget={targets.outputTargets} />
+              )}
+            </>
+          )}
+        </AllToolsDrawer>
+      ) : null}
+    </div>
   );
 
   const modeToggle = (
@@ -439,7 +353,10 @@ const Toolbar = ({
           svg={option === "present" ? MonitorPlay : Pencil}
           isActive={mode === option}
           className="rounded-none first:rounded-l-md last:rounded-r-md"
-          onClick={() => setMode(option)}
+          onClick={() => {
+            if (option === "present") setAllToolsOpen(false);
+            setMode(option);
+          }}
         >
           {option === "present" ? "Present" : "Edit"}
         </ToolbarButton>
@@ -456,21 +373,21 @@ const Toolbar = ({
               className="flex w-full min-w-0 items-center"
               data-testid="toolbar-primary-row"
             >
+              <div className="shrink-0 bg-homepage-canvas">
+                <Menu variant="default" />
+              </div>
               <div
-                className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-2 scrollbar-variable"
+                className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto pr-2 scrollbar-variable"
                 data-testid="toolbar-scroll-controls"
               >
-                <div className="sticky left-0 z-10 shrink-0 bg-homepage-canvas">
-                  <Menu variant="default" />
-                </div>
                 {modeToggle}
                 {mode === "edit" && !isLyricsEditorOpen && !isViewOnlyAccess(access) && <Undo />}
-                {mode === "edit" && renderPrimaryToolbarTabs()}
+                {mode === "edit" && renderConfigurationsButton()}
               </div>
             </div>
             {mode === "edit" && (
               <>
-                <div className="w-full border-t border-gray-600" />
+                <div className={cn("w-full border-t border-gray-600", section === "editing" && !itemType && "hidden")} />
                 {renderContextualToolbar()}
               </>
             )}

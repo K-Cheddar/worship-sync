@@ -103,7 +103,9 @@ describe("mapNativeServicePlanParticipants", () => {
       { name: "Jordan Guest", title: "", event: repeatLastEventSuffix ? "Sabbath School Panelist" : "Sabbath School" },
     ]);
     expect(preview.overlayPlan.map((item) => item.action)).toEqual(
-      repeatLastEventSuffix ? ["update", "clone", "clone"] : ["update", "create", "create"],
+      repeatLastEventSuffix
+        ? ["update", "clone", "clone"]
+        : ["update", "create", "create"],
     );
     expect(preview.overlayPlan[1].resolutionNotice).toMatch(/multiple team roles/i);
   });
@@ -132,7 +134,7 @@ describe("mapNativeServicePlanParticipants", () => {
     expect(preview.overlayPlan.map((item) => item.patch.event)).toEqual(Array(3).fill("Sabbath School Lesson Study"));
   });
 
-  it("keeps duplicate item events unsafe when a configured suffix collides with another item label", () => {
+  it("supports a configured suffix shared with another item label", () => {
     const preview = buildNativePreview(
       plan([element("lesson", "Sabbath School Lesson Study"), element("other", "Sabbath School Panelist")]),
       readyProjection([...lessonProjection.elements, {
@@ -143,8 +145,7 @@ describe("mapNativeServicePlanParticipants", () => {
       lessonConfig(),
     );
 
-    expect(preview.overlayPlan.every((item) => item.action === "skip")).toBe(true);
-    expect(preview.overlayPlan[0].reason).toMatch(/unique event label/i);
+    expect(preview.overlayPlan.map((item) => item.action)).toEqual(["create", "create", "create", "create"]);
   });
 
   it("honors disabled matching rules while leaving unmatched items automatically eligible", () => {
@@ -238,7 +239,7 @@ describe("mapNativeServicePlanParticipants", () => {
     });
   });
 
-  it("defaults the event label to the item title and skips ambiguous duplicate item labels", () => {
+  it("defaults the event label to the item title and keeps repeated item occurrences", () => {
     const servicePlan = plan([
       element("item-1", "Sermon"),
       element("item-2", "Sermon"),
@@ -251,12 +252,11 @@ describe("mapNativeServicePlanParticipants", () => {
     const preview = buildNativePreview(servicePlan, projection);
 
     expect(preview.overlayPlan).toHaveLength(2);
-    expect(preview.overlayPlan.every((item) => item.action === "skip")).toBe(true);
+    expect(preview.overlayPlan.map((item) => item.action)).toEqual(["create", "create"]);
     expect(preview.overlayPlan.map((item) => item.patch.event)).toEqual(["Sermon", "Sermon"]);
-    expect(preview.overlayPlan[0].reason).toMatch(/unique event label/i);
   });
 
-  it("treats duplicate exact native targets as ambiguous while keeping the URL matcher unchanged", () => {
+  it("uses duplicate native event slots while keeping the URL matcher unchanged", () => {
     const servicePlan = plan([element("item-1", "Sermon")]);
     const projection = readyProjection([
       { elementId: "item-1", assignees: [{ name: "Avery Stone", memberStatus: "resolved", roleStatus: "missing" }] },
@@ -292,8 +292,9 @@ describe("mapNativeServicePlanParticipants", () => {
     });
 
     expect(nativePreview.overlayPlan[0]).toMatchObject({
-      action: "skip",
-      duplicateExactMatchesAreAmbiguous: true,
+      action: "update",
+      targetOverlayId: "overlay-1",
+      sourceKind: "native",
     });
     expect(legacyPreview.overlayPlan[0]).toMatchObject({
       action: "update",
@@ -376,4 +377,23 @@ describe("mapNativeServicePlanParticipants", () => {
     expect(preview.overlayPlan).toHaveLength(3);
     expect(preview.overlayPlan.every((item) => item.action === "skip")).toBe(true);
   });
+
+  it("does not substitute a generic song heading or Teams role for a missing song title", () => {
+    const preview = buildNativePreview(plan([{ ...element("song", "Song of Praise"), type: "song" }]), readyProjection([{
+      elementId: "song", assignees: [{ name: "Praise Team", memberStatus: "resolved", roleStatus: "resolved", roleTitle: "Music Leader" }],
+    }]));
+    expect(preview.overlayPlan[0]).toMatchObject({ action: "skip", patch: { name: "Praise Team", title: "", event: "Song of Praise" }, reason: expect.stringMatching(/song title/i) });
+  });
+
+  it("uses a linked song title instead of the generic heading and omits irrelevant blank-role notices", () => {
+    const preview = buildNativePreview(plan([{
+      ...element("song", "Song of Praise"),
+      songRef: { kind: "library", songId: "god-is", songName: "God Is" },
+    }]), readyProjection([{
+      elementId: "song", assignees: [{ name: "Praise Team", memberStatus: "guest", roleStatus: "missing" }],
+    }]));
+    expect(preview.overlayPlan[0]).toMatchObject({ action: "create", patch: { name: "Praise Team", title: "God Is", event: "Song of Praise" } });
+    expect(preview.overlayPlan[0].resolutionNotice).toBeUndefined();
+  });
+
 });

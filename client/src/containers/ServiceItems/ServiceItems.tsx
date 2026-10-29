@@ -5,8 +5,7 @@ import {
   removeItemsFromList,
   setActiveItemInList,
 } from "../../store/itemListSlice";
-import { addItemToAllItemsList } from "../../store/allItemsSlice";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { DndContext, useDroppable, DragEndEvent, DragStartEvent, DragOverlay } from "@dnd-kit/core";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { PanelsTopLeft, Pencil, Plus, Trash2 } from "lucide-react";
@@ -31,7 +30,7 @@ import LeftPanelButton from "../../components/LeftPanelButton/LeftPanelButton";
 import ServiceOutlineSkeleton from "./ServiceOutlineSkeleton";
 import Outlines from "../Toolbar/ToolbarElements/Outlines";
 import { ServiceItem as ServiceItemType } from "../../types";
-import { getControllerItemPath } from "../../utils/outlineSlideSections";
+import { selectControllerItem } from "../../store/controllerItemSelection";
 import { requestOutlineSelectionScroll } from "../../utils/outlineSelectionScroll";
 import { useControllerBasePath } from "../../context/activeController";
 import { resolveServiceItemLocalImage } from "../../utils/resolveServiceItemLocalImage";
@@ -55,6 +54,7 @@ const EMPTY_SERVICE_TIMES: ServiceTime[] = [];
 const ServiceItems = () => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
+  const location = useLocation();
   const controllerBasePath = useControllerBasePath();
   const {
     list: serviceItems,
@@ -96,6 +96,9 @@ const ServiceItems = () => {
     access === "full" ||
     (access === "music" && musicCanOutlineMutateItem(item));
   const [isAddingHeading, setIsAddingHeading] = useState(false);
+  const [headingCreateOpen, setHeadingCreateOpen] = useState(false);
+  const [headingCreateDraft, setHeadingCreateDraft] = useState("");
+  const [headingCreateError, setHeadingCreateError] = useState("");
   const [collapsedHeadingListIds, setCollapsedHeadingListIds] = useState<
     Set<string>
   >(new Set());
@@ -106,7 +109,7 @@ const ServiceItems = () => {
   const [headingRenameOpen, setHeadingRenameOpen] = useState(false);
   const headingRenameWindowRef = useRef<FloatingWindowHandle>(null);
   const [headingRenameDraft, setHeadingRenameDraft] = useState("");
-  const [headingRenamePosition, setHeadingRenamePosition] = useState({
+  const [headingFormPosition, setHeadingFormPosition] = useState({
     x: Math.max(window.innerWidth - 340, 0),
     y: 80,
   });
@@ -290,12 +293,29 @@ const ServiceItems = () => {
     dispatch(updateItemList(updatedServiceItems));
   };
 
-  const handleAddHeading = useCallback(async () => {
-    if (!db) return;
+  const openHeadingCreateWindow = useCallback(() => {
+    const trigger = document.activeElement;
+    if (trigger instanceof HTMLElement) {
+      const rect = trigger.getBoundingClientRect();
+      setHeadingFormPosition({
+        x: Math.min(Math.max(rect.left, 8), Math.max(window.innerWidth - 340, 0)),
+        y: Math.min(rect.bottom + 8, Math.max(window.innerHeight - 220, 8)),
+      });
+    }
+    setHeadingRenameOpen(false);
+    setHeadingCreateDraft("");
+    setHeadingCreateError("");
+    setHeadingCreateOpen(true);
+  }, []);
+
+  const handleCreateHeading = useCallback(async () => {
+    const name = headingCreateDraft.trim();
+    if (!db || !name) return;
     setIsAddingHeading(true);
+    setHeadingCreateError("");
     try {
       const item = await createNewHeading({
-        name: "New Heading",
+        name,
         list: serviceItems,
         db,
       });
@@ -306,11 +326,20 @@ const ServiceItems = () => {
         listId: generateRandomId(),
       };
       dispatch(addItemToItemList(serviceItem));
-      dispatch(addItemToAllItemsList(serviceItem));
+      setHeadingCreateOpen(false);
+      setHeadingCreateDraft("");
+    } catch {
+      setHeadingCreateError("Could not create the heading. Try again.");
     } finally {
       setIsAddingHeading(false);
     }
-  }, [db, serviceItems, dispatch]);
+  }, [db, headingCreateDraft, serviceItems, dispatch]);
+
+  const handleCancelHeadingCreate = useCallback(() => {
+    setHeadingCreateOpen(false);
+    setHeadingCreateDraft("");
+    setHeadingCreateError("");
+  }, []);
 
   const findNextNonHeadingIndex = (fromIndex: number) => {
     for (let i = fromIndex + 1; i < serviceItems.length; i++) {
@@ -340,6 +369,12 @@ const ServiceItems = () => {
     return -1;
   };
 
+  const openItem = (item: ServiceItemType) => {
+    if (item.type === "heading") return;
+    void dispatch(selectControllerItem(item, db));
+    if (location.pathname.replace(/\/$/, "") !== controllerBasePath) navigate(controllerBasePath);
+  };
+
   const handleItemListKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -352,8 +387,7 @@ const ServiceItems = () => {
         const nextItem = serviceItems[nextIndex];
         setSelectedListIds(new Set([nextItem.listId]));
         setAnchorListId(nextItem.listId);
-        dispatch(setActiveItemInList(nextItem.listId));
-        navigate(getControllerItemPath(nextItem, controllerBasePath));
+        openItem(nextItem);
         return;
       }
       const nextHeadingIdx = findNextHeadingIndex(currentIndex);
@@ -375,8 +409,7 @@ const ServiceItems = () => {
         const prevItem = serviceItems[prevIndex];
         setSelectedListIds(new Set([prevItem.listId]));
         setAnchorListId(prevItem.listId);
-        dispatch(setActiveItemInList(prevItem.listId));
-        navigate(getControllerItemPath(prevItem, controllerBasePath));
+        openItem(prevItem);
         return;
       }
       const prevHeadingIdx = findPrevHeadingIndex(currentIndex);
@@ -430,7 +463,7 @@ const ServiceItems = () => {
     const trigger = document.activeElement;
     if (trigger instanceof HTMLElement) {
       const rect = trigger.getBoundingClientRect();
-      setHeadingRenamePosition({
+      setHeadingFormPosition({
         x: Math.min(Math.max(rect.left, 8), Math.max(window.innerWidth - 340, 0)),
         y: Math.min(rect.bottom + 8, Math.max(window.innerHeight - 240, 8)),
       });
@@ -474,6 +507,7 @@ const ServiceItems = () => {
       setAnchorListId(listId);
       dispatch(setActiveItemInList(listId));
       revealSelectedOutlineItemIfReselected(listId);
+      if (row) openItem(row);
       return;
     }
     if (e.shiftKey) {
@@ -527,6 +561,7 @@ const ServiceItems = () => {
     setAnchorListId(listId);
     dispatch(setActiveItemInList(listId));
     revealSelectedOutlineItemIfReselected(listId);
+    if (row) openItem(row);
   };
 
   const handleEnterMultiSelectMode = useCallback(
@@ -665,13 +700,13 @@ const ServiceItems = () => {
   }, []);
 
   const getActionHandler = useCallback((id: ActionBarItem["id"]) => {
-    if (id === "add-heading") return handleAddHeading;
+    if (id === "add-heading") return openHeadingCreateWindow;
     if (id === "edit-heading") return openHeadingRenameWindow;
     if (id === "delete-selected") return handleDeleteSelected;
     if (id === "delete-heading") return handleDeleteHeading;
     if (id === "open-service-plan") return () => dispatch(setServicePlanningFloatingWindowDismissed(false));
     return handleMultiSelectDone;
-  }, [dispatch, handleAddHeading, handleDeleteHeading, handleDeleteSelected, handleMultiSelectDone, openHeadingRenameWindow]);
+  }, [dispatch, handleDeleteHeading, handleDeleteSelected, handleMultiSelectDone, openHeadingCreateWindow, openHeadingRenameWindow]);
 
   const actionBarItemDefs = useMemo((): ActionBarItemDef[] =>
     actionBarItems.map((item) => ({
@@ -763,6 +798,51 @@ const ServiceItems = () => {
             <ActionBar items={visibleActionBarItemDefs} overflowMenuClassName="min-w-48" />
           </div>
         )}
+        {headingCreateOpen ? (
+          <FloatingWindow
+            title="New heading"
+            onClose={handleCancelHeadingCreate}
+            defaultWidth={320}
+            defaultHeight={190}
+            defaultPosition={headingFormPosition}
+            autoHeight
+          >
+            <form
+              className="flex flex-col gap-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void handleCreateHeading();
+              }}
+            >
+              <Input
+                label="Heading name"
+                value={headingCreateDraft}
+                onChange={(value) => {
+                  setHeadingCreateDraft(String(value));
+                  setHeadingCreateError("");
+                }}
+                placeholder="Name"
+                inputTextSize="text-sm"
+                inputWidth="w-full"
+                autoFocus
+                data-ignore-undo="true"
+              />
+              {headingCreateError ? (
+                <p role="alert" className="text-xs text-amber-300">
+                  {headingCreateError}
+                </p>
+              ) : null}
+              <Button
+                type="submit"
+                variant="cta"
+                className="w-full justify-center"
+                disabled={!headingCreateDraft.trim() || isAddingHeading}
+              >
+                {isAddingHeading ? "Creating…" : "Create"}
+              </Button>
+            </form>
+          </FloatingWindow>
+        ) : null}
         {selectedHeading && headingRenameOpen ? (
           <FloatingWindow
             ref={headingRenameWindowRef}
@@ -770,7 +850,7 @@ const ServiceItems = () => {
             onClose={handleCancelHeadingRename}
             defaultWidth={320}
             defaultHeight={220}
-            defaultPosition={headingRenamePosition}
+            defaultPosition={headingFormPosition}
             autoHeight
           >
             <form
@@ -905,7 +985,6 @@ const ServiceItems = () => {
             ) : (
               <LeftPanelButton
                 isSelected={false}
-                to={getControllerItemPath(item, controllerBasePath)}
                 title={item.name}
                 subtitle={arrangementSubtitlesByItemId.get(item._id)}
                 type={item.type}

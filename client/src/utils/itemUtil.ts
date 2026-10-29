@@ -33,6 +33,7 @@ import { formatBible, formatFree, formatSong } from "./overflow";
 import { createNewSlide } from "./slideCreation";
 import { sortNamesInList } from "./sort";
 import { DEFAULT_OUTLINE_SCOPE } from "./outlineScope";
+import { trackBibleDocumentActivity } from "./contentReplicationActivity";
 
 type CreateSectionsType = {
   formattedLyrics?: FormattedLyrics[];
@@ -257,12 +258,14 @@ export const createNewBible = async ({
   brightness,
   fontMode,
 }: CreateNewBibleType): Promise<ItemState> => {
-  const _name = makeUnique({ value: name, property: "name", list });
+  // Bible display names stay canonical across imports; only IDs gain suffixes.
+  // Checking names can reuse a suffixed document and discard the new slides.
+  const _id = makeUnique({ value: name, property: "_id", list });
 
   const newItem: ItemState = {
     name,
     type: "bible",
-    _id: _name,
+    _id,
     selectedArrangement: 0,
     shouldSkipTitle: false,
     arrangements: [],
@@ -290,8 +293,14 @@ export const createNewBible = async ({
     brightness,
   });
 
-  const _item = await createNewItemInDb({ item, db });
-  return _item;
+  const endBibleDocumentActivity = db?.name
+    ? trackBibleDocumentActivity(db.name)
+    : null;
+  try {
+    return await createNewItemInDb({ item, db });
+  } finally {
+    endBibleDocumentActivity?.();
+  }
 };
 
 type FormatBibleFromScratchType = {
@@ -516,6 +525,8 @@ type CreateNewFreeFormType = {
   overflow?: OverflowMode;
   /** When true, first slide body stays empty (no `text || name` fallback). */
   emptyBodyText?: boolean;
+  /** When true, creates a custom item without an initial slide. */
+  emptyItem?: boolean;
   shouldSendTo?: ShouldSendTo;
 };
 
@@ -532,6 +543,7 @@ export const createNewFreeForm = async ({
   brightness,
   overflow = "fit",
   emptyBodyText = false,
+  emptyItem = false,
   shouldSendTo,
 }: CreateNewFreeFormType): Promise<ItemState> => {
   const _name = makeUnique({ value: name, property: "name", list });
@@ -544,40 +556,43 @@ export const createNewFreeForm = async ({
       ? mediaInfo.localVideoInput
       : undefined);
   const slideNameFromInput = resolvedMediaSource?.label?.trim();
-  const slides =
-    slideDefs && slideDefs.length > 0
-      ? slideDefs.map((def, index) => {
-          const slide = createNewSlide({
-            type: "Section",
-            name: def.name || `Page ${index + 1}`,
-            fontSize: DEFAULT_FONT_PX,
-            words: index === 0 ? bodyWords : ["", ""],
-            background: def.background,
-            mediaInfo: def.mediaInfo,
-            mediaSource: def.mediaSource,
-            brightness,
-            overflow,
-            shouldKeepAspectRatio:
-              Boolean(def.mediaInfo || def.mediaSource),
-          });
-          // Media-created custom slides start without a visible text body.
-          slide.boxes[1].words = "";
-          return slide;
-        })
-      : [
-          createNewSlide({
-            type: "Section",
-            name: slideNameFromInput || "Section 1",
-            fontSize: DEFAULT_FONT_PX,
-            words: bodyWords,
-            background: resolvedMediaSource ? "" : background,
-            mediaInfo: resolvedMediaSource ? undefined : mediaInfo,
-            mediaSource: resolvedMediaSource,
-            brightness,
-            overflow,
-            shouldKeepAspectRatio: Boolean(mediaInfo || resolvedMediaSource),
-          }),
-        ];
+  let slides: ItemState["slides"] = [];
+  if (!emptyItem) {
+    if (slideDefs && slideDefs.length > 0) {
+      slides = slideDefs.map((def, index) => {
+        const slide = createNewSlide({
+          type: "Section",
+          name: def.name || `Page ${index + 1}`,
+          fontSize: DEFAULT_FONT_PX,
+          words: index === 0 ? bodyWords : ["", ""],
+          background: def.background,
+          mediaInfo: def.mediaInfo,
+          mediaSource: def.mediaSource,
+          brightness,
+          overflow,
+          shouldKeepAspectRatio: Boolean(def.mediaInfo || def.mediaSource),
+        });
+        // Media-created custom slides start without a visible text body.
+        slide.boxes[1].words = "";
+        return slide;
+      });
+    } else {
+      slides = [
+        createNewSlide({
+          type: "Section",
+          name: slideNameFromInput || "Section 1",
+          fontSize: DEFAULT_FONT_PX,
+          words: bodyWords,
+          background: resolvedMediaSource ? "" : background,
+          mediaInfo: resolvedMediaSource ? undefined : mediaInfo,
+          mediaSource: resolvedMediaSource,
+          brightness,
+          overflow,
+          shouldKeepAspectRatio: Boolean(mediaInfo || resolvedMediaSource),
+        }),
+      ];
+    }
+  }
   const firstBackground = slides[0]?.boxes[0]?.background || background;
   const listBackground = getServiceItemListBackgroundPatch({
     background: firstBackground,
@@ -601,7 +616,9 @@ export const createNewFreeForm = async ({
   };
 
   const formattedItem =
-    resolvedMediaSource && emptyBodyText ? newItem : formatFree(newItem);
+    emptyItem || (resolvedMediaSource && emptyBodyText)
+      ? newItem
+      : formatFree(newItem);
 
   const item = await createNewItemInDb({ item: formattedItem, db });
 
@@ -732,11 +749,11 @@ type CreateNewItemInDbType = {
 };
 
 /** Share one in-flight custom-item retry across repeated local clicks. */
-export async function runCanvaCustomItemCreationOnce(
-  inFlight: Map<string, Promise<string>>,
+export async function runCanvaCustomItemCreationOnce<T>(
+  inFlight: Map<string, Promise<T>>,
   idempotencyKey: string | undefined,
-  create: () => Promise<string>,
-): Promise<string> {
+  create: () => Promise<T>,
+): Promise<T> {
   if (!idempotencyKey) return create();
   const existing = inFlight.get(idempotencyKey);
   if (existing) return existing;
@@ -964,7 +981,11 @@ export const createNewItemList = async ({
       controllerScope,
     );
   } catch (error) {
-    db.put({
+    const readError = error as { status?: number | string; name?: string } | null;
+    if (readError?.status !== 404 && readError?.status !== "404" && readError?.name !== "not_found") {
+      throw error;
+    }
+    await db.put({
       ...list,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -1025,7 +1046,7 @@ export const createItemListFromExisting = async ({
       items: response.items,
       overlays: newOverlays,
     };
-    db.put({
+    await db.put({
       ...newList,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),

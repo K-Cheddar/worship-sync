@@ -1,4 +1,5 @@
 import {
+  DEFAULT_INVITE_ACCESS_DRAFT,
   buildPermissionsFromAccessDraft,
   getInviteAccessSummaryLabel,
   inviteAccessOptions,
@@ -8,6 +9,33 @@ import {
 } from "./accountInviteAccess";
 
 describe("accountInviteAccess", () => {
+  it("defaults new member invites to Services view access", () => {
+    expect(DEFAULT_INVITE_ACCESS_DRAFT).toEqual({
+      role: "member",
+      controllerAccess: "full",
+      teamsAccess: "none",
+      servicesAccess: "view",
+      teamScopeIds: [],
+    });
+    expect(resolveInviteAccessPayload(DEFAULT_INVITE_ACCESS_DRAFT).permissions).toEqual({
+      teams: "none",
+      services: "view",
+      teamScopes: {},
+    });
+  });
+
+  it.each(["none", "edit"] as const)(
+    "preserves an explicitly selected Services %s override",
+    (servicesAccess) => {
+      expect(
+        resolveInviteAccessPayload({
+          ...DEFAULT_INVITE_ACCESS_DRAFT,
+          servicesAccess,
+        }).permissions.services,
+      ).toBe(servicesAccess);
+    },
+  );
+
   it("builds scoped team permissions for invite drafts", () => {
     expect(
       buildPermissionsFromAccessDraft({

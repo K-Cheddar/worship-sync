@@ -1,3 +1,5 @@
+import { startItemCacheSync } from "../store/itemCacheSync";
+import { resetItemCache } from "../store/allDocsSlice";
 import {
   createContext,
   useCallback,
@@ -6,13 +8,14 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 
 import PouchDB from "pouchdb-browser";
 import { Cloudinary } from "@cloudinary/url-gen";
 import { GlobalInfoContext, globalFireDbInfo } from "./globalInfo";
 import { useLocation } from "react-router-dom";
-import { useDispatch } from "../hooks";
+import { useDispatch, useSelector } from "../hooks";
 import { backoff } from "../utils/generalUtils";
 import { getApiBasePath } from "../utils/environment";
 import { MAX_INITIAL_SESSION_RETRIES, MAX_REPLICATION_AUTH_RETRIES } from "../constants";
@@ -24,6 +27,14 @@ import {
   getContentDatabaseForOwner,
   setActiveContentDatabase,
 } from "../store/deferredItemMutations";
+import {
+  trackContentReplication,
+  beginContentDatabaseSession,
+  type ContentReplicationActivity,
+  hasSuccessfulInitialContentReplication,
+  subscribeToContentActivity,
+} from "../utils/contentReplicationActivity";
+import { cancelBibleItemCleanupRetry } from "../utils/bibleItemCleanup";
 
 export type ConnectionStatus = {
   status: "connecting" | "retrying" | "failed" | "connected";
@@ -45,6 +56,8 @@ export const describeControllerSyncError = (error: unknown) => {
 
 type ControllerInfoContextType = {
   db: PouchDB.Database | undefined;
+  bootstrapReady: boolean;
+  canCreateBootstrapDocuments: () => boolean;
   bibleDb: PouchDB.Database | undefined;
   cloud: Cloudinary;
   updater: EventTarget;
@@ -156,8 +169,10 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   const location = useLocation();
   const dispatch = useDispatch();
+  // A full Redux session reset retires the feed even if the database name is unchanged.
+  const cacheSession = useSelector((state) => state.allDocs.session);
 
-  const { database, loginState, logout, setLoginState, login } =
+  const { database, churchId, userId, loginState, logout, setLoginState, login } =
     useContext(GlobalInfoContext) || {};
 
   const isAuthenticatedSession = loginState === "success";
@@ -173,6 +188,10 @@ const ControllerInfoProvider = ({ children }: any) => {
   const broadcastDatabaseKey = isGuestSession
     ? `${DEMO_DATABASE_KEY}-guest`
     : activeDatabaseKey;
+  const databaseSessionKey = JSON.stringify([churchId || "", userId || "", broadcastDatabaseKey]);
+  const databaseSessionRef = useRef(databaseSessionKey);
+  databaseSessionRef.current = databaseSessionKey;
+  const dbSessionRef = useRef<string | null>(null);
   const activeDatabaseKeyRef = useRef(activeDatabaseKey);
   activeDatabaseKeyRef.current = activeDatabaseKey;
 
@@ -188,18 +207,33 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   useEffect(() => {
     if (loginState === "guest") {
-      setLocalDbIdentity(GUEST_DATABASE_NAME);
+      setLocalDbIdentity(databaseSessionKey);
     } else if (loginState === "success") {
-      setLocalDbIdentity(`worship-sync-${activeDatabaseKey}`);
+      setLocalDbIdentity(databaseSessionKey);
     } else if (loginState === "loading" || loginState === "error") {
       // keep prior identity during sign-in attempts and recoverable errors
     } else {
       setLocalDbIdentity(null);
     }
-  }, [loginState, activeDatabaseKey]);
+  }, [loginState, databaseSessionKey]);
+
+  useEffect(() => {
+    const expectedName = isGuestSession ? GUEST_DATABASE_NAME : `worship-sync-${activeDatabaseKey}`;
+    if (!db || db.name !== expectedName || dbSessionRef.current !== databaseSessionKey || !(isGuestSession || isAuthenticatedSession)) {
+      dispatch(resetItemCache());
+      return;
+    }
+    return startItemCacheSync(db, dispatch);
+  }, [db, activeDatabaseKey, databaseSessionKey, cacheSession, isGuestSession, isAuthenticatedSession, dispatch]);
 
   const updater = useRef(new EventTarget());
   const syncRef = useRef<any>(null);
+  const contentSyncActivityRef = useRef<ContentReplicationActivity | null>(null);
+  const initialContentReplicationActivityRef =
+    useRef<ContentReplicationActivity | null>(null);
+  const manualContentPullRef = useRef<any>(null);
+  const manualContentPullActivityRef =
+    useRef<ContentReplicationActivity | null>(null);
   const syncGenerationRef = useRef(0);
   const syncBatchSizeRef = useRef(40);
   const remoteDbRef = useRef<PouchDB.Database | null>(null);
@@ -252,6 +286,9 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   const syncDb = useCallback(
     (localDb: PouchDB.Database, remoteDb: PouchDB.Database, churchKey: string) => {
+      contentSyncActivityRef.current?.release();
+      const syncActivity = trackContentReplication(localDb.name);
+      contentSyncActivityRef.current = syncActivity;
       syncRef.current?.cancel();
       syncRef.current = null;
       const generation = ++syncGenerationRef.current;
@@ -279,11 +316,13 @@ const ControllerInfoProvider = ({ children }: any) => {
             }
           })
           .on("active", () => {
+            syncActivity.setBusy(true);
             if (syncRef.current === liveSync) {
               setConnectionStatus({ status: "connected", retryCount: syncRetryRef.current });
             }
           })
           .on("paused", (error?: unknown) => {
+            syncActivity.setBusy(Boolean(error));
             if (syncRef.current === liveSync) {
               if (error) {
                 setConnectionStatus((current) => current.status === "failed"
@@ -296,10 +335,15 @@ const ControllerInfoProvider = ({ children }: any) => {
             }
           })
           .on("denied", (error: any) => {
+            syncActivity.setBusy(true);
             void handleSyncError(error, liveSync);
           })
           .on("error", (error: any) => {
+            syncActivity.setBusy(true);
             void handleSyncError(error, liveSync);
+          })
+          .on("complete", () => {
+            syncActivity.release();
           });
       };
 
@@ -389,7 +433,11 @@ const ControllerInfoProvider = ({ children }: any) => {
   const pullFromRemote = useCallback(() => {
     const remote = remoteDbRef.current;
     if (!db || !remote || !isAuthenticatedSession) return;
-    remote
+    manualContentPullRef.current?.cancel();
+    manualContentPullActivityRef.current?.release();
+    const activity = trackContentReplication(db.name);
+    manualContentPullActivityRef.current = activity;
+    const pull = remote
       .replicate.to(db, { retry: false, selector: { _id: { $ne: "media" } } })
       .on("change", (info: any) => {
         if (info.docs?.length) {
@@ -397,7 +445,22 @@ const ControllerInfoProvider = ({ children }: any) => {
             new CustomEvent("update", { detail: info.docs })
           );
         }
+      })
+      .on("complete", () => {
+        activity.release();
+        if (manualContentPullActivityRef.current === activity) {
+          manualContentPullActivityRef.current = null;
+          manualContentPullRef.current = null;
+        }
+      })
+      .on("error", () => {
+        activity.release();
+        if (manualContentPullActivityRef.current === activity) {
+          manualContentPullActivityRef.current = null;
+          manualContentPullRef.current = null;
+        }
       });
+    manualContentPullRef.current = pull;
   }, [db, isAuthenticatedSession]);
 
   const bibleSyncDb = useCallback(
@@ -503,7 +566,10 @@ const ControllerInfoProvider = ({ children }: any) => {
   }, [loginState, activeDatabaseKey, isGuestSession]);
 
   useEffect(() => {
+    let cancelled = false;
     const setupDb = async () => {
+      const sessionAtStart = databaseSessionKey;
+      const isCurrentSession = () => !cancelled && databaseSessionRef.current === sessionAtStart;
       try {
         const dbName = isGuestSession
           ? GUEST_DATABASE_NAME
@@ -519,6 +585,8 @@ const ControllerInfoProvider = ({ children }: any) => {
 
           const localDb = new PouchDB(dbName);
           await seedOfflineGuestDatabase(localDb);
+          if (!isCurrentSession()) return;
+          dbSessionRef.current = sessionAtStart;
           setDbProgress(100);
           setDb(localDb);
           setIsDbSetup(true);
@@ -557,6 +625,75 @@ const ControllerInfoProvider = ({ children }: any) => {
           }
         }
 
+        if (!isCurrentSession()) return;
+        // Local content is usable offline while the initial remote pull retries.
+        dbSessionRef.current = sessionAtStart;
+        setGlobalContentDatabase(localDb, {
+          databaseKey: activeDatabaseKey,
+          churchId: churchId || "",
+        });
+        setDb(localDb);
+        setIsDbSetup(true);
+
+      } catch (error) {
+        if (!isCurrentSession()) return;
+        console.error("Error in setupDb:", error);
+        setDbProgress(0);
+      }
+    };
+    if (shouldInitializeControllerData && !isDbSetup) void setupDb();
+    return () => { cancelled = true; };
+  }, [shouldInitializeControllerData, databaseSessionKey, churchId, activeDatabaseKey, broadcastDatabaseKey, isGuestSession, isDbSetup]);
+
+  const initialRemoteDatabaseRef = useRef<PouchDB.Database | null>(null);
+  const contentDatabaseSessionRef = useRef<
+    ReturnType<typeof beginContentDatabaseSession> | null
+  >(null);
+  const canCreateBootstrapDocuments = useCallback(() => {
+    if (!isAuthenticatedSession && !isGuestSession) return false;
+    if (!db || globalDb !== db || databaseSessionRef.current !== databaseSessionKey || dbSessionRef.current !== databaseSessionKey) return false;
+    if (isGuestSession) return true;
+    const session = contentDatabaseSessionRef.current;
+    return Boolean(session && hasSuccessfulInitialContentReplication(db.name, session.token));
+  }, [db, databaseSessionKey, isGuestSession, isAuthenticatedSession]);
+  const bootstrapReady = useSyncExternalStore(
+    subscribeToContentActivity,
+    canCreateBootstrapDocuments,
+    () => false,
+  );
+  useEffect(() => {
+    if (!db || !isAuthenticatedSession || dbSessionRef.current !== databaseSessionKey) {
+      return;
+    }
+    const localDb = db;
+    const contentDatabaseSession = beginContentDatabaseSession(localDb.name);
+    contentDatabaseSessionRef.current = contentDatabaseSession;
+    // This concrete PouchDB instance already completed its first remote pull.
+    // Keep that fact when authentication refreshes the same local DB session.
+    if (initialRemoteDatabaseRef.current === localDb) {
+      contentDatabaseSession.markInitialReplicationComplete();
+    }
+    return () => {
+      cancelBibleItemCleanupRetry(localDb, contentDatabaseSession.token);
+      contentDatabaseSession.release();
+      if (contentDatabaseSessionRef.current === contentDatabaseSession) {
+        contentDatabaseSessionRef.current = null;
+      }
+    };
+  }, [db, databaseSessionKey, isAuthenticatedSession]);
+
+  useEffect(() => {
+    if (!db || !hasCouchSession || !isAuthenticatedSession || dbSessionRef.current !== databaseSessionKey || initialRemoteDatabaseRef.current === db) return;
+    let cancelled = false;
+    const sessionAtStart = databaseSessionKey;
+    const isCurrentSession = () => !cancelled && databaseSessionRef.current === sessionAtStart;
+    const localDb = db;
+    const contentDatabaseSession = contentDatabaseSessionRef.current;
+    if (!contentDatabaseSession) return;
+    const connectRemote = async () => {
+      let pullActivity: ContentReplicationActivity | null = null;
+      let pullFailed = false;
+      try {
         const remoteSourceDbName = `worship-sync-${isGuestSession ? DEMO_DATABASE_KEY : activeDatabaseKey
           }`;
         const remoteUrl = `${import.meta.env.VITE_COUCHDB_HOST}/${remoteSourceDbName}`;
@@ -578,6 +715,10 @@ const ControllerInfoProvider = ({ children }: any) => {
 
         syncRef.current?.cancel();
         replicateRef.current?.cancel();
+        initialContentReplicationActivityRef.current?.release();
+        const activePullActivity = trackContentReplication(localDb.name);
+        pullActivity = activePullActivity;
+        initialContentReplicationActivityRef.current = activePullActivity;
         pendingMax = 0;
 
         replicateRef.current = remoteDb.replicate
@@ -588,6 +729,7 @@ const ControllerInfoProvider = ({ children }: any) => {
             selector: { _id: { $ne: "media" } },
           })
           .on("change", (info) => {
+            if (!isCurrentSession()) return;
             const pending: number = (info as any).pending; // this property exists when printing info
             pendingMax = pendingMax < pending ? pending : pendingMax;
             if (pendingMax > 0) {
@@ -597,6 +739,8 @@ const ControllerInfoProvider = ({ children }: any) => {
             }
           })
           .on("error", async (error: any) => {
+            if (!isCurrentSession()) return;
+            pullFailed = true;
             console.error("Replication error:", error);
             if (error.status === 401 || error.status === 403) {
               setHasCouchSession(false);
@@ -615,7 +759,8 @@ const ControllerInfoProvider = ({ children }: any) => {
                 status: "retrying",
                 retryCount: replicateRetryRef.current,
               });
-              const success = await getCouchSession();
+              const success = await getCouchSession(isCurrentSession);
+              if (!isCurrentSession()) return;
               if (!success) {
                 setConnectionStatus({
                   status: "failed",
@@ -626,46 +771,35 @@ const ControllerInfoProvider = ({ children }: any) => {
               // Do not reset replicateRetryRef here; allow cap to stop the loop
             }
           })
-          .on("complete", () => {
-            setDbProgress(100);
-            setDb(localDb);
-            setIsDbSetup(true);
-            setGlobalContentDatabase(localDb, {
-              databaseKey: activeDatabaseKey,
-              churchId: globalFireDbInfo.churchId || "",
-            });
-            if (broadcastDatabaseKey) {
-              updateGlobalBroadcast(broadcastDatabaseKey);
+          .on("complete", (result: { status?: string; ok?: boolean; errors?: unknown[] }) => {
+            if (!isCurrentSession() || pullFailed || result?.status === "cancelled" || result?.ok === false || result?.errors?.length) return;
+            contentDatabaseSession.markInitialReplicationComplete();
+            activePullActivity.release();
+            if (initialContentReplicationActivityRef.current === activePullActivity) {
+              initialContentReplicationActivityRef.current = null;
             }
+            setDbProgress(100);
+            initialRemoteDatabaseRef.current = localDb;
             if (isAuthenticatedSession) {
               syncDb(localDb, remoteDb, activeDatabaseKey);
             }
           });
       } catch (error) {
-        console.error("Error in setupDb:", error);
-        setDbProgress(0);
-        // Don't set isDbSetup to true on error, so it can retry
+        pullActivity?.release();
+        if (initialContentReplicationActivityRef.current === pullActivity) {
+          initialContentReplicationActivityRef.current = null;
+        }
+        if (isCurrentSession()) console.error("Error connecting content replication:", error);
       }
     };
-
-    if (
-      shouldInitializeControllerData &&
-      !isDbSetup &&
-      hasCouchSession
-    ) {
-      setupDb();
-    }
-  }, [
-    shouldInitializeControllerData,
-    activeDatabaseKey,
-    broadcastDatabaseKey,
-    isAuthenticatedSession,
-    isGuestSession,
-    isDbSetup,
-    hasCouchSession,
-    syncDb,
-    getCouchSession,
-  ]);
+    void connectRemote();
+    return () => {
+      cancelled = true;
+      replicateRef.current?.cancel();
+      initialContentReplicationActivityRef.current?.release();
+      initialContentReplicationActivityRef.current = null;
+    };
+  }, [db, hasCouchSession, isAuthenticatedSession, databaseSessionKey, activeDatabaseKey, isGuestSession, syncDb, getCouchSession]);
 
   useEffect(() => {
     const setupBibleDb = async () => {
@@ -779,6 +913,14 @@ const ControllerInfoProvider = ({ children }: any) => {
     await bibleSyncRef.current?.cancel();
     await replicateRef.current?.cancel();
     await bibleReplicateRef.current?.cancel();
+    manualContentPullRef.current?.cancel();
+    contentSyncActivityRef.current?.release();
+    contentSyncActivityRef.current = null;
+    initialContentReplicationActivityRef.current?.release();
+    initialContentReplicationActivityRef.current = null;
+    manualContentPullActivityRef.current?.release();
+    manualContentPullActivityRef.current = null;
+    manualContentPullRef.current = null;
     remoteDbRef.current = null;
     const previousContentOwner = getActiveContentDatabaseOwner();
     if (previousContentOwner) {
@@ -790,10 +932,8 @@ const ControllerInfoProvider = ({ children }: any) => {
     const bibleDbInstance = bibleDb;
     setDb(undefined);
     setDbProgress(0);
-    setIsDbSetup(false);
     setBibleDb(undefined);
     setBibleDbProgress(0);
-    setIsBibleDbSetup(false);
     pendingMax = 0;
     dispatch({ type: "RESET_INITIALIZATION" });
 
@@ -807,6 +947,8 @@ const ControllerInfoProvider = ({ children }: any) => {
         console.error(e);
       });
     }
+    setIsDbSetup(false);
+    setIsBibleDbSetup(false);
   }, [db, bibleDb, dispatch]);
 
   useEffect(() => {
@@ -866,16 +1008,26 @@ const ControllerInfoProvider = ({ children }: any) => {
         syncTimeout = null;
       }
       syncRef.current?.cancel();
+      contentSyncActivityRef.current?.release();
+      contentSyncActivityRef.current = null;
+      initialContentReplicationActivityRef.current?.release();
+      initialContentReplicationActivityRef.current = null;
       bibleSyncRef.current?.cancel();
       replicateRef.current?.cancel();
       bibleReplicateRef.current?.cancel();
+      manualContentPullRef.current?.cancel();
       remoteDbRef.current = null;
+      manualContentPullActivityRef.current?.release();
+      manualContentPullActivityRef.current = null;
+      manualContentPullRef.current = null;
     };
   }, []);
 
   const value = useMemo(
     () => ({
-      db,
+      db: dbSessionRef.current === databaseSessionKey ? db : undefined,
+      bootstrapReady,
+      canCreateBootstrapDocuments,
       cloud,
       updater: updater.current,
       isGuestSession,
@@ -893,6 +1045,9 @@ const ControllerInfoProvider = ({ children }: any) => {
     }),
     [
       db,
+      databaseSessionKey,
+      bootstrapReady,
+      canCreateBootstrapDocuments,
       bibleDb,
       bibleDbProgress,
       dbProgress,

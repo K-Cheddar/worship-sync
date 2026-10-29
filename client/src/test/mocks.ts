@@ -32,6 +32,7 @@ export function createMockPouchDB(
 ): PouchDB.Database {
   return {
     get: jest.fn().mockResolvedValue({ _id: "credits", list: [] }),
+    info: jest.fn().mockResolvedValue({ update_seq: 0 }),
     put: jest.fn(),
     find: jest.fn(),
     createIndex: jest.fn(),
@@ -61,6 +62,8 @@ export function createMockControllerContext(
   return {
     db: overrideDb ?? createMockPouchDB(),
     dbProgress: 100,
+    bootstrapReady: true,
+    canCreateBootstrapDocuments: () => true,
     isGuestSession: false,
     setIsMobile: jest.fn(),
     updater: new MockEventTarget(),

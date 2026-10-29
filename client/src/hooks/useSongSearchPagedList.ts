@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLoadMoreOnScroll } from "./useLoadMoreOnScroll";
-import { filterAndSortSongsForSearchWithEnrichment } from "../utils/songSearchUtils";
+import { filterAndSortSongsForSearchWithEnrichment, prepareItemSearchDocuments } from "../utils/songSearchUtils";
 import { DBItem } from "../types";
 
 const DEBOUNCE_MS = 250;
@@ -40,7 +40,11 @@ export function useSongSearchPagedList({
   const listScrollRef = useRef<HTMLUListElement | null>(null);
 
   const songDocs = useMemo(
-    () => songs.filter((song) => song.type === "song"),
+    () => {
+      const documents = songs.filter((song) => song.type === "song");
+      prepareItemSearchDocuments(documents);
+      return documents;
+    },
     [songs],
   );
 

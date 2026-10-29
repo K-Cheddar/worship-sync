@@ -1,3 +1,4 @@
+import type { PresentationViewAction } from "./transferModel";
 import {
   createContext,
   useCallback,
@@ -35,10 +36,10 @@ type CanvaTransferRuntime = {
   pageStatus: Record<number, CanvaPageState>;
   error?: string;
   importedCount?: number;
-  viewPath?: string;
+  viewPresentation?: PresentationViewAction;
   failedPages?: Array<{ page: number; error: string }>;
   customItemError?: string;
-  customItemRetry?: () => Promise<string | void>;
+  customItemRetry?: () => Promise<PresentationViewAction | void>;
   customItemRetryPending?: boolean;
   cleanupRetry?: () => Promise<void>;
   cleanupRetryPending?: boolean;
@@ -46,7 +47,7 @@ type CanvaTransferRuntime = {
   dedupeKey?: string;
   controller?: AbortController;
   run: (signal: AbortSignal, onProgress: (event: CanvaImportProgressEvent) => void) => Promise<CanvaImportResult>;
-  finalize: (result: CanvaImportResult, signal: AbortSignal, onPagesPersisted: (pages: number[]) => void) => Promise<{ importedCount: number; viewPath?: string; failedPages?: CanvaImportResult["failedPages"]; customItemError?: string }>;
+  finalize: (result: CanvaImportResult, signal: AbortSignal, onPagesPersisted: (pages: number[]) => void) => Promise<{ importedCount: number; viewPresentation?: PresentationViewAction; failedPages?: CanvaImportResult["failedPages"]; customItemError?: string }>;
 };
 
 type ResourceUploadFile = {
@@ -174,7 +175,7 @@ const toCanvaTransfer = (job: CanvaTransferRuntime): Transfer => {
     phase,
     ...(detail ? { detail } : {}),
     ...(errorMessage ? { error: { message: errorMessage } } : {}),
-    ...(job.viewPath ? { result: { label: "View presentation", to: job.viewPath } } : {}),
+    ...(job.viewPresentation ? { result: { label: "View presentation", ...job.viewPresentation } } : {}),
     canCancel: !terminal,
     blocksUnload: status === "queued" || status === "active",
     actions,
@@ -419,9 +420,9 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
       job.customItemRetryPending = true;
       publishCanva(job);
       try {
-        const viewPath = await job.customItemRetry();
+        const viewPresentation = await job.customItemRetry();
         job.customItemError = undefined;
-        if (viewPath) job.viewPath = viewPath;
+        if (viewPresentation) job.viewPresentation = viewPresentation;
         job.status = job.failedPages?.length ? "partial" : "completed";
       } catch (error) {
         job.customItemError = error instanceof Error ? error.message : "Try again.";

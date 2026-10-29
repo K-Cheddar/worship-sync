@@ -1,10 +1,11 @@
+import { isControllerWorkspacePath } from "./controllerWorkspace";
 import type {
   ControllerItemMediaRouteKey,
   ItemType,
   MediaRouteKey,
 } from "../types";
 
-/** Keys under `/controller/item/...` (iterate for repairs / migrations). */
+/** Stable per-item-kind media folder keys (iterate for repairs / migrations). */
 export const CONTROLLER_ITEM_MEDIA_ROUTE_KEYS: ControllerItemMediaRouteKey[] = [
   "controller-item-song",
   "controller-item-free",
@@ -88,9 +89,7 @@ export function migrateLegacyMediaRouteFolders(
 }
 
 /**
- * Map URL + page context (+ active item type on item routes) to persisted
- * media-folder route key. Paths are absolute (e.g. `/controller/item/...`,
- * `/overlay-controller`).
+ * Map workspace/section context and active Redux item type to a persisted folder key.
  */
 export function getMediaRouteKey(
   pathname: string,
@@ -100,7 +99,7 @@ export function getMediaRouteKey(
   if (pathname === "/overlay-controller" || pageMode === "overlayController") {
     return "overlay-controller";
   }
-  if (pathname.includes("/controller/item/")) {
+  if (isControllerWorkspacePath(pathname) && itemType) {
     return controllerItemMediaRouteKey(itemType ?? "");
   }
   if (pathname.includes("/controller/overlays")) return "controller-overlays";

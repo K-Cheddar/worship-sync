@@ -1,5 +1,6 @@
 import type { OverlayInfo } from "../../types";
-import { findOverlayForServicePlanningCandidate } from "./findBestOverlayMatch";
+import type { OverlaySyncPlanItem } from "../../types/servicePlanningImport";
+import { findOverlayForServicePlanningCandidate, planNativeOverlaySync } from "./findBestOverlayMatch";
 
 const participant = (
   id: string,
@@ -89,5 +90,149 @@ describe("findOverlayForServicePlanningCandidate", () => {
     );
 
     expect(result).toEqual({ kind: "ambiguous", score: 100 });
+  });
+});
+
+
+describe("planNativeOverlaySync", () => {
+  const candidate = (patch: OverlaySyncPlanItem["patch"], isSong = false): OverlaySyncPlanItem => ({
+    sourceKind: "native", isSong, action: "create", sectionName: "Service", sourceRowIndex: 0,
+    elementType: patch.event || "", title: "", ledBy: "", personIndex: 0, rawNameToken: patch.name || "", patch,
+  });
+
+  it("reserves exact library and current songs before any same-event fallback, preferring current exact copies", () => {
+    const plan = [candidate({ name: "Praise Team", title: "New Song", event: "Song of Praise" }, true),
+      candidate({ name: "Praise Team", title: "God Is", event: "Song of Praise" }, true),
+      candidate({ name: "Praise Team", title: "Just Want to Praise You", event: "Song of Praise" }, true)];
+    const current = [
+      { ...participant("god-is", "Song of Praise"), name: "Praise Team", title: "God Is" },
+      { ...participant("spare", "Song of Praise"), name: "Previous", title: "Previous Song" },
+    ];
+    const library = [
+      { ...participant("saved-god-is", "Song of Praise"), name: "Praise Team", title: "God Is" },
+      { ...participant("saved-just", "Song of Praise"), name: "Praise Team", title: "Just Want to Praise You" },
+    ];
+    const result = planNativeOverlaySync(plan, current, library);
+    expect(result.map((item) => item.targetOverlayId)).toEqual(["spare", "god-is", "saved-just"]);
+    expect(result.map((item) => item.action)).toEqual(["update", "update", "clone"]);
+    expect(result[2].targetOverlaySource).toBe("library");
+  });
+
+  it("preserves the participant identity before event fallback even when their role title changes", () => {
+    const plan = [candidate({ name: "New Speaker", title: "", event: "Sermon" }), candidate({ name: "Samuel Muir", title: "Pastor", event: "Sermon" })];
+    const current = [
+      { ...participant("samuel", "Sermon"), name: "Samuel Muir", title: "Old role" },
+      { ...participant("ryann", "Sermon"), name: "Ryann" },
+    ];
+    const library = [{ ...participant("saved-samuel", "Sermon"), name: "Samuel Muir", title: "Pastor" }];
+    expect(planNativeOverlaySync(plan, current, library).map((item) => item.targetOverlayId)).toEqual(["ryann", "samuel"]);
+  });
+
+  it("uses an active event slot before an exact participant match from the library", () => {
+    const result = planNativeOverlaySync(
+      [candidate({ name: "New Speaker", title: "Guest Pastor", event: "Sermon" })],
+      [{ ...participant("active-sermon", "Sermon"), name: "Previous Speaker", title: "Pastor" }],
+      [{ ...participant("library-sermon", "Sermon"), name: "New Speaker", title: "Guest Pastor" }],
+    );
+
+    expect(result[0]).toMatchObject({
+      action: "update",
+      targetOverlayId: "active-sermon",
+      targetOverlaySource: undefined,
+    });
+  });
+
+  it("reserves exact song titles in the current list before assigning event slots", () => {
+    const plan = [
+      candidate({ name: "Praise Team", title: "New Song", event: "Song of Praise" }, true),
+      candidate({ name: "Praise Team", title: "God Is", event: "Song of Praise" }, true),
+    ];
+    const current = [
+      { ...participant("god-is", "Song of Praise"), name: "Praise Team", title: "God Is" },
+      { ...participant("spare", "Song of Praise"), name: "Other Team", title: "Old Song" },
+    ];
+    const library = [
+      { ...participant("library-new-song", "Song of Praise"), name: "Praise Team", title: "New Song" },
+    ];
+
+    const result = planNativeOverlaySync(plan, current, library);
+    expect(result.map((item) => item.targetOverlayId)).toEqual(["spare", "god-is"]);
+    expect(result.map((item) => item.action)).toEqual(["update", "update"]);
+  });
+
+  it("claims repeated normalized events in their existing list order", () => {
+    const plan = [
+      candidate({ name: "First Host", title: "", event: "Sabbath School Co-Host" }),
+      candidate({ name: "Second Host", title: "", event: "Sabbath School Co-Host" }),
+    ];
+    const current = [
+      participant("cohost-a", " Sabbath  School Co-Host "),
+      participant("cohost-b", "SABBATH SCHOOL CO-HOST"),
+    ];
+
+    expect(planNativeOverlaySync(plan, current).map((item) => item.targetOverlayId)).toEqual([
+      "cohost-a", "cohost-b",
+    ]);
+  });
+
+  it("clones a library template only after current event slots have been assigned", () => {
+    const plan = [
+      candidate({ name: "New Speaker", title: "Guest", event: "Sermon" }),
+      candidate({ name: "Library Speaker", title: "Pastor", event: "Sermon" }),
+    ];
+    const current = [participant("active-sermon", "Sermon")];
+    const library = [
+      { ...participant("library-sermon", "Sermon"), name: "Library Speaker", title: "Pastor" },
+    ];
+
+    const result = planNativeOverlaySync(plan, current, library);
+    expect(result.map((item) => [item.action, item.targetOverlayId, item.targetOverlaySource])).toEqual([
+      ["update", "active-sermon", undefined],
+      ["clone", "library-sermon", "library"],
+    ]);
+  });
+
+  it("uses an already-claimed active overlay as the clone template after library matches are exhausted", () => {
+    const current = [
+      {
+        ...participant("cohost", "Sabbath School Co-Host"),
+        name: "Previous Host",
+        formatting: { participantOverlayPosition: "right" as const },
+      },
+    ];
+    const plan = [
+      candidate({ name: "First Host", title: "Host", event: "Sabbath School Co-Host" }),
+      candidate({ name: "Second Host", title: "Co-Host", event: " sabbath   school co-host " }),
+    ];
+
+    const result = planNativeOverlaySync(plan, current);
+
+    expect(result.map(({ action, targetOverlayId, targetOverlaySource }) => [
+      action,
+      targetOverlayId,
+      targetOverlaySource,
+    ])).toEqual([
+      ["update", "cohost", undefined],
+      ["clone", "cohost", undefined],
+    ]);
+    expect(current[0]).toMatchObject({
+      id: "cohost",
+      name: "Previous Host",
+      formatting: { participantOverlayPosition: "right" },
+    });
+  });
+
+  it("does not match similar event text or a different overlay type", () => {
+    const result = planNativeOverlaySync([candidate({ name: "Guest", title: "", event: "Sermon" })], [
+      participant("similar-event", "Sermon Response"),
+      { id: "image", type: "image", event: "Sermon" },
+    ]);
+    expect(result[0]).toMatchObject({ action: "create", targetOverlayId: undefined });
+  });
+
+  it("uses stable distinct slots for repeated identical songs with normalized event identities", () => {
+    const plan = [0, 1, 2].map(() => candidate({ name: "Praise Team", title: "God Is", event: "Song of Praise" }, true));
+    const current = [0, 1, 2].map((index) => ({ ...participant(`song-${index}`, "  SONG of   praise "), name: "praise team", title: "god is" }));
+    expect(planNativeOverlaySync(plan, current).map((item) => item.targetOverlayId)).toEqual(["song-0", "song-1", "song-2"]);
   });
 });

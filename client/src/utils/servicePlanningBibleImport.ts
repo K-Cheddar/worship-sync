@@ -180,7 +180,7 @@ export const createBibleItemFromParsedReference = async ({
   name,
   db,
   bibleDb,
-  allItems,
+  libraryItems,
   background,
   mediaInfo,
   brightness,
@@ -191,7 +191,7 @@ export const createBibleItemFromParsedReference = async ({
   name?: string;
   db: PouchDB.Database | undefined;
   bibleDb?: PouchLike | undefined;
-  allItems: ServiceItem[];
+  libraryItems: ServiceItem[];
   background: string;
   mediaInfo?: MediaType;
   brightness: number;
@@ -220,6 +220,15 @@ export const createBibleItemFromParsedReference = async ({
     );
   }
 
+  // A saved preference can retain its media metadata even when an older
+  // preference record has no separate background URL. Bible slide rendering
+  // paints box.background, so resolve the URL from that same media reference
+  // before building the slides.
+  const configuredBackground = background ||
+    (mediaInfo?.type === "video"
+      ? mediaInfo.placeholderImage || ""
+      : mediaInfo?.localImage?.cloudUrl || mediaInfo?.background || "");
+
   return createNewBible({
     name:
       name?.trim() ||
@@ -229,8 +238,8 @@ export const createBibleItemFromParsedReference = async ({
     version,
     verses,
     db,
-    list: allItems,
-    background,
+    list: libraryItems,
+    background: configuredBackground,
     mediaInfo,
     brightness,
     fontMode,

@@ -1,6 +1,5 @@
 import {
   DEFAULT_BOOTSTRAP_OUTLINE,
-  loadOrCreateAllItemsDoc,
   loadOrCreateItemListsDoc,
   loadOrCreatePreferencesBundle,
 } from "./controllerBootstrapDocs";
@@ -15,67 +14,58 @@ import { preferencesClusterLoadFallback } from "../store/preferencesSlice";
 const notFound = { status: 404, name: "not_found" };
 
 describe("controllerBootstrapDocs", () => {
-  describe("loadOrCreateAllItemsDoc", () => {
-    it("returns an existing allItems document without writing", async () => {
-      const existing = {
-        _id: "allItems",
-        _rev: "1-a",
-        items: [{ _id: "song-1", name: "Song", type: "song" }],
-      };
-      const db = {
-        get: jest.fn().mockResolvedValue(existing),
-        put: jest.fn(),
-      } as unknown as PouchDB.Database;
+  it("does not interpret unverified local 404s as permission to write defaults", async () => {
+    const db = { get: jest.fn().mockRejectedValue(notFound), put: jest.fn() } as unknown as PouchDB.Database;
+    await expect(loadOrCreateItemListsDoc(db)).resolves.toBeUndefined();
+    await expect(loadOrCreatePreferencesBundle(db)).resolves.toBeUndefined();
+    expect(db.put).not.toHaveBeenCalled();
+  });
 
-      await expect(loadOrCreateAllItemsDoc(db)).resolves.toBe(existing);
-      expect(db.put).not.toHaveBeenCalled();
-    });
+  it("reads existing offline documents without remote verification", async () => {
+    const registry = { _id: "ItemLists", itemLists: [{ _id: "saved", name: "Saved" }] };
+    const db = {
+      get: jest.fn(async (id: string) => {
+        if (id === "ItemLists") return registry;
+        if (id === PREFERENCES_POUCH_ID) return { _id: id, preferences: preferencesClusterLoadFallback.preferences };
+        throw notFound;
+      }), put: jest.fn(),
+    } as unknown as PouchDB.Database;
+    await expect(loadOrCreateItemListsDoc(db)).resolves.toBe(registry);
+    await expect(loadOrCreatePreferencesBundle(db)).resolves.toMatchObject({ preferences: preferencesClusterLoadFallback.preferences });
+    expect(db.put).not.toHaveBeenCalled();
+  });
 
-    it("creates an empty allItems document after a confirmed 404", async () => {
-      const created = { _id: "allItems", _rev: "1-created", items: [] };
-      const db = {
-        get: jest
-          .fn()
-          .mockRejectedValueOnce(notFound)
-          .mockResolvedValueOnce(created),
-        put: jest
-          .fn()
-          .mockResolvedValue({ ok: true, id: "allItems", rev: "1-created" }),
-      } as unknown as PouchDB.Database;
+  it("creates defaults once only after successful verification of an empty church", async () => {
+    const docs = new Map<string, unknown>();
+    const db = {
+      get: jest.fn(async (id: string) => { if (docs.has(id)) return docs.get(id); throw notFound; }),
+      put: jest.fn(async (doc: { _id: string }) => { docs.set(doc._id, doc); return { ok: true }; }),
+    } as unknown as PouchDB.Database;
+    let verified = false;
+    const canCreate = () => verified;
+    await loadOrCreateItemListsDoc(db, canCreate);
+    await loadOrCreatePreferencesBundle(db, canCreate);
+    expect(db.put).not.toHaveBeenCalled();
+    verified = true;
+    await loadOrCreateItemListsDoc(db, canCreate);
+    await loadOrCreatePreferencesBundle(db, canCreate);
+    await loadOrCreateItemListsDoc(db, canCreate);
+    await loadOrCreatePreferencesBundle(db, canCreate);
+    expect(db.put).toHaveBeenCalledTimes(5);
+    expect(new Set(jest.mocked(db.put).mock.calls.map(([doc]) => doc._id)).size).toBe(5);
+  });
 
-      await expect(loadOrCreateAllItemsDoc(db)).resolves.toEqual(created);
-      expect(db.put).toHaveBeenCalledWith(
-        expect.objectContaining({
-          _id: "allItems",
-          items: [],
-          docType: "allItems",
-        }),
-      );
-    });
-
-    it("rethrows non-404 read errors without writing", async () => {
-      const readError = { status: 500, message: "boom" };
-      const db = {
-        get: jest.fn().mockRejectedValue(readError),
-        put: jest.fn(),
-      } as unknown as PouchDB.Database;
-
-      await expect(loadOrCreateAllItemsDoc(db)).rejects.toBe(readError);
-      expect(db.put).not.toHaveBeenCalled();
-    });
-
-    it("rereads after a create conflict", async () => {
-      const winning = { _id: "allItems", _rev: "2-win", items: [{ _id: "x" }] };
-      const db = {
-        get: jest
-          .fn()
-          .mockRejectedValueOnce(notFound)
-          .mockResolvedValueOnce(winning),
-        put: jest.fn().mockRejectedValue({ status: 409, name: "conflict" }),
-      } as unknown as PouchDB.Database;
-
-      await expect(loadOrCreateAllItemsDoc(db)).resolves.toBe(winning);
-    });
+  it("rechecks bootstrap ownership after an asynchronous missing-document read", async () => {
+    let rejectRead!: (error: unknown) => void;
+    let current = true;
+    const db = {
+      get: jest.fn().mockReturnValue(new Promise((_resolve, reject) => { rejectRead = reject; })), put: jest.fn(),
+    } as unknown as PouchDB.Database;
+    const load = loadOrCreateItemListsDoc(db, () => current);
+    current = false;
+    rejectRead(notFound);
+    await expect(load).resolves.toBeUndefined();
+    expect(db.put).not.toHaveBeenCalled();
   });
 
   describe("loadOrCreateItemListsDoc", () => {
@@ -91,7 +81,7 @@ describe("controllerBootstrapDocs", () => {
         put: jest.fn(),
       } as unknown as PouchDB.Database;
 
-      await expect(loadOrCreateItemListsDoc(db)).resolves.toBe(existing);
+      await expect(loadOrCreateItemListsDoc(db, () => true)).resolves.toBe(existing);
       expect(db.put).not.toHaveBeenCalled();
     });
 
@@ -110,7 +100,7 @@ describe("controllerBootstrapDocs", () => {
       const put = jest.fn().mockResolvedValue({ ok: true });
       const db = { get, put } as unknown as PouchDB.Database;
 
-      await expect(loadOrCreateItemListsDoc(db)).resolves.toEqual(created);
+      await expect(loadOrCreateItemListsDoc(db, () => true)).resolves.toEqual(created);
       expect(put).toHaveBeenCalledWith(
         expect.objectContaining({
           _id: DEFAULT_BOOTSTRAP_OUTLINE._id,
@@ -152,7 +142,7 @@ describe("controllerBootstrapDocs", () => {
       const put = jest.fn().mockResolvedValue({ ok: true });
       const db = { get, put } as unknown as PouchDB.Database;
 
-      await expect(loadOrCreateItemListsDoc(db)).resolves.toEqual(healed);
+      await expect(loadOrCreateItemListsDoc(db, () => true)).resolves.toEqual(healed);
       expect(put).toHaveBeenCalledWith(
         expect.objectContaining({
           _id: "ItemLists",
@@ -220,8 +210,8 @@ describe("controllerBootstrapDocs", () => {
 
       const db = { get, put } as unknown as PouchDB.Database;
 
-      const bundle = await loadOrCreatePreferencesBundle(db);
-      expect(bundle.preferences).toEqual(
+      const bundle = await loadOrCreatePreferencesBundle(db, () => true);
+      expect(bundle?.preferences).toEqual(
         preferencesClusterLoadFallback.preferences,
       );
       expect(put).toHaveBeenCalledWith(
@@ -242,7 +232,7 @@ describe("controllerBootstrapDocs", () => {
         put: jest.fn(),
       } as unknown as PouchDB.Database;
 
-      await expect(loadOrCreatePreferencesBundle(db)).rejects.toBe(readError);
+      await expect(loadOrCreatePreferencesBundle(db, () => true)).rejects.toBe(readError);
       expect(db.put).not.toHaveBeenCalled();
     });
   });

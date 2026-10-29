@@ -40,12 +40,6 @@ const SlideBoxes = ({
     selectedSlideData?.mediaSource?.kind === "local-video-input"
       ? selectedSlideData.mediaSource
       : undefined;
-  const isEmpty = boxes.length === 0;
-
-  if (isEmpty) {
-    return null;
-  }
-
   const activeBox: Box | undefined = boxes[selectedBox];
   const activeBoxHasFileMedia = Boolean(
     activeBox?.mediaInfo?.id || activeBox?.background,
@@ -151,6 +145,7 @@ const SlideBoxes = ({
             >
               <Button
                 truncate
+                aria-pressed={selectedBox === index}
                 className="min-w-0 flex-1 text-xs hover:bg-gray-500"
                 variant="none"
                 onClick={() => dispatch(setSelectedBox(index))}
@@ -171,6 +166,7 @@ const SlideBoxes = ({
               {canDeleteBox(index) && canEdit && (
                 <Button
                   svg={Trash2}
+                  aria-label={`Delete ${boxLabel || `box ${index + 1}`}`}
                   variant="tertiary"
                   color="red"
                   onClick={() => {
@@ -189,31 +185,31 @@ const SlideBoxes = ({
             </span>
           );
         })}
-        {canEdit && (
-          <Button
-            className="mt-1 w-full justify-center text-xs"
-            svg={Plus}
-            onClick={() => {
-              dispatch(
-                updateBoxes({
-                  boxes: [
-                    ...boxes,
-                    createBox({
-                      width: 75,
-                      height: 75,
-                      x: 12.5,
-                      y: 12.5,
-                    }),
-                  ],
-                })
-              );
-              dispatch(setSelectedBox(boxes.length));
-            }}
-          >
-            Add Box
-          </Button>
-        )}
       </div>
+      {canEdit && (
+        <Button
+          className="shrink-0 w-full justify-center text-xs"
+          svg={Plus}
+          onClick={() => {
+            dispatch(
+              updateBoxes({
+                boxes: [
+                  ...boxes,
+                  createBox({
+                    width: 75,
+                    height: 75,
+                    x: 12.5,
+                    y: 12.5,
+                  }),
+                ],
+              })
+            );
+            dispatch(setSelectedBox(boxes.length));
+          }}
+        >
+          Add Box
+        </Button>
+      )}
     </section>
   );
 };

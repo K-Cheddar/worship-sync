@@ -12,6 +12,7 @@ import {
   DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
   refreshServicePlanFromImport,
 } from "./servicePlanImportSync";
+import { applyPlanAnchorStartTime } from "./servicePlanTimingUtils";
 
 const element = (
   id: string,
@@ -37,6 +38,131 @@ const namedSection = (
 ): ServicePlanSection => ({ id, name, elements });
 
 describe("summarizeServicePlanImport", () => {
+  it("reviews a reliable account occurrence reorder even if it retains an old PDF review flag", () => {
+    const current = [section([
+      element("first", "Prayer", { sourcePlanningManaged: true, sourceOccurrenceId: "pco-first", planningCenterPdfMatchReviewRequired: true }),
+      element("second", "Prayer", { sourcePlanningManaged: true, sourceOccurrenceId: "pco-second" }),
+    ])];
+    const next = [section([...current[0].elements].reverse())];
+    const summary = summarizeServicePlanImport(current, next, {}, { trackSameSectionMoves: true });
+    expect(summary.moved).toBe(1);
+    expect(applySelectedServicePlanImportChanges(current, next, summary, new Set(summary.changes.map(servicePlanImportChangeKey))))
+      .toEqual(next);
+  });
+  it("executes every source permutation and preserves original order when only an addition is approved", () => {
+    const permutations = (values: string[]): string[][] => values.length
+      ? values.flatMap((value, index) => permutations(values.filter((_, other) => other !== index)).map((tail) => [value, ...tail])) : [[]];
+    const current = [section(["a", "b", "c", "d"].map((id) => element(id, id, { sourcePlanningManaged: true })))];
+    const outcomes = permutations(["a", "b", "c", "d"]).map((ids) => {
+      const next = [section(ids.flatMap((id, index) => [
+        current[0].elements.find((item) => item.id === id)!,
+        ...(index === 1 ? [element("new", "New", { sourcePlanningManaged: true })] : []),
+      ]))];
+      const summary = summarizeServicePlanImport(current, next, {}, { trackSameSectionMoves: true });
+      const all = applySelectedServicePlanImportChanges(current, next, summary, new Set(summary.changes.map(servicePlanImportChangeKey)));
+      const additionOnly = applySelectedServicePlanImportChanges(current, next, summary, new Set(["added:new"]));
+      return {
+        expected: next[0].elements.map(({ id }) => id).join(","),
+        actual: all[0].elements.map(({ id }) => id).join(","),
+        existingAfterAddition: additionOnly[0].elements.filter(({ id }) => id !== "new").map(({ id }) => id),
+      };
+    });
+    expect(outcomes.map(({ actual }) => actual)).toEqual(outcomes.map(({ expected }) => expected));
+    expect(outcomes.map(({ existingAfterAddition }) => existingAfterAddition)).toEqual(outcomes.map(() => ["a", "b", "c", "d"]));
+  });
+  it("derives cascade timing from selected operations without proposing timing operations", () => {
+    const current = [section([
+      element("song", "Song", { startTime: "09:00", durationSeconds: 300 }),
+      element("prayer", "Prayer", { startTime: "09:05", durationSeconds: 600 }),
+      element("message", "Message", { startTime: "09:15", durationSeconds: 900 }),
+    ])];
+    const changedDuration = [section([
+      element("song", "Song", { startTime: "09:00", durationSeconds: 480 }),
+      current[0].elements[1],
+      current[0].elements[2],
+    ])];
+    const proposed = applyPlanAnchorStartTime(changedDuration, "09:00");
+    const summary = summarizeServicePlanImport(current, proposed, {}, {
+      dependentTimingShifts: true,
+    });
+
+    expect(summary.changes.map(({ kind, id }) => [kind, id])).toEqual([
+      ["updated", "song"],
+    ]);
+
+    const appliedWithoutSelection = applySelectedServicePlanImportChanges(
+      current,
+      proposed,
+      summary,
+      new Set(),
+    );
+    expect(appliedWithoutSelection).toBe(current);
+    expect(applyPlanAnchorStartTime(applySelectedServicePlanImportChanges(current, proposed, summary,
+      new Set(["updated:song"])), "09:00").flatMap(({ elements }) => elements.map(({ startTime }) => startTime)))
+      .toEqual(["09:00", "09:08", "09:18"]);
+  });
+
+  it("recalculates a consistent selected result after added or removed items", () => {
+    const current = [
+      namedSection("one", "Praise", [
+        element("first", "Song", { sourcePlanningManaged: true, startTime: "09:00", durationSeconds: 300 }),
+        element("removed", "Removed item", { sourcePlanningManaged: true, startTime: "09:05", durationSeconds: 120 }),
+      ]),
+      namedSection("two", "Message", [
+        element("last", "Message", { sourcePlanningManaged: true, startTime: "09:07", durationSeconds: 600 }),
+      ]),
+    ];
+    const proposed = [
+      namedSection("one", "Praise", [
+        element("first", "Song", { sourcePlanningManaged: true, startTime: "09:00", durationSeconds: 300 }),
+        element("added", "New item", { sourcePlanningManaged: true, durationSeconds: 180 }),
+      ]),
+      namedSection("two", "Message", [
+        element("last", "Message", { sourcePlanningManaged: true, startTime: "09:03", durationSeconds: 600 }),
+      ]),
+    ];
+    const summary = summarizeServicePlanImport(current, proposed);
+    const selected = new Set(summary.changes
+      .filter(({ kind }) => kind === "added" || kind === "removed")
+      .map(servicePlanImportChangeKey));
+    const applied = applyPlanAnchorStartTime(
+      applySelectedServicePlanImportChanges(current, proposed, summary, selected),
+      "09:00",
+    );
+
+    expect(applied.flatMap((planSection) => planSection.elements).map(({ id, startTime }) => [id, startTime])).toEqual([
+      ["first", "09:00"],
+      ["added", "09:05"],
+      ["last", "09:08"],
+    ]);
+  });
+
+  it("applies only selected duration updates and cascades from the preserved anchor", () => {
+    const current = [section([
+      element("first", "First", { sourcePlanningManaged: true, startTime: "09:00", durationSeconds: 300 }),
+      element("second", "Second", { sourcePlanningManaged: true, startTime: "09:05", durationSeconds: 600 }),
+      element("third", "Third", { sourcePlanningManaged: true, startTime: "09:15", durationSeconds: 300 }),
+    ])];
+    const proposed = applyPlanAnchorStartTime([section([
+      element("first", "First", { sourcePlanningManaged: true, startTime: "09:00", durationSeconds: 480 }),
+      element("second", "Second", { sourcePlanningManaged: true, startTime: "09:08", durationSeconds: 720 }),
+      element("third", "Third", { sourcePlanningManaged: true, startTime: "09:20", durationSeconds: 300 }),
+    ])], "09:00");
+    const summary = summarizeServicePlanImport(current, proposed, {}, { dependentTimingShifts: true });
+    const firstUpdate = summary.changes.find(({ id, kind }) => id === "first" && kind === "updated");
+    const selected = new Set(firstUpdate ? [servicePlanImportChangeKey(firstUpdate)] : []);
+    const applied = applyPlanAnchorStartTime(
+      applySelectedServicePlanImportChanges(current, proposed, summary, selected),
+      "09:00",
+    );
+
+    expect(applied[0].elements.map(({ durationSeconds, startTime }) => [durationSeconds, startTime])).toEqual([
+      [480, "09:00"],
+      [600, "09:08"],
+      [300, "09:18"],
+    ]);
+  });
+
   it("surfaces semantic microphone and IEM equipment changes in review", () => {
     const current = [section([element("equipment", "Prayer", {
       assignees: [{ id: "jamie", name: "Jamie", iemIds: ["iem-1"], microphoneIds: ["mic-1"] }],
@@ -619,6 +745,26 @@ describe("summarizeServicePlanImport", () => {
       "removed",
     ]);
     expect(result[0].elements[0].title).toEqual(plainTextToRichText("New welcome"));
+  });
+
+  it.each([
+    [0, true], [4, true], [undefined, undefined],
+  ] as const)("uses PDF provenance for a keyless review candidate at position %s", (planningCenterPdfSourcePosition, expectedReviewRequired) => {
+    const currentItem = element("prayer", "Prayer");
+    const current = [section([currentItem])];
+    const next = [section([
+      currentItem,
+      element("candidate", "Prayer", {
+        legacyImportMatchCandidateForId: currentItem.id,
+        planningCenterPdfSourcePosition,
+      }),
+      element("addition", "New item"),
+    ])];
+    const summary = summarizeServicePlanImport(current, next);
+    const applied = applySelectedServicePlanImportChanges(current, next, summary, new Set(["added:addition"]));
+    expect(applied[0].elements.find(({ id }) => id === currentItem.id)?.planningCenterPdfMatchReviewRequired)
+      .toBe(expectedReviewRequired);
+    expect(applied[0].elements.map(({ id }) => id)).toEqual([currentItem.id, "addition"]);
   });
 
   it("preserves the complete refreshed result when every change is selected", () => {

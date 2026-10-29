@@ -1,3 +1,5 @@
+import { selectControllerItem } from "../../store/controllerItemSelection";
+import { selectItemEntries } from "../../store/itemLibrarySelectors";
 import Spinner from "@/components/Spinner/Spinner";
 import SongTxtImport from "./SongTxtImport";
 import { findSongDuplicates } from "../../utils/songTxtImport";
@@ -43,11 +45,6 @@ import {
 } from "../../utils/itemUtil";
 import { setActiveItem } from "../../store/itemSlice";
 import { addItemToItemList } from "../../store/itemListSlice";
-import {
-  addItemToAllItemsList,
-  upsertItemInAllItemsList,
-} from "../../store/allItemsSlice";
-import { upsertItemInAllDocs } from "../../store/allDocsSlice";
 import { selectSongLibrary } from "../../store/songLibrarySelectors";
 import { ItemState, ItemType, ServiceItem, ShouldSendTo } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
@@ -124,7 +121,7 @@ export type CreateItemProps = {
   onCancel?: () => void;
   /**
    * Embedded: called after a successful create instead of opening the item editor.
-   * The item is still written to the library (allItems + allDocs).
+   * The item is still written to the library (PouchDB item document).
    */
   onCreated?: (item: ItemState) => void;
   /** Embedded: select a library duplicate in the caller's context. Never creates a song. */
@@ -148,9 +145,8 @@ const CreateItem = ({
   const isEmbedded = variant === "embedded";
   const createItemDraft = useSelector((state: RootState) => state.createItem);
   const reduxStore = useStore<RootState>();
-  const { list, isInitialized: isAllItemsInitialized } = useSelector(
-    (state: RootState) => state.allItems,
-  );
+  const list = useSelector(selectItemEntries);
+  const isItemCacheInitialized = useSelector((state) => state.allDocs.isInitialized);
   const { songs: songLibrary, documents: songDocuments } = useSelector(selectSongLibrary);
   const [duplicateReview, setDuplicateReview] = useState(false);
 
@@ -218,7 +214,7 @@ const CreateItem = ({
   const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
   const currentDatabaseRef = useRef(db);
   currentDatabaseRef.current = db;
-  const canCreateEmbeddedItem = Boolean(db && isAllItemsInitialized);
+  const canCreateEmbeddedItem = Boolean(db && isItemCacheInitialized);
 
   const navigate = useNavigate();
   const controllerBasePath = useControllerBasePath();
@@ -596,11 +592,8 @@ const CreateItem = ({
     : [];
 
   const goToItem = (itemId: string, listId: string) => {
-    navigate(
-      `${controllerBasePath}/item/${window.btoa(encodeURI(itemId))}/${window.btoa(
-        encodeURI(listId)
-      )}`
-    );
+    void dispatch(selectControllerItem({ _id: itemId, listId }, db));
+    navigate(controllerBasePath);
   };
 
   const dispatchNewItem = (item: ItemState) => {
@@ -611,21 +604,15 @@ const CreateItem = ({
       _id: item._id,
       listId: "",
     };
-    if (item.type === "free") {
-      dispatch(upsertItemInAllItemsList(listItem));
-    } else {
-      dispatch(addItemToAllItemsList(listItem));
-    }
-    dispatch(upsertItemInAllDocs(item));
 
     if (isEmbedded) {
       onCreated?.(item);
       return;
     }
 
-    dispatch(setActiveItem(item));
     const addedAction = dispatch(addItemToItemList(listItem));
-    goToItem(item._id, addedAction.payload.listId);
+    dispatch(setActiveItem({ ...item, listId: addedAction.payload.listId }));
+    navigate(controllerBasePath);
   };
 
   const createItem = async (allowSeparateSong = false) => {
@@ -714,6 +701,7 @@ const CreateItem = ({
             mediaInfo: defaultFreeFormBackground.mediaInfo,
             brightness: defaultFreeFormBackgroundBrightness,
             text: draftText,
+            emptyItem: !isEmbedded && !draftText.trim(),
             overflow: defaultFreeFormFontMode,
             shouldSendTo,
           });
@@ -778,6 +766,8 @@ const CreateItem = ({
   } else if (isEmbedded) {
     createButtonLabel = "Create and attach";
   }
+  const customTextLabel = isEmbedded ? "Text" : "Text (optional)";
+  const isCompactCustomText = selectedType === "free" && !isEmbedded;
 
   const lyricsImportPanel = (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-x-hidden">
@@ -1098,24 +1088,32 @@ const CreateItem = ({
 
             {!hideFreeFormPasteText && (selectedType === "song" || selectedType === "free") && (
               <TextArea
-                textareaClassName="min-h-56 rounded-md"
+                textareaClassName={
+                  isCompactCustomText
+                    ? "min-h-24 max-h-[40vh] overflow-y-auto rounded-md"
+                    : "min-h-56 rounded-md"
+                }
                 className={cn(
                   "min-h-auto w-full flex-1",
                   selectedType === "song" ? "mt-3" : "mt-2",
                 )}
-                label={selectedType === "song" ? "Lyrics" : "Text"}
+                label={selectedType === "song" ? "Lyrics" : customTextLabel}
                 description={
                   selectedType === "song"
                     ? "Paste lyrics here."
                     : "Paste text here."
                 }
+                rows={isCompactCustomText ? 2 : undefined}
+                autoResize={isCompactCustomText}
                 value={text}
                 onChange={(val) => updateCreateItemDraft({ text: val as string })}
                 data-ignore-undo="true"
               />
             )}
 
-            {(selectedType === "song" || selectedType === "free") && (
+            {(selectedType === "song" ||
+              (selectedType === "free" &&
+                (isEmbedded || Boolean(text.trim())))) && (
               <RemoveParentheticalsToggle
                 value={removeParentheticals}
                 onChange={setRemoveParentheticals}

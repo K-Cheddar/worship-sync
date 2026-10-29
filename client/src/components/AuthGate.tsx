@@ -1,7 +1,8 @@
-import { ReactNode, useCallback, useContext, useMemo } from "react";
-import { getAuthBootstrapLoadingDescription } from "../utils/authUserMessages";
+import { ReactNode, useCallback, useContext } from "react";
+import { getAuthBootstrapOfflineDescription } from "../utils/authUserMessages";
 import { Navigate, useLocation } from "react-router-dom";
 import AuthScreenMain from "./AuthScreenMain";
+import BootstrapLoadingScreen from "./BootstrapLoadingScreen";
 import Button from "./Button/Button";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { useCloseOnEscape } from "../hooks/useCloseOnEscape";
@@ -101,21 +102,6 @@ const AuthGate = ({
   const controllerAccess = context?.controllerAccess ?? access;
   const operatorName = context?.operatorName;
 
-  const loadingDescription = useMemo(
-    () =>
-      getAuthBootstrapLoadingDescription(authServerStatus ?? "checking", {
-        retryCount: authServerRetryCount ?? 0,
-      }),
-    [authServerRetryCount, authServerStatus]
-  );
-
-  const loadingTitle = useMemo(() => {
-    if (allowedKinds.includes("workstation") && !allowedKinds.includes("human")) {
-      return "Preparing this workstation...";
-    }
-    return "Checking your access...";
-  }, [allowedKinds]);
-
   if (!context) {
     if (process.env.NODE_ENV === "development") {
       console.error("AuthGate must be used within GlobalInfoProvider.");
@@ -127,10 +113,21 @@ const AuthGate = ({
     if (allowedKinds.includes("display")) {
       return <DisplayAuthLoadingPlaceholder />;
     }
+    if (authServerStatus !== "offline") {
+      return <BootstrapLoadingScreen />;
+    }
+
     return (
       <ValidationScreen
-        title={loadingTitle}
-        description={loadingDescription}
+        title={
+          allowedKinds.includes("workstation") &&
+          !allowedKinds.includes("human")
+            ? "Preparing this workstation..."
+            : "Checking your access..."
+        }
+        description={getAuthBootstrapOfflineDescription({
+          retryCount: authServerRetryCount ?? 0,
+        })}
       />
     );
   }

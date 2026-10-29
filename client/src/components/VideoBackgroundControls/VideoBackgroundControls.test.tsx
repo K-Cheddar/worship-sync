@@ -99,6 +99,16 @@ describe("VideoBackgroundControls", () => {
     ).toBeInTheDocument();
   });
 
+  it("opens the send behavior explanation and preserves send-mode selection", async () => {
+    const user = userEvent.setup();
+    render(<VideoBackgroundControls media={media} mediaKey="remote:video-1" sendMode="continue" onSendModeChange={mockSendModeChange} />);
+    await user.click(screen.getByRole("button", { name: "About video send behavior" }));
+    expect(screen.getAllByText("Sending this slide keeps the video playing from where it is now.")).toHaveLength(2);
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Start over" }));
+    expect(mockSendModeChange).toHaveBeenCalledWith("restart");
+  });
+
   it("can show transport controls without send-mode guidance", () => {
     render(
       <VideoBackgroundControls

@@ -1,7 +1,7 @@
-import { useCallback, useContext, useRef } from "react";
+import { selectItemEntries } from "../store/itemLibrarySelectors";
+import { useCallback, useContext, useEffect, useRef } from "react";
 import { useStore } from "react-redux";
 import { useDispatch, useSelector } from "../hooks";
-import { getServicePlanningImportDataFromUrl } from "../containers/Overlays/eventParser";
 import { servicePlanToImportData } from "../integrations/servicePlanning/servicePlanToImportData";
 import { mapNativeServicePlanParticipants } from "../integrations/servicePlanning/mapNativeServicePlanParticipants";
 import type { ServicePlanningMappedRow } from "../integrations/servicePlanning/mapServicePlanningToOverlays";
@@ -9,7 +9,8 @@ import {
   buildServicePlanningPreview,
   getChangedOverlayPatch,
 } from "../integrations/servicePlanning/buildServicePlanningPreview";
-import { findOverlayForServicePlanningCandidate } from "../integrations/servicePlanning/findBestOverlayMatch";
+import { findOverlayForServicePlanningCandidate, normalizeOverlayEvent, planNativeOverlaySync, type OverlayMatchResolution } from "../integrations/servicePlanning/findBestOverlayMatch";
+import { getAllOverlayDocs } from "../utils/dbUtils";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { ControllerInfoContext } from "../context/controllerInfo";
 import {
@@ -22,7 +23,6 @@ import {
   updateList as updateOverlayList,
   updateOverlayInList,
 } from "../store/overlaysSlice";
-import { addItemToAllItemsList } from "../store/allItemsSlice";
 import {
   buildClonedParticipantOverlay,
   buildNewParticipantOverlay,
@@ -33,7 +33,7 @@ import {
 import { moveOverlayAfterServicePlanningAnchor } from "../integrations/servicePlanning/servicePlanningOverlayOrder";
 import generateRandomId from "../utils/generateRandomId";
 import { setActiveItemInList, updateItemList } from "../store/itemListSlice";
-import type { OverlayInfo } from "../types";
+import type { DBOverlay, OverlayInfo } from "../types";
 import type { RootState } from "../store/store";
 import { selectSongLibrary } from "../store/songLibrarySelectors";
 import { getConfiguredDefaultFormatting } from "../utils/overlayUtils";
@@ -48,6 +48,7 @@ import type {
   ServicePlan,
   ServicePlanParticipantOverlayProjection,
 } from "../types/servicePlan";
+import type { ServicePlanningConfig } from "../types/integrations";
 import {
   executeServicePlanningOutlineSyncStep as executeOutlineSyncUtilityStep,
   insertServicePlanningOutlineCandidates,
@@ -63,8 +64,7 @@ import {
   getOutlineCandidateLineItemKey,
   getOverlayPlanLineItemKey,
 } from "../utils/servicePlanningSyncKeys";
-import { persistItemListServiceOutline } from "../utils/itemListImports";
-import { freeFormDocToServiceItem } from "../utils/freeFormLibrary";
+import { itemDocumentToLibraryEntry } from "../utils/itemLibrary";
 import { getChurchResource } from "../api/auth";
 import type { ChurchResource } from "../types/churchResource";
 import { getServicePlanElementContentResources } from "../types/servicePlan";
@@ -84,6 +84,8 @@ export type ServicePlanningImportResult = {
 
 export type ExecutableOverlaySyncPlanItem = OverlaySyncPlanItem & {
   action: "update" | "clone" | "create";
+  /** Binds this native step to the settings used to build its preview. */
+  nativeOverlayMappingKey?: string;
 };
 
 export type ServicePlanningOverlayStepExecutionResult = {
@@ -106,6 +108,29 @@ const SERVICE_PLANNING_DISABLED_MESSAGE =
 const SERVICE_PLANNING_LOADING_MESSAGE =
   "Integrations are still loading. Try again in a moment.";
 const OVERLAY_SELECTION_SCROLL_DELAY_MS = 500;
+const DEFAULT_SERVICE_PLANNING_CONFIG = createDefaultChurchIntegrations().servicePlanning;
+
+type NativeOverlayMappingState = { ready: boolean; key: string };
+
+const getNativeOverlayMappingKey = (
+  churchId: string | undefined,
+  ready: boolean,
+  servicePlanning: ServicePlanningConfig,
+): string => JSON.stringify([
+  churchId || "",
+  ready,
+  ready ? servicePlanning.elementRules.map((rule) => ({
+    matchElementType: rule.matchElementType,
+    matchMode: rule.matchMode,
+    overlaySyncEnabled: rule.overlaySyncEnabled,
+    displayName: rule.displayName,
+    multiOverlay: {
+      mode: rule.multiOverlay.mode,
+      eventSuffixByPersonIndex: rule.multiOverlay.eventSuffixByPersonIndex,
+      repeatLastEventSuffix: rule.multiOverlay.repeatLastEventSuffix,
+    },
+  })) : null,
+]);
 
 /**
  * These moved to buildServicePlanningPreview.ts so the preview can be built
@@ -133,16 +158,50 @@ export const useServicePlanningImport = () => {
   const { db, bibleDb } = useContext(ControllerInfoContext) || {};
   const { churchIntegrations, churchIntegrationsStatus, churchId } =
     useContext(GlobalInfoContext) || {};
+  const isNativeOverlayMappingReady =
+    churchIntegrationsStatus === "ready" && Boolean(churchIntegrations);
+  const currentServicePlanning = isNativeOverlayMappingReady
+    ? churchIntegrations!.servicePlanning
+    : DEFAULT_SERVICE_PLANNING_CONFIG;
+  const nativeOverlayMappingKey = getNativeOverlayMappingKey(
+    churchId,
+    isNativeOverlayMappingReady,
+    currentServicePlanning,
+  );
+  const nativeOverlayMappingRef = useRef<NativeOverlayMappingState>({
+    ready: isNativeOverlayMappingReady,
+    key: nativeOverlayMappingKey,
+  });
+  nativeOverlayMappingRef.current = {
+    ready: isNativeOverlayMappingReady,
+    key: nativeOverlayMappingKey,
+  };
+  const isNativeOverlayPreviewFresh = useCallback(
+    (preview: ServicePlanningPreview | null | undefined): boolean =>
+      Boolean(
+        preview?.nativeOverlaySummary &&
+        nativeOverlayMappingRef.current.ready &&
+        preview.nativeOverlayMappingKey === nativeOverlayMappingRef.current.key,
+      ),
+    [],
+  );
   const churchResourceLookupCacheRef = useRef<{
     churchId: string;
     byId: Map<string, Promise<ChurchResource | undefined>>;
   }>({ churchId: "", byId: new Map() });
-  const allItems = useSelector((s: RootState) => s.allItems.list);
+  const libraryItems = useSelector(selectItemEntries);
   const selectedItemList = useSelector(
     (s: RootState) =>
       s.undoable.present.itemLists.selectedList ??
       s.undoable.present.itemLists.activeList,
   );
+  const overlayScopeRef = useRef({ db, churchId, listId: selectedItemList?._id });
+  overlayScopeRef.current = { db, churchId, listId: selectedItemList?._id };
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   const {
     defaultBibleBackground,
     defaultBibleBackgroundBrightness,
@@ -158,71 +217,8 @@ export const useServicePlanningImport = () => {
         ? null
         : SERVICE_PLANNING_DISABLED_MESSAGE;
 
-  const loadPreview = useCallback(
-    async (url: string): Promise<ServiceOutline> => {
-      if (churchIntegrationsStatus !== "ready" || !churchIntegrations) {
-        throw new Error(SERVICE_PLANNING_LOADING_MESSAGE);
-      }
-      const sp = churchIntegrations.servicePlanning;
-      if (!sp.enabled) {
-        throw new Error(SERVICE_PLANNING_DISABLED_MESSAGE);
-      }
-
-      const importData = await getServicePlanningImportDataFromUrl(url);
-      const state = store.getState();
-      const songLibrary = selectSongLibrary(state).songs;
-      const customDocumentLibrary = state.allDocs.allFreeFormDocs
-        .filter((document) => document.type === "free" && Array.isArray(document.slides))
-        .map(freeFormDocToServiceItem);
-      const preview = buildServicePlanningPreview({
-        importData,
-        servicePlanning: sp,
-        overlays: state.undoable.present.overlays.list,
-        songLibrary,
-        customDocumentLibrary,
-        activeOutlineList: state.undoable.present.itemList.list,
-      });
-
-      const serviceOutline: ServiceOutline = {
-        source: "servicePlanning",
-        loadedAt: new Date().toISOString(),
-        sourceUrl: url,
-        planLabel: importData.planLabel.trim() || "Imported plan",
-        preview,
-      };
-
-      try {
-        await persistItemListServiceOutline(
-          db,
-          selectedItemList?._id,
-          serviceOutline,
-        );
-      } catch (error) {
-        console.error("Failed to persist service outline:", error);
-      }
-
-      return serviceOutline;
-    },
-    [
-      churchIntegrations,
-      churchIntegrationsStatus,
-      db,
-      selectedItemList?._id,
-      store,
-    ],
-  );
-
-  /**
-   * The plan-sourced twin of `loadPreview`: same matching rules, same preview
-   * shape, but built from the Teams ServicePlan the Services page owns instead
-   * of a freshly scraped URL.
-   *
-   * Deliberately does *not* call `persistItemListServiceOutline`. A plan-sourced
-   * preview is rebuilt on every `service-plan-updated` event, and the Services
-   * editor autosaves as the operator types — mirroring each of those into a
-   * PouchDB write would put storage churn on a live surface for no gain, since
-   * the plan is already durable server-side and re-derived on mount.
-   */
+  // Saved plans are durable in Services. Rebuild their preview without writing
+  // every live update into the presentation outline's historical import data.
   const loadPlanPreview = useCallback(
     async (
       plan: Pick<ServicePlan, "name" | "sections" | "sourceImport"> & Partial<Pick<ServicePlan, "planKey">>,
@@ -235,8 +231,8 @@ export const useServicePlanningImport = () => {
       // A saved WorshipSync plan is native data. Build its controller model
       // even when the optional URL importer is disabled or its settings have
       // not loaded yet. Existing mapping rules are still honored when present.
-      const sp = churchIntegrations?.servicePlanning
-        ?? createDefaultChurchIntegrations().servicePlanning;
+      const sp = currentServicePlanning;
+      const mappingKey = nativeOverlayMappingKey;
       if (churchResourceLookupCacheRef.current.churchId !== churchId) {
         churchResourceLookupCacheRef.current = {
           churchId: churchId || "",
@@ -287,11 +283,22 @@ export const useServicePlanningImport = () => {
         participantOverlay,
         servicePlanning: sp,
       });
+      // Follow the saved-overlay drawer's library source. Copy library matches
+      // into this list, so another list's saved overlays are never edited.
+      const events = new Set(nativeOverlayMapping.overlayCandidates.flatMap((row) =>
+        row.candidates.filter((candidate) => !candidate.skipReason)
+          .map((candidate) => normalizeOverlayEvent(candidate.patch.event))));
+      const overlayLibrary = db && events.size > 0
+        ? (await getAllOverlayDocs(db))
+            .filter((overlay) => (overlay.type ?? "participant") === "participant" &&
+              events.has(normalizeOverlayEvent(overlay.event)))
+            .map(normalizeOverlayForSync)
+        : [];
       const state = store.getState();
       const songLibrary = selectSongLibrary(state).songs;
       const customDocumentLibrary = state.allDocs.allFreeFormDocs
         .filter((document) => document.type === "free" && Array.isArray(document.slides))
-        .map(freeFormDocToServiceItem);
+        .map(itemDocumentToLibraryEntry);
       const preview = buildServicePlanningPreview({
         importData,
         servicePlanning: sp,
@@ -301,8 +308,15 @@ export const useServicePlanningImport = () => {
         activeOutlineList: state.undoable.present.itemList.list,
         teamAssignments,
         nativeOverlayCandidates: nativeOverlayMapping.overlayCandidates,
+        overlayLibrary,
         nativeOverlaySummary: nativeOverlayMapping.summary,
       });
+      preview.nativeOverlayMappingKey = mappingKey;
+      preview.overlayPlan = preview.overlayPlan.map((step) =>
+        step.sourceKind === "native"
+          ? { ...step, nativeOverlayMappingKey: mappingKey }
+          : step,
+      );
 
       return {
         source: "servicePlanning",
@@ -313,7 +327,7 @@ export const useServicePlanningImport = () => {
         preview,
       };
     },
-    [churchId, churchIntegrations, store],
+    [churchId, currentServicePlanning, db, nativeOverlayMappingKey, store],
   );
 
   const applyPersistedOverlayUpdate = useCallback(
@@ -478,7 +492,7 @@ export const useServicePlanningImport = () => {
       const customDocumentsById = new Map(
         store.getState().allDocs.allFreeFormDocs
           .filter((document) => document.type === "free" && Array.isArray(document.slides))
-          .map((document) => [document._id, freeFormDocToServiceItem(document)]),
+          .map((document) => [document._id, itemDocumentToLibraryEntry(document)]),
       );
       const currentCandidates = outlineCandidates.map((candidate) => {
         if (candidate.outlineItemType !== "custom-document" || !candidate.customDocumentId) {
@@ -496,7 +510,7 @@ export const useServicePlanningImport = () => {
       const result = await insertServicePlanningOutlineCandidates({
         outlineCandidates: currentCandidates,
         currentList,
-        allItems,
+        libraryItems,
         db,
         bibleDb,
         defaultBibleBackground: defaultBibleBackground.background,
@@ -509,16 +523,11 @@ export const useServicePlanningImport = () => {
         dispatch(updateItemList(result.newList));
       }
 
-      if (result.createdAllItems.length > 0) {
-        result.createdAllItems.forEach((item) => {
-          dispatch(addItemToAllItemsList(item));
-        });
-      }
 
       return { inserted: result.inserted };
     },
     [
-      allItems,
+      libraryItems,
       bibleDb,
       db,
       defaultBibleBackground.background,
@@ -527,45 +536,6 @@ export const useServicePlanningImport = () => {
       defaultBibleFontMode,
       dispatch,
       store,
-    ],
-  );
-
-  const runImport = useCallback(
-    async (
-      preview: ServicePlanningPreview,
-      options: ServicePlanningImportOptions,
-    ): Promise<ServicePlanningImportResult> => {
-      if (churchIntegrationsStatus !== "ready" || !churchIntegrations) {
-        throw new Error(SERVICE_PLANNING_LOADING_MESSAGE);
-      }
-      if (!churchIntegrations.servicePlanning.enabled) {
-        throw new Error(SERVICE_PLANNING_DISABLED_MESSAGE);
-      }
-
-      let overlaysUpdated = 0;
-      let overlaysSkipped = 0;
-      let outlineInserted = 0;
-      const reasons: string[] = [];
-
-      if (options.overlays) {
-        const result = await runOverlaySync(preview.overlayCandidates);
-        overlaysUpdated = result.updated;
-        overlaysSkipped = result.skipped;
-        reasons.push(...result.reasons);
-      }
-
-      if (options.outline) {
-        const result = await runOutlineInsert(preview.outlineCandidates);
-        outlineInserted = result.inserted;
-      }
-
-      return { overlaysUpdated, overlaysSkipped, outlineInserted, reasons };
-    },
-    [
-      churchIntegrations,
-      churchIntegrationsStatus,
-      runOverlaySync,
-      runOutlineInsert,
     ],
   );
 
@@ -580,12 +550,19 @@ export const useServicePlanningImport = () => {
 
   const planOverlaySyncSteps = useCallback(
     (preview: ServicePlanningPreview) => {
-      const skipped = preview.overlayPlan.filter(
+      const overlayPlan = planNativeOverlaySync(
+        preview.overlayPlan,
+        store.getState().undoable.present.overlays.list,
+        preview.overlayLibrary,
+      );
+      const skipped = overlayPlan.filter(
         (item) => item.action === "skip",
       );
-      const steps = preview.overlayPlan.filter(
+      const steps = overlayPlan.filter(
         (item): item is ExecutableOverlaySyncPlanItem => item.action !== "skip",
-      );
+      ).map((item) => item.sourceKind === "native"
+        ? { ...item, nativeOverlayMappingKey: preview.nativeOverlayMappingKey }
+        : item);
       return {
         steps,
         skippedCount: skipped.length,
@@ -594,7 +571,7 @@ export const useServicePlanningImport = () => {
           .filter((reason): reason is string => Boolean(reason?.trim())),
       };
     },
-    [],
+    [store],
   );
 
   const planSyncItemsInOrder = useCallback(
@@ -672,7 +649,7 @@ export const useServicePlanningImport = () => {
       const result = await executeOutlineSyncUtilityStep({
         step,
         currentList,
-        allItems,
+        libraryItems,
         db,
         bibleDb,
         defaultBibleBackground: defaultBibleBackground.background,
@@ -685,11 +662,6 @@ export const useServicePlanningImport = () => {
         dispatch(updateItemList(result.newList));
       }
 
-      if (result.createdAllItems.length > 0) {
-        result.createdAllItems.forEach((item) => {
-          dispatch(addItemToAllItemsList(item));
-        });
-      }
 
       if (result.activeListId) {
         dispatch(setActiveItemInList(result.activeListId));
@@ -711,7 +683,7 @@ export const useServicePlanningImport = () => {
       };
     },
     [
-      allItems,
+      libraryItems,
       bibleDb,
       db,
       defaultBibleBackground.background,
@@ -728,6 +700,7 @@ export const useServicePlanningImport = () => {
       step: ExecutableOverlaySyncPlanItem,
       options: {
         insertAfterId?: string;
+        nativeOverlayMappingKey?: string;
         /** Overlay ids already touched/created earlier in this run; excluded
          *  from the duplicate check so intentional same-event overlays
          *  (e.g. two co-hosts) are preserved while pre-existing ones are reused. */
@@ -739,6 +712,15 @@ export const useServicePlanningImport = () => {
       // synced overlays build up in plan order. Fall back to the template (clone)
       // or end of list (create) for the first step when there is no anchor yet.
       const { insertAfterId: anchorOverlayId, claimedOverlayIds } = options;
+      const assertNativeMappingFresh = () => {
+        if (step.sourceKind !== "native") return;
+        const current = nativeOverlayMappingRef.current;
+        const expectedKey = options.nativeOverlayMappingKey ?? step.nativeOverlayMappingKey;
+        if (!current.ready || !expectedKey || expectedKey !== current.key) {
+          throw new Error("Church overlay settings changed. Refresh the plan before syncing overlays.");
+        }
+      };
+      assertNativeMappingFresh();
       const skipStep = (
         reason: string,
         resultOverlayId?: string,
@@ -751,20 +733,44 @@ export const useServicePlanningImport = () => {
         resultOverlayId,
       });
 
+      const scopeAtStart = { db, churchId, listId: selectedItemList?._id };
+      const isScopeCurrent = () => mountedRef.current &&
+        overlayScopeRef.current.db === scopeAtStart.db &&
+        overlayScopeRef.current.churchId === scopeAtStart.churchId &&
+        overlayScopeRef.current.listId === scopeAtStart.listId &&
+        (store.getState().undoable.present.itemLists.selectedList ??
+          store.getState().undoable.present.itemLists.activeList)?._id === scopeAtStart.listId;
+      if (step.sourceKind === "native" && !isScopeCurrent()) {
+        return skipStep("The Controller changed. Refresh the plan before syncing.");
+      }
+
       const excludedIds = new Set(claimedOverlayIds);
       if (step.action === "clone" && step.targetOverlayId) {
         excludedIds.add(step.targetOverlayId);
       }
-      const resolution = findOverlayForServicePlanningCandidate(
-        step.elementType,
-        step.patch.event,
-        list,
-        excludedIds,
-        {
-          duplicateExactMatchesAreAmbiguous:
-            step.duplicateExactMatchesAreAmbiguous === true,
-        },
-      );
+      const plannedTarget = step.action === "update"
+        ? list.find((overlay) => overlay.id === step.targetOverlayId &&
+            !claimedOverlayIds?.has(overlay.id) &&
+            (overlay.type ?? "participant") === "participant" &&
+            normalizeOverlayEvent(overlay.event) === normalizeOverlayEvent(step.patch.event))
+        : undefined;
+      if (step.sourceKind === "native" && step.action === "update" && !plannedTarget) {
+        return skipStep("The planned overlay changed. Refresh the plan before syncing.");
+      }
+      let resolution: OverlayMatchResolution;
+      if (step.sourceKind === "native") {
+        resolution = plannedTarget
+          ? { kind: "match", overlay: plannedTarget, score: 100 }
+          : { kind: "none" };
+      } else {
+        resolution = findOverlayForServicePlanningCandidate(
+          step.elementType,
+          step.patch.event,
+          list,
+          excludedIds,
+          { duplicateExactMatchesAreAmbiguous: step.duplicateExactMatchesAreAmbiguous === true },
+        );
+      }
       if (resolution.kind === "ambiguous") {
         return skipStep(
           `More than one overlay could match "${step.patch.event || step.elementType}". Adjust the event mapping before syncing this item.`,
@@ -787,12 +793,18 @@ export const useServicePlanningImport = () => {
         await new Promise((resolve) =>
           setTimeout(resolve, OVERLAY_SELECTION_SCROLL_DELAY_MS),
         );
+        assertNativeMappingFresh();
+        if (step.sourceKind === "native" && !isScopeCurrent()) {
+          return skipStep("The Controller changed. Refresh the plan before syncing.");
+        }
         if (db) {
           const persisted = await persistExistingOverlayDoc(db, {
             id: target.id,
             ...changedPatch,
           } as OverlayInfo);
-          applyPersistedOverlayUpdate(persisted, { select: true });
+          if (step.sourceKind !== "native" || isScopeCurrent()) {
+            applyPersistedOverlayUpdate(persisted, { select: true });
+          }
         } else {
           applyPersistedOverlayUpdate(next, { select: true });
         }
@@ -808,29 +820,42 @@ export const useServicePlanningImport = () => {
       }
 
       if (step.action === "clone") {
-        const template =
-          (step.targetOverlayId &&
-            list.find((overlay) => overlay.id === step.targetOverlayId)) ||
-          null;
+        let template = list.find((overlay) => overlay.id === step.targetOverlayId) ?? null;
+        if (step.targetOverlaySource === "library" && db && step.targetOverlayId) {
+          template = normalizeOverlayForSync(await db.get(`overlay-${step.targetOverlayId}`) as DBOverlay);
+        }
+        assertNativeMappingFresh();
         if (template) {
+          if (step.sourceKind === "native" && (!isScopeCurrent() ||
+              (template.type ?? "participant") !== "participant" ||
+              normalizeOverlayEvent(template.event) !== normalizeOverlayEvent(step.patch.event))) {
+            return skipStep("The planned overlay changed. Refresh the plan before syncing.");
+          }
           dispatch(selectOverlay(template));
           await new Promise((resolve) =>
             setTimeout(resolve, OVERLAY_SELECTION_SCROLL_DELAY_MS),
           );
+          assertNativeMappingFresh();
+          if (step.sourceKind === "native" && !isScopeCurrent()) {
+            return skipStep("The Controller changed. Refresh the plan before syncing.");
+          }
           const newId = generateRandomId();
-          const { templatesByType, defaultTemplateIdsByType } =
-            store.getState().undoable.present.overlayTemplates;
-          const built = buildClonedParticipantOverlay(
+          let built = buildClonedParticipantOverlay(
             template,
             step.patch,
             newId,
-            getConfiguredDefaultFormatting(
-              "participant",
-              templatesByType,
-              defaultTemplateIdsByType,
-            ),
           );
+          if (step.targetOverlaySource === "library") {
+            built = applyServicePlanningOverlayPatch({ ...template, id: newId }, step.patch);
+            delete built.servicePlanSource;
+            delete built.servicePlanBaseline;
+            delete built.servicePlanOverrides;
+          }
+          assertNativeMappingFresh();
           await persistNewParticipantOverlay(db, built);
+          if (step.sourceKind === "native" && !isScopeCurrent()) {
+            return skipStep("The Controller changed. Refresh the plan before syncing.");
+          }
           dispatch(
             addExistingOverlayToList({
               overlay: built,
@@ -849,6 +874,9 @@ export const useServicePlanningImport = () => {
             resultOverlayId: newId,
           };
         }
+        if (step.sourceKind === "native") {
+          return skipStep("The planned overlay is unavailable. Refresh the plan before syncing.");
+        }
       }
 
       const newId = generateRandomId();
@@ -863,7 +891,11 @@ export const useServicePlanningImport = () => {
           defaultTemplateIdsByType,
         ),
       );
+      assertNativeMappingFresh();
       await persistNewParticipantOverlay(db, newOverlay);
+      if (step.sourceKind === "native" && !isScopeCurrent()) {
+        return skipStep("The Controller changed. Refresh the plan before syncing.");
+      }
       dispatch(
         addExistingOverlayToList({
           overlay: newOverlay,
@@ -882,11 +914,81 @@ export const useServicePlanningImport = () => {
         resultOverlayId: newId,
       };
     },
-    [applyPersistedOverlayUpdate, db, dispatch, placeNewOverlayAfterAnchor, store],
+    [applyPersistedOverlayUpdate, churchId, db, dispatch, placeNewOverlayAfterAnchor, selectedItemList?._id, store],
+  );
+
+  const runImport = useCallback(
+    async (
+      preview: ServicePlanningPreview,
+      options: ServicePlanningImportOptions,
+    ): Promise<ServicePlanningImportResult> => {
+      if (options.overlays && preview.nativeOverlaySummary &&
+        !isNativeOverlayPreviewFresh(preview)) {
+        throw new Error("Church overlay settings are still loading or changed. Refresh the plan before syncing overlays.");
+      }
+      if (!preview.nativeOverlaySummary && (churchIntegrationsStatus !== "ready" || !churchIntegrations)) {
+        throw new Error(SERVICE_PLANNING_LOADING_MESSAGE);
+      }
+      if (!preview.nativeOverlaySummary && !churchIntegrations?.servicePlanning.enabled) {
+        throw new Error(SERVICE_PLANNING_DISABLED_MESSAGE);
+      }
+
+      let overlaysUpdated = 0;
+      let overlaysSkipped = 0;
+      let outlineInserted = 0;
+      const reasons: string[] = [];
+
+      if (options.overlays) {
+        if (preview.nativeOverlaySummary) {
+          const planned = planOverlaySyncSteps(preview);
+          overlaysSkipped = planned.skippedCount;
+          reasons.push(...planned.skipReasons);
+          const claimedOverlayIds = new Set<string>();
+          let insertAfterId: string | undefined;
+          for (const step of planned.steps) {
+            if (!isNativeOverlayPreviewFresh(preview)) {
+              throw new Error("Church overlay settings changed. Refresh the plan before syncing overlays.");
+            }
+            const result = await executeOverlaySyncStep(step, {
+              claimedOverlayIds,
+              insertAfterId,
+              nativeOverlayMappingKey: preview.nativeOverlayMappingKey,
+            });
+            overlaysUpdated += result.overlaysUpdated + result.overlaysCloned + result.overlaysCreated;
+            overlaysSkipped += result.overlaysSkipped;
+            reasons.push(...result.reasons);
+            if (result.resultOverlayId) {
+              claimedOverlayIds.add(result.resultOverlayId);
+              insertAfterId = result.resultOverlayId;
+            }
+          }
+        } else {
+          const result = await runOverlaySync(preview.overlayCandidates);
+          overlaysUpdated = result.updated;
+          overlaysSkipped = result.skipped;
+          reasons.push(...result.reasons);
+        }
+      }
+
+      if (options.outline) {
+        const result = await runOutlineInsert(preview.outlineCandidates);
+        outlineInserted = result.inserted;
+      }
+
+      return { overlaysUpdated, overlaysSkipped, outlineInserted, reasons };
+    },
+    [
+      churchIntegrations,
+      churchIntegrationsStatus,
+      runOverlaySync,
+      planOverlaySyncSteps,
+      executeOverlaySyncStep,
+      runOutlineInsert,
+      isNativeOverlayPreviewFresh,
+    ],
   );
 
   return {
-    loadPreview,
     loadPlanPreview,
     runImport,
     planOutlineSyncSteps,
@@ -894,6 +996,9 @@ export const useServicePlanningImport = () => {
     planOverlaySyncSteps,
     executeOutlineSyncStep,
     executeOverlaySyncStep,
+    isNativeOverlayMappingReady,
+    nativeOverlayMappingKey,
+    isNativeOverlayPreviewFresh,
     isServicePlanningEnabled,
     servicePlanningAvailabilityMessage,
   };

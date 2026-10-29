@@ -1,3 +1,4 @@
+export type PresentationViewAction = { to: string; onClick: (event: React.MouseEvent) => void };
 export type TransferStatus = "queued" | "active" | "complete" | "partial" | "failed" | "cancelled";
 
 export type TransferFileActivity = {
@@ -23,7 +24,7 @@ export type Transfer = {
     total?: number;
   };
   detail?: string;
-  result?: { label: string; to?: string };
+  result?: { label: string; to?: string; onClick?: (event: React.MouseEvent) => void };
   error?: { message: string };
   files?: TransferFileActivity[];
   canCancel?: boolean;

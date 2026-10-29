@@ -1,3 +1,5 @@
+import { useSelector } from "../../hooks";
+import type { RootState } from "../../store/store";
 import React from "react";
 import userEvent from "@testing-library/user-event";
 import { configureStore } from "@reduxjs/toolkit";
@@ -7,7 +9,6 @@ import {
   MemoryRouter,
   Route,
   Routes,
-  useParams,
   useSearchParams,
 } from "react-router-dom";
 import CreateItem from "./CreateItem";
@@ -15,7 +16,7 @@ import {
   createItemSlice,
   initialCreateItemState,
 } from "../../store/createItemSlice";
-import { allItemsSlice } from "../../store/allItemsSlice";
+import { itemLibraryUiSlice } from "../../store/itemLibraryUiSlice";
 import { allDocsSlice } from "../../store/allDocsSlice";
 import { itemListSlice } from "../../store/itemListSlice";
 import { itemSlice } from "../../store/itemSlice";
@@ -100,6 +101,8 @@ const createUndoableState = () => ({
   past: [],
   present: {
     preferences: preferencesSlice.getInitialState(),
+    item: itemSlice.getInitialState(),
+    itemList: itemListSlice.getInitialState(),
   },
   future: [],
 });
@@ -110,7 +113,7 @@ const BibleRouteProbe = () => {
 };
 
 const ItemRouteProbe = () => {
-  const { itemId, listId } = useParams();
+  const { _id: itemId, listId } = useSelector((state: RootState) => state.undoable.present.item);
   return (
     <div data-testid="item-page">
       {itemId}:{listId}
@@ -120,40 +123,38 @@ const ItemRouteProbe = () => {
 
 const createTestStore = ({
   createItem = initialCreateItemState,
-  allItemsList = [],
+  libraryEntries = [],
   allSongDocs = [],
-  isAllItemsInitialized = true,
+  isItemCacheInitialized = true,
 }: {
   createItem?: ReturnType<typeof createItemSlice.reducer>;
-  allItemsList?: ServiceItem[];
+  libraryEntries?: ServiceItem[];
   allSongDocs?: ItemState[];
-  isAllItemsInitialized?: boolean;
+  isItemCacheInitialized?: boolean;
 } = {}) => {
   const undoableState = createUndoableState();
 
   return configureStore({
     reducer: {
       createItem: createItemSlice.reducer,
-      allItems: allItemsSlice.reducer,
+      itemLibraryUi: itemLibraryUiSlice.reducer,
       allDocs: allDocsSlice.reducer,
       itemList: itemListSlice.reducer,
       item: itemSlice.reducer,
       timers: timersSlice.reducer,
       bible: bibleSlice.reducer,
       presentation: presentationSlice.reducer,
-      undoable: (state = undoableState) => state,
+      undoable: (state = undoableState, action: Parameters<typeof itemSlice.reducer>[1]) => ({ ...state, present: { ...state.present, item: itemSlice.reducer(state.present.item, action), itemList: itemListSlice.reducer(state.present.itemList, action) } }),
     } as any,
     preloadedState: {
       createItem,
-      allItems: {
-        ...allItemsSlice.getInitialState(),
-        list: allItemsList,
-        isAllItemsLoading: false,
-        isInitialized: isAllItemsInitialized,
-      },
+      itemLibraryUi: itemLibraryUiSlice.getInitialState(),
       allDocs: {
         ...allDocsSlice.getInitialState(),
-        allSongDocs,
+        allSongDocs: allSongDocs.length ? allSongDocs : libraryEntries.filter((item) => item.type === "song"),
+        allFreeFormDocs: libraryEntries.filter((item) => item.type === "free"),
+        allTimerDocs: libraryEntries.filter((item) => item.type === "timer"),
+        isInitialized: isItemCacheInitialized,
       },
       itemList: itemListSlice.getInitialState(),
       item: itemSlice.getInitialState(),
@@ -189,7 +190,7 @@ const renderCreateItem = ({
       <Route path="/controller/create" element={<CreateItem />} />
       <Route path="/controller/bible" element={<BibleRouteProbe />} />
       <Route
-        path="/controller/item/:itemId/:listId"
+        path="/controller"
         element={<ItemRouteProbe />}
       />
       <Route
@@ -623,20 +624,73 @@ describe("CreateItem", () => {
     });
 
     renderCreateItem({ store });
+    expect(
+      screen.getByLabelText("Remove ad-libs in parentheses:"),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Create Custom Item" }));
 
     await waitFor(() => {
-      expect(store.getState().allItems.list).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            _id: "welcome-slides",
-            name: "Welcome Slides",
-            type: "free",
-          }),
-        ]),
+      expect(mockedCreateNewFreeForm).toHaveBeenCalledTimes(1);
+    });
+    expect(mockedCreateNewFreeForm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Welcome Slides",
+        text: "Welcome",
+        emptyItem: false,
+      }),
+    );
+    expect(store.getState().allDocs.allFreeFormDocs).toEqual([]);
+
+  });
+
+  it("creates a custom item from its name without an initial slide", async () => {
+    mockedCreateNewFreeForm.mockResolvedValue(
+      createMockItem({
+        name: "Welcome Images",
+        _id: "welcome-images",
+        type: "free",
+        slides: [],
+      }),
+    );
+    const store = createTestStore({
+      createItem: {
+        ...initialCreateItemState,
+        type: "free",
+        hasUserSelectedType: true,
+        name: "Welcome Images",
+        text: "",
+      },
+    });
+
+    renderCreateItem({ store });
+
+    const textField = screen.getByLabelText("Text (optional):");
+    expect(textField).toHaveAttribute("rows", "2");
+    expect(textField).toHaveClass("min-h-24");
+    expect(
+      screen.queryByLabelText("Remove ad-libs in parentheses:"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Create Custom Item" }));
+
+    await waitFor(() => {
+      expect(mockedCreateNewFreeForm).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "Welcome Images",
+          text: "",
+          emptyItem: true,
+        }),
       );
     });
-    expect(store.getState().allItems.list).toHaveLength(1);
+    await waitFor(() => {
+      expect(screen.getByTestId("item-page")).toBeInTheDocument();
+    });
+    expect(store.getState().undoable.present.item.slides).toEqual([]);
+    expect(store.getState().itemList.list[0]).toMatchObject({
+      _id: "welcome-images",
+      name: "Welcome Images",
+      type: "free",
+    });
   });
 
   it("navigates to the inserted outline row listId after creating a song", async () => {
@@ -666,9 +720,7 @@ describe("CreateItem", () => {
 
     const insertedListId = store.getState().itemList.list[0].listId;
     expect(screen.getByTestId("item-page")).toHaveTextContent(
-      `${window.btoa(encodeURI("song-1"))}:${window.btoa(
-        encodeURI(insertedListId),
-      )}`,
+      `song-1:${insertedListId}`,
     );
   });
 
@@ -903,7 +955,7 @@ describe("CreateItem", () => {
         name: "Amazing Grace",
         text: "Verse 1",
       },
-      allItemsList: [
+      libraryEntries: [
         {
           _id: "existing-song",
           listId: "list-1",
@@ -936,7 +988,7 @@ describe("CreateItem", () => {
         name: "Amazing Grace",
         text: "Verse 1",
       },
-      allItemsList: [
+      libraryEntries: [
         {
           _id: "existing-song",
           listId: "list-1",
@@ -1008,7 +1060,7 @@ describe("CreateItem", () => {
         ...initialCreateItemState,
         name: "New Song",
       },
-      isAllItemsInitialized: false,
+      isItemCacheInitialized: false,
     });
 
     render(
@@ -1066,7 +1118,11 @@ describe("CreateItem", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create and attach" }));
 
     await waitFor(() => expect(mockedCreateNewFreeForm).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "Prayer Guide" }),
+      expect.objectContaining({
+        name: "Prayer Guide",
+        text: "",
+        emptyItem: false,
+      }),
     ));
     expect(onCreated).toHaveBeenCalledWith(createdDocument);
   });

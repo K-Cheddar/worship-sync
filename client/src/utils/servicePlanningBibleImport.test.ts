@@ -52,7 +52,7 @@ describe("createBibleItemFromParsedReference", () => {
       name: "Psalm 78:1-2 NIV",
       db: undefined,
       bibleDb: undefined,
-      allItems: [],
+      libraryItems: [],
       background: "#000",
       brightness: 60,
       fontMode: "separate",
@@ -69,6 +69,51 @@ describe("createBibleItemFromParsedReference", () => {
         version: "niv",
       }),
     );
+  });
+
+  it("uses the configured media URL when the saved Bible preference omits its background URL", async () => {
+    mockedGetVersesApi.mockResolvedValue({
+      name: "4",
+      index: 3,
+      verses: [{ name: "10", index: 9, text: "Bless me indeed" }],
+    });
+    mockedCreateNewBible.mockImplementation(
+      jest.requireActual<typeof import("./itemUtil")>("./itemUtil").createNewBible,
+    );
+    const mediaInfo = {
+      type: "image" as const,
+      background: "https://media.example.test/bible.jpg",
+      localImage: { id: "bible-image", cloudUrl: "https://media.example.test/bible.jpg" },
+    } as any;
+
+    const created = await createBibleItemFromParsedReference({
+      parsedRef: {
+        book: "1 Chronicles",
+        chapter: "4",
+        verseRange: "10",
+        version: "NKJV",
+      },
+      db: undefined,
+      bibleDb: undefined,
+      libraryItems: [],
+      background: "",
+      mediaInfo,
+      brightness: 47,
+      fontMode: "separate",
+    });
+
+    expect(mockedCreateNewBible).toHaveBeenCalledWith(expect.objectContaining({
+      background: "https://media.example.test/bible.jpg",
+      mediaInfo,
+      brightness: 47,
+      fontMode: "separate",
+    }));
+    expect(created.background).toBe("https://media.example.test/bible.jpg");
+    expect(created.slides.length).toBeGreaterThan(1);
+    expect(created.slides.every((slide) =>
+      slide.boxes[0]?.background === "https://media.example.test/bible.jpg",
+    )).toBe(true);
+    expect(created.slides[0].boxes[0].mediaInfo).toEqual(mediaInfo);
   });
 
   it("reuses cached Bible Gateway chapters before fetching remotely", async () => {
@@ -106,7 +151,7 @@ describe("createBibleItemFromParsedReference", () => {
       name: "Psalm 78:1-2 NIV",
       db: undefined,
       bibleDb,
-      allItems: [],
+      libraryItems: [],
       background: "#000",
       brightness: 60,
       fontMode: "separate",
@@ -169,7 +214,7 @@ describe("createBibleItemFromParsedReference", () => {
       name: "John 3:1-2 NKJV",
       db: undefined,
       bibleDb,
-      allItems: [],
+      libraryItems: [],
       background: "#000",
       brightness: 60,
       fontMode: "separate",
@@ -217,7 +262,7 @@ describe("createBibleItemFromParsedReference", () => {
       name: "John 3:16-17 NIV",
       db: undefined,
       bibleDb: undefined,
-      allItems: [],
+      libraryItems: [],
       background: "#000",
       brightness: 60,
       fontMode: "separate",
@@ -265,7 +310,7 @@ describe("createBibleItemFromParsedReference", () => {
       },
       db: undefined,
       bibleDb: undefined,
-      allItems: [],
+      libraryItems: [],
       background: "#000",
       brightness: 60,
       fontMode: "separate",

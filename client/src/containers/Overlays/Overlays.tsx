@@ -3,7 +3,7 @@ import { selectOverlayTargetIds } from "../../store/selectLiveOutputs";
 import { Plus, Check, FolderOpen, History } from "lucide-react";
 
 import { useDispatch, useSelector } from "../../hooks";
-import { shallowEqual, useStore } from "react-redux";
+import { shallowEqual } from "react-redux";
 import {
   addOverlayToList,
   deleteOverlayFromList,
@@ -13,7 +13,6 @@ import {
   updateInitialList,
   updateList,
   updateOverlayInList,
-  updateOverlayListFromRemote,
 } from "../../store/overlaysSlice";
 import { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import Overlay from "./Overlay";
@@ -29,6 +28,7 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import generateRandomId from "../../utils/generateRandomId";
 import { applyPouchAudit } from "../../utils/pouchAudit";
+import { persistExistingOverlayDoc } from "../../utils/persistOverlayDoc";
 import { keepElementInView } from "../../utils/generalUtils";
 import { RootState } from "../../store/store";
 import Drawer from "../../components/Drawer";
@@ -56,14 +56,8 @@ import OverlaysListSkeleton from "./OverlaysListSkeleton";
 import {
   getConfiguredDefaultFormatting,
   getDefaultFormatting,
-  normalizeOverlayForSync,
   loadOverlayForSelection,
 } from "../../utils/overlayUtils";
-import {
-  shouldKeepLocalListRowForRemoteOverlay,
-  syncSelectedOverlayFromRemote,
-  type OverlaySyncRootSlice,
-} from "../../utils/overlayRemoteSync";
 import { putOverlayHistoryDocs } from "../../utils/dbUtils";
 import { DBOverlayTemplates } from "../../types";
 import { createPortal } from "react-dom";
@@ -129,8 +123,7 @@ const Overlays = ({
   const selectedOverlay = _selectedOverlay ?? defaultSelectedOverlay;
 
   const dispatch = useDispatch();
-  const store = useStore();
-  const { isMobile, db, updater } = useContext(ControllerInfoContext) || {
+  const { isMobile, db } = useContext(ControllerInfoContext) || {
     isMobile: false,
   };
   const { access } = useContext(GlobalInfoContext) || {};
@@ -171,66 +164,6 @@ const Overlays = ({
       setIsTemplateDrawerOpen(false);
     }
   }, [selectedOverlay.id]);
-
-  const updateOverlayFromExternal = useCallback(
-    async (event: CustomEventInit) => {
-      try {
-        const updates = event.detail;
-        for (const _update of updates) {
-          // check if the list we have selected was updated
-          if (_update._id?.startsWith("overlay-")) {
-            const update = _update as DBOverlay;
-
-            const overlayIndex = list.findIndex(
-              (overlay) => overlay.id === update.id,
-            );
-
-            if (overlayIndex === -1) {
-              continue;
-            }
-
-            const normalized = normalizeOverlayForSync(update);
-            const getState = store.getState as () => OverlaySyncRootSlice;
-            const keepLocalRow = shouldKeepLocalListRowForRemoteOverlay(
-              getState,
-              normalized,
-            );
-
-            const updatedOverlayList = list.map((overlay, index) => {
-              if (index === overlayIndex) {
-                if (keepLocalRow) {
-                  return overlay;
-                }
-                return update;
-              }
-              return overlay;
-            });
-
-            dispatch(updateOverlayListFromRemote(updatedOverlayList));
-            syncSelectedOverlayFromRemote(
-              dispatch,
-              store.getState as () => OverlaySyncRootSlice,
-              update,
-            );
-          }
-        }
-      } catch (e) {
-        console.error(e);
-      }
-    },
-    [dispatch, list, store],
-  );
-
-  useEffect(() => {
-    if (!updater) return;
-
-    updater.addEventListener("update", updateOverlayFromExternal);
-
-    return () =>
-      updater.removeEventListener("update", updateOverlayFromExternal);
-  }, [updater, updateOverlayFromExternal]);
-
-  useGlobalBroadcast(updateOverlayFromExternal);
 
   const updateTemplatesFromExternal = useCallback(
     async (event: CustomEventInit) => {
@@ -321,16 +254,10 @@ const Overlays = ({
       // Draft flushes can arrive after selection swaps; persist by payload id so edits are not dropped.
       if (selectedOverlay.id && overlay.id !== selectedOverlay.id) {
         dispatch(updateOverlayInList(overlay));
-        if (!db) return;
+        const dbAtStart = db;
+        if (!dbAtStart) return;
         try {
-          const dbOverlay: DBOverlay = await db.get(`overlay-${overlay.id}`);
-          const updatedAt = new Date().toISOString();
-          const merged = applyPouchAudit(
-            dbOverlay,
-            { ...dbOverlay, ...overlay, updatedAt },
-            { isNew: false },
-          );
-          await db.put(merged);
+          await persistExistingOverlayDoc(dbAtStart, overlay);
         } catch (error) {
           console.error("Error persisting non-selected overlay", error);
         }
@@ -448,7 +375,8 @@ const Overlays = ({
       delete copyableOverlay.servicePlanSource;
       delete copyableOverlay.servicePlanBaseline;
       delete copyableOverlay.servicePlanOverrides;
-      delete (copyableOverlay as Record<string, unknown>).servicePlanReviewRequired;
+      delete (copyableOverlay as Record<string, unknown>)
+        .servicePlanReviewRequired;
       const newOverlay: OverlayInfo = {
         ...copyableOverlay,
         id: newId,
@@ -607,12 +535,12 @@ const Overlays = ({
               </section>
               {detailTarget
                 ? isDetailActive &&
-                createPortal(
-                  <div className="absolute inset-0 z-10 overflow-y-auto p-2">
-                    {overlayEditor}
-                  </div>,
-                  detailTarget,
-                )
+                  createPortal(
+                    <div className="absolute inset-0 z-10 overflow-y-auto p-2">
+                      {overlayEditor}
+                    </div>,
+                    detailTarget,
+                  )
                 : overlayEditor}
             </div>
           </div>

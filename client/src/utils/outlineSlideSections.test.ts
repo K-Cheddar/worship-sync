@@ -7,13 +7,11 @@ import {
   captureOutlineScrollAnchorFromVirtualItems,
   captureOutlineScrollAnchor,
   captureOutlineSlideFocalPoint,
-  getControllerItemPath,
   getOutlineVirtualRowKey,
   getPinnedListIdFromVirtualItems,
   getNonHeadingOutlineItems,
   getPinnedListIdFromRowOffsets,
   getPrefetchItemIds,
-  mergeDocsById,
   prepareItemForEditor,
   resolveOutlineScrollTopFromAnchor,
   resolveSlidesForOutlineItem,
@@ -673,30 +671,6 @@ describe("outlineSlideSections", () => {
     expect(findOutlineRowIndexForItem(rows, "l-2")).toBe(3); // section label
   });
 
-  it("merges extra pouch docs that allDocs does not hold", () => {
-    const merged = mergeDocsById(
-      {
-        allSongDocs: [songDoc("song-1", "1", [slide("a", "A")])],
-        allFreeFormDocs: [],
-        allTimerDocs: [],
-        allBibleDocs: [],
-      },
-      new Map([
-        [
-          "service-time",
-          {
-            _id: "service-time",
-            name: "Countdown",
-            type: "service-time",
-            slides: [slide("t", "Timer")],
-          } as DBItem,
-        ],
-      ]),
-    );
-
-    expect(merged.get("song-1")?._rev).toBe("1");
-    expect(merged.get("service-time")?.name).toBe("Countdown");
-  });
 
   it("backfills formatted sections when preparing a free item", () => {
     const prepared = prepareItemForEditor(
@@ -740,15 +714,6 @@ describe("outlineSlideSections", () => {
         words: "Line one\nLine two",
         slideSpan: 2,
       }),
-    );
-  });
-
-  it("encodes controller item paths", () => {
-    const path = getControllerItemPath({ _id: "song/1", listId: "list 2" });
-    expect(path).toBe(
-      `/controller/item/${window.btoa(encodeURI("song/1"))}/${window.btoa(
-        encodeURI("list 2"),
-      )}`,
     );
   });
 

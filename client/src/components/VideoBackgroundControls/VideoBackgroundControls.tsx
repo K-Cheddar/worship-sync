@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { Pause, Play, SkipBack, Square } from "lucide-react";
+import { Info, Pause, Play, SkipBack, Square } from "lucide-react";
 import Button from "../Button/Button";
 import SegmentedControl from "../SegmentedControl/SegmentedControl";
 import { Slider } from "../ui/Slider";
+import { Popover, PopoverContent, PopoverTrigger } from "../ui/Popover";
 import type { MediaType, VideoBackgroundSendMode } from "../../types";
 import {
   applyVideoBackgroundTransport,
@@ -157,7 +158,7 @@ const VideoBackgroundControls = ({
       )}
       data-testid="video-background-controls"
     >
-      <div className="flex min-w-0 items-center gap-2">
+      <div className="flex min-w-0 items-center gap-2 max-md:gap-1">
         <Button
           type="button"
           variant="tertiary"
@@ -188,7 +189,7 @@ const VideoBackgroundControls = ({
             pushTransport(0, true, true);
           }}
         />
-        <span className="w-[4.5rem] shrink-0 text-center text-xs tabular-nums text-gray-300">
+        <span className="w-[4.5rem] max-md:w-10 shrink-0 text-center text-xs tabular-nums text-gray-300">
           {formatVideoClock(displaySeconds)}
         </span>
         <Slider
@@ -208,11 +209,11 @@ const VideoBackgroundControls = ({
           }}
           className="min-w-0 flex-1"
         />
-        <span className="w-[4.5rem] shrink-0 text-center text-xs tabular-nums text-gray-400">
+        <span className="w-[4.5rem] max-md:w-10 shrink-0 text-center text-xs tabular-nums text-gray-400">
           {formatVideoClock(duration)}
         </span>
       </div>
-      {showSendMode ? <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-1">
+      {showSendMode ? <div className="flex min-w-0 items-center gap-x-2 px-1">
         <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-gray-300">
           On send
         </span>
@@ -223,7 +224,13 @@ const VideoBackgroundControls = ({
           onChange={onSendModeChange}
           options={SEND_MODE_OPTIONS}
         />
-        <p className="min-w-0 flex-1 text-[11px] leading-snug text-gray-400">
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="tertiary" svg={Info} aria-label="About video send behavior" className="md:hidden shrink-0" />
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-64 max-w-[calc(100vw-2rem)] text-xs">{sendModeHint}</PopoverContent>
+        </Popover>
+        <p className="hidden md:block min-w-0 flex-1 text-[11px] leading-snug text-gray-400">
           {sendModeHint}
         </p>
       </div> : null}

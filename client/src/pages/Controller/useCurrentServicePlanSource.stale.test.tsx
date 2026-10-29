@@ -3,10 +3,9 @@ import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
 import { render, waitFor, act } from "@testing-library/react";
 import servicePlanningImportReducer, {
-  markServicePlanningUrlSelection,
   setServicePlanningOutlinePlanBinding,
   setServicePlanningServiceOutline,
-  setStoredServicePlanningOutlineIfIdle,
+  setServicePlanningRestoredOutlineUnlessStale,
 } from "../../store/servicePlanningImportSlice";
 import itemListsReducer, { initiateItemLists } from "../../store/itemListsSlice";
 import controllerProfilesReducer, {
@@ -39,6 +38,8 @@ const mockLoadPlanPreview = jest.fn();
 const mockPersistItemListServicePlanBinding = jest.fn();
 let mockLiveHandler: ((event: unknown) => void) | null = null;
 let mockServicePlanningEnabled = true;
+let mockNativeOverlayMappingReady = false;
+let mockNativeOverlayMappingKey = "church-1:unverified";
 
 jest.mock("../../api/auth", () => ({
   getServicePlan: (...args: unknown[]) => mockGetServicePlan(...args),
@@ -67,6 +68,10 @@ jest.mock("../../hooks/useServicePlanningImport", () => ({
   useServicePlanningImport: () => ({
     loadPlanPreview: mockLoadPlanPreview,
     isServicePlanningEnabled: mockServicePlanningEnabled,
+    isNativeOverlayMappingReady: mockNativeOverlayMappingReady,
+    nativeOverlayMappingKey: mockNativeOverlayMappingKey,
+    isNativeOverlayPreviewFresh: (preview: { nativeOverlayMappingKey?: string } | null) =>
+      Boolean(mockNativeOverlayMappingReady && preview?.nativeOverlayMappingKey === mockNativeOverlayMappingKey),
   }),
 }));
 
@@ -266,10 +271,10 @@ const renderHookWith = (
   controllerInfo: Record<string, unknown> = {},
   activeControllerId = "presentation",
 ) => {
-  return render(
+  const tree = (nextGlobalInfo: Record<string, unknown>) => (
     <Provider store={store}>
       <ActiveControllerContext.Provider value={activeControllerId}>
-        <GlobalInfoContext.Provider value={globalInfo as never}>
+        <GlobalInfoContext.Provider value={nextGlobalInfo as never}>
           <ControllerInfoContext.Provider value={controllerInfo as never}>
             <Harness
               onResult={(result) => {
@@ -279,8 +284,14 @@ const renderHookWith = (
           </ControllerInfoContext.Provider>
         </GlobalInfoContext.Provider>
       </ActiveControllerContext.Provider>
-    </Provider>,
+    </Provider>
   );
+  const view = render(tree(globalInfo));
+  return {
+    ...view,
+    rerenderWithGlobalInfo: (nextGlobalInfo: Record<string, unknown>) =>
+      view.rerender(tree(nextGlobalInfo)),
+  };
 };
 
 const enabledGlobalInfo = {
@@ -301,6 +312,8 @@ const setVisibility = (visibility: DocumentVisibilityState) => {
 describe("useCurrentServicePlanSource", () => {
   beforeEach(() => {
     mockServicePlanningEnabled = true;
+    mockNativeOverlayMappingReady = false;
+    mockNativeOverlayMappingKey = "church-1:unverified";
     jest.clearAllMocks();
     dispatchedTypes.length = 0;
     latestResult = null;
@@ -371,6 +384,64 @@ describe("useCurrentServicePlanSource", () => {
     );
   });
 
+  it("rebuilds the selected plan preview when verified overlay mappings arrive", async () => {
+    const store = makeStore();
+    const view = renderHookWith(store, enabledGlobalInfo);
+
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+        planFixture.planKey,
+      ),
+    );
+    expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1);
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
+
+    mockNativeOverlayMappingReady = true;
+    mockNativeOverlayMappingKey = "church-1:verified-custom-rules";
+    view.rerenderWithGlobalInfo(enabledGlobalInfo);
+
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(2));
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBe(planFixture.planKey);
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
+  });
+
+  it("does not rebuild the preview for unrelated context object changes", async () => {
+    const store = makeStore();
+    const view = renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+
+    view.rerenderWithGlobalInfo({ ...enabledGlobalInfo, unrelatedSetting: { revision: 2 } });
+    await act(async () => Promise.resolve());
+
+    expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1);
+    expect(store.getState().servicePlanningImport.isPlanPreviewStale).toBe(false);
+  });
+
+  it("suppresses a pending preview built with settings from before a mapping change", async () => {
+    let resolveOldPreview: ((outline: typeof outlineFixture) => void) | undefined;
+    mockLoadPlanPreview
+      .mockReturnValueOnce(new Promise((resolve) => { resolveOldPreview = resolve; }))
+      .mockResolvedValueOnce({ ...outlineFixture, planLabel: "Current mapping preview" });
+    const store = makeStore();
+    const view = renderHookWith(store, enabledGlobalInfo);
+
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+    mockNativeOverlayMappingReady = true;
+    mockNativeOverlayMappingKey = "church-1:verified-custom-rules";
+    view.rerenderWithGlobalInfo(enabledGlobalInfo);
+
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(store.getState().servicePlanningImport.serviceOutline?.planLabel)
+        .toBe("Current mapping preview"),
+    );
+
+    resolveOldPreview?.({ ...outlineFixture, planLabel: "Stale default mapping preview" });
+    await act(async () => Promise.resolve());
+    expect(store.getState().servicePlanningImport.serviceOutline?.planLabel)
+      .toBe("Current mapping preview");
+  });
+
   it("keeps a failed first saved-plan load protected from stored restoration until retry succeeds", async () => {
     mockGetServicePlanAssignments.mockRejectedValueOnce(
       new Error("assignments temporarily unavailable"),
@@ -389,7 +460,7 @@ describe("useCurrentServicePlanSource", () => {
     expect(mockLoadPlanPreview).not.toHaveBeenCalled();
 
     act(() => {
-      store.dispatch(setStoredServicePlanningOutlineIfIdle({
+      store.dispatch(setServicePlanningRestoredOutlineUnlessStale({
         ...outlineFixture,
         sourceUrl: "https://example.com/legacy-outline",
       }));
@@ -429,7 +500,7 @@ describe("useCurrentServicePlanSource", () => {
     let restorationAttempted = false;
     afterPlanSelectionTransition = () => {
       restorationAttempted = true;
-      store.dispatch(setStoredServicePlanningOutlineIfIdle(storedOutline));
+      store.dispatch(setServicePlanningRestoredOutlineUnlessStale(storedOutline));
     };
 
     renderHookWith(store, enabledGlobalInfo);
@@ -503,7 +574,7 @@ describe("useCurrentServicePlanSource", () => {
     act(() => {
       latestResult?.selectPlan(nextPlanKey);
       store.dispatch(
-        setStoredServicePlanningOutlineIfIdle({
+        setServicePlanningRestoredOutlineUnlessStale({
           ...outlineFixture,
           planLabel: "Legacy outline",
         }),
@@ -801,7 +872,6 @@ describe("useCurrentServicePlanSource", () => {
     renderHookWith(store, enabledGlobalInfo);
 
     await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalled());
-    expect(store.getState().servicePlanningImport.url).toBe("");
   });
 
   it("refetches a plan after its ID-only live change notification", async () => {
@@ -961,7 +1031,7 @@ describe("useCurrentServicePlanSource", () => {
 
     renderHookWith(store, enabledGlobalInfo);
     await act(async () => {
-      store.dispatch(setStoredServicePlanningOutlineIfIdle(storedOutline));
+      store.dispatch(setServicePlanningRestoredOutlineUnlessStale(storedOutline));
       resolvePlans({
         success: true,
         servicePlans: [
@@ -986,7 +1056,7 @@ describe("useCurrentServicePlanSource", () => {
     );
   });
 
-  it("keeps a URL preview imported during this Controller visit when the target binding changes", async () => {
+  it("keeps the saved plan selected when legacy URL state is restored during this visit", async () => {
     const store = makeStore();
     const urlOutline = {
       ...outlineFixture,
@@ -999,9 +1069,8 @@ describe("useCurrentServicePlanSource", () => {
     await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
     await act(async () => {
       store.dispatch(setServicePlanningServiceOutline(urlOutline));
-      store.dispatch(markServicePlanningUrlSelection());
     });
-    await waitFor(() => expect(latestResult?.selectedPlanKey).toBeNull());
+    await waitFor(() => expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey));
 
     await act(async () => {
       store.dispatch(
@@ -1013,12 +1082,12 @@ describe("useCurrentServicePlanSource", () => {
       );
     });
 
-    expect(mockGetServicePlan).toHaveBeenCalledTimes(1);
-    expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1);
+    expect(mockGetServicePlan).toHaveBeenCalled();
+    expect(mockLoadPlanPreview).toHaveBeenCalled();
     expect(store.getState().servicePlanningImport.serviceOutline).toEqual(
-      urlOutline,
+      outlineFixture,
     );
-    expect(store.getState().servicePlanningImport.servicePlanKey).toBeNull();
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBe(planFixture.planKey);
   });
 
   it("keeps an explicit manual plan selected when its binding is cleared", async () => {

@@ -98,14 +98,25 @@ const Services = ({
     [activeControllerProfile, currentLists, dispatch],
   );
 
-  const { db, updater } = useContext(ControllerInfoContext) || {};
+  const { db, updater, bootstrapReady, canCreateBootstrapDocuments } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
   const { showToast } = useToast();
   const [justAdded, setJustAdded] = useState(false);
+  const [isCreatingOutline, setIsCreatingOutline] = useState(false);
+  const creationOwnerRef = useRef<{ db: typeof db; scope: string } | null>(null);
+  useEffect(() => {
+    const owner = { db, scope };
+    creationOwnerRef.current = owner;
+    setIsCreatingOutline(false);
+    setJustAdded(false);
+    return () => { creationOwnerRef.current = null; };
+  }, [db, scope]);
   const currentListsRef = useRef(currentLists);
   currentListsRef.current = currentLists;
+  const selectOutlineRef = useRef(selectOutline);
+  selectOutlineRef.current = selectOutline;
   /** One aux bootstrap create per scope — avoids duplicate empties under Strict Mode / remount. */
-  const bootstrapInFlightByScopeRef = useRef(new Set<string>());
+  const bootstrapInFlightByScopeRef = useRef(new WeakMap<PouchDB.Database, Set<string>>());
 
   const { setNodeRef } = useDroppable({
     id: "items-lists",
@@ -132,10 +143,12 @@ const Services = ({
   };
 
   useEffect(() => {
+    let cancelled = false;
     const getItemLists = async () => {
       if (!db) return;
       try {
-        const response = await loadOrCreateItemListsDoc(db);
+        const response = await loadOrCreateItemListsDoc(db, canCreateBootstrapDocuments);
+        if (cancelled || !response) return;
         const _itemLists = response.itemLists || [];
         const _activeList = response.activeList;
         if (!itemListsReady) {
@@ -157,6 +170,7 @@ const Services = ({
           );
         }
       } catch (e) {
+        if (cancelled) return;
         console.error(e);
         if (!itemListsReady) {
           dispatch(initiateItemLists([]));
@@ -169,7 +183,8 @@ const Services = ({
     };
 
     void getItemLists();
-  }, [db, dispatch, itemListsReady, showToast]);
+    return () => { cancelled = true; };
+  }, [db, bootstrapReady, canCreateBootstrapDocuments, dispatch, itemListsReady, showToast]);
 
   /**
    * Aux controllers with no outlines in their scope get one empty outline so
@@ -177,15 +192,22 @@ const Services = ({
    * sanctuary outline).
    */
   useEffect(() => {
-    if (!itemListsReady || !db || access !== "full") return;
+    if (!itemListsReady || !db || !bootstrapReady || !canCreateBootstrapDocuments?.() || access !== "full") return;
     if (scope === DEFAULT_OUTLINE_SCOPE) return;
     if (scopedLists.length > 0) return;
-    if (bootstrapInFlightByScopeRef.current.has(scope)) return;
+    const inFlight = bootstrapInFlightByScopeRef.current.get(db) ?? new Set<string>();
+    if (inFlight.has(scope)) return;
 
-    bootstrapInFlightByScopeRef.current.add(scope);
+    inFlight.add(scope);
+    bootstrapInFlightByScopeRef.current.set(db, inFlight);
     let cancelled = false;
     void (async () => {
       try {
+        // Read the post-pull registry before using a still-hydrating Redux
+        // scope to decide that this controller needs a default outline.
+        const registry = await loadOrCreateItemListsDoc(db, canCreateBootstrapDocuments);
+        if (cancelled || !registry || !canCreateBootstrapDocuments()) return;
+        if (registry.itemLists.some((list) => isOutlineInScope(list, scope))) return;
         const listsAtStart = currentListsRef.current;
         const newList = await createNewItemList({
           db,
@@ -202,18 +224,18 @@ const Services = ({
         );
         if (!scopeStillEmpty) return;
         dispatch(updateItemLists([...latestLists, newList]));
-        selectOutline(newList._id);
+        selectOutlineRef.current(newList._id);
       } catch (e) {
         console.error(e);
       } finally {
-        bootstrapInFlightByScopeRef.current.delete(scope);
+        inFlight.delete(scope);
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [itemListsReady, db, access, scope, scopedLists.length, dispatch, selectOutline]);
+  }, [itemListsReady, db, bootstrapReady, canCreateBootstrapDocuments, access, scope, scopedLists.length, dispatch]);
 
   const updateItemListsFromExternal = useCallback(
     async (event: CustomEventInit) => {
@@ -259,16 +281,30 @@ const Services = ({
   };
 
   const addOutline = async () => {
-    const newList = await createNewItemList({
-      db,
-      name: "New Outline",
-      currentLists,
-      controllerScope: scope,
-    });
-    setJustAdded(true);
-    dispatch(updateItemLists([...currentLists, newList]));
-    selectOutline(newList._id);
-    setTimeout(() => setJustAdded(false), 2000);
+    const owner = creationOwnerRef.current;
+    if (!owner || isCreatingOutline) return;
+    setIsCreatingOutline(true);
+    try {
+      const newList = await createNewItemList({
+        db,
+        name: "New Outline",
+        currentLists,
+        controllerScope: scope,
+      });
+      if (creationOwnerRef.current !== owner) return;
+      setJustAdded(true);
+      dispatch(updateItemLists([...currentListsRef.current, newList]));
+      selectOutline(newList._id);
+      setTimeout(() => {
+        if (creationOwnerRef.current === owner) setJustAdded(false);
+      }, 2000);
+    } catch (error) {
+      if (creationOwnerRef.current !== owner) return;
+      console.error(error);
+      showToast("Could not create service outline. Try again.", "error");
+    } finally {
+      if (creationOwnerRef.current === owner) setIsCreatingOutline(false);
+    }
   };
 
   const triggerIconSize = "md";
@@ -439,7 +475,8 @@ const Services = ({
                 color={justAdded ? "#84cc16" : "#22d3ee"}
                 className="w-full justify-center py-2 text-xs font-semibold"
                 variant="primary"
-                disabled={justAdded}
+                disabled={justAdded || isCreatingOutline}
+                isLoading={isCreatingOutline}
                 onClick={() => {
                   void addOutline();
                 }}

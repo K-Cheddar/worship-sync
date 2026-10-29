@@ -14,33 +14,38 @@ describe("MEDIA_ROUTE_KEYS", () => {
 describe("getMediaRouteKey", () => {
   it("maps overlay-controller path and pageMode", () => {
     expect(getMediaRouteKey("/overlay-controller")).toBe("overlay-controller");
-    expect(getMediaRouteKey("/controller/item/x/y", "overlayController")).toBe(
+    expect(getMediaRouteKey("/controller", "overlayController")).toBe(
       "overlay-controller",
     );
   });
 
   it("maps controller item routes by item type", () => {
-    expect(getMediaRouteKey("/controller/item/a/b", "default", "song")).toBe(
+    expect(getMediaRouteKey("/controller", "default", "song")).toBe(
       "controller-item-song",
     );
-    expect(getMediaRouteKey("/controller/item/a/b", "default", "free")).toBe(
+    expect(getMediaRouteKey("/controller", "default", "free")).toBe(
       "controller-item-free",
     );
-    expect(getMediaRouteKey("/controller/item/a/b", "default", "bible")).toBe(
+    expect(getMediaRouteKey("/controller", "default", "bible")).toBe(
       "controller-item-bible",
     );
-    expect(getMediaRouteKey("/controller/item/a/b", "default", "timer")).toBe(
+    expect(getMediaRouteKey("/controller", "default", "timer")).toBe(
       "controller-item-timer",
     );
-    expect(getMediaRouteKey("/controller/item/a/b", "default", "image")).toBe(
+    expect(getMediaRouteKey("/controller", "default", "image")).toBe(
       "controller-item-image",
     );
-    expect(getMediaRouteKey("/controller/item/a/b", "default", "heading")).toBe(
+    expect(getMediaRouteKey("/controller", "default", "heading")).toBe(
       "controller-item-heading",
     );
-    expect(getMediaRouteKey("/controller/item/a/b")).toBe(
-      "controller-item-unknown",
+    expect(getMediaRouteKey("/controller")).toBe(
+      "controller-default",
     );
+  });
+
+  it("keeps per-kind folders for an auxiliary workspace", () => {
+    expect(getMediaRouteKey("/aux-controller/lobby", "default", "free")).toBe("controller-item-free");
+    expect(getMediaRouteKey("/aux-controller/lobby/timers", "default", "timer")).toBe("controller-default");
   });
 
   it("maps settings tabs to controller-settings", () => {
