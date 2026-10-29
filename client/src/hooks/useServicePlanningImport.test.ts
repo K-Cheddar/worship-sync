@@ -1199,6 +1199,66 @@ describe("native overlay synchronization batches", () => {
     expect(db.docs.get("overlay-samuel")?.name).toBe("Samuel Muir");
   });
 
+  it("uses the same active-list target in preview and execution before an exact library match", async () => {
+    jest.useFakeTimers();
+    const active: OverlayInfo = {
+      id: "active-sermon",
+      name: "Previous Speaker",
+      title: "Pastor",
+      event: "Sermon",
+      duration: 14,
+      formatting: { participantOverlayPosition: "right" },
+      description: "Keep this note",
+    };
+    const library: OverlayInfo = {
+      id: "library-sermon",
+      name: "New Speaker",
+      title: "Guest Pastor",
+      event: "Sermon",
+      duration: 7,
+      description: "Library template",
+    };
+    const unrelated: OverlayInfo = {
+      id: "unrelated-overlay",
+      name: "Host",
+      event: "Welcome",
+      formatting: { participantOverlayPosition: "left" },
+    };
+    const db = memoryDb([active, library]);
+    const libraryBefore = { ...db.docs.get("overlay-library-sermon") };
+    const store = createSyncTestStore([active, unrelated]);
+    const { result } = renderHook(() => useServicePlanningImport(), {
+      wrapper: servicePlanningHookWrapper(store, db),
+    });
+    const source = makePlan([{ name: "New Speaker", event: "Sermon" }]);
+    let preview!: Awaited<ReturnType<typeof result.current.loadPlanPreview>>["preview"];
+    await act(async () => {
+      preview = (await result.current.loadPlanPreview(source.plan, [], source.projection)).preview;
+    });
+
+    expect(preview.overlayPlan[0]).toMatchObject({ action: "update", targetOverlayId: "active-sermon" });
+    const step = result.current.planOverlaySyncSteps(preview).steps[0];
+    expect(step).toMatchObject({ action: "update", targetOverlayId: preview.overlayPlan[0].targetOverlayId });
+    await act(async () => {
+      const pending = result.current.executeOverlaySyncStep(step);
+      await jest.runAllTimersAsync();
+      expect(await pending).toMatchObject({ overlaysUpdated: 1, resultOverlayId: "active-sermon" });
+    });
+
+    const after = store.getState().undoable.present.overlays.list;
+    expect(after.map((overlay) => overlay.id)).toEqual(["active-sermon", "unrelated-overlay"]);
+    expect(after[0]).toMatchObject({
+      id: "active-sermon",
+      name: "New Speaker",
+      title: "",
+      event: "Sermon",
+      duration: 14,
+      formatting: { participantOverlayPosition: "right" },
+      description: "Keep this note",
+    });
+    expect(db.docs.get("overlay-library-sermon")).toEqual(libraryBefore);
+  });
+
   it("resumes after a partial create failure without duplicating the durable first overlay", async () => {
     jest.useFakeTimers();
     const db = memoryDb([]);

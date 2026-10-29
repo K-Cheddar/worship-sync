@@ -103,7 +103,7 @@ describe("mapNativeServicePlanParticipants", () => {
       { name: "Jordan Guest", title: "", event: repeatLastEventSuffix ? "Sabbath School Panelist" : "Sabbath School" },
     ]);
     expect(preview.overlayPlan.map((item) => item.action)).toEqual(
-      repeatLastEventSuffix ? ["update", "clone", "clone"] : ["update", "create", "create"],
+      ["update", "create", "create"],
     );
     expect(preview.overlayPlan[1].resolutionNotice).toMatch(/multiple team roles/i);
   });
@@ -210,7 +210,7 @@ describe("mapNativeServicePlanParticipants", () => {
       event: "Sermon",
       name: "Previous participant",
     }]);
-    expect(preview.overlayPlan.map((item) => item.action)).toEqual(["update", "clone"]);
+    expect(preview.overlayPlan.map((item) => item.action)).toEqual(["update", "create"]);
   });
 
   it("keeps the member name and leaves the title blank when team-role context is ambiguous", () => {

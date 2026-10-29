@@ -41,7 +41,7 @@ const ServicePlanOutlinePreview = ({ plan }: { plan: ServicePlan }) => {
               <li key={`${entry.listId}:${index}`}>
                 <span className="text-zinc-200">{entry.title}</span>{": "}
                 {entry.status === "already-present" ? "Already in outline"
-                  : entry.status === "unresolved" ? "Unresolved attachment. Review in Services."
+                  : entry.status === "unresolved" ? entry.reason
                     : `Ready to add: ${entry.destination?.kind === "heading" ? entry.destination.name : "End of outline"}`}
                 {entry.status === "ready" && entry.placementFallback
                   ? <span className="text-amber-300">{`. Mapped heading "${entry.placementFallback.headingName}" is missing`}</span>

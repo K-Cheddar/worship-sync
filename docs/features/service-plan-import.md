@@ -92,7 +92,9 @@ The current user request authorizes these rules for syncing a saved Service Plan
 - Count successful fallbacks as added content and explain the missing heading in the added item's summary. Report the fallback only after insertion, including in partial-success or combined outline/overlay summaries.
 - Accept whole-chapter Scripture such as Psalms 105 alongside explicit verse ranges. Use the existing Bible loader and requested version; invalid or unavailable passages must not produce empty items.
 - Retain stable attachment/list IDs and skip already-present items on repeated sync. Preserve saved Service Plan data.
+- Automatic outline sync adds a library song only when its document ID is absent from the outline and from earlier planned insertions; existing manual repetitions and their customizations remain intact. Informational resources and dismissed inferred references are ignored, while unresolved explicit attachments are reported with identifying details. Preview and the compact result summary distinguish already-present content from skipped attachments. (Confirmed by the current request, 2026-10-29.)
 - Library refreshes caused by indexing imported Bible items do not interrupt the remaining saved-plan attachments; outline, database, source-plan, and component ownership checks still apply.
+- Newly synced Scripture uses the configured Bible background, media, brightness, and font mode. Repeated passage names must receive unused document IDs so an older document cannot replace the generated slides. Existing outline items and their operator edits remain untouched. (Confirmed by the current request, 2026-10-29.)
 
 Regression coverage: `servicePlanOutlineBridge.test.ts`, `useServicePlanOutlinePush.test.tsx`, `ServicePlanningSyncFloatingWindow.test.tsx`.
 

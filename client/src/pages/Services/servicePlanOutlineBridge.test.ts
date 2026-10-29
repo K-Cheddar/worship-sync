@@ -69,6 +69,51 @@ const worshipHeading: ServiceItem = {
 };
 
 describe("buildServicePlanOutlineItems", () => {
+  it("deduplicates songs by library ID while preserving existing manual copies and same-title songs", async () => {
+    const sameTitle = { ...librarySongs[1], name: librarySongs[0].name };
+    const plan: ServicePlan = { ...basePlan, sections: [{ ...basePlan.sections[0], elements: [
+      basePlan.sections[0].elements[0],
+      { ...basePlan.sections[0].elements[0], id: "again" },
+      { ...basePlan.sections[0].elements[0], id: "different", songRef: { kind: "library", songId: sameTitle._id, songName: sameTitle.name } },
+    ] }] };
+    const songs = [librarySongs[0], sameTitle];
+    const preview = planServicePlanOutlineItems({ plan, currentList: [], songs });
+    expect(preview.previewEntries.map((entry) => entry.status)).toEqual(["ready", "already-present", "ready"]);
+    const first = await buildServicePlanOutlineItems({ plan, currentList: [], db: undefined, songs });
+    expect(first.items.map((item) => item._id)).toEqual(["song-1", "song-2"]);
+    const manual = [{ ...librarySongs[0], listId: "manual-1", background: "one" }, { ...librarySongs[0], listId: "manual-2", background: "two" }];
+    const before = JSON.stringify(manual);
+    const next = await buildServicePlanOutlineItems({ plan, currentList: manual, db: undefined, songs });
+    expect(next.items.map((item) => item._id)).toEqual(["song-2"]);
+    expect(JSON.stringify(manual)).toBe(before);
+    const repeated = await buildServicePlanOutlineItems({ plan, currentList: [...manual, ...next.items], db: undefined, songs });
+    expect(repeated.items).toEqual([]);
+    const changedLink = { ...librarySongs[0], listId: "different::attachment:legacy-song-0-library" };
+    const collision = await buildServicePlanOutlineItems({ plan, currentList: [changedLink], db: undefined, songs });
+    expect(collision.items).toHaveLength(1);
+    expect(collision.items[0]._id).toBe("song-2");
+    expect(collision.items[0].listId).not.toBe(changedLink.listId);
+  });
+
+  it("ignores informational and dismissed references but reports each broken explicit attachment", () => {
+    const plan: ServicePlan = { ...basePlan, sections: [{ ...basePlan.sections[0], elements: [
+      { id: "story", type: "free", title: plainTextToRichText("Children's Story"), resources: [{ id: "text", type: "text", title: "Gracelink.org" }] },
+      { id: "praise", type: "free", title: plainTextToRichText("Song of Praise"), sourceSongReferenceDismissed: true },
+      { id: "mixed", type: "song", title: plainTextToRichText("Mixed"), resources: [
+        { id: "good", type: "song", title: "Good", data: { songId: "song-1" } },
+        { id: "bad-song", type: "song", title: "Missing", data: { songId: "deleted-song" } },
+        { id: "bad-bible", type: "scripture", title: "Bad reading", data: { scripture: { book: "Invalid", chapter: "0" } } },
+        { id: "bad-doc", type: "custom-document", title: "Missing slides", data: { customDocumentId: "deleted-doc" } },
+      ] },
+    ] }] };
+    const result = planServicePlanOutlineItems({ plan, currentList: [], songs: librarySongs });
+    expect(result.steps).toHaveLength(1);
+    expect(result.unresolvedAttachments).toHaveLength(3);
+    expect(result.unresolvedAttachments.map((entry) => entry.reason)).toEqual([
+      expect.stringContaining("deleted-song"), expect.stringContaining("bad-bible"), expect.stringContaining("deleted-doc"),
+    ]);
+    expect(result.skippedTitles).toEqual(["Mixed"]);
+  });
   it("previews the same attachment identities, unresolved references and placement as native sync", () => {
     const plan: ServicePlan = { ...basePlan, sections: [{
       id: "worship", name: "Worship", elements: [{
@@ -86,20 +131,17 @@ describe("buildServicePlanOutlineItems", () => {
     const result = planServicePlanOutlineItems({ plan, songs: librarySongs, currentList,
       sectionRules: [{ id: "map", matchSectionName: "Worship", matchMode: "exact", headingName: "Removed heading" }],
     });
-    expect(result.steps.map((step) => step.planned.listId)).toEqual(["mixed::attachment:reprise"]);
+    expect(result.steps).toEqual([]);
     expect(result.previewEntries.map(({ listId, status }) => [listId, status])).toEqual([
       ["mixed::attachment:first", "already-present"],
-      ["mixed::attachment:reprise", "ready"],
+      ["mixed::attachment:reprise", "already-present"],
       ["mixed::attachment:missing-song", "unresolved"],
       ["mixed::attachment:bad-reading", "unresolved"],
       ["mixed::attachment:missing-doc", "unresolved"],
     ]);
-    const ready = result.previewEntries.find((entry) => entry.status === "ready");
-    expect(ready?.destination).toEqual(result.steps[0].destination);
-    expect(ready?.placementFallback).toEqual(result.steps[0].placementFallback);
     expect(result.skippedTitles).toEqual(["Mixed attachments"]);
     const repeated = planServicePlanOutlineItems({ plan, songs: librarySongs,
-      currentList: [...currentList, { ...librarySongs[0], listId: result.steps[0].planned.listId }],
+      currentList,
     });
     expect(repeated.steps).toEqual([]);
     expect(repeated.previewEntries.filter((entry) => entry.status === "already-present")).toHaveLength(2);
@@ -171,6 +213,107 @@ describe("buildServicePlanOutlineItems", () => {
     } }));
   });
 
+  it("builds synced scriptures with the configured background, media, brightness, and font mode", async () => {
+    const plan: ServicePlan = { ...basePlan, sections: [{ id: "reading", name: "Reading", elements: [{
+      id: "reading", type: "bible", title: plainTextToRichText("Reading the Word"),
+      scriptureRef: { label: "John 3:16", book: "John", chapter: "3", verseRange: "16", version: "NIV" },
+    }] }] };
+    const mediaInfo = {
+      type: "image" as const,
+      path: "/media/bible.jpg",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      format: "jpg",
+      height: 1080,
+      width: 1920,
+      name: "Bible Background",
+      publicId: "bible-background",
+      id: "bible-background",
+      background: "bible.jpg",
+      thumbnail: "bible-thumb.jpg",
+      localImage: {
+        id: "local-bible-background",
+        ownerDeviceId: "device-1",
+        ownerLabel: "Operator device",
+        fileName: "bible.jpg",
+        contentType: "image/jpeg",
+        storagePolicy: "local-and-cloud" as const,
+        cloudUrl: "bible.jpg",
+      },
+    };
+    const result = await buildServicePlanOutlineItems({
+      plan,
+      currentList: [],
+      db: undefined,
+      songs: [],
+      background: "bible.jpg",
+      mediaInfo,
+      brightness: 42,
+      fontMode: "separate",
+    });
+
+    expect(result.items).toHaveLength(1);
+    expect(mockCreateBibleItem).toHaveBeenCalledWith(expect.objectContaining({
+      background: "bible.jpg",
+      mediaInfo,
+      brightness: 42,
+      fontMode: "separate",
+    }));
+
+    const customized = { ...result.items[0], background: "operator-choice.jpg" };
+    const repeated = await buildServicePlanOutlineItems({
+      plan, currentList: [customized], db: undefined, songs: [],
+      background: "bible.jpg", mediaInfo, brightness: 42, fontMode: "separate",
+    });
+    expect(repeated.items).toEqual([]);
+    expect(mockCreateBibleItem).toHaveBeenCalledTimes(1);
+    expect(customized.background).toBe("operator-choice.jpg");
+  });
+
+  it("keeps Bible media and its thumbnail on the inserted outline row", async () => {
+    const mediaInfo = {
+      type: "image" as const,
+      background: "https://media.example.test/bible.jpg",
+      localImage: {
+        id: "bible-image",
+        cloudUrl: "https://media.example.test/bible.jpg",
+      },
+    } as any;
+    mockCreateBibleItem.mockResolvedValueOnce({
+      _id: "bible-john-3",
+      name: "John 3:16 NKJV",
+      type: "bible",
+      background: "https://media.example.test/bible.jpg",
+      slides: [{ boxes: [{ background: "https://media.example.test/bible.jpg", mediaInfo }] }],
+    } as any);
+    const plan: ServicePlan = { ...basePlan, sections: [{
+      id: "reading",
+      name: "Reading",
+      elements: [{
+        id: "reading",
+        type: "bible",
+        title: plainTextToRichText("Reading"),
+        scriptureRef: { label: "John 3:16", book: "John", chapter: "3", verseRange: "16", version: "NKJV" },
+      }],
+    }] };
+
+    const result = await buildServicePlanOutlineItems({
+      plan,
+      currentList: [],
+      db: undefined,
+      songs: [],
+      background: "https://media.example.test/bible.jpg",
+      mediaInfo,
+      brightness: 47,
+      fontMode: "separate",
+    });
+
+    expect(result.items[0]).toMatchObject({
+      background: "https://media.example.test/bible.jpg",
+      localImage: { id: "bible-image", cloudUrl: "https://media.example.test/bible.jpg" },
+    });
+  });
+
   it("reports invalid scripture and rejects unavailable chapters without creating empty Bible items", async () => {
     const plan: ServicePlan = { ...basePlan, sections: [{ id: "reading", name: "Reading", elements: [{
       id: "invalid", type: "bible", title: plainTextToRichText("Invalid reading"),
@@ -196,7 +339,7 @@ describe("buildServicePlanOutlineItems", () => {
   it("appends multiple missing mappings in plan order and reports only successful additions", async () => {
     const plan: ServicePlan = { ...basePlan, sections: ["Praise & Prayer", "Praise & Worship"].map((name, index) => ({
       id: `section-${index}`, name,
-      elements: [{ ...basePlan.sections[0].elements[0], id: `element-${index}` }],
+      elements: [{ ...basePlan.sections[0].elements[0], id: `element-${index}`, songRef: { kind: "library" as const, songId: librarySongs[index]._id, songName: librarySongs[index].name } }],
     })) };
     const sectionRules = plan.sections.map((section, index) => ({ id: section.id, matchSectionName: section.name, matchMode: "exact" as const, headingName: ["Call to Prayer", "Praise and Worship"][index] }));
     const tail: ServiceItem = { _id: "tail", listId: "tail", type: "song", name: "Tail" };
@@ -426,12 +569,12 @@ describe("buildServicePlanOutlineItems", () => {
       customDocuments,
     });
     expect(first.items.map((item) => item.type)).toEqual([
-      "free", "song", "bible", "song", "free",
+      "free", "song", "bible", "free",
     ]);
     expect(first.items.map((item) => item._id)).toEqual([
-      "document-2", "song-1", "bible-John-3", "song-1", "document-1",
+      "document-2", "song-1", "bible-John-3", "document-1",
     ]);
-    expect(new Set(first.items.map((item) => item.listId)).size).toBe(5);
+    expect(new Set(first.items.map((item) => item.listId)).size).toBe(4);
 
     const second = await buildServicePlanOutlineItems({
       plan,
@@ -799,19 +942,19 @@ describe("buildServicePlanOutlineItems", () => {
       name: "Special Feature",
       elements: [
         { ...basePlan.sections[0].elements[0], id: "special-one" },
-        { ...basePlan.sections[0].elements[0], id: "special-two" },
+        { ...basePlan.sections[0].elements[0], id: "special-two", songRef: { kind: "library" as const, songId: "song-2", songName: "Build My Life" } },
       ],
     };
     const secondSection = {
       ...basePlan.sections[0],
       id: "section-other",
       name: "Other Unmatched",
-      elements: [{ ...basePlan.sections[0].elements[0], id: "other-one" }],
+      elements: [{ ...basePlan.sections[0].elements[0], id: "other-one", songRef: { kind: "library" as const, songId: "song-3", songName: "Third" } }],
     };
     const result = planServicePlanOutlineItems({
       plan: { ...basePlan, sections: [firstSection, secondSection] },
       currentList: [worshipHeading, { _id: "last-heading", name: "Message", type: "heading", listId: "last-heading" }],
-      songs: librarySongs,
+      songs: [...librarySongs, { ...librarySongs[0], _id: "song-3", name: "Third" }],
     });
 
     expect(result.steps.map((step) => step.destination)).toEqual([
@@ -831,9 +974,9 @@ describe("buildServicePlanOutlineItems", () => {
     const secondSection = {
       id: "section-message",
       name: "Message",
-      elements: [{ ...basePlan.sections[0].elements[0], id: "el-message" }],
+      elements: [{ ...basePlan.sections[0].elements[0], id: "el-message", songRef: { kind: "library" as const, songId: "song-2", songName: "Great Are You Lord" } }],
     };
-    const secondSong = { ...librarySongs[0], _id: "song-1", name: "Great Are You Lord" };
+    const secondSong = { ...librarySongs[0], _id: "song-2", name: "Great Are You Lord" };
     const messageHeading: ServiceItem = {
       _id: "heading-message",
       name: "Message",
@@ -844,7 +987,7 @@ describe("buildServicePlanOutlineItems", () => {
     const result = planServicePlanOutlineItems({
       plan,
       currentList: [worshipHeading, messageHeading],
-      songs: [secondSong],
+      songs: [librarySongs[0], secondSong],
     });
     expect(result.steps.map((step) => step.destination)).toEqual([
       { kind: "heading", listId: worshipHeading.listId, name: worshipHeading.name },
@@ -862,7 +1005,7 @@ describe("buildServicePlanOutlineItems", () => {
     const sharedResult = planServicePlanOutlineItems({
       plan,
       currentList: [worshipHeading],
-      songs: [secondSong],
+      songs: [librarySongs[0], secondSong],
       sectionRules: sharedHeadingRules,
     });
     expect(sharedResult.steps.map((step) => step.destination.kind === "heading" ? step.destination.listId : null)).toEqual([

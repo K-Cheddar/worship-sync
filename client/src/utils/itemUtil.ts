@@ -257,12 +257,14 @@ export const createNewBible = async ({
   brightness,
   fontMode,
 }: CreateNewBibleType): Promise<ItemState> => {
-  const _name = makeUnique({ value: name, property: "name", list });
+  // Bible display names stay canonical across imports; only IDs gain suffixes.
+  // Checking names can reuse a suffixed document and discard the new slides.
+  const _id = makeUnique({ value: name, property: "_id", list });
 
   const newItem: ItemState = {
     name,
     type: "bible",
-    _id: _name,
+    _id,
     selectedArrangement: 0,
     shouldSkipTitle: false,
     arrangements: [],

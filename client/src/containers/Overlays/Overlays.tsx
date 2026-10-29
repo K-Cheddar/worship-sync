@@ -375,7 +375,8 @@ const Overlays = ({
       delete copyableOverlay.servicePlanSource;
       delete copyableOverlay.servicePlanBaseline;
       delete copyableOverlay.servicePlanOverrides;
-      delete (copyableOverlay as Record<string, unknown>).servicePlanReviewRequired;
+      delete (copyableOverlay as Record<string, unknown>)
+        .servicePlanReviewRequired;
       const newOverlay: OverlayInfo = {
         ...copyableOverlay,
         id: newId,
@@ -534,12 +535,12 @@ const Overlays = ({
               </section>
               {detailTarget
                 ? isDetailActive &&
-                createPortal(
-                  <div className="absolute inset-0 z-10 overflow-y-auto p-2">
-                    {overlayEditor}
-                  </div>,
-                  detailTarget,
-                )
+                  createPortal(
+                    <div className="absolute inset-0 z-10 overflow-y-auto p-2">
+                      {overlayEditor}
+                    </div>,
+                    detailTarget,
+                  )
                 : overlayEditor}
             </div>
           </div>

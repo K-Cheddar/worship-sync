@@ -96,6 +96,9 @@ const ServiceItems = () => {
     access === "full" ||
     (access === "music" && musicCanOutlineMutateItem(item));
   const [isAddingHeading, setIsAddingHeading] = useState(false);
+  const [headingCreateOpen, setHeadingCreateOpen] = useState(false);
+  const [headingCreateDraft, setHeadingCreateDraft] = useState("");
+  const [headingCreateError, setHeadingCreateError] = useState("");
   const [collapsedHeadingListIds, setCollapsedHeadingListIds] = useState<
     Set<string>
   >(new Set());
@@ -106,7 +109,7 @@ const ServiceItems = () => {
   const [headingRenameOpen, setHeadingRenameOpen] = useState(false);
   const headingRenameWindowRef = useRef<FloatingWindowHandle>(null);
   const [headingRenameDraft, setHeadingRenameDraft] = useState("");
-  const [headingRenamePosition, setHeadingRenamePosition] = useState({
+  const [headingFormPosition, setHeadingFormPosition] = useState({
     x: Math.max(window.innerWidth - 340, 0),
     y: 80,
   });
@@ -290,12 +293,29 @@ const ServiceItems = () => {
     dispatch(updateItemList(updatedServiceItems));
   };
 
-  const handleAddHeading = useCallback(async () => {
-    if (!db) return;
+  const openHeadingCreateWindow = useCallback(() => {
+    const trigger = document.activeElement;
+    if (trigger instanceof HTMLElement) {
+      const rect = trigger.getBoundingClientRect();
+      setHeadingFormPosition({
+        x: Math.min(Math.max(rect.left, 8), Math.max(window.innerWidth - 340, 0)),
+        y: Math.min(rect.bottom + 8, Math.max(window.innerHeight - 220, 8)),
+      });
+    }
+    setHeadingRenameOpen(false);
+    setHeadingCreateDraft("");
+    setHeadingCreateError("");
+    setHeadingCreateOpen(true);
+  }, []);
+
+  const handleCreateHeading = useCallback(async () => {
+    const name = headingCreateDraft.trim();
+    if (!db || !name) return;
     setIsAddingHeading(true);
+    setHeadingCreateError("");
     try {
       const item = await createNewHeading({
-        name: "New Heading",
+        name,
         list: serviceItems,
         db,
       });
@@ -306,10 +326,20 @@ const ServiceItems = () => {
         listId: generateRandomId(),
       };
       dispatch(addItemToItemList(serviceItem));
+      setHeadingCreateOpen(false);
+      setHeadingCreateDraft("");
+    } catch {
+      setHeadingCreateError("Could not create the heading. Try again.");
     } finally {
       setIsAddingHeading(false);
     }
-  }, [db, serviceItems, dispatch]);
+  }, [db, headingCreateDraft, serviceItems, dispatch]);
+
+  const handleCancelHeadingCreate = useCallback(() => {
+    setHeadingCreateOpen(false);
+    setHeadingCreateDraft("");
+    setHeadingCreateError("");
+  }, []);
 
   const findNextNonHeadingIndex = (fromIndex: number) => {
     for (let i = fromIndex + 1; i < serviceItems.length; i++) {
@@ -433,7 +463,7 @@ const ServiceItems = () => {
     const trigger = document.activeElement;
     if (trigger instanceof HTMLElement) {
       const rect = trigger.getBoundingClientRect();
-      setHeadingRenamePosition({
+      setHeadingFormPosition({
         x: Math.min(Math.max(rect.left, 8), Math.max(window.innerWidth - 340, 0)),
         y: Math.min(rect.bottom + 8, Math.max(window.innerHeight - 240, 8)),
       });
@@ -670,13 +700,13 @@ const ServiceItems = () => {
   }, []);
 
   const getActionHandler = useCallback((id: ActionBarItem["id"]) => {
-    if (id === "add-heading") return handleAddHeading;
+    if (id === "add-heading") return openHeadingCreateWindow;
     if (id === "edit-heading") return openHeadingRenameWindow;
     if (id === "delete-selected") return handleDeleteSelected;
     if (id === "delete-heading") return handleDeleteHeading;
     if (id === "open-service-plan") return () => dispatch(setServicePlanningFloatingWindowDismissed(false));
     return handleMultiSelectDone;
-  }, [dispatch, handleAddHeading, handleDeleteHeading, handleDeleteSelected, handleMultiSelectDone, openHeadingRenameWindow]);
+  }, [dispatch, handleDeleteHeading, handleDeleteSelected, handleMultiSelectDone, openHeadingCreateWindow, openHeadingRenameWindow]);
 
   const actionBarItemDefs = useMemo((): ActionBarItemDef[] =>
     actionBarItems.map((item) => ({
@@ -768,6 +798,51 @@ const ServiceItems = () => {
             <ActionBar items={visibleActionBarItemDefs} overflowMenuClassName="min-w-48" />
           </div>
         )}
+        {headingCreateOpen ? (
+          <FloatingWindow
+            title="New heading"
+            onClose={handleCancelHeadingCreate}
+            defaultWidth={320}
+            defaultHeight={190}
+            defaultPosition={headingFormPosition}
+            autoHeight
+          >
+            <form
+              className="flex flex-col gap-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void handleCreateHeading();
+              }}
+            >
+              <Input
+                label="Heading name"
+                value={headingCreateDraft}
+                onChange={(value) => {
+                  setHeadingCreateDraft(String(value));
+                  setHeadingCreateError("");
+                }}
+                placeholder="Name"
+                inputTextSize="text-sm"
+                inputWidth="w-full"
+                autoFocus
+                data-ignore-undo="true"
+              />
+              {headingCreateError ? (
+                <p role="alert" className="text-xs text-amber-300">
+                  {headingCreateError}
+                </p>
+              ) : null}
+              <Button
+                type="submit"
+                variant="cta"
+                className="w-full justify-center"
+                disabled={!headingCreateDraft.trim() || isAddingHeading}
+              >
+                {isAddingHeading ? "Creating…" : "Create"}
+              </Button>
+            </form>
+          </FloatingWindow>
+        ) : null}
         {selectedHeading && headingRenameOpen ? (
           <FloatingWindow
             ref={headingRenameWindowRef}
@@ -775,7 +850,7 @@ const ServiceItems = () => {
             onClose={handleCancelHeadingRename}
             defaultWidth={320}
             defaultHeight={220}
-            defaultPosition={headingRenamePosition}
+            defaultPosition={headingFormPosition}
             autoHeight
           >
             <form

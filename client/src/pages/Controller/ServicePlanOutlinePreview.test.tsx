@@ -30,9 +30,9 @@ it("starts collapsed and follows native outline/library updates without mutating
   const { rerender } = render(<Provider store={store}><ServicePlanOutlinePreview plan={plan} /></Provider>);
   const toggle = screen.getByRole("button", { name: /Outline preview/ });
   expect(toggle).toHaveAttribute("aria-expanded", "false");
-  expect(screen.queryByText(/Unresolved attachment/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Linked song/)).not.toBeInTheDocument();
   await userEvent.setup().click(toggle);
-  expect(screen.getByText(/Unresolved attachment/)).toBeInTheDocument();
+  expect(screen.getByText(/Linked song.*library-song/)).toBeInTheDocument();
   const song: ServiceItem = { _id: "library-song", name: "Song", type: "song", listId: "library" };
   const songDoc: DBItem = {
     _id: song._id, name: song.name, type: "song", slides: [], arrangements: [], selectedArrangement: 0,

@@ -32,3 +32,17 @@ it.each([
   expect(entry[referenceKey as "localImage" | "localVideoFile"]).toEqual(reference);
   expect(entry.background).toBe(expected);
 });
+
+it("uses a song's first slide box background for its outline thumbnail", () => {
+  const document = {
+    _id: "song-with-slide-background",
+    name: "Song with slide background",
+    type: "song",
+    selectedArrangement: 0,
+    arrangements: [{ slides: [{ boxes: [{ background: "https://images.test/song.jpg" }] }] }],
+  } as unknown as DBItem;
+
+  expect(itemDocumentToLibraryEntry(document).background).toBe(
+    "https://images.test/song.jpg",
+  );
+});

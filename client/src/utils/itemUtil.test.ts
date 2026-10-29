@@ -708,6 +708,19 @@ Let Your fire fall`;
   });
 
   describe("createNewBible", () => {
+    it("avoids an existing document ID even when its display name was changed", async () => {
+      const item = await createNewBible({
+        name: "John 3:16 NKJV",
+        book: "John", chapter: "3", version: "NKJV",
+        verses: [{ name: "16", index: 15, text: "For God so loved" }],
+        list: [{ _id: "John 3:16 NKJV", name: "Renamed reading", type: "bible", listId: "reading" }],
+        db: undefined, background: "bible.jpg", brightness: 47, fontMode: "fit",
+      });
+      expect(item._id).toBe("John 3:16 NKJV (1)");
+      expect(item.name).toBe("John 3:16 NKJV");
+      expect(item.background).toBe("bible.jpg");
+    });
+
     it("creates a new bible item with book, chapter, version and verses", async () => {
       const list: ServiceItem[] = [];
       const verses = [

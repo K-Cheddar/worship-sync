@@ -19,51 +19,84 @@ export const planNativeOverlaySync = (
   library: OverlayInfo[] = [],
 ): OverlaySyncPlanItem[] => {
   const currentIds = new Set(current.map((overlay) => overlay.id));
-  const pool = [...current, ...library.filter((overlay) => !currentIds.has(overlay.id))]
-    .filter(isParticipantOverlay);
-  const claimed = new Set<string>();
-  const targets = new Map<OverlaySyncPlanItem, OverlayInfo>();
-  const candidates = plan.filter((item) => item.sourceKind === "native" && item.action !== "skip");
+  const currentParticipants = current.filter(isParticipantOverlay);
+  const libraryParticipants = library
+    .filter((overlay) => !currentIds.has(overlay.id) && isParticipantOverlay(overlay));
+  const claimedCurrentIds = new Set<string>();
+  const claimedLibraryIds = new Set<string>();
+  const targets = new Map<number, { overlay: OverlayInfo; source: "current" | "library" }>();
+  const candidateIndexes = plan.flatMap((item, index) =>
+    item.sourceKind === "native" && item.action !== "skip" ? [index] : [],
+  );
   const sameEvent = (item: OverlaySyncPlanItem, overlay: OverlayInfo) =>
     Boolean(normalizeOverlayEvent(item.patch.event)) &&
     normalizeOverlayEvent(item.patch.event) === normalizeOverlayEvent(overlay.event);
+  const sameParticipant = (item: OverlaySyncPlanItem, overlay: OverlayInfo) => {
+    const name = normalizeOverlayEvent(item.patch.name);
+    return Boolean(name) && name === normalizeOverlayEvent(overlay.name) &&
+      (!item.isSong || normalizeOverlayEvent(item.patch.title) === normalizeOverlayEvent(overlay.title));
+  };
+  const sameSong = (item: OverlaySyncPlanItem, overlay: OverlayInfo) => {
+    const title = normalizeOverlayEvent(item.patch.title);
+    return item.isSong === true && Boolean(title) && title === normalizeOverlayEvent(overlay.title);
+  };
 
-  for (const pass of ["identity", "song", "slot"] as const) {
-    for (const item of candidates) {
-      if (targets.has(item)) continue;
-      const target = pool.find((overlay) => {
-        if (claimed.has(overlay.id) || !sameEvent(item, overlay)) return false;
-        const sameName = normalizeOverlayEvent(item.patch.name) === normalizeOverlayEvent(overlay.name);
-        const sameTitle = normalizeOverlayEvent(item.patch.title) === normalizeOverlayEvent(overlay.title);
-        if (pass === "identity") return sameName && (!item.isSong || sameTitle);
-        if (pass === "song") return item.isSong === true && sameTitle;
-        return true;
-      });
-      if (target) {
-        targets.set(item, target);
-        claimed.add(target.id);
-      }
+  const assignMatches = (
+    indexes: number[],
+    overlays: OverlayInfo[],
+    claimedIds: Set<string>,
+    source: "current" | "library",
+    matches: (item: OverlaySyncPlanItem, overlay: OverlayInfo) => boolean,
+  ) => {
+    for (const index of indexes) {
+      const item = plan[index];
+      if (targets.has(index)) continue;
+      const target = overlays.find((overlay) =>
+        !claimedIds.has(overlay.id) && sameEvent(item, overlay) && matches(item, overlay),
+      );
+      if (!target) continue;
+      targets.set(index, { overlay: target, source });
+      claimedIds.add(target.id);
     }
-  }
+  };
 
-  return plan.map((item) => {
+  // Reserve specific current-list matches across the whole batch before the
+  // plan-order event-slot fallback can claim them for another participant.
+  assignMatches(candidateIndexes, currentParticipants, claimedCurrentIds, "current", sameParticipant);
+  assignMatches(candidateIndexes, currentParticipants, claimedCurrentIds, "current", sameSong);
+  assignMatches(candidateIndexes, currentParticipants, claimedCurrentIds, "current", () => true);
+
+  const remainingIndexes = candidateIndexes.filter((index) => !targets.has(index));
+  // Library entries are clone templates only. They are considered after every
+  // suitable current-list slot has been assigned and are never edited in place.
+  assignMatches(remainingIndexes, libraryParticipants, claimedLibraryIds, "library", sameParticipant);
+  assignMatches(remainingIndexes, libraryParticipants, claimedLibraryIds, "library", sameSong);
+  assignMatches(remainingIndexes, libraryParticipants, claimedLibraryIds, "library", () => true);
+
+  return plan.map((item, index) => {
     if (item.sourceKind !== "native" || item.action === "skip") return item;
-    const target = targets.get(item);
-    const template = target ?? pool.find((overlay) => sameEvent(item, overlay));
-    const inCurrentList = Boolean(target && currentIds.has(target.id));
+    const assigned = targets.get(index);
+    const fallbackTemplate = assigned
+      ? undefined
+      : libraryParticipants.find((overlay) => sameEvent(item, overlay));
+    const reusableTemplate = assigned?.overlay ?? fallbackTemplate;
+    const target = assigned?.source === "current" ? assigned.overlay : undefined;
+    const inCurrentList = Boolean(target);
     const alreadyCorrect = inCurrentList && target &&
       (["name", "title", "event"] as const).every((field) =>
         (target[field] ?? "") === (item.patch[field] ?? ""));
-    let action: OverlaySyncPlanItem["action"] = "create";
-    if (inCurrentList) action = "update";
-    else if (template) action = "clone";
+    const action: OverlaySyncPlanItem["action"] = inCurrentList
+      ? "update"
+      : reusableTemplate ? "clone" : "create";
     return {
       ...item,
       action,
-      targetOverlayId: template?.id,
-      targetOverlayName: template?.name || undefined,
-      targetOverlayEvent: template?.event || undefined,
-      targetOverlaySource: template && !currentIds.has(template.id) ? "library" : undefined,
+      targetOverlayId: reusableTemplate?.id,
+      targetOverlayName: reusableTemplate?.name || undefined,
+      targetOverlayEvent: reusableTemplate?.event || undefined,
+      targetOverlaySource: assigned?.source === "library" || fallbackTemplate
+        ? "library"
+        : undefined,
       placementOnly: Boolean(alreadyCorrect),
       reason: alreadyCorrect ? "Existing overlay is already up to date." : undefined,
     };

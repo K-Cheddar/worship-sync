@@ -16,6 +16,8 @@ import {
   buildServicePlanOutlineItem,
   placeServicePlanOutlineItem,
   planServicePlanOutlineItems,
+  isServicePlanItemAlreadyInOutline,
+  availableSongOutlineListId,
   type ServicePlanOutlinePushResult,
   type ServicePlanOutlinePlacementFallback,
 } from "./servicePlanOutlineBridge";
@@ -58,6 +60,11 @@ export const useServicePlanOutlinePush = () => {
     ): Promise<ServicePlanOutlinePushResult> => {
       const stateAtStart = store.getState().undoable.present;
       const selectedListAtStart = stateAtStart.itemLists.selectedList;
+      const {
+        defaultBibleBackground,
+        defaultBibleBackgroundBrightness,
+        defaultBibleFontMode,
+      } = stateAtStart.preferences.preferences;
       if (!selectedListAtStart) {
         throw new Error("Open or create an item list in the Controller first.");
       }
@@ -102,12 +109,20 @@ export const useServicePlanOutlinePush = () => {
       });
       assertCurrent();
       const items: ServiceItem[] = [];
+      const alreadyPresent = planResult.previewEntries.filter((entry) =>
+        entry.status === "already-present" && (!entry.songId || startingList.some(
+          (item) => item.type === "song" && item._id === entry.songId,
+        )),
+      );
       const placementFallbacks: ServicePlanOutlinePlacementFallback[] = [];
       for (const step of planResult.steps) {
         if (!shouldContinue()) break;
         assertCurrent();
         let latestList = store.getState().undoable.present.itemList.list;
-        if (latestList.some((existing) => existing.listId === step.planned.listId)) continue;
+        if (isServicePlanItemAlreadyInOutline(latestList, step.planned)) {
+          alreadyPresent.push({ listId: step.planned.listId, title: step.planned.kind === "song" ? step.planned.song.name : step.element.title, sectionName: step.sectionName, sectionId: "", status: "already-present" });
+          continue;
+        }
         // Build only the item that is about to be shown. In particular, a stop
         // request must not pre-create Bible documents for later steps.
         // eslint-disable-next-line no-await-in-loop -- order and visible progress are intentional
@@ -116,12 +131,22 @@ export const useServicePlanOutlinePush = () => {
           list: [...latestList, ...selectItemEntries(store.getState())],
           db,
           bibleDb,
+          background: defaultBibleBackground.background,
+          mediaInfo: defaultBibleBackground.mediaInfo,
+          brightness: defaultBibleBackgroundBrightness,
+          fontMode: defaultBibleFontMode,
         });
         const currentEntry = selectItemEntries(store.getState()).find((entry) => entry._id === builtItem._id);
-        const item = currentEntry ? { ...currentEntry, listId: builtItem.listId } : builtItem;
+        let item = currentEntry ? { ...currentEntry, listId: builtItem.listId } : builtItem;
         assertCurrent();
         latestList = store.getState().undoable.present.itemList.list;
-        if (latestList.some((existing) => existing.listId === item.listId)) continue;
+        if (isServicePlanItemAlreadyInOutline(latestList, step.planned)) {
+          alreadyPresent.push({ listId: item.listId, title: item.name, sectionName: step.sectionName, sectionId: "", status: "already-present" });
+          continue;
+        }
+        if (step.planned.kind === "song") {
+          item = { ...item, listId: availableSongOutlineListId(latestList, item.listId) };
+        }
         const placed = placeServicePlanOutlineItem(latestList, item, step);
         assertCurrent();
         dispatch(updateItemList(placed.list));
@@ -137,6 +162,13 @@ export const useServicePlanOutlinePush = () => {
         insertedCount: items.length,
         skippedTitles: planResult.skippedTitles,
         placementFallbacks,
+        unresolvedAttachments: planResult.unresolvedAttachments,
+        alreadyPresent: [
+          ...alreadyPresent,
+          ...planResult.previewEntries.filter((entry) => entry.status === "already-present" && entry.songId &&
+            !startingList.some((item) => item.type === "song" && item._id === entry.songId) &&
+            store.getState().undoable.present.itemList.list.some((item) => item.type === "song" && item._id === entry.songId)),
+        ],
       };
     },
     [db, bibleDb, customDocuments, dispatch, selectedList, songs, store, sectionRules],
