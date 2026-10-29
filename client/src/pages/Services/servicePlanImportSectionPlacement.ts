@@ -1,5 +1,30 @@
 import type { ServicePlanElement, ServicePlanSection } from "../../types/servicePlan";
 
+/** IDs outside a longest common subsequence are the minimal relative moves.
+ * Additions/removals are excluded by the caller. Ties keep the earliest current
+ * occurrence, so the same input always proposes the same review operations. */
+export const servicePlanImportReorderIds = (current: string[], incoming: string[]): string[] => {
+  const length = Array.from({ length: current.length + 1 }, () => new Uint32Array(incoming.length + 1));
+  for (let left = current.length - 1; left >= 0; left -= 1) {
+    for (let right = incoming.length - 1; right >= 0; right -= 1) {
+      length[left][right] = current[left] === incoming[right]
+        ? 1 + length[left + 1][right + 1]
+        : Math.max(length[left + 1][right], length[left][right + 1]);
+    }
+  }
+  const stable = new Set<string>();
+  let left = 0;
+  let right = 0;
+  while (left < current.length && right < incoming.length) {
+    if (current[left] === incoming[right]) {
+      stable.add(current[left++]);
+      right += 1;
+    } else if (length[left][right + 1] >= length[left + 1][right]) right += 1;
+    else left += 1;
+  }
+  return incoming.filter((id) => !stable.has(id));
+};
+
 /** Place only imported additions/moves around confidently matched source rows.
  * Unmatched operator items keep their relative order and are never used as
  * positional evidence. */
@@ -26,7 +51,9 @@ export const placeServicePlanImportElements = (
         const position = sourceIndex.get(candidate.id);
         return position !== undefined && position < index ? [candidateIndex] : [];
       });
-      before = previousIndexes.length ? previousIndexes.at(-1)! + 1 : result.length;
+      const originalIndex = existingElements.findIndex(({ id }) => id === element.id);
+      before = previousIndexes.length ? previousIndexes.at(-1)! + 1
+        : originalIndex >= 0 ? Math.min(originalIndex, result.length) : result.length;
     }
     result.splice(before, 0, element);
   });

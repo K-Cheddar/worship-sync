@@ -38,7 +38,39 @@ const namedSection = (
 ): ServicePlanSection => ({ id, name, elements });
 
 describe("summarizeServicePlanImport", () => {
-  it("reports cascade-only start-time shifts as read-only schedule information", () => {
+  it("reviews a reliable account occurrence reorder even if it retains an old PDF review flag", () => {
+    const current = [section([
+      element("first", "Prayer", { sourcePlanningManaged: true, sourceOccurrenceId: "pco-first", planningCenterPdfMatchReviewRequired: true }),
+      element("second", "Prayer", { sourcePlanningManaged: true, sourceOccurrenceId: "pco-second" }),
+    ])];
+    const next = [section([...current[0].elements].reverse())];
+    const summary = summarizeServicePlanImport(current, next, {}, { trackSameSectionMoves: true });
+    expect(summary.moved).toBe(1);
+    expect(applySelectedServicePlanImportChanges(current, next, summary, new Set(summary.changes.map(servicePlanImportChangeKey))))
+      .toEqual(next);
+  });
+  it("executes every source permutation and preserves original order when only an addition is approved", () => {
+    const permutations = (values: string[]): string[][] => values.length
+      ? values.flatMap((value, index) => permutations(values.filter((_, other) => other !== index)).map((tail) => [value, ...tail])) : [[]];
+    const current = [section(["a", "b", "c", "d"].map((id) => element(id, id, { sourcePlanningManaged: true })))];
+    const outcomes = permutations(["a", "b", "c", "d"]).map((ids) => {
+      const next = [section(ids.flatMap((id, index) => [
+        current[0].elements.find((item) => item.id === id)!,
+        ...(index === 1 ? [element("new", "New", { sourcePlanningManaged: true })] : []),
+      ]))];
+      const summary = summarizeServicePlanImport(current, next, {}, { trackSameSectionMoves: true });
+      const all = applySelectedServicePlanImportChanges(current, next, summary, new Set(summary.changes.map(servicePlanImportChangeKey)));
+      const additionOnly = applySelectedServicePlanImportChanges(current, next, summary, new Set(["added:new"]));
+      return {
+        expected: next[0].elements.map(({ id }) => id).join(","),
+        actual: all[0].elements.map(({ id }) => id).join(","),
+        existingAfterAddition: additionOnly[0].elements.filter(({ id }) => id !== "new").map(({ id }) => id),
+      };
+    });
+    expect(outcomes.map(({ actual }) => actual)).toEqual(outcomes.map(({ expected }) => expected));
+    expect(outcomes.map(({ existingAfterAddition }) => existingAfterAddition)).toEqual(outcomes.map(() => ["a", "b", "c", "d"]));
+  });
+  it("derives cascade timing from selected operations without proposing timing operations", () => {
     const current = [section([
       element("song", "Song", { startTime: "09:00", durationSeconds: 300 }),
       element("prayer", "Prayer", { startTime: "09:05", durationSeconds: 600 }),
@@ -56,22 +88,18 @@ describe("summarizeServicePlanImport", () => {
 
     expect(summary.changes.map(({ kind, id }) => [kind, id])).toEqual([
       ["updated", "song"],
-      ["timing_shift", "prayer"],
-      ["timing_shift", "message"],
     ]);
-    expect(summary.changes[1].fields).toEqual([{
-      label: "Resulting start time",
-      before: "09:05",
-      after: "09:08",
-    }]);
 
     const appliedWithoutSelection = applySelectedServicePlanImportChanges(
       current,
       proposed,
       summary,
-      new Set(summary.changes.filter(({ kind }) => kind === "timing_shift").map(servicePlanImportChangeKey)),
+      new Set(),
     );
     expect(appliedWithoutSelection).toBe(current);
+    expect(applyPlanAnchorStartTime(applySelectedServicePlanImportChanges(current, proposed, summary,
+      new Set(["updated:song"])), "09:00").flatMap(({ elements }) => elements.map(({ startTime }) => startTime)))
+      .toEqual(["09:00", "09:08", "09:18"]);
   });
 
   it("recalculates a consistent selected result after added or removed items", () => {

@@ -122,7 +122,6 @@ import { getPlanningCenterPlanImport } from "../../api/planningCenter";
 import {
   DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
   getNewServicePlanImportAmbiguityIds,
-  orderPlanningCenterPdfRefresh,
   preparePlanningCenterPdfImport,
   refreshServicePlanFromImport,
   type ServicePlanningRefreshOptions,
@@ -329,6 +328,7 @@ const ServicePlanSkeleton = () => (
 type ServicePlanImportPreview = {
   currentSections: ServicePlanSection[];
   sections: ServicePlanSection[];
+  importedSections: ServicePlanSection[];
   sourceImport: ServicePlanSourceImport;
   summary: ServicePlanImportSummary;
   recalculateTimeline: boolean;
@@ -1685,6 +1685,7 @@ const ServicePlanEditor = ({
   ) => {
     const parsedSections = buildServicePlanSectionsFromImport(data, allSongDocs, {
       classifyExternalTitle: source === "servicePlanning",
+      preserveSourceTitle: source === "planningCenterPdf",
       knownPeople: [
         ...members.map((member) => memberName(member)),
         ...(churchIntegrations?.servicePlanning?.people || []).flatMap((person) => [
@@ -1743,7 +1744,6 @@ const ServicePlanEditor = ({
       planTimezone || "UTC",
     );
     if (source === "planningCenterPdf" && hasPlanContent && sections) {
-      nextSections = orderPlanningCenterPdfRefresh(nextSections, importedSections);
       if (recalculateTimeline && timelineAnchorStartTime) {
         nextSections = applyPlanAnchorStartTime(nextSections, timelineAnchorStartTime);
       }
@@ -1763,6 +1763,7 @@ const ServicePlanEditor = ({
       setImportPreview({
         currentSections: sections,
         sections: nextSections,
+        importedSections,
         sourceImport: nextSourceImport,
         summary: summarizeServicePlanImport(
           sections,
@@ -1805,10 +1806,15 @@ const ServicePlanEditor = ({
     event.target.value = "";
     if (!file) return;
     const importEditorIdentityKey = editorIdentityKey;
+    const draftVersionAtStart = draftChangeVersionRef.current;
     setImporting(true);
     try {
       const text = await extractTextFromPdfFile(file);
       if (currentEditorIdentityRef.current !== importEditorIdentityKey) return;
+      if (draftChangeVersionRef.current !== draftVersionAtStart) {
+        showToast("The plan changed. Import it again to review the latest draft.");
+        return;
+      }
       const data = parsePlanningCenterPdfText(text);
       applyImportedPlanData(data, "planningCenterPdf", "");
     } catch (error) {
@@ -1832,6 +1838,8 @@ const ServicePlanEditor = ({
     if (usingPcoAccount && (!churchId || !importPcoServiceTypeId || !importPcoPlanId))
       return;
     if (!usingPcoAccount && !trimmedUrl) return;
+    const importEditorIdentityKey = editorIdentityKey;
+    const draftVersionAtStart = draftChangeVersionRef.current;
     setImporting(true);
     const sourceLabel = servicePlanImportSourceLabel(importSource);
     try {
@@ -1875,6 +1883,11 @@ const ServicePlanEditor = ({
         nextSourceUrl = trimmedUrl;
       }
 
+      if (currentEditorIdentityRef.current !== importEditorIdentityKey) return;
+      if (draftChangeVersionRef.current !== draftVersionAtStart) {
+        showToast("The plan changed. Import it again to review the latest draft.");
+        return;
+      }
       applyImportedPlanData(data, importSource, nextSourceUrl, sourceExtras);
     } catch (error) {
       showApiErrorToast(showToast, error, `Could not import from ${sourceLabel}.`);
@@ -1934,22 +1947,29 @@ const ServicePlanEditor = ({
     updateDraft(draft);
   };
 
+  const getSelectedImportSections = (selectedChangeKeys: string[]) => {
+    if (!importPreview) return undefined;
+    const selected = applySelectedServicePlanImportChanges(
+      importPreview.currentSections, importPreview.sections, importPreview.summary, new Set(selectedChangeKeys),
+    );
+    return selectedChangeKeys.length && importPreview.recalculateTimeline && importPreview.timelineAnchorStartTime
+      ? applyPlanAnchorStartTime(selected, importPreview.timelineAnchorStartTime)
+      : selected;
+  };
+
   const applyImportPreview = (selectedChangeKeys: string[]) => {
     if (!importPreview) return;
+    if (JSON.stringify(sections) !== JSON.stringify(importPreview.currentSections)) {
+      setImportPreview(null);
+      showToast("The plan changed. Import it again to review the latest draft.");
+      return;
+    }
     const actionableKeys = new Set(importPreview.summary.changes
-      .filter((change) => change.kind !== "timing_shift")
       .map((change) => `${change.kind}:${change.id}`));
     const hasSelectedChanges = selectedChangeKeys.some((key) => actionableKeys.has(key));
     if (!hasSelectedChanges) return;
-    let selectedSections = applySelectedServicePlanImportChanges(
-      importPreview.currentSections,
-      importPreview.sections,
-      importPreview.summary,
-      new Set(selectedChangeKeys),
-    );
-    if (importPreview.recalculateTimeline && importPreview.timelineAnchorStartTime) {
-      selectedSections = applyPlanAnchorStartTime(selectedSections, importPreview.timelineAnchorStartTime);
-    }
+    const selectedSections = getSelectedImportSections(selectedChangeKeys);
+    if (!selectedSections) return;
     applyImportedDraft({
       sections: selectedSections,
       planName: occurrence.name || service.name || "",
@@ -3983,6 +4003,11 @@ const ServicePlanEditor = ({
       {importPreview ? (
         <ServicePlanImportReviewWindow
           summary={importPreview.summary}
+          currentSections={importPreview.currentSections}
+          proposedSections={importPreview.sections}
+          importedSections={importPreview.importedSections}
+          importLabel={importPreview.sourceImport.source === "planningCenterPdf" ? "Updated PDF" : "Updated import"}
+          getSelectedSections={getSelectedImportSections}
           onApply={applyImportPreview}
           onClose={() => setImportPreview(null)}
         />
@@ -3994,6 +4019,7 @@ const ServicePlanEditor = ({
           batchTotal={ambiguityDialog.batchTotal}
           completedCount={ambiguityDialog.completedCount}
           prompt={ambiguityDialog.prompt}
+          updatedNoteLabel={sourceImport?.source === "planningCenterPdf" ? "Updated PDF note" : "Updated source note"}
           onLater={() => {
             if (!sections) { setAmbiguityDialog(null); return; }
             const ids = new Set(ambiguityDialog.elementIds);

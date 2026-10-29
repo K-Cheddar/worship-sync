@@ -4,7 +4,7 @@
 
 **Approval source:** User requests, 2026-10-16 (cross-section matching, review, selection, and ordering) and 2026-10-18 (saved-plan outline fallbacks and whole-chapter Scripture)
 
-**Last reviewed:** 2026-10-27
+**Last reviewed:** 2026-10-28
 
 ## Purpose
 
@@ -34,8 +34,41 @@ An operator imports or refreshes a plan, reviews the proposed item changes, sele
 - An ambiguous match must not relocate, replace, or delete an existing item.
 - An existing item reserved for an individual match review is excluded from automatic identity, title, order, and cross-section matching, removal, and PDF ordering. Only its selected `legacy_match` suggestion may associate it with an incoming row. Each existing item participates in at most one proposed association. (Confirmed by the current request, 2026-10-27.)
 - When another change is approved, an unapproved PDF match retains its review-required protection through save/reload even if collision resolution removed its synthetic key. PDF source position identifies keyless review candidates. (Confirmed by the current request, 2026-10-28.)
+- For Planning Center PDFs without durable row IDs, exact source identities and same-title evidence may match automatically; remaining position alone must not associate differently titled rows. An uncertain match may be offered as an unchecked, individual review suggestion. Local information stays with the existing item until its match is selected. (Confirmed by the current request, 2026-10-28.)
+- A changed source note that cannot be reconciled safely requires an explicit **Keep existing notes** or **Use updated source note** decision. Keeping notes leaves the source note pending; using it replaces unchanged tracked source paragraphs while retaining locally edited and independent notes where provenance allows. If note ownership is unknown, the review must show the existing content and explain that using the update replaces it. (Confirmed by the current request, 2026-10-28.)
 - Import does not apply every item's position as a blanket reorder.
 - Changes beyond the selected additions, removals, updates, and moves remain untouched.
+
+## PDF reconciliation and persistence (confirmed 2026-10-28)
+
+**Approval source:** Current architecture-refactor request, 2026-10-28.
+
+- Song category prefixes have the same matching meaning as their cleaned display
+  title. Keep raw source text for ownership comparisons and actual title changes.
+- Resolve each incoming occurrence once. The review operations and their resolved
+  source sequence govern selective application; do not match again during Apply.
+- Compare relative source sequences to propose a minimal, deterministic set of
+  reorders. Insertion/removal shifts are not additional move approvals. Preserve
+  the relative order of existing rows when only an addition or update is selected.
+- Unconfirmed candidates are protected and cannot act as automatic placement
+  anchors. With no confident anchor, a confirmed same-section match retains its
+  existing location. Operator items are never claimed or independently moved.
+- Start-time cascades are derived schedule impact from the exact selected result,
+  not operations or Apply-count entries. The compact review remains unchanged.
+- Save the actual source enum, account identifiers, source occurrence and template
+  provenance, PDF fingerprint evidence, note/assignee ownership and review decisions.
+  Source positions, resolved local match IDs and proposed candidates are transient.
+  A PDF position never establishes durable identity. Template creation clears dated
+  PDF evidence and review state.
+- Older plans missing metadata use conservative canonical-title/provenance
+  fallbacks; uncertain rows require confirmation. No bulk migration is needed.
+  A source enum previously overwritten by an older server cannot be reconstructed
+  reliably; explicitly choosing PDF import uses PDF reconciliation for those plans.
+- Edits made while reading an import or after its preview opens must not be
+  overwritten by the older snapshot. Preserve the draft and ask the operator to
+  import again against the current plan.
+
+Regression evidence and module ownership: [reconciliation assessment](../planning-center-reconciliation.md).
 
 ## Live-adjusted timing display (confirmed 2026-10-27)
 
@@ -149,6 +182,13 @@ Regression coverage: `servicePlanNativeTransfer.test.ts` and the public-link rep
 - **Approval source/date:** Current request, 2026-10-16.
 - **Affected workflow/contract:** Service-plan import and refresh.
 
+- **Question/problem:** Planning Center PDF rows without durable identities could inherit local item data from a different row at the same position, and a source-note conflict had no way to resolve the note decision.
+- **Approved behavior:** Do not pair differently titled PDF rows by position alone. Preserve local data with its existing item, and present note-ownership conflicts with explicit keep-existing or use-updated choices. Keeping notes leaves the source change pending; using it follows stored note provenance and preserves locally edited tracked paragraphs, or clearly replaces the full note when ownership cannot be distinguished.
+- **Why:** Source order can change while local notes, assignments, equipment, and attachments still belong to the previous item. Operators need to choose how a genuine note conflict is handled without losing unrelated local notes.
+- **Material alternative rejected:** Guess that rows at similar positions are the same item, or let a generic acknowledgment mark an unresolved note conflict as handled.
+- **Approval source/date:** Current user request, 2026-10-28.
+- **Affected workflow/contract:** Planning Center PDF refresh and source-note reconciliation.
+
 - **Question/problem:** A plan created from a template before item provenance was stored has an unmarked same-title item, which may instead be manual.
 - **Approved behavior:** Leave unmarked items untouched rather than using title/type alone to relocate them across sections.
 - **Why:** Avoid claiming or moving arbitrary manually created items.
@@ -178,4 +218,4 @@ Regression coverage: `servicePlanNativeTransfer.test.ts` and the public-link rep
 
 ## Technical design notes
 
-Template-to-plan cloning stores the original template element ID and item type on each cloned element. Existing sections use the shared placement helper in reconciliation and selected-change application. A newly created destination section uses the already source-ordered reconciled element list directly, since moved items retain local IDs that may differ from the incoming IDs used as placement anchors.
+Template-to-plan cloning stores the original template element ID and item type on each cloned element. Reconciliation resolves local IDs before constructing the proposed source sequence. Existing and new sections execute the same selected placement operations. Field-ownership reconciliation stays in the existing ownership/merge functions; durable source types and source-state normalization are shared with the server in `shared/servicePlanImportMetadata.ts`.
