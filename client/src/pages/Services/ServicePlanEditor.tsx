@@ -62,11 +62,12 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { useChurchServiceTimeZone } from "../../context/churchServiceTimeZone";
 import { useToast } from "../../context/toastContext";
-import { useSelector } from "../../hooks";
+import { useDispatch, useSelector } from "../../hooks";
 import { broadcastItemUpdate } from "../../store/store";
-import { applyPouchAudit } from "../../utils/pouchAudit";
 import { getYouTubeVideoReference } from "../../utils/youtube";
+import { loadSong, saveSong, songToLibraryProjection } from "../../utils/songPersistence";
 import type { DBItem } from "../../types";
+import { applyItemDocumentChange } from "../../store/allDocsSlice";
 import {
   getServicePlan,
   getServicePlanAssignmentHistory,
@@ -535,6 +536,7 @@ const ServicePlanEditor = ({
   onPlanTimingChange,
   templateResource,
 }: ServicePlanEditorProps) => {
+  const dispatch = useDispatch();
   const { churchId, userId, access, churchBranding, churchIntegrations, canUseTeamsLiveSync } =
     useContext(GlobalInfoContext) || {};
   const churchTimeZoneValue = useChurchServiceTimeZone().timeZone;
@@ -2388,7 +2390,7 @@ const ServicePlanEditor = ({
   const linkYouTubeVideoToSong = useCallback(
     async (song: DBItem, result: YouTubeSearchResult) => {
       if (!db) throw new Error("The song library is not available. Try again.");
-      const existing = (await db.get(song._id)) as DBItem;
+      const existing = await loadSong(db, song._id);
       const currentLinks = existing.songLinks ?? [];
       const existingYouTubeIndex = currentLinks.findIndex(
         (link) => getYouTubeVideoReference(link.url)?.videoId === result.videoId,
@@ -2413,16 +2415,11 @@ const ServicePlanEditor = ({
       if (replacementIndex >= 0) nextLinks[replacementIndex] = nextLink;
       else nextLinks.push(nextLink);
 
-      const audited = applyPouchAudit(
-        existing,
-        { ...existing, songLinks: nextLinks },
-        { isNew: false },
-      );
-      const savedResult = await db.put(audited);
-      const saved = { ...audited, _rev: savedResult.rev };
+      const saved = await saveSong(db, { ...existing, songLinks: nextLinks }, existing);
+      dispatch(applyItemDocumentChange({ id: saved._id, doc: songToLibraryProjection(saved) }));
       broadcastItemUpdate(saved);
     },
-    [db],
+    [db, dispatch],
   );
   const viewLibrarySong = useMemo(() => {
     if (!viewSongRef || viewSongRef.kind !== "library") return null;

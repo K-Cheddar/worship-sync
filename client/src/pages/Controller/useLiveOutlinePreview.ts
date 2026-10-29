@@ -1,5 +1,6 @@
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import { useSelector } from "../../hooks";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import { formatItemList } from "../../utils/formatItemList";
 import {
@@ -7,8 +8,8 @@ import {
   resolveOutlineForScope,
 } from "../../utils/outlineScope";
 import type {
+  DBItemLists,
   DBItemListDetails,
-  ItemLists,
   ServiceItem as ServiceItemType,
 } from "../../types";
 
@@ -23,8 +24,81 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
   isLoading: boolean;
 } => {
   const { db, cloud, updater } = useContext(ControllerInfoContext) || {};
+  const reduxOutlines = useSelector((state) => state.undoable.present.itemLists.currentLists);
+  const registryInitialized = useSelector((state) => state.undoable.present.itemLists.isInitialized);
+  const reduxSelectedId = useSelector((state) =>
+    state.undoable.present.itemLists.selectedIdByScope[outlineScope],
+  );
+  const reduxLiveOutlineId = useSelector((state) =>
+    state.undoable.present.itemLists.activeList?._id,
+  );
+  const [fallbackRegistry, setFallbackRegistry] = useState<{
+    database: typeof db;
+    document?: DBItemLists;
+  }>();
   const [items, setItems] = useState<ServiceItemType[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [registryVersion, setRegistryVersion] = useState(0);
+  const registryReadRef = useRef<{
+    database: typeof db;
+    version: number;
+    promise: Promise<DBItemLists>;
+  } | undefined>(undefined);
+  const fallbackDocument = fallbackRegistry && fallbackRegistry.database === db
+    ? fallbackRegistry.document
+    : undefined;
+
+  useEffect(() => {
+    if (registryInitialized || !db) return;
+    let cancelled = false;
+    let request = registryReadRef.current;
+    if (request?.database !== db || request.version !== registryVersion) {
+      request = {
+        database: db,
+        version: registryVersion,
+        promise: db.get("ItemLists") as Promise<DBItemLists>,
+      };
+      registryReadRef.current = request;
+    }
+    request.promise.then(
+      (document) => {
+        if (cancelled) return;
+        const fallbackOutlineId = resolveOutlineForScope(
+          document.itemLists ?? [],
+          outlineScope,
+          outlineScope === DEFAULT_OUTLINE_SCOPE ? document.activeList?._id : undefined,
+        )?._id;
+        if (activeListScopeRef.current !== outlineScope || activeListIdRef.current !== fallbackOutlineId) {
+          setIsLoading(Boolean(fallbackOutlineId));
+        }
+        setFallbackRegistry({ database: db, document });
+      },
+      () => {
+        if (cancelled) return;
+        setIsLoading(false);
+        setFallbackRegistry((current) => current?.database === db ? current : { database: db });
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [db, outlineScope, registryInitialized, registryVersion]);
+
+  const outlines = registryInitialized
+    ? reduxOutlines
+    : fallbackDocument?.itemLists ?? [];
+  const selectedId = registryInitialized ? reduxSelectedId : undefined;
+  const liveOutlineId = registryInitialized
+    ? reduxLiveOutlineId
+    : fallbackDocument?.activeList?._id;
+  const outlineId = resolveOutlineForScope(
+    outlines,
+    outlineScope,
+    selectedId ?? (outlineScope === DEFAULT_OUTLINE_SCOPE ? liveOutlineId : undefined),
+  )?._id;
+  const isLoadingRegistry = Boolean(
+    db && !registryInitialized && fallbackRegistry?.database !== db,
+  );
   const activeListIdRef = useRef<string | undefined>(undefined);
   const activeListScopeRef = useRef<string | undefined>(undefined);
   const requestIdRef = useRef(0);
@@ -36,6 +110,7 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
       listId: string | undefined,
       requestId: number,
       requestScope: string,
+      showLoading: boolean,
     ) => {
       if (!db || !cloud || !listId) {
         if (
@@ -47,6 +122,7 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
         }
         return;
       }
+      if (showLoading) setIsLoading(true);
       try {
         const response: DBItemListDetails | undefined = await db.get(listId);
         if (
@@ -61,7 +137,7 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
           requestIdRef.current === requestId &&
           scopeRef.current === requestScope
         ) {
-          setItems([]);
+          if (showLoading) setItems([]);
         }
       } finally {
         if (requestIdRef.current === requestId && scopeRef.current === requestScope) {
@@ -75,44 +151,20 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
   const loadActiveList = useCallback(async () => {
     const requestId = ++requestIdRef.current;
     const requestScope = outlineScope;
-    if (!db || !cloud) {
-      setItems([]);
-      setIsLoading(false);
-      return;
+    if (
+      activeListIdRef.current !== undefined &&
+      activeListScopeRef.current !== requestScope
+    ) {
+      setIsLoading(true);
     }
-    setIsLoading(true);
-    try {
-      const response: ItemLists | undefined = await db.get("ItemLists");
-      if (
-        requestIdRef.current !== requestId ||
-        scopeRef.current !== requestScope
-      ) {
-        return;
-      }
-      const activeId = resolveOutlineForScope(
-        response?.itemLists ?? [],
-        requestScope,
-        response?.selectedIdByScope?.[requestScope] ??
-          (requestScope === DEFAULT_OUTLINE_SCOPE
-            ? response?.activeList?._id
-            : undefined),
-      )?._id;
-      if (activeListIdRef.current !== activeId) setItems([]);
-      activeListIdRef.current = activeId;
-      activeListScopeRef.current = requestScope;
-      await loadOutlineItems(activeId, requestId, requestScope);
-    } catch {
-      if (
-        requestIdRef.current === requestId &&
-        scopeRef.current === requestScope
-      ) {
-        activeListIdRef.current = undefined;
-        activeListScopeRef.current = undefined;
-        setItems([]);
-        setIsLoading(false);
-      }
-    }
-  }, [cloud, db, loadOutlineItems, outlineScope]);
+    const selectionChanged =
+      activeListScopeRef.current !== requestScope ||
+      activeListIdRef.current !== outlineId;
+    if (selectionChanged) setIsLoading(true);
+    activeListIdRef.current = outlineId;
+    activeListScopeRef.current = requestScope;
+    await loadOutlineItems(outlineId, requestId, requestScope, selectionChanged);
+  }, [loadOutlineItems, outlineId, outlineScope]);
 
   useEffect(() => {
     void loadActiveList();
@@ -125,12 +177,8 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
     (event: CustomEventInit) => {
       const updates = event.detail;
       if (!Array.isArray(updates)) return;
-      // When an active-list change and a detail update arrive in one PouchDB
-      // batch, the new ItemLists selection owns this refresh. Fetching the old
-      // detail in the same batch must not invalidate the newer selection read.
-      if (updates.some((update) => update._id === "ItemLists")) {
-        void loadActiveList();
-        return;
+      if (!registryInitialized && updates.some((update) => update._id === "ItemLists")) {
+        setRegistryVersion((version) => version + 1);
       }
       if (
         activeListScopeRef.current === scopeRef.current &&
@@ -141,10 +189,11 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
           activeListIdRef.current,
           requestId,
           scopeRef.current,
+          false,
         );
       }
     },
-    [loadActiveList, loadOutlineItems],
+    [loadOutlineItems, registryInitialized],
   );
 
   useEffect(() => {
@@ -155,5 +204,5 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
 
   useGlobalBroadcast(handleExternalUpdate);
 
-  return { items, isLoading };
+  return { items, isLoading: isLoading || isLoadingRegistry };
 };

@@ -88,6 +88,7 @@ type LyricsEditorPanelProps = {
   song?: DBItem | null;
   onClose?: () => void;
   onSaveLyrics?: (payload: {
+    baselineSong: DBItem;
     arrangements: Arrangment[];
     selectedArrangement: number;
     songMetadata?: SongMetadata;
@@ -183,6 +184,7 @@ const LyricsEditorPanel = ({
   const currentItemIdRef = useRef(item._id);
   const pendingRemoteItemRef = useRef(pendingRemoteItem);
   const remoteUpdateToastIdRef = useRef<string | null>(null);
+  const acceptedLocalDraftRef = useRef(false);
   const syncedItemIdRef = useRef(item._id);
   const wasLyricsEditorOpenRef = useRef(false);
   const baselineSelectedArrangementIdRef = useRef(localSelectedArrangementId);
@@ -276,6 +278,7 @@ const LyricsEditorPanel = ({
       setSelectedSectionId(null);
       setRecentlyMovedSectionId(null);
       setHasArrangementChanges(false);
+      acceptedLocalDraftRef.current = false;
       baselineSelectedArrangementIdRef.current = nextSelectedArrangementId;
     },
     []
@@ -283,6 +286,7 @@ const LyricsEditorPanel = ({
 
   const updateLocalArrangements = useCallback(
     (value: SetStateAction<Arrangment[]>) => {
+      acceptedLocalDraftRef.current = true;
       setHasArrangementChanges(true);
       setLocalArrangements((currentArrangements) => {
         const nextArrangements =
@@ -817,7 +821,8 @@ const LyricsEditorPanel = ({
     dispatch(keepLocalItemChanges());
   }, [dispatch]);
 
-  const handleReloadRemote = useCallback(() => {
+  const handleReloadRemote = useCallback((onlyIfClean = false) => {
+    if (onlyIfClean && acceptedLocalDraftRef.current) return;
     const remoteItem = pendingRemoteItemRef.current;
     const activeItemId = currentItemIdRef.current;
     if (!remoteItem || remoteItem._id !== activeItemId) return;
@@ -832,13 +837,13 @@ const LyricsEditorPanel = ({
       nextArrangementIndex,
       remoteItem.songMetadata,
     );
-    dispatch(applyPendingRemoteItem());
+    dispatch(applyPendingRemoteItem(onlyIfClean || undefined, true));
   }, [dispatch, localSelectedArrangement, resetLocalEditorState]);
 
   useEffect(() => {
     if (isLibraryEditor) return;
     if (isLyricsEditorOpen && hasRemoteUpdate && !hasPendingUpdate && !hasPendingChanges) {
-      handleReloadRemote();
+      handleReloadRemote(true);
       return;
     }
 
@@ -853,7 +858,9 @@ const LyricsEditorPanel = ({
     if (remoteUpdateToastIdRef.current || !showToast || !removeToast) return;
 
     remoteUpdateToastIdRef.current = showToast({
-      message: `Someone else updated this ${itemTypeLabel}.`,
+      message: controllerItem.remoteUpdateReason === "song-version-transition"
+        ? "This song was migrated while it was open. Copy any draft changes before reloading the current version."
+        : `Someone else updated this ${itemTypeLabel}.`,
       variant: "info",
       persist: true,
       showCloseButton: false,
@@ -868,7 +875,7 @@ const LyricsEditorPanel = ({
               remoteUpdateToastIdRef.current = null;
             }}
           >
-            Keep Editing Mine
+            {controllerItem.remoteUpdateReason === "song-version-transition" ? "Keep Draft Open" : "Keep Editing Mine"}
           </Button>
           <Button
             variant="cta"
@@ -879,7 +886,7 @@ const LyricsEditorPanel = ({
               remoteUpdateToastIdRef.current = null;
             }}
           >
-            Use Their Changes
+            {controllerItem.remoteUpdateReason === "song-version-transition" ? "Reload Migrated Song" : "Use Their Changes"}
           </Button>
         </div>
       ),
@@ -888,6 +895,7 @@ const LyricsEditorPanel = ({
     handleKeepLocalEdits,
     handleReloadRemote,
     hasRemoteUpdate,
+    controllerItem.remoteUpdateReason,
     hasPendingChanges,
     hasPendingUpdate,
     itemTypeLabel,
@@ -964,6 +972,7 @@ const LyricsEditorPanel = ({
       setIsSaving(true);
       try {
         await onSaveLyrics({
+          baselineSong: item,
           arrangements: formattedItem.arrangements,
           selectedArrangement: localSelectedArrangement,
           songMetadata: localSongMetadata,

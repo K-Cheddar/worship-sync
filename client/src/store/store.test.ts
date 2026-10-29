@@ -1,6 +1,7 @@
+import type { SongV2Documents } from "../types";
+
 const flushListenerEffects = async () => {
-  await Promise.resolve();
-  await Promise.resolve();
+  for (let attempt = 0; attempt < 12; attempt += 1) await Promise.resolve();
 };
 
 // Pure selectors/helpers from the slot-based presentation slice (no store side effects).
@@ -213,16 +214,26 @@ let mockActiveItemDb: any;
 const loadStoreWithItemPersistence = () => {
   let storeModule: any;
   let itemSliceModule: any;
-  let mutationsModule: typeof import("./deferredItemMutations");
+  let songPersistenceModule: any;
+  let deferredMutations!: typeof import("./deferredItemMutations");
+  let replicationConflicts: any;
   let selectionModule: typeof import("./controllerItemSelection");
   const postMessage = jest.fn();
   const db = {
     get: jest.fn(),
     put: jest.fn(),
+    allDocs: jest.fn(),
   };
   mockActiveItemDb = db;
 
   jest.isolateModules(() => {
+    jest.doMock("../utils/songPersistence", () => {
+      const actual = jest.requireActual("../utils/songPersistence");
+      return {
+        ...actual,
+        saveSong: jest.fn(actual.saveSong),
+      };
+    });
     jest.doMock("../context/controllerInfo", () => ({
       get globalDb() { return mockActiveItemDb; },
       globalBroadcastRef: { postMessage },
@@ -242,22 +253,221 @@ const loadStoreWithItemPersistence = () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     itemSliceModule = require("./itemSlice");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    selectionModule = require("./controllerItemSelection");
+    songPersistenceModule = require("../utils/songPersistence");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    mutationsModule = require("./deferredItemMutations");
+    deferredMutations = require("./deferredItemMutations");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    replicationConflicts = require("../utils/songV2ReplicationConflicts");
+    selectionModule = require("./controllerItemSelection");
   });
 
   return {
     store: storeModule.default,
     itemSlice: itemSliceModule.itemSlice,
     selectControllerItem: selectionModule!.selectControllerItem,
-    deferredMutations: mutationsModule!,
     updateSlides: itemSliceModule.updateSlides,
     db,
     postMessage,
     setGlobalDb: (next: unknown) => { mockActiveItemDb = next; },
+    songPersistence: songPersistenceModule,
+    deferredMutations,
+    replicationConflicts,
+    songV2DocumentsChanged: storeModule.songV2DocumentsChanged,
   };
 };
+
+describe("v2 remote refresh and pending-input boundaries", () => {
+  const structuredClone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+  function setup() {
+    const env = loadStoreWithItemPersistence();
+    const source = createSongDoc({ arrangements: [{ id: "a", name: "Master", formattedLyrics: [], songOrder: [],
+      slides: ["A", "B"].map(id => ({ id, name: `Verse 1${id}`, type: "Verse", boxes: [{ id: `${id}-box`, words: id, width: 100, height: 100 }] })),
+    }] });
+    const physical: SongV2Documents = env.songPersistence.serializeSongToV2Documents(source);
+    const docs = new Map<string, any>([physical.root, ...physical.arrangements, ...physical.slides].map(doc => [doc._id, { ...doc, _rev: "1-base" }]));
+    env.db.get.mockImplementation(async id => {
+      const doc = docs.get(id);
+      if (!doc) throw Object.assign(new Error("missing"), { status: 404 });
+      return structuredClone(doc);
+    });
+    mockV2AllDocs(env.db, docs);
+    env.db.put.mockImplementation(async next => {
+      const old = docs.get(next._id);
+      if (old && old._rev !== next._rev) throw Object.assign(new Error("conflict"), { status: 409 });
+      const rev = `${Number(old?._rev.split("-")[0] ?? 0) + 1}-saved`;
+      docs.set(next._id, structuredClone({ ...next, _rev: rev }));
+      return { ok: true, id: next._id, rev };
+    });
+    const baseline = env.songPersistence.hydrateSongFromV2Documents(docs.get(physical.root._id), physical.arrangements.map(doc => docs.get(doc._id)), physical.slides.map(doc => docs.get(doc._id)), true);
+    env.store.dispatch(env.itemSlice.actions.setActiveItem(baseline));
+    const edit = (words: string) => {
+      const slides = structuredClone(env.store.getState().undoable.present.item.arrangements[0].slides);
+      slides[0].boxes[0].words = words;
+      env.store.dispatch(env.itemSlice.actions._updateSlides(slides));
+    };
+    return { ...env, docs, physical, baseline, edit };
+  }
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  it("ignores unrelated slides, coalesces active notifications, and uses only scoped reads", async () => {
+    const env = setup();
+    env.store.dispatch(env.songV2DocumentsChanged([{ songId: "unrelated", libraryChanged: false }]));
+    await jest.advanceTimersByTimeAsync(50);
+    expect(env.db.get).not.toHaveBeenCalled();
+    expect(env.db.allDocs).not.toHaveBeenCalled();
+    for (let i = 0; i < 3; i++) env.store.dispatch(env.songV2DocumentsChanged([{ songId: "song-1", libraryChanged: false }]));
+    await jest.advanceTimersByTimeAsync(50);
+    expect(env.db.get).toHaveBeenCalledTimes(1);
+    expect(env.db.allDocs).toHaveBeenCalledTimes(2);
+    expect(env.db.allDocs.mock.calls.every(([options]) => Array.isArray(options.keys))).toBe(true);
+  });
+
+  it("flushes accepted input during its 200ms debounce before buffering a remote update", async () => {
+    const env = setup();
+    const owner = env.deferredMutations.getItemMutationOwner(env.store.getState().undoable.present.item);
+    env.store.dispatch(env.itemSlice.actions.setHasPendingUpdate(true));
+    env.deferredMutations.scheduleOwnedItemMutation(owner!, 200, () => env.edit("typed B"));
+    env.store.dispatch(env.itemSlice.actions.bufferRemoteItemUpdate({ ...env.baseline, name: "remote" }));
+    expect(env.store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words).toBe("typed B");
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    await jest.advanceTimersByTimeAsync(1700);
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("typed B");
+  });
+
+  it("does not autosave ordinary item changes while v2 revision leaves await review", async () => {
+    const env = setup();
+    const conflict = {
+      documentId: env.physical.arrangements[0]._id,
+      winningRevision: "1-base",
+      revisions: ["2-competing"],
+    };
+    env.store.dispatch(env.itemSlice.actions.bufferSongV2RevisionConflict({
+      item: env.baseline,
+      conflicts: [conflict],
+    }));
+    env.store.dispatch(env.itemSlice.actions._setName("Unreviewed edit"));
+    await jest.advanceTimersByTimeAsync(1700);
+    expect(env.store.getState().undoable.present.item.name).toBe("Unreviewed edit");
+    expect(env.store.getState().undoable.present.item.pendingSongV2Conflicts).toEqual([conflict]);
+    expect(env.db.put).not.toHaveBeenCalled();
+  });
+
+  it("flushes other owned pending mutations before a broad refresh decides the editor is clean", async () => {
+    const env = setup();
+    const owner = env.deferredMutations.getItemMutationOwner(env.store.getState().undoable.present.item);
+    env.deferredMutations.scheduleOwnedItemMutation(owner!, 200, () => env.edit("accepted input"));
+    const remoteB = env.docs.get(env.physical.slides[1]._id);
+    env.docs.set(remoteB._id, { ...remoteB, _rev: "2-remote", boxes: [{ ...remoteB.boxes[0], words: "remote B" }] });
+    env.store.dispatch({ type: "allDocs/updateAllSongDocs", payload: [env.songPersistence.songToLibraryProjection(env.baseline)] });
+    await jest.advanceTimersByTimeAsync(0);
+    expect(env.store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words).toBe("accepted input");
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    await jest.advanceTimersByTimeAsync(1500);
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("accepted input");
+    expect(env.docs.get(env.physical.slides[1]._id).boxes[0].words).toBe("remote B");
+  });
+
+  it("rechecks cleanliness when a stale automatic adoption runs after new input was accepted", async () => {
+    const env = setup();
+    env.store.dispatch(env.itemSlice.actions.bufferRemoteItemUpdate(env.baseline));
+    env.store.dispatch(env.itemSlice.actions.setIsLyricsEditorOpen(true));
+    env.store.dispatch(env.itemSlice.actions.applyPendingRemoteItem(true));
+    expect(env.store.getState().undoable.present.item.hasRemoteUpdate).toBe(true);
+    env.store.dispatch(env.itemSlice.actions.applyPendingRemoteItem(true, true));
+    expect(env.store.getState().undoable.present.item.hasRemoteUpdate).toBe(false);
+    env.store.dispatch(env.itemSlice.actions.setIsLyricsEditorOpen(false));
+    env.store.dispatch(env.itemSlice.actions.bufferRemoteItemUpdate(env.baseline));
+    const owner = env.deferredMutations.getItemMutationOwner(env.store.getState().undoable.present.item);
+    env.deferredMutations.scheduleOwnedItemMutation(owner!, 200, () => env.edit("typed after clean render"));
+    env.store.dispatch(env.itemSlice.actions.applyPendingRemoteItem(true));
+    expect(env.store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words).toBe("typed after clean render");
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    expect(env.store.getState().undoable.present.item.hasRemoteUpdate).toBe(true);
+    await jest.advanceTimersByTimeAsync(1500);
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("typed after clean render");
+  });
+
+  it("does not acknowledge text typed during an in-flight save until that text is written", async () => {
+    const env = setup();
+    const originalPut = env.db.put.getMockImplementation()!;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    env.db.put.mockImplementationOnce(async next => { await gate; return originalPut(next); });
+    env.edit("first");
+    await jest.advanceTimersByTimeAsync(1500);
+    const owner = env.deferredMutations.getItemMutationOwner(env.store.getState().undoable.present.item);
+    env.store.dispatch(env.itemSlice.actions.setHasPendingUpdate(true));
+    env.deferredMutations.scheduleOwnedItemMutation(owner!, 200, () => env.edit("second typed"));
+    release();
+    await jest.advanceTimersByTimeAsync(0);
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    expect(env.store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words).toBe("second typed");
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("first");
+    await jest.advanceTimersByTimeAsync(1500);
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("second typed");
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+  });
+
+  it("re-reads an older remote response after a successful save instead of replacing the saved content", async () => {
+    const env = setup();
+    const read = env.db.allDocs.getMockImplementation()!;
+    let release!: () => void;
+    let calls = 0;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    env.db.allDocs.mockImplementation(async options => {
+      const result = structuredClone(await read(options));
+      if (++calls === 2) await gate;
+      return result;
+    });
+    env.store.dispatch(env.songV2DocumentsChanged([{ songId: "song-1", libraryChanged: false }]));
+    await jest.advanceTimersByTimeAsync(50);
+    env.edit("newest");
+    await jest.advanceTimersByTimeAsync(1500);
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+    release();
+    await jest.advanceTimersByTimeAsync(50);
+    const item = env.store.getState().undoable.present.item;
+    expect(item.arrangements[0].slides[0].boxes[0].words).toBe("newest");
+    expect(item.hasRemoteUpdate).toBe(false);
+    expect(item.pendingRemoteItem).toBeNull();
+  });
+
+  it("ignores a changed-song load after switching databases with the same item ID", async () => {
+    const env = setup();
+    let release!: (doc: unknown) => void;
+    env.db.get.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    env.store.dispatch(env.songV2DocumentsChanged([{ songId: "song-1", libraryChanged: true }]));
+    await jest.advanceTimersByTimeAsync(50);
+    const otherDb = { get: jest.fn(), put: jest.fn(), allDocs: jest.fn() };
+    env.setGlobalDb(otherDb);
+    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...env.baseline, name: "Other church" }));
+    release(env.docs.get(env.physical.root._id));
+    await jest.advanceTimersByTimeAsync(50);
+    expect(env.store.getState().undoable.present.item.name).toBe("Other church");
+    expect(env.store.getState().undoable.present.item.pendingRemoteItem).toBeNull();
+    expect(otherDb.get).not.toHaveBeenCalled();
+    expect(otherDb.put).not.toHaveBeenCalled();
+  });
+
+  it.each(["mine", "theirs"])("retains unresolved drafts through a late acknowledgment and resolves only displayed leaves for %s", async choice => {
+    const env = setup();
+    const approved = [{ documentId: env.physical.arrangements[0]._id, winningRevision: "1-base", revisions: ["2-displayed"] }];
+    const remote = { ...env.baseline, name: "Remote version" };
+    const prune = jest.spyOn(env.replicationConflicts, "pruneResolvedSongV2Conflicts")
+      .mockImplementation(async (_db: unknown, adopted: unknown) => adopted);
+    env.store.dispatch(env.itemSlice.actions.bufferSongV2RevisionConflict({ item: remote, conflicts: approved }));
+    env.store.dispatch(env.itemSlice.actions.markItemPersisted(env.baseline, env.baseline));
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    expect(env.store.getState().undoable.present.item.pendingRemoteItem.name).toBe("Remote version");
+    env.store.dispatch(choice === "mine" ? env.itemSlice.actions.keepLocalItemChanges() : env.itemSlice.actions.applyPendingRemoteItem());
+    await jest.advanceTimersByTimeAsync(1500);
+    expect(prune).toHaveBeenCalledWith(env.db, expect.anything(), approved);
+    expect(env.store.getState().undoable.present.item.pendingSongV2Conflicts).toBeUndefined();
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+    prune.mockRestore();
+  });
+});
 
 const createOverlay = (id: string, name: string) => ({
   id,
@@ -292,6 +502,25 @@ const createSongDoc = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+const mockV2AllDocs = (db: { allDocs?: jest.Mock }, docs: Map<string, any>) => {
+  db.allDocs = jest.fn(async ({ keys, startkey, endkey }: {
+    keys?: string[];
+    startkey?: string;
+    endkey?: string;
+  }) => {
+    const selected = keys
+      ? keys.map((id) => [id, docs.get(id)] as const)
+      : [...docs.entries()].filter(([id]) =>
+          (!startkey || id >= startkey) && (!endkey || id <= endkey),
+        );
+    return {
+      rows: selected.map(([id, doc]) => doc
+        ? { id, key: id, value: { rev: doc._rev }, doc }
+        : { id, key: id, error: "not_found" }),
+    };
+  });
+};
+
 // Characterization tests deliberately assert the current defects. Convert the
 // defect expectations to preservation expectations when the fixes are approved.
 describe("item content integrity investigation", () => {
@@ -300,6 +529,7 @@ describe("item content integrity investigation", () => {
     slides: [createScreenSlide(id + "-slide", id + " exclusive words")],
     arrangements: type === "song" ? [{
       id: id + "-arrangement", name: "Master",
+      monitorLayout: { currentFontSizePx: 300, nextFontSizePx: 300 },
       slides: [createScreenSlide(id + "-arr-slide", id + " exclusive words")],
       formattedLyrics: [{ id: id + "-section", type: "Verse", name: "Verse",
         words: id + " exclusive words", slideSpan: 1 }],
@@ -321,7 +551,13 @@ describe("item content integrity investigation", () => {
         formattedSections: [{ sectionNum: 1, words: "free-A exclusive words", slideSpan: 1 }] }],
       ["free-B", fixture("free-B", "free")],
     ]);
-    runtime.db.get.mockImplementation(async (id: string) => clone(docs.get(id)));
+    runtime.db.get.mockImplementation(async (id: string) => {
+      const document = docs.get(id);
+      if (!document) {
+        throw Object.assign(new Error(`missing ${id}`), { status: 404, name: "not_found" });
+      }
+      return clone(document);
+    });
     const commit = async (doc: Fixture) => {
       const current = docs.get(doc._id);
       if (current?._rev !== doc._rev) throw Object.assign(new Error("conflict"), { status: 409 });
@@ -397,8 +633,18 @@ describe("item content integrity investigation", () => {
   it("finishes A after its delayed get resolves while B starts a newer save", async () => {
     const { docs, select, edit, tick, db } = setup();
     const held = deferred<Fixture>();
-    db.get.mockImplementation((id: string) => id === "song-A"
-      ? held.promise : Promise.resolve(clone(docs.get(id))));
+    let heldARead = false;
+    db.get.mockImplementation((id: string) => {
+      if (id === "song-A" && !heldARead) {
+        heldARead = true;
+        return held.promise;
+      }
+      const document = docs.get(id);
+      if (!document) {
+        return Promise.reject(Object.assign(new Error(`missing ${id}`), { status: 404, name: "not_found" }));
+      }
+      return Promise.resolve(clone(document));
+    });
     select("song-A"); edit("A canceled"); await tick();
     select("song-B"); edit("B saved");
     held.resolve(clone(docs.get("song-A")!)); await flushListenerEffects();
@@ -593,13 +839,18 @@ describe("item content integrity investigation", () => {
     const remote = { ...fixture("song-A"), _rev: "2-remote", name: "Remote edit" };
     docs.set("song-A", remote);
     store.dispatch({ type: "allDocs/hydrateItemCache", payload: [remote, docs.get("song-B")] });
+    // Active songs use arrangement-owned slide content even when the remote
+    // library row still has legacy root slides.
+    const { normalizeItemSlides } = require("../utils/activeItemSlides");
     expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(true);
     await tick();
     expect(docs.get("song-A")).toEqual(remote);
     expect(docs.get("song-B")?.name).toBe("song-B");
     expect(store.getState().undoable.present.item.name).toBe("Local edit");
     expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
-    expect(store.getState().undoable.present.item.pendingRemoteItem).toEqual(remote);
+    expect(store.getState().undoable.present.item.pendingRemoteItem).toEqual(
+      normalizeItemSlides(remote),
+    );
   });
 
   it("does not clear a newer pending indicator when an older save completes", async () => {
@@ -1145,6 +1396,7 @@ describe("store module", () => {
       }));
       jest.doMock("../context/globalInfo", () => ({ globalFireDbInfo: fireInfo, globalHostId: "host-123" }));
       jest.doMock("../utils/dbUtils", () => ({
+        invalidateLibraryRefresh: jest.fn(),
         migrateLegacyCreditsToActiveOutlineIfNeeded: migrate,
         ensureCreditsIndexDoc: ensure,
         getCreditsByIds: getCredits,
@@ -2271,7 +2523,15 @@ describe("store module", () => {
     const { store, itemSlice, db } = loadStoreWithItemPersistence();
     const previousAudio = createSongAudio("audio-old");
     const attachedAudio = createSongAudio("audio-new");
-    db.get.mockResolvedValue(createSongDoc({ _rev: "2-song", name: "Edited while uploading", songAudio: attachedAudio }));
+    db.get.mockImplementation(async (id: string) => {
+      if (id.startsWith("song-v2:root:")) {
+        throw Object.assign(new Error("missing v2 root"), { status: 404, name: "not_found" });
+      }
+      if (id === "song-1") {
+        return createSongDoc({ _rev: "2-song", name: "Edited while uploading", songAudio: attachedAudio });
+      }
+      throw Object.assign(new Error(`missing ${id}`), { status: 404, name: "not_found" });
+    });
     db.put.mockResolvedValue({ rev: "3-song" });
 
     store.dispatch(
@@ -2305,12 +2565,16 @@ describe("store module", () => {
 
   it("preserves newer persisted song audio during an ordinary item autosave", async () => {
     jest.useFakeTimers();
-    const { store, itemSlice, db } = loadStoreWithItemPersistence();
+    const { store, itemSlice, db, songPersistence } = loadStoreWithItemPersistence();
     const staleAudio = createSongAudio("audio-old");
     const persistedAudio = createSongAudio("audio-new");
-    db.get.mockResolvedValue(
-      createSongDoc({ _rev: "2-song", songAudio: persistedAudio }),
-    );
+    const persistedSong = createSongDoc({ _rev: "2-song", songAudio: persistedAudio });
+    db.get.mockImplementation(async (id: string) => {
+      if (id.startsWith("song-v2:root:")) {
+        throw Object.assign(new Error("Not found"), { status: 404 });
+      }
+      return persistedSong;
+    });
     db.put.mockResolvedValue({ ok: true, id: "song-1", rev: "3-song" });
 
     store.dispatch(
@@ -2329,13 +2593,384 @@ describe("store module", () => {
         songAudio: persistedAudio,
       }),
     );
+    expect(songPersistence.saveSong).toHaveBeenCalledTimes(1);
+    expect(songPersistence.saveSong).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({ name: "Edited Song", songAudio: persistedAudio }),
+      expect.objectContaining({ _rev: "2-song", songAudio: persistedAudio }),
+    );
+    songPersistence.saveSong.mockClear();
+  });
+
+  it("uses baseItem intent for v2 autosave, preserves remote siblings, and advances the baseline", async () => {
+    jest.useFakeTimers();
+    const { store, itemSlice, db } = loadStoreWithItemPersistence();
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const persistence = require("../utils/songPersistence");
+    const { serializeSongToV2Documents, hydrateSongFromV2Documents } = persistence;
+    const authored = createSongDoc({
+      arrangements: [{ id: "a", name: "A", formattedLyrics: [], songOrder: [], slides: [
+        { id: "a1", name: "A1", type: "Verse", boxes: [{ id: "a-box", words: "A old", width: 1920, height: 1080 }] },
+        { id: "b1", name: "B1", type: "Verse", boxes: [{ id: "b-box", words: "B old", width: 1920, height: 1080 }] },
+      ] }],
+    });
+    const physical = serializeSongToV2Documents(authored);
+    const docs = new Map<string, any>();
+    docs.set(physical.root._id, { ...physical.root, _rev: "1-root" });
+    physical.arrangements.forEach((doc: any) => docs.set(doc._id, { ...doc, _rev: "1-arr" }));
+    physical.slides.forEach((doc: any) => docs.set(doc._id, { ...doc, _rev: "1-slide" }));
+    db.get.mockImplementation(async (id: string) => {
+      const found = docs.get(id);
+      if (!found) throw Object.assign(new Error("missing"), { status: 404, name: "not_found" });
+      return found;
+    });
+    mockV2AllDocs(db as any, docs);
+    let sequence = 1;
+    db.put.mockImplementation(async (next: any) => {
+      const existing = docs.get(next._id);
+      if (existing && next._rev !== existing._rev) throw Object.assign(new Error("conflict"), { status: 409 });
+      const rev = `${++sequence}-saved`;
+      docs.set(next._id, { ...next, _rev: rev });
+      return { ok: true, id: next._id, rev };
+    });
+    const baseline = hydrateSongFromV2Documents(docs.get(physical.root._id), physical.arrangements.map((doc: any) => docs.get(doc._id)), physical.slides.map((doc: any) => docs.get(doc._id)));
+    const remoteB = docs.get(physical.slides[1]._id);
+    docs.set(remoteB._id, { ...remoteB, boxes: [{ ...remoteB.boxes[0], words: "B remote" }], _rev: "2-remote" });
+    store.dispatch(itemSlice.actions.setActiveItem(baseline));
+    const localSlides = baseline.arrangements[0].slides.map((slide: any) => ({ ...slide, boxes: slide.id === "a1" ? [{ ...slide.boxes[0], words: "A local" }] : slide.boxes }));
+    store.dispatch(itemSlice.actions._updateSlides(localSlides));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.put.mock.calls.map(([doc]: [any]) => doc._id)).toEqual([physical.slides[0]._id]);
+    expect(store.getState().undoable.present.item.baseItem.arrangements[0].slides[1].boxes[0].words).toBe("B remote");
+    expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(false);
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+    const librarySong = store.getState().allDocs.allSongDocs.find((doc: any) => doc._id === "song-1");
+    expect(librarySong.arrangements[0].slides).toEqual([]);
+    store.dispatch(itemSlice.actions.applyPendingRemoteItem());
+    expect(store.getState().undoable.present.item.arrangements[0].slides[1].boxes[0].words).toBe("B remote");
+    const nextSlides = store.getState().undoable.present.item.arrangements[0].slides.map((slide: any) => ({ ...slide, boxes: slide.id === "b1" ? [{ ...slide.boxes[0], words: "B next" }] : slide.boxes }));
+    store.dispatch(itemSlice.actions._updateSlides(nextSlides));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(docs.get(physical.slides[1]._id).boxes[0].words).toBe("B next");
+    expect(store.getState().undoable.present.item.baseItem.arrangements[0].slides[1].boxes[0].words).toBe("B next");
+  });
+
+  it("keeps a v2 same-slide draft dirty when a concurrent edit conflicts", async () => {
+    jest.useFakeTimers();
+    const { store, itemSlice, db } = loadStoreWithItemPersistence();
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const persistence = require("../utils/songPersistence");
+    const { serializeSongToV2Documents, hydrateSongFromV2Documents } = persistence;
+    const authored = createSongDoc({ arrangements: [{ id: "a", name: "A", formattedLyrics: [], songOrder: [], slides: [
+      { id: "a1", name: "A1", type: "Verse", boxes: [{ id: "box", words: "old", width: 1920, height: 1080 }] },
+    ] }] });
+    const physical = serializeSongToV2Documents(authored);
+    const docs = new Map<string, any>([
+      [physical.root._id, { ...physical.root, _rev: "1-root" }],
+      ...physical.arrangements.map((doc: any) => [doc._id, { ...doc, _rev: "1-arr" }]),
+      ...physical.slides.map((doc: any) => [doc._id, { ...doc, _rev: "1-slide" }]),
+    ]);
+    db.get.mockImplementation(async (id: string) => {
+      const found = docs.get(id);
+      if (!found) throw Object.assign(new Error("missing"), { status: 404, name: "not_found" });
+      return found;
+    });
+    mockV2AllDocs(db as any, docs);
+    const slide = docs.get(physical.slides[0]._id);
+    docs.set(slide._id, { ...slide, boxes: [{ ...slide.boxes[0], words: "remote" }], _rev: "2-remote" });
+    const baseline = hydrateSongFromV2Documents(docs.get(physical.root._id), physical.arrangements.map((doc: any) => docs.get(doc._id)), [slide]);
+    store.dispatch(itemSlice.actions.setActiveItem(baseline));
+    store.dispatch(itemSlice.actions._updateSlides([{ ...baseline.arrangements[0].slides[0], boxes: [{ ...baseline.arrangements[0].slides[0].boxes[0], words: "local" }] }]));
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.put).not.toHaveBeenCalled();
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(true);
+    expect(store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words).toBe("local");
+    expect(store.getState().undoable.present.item.remoteUpdateReason).toBe("song-content-conflict");
+
+    // A late acknowledgment must not replace the unresolved remote choice or
+    // make the local draft look persisted.
+    store.dispatch(itemSlice.actions.markItemPersisted(baseline, baseline));
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(true);
+    expect(store.getState().undoable.present.item.remoteUpdateReason).toBe("song-content-conflict");
+    expect(store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words).toBe("local");
+    expect(store.getState().undoable.present.item.pendingRemoteItem.arrangements[0].slides[0].boxes[0].words).toBe("remote");
+    expect(errorSpy).toHaveBeenCalledWith("Could not save active song draft", expect.objectContaining({ name: "SongV2ConcurrentEditError" }));
+  });
+
+  it("keeps a failed Song v2 network save pending without classifying it as a content conflict", async () => {
+    jest.useFakeTimers();
+    const { store, itemSlice, db } = loadStoreWithItemPersistence();
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const persistence = require("../utils/songPersistence");
+    const { serializeSongToV2Documents, hydrateSongFromV2Documents } = persistence;
+    const authored = createSongDoc({ arrangements: [{ id: "a", name: "A", formattedLyrics: [], songOrder: [], slides: [
+      { id: "a1", name: "A1", type: "Verse", boxes: [{ id: "box", words: "old", width: 1920, height: 1080 }] },
+    ] }] });
+    const physical = serializeSongToV2Documents(authored);
+    const docs = new Map<string, any>([
+      [physical.root._id, { ...physical.root, _rev: "1-root" }],
+      ...physical.arrangements.map((doc: any) => [doc._id, { ...doc, _rev: "1-arr" }]),
+      ...physical.slides.map((doc: any) => [doc._id, { ...doc, _rev: "1-slide" }]),
+    ]);
+    db.get.mockImplementation(async (id: string) => {
+      const found = docs.get(id);
+      if (!found) throw Object.assign(new Error("missing"), { status: 404, name: "not_found" });
+      return found;
+    });
+    mockV2AllDocs(db as any, docs);
+    db.put.mockRejectedValue(Object.assign(new Error("offline"), { status: 500 }));
+    const baseline = hydrateSongFromV2Documents(
+      docs.get(physical.root._id),
+      physical.arrangements.map((doc: any) => docs.get(doc._id)),
+      physical.slides.map((doc: any) => docs.get(doc._id)),
+    );
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    store.dispatch(itemSlice.actions.setActiveItem(baseline));
+    store.dispatch(itemSlice.actions._updateSlides([{
+      ...baseline.arrangements[0].slides[0],
+      boxes: [{ ...baseline.arrangements[0].slides[0].boxes[0], words: "local draft" }],
+    }]));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    const active = store.getState().undoable.present.item;
+    expect(docs.get(physical.slides[0]._id).boxes[0].words).toBe("old");
+    expect(active.arrangements[0].slides[0].boxes[0].words).toBe("local draft");
+    expect(active.hasPendingUpdate).toBe(true);
+    expect(active.remoteUpdateReason).toBeNull();
+    expect(active.hasRemoteUpdate).toBe(false);
+    errorSpy.mockRestore();
+  });
+
+  it("preserves an open v1 draft and surfaces a migration that wins at the commit check", async () => {
+    jest.useFakeTimers();
+    const { store, itemSlice, db } = loadStoreWithItemPersistence();
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { serializeSongToV2Documents } = require("../utils/songPersistence");
+    const authored: any = createSongDoc({ arrangements: [{ id: "a", name: "A", formattedLyrics: [], songOrder: [], slides: [
+      { id: "a1", name: "A1", type: "Verse", boxes: [{ id: "box", words: "before", width: 1920, height: 1080 }] },
+    ] }] });
+    const physical = serializeSongToV2Documents(authored);
+    const v2Docs = new Map<string, any>([
+      [physical.root._id, { ...physical.root, _rev: "2-root" }],
+      ...physical.arrangements.map((doc: any) => [doc._id, { ...doc, _rev: "2-arr" }]),
+      ...physical.slides.map((doc: any) => [doc._id, { ...doc, _rev: "2-slide" }]),
+    ]);
+    let rootReads = 0;
+    db.get.mockImplementation(async (id: string) => {
+      if (id === physical.root._id) {
+        rootReads += 1;
+        if (rootReads >= 2) return v2Docs.get(id);
+        throw Object.assign(new Error("not found"), { status: 404, name: "not_found" });
+      }
+      if (id === authored._id) return authored;
+      const doc = v2Docs.get(id);
+      if (doc) return doc;
+      throw Object.assign(new Error("not found"), { status: 404, name: "not_found" });
+    });
+    mockV2AllDocs(db as any, v2Docs);
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    store.dispatch(itemSlice.actions.setActiveItem(authored));
+    store.dispatch(itemSlice.actions._updateSlides([{
+      ...authored.arrangements[0].slides[0],
+      boxes: [{ ...authored.arrangements[0].slides[0].boxes[0], words: "draft from old editor" }],
+    }]));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    const active = store.getState().undoable.present.item;
+    expect(db.put).not.toHaveBeenCalled();
+    expect(active.hasPendingUpdate).toBe(true);
+    expect(active.hasRemoteUpdate).toBe(true);
+    expect(active.remoteUpdateReason).toBe("song-version-transition");
+    expect(active.arrangements[0].slides[0].boxes[0].words).toBe("draft from old editor");
+    expect(active.pendingRemoteItem.docType).toBe("song-v2-root");
+    expect(errorSpy).toHaveBeenCalledWith("Could not save active song draft", expect.objectContaining({ name: "SongV2VersionTransitionError" }));
+  });
+
+  it("retries a partial v2 autosave, advances the baseline, and clears dirty state", async () => {
+    jest.useFakeTimers();
+    const { store, itemSlice, db } = loadStoreWithItemPersistence();
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { serializeSongToV2Documents, hydrateSongFromV2Documents } = require("../utils/songPersistence");
+    const authored = createSongDoc({ shouldSkipTitle: false, arrangements: [{ id: "a", name: "A", formattedLyrics: [], songOrder: [], slides: [
+      { id: "a1", name: "A1", type: "Verse", boxes: [{ id: "a-box", words: "A old", width: 1920, height: 1080 }] },
+      { id: "b1", name: "B1", type: "Verse", boxes: [{ id: "b-box", words: "B old", width: 1920, height: 1080 }] },
+    ] }] });
+    const physical = serializeSongToV2Documents(authored);
+    const docs = new Map<string, any>([
+      [physical.root._id, { ...physical.root, _rev: "1-root" }],
+      ...physical.arrangements.map((doc: any) => [doc._id, { ...doc, _rev: "1-arr" }]),
+      ...physical.slides.map((doc: any) => [doc._id, { ...doc, _rev: "1-slide" }]),
+    ]);
+    db.get.mockImplementation(async (id: string) => {
+      const found = docs.get(id);
+      if (!found) throw Object.assign(new Error("missing"), { status: 404, name: "not_found" });
+      return found;
+    });
+    mockV2AllDocs(db as any, docs);
+    let sequence = 1;
+    let failed = false;
+    db.put.mockImplementation(async (next: any) => {
+      if (next._id === physical.slides[1]._id && !failed) {
+        failed = true;
+        throw new Error("temporary offline failure");
+      }
+      const existing = docs.get(next._id);
+      if (existing && next._rev !== existing._rev) throw Object.assign(new Error("conflict"), { status: 409 });
+      const rev = `${++sequence}-saved`;
+      docs.set(next._id, { ...next, _rev: rev });
+      return { ok: true, id: next._id, rev };
+    });
+    const baseline = hydrateSongFromV2Documents(docs.get(physical.root._id), physical.arrangements.map((doc: any) => docs.get(doc._id)), physical.slides.map((doc: any) => docs.get(doc._id)));
+    store.dispatch(itemSlice.actions.setActiveItem(baseline));
+    const localSlides = baseline.arrangements[0].slides.map((slide: any, index: number) => ({ ...slide, boxes: [{ ...slide.boxes[0], words: `Local ${index + 1}` }] }));
+    store.dispatch(itemSlice.actions._updateSlides(localSlides));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(db.put.mock.calls.map(([doc]: [any]) => doc._id)).toEqual([physical.slides[0]._id, physical.slides[1]._id]);
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    expect(store.getState().undoable.present.item.baseItem.arrangements[0].slides[0].boxes[0].words).toBe("A old");
+
+    store.dispatch(itemSlice.actions._updateSlides(store.getState().undoable.present.item.arrangements[0].slides));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(db.put.mock.calls.slice(2).map(([doc]: [any]) => doc._id)).toEqual([physical.slides[1]._id]);
+    expect(store.getState().undoable.present.item.baseItem.arrangements[0].slides.map((slide: any) => slide.boxes[0].words)).toEqual(["Local 1", "Local 2"]);
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+    expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(false);
+    expect(store.getState().allDocs.allSongDocs.find((doc: any) => doc._id === "song-1").arrangements[0].slides).toEqual([]);
+  });
+
+  it("buffers remote content after a late v2 Pouch 409 while preserving the dirty draft", async () => {
+    jest.useFakeTimers();
+    const { store, itemSlice, db } = loadStoreWithItemPersistence();
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { serializeSongToV2Documents, hydrateSongFromV2Documents } = require("../utils/songPersistence");
+    const authored = createSongDoc({ shouldSkipTitle: false, arrangements: [{ id: "a", name: "A", formattedLyrics: [], songOrder: [], slides: [
+      { id: "a1", name: "A1", type: "Verse", boxes: [{ id: "box", words: "old", width: 1920, height: 1080 }] },
+    ] }] });
+    const physical = serializeSongToV2Documents(authored);
+    const docs = new Map<string, any>([
+      [physical.root._id, { ...physical.root, _rev: "1-root" }],
+      ...physical.arrangements.map((doc: any) => [doc._id, { ...doc, _rev: "1-arr" }]),
+      ...physical.slides.map((doc: any) => [doc._id, { ...doc, _rev: "1-slide" }]),
+    ]);
+    db.get.mockImplementation(async (id: string) => {
+      const found = docs.get(id);
+      if (!found) throw Object.assign(new Error("missing"), { status: 404, name: "not_found" });
+      return found;
+    });
+    mockV2AllDocs(db as any, docs);
+    db.put.mockImplementation(async (next: any) => {
+      const remote = { ...next, boxes: [{ ...next.boxes[0], words: "remote" }], _rev: "2-remote" };
+      docs.set(next._id, remote);
+      throw Object.assign(new Error("late conflict"), { status: 409 });
+    });
+    const baseline = hydrateSongFromV2Documents(docs.get(physical.root._id), physical.arrangements.map((doc: any) => docs.get(doc._id)), physical.slides.map((doc: any) => docs.get(doc._id)));
+    store.dispatch(itemSlice.actions.setActiveItem(baseline));
+    store.dispatch(itemSlice.actions._updateSlides([{ ...baseline.arrangements[0].slides[0], boxes: [{ ...baseline.arrangements[0].slides[0].boxes[0], words: "local" }] }]));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    const item = store.getState().undoable.present.item;
+    expect(item.hasPendingUpdate).toBe(true);
+    expect(item.hasRemoteUpdate).toBe(true);
+    expect(item.arrangements[0].slides[0].boxes[0].words).toBe("local");
+    expect(item.pendingRemoteItem.arrangements[0].slides[0].boxes[0].words).toBe("remote");
+    expect(item.baseItem.arrangements[0].slides[0].boxes[0].words).toBe("old");
+  });
+
+  it("omits legacy root slides from song saves and retains non-song slide persistence", async () => {
+    jest.useFakeTimers();
+    const { store, itemSlice, db, songPersistence } = loadStoreWithItemPersistence();
+    const arrangementSlide = { id: "arr-slide", name: "Verse", type: "Verse", boxes: [] };
+    const persistedSong = createSongDoc({
+      _rev: "1-song", slides: [{ id: "legacy", name: "Legacy", type: "Verse", boxes: [] }],
+      arrangements: [{ id: "arr-1", name: "Master", formattedLyrics: [], songOrder: [], slides: [arrangementSlide] }],
+    });
+    db.get.mockImplementation(async (id: string) => {
+      if (id.startsWith("song-v2:root:")) {
+        throw Object.assign(new Error("Not found"), { status: 404 });
+      }
+      return persistedSong;
+    });
+    db.put.mockResolvedValue({ ok: true, id: "song-1", rev: "2-song" });
+    store.dispatch(itemSlice.actions.setActiveItem(createSongDoc({
+      _rev: "1-song", slides: [{ id: "legacy", name: "Legacy", type: "Verse", boxes: [] }],
+      arrangements: [{ id: "arr-1", name: "Master", formattedLyrics: [], songOrder: [], slides: [arrangementSlide] }],
+    })));
+    store.dispatch(itemSlice.actions._setName("Saved Song"));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    const savedSong = db.put.mock.calls[0][0];
+    expect(savedSong).not.toHaveProperty("slides");
+    expect(savedSong.arrangements[0].slides).toEqual([arrangementSlide]);
+    expect(songPersistence.saveSong).toHaveBeenCalledTimes(1);
+    songPersistence.saveSong.mockClear();
+
+    const nonSong = createTimerItem({ _rev: "1-timer" });
+    store.dispatch(itemSlice.actions.setActiveItem(nonSong));
+    db.get.mockResolvedValue(nonSong);
+    db.put.mockClear();
+    store.dispatch(itemSlice.actions._setName("Saved Timer"));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(db.put.mock.calls[0][0].slides).toEqual(nonSong.slides);
+    expect(songPersistence.saveSong).not.toHaveBeenCalled();
+  });
+
+  it("updates the selected arrangement's compact monitor layout when source sizing inputs change", async () => {
+    const { store, itemSlice, updateSlides } = loadStoreWithItemPersistence();
+    const initialSlide = {
+      id: "verse-1",
+      name: "Verse 1",
+      type: "Verse",
+      boxes: [{ words: "" }, { words: "short", width: 100, isBold: false, isItalic: false }],
+    };
+    store.dispatch(itemSlice.actions.setActiveItem(createSongDoc({
+      monitorLayout: undefined,
+      arrangements: [{
+        id: "arr-1", name: "Master", formattedLyrics: [], songOrder: [],
+        monitorLayout: { currentFontSizePx: 1, nextFontSizePx: 2 },
+        slides: [initialSlide],
+      }],
+    })));
+
+    const updatedSlide = {
+      ...initialSlide,
+      boxes: [initialSlide.boxes[0], { ...initialSlide.boxes[1], words: "a much longer lyric line that should need more space" }],
+    };
+    await store.dispatch(updateSlides({ slides: [updatedSlide] })).unwrap();
+
+    const state = store.getState().undoable.present.item;
+    expect(state.slides).toEqual([]);
+    expect(state.arrangements[0].slides).toEqual([updatedSlide]);
+    expect(state.arrangements[0].monitorLayout).not.toEqual({
+      currentFontSizePx: 1,
+      nextFontSizePx: 2,
+    });
   });
 
   it("does not restore removed song audio during an ordinary item autosave", async () => {
     jest.useFakeTimers();
     const { store, itemSlice, db } = loadStoreWithItemPersistence();
     const staleAudio = createSongAudio("audio-old");
-    db.get.mockResolvedValue(createSongDoc({ _rev: "2-song" }));
+    db.get.mockImplementation(async (id: string) => {
+      if (id !== "song-1") {
+        throw Object.assign(new Error("missing document"), { status: 404 });
+      }
+      return createSongDoc({ _rev: "2-song" });
+    });
     db.put.mockResolvedValue({ ok: true, id: "song-1", rev: "3-song" });
 
     store.dispatch(
@@ -2351,6 +2986,8 @@ describe("store module", () => {
     expect(db.put).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "Edited Song",
+        _id: "song-1",
+        type: "song",
       }),
     );
     expect(db.put.mock.calls[0][0]).not.toHaveProperty("songAudio");
@@ -2360,7 +2997,12 @@ describe("store module", () => {
     jest.useFakeTimers();
     const { store, itemSlice, db: dbA, postMessage, setGlobalDb } =
       loadStoreWithItemPersistence();
-    dbA.get.mockResolvedValue(createSongDoc({ _rev: "1-song" }));
+    dbA.get.mockImplementation(async (id: string) => {
+      if (id.startsWith("song-v2:root:")) {
+        throw Object.assign(new Error("missing"), { status: 404, name: "not_found" });
+      }
+      return createSongDoc({ _rev: "1-song", _id: id });
+    });
     dbA.put.mockResolvedValue({ ok: true, id: "song-1", rev: "2-song" });
     const dbB = { get: jest.fn(), put: jest.fn() };
 
@@ -4931,6 +5573,7 @@ const loadStoreWithItemListPersistence = () => {
   let itemListsSliceModule: any;
   let overlaySliceModule: any;
   let overlaysSliceModule: any;
+  let presentationSyncErrorBusModule: any;
   const postMessage = jest.fn();
   const db = {
     get: jest.fn(),
@@ -4939,9 +5582,10 @@ const loadStoreWithItemListPersistence = () => {
       .mockResolvedValue({ ok: true, id: "outline-a", rev: "2-saved" }),
   };
 
+  let activeDb: unknown = db;
   jest.isolateModules(() => {
     jest.doMock("../context/controllerInfo", () => ({
-      globalDb: db,
+      get globalDb() { return activeDb; },
       globalBroadcastRef: { postMessage },
     }));
     jest.doMock("../context/globalInfo", () => ({
@@ -4964,6 +5608,8 @@ const loadStoreWithItemListPersistence = () => {
     overlaySliceModule = require("./overlaySlice");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     overlaysSliceModule = require("./overlaysSlice");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    presentationSyncErrorBusModule = require("../utils/presentationSyncErrorBus");
   });
 
   return {
@@ -4972,7 +5618,10 @@ const loadStoreWithItemListPersistence = () => {
     itemListsSlice: itemListsSliceModule.itemListsSlice,
     overlaySlice: overlaySliceModule.overlaySlice,
     overlaysSlice: overlaysSliceModule.overlaysSlice,
+    registerPresentationSyncErrorHandler:
+      presentationSyncErrorBusModule.registerPresentationSyncErrorHandler,
     db,
+    setGlobalDb: (next: unknown) => { activeDb = next; },
     postMessage,
   };
 };
@@ -4992,11 +5641,310 @@ describe("item list outline persistence", () => {
       ]),
     );
     store.dispatch(
-      itemListSlice.actions.initiateItemList([
-        createServiceItem({ name: "Current", _id: "song-1", listId: "l1" }),
-      ]),
+      itemListSlice.actions.initiateItemList({
+        outlineId: "outline-a",
+        items: [
+          createServiceItem({ name: "Current", _id: "song-1", listId: "l1" }),
+        ],
+      }),
     );
   };
+
+  it("retains the latest unresolved draft through controller teardown and profile navigation without saving it", async () => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, db } = loadStoreWithItemListPersistence();
+    hydrateOutline(store, itemListSlice, itemListsSlice);
+    store.dispatch(itemListSlice.actions.updateItemList([createServiceItem({ name: "Local", listId: "l1", _id: "song-1" })]));
+    store.dispatch(itemListSlice.actions.updateItemListFromRemote({ outlineId: "outline-a", items: [createServiceItem({ name: "Remote", listId: "l1", _id: "song-1" })] }));
+    store.dispatch(itemListSlice.actions.addItemToItemList(createServiceItem({ name: "Added after notice", _id: "later" })));
+    const draft = store.getState().undoable.present.itemList.list;
+    store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+    store.dispatch(itemListsSlice.actions.initiateItemLists([{ _id: "outline-b", name: "B", controllerScope: "aux" }]));
+    store.dispatch(itemListsSlice.actions.setOutlineScope("aux"));
+    store.dispatch(itemListSlice.actions.initiateItemList({ outlineId: "outline-b", items: [] }));
+    store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+    store.dispatch(itemListsSlice.actions.initiateItemLists([{ _id: "outline-a", name: "A" }]));
+    store.dispatch(itemListSlice.actions.initiateItemList({ outlineId: "outline-a", items: [createServiceItem({ name: "Remote", listId: "l1", _id: "song-1" })] }));
+    await jest.advanceTimersByTimeAsync(2000);
+    expect(store.getState().undoable.present.itemList.list).toEqual(draft);
+    expect(store.getState().undoable.present.itemList.remoteConflicts["outline-a"].localItems).toEqual(draft);
+    expect(db.put.mock.calls.filter(([document]: [Record<string, unknown>]) => document._id === "outline-a")).toEqual([]);
+    jest.useRealTimers();
+  });
+
+  it("isolates retained outline drafts when churches use the same outline ID", () => {
+    const env = loadStoreWithItemListPersistence();
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    env.store.dispatch(env.itemListSlice.actions.updateItemList([createServiceItem({ name: "Local A", listId: "l1", _id: "song-1" })]));
+    env.store.dispatch(env.itemListSlice.actions.updateItemListFromRemote({ outlineId: "outline-a", items: [createServiceItem({ name: "Remote A", listId: "l1", _id: "song-1" })] }));
+    const otherDb = { get: jest.fn(), put: jest.fn() };
+    env.setGlobalDb(otherDb);
+    env.store.dispatch({ type: "RESET" });
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    expect(env.store.getState().undoable.present.itemList.remoteConflicts).toEqual({});
+    expect(env.store.getState().undoable.present.itemList.list[0].name).toBe("Current");
+    env.setGlobalDb(env.db);
+    env.store.dispatch({ type: "RESET" });
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    expect(env.store.getState().undoable.present.itemList.list[0].name).toBe("Current");
+    expect(env.store.getState().undoable.present.itemList.remoteConflicts).toEqual({});
+    expect(otherDb.put).not.toHaveBeenCalled();
+  });
+
+  it("keeps conflict ownership and baseline outside undo history while undoing and redoing later row edits", async () => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    env.store.dispatch({ type: "CONTROLLER_PAGE_READY" });
+    await jest.advanceTimersByTimeAsync(20);
+    env.store.dispatch(env.itemListSlice.actions.updateItemList([createServiceItem({ name: "Local", listId: "l1", _id: "song-1" })]));
+    env.store.dispatch(env.itemListSlice.actions.updateItemListFromRemote({ outlineId: "outline-a", items: [createServiceItem({ name: "Remote", listId: "l1", _id: "song-1" })] }));
+    await jest.advanceTimersByTimeAsync(501);
+    env.store.dispatch(env.itemListSlice.actions.addItemToItemList(createServiceItem({ name: "Later row", _id: "later" })));
+    const latest = env.store.getState().undoable.present.itemList.list;
+    env.store.dispatch({ type: "@@redux-undo/UNDO" });
+    const undone = env.store.getState().undoable.present.itemList;
+    expect(undone.remoteConflicts["outline-a"]).toBeDefined();
+    expect(undone.remoteConflicts["outline-a"].localItems).toEqual(undone.list);
+    expect(undone.syncBaseline[0].name).toBe("Remote");
+    env.store.dispatch({ type: "@@redux-undo/REDO" });
+    const redone = env.store.getState().undoable.present.itemList;
+    expect(redone.list).toEqual(latest);
+    expect(redone.remoteConflicts["outline-a"].localItems).toEqual(latest);
+    expect(env.db.put).not.toHaveBeenCalled();
+    jest.useRealTimers();
+  });
+
+  it("clears all retained databases, pending revision choices and undo history on full account RESET", () => {
+    const env = loadStoreWithItemListPersistence();
+    const firstDb = env.db;
+    const secondDb = { name: "another-church", get: jest.fn(), put: jest.fn() };
+    const row = createServiceItem({ name: "Private draft", listId: "l1", _id: "song-1" });
+    for (const database of [firstDb, secondDb]) {
+      env.setGlobalDb(database);
+      env.store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+      hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+      env.store.dispatch(env.itemListSlice.actions.updateItemList([row]));
+      env.store.dispatch(env.itemListSlice.actions.recordOutlineConflict({
+        outlineId: "outline-a", baselineItems: [], localItems: [row], remoteItems: [{ ...row, name: "Saved" }],
+        revisionConflict: { graph: { winningRevision: "2-a", conflictRevisions: ["2-b"], histories: {} }, versions: [] },
+      }));
+      env.store.dispatch(env.itemListSlice.actions.resolveOutlineConflict({ outlineId: "outline-a", choice: "keep-local" }));
+    }
+    expect(env.store.getState().undoable.present.itemList.pendingRevisionResolutions["outline-a"]).toBeDefined();
+    env.store.dispatch({ type: "RESET" });
+    expect(env.store.getState().undoable.past).toEqual([]);
+    expect(env.store.getState().undoable.future).toEqual([]);
+    expect(env.store.getState().undoable.present.itemList.remoteConflicts).toEqual({});
+    expect(env.store.getState().undoable.present.itemList.pendingRevisionResolutions).toEqual({});
+    for (const database of [secondDb, firstDb]) {
+      env.setGlobalDb(database);
+      // Simulate the next authenticated account reopening the same databases.
+      env.store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+      hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+      env.store.dispatch({ type: "@@redux-undo/UNDO" });
+      env.store.dispatch({ type: "@@redux-undo/REDO" });
+      expect(env.store.getState().undoable.present.itemList.remoteConflicts).toEqual({});
+      expect(env.store.getState().undoable.present.itemList.pendingRevisionResolutions).toEqual({});
+      expect(env.store.getState().undoable.present.itemList.list[0].name).toBe("Current");
+    }
+    expect(env.db.put).not.toHaveBeenCalled();
+    expect(secondDb.put).not.toHaveBeenCalled();
+  });
+
+  it.each(["read", "write"])("ignores a late outline %s after logout and sign-in with the same database handle", async (stage) => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    const row = createServiceItem({ name: "Old account draft", listId: "l1", _id: "song-1" });
+    let finish!: (value: unknown) => void;
+    const pending = new Promise((resolve) => { finish = resolve; });
+    env.db.get.mockResolvedValue({ _id: "outline-a", _rev: "1-base", items: [createServiceItem({ name: "Current", listId: "l1", _id: "song-1" })], overlays: [] });
+    if (stage === "read") env.db.get.mockReturnValueOnce(pending);
+    else env.db.put.mockReturnValueOnce(pending);
+    env.store.dispatch(env.itemListSlice.actions.updateItemList([row]));
+    await jest.advanceTimersByTimeAsync(1500);
+    env.store.dispatch({ type: "RESET" });
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    finish(stage === "read" ? { _id: "outline-a", _rev: "2-remote", items: [{ ...row, name: "Old account remote" }] } : { rev: "2-saved" });
+    await flushListenerEffects();
+    env.store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    expect(env.store.getState().undoable.present.itemList.remoteConflicts).toEqual({});
+    expect(env.store.getState().undoable.present.itemList.list[0].name).toBe("Current");
+    expect(env.postMessage).not.toHaveBeenCalled();
+    expect(env.db.put).toHaveBeenCalledTimes(stage === "read" ? 0 : 1);
+    jest.useRealTimers();
+  });
+
+  it("retains newer edits when an earlier conflict resolution is acknowledged after controller teardown", async () => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    const remote = createServiceItem({ name: "Remote", listId: "l1", _id: "song-1" });
+    env.db.get.mockResolvedValue({ _id: "outline-a", _rev: "2-remote", items: [remote] });
+    let finish!: (value: { rev: string }) => void;
+    env.db.put.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    env.store.dispatch(env.itemListSlice.actions.updateItemList([{ ...remote, name: "Local" }]));
+    env.store.dispatch(env.itemListSlice.actions.updateItemListFromRemote({ outlineId: "outline-a", items: [remote] }));
+    env.store.dispatch(env.itemListSlice.actions.resolveOutlineConflict({ outlineId: "outline-a", choice: "keep-local" }));
+    await jest.advanceTimersByTimeAsync(1500);
+    expect(env.db.put).toHaveBeenCalledTimes(1);
+    env.store.dispatch(env.itemListSlice.actions.addItemToItemList(createServiceItem({ name: "After submission", _id: "later" })));
+    const latest = env.store.getState().undoable.present.itemList.list;
+    env.store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+    finish({ rev: "3-saved" });
+    await flushListenerEffects();
+    expect(env.store.getState().undoable.present.itemList.loadedOutlineId).toBeUndefined();
+    expect(env.store.getState().undoable.present.itemList.remoteConflicts["outline-a"].localItems).toEqual(latest);
+    env.store.dispatch(env.itemListsSlice.actions.initiateItemLists([{ _id: "outline-a", name: "Sunday" }]));
+    env.store.dispatch(env.itemListSlice.actions.initiateItemList({ outlineId: "outline-a", items: env.db.put.mock.calls[0][0].items }));
+    expect(env.store.getState().undoable.present.itemList.list.map((item: { name: string }) => item.name)).toEqual(["Local", "After submission"]);
+    jest.useRealTimers();
+  });
+
+  it("does not replace a newer remote conflict with an error from an older in-flight read", async () => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    const row = createServiceItem({ name: "Local", listId: "l1", _id: "song-1" });
+    let finish!: (value: unknown) => void;
+    env.db.get.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    env.store.dispatch(env.itemListSlice.actions.updateItemList([row]));
+    await jest.advanceTimersByTimeAsync(1500);
+    env.store.dispatch(env.itemListSlice.actions.updateItemListFromRemote({ outlineId: "outline-a", items: [{ ...row, name: "Newest remote" }] }));
+    env.store.dispatch(env.itemListSlice.actions.addItemToItemList(createServiceItem({ name: "Later", _id: "later" })));
+    finish({ _id: "outline-a", _rev: "2-older", items: [{ ...row, name: "Older remote" }] });
+    await flushListenerEffects();
+    const conflict = env.store.getState().undoable.present.itemList.remoteConflicts["outline-a"];
+    expect(conflict.remoteItems[0].name).toBe("Newest remote");
+    expect(conflict.localItems.map((item: { name: string }) => item.name)).toEqual(["Local", "Later"]);
+    expect(env.db.put).not.toHaveBeenCalled();
+    jest.useRealTimers();
+  });
+
+  it("restores retained drafts when a database handle is recreated for the same church", () => {
+    const env = loadStoreWithItemListPersistence();
+    Object.assign(env.db, { name: "church-a-content" });
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    const row = createServiceItem({ name: "Local A", listId: "l1", _id: "song-1" });
+    env.store.dispatch(env.itemListSlice.actions.updateItemList([row]));
+    env.store.dispatch(env.itemListSlice.actions.updateItemListFromRemote({ outlineId: "outline-a", items: [{ ...row, name: "Remote A" }] }));
+    env.setGlobalDb({ name: "church-a-content", get: jest.fn(), put: jest.fn() });
+    env.store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    expect(env.store.getState().undoable.present.itemList.list).toEqual([row]);
+  });
+
+  it.each(["debounce", "write"])("saves the reviewed rows before edits during %s and then autosaves the newer draft", async (stage) => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    const base = [createServiceItem({ _id: "welcome", listId: "a", name: "Welcome" })];
+    const first = [{ ...base[0], name: "Welcome A" }];
+    const second = [{ ...base[0], name: "Welcome B" }, createServiceItem({ _id: "closing", listId: "c", name: "Closing Song" })];
+    const later = createServiceItem({ _id: "later", listId: "later", name: "Added while saving" });
+    const common = { _id: "outline-a", name: "Sunday", overlays: ["overlay"] };
+    let current: Record<string, any> = { ...common, items: first, _rev: "2-first", _revisions: { start: 2, ids: ["first", "base"] } };
+    let conflicts = ["2-second"];
+    let acknowledge!: () => void;
+    const acknowledgement = new Promise<void>((resolve) => { acknowledge = resolve; });
+    const other = { ...common, items: second, _rev: "2-second", _revisions: { start: 2, ids: ["second", "base"] } };
+    env.db.get.mockImplementation(async (_id: string, options?: { rev?: string }) => {
+      if (options?.rev === "1-base") return { ...common, items: base, _rev: "1-base" };
+      if (options?.rev === "2-second") return other;
+      return { ...current, _conflicts: conflicts };
+    });
+    env.db.put.mockImplementation(async (doc: Record<string, any>) => {
+      current = { ...doc, _rev: "3-saved", _revisions: { start: 3, ids: ["saved", "first", "base"] } };
+      if (stage === "write" && env.db.put.mock.calls.length === 1) await acknowledgement;
+      return { rev: current._rev };
+    });
+    const remove = jest.fn(async () => { conflicts = []; });
+    Object.assign(env.db, { remove });
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    env.store.dispatch(env.itemListSlice.actions.initiateItemList({ outlineId: "outline-a", items: first }));
+    const review = { baselineItems: base, localItems: first, remoteItems: second };
+    env.store.dispatch(env.itemListSlice.actions.recordOutlineConflict({
+      outlineId: "outline-a", baselineItems: first, localItems: first, remoteItems: first,
+      revisionConflict: { graph: { winningRevision: "2-first", conflictRevisions: ["2-second"], histories: { "2-first": ["2-first", "1-base"], "2-second": ["2-second", "1-base"] } },
+        versions: [{ revision: "2-first", items: first }, { revision: "2-second", items: second }], itemReview: review,
+        remoteDocument: { ...common, _rev: "2-first", items: [first[0], second[1]] },
+      },
+    }));
+    env.store.dispatch(env.itemListSlice.actions.resolveOutlineConflict({
+      outlineId: "outline-a", choice: "keep-local", draftItems: first, reviewedItems: second,
+      revisionSelection: { kind: "rows", review, choices: { '["a","name"]': "remote" } },
+      reviewedRevisionConflict: env.store.getState().undoable.present.itemList.remoteConflicts["outline-a"].revisionConflict,
+    }));
+    // Editing during debounce must not change the previewed commit or prevent
+    // the subsequent ordinary autosave of newer work.
+    if (stage === "write") await jest.advanceTimersByTimeAsync(1500);
+    env.store.dispatch(env.itemListSlice.actions.updateItemList([...second, later]));
+    if (stage === "debounce") await jest.advanceTimersByTimeAsync(1500);
+    else acknowledge();
+    await flushListenerEffects();
+    expect(env.db.put.mock.calls[0][0].items).toEqual(second);
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect({ stage: "after resolution", items: env.store.getState().undoable.present.itemList.list }).toEqual({ stage: "after resolution", items: [...second, later] });
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect({ stage: "after autosave", items: current.items, pending: env.store.getState().undoable.present.itemList.hasPendingUpdate }).toEqual({ stage: "after autosave", items: [...second, later], pending: false });
+    expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
+    expect(env.store.getState().undoable.present.itemList.remoteConflicts).toEqual({});
+    jest.useRealTimers();
+  });
+
+  it("allows registry Retry save after the creating controller session has unmounted", async () => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    let current = { _id: "ItemLists", _rev: "1-base", itemLists: [{ _id: "outline-a", name: "A" }], activeList: { _id: "outline-a", name: "A" } };
+    env.db.get.mockImplementation(async () => ({ ...current }));
+    env.db.put.mockRejectedValueOnce(new Error("offline")).mockImplementation(async (doc: typeof current) => {
+      current = { ...doc, _rev: "2-saved" };
+      return { rev: current._rev };
+    });
+    env.store.dispatch(env.itemListsSlice.actions.initiateItemLists(current.itemLists));
+    env.store.dispatch(env.itemListsSlice.actions.updateItemLists([{ _id: "outline-a", name: "Unsaved rename" }]));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(env.store.getState().undoable.present.itemLists.registrySave.status).toBe("error");
+    env.store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+    env.store.dispatch(env.itemListsSlice.actions.initiateItemLists(current.itemLists));
+    await flushListenerEffects();
+    expect(env.store.getState().undoable.present.itemLists.registrySave.status).toBe("error");
+    expect(env.store.getState().undoable.present.itemLists.currentLists[0].name).toBe("Unsaved rename");
+    expect(env.store.getState().undoable.present.itemLists.selectedList?.name).toBe("Unsaved rename");
+    env.store.dispatch(env.itemListsSlice.actions.retryRegistrySave());
+    await flushListenerEffects();
+    expect(current.itemLists[0].name).toBe("Unsaved rename");
+    expect(env.store.getState().undoable.present.itemLists.currentLists[0].name).toBe("Unsaved rename");
+    expect(env.store.getState().undoable.present.itemLists.registrySave.status).toBe("idle");
+    jest.useRealTimers();
+  });
+
+  it("completes a delayed registry write only in its original database after a church switch", async () => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    let finish!: (value: { rev: string }) => void;
+    const gate = new Promise<{ rev: string }>((resolve) => { finish = resolve; });
+    env.db.get.mockResolvedValue({ _id: "ItemLists", _rev: "1-base", itemLists: [{ _id: "outline-a", name: "A" }], activeList: { _id: "outline-a", name: "A" } });
+    env.db.put.mockReturnValueOnce(gate);
+    env.store.dispatch(env.itemListsSlice.actions.initiateItemLists([{ _id: "outline-a", name: "A" }]));
+    env.store.dispatch(env.itemListsSlice.actions.updateItemLists([{ _id: "outline-a", name: "Church A" }]));
+    await jest.advanceTimersByTimeAsync(1500);
+    expect(env.db.put).toHaveBeenCalledTimes(1);
+    const otherDb = { get: jest.fn(), put: jest.fn() };
+    env.setGlobalDb(otherDb);
+    env.store.dispatch({ type: "RESET" });
+    env.store.dispatch(env.itemListsSlice.actions.initiateItemLists([{ _id: "outline-a", name: "Church B" }]));
+    finish({ rev: "2-saved" });
+    await flushListenerEffects();
+    expect(otherDb.get).not.toHaveBeenCalled();
+    expect(otherDb.put).not.toHaveBeenCalled();
+    expect(env.store.getState().undoable.present.itemLists.currentLists[0].name).toBe("Church B");
+    expect(env.postMessage).not.toHaveBeenCalled();
+    jest.useRealTimers();
+  });
 
   it("persists the post-debounce outline list onto the latest document rev", async () => {
     jest.useFakeTimers();
@@ -5275,7 +6223,7 @@ describe("item list outline persistence", () => {
     logError.mockRestore();
   });
 
-  it("discards a delayed outline save after a remote hydrate during debounce", async () => {
+  it("preserves both drafts and pauses autosave after conflicting remote content arrives during debounce", async () => {
     jest.useFakeTimers();
     const { store, itemListSlice, itemListsSlice, db } =
       loadStoreWithItemListPersistence();
@@ -5301,11 +6249,138 @@ describe("item list outline persistence", () => {
 
     expect(db.put).not.toHaveBeenCalled();
     expect(store.getState().undoable.present.itemList.list[0].name).toBe(
-      "Remote Current",
+      "Stale Local",
     );
-    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(
-      false,
+    expect(store.getState().undoable.present.itemList.remoteConflicts["outline-a"]).toEqual(
+      expect.objectContaining({
+        localItems: [expect.objectContaining({ name: "Stale Local" })],
+        remoteItems: [expect.objectContaining({ name: "Remote Current" })],
+      }),
     );
+  });
+
+  it("merges a remote row edit into local work that is still in autosave debounce", async () => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, db } =
+      loadStoreWithItemListPersistence();
+    const baseline = [
+      createServiceItem({ name: "A", _id: "song-a", listId: "row-a" }),
+      createServiceItem({ name: "B", _id: "song-b", listId: "row-b" }),
+    ];
+    const remote = [baseline[0], { ...baseline[1], name: "B remote" }];
+    db.get.mockResolvedValue({
+      _id: "outline-a",
+      _rev: "2-remote",
+      items: remote,
+      overlays: [],
+    });
+    store.dispatch(
+      itemListsSlice.actions.initiateItemLists([
+        { _id: "outline-a", name: "Sunday" },
+      ]),
+    );
+    store.dispatch(itemListSlice.actions.initiateItemList({
+      outlineId: "outline-a",
+      items: baseline,
+    }));
+    store.dispatch(itemListSlice.actions.updateItemList([
+      { ...baseline[0], name: "A local" },
+      baseline[1],
+    ]));
+    store.dispatch(itemListSlice.actions.updateItemListFromRemote({
+      outlineId: "outline-a",
+      items: remote,
+    }));
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(store.getState().undoable.present.itemList.list).toEqual([
+      expect.objectContaining({ listId: "row-a", name: "A local" }),
+      expect.objectContaining({ listId: "row-b", name: "B remote" }),
+    ]);
+    expect(db.put).toHaveBeenCalledWith(expect.objectContaining({
+      _id: "outline-a",
+      items: expect.arrayContaining([
+        expect.objectContaining({ name: "A local" }),
+        expect.objectContaining({ name: "B remote" }),
+      ]),
+    }));
+    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
+  });
+
+  it("keeps merged remote rows when a newer local draft arrives before save acknowledgment", async () => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, db } =
+      loadStoreWithItemListPersistence();
+    const baseline = [
+      createServiceItem({ name: "A", _id: "song-a", listId: "row-a" }),
+      createServiceItem({ name: "B", _id: "song-b", listId: "row-b" }),
+    ];
+    let currentDoc: Record<string, any> = {
+      _id: "outline-a",
+      _rev: "2-remote",
+      items: [baseline[0], { ...baseline[1], name: "B remote" }],
+      overlays: [],
+    };
+    let submittedDoc: Record<string, any> | undefined;
+    let finishFirstPut!: (result: { ok: boolean; rev: string }) => void;
+    db.get.mockImplementation(async () => ({ ...currentDoc }));
+    db.put.mockImplementation(async (document: Record<string, any>) => {
+      if (!submittedDoc) {
+        submittedDoc = { ...document };
+        return new Promise((resolve) => {
+          finishFirstPut = resolve;
+        });
+      }
+      currentDoc = { ...document, _rev: "4-newer-draft" };
+      return { ok: true, rev: "4-newer-draft" };
+    });
+
+    store.dispatch(itemListsSlice.actions.initiateItemLists([
+      { _id: "outline-a", name: "Sunday" },
+    ]));
+    store.dispatch(itemListSlice.actions.initiateItemList({
+      outlineId: "outline-a",
+      items: baseline,
+    }));
+    const submittedItems = [
+      { ...baseline[0], name: "A saved" },
+      baseline[1],
+    ];
+    store.dispatch(itemListSlice.actions.updateItemList(submittedItems));
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(submittedDoc?.items).toEqual([
+      expect.objectContaining({ name: "A saved", listId: "row-a" }),
+      expect.objectContaining({ name: "B remote", listId: "row-b" }),
+    ]);
+
+    store.dispatch(itemListSlice.actions.updateItemList([
+      { ...submittedItems[0], name: "A newer draft" },
+      baseline[1],
+    ]));
+    currentDoc = { ...submittedDoc!, _rev: "3-first-save" };
+    finishFirstPut({ ok: true, rev: "3-first-save" });
+    await flushListenerEffects();
+
+    expect(store.getState().undoable.present.itemList.list).toEqual([
+      expect.objectContaining({ name: "A newer draft", listId: "row-a" }),
+      expect.objectContaining({ name: "B remote", listId: "row-b" }),
+    ]);
+    expect(store.getState().undoable.present.itemList.syncBaseline).toEqual(
+      submittedDoc?.items,
+    );
+    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(true);
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(currentDoc.items).toEqual([
+      expect.objectContaining({ name: "A newer draft", listId: "row-a" }),
+      expect.objectContaining({ name: "B remote", listId: "row-b" }),
+    ]);
+    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
   });
 
   it("still persists after selection changes during debounce", async () => {
@@ -5340,6 +6415,104 @@ describe("item list outline persistence", () => {
         ]),
       }),
     );
+  });
+
+  it("rebases a debounced local registry rename over independent replicated changes", async () => {
+    jest.useFakeTimers();
+    const { store, itemListsSlice, db, postMessage } =
+      loadStoreWithItemListPersistence();
+    let current: Record<string, any> = {
+      _id: "ItemLists",
+      _rev: "1-base",
+      itemLists: [
+        { _id: "outline-a", name: "A" },
+        { _id: "outline-b", name: "B" },
+      ],
+      activeList: { _id: "outline-a", name: "A" },
+      selectedIdByScope: { presentation: "outline-a", aux: "outline-b" },
+    };
+    db.get.mockImplementation(async (id: string) => {
+      if (id !== "ItemLists") throw new Error(`Unexpected document ${id}`);
+      return { ...current };
+    });
+    db.put.mockImplementation(async (document: Record<string, any>) => {
+      if (document._rev !== current._rev) {
+        throw Object.assign(new Error("conflict"), { status: 409 });
+      }
+      current = { ...document, _rev: "2-saved" };
+      return { ok: true, rev: "2-saved" };
+    });
+    store.dispatch(itemListsSlice.actions.initiateItemLists({
+      itemLists: current.itemLists,
+    }));
+    store.dispatch(itemListsSlice.actions.updateItemLists([
+      { _id: "outline-a", name: "A local rename" },
+      current.itemLists[1],
+    ]));
+    current = {
+      ...current,
+      _rev: "2-remote",
+      itemLists: [
+        current.itemLists[0],
+        { _id: "outline-b", name: "B remote rename" },
+        { _id: "outline-c", name: "Remote addition", controllerScope: "aux" },
+      ],
+      activeList: { _id: "outline-b", name: "B remote rename" },
+      selectedIdByScope: {
+        presentation: "outline-b",
+        aux: "outline-c",
+        anotherController: "outline-z",
+      },
+    };
+    store.dispatch(itemListsSlice.actions.updateItemListsFromRemote({
+      itemLists: current.itemLists,
+      activeListId: current.activeList._id,
+    }));
+
+    expect(store.getState().undoable.present.itemLists.currentLists).toEqual([
+      { _id: "outline-a", name: "A local rename" },
+      { _id: "outline-b", name: "B remote rename" },
+      { _id: "outline-c", name: "Remote addition", controllerScope: "aux" },
+    ]);
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.get).toHaveBeenCalledWith("ItemLists");
+    expect(db.put).toHaveBeenCalledTimes(1);
+    expect(current.itemLists).toEqual([
+      { _id: "outline-a", name: "A local rename" },
+      { _id: "outline-b", name: "B remote rename" },
+      { _id: "outline-c", name: "Remote addition", controllerScope: "aux" },
+    ]);
+    expect(current.selectedIdByScope).toEqual({ presentation: "outline-b", aux: "outline-c", anotherController: "outline-z" });
+    expect(current.activeList._id).toBe("outline-b");
+    expect(postMessage).toHaveBeenCalled();
+  });
+
+  it("keeps outline selection local and does not save selection-only changes", async () => {
+    jest.useFakeTimers();
+    const { store, itemListsSlice, db } =
+      loadStoreWithItemListPersistence();
+    const current = [{ _id: "outline-a", name: "A" }, { _id: "outline-b", name: "B" }];
+    store.dispatch(itemListsSlice.actions.initiateItemLists([
+      ...current,
+    ]));
+    store.dispatch(itemListsSlice.actions.selectItemList("outline-b"));
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.get).not.toHaveBeenCalled();
+    expect(db.put).not.toHaveBeenCalled();
+    expect(store.getState().undoable.present.itemLists.selectedList?._id).toBe("outline-b");
+    expect(store.getState().undoable.present.itemLists.activeList?._id).toBe("outline-a");
+
+    store.dispatch(itemListsSlice.actions.updateItemListsFromRemote({
+      itemLists: current,
+      activeListId: "outline-a",
+    }));
+    expect(store.getState().undoable.present.itemLists.selectedList?._id).toBe("outline-b");
+    jest.useRealTimers();
   });
 });
 

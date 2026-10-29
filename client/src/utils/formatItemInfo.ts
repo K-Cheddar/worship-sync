@@ -29,7 +29,7 @@ export const formatItemInfo = (item: DBItem, cloud: Cloudinary) => {
 
   if (item.type === "song") {
     updatedArrangements = item.arrangements.map((arrangement, arrIndex) => {
-      let { formattedLyrics, slides, songOrder } = { ...arrangement };
+      let { formattedLyrics, slides, songOrder, monitorLayout } = { ...arrangement };
 
       formattedLyrics = formattedLyrics.map((el) => {
         return { ...el, id: el.id || generateRandomId() };
@@ -75,6 +75,7 @@ export const formatItemInfo = (item: DBItem, cloud: Cloudinary) => {
         formattedLyrics,
         songOrder: songOrderWIds,
         slides,
+        monitorLayout,
       };
     });
     slides = updatedArrangements[item.selectedArrangement].slides;
@@ -100,7 +101,7 @@ export const formatItemInfo = (item: DBItem, cloud: Cloudinary) => {
   }
 
   _item.arrangements = updatedArrangements || [];
-  _item.slides = slides || [];
+  _item.slides = item.type === "song" ? [] : (slides || []);
 
   // Ensure free form items have formattedSections
   if (item.type === "free" && (!item.formattedSections || item.formattedSections.length === 0)) {

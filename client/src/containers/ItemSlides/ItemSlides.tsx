@@ -100,6 +100,7 @@ import {
 } from "../../utils/displaySettings";
 import {
   ItemSlideType,
+  MonitorLayout,
   Presentation as PresentationType,
   ShouldSendTo,
 } from "../../types";
@@ -272,6 +273,7 @@ const ItemSlidesContent = () => {
     type,
     name,
     slides: __slides,
+    monitorLayout: itemMonitorLayout,
     isLoading,
     _id,
     listId,
@@ -303,9 +305,10 @@ const ItemSlidesContent = () => {
   const arrangement = arrangements[selectedArrangement];
 
   const slides = useMemo(() => {
-    const _slides = arrangement?.slides || __slides || [];
-    return isLoading ? [] : _slides;
-  }, [isLoading, __slides, arrangement?.slides]);
+    const activeSlides =
+      type === "song" ? (arrangement?.slides ?? []) : (__slides ?? []);
+    return isLoading ? [] : activeSlides;
+  }, [isLoading, type, __slides, arrangement?.slides]);
   const itemIdentity = `${_id}\u0000${listId ?? ""}`;
 
   const renameFreeSection = useCallback(
@@ -459,14 +462,21 @@ const ItemSlidesContent = () => {
     controllerProfile,
   );
 
-  const shouldPrepareFreeMonitorSlides =
-    type === "free" && sendsToMonitor && monitorShowNextSlide;
-
   const monitorReadySlides = useMemo(() => {
-    return shouldPrepareFreeMonitorSlides
-      ? ensureSlidesHaveMonitorBandFormatting(slides)
+    return sendsToMonitor && monitorShowNextSlide
+      ? ensureSlidesHaveMonitorBandFormatting(
+          slides,
+          type === "song" ? arrangement?.monitorLayout : itemMonitorLayout,
+        )
       : slides;
-  }, [slides, shouldPrepareFreeMonitorSlides]);
+  }, [
+    slides,
+    sendsToMonitor,
+    monitorShowNextSlide,
+    type,
+    arrangement?.monitorLayout,
+    itemMonitorLayout,
+  ]);
 
   /**
    * Slide ids currently on outputs for this item (last pushed payload per
@@ -818,6 +828,7 @@ const ItemSlidesContent = () => {
           listId: string;
           timerId?: string;
           shouldSendTo?: ShouldSendTo;
+          monitorLayout?: MonitorLayout;
         };
         presentationOnly?: boolean;
       },
@@ -1117,8 +1128,14 @@ const ItemSlidesContent = () => {
         else if (index === prevSelected - 1) transitionDirection = "prev";
         else transitionDirection = "jump";
         const presentationMonitorSlides = options?.presentation
-          ? presentationType === "free" && monitorShowNextSlide
-            ? ensureSlidesHaveMonitorBandFormatting(presentationSlides)
+          ? (presentationType === "song" || presentationType === "bible" || presentationType === "free") && monitorShowNextSlide
+            ? ensureSlidesHaveMonitorBandFormatting(
+                presentationSlides,
+                options.presentation.monitorLayout ??
+                  (presentationType === "song"
+                    ? arrangement?.monitorLayout
+                    : itemMonitorLayout),
+              )
             : presentationSlides
           : monitorReadySlides;
         const monitorSlide = presentationMonitorSlides[index] ?? slide;
@@ -1131,15 +1148,18 @@ const ItemSlidesContent = () => {
           ? (presentationMonitorSlides[index + 1] ?? presentationSlides[index + 1])
           : null;
         const nextSlideForMonitor = nextSlideSlide
-          ? {
-              ...nextSlideSlide,
-              boxes:
-                nextSlideSlide.monitorNextBandBoxes ?? nextSlideSlide.boxes,
-            }
+          ? (() => {
+              const { monitorCurrentBandBoxes: _current, monitorNextBandBoxes: _next, ...slide } = nextSlideSlide;
+              return {
+                ...slide,
+                boxes: nextSlideSlide.monitorNextBandBoxes ?? nextSlideSlide.boxes,
+              };
+            })()
           : undefined;
         // Only use band-formatted boxes when using next-slide layout; single-slide uses DisplayBox at 1080p
+        const { monitorCurrentBandBoxes: _current, monitorNextBandBoxes: _next, ...slideWithoutLegacyBands } = monitorSlide;
         const slideForMonitor = {
-          ...monitorSlide,
+          ...slideWithoutLegacyBands,
           boxes:
             nextSlideForMonitor != null
               ? (monitorSlide.monitorCurrentBandBoxes ?? monitorSlide.boxes)
@@ -1188,6 +1208,8 @@ const ItemSlidesContent = () => {
       _id,
       listId,
       monitorReadySlides,
+      arrangement?.monitorLayout,
+      itemMonitorLayout,
       outputSlots,
       showToast,
     ],

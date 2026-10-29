@@ -3,7 +3,9 @@ import {
   updateItemList,
   addItemToItemList,
   removeItemsFromList,
+  resolveOutlineConflict,
   setActiveItemInList,
+  retryItemListLoad,
 } from "../../store/itemListSlice";
 import { useLocation, useNavigate } from "react-router-dom";
 import { DndContext, useDroppable, DragEndEvent, DragStartEvent, DragOverlay } from "@dnd-kit/core";
@@ -48,6 +50,8 @@ import NextServiceCountdownText from "../../components/NextServiceCountdownText/
 import type { ServiceTime } from "../../types";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
 import { usePresentationControllerMode } from "../../context/presentationControllerMode";
+import isEqual from "lodash/isEqual";
+import OutlineRevisionReview from "./OutlineRevisionReview";
 
 const EMPTY_SERVICE_TIMES: ServiceTime[] = [];
 
@@ -59,10 +63,36 @@ const ServiceItems = () => {
   const {
     list: serviceItems,
     isLoading,
+    loadError,
+    isRetrying,
+    isInitialized,
     initialItems,
     selectedItemListId,
     insertPointIndex,
+    pendingRevisionResolutions,
   } = useSelector((state) => state.undoable.present.itemList);
+  const loadedOutlineId = useSelector(
+    (state) => state.undoable.present.itemList.loadedOutlineId,
+  );
+  const remoteOutlineConflict = useSelector((state) => {
+    const itemList = state.undoable.present.itemList;
+    return itemList.loadedOutlineId
+      ? itemList.remoteConflicts?.[itemList.loadedOutlineId]
+      : undefined;
+  });
+  const hasDraftChangesSinceConflict = Boolean(
+    remoteOutlineConflict &&
+    !isEqual(
+      serviceItems,
+      remoteOutlineConflict.originalLocalItems ?? remoteOutlineConflict.localItems,
+    ),
+  );
+  let conflictMessage = "This outline has conflicting changes. Your draft is still open; choose which version to keep.";
+  if (remoteOutlineConflict?.resolutionChoice) {
+    conflictMessage = "Saving your choice. Your draft stays available until the save finishes.";
+  } else if (remoteOutlineConflict?.saveError) {
+    conflictMessage = "Could not save your choice. Your draft is still open. Try your choice again.";
+  }
   const mediaList = useSelector((state) => state.media.list);
   const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
   const serviceTimes = useSelector(
@@ -763,6 +793,55 @@ const ServiceItems = () => {
         <div className="min-h-0 border-b-2 border-white/25 bg-black/55 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)]">
           <Outlines servicePanel className="w-full min-w-0" />
         </div>
+        {remoteOutlineConflict && loadedOutlineId && loadedOutlineId === selectedList?._id && (
+          <div
+            className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-400/40 bg-amber-950/40 px-3 py-2 text-sm"
+            role="alert"
+          >
+            <p className="min-w-0 flex-1">
+              {isViewOnlyAccess(access) ? "This outline has conflicting saved versions. Ask a controller operator to review them." : conflictMessage}
+            </p>
+            <p className="w-full text-xs text-amber-100/90">
+              Unsaved drafts stay available during controller navigation. Signing out, closing or reloading the app clears them.
+            </p>
+            {remoteOutlineConflict.revisionConflict && !isViewOnlyAccess(access) && (
+              <OutlineRevisionReview conflict={remoteOutlineConflict} draft={serviceItems}
+                pendingItems={pendingRevisionResolutions?.[loadedOutlineId]?.items}
+                onSave={(items, selection) => dispatch(resolveOutlineConflict({
+                  outlineId: loadedOutlineId, choice: "keep-local", reviewedItems: items,
+                  draftItems: serviceItems, revisionSelection: selection,
+                  reviewedRevisionConflict: remoteOutlineConflict.revisionConflict,
+                }))} />
+            )}
+            {hasDraftChangesSinceConflict && !remoteOutlineConflict.revisionConflict && (
+              <p className="w-full text-xs text-amber-100/90">
+                Using the remote version will discard your edits made since this notice appeared.
+              </p>
+            )}
+            {!isViewOnlyAccess(access) && !remoteOutlineConflict.revisionConflict && <div className="flex shrink-0 gap-2">
+              <Button
+                variant="secondary"
+                disabled={Boolean(remoteOutlineConflict.resolutionChoice)}
+                onClick={() => dispatch(resolveOutlineConflict({
+                  outlineId: loadedOutlineId,
+                  choice: "keep-local",
+                }))}
+              >
+                Keep my draft
+              </Button>
+              <Button
+                variant="tertiary"
+                disabled={Boolean(remoteOutlineConflict.resolutionChoice)}
+                onClick={() => dispatch(resolveOutlineConflict({
+                  outlineId: loadedOutlineId,
+                  choice: "use-remote",
+                }))}
+              >
+                Use remote version
+              </Button>
+            </div>}
+          </div>
+        )}
         {visibleActionBarItemDefs.length > 0 && (
           <div className="border-b border-white/10 px-2 py-1 min-w-0">
             <ActionBar items={visibleActionBarItemDefs} overflowMenuClassName="min-w-48" />
@@ -813,7 +892,15 @@ const ServiceItems = () => {
             </form>
           </FloatingWindow>
         ) : null}
-        {!isLoading && serviceItems.length === 0 && (
+        {!isLoading && (loadError || isRetrying) && (
+          <div className="flex items-center justify-between gap-2 text-sm p-3 text-amber-100" role="alert">
+            <p>{isRetrying ? "Trying again…" : loadError}</p>
+            <Button variant="secondary" disabled={isRetrying} onClick={() => dispatch(retryItemListLoad())}>
+              Try again
+            </Button>
+          </div>
+        )}
+        {!isLoading && !loadError && serviceItems.length === 0 && (
           <p className="text-sm p-2">
             {!isViewOnlyAccess(access)
               ? "This outline is empty. Create a new item or add an existing one using the buttons above."
@@ -822,7 +909,7 @@ const ServiceItems = () => {
         )}
         {isLoading ? (
           <ServiceOutlineSkeleton />
-        ) : (
+        ) : loadError && !(isInitialized && loadedOutlineId === selectedList?._id) ? null : (
           <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
             <ul
               ref={setNodeRef}

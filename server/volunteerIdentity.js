@@ -8,6 +8,8 @@ const isFirestoreTransactionAborted = (error) => {
   return code === "10" || code === "aborted";
 };
 
+const MAX_VOLUNTEER_LINK_TRANSACTION_ATTEMPTS = 3;
+
 export const volunteerIdentityClaimId = (churchId, userId) =>
   `volunteer_identity_${createHash("sha256")
     .update(`${String(churchId || "").trim()}\u0000${String(userId || "").trim()}`)
@@ -276,23 +278,36 @@ export const createVolunteerIdentityOperations = ({
   const linkRosterMember = async (args) => {
     const db = requireFirestore();
     if (db) {
-      try {
-        return await db.runTransaction(async (transaction) => {
-          const plan = await prepareRosterMemberLink({
-            ...args,
-            db,
-            transaction,
+      for (
+        let attempt = 1;
+        attempt <= MAX_VOLUNTEER_LINK_TRANSACTION_ATTEMPTS;
+        attempt += 1
+      ) {
+        try {
+          return await db.runTransaction(async (transaction) => {
+            const plan = await prepareRosterMemberLink({
+              ...args,
+              db,
+              transaction,
+            });
+            plan.applyToTransaction(transaction);
+            return plan;
           });
-          plan.applyToTransaction(transaction);
-          return plan;
-        });
-      } catch (transactionError) {
-        if (isFirestoreTransactionAborted(transactionError)) {
-          throw linkConflict(
-            "This account's roster link changed during the request. Try again.",
-          );
+        } catch (transactionError) {
+          if (!isFirestoreTransactionAborted(transactionError)) {
+            throw transactionError;
+          }
+          if (attempt === MAX_VOLUNTEER_LINK_TRANSACTION_ATTEMPTS) {
+            throw linkConflict(
+              "This account's roster link changed during the request. Try again.",
+            );
+          }
+          // Firestore retries conflicts within one runTransaction call. A
+          // removal and roster link may still exhaust those retries while
+          // committing their shared identity state, so start a fresh
+          // transaction and re-check membership before treating it as a
+          // competing link.
         }
-        throw transactionError;
       }
     }
 

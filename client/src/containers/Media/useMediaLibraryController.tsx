@@ -1,3 +1,4 @@
+import { getActiveItemSlides } from "../../utils/activeItemSlides";
 import { getActiveContentDatabaseOwner } from "../../store/deferredItemMutations";
 import { flushSync } from "react-dom";
 import { isControllerWorkspacePath } from "../../utils/controllerWorkspace";
@@ -355,10 +356,12 @@ export function useMediaLibraryController({
 
   const itemSlideContext = useMemo(() => {
     if (!isControllerWorkspacePath(location.pathname)) return undefined;
-    const arrangement = item.arrangements[item.selectedArrangement];
-    const slides = arrangement?.slides?.length
-      ? arrangement.slides
-      : item.slides;
+    const slides = getActiveItemSlides({
+      type: item.type,
+      arrangements: item.arrangements,
+      selectedArrangement: item.selectedArrangement,
+      slides: item.slides,
+    });
     return {
       itemType: item.type,
       slides,

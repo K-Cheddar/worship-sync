@@ -5,8 +5,10 @@ import type {
   ServiceItem,
   FormattedSection,
   ShouldSendTo,
+  MonitorLayout,
 } from "../types";
 import { getFormattedSections } from "./overflow";
+import { getMonitorLayoutFromLegacySlides } from "./activeItemSlides";
 
 export const OUTLINE_PREFETCH_WINDOW = 2;
 export const OUTLINE_SCROLL_SETTLE_MS = 120;
@@ -34,6 +36,7 @@ export type OutlineSlideSection = {
   isActive: boolean;
   formattedSections?: FormattedSection[];
   shouldSendTo?: ShouldSendTo;
+  monitorLayout?: MonitorLayout;
 };
 
 export type OutlineSlideSectionCacheEntry = {
@@ -48,6 +51,7 @@ export type OutlineSlideSectionCacheEntry = {
   resolvedSlides: ItemSlideType[];
   resolvedFormattedSections: FormattedSection[];
   resolvedShouldSendTo?: ShouldSendTo;
+  resolvedMonitorLayout?: MonitorLayout;
   section: OutlineSlideSection;
 };
 
@@ -93,8 +97,9 @@ type ActiveItemSlideSource = {
   name?: string;
   type?: string;
   slides?: ItemSlideType[];
-  arrangements?: { slides?: ItemSlideType[] }[];
+  arrangements?: { slides?: ItemSlideType[]; monitorLayout?: MonitorLayout }[];
   selectedArrangement?: number;
+  monitorLayout?: MonitorLayout;
   formattedSections?: FormattedSection[];
   shouldSendTo?: ShouldSendTo;
 };
@@ -129,11 +134,9 @@ const resolveSlidesFromDoc = (
   const type = source.type || fallbackType;
   if (type === "song") {
     const arrangementIndex = source.selectedArrangement ?? 0;
-    return (
-      source.arrangements?.[arrangementIndex]?.slides ??
-      source.slides ??
-      EMPTY_ITEM_SLIDES
-    );
+    const arrangementSlides = source.arrangements?.[arrangementIndex]?.slides;
+    if (arrangementSlides?.length) return arrangementSlides;
+    return source.slides ?? EMPTY_ITEM_SLIDES;
   }
   return source.slides ?? EMPTY_ITEM_SLIDES;
 };
@@ -182,6 +185,22 @@ export const buildOutlineSlideSections = (
     const resolvedShouldSendTo = isActive
       ? options.activeItem.shouldSendTo
       : doc?.shouldSendTo;
+    const sourceArrangement =
+      source?.type === "song"
+        ? source.arrangements?.[source.selectedArrangement ?? 0]
+        : undefined;
+    let legacyMonitorSlides: ItemSlideType[] = EMPTY_ITEM_SLIDES;
+    if (sourceArrangement?.slides?.length) {
+      legacyMonitorSlides = sourceArrangement.slides;
+    } else if (source?.type === "song") {
+      legacyMonitorSlides = source?.slides ?? EMPTY_ITEM_SLIDES;
+    }
+    const resolvedMonitorLayout =
+      source?.type === "song"
+        ? (sourceArrangement?.monitorLayout ??
+          getMonitorLayoutFromLegacySlides(legacyMonitorSlides))
+        : (source?.monitorLayout ??
+          getMonitorLayoutFromLegacySlides(source?.slides ?? []));
     const sourceListId =
       source && "listId" in source ? source.listId : undefined;
     const cached = options.sectionCache?.get(item.listId);
@@ -196,7 +215,8 @@ export const buildOutlineSlideSections = (
       cached.selectedArrangement === source?.selectedArrangement &&
       cached.resolvedSlides === resolvedSlides &&
       cached.resolvedFormattedSections === resolvedFormattedSections &&
-      cached.resolvedShouldSendTo === resolvedShouldSendTo
+      cached.resolvedShouldSendTo === resolvedShouldSendTo &&
+      cached.resolvedMonitorLayout === resolvedMonitorLayout
     ) {
       return cached.section;
     }
@@ -210,6 +230,7 @@ export const buildOutlineSlideSections = (
       isActive,
       formattedSections: resolvedFormattedSections,
       shouldSendTo: resolvedShouldSendTo,
+      monitorLayout: resolvedMonitorLayout,
     };
     options.sectionCache?.set(item.listId, {
       item,
@@ -223,6 +244,7 @@ export const buildOutlineSlideSections = (
       resolvedSlides,
       resolvedFormattedSections,
       resolvedShouldSendTo,
+      resolvedMonitorLayout,
       section,
     });
     return section;

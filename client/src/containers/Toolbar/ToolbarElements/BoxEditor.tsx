@@ -9,6 +9,7 @@ import RadioButton, {
   RadioGroup,
 } from "../../../components/RadioButton/RadioButton";
 import { updateBoxProperties } from "../../../utils/formatter";
+import { getActiveItemSlides } from "../../../utils/activeItemSlides";
 import {
   applyOwnedContentMutation,
   setItemFormatting,
@@ -146,7 +147,8 @@ const BoxEditor = ({
   const dispatch = useDispatch();
   const { showToast, removeToast } = useToast();
   const item = useSelector((state) => state.undoable.present.item);
-  const { selectedSlide, selectedBox, slides } = item;
+  const { selectedSlide, selectedBox } = item;
+  const slides = getActiveItemSlides(item);
   const owner = getItemMutationOwner(item);
 
   const boxes = useMemo(
@@ -193,7 +195,7 @@ const BoxEditor = ({
 
   const targetForItem = useCallback(
     (targetItem: ItemState, boxIndex: number, shouldApplyAll: boolean) => {
-      const targetSlide = targetItem.slides[targetItem.selectedSlide];
+      const targetSlide = getActiveItemSlides(targetItem)[targetItem.selectedSlide];
       const targetOwner = getItemMutationOwner(targetItem);
       if (!targetOwner || !targetSlide?.id) return null;
       const targetSectionNum = targetSlide.name.match(/Section (\d+)/)?.[1];

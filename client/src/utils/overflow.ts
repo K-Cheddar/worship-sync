@@ -12,8 +12,9 @@ import {
 } from "../types";
 import { getLetterFromIndex } from "./generalUtils";
 import {
-  addMonitorFormattedToSlide,
   addMonitorFormattedToSlides,
+  getMonitorLayoutForSlides,
+  stripMonitorBoxClones,
 } from "./monitorSlideFormatter";
 import { DEFAULT_FONT_PX, DEFAULT_TITLE_FONT_PX } from "../constants";
 import { getMaxLines, getNumLines } from "./textMeasurement";
@@ -44,6 +45,20 @@ const formatVerseRange = (verses: verseType[]): string => {
   return ranges.join(", ");
 };
 
+const matchesLyricPage = (slideName: string | undefined, name: string) =>
+  slideName === name || (slideName?.startsWith(name) &&
+    /^[a-z]+$/i.test(slideName.slice(name.length).replace(/\u200B/g, "")));
+
+const findSongSectionPages = (slides: ItemSlideType[], name: string, occurrence: number) => {
+  const groups: ItemSlideType[][] = [];
+  for (const old of slides) {
+    if (!matchesLyricPage(old.name, name)) continue;
+    if (!groups.length || old.boxes[1]?.slideIndex === 0) groups.push([]);
+    groups[groups.length - 1].push(old);
+  }
+  return groups[occurrence] ?? [];
+};
+
 type FormatSectionType = {
   text: string;
   type: SlideType;
@@ -53,6 +68,8 @@ type FormatSectionType = {
   fontSizePx: number;
   selectedBox: number;
   selectedSlide: ItemSlideType;
+  preserveIdentity?: boolean;
+  existingPages?: ItemSlideType[];
 };
 
 export const formatSection = ({
@@ -64,9 +81,11 @@ export const formatSection = ({
   fontSizePx,
   selectedBox,
   selectedSlide,
+  preserveIdentity = false,
+  existingPages,
 }: FormatSectionType): ItemSlideType[] => {
   const lines = text.split("\n");
-  const formattedSlides = [];
+  const formattedSlides: ItemSlideType[] = [];
   let currentBoxes = [];
 
   let maxLines = 0,
@@ -86,9 +105,10 @@ export const formatSection = ({
     else currentBoxes = slides[slides.length - 1].boxes || [];
 
     const currentBox = currentBoxes[1];
+    const pageFontSizePx = preserveIdentity ? currentBox.fontSize ?? fontSizePx : fontSizePx;
 
     ({ maxLines, lineHeight } = getMaxLines({
-      fontSizePx,
+      fontSizePx: pageFontSizePx,
       height: currentBox.height,
       isBold: currentBox.isBold,
       isItalic: currentBox.isItalic,
@@ -102,7 +122,7 @@ export const formatSection = ({
 
       const lineCount = getNumLines({
         text: lines[i + counter],
-        fontSizePx,
+        fontSizePx: pageFontSizePx,
         lineHeight,
         width: currentBox.width,
         isBold: currentBox.isBold,
@@ -128,8 +148,9 @@ export const formatSection = ({
     box.excludeFromOverflow = false;
 
     i += counter - 1;
-    formattedSlides.push(
-      createNewSlide({
+    const candidate: ItemSlideType | undefined = preserveIdentity ? (existingPages ?? slides)[formattedSlides.length] : undefined;
+    const previous: ItemSlideType | undefined = candidate && matchesLyricPage(candidate.name, name) ? candidate : undefined;
+    const generated: ItemSlideType = createNewSlide({
         type,
         name,
         boxes: currentBoxes.map((_box, index) => {
@@ -139,24 +160,31 @@ export const formatSection = ({
             return _box;
           }
         }),
-        fontSize: fontSizePx,
+        fontSize: pageFontSizePx,
         fontColor: selectedSlide.boxes[selectedBox].fontColor,
         slideIndex: formattedSlides.length,
         background: currentBoxes[0].background || undefined,
         isBold: selectedSlide.boxes[selectedBox].isBold,
         isItalic: selectedSlide.boxes[selectedBox].isItalic,
-        formattedTextDisplayInfo: selectedSlide.formattedTextDisplayInfo,
-      }),
-    );
+        formattedTextDisplayInfo: preserveIdentity ? slides[slidePosition]?.formattedTextDisplayInfo : selectedSlide.formattedTextDisplayInfo,
+      });
+    formattedSlides.push(preserveIdentity ? {
+      ...previous,
+      ...generated,
+      id: previous?.id ?? generated.id,
+      boxes: generated.boxes.map((box, index) => ({
+        ...box,
+        id: previous?.boxes[index]?.id ?? generateRandomId(),
+      })),
+    } : generated);
   }
 
-  return formattedSlides.map(addMonitorFormattedToSlide);
+  return stripMonitorBoxClones(formattedSlides);
 };
 
 /**
- * Matches {@link formatLyrics}: `formatSection` receives `newSlides` that already
- * includes the title slide (and prior sections). `slidePosition` starts at
- * `newSlides.length`, so the first verse slide uses `slides[1]`, not `slides[0]`.
+ * Match the section/page templates used by {@link formatLyrics}. For legacy
+ * unnamed templates, retain the title/prior-section positional offset.
  */
 export const getNewSlidesOffsetForSectionPreview = ({
   songOrder,
@@ -182,8 +210,12 @@ export const getNewSlidesOffsetForSectionPreview = ({
   const dummyNewSlides = (length: number) =>
     Array.from({ length }, () => ({} as ItemSlideType));
 
+  const occurrences = new Map<string, number>();
   for (let j = 0; j < sectionIndex; j++) {
     const name = songOrder[j].name;
+    const occurrence = occurrences.get(name) ?? 0;
+    occurrences.set(name, occurrence + 1);
+    const sectionSlides = findSongSectionPages(slides, name, occurrence);
     const lyrics =
       formattedLyrics.find((e) => e.name === name)?.words || "";
     const type = name.split(" ")[0] as SlideType;
@@ -191,8 +223,9 @@ export const getNewSlidesOffsetForSectionPreview = ({
       text: lyrics,
       type,
       name,
-      slides,
-      newSlides: dummyNewSlides(offset),
+      slides: sectionSlides.length ? sectionSlides : slides,
+      newSlides: sectionSlides.length ? [] : dummyNewSlides(offset),
+      preserveIdentity: sectionSlides.length > 0,
       fontSizePx,
       selectedSlide,
       selectedBox: 1,
@@ -251,13 +284,14 @@ export const getFormattedSections = (
 
 export const ensureSlidesHaveMonitorBandFormatting = (
   slides: ItemSlideType[],
+  layout?: ItemState["monitorLayout"],
 ): ItemSlideType[] => {
-  if (slides.length === 0) return slides;
+  if (slides.length === 0 || !layout) return slides;
 
   const slidesWithBandBox = slides.filter((slide) => Boolean(slide.boxes?.[1]));
   if (slidesWithBandBox.length === 0) return slides;
 
-  return addMonitorFormattedToSlides(slides);
+  return addMonitorFormattedToSlides(slides, layout);
 };
 
 export const formatFree = (item: ItemState) => {
@@ -293,7 +327,8 @@ export const formatFree = (item: ItemState) => {
     );
     return {
       ...item,
-      slides: ensureSlidesHaveMonitorBandFormatting(item.slides),
+      slides: stripMonitorBoxClones(item.slides),
+      monitorLayout: getMonitorLayoutForSlides(item.slides),
     };
   }
 
@@ -453,7 +488,8 @@ export const formatFree = (item: ItemState) => {
 
   return {
     ...item,
-    slides: ensureSlidesHaveMonitorBandFormatting(updatedSlides),
+    slides: stripMonitorBoxClones(updatedSlides),
+    monitorLayout: getMonitorLayoutForSlides(updatedSlides),
     formattedSections: updatedFormattedSections,
   };
 };
@@ -469,7 +505,7 @@ export const formatLyrics = (item: ItemState) => {
   const lastSlide = slides.length - 1;
   const lastBoxes = slides[lastSlide].boxes;
 
-  const newSlides = [
+  const newSlides = [slides[0]?.type === "Title" || slides[0]?.name === "Title" ? slides[0] :
     createNewSlide({
       type: "Title",
       name: "Title",
@@ -485,7 +521,14 @@ export const formatLyrics = (item: ItemState) => {
     ? (slide.boxes[1].fontSize ?? DEFAULT_FONT_PX)
     : DEFAULT_FONT_PX;
 
+  // Match section occurrences and page ordinals, never global array positions:
+  // overflow in Verse 1 must not borrow Chorus identities or box layouts.
+  const occurrences = new Map<string, number>();
   for (let i = 0; i < songOrder.length; ++i) {
+    const name = songOrder[i].name;
+    const occurrence = occurrences.get(name) ?? 0;
+    occurrences.set(name, occurrence + 1);
+    const sectionSlides = findSongSectionPages(slides, name, occurrence);
     const lyrics =
       formattedLyrics.find((e) => e.name === songOrder[i].name)?.words || "";
 
@@ -494,17 +537,19 @@ export const formatLyrics = (item: ItemState) => {
         text: lyrics,
         type: songOrder[i].name.split(" ")[0] as SlideType,
         name: songOrder[i].name,
-        slides,
-        newSlides,
+        slides: sectionSlides.length ? sectionSlides : [slide ?? slides[1] ?? slides[0]],
+        newSlides: [],
         fontSizePx,
         selectedSlide: slide,
         selectedBox: 1,
+        preserveIdentity: true,
+        existingPages: sectionSlides,
       }),
     );
   }
 
-  newSlides.push(createNewSlide({ type: "Blank", boxes: lastBoxes }));
-  return addMonitorFormattedToSlides(newSlides);
+  newSlides.push(slides[lastSlide]?.type === "Blank" || slides[lastSlide]?.name === "Blank" ? slides[lastSlide] : createNewSlide({ type: "Blank", boxes: lastBoxes }));
+  return stripMonitorBoxClones(newSlides);
 };
 
 export const formatSong = (_item: ItemState) => {
@@ -512,10 +557,15 @@ export const formatSong = (_item: ItemState) => {
     ..._item,
     arrangements: _item.arrangements
       ? _item.arrangements.map((el, i): Arrangment => {
-          if (i === _item.selectedArrangement) {
-            return { ...el, slides: formatLyrics(_item) };
-          }
-          return el;
+          const slides =
+            i === _item.selectedArrangement
+              ? formatLyrics(_item)
+              : stripMonitorBoxClones(el.slides ?? []);
+          const monitorLayout =
+            i === _item.selectedArrangement || !el.monitorLayout
+              ? getMonitorLayoutForSlides(slides)
+              : el.monitorLayout;
+          return { ...el, slides, monitorLayout };
         })
       : [],
   };
@@ -572,7 +622,9 @@ export const formatSong = (_item: ItemState) => {
     slides: updatedSlides,
   };
 
-  return { ...item, slides: updatedSlides };
+  return { ...item, slides: [], arrangements: item.arrangements.map((arrangement, index) =>
+    index === selectedArrangement ? { ...arrangement, slides: updatedSlides } : arrangement,
+  ) };
 };
 
 type formatBibleType = {
@@ -680,7 +732,8 @@ export const formatBible = ({
       }),
     );
 
-  _item.slides = addMonitorFormattedToSlides(newSlides);
+  _item.slides = stripMonitorBoxClones(newSlides);
+  _item.monitorLayout = getMonitorLayoutForSlides(newSlides);
 
   return {
     ..._item,

@@ -5,8 +5,10 @@ import { MemoryRouter } from "react-router-dom";
 import store from "../store/store";
 import ControllerInfoProvider, {
   canRetrySync413,
+  cancelSongV2CleanupMaintenance,
   ControllerInfoContext,
   nextSyncBatchSize,
+  scheduleSongV2CleanupMaintenance,
 } from "./controllerInfo";
 import { GlobalInfoContext } from "./globalInfo";
 import { createMockGlobalContext } from "../test/mocks";
@@ -110,6 +112,11 @@ describe("ControllerInfoProvider", () => {
         addEventListener: jest.fn(),
         removeEventListener: jest.fn(),
       })) as unknown as typeof BroadcastChannel;
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.useRealTimers();
   });
 
   it("hydrates and listens on the Services route before the remote session resolves", async () => {
@@ -351,6 +358,70 @@ describe("controller replication 413 batch policy", () => {
 
     expect(liveSyncHandles).toHaveLength(2);
     expect(liveSyncBatchSizes).toEqual([40, 40]);
+  });
+
+  it("cancels a scheduled church retry before teardown and keeps the next church independent", async () => {
+    jest.useFakeTimers();
+    jest.spyOn(console, "error").mockImplementation(() => {});
+    let startedOldCleanup!: () => void;
+    const oldCleanupStarted = new Promise<void>(resolve => { startedOldCleanup = resolve; });
+    const oldDb = {
+      name: "worship-sync-church-a",
+      allDocs: jest.fn(async () => {
+        startedOldCleanup();
+        throw new Error("temporary cleanup scan failure");
+      }),
+      destroy: jest.fn().mockResolvedValue(undefined),
+    } as unknown as PouchDB.Database;
+    scheduleSongV2CleanupMaintenance(oldDb, true);
+    await oldCleanupStarted;
+    for (let index = 0; index < 10; index += 1) await Promise.resolve();
+    expect(jest.getTimerCount()).toBe(1);
+
+    cancelSongV2CleanupMaintenance(oldDb);
+    await oldDb.destroy();
+    const oldDatabaseCalls = (oldDb.allDocs as jest.Mock).mock.calls.length;
+    await jest.advanceTimersByTimeAsync(300_000);
+    expect(oldDb.destroy).toHaveBeenCalledTimes(1);
+    expect(oldDb.allDocs).toHaveBeenCalledTimes(oldDatabaseCalls);
+
+    const newDb = {
+      name: "worship-sync-church-b",
+      allDocs: jest.fn().mockResolvedValue({ rows: [] }),
+      destroy: jest.fn().mockResolvedValue(undefined),
+    } as unknown as PouchDB.Database;
+    scheduleSongV2CleanupMaintenance(newDb, true);
+    for (let index = 0; index < 10; index += 1) await Promise.resolve();
+    expect(newDb.allDocs).toHaveBeenCalledTimes(2);
+    expect(oldDb.allDocs).toHaveBeenCalledTimes(oldDatabaseCalls);
+    jest.useRealTimers();
+  });
+
+  it("does not continue in-flight cleanup after the original database is torn down", async () => {
+    jest.useFakeTimers();
+    let started!: () => void;
+    const operationStarted = new Promise<void>(resolve => { started = resolve; });
+    let finishEnumeration!: (result: { rows: [] }) => void;
+    const enumeration = new Promise<{ rows: [] }>(resolve => { finishEnumeration = resolve; });
+    const oldDb = {
+      name: "worship-sync-church-a-in-flight",
+      allDocs: jest.fn(() => {
+        started();
+        return enumeration;
+      }),
+      destroy: jest.fn().mockResolvedValue(undefined),
+    } as unknown as PouchDB.Database;
+    scheduleSongV2CleanupMaintenance(oldDb, true);
+    await operationStarted;
+
+    cancelSongV2CleanupMaintenance(oldDb);
+    await oldDb.destroy();
+    finishEnumeration({ rows: [] });
+    for (let index = 0; index < 10; index += 1) await Promise.resolve();
+
+    expect(oldDb.allDocs).toHaveBeenCalledTimes(1);
+    expect(jest.getTimerCount()).toBe(0);
+    jest.useRealTimers();
   });
 
   it("does not restart sync when auth recovery finishes after provider unmount", async () => {

@@ -1,4 +1,4 @@
-import { Box, ItemSlideType } from "../types";
+import { Box, ItemSlideType, MonitorLayout } from "../types";
 import {
   DEFAULT_FONT_PX,
   MONITOR_BAND_CURRENT_PX,
@@ -99,55 +99,53 @@ export function formatBoxesForMonitorBand(
   });
 }
 
-// Use the larger band - its okay if the next band is cut off
+// Use the larger band; the next band may be cut off just as before.
 const MONITOR_BAND_HEIGHT_PX = MONITOR_BAND_CURRENT_PX;
 
-function applyFixedFontToBoxes(boxes: Box[], fontPx: number): Box[] {
-  return boxes.map((box) => ({
-    ...box,
-    fontSize: fontPx,
-    monitorFontSizePx: fontPx,
-  }));
-}
+export const getMonitorLayoutForSlides = (slides: ItemSlideType[]): MonitorLayout => {
+  const fontSizes = slides
+    .map((slide) => {
+      const bandBox = slide.boxes?.[1];
+      return bandBox
+        ? formatBoxesForMonitorBand([bandBox], MONITOR_BAND_HEIGHT_PX)[0]?.monitorFontSizePx
+        : undefined;
+    })
+    .filter((size): size is number => size != null);
+  const sharedFontPx = fontSizes.length ? Math.min(...fontSizes) : MAX_FONT_PX;
+  return { currentFontSizePx: sharedFontPx, nextFontSizePx: sharedFontPx };
+};
 
-/** Bands only render box at index 1 (main content). */
+export const stripMonitorBoxClones = (slides: ItemSlideType[]): ItemSlideType[] =>
+  slides.map((slide) => {
+    if (
+      !("monitorCurrentBandBoxes" in slide) &&
+      !("monitorNextBandBoxes" in slide)
+    ) return slide;
+    const { monitorCurrentBandBoxes: _current, monitorNextBandBoxes: _next, ...clean } = slide;
+    return clean;
+  });
+
+/** Derives temporary band boxes from source box 1 and compact, synchronized font sizes. */
 export function addMonitorFormattedToSlide(
   slide: ItemSlideType,
-  fixedFontPx?: number,
+  layout: MonitorLayout,
 ): ItemSlideType {
-  const boxes = slide.boxes ?? [];
-  const bandBox = boxes[1];
-  if (!bandBox) {
-    return { ...slide, monitorCurrentBandBoxes: [], monitorNextBandBoxes: [] };
-  }
-  const formatted =
-    fixedFontPx !== undefined
-      ? applyFixedFontToBoxes([bandBox], fixedFontPx)
-      : formatBoxesForMonitorBand([bandBox], MONITOR_BAND_HEIGHT_PX);
+  const sourceBox = slide.boxes?.[1];
+  const derive = (fontSizePx: number) =>
+    sourceBox
+      ? [{ ...sourceBox, fontSize: fontSizePx, monitorFontSizePx: fontSizePx }]
+      : [];
   return {
     ...slide,
-    monitorCurrentBandBoxes: formatted,
-    monitorNextBandBoxes: formatted,
+    monitorCurrentBandBoxes: derive(layout.currentFontSizePx),
+    monitorNextBandBoxes: derive(layout.nextFontSizePx),
   };
 }
 
+/** Renderer helper; persisted callers should store only getMonitorLayoutForSlides. */
 export function addMonitorFormattedToSlides(
   slides: ItemSlideType[],
+  layout: MonitorLayout,
 ): ItemSlideType[] {
-  const fontSizes = slides
-    .map((slide) => {
-      const boxes = slide.boxes ?? [];
-      const bandBox = boxes[1];
-      if (!bandBox) return null;
-      const formatted = formatBoxesForMonitorBand(
-        [bandBox],
-        MONITOR_BAND_HEIGHT_PX,
-      );
-      return formatted[0]?.monitorFontSizePx ?? null;
-    })
-    .filter((p): p is number => p != null);
-
-  const minFontPx = fontSizes.length > 0 ? Math.min(...fontSizes) : MAX_FONT_PX;
-
-  return slides.map((slide) => addMonitorFormattedToSlide(slide, minFontPx));
+  return slides.map((slide) => addMonitorFormattedToSlide(slide, layout));
 }

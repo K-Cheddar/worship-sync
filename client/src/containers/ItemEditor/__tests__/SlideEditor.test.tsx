@@ -71,6 +71,7 @@ jest.mock("../../../context/activeController", () => ({
 }));
 
 jest.mock("../../../store/itemSlice", () => ({
+  setHasPendingUpdate: (payload: boolean) => ({ type: "item/setHasPendingUpdate", payload }),
   setSelectedBox: jest.fn((value: number) => ({
     type: "item/setSelectedBox",
     payload: value,
@@ -113,8 +114,8 @@ jest.mock("../../../store/store", () => ({
 }));
 
 jest.mock("../../../store/allDocsSlice", () => ({
-  upsertItemInAllDocs: jest.fn((payload: unknown) => ({
-    type: "allDocs/upsertItemInAllDocs",
+  applyItemDocumentChange: jest.fn((payload: unknown) => ({
+    type: "allDocs/applyItemDocumentChange",
     payload,
   })),
 }));
@@ -463,7 +464,13 @@ describe("SlideEditor", () => {
   it.each(["song", "church", "unmount"])("keeps a deferred MP3 upload on its original database after %s changes", async (transition) => {
     const original = { ...makeBaseState().undoable.present.item, _id: "song-A", type: "song", _rev: "1-original" };
     mockState = makeStateWithItem(original);
-    const dbA = createMockPouchDB({ get: jest.fn().mockResolvedValue(original), put: jest.fn().mockResolvedValue({ rev: "2-audio" }) });
+    const dbA = createMockPouchDB({
+      get: jest.fn(async (id: string) => {
+        if (id === original._id) return original;
+        throw Object.assign(new Error(`missing ${id}`), { status: 404, name: "not_found" });
+      }),
+      put: jest.fn().mockResolvedValue({ rev: "2-audio" }),
+    });
     const dbB = createMockPouchDB();
     let resolveUpload!: (value: Awaited<ReturnType<typeof authApi.uploadSongAudio>>) => void;
     const upload = new Promise<Awaited<ReturnType<typeof authApi.uploadSongAudio>>>((resolve) => { resolveUpload = resolve; });
@@ -1134,6 +1141,67 @@ describe("SlideEditor", () => {
     expect(mockRemoveToast).toHaveBeenCalledWith("toast-1");
   });
 
+  it("does not show a conflict toast while a dirty Song v2 draft can reconcile automatically", () => {
+    mockState = makeStateWithItem({
+      type: "song",
+      docType: "song-v2-root",
+      hasRemoteUpdate: true,
+      hasPendingUpdate: true,
+      isLyricsEditorOpen: false,
+      remoteUpdateReason: null,
+    });
+
+    renderWithToastContext();
+
+    expect(mockShowToast).not.toHaveBeenCalled();
+    expect(mockApplyPendingRemoteItem).not.toHaveBeenCalled();
+  });
+
+  it("keeps confirmed Song v2 content conflicts actionable until the operator chooses", () => {
+    mockState = makeStateWithItem({
+      type: "song",
+      docType: "song-v2-root",
+      hasRemoteUpdate: true,
+      hasPendingUpdate: true,
+      isLyricsEditorOpen: false,
+      remoteUpdateReason: "song-content-conflict",
+      pendingRemoteItem: { _id: "default-item", type: "song", docType: "song-v2-root" },
+    });
+
+    renderWithToastContext();
+
+    expect(mockShowToast).toHaveBeenCalledWith(expect.objectContaining({
+      message: "Someone else updated this song.",
+      persist: true,
+      showCloseButton: false,
+    }));
+    const { children } = mockShowToast.mock.calls[0][0];
+    render(<>{children("toast-1")}</>);
+
+    fireEvent.click(screen.getByRole("button", { name: "Use Their Changes" }));
+
+    expect(mockApplyPendingRemoteItem).toHaveBeenCalled();
+    expect(mockRemoveToast).toHaveBeenCalledWith("toast-1");
+  });
+
+  it("still shows the Song v2 migration decision for a dirty draft", () => {
+    mockState = makeStateWithItem({
+      type: "song",
+      docType: "song",
+      hasRemoteUpdate: true,
+      hasPendingUpdate: true,
+      isLyricsEditorOpen: false,
+      remoteUpdateReason: "song-version-transition",
+    });
+
+    renderWithToastContext();
+
+    expect(mockShowToast).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.stringContaining("migrated while it was open"),
+      persist: true,
+    }));
+  });
+
   it("applies a buffered remote update immediately when the item is not dirty", () => {
     mockState = makeBaseState({
       undoable: {
@@ -1153,6 +1221,35 @@ describe("SlideEditor", () => {
     expect(mockDispatch).toHaveBeenCalledWith({
       type: "item/applyPendingRemoteItem",
     });
+    expect(mockShowToast).not.toHaveBeenCalled();
+  });
+
+  it("keeps the winning song view read-only while revision conflicts await review", () => {
+    const slide = {
+      id: "song-slide",
+      type: "Verse",
+      name: "Verse 1",
+      boxes: [
+        { id: "box-0", width: 100, height: 100, words: "" },
+        { id: "box-1", width: 100, height: 100, words: "Saved lyrics" },
+      ],
+    };
+    mockState = makeStateWithItem({
+      type: "song",
+      arrangements: [{
+        id: "arr-1",
+        name: "Master",
+        formattedLyrics: [{ id: "lyric-1", name: "Verse 1", words: "Saved lyrics" }],
+        songOrder: [{ name: "Verse 1" }],
+        slides: [slide],
+      }],
+      pendingSongV2Conflicts: [{ documentId: "song-v2:arrangement:x", winningRevision: "2-win", revisions: ["2-branch"] }],
+    });
+
+    renderWithToastContext();
+
+    expect(screen.getByRole("button", { name: "Edit Lyrics" })).toBeDisabled();
+    expect(screen.getByTestId("section-text-editor")).toHaveAttribute("data-disabled", "true");
     expect(mockShowToast).not.toHaveBeenCalled();
   });
 
@@ -2033,6 +2130,7 @@ describe("SlideEditor", () => {
 
       expect(mockFormatSong).not.toHaveBeenCalled();
       expect(mockUpdateArrangements).not.toHaveBeenCalled();
+      expect(mockDispatch).toHaveBeenCalledWith({ type: "item/setHasPendingUpdate", payload: true });
 
       act(() => {
         jest.advanceTimersByTime(200);
@@ -2279,26 +2377,6 @@ describe("SlideEditor", () => {
     });
 
     it("does not dispatch for song when arrangement has no slides", () => {
-      const slides = [
-        {
-          id: "title",
-          type: "Media",
-          name: "Title",
-          boxes: [
-            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
-            { width: 100, height: 100, words: "T", x: 0, y: 0 },
-          ],
-        },
-        {
-          id: "v1",
-          type: "Media",
-          name: "Verse 1",
-          boxes: [
-            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
-            { width: 100, height: 100, words: "V", x: 0, y: 0 },
-          ],
-        },
-      ];
       mockState = makeBaseState({
         undoable: {
           present: {
@@ -2314,20 +2392,14 @@ describe("SlideEditor", () => {
                   songOrder: [],
                 },
               ],
-              slides,
+              slides: [],
             },
           },
         },
       });
 
       render(<SlideEditor access="full" />);
-      invokeDisplayOnChange(
-        makeOnChangePayload({
-          index: 1,
-          value: "x",
-          box: { width: 100, height: 100, words: "x", x: 0, y: 0 },
-        })
-      );
+      expect(displayWindowCapture.onChange).toBeNull();
 
       expect(mockUpdateBoxes).not.toHaveBeenCalled();
       expect(mockUpdateArrangements).not.toHaveBeenCalled();

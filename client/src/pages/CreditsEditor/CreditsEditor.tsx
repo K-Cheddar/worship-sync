@@ -341,7 +341,6 @@ const CreditsEditor = ({
             dispatch(
               initiateItemLists({
                 itemLists: lists,
-                selectedIdByScope: response?.selectedIdByScope,
               }),
             );
             if (response?.activeList) {

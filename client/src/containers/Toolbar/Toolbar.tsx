@@ -44,6 +44,7 @@ import {
   updateSlides,
 } from "../../store/itemSlice";
 import { ItemState } from "../../types";
+import { getActiveItemSlides } from "../../utils/activeItemSlides";
 import type { ItemMutationOwner } from "../../store/deferredItemMutations";
 import { scrollToolbarTabIntoViewIfNeeded } from "../../utils/scrollToolbarTabIntoView";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
@@ -134,16 +135,15 @@ const Toolbar = ({
 
   const updateItem = useCallback(
     (updatedItem: ItemState, expectedOwner?: ItemMutationOwner) => {
-      dispatch(
-        updateSlides({
-          slides: updatedItem.slides,
-          formattedSections: updatedItem.formattedSections,
-          expectedOwner,
-        })
-      );
-      if (updatedItem.arrangements.length > 0) {
+      if (updatedItem.type === "song") {
+        dispatch(updateArrangements({ arrangements: updatedItem.arrangements, expectedOwner }));
+      } else {
         dispatch(
-          updateArrangements({ arrangements: updatedItem.arrangements, expectedOwner })
+          updateSlides({
+            slides: getActiveItemSlides(updatedItem),
+            formattedSections: updatedItem.formattedSections,
+            expectedOwner,
+          })
         );
       }
       if (updatedItem.bibleInfo) {

@@ -47,11 +47,32 @@ import {
   applyOwnedItemContentMutation,
   type OwnedItemContentMutation,
 } from "../utils/ownedItemContentMutation";
+import { getActiveItemSlides, normalizeItemSlides } from "../utils/activeItemSlides";
+import { getMonitorLayoutForSlides } from "../utils/monitorSlideFormatter";
 
 const defaultShouldSendTo: ShouldSendTo = {
   projector: true,
   monitor: true,
   stream: true,
+};
+
+const hasMonitorSizingInputsChanged = (
+  previousSlides: ItemSlideType[],
+  nextSlides: ItemSlideType[],
+) => {
+  if (previousSlides.length !== nextSlides.length) return true;
+  return previousSlides.some((slide, index) => {
+    const previousBox = slide.boxes?.[1];
+    const nextBox = nextSlides[index]?.boxes?.[1];
+    return (
+      previousBox?.words !== nextBox?.words ||
+      previousBox?.width !== nextBox?.width ||
+      previousBox?.height !== nextBox?.height ||
+      previousBox?.fontSize !== nextBox?.fontSize ||
+      previousBox?.isBold !== nextBox?.isBold ||
+      previousBox?.isItalic !== nextBox?.isItalic
+    );
+  });
 };
 
 const initialState: ItemState = {
@@ -80,6 +101,7 @@ const initialState: ItemState = {
   isItemFormatting: false,
   hasPendingUpdate: false,
   hasRemoteUpdate: false,
+  remoteUpdateReason: null,
   baseItem: null,
   pendingRemoteItem: null,
   shouldSendTo: defaultShouldSendTo,
@@ -87,6 +109,7 @@ const initialState: ItemState = {
   songMetadata: undefined,
   songLinks: [],
   songAudio: undefined,
+  monitorLayout: undefined,
   backgroundTargetSlideIds: [],
   backgroundTargetRangeAnchorId: null,
   mobileBackgroundTargetSelectMode: false,
@@ -118,6 +141,7 @@ const createItemSnapshot = (
 ): DBItem | null => {
   if (!item?._id || !item.type) return null;
 
+  const normalized = normalizeItemSlides(item);
   return {
     _id: item._id,
     name: item.name || "",
@@ -125,8 +149,9 @@ const createItemSnapshot = (
     shouldSkipTitle: item.shouldSkipTitle,
     selectedArrangement: item.selectedArrangement ?? 0,
     background: item.background,
-    arrangements: item.arrangements || [],
-    slides: item.slides || [],
+    arrangements: normalized.arrangements || [],
+    slides: normalized.slides || [],
+    monitorLayout: normalized.monitorLayout,
     bibleInfo: item.bibleInfo,
     timerInfo: item.timerInfo,
     shouldSendTo: item.shouldSendTo || defaultShouldSendTo,
@@ -232,9 +257,17 @@ export const getItemPersistenceConflicts = (
   const base = normalizeSnapshotForEditorCompare(baseline);
   const remote = normalizeSnapshotForEditorCompare(latest);
   return getItemPersistenceChanges(itemSnapshot, baseline).filter(
-    (field) =>
-      !_.isEqual(remote[field], base[field]) &&
-      !_.isEqual(remote[field], current[field]),
+    (field) => {
+      // The v2 writer validates arrangement and slide documents separately.
+      // A whole-arrangement comparison here would reject a local edit to one
+      // slide whenever a sibling slide changed remotely.
+      if (field === "arrangements" &&
+        (current.docType === "song-v2-root" || base.docType === "song-v2-root")) {
+        return false;
+      }
+      return !_.isEqual(remote[field], base[field]) &&
+        !_.isEqual(remote[field], current[field]);
+    },
   );
 };
 
@@ -261,6 +294,8 @@ const applyItemDataToState = (
     contentOwner?: ItemContentOwner | null;
   },
 ) => {
+  const normalized = normalizeItemSlides(payload);
+  payload = normalized;
   const preserveSelection = options?.preserveSelection ?? false;
   const nextListId = "listId" in payload ? payload.listId : undefined;
   const nextSelectedSlide =
@@ -283,6 +318,7 @@ const applyItemDataToState = (
     : "contentOwner" in payload
       ? payload.contentOwner
       : undefined;
+  state.docType = payload.docType;
   state.listId = nextListId || state.listId;
   if ("background" in payload && payload.background !== undefined) {
     state.background = payload.background;
@@ -296,7 +332,8 @@ const applyItemDataToState = (
     : (nextSelectedBox ?? 1);
   state.shouldSkipTitle = payload.shouldSkipTitle || false;
   state.arrangements = payload.arrangements || [];
-  state.slides = payload.slides || [];
+  state.slides = payload.type === "song" ? [] : (payload.slides || []);
+  state.monitorLayout = payload.monitorLayout;
   state.formattedSections = payload.formattedSections || [];
   state.bibleInfo = payload.bibleInfo || {
     book: "",
@@ -325,7 +362,9 @@ export const itemSlice = createSlice({
       resetBackgroundTargetUi(state);
       state.baseItem = createItemSnapshot(action.payload);
       state.pendingRemoteItem = null;
+      state.pendingSongV2Conflicts = undefined;
       state.hasRemoteUpdate = false;
+      state.remoteUpdateReason = null;
     },
     replaceMediaReferencesInActiveItem: (
       state,
@@ -424,7 +463,15 @@ export const itemSlice = createSlice({
       state.hasPendingUpdate = true;
     },
     _updateSlides: (state, action: PayloadAction<ItemSlideType[]>) => {
-      state.slides = [...action.payload];
+      if (state.type === "song") {
+        state.arrangements = state.arrangements.map((arrangement, index) =>
+          index === state.selectedArrangement
+            ? { ...arrangement, slides: [...action.payload] }
+            : arrangement,
+        );
+      } else {
+        state.slides = [...action.payload];
+      }
       state.hasPendingUpdate = true;
     },
     _updateBibleInfo: (state, action: PayloadAction<BibleInfo>) => {
@@ -437,6 +484,18 @@ export const itemSlice = createSlice({
     },
     syncLiveTimerInfo: (state, action: PayloadAction<TimerInfo>) => {
       state.timerInfo = action.payload;
+    },
+    _updateMonitorLayout: (state, action: PayloadAction<ItemState["monitorLayout"]>) => {
+      if (state.type === "song") {
+        state.arrangements = state.arrangements.map((arrangement, index) =>
+          index === state.selectedArrangement
+            ? { ...arrangement, monitorLayout: action.payload }
+            : arrangement,
+        );
+      } else {
+        state.monitorLayout = action.payload;
+      }
+      state.hasPendingUpdate = true;
     },
     _updateFormattedSections: (
       state,
@@ -548,29 +607,32 @@ export const itemSlice = createSlice({
     clearTransientState: (state) => {
       resetTransientItemState(state);
     },
-    markItemPersisted: (state, action: PayloadAction<DBItem>) => {
-      if (state._id !== action.payload._id) return;
-      const alreadyEditedFields = new Set(
-        state.baseItem
-          ? getItemPersistenceChanges(state, state.baseItem)
-          : [],
-      );
-      for (const field of ITEM_PERSISTED_FIELDS) {
-        if (alreadyEditedFields.has(field)) continue;
-        (state as unknown as Record<PersistedItemField, unknown>)[field] =
-          action.payload[field];
-      }
-      state.baseItem = createItemSnapshot(action.payload);
-      state.hasPendingUpdate = getItemPersistenceChanges(
-        state,
-        action.payload,
-      ).length > 0;
-      if (!state.hasPendingUpdate) {
-        state.pendingRemoteItem = null;
-        state.hasRemoteUpdate = false;
-      } else if (state.pendingRemoteItem) {
-        state.pendingRemoteItem = action.payload;
-      }
+    markItemPersisted: {
+      prepare: (persisted: DBItem, authored?: DBItem) => ({ payload: persisted, meta: { authored } }),
+      reducer: (state, action: PayloadAction<DBItem, string, { authored?: DBItem }>) => {
+        if (state._id !== action.payload._id) return;
+        const comparison = action.meta?.authored ?? state.baseItem;
+        const alreadyEditedFields = new Set(
+          comparison ? getItemPersistenceChanges(state, comparison) : [],
+        );
+        for (const field of ITEM_PERSISTED_FIELDS) {
+          if (alreadyEditedFields.has(field)) continue;
+          (state as unknown as Record<PersistedItemField, unknown>)[field] = action.payload[field];
+        }
+        const persistedSnapshot = createItemSnapshot(action.payload);
+        state.baseItem = persistedSnapshot;
+        state.hasPendingUpdate = getItemPersistenceChanges(
+          state, persistedSnapshot ?? action.payload,
+        ).length > 0 || !!state.pendingSongV2Conflicts?.length || !!state.remoteUpdateReason;
+        if (!state.hasPendingUpdate) {
+          state.pendingRemoteItem = null;
+          state.pendingSongV2Conflicts = undefined;
+          state.hasRemoteUpdate = false;
+          state.remoteUpdateReason = null;
+        } else if (state.pendingRemoteItem && !state.pendingSongV2Conflicts?.length && !state.remoteUpdateReason) {
+          state.pendingRemoteItem = action.payload;
+        }
+      },
     },
     rebaseItemPersistence: (state, action: PayloadAction<DBItem>) => {
       if (state._id !== action.payload._id) return;
@@ -578,18 +640,35 @@ export const itemSlice = createSlice({
       state.hasPendingUpdate = getItemPersistenceChanges(
         state,
         action.payload,
-      ).length > 0;
+      ).length > 0 || !!state.pendingSongV2Conflicts?.length || !!state.remoteUpdateReason;
     },
     bufferRemoteItemUpdate: (state, action: PayloadAction<DBItem>) => {
       if (state._id !== action.payload._id) return;
       state.pendingRemoteItem = action.payload;
       state.hasRemoteUpdate = true;
     },
+    bufferSongV2RevisionConflict: (state, action: PayloadAction<{
+      item: DBItem; conflicts: NonNullable<ItemState["pendingSongV2Conflicts"]>;
+    }>) => {
+      if (state._id !== action.payload.item._id) return;
+      state.pendingRemoteItem = action.payload.item;
+      state.pendingSongV2Conflicts = action.payload.conflicts;
+      state.hasRemoteUpdate = true;
+      state.hasPendingUpdate = true;
+    },
+    setRemoteUpdateReason: (state, action: PayloadAction<ItemState["remoteUpdateReason"]>) => {
+      state.remoteUpdateReason = action.payload ?? null;
+    },
     discardPendingRemoteItem: (state) => {
       state.pendingRemoteItem = null;
+      state.pendingSongV2Conflicts = undefined;
       state.hasRemoteUpdate = false;
+      state.remoteUpdateReason = null;
     },
-    applyPendingRemoteItem: (state) => {
+    applyPendingRemoteItem: {
+      prepare: (onlyIfClean?: boolean, allowLyricsEditorOpen = false) => ({ payload: onlyIfClean, meta: { allowLyricsEditorOpen } }),
+      reducer: (state, action: PayloadAction<boolean | undefined, string, { allowLyricsEditorOpen: boolean }>) => {
+      if (action.payload && (state.hasPendingUpdate || (state.isLyricsEditorOpen && !action.meta.allowLyricsEditorOpen))) return;
       if (!state.pendingRemoteItem) return;
       if (state.pendingRemoteItem._id !== state._id) {
         state.pendingRemoteItem = null;
@@ -606,14 +685,20 @@ export const itemSlice = createSlice({
       resetBackgroundTargetUi(state);
       state.baseItem = createItemSnapshot(state.pendingRemoteItem);
       state.pendingRemoteItem = null;
+      state.pendingSongV2Conflicts = undefined;
       state.hasRemoteUpdate = false;
+      state.remoteUpdateReason = null;
+      },
     },
     keepLocalItemChanges: (state) => {
       if (!state.pendingRemoteItem) return;
+      const hasRevisionConflicts = !!state.pendingSongV2Conflicts?.length;
       state.baseItem = createItemSnapshot(state.pendingRemoteItem);
       state.pendingRemoteItem = null;
+      state.pendingSongV2Conflicts = undefined;
       state.hasRemoteUpdate = false;
-      state.hasPendingUpdate = !itemDocMatchesEditorState(
+      state.remoteUpdateReason = null;
+      state.hasPendingUpdate = hasRevisionConflicts || !itemDocMatchesEditorState(
         state.baseItem!,
         state,
       );
@@ -799,12 +884,12 @@ export const updateBoxes = createAsyncThunk(
       dispatch(_updateArrangements(arrangements));
     }
 
-    const slides = item.slides.map((slide, index) => {
+    const activeSlides = getActiveItemSlides(item);
+    const slides = activeSlides.map((slide, index) => {
       if (index !== item.selectedSlide) return slide;
       return { ...slide, boxes: [...args.boxes] };
     });
-
-    dispatch(_updateSlides(slides));
+    dispatch(updateSlides({ slides }));
   },
 );
 
@@ -827,19 +912,31 @@ export const updateArrangements = createAsyncThunk(
     }
     const { selectedArrangement: currentArrangement } = item;
     const { selectedArrangement, arrangements } = args;
-    const newSlides =
-      arrangements[selectedArrangement ?? currentArrangement]?.slides ?? [];
+    const nextArrangement = selectedArrangement ?? currentArrangement;
+    const nextArrangements = arrangements.map((arrangement, index) => {
+      const previousSlides = item.arrangements[index]?.slides ?? [];
+      const nextSlides = arrangement.slides ?? [];
+      if (
+        item.type !== "song" ||
+        !hasMonitorSizingInputsChanged(previousSlides, nextSlides)
+      ) {
+        const previousLayout = item.arrangements[index]?.monitorLayout;
+        return arrangement.monitorLayout || !previousLayout
+          ? arrangement
+          : { ...arrangement, monitorLayout: previousLayout };
+      }
+      return {
+        ...arrangement,
+        monitorLayout: getMonitorLayoutForSlides(nextSlides),
+      };
+    });
+    const newSlides = nextArrangements[nextArrangement]?.slides ?? [];
     const oldSlides = item.arrangements[currentArrangement]?.slides ?? [];
 
-    dispatch(_updateArrangements(arrangements));
+    dispatch(_updateArrangements(nextArrangements));
     if (selectedArrangement !== undefined) {
       dispatch(_setSelectedArrangement(selectedArrangement));
     }
-    dispatch(
-      _updateSlides(
-        arrangements[selectedArrangement ?? currentArrangement].slides,
-      ),
-    );
 
     if (item.type === "song" && oldSlides.length !== newSlides.length) {
       const hint = getSelectionHint(oldSlides, item.selectedSlide);
@@ -874,8 +971,7 @@ export const updateAllSlideBackgrounds = createAsyncThunk(
           ? { mediaSource: args.mediaInfo.localVideoInput }
           : { mediaSource: null };
 
-    const arrangementSlides =
-      item.arrangements[item.selectedArrangement]?.slides;
+    const arrangementSlides = getActiveItemSlides(item);
     const mapSlides = (slides: ItemSlideType[]) => {
       return slides.map((slide) => {
         const nextBoxes = [
@@ -901,21 +997,9 @@ export const updateAllSlideBackgrounds = createAsyncThunk(
         };
       });
     };
-    let arrangements = [...item.arrangements];
-    if (arrangementSlides) {
-      const updatedSlides = mapSlides(arrangementSlides);
-      arrangements = arrangements.map((arrangement, index) => {
-        if (index !== item.selectedArrangement) return arrangement;
-        return {
-          ...arrangement,
-          slides: [...updatedSlides],
-        };
-      });
-    }
-    const slides = mapSlides(item.slides);
+    const slides = mapSlides(arrangementSlides);
 
     dispatch(_updateSlides(slides));
-    dispatch(_updateArrangements(arrangements));
     dispatch(setBackground(args.background));
 
     _syncListItemBackground({
@@ -967,33 +1051,13 @@ export const updateSlideBackground = createAsyncThunk(
       };
     };
 
-    const arrangementSlides =
-      item.arrangements[item.selectedArrangement]?.slides;
+    const arrangementSlides = getActiveItemSlides(item);
 
-    let arrangements = [...item.arrangements];
-
-    if (arrangementSlides) {
-      arrangements = arrangements.map((arrangement, index) => {
-        if (index !== item.selectedArrangement) return arrangement;
-        return {
-          ...arrangement,
-          slides: [
-            ...arrangement.slides.map((slide, slideIndex) => {
-              if (slideIndex !== item.selectedSlide) return slide;
-              return applySlide(slide);
-            }),
-          ],
-        };
-      });
-    }
-
-    const slides = item.slides.map((slide, index) => {
-      if (index !== item.selectedSlide) return slide;
-      return applySlide(slide);
-    });
+    const slides = arrangementSlides.map((slide, index) =>
+      index === item.selectedSlide ? applySlide(slide) : slide,
+    );
 
     dispatch(_updateSlides(slides));
-    dispatch(_updateArrangements(arrangements));
 
     if (item.selectedSlide === 0) {
       dispatch(setBackground(args.background));
@@ -1029,21 +1093,8 @@ export const updateSlideVideoBackgroundSendMode = createAsyncThunk(
         index === item.selectedSlide ? applyMode(slide) : slide,
       );
 
-    const arrangementSlides =
-      item.arrangements[item.selectedArrangement]?.slides;
-    if (arrangementSlides) {
-      dispatch(
-        _updateArrangements(
-          item.arrangements.map((arrangement, index) =>
-            index === item.selectedArrangement
-              ? { ...arrangement, slides: mapSelected(arrangement.slides) }
-              : arrangement,
-          ),
-        ),
-      );
-    }
-
-    dispatch(_updateSlides(mapSelected(item.slides)));
+    const arrangementSlides = getActiveItemSlides(item);
+    dispatch(_updateSlides(mapSelected(arrangementSlides)));
   },
 );
 
@@ -1065,9 +1116,7 @@ export const updateSlideBackgroundsOnSubset = createAsyncThunk(
       return;
     }
 
-    const arrangementSlides =
-      item.arrangements[item.selectedArrangement]?.slides;
-    let arrangements = [...item.arrangements];
+    const arrangementSlides = getActiveItemSlides(item);
     const mediaSource =
       args.mediaSource !== undefined
         ? args.mediaSource
@@ -1080,21 +1129,11 @@ export const updateSlideBackgroundsOnSubset = createAsyncThunk(
       mediaSource,
     };
 
-    if (arrangementSlides?.length) {
-      arrangements = arrangements.map((arrangement, index) => {
-        if (index !== item.selectedArrangement) return arrangement;
-        return {
-          ...arrangement,
-          slides: mapSlidesUpdateBox0ById(arrangement.slides, idSet, patch),
-        };
-      });
-    }
-    const slides = mapSlidesUpdateBox0ById(item.slides, idSet, patch);
+    const slides = mapSlidesUpdateBox0ById(arrangementSlides, idSet, patch);
 
     dispatch(_updateSlides(slides));
-    dispatch(_updateArrangements(arrangements));
 
-    const firstSlideId = item.slides[0]?.id;
+    const firstSlideId = arrangementSlides[0]?.id;
     const targetsIncludeIndex0 =
       firstSlideId !== undefined && idSet.has(firstSlideId);
     if (targetsIncludeIndex0) {
@@ -1124,24 +1163,12 @@ export const clearSlideBackgroundsOnSubset = createAsyncThunk(
       mediaSource: null,
     };
 
-    const arrangementSlides =
-      item.arrangements[item.selectedArrangement]?.slides;
-    let arrangements = [...item.arrangements];
-    if (arrangementSlides?.length) {
-      arrangements = arrangements.map((arrangement, index) => {
-        if (index !== item.selectedArrangement) return arrangement;
-        return {
-          ...arrangement,
-          slides: mapSlidesUpdateBox0ById(arrangement.slides, idSet, patch),
-        };
-      });
-    }
-    const slides = mapSlidesUpdateBox0ById(item.slides, idSet, patch);
+    const arrangementSlides = getActiveItemSlides(item);
+    const slides = mapSlidesUpdateBox0ById(arrangementSlides, idSet, patch);
 
     dispatch(_updateSlides(slides));
-    dispatch(_updateArrangements(arrangements));
 
-    const firstSlideId = item.slides[0]?.id;
+    const firstSlideId = arrangementSlides[0]?.id;
     const targetsIncludeIndex0 =
       firstSlideId !== undefined && idSet.has(firstSlideId);
     if (targetsIncludeIndex0) {
@@ -1160,7 +1187,7 @@ export const addSlide = createAsyncThunk(
   "item/addSlide",
   async (args: { slide: ItemSlideType }, { dispatch, getState }) => {
     const item = getState().undoable.present.item;
-    const newSlides = [...item.slides, args.slide];
+    const newSlides = [...getActiveItemSlides(item), args.slide];
     dispatch(updateSlides({ slides: newSlides }));
   },
 );
@@ -1169,7 +1196,7 @@ export const removeSlide = createAsyncThunk(
   "item/removeSlide",
   async (args: { index: number }, { dispatch, getState }) => {
     const item = getState().undoable.present.item;
-    const newSlides = item.slides.filter((_, index) => index !== args.index);
+    const newSlides = getActiveItemSlides(item).filter((_, index) => index !== args.index);
     dispatch(updateSlides({ slides: newSlides }));
   },
 );
@@ -1181,8 +1208,9 @@ export const removeSlidesByIds = createAsyncThunk(
     const item = getState().undoable.present.item;
     const idSet = new Set(args.slideIds);
     if (idSet.size === 0) return;
-    const newSlides = item.slides.filter((s) => !idSet.has(s.id));
-    if (newSlides.length === item.slides.length) return;
+    const activeSlides = getActiveItemSlides(item);
+    const newSlides = activeSlides.filter((s) => !idSet.has(s.id));
+    if (newSlides.length === activeSlides.length) return;
     if (newSlides.length === 0) return;
     await dispatch(updateSlides({ slides: newSlides })).unwrap();
     dispatch(itemSlice.actions.clearBackgroundTargetSelection());
@@ -1206,10 +1234,17 @@ export const updateSlides = createAsyncThunk(
     ) {
       return;
     }
-    const oldSlides = item.slides;
+    const oldSlides = getActiveItemSlides(item);
     const newSlides = args.slides;
 
     dispatch(_updateSlides(args.slides));
+    if (hasMonitorSizingInputsChanged(oldSlides, newSlides)) {
+      dispatch(
+        itemSlice.actions._updateMonitorLayout(
+          getMonitorLayoutForSlides(newSlides),
+        ),
+      );
+    }
     if (args.formattedSections) {
       dispatch(_updateFormattedSections(args.formattedSections));
     }
@@ -1257,6 +1292,7 @@ export const applyOwnedContentMutation = createAsyncThunk(
     if (!sameItemMutationOwner(getItemMutationOwner(item), args.owner)) {
       return false;
     }
+    if (item.pendingSongV2Conflicts?.length) return false;
     const update = applyOwnedItemContentMutation(item, args.mutation);
     if (!update) return false;
     dispatch(itemSlice.actions.applyOwnedContentUpdate({
@@ -1290,6 +1326,7 @@ export const {
   syncLiveTimerInfo,
   _updateFormattedSections,
   applyOwnedContentUpdate,
+  _updateMonitorLayout,
   setBackground,
   setHasPendingUpdate,
   setSelectedBox,
@@ -1300,6 +1337,7 @@ export const {
   setShouldSendTo,
   forceUpdate,
   bufferRemoteItemUpdate,
+  bufferSongV2RevisionConflict,
   discardPendingRemoteItem,
   applyPendingRemoteItem,
   keepLocalItemChanges,

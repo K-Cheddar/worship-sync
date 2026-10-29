@@ -9,6 +9,7 @@ import {
 } from "../types";
 import {
   ensureCreditsIndexDoc,
+  formatAllDocs,
   getAllCreditDocsForOutline,
   getAllCreditsHistory,
   getCreditUsageByList,
@@ -32,7 +33,12 @@ import {
   putOverlayHistoryDocs,
   removeCreditHistoryDoc,
   removeOverlayHistoryDoc,
+  updateAllDocs,
+  invalidateLibraryRefresh,
 } from "./dbUtils";
+import { serializeSongToV2Documents } from "./songPersistence";
+import { allDocsSlice } from "../store/allDocsSlice";
+import type { Cloudinary } from "@cloudinary/url-gen";
 
 type MockDb = {
   get: jest.Mock;
@@ -80,6 +86,212 @@ const createMutablePouchDb = (initialDocs: Record<string, unknown>[] = []) => {
 describe("dbUtils", () => {
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  it("loads complete song documents from the provided database", async () => {
+    const db = createDb();
+    const song = {
+      _id: "song-1",
+      name: "Trust and Obey",
+      type: "song",
+      songAudio: { id: "audio-1" },
+    };
+    db.allDocs.mockResolvedValue({ rows: [{ doc: song }] });
+    const dispatch = jest.fn();
+
+    await expect(updateAllDocs(dispatch, db as unknown as PouchDB.Database)).resolves.toBe(true);
+
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "allDocs/updateAllSongDocs",
+      payload: [song],
+    });
+  });
+
+  it("discovers legacy songs and lightweight v2 projections without exposing children", async () => {
+    const db = createDb();
+    const legacySong = {
+      _id: "song-legacy",
+      name: "Legacy song",
+      type: "song",
+      arrangements: [],
+    };
+    const v2Docs = serializeSongToV2Documents({
+      _id: "song-v2",
+      type: "song",
+      name: "V2 song",
+      arrangements: [{
+        id: "arr-1",
+        name: "Arrangement",
+        formattedLyrics: [],
+        songOrder: [],
+        slides: [{ id: "slide-1", type: "Verse", name: "Verse 1", boxes: [] }],
+      }],
+      selectedArrangement: 0,
+      slides: [],
+    } as unknown as import("../types").DBItem);
+    db.allDocs.mockResolvedValue({
+      rows: [legacySong, v2Docs.root, ...v2Docs.arrangements, ...v2Docs.slides]
+        .map((doc) => ({ doc })),
+    });
+    const dispatch = jest.fn();
+
+    await expect(updateAllDocs(dispatch, db as unknown as PouchDB.Database)).resolves.toBe(true);
+
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "allDocs/updateAllSongDocs",
+      payload: [legacySong, expect.objectContaining({ _id: "song-v2", docType: "song-v2-root", arrangements: [expect.objectContaining({ slides: [] })] })],
+    });
+    expect(v2Docs.root).not.toHaveProperty("type");
+    expect(v2Docs.arrangements[0]).not.toHaveProperty("type");
+    expect(v2Docs.slides[0].type).not.toBe("song");
+  });
+
+  it("does not fetch v2 slide bodies for library refresh", async () => {
+    const db = createDb();
+    const docs = serializeSongToV2Documents({
+      _id: "song-v2", type: "song", name: "V2", selectedArrangement: 0,
+      arrangements: [{ id: "a", name: "Master", formattedLyrics: [], songOrder: [], slides: [{ id: "s", type: "Verse", name: "Verse", boxes: [] }] }],
+    } as unknown as import("../types").DBItem);
+    const documents = [docs.root, ...docs.arrangements, ...docs.slides];
+    db.allDocs.mockImplementation(async ({ keys, include_docs }) => ({
+      rows: documents.filter((doc) => !keys || keys.includes(doc._id)).map((doc) => ({ id: doc._id, ...(include_docs ? { doc } : {}) })),
+    }));
+    await updateAllDocs(jest.fn(), db as unknown as PouchDB.Database);
+    expect(db.allDocs.mock.calls).toEqual([
+      [{ include_docs: false }],
+      [{ keys: [docs.root._id, docs.arrangements[0]._id], include_docs: true }],
+    ]);
+    expect(db.get).not.toHaveBeenCalled();
+  });
+
+  it("does not format v2 infrastructure as legacy item documents", async () => {
+    const db = createDb();
+    const docs = serializeSongToV2Documents({
+      _id: "song-v2", type: "song", name: "V2", selectedArrangement: 0,
+      arrangements: [{ id: "a", name: "Master", formattedLyrics: [], songOrder: [], slides: [{ id: "s", type: "Verse", name: "Verse", boxes: [] }] }],
+    } as unknown as import("../types").DBItem);
+    db.allDocs.mockResolvedValue({ rows: [docs.root, ...docs.arrangements, ...docs.slides].map((doc) => ({ doc })) });
+
+    await formatAllDocs(db as unknown as PouchDB.Database, {} as Cloudinary);
+
+    expect(db.put).not.toHaveBeenCalled();
+  });
+
+  it("does not classify v2 root or child documents as legacy items for font migration", async () => {
+    const db = createDb();
+    const legacySong = {
+      _id: "song-legacy",
+      name: "Legacy song",
+      type: "song",
+      arrangements: [],
+      slides: [],
+    };
+    const v2Docs = serializeSongToV2Documents({
+      _id: "song-v2",
+      type: "song",
+      name: "V2 song",
+      arrangements: [{
+        id: "arr-1",
+        name: "Arrangement",
+        formattedLyrics: [],
+        songOrder: [],
+        slides: [{ id: "slide-1", type: "Verse", name: "Verse 1", boxes: [] }],
+      }],
+      selectedArrangement: 0,
+      slides: [],
+    } as unknown as import("../types").DBItem);
+    db.allDocs.mockResolvedValue({
+      rows: [legacySong, v2Docs.root, ...v2Docs.arrangements, ...v2Docs.slides]
+        .map((doc) => ({ doc })),
+    });
+    db.put.mockResolvedValue({ ok: true, id: legacySong._id, rev: "2-legacy" });
+
+    await expect(migrateFontSizesToPixels(db as unknown as PouchDB.Database)).resolves.toEqual({
+      migratedCount: 1,
+      errorCount: 0,
+    });
+
+    expect(db.put).toHaveBeenCalledTimes(1);
+    expect(db.put).toHaveBeenCalledWith(expect.objectContaining({ _id: legacySong._id }));
+  });
+
+  it("keeps song library state arrangement-canonical without measuring monitor sizing", async () => {
+    const db = createDb();
+    const legacySlide = {
+      id: "legacy", type: "Verse", name: "Verse 1", boxes: [],
+      monitorCurrentBandBoxes: [{ id: "clone", fontSize: 27 }],
+    };
+    const song = {
+      _id: "song-legacy", name: "Legacy Song", type: "song", slides: [legacySlide],
+      monitorLayout: { currentFontSizePx: 35, nextFontSizePx: 34 },
+      arrangements: [{
+        id: "arr", name: "Master", slides: [], formattedLyrics: [], songOrder: [],
+      }],
+    };
+    db.allDocs.mockResolvedValue({ rows: [{ doc: song }] });
+    let state = allDocsSlice.getInitialState();
+    const dispatch = jest.fn((action) => {
+      state = allDocsSlice.reducer(state, action as any);
+    });
+
+    await updateAllDocs(dispatch, db as unknown as PouchDB.Database);
+
+    const [librarySong] = state.allSongDocs;
+    expect(librarySong).not.toHaveProperty("slides");
+    expect(librarySong).not.toHaveProperty("monitorLayout");
+    expect(librarySong.arrangements[0].slides).toEqual([{
+      id: "legacy",
+      type: "Verse",
+      name: "Verse 1",
+      boxes: [],
+    }]);
+    expect(librarySong.arrangements[0].slides[0]).not.toHaveProperty("monitorCurrentBandBoxes");
+    expect(librarySong.arrangements[0]).not.toHaveProperty("monitorNextBandBoxes");
+    expect(librarySong.arrangements[0].monitorLayout).toEqual({
+      currentFontSizePx: 27,
+      nextFontSizePx: 27,
+    });
+  });
+
+  it("loads durable custom documents from the same initialization scan", async () => {
+    const db = createDb();
+    const welcomeSlides = {
+      _id: "welcome-slides",
+      name: "Welcome Slides",
+      type: "free",
+      slides: [{ id: "slide-1" }, { id: "slide-2" }],
+    };
+    db.allDocs.mockResolvedValue({ rows: [{ doc: welcomeSlides }] });
+    const dispatch = jest.fn();
+
+    await expect(updateAllDocs(dispatch, db as unknown as PouchDB.Database)).resolves.toBe(true);
+
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "allDocs/updateAllFreeFormDocs",
+      payload: [welcomeSlides],
+    });
+  });
+
+  it("does not dispatch a stale document load after its route is inactive", async () => {
+    const db = createDb();
+    db.allDocs.mockResolvedValue({ rows: [{ doc: { _id: "song-1", type: "song" } }] });
+    const dispatch = jest.fn();
+
+    await expect(updateAllDocs(dispatch, db as unknown as PouchDB.Database, () => false)).resolves.toBe(false);
+
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("ignores a broad refresh invalidated by a newer targeted update", async () => {
+    const db = createDb();
+    let release!: (value: unknown) => void;
+    db.allDocs.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    const dispatch = jest.fn();
+    const pending = updateAllDocs(dispatch, db as unknown as PouchDB.Database);
+    invalidateLibraryRefresh(db as unknown as PouchDB.Database);
+    release({ rows: [] });
+    await expect(pending).resolves.toBe(false);
+    expect(dispatch).not.toHaveBeenCalled();
   });
 
   it("builds overlay usage map from item lists and skips unreadable lists", async () => {
@@ -1072,15 +1284,6 @@ describe("dbUtils", () => {
     expect(db.put).toHaveBeenCalledWith(
       expect.objectContaining({
         _id: "song-1",
-        slides: [
-          expect.objectContaining({
-            boxes: [expect.objectContaining({ fontSize: 45 })],
-            monitorCurrentBandBoxes: [
-              expect.objectContaining({ fontSize: 36 }),
-            ],
-            monitorNextBandBoxes: [expect.objectContaining({ fontSize: 27 })],
-          }),
-        ],
         arrangements: [
           expect.objectContaining({
             slides: [
@@ -1092,6 +1295,11 @@ describe("dbUtils", () => {
         ],
       }),
     );
+    const savedSong = db.put.mock.calls[0][0];
+    expect(savedSong).not.toHaveProperty("slides");
+    expect(savedSong).not.toHaveProperty("monitorLayout");
+    expect(savedSong.arrangements[0].slides[0]).not.toHaveProperty("monitorCurrentBandBoxes");
+    expect(savedSong.arrangements[0].slides[0]).not.toHaveProperty("monitorNextBandBoxes");
   });
 
   it("migrates font sizes to defaults by item type", async () => {
@@ -1136,8 +1344,7 @@ describe("dbUtils", () => {
     expect(result).toEqual({ migratedCount: 2, errorCount: 0 });
 
     const songPut = db.put.mock.calls[0][0];
-    expect(songPut.slides[0].boxes[0].fontSize).toBe(180);
-    expect(songPut.slides[1].boxes[0].fontSize).toBe(108);
+    expect(songPut).not.toHaveProperty("slides");
     expect(songPut.arrangements[0].slides[0].boxes[0].fontSize).toBe(180);
     expect(songPut.arrangements[0].slides[1].boxes[0].fontSize).toBe(108);
 

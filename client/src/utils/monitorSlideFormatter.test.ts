@@ -2,6 +2,8 @@ import {
   addMonitorFormattedToSlide,
   addMonitorFormattedToSlides,
   formatBoxesForMonitorBand,
+  getMonitorLayoutForSlides,
+  stripMonitorBoxClones,
 } from "./monitorSlideFormatter";
 import type { Box, ItemSlideType } from "../types";
 
@@ -67,21 +69,53 @@ describe("monitorSlideFormatter", () => {
       boxes: [createBox({ id: "only-box" })],
     };
 
-    const result = addMonitorFormattedToSlide(slideWithoutBand);
+    const result = addMonitorFormattedToSlide(slideWithoutBand, {
+      currentFontSizePx: 24,
+      nextFontSizePx: 18,
+    });
     expect(result.monitorCurrentBandBoxes).toEqual([]);
     expect(result.monitorNextBandBoxes).toEqual([]);
   });
 
-  it("applies one shared minimum monitor font size across all slides", () => {
+  it("derives identical current and next monitor boxes from the source box", () => {
     const slides = [
       createSlide("s1", "short"),
       createSlide("s2", "this is long text"),
     ];
 
-    const result = addMonitorFormattedToSlides(slides);
-    expect(result[0].monitorCurrentBandBoxes?.[0].monitorFontSizePx).toBe(33);
-    expect(result[1].monitorCurrentBandBoxes?.[0].monitorFontSizePx).toBe(33);
-    expect(result[0].monitorNextBandBoxes?.[0].monitorFontSizePx).toBe(33);
-    expect(result[1].monitorNextBandBoxes?.[0].monitorFontSizePx).toBe(33);
+    const layout = getMonitorLayoutForSlides(slides);
+    const result = addMonitorFormattedToSlides(slides, layout);
+    expect(layout.currentFontSizePx).toBe(33);
+    expect(layout.nextFontSizePx).toBe(33);
+    expect(result[0].monitorCurrentBandBoxes).toEqual(
+      formatBoxesForMonitorBand([slides[0].boxes[1]], 540).map((box) => ({ ...box, fontSize: 33, monitorFontSizePx: 33 })),
+    );
+    expect(result[1].monitorNextBandBoxes?.[0]).toMatchObject({
+      id: "s2-band", words: "this is long text", fontColor: "rgba(255,255,255,1)", monitorFontSizePx: 33,
+    });
+    const edited = { ...slides[0], boxes: [slides[0].boxes[0], { ...slides[0].boxes[1], words: "updated source", fontColor: "#123456" }] };
+    const updated = addMonitorFormattedToSlides([edited], layout)[0];
+    expect(updated.monitorCurrentBandBoxes?.[0]).toMatchObject({ words: "updated source", fontColor: "#123456" });
+  });
+
+  it("removes legacy monitor clones after capturing their compact layout", () => {
+    const legacySong = {
+      _id: "song-1", type: "song", selectedArrangement: 0, slides: [{ ...createSlide("legacy-root", "ignored") }],
+      arrangements: [{
+        id: "arr-1", name: "Master", songOrder: [], formattedLyrics: [],
+        slides: [{
+          ...createSlide("s1", "source text"),
+          monitorCurrentBandBoxes: [{ ...createBox({ words: "source text", fontSize: 31, monitorFontSizePx: 31 }) }],
+          monitorNextBandBoxes: [{ ...createBox({ words: "source text", fontSize: 29, monitorFontSizePx: 29 }) }],
+        }],
+      }],
+    } as any;
+    const { normalizeItemSlides } = require("./activeItemSlides");
+    const normalized = normalizeItemSlides(legacySong);
+    expect(normalized.slides).toEqual([]);
+    expect(normalized.arrangements[0].monitorLayout).toEqual({ currentFontSizePx: 31, nextFontSizePx: 29 });
+    expect(normalized.arrangements[0].slides[0]).not.toHaveProperty("monitorCurrentBandBoxes");
+    expect(normalized.arrangements[0].slides[0]).not.toHaveProperty("monitorNextBandBoxes");
+    expect(stripMonitorBoxClones([normalized.arrangements[0].slides[0]])[0]).not.toHaveProperty("monitorCurrentBandBoxes");
   });
 });
