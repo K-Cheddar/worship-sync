@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-29-controller-data-integrity",
+  "date": "2026-10-29",
+  "type": "fixed",
+  "title": "Safer controller startup and saves",
+  "description": "Saved church content loads safely on a new installation, stays available offline, and keeps the latest outline and overlay edits when saves overlap."
+}

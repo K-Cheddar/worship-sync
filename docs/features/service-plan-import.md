@@ -123,6 +123,8 @@ The current user request confirms these native transfer behaviors:
 - Keep usable same-church library references. When churches differ, match songs by title when possible, retain usable content, and show unresolved song references for review.
 - Ask before replacing content in a populated destination. Apply the accepted import as one `updateDraft()` edit so undo and autosave remain available.
 - Native transfer is a one-time copy and must not create continuous source-refresh tracking. Existing public links and Planning Center / Service Planning behavior remain unchanged.
+- JSON and public-link imports belong to the full editor identity and draft version captured at start. Recheck after loading and before applying a replacement; retire pending proposals on identity changes. A changed draft requires another import, and stale completion cannot change the current import's loading state or show success. (Current request, 2026-10-29.)
+- Native JSON transfers preserve optional `pre`, `main`, and `post` section phases and order, including across churches. Legacy absence retains main-service semantics; format version 1, regenerated IDs, and ownership stripping remain unchanged. (Current request, 2026-10-29.)
 
 **Approval source/date:** Current user request, 2026-10-25.
 

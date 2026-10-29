@@ -55,6 +55,7 @@ const cleanSections = (
   return sections.map((section) => ({
     id: generateRandomId(),
     name: section.name,
+    ...(section.phase ? { phase: section.phase } : {}),
     elements: section.elements.map((item) => {
       const originalSongRefs = getServicePlanElementSongRefs(item);
       const songRefs = mapSongRefs(item, sameChurch, songs);
@@ -154,7 +155,13 @@ export const importWorshipSyncPlan = (
     throw new Error("This WorshipSync plan file format or version isn't supported.");
   }
   const sections = file.sections as ServicePlanSection[];
-  if (sections.some((section) => !section || typeof section.name !== "string" || !Array.isArray(section.elements) || section.elements.some((item) => !item || typeof item !== "object" || typeof item.type !== "string" || !item.title || typeof item.title !== "object"))) {
+  if (sections.some((section) =>
+    !section || typeof section.name !== "string"
+    || (section.phase !== undefined && !["pre", "main", "post"].includes(section.phase))
+    || !Array.isArray(section.elements)
+    || section.elements.some((item) => !item || typeof item !== "object"
+      || typeof item.type !== "string" || !item.title || typeof item.title !== "object"),
+  )) {
     throw new Error("This WorshipSync plan file has invalid sections.");
   }
   return cleanSections(sections, {

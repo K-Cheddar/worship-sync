@@ -12,7 +12,7 @@ const notifyActivityChanged = () => {
 
 export const subscribeToContentActivity = (listener: () => void) => {
   activityListeners.add(listener);
-  return () => activityListeners.delete(listener);
+  return () => { activityListeners.delete(listener); };
 };
 
 export type ContentReplicationActivity = {

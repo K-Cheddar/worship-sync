@@ -981,7 +981,11 @@ export const createNewItemList = async ({
       controllerScope,
     );
   } catch (error) {
-    db.put({
+    const readError = error as { status?: number | string; name?: string } | null;
+    if (readError?.status !== 404 && readError?.status !== "404" && readError?.name !== "not_found") {
+      throw error;
+    }
+    await db.put({
       ...list,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -1042,7 +1046,7 @@ export const createItemListFromExisting = async ({
       items: response.items,
       overlays: newOverlays,
     };
-    db.put({
+    await db.put({
       ...newList,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
