@@ -41,6 +41,7 @@ import { formatSong, getFormattedSections } from "./overflow";
 
 export {
   BIBLE_ITEM_CLEANUP_GRACE_PERIOD_MS,
+  MAX_BIBLE_ITEM_CLEANUP_RETRY_DELAY_MS,
   cancelBibleItemCleanupRetry,
   deleteUnusedBibleItems,
   scheduleBibleItemCleanupRetry,

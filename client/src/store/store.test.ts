@@ -5225,7 +5225,7 @@ describe("item list outline persistence", () => {
     store.dispatch(itemListSlice.actions.updateItemList([]));
 
     await jest.advanceTimersByTimeAsync(1500);
-    for (let attempt = 0; attempt < 30; attempt += 1) await Promise.resolve();
+    await flushBibleCleanup();
 
     expect(savedOutline.items).toEqual([]);
     expect(db.bulkDocs).toHaveBeenCalledWith([
@@ -5880,6 +5880,133 @@ describe("item list outline persistence", () => {
     expect(store.getState().undoable.present.overlays.hasPendingUpdate).toBe(
       false,
     );
+  });
+
+  it("defers Bible cleanup until an outgoing outline save settles and checks its reference", async () => {
+    jest.useFakeTimers();
+    const {
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      activeControllerPresence,
+      db,
+    } = loadStoreWithItemListPersistence();
+    const presence = activeControllerPresence.beginActiveControllerPresence(
+      activeControllerPresence.getControllerPresenceScope(
+        "church-test",
+        db.name,
+      ),
+    );
+    presence.publish(["host-123"]);
+
+    const oldDate = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const bibleDoc = {
+      _id: "bible-outgoing-save",
+      _rev: "1-bible",
+      type: "bible",
+      name: "Genesis 1",
+      createdAt: oldDate,
+      updatedAt: oldDate,
+    };
+    const bibleReference = createServiceItem({
+      _id: bibleDoc._id,
+      name: bibleDoc.name,
+      type: "bible",
+      listId: "bible-link",
+      createdAt: oldDate,
+      updatedAt: oldDate,
+    });
+    let sequence = 1;
+    let outlineA: Record<string, any> = {
+      _id: "outline-a",
+      _rev: "1-outline-a",
+      items: [],
+      overlays: [],
+    };
+    const outlineB = {
+      _id: "outline-b",
+      _rev: "1-outline-b",
+      items: [],
+      overlays: [],
+    };
+    let registry: Record<string, any> = {
+      _id: "ItemLists",
+      _rev: "1-registry",
+      itemLists: [
+        { _id: "outline-a", name: "Sunday" },
+        { _id: "outline-b", name: "Wednesday" },
+      ],
+      activeList: { _id: "outline-a", name: "Sunday" },
+    };
+    let signalOutgoingSaveStarted!: () => void;
+    const outgoingSaveStarted = new Promise<void>((resolve) => {
+      signalOutgoingSaveStarted = resolve;
+    });
+    let finishOutgoingSave!: () => void;
+    const outgoingSaveGate = new Promise<void>((resolve) => {
+      finishOutgoingSave = resolve;
+    });
+
+    db.get.mockImplementation(async (id: string) => {
+      if (id === "ItemLists") return { ...registry };
+      if (id === "outline-a") return { ...outlineA };
+      if (id === "outline-b") return { ...outlineB };
+      throw Object.assign(new Error("missing"), { status: 404 });
+    });
+    db.put.mockImplementation(async (document: Record<string, any>) => {
+      if (document._id === "outline-a") {
+        signalOutgoingSaveStarted();
+        await outgoingSaveGate;
+        sequence += 1;
+        outlineA = { ...document, _rev: `${sequence}-outline-a` };
+        return { ok: true, rev: outlineA._rev };
+      }
+      sequence += 1;
+      registry = { ...document, _rev: `${sequence}-registry` };
+      return { ok: true, rev: registry._rev };
+    });
+    db.allDocs.mockImplementation(async ({ keys }: { keys: string[] }) => ({
+      rows: keys.map((key) => {
+        if (key === "outline-a") return { id: key, doc: { ...outlineA } };
+        if (key === "outline-b") return { id: key, doc: { ...outlineB } };
+        if (key === bibleDoc._id) return { id: key, doc: { ...bibleDoc } };
+        return { key, error: "not_found" };
+      }),
+      update_seq: sequence,
+    }));
+    db.info.mockImplementation(async () => ({ update_seq: sequence }));
+    db.bulkDocs.mockResolvedValue([]);
+
+    store.dispatch(allDocsSlice.actions.hydrateItemCache([bibleDoc]));
+    store.dispatch(itemListsSlice.actions.initiateItemLists(registry.itemLists));
+    store.dispatch(itemListSlice.actions.initiateItemList([]));
+    store.dispatch(itemListSlice.actions.updateItemList([bibleReference]));
+    store.dispatch(itemListsSlice.actions.selectItemList("outline-b"));
+    store.dispatch(itemListSlice.actions.initiateItemList([]));
+    await outgoingSaveStarted;
+    await flushListenerEffects();
+
+    expect(store.getState().undoable.present.itemLists.selectedList?._id).toBe(
+      "outline-b",
+    );
+    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(
+      false,
+    );
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushBibleCleanup();
+    expect(db.allDocs).not.toHaveBeenCalled();
+    expect(db.bulkDocs).not.toHaveBeenCalled();
+
+    finishOutgoingSave();
+    await flushBibleCleanup();
+    expect(outlineA.items).toEqual([expect.objectContaining({ _id: bibleDoc._id })]);
+    expect(db.allDocs).toHaveBeenCalledTimes(1);
+    expect(db.bulkDocs).not.toHaveBeenCalled();
+
+    presence.release();
+    jest.useRealTimers();
   });
 
   it("keeps both pending flags when shared-outline writes fail", async () => {

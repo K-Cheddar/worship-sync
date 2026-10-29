@@ -1,5 +1,6 @@
 import {
   BIBLE_ITEM_CLEANUP_GRACE_PERIOD_MS,
+  MAX_BIBLE_ITEM_CLEANUP_RETRY_DELAY_MS,
   cancelBibleItemCleanupRetry,
   deleteUnusedBibleItems,
   scheduleBibleItemCleanupRetry,
@@ -286,6 +287,51 @@ describe("deleteUnusedBibleItems", () => {
     });
     expect(docs.has(item._id)).toBe(false);
     expect(rawDb.bulkDocs).toHaveBeenCalledTimes(1);
+    jest.useRealTimers();
+  });
+
+  it("caps long retry timers and rechecks future-dated documents before deleting", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-10-29T12:00:00.000Z"));
+    const item = bible(
+      "future-dated-orphan",
+      new Date(
+        Date.now() + MAX_BIBLE_ITEM_CLEANUP_RETRY_DELAY_MS + 5000,
+      ).toISOString(),
+    );
+    const { db, docs, rawDb } = createDb([
+      { _id: "ItemLists", _rev: "1-lists", itemLists: [{ _id: "outline" }] },
+      outline("outline", []),
+      item,
+    ]);
+    const initialOutcome = await deleteUnusedBibleItems({
+      db,
+      bibleItems: [item],
+    });
+    expect(initialOutcome).toMatchObject({ deleted: 0 });
+    const initialRetryDelay = initialOutcome?.retryAfterMs ?? 0;
+    expect(initialRetryDelay).toBeGreaterThan(MAX_BIBLE_ITEM_CLEANUP_RETRY_DELAY_MS);
+
+    const retry = jest.fn();
+    scheduleBibleItemCleanupRetry(
+      db,
+      Symbol("future-dated-session"),
+      initialRetryDelay,
+      retry,
+    );
+    jest.advanceTimersByTime(MAX_BIBLE_ITEM_CLEANUP_RETRY_DELAY_MS);
+    expect(retry).toHaveBeenCalledTimes(1);
+
+    const reevaluatedOutcome = await deleteUnusedBibleItems({
+      db,
+      bibleItems: [item],
+    });
+    expect(reevaluatedOutcome).toMatchObject({ deleted: 0 });
+    const reevaluatedRetryDelay = reevaluatedOutcome?.retryAfterMs ?? 0;
+    expect(reevaluatedRetryDelay).toBeGreaterThan(0);
+    expect(reevaluatedRetryDelay).toBeLessThan(initialRetryDelay);
+    expect(docs.has(item._id)).toBe(true);
+    expect(rawDb.bulkDocs).not.toHaveBeenCalled();
     jest.useRealTimers();
   });
 

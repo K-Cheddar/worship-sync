@@ -1,6 +1,7 @@
 import type { DBItem, DBItemListDetails, DBItemLists } from "../types";
 
 export const BIBLE_ITEM_CLEANUP_GRACE_PERIOD_MS = 60 * 60 * 1000;
+export const MAX_BIBLE_ITEM_CLEANUP_RETRY_DELAY_MS = 2_147_483_647;
 
 type DeleteUnusedBibleItemsOptions = {
   db: PouchDB.Database;
@@ -56,13 +57,21 @@ export const scheduleBibleItemCleanupRetry = (
 ) => {
   const existing = delayedBibleCleanupRetries.get(db);
   if (existing) clearTimeout(existing.timer);
+  // Window.setTimeout converts its delay to a signed 32-bit integer. Longer
+  // waits are split into bounded intervals; each wake-up rechecks document age.
+  const boundedDelayMs = Number.isFinite(delayMs)
+    ? Math.min(
+        MAX_BIBLE_ITEM_CLEANUP_RETRY_DELAY_MS,
+        Math.max(1, Math.ceil(delayMs)),
+      )
+    : MAX_BIBLE_ITEM_CLEANUP_RETRY_DELAY_MS;
   const entry = {
     owner,
     timer: setTimeout(() => {
       if (delayedBibleCleanupRetries.get(db) !== entry) return;
       delayedBibleCleanupRetries.delete(db);
       retry();
-    }, Math.max(1, delayMs)),
+    }, boundedDelayMs),
   };
   delayedBibleCleanupRetries.set(db, entry);
 };

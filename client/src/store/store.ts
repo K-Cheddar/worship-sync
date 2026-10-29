@@ -1488,6 +1488,7 @@ listenerMiddleware.startListening({
 });
 
 const pendingBibleCleanupByDatabase = new WeakMap<object, Set<string>>();
+const inFlightOutlinePersistenceByDatabase = new WeakMap<object, number>();
 const bibleCleanupOpportunity = createAction<{ immediate?: boolean }>(
   "bibleCleanup/opportunity",
 );
@@ -1520,6 +1521,24 @@ const noteRemovedBibleOutlineItem = (
 
 const hasPendingBibleCleanup = (database: object, outlineId: string) =>
   pendingBibleCleanupByDatabase.get(database)?.has(outlineId) ?? false;
+
+const beginOutlinePersistence = (database: object) => {
+  inFlightOutlinePersistenceByDatabase.set(
+    database,
+    (inFlightOutlinePersistenceByDatabase.get(database) ?? 0) + 1,
+  );
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const count = inFlightOutlinePersistenceByDatabase.get(database) ?? 0;
+    if (count <= 1) inFlightOutlinePersistenceByDatabase.delete(database);
+    else inFlightOutlinePersistenceByDatabase.set(database, count - 1);
+  };
+};
+
+const isOutlinePersistenceIdle = (database: object) =>
+  (inFlightOutlinePersistenceByDatabase.get(database) ?? 0) === 0;
 
 const getBibleCleanupSessionStates = (database: object) => {
   const sessions = bibleCleanupSessions.get(database) ?? new Map();
@@ -1623,6 +1642,7 @@ listenerMiddleware.startListening({
 
     const cacheSession = stateAtStart.allDocs.session;
     const cacheChangeVersion = stateAtStart.allDocs.changeVersion;
+    let cleanupWasBlockedByOutlinePersistence = false;
     const cleanupResult = await deleteUnusedBibleItems({
       db: database,
       bibleItems: stateAtStart.allDocs.allBibleDocs,
@@ -1643,6 +1663,10 @@ listenerMiddleware.startListening({
           globalFireDbInfo.churchId,
           globalFireDbInfo.database,
         );
+        const outlinePersistenceIdle = isOutlinePersistenceIdle(database);
+        if (!outlinePersistenceIdle) {
+          cleanupWasBlockedByOutlinePersistence = true;
+        }
         return (
           db === database &&
           getContentDatabaseSessionToken(database.name) === sessionToken &&
@@ -1654,6 +1678,7 @@ listenerMiddleware.startListening({
           currentPresent.itemList.isInitialized &&
           currentPresent.itemLists.isInitialized &&
           !hasPendingWrites &&
+          outlinePersistenceIdle &&
           syncStatus !== "running" &&
           syncStatus !== "cancelling" &&
           isContentReplicationIdle(database.name) &&
@@ -1668,7 +1693,18 @@ listenerMiddleware.startListening({
     if (db !== database || getContentDatabaseSessionToken(database.name) !== sessionToken) {
       return;
     }
-    if (cleanupResult === null) return;
+    if (cleanupResult === null) {
+      // A persistence completion can dispatch while an earlier cleanup attempt
+      // is still unwinding. Recheck after that attempt releases its per-db guard.
+      if (
+        cleanupWasBlockedByOutlinePersistence &&
+        isOutlinePersistenceIdle(database) &&
+        !listenerApi.signal.aborted
+      ) {
+        listenerApi.dispatch(bibleCleanupOpportunity({ immediate: true }));
+      }
+      return;
+    }
 
     sessionState.status = "complete";
     pendingBibleCleanupByDatabase.delete(database);
@@ -1787,12 +1823,15 @@ listenerMiddleware.startListening({
       return;
     }
 
+    const releaseOutlinePersistence = beginOutlinePersistence(dbAtStart);
+    let persistenceSucceeded = false;
     try {
       const persisted = await persistServiceListItems(
         dbAtStart,
         selectedList._id,
         [...list],
       );
+      persistenceSucceeded = true;
 
       listenerApi.throwIfCancelled();
       if (db !== dbAtStart) return;
@@ -1813,12 +1852,22 @@ listenerMiddleware.startListening({
         },
       });
 
-      if (hasPendingBibleCleanup(dbAtStart, selectedList._id)) {
-        listenerApi.dispatch(bibleCleanupOpportunity({ immediate: true }));
-      }
     } catch (error) {
       if (isListenerCancelledTaskError(error)) return;
       console.error("Failed to persist item list outline:", error);
+    } finally {
+      releaseOutlinePersistence();
+      const pendingBibleCleanup = hasPendingBibleCleanup(
+        dbAtStart,
+        selectedList._id,
+      );
+      if (persistenceSucceeded || !pendingBibleCleanup) {
+        listenerApi.dispatch(
+          bibleCleanupOpportunity({
+            immediate: persistenceSucceeded && pendingBibleCleanup,
+          }),
+        );
+      }
     }
   },
 });
