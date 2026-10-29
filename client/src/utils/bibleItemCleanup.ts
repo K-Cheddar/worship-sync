@@ -9,20 +9,72 @@ type DeleteUnusedBibleItemsOptions = {
   canRun?: () => boolean;
 };
 
-const activeBibleCleanupByDatabase = new WeakMap<object, Promise<number | null>>();
+export type BibleItemCleanupOutcome = {
+  deleted: number;
+  /** Delay until the earliest recent orphan passes the grace period. */
+  retryAfterMs: number | null;
+};
 
-const getBibleItemAge = (item: DBItem, now: number): "recent" | "old" | "unknown" => {
+const activeBibleCleanupByDatabase = new WeakMap<
+  object,
+  Promise<BibleItemCleanupOutcome | null>
+>();
+const delayedBibleCleanupRetries = new WeakMap<
+  object,
+  { owner: symbol; timer: ReturnType<typeof setTimeout> }
+>();
+
+const getBibleItemAge = (
+  item: DBItem,
+  now: number,
+): { status: "recent" | "old" | "unknown"; retryAfterMs: number | null } => {
   const values = [item.createdAt, item.updatedAt].filter(
     (value) => value !== undefined,
   );
   if (values.length === 0 || values.some((value) => typeof value !== "string")) {
-    return "unknown";
+    return { status: "unknown", retryAfterMs: null };
   }
   const timestamps = (values as string[]).map((value) => Date.parse(value));
-  if (timestamps.some((value) => !Number.isFinite(value))) return "unknown";
-  return Math.max(...timestamps) > now - BIBLE_ITEM_CLEANUP_GRACE_PERIOD_MS
-    ? "recent"
-    : "old";
+  if (timestamps.some((value) => !Number.isFinite(value))) {
+    return { status: "unknown", retryAfterMs: null };
+  }
+  const latestTimestamp = Math.max(...timestamps);
+  if (latestTimestamp > now - BIBLE_ITEM_CLEANUP_GRACE_PERIOD_MS) {
+    return {
+      status: "recent",
+      retryAfterMs: latestTimestamp + BIBLE_ITEM_CLEANUP_GRACE_PERIOD_MS - now + 1,
+    };
+  }
+  return { status: "old", retryAfterMs: null };
+};
+
+export const scheduleBibleItemCleanupRetry = (
+  db: PouchDB.Database,
+  owner: symbol,
+  delayMs: number,
+  retry: () => void,
+) => {
+  const existing = delayedBibleCleanupRetries.get(db);
+  if (existing) clearTimeout(existing.timer);
+  const entry = {
+    owner,
+    timer: setTimeout(() => {
+      if (delayedBibleCleanupRetries.get(db) !== entry) return;
+      delayedBibleCleanupRetries.delete(db);
+      retry();
+    }, Math.max(1, delayMs)),
+  };
+  delayedBibleCleanupRetries.set(db, entry);
+};
+
+export const cancelBibleItemCleanupRetry = (
+  db: PouchDB.Database,
+  owner?: symbol,
+) => {
+  const current = delayedBibleCleanupRetries.get(db);
+  if (!current || (owner && current.owner !== owner)) return;
+  clearTimeout(current.timer);
+  delayedBibleCleanupRetries.delete(db);
 };
 
 /**
@@ -31,18 +83,18 @@ const getBibleItemAge = (item: DBItem, now: number): "recent" | "old" | "unknown
  * per-document Bible candidates; a missing, malformed, or changing inventory
  * aborts the entire cleanup.
  *
- * Returns null when safety could not be established or recent orphan documents
- * need a later retry. Timestamp-uncertain documents are kept permanently.
+ * Returns null when safety could not be established. Recent orphan documents
+ * are returned as a retry delay; timestamp-uncertain documents are kept.
  */
 export const deleteUnusedBibleItems = async ({
   db,
   bibleItems,
   canRun = () => true,
-}: DeleteUnusedBibleItemsOptions): Promise<number | null> => {
+}: DeleteUnusedBibleItemsOptions): Promise<BibleItemCleanupOutcome | null> => {
   const active = activeBibleCleanupByDatabase.get(db);
   if (active) return active;
 
-  const cleanup = (async (): Promise<number | null> => {
+  const cleanup = (async (): Promise<BibleItemCleanupOutcome | null> => {
     try {
       if (!canRun()) return null;
 
@@ -70,7 +122,7 @@ export const deleteUnusedBibleItems = async ({
         if (bibleById.has(item._id)) return null;
         bibleById.set(item._id, item);
       }
-      if (bibleById.size === 0) return 0;
+      if (bibleById.size === 0) return { deleted: 0, retryAfterMs: null };
 
       const inventory = (await db.allDocs({
         keys: [...outlineIds, ...bibleById.keys()],
@@ -120,7 +172,7 @@ export const deleteUnusedBibleItems = async ({
       }
 
       const now = Date.now();
-      let hasRecentOrphan = false;
+      let retryAfterMs: number | null = null;
       const candidates: Array<{ _id: string; _rev: string; _deleted: true }> = [];
       for (const id of bibleById.keys()) {
         const persisted = docsById.get(id) as DBItem | undefined;
@@ -134,14 +186,18 @@ export const deleteUnusedBibleItems = async ({
         }
         if (referencedIds.has(id)) continue;
         const age = getBibleItemAge(persisted, now);
-        if (age === "recent") {
-          hasRecentOrphan = true;
+        if (age.status === "recent") {
+          retryAfterMs = retryAfterMs === null
+            ? age.retryAfterMs
+            : Math.min(retryAfterMs, age.retryAfterMs ?? retryAfterMs);
           continue;
         }
-        if (age === "unknown") continue;
+        if (age.status === "unknown") continue;
         candidates.push({ _id: id, _rev: persisted._rev, _deleted: true });
       }
-      if (candidates.length === 0) return hasRecentOrphan ? null : 0;
+      if (candidates.length === 0) {
+        return { deleted: 0, retryAfterMs };
+      }
 
       if (!canRun()) return null;
       const currentLists = (await db.get("ItemLists")) as DBItemLists;
@@ -155,8 +211,18 @@ export const deleteUnusedBibleItems = async ({
       }
 
       const results = await db.bulkDocs(candidates);
-      if (results.some((result) => "error" in result && result.error)) return null;
-      return hasRecentOrphan ? null : results.length;
+      if (
+        results.length !== candidates.length ||
+        results.some(
+          (result) =>
+            !("ok" in result) ||
+            result.ok !== true ||
+            ("error" in result && result.error),
+        )
+      ) {
+        return null;
+      }
+      return { deleted: results.length, retryAfterMs };
     } catch {
       // Missing, unreadable, or malformed outline inventory must never delete.
       return null;

@@ -1,4 +1,19 @@
 const activeByDatabase = new Map<string, Set<symbol>>();
+const bibleDocumentActivityByDatabase = new Map<string, Set<symbol>>();
+const contentDatabaseSessions = new Map<
+  string,
+  { token: symbol; initialReplicationComplete: boolean }
+>();
+const activityListeners = new Set<() => void>();
+
+const notifyActivityChanged = () => {
+  activityListeners.forEach((listener) => listener());
+};
+
+export const subscribeToContentActivity = (listener: () => void) => {
+  activityListeners.add(listener);
+  return () => activityListeners.delete(listener);
+};
 
 export type ContentReplicationActivity = {
   setBusy: (busy: boolean) => void;
@@ -24,6 +39,7 @@ export const trackContentReplication = (
       active?.delete(token);
       if (active?.size === 0) activeByDatabase.delete(databaseName);
     }
+    notifyActivityChanged();
   };
   const release = () => {
     if (released) return;
@@ -33,6 +49,7 @@ export const trackContentReplication = (
     const active = activeByDatabase.get(databaseName);
     active?.delete(token);
     if (active?.size === 0) activeByDatabase.delete(databaseName);
+    notifyActivityChanged();
   };
   setBusy(true);
   return { setBusy, release };
@@ -40,3 +57,64 @@ export const trackContentReplication = (
 
 export const isContentReplicationIdle = (databaseName: string): boolean =>
   (activeByDatabase.get(databaseName)?.size ?? 0) === 0;
+
+export const beginContentDatabaseSession = (databaseName: string) => {
+  const token = Symbol(databaseName);
+  contentDatabaseSessions.set(databaseName, {
+    token,
+    initialReplicationComplete: false,
+  });
+  notifyActivityChanged();
+
+  return {
+    token,
+    markInitialReplicationComplete: () => {
+      const current = contentDatabaseSessions.get(databaseName);
+      if (current?.token !== token || current.initialReplicationComplete) return;
+      contentDatabaseSessions.set(databaseName, {
+        token,
+        initialReplicationComplete: true,
+      });
+      notifyActivityChanged();
+    },
+    release: () => {
+      if (contentDatabaseSessions.get(databaseName)?.token !== token) return;
+      contentDatabaseSessions.delete(databaseName);
+      notifyActivityChanged();
+    },
+  };
+};
+
+export const getContentDatabaseSessionToken = (databaseName: string) =>
+  contentDatabaseSessions.get(databaseName)?.token ?? null;
+
+export const hasSuccessfulInitialContentReplication = (
+  databaseName: string,
+  token: symbol | null = getContentDatabaseSessionToken(databaseName),
+) => {
+  const current = contentDatabaseSessions.get(databaseName);
+  return Boolean(
+    token && current?.token === token && current.initialReplicationComplete,
+  );
+};
+
+/** Track Bible creation while its content document is being committed. */
+export const trackBibleDocumentActivity = (databaseName: string) => {
+  const token = Symbol(databaseName);
+  const active = bibleDocumentActivityByDatabase.get(databaseName) ?? new Set<symbol>();
+  active.add(token);
+  bibleDocumentActivityByDatabase.set(databaseName, active);
+  notifyActivityChanged();
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const current = bibleDocumentActivityByDatabase.get(databaseName);
+    current?.delete(token);
+    if (current?.size === 0) bibleDocumentActivityByDatabase.delete(databaseName);
+    notifyActivityChanged();
+  };
+};
+
+export const isBibleDocumentActivityIdle = (databaseName: string) =>
+  (bibleDocumentActivityByDatabase.get(databaseName)?.size ?? 0) === 0;

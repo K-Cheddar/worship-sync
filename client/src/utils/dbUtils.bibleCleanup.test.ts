@@ -1,6 +1,8 @@
 import {
   BIBLE_ITEM_CLEANUP_GRACE_PERIOD_MS,
+  cancelBibleItemCleanupRetry,
   deleteUnusedBibleItems,
+  scheduleBibleItemCleanupRetry,
 } from "./dbUtils";
 import type { DBItem } from "../types";
 
@@ -91,7 +93,7 @@ describe("deleteUnusedBibleItems", () => {
         db,
         bibleItems: [referencedA, referencedB, orphan],
       }),
-    ).resolves.toBe(1);
+    ).resolves.toEqual({ deleted: 1, retryAfterMs: null });
 
     expect(docs.has("bible-orphan")).toBe(false);
     expect(docs.has("bible-a")).toBe(true);
@@ -174,9 +176,12 @@ describe("deleteUnusedBibleItems", () => {
       uncertain,
     ]);
 
-    await expect(
-      deleteUnusedBibleItems({ db, bibleItems: [item, uncertain] }),
-    ).resolves.toBeNull();
+    const outcome = await deleteUnusedBibleItems({
+      db,
+      bibleItems: [item, uncertain],
+    });
+    expect(outcome).toMatchObject({ deleted: 0 });
+    expect(outcome?.retryAfterMs).toBeGreaterThan(0);
 
     expect(docs.has(item._id)).toBe(true);
     expect(docs.has(uncertain._id)).toBe(true);
@@ -189,7 +194,7 @@ describe("deleteUnusedBibleItems", () => {
     ]);
     await expect(
       deleteUnusedBibleItems({ db: uncertainDb, bibleItems: [uncertain] }),
-    ).resolves.toBe(0);
+    ).resolves.toEqual({ deleted: 0, retryAfterMs: null });
     expect(uncertainRawDb.bulkDocs).not.toHaveBeenCalled();
   });
 
@@ -208,6 +213,21 @@ describe("deleteUnusedBibleItems", () => {
 
     expect(docs.has(item._id)).toBe(true);
     expect(rawDb.bulkDocs).not.toHaveBeenCalled();
+  });
+
+  it("does not report successful deletion when a tombstone conflicts", async () => {
+    const item = bible("orphan-conflict");
+    const { db, docs, rawDb } = createDb([
+      { _id: "ItemLists", _rev: "1-lists", itemLists: [{ _id: "outline" }] },
+      outline("outline", []),
+      item,
+    ]);
+    rawDb.bulkDocs.mockResolvedValueOnce([
+      { id: item._id, error: "conflict" },
+    ] as never);
+
+    await expect(deleteUnusedBibleItems({ db, bibleItems: [item] })).resolves.toBeNull();
+    expect(docs.has(item._id)).toBe(true);
   });
 
   it("coalesces concurrent cleanup attempts for one database", async () => {
@@ -232,8 +252,58 @@ describe("deleteUnusedBibleItems", () => {
     await Promise.resolve();
     releaseInventory();
 
-    await expect(Promise.all([first, second])).resolves.toEqual([1, 1]);
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { deleted: 1, retryAfterMs: null },
+      { deleted: 1, retryAfterMs: null },
+    ]);
     expect(rawDb.allDocs).toHaveBeenCalledTimes(1);
     expect(rawDb.bulkDocs).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns a deterministic retry delay and reconsiders a recent orphan after the grace period", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-10-29T12:00:00.000Z"));
+    const item = bible(
+      "recent-orphan",
+      new Date(Date.now() - BIBLE_ITEM_CLEANUP_GRACE_PERIOD_MS + 5000).toISOString(),
+    );
+    const { db, docs, rawDb } = createDb([
+      { _id: "ItemLists", _rev: "1-lists", itemLists: [{ _id: "outline" }] },
+      outline("outline", []),
+      item,
+    ]);
+
+    await expect(deleteUnusedBibleItems({ db, bibleItems: [item] })).resolves.toEqual({
+      deleted: 0,
+      retryAfterMs: 5001,
+    });
+    expect(docs.has(item._id)).toBe(true);
+
+    jest.advanceTimersByTime(5001);
+    await expect(deleteUnusedBibleItems({ db, bibleItems: [item] })).resolves.toEqual({
+      deleted: 1,
+      retryAfterMs: null,
+    });
+    expect(docs.has(item._id)).toBe(false);
+    expect(rawDb.bulkDocs).toHaveBeenCalledTimes(1);
+    jest.useRealTimers();
+  });
+
+  it("cancels a delayed retry when its database session owner retires", () => {
+    jest.useFakeTimers();
+    const { db } = createDb([]);
+    const callback = jest.fn();
+    const session = Symbol("retired-session");
+    scheduleBibleItemCleanupRetry(db, session, 1000, callback);
+
+    cancelBibleItemCleanupRetry(db, Symbol("different-session"));
+    jest.advanceTimersByTime(1000);
+    expect(callback).toHaveBeenCalledTimes(1);
+
+    scheduleBibleItemCleanupRetry(db, session, 1000, callback);
+    cancelBibleItemCleanupRetry(db, session);
+    jest.advanceTimersByTime(1000);
+    expect(callback).toHaveBeenCalledTimes(1);
+    jest.useRealTimers();
   });
 });

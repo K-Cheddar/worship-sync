@@ -4925,7 +4925,9 @@ describe("store module", () => {
   });
 });
 
-const loadStoreWithItemListPersistence = () => {
+const loadStoreWithItemListPersistence = (
+  { initialReplicationComplete = true }: { initialReplicationComplete?: boolean } = {},
+) => {
   let storeModule: any;
   let itemListSliceModule: any;
   let itemListsSliceModule: any;
@@ -4934,6 +4936,7 @@ const loadStoreWithItemListPersistence = () => {
   let allDocsSliceModule: any;
   let servicePlanningImportSliceModule: any;
   let activeControllerPresenceModule: any;
+  let contentReplicationActivityModule: any;
   const postMessage = jest.fn();
   const db = {
     name: "outline-persistence-test-db",
@@ -4956,6 +4959,7 @@ const loadStoreWithItemListPersistence = () => {
         db: undefined,
         database: "outline-persistence-test-db",
         churchId: "church-test",
+        isConnected: true,
       },
       globalHostId: "host-123",
     }));
@@ -4981,7 +4985,15 @@ const loadStoreWithItemListPersistence = () => {
     servicePlanningImportSliceModule = require("./servicePlanningImportSlice");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     activeControllerPresenceModule = require("../utils/activeControllerPresence");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    contentReplicationActivityModule = require("../utils/contentReplicationActivity");
   });
+
+  const contentDatabaseSession =
+    contentReplicationActivityModule.beginContentDatabaseSession(db.name);
+  if (initialReplicationComplete) {
+    contentDatabaseSession.markInitialReplicationComplete();
+  }
 
   return {
     store: storeModule.default,
@@ -4992,6 +5004,8 @@ const loadStoreWithItemListPersistence = () => {
     allDocsSlice: allDocsSliceModule.allDocsSlice,
     servicePlanningImportSlice: servicePlanningImportSliceModule.servicePlanningImportSlice,
     activeControllerPresence: activeControllerPresenceModule,
+    contentReplicationActivity: contentReplicationActivityModule,
+    contentDatabaseSession,
     db,
     postMessage,
   };
@@ -5016,6 +5030,80 @@ describe("item list outline persistence", () => {
         createServiceItem({ name: "Current", _id: "song-1", listId: "l1" }),
       ]),
     );
+  };
+
+  const configureBibleCleanupDatabase = (
+    db: any,
+    bibleDoc: Record<string, any>,
+    savedOutlineItems: Array<Record<string, any>> = [],
+  ) => {
+    let sequence = 1;
+    let outlineDoc: Record<string, any> = {
+      _id: "outline-a",
+      _rev: "1-outline",
+      items: [...savedOutlineItems],
+      overlays: [],
+    };
+    const deletedIds = new Set<string>();
+    const registry = {
+      _id: "ItemLists",
+      _rev: "1-registry",
+      itemLists: [{ _id: "outline-a", name: "Sunday" }],
+    };
+    db.get.mockImplementation(async (id: string) =>
+      id === "ItemLists" ? { ...registry } : { ...outlineDoc },
+    );
+    db.put.mockImplementation(async (doc: Record<string, any>) => {
+      sequence += 1;
+      outlineDoc = { ...doc, _rev: `${sequence}-outline` };
+      return { ok: true, rev: outlineDoc._rev };
+    });
+    db.allDocs.mockImplementation(async ({ keys }: { keys: string[] }) => ({
+      rows: keys.map((key) => {
+        if (key === "outline-a") return { id: key, doc: { ...outlineDoc } };
+        if (key === bibleDoc._id && !deletedIds.has(key)) {
+          return { id: key, doc: { ...bibleDoc } };
+        }
+        return { key, error: "not_found" };
+      }),
+      update_seq: sequence,
+    }));
+    db.info.mockImplementation(async () => ({ update_seq: sequence }));
+    db.bulkDocs.mockImplementation(async (docs: Array<{ _id: string }>) => {
+      docs.forEach(({ _id }) => {
+        deletedIds.add(_id);
+        sequence += 1;
+      });
+      return docs.map((doc) => ({ id: doc._id, ok: true }));
+    });
+    return {
+      getOutline: () => outlineDoc,
+      setOutlineItems: (items: Array<Record<string, any>>) => {
+        outlineDoc = { ...outlineDoc, items: [...items], _rev: `${sequence + 1}-outline` };
+        sequence += 1;
+      },
+      isDeleted: () => deletedIds.has(bibleDoc._id),
+    };
+  };
+
+  const initializeBibleCleanupState = (
+    store: any,
+    itemListSlice: any,
+    itemListsSlice: any,
+    allDocsSlice: any,
+    bibleDoc: Record<string, any>,
+  ) => {
+    store.dispatch(allDocsSlice.actions.hydrateItemCache([bibleDoc]));
+    store.dispatch(
+      itemListsSlice.actions.initiateItemLists([
+        { _id: "outline-a", name: "Sunday" },
+      ]),
+    );
+    store.dispatch(itemListSlice.actions.initiateItemList([]));
+  };
+
+  const flushBibleCleanup = async () => {
+    for (let attempt = 0; attempt < 40; attempt += 1) await Promise.resolve();
   };
 
   it("persists the post-debounce outline list onto the latest document rev", async () => {
@@ -5145,7 +5233,7 @@ describe("item list outline persistence", () => {
     ]);
   });
 
-  it("defers Bible cleanup when another Controller is active", async () => {
+  it("defers cleanup while another Controller is active and retries when it leaves", async () => {
     jest.useFakeTimers();
     const {
       store,
@@ -5158,37 +5246,37 @@ describe("item list outline persistence", () => {
     const presence = activeControllerPresence.beginActiveControllerPresence(
       activeControllerPresence.getControllerPresenceScope(
         "church-test",
-        "outline-persistence-test-db",
+        db.name,
       ),
     );
     presence.publish(["host-123", "host-456"]);
-    const bibleDoc = createServiceItem({
-      name: "Genesis 1",
+    const oldDate = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const bibleDoc = {
       _id: "bible-other-controller",
-      listId: "bible-link",
+      _rev: "1-bible",
       type: "bible",
-    });
-    db.get.mockResolvedValue({
-      _id: "outline-a",
-      _rev: "1-outline",
-      items: [bibleDoc],
-      overlays: [],
-    });
-    store.dispatch(allDocsSlice.actions.hydrateItemCache([bibleDoc]));
-    store.dispatch(
-      itemListsSlice.actions.initiateItemLists([
-        { _id: "outline-a", name: "Sunday" },
-      ]),
+      name: "Genesis 1",
+      createdAt: oldDate,
+      updatedAt: oldDate,
+    };
+    const inventory = configureBibleCleanupDatabase(db, bibleDoc);
+    initializeBibleCleanupState(
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      bibleDoc,
     );
-    store.dispatch(itemListSlice.actions.initiateItemList([bibleDoc]));
-    store.dispatch(itemListSlice.actions.updateItemList([]));
 
-    await jest.advanceTimersByTimeAsync(1500);
-    for (let attempt = 0; attempt < 30; attempt += 1) await Promise.resolve();
+    await jest.advanceTimersByTimeAsync(1501);
+    await flushBibleCleanup();
 
-    expect(db.put).toHaveBeenCalledTimes(1);
     expect(db.allDocs).not.toHaveBeenCalled();
     expect(db.bulkDocs).not.toHaveBeenCalled();
+    presence.publish(["host-123"]);
+    await flushBibleCleanup();
+    expect(inventory.isDeleted()).toBe(true);
+    expect(db.bulkDocs).toHaveBeenCalledTimes(1);
     presence.release();
   });
 
@@ -5232,6 +5320,373 @@ describe("item list outline persistence", () => {
     expect(db.put).toHaveBeenCalledTimes(1);
     expect(db.allDocs).not.toHaveBeenCalled();
     expect(db.bulkDocs).not.toHaveBeenCalled();
+  });
+
+  it("reconciles previously orphaned Bible documents once after initial replication and cache hydration", async () => {
+    jest.useFakeTimers();
+    const {
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      activeControllerPresence,
+      db,
+    } = loadStoreWithItemListPersistence();
+    const presence = activeControllerPresence.beginActiveControllerPresence(
+      activeControllerPresence.getControllerPresenceScope(
+        "church-test",
+        db.name,
+      ),
+    );
+    presence.publish(["host-123"]);
+    const oldDate = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const bibleDoc = {
+      _id: "previously-orphaned-bible",
+      _rev: "1-bible",
+      type: "bible",
+      name: "Genesis 1",
+      createdAt: oldDate,
+      updatedAt: oldDate,
+    };
+    const inventory = configureBibleCleanupDatabase(db, bibleDoc);
+    initializeBibleCleanupState(
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      bibleDoc,
+    );
+
+    await flushBibleCleanup();
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushBibleCleanup();
+    expect(inventory.isDeleted()).toBe(true);
+    expect(db.bulkDocs).toHaveBeenCalledTimes(1);
+
+    presence.publish(["host-123"]);
+    presence.publish(["host-123"]);
+    await flushBibleCleanup();
+    expect(db.allDocs).toHaveBeenCalledTimes(1);
+    expect(db.bulkDocs).toHaveBeenCalledTimes(1);
+    presence.release();
+  });
+
+  it("waits for successful initial replication before reconciliation", async () => {
+    jest.useFakeTimers();
+    const {
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      activeControllerPresence,
+      contentDatabaseSession,
+      db,
+    } = loadStoreWithItemListPersistence({ initialReplicationComplete: false });
+    const presence = activeControllerPresence.beginActiveControllerPresence(
+      activeControllerPresence.getControllerPresenceScope("church-test", db.name),
+    );
+    presence.publish(["host-123"]);
+    const oldDate = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const bibleDoc = {
+      _id: "initial-sync-gated-bible",
+      _rev: "1-bible",
+      type: "bible",
+      name: "Genesis 1",
+      createdAt: oldDate,
+      updatedAt: oldDate,
+    };
+    const inventory = configureBibleCleanupDatabase(db, bibleDoc);
+    initializeBibleCleanupState(
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      bibleDoc,
+    );
+    await flushBibleCleanup();
+    await jest.advanceTimersByTimeAsync(5000);
+    await flushBibleCleanup();
+    expect(db.allDocs).not.toHaveBeenCalled();
+    expect(inventory.isDeleted()).toBe(false);
+
+    contentDatabaseSession.markInitialReplicationComplete();
+    await flushBibleCleanup();
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushBibleCleanup();
+    expect(inventory.isDeleted()).toBe(true);
+    expect(db.bulkDocs).toHaveBeenCalledTimes(1);
+    presence.release();
+  });
+
+  it("defers reconciliation while Controller presence is unknown", async () => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, allDocsSlice, db } =
+      loadStoreWithItemListPersistence();
+    const oldDate = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const bibleDoc = {
+      _id: "presence-unknown-bible",
+      _rev: "1-bible",
+      type: "bible",
+      name: "Genesis 1",
+      createdAt: oldDate,
+      updatedAt: oldDate,
+    };
+    configureBibleCleanupDatabase(db, bibleDoc);
+    initializeBibleCleanupState(
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      bibleDoc,
+    );
+
+    await flushBibleCleanup();
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushBibleCleanup();
+    expect(db.allDocs).not.toHaveBeenCalled();
+    expect(db.bulkDocs).not.toHaveBeenCalled();
+  });
+
+  it("retries a temporary Bible-creation activity without another outline edit", async () => {
+    jest.useFakeTimers();
+    const {
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      activeControllerPresence,
+      contentReplicationActivity,
+      db,
+    } = loadStoreWithItemListPersistence();
+    const presence = activeControllerPresence.beginActiveControllerPresence(
+      activeControllerPresence.getControllerPresenceScope("church-test", db.name),
+    );
+    presence.publish(["host-123"]);
+    const oldDate = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const bibleDoc = {
+      _id: "deferred-bible-cleanup",
+      _rev: "1-bible",
+      type: "bible",
+      name: "Genesis 1",
+      createdAt: oldDate,
+      updatedAt: oldDate,
+    };
+    const inventory = configureBibleCleanupDatabase(db, bibleDoc);
+    const endActivity = contentReplicationActivity.trackBibleDocumentActivity(db.name);
+    initializeBibleCleanupState(
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      bibleDoc,
+    );
+
+    await flushBibleCleanup();
+    await jest.advanceTimersByTimeAsync(1501);
+    await flushBibleCleanup();
+    expect(db.allDocs).not.toHaveBeenCalled();
+    expect(db.bulkDocs).not.toHaveBeenCalled();
+
+    endActivity();
+    await flushBibleCleanup();
+    expect(inventory.isDeleted()).toBe(true);
+    expect(db.bulkDocs).toHaveBeenCalledTimes(1);
+    expect(store.getState().undoable.present.itemList.list).toEqual([]);
+    presence.release();
+  });
+
+  it("retries a recent orphan after its grace period without an outline edit", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-10-29T12:00:00.000Z"));
+    const {
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      activeControllerPresence,
+      db,
+    } = loadStoreWithItemListPersistence();
+    const presence = activeControllerPresence.beginActiveControllerPresence(
+      activeControllerPresence.getControllerPresenceScope("church-test", db.name),
+    );
+    presence.publish(["host-123"]);
+    const recentDate = new Date(Date.now() - 60 * 60 * 1000 + 3000).toISOString();
+    const bibleDoc = {
+      _id: "recent-bible-cleanup",
+      _rev: "1-bible",
+      type: "bible",
+      name: "Genesis 1",
+      createdAt: recentDate,
+      updatedAt: recentDate,
+    };
+    const inventory = configureBibleCleanupDatabase(db, bibleDoc);
+    initializeBibleCleanupState(
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      bibleDoc,
+    );
+
+    await flushBibleCleanup();
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushBibleCleanup();
+    expect(inventory.isDeleted()).toBe(false);
+    expect(db.allDocs).toHaveBeenCalledTimes(1);
+
+    await jest.advanceTimersByTimeAsync(1501);
+    await flushBibleCleanup();
+    expect(inventory.isDeleted()).toBe(true);
+    expect(db.allDocs).toHaveBeenCalledTimes(2);
+    expect(db.bulkDocs).toHaveBeenCalledTimes(1);
+    presence.release();
+  });
+
+  it("cancels a recent-orphan timer when its database session ends", async () => {
+    jest.useFakeTimers();
+    const {
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      activeControllerPresence,
+      contentDatabaseSession,
+      db,
+    } = loadStoreWithItemListPersistence();
+    const presence = activeControllerPresence.beginActiveControllerPresence(
+      activeControllerPresence.getControllerPresenceScope("church-test", db.name),
+    );
+    presence.publish(["host-123"]);
+    const recentDate = new Date(Date.now() - 60 * 60 * 1000 + 3000).toISOString();
+    const bibleDoc = {
+      _id: "session-owned-recent-bible",
+      _rev: "1-bible",
+      type: "bible",
+      name: "Genesis 1",
+      createdAt: recentDate,
+      updatedAt: recentDate,
+    };
+    const inventory = configureBibleCleanupDatabase(db, bibleDoc);
+    initializeBibleCleanupState(
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      bibleDoc,
+    );
+    await flushBibleCleanup();
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushBibleCleanup();
+    expect(db.allDocs).toHaveBeenCalledTimes(1);
+
+    contentDatabaseSession.release();
+    await flushBibleCleanup();
+    await jest.advanceTimersByTimeAsync(5000);
+    await flushBibleCleanup();
+    expect(db.allDocs).toHaveBeenCalledTimes(1);
+    expect(inventory.isDeleted()).toBe(false);
+    presence.release();
+  });
+
+  it("preserves a newly created Bible document until its outline reference is saved", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-10-29T12:00:00.000Z"));
+    const {
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      activeControllerPresence,
+      contentReplicationActivity,
+      db,
+    } = loadStoreWithItemListPersistence();
+    const presence = activeControllerPresence.beginActiveControllerPresence(
+      activeControllerPresence.getControllerPresenceScope("church-test", db.name),
+    );
+    presence.publish(["host-123"]);
+    const bibleDoc = {
+      _id: "newly-created-bible",
+      _rev: "1-bible",
+      type: "bible",
+      name: "Genesis 1",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const inventory = configureBibleCleanupDatabase(db, bibleDoc);
+    const endCreation = contentReplicationActivity.trackBibleDocumentActivity(db.name);
+    initializeBibleCleanupState(
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      bibleDoc,
+    );
+    await flushBibleCleanup();
+    await jest.advanceTimersByTimeAsync(1501);
+    await flushBibleCleanup();
+    expect(db.allDocs).not.toHaveBeenCalled();
+
+    endCreation();
+    await flushBibleCleanup();
+    expect(inventory.isDeleted()).toBe(false);
+    expect(db.bulkDocs).not.toHaveBeenCalled();
+
+    inventory.setOutlineItems([{ _id: bibleDoc._id, type: "bible" }]);
+    await jest.advanceTimersByTimeAsync(30 * 60 * 1000);
+    presence.publish(["host-123"]);
+    await jest.advanceTimersByTimeAsync(10 * 60 * 1000);
+    presence.publish(["host-123"]);
+    await jest.advanceTimersByTimeAsync(10 * 60 * 1000);
+    presence.publish(["host-123"]);
+    await jest.advanceTimersByTimeAsync(10 * 60 * 1000 + 5_000);
+    await flushBibleCleanup();
+    expect(inventory.isDeleted()).toBe(false);
+    expect(db.bulkDocs).not.toHaveBeenCalled();
+    presence.release();
+  });
+
+  it("invalidates cleanup when the database session changes during inventory verification", async () => {
+    jest.useFakeTimers();
+    const {
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      activeControllerPresence,
+      contentDatabaseSession,
+      db,
+    } = loadStoreWithItemListPersistence();
+    const presence = activeControllerPresence.beginActiveControllerPresence(
+      activeControllerPresence.getControllerPresenceScope("church-test", db.name),
+    );
+    presence.publish(["host-123"]);
+    const oldDate = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const bibleDoc = {
+      _id: "session-switch-during-cleanup",
+      _rev: "1-bible",
+      type: "bible",
+      name: "Genesis 1",
+      createdAt: oldDate,
+      updatedAt: oldDate,
+    };
+    configureBibleCleanupDatabase(db, bibleDoc);
+    db.info.mockImplementationOnce(async () => {
+      contentDatabaseSession.release();
+      return { update_seq: 1 };
+    });
+    initializeBibleCleanupState(
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      bibleDoc,
+    );
+
+    await flushBibleCleanup();
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushBibleCleanup();
+    expect(db.bulkDocs).not.toHaveBeenCalled();
+    presence.release();
   });
 
   it("retries after an overlay-order write wins a shared-document revision conflict", async () => {

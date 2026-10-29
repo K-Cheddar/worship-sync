@@ -33,6 +33,7 @@ import { formatBible, formatFree, formatSong } from "./overflow";
 import { createNewSlide } from "./slideCreation";
 import { sortNamesInList } from "./sort";
 import { DEFAULT_OUTLINE_SCOPE } from "./outlineScope";
+import { trackBibleDocumentActivity } from "./contentReplicationActivity";
 
 type CreateSectionsType = {
   formattedLyrics?: FormattedLyrics[];
@@ -292,8 +293,14 @@ export const createNewBible = async ({
     brightness,
   });
 
-  const _item = await createNewItemInDb({ item, db });
-  return _item;
+  const endBibleDocumentActivity = db?.name
+    ? trackBibleDocumentActivity(db.name)
+    : null;
+  try {
+    return await createNewItemInDb({ item, db });
+  } finally {
+    endBibleDocumentActivity?.();
+  }
 };
 
 type FormatBibleFromScratchType = {

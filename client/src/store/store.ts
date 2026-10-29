@@ -2,6 +2,7 @@ import {
   Action,
   combineReducers,
   configureStore,
+  createAction,
   createListenerMiddleware,
   isAnyOf,
   Reducer,
@@ -109,11 +110,22 @@ import { extractMediaUrlsFromBackgrounds } from "../utils/mediaCacheUtils";
 import { persistMediaStateChanges } from "../utils/mediaDocUtils";
 import { normalizeOverlayForSync } from "../utils/overlayUtils";
 import { persistExistingOverlayDoc } from "../utils/persistOverlayDoc";
-import { deleteUnusedBibleItems } from "../utils/bibleItemCleanup";
-import { isContentReplicationIdle } from "../utils/contentReplicationActivity";
+import {
+  cancelBibleItemCleanupRetry,
+  deleteUnusedBibleItems,
+  scheduleBibleItemCleanupRetry,
+} from "../utils/bibleItemCleanup";
+import {
+  getContentDatabaseSessionToken,
+  hasSuccessfulInitialContentReplication,
+  isBibleDocumentActivityIdle,
+  isContentReplicationIdle,
+  subscribeToContentActivity,
+} from "../utils/contentReplicationActivity";
 import {
   getControllerPresenceScope,
   isOnlyActiveController,
+  subscribeToActiveControllerPresence,
 } from "../utils/activeControllerPresence";
 import {
   persistServiceListItems,
@@ -1288,6 +1300,8 @@ listenerMiddleware.startListening({
           hostId: globalHostId,
         },
       });
+    }).finally(() => {
+      listenerApi.dispatch(bibleCleanupOpportunity({}));
     });
   },
 });
@@ -1474,6 +1488,16 @@ listenerMiddleware.startListening({
 });
 
 const pendingBibleCleanupByDatabase = new WeakMap<object, Set<string>>();
+const bibleCleanupOpportunity = createAction<{ immediate?: boolean }>(
+  "bibleCleanup/opportunity",
+);
+const INITIAL_BIBLE_RECONCILIATION_DELAY_MS = 1500;
+type BibleCleanupSessionState = {
+  status: "pending" | "complete";
+  notBefore: number;
+};
+const bibleCleanupSessions = new WeakMap<object, Map<symbol, BibleCleanupSessionState>>();
+const dueBibleCleanupRetries = new WeakMap<object, Set<symbol>>();
 
 const noteRemovedBibleOutlineItem = (
   database: object | undefined,
@@ -1497,11 +1521,194 @@ const noteRemovedBibleOutlineItem = (
 const hasPendingBibleCleanup = (database: object, outlineId: string) =>
   pendingBibleCleanupByDatabase.get(database)?.has(outlineId) ?? false;
 
-const completeBibleCleanup = (database: object, outlineId: string) => {
-  const pending = pendingBibleCleanupByDatabase.get(database);
-  pending?.delete(outlineId);
-  if (pending?.size === 0) pendingBibleCleanupByDatabase.delete(database);
+const getBibleCleanupSessionStates = (database: object) => {
+  const sessions = bibleCleanupSessions.get(database) ?? new Map();
+  bibleCleanupSessions.set(database, sessions);
+  return sessions;
 };
+
+const getDueBibleCleanupRetries = (database: object) => {
+  const due = dueBibleCleanupRetries.get(database) ?? new Set<symbol>();
+  dueBibleCleanupRetries.set(database, due);
+  return due;
+};
+
+const scheduleBibleCleanupAttempt = (
+  database: PouchDB.Database,
+  sessionToken: symbol,
+  cacheSession: number,
+  delayMs: number,
+) => {
+  scheduleBibleItemCleanupRetry(database, sessionToken, delayMs, () => {
+    const currentState = store.getState() as RootState;
+    if (
+      db !== database ||
+      getContentDatabaseSessionToken(database.name) !== sessionToken ||
+      currentState.allDocs.session !== cacheSession
+    ) {
+      return;
+    }
+    getDueBibleCleanupRetries(database).add(sessionToken);
+    store.dispatch(bibleCleanupOpportunity({ immediate: true }));
+  });
+};
+
+listenerMiddleware.startListening({
+  actionCreator: bibleCleanupOpportunity,
+  effect: async (action, listenerApi) => {
+    const database = db;
+    if (!database) return;
+
+    const sessionStates = getBibleCleanupSessionStates(database);
+    const dueRetries = getDueBibleCleanupRetries(database);
+    const sessionToken = getContentDatabaseSessionToken(database.name);
+    for (const staleToken of sessionStates.keys()) {
+      if (staleToken === sessionToken) continue;
+      cancelBibleItemCleanupRetry(database, staleToken);
+      sessionStates.delete(staleToken);
+      dueRetries.delete(staleToken);
+    }
+    if (
+      !sessionToken ||
+      !hasSuccessfulInitialContentReplication(database.name, sessionToken)
+    ) {
+      return;
+    }
+
+    const stateAtStart = listenerApi.getState() as RootState;
+    if (
+      !stateAtStart.allDocs.isInitialized ||
+      stateAtStart.allDocs.error !== null
+    ) {
+      if (sessionToken) {
+        cancelBibleItemCleanupRetry(database, sessionToken);
+        sessionStates.delete(sessionToken);
+        dueRetries.delete(sessionToken);
+      }
+      return;
+    }
+
+    let sessionState = sessionStates.get(sessionToken);
+    if (!sessionState) {
+      sessionState = {
+        status: "pending",
+        notBefore: Date.now() + INITIAL_BIBLE_RECONCILIATION_DELAY_MS,
+      };
+      sessionStates.set(sessionToken, sessionState);
+      scheduleBibleCleanupAttempt(
+        database,
+        sessionToken,
+        stateAtStart.allDocs.session,
+        INITIAL_BIBLE_RECONCILIATION_DELAY_MS,
+      );
+    }
+
+    const pendingOutlineCleanup =
+      (pendingBibleCleanupByDatabase.get(database)?.size ?? 0) > 0;
+    const retryIsDue = dueRetries.has(sessionToken);
+    if (
+      sessionState.status === "complete" &&
+      !pendingOutlineCleanup &&
+      !retryIsDue
+    ) {
+      return;
+    }
+    if (
+      !retryIsDue &&
+      !action.payload.immediate &&
+      Date.now() < sessionState.notBefore
+    ) {
+      return;
+    }
+
+    const cacheSession = stateAtStart.allDocs.session;
+    const cacheChangeVersion = stateAtStart.allDocs.changeVersion;
+    const cleanupResult = await deleteUnusedBibleItems({
+      db: database,
+      bibleItems: stateAtStart.allDocs.allBibleDocs,
+      canRun: () => {
+        const currentState = listenerApi.getState() as RootState;
+        const currentPresent = currentState.undoable.present;
+        const syncStatus = currentState.servicePlanningImport.sync.status;
+        const hasPendingWrites =
+          currentPresent.item.hasPendingUpdate ||
+          currentPresent.itemList.hasPendingUpdate ||
+          Object.values(currentState.autosaveIndicator.debouncedSaveDepth).some(
+            (depth) => depth > 0,
+          ) ||
+          itemAutosaveDebounces.size > 0 ||
+          itemAutosaveWriteQueues.size > 0 ||
+          pendingItemAutosaves.size > 0;
+        const presenceScope = getControllerPresenceScope(
+          globalFireDbInfo.churchId,
+          globalFireDbInfo.database,
+        );
+        return (
+          db === database &&
+          getContentDatabaseSessionToken(database.name) === sessionToken &&
+          hasSuccessfulInitialContentReplication(database.name, sessionToken) &&
+          currentState.allDocs.isInitialized &&
+          currentState.allDocs.error === null &&
+          currentState.allDocs.session === cacheSession &&
+          currentState.allDocs.changeVersion === cacheChangeVersion &&
+          currentPresent.itemList.isInitialized &&
+          currentPresent.itemLists.isInitialized &&
+          !hasPendingWrites &&
+          syncStatus !== "running" &&
+          syncStatus !== "cancelling" &&
+          isContentReplicationIdle(database.name) &&
+          isBibleDocumentActivityIdle(database.name) &&
+          globalFireDbInfo.isConnected === true &&
+          isOnlyActiveController(presenceScope, globalHostId) &&
+          !listenerApi.signal.aborted
+        );
+      },
+    });
+
+    if (db !== database || getContentDatabaseSessionToken(database.name) !== sessionToken) {
+      return;
+    }
+    if (cleanupResult === null) return;
+
+    sessionState.status = "complete";
+    pendingBibleCleanupByDatabase.delete(database);
+    dueRetries.delete(sessionToken);
+    if (cleanupResult.retryAfterMs !== null) {
+      scheduleBibleCleanupAttempt(
+        database,
+        sessionToken,
+        cacheSession,
+        cleanupResult.retryAfterMs,
+      );
+    } else {
+      cancelBibleItemCleanupRetry(database, sessionToken);
+    }
+  },
+});
+
+listenerMiddleware.startListening({
+  matcher: isAnyOf(
+    allDocsSlice.actions.hydrateItemCache,
+    allDocsSlice.actions.applyItemDocumentChange,
+    allDocsSlice.actions.resetItemCache,
+    allDocsSlice.actions.setItemCacheError,
+    itemSlice.actions.setHasPendingUpdate,
+    itemSlice.actions.markItemPersisted,
+    itemListSlice.actions.initiateItemList,
+    itemListSlice.actions.setIsInitialized,
+    itemListSlice.actions.setHasPendingUpdate,
+    itemListsSlice.actions.initiateItemLists,
+    itemListsSlice.actions.setIsInitialized,
+    autosaveIndicatorSlice.actions.endKeyedDebouncedSave,
+    servicePlanningImportSlice.actions.completeServicePlanningSync,
+    servicePlanningImportSlice.actions.failServicePlanningSync,
+    servicePlanningImportSlice.actions.finishServicePlanningSyncCancellation,
+    servicePlanningImportSlice.actions.clearServicePlanningSyncState,
+  ),
+  effect: (_action, listenerApi) => {
+    listenerApi.dispatch(bibleCleanupOpportunity({}));
+  },
+});
 
 // handle ItemList updates
 listenerMiddleware.startListening({
@@ -1607,46 +1814,7 @@ listenerMiddleware.startListening({
       });
 
       if (hasPendingBibleCleanup(dbAtStart, selectedList._id)) {
-        const cleanupState = listenerApi.getState() as RootState;
-        const cacheSession = cleanupState.allDocs.session;
-        const cacheChangeVersion = cleanupState.allDocs.changeVersion;
-        const cleanupResult = await deleteUnusedBibleItems({
-          db: dbAtStart,
-          bibleItems: cleanupState.allDocs.allBibleDocs,
-          canRun: () => {
-            const currentState = listenerApi.getState() as RootState;
-            const currentPresent = currentState.undoable.present;
-            const syncStatus = currentState.servicePlanningImport.sync.status;
-            const hasPendingWrites =
-              currentPresent.item.hasPendingUpdate ||
-              currentPresent.itemList.hasPendingUpdate ||
-              Object.values(currentState.autosaveIndicator.debouncedSaveDepth).some(
-                (depth) => depth > 0,
-              );
-            return (
-              !listenerApi.signal.aborted &&
-              db === dbAtStart &&
-              isOnlyActiveController(
-                getControllerPresenceScope(
-                  globalFireDbInfo.churchId,
-                  globalFireDbInfo.database,
-                ),
-                globalHostId,
-              ) &&
-              isContentReplicationIdle(dbAtStart.name) &&
-              currentState.allDocs.isInitialized &&
-              currentState.allDocs.error === null &&
-              currentState.allDocs.session === cacheSession &&
-              currentState.allDocs.changeVersion === cacheChangeVersion &&
-              !hasPendingWrites &&
-              syncStatus !== "running" &&
-              syncStatus !== "cancelling"
-            );
-          },
-        });
-        if (cleanupResult !== null) {
-          completeBibleCleanup(dbAtStart, selectedList._id);
-        }
+        listenerApi.dispatch(bibleCleanupOpportunity({ immediate: true }));
       }
     } catch (error) {
       if (isListenerCancelledTaskError(error)) return;
@@ -4045,6 +4213,13 @@ const store = configureStore({
       itemOwnerTransitionMiddleware,
       listenerMiddleware.middleware,
     ),
+});
+
+subscribeToContentActivity(() => {
+  store.dispatch(bibleCleanupOpportunity({}));
+});
+subscribeToActiveControllerPresence(() => {
+  store.dispatch(bibleCleanupOpportunity({}));
 });
 
 registerContentDatabaseFlushHandler(flushItemAutosavesForContentDatabase);

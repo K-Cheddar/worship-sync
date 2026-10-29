@@ -42,6 +42,8 @@ import { syncServicesFromRemote } from "../store/serviceTimesSlice";
 import {
   beginActiveControllerPresence,
   getControllerPresenceScope,
+  isFreshActiveControllerRecord,
+  notifyActiveControllerPresenceChanged,
 } from "../utils/activeControllerPresence";
 import {
   AuthBootstrap,
@@ -1968,7 +1970,13 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
                 inventoryUncertain = true;
                 return [];
               }
-              if (now - lastActive > 60 * 60 * 1000) return [];
+              if (lastActive - now > 5 * 60 * 1000) {
+                inventoryUncertain = true;
+                return [];
+              }
+              if (!isFreshActiveControllerRecord(instance.lastActive || "", now)) {
+                return [];
+              }
               if (!instanceId) {
                 inventoryUncertain = true;
                 return [];
@@ -2429,7 +2437,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     const connectedRef = ref(firebaseDb, ".info/connected");
     const unsubscribe = onValue(connectedRef, (snap) => {
       const isConnected = snap.val() === true;
+      const connectionChanged = globalFireDbInfo.isConnected !== isConnected;
       globalFireDbInfo.isConnected = isConnected;
+      if (connectionChanged) notifyActiveControllerPresenceChanged();
       setRealtimeConnected(isConnected);
       if (!isConnected) {
         wasRealtimeConnectedRef.current = false;

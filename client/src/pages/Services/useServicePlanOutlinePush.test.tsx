@@ -13,6 +13,7 @@ import { buildServicePlanOutlineItem, planServicePlanOutlineItems } from "./serv
 import { getVerses } from "../../api/getVerses";
 import { createItemFromProps } from "../../utils/itemUtil";
 import type { ItemState } from "../../types";
+import { isBibleDocumentActivityIdle } from "../../utils/contentReplicationActivity";
 
 jest.mock("../../api/getVerses", () => ({ getVerses: jest.fn() }));
 // JSDOM has no text layout; keep slide construction and persistence real.
@@ -689,6 +690,32 @@ describe("useServicePlanOutlinePush", () => {
     });
     expect(onAdded).not.toHaveBeenCalled();
     expect(mockState.undoable.present.itemList.list).toEqual([{ ...song, listId: "manual-occurrence" }]);
+  });
+
+  it("marks the native saved-plan outline push active until its deferred item build settles", async () => {
+    const song: ServiceItem = { _id: "song", name: "Song", type: "song", listId: "song-link" };
+    const db = { name: "native-saved-plan-push-test-db" } as PouchDB.Database;
+    setPlannedItems([song]);
+    let finish!: (item: ServiceItem) => void;
+    mockBuildItem.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <ControllerInfoContext.Provider value={{ db } as never}>
+        {children}
+      </ControllerInfoContext.Provider>
+    );
+    const { result } = renderHook(() => useServicePlanOutlinePush(), { wrapper });
+    let pending!: ReturnType<typeof result.current.pushPlanToOutline>;
+
+    await act(async () => {
+      pending = result.current.pushPlanToOutline({} as ServicePlan);
+    });
+    expect(isBibleDocumentActivityIdle(db.name)).toBe(false);
+
+    await act(async () => {
+      finish(song);
+      await pending;
+    });
+    expect(isBibleDocumentActivityIdle(db.name)).toBe(true);
   });
   it("inserts current library metadata after an asynchronous build without refreshing existing outline overrides", async () => {
     const existing: ServiceItem = { _id: "existing-song", type: "song", name: "Existing", listId: "existing", background: "operator override" };

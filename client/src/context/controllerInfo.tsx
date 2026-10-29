@@ -28,8 +28,10 @@ import {
 } from "../store/deferredItemMutations";
 import {
   trackContentReplication,
+  beginContentDatabaseSession,
   type ContentReplicationActivity,
 } from "../utils/contentReplicationActivity";
+import { cancelBibleItemCleanupRetry } from "../utils/bibleItemCleanup";
 
 export type ConnectionStatus = {
   status: "connecting" | "retrying" | "failed" | "connected";
@@ -639,12 +641,38 @@ const ControllerInfoProvider = ({ children }: any) => {
   }, [shouldInitializeControllerData, databaseSessionKey, churchId, activeDatabaseKey, broadcastDatabaseKey, isGuestSession, isDbSetup]);
 
   const initialRemoteDatabaseRef = useRef<PouchDB.Database | null>(null);
+  const contentDatabaseSessionRef = useRef<
+    ReturnType<typeof beginContentDatabaseSession> | null
+  >(null);
+  useEffect(() => {
+    if (!db || !isAuthenticatedSession || dbSessionRef.current !== databaseSessionKey) {
+      return;
+    }
+    const localDb = db;
+    const contentDatabaseSession = beginContentDatabaseSession(localDb.name);
+    contentDatabaseSessionRef.current = contentDatabaseSession;
+    // This concrete PouchDB instance already completed its first remote pull.
+    // Keep that fact when authentication refreshes the same local DB session.
+    if (initialRemoteDatabaseRef.current === localDb) {
+      contentDatabaseSession.markInitialReplicationComplete();
+    }
+    return () => {
+      cancelBibleItemCleanupRetry(localDb, contentDatabaseSession.token);
+      contentDatabaseSession.release();
+      if (contentDatabaseSessionRef.current === contentDatabaseSession) {
+        contentDatabaseSessionRef.current = null;
+      }
+    };
+  }, [db, databaseSessionKey, isAuthenticatedSession]);
+
   useEffect(() => {
     if (!db || !hasCouchSession || !isAuthenticatedSession || dbSessionRef.current !== databaseSessionKey || initialRemoteDatabaseRef.current === db) return;
     let cancelled = false;
     const sessionAtStart = databaseSessionKey;
     const isCurrentSession = () => !cancelled && databaseSessionRef.current === sessionAtStart;
     const localDb = db;
+    const contentDatabaseSession = contentDatabaseSessionRef.current;
+    if (!contentDatabaseSession) return;
     const connectRemote = async () => {
       let pullActivity: ContentReplicationActivity | null = null;
       try {
@@ -725,11 +753,12 @@ const ControllerInfoProvider = ({ children }: any) => {
             }
           })
           .on("complete", () => {
+            if (!isCurrentSession()) return;
+            contentDatabaseSession.markInitialReplicationComplete();
             activePullActivity.release();
             if (initialContentReplicationActivityRef.current === activePullActivity) {
               initialContentReplicationActivityRef.current = null;
             }
-            if (!isCurrentSession()) return;
             setDbProgress(100);
             initialRemoteDatabaseRef.current = localDb;
             if (isAuthenticatedSession) {
