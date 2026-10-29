@@ -99,6 +99,89 @@ describe("useLiveOutlinePreview", () => {
     expect(db.get).not.toHaveBeenCalledWith("ItemLists");
   });
 
+  it("follows remote live-outline switches from the winning fallback registry before Redux initializes", async () => {
+    store.dispatch({ type: "RESET" });
+    const original = makeItemListsDoc();
+    const nextOutline = { _id: "next-main", name: "Next main", controllerScope: "presentation" };
+    let registry = { ...original, itemLists: [...original.itemLists, nextOutline] };
+    let resolveNext!: (value: { items: ReturnType<typeof makeItem>[] }) => void;
+    const db = {
+      get: jest.fn((id: string) => {
+        if (id === "ItemLists") return Promise.resolve(registry);
+        if (id === nextOutline._id) return new Promise((resolve) => { resolveNext = resolve; });
+        return Promise.resolve({ items: [makeItem("Original live item")] });
+      }),
+    };
+    const updater = new EventTarget();
+    const cloud = {} as never;
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <Provider store={store}>
+        <ControllerInfoContext.Provider value={{ db, cloud, updater } as never}>
+          {children}
+        </ControllerInfoContext.Provider>
+      </Provider>
+    );
+    const { result } = renderHook(() => useLiveOutlinePreview(), { wrapper });
+    await waitFor(() => expect(result.current.items[0]?.name).toBe("Original live item"));
+    expect(result.current.isLoading).toBe(false);
+
+    // The notification may describe a losing revision; Pouch's winner is authoritative.
+    registry = { ...registry, activeList: nextOutline };
+    act(() => updater.dispatchEvent(new CustomEvent("update", { detail: [original] })));
+    await waitFor(() => expect(db.get).toHaveBeenCalledWith("next-main"));
+    expect(result.current.isLoading).toBe(true);
+    await act(async () => { resolveNext({ items: [makeItem("New live item")] }); });
+    expect(result.current.items[0]?.name).toBe("New live item");
+    expect(result.current.isLoading).toBe(false);
+    expect(store.getState().undoable.present.itemLists.isInitialized).toBe(false);
+
+    const readsBefore = db.get.mock.calls.length;
+    registry = { ...registry, itemLists: registry.itemLists.map((list) => ({ ...list, name: `${list.name} renamed` })) };
+    await act(async () => updater.dispatchEvent(new CustomEvent("update", { detail: [{ _id: "ItemLists" }] })));
+    expect(db.get).toHaveBeenCalledTimes(readsBefore + 1);
+    expect(db.get.mock.calls.filter(([id]) => id === "next-main")).toHaveLength(1);
+    expect(result.current.items[0]?.name).toBe("New live item");
+    expect(result.current.isLoading).toBe(false);
+  });
+
+  it("ignores superseded fallback registry reads and late results after unmount", async () => {
+    store.dispatch({ type: "RESET" });
+    const registryReads: Array<(value: ReturnType<typeof makeItemListsDoc>) => void> = [];
+    const db = {
+      get: jest.fn((id: string) => id === "ItemLists"
+        ? new Promise((resolve) => { registryReads.push(resolve); })
+        : Promise.resolve({ items: [makeItem(id)] })),
+    };
+    const updater = new EventTarget();
+    const cloud = {} as never;
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <Provider store={store}>
+        <ControllerInfoContext.Provider value={{ db, cloud, updater } as never}>
+          {children}
+        </ControllerInfoContext.Provider>
+      </Provider>
+    );
+    const { result, unmount } = renderHook(() => useLiveOutlinePreview(), { wrapper });
+    const notify = () => updater.dispatchEvent(new CustomEvent("update", { detail: [{ _id: "ItemLists" }] }));
+    act(() => { notify(); });
+    expect(registryReads).toHaveLength(2);
+    const next = { _id: "next-main", name: "Next main", controllerScope: "presentation" };
+    const winner = { ...makeItemListsDoc(), itemLists: [next], activeList: next };
+    await act(async () => { registryReads[1](winner); });
+    await waitFor(() => expect(result.current.items[0]?.name).toBe("next-main"));
+    await act(async () => { registryReads[0](makeItemListsDoc()); });
+    expect(result.current.items[0]?.name).toBe("next-main");
+    expect(db.get).not.toHaveBeenCalledWith("main-list");
+
+    act(() => { notify(); });
+    expect(registryReads).toHaveLength(3);
+    unmount();
+    await act(async () => { registryReads[2](makeItemListsDoc()); });
+    act(() => { notify(); });
+    expect(registryReads).toHaveLength(3);
+    expect(db.get).not.toHaveBeenCalledWith("main-list");
+  });
+
   it("ignores a stale outline response after switching controller scopes", async () => {
     initializeLocalRegistry();
     let resolveMain!: (value: { _id: string; items: ReturnType<typeof makeItem>[] }) => void;

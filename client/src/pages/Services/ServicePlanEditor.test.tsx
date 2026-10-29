@@ -2540,12 +2540,28 @@ describe("ServicePlanEditor", () => {
     expect(
       await screen.findByRole("checkbox", { name: "Confirm match for Sermon" }),
     ).not.toBeChecked();
-    expect(screen.getByText("Moved")).toBeInTheDocument();
+    expect(screen.queryByText("Moved")).not.toBeInTheDocument();
     expect(screen.getByText("Possible matches")).toBeInTheDocument();
     expect(
       screen.getByText("Message → Response & Celebration"),
     ).toBeInTheDocument();
     expect(screen.queryByText("Added")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("checkbox", { name: "Confirm match for Sermon" }));
+    await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
+
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), { timeout: 2_500 });
+    const savedSections = mockSaveServicePlan.mock.calls.at(-1)![2].sections!;
+    const destination = savedSections.find(({ name }) => name === "Response & Celebration");
+    expect(destination?.elements).toEqual([
+      expect.objectContaining({ id: "legacy-sermon", notes: plainTextToRichText("Operator notes") }),
+    ]);
+    expect(richTextToPlainText(destination!.elements[0].title)).toBe("Sermon");
+    expect(savedSections.find(({ id }) => id === "message")?.elements ?? []).toEqual([]);
+    expect(savedSections.find(({ id }) => id === "worship")?.elements).toEqual([
+      expect.objectContaining({ id: "tracked-song", sourceOccurrenceId: "pco-song" }),
+    ]);
+    expect(savedSections.flatMap(({ elements }) => elements).filter(({ id }) => id === "legacy-sermon")).toHaveLength(1);
   });
 
   it("offers one optional review prompt after an external import adds ambiguous items", async () => {

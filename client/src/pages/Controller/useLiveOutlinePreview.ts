@@ -38,8 +38,10 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
   }>();
   const [items, setItems] = useState<ServiceItemType[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [registryVersion, setRegistryVersion] = useState(0);
   const registryReadRef = useRef<{
     database: typeof db;
+    version: number;
     promise: Promise<DBItemLists>;
   } | undefined>(undefined);
   const fallbackDocument = fallbackRegistry && fallbackRegistry.database === db
@@ -47,12 +49,13 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
     : undefined;
 
   useEffect(() => {
-    if (registryInitialized || !db || fallbackRegistry?.database === db) return;
+    if (registryInitialized || !db) return;
     let cancelled = false;
     let request = registryReadRef.current;
-    if (request?.database !== db) {
+    if (request?.database !== db || request.version !== registryVersion) {
       request = {
         database: db,
+        version: registryVersion,
         promise: db.get("ItemLists") as Promise<DBItemLists>,
       };
       registryReadRef.current = request;
@@ -65,19 +68,21 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
           outlineScope,
           outlineScope === DEFAULT_OUTLINE_SCOPE ? document.activeList?._id : undefined,
         )?._id;
-        setIsLoading(Boolean(fallbackOutlineId));
+        if (activeListScopeRef.current !== outlineScope || activeListIdRef.current !== fallbackOutlineId) {
+          setIsLoading(Boolean(fallbackOutlineId));
+        }
         setFallbackRegistry({ database: db, document });
       },
       () => {
         if (cancelled) return;
         setIsLoading(false);
-        setFallbackRegistry({ database: db });
+        setFallbackRegistry((current) => current?.database === db ? current : { database: db });
       },
     );
     return () => {
       cancelled = true;
     };
-  }, [db, fallbackRegistry?.database, outlineScope, registryInitialized]);
+  }, [db, outlineScope, registryInitialized, registryVersion]);
 
   const outlines = registryInitialized
     ? reduxOutlines
@@ -172,6 +177,9 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
     (event: CustomEventInit) => {
       const updates = event.detail;
       if (!Array.isArray(updates)) return;
+      if (!registryInitialized && updates.some((update) => update._id === "ItemLists")) {
+        setRegistryVersion((version) => version + 1);
+      }
       if (
         activeListScopeRef.current === scopeRef.current &&
         updates.some((update) => update._id === activeListIdRef.current)
@@ -185,7 +193,7 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
         );
       }
     },
-    [loadOutlineItems],
+    [loadOutlineItems, registryInitialized],
   );
 
   useEffect(() => {
