@@ -7,7 +7,7 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { VideoDownloadProxy } from "./videoDownloadProxy";
-import { validateSafeHttpUrl } from "./safeHttp";
+import { validateSafeHttpUrl, type SafeHttpLookupAll } from "./safeHttp";
 import {
   getCompatibleVideoQualities,
   validateSupportedVideoUrl,
@@ -50,6 +50,10 @@ type DownloadRecord = {
   child?: RunningChild;
   uploadRequest?: ClientRequest;
   uploadStream?: ReadStream;
+  downloadTask?: Promise<void>;
+  uploadTask?: Promise<void>;
+  uploadCancelled?: boolean;
+  cleanupTask?: Promise<void>;
   status: "active" | "complete" | "failed" | "cancelled";
 };
 
@@ -111,6 +115,7 @@ export class VideoDownloader extends EventEmitter {
       ffprobePath: string;
       spawnProcess?: typeof spawn;
       requestMux?: typeof requestHttps;
+      lookupAll?: SafeHttpLookupAll;
       proxyFactory?: () => Pick<VideoDownloadProxy, "url" | "start" | "stop">;
     },
   ) {
@@ -279,7 +284,11 @@ export class VideoDownloader extends EventEmitter {
       await rm(directory, { recursive: true, force: true });
       await mkdir(directory, { recursive: true });
       this.emitProgress({ jobId, stage: "preparing", progress: 0 });
-      void this.runDownload(jobId, record, inspection).catch(() => undefined);
+      const downloadTask = this.runDownload(jobId, record, inspection).catch(() => undefined);
+      record.downloadTask = downloadTask;
+      void downloadTask.finally(() => {
+        if (record.downloadTask === downloadTask) record.downloadTask = undefined;
+      });
     } catch (error) {
       this.jobs.delete(jobId);
       if (this.activeJobId === jobId) this.activeJobId = null;
@@ -449,20 +458,24 @@ export class VideoDownloader extends EventEmitter {
     } else child.kill();
   }
 
-  cancelDownload(jobId: string) {
+  async cancelDownload(jobId: string) {
     const record = this.jobs.get(jobId);
     if (!record) return false;
     const downloadActive = record.status === "active";
     if (downloadActive) record.status = "cancelled";
+    if (record.uploadTask) record.uploadCancelled = true;
     if (record.child) {
       record.child.cancelled = true;
       this.terminate(record.child.child);
     }
     if (record.uploadRequest) {
+      record.uploadCancelled = true;
       record.uploadStream?.destroy();
       record.uploadRequest.destroy(new Error("Upload cancelled."));
     }
-    return Boolean(downloadActive || record.uploadRequest);
+    const wasActive = Boolean(downloadActive || record.uploadTask || record.uploadRequest);
+    await Promise.allSettled([record.downloadTask, record.uploadTask].filter(Boolean) as Promise<void>[]);
+    return wasActive;
   }
 
   getCompletedFile(jobId: string) {
@@ -477,6 +490,18 @@ export class VideoDownloader extends EventEmitter {
     const record = this.jobs.get(jobId);
     const filePath = record?.filePath;
     if (!record || record.status !== "complete" || !filePath) throw new Error("The downloaded video is not ready to upload.");
+    if (record.uploadTask) throw new Error("A cloud upload is already running for this video.");
+    record.uploadCancelled = false;
+    const uploadTask = this.performMuxUpload(jobId, record, filePath, rawUploadUrl);
+    record.uploadTask = uploadTask;
+    try {
+      await uploadTask;
+    } finally {
+      if (record.uploadTask === uploadTask) record.uploadTask = undefined;
+    }
+  }
+
+  private async performMuxUpload(jobId: string, record: DownloadRecord, filePath: string, rawUploadUrl: unknown) {
     if (typeof rawUploadUrl !== "string" || rawUploadUrl.length > 8192) throw new Error("The cloud upload could not be started.");
     let uploadUrl: URL;
     try { uploadUrl = new URL(rawUploadUrl); }
@@ -484,8 +509,10 @@ export class VideoDownloader extends EventEmitter {
     if (uploadUrl.protocol !== "https:" || !MUX_UPLOAD_HOSTS.includes(uploadUrl.hostname) || uploadUrl.username || uploadUrl.password || (uploadUrl.port && uploadUrl.port !== "443")) {
       throw new Error("The cloud upload address is invalid.");
     }
-    const validatedUpload = await validateSafeHttpUrl(uploadUrl.toString());
+    const validatedUpload = await validateSafeHttpUrl(uploadUrl.toString(), this.options.lookupAll);
+    if (record.uploadCancelled || this.jobs.get(jobId) !== record) throw new Error("Upload cancelled.");
     const size = (await stat(filePath)).size;
+    if (record.uploadCancelled || this.jobs.get(jobId) !== record) throw new Error("Upload cancelled.");
     this.emitProgress({ jobId, stage: "uploading", progress: 0, downloadedBytes: 0, totalBytes: size });
     const uploadStream = createReadStream(filePath);
     record.uploadStream = uploadStream;
@@ -513,7 +540,7 @@ export class VideoDownloader extends EventEmitter {
         settled = true;
         record.uploadRequest = undefined;
         record.uploadStream = undefined;
-        if (error) reject(error);
+        if (error) reject(record.uploadCancelled ? new Error("Upload cancelled.") : error);
         else resolveUpload();
       };
       request.once("response", (response) => {
@@ -530,25 +557,28 @@ export class VideoDownloader extends EventEmitter {
   async cleanup(jobId: string) {
     const record = this.jobs.get(jobId);
     if (!record) return;
-    if (record.status === "active") this.cancelDownload(jobId);
-    await rm(record.directory, { recursive: true, force: true });
-    this.jobs.delete(jobId);
-    this.inspections.delete(record.inspectionId);
+    if (record.cleanupTask) return record.cleanupTask;
+    const cleanupTask = (async () => {
+      await this.cancelDownload(jobId);
+      await Promise.allSettled([record.downloadTask, record.uploadTask].filter(Boolean) as Promise<void>[]);
+      if (this.jobs.get(jobId) !== record) return;
+      await rm(record.directory, { recursive: true, force: true });
+      this.jobs.delete(jobId);
+      this.inspections.delete(record.inspectionId);
+    })();
+    record.cleanupTask = cleanupTask;
+    try {
+      await cleanupTask;
+    } finally {
+      if (record.cleanupTask === cleanupTask) record.cleanupTask = undefined;
+    }
   }
 
   async shutdown() {
     const records = [...this.jobs.entries()];
     for (const [jobId, record] of records) {
-      this.cancelDownload(jobId);
-      if (record.child) {
-        await new Promise<void>((resolveDone) => {
-          const timer = setTimeout(resolveDone, 5000);
-          record.child?.child.once("close", () => {
-            clearTimeout(timer);
-            resolveDone();
-          });
-        });
-      }
+      await this.cancelDownload(jobId);
+      await Promise.allSettled([record.downloadTask, record.uploadTask].filter(Boolean) as Promise<void>[]);
       await rm(record.directory, { recursive: true, force: true }).catch(() => undefined);
     }
     this.jobs.clear();

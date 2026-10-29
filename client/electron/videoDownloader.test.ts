@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChildProcess } from "node:child_process";
 import { VideoDownloader, type VideoDownloadEvent } from "./videoDownloader";
+import type { SafeHttpLookupAll } from "./safeHttp";
 
 type FakeChild = ChildProcess & { stdout: PassThrough; stderr: PassThrough };
 
@@ -42,6 +43,7 @@ describe("VideoDownloader job lifecycle", () => {
   let failNextDownload = false;
   let processOptions: Array<{ shell?: boolean }>;
   let processArguments: string[][];
+  let uploadLookup: SafeHttpLookupAll;
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "worshipsync-downloader-test-"));
@@ -51,6 +53,7 @@ describe("VideoDownloader job lifecycle", () => {
     failNextDownload = false;
     processOptions = [];
     processArguments = [];
+    uploadLookup = async () => [{ address: "8.8.8.8", family: 4 }];
     const spawnProcess = ((binary: string, args: string[], options: { shell?: boolean }) => {
       processOptions.push(options);
       processArguments.push(args);
@@ -92,6 +95,7 @@ describe("VideoDownloader job lifecycle", () => {
       ffmpegPath: "ffmpeg.exe",
       ffprobePath: "ffprobe.exe",
       spawnProcess,
+      lookupAll: (...args) => uploadLookup(...args),
       proxyFactory: () => ({ url: "http://127.0.0.1:12345", start: async () => undefined, stop: async () => undefined }),
     });
   });
@@ -149,7 +153,7 @@ describe("VideoDownloader job lifecycle", () => {
     const jobId = "22345678-1234-4123-8123-123456789abc";
     await downloader.startDownload({ jobId, inspectionId: metadata.inspectionId, quality: "best" });
     await waitFor(() => Boolean(currentDownload));
-    expect(downloader.cancelDownload(jobId)).toBe(true);
+    await expect(downloader.cancelDownload(jobId)).resolves.toBe(true);
     await cancelled;
     expect(() => downloader.getCompletedFile(jobId)).toThrow(/no longer available/);
     expect(existsSync(join(root, "downloads", jobId))).toBe(false);
@@ -169,5 +173,36 @@ describe("VideoDownloader job lifecycle", () => {
     await completed;
     expect(downloadCount).toBe(2);
     expect(existsSync(downloader.getCompletedFile(jobId).path)).toBe(true);
+  });
+
+  it("waits for an in-flight Mux source read to settle before cleaning its job directory", async () => {
+    const metadata = await inspect();
+    const jobId = "42345678-1234-4123-8123-123456789abc";
+    const events: VideoDownloadEvent[] = [];
+    downloader.on("progress", (event) => events.push(event));
+    await downloader.startDownload({ jobId, inspectionId: metadata.inspectionId, quality: 1080 });
+    await waitFor(() => events.some((event) => event.stage === "complete"));
+
+    let resolveLookup!: (addresses: Array<{ address: string; family: 4 }>) => void;
+    let markLookupStarted!: () => void;
+    const lookupStarted = new Promise<void>((resolve) => { markLookupStarted = resolve; });
+    const pendingLookup = new Promise<Array<{ address: string; family: 4 }>>((resolve) => { resolveLookup = resolve; });
+    uploadLookup = async () => {
+      markLookupStarted();
+      return pendingLookup;
+    };
+    const upload = downloader.uploadToMux(jobId, "https://upload.mux.com/one").then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    await lookupStarted;
+    const cleanup = downloader.cleanup(jobId);
+    await Promise.resolve();
+    expect(existsSync(join(root, "downloads", jobId))).toBe(true);
+
+    resolveLookup([{ address: "8.8.8.8", family: 4 }]);
+    expect(await upload).toEqual(expect.objectContaining({ message: "Upload cancelled." }));
+    await cleanup;
+    expect(existsSync(join(root, "downloads", jobId))).toBe(false);
   });
 });

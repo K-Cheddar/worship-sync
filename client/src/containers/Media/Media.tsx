@@ -55,6 +55,9 @@ import { useNativeFileDrop } from "./useNativeFileDrop";
 import { MediaAddControl } from "./MediaAddControl";
 import { MediaSourceAddMenu } from "./MediaSourceAddMenu";
 import DownloadVideoDialog from "./DownloadVideoDialog";
+import { useActiveControllerProfile } from "../../context/activeController";
+import { useLocation } from "react-router-dom";
+import { MEDIA_STORAGE_CHANGED_EVENT } from "./mediaStorageEvents";
 
 const MEDIA_LIBRARY_FORM_POPOVER_CLASS =
   "w-72 border border-gray-600 bg-gray-900 p-3 text-white";
@@ -81,6 +84,8 @@ export const getMediaPanelClassName = ({
 const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
   const dispatch = useDispatch();
   const { churchId = "" } = useContext(GlobalInfoContext) || {};
+  const controllerProfile = useActiveControllerProfile();
+  const { pathname } = useLocation();
   const [isCanvaImportOpen, setIsCanvaImportOpen] = useState(false);
   const [canvaSourceMedia, setCanvaSourceMedia] = useState<MediaType | null>(
     null,
@@ -169,6 +174,12 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
     });
     return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    const onStorageChanged = () => notifyStorageUsageChanged();
+    window.addEventListener(MEDIA_STORAGE_CHANGED_EVENT, onStorageChanged);
+    return () => window.removeEventListener(MEDIA_STORAGE_CHANGED_EVENT, onStorageChanged);
+  }, [notifyStorageUsageChanged]);
 
   const selectedCount = c.selectedMediaIds.size;
   const mediaRenameWindowRef = useRef<FloatingWindowHandle>(null);
@@ -327,9 +338,9 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
             onOpenChange={setIsVideoDownloadOpen}
             disabled={c.isMediaReadOnly}
             isGuestSession={c.isGuestSession}
-            onMediaAdded={addLocalMedia}
-            onMediaPatched={(id, patch) => dispatch(updateMediaItemFields({ id, patch }))}
-            onUploadComplete={notifyStorageUsageChanged}
+            controllerProfileId={controllerProfile.id}
+            folderId={c.uploadTargetFolderId}
+            routePath={pathname}
           />
         ) : null}
         {isVideoInputOpen ? (

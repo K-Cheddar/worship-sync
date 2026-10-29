@@ -68,12 +68,14 @@ export const createLocalMediaFromDownloadedVideo = async ({
   displayName,
   duration,
   storagePolicy,
+  folderId,
 }: {
   asset: ElectronLocalAsset;
   workspaceId: string;
   displayName: string;
   duration: number;
   storagePolicy: LocalAssetStoragePolicy;
+  folderId?: string | null;
 }): Promise<MediaType> => {
   if (
     asset.kind !== "video" || asset.contentType !== "video/mp4" ||
@@ -119,6 +121,7 @@ export const createLocalMediaFromDownloadedVideo = async ({
     duration,
     hasAudio: true,
     source: "local",
+    folderId: folderId ?? null,
     localVideoFile: {
       id: asset.assetId,
       contentRevision,

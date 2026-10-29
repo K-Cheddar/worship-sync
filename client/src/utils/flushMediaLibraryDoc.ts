@@ -53,6 +53,8 @@ export type FlushMediaLibraryDocOptions = {
   allowOriginalOwnerPersistenceAfterScopeChange?: boolean;
   /** Controls current-scope side effects such as broadcasts, Electron cache, and Redux cache publication. */
   publishIfCurrent?: () => boolean;
+  /** Prevents a deferred write when its originating workspace is no longer active. */
+  canPersist?: () => boolean;
   /** Media rows relocated only because their folder is being deleted with Keep Contents. */
   automaticMediaRehomeIds?: ReadonlySet<string>;
   /** Child folders relocated only because their parent is being deleted with Keep Contents. */
@@ -108,7 +110,9 @@ export async function flushMediaLibraryDocToPouch(
     return { ok: false, error: new Error(FLUSH_MEDIA_NO_DB_MESSAGE) };
   }
   const databaseIsActive = () => activeDb === db;
-  const canPersist = () => options.allowOriginalOwnerPersistenceAfterScopeChange || databaseIsActive();
+  const canPersist = () =>
+    (options.allowOriginalOwnerPersistenceAfterScopeChange || databaseIsActive()) &&
+    (options.canPersist?.() ?? true);
   const canPublish = () => databaseIsActive() && (options.publishIfCurrent?.() ?? true);
   if (!canPersist()) {
     return { ok: false, error: new Error(FLUSH_MEDIA_STALE_DB_MESSAGE) };

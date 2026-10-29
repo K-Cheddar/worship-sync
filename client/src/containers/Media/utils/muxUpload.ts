@@ -269,6 +269,7 @@ const uploadVideoToMuxFromSource = async (
   callbacks.setCancelUpload?.(cancelAndCleanUpload);
 
   try {
+    if (callbacks.isCancelled?.()) throw new Error("Upload cancelled");
     // The Media Library owns the upload intent and Mux registration. The
     // source-specific transport changes for disk-backed downloads only.
     await uploadFile(uploadUrl);

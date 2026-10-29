@@ -150,4 +150,17 @@ describe("TransferProgress", () => {
     rerender(<TransferProgress transfer={{ ...base, status: "complete" }} variant="card" />);
     expect(screen.getByTestId("transfer-status-icon")).toHaveClass("text-green-300");
   });
+
+  it("routes a result action through the Activity owner instead of treating it as navigation", async () => {
+    const user = userEvent.setup();
+    const onResultAction = jest.fn();
+    render(<TransferProgress
+      transfer={{ ...base, result: { label: "View in Media Library", actionKey: "view" } }}
+      variant="card"
+      onResultAction={onResultAction}
+    />);
+
+    await user.click(screen.getByRole("button", { name: "View in Media Library" }));
+    expect(onResultAction).toHaveBeenCalledWith("view");
+  });
 });

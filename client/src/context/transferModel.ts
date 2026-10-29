@@ -23,7 +23,7 @@ export type Transfer = {
     total?: number;
   };
   detail?: string;
-  result?: { label: string; to?: string };
+  result?: { label: string; to?: string; actionKey?: string };
   error?: { message: string };
   files?: TransferFileActivity[];
   canCancel?: boolean;

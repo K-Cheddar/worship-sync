@@ -6,6 +6,7 @@ import { normalizeProgress, type TransferOverviewItem } from "../../context/tran
 type TransferProgressProps = {
   transfer: TransferOverviewItem;
   variant: "card" | "summary" | "compact";
+  onResultAction?: (key: string) => void;
 };
 
 export const formatTransferProgress = (progressValue: number | null) => {
@@ -26,7 +27,7 @@ const percentLabel = (transfer: TransferOverviewItem) => {
   return formatTransferProgress(transfer.progress);
 };
 
-export const TransferProgress = ({ transfer, variant }: TransferProgressProps) => {
+export const TransferProgress = ({ transfer, variant, onResultAction }: TransferProgressProps) => {
   const [showFailedFiles, setShowFailedFiles] = useState(false);
   const compact = variant === "compact";
   const summary = variant === "summary";
@@ -110,7 +111,9 @@ export const TransferProgress = ({ transfer, variant }: TransferProgressProps) =
       ) : null}
       {transfer.result ? (
         <div className="mt-2 text-xs">
-          {transfer.result.to
+          {transfer.result.actionKey && onResultAction
+            ? <button type="button" onClick={() => onResultAction(transfer.result!.actionKey!)} className="flex cursor-pointer items-center gap-1 rounded text-cyan-200 underline outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-800">{transfer.result.label}</button>
+            : transfer.result.to
           ? <Link to={transfer.result.to} className="flex cursor-pointer items-center gap-1 rounded text-cyan-200 underline outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-800">{transfer.result.label}</Link>
             : <span className="text-gray-300">{transfer.result.label}</span>}
         </div>

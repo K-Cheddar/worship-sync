@@ -135,6 +135,23 @@ describe("church-scoped Mux upload and temporary conversion", () => {
     expect(result).toMatchObject({ playbackId: "playback-1", name: "Sunday Opener" });
   });
 
+  it("cleans a newly-created Mux upload without starting disk streaming if cancellation arrived during upload creation", async () => {
+    const uploadDownloadedVideo = jest.fn().mockResolvedValue(undefined);
+    window.electronAPI = {
+      uploadDownloadedVideoToMux: uploadDownloadedVideo,
+    } as unknown as typeof window.electronAPI;
+
+    await expect(uploadDownloadedVideoToMux(
+      "job-1",
+      "Sunday Opener.mp4",
+      { churchId: "church-1", mediaId: "media-1", title: "Sunday Opener" },
+      { isCancelled: () => true },
+    )).rejects.toThrow("Upload cancelled");
+
+    expect(uploadDownloadedVideo).not.toHaveBeenCalled();
+    expect(mockCancelUpload).toHaveBeenCalledWith("church-1", "upload-1");
+  });
+
   it("removes an uncommitted asset after rendition polling is cancelled", async () => {
     const uploadXhr = new TestXmlHttpRequest();
     global.XMLHttpRequest = jest.fn(() => uploadXhr) as unknown as typeof XMLHttpRequest;

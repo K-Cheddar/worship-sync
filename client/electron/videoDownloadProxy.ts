@@ -3,14 +3,24 @@ import { createConnection } from "node:net";
 import type { AddressInfo } from "node:net";
 import type { Duplex } from "node:stream";
 import { validateExtractorRequestUrl } from "./videoDownloaderSecurity";
+import type { SafeHttpLookupAll } from "./safeHttp";
 
 const MAX_PROXY_CONNECTIONS = 12;
+
+type VideoDownloadProxyOptions = {
+  lookupAll?: SafeHttpLookupAll;
+  requestHttp?: typeof requestHttp;
+  createConnection?: typeof createConnection;
+};
 
 /** A per-job loopback proxy: validates every extractor request and pins DNS. */
 export class VideoDownloadProxy {
   private readonly sockets = new Set<Duplex>();
   private server = createServer();
   private port = 0;
+  private stopped = true;
+
+  constructor(private readonly options: VideoDownloadProxyOptions = {}) {}
 
   get url() {
     if (!this.port) throw new Error("The video network proxy is not ready.");
@@ -18,6 +28,7 @@ export class VideoDownloadProxy {
   }
 
   async start(): Promise<void> {
+    this.stopped = false;
     this.server.on("request", (request, response) => {
       void this.forwardHttp(request, response);
     });
@@ -60,7 +71,8 @@ export class VideoDownloadProxy {
       return;
     }
     try {
-      const { url, address } = await validateExtractorRequestUrl(incoming.url);
+      const { url, address } = await validateExtractorRequestUrl(incoming.url, this.options.lookupAll);
+      if (this.stopped || incoming.destroyed || outgoing.destroyed) return;
       if (url.protocol !== "http:") {
         this.reject(outgoing);
         return;
@@ -69,7 +81,7 @@ export class VideoDownloadProxy {
         this.reject(outgoing, 429);
         return;
       }
-      const upstream = requestHttp(
+      const upstream = (this.options.requestHttp ?? requestHttp)(
         {
           protocol: "http:",
           hostname: url.hostname,
@@ -93,6 +105,7 @@ export class VideoDownloadProxy {
       });
       incoming.pipe(upstream);
       outgoing.on("close", () => upstream.destroy());
+      if (outgoing.destroyed) upstream.destroy();
     } catch {
       this.reject(outgoing);
     }
@@ -102,14 +115,19 @@ export class VideoDownloadProxy {
     try {
       if (!authority || authority.includes("@")) throw new Error("bad target");
       const target = new URL(`https://${authority}`);
-      if (target.port && target.port !== "443") throw new Error("bad port");
-      const { address } = await validateExtractorRequestUrl(target.toString());
-      const upstream = createConnection({
+      if ((target.port && target.port !== "443") || target.pathname !== "/" || target.search || target.hash) throw new Error("bad authority");
+      const { address } = await validateExtractorRequestUrl(target.toString(), this.options.lookupAll);
+      if (this.stopped || client.destroyed) return;
+      const upstream = (this.options.createConnection ?? createConnection)({
         host: address.address,
         family: address.family,
         port: 443,
       });
       this.track(upstream);
+      if (client.destroyed) {
+        upstream.destroy();
+        return;
+      }
       upstream.setTimeout(60_000, () => upstream.destroy());
       upstream.once("connect", () => {
         client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
@@ -125,6 +143,7 @@ export class VideoDownloadProxy {
   }
 
   async stop(): Promise<void> {
+    this.stopped = true;
     for (const socket of this.sockets) socket.destroy();
     this.sockets.clear();
     this.port = 0;

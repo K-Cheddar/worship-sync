@@ -14,7 +14,7 @@ import Modal from "../components/Modal/Modal";
 import { TransferProgress } from "../components/TransferProgress/TransferProgress";
 import type { CanvaImportProgressEvent, CanvaImportResult } from "../api/canva";
 import { formatCanvaImportError } from "../utils/canvaImportError";
-import { getActivitySummary, getTransferOverview, type Transfer } from "./transferModel";
+import { getActivitySummary, getMediaTransferOverview, getTransferOverview, type Transfer } from "./transferModel";
 import { uploadChurchResource } from "../api/auth";
 import type { ChurchResource } from "../types/churchResource";
 
@@ -206,7 +206,7 @@ const TransferPanel = ({ transfers, isMinimized, hasLocalActivityHost, onMinimiz
         </div>
         <ul className="max-h-[min(60vh,28rem)] space-y-2 overflow-y-auto p-2">
           {transfers.map((transfer) => <li key={transfer.id} className="rounded-md bg-gray-800 p-3">
-            <TransferProgress transfer={transfer} variant="card" />
+            <TransferProgress transfer={transfer} variant="card" onResultAction={(key) => void runTransferAction(transfer.id, key)} />
             {transfer.actions?.length ? <div className="mt-2 flex flex-wrap gap-2">
               {transfer.actions.map((action) => <Button key={action.key} variant="tertiary" disabled={action.pending} onClick={() => {
                 if (action.confirmation) setConfirmation({ transfer, action });
@@ -227,6 +227,25 @@ const TransferPanel = ({ transfers, isMinimized, hasLocalActivityHost, onMinimiz
       </Modal>
     </>
   );
+};
+
+const TransferTaskbarProgress = ({ transfers }: { transfers: Transfer[] }) => {
+  const overview = getMediaTransferOverview(transfers);
+  useEffect(() => {
+    const api = window.electronAPI;
+    if (!api) return;
+    const active = overview.activeCount > 0;
+    api.setUploadInProgress(active);
+    if (api.setTaskbarUploadProgress) {
+      void api.setTaskbarUploadProgress(active && overview.progress !== null ? overview.progress / 100 : null);
+    }
+  }, [overview.activeCount, overview.progress]);
+  useEffect(() => () => {
+    const api = window.electronAPI;
+    api?.setUploadInProgress(false);
+    if (api?.setTaskbarUploadProgress) void api.setTaskbarUploadProgress(null);
+  }, []);
+  return null;
 };
 
 export const TransferProvider = ({ children }: { children: ReactNode }) => {
@@ -544,7 +563,7 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
     runTransferAction,
     getTransfer: (id: string) => transfersRef.current.find((transfer) => transfer.id === id),
   }), [startCanvaTransfer, startResourceUpload, registerResourceUploadListener, updateTransfer, removeTransfer, registerTransferAction, runTransferAction]);
-  return <TransferActionsContext.Provider value={actionValue}><TransferContext.Provider value={value}>{children}<TransferPanel transfers={transfers} isMinimized={isMinimized} hasLocalActivityHost={activityHostCount > 0} onMinimize={minimizeTransfers} onRestore={restoreTransfers} runTransferAction={runTransferAction} /></TransferContext.Provider></TransferActionsContext.Provider>;
+  return <TransferActionsContext.Provider value={actionValue}><TransferContext.Provider value={value}>{children}<TransferTaskbarProgress transfers={transfers} /><TransferPanel transfers={transfers} isMinimized={isMinimized} hasLocalActivityHost={activityHostCount > 0} onMinimize={minimizeTransfers} onRestore={restoreTransfers} runTransferAction={runTransferAction} /></TransferContext.Provider></TransferActionsContext.Provider>;
 };
 
 export { getTransferOverview };

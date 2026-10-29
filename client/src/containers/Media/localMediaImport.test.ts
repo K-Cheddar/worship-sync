@@ -171,6 +171,7 @@ describe("createLocalMediaFromFile", () => {
       displayName: "Sunday Opener",
       duration: 42,
       storagePolicy: "local-only",
+      folderId: "folder-one",
     });
 
     expect(mockedSaveLocalVideoFile).toHaveBeenCalledWith(expect.objectContaining({
@@ -183,6 +184,7 @@ describe("createLocalMediaFromFile", () => {
       id: asset.assetId,
       name: "Sunday Opener",
       duration: 42,
+      folderId: "folder-one",
       background: `local-video-file://${encodeURIComponent(asset.assetId)}`,
       localVideoFile: { id: asset.assetId, storagePolicy: "local-only" },
     });
