@@ -13,6 +13,7 @@ import {
   Book,
   BookOpen,
   Check,
+  CircleAlert,
   ChevronDown,
   FileText,
   Music,
@@ -1533,6 +1534,19 @@ const ServicePlanningSyncFloatingWindow = ({
                       aria-hidden="true"
                       className={`h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform ${isSyncSummaryExpanded ? "rotate-180" : ""}`}
                     />
+                    {lastSyncSummary.errors.length > 0 ? (
+                      <CircleAlert
+                        className="h-4 w-4 shrink-0 text-red-400"
+                        role="img"
+                        aria-label="Sync completed with errors"
+                      />
+                    ) : lastSyncSummary.skipped.length > 0 ? (
+                      <AlertTriangle
+                        className="h-4 w-4 shrink-0 text-amber-300"
+                        role="img"
+                        aria-label="Sync completed with skipped attachments"
+                      />
+                    ) : null}
                     <span>{lastSyncSummary.title}</span>
                   </span>
                   <span className="ml-auto text-right text-zinc-400">

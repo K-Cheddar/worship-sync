@@ -4931,12 +4931,19 @@ const loadStoreWithItemListPersistence = () => {
   let itemListsSliceModule: any;
   let overlaySliceModule: any;
   let overlaysSliceModule: any;
+  let allDocsSliceModule: any;
+  let servicePlanningImportSliceModule: any;
+  let activeControllerPresenceModule: any;
   const postMessage = jest.fn();
   const db = {
+    name: "outline-persistence-test-db",
     get: jest.fn(),
     put: jest
       .fn()
       .mockResolvedValue({ ok: true, id: "outline-a", rev: "2-saved" }),
+    allDocs: jest.fn(),
+    info: jest.fn(),
+    bulkDocs: jest.fn(),
   };
 
   jest.isolateModules(() => {
@@ -4945,7 +4952,11 @@ const loadStoreWithItemListPersistence = () => {
       globalBroadcastRef: { postMessage },
     }));
     jest.doMock("../context/globalInfo", () => ({
-      globalFireDbInfo: { db: undefined, database: undefined },
+      globalFireDbInfo: {
+        db: undefined,
+        database: "outline-persistence-test-db",
+        churchId: "church-test",
+      },
       globalHostId: "host-123",
     }));
     jest.doMock("firebase/database", () => ({
@@ -4964,6 +4975,12 @@ const loadStoreWithItemListPersistence = () => {
     overlaySliceModule = require("./overlaySlice");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     overlaysSliceModule = require("./overlaysSlice");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    allDocsSliceModule = require("./allDocsSlice");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    servicePlanningImportSliceModule = require("./servicePlanningImportSlice");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    activeControllerPresenceModule = require("../utils/activeControllerPresence");
   });
 
   return {
@@ -4972,6 +4989,9 @@ const loadStoreWithItemListPersistence = () => {
     itemListsSlice: itemListsSliceModule.itemListsSlice,
     overlaySlice: overlaySliceModule.overlaySlice,
     overlaysSlice: overlaysSliceModule.overlaysSlice,
+    allDocsSlice: allDocsSliceModule.allDocsSlice,
+    servicePlanningImportSlice: servicePlanningImportSliceModule.servicePlanningImportSlice,
+    activeControllerPresence: activeControllerPresenceModule,
     db,
     postMessage,
   };
@@ -5036,6 +5056,182 @@ describe("item list outline persistence", () => {
     expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(
       false,
     );
+  });
+
+  it("cleans Bible items only after a successful outline save and while sync is idle", async () => {
+    jest.useFakeTimers();
+    const {
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      activeControllerPresence,
+      db,
+    } =
+      loadStoreWithItemListPersistence();
+    const presence = activeControllerPresence.beginActiveControllerPresence(
+      activeControllerPresence.getControllerPresenceScope(
+        "church-test",
+        "outline-persistence-test-db",
+      ),
+    );
+    presence.publish(["host-123"]);
+    expect(
+      activeControllerPresence.isOnlyActiveController(
+        activeControllerPresence.getControllerPresenceScope(
+          "church-test",
+          "outline-persistence-test-db",
+        ),
+        "host-123",
+      ),
+    ).toBe(true);
+    const bibleDoc = createServiceItem({
+      name: "Genesis 1",
+      _id: "bible-1",
+      _rev: "1-bible",
+      listId: "bible-link",
+      type: "bible",
+      createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+      updatedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+    });
+    const registry = {
+      _id: "ItemLists",
+      _rev: "1-registry",
+      itemLists: [{ _id: "outline-a", name: "Sunday" }],
+    };
+    let sequence = 1;
+    let savedOutline: Record<string, any> = {
+      _id: "outline-a",
+      _rev: "1-outline",
+      items: [bibleDoc],
+      overlays: [],
+    };
+    db.get.mockImplementation(async (id: string) =>
+      id === "ItemLists" ? { ...registry } : { ...savedOutline },
+    );
+    db.put.mockImplementation(async (doc: Record<string, any>) => {
+      sequence += 1;
+      savedOutline = { ...doc, _rev: "2-outline" };
+      return { ok: true, rev: "2-outline" };
+    });
+    db.allDocs.mockImplementation(async ({ keys }: { keys: string[] }) => ({
+      rows: keys.map((key) => key === "outline-a"
+        ? { id: key, doc: { ...savedOutline } }
+        : { id: key, doc: { ...bibleDoc } }),
+      update_seq: sequence,
+    }));
+    db.info.mockImplementation(async () => ({ update_seq: sequence }));
+    db.bulkDocs.mockImplementation(async (docs: Array<{ _id: string }>) => {
+      sequence += 1;
+      return docs.map((doc) => ({ id: doc._id, ok: true }));
+    });
+
+    store.dispatch(allDocsSlice.actions.hydrateItemCache([bibleDoc]));
+    store.dispatch(
+      itemListsSlice.actions.initiateItemLists([
+        { _id: "outline-a", name: "Sunday" },
+      ]),
+    );
+    store.dispatch(itemListSlice.actions.initiateItemList([bibleDoc]));
+    expect(store.getState().undoable.present.itemList.list[0].type).toBe("bible");
+    store.dispatch(itemListSlice.actions.updateItemList([]));
+
+    await jest.advanceTimersByTimeAsync(1500);
+    for (let attempt = 0; attempt < 30; attempt += 1) await Promise.resolve();
+
+    expect(savedOutline.items).toEqual([]);
+    expect(db.bulkDocs).toHaveBeenCalledWith([
+      { _id: "bible-1", _rev: expect.any(String), _deleted: true },
+    ]);
+  });
+
+  it("defers Bible cleanup when another Controller is active", async () => {
+    jest.useFakeTimers();
+    const {
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      activeControllerPresence,
+      db,
+    } = loadStoreWithItemListPersistence();
+    const presence = activeControllerPresence.beginActiveControllerPresence(
+      activeControllerPresence.getControllerPresenceScope(
+        "church-test",
+        "outline-persistence-test-db",
+      ),
+    );
+    presence.publish(["host-123", "host-456"]);
+    const bibleDoc = createServiceItem({
+      name: "Genesis 1",
+      _id: "bible-other-controller",
+      listId: "bible-link",
+      type: "bible",
+    });
+    db.get.mockResolvedValue({
+      _id: "outline-a",
+      _rev: "1-outline",
+      items: [bibleDoc],
+      overlays: [],
+    });
+    store.dispatch(allDocsSlice.actions.hydrateItemCache([bibleDoc]));
+    store.dispatch(
+      itemListsSlice.actions.initiateItemLists([
+        { _id: "outline-a", name: "Sunday" },
+      ]),
+    );
+    store.dispatch(itemListSlice.actions.initiateItemList([bibleDoc]));
+    store.dispatch(itemListSlice.actions.updateItemList([]));
+
+    await jest.advanceTimersByTimeAsync(1500);
+    for (let attempt = 0; attempt < 30; attempt += 1) await Promise.resolve();
+
+    expect(db.put).toHaveBeenCalledTimes(1);
+    expect(db.allDocs).not.toHaveBeenCalled();
+    expect(db.bulkDocs).not.toHaveBeenCalled();
+    presence.release();
+  });
+
+  it("defers Bible cleanup when Service Plan synchronization is active", async () => {
+    jest.useFakeTimers();
+    const {
+      store,
+      itemListSlice,
+      itemListsSlice,
+      allDocsSlice,
+      servicePlanningImportSlice,
+      db,
+    } = loadStoreWithItemListPersistence();
+    const bibleDoc = createServiceItem({
+      name: "Genesis 1",
+      _id: "bible-active-sync",
+      listId: "bible-link",
+      type: "bible",
+    });
+    db.get.mockResolvedValue({
+      _id: "outline-a",
+      _rev: "1-outline",
+      items: [bibleDoc],
+      overlays: [],
+    });
+    store.dispatch(allDocsSlice.actions.hydrateItemCache([bibleDoc]));
+    store.dispatch(
+      itemListsSlice.actions.initiateItemLists([
+        { _id: "outline-a", name: "Sunday" },
+      ]),
+    );
+    store.dispatch(itemListSlice.actions.initiateItemList([bibleDoc]));
+    store.dispatch(
+      servicePlanningImportSlice.actions.startServicePlanningSync({ mode: "outline" }),
+    );
+    store.dispatch(itemListSlice.actions.updateItemList([]));
+
+    await jest.advanceTimersByTimeAsync(1500);
+    for (let attempt = 0; attempt < 30; attempt += 1) await Promise.resolve();
+
+    expect(db.put).toHaveBeenCalledTimes(1);
+    expect(db.allDocs).not.toHaveBeenCalled();
+    expect(db.bulkDocs).not.toHaveBeenCalled();
   });
 
   it("retries after an overlay-order write wins a shared-document revision conflict", async () => {

@@ -76,10 +76,15 @@ export const planNativeOverlaySync = (
   return plan.map((item, index) => {
     if (item.sourceKind !== "native" || item.action === "skip") return item;
     const assigned = targets.get(index);
-    const fallbackTemplate = assigned
+    const libraryTemplate = assigned
       ? undefined
       : libraryParticipants.find((overlay) => sameEvent(item, overlay));
-    const reusableTemplate = assigned?.overlay ?? fallbackTemplate;
+    const claimedCurrentTemplate = assigned || libraryTemplate
+      ? undefined
+      : currentParticipants.find(
+          (overlay) => claimedCurrentIds.has(overlay.id) && sameEvent(item, overlay),
+        );
+    const reusableTemplate = assigned?.overlay ?? libraryTemplate ?? claimedCurrentTemplate;
     const target = assigned?.source === "current" ? assigned.overlay : undefined;
     const inCurrentList = Boolean(target);
     const alreadyCorrect = inCurrentList && target &&
@@ -94,7 +99,7 @@ export const planNativeOverlaySync = (
       targetOverlayId: reusableTemplate?.id,
       targetOverlayName: reusableTemplate?.name || undefined,
       targetOverlayEvent: reusableTemplate?.event || undefined,
-      targetOverlaySource: assigned?.source === "library" || fallbackTemplate
+      targetOverlaySource: assigned?.source === "library" || libraryTemplate
         ? "library"
         : undefined,
       placementOnly: Boolean(alreadyCorrect),

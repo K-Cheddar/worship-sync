@@ -192,6 +192,36 @@ describe("planNativeOverlaySync", () => {
     ]);
   });
 
+  it("uses an already-claimed active overlay as the clone template after library matches are exhausted", () => {
+    const current = [
+      {
+        ...participant("cohost", "Sabbath School Co-Host"),
+        name: "Previous Host",
+        formatting: { participantOverlayPosition: "right" as const },
+      },
+    ];
+    const plan = [
+      candidate({ name: "First Host", title: "Host", event: "Sabbath School Co-Host" }),
+      candidate({ name: "Second Host", title: "Co-Host", event: " sabbath   school co-host " }),
+    ];
+
+    const result = planNativeOverlaySync(plan, current);
+
+    expect(result.map(({ action, targetOverlayId, targetOverlaySource }) => [
+      action,
+      targetOverlayId,
+      targetOverlaySource,
+    ])).toEqual([
+      ["update", "cohost", undefined],
+      ["clone", "cohost", undefined],
+    ]);
+    expect(current[0]).toMatchObject({
+      id: "cohost",
+      name: "Previous Host",
+      formatting: { participantOverlayPosition: "right" },
+    });
+  });
+
   it("does not match similar event text or a different overlay type", () => {
     const result = planNativeOverlaySync([candidate({ name: "Guest", title: "", event: "Sermon" })], [
       participant("similar-event", "Sermon Response"),

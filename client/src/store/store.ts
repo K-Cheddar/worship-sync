@@ -109,6 +109,12 @@ import { extractMediaUrlsFromBackgrounds } from "../utils/mediaCacheUtils";
 import { persistMediaStateChanges } from "../utils/mediaDocUtils";
 import { normalizeOverlayForSync } from "../utils/overlayUtils";
 import { persistExistingOverlayDoc } from "../utils/persistOverlayDoc";
+import { deleteUnusedBibleItems } from "../utils/bibleItemCleanup";
+import { isContentReplicationIdle } from "../utils/contentReplicationActivity";
+import {
+  getControllerPresenceScope,
+  isOnlyActiveController,
+} from "../utils/activeControllerPresence";
 import {
   persistServiceListItems,
   persistServiceListOverlays,
@@ -1467,6 +1473,36 @@ listenerMiddleware.startListening({
   },
 });
 
+const pendingBibleCleanupByDatabase = new WeakMap<object, Set<string>>();
+
+const noteRemovedBibleOutlineItem = (
+  database: object | undefined,
+  outlineId: string | undefined,
+  previousItems: Array<{ _id: string; type?: string }>,
+  nextItems: Array<{ _id: string; type?: string }>,
+) => {
+  if (!database || !outlineId) return;
+  const nextBibleIds = new Set(
+    nextItems.filter((item) => item.type === "bible").map((item) => item._id),
+  );
+  const removedBible = previousItems.some(
+    (item) => item.type === "bible" && !nextBibleIds.has(item._id),
+  );
+  if (!removedBible) return;
+  const pending = pendingBibleCleanupByDatabase.get(database) ?? new Set<string>();
+  pending.add(outlineId);
+  pendingBibleCleanupByDatabase.set(database, pending);
+};
+
+const hasPendingBibleCleanup = (database: object, outlineId: string) =>
+  pendingBibleCleanupByDatabase.get(database)?.has(outlineId) ?? false;
+
+const completeBibleCleanup = (database: object, outlineId: string) => {
+  const pending = pendingBibleCleanupByDatabase.get(database);
+  pending?.delete(outlineId);
+  if (pending?.size === 0) pendingBibleCleanupByDatabase.delete(database);
+};
+
 // handle ItemList updates
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
@@ -1491,6 +1527,21 @@ listenerMiddleware.startListening({
       (currentState as RootState).undoable.present.itemLists.selectedList?._id !==
         (previousState as RootState).undoable.present.itemLists.selectedList?._id &&
       !!(previousState as RootState).undoable.present.itemList.hasPendingUpdate;
+    if (
+      itemListChanged &&
+      !excluded(action) &&
+      !isStoreResetAction(action)
+    ) {
+      const currentPresent = (currentState as RootState).undoable.present;
+      const previousPresent = (previousState as RootState).undoable.present;
+      noteRemovedBibleOutlineItem(
+        db,
+        currentPresent.itemLists.selectedList?._id ??
+          previousPresent.itemLists.selectedList?._id,
+        previousPresent.itemList.list,
+        currentPresent.itemList.list,
+      );
+    }
     return (
       (itemListChanged &&
       !excluded(action) &&
@@ -1554,6 +1605,49 @@ listenerMiddleware.startListening({
           hostId: globalHostId,
         },
       });
+
+      if (hasPendingBibleCleanup(dbAtStart, selectedList._id)) {
+        const cleanupState = listenerApi.getState() as RootState;
+        const cacheSession = cleanupState.allDocs.session;
+        const cacheChangeVersion = cleanupState.allDocs.changeVersion;
+        const cleanupResult = await deleteUnusedBibleItems({
+          db: dbAtStart,
+          bibleItems: cleanupState.allDocs.allBibleDocs,
+          canRun: () => {
+            const currentState = listenerApi.getState() as RootState;
+            const currentPresent = currentState.undoable.present;
+            const syncStatus = currentState.servicePlanningImport.sync.status;
+            const hasPendingWrites =
+              currentPresent.item.hasPendingUpdate ||
+              currentPresent.itemList.hasPendingUpdate ||
+              Object.values(currentState.autosaveIndicator.debouncedSaveDepth).some(
+                (depth) => depth > 0,
+              );
+            return (
+              !listenerApi.signal.aborted &&
+              db === dbAtStart &&
+              isOnlyActiveController(
+                getControllerPresenceScope(
+                  globalFireDbInfo.churchId,
+                  globalFireDbInfo.database,
+                ),
+                globalHostId,
+              ) &&
+              isContentReplicationIdle(dbAtStart.name) &&
+              currentState.allDocs.isInitialized &&
+              currentState.allDocs.error === null &&
+              currentState.allDocs.session === cacheSession &&
+              currentState.allDocs.changeVersion === cacheChangeVersion &&
+              !hasPendingWrites &&
+              syncStatus !== "running" &&
+              syncStatus !== "cancelling"
+            );
+          },
+        });
+        if (cleanupResult !== null) {
+          completeBibleCleanup(dbAtStart, selectedList._id);
+        }
+      }
     } catch (error) {
       if (isListenerCancelledTaskError(error)) return;
       console.error("Failed to persist item list outline:", error);

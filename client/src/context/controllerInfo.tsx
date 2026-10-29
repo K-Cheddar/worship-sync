@@ -26,6 +26,10 @@ import {
   getContentDatabaseForOwner,
   setActiveContentDatabase,
 } from "../store/deferredItemMutations";
+import {
+  trackContentReplication,
+  type ContentReplicationActivity,
+} from "../utils/contentReplicationActivity";
 
 export type ConnectionStatus = {
   status: "connecting" | "retrying" | "failed" | "connected";
@@ -217,6 +221,12 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   const updater = useRef(new EventTarget());
   const syncRef = useRef<any>(null);
+  const contentSyncActivityRef = useRef<ContentReplicationActivity | null>(null);
+  const initialContentReplicationActivityRef =
+    useRef<ContentReplicationActivity | null>(null);
+  const manualContentPullRef = useRef<any>(null);
+  const manualContentPullActivityRef =
+    useRef<ContentReplicationActivity | null>(null);
   const syncGenerationRef = useRef(0);
   const syncBatchSizeRef = useRef(40);
   const remoteDbRef = useRef<PouchDB.Database | null>(null);
@@ -269,6 +279,9 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   const syncDb = useCallback(
     (localDb: PouchDB.Database, remoteDb: PouchDB.Database, churchKey: string) => {
+      contentSyncActivityRef.current?.release();
+      const syncActivity = trackContentReplication(localDb.name);
+      contentSyncActivityRef.current = syncActivity;
       syncRef.current?.cancel();
       syncRef.current = null;
       const generation = ++syncGenerationRef.current;
@@ -296,11 +309,13 @@ const ControllerInfoProvider = ({ children }: any) => {
             }
           })
           .on("active", () => {
+            syncActivity.setBusy(true);
             if (syncRef.current === liveSync) {
               setConnectionStatus({ status: "connected", retryCount: syncRetryRef.current });
             }
           })
           .on("paused", (error?: unknown) => {
+            syncActivity.setBusy(Boolean(error));
             if (syncRef.current === liveSync) {
               if (error) {
                 setConnectionStatus((current) => current.status === "failed"
@@ -313,10 +328,15 @@ const ControllerInfoProvider = ({ children }: any) => {
             }
           })
           .on("denied", (error: any) => {
+            syncActivity.setBusy(true);
             void handleSyncError(error, liveSync);
           })
           .on("error", (error: any) => {
+            syncActivity.setBusy(true);
             void handleSyncError(error, liveSync);
+          })
+          .on("complete", () => {
+            syncActivity.release();
           });
       };
 
@@ -406,7 +426,11 @@ const ControllerInfoProvider = ({ children }: any) => {
   const pullFromRemote = useCallback(() => {
     const remote = remoteDbRef.current;
     if (!db || !remote || !isAuthenticatedSession) return;
-    remote
+    manualContentPullRef.current?.cancel();
+    manualContentPullActivityRef.current?.release();
+    const activity = trackContentReplication(db.name);
+    manualContentPullActivityRef.current = activity;
+    const pull = remote
       .replicate.to(db, { retry: false, selector: { _id: { $ne: "media" } } })
       .on("change", (info: any) => {
         if (info.docs?.length) {
@@ -414,7 +438,22 @@ const ControllerInfoProvider = ({ children }: any) => {
             new CustomEvent("update", { detail: info.docs })
           );
         }
+      })
+      .on("complete", () => {
+        activity.release();
+        if (manualContentPullActivityRef.current === activity) {
+          manualContentPullActivityRef.current = null;
+          manualContentPullRef.current = null;
+        }
+      })
+      .on("error", () => {
+        activity.release();
+        if (manualContentPullActivityRef.current === activity) {
+          manualContentPullActivityRef.current = null;
+          manualContentPullRef.current = null;
+        }
       });
+    manualContentPullRef.current = pull;
   }, [db, isAuthenticatedSession]);
 
   const bibleSyncDb = useCallback(
@@ -607,6 +646,7 @@ const ControllerInfoProvider = ({ children }: any) => {
     const isCurrentSession = () => !cancelled && databaseSessionRef.current === sessionAtStart;
     const localDb = db;
     const connectRemote = async () => {
+      let pullActivity: ContentReplicationActivity | null = null;
       try {
         const remoteSourceDbName = `worship-sync-${isGuestSession ? DEMO_DATABASE_KEY : activeDatabaseKey
           }`;
@@ -629,6 +669,10 @@ const ControllerInfoProvider = ({ children }: any) => {
 
         syncRef.current?.cancel();
         replicateRef.current?.cancel();
+        initialContentReplicationActivityRef.current?.release();
+        const activePullActivity = trackContentReplication(localDb.name);
+        pullActivity = activePullActivity;
+        initialContentReplicationActivityRef.current = activePullActivity;
         pendingMax = 0;
 
         replicateRef.current = remoteDb.replicate
@@ -681,6 +725,10 @@ const ControllerInfoProvider = ({ children }: any) => {
             }
           })
           .on("complete", () => {
+            activePullActivity.release();
+            if (initialContentReplicationActivityRef.current === activePullActivity) {
+              initialContentReplicationActivityRef.current = null;
+            }
             if (!isCurrentSession()) return;
             setDbProgress(100);
             initialRemoteDatabaseRef.current = localDb;
@@ -689,11 +737,20 @@ const ControllerInfoProvider = ({ children }: any) => {
             }
           });
       } catch (error) {
+        pullActivity?.release();
+        if (initialContentReplicationActivityRef.current === pullActivity) {
+          initialContentReplicationActivityRef.current = null;
+        }
         if (isCurrentSession()) console.error("Error connecting content replication:", error);
       }
     };
     void connectRemote();
-    return () => { cancelled = true; replicateRef.current?.cancel(); };
+    return () => {
+      cancelled = true;
+      replicateRef.current?.cancel();
+      initialContentReplicationActivityRef.current?.release();
+      initialContentReplicationActivityRef.current = null;
+    };
   }, [db, hasCouchSession, isAuthenticatedSession, databaseSessionKey, activeDatabaseKey, isGuestSession, syncDb, getCouchSession]);
 
   useEffect(() => {
@@ -808,6 +865,14 @@ const ControllerInfoProvider = ({ children }: any) => {
     await bibleSyncRef.current?.cancel();
     await replicateRef.current?.cancel();
     await bibleReplicateRef.current?.cancel();
+    manualContentPullRef.current?.cancel();
+    contentSyncActivityRef.current?.release();
+    contentSyncActivityRef.current = null;
+    initialContentReplicationActivityRef.current?.release();
+    initialContentReplicationActivityRef.current = null;
+    manualContentPullActivityRef.current?.release();
+    manualContentPullActivityRef.current = null;
+    manualContentPullRef.current = null;
     remoteDbRef.current = null;
     const previousContentOwner = getActiveContentDatabaseOwner();
     if (previousContentOwner) {
@@ -895,10 +960,18 @@ const ControllerInfoProvider = ({ children }: any) => {
         syncTimeout = null;
       }
       syncRef.current?.cancel();
+      contentSyncActivityRef.current?.release();
+      contentSyncActivityRef.current = null;
+      initialContentReplicationActivityRef.current?.release();
+      initialContentReplicationActivityRef.current = null;
       bibleSyncRef.current?.cancel();
       replicateRef.current?.cancel();
       bibleReplicateRef.current?.cancel();
+      manualContentPullRef.current?.cancel();
       remoteDbRef.current = null;
+      manualContentPullActivityRef.current?.release();
+      manualContentPullActivityRef.current = null;
+      manualContentPullRef.current = null;
     };
   }, []);
 

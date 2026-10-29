@@ -14,6 +14,7 @@ import servicePlanningImportReducer, {
   startServicePlanningSync,
   completeServicePlanningSync,
   advanceServicePlanningSyncStep,
+  failServicePlanningSync,
 } from "../../store/servicePlanningImportSlice";
 import allDocsReducer from "../../store/allDocsSlice";
 import { setActiveItemInList } from "../../store/itemListSlice";
@@ -653,6 +654,10 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const summaryCard = screen.getByLabelText("Most recent sync");
     const summary = within(summaryCard);
     expect(summaryButton).toHaveAttribute("aria-expanded", "false");
+    const warningIcon = within(summaryButton).getByRole("img", {
+      name: "Sync completed with skipped attachments",
+    });
+    expect(warningIcon).toHaveClass("shrink-0", "text-amber-300");
     expect(summary.queryByText("What A Beautiful Name")).not.toBeInTheDocument();
     await userEvent.setup().click(summaryButton);
     expect(summaryButton).toHaveAttribute("aria-expanded", "true");
@@ -760,9 +765,41 @@ describe("ServicePlanningSyncFloatingWindow", () => {
 
     const nextSummaryButton = await screen.findByRole("button", { name: /0 added · 1 updated · 0 created · 0 skipped/i });
     expect(nextSummaryButton).toHaveAttribute("aria-expanded", "false");
+    expect(within(nextSummaryButton).queryByRole("img")).not.toBeInTheDocument();
     await userEvent.setup().click(nextSummaryButton);
     expect(screen.getByText("New Person — Host")).toBeInTheDocument();
     expect(screen.queryByText("Clarence Jones — Sabbath School Host")).not.toBeInTheDocument();
+  });
+
+  it("shows the error indicator when skipped attachments and errors are both present", async () => {
+    const store = configureStore({
+      reducer: { servicePlanningImport: servicePlanningImportReducer, allDocs: allDocsReducer },
+    });
+    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+    store.dispatch(startServicePlanningSync({ mode: "overlays" }));
+    store.dispatch(recordServicePlanningSyncResult({
+      overlaysSkipped: 1,
+      reasons: ["The matching overlay was unavailable."],
+    }));
+    store.dispatch(failServicePlanningSync("Overlay persistence failed."));
+
+    renderWindow(store);
+
+    const summaryButton = await screen.findByRole("button", {
+      name: /1 skipped · 1 errors/i,
+    });
+    expect(summaryButton).toHaveAttribute("aria-expanded", "false");
+    expect(within(summaryButton).getByRole("img", {
+      name: "Sync completed with errors",
+    })).toHaveClass("shrink-0", "text-red-400");
+    expect(within(summaryButton).queryByRole("img", {
+      name: "Sync completed with skipped attachments",
+    })).not.toBeInTheDocument();
+
+    await userEvent.setup().click(summaryButton);
+    const summary = within(screen.getByLabelText("Most recent sync"));
+    expect(summary.getByText("The matching overlay was unavailable.")).toBeInTheDocument();
+    expect(summary.getByText("Overlay persistence failed.")).toBeInTheDocument();
   });
 
   it("combines native outline additions and automatically eligible overlays after Sync All", async () => {
