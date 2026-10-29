@@ -11,6 +11,7 @@ import {
 import GlobalInfoProvider, {
   GlobalInfoContext,
   globalFireDbInfo,
+  globalHostId,
 } from "./globalInfo";
 import Login from "../pages/Login";
 import { useTeamsLiveSync } from "../pages/Teams/hooks/useTeamsLiveSync";
@@ -38,6 +39,10 @@ import {
   setWorkstationToken,
   setWorkstationSessionOperatorName,
 } from "../utils/authStorage";
+import {
+  getControllerPresenceScope,
+  isOnlyActiveController,
+} from "../utils/activeControllerPresence";
 
 const mockDispatch = jest.fn();
 const onValueCallbacks = new Map<string, (snapshot: any) => void>();
@@ -406,7 +411,9 @@ const ContextProbe = () => {
       <div data-testid="youtube-connected">
         {context.churchIntegrations.youtube.connected ? "yes" : "no"}
       </div>
-      <div data-testid="path">{location.pathname}</div>
+      <div data-testid="path">
+        {location.pathname}{location.search}{location.hash}
+      </div>
       <button type="button" onClick={() => void context.refreshAuthBootstrap()}>
         Refresh bootstrap
       </button>
@@ -434,7 +441,9 @@ const AuthActionsProbe = () => {
 
   return (
     <div>
-      <div data-testid="path">{location.pathname}</div>
+      <div data-testid="path">
+        {location.pathname}{location.search}{location.hash}
+      </div>
       <div data-testid="probe-auth-status">{context.authServerStatus}</div>
       <div data-testid="probe-auth-error">{context.authError || "none"}</div>
       <div data-testid="pending-email-verification-id">
@@ -1473,6 +1482,78 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
       );
     });
     expect(mockDispatch).not.toHaveBeenCalled();
+  });
+
+  it("publishes only a complete same-database Controller inventory for cleanup gating", async () => {
+    localStorage.setItem("loggedIn", "true");
+    localStorage.setItem("user", "Test User");
+    localStorage.setItem("database", "main");
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(loggedInHumanBootstrap);
+
+    renderProvider();
+
+    const path = "churches/church-1/data/activeInstances";
+    await waitFor(() => expect(onValueCallbacks.has(path)).toBe(true));
+    const scope = getControllerPresenceScope("church-1", "main");
+    const now = new Date().toISOString();
+    const publish = onValueCallbacks.get(path)!;
+
+    act(() =>
+      publish(snapshotFor({
+        [globalHostId]: {
+          hostId: globalHostId,
+          database: "main",
+          isOnController: true,
+          lastActive: now,
+        },
+      })),
+    );
+    expect(isOnlyActiveController(scope, globalHostId)).toBe(true);
+
+    act(() =>
+      publish(snapshotFor({
+        [globalHostId]: {
+          hostId: globalHostId,
+          database: "main",
+          isOnController: true,
+          lastActive: now,
+        },
+        "other-controller": {
+          hostId: "other-controller",
+          database: "main",
+          isOnController: true,
+          lastActive: now,
+        },
+      })),
+    );
+    expect(isOnlyActiveController(scope, globalHostId)).toBe(false);
+
+    act(() =>
+      publish(snapshotFor({
+        [globalHostId]: {
+          hostId: globalHostId,
+          database: "main",
+          isOnController: true,
+          lastActive: now,
+        },
+        "other-database-controller": {
+          hostId: "other-database-controller",
+          database: "another-db",
+          isOnController: true,
+          lastActive: now,
+        },
+      })),
+    );
+    expect(isOnlyActiveController(scope, globalHostId)).toBe(true);
+
+    act(() =>
+      onValueErrorCallbacks.get(path)?.(
+        Object.assign(new Error("permission denied"), {
+          code: "PERMISSION_DENIED",
+        }),
+      ),
+    );
+    expect(isOnlyActiveController(scope, globalHostId)).toBe(false);
   });
 
   it("reattaches presentation listeners after the realtime database reconnects", async () => {
@@ -2806,7 +2887,7 @@ describe("GlobalInfoProvider auth regression coverage", () => {
     };
     setPendingProviderRedirectState({
       method: "google",
-      returnPath: "/controller/bible?search=John%203:16",
+      returnPath: "/current-service?tab=plan#item-2",
     });
     getRedirectResultMock.mockResolvedValueOnce({ user: providerUser });
 
@@ -2827,7 +2908,7 @@ describe("GlobalInfoProvider auth regression coverage", () => {
     expect(getPendingProviderRedirectState()).toBeNull();
     await waitFor(() => {
       expect(screen.getByTestId("path")).toHaveTextContent(
-        "/controller/bible",
+        "/current-service?tab=plan#item-2",
       );
     });
   });

@@ -8,6 +8,27 @@ const sections = (title: string): ServicePlanSection[] => [{
 }];
 
 describe("service plan draft history after reconciliation", () => {
+  it("restores section phase changes through undo and redo", () => {
+    const restored = jest.fn();
+    const initialSections: ServicePlanSection[] = [{
+      id: "s1", phase: "main", name: "Order", elements: [],
+    }];
+    const editedSections: ServicePlanSection[] = [{
+      ...initialSections[0], phase: "pre",
+    }];
+    const view = renderHook(({ draft }) => useServicePlanDraftHistory({ draft, onRestore: restored }), {
+      initialProps: { draft: { sections: initialSections, planName: "Plan" } },
+    });
+
+    act(() => view.result.current.record("section:s1:phase"));
+    view.rerender({ draft: { sections: editedSections, planName: "Plan" } });
+    act(() => view.result.current.undo());
+    expect(restored.mock.calls[0][0].sections[0].phase).toBe("main");
+
+    act(() => view.result.current.redo());
+    expect(restored.mock.calls[1][0].sections[0].phase).toBe("pre");
+  });
+
   it("drops pre-reconciliation undo entries so they cannot restore an obsolete server snapshot", () => {
     let restored = jest.fn();
     const initial = sections("Base");

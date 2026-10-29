@@ -8,36 +8,44 @@ import {
   useRef,
   useState,
 } from "react";
-import { AlertTriangle, Book, BookOpen, Check, ChevronDown, Download, FileText, Music, Plus, RefreshCw, RotateCcw, Square, Users } from "lucide-react";
+import {
+  AlertTriangle,
+  Book,
+  BookOpen,
+  Check,
+  CircleAlert,
+  ChevronDown,
+  FileText,
+  Music,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  Square,
+  Users,
+} from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { planNativeOverlaySync } from "../../integrations/servicePlanning/findBestOverlayMatch";
 import { useDispatch, useSelector } from "../../hooks";
 import {
   cancelServicePlanningSync,
   clearServicePlanningSyncState,
-  markServicePlanningUrlSelection,
   setServicePlanningFloatingWindowDismissed,
-  setServicePlanningImportUrl,
-  setServicePlanningServiceOutline,
   startServicePlanningSync,
 } from "../../store/servicePlanningImportSlice";
-import {
-  useServicePlanningImport,
-  overlayPlanHasExecutableChange,
-} from "../../hooks/useServicePlanningImport";
+import { overlayPlanHasExecutableChange } from "../../hooks/useServicePlanningImport";
 import type { OverlayInfo } from "../../types";
 import {
   Popover,
-  PopoverAnchor,
   PopoverContent,
-  PopoverClose,
   PopoverTrigger,
 } from "../../components/ui/Popover";
-import Input from "../../components/Input/Input";
 import { useToast } from "../../context/toastContext";
 import type { RootState } from "../../store/store";
 import Button from "../../components/Button/Button";
 import ServicePlanningOverlayPreview from "../../components/ServicePlanningOverlayPreview/ServicePlanningOverlayPreview";
-import FloatingWindow, { type FloatingWindowHandle } from "../../components/FloatingWindow/FloatingWindow";
+import FloatingWindow, {
+  type FloatingWindowHandle,
+} from "../../components/FloatingWindow/FloatingWindow";
 import Spinner from "../../components/Spinner/Spinner";
 import ProfileImagePreview from "../../components/ProfileImagePreview/ProfileImagePreview";
 import {
@@ -61,8 +69,13 @@ import { cn } from "../../utils/cnHelper";
 import { iconColorMap } from "../../utils/itemTypeMaps";
 
 import { useCurrentServicePlanSource } from "./useCurrentServicePlanSource";
-import ActionBar, { type ActionBarItem as ActionBarItemDef } from "../../components/ActionBar/ActionBar";
-import { MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS, MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE } from "../../containers/Media/mediaLibraryMediaActionUi";
+import ActionBar, {
+  type ActionBarItem as ActionBarItemDef,
+} from "../../components/ActionBar/ActionBar";
+import {
+  MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
+  MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
+} from "../../containers/Media/mediaLibraryMediaActionUi";
 import { getControllerRightPanelWidthPx } from "../../utils/controllerPanelLayout";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { useChurchServiceTimeZone } from "../../context/churchServiceTimeZone";
@@ -82,6 +95,7 @@ import {
   limitControllerServicePlans,
 } from "./controllerServicePlanSelection";
 import ControllerServicePlanView from "./ControllerServicePlanView";
+import ServicePlanOutlinePreview from "./ServicePlanOutlinePreview";
 import { useServicePlanOutlinePush } from "../Services/useServicePlanOutlinePush";
 
 const MARGIN = 16;
@@ -92,6 +106,7 @@ type SyncSummaryEntry = { label: string; reason?: string };
 type SyncSummary = {
   title: string;
   outline: SyncSummaryEntry[];
+  alreadyPresent?: SyncSummaryEntry[];
   overlaysUpdated: SyncSummaryEntry[];
   overlaysCreated: SyncSummaryEntry[];
   skipped: SyncSummaryEntry[];
@@ -143,22 +158,32 @@ const SyncSummaryCategory = ({
   colorClass: string;
   headingColorClass: string;
   Icon: typeof Check;
-}) => entries.length ? (
-  <section className={`min-w-0 border-l-2 pl-2 ${colorClass}`}>
-    <h3 className={`mb-0.5 flex items-center gap-1.5 font-semibold ${headingColorClass}`}>
-      <Icon aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
-      <span>{title} · {entries.length}</span>
-    </h3>
-    <ul className="space-y-0.5 pl-5 text-zinc-200">
-      {entries.map((entry, index) => (
-        <li key={`${entry.label}-${index}`} className="break-words [overflow-wrap:anywhere]">
-          <span>{entry.label}</span>
-          {entry.reason ? <span className="text-zinc-400"> — {entry.reason}</span> : null}
-        </li>
-      ))}
-    </ul>
-  </section>
-) : null;
+}) =>
+  entries.length ? (
+    <section className={`min-w-0 border-l-2 pl-2 ${colorClass}`}>
+      <h3
+        className={`mb-0.5 flex items-center gap-1.5 font-semibold ${headingColorClass}`}
+      >
+        <Icon aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+        <span>
+          {title} · {entries.length}
+        </span>
+      </h3>
+      <ul className="space-y-0.5 pl-5 text-zinc-200">
+        {entries.map((entry, index) => (
+          <li
+            key={`${entry.label}-${index}`}
+            className="break-words [overflow-wrap:anywhere]"
+          >
+            <span>{entry.label}</span>
+            {entry.reason ? (
+              <span className="text-zinc-400"> — {entry.reason}</span>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </section>
+  ) : null;
 
 const getLineItemBaseBadges = (item: ServicePlanningLineItem) => {
   if (item.outlineItemType === "song") {
@@ -285,29 +310,22 @@ const filterRedundantOverlayBadges = (
   );
 };
 
-const hasSyncableOutlineItems = (preview: ServicePlanningPreview | null): boolean =>
-  Boolean(
-    preview?.outlineCandidates.some(
-      (candidate) =>
-        !candidate.outlineAlreadyPresent &&
-        (
-          (candidate.outlineItemType === "song" &&
-            Boolean(candidate.matchedLibraryItem)) ||
-          (candidate.outlineItemType === "bible" && Boolean(candidate.parsedRef)) ||
-          (candidate.outlineItemType === "custom-document" &&
-            candidate.matchedLibraryItem?.type === "free")
-        ),
-    ),
-  );
-
 const hasSyncableOverlayItems = (
   preview: ServicePlanningPreview | null,
   overlays: OverlayInfo[],
 ): boolean =>
-  Boolean(preview && overlayPlanHasExecutableChange(preview.overlayPlan, overlays));
+  Boolean(
+    preview &&
+    overlayPlanHasExecutableChange(
+      preview.overlayPlan,
+      overlays,
+      preview.overlayLibrary,
+    ),
+  );
 
 const getPreviewLineItems = (preview: ServicePlanningPreview | null) => {
-  const maybeItems = (preview as Partial<ServicePlanningPreview> | null)?.lineItems;
+  const maybeItems = (preview as Partial<ServicePlanningPreview> | null)
+    ?.lineItems;
   return Array.isArray(maybeItems) ? maybeItems : [];
 };
 
@@ -352,9 +370,12 @@ const buildAssignmentsByTeam = (preview: ServicePlanningPreview | null) => {
  * precedence over the operator-facing item title in the Controller.
  */
 const getLineItemDisplayTitle = (item: ServicePlanningLineItem): string =>
-  (item.outlineItemType === "bible" && item.parsedRef
+  item.outlineItemType === "bible" && item.parsedRef
     ? getBibleImportDisplayName(item.parsedRef, item.parsedRef.version)
-    : item.title.trim() || item.cleanedTitle.trim() || item.elementType.trim() || "Untitled item");
+    : item.title.trim() ||
+      item.cleanedTitle.trim() ||
+      item.elementType.trim() ||
+      "Untitled item";
 
 const ServicePlanningSyncFloatingWindow = ({
   hideOutlineActions = false,
@@ -371,24 +392,24 @@ const ServicePlanningSyncFloatingWindow = ({
   const { churchBranding, churchId } = useContext(GlobalInfoContext) || {};
   const { timeZone: churchTimeZone } = useChurchServiceTimeZone();
   const planTimeZone = churchTimeZone;
-  const { loadPreview } = useServicePlanningImport();
   const { pushPlanToOutline } = useServicePlanOutlinePush();
   const { showToast } = useToast();
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [isImportOpen, setIsImportOpen] = useState(false);
   const [isPlanPickerOpen, setIsPlanPickerOpen] = useState(false);
   const [planSearch, setPlanSearch] = useState("");
   const [activePlanKey, setActivePlanKey] = useState<string | null>(null);
-  const [importUrl, setImportUrl] = useState("");
-  const [isImporting, setIsImporting] = useState(false);
   const [isPushingSavedPlan, setIsPushingSavedPlan] = useState(false);
   const [isStoppingSavedPlan, setIsStoppingSavedPlan] = useState(false);
-  const [lastSyncSummary, setLastSyncSummary] = useState<SyncSummary | null>(null);
-  const [isSyncSummaryExpanded, setIsSyncSummaryExpanded] = useState(true);
-  const [isOverlayPreviewExpanded, setIsOverlayPreviewExpanded] = useState(false);
+  const [lastSyncSummary, setLastSyncSummary] = useState<SyncSummary | null>(
+    null,
+  );
+  const [isSyncSummaryExpanded, setIsSyncSummaryExpanded] = useState(false);
+  const [isOverlayPreviewExpanded, setIsOverlayPreviewExpanded] =
+    useState(false);
   const cancelSavedPlanPushRef = useRef(false);
   const pendingSavedPlanSummaryRef = useRef<{
     outline: SyncSummaryEntry[];
+    alreadyPresent: SyncSummaryEntry[];
     skipped: SyncSummaryEntry[];
   } | null>(null);
   const [activeTab, setActiveTab] = useState<"plan" | "assignments">("plan");
@@ -412,6 +433,8 @@ const ServicePlanningSyncFloatingWindow = ({
     isParticipantOverlayUnsafe,
     isLoadingPlans,
     isPlanPreviewStale,
+    isNativeOverlayMappingReady,
+    isNativeOverlayPreviewFresh,
     plansError,
     isPlanSourced,
     refresh: refreshPlan,
@@ -422,16 +445,27 @@ const ServicePlanningSyncFloatingWindow = ({
   const planSyncEligibilityRef = useRef({ isLoading, isPlanPreviewStale });
   planSyncEligibilityRef.current = { isLoading, isPlanPreviewStale };
 
-  const preview = useSelector((s: RootState) => s.servicePlanningImport.preview);
-  const allFreeFormDocs = useSelector((s: RootState) => s.allDocs.allFreeFormDocs);
+  const storedPreview = useSelector(
+    (s: RootState) => s.servicePlanningImport.preview,
+  );
+  const preview = isPlanSourced && selectedPlanKey ? storedPreview : null;
+  const allFreeFormDocs = useSelector(
+    (s: RootState) => s.allDocs.allFreeFormDocs,
+  );
   const overlays = useSelector(
     (s: RootState) => s.undoable?.present?.overlays?.list ?? EMPTY_OVERLAY_LIST,
   );
+  const currentOverlayPlan = planNativeOverlaySync(
+    preview?.overlayPlan ?? [],
+    overlays,
+    preview?.overlayLibrary,
+  );
   const sync = useSelector((s: RootState) => s.servicePlanningImport.sync);
-  const url = useSelector((s: RootState) => s.servicePlanningImport.url);
-  const serviceOutline = useSelector(
+  const storedServiceOutline = useSelector(
     (s: RootState) => s.servicePlanningImport.serviceOutline,
   );
+  const serviceOutline =
+    isPlanSourced && selectedPlanKey ? storedServiceOutline : null;
   const floatingWindowDismissed = useSelector(
     (s: RootState) => s.servicePlanningImport.floatingWindowDismissed,
   );
@@ -451,7 +485,8 @@ const ServicePlanningSyncFloatingWindow = ({
     (s: RootState) => s.servicePlanningImport.floatingWindowRestoreId,
   );
   const scrollbarWidth = useSelector(
-    (s: RootState) => s.undoable?.present?.preferences?.scrollbarWidth ?? "thin",
+    (s: RootState) =>
+      s.undoable?.present?.preferences?.scrollbarWidth ?? "thin",
   );
   const prevRestoreIdRef = useRef(floatingWindowRestoreId);
   useEffect(() => {
@@ -483,35 +518,6 @@ const ServicePlanningSyncFloatingWindow = ({
       floatingWindowRef.current?.restore();
     }
   }, [floatingWindowRestoreId]);
-
-  const handleImport = useCallback(async () => {
-    const trimmed = importUrl.trim();
-    if (!trimmed) return;
-    if (!trimmed.toLowerCase().startsWith("https://")) {
-      showToast("URL must start with https://", "error");
-      return;
-    }
-    setIsImporting(true);
-    try {
-      const result = await loadPreview(trimmed);
-      dispatch(setServicePlanningImportUrl(trimmed));
-      dispatch(setServicePlanningServiceOutline(result));
-      dispatch(markServicePlanningUrlSelection());
-      dispatch(setServicePlanningFloatingWindowDismissed(false));
-      setIsImportOpen(false);
-      setImportUrl("");
-      showToast("Plan loaded", "success");
-    } catch (error) {
-      showToast(
-        error instanceof Error && error.message.trim()
-          ? error.message
-          : "Failed to load plan. Check the URL and try again.",
-        "error",
-      );
-    } finally {
-      setIsImporting(false);
-    }
-  }, [dispatch, importUrl, loadPreview, setImportUrl, showToast]);
 
   const handleRefresh = useCallback(async () => {
     if (
@@ -550,34 +556,30 @@ const ServicePlanningSyncFloatingWindow = ({
       return;
     }
 
-    if (!url) return;
     setIsRefreshing(true);
     try {
-      const result = await loadPreview(url);
-      dispatch(setServicePlanningServiceOutline(result));
-      setMicrophoneRefreshVersion((version) => version + 1);
-      showToast("Plan refreshed", "success");
-    } catch {
-      showToast("Failed to refresh plan", "error");
+      await refreshPlans();
     } finally {
       setIsRefreshing(false);
     }
   }, [
-    dispatch,
     isPlanSourced,
     isRefreshing,
-    loadPreview,
     refreshPlan,
+    refreshPlans,
     selectedPlanKey,
     showToast,
     sync.status,
-    url,
   ]);
 
-  const isContextChanging = isLoading || isPlanRefreshing || targetOutlineLoading;
+  const isContextChanging =
+    isLoading || isPlanRefreshing || targetOutlineLoading;
   const canSyncOverlays =
     allowOverlaySync &&
+    isPlanSourced &&
+    Boolean(selectedPlanKey) &&
     !isPlanPreviewStale &&
+    isNativeOverlayPreviewFresh(preview) &&
     !isContextChanging &&
     !isRefreshingParticipants &&
     !isParticipantOverlayUnsafe &&
@@ -585,99 +587,153 @@ const ServicePlanningSyncFloatingWindow = ({
   const canSyncOverlaysRef = useRef(canSyncOverlays);
   canSyncOverlaysRef.current = canSyncOverlays;
   const canSyncOutline =
+    isPlanSourced &&
     !isPlanPreviewStale &&
-    !isContextChanging && Boolean(selectedList) && (isPlanSourced && selectedPlanDetails
-      ? selectedPlanDetails.sections.some((section) => section.elements.some((element) =>
-          getServicePlanElementContentResources(element).some((resource) =>
-            resource.type === "song" || resource.type === "scripture" || resource.type === "custom-document",
-          ),
-        ))
-      : hasSyncableOutlineItems(preview));
+    !isContextChanging &&
+    Boolean(selectedList) &&
+    selectedPlanDetails !== null &&
+    selectedPlanDetails.sections.some((section) =>
+      section.elements.some((element) =>
+        getServicePlanElementContentResources(element).some(
+          (resource) =>
+            resource.type === "song" ||
+            resource.type === "scripture" ||
+            resource.type === "custom-document",
+        ),
+      ),
+    );
   const canSyncAny = allowOverlaySync
     ? canSyncOverlays || canSyncOutline
     : canSyncOutline;
 
-  const handleSync = useCallback((mode: "overlays" | "outline" | "both") => {
-    if (mode !== "overlays" && isPlanSourced && selectedPlanDetails && canSyncOutline) {
-      if (isPushingSavedPlan || isContextChanging || !selectedList) return;
-      setIsPushingSavedPlan(true);
-      cancelSavedPlanPushRef.current = false;
-      const sourcePlan = selectedPlanDetails;
-      const outline: SyncSummaryEntry[] = [];
-      void pushPlanToOutline(
-        sourcePlan,
-        () =>
-          currentPlanRef.current === sourcePlan &&
-          !planSyncEligibilityRef.current.isLoading &&
-          !planSyncEligibilityRef.current.isPlanPreviewStale,
-        async (item, fallback) => {
-          outline.push({
-            label: item.name,
-            ...(fallback ? { reason: fallback.reason === "mapped-heading-missing"
-              ? `Added at end — mapped heading "${fallback.headingName}" wasn't found.`
-              : `Added at end — heading "${fallback.headingName}" was removed before insertion.` } : {}),
-          });
-          dispatch(setActiveItemInList(item.listId));
-          await ensureElementInView(`service-item-${item.listId}`, "service-items-list");
-        },
-        () => !cancelSavedPlanPushRef.current,
-      )
-        .then((result) => {
-          const skipped = result.skippedTitles.map((label) => ({ label, reason: "Unresolved Service Plan attachment" }));
-          setLastSyncSummary({
-            outline,
-            overlaysUpdated: [],
-            overlaysCreated: [],
-            skipped,
-            errors: [],
-            title: cancelSavedPlanPushRef.current
-              ? "Sync stopped"
-              : skipped.length
-                ? "Sync complete with skipped items"
-                : "Sync complete",
-          });
-          setIsSyncSummaryExpanded(true);
-          if (mode === "both" && !cancelSavedPlanPushRef.current && allowOverlaySync && canSyncOverlaysRef.current) {
-            pendingSavedPlanSummaryRef.current = { outline, skipped };
-            dispatch(setServicePlanningFloatingWindowDismissed(false));
-            dispatch(startServicePlanningSync({ mode: "overlays" }));
-          } else {
-            showToast(
-              cancelSavedPlanPushRef.current
-                ? "Sync stopped."
-                : skipped.length
-                  ? "Sync complete. Some items were skipped."
-                  : "Sync complete.",
-              cancelSavedPlanPushRef.current || skipped.length ? "info" : "success",
+  const handleSync = useCallback(
+    (mode: "overlays" | "outline" | "both") => {
+      if (
+        mode !== "overlays" &&
+        isPlanSourced &&
+        selectedPlanDetails &&
+        canSyncOutline
+      ) {
+        if (isPushingSavedPlan || isContextChanging || !selectedList) return;
+        setIsPushingSavedPlan(true);
+        cancelSavedPlanPushRef.current = false;
+        const sourcePlan = selectedPlanDetails;
+        const outline: SyncSummaryEntry[] = [];
+        void pushPlanToOutline(
+          sourcePlan,
+          () =>
+            currentPlanRef.current === sourcePlan &&
+            !planSyncEligibilityRef.current.isLoading &&
+            !planSyncEligibilityRef.current.isPlanPreviewStale,
+          async (item, fallback) => {
+            outline.push({
+              label: item.name,
+              ...(fallback
+                ? {
+                    reason:
+                      fallback.reason === "mapped-heading-missing"
+                        ? `Added at end — mapped heading "${fallback.headingName}" wasn't found.`
+                        : `Added at end — heading "${fallback.headingName}" was removed before insertion.`,
+                  }
+                : {}),
+            });
+            dispatch(setActiveItemInList(item.listId));
+            await ensureElementInView(
+              `service-item-${item.listId}`,
+              "service-items-list",
             );
-          }
-        })
-        .catch((error: unknown) => {
-          const message = error instanceof Error ? error.message : "Could not add plan content to the outline.";
-          setLastSyncSummary({ outline, overlaysUpdated: [], overlaysCreated: [], skipped: [], errors: [{ label: message }], title: "Sync incomplete" });
-          setIsSyncSummaryExpanded(true);
-          showToast(message, "error");
-        })
-        .finally(() => {
-          setIsPushingSavedPlan(false);
-          setIsStoppingSavedPlan(false);
-        });
-      return;
-    }
-    const effectiveMode = allowOverlaySync ? mode : "outline";
-    const shouldSyncOverlays = effectiveMode !== "outline" && canSyncOverlays;
-    const shouldSyncOutline = effectiveMode !== "overlays" && canSyncOutline;
-    if (!shouldSyncOverlays && !shouldSyncOutline) return;
+          },
+          () => !cancelSavedPlanPushRef.current,
+        )
+          .then((result) => {
+            const skipped = result.unresolvedAttachments.map(({ title: label, reason }) => ({ label, reason }));
+            const alreadyPresent = result.alreadyPresent.map(({ title: label }) => ({ label }));
+            setLastSyncSummary({
+              outline,
+              alreadyPresent,
+              overlaysUpdated: [],
+              overlaysCreated: [],
+              skipped,
+              errors: [],
+              title: cancelSavedPlanPushRef.current
+                ? "Sync stopped"
+                : skipped.length
+                  ? "Sync complete with skipped items"
+                  : "Sync complete",
+            });
+            setIsSyncSummaryExpanded(false);
+            if (
+              mode === "both" &&
+              !cancelSavedPlanPushRef.current &&
+              allowOverlaySync &&
+              canSyncOverlaysRef.current
+            ) {
+              pendingSavedPlanSummaryRef.current = { outline, skipped, alreadyPresent };
+              dispatch(setServicePlanningFloatingWindowDismissed(false));
+              dispatch(startServicePlanningSync({ mode: "overlays" }));
+            } else {
+              showToast(
+                cancelSavedPlanPushRef.current
+                  ? "Sync stopped."
+                  : skipped.length
+                    ? "Sync complete. Some items were skipped."
+                    : "Sync complete.",
+                cancelSavedPlanPushRef.current || skipped.length
+                  ? "info"
+                  : "success",
+              );
+            }
+          })
+          .catch((error: unknown) => {
+            const message =
+              error instanceof Error
+                ? error.message
+                : "Could not add plan content to the outline.";
+            setLastSyncSummary({
+              outline,
+              overlaysUpdated: [],
+              overlaysCreated: [],
+              skipped: [],
+              errors: [{ label: message }],
+              title: "Sync incomplete",
+            });
+            setIsSyncSummaryExpanded(false);
+            showToast(message, "error");
+          })
+          .finally(() => {
+            setIsPushingSavedPlan(false);
+            setIsStoppingSavedPlan(false);
+          });
+        return;
+      }
+      const effectiveMode = allowOverlaySync ? mode : "outline";
+      const shouldSyncOverlays = effectiveMode !== "outline" && canSyncOverlays;
+      const shouldSyncOutline = effectiveMode !== "overlays" && canSyncOutline;
+      if (!shouldSyncOverlays && !shouldSyncOutline) return;
 
-    const nextMode =
-      shouldSyncOverlays && shouldSyncOutline
-        ? "both"
-        : shouldSyncOverlays
-          ? "overlays"
-          : "outline";
-    dispatch(setServicePlanningFloatingWindowDismissed(false));
-    dispatch(startServicePlanningSync({ mode: nextMode }));
-  }, [allowOverlaySync, canSyncOutline, canSyncOverlays, dispatch, isContextChanging, isPlanSourced, isPushingSavedPlan, pushPlanToOutline, selectedList, selectedPlanDetails, showToast]);
+      const nextMode =
+        shouldSyncOverlays && shouldSyncOutline
+          ? "both"
+          : shouldSyncOverlays
+            ? "overlays"
+            : "outline";
+      dispatch(setServicePlanningFloatingWindowDismissed(false));
+      dispatch(startServicePlanningSync({ mode: nextMode }));
+    },
+    [
+      allowOverlaySync,
+      canSyncOutline,
+      canSyncOverlays,
+      dispatch,
+      isContextChanging,
+      isPlanSourced,
+      isPushingSavedPlan,
+      pushPlanToOutline,
+      selectedList,
+      selectedPlanDetails,
+      showToast,
+    ],
+  );
 
   const handleStopSync = useCallback(() => {
     if (isPushingSavedPlan) {
@@ -689,30 +745,48 @@ const ServicePlanningSyncFloatingWindow = ({
   }, [dispatch, isPushingSavedPlan]);
 
   useEffect(() => {
-    if (sync.status !== "completed" && sync.status !== "cancelled" && sync.status !== "failed") return;
+    if (
+      sync.status !== "completed" &&
+      sync.status !== "cancelled" &&
+      sync.status !== "failed"
+    )
+      return;
     const savedOutline = pendingSavedPlanSummaryRef.current;
-    const overlayLabel = (item: ServicePlanningSyncItem) => item.sublabel ? `${item.label} — ${item.sublabel}` : item.label;
-    const overlaysUpdated = sync.syncItems.filter((item) => item.phase === "overlays" && item.status === "updated").map((item) => ({ label: overlayLabel(item) }));
-    const overlaysCreated = sync.syncItems.filter((item) => item.phase === "overlays" && item.status === "created").map((item) => ({ label: overlayLabel(item) }));
+    const overlayLabel = (item: ServicePlanningSyncItem) =>
+      item.sublabel ? `${item.label} — ${item.sublabel}` : item.label;
+    const overlaysUpdated = sync.syncItems
+      .filter((item) => item.phase === "overlays" && item.status === "updated")
+      .map((item) => ({ label: overlayLabel(item) }));
+    const overlaysCreated = sync.syncItems
+      .filter((item) => item.phase === "overlays" && item.status === "created")
+      .map((item) => ({ label: overlayLabel(item) }));
     if (!savedOutline && sync.mode === "outline") return;
     setLastSyncSummary({
-      outline: savedOutline?.outline ?? sync.syncItems.filter((item) => item.phase === "outline" && item.status === "added").map((item) => ({ label: item.label })),
+      outline:
+        savedOutline?.outline ??
+        sync.syncItems
+          .filter((item) => item.phase === "outline" && item.status === "added")
+          .map((item) => ({ label: item.label })),
+      alreadyPresent: savedOutline?.alreadyPresent,
       overlaysUpdated,
       overlaysCreated,
       skipped: [
         ...(savedOutline?.skipped ?? []),
-        ...sync.reasons.filter((reason) => !/already (?:up to date|exists)/i.test(reason)).map((label) => ({ label })),
+        ...sync.reasons
+          .filter((reason) => !/already (?:up to date|exists)/i.test(reason))
+          .map((label) => ({ label })),
       ],
       errors: sync.error ? [{ label: sync.error }] : [],
-      title: sync.status === "cancelled"
-        ? "Sync stopped"
-        : sync.status === "failed"
-          ? "Sync incomplete"
-          : savedOutline?.skipped.length
-            ? "Sync complete with skipped items"
-            : "Sync complete",
+      title:
+        sync.status === "cancelled"
+          ? "Sync stopped"
+          : sync.status === "failed"
+            ? "Sync incomplete"
+            : savedOutline?.skipped.length
+              ? "Sync complete with skipped items"
+              : "Sync complete",
     });
-    setIsSyncSummaryExpanded(true);
+    setIsSyncSummaryExpanded(false);
     pendingSavedPlanSummaryRef.current = null;
   }, [sync]);
 
@@ -773,7 +847,7 @@ const ServicePlanningSyncFloatingWindow = ({
     planPickerPlans[0] ??
     null;
   const activePlanIndex = activePlan
-    ? planPickerIndexByKey.get(activePlan.planKey) ?? -1
+    ? (planPickerIndexByKey.get(activePlan.planKey) ?? -1)
     : -1;
   const activePlanOptionRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -790,96 +864,196 @@ const ServicePlanningSyncFloatingWindow = ({
   const isSyncStopping = sync.status === "cancelling";
   const isSyncActive = isSyncRunning || isSyncStopping || isPushingSavedPlan;
   const actionBarItemDefs = useMemo((): ActionBarItemDef[] => {
-    const items = isSyncActive ? [
-    {
-      id: "stop-sync",
-      label: isSyncStopping || isStoppingSavedPlan ? "Stopping..." : "Stop syncing",
-      disabled: isSyncStopping || isStoppingSavedPlan,
-      renderButton: (isMeasure: boolean) => (
-        <Button variant="tertiary" svg={Square} color="#ef4444" className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={isSyncStopping || isStoppingSavedPlan} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure || isSyncStopping || isStoppingSavedPlan ? undefined : handleStopSync}>{isSyncStopping || isStoppingSavedPlan ? "Stopping..." : "Stop syncing"}</Button>
-      ),
-      onOverflowSelect: isSyncStopping || isStoppingSavedPlan ? undefined : handleStopSync,
-      renderOverflowItem: () => <><Square className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-red-400")} />{isSyncStopping || isStoppingSavedPlan ? "Stopping..." : "Stop syncing"}</>,
-    },
-  ] : [
-    {
-      id: "sync-all",
-      label: "Sync All",
-      disabled: isSyncActive || !canSyncAny,
-      renderButton: (isMeasure: boolean) => (
-        <Button variant="tertiary" svg={RefreshCw} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={isSyncActive || !canSyncAny} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure ? undefined : () => handleSync("both")}>Sync All</Button>
-      ),
-      onOverflowSelect: () => handleSync("both"),
-      renderOverflowItem: () => <><RefreshCw className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />Sync All</>,
-    },
-    {
-      id: "refresh",
-      label: isRefreshing ? "Refreshing…" : "Refresh",
-      disabled: isRefreshing || isSyncActive,
-      renderButton: (isMeasure: boolean) => (
-        <Button
-          variant="tertiary"
-          svg={RefreshCw}
-          iconSize="sm"
-          color={isRefreshing ? "#22d3ee" : undefined}
-          className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS, isRefreshing && "[&_svg]:animate-spin")}
-          disabled={isRefreshing || isSyncActive}
-          tabIndex={isMeasure ? -1 : undefined}
-          onClick={isMeasure ? undefined : () => void handleRefresh()}
-        >
-          {isRefreshing ? "Refreshing…" : "Refresh"}
-        </Button>
-      ),
-      onOverflowSelect: () => void handleRefresh(),
-      renderOverflowItem: () => <><RefreshCw className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />{isRefreshing ? "Refreshing…" : "Refresh"}</>,
-    },
-    {
-      id: "sync-overlays",
-      label: "Sync overlays",
-      disabled: isSyncActive || !canSyncOverlays,
-      renderButton: (isMeasure: boolean) => (
-        <Button variant="tertiary" svg={RefreshCw} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={isSyncActive || !canSyncOverlays} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure ? undefined : () => handleSync("overlays")}>Sync overlays</Button>
-      ),
-      onOverflowSelect: () => handleSync("overlays"),
-      renderOverflowItem: () => <><RefreshCw className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />Sync overlays</>,
-    },
-    {
-      id: "sync-outline",
-      label: isPushingSavedPlan ? "Syncing outline…" : "Sync outline",
-      disabled: isSyncActive || isPushingSavedPlan || !canSyncOutline,
-      renderButton: (isMeasure: boolean) => (
-        <Button variant="tertiary" svg={RefreshCw} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={isSyncActive || isPushingSavedPlan || !canSyncOutline} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure ? undefined : () => handleSync("outline")}>{isPushingSavedPlan ? "Syncing outline…" : "Sync outline"}</Button>
-      ),
-      onOverflowSelect: () => handleSync("outline"),
-      renderOverflowItem: () => <><RefreshCw className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />Sync outline</>,
-    },
-    {
-      id: "import",
-      label: "Import",
-      disabled: isSyncActive,
-      renderButton: (isMeasure: boolean) => isMeasure ? (
-        <Button variant="tertiary" svg={Download} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} tabIndex={-1}>Import</Button>
-      ) : (
-        <Button
-          variant="tertiary"
-          svg={Download}
-          className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)}
-          disabled={isSyncActive}
-          onClick={() => setIsImportOpen(true)}
-        >
-          Import
-        </Button>
-      ),
-      onOverflowSelect: () => setIsImportOpen(true),
-      renderOverflowItem: () => <><Download className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />Import</>,
-    },
-    ];
+    const items = isSyncActive
+      ? [
+          {
+            id: "stop-sync",
+            label:
+              isSyncStopping || isStoppingSavedPlan
+                ? "Stopping..."
+                : "Stop syncing",
+            disabled: isSyncStopping || isStoppingSavedPlan,
+            renderButton: (isMeasure: boolean) => (
+              <Button
+                variant="tertiary"
+                svg={Square}
+                color="#ef4444"
+                className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)}
+                disabled={isSyncStopping || isStoppingSavedPlan}
+                tabIndex={isMeasure ? -1 : undefined}
+                onClick={
+                  isMeasure || isSyncStopping || isStoppingSavedPlan
+                    ? undefined
+                    : handleStopSync
+                }
+              >
+                {isSyncStopping || isStoppingSavedPlan
+                  ? "Stopping..."
+                  : "Stop syncing"}
+              </Button>
+            ),
+            onOverflowSelect:
+              isSyncStopping || isStoppingSavedPlan
+                ? undefined
+                : handleStopSync,
+            renderOverflowItem: () => (
+              <>
+                <Square
+                  className={cn(
+                    MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
+                    "text-red-400",
+                  )}
+                />
+                {isSyncStopping || isStoppingSavedPlan
+                  ? "Stopping..."
+                  : "Stop syncing"}
+              </>
+            ),
+          },
+        ]
+      : [
+          {
+            id: "sync-all",
+            label: "Sync All",
+            disabled: isSyncActive || !canSyncAny,
+            renderButton: (isMeasure: boolean) => (
+              <Button
+                variant="tertiary"
+                svg={RefreshCw}
+                className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)}
+                disabled={isSyncActive || !canSyncAny}
+                tabIndex={isMeasure ? -1 : undefined}
+                onClick={isMeasure ? undefined : () => handleSync("both")}
+              >
+                Sync All
+              </Button>
+            ),
+            onOverflowSelect: () => handleSync("both"),
+            renderOverflowItem: () => (
+              <>
+                <RefreshCw
+                  className={cn(
+                    MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
+                    "text-cyan-400",
+                  )}
+                />
+                Sync All
+              </>
+            ),
+          },
+          {
+            id: "refresh",
+            label: isRefreshing ? "Refreshing…" : "Refresh",
+            disabled: isRefreshing || isSyncActive,
+            renderButton: (isMeasure: boolean) => (
+              <Button
+                variant="tertiary"
+                svg={RefreshCw}
+                iconSize="sm"
+                color={isRefreshing ? "#22d3ee" : undefined}
+                className={cn(
+                  "shrink-0",
+                  MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
+                  isRefreshing && "[&_svg]:animate-spin",
+                )}
+                disabled={isRefreshing || isSyncActive}
+                tabIndex={isMeasure ? -1 : undefined}
+                onClick={isMeasure ? undefined : () => void handleRefresh()}
+              >
+                {isRefreshing ? "Refreshing…" : "Refresh"}
+              </Button>
+            ),
+            onOverflowSelect: () => void handleRefresh(),
+            renderOverflowItem: () => (
+              <>
+                <RefreshCw
+                  className={cn(
+                    MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
+                    "text-cyan-400",
+                  )}
+                />
+                {isRefreshing ? "Refreshing…" : "Refresh"}
+              </>
+            ),
+          },
+          {
+            id: "sync-overlays",
+            label: "Sync overlays",
+            disabled: isSyncActive || !canSyncOverlays,
+            renderButton: (isMeasure: boolean) => (
+              <Button
+                variant="tertiary"
+                svg={RefreshCw}
+                className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)}
+                disabled={isSyncActive || !canSyncOverlays}
+                tabIndex={isMeasure ? -1 : undefined}
+                onClick={isMeasure ? undefined : () => handleSync("overlays")}
+              >
+                Sync overlays
+              </Button>
+            ),
+            onOverflowSelect: () => handleSync("overlays"),
+            renderOverflowItem: () => (
+              <>
+                <RefreshCw
+                  className={cn(
+                    MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
+                    "text-cyan-400",
+                  )}
+                />
+                Sync overlays
+              </>
+            ),
+          },
+          {
+            id: "sync-outline",
+            label: isPushingSavedPlan ? "Syncing outline…" : "Sync outline",
+            disabled: isSyncActive || isPushingSavedPlan || !canSyncOutline,
+            renderButton: (isMeasure: boolean) => (
+              <Button
+                variant="tertiary"
+                svg={RefreshCw}
+                className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)}
+                disabled={isSyncActive || isPushingSavedPlan || !canSyncOutline}
+                tabIndex={isMeasure ? -1 : undefined}
+                onClick={isMeasure ? undefined : () => handleSync("outline")}
+              >
+                {isPushingSavedPlan ? "Syncing outline…" : "Sync outline"}
+              </Button>
+            ),
+            onOverflowSelect: () => handleSync("outline"),
+            renderOverflowItem: () => (
+              <>
+                <RefreshCw
+                  className={cn(
+                    MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE,
+                    "text-cyan-400",
+                  )}
+                />
+                Sync outline
+              </>
+            ),
+          },
+        ];
     return allowOverlaySync
       ? items
-      : items.filter((item) => item.id !== "sync-all" && item.id !== "sync-overlays");
-  }, [allowOverlaySync, canSyncAny, canSyncOutline, canSyncOverlays, handleRefresh, handleStopSync, handleSync, isPushingSavedPlan, isRefreshing, isStoppingSavedPlan, isSyncActive, isSyncStopping]);
-
-
+      : items.filter(
+          (item) => item.id !== "sync-all" && item.id !== "sync-overlays",
+        );
+  }, [
+    allowOverlaySync,
+    canSyncAny,
+    canSyncOutline,
+    canSyncOverlays,
+    handleRefresh,
+    handleStopSync,
+    handleSync,
+    isPushingSavedPlan,
+    isRefreshing,
+    isStoppingSavedPlan,
+    isSyncActive,
+    isSyncStopping,
+  ]);
 
   // The outline action can open this window before a plan is loaded. Keeping
   // the empty state visible is what lets an operator recover when the nearest
@@ -915,13 +1089,17 @@ const ServicePlanningSyncFloatingWindow = ({
     return grouped;
   }, [sync.syncItems]);
 
-  const activeKey = sync.status === "running" || sync.status === "cancelling"
-    ? `${sync.activeLabel}::${sync.activeSublabel}`
-    : null;
+  const activeKey =
+    sync.status === "running" || sync.status === "cancelling"
+      ? `${sync.activeLabel}::${sync.activeSublabel}`
+      : null;
 
   useEffect(() => {
     if (activeItemRef.current) {
-      activeItemRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      activeItemRef.current.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+      });
     }
   }, [activeKey]);
 
@@ -994,7 +1172,10 @@ const ServicePlanningSyncFloatingWindow = ({
 
   let selectedPlanLabel = "Choose a service plan";
   if (selectedPlan) {
-    selectedPlanLabel = formatControllerServicePlanLabel(selectedPlan, planTimeZone);
+    selectedPlanLabel = formatControllerServicePlanLabel(
+      selectedPlan,
+      planTimeZone,
+    );
   } else if (!isPlanSourced && serviceOutline?.planLabel?.trim()) {
     selectedPlanLabel = serviceOutline.planLabel.trim();
   } else if (plansError) {
@@ -1023,7 +1204,7 @@ const ServicePlanningSyncFloatingWindow = ({
               setActivePlanKey(
                 planPickerPlans.some((plan) => plan.planKey === selectedPlanKey)
                   ? selectedPlanKey
-                  : planPickerPlans[0]?.planKey ?? null,
+                  : (planPickerPlans[0]?.planKey ?? null),
               );
             } else {
               setPlanSearch("");
@@ -1040,16 +1221,26 @@ const ServicePlanningSyncFloatingWindow = ({
             >
               {selectedPlan && selectedPlanDateTime ? (
                 <span className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-2">
-                  <span className="min-w-0 truncate font-medium">{selectedPlanName}</span>
-                  <span className="shrink-0 text-[11px] text-zinc-400 sm:text-xs">{selectedPlanDateTime}</span>
+                  <span className="min-w-0 truncate font-medium">
+                    {selectedPlanName}
+                  </span>
+                  <span className="shrink-0 text-[11px] text-zinc-400 sm:text-xs">
+                    {selectedPlanDateTime}
+                  </span>
                 </span>
               ) : (
-                <span className="min-w-0 flex-1 truncate">{selectedPlanLabel}</span>
+                <span className="min-w-0 flex-1 truncate">
+                  {selectedPlanLabel}
+                </span>
               )}
               {isLoadingPlans ? (
                 <Spinner width="14px" borderWidth="2px" />
               ) : (
-                <ChevronDown size={14} className="shrink-0 text-zinc-400" aria-hidden />
+                <ChevronDown
+                  size={14}
+                  className="shrink-0 text-zinc-400"
+                  aria-hidden
+                />
               )}
             </button>
           </PopoverTrigger>
@@ -1082,19 +1273,25 @@ const ServicePlanningSyncFloatingWindow = ({
                   if (planPickerPlans.length === 0) return;
                   event.preventDefault();
                   const direction = event.key === "ArrowDown" ? 1 : -1;
-                  const nextIndex = activePlanIndex < 0
-                    ? direction > 0
-                      ? 0
-                      : planPickerPlans.length - 1
-                    : (activePlanIndex + direction + planPickerPlans.length) %
-                      planPickerPlans.length;
+                  const nextIndex =
+                    activePlanIndex < 0
+                      ? direction > 0
+                        ? 0
+                        : planPickerPlans.length - 1
+                      : (activePlanIndex + direction + planPickerPlans.length) %
+                        planPickerPlans.length;
                   setActivePlanKey(planPickerPlans[nextIndex].planKey);
                 } else if (event.key === "Home" || event.key === "End") {
                   if (planPickerPlans.length === 0) return;
                   event.preventDefault();
-                  const index = event.key === "Home" ? 0 : planPickerPlans.length - 1;
+                  const index =
+                    event.key === "Home" ? 0 : planPickerPlans.length - 1;
                   setActivePlanKey(planPickerPlans[index].planKey);
-                } else if (event.key === "Enter" && activePlan && !isSyncActive) {
+                } else if (
+                  event.key === "Enter" &&
+                  activePlan &&
+                  !isSyncActive
+                ) {
                   event.preventDefault();
                   selectPickerPlan(activePlan.planKey);
                 }
@@ -1121,10 +1318,12 @@ const ServicePlanningSyncFloatingWindow = ({
               className="min-h-0 flex-1 overflow-y-auto"
             >
               {planPickerPlans.length > 0 ? (
-                ([
-                  ["Upcoming", plansByGroup.upcoming],
-                  ["Recent", plansByGroup.recent],
-                ] as const).map(([group, plans]) =>
+                (
+                  [
+                    ["Upcoming", plansByGroup.upcoming],
+                    ["Recent", plansByGroup.recent],
+                  ] as const
+                ).map(([group, plans]) =>
                   plans.length > 0 ? (
                     <div
                       key={group}
@@ -1139,7 +1338,8 @@ const ServicePlanningSyncFloatingWindow = ({
                       </p>
                       {plans.map((plan) => {
                         const selected = plan.planKey === selectedPlanKey;
-                        const optionIndex = planPickerIndexByKey.get(plan.planKey) ?? 0;
+                        const optionIndex =
+                          planPickerIndexByKey.get(plan.planKey) ?? 0;
                         const active = plan.planKey === activePlan?.planKey;
                         return (
                           <button
@@ -1148,7 +1348,10 @@ const ServicePlanningSyncFloatingWindow = ({
                             ref={active ? activePlanOptionRef : undefined}
                             type="button"
                             role="option"
-                            aria-label={formatControllerServicePlanLabel(plan, planTimeZone)}
+                            aria-label={formatControllerServicePlanLabel(
+                              plan,
+                              planTimeZone,
+                            )}
                             aria-selected={selected}
                             tabIndex={-1}
                             disabled={isSyncActive}
@@ -1163,12 +1366,27 @@ const ServicePlanningSyncFloatingWindow = ({
                               <span className="min-w-0 flex-1 truncate font-medium">
                                 {plan.name?.trim() || "Service plan"}
                               </span>
-                              {selected ? <Check size={14} className="shrink-0 text-cyan-300 sm:hidden" aria-hidden /> : null}
+                              {selected ? (
+                                <Check
+                                  size={14}
+                                  className="shrink-0 text-cyan-300 sm:hidden"
+                                  aria-hidden
+                                />
+                              ) : null}
                             </span>
                             <span className="shrink-0 text-[11px] text-zinc-400 sm:text-xs">
-                              {formatControllerServicePlanDateTime(plan, planTimeZone)}
+                              {formatControllerServicePlanDateTime(
+                                plan,
+                                planTimeZone,
+                              )}
                             </span>
-                            {selected ? <Check size={14} className="hidden shrink-0 text-cyan-300 sm:block" aria-hidden /> : null}
+                            {selected ? (
+                              <Check
+                                size={14}
+                                className="hidden shrink-0 text-cyan-300 sm:block"
+                                aria-hidden
+                              />
+                            ) : null}
                           </button>
                         );
                       })}
@@ -1176,11 +1394,11 @@ const ServicePlanningSyncFloatingWindow = ({
                   ) : null,
                 )
               ) : (
-              <p className="px-2 py-3 text-xs text-zinc-400">
-                {savedPlans.length === 0
-                  ? "No saved plans yet."
-                  : "No plans match your search."}
-              </p>
+                <p className="px-2 py-3 text-xs text-zinc-400">
+                  {savedPlans.length === 0
+                    ? "No saved plans yet."
+                    : "No plans match your search."}
+                </p>
               )}
             </div>
             {!planSearch.trim() && savedPlans.length > visiblePlans.length ? (
@@ -1219,7 +1437,8 @@ const ServicePlanningSyncFloatingWindow = ({
     );
   }
 
-  let emptyPreviewMessage = "Choose a saved plan to review it in the controller.";
+  let emptyPreviewMessage =
+    "Choose a saved plan to review it in the controller.";
   if (isLoading) {
     emptyPreviewMessage = "Loading the selected plan…";
   } else if (plansError) {
@@ -1259,6 +1478,18 @@ const ServicePlanningSyncFloatingWindow = ({
               : "The plan and its assignments could not be fully loaded. Retry before syncing."}
           </p>
         ) : null}
+        {isPlanSourced &&
+        preview?.nativeOverlaySummary &&
+        !isNativeOverlayPreviewFresh(preview) ? (
+          <p
+            role="status"
+            className="rounded border border-amber-500/40 bg-amber-950/30 px-2 py-1.5 text-xs text-amber-200"
+          >
+            {isNativeOverlayMappingReady
+              ? "Refreshing the overlay preview with the latest church settings. Overlay sync is paused until it finishes."
+              : "Church integration settings are loading. The plan is available, but overlay sync will wait until the settings are verified."}
+          </p>
+        ) : null}
 
         <div className="sticky -top-3 z-10 -mx-3 -mt-2 border-b border-zinc-700 bg-gray-800/95 px-3 pt-3 pb-2 backdrop-blur">
           <Tabs
@@ -1283,75 +1514,114 @@ const ServicePlanningSyncFloatingWindow = ({
             </TabsList>
           </Tabs>
 
-          <Popover open={isImportOpen} onOpenChange={setIsImportOpen}>
-            <PopoverAnchor asChild>
-              <div className="w-full">
-                <ActionBar items={actionBarItemDefs} className="mt-2" />
-                {lastSyncSummary && (
-                  <section className="mt-2 overflow-hidden rounded border border-white/10 bg-zinc-900/70 text-xs" aria-label="Most recent sync">
-                    <button
-                      type="button"
-                      className="flex w-full flex-wrap items-center justify-between gap-x-3 gap-y-1 px-2 py-1.5 text-left font-medium text-zinc-100 hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
-                      aria-expanded={isSyncSummaryExpanded}
-                      onClick={() => setIsSyncSummaryExpanded((expanded) => !expanded)}
-                    >
-                      <span className="flex min-w-0 items-center gap-1.5">
-                        <ChevronDown aria-hidden="true" className={`h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform ${isSyncSummaryExpanded ? "rotate-180" : ""}`} />
-                        <span>{lastSyncSummary.title}</span>
-                      </span>
-                      <span className="ml-auto text-right text-zinc-400">
-                        {lastSyncSummary.outline.length} outline · {lastSyncSummary.overlaysUpdated.length + lastSyncSummary.overlaysCreated.length} overlays · {lastSyncSummary.skipped.length} skipped
-                        {lastSyncSummary.errors.length ? ` · ${lastSyncSummary.errors.length} errors` : ""}
-                      </span>
-                    </button>
-                    {isSyncSummaryExpanded && <div className="space-y-2 px-2 pb-2 text-zinc-300">
-                        <SyncSummaryCategory title="Outline added" entries={lastSyncSummary.outline} colorClass="border-cyan-400" headingColorClass="text-cyan-300" Icon={Music} />
-                        <SyncSummaryCategory title="Overlays updated" entries={lastSyncSummary.overlaysUpdated} colorClass="border-green-400" headingColorClass="text-green-300" Icon={Check} />
-                        <SyncSummaryCategory title="Overlays created" entries={lastSyncSummary.overlaysCreated} colorClass="border-sky-400" headingColorClass="text-sky-300" Icon={Users} />
-                        <SyncSummaryCategory title="Skipped" entries={lastSyncSummary.skipped} colorClass="border-amber-400" headingColorClass="text-amber-300" Icon={AlertTriangle} />
-                        <SyncSummaryCategory title="Errors" entries={lastSyncSummary.errors} colorClass="border-red-400" headingColorClass="text-red-300" Icon={AlertTriangle} />
-                        {!lastSyncSummary.outline.length && !lastSyncSummary.overlaysUpdated.length && !lastSyncSummary.overlaysCreated.length && !lastSyncSummary.skipped.length && !lastSyncSummary.errors.length && <p className="border-l-2 border-zinc-500 pl-2 text-zinc-400">No changes were needed.</p>}
-                    </div>}
-                  </section>
+          <div className="w-full">
+            <ActionBar items={actionBarItemDefs} className="mt-2" />
+            {lastSyncSummary && (
+              <section
+                className="mt-2 overflow-hidden rounded border border-white/10 bg-zinc-900/70 text-xs"
+                aria-label="Most recent sync"
+              >
+                <button
+                  type="button"
+                  className="flex w-full cursor-pointer flex-wrap items-center justify-between gap-x-3 gap-y-1 px-2 py-1.5 text-left font-medium text-zinc-100 hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                  aria-expanded={isSyncSummaryExpanded}
+                  onClick={() =>
+                    setIsSyncSummaryExpanded((expanded) => !expanded)
+                  }
+                >
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <ChevronDown
+                      aria-hidden="true"
+                      className={`h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform ${isSyncSummaryExpanded ? "rotate-180" : ""}`}
+                    />
+                    {lastSyncSummary.errors.length > 0 ? (
+                      <CircleAlert
+                        className="h-4 w-4 shrink-0 text-red-400"
+                        role="img"
+                        aria-label="Sync completed with errors"
+                      />
+                    ) : lastSyncSummary.skipped.length > 0 ? (
+                      <AlertTriangle
+                        className="h-4 w-4 shrink-0 text-amber-300"
+                        role="img"
+                        aria-label="Sync completed with skipped attachments"
+                      />
+                    ) : null}
+                    <span>{lastSyncSummary.title}</span>
+                  </span>
+                  <span className="ml-auto text-right text-zinc-400">
+                    <span className="text-cyan-300">{lastSyncSummary.outline.length} added</span>{" "}
+                    {lastSyncSummary.alreadyPresent && <>· <span className="text-zinc-300">{lastSyncSummary.alreadyPresent.length} already in outline</span>{" "}</>}
+                    · <span className="text-green-300">{lastSyncSummary.overlaysUpdated.length} updated</span>{" "}
+                    · <span className="text-sky-300">{lastSyncSummary.overlaysCreated.length} created</span>{" "}
+                    · <span className="text-amber-300">{lastSyncSummary.skipped.length} skipped</span>
+                    {lastSyncSummary.errors.length > 0 && (
+                      <> · <span className="text-red-300">{lastSyncSummary.errors.length} errors</span></>
+                    )}
+                  </span>
+                </button>
+                {isSyncSummaryExpanded && (
+                  <div className="space-y-2 px-2 pb-2 text-zinc-300">
+                    <SyncSummaryCategory
+                      title="Outline added"
+                      entries={lastSyncSummary.outline}
+                      colorClass="border-cyan-400"
+                      headingColorClass="text-cyan-300"
+                      Icon={Music}
+                    />
+                    <SyncSummaryCategory
+                      title="Already in outline"
+                      entries={lastSyncSummary.alreadyPresent ?? []}
+                      colorClass="border-zinc-400"
+                      headingColorClass="text-zinc-300"
+                      Icon={Check}
+                    />
+                    <SyncSummaryCategory
+                      title="Overlays updated"
+                      entries={lastSyncSummary.overlaysUpdated}
+                      colorClass="border-green-400"
+                      headingColorClass="text-green-300"
+                      Icon={Check}
+                    />
+                    <SyncSummaryCategory
+                      title="Overlays created"
+                      entries={lastSyncSummary.overlaysCreated}
+                      colorClass="border-sky-400"
+                      headingColorClass="text-sky-300"
+                      Icon={Users}
+                    />
+                    <SyncSummaryCategory
+                      title="Skipped"
+                      entries={lastSyncSummary.skipped}
+                      colorClass="border-amber-400"
+                      headingColorClass="text-amber-300"
+                      Icon={AlertTriangle}
+                    />
+                    <SyncSummaryCategory
+                      title="Errors"
+                      entries={lastSyncSummary.errors}
+                      colorClass="border-red-400"
+                      headingColorClass="text-red-300"
+                      Icon={AlertTriangle}
+                    />
+                    {!lastSyncSummary.outline.length &&
+                      !lastSyncSummary.alreadyPresent?.length &&
+                      !lastSyncSummary.overlaysUpdated.length &&
+                      !lastSyncSummary.overlaysCreated.length &&
+                      !lastSyncSummary.skipped.length &&
+                      !lastSyncSummary.errors.length && (
+                        <p className="border-l-2 border-zinc-500 pl-2 text-zinc-400">
+                          No changes were needed.
+                        </p>
+                      )}
+                  </div>
                 )}
-              </div>
-            </PopoverAnchor>
-            <PopoverContent
-              align="start"
-              className="w-(--radix-popover-trigger-width) bg-gray-800 border-gray-700 text-white"
-            >
-              <div className="flex flex-col gap-3">
-                <p className="text-sm font-semibold">Load Service Plan</p>
-                <Input
-                  label="Planning URL"
-                  value={importUrl}
-                  onChange={(v) => setImportUrl(String(v))}
-                  placeholder="https://..."
-                  disabled={isImporting}
-                  onKeyDown={(e) => { if (e.key === "Enter") void handleImport(); }}
-                />
-                <div className="flex justify-end gap-2">
-                  <PopoverClose asChild>
-                    <Button variant="tertiary" className="text-sm" disabled={isImporting}>Cancel</Button>
-                  </PopoverClose>
-                  <Button
-                    variant="cta"
-                    className="text-sm"
-                    isLoading={isImporting}
-                    disabled={isImporting || !importUrl.trim()}
-                    onClick={() => void handleImport()}
-                  >
-                    {isImporting ? "Loading…" : "Load"}
-                  </Button>
-                </div>
-              </div>
-            </PopoverContent>
-          </Popover>
-
+              </section>
+            )}
+          </div>
           {serviceOutline?.loadedAt ? (
             <div className="mt-2 text-xs text-zinc-400">
-              {isPlanSourced ? "Updated" : "Imported"}{" "}
-              {new Date(serviceOutline.loadedAt).toLocaleString()}
+              Updated {new Date(serviceOutline.loadedAt).toLocaleString()}
             </div>
           ) : null}
         </div>
@@ -1364,16 +1634,23 @@ const ServicePlanningSyncFloatingWindow = ({
           <div className="flex items-center gap-2 text-xs text-zinc-400">
             <Spinner width="14px" borderWidth="2px" />
             <span>
-              Step {Math.min(sync.currentStep + 1, sync.totalSteps)} of {sync.totalSteps}
+              Step {Math.min(sync.currentStep + 1, sync.totalSteps)} of{" "}
+              {sync.totalSteps}
             </span>
           </div>
         ) : null}
 
         {!isLoading && (preview || (isPlanSourced && selectedPlanDetails)) ? (
           <div className="flex flex-col gap-2">
+            {activeTab === "plan" && isPlanSourced && selectedPlanDetails ? (
+              <ServicePlanOutlinePreview
+                key={`outline:${churchId}:${controllerProfile.id}:${selectedPlanDetails.planKey}`}
+                plan={selectedPlanDetails}
+              />
+            ) : null}
             {activeTab === "plan" && preview?.nativeOverlaySummary ? (
               <ServicePlanningOverlayPreview
-                items={preview.overlayPlan}
+                items={currentOverlayPlan}
                 nativeSummary={preview.nativeOverlaySummary}
                 expanded={isOverlayPreviewExpanded}
                 onExpandedChange={setIsOverlayPreviewExpanded}
@@ -1382,7 +1659,7 @@ const ServicePlanningSyncFloatingWindow = ({
             {activeTab === "plan" ? (
               isPlanSourced && selectedPlanDetails ? (
                 <ControllerServicePlanView
-                  key={`${churchId}:${controllerProfile.id}:${selectedPlanDetails.planKey}`}
+                  key={`viewer:${churchId}:${controllerProfile.id}:${selectedPlanDetails.planKey}`}
                   plan={selectedPlanDetails}
                   snapshot={selectedPlanSnapshot}
                   churchId={churchId || ""}
@@ -1392,374 +1669,533 @@ const ServicePlanningSyncFloatingWindow = ({
                   sectionBorderColor={sectionBorderColor}
                 />
               ) : (
-              <div className="flex flex-col gap-2 pr-1">
-                {Array.from(lineItemsBySection.entries()).map(([sectionName, items]) => (
-                  <div
-                    key={sectionName}
-                    className="overflow-hidden rounded-lg border border-zinc-700/80 border-l-2 bg-zinc-950/40"
-                    style={{ borderLeftColor: sectionBorderColor }}
-                  >
-                    {sectionName && (
-                      <div className="border-b border-zinc-700/80 bg-zinc-950/80 px-2.5 py-1.5">
-                        <span
-                          className="text-xs font-semibold tracking-wide"
-                          style={{ color: sectionLabelColor }}
-                        >
-                          {sectionName}
-                        </span>
-                      </div>
-                    )}
-                    <ul className="divide-y divide-zinc-700">
-                      {items.map((item, index) => {
-                        const lineItemKey = getServicePlanningLineItemKey(item);
-                        const relatedSyncItems =
-                          syncItemsByLineItemKey.get(lineItemKey) ?? [];
+                <div className="flex flex-col gap-2 pr-1">
+                  {Array.from(lineItemsBySection.entries()).map(
+                    ([sectionName, items]) => (
+                      <div
+                        key={sectionName}
+                        className="overflow-hidden rounded-lg border border-zinc-700/80 border-l-2 bg-zinc-950/40"
+                        style={{ borderLeftColor: sectionBorderColor }}
+                      >
+                        {sectionName && (
+                          <div className="border-b border-zinc-700/80 bg-zinc-950/80 px-2.5 py-1.5">
+                            <span
+                              className="text-xs font-semibold tracking-wide"
+                              style={{ color: sectionLabelColor }}
+                            >
+                              {sectionName}
+                            </span>
+                          </div>
+                        )}
+                        <ul className="divide-y divide-zinc-700">
+                          {items.map((item, index) => {
+                            const lineItemKey =
+                              getServicePlanningLineItemKey(item);
+                            const relatedSyncItems =
+                              syncItemsByLineItemKey.get(lineItemKey) ?? [];
 
-                        const syncBadgeDataList = filterRedundantOverlayBadges(
-                          relatedSyncItems
-                            .map((syncItem) =>
-                              getSyncBadgeData({
-                                item: syncItem,
-                                isRunning,
-                                activeLabel: sync.activeLabel,
-                                activeSublabel: sync.activeSublabel,
-                              }),
-                            )
-                            .filter((d): d is NonNullable<SyncBadgeData> => d !== null),
-                        );
+                            const syncBadgeDataList =
+                              filterRedundantOverlayBadges(
+                                relatedSyncItems
+                                  .map((syncItem) =>
+                                    getSyncBadgeData({
+                                      item: syncItem,
+                                      isRunning,
+                                      activeLabel: sync.activeLabel,
+                                      activeSublabel: sync.activeSublabel,
+                                    }),
+                                  )
+                                  .filter(
+                                    (d): d is NonNullable<SyncBadgeData> =>
+                                      d !== null,
+                                  ),
+                              );
 
-                        const activeSyncData = syncBadgeDataList.find(
-                          (d) => d.type === "active",
-                        );
-                        const isActive = Boolean(activeSyncData);
+                            const activeSyncData = syncBadgeDataList.find(
+                              (d) => d.type === "active",
+                            );
+                            const isActive = Boolean(activeSyncData);
 
-                        const hasCompletedSync = syncBadgeDataList.some(
-                          (d) =>
-                            d.type === "badge" &&
-                            (d.label === "Overlay updated" ||
-                              d.label === "Overlay created" ||
-                              d.label === "Overlay found"),
-                        );
+                            const hasCompletedSync = syncBadgeDataList.some(
+                              (d) =>
+                                d.type === "badge" &&
+                                (d.label === "Overlay updated" ||
+                                  d.label === "Overlay created" ||
+                                  d.label === "Overlay found"),
+                            );
 
-                        // Count deduplicated badge labels
-                        const labelCounts = new Map<
-                          string,
-                          { label: string; className: string; count: number }
-                        >();
-                        for (const data of syncBadgeDataList) {
-                          if (data.type !== "badge") continue;
-                          const existing = labelCounts.get(data.label);
-                          if (existing) existing.count++;
-                          else labelCounts.set(data.label, { label: data.label, className: data.className, count: 1 });
-                        }
+                            // Count deduplicated badge labels
+                            const labelCounts = new Map<
+                              string,
+                              {
+                                label: string;
+                                className: string;
+                                count: number;
+                              }
+                            >();
+                            for (const data of syncBadgeDataList) {
+                              if (data.type !== "badge") continue;
+                              const existing = labelCounts.get(data.label);
+                              if (existing) existing.count++;
+                              else
+                                labelCounts.set(data.label, {
+                                  label: data.label,
+                                  className: data.className,
+                                  count: 1,
+                                });
+                            }
 
-                        const isSongNotFound =
-                          item.selectedForOutline &&
-                          item.outlineItemType === "song" &&
-                          !item.attachedSongs?.length &&
-                          !item.matchedLibraryItem;
+                            const isSongNotFound =
+                              item.selectedForOutline &&
+                              item.outlineItemType === "song" &&
+                              !item.attachedSongs?.length &&
+                              !item.matchedLibraryItem;
 
-                        const badges = [
-                          ...getLineItemBaseBadges(item),
-                          ...(item.overlayReady && !hasCompletedSync
-                            ? [
-                              <span
-                                key="overlay-ready"
-                                className="inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-emerald-900/60 text-emerald-300"
-                                aria-label="Overlay ready"
-                                title="Overlay ready"
+                            const badges = [
+                              ...getLineItemBaseBadges(item),
+                              ...(item.overlayReady && !hasCompletedSync
+                                ? [
+                                    <span
+                                      key="overlay-ready"
+                                      className="inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-emerald-900/60 text-emerald-300"
+                                      aria-label="Overlay ready"
+                                      title="Overlay ready"
+                                    >
+                                      <Check
+                                        size={11}
+                                        strokeWidth={3}
+                                        aria-hidden
+                                      />
+                                    </span>,
+                                  ]
+                                : []),
+                              ...(isActive && activeSyncData?.type === "active"
+                                ? [
+                                    <span
+                                      key="active"
+                                      className="inline-flex shrink-0 items-center gap-1 rounded bg-cyan-900/60 px-1 py-0.5 text-[10px] font-medium text-cyan-200"
+                                    >
+                                      <Spinner width="10px" borderWidth="2px" />
+                                      {`Syncing ${activeSyncData.phase === "outline" ? "outline" : "overlay"}`}
+                                    </span>,
+                                  ]
+                                : []),
+                              ...Array.from(labelCounts.values()).map(
+                                ({ label, className, count }) => (
+                                  <StatusBadge
+                                    key={label}
+                                    className={className}
+                                    label={
+                                      count > 1
+                                        ? pluralizeBadgeLabel(label, count)
+                                        : label
+                                    }
+                                  />
+                                ),
+                              ),
+                            ];
+
+                            const displayTitle = getLineItemDisplayTitle(item);
+
+                            return (
+                              <li
+                                key={`${sectionName}-${item.elementType}-${item.title}-${index}`}
+                                ref={isActive ? activeItemRef : undefined}
+                                className="flex flex-col gap-1.5 px-2.5 py-2"
                               >
-                                <Check size={11} strokeWidth={3} aria-hidden />
-                              </span>,
-                            ]
-                            : []),
-                          ...(isActive && activeSyncData?.type === "active"
-                            ? [
-                              <span
-                                key="active"
-                                className="inline-flex shrink-0 items-center gap-1 rounded bg-cyan-900/60 px-1 py-0.5 text-[10px] font-medium text-cyan-200"
-                              >
-                                <Spinner width="10px" borderWidth="2px" />
-                                {`Syncing ${activeSyncData.phase === "outline" ? "outline" : "overlay"}`}
-                              </span>,
-                            ]
-                            : []),
-                          ...Array.from(labelCounts.values()).map(
-                            ({ label, className, count }) => (
-                              <StatusBadge
-                                key={label}
-                                className={className}
-                                label={count > 1 ? pluralizeBadgeLabel(label, count) : label}
-                              />
-                            ),
-                          ),
-                        ];
-
-                        const displayTitle = getLineItemDisplayTitle(item);
-
-                        return (
-                          <li
-                            key={`${sectionName}-${item.elementType}-${item.title}-${index}`}
-                            ref={isActive ? activeItemRef : undefined}
-                            className="flex flex-col gap-1.5 px-2.5 py-2"
-                          >
-                            <div className="flex flex-col gap-1.5">
-                              {item.startTime || (item.durationMinutes ?? 0) > 0 ? (
-                                <div className="flex flex-wrap gap-x-3 text-[11px] text-zinc-400">
-                                  {item.startTime ? <span>{formatPreviewStartTime(item.startTime)}</span> : null}
-                                  {(item.durationMinutes ?? 0) > 0 ? (
-                                    <span>{formatServicePlanDuration({ durationMinutes: item.durationMinutes })}</span>
-                                  ) : null}
-                                </div>
-                              ) : null}
-                              <div className="flex items-start gap-2">
-                                <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                                  {item.outlineItemType === "song" && (
-                                    <Music size={11} className="shrink-0" color={iconColorMap.get("song")} />
-                                  )}
-                                  {item.outlineItemType === "bible" && (
-                                    <Book size={11} className="shrink-0" color={iconColorMap.get("bible")} />
-                                  )}
-                                  <span className={cn(
-                                    "wrap-break-word text-xs font-semibold",
-                                    item.outlineItemType === "song"
-                                      ? "text-blue-300"
-                                      : item.outlineItemType === "bible"
-                                        ? "text-yellow-300"
-                                        : "text-zinc-100",
-                                  )}>
-                                    {displayTitle}
-                                  </span>
-                                </div>
-                                <div className="flex shrink-0 flex-wrap justify-end gap-1">
-                                  {badges}
-                                </div>
-                              </div>
-
-                              {item.attachedSongs?.length ? (
-                                <div className="flex flex-col gap-1 border-l border-cyan-500/40 pl-2 text-xs text-cyan-200">
-                                  {item.attachedSongs.map((song, index) => (
-                                    <div key={`${song.songId || song.title}-${index}`} className="flex flex-wrap items-center gap-1.5">
-                                      <Music size={11} className="shrink-0 text-cyan-400" aria-hidden />
-                                      <span className="wrap-break-word">{song.title}</span>
-                                      {song.inLibrary ? (
-                                        <Check size={13} className="text-emerald-400" aria-label={`${song.title} is in library`} />
-                                      ) : !hideOutlineActions ? (
-                                        <div className="flex items-center gap-1 rounded border border-dashed border-amber-400/60 px-1.5 py-0.5 text-amber-100">
-                                          <AlertTriangle size={12} aria-hidden />
-                                          <span>Not in library</span>
-                                          <Button variant="primary" svg={Plus} color="#22d3ee" iconSize="xs" className="min-h-0 px-1 py-0.5 text-xs" aria-label={`Create song ${song.title}`} onClick={() => handleCreateClick(song.title)}>Create song</Button>
-                                        </div>
+                                <div className="flex flex-col gap-1.5">
+                                  {item.startTime ||
+                                  (item.durationMinutes ?? 0) > 0 ? (
+                                    <div className="flex flex-wrap gap-x-3 text-[11px] text-zinc-400">
+                                      {item.startTime ? (
+                                        <span>
+                                          {formatPreviewStartTime(
+                                            item.startTime,
+                                          )}
+                                        </span>
+                                      ) : null}
+                                      {(item.durationMinutes ?? 0) > 0 ? (
+                                        <span>
+                                          {formatServicePlanDuration({
+                                            durationMinutes:
+                                              item.durationMinutes,
+                                          })}
+                                        </span>
                                       ) : null}
                                     </div>
-                                  ))}
-                                </div>
-                              ) : null}
-                              {item.attachedCustomDocuments?.length ? (
-                                <div className="flex flex-col gap-1 border-l border-indigo-500/40 pl-2 text-xs text-indigo-200">
-                                  {item.attachedCustomDocuments.map((document, documentIndex) => {
-                                    const currentDocument = allFreeFormDocs.find(
-                                      (candidate) => candidate._id === document.documentId && candidate.type === "free",
-                                    );
-                                    const title = currentDocument?.name?.trim() || document.title;
-                                    return (
-                                      <div key={`${document.documentId}:${documentIndex}`} className="flex flex-wrap items-center gap-1.5">
-                                        <FileText size={11} className="shrink-0 text-indigo-300" aria-hidden />
-                                        <span className="wrap-break-word">{title}</span>
-                                        {currentDocument ? (
-                                          <Check size={13} className="text-emerald-400" aria-label={`${title} is in the library`} />
-                                        ) : (
-                                          <span className="text-amber-200">Unavailable</span>
+                                  ) : null}
+                                  <div className="flex items-start gap-2">
+                                    <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                                      {item.outlineItemType === "song" && (
+                                        <Music
+                                          size={11}
+                                          className="shrink-0"
+                                          color={iconColorMap.get("song")}
+                                        />
+                                      )}
+                                      {item.outlineItemType === "bible" && (
+                                        <Book
+                                          size={11}
+                                          className="shrink-0"
+                                          color={iconColorMap.get("bible")}
+                                        />
+                                      )}
+                                      <span
+                                        className={cn(
+                                          "wrap-break-word text-xs font-semibold",
+                                          item.outlineItemType === "song"
+                                            ? "text-blue-300"
+                                            : item.outlineItemType === "bible"
+                                              ? "text-yellow-300"
+                                              : "text-zinc-100",
                                         )}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              ) : null}
+                                      >
+                                        {displayTitle}
+                                      </span>
+                                    </div>
+                                    <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                                      {badges}
+                                    </div>
+                                  </div>
 
-                              {item.contentResources?.length ? (
-                                <div className="flex flex-col gap-1 border-l border-blue-500/40 pl-2 text-xs text-blue-100">
-                                  {item.contentResources.map((resource) => {
-                                    const content = (
-                                      <>
-                                        <span className="text-zinc-500">{getServicePlanResourceTypeLabel(resource.type)}:</span>{" "}
-                                        <span className="wrap-break-word">{resource.title}</span>
-                                      </>
-                                    );
-                                    return (
-                                      <div key={resource.id} className="flex flex-col gap-0.5">
-                                        {resource.url && isPreviewHttpUrl(resource.url) ? (
-                                          <a
-                                            href={resource.url}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            className="wrap-break-word underline decoration-blue-400/40 underline-offset-2 hover:text-blue-200"
-                                          >
-                                            {content}
-                                          </a>
-                                        ) : <div>{content}</div>}
-                                        {resource.detail ? (
-                                          <div className="whitespace-pre-wrap wrap-break-word text-zinc-300">{resource.detail}</div>
-                                        ) : null}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              ) : null}
-
-                              {(item.assigneeNames?.length || item.ledBy) && (
-                                <div className="flex flex-wrap gap-x-1.5 text-xs text-zinc-400">
-                                  <span>{item.assigneeNames?.length ? "Assigned:" : "Led by:"}</span>
-                                  <span className="wrap-break-word text-zinc-300">
-                                    {item.assigneeNames?.join(", ") || item.ledBy}
-                                  </span>
-                                </div>
-                              )}
-                              {item.microphoneAssignments?.length ? (
-                                <div className="flex flex-col gap-1 text-xs text-zinc-400">
-                                  {item.microphoneAssignments.map((assignment, assignmentIndex) => (
-                                    <div key={`${assignment.assigneeName || "unassigned"}-${assignmentIndex}`} className="flex flex-wrap items-center gap-1.5">
-                                      <span>{assignment.assigneeName || "Unassigned"}</span>
-                                      {assignment.microphoneIds.map((microphoneId) => {
-                                        const microphone = microphones.find((candidate) => candidate.id === microphoneId);
-                                        const label = microphone
-                                          ? `${microphone.name}${microphone.type ? ` · ${microphone.type}` : ""}`
-                                          : microphoneId;
-                                        return (
-                                          <span
-                                            key={microphoneId}
-                                            className="inline-flex items-center gap-1 rounded border border-zinc-700 bg-zinc-900/70 px-1.5 py-0.5"
-                                          >
-                                            {microphone ? <span className="size-2 rounded-full" style={{ backgroundColor: microphone.color }} aria-hidden /> : null}
-                                            {label}
+                                  {item.attachedSongs?.length ? (
+                                    <div className="flex flex-col gap-1 border-l border-cyan-500/40 pl-2 text-xs text-cyan-200">
+                                      {item.attachedSongs.map((song, index) => (
+                                        <div
+                                          key={`${song.songId || song.title}-${index}`}
+                                          className="flex flex-wrap items-center gap-1.5"
+                                        >
+                                          <Music
+                                            size={11}
+                                            className="shrink-0 text-cyan-400"
+                                            aria-hidden
+                                          />
+                                          <span className="wrap-break-word">
+                                            {song.title}
                                           </span>
+                                          {song.inLibrary ? (
+                                            <Check
+                                              size={13}
+                                              className="text-emerald-400"
+                                              aria-label={`${song.title} is in library`}
+                                            />
+                                          ) : !hideOutlineActions ? (
+                                            <div className="flex items-center gap-1 rounded border border-dashed border-amber-400/60 px-1.5 py-0.5 text-amber-100">
+                                              <AlertTriangle
+                                                size={12}
+                                                aria-hidden
+                                              />
+                                              <span>Not in library</span>
+                                              <Button
+                                                variant="primary"
+                                                svg={Plus}
+                                                color="#22d3ee"
+                                                iconSize="xs"
+                                                className="min-h-0 px-1 py-0.5 text-xs"
+                                                aria-label={`Create song ${song.title}`}
+                                                onClick={() =>
+                                                  handleCreateClick(song.title)
+                                                }
+                                              >
+                                                Create song
+                                              </Button>
+                                            </div>
+                                          ) : null}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : null}
+                                  {item.attachedCustomDocuments?.length ? (
+                                    <div className="flex flex-col gap-1 border-l border-indigo-500/40 pl-2 text-xs text-indigo-200">
+                                      {item.attachedCustomDocuments.map(
+                                        (document, documentIndex) => {
+                                          const currentDocument =
+                                            allFreeFormDocs.find(
+                                              (candidate) =>
+                                                candidate._id ===
+                                                  document.documentId &&
+                                                candidate.type === "free",
+                                            );
+                                          const title =
+                                            currentDocument?.name?.trim() ||
+                                            document.title;
+                                          return (
+                                            <div
+                                              key={`${document.documentId}:${documentIndex}`}
+                                              className="flex flex-wrap items-center gap-1.5"
+                                            >
+                                              <FileText
+                                                size={11}
+                                                className="shrink-0 text-indigo-300"
+                                                aria-hidden
+                                              />
+                                              <span className="wrap-break-word">
+                                                {title}
+                                              </span>
+                                              {currentDocument ? (
+                                                <Check
+                                                  size={13}
+                                                  className="text-emerald-400"
+                                                  aria-label={`${title} is in the library`}
+                                                />
+                                              ) : (
+                                                <span className="text-amber-200">
+                                                  Unavailable
+                                                </span>
+                                              )}
+                                            </div>
+                                          );
+                                        },
+                                      )}
+                                    </div>
+                                  ) : null}
+
+                                  {item.contentResources?.length ? (
+                                    <div className="flex flex-col gap-1 border-l border-blue-500/40 pl-2 text-xs text-blue-100">
+                                      {item.contentResources.map((resource) => {
+                                        const content = (
+                                          <>
+                                            <span className="text-zinc-500">
+                                              {getServicePlanResourceTypeLabel(
+                                                resource.type,
+                                              )}
+                                              :
+                                            </span>{" "}
+                                            <span className="wrap-break-word">
+                                              {resource.title}
+                                            </span>
+                                          </>
+                                        );
+                                        return (
+                                          <div
+                                            key={resource.id}
+                                            className="flex flex-col gap-0.5"
+                                          >
+                                            {resource.url &&
+                                            isPreviewHttpUrl(resource.url) ? (
+                                              <a
+                                                href={resource.url}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="wrap-break-word underline decoration-blue-400/40 underline-offset-2 hover:text-blue-200"
+                                              >
+                                                {content}
+                                              </a>
+                                            ) : (
+                                              <div>{content}</div>
+                                            )}
+                                            {resource.detail ? (
+                                              <div className="whitespace-pre-wrap wrap-break-word text-zinc-300">
+                                                {resource.detail}
+                                              </div>
+                                            ) : null}
+                                          </div>
                                         );
                                       })}
                                     </div>
-                                  ))}
-                                </div>
-                              ) : null}
-                              {item.note ? (
-                                <div className="whitespace-pre-wrap wrap-break-word rounded bg-zinc-900/70 px-2 py-1.5 text-xs text-zinc-300">
-                                  <span className="mr-1 text-zinc-500">Notes</span>{item.note}
-                                </div>
-                              ) : null}
-                              {item.teamNotes?.length ? (
-                                <div className="flex flex-col gap-1">
-                                  {item.teamNotes.map((teamNote, noteIndex) => (
-                                    <div key={`${teamNote.teamName}-${noteIndex}`} className="whitespace-pre-wrap wrap-break-word text-xs text-zinc-400">
-                                      <span className="text-zinc-500">{teamNote.teamName}:</span>{" "}{teamNote.note}
+                                  ) : null}
+
+                                  {(item.assigneeNames?.length ||
+                                    item.ledBy) && (
+                                    <div className="flex flex-wrap gap-x-1.5 text-xs text-zinc-400">
+                                      <span>
+                                        {item.assigneeNames?.length
+                                          ? "Assigned:"
+                                          : "Led by:"}
+                                      </span>
+                                      <span className="wrap-break-word text-zinc-300">
+                                        {item.assigneeNames?.join(", ") ||
+                                          item.ledBy}
+                                      </span>
                                     </div>
-                                  ))}
-                                </div>
-                              ) : null}
+                                  )}
+                                  {item.microphoneAssignments?.length ? (
+                                    <div className="flex flex-col gap-1 text-xs text-zinc-400">
+                                      {item.microphoneAssignments.map(
+                                        (assignment, assignmentIndex) => (
+                                          <div
+                                            key={`${assignment.assigneeName || "unassigned"}-${assignmentIndex}`}
+                                            className="flex flex-wrap items-center gap-1.5"
+                                          >
+                                            <span>
+                                              {assignment.assigneeName ||
+                                                "Unassigned"}
+                                            </span>
+                                            {assignment.microphoneIds.map(
+                                              (microphoneId) => {
+                                                const microphone =
+                                                  microphones.find(
+                                                    (candidate) =>
+                                                      candidate.id ===
+                                                      microphoneId,
+                                                  );
+                                                const label = microphone
+                                                  ? `${microphone.name}${microphone.type ? ` · ${microphone.type}` : ""}`
+                                                  : microphoneId;
+                                                return (
+                                                  <span
+                                                    key={microphoneId}
+                                                    className="inline-flex items-center gap-1 rounded border border-zinc-700 bg-zinc-900/70 px-1.5 py-0.5"
+                                                  >
+                                                    {microphone ? (
+                                                      <span
+                                                        className="size-2 rounded-full"
+                                                        style={{
+                                                          backgroundColor:
+                                                            microphone.color,
+                                                        }}
+                                                        aria-hidden
+                                                      />
+                                                    ) : null}
+                                                    {label}
+                                                  </span>
+                                                );
+                                              },
+                                            )}
+                                          </div>
+                                        ),
+                                      )}
+                                    </div>
+                                  ) : null}
+                                  {item.note ? (
+                                    <div className="whitespace-pre-wrap wrap-break-word rounded bg-zinc-900/70 px-2 py-1.5 text-xs text-zinc-300">
+                                      <span className="mr-1 text-zinc-500">
+                                        Notes
+                                      </span>
+                                      {item.note}
+                                    </div>
+                                  ) : null}
+                                  {item.teamNotes?.length ? (
+                                    <div className="flex flex-col gap-1">
+                                      {item.teamNotes.map(
+                                        (teamNote, noteIndex) => (
+                                          <div
+                                            key={`${teamNote.teamName}-${noteIndex}`}
+                                            className="whitespace-pre-wrap wrap-break-word text-xs text-zinc-400"
+                                          >
+                                            <span className="text-zinc-500">
+                                              {teamNote.teamName}:
+                                            </span>{" "}
+                                            {teamNote.note}
+                                          </div>
+                                        ),
+                                      )}
+                                    </div>
+                                  ) : null}
 
-                              {!hideOutlineActions &&
-                                item.outlineItemType === "bible" &&
-                                item.parsedRef ? (
-                                <Button
-                                  variant="primary"
-                                  color="#22d3ee"
-                                  svg={BookOpen}
-                                  iconSize="sm"
-                                  className="self-start text-xs"
-                                  aria-label={`Open ${item.title} in Bible`}
-                                  onClick={() => handleBibleClick(item)}
-                                >
-                                  Open
-                                </Button>
-                              ) : null}
+                                  {!hideOutlineActions &&
+                                  item.outlineItemType === "bible" &&
+                                  item.parsedRef ? (
+                                    <Button
+                                      variant="primary"
+                                      color="#22d3ee"
+                                      svg={BookOpen}
+                                      iconSize="sm"
+                                      className="self-start text-xs"
+                                      aria-label={`Open ${item.title} in Bible`}
+                                      onClick={() => handleBibleClick(item)}
+                                    >
+                                      Open
+                                    </Button>
+                                  ) : null}
 
-                              {isSongNotFound && !hideOutlineActions ? (
-                                <div className="flex self-start flex-wrap items-center gap-2 rounded border border-dashed border-amber-400/60 bg-amber-400/5 px-2 py-1 text-xs text-amber-100">
-                                  <div className="flex items-center gap-1.5">
-                                    <AlertTriangle
-                                      size={13}
-                                      className="shrink-0 text-amber-300"
-                                      aria-hidden
-                                    />
-                                    <span className="font-medium text-amber-50">
-                                      Not in library
-                                    </span>
-                                  </div>
-                                  <Button
-                                    variant="primary"
-                                    svg={Plus}
-                                    color="#22d3ee"
-                                    iconSize="xs"
-                                    className="min-h-0 px-1.5 py-0.5 text-xs"
-                                    aria-label={`Create song ${item.cleanedTitle || cleanPlanningTitle(item.title)}`}
-                                    onClick={() =>
-                                      handleCreateClick(
-                                        item.cleanedTitle || cleanPlanningTitle(item.title),
-                                      )
-                                    }
-                                  >
-                                    Create song
-                                  </Button>
+                                  {isSongNotFound && !hideOutlineActions ? (
+                                    <div className="flex self-start flex-wrap items-center gap-2 rounded border border-dashed border-amber-400/60 bg-amber-400/5 px-2 py-1 text-xs text-amber-100">
+                                      <div className="flex items-center gap-1.5">
+                                        <AlertTriangle
+                                          size={13}
+                                          className="shrink-0 text-amber-300"
+                                          aria-hidden
+                                        />
+                                        <span className="font-medium text-amber-50">
+                                          Not in library
+                                        </span>
+                                      </div>
+                                      <Button
+                                        variant="primary"
+                                        svg={Plus}
+                                        color="#22d3ee"
+                                        iconSize="xs"
+                                        className="min-h-0 px-1.5 py-0.5 text-xs"
+                                        aria-label={`Create song ${item.cleanedTitle || cleanPlanningTitle(item.title)}`}
+                                        onClick={() =>
+                                          handleCreateClick(
+                                            item.cleanedTitle ||
+                                              cleanPlanningTitle(item.title),
+                                          )
+                                        }
+                                      >
+                                        Create song
+                                      </Button>
+                                    </div>
+                                  ) : null}
                                 </div>
-                              ) : null}
-                            </div>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </div>
-                ))}
-              </div>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
+                    ),
+                  )}
+                </div>
               )
             ) : (
               <div className="flex flex-col gap-2 pr-1">
-                <p className="text-xs text-zinc-400">Only teams that have at least one assignment will be shown.</p>
+                <p className="text-xs text-zinc-400">
+                  Only teams that have at least one assignment will be shown.
+                </p>
                 {assignmentsByTeam.size === 0 ? (
                   <p className="text-zinc-400">No assignments found.</p>
                 ) : null}
-                {Array.from(assignmentsByTeam.entries()).map(([teamName, assignments]) => (
-                  <section
-                    key={teamName}
-                    className="overflow-hidden rounded-lg border border-zinc-700/80 border-l-2 bg-zinc-950/40"
-                    style={{ borderLeftColor: sectionBorderColor }}
-                  >
-                    <div className="border-b border-zinc-700/80 bg-zinc-950/80 px-2.5 py-1.5">
-                      <h3
-                        className="text-xs font-semibold tracking-wide"
-                        style={{ color: sectionLabelColor }}
-                      >
-                        {teamName}
-                      </h3>
-                    </div>
-                    <ul className="divide-y divide-zinc-700">
-                      {assignments.map((assignment, index) => (
-                        <li
-                          key={`${teamName}-${assignment.role}-${assignment.name}-${index}`}
-                          className="flex items-center gap-2 px-2.5 py-2"
+                {Array.from(assignmentsByTeam.entries()).map(
+                  ([teamName, assignments]) => (
+                    <section
+                      key={teamName}
+                      className="overflow-hidden rounded-lg border border-zinc-700/80 border-l-2 bg-zinc-950/40"
+                      style={{ borderLeftColor: sectionBorderColor }}
+                    >
+                      <div className="border-b border-zinc-700/80 bg-zinc-950/80 px-2.5 py-1.5">
+                        <h3
+                          className="text-xs font-semibold tracking-wide"
+                          style={{ color: sectionLabelColor }}
                         >
-                          {assignment.profileImageUrl ? (
-                            <ProfileImagePreview
-                              imageUrl={assignment.profileImageUrl}
-                              memberName={assignment.name}
-                              className="size-7"
-                            />
-                          ) : null}
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-xs font-medium text-zinc-100">
-                              {assignment.name}
-                            </p>
-                            <p className="truncate text-[11px] text-zinc-400">
-                              {assignment.role}
-                            </p>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  </section>
-                ))}
+                          {teamName}
+                        </h3>
+                      </div>
+                      <ul className="divide-y divide-zinc-700">
+                        {assignments.map((assignment, index) => (
+                          <li
+                            key={`${teamName}-${assignment.role}-${assignment.name}-${index}`}
+                            className="flex items-center gap-2 px-2.5 py-2"
+                          >
+                            {assignment.profileImageUrl ? (
+                              <ProfileImagePreview
+                                imageUrl={assignment.profileImageUrl}
+                                memberName={assignment.name}
+                                className="size-7"
+                              />
+                            ) : null}
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-xs font-medium text-zinc-100">
+                                {assignment.name}
+                              </p>
+                              <p className="truncate text-[11px] text-zinc-400">
+                                {assignment.role}
+                              </p>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  ),
+                )}
               </div>
             )}
           </div>
         ) : null}
 
-        {((!preview && !(isPlanSourced && selectedPlanDetails)) || isLoading) && !isFailed ? (
+        {((!preview && !(isPlanSourced && selectedPlanDetails)) || isLoading) &&
+        !isFailed ? (
           <div
             className="flex items-center gap-2 text-zinc-400"
             role={isLoading ? "status" : undefined}

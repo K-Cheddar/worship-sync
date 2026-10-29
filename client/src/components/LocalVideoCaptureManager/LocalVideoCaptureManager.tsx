@@ -17,11 +17,13 @@ import {
   readLocalVideoWarmIntent,
   subscribeLocalVideoWarmIntent,
 } from "../../utils/localVideoWarmIntent";
+import { subscribeLocalVideoCaptureDemand } from "../../utils/localVideoCaptureQualityRelay";
 
 const RECOVERY_INTERVAL_MS = 3_000;
 const ISSUE_REPEAT_INTERVAL_MS = 30_000;
 const CAPTURE_RELEASE_GRACE_MS = 5_000;
 const CAPTURE_MANAGER_CONSUMER_ID = "active-output-manager";
+const CAPTURE_DEMAND_TTL_MS = 10_000;
 
 type ManagedSource = {
   sourceId: string;
@@ -40,6 +42,30 @@ const LocalVideoCaptureManager = () => {
   const [listWarmSourceIds, setListWarmSourceIds] = useState(
     () => readLocalVideoWarmIntent().sourceIds,
   );
+  const [requestedSourceIds, setRequestedSourceIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!window.__ELECTRON__) return;
+    const demands = new Map<string, number>();
+    const unsubscribe = subscribeLocalVideoCaptureDemand((sourceId) => {
+      const binding = resolveLocalVideoInputBinding(sourceId);
+      if (!binding || isDesktopCaptureKind(binding.captureKind)) return;
+      const existing = demands.has(sourceId);
+      demands.set(sourceId, Date.now());
+      if (!existing) setRequestedSourceIds([...demands.keys()]);
+    });
+    const timer = window.setInterval(() => {
+      let changed = false;
+      demands.forEach((lastSeenAt, sourceId) => {
+        if (Date.now() - lastSeenAt > CAPTURE_DEMAND_TTL_MS) {
+          demands.delete(sourceId);
+          changed = true;
+        }
+      });
+      if (changed) setRequestedSourceIds([...demands.keys()]);
+    }, RECOVERY_INTERVAL_MS);
+    return () => { unsubscribe(); window.clearInterval(timer); };
+  }, []);
 
   useEffect(() => {
     return subscribeLocalVideoWarmIntent((intent) => {
@@ -62,7 +88,7 @@ const LocalVideoCaptureManager = () => {
       });
     });
 
-    listWarmSourceIds.forEach((sourceId) => {
+    [...listWarmSourceIds, ...requestedSourceIds].forEach((sourceId) => {
       if (bySource.has(sourceId)) return;
       const binding = resolveLocalVideoInputBinding(sourceId);
       if (!binding || isDesktopCaptureKind(binding.captureKind)) return;
@@ -75,7 +101,7 @@ const LocalVideoCaptureManager = () => {
     });
 
     return [...bySource.values()];
-  }, [deviceId, listWarmSourceIds, outputSlots]);
+  }, [deviceId, listWarmSourceIds, requestedSourceIds, outputSlots]);
 
   const activeInputKey = JSON.stringify(
     activeInputs

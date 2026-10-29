@@ -1,7 +1,6 @@
 import type PouchDB from "pouchdb-browser";
 import { preferencesClusterLoadFallback } from "../store/preferencesSlice";
 import type {
-  DBAllItems,
   DBItemLists,
   DBMonitorSettingsDoc,
   DBPreferences,
@@ -36,46 +35,6 @@ const isPouchConflict = (error: unknown) => {
 };
 
 const nowIso = () => new Date().toISOString();
-
-/**
- * get → on confirmed not_found put empty → re-get.
- * Any other read error is rethrown so we never invent empty data over a real failure.
- */
-async function loadOrCreateDoc<T extends { _id: string }>(
-  db: PouchDB.Database,
-  id: string,
-  factory: () => Omit<T, "_rev">,
-): Promise<T> {
-  try {
-    return (await db.get(id)) as T;
-  } catch (error) {
-    if (!isPouchNotFound(error)) throw error;
-  }
-
-  try {
-    await db.put(factory() as T);
-  } catch (error) {
-    if (!isPouchConflict(error)) throw error;
-  }
-
-  return (await db.get(id)) as T;
-}
-
-/** Empty song/library index for a brand-new church content database. */
-export async function loadOrCreateAllItemsDoc(
-  db: PouchDB.Database,
-): Promise<DBAllItems> {
-  return loadOrCreateDoc<DBAllItems>(db, "allItems", () => {
-    const now = nowIso();
-    return {
-      _id: "allItems",
-      items: [],
-      createdAt: now,
-      updatedAt: now,
-      docType: "allItems",
-    };
-  });
-}
 
 /** Matches the label used when operators click “Add New Service”. */
 export const DEFAULT_BOOTSTRAP_OUTLINE: ItemList = {

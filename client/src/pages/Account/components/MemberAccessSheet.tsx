@@ -316,7 +316,7 @@ const MemberAccessSheet = () => {
           role: "member",
           controllerAccess: "full",
           teamsAccess: "none",
-          servicesAccess: "none",
+          servicesAccess: "view",
         });
   };
 

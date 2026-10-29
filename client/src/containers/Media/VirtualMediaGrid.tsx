@@ -265,15 +265,16 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
 
           const scrollContainer =
             scrollElement === undefined ? scrollRef.current : scrollElement;
-          if (getUsableScrollViewport(scrollContainer) === 0) {
+          if (!scrollContainer || getUsableScrollViewport(scrollContainer) === 0) {
             return Promise.resolve({ status: "not-ready" });
           }
 
-          virtualizerRef.current.scrollToIndex(rowIndex, { align: "auto" });
+          virtualizerRef.current.scrollToIndex(rowIndex, { align: "auto", behavior: "instant" });
 
           return new Promise<VirtualMediaGridScrollResult>((resolve) => {
             let frameId: number | null = null;
             let settled = false;
+            let visibleLayout: string | null = null;
 
             const cleanup = () => {
               if (frameId !== null) cancelAnimationFrame(frameId);
@@ -285,7 +286,14 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
               cleanup();
               resolve(result);
             };
-            const handleAbort = () => finish({ status: "cancelled" });
+            const handleAbort = () => {
+              if (settled) return;
+              // Retire TanStack's index reconciliation as well as our checks.
+              virtualizerRef.current.scrollToOffset(scrollContainer.scrollTop, {
+                behavior: "instant",
+              });
+              finish({ status: "cancelled" });
+            };
             const checkForMountedTile = () => {
               if (signal?.aborted) {
                 handleAbort();
@@ -316,22 +324,44 @@ export const VirtualMediaGrid = forwardRef<VirtualMediaGridHandle, VirtualMediaG
                 const containerRect =
                   currentScrollContainer.getBoundingClientRect();
                 const mediaRect = mediaElement.getBoundingClientRect();
-                const viewportTop = containerRect.top;
+                const viewportTop = containerRect.top + currentScrollContainer.clientTop;
                 const viewportBottom =
-                  containerRect.height > 0
-                    ? containerRect.bottom
-                    : viewportTop + currentScrollContainer.clientHeight;
-                const isOutsideViewport =
-                  mediaRect.top < viewportTop || mediaRect.bottom > viewportBottom;
+                  viewportTop + (currentScrollContainer.clientHeight || containerRect.height);
+                const visibleHeight =
+                  Math.min(mediaRect.bottom, viewportBottom) - Math.max(mediaRect.top, viewportTop);
+                const isVisible = mediaRect.height > 0 && mediaRect.width > 0 &&
+                  visibleHeight >= Math.min(mediaRect.height, viewportBottom - viewportTop) - 1;
+                const layout = JSON.stringify([
+                  viewportTop, viewportBottom, containerRect.width,
+                  mediaRect.top, mediaRect.bottom, mediaRect.width,
+                ]);
 
-                if (isOutsideViewport) {
-                  mediaElement.scrollIntoView({
-                    block: "nearest",
-                    behavior: "smooth",
+                // Measurements and panel resizing can move a mounted tile. Confirm
+                // visibility on the next frame before retiring the focus request.
+                if (isVisible && visibleLayout === layout) {
+                  finish({ status: "success" });
+                  return;
+                }
+                visibleLayout = isVisible ? layout : null;
+                if (!isVisible && mediaRect.height > 0) {
+                  const delta = mediaRect.top < viewportTop
+                    ? mediaRect.top - viewportTop
+                    : mediaRect.bottom - viewportBottom;
+                  currentScrollContainer.scrollTo({
+                    top: currentScrollContainer.scrollTop + delta,
+                    behavior: "instant",
                   });
                 }
-                finish({ status: "success" });
-                return;
+              } else {
+                visibleLayout = null;
+                // Row estimates or the column count may have changed since the
+                // initial jump. Retarget using the latest rows until it mounts.
+                const currentRowIndex = rowsRef.current.findIndex(
+                  (row) => row.type === "tiles" && row.items.some((item) => item.id === id),
+                );
+                virtualizerRef.current.scrollToIndex(currentRowIndex, {
+                  align: "auto", behavior: "instant",
+                });
               }
 
               frameId = requestAnimationFrame(() => {

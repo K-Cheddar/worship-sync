@@ -283,26 +283,13 @@ export const getSignInFlowErrorMessage = (
     ? getFirebaseSignInMessage(error, options)
     : getSessionApiErrorMessage(error);
 
-/** Matches auth bootstrap `authServerStatus` from GlobalInfo */
-export type AuthServerConnectionStatus = "checking" | "online" | "offline";
-
-/**
- * User-facing line while bootstrap or sign-in is still loading.
- * Prefer server status when available so operators see connection vs validation.
- */
-export const getAuthBootstrapLoadingDescription = (
-  authServerStatus: AuthServerConnectionStatus,
-  options?: { retryCount?: number },
-): string => {
-  if (authServerStatus === "offline") {
-    const n = options?.retryCount ?? 0;
-    if (n > 0) {
-      return `Can't reach WorshipSync right now. Trying again (attempt ${n})…`;
-    }
-    return "Can't reach WorshipSync right now. Check your connection; we'll keep trying.";
+/** Shown only when auth bootstrap confirms the server is unreachable. */
+export const getAuthBootstrapOfflineDescription = (options?: {
+  retryCount?: number;
+}): string => {
+  const retryCount = options?.retryCount ?? 0;
+  if (retryCount > 0) {
+    return `Can't reach WorshipSync right now. Trying again (attempt ${retryCount})…`;
   }
-  if (authServerStatus === "checking") {
-    return "Connecting to WorshipSync…";
-  }
-  return "Finishing up with WorshipSync…";
+  return "Can't reach WorshipSync right now. Check your connection; we'll keep trying.";
 };

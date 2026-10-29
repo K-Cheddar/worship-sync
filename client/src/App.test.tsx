@@ -1,16 +1,21 @@
 import { act, render, screen } from "@testing-library/react";
 import { Provider } from "react-redux";
+import { StrictMode } from "react";
 import { configureStore } from "@reduxjs/toolkit";
 import App, { AppRoutes } from "./App";
 import { GlobalInfoContext } from "./context/globalInfo";
 import { createMockGlobalContext } from "./test/mocks";
-import { MemoryRouter } from "react-router-dom";
+import {
+  createMemoryRouter,
+  MemoryRouter,
+  RouterProvider,
+} from "react-router-dom";
 import { presentationSlice } from "./store/presentationSlice";
 import { itemSlice } from "./store/itemSlice";
 import { overlaysSlice } from "./store/overlaysSlice";
 import { bibleSlice } from "./store/bibleSlice";
 import { itemListSlice } from "./store/itemListSlice";
-import { allItemsSlice } from "./store/allItemsSlice";
+import { itemLibraryUiSlice } from "./store/itemLibraryUiSlice";
 import { createItemSlice } from "./store/createItemSlice";
 import { preferencesSlice } from "./store/preferencesSlice";
 import { itemListsSlice } from "./store/itemListsSlice";
@@ -19,6 +24,7 @@ import { allDocsSlice } from "./store/allDocsSlice";
 import { creditsSlice } from "./store/creditsSlice";
 
 let mockBoardPending: Promise<void> | null = null;
+let mockBoardControllerPending: Promise<void> | null = null;
 
 // controllerInfo/env use import.meta – replaced by jest.config.cjs moduleNameMapper (__mocks__)
 
@@ -40,7 +46,7 @@ const createMockStore = () => {
       overlays: overlaysSlice.reducer,
       bible: bibleSlice.reducer,
       itemList: itemListSlice.reducer,
-      allItems: allItemsSlice.reducer,
+      itemLibraryUi: itemLibraryUiSlice.reducer,
       createItem: createItemSlice.reducer,
       preferences: preferencesSlice.reducer,
       itemLists: itemListsSlice.reducer,
@@ -54,7 +60,7 @@ const createMockStore = () => {
       overlays: overlaysSlice.getInitialState(),
       bible: bibleSlice.getInitialState(),
       itemList: itemListSlice.getInitialState(),
-      allItems: allItemsSlice.getInitialState(),
+      itemLibraryUi: itemLibraryUiSlice.getInitialState(),
       createItem: createItemSlice.getInitialState(),
       preferences: preferencesSlice.getInitialState(),
       itemLists: itemListsSlice.getInitialState(),
@@ -131,9 +137,10 @@ jest.mock("./pages/ProjectorFull", () => () => (
 jest.mock("./pages/CreditsEditor/CreditsEditor", () => () => (
   <div data-testid="credits-editor-page">Credits Editor Page</div>
 ));
-jest.mock("./pages/BoardController", () => () => (
-  <div data-testid="board-controller-page">Board Controller Page</div>
-));
+jest.mock("./pages/BoardController", () => () => {
+  if (mockBoardControllerPending) throw mockBoardControllerPending;
+  return <div data-testid="board-controller-page">Board Controller Page</div>;
+});
 jest.mock("./pages/BoardDisplay", () => () => (
   <div data-testid="board-display-page">Board Display Page</div>
 ));
@@ -196,6 +203,11 @@ jest.mock("./ControllerContextWrapper", () => ({
 }));
 
 describe("App Component", () => {
+  afterEach(() => {
+    mockBoardPending = null;
+    mockBoardControllerPending = null;
+  });
+
   it("keeps the actual route Suspense fallback empty while a display chunk is pending", async () => {
     let finish!: () => void;
     mockBoardPending = new Promise<void>((resolve) => { finish = resolve; });
@@ -214,14 +226,104 @@ describe("App Component", () => {
     expect(screen.getByTestId("board-present-page")).toBeInTheDocument();
   });
 
-  it.each(["/home", "/controller"])("preserves the app auth splash on %s", (path) => {
+  it.each(["/home", "/controller"])("uses the shared app startup screen on %s", (path) => {
     render(
       <GlobalInfoContext.Provider value={createMockGlobalContext({ bootstrapStatus: "loading" })}>
         <MemoryRouter initialEntries={[path]}><AppRoutes /></MemoryRouter>
       </GlobalInfoContext.Provider>,
     );
-    expect(screen.getByAltText("")).toBeInTheDocument();
+    expect(screen.getByText("Getting WorshipSync ready")).toBeInTheDocument();
+    expect(screen.getByText("Preparing your workspace…")).toBeInTheDocument();
     expect(document.body.style.backgroundColor).toBe("rgb(43, 53, 68)");
+  });
+
+  it("keeps the shared startup screen visible while the initial lazy route loads", async () => {
+    let finish!: () => void;
+    mockBoardControllerPending = new Promise<void>((resolve) => { finish = resolve; });
+    const loadingContext = createMockGlobalContext({
+      bootstrapStatus: "loading",
+      loginState: "loading",
+    });
+    const { rerender } = render(
+      <StrictMode>
+        <GlobalInfoContext.Provider value={loadingContext}>
+          <MemoryRouter initialEntries={["/boards/controller"]}>
+            <AppRoutes />
+          </MemoryRouter>
+        </GlobalInfoContext.Provider>
+      </StrictMode>,
+    );
+
+    expect(screen.getByText("Getting WorshipSync ready")).toBeInTheDocument();
+
+    rerender(
+      <StrictMode>
+        <GlobalInfoContext.Provider
+          value={createMockGlobalContext({ bootstrapStatus: "ready", loginState: "success" })}
+        >
+          <MemoryRouter initialEntries={["/boards/controller"]}>
+            <AppRoutes />
+          </MemoryRouter>
+        </GlobalInfoContext.Provider>
+      </StrictMode>,
+    );
+    // The route module resolves, then the mocked route holds on its own promise.
+    const initialFallback = await screen.findByTestId("route-chunk-splash");
+
+    expect(initialFallback).toHaveClass("route-chunk-splash--initial");
+    expect(screen.getByText("Getting WorshipSync ready")).toBeInTheDocument();
+    expect(screen.getByText("Preparing your workspace…")).toBeInTheDocument();
+
+    await act(async () => { mockBoardControllerPending = null; finish(); });
+    expect(await screen.findByTestId("board-controller-page")).toBeInTheDocument();
+  });
+
+  it("keeps the delayed splash reveal for a quick normal lazy-route navigation", async () => {
+    let finish!: () => void;
+    mockBoardControllerPending = new Promise<void>((resolve) => { finish = resolve; });
+    const router = createMemoryRouter(
+      [{ path: "*", element: <AppRoutes /> }],
+      { initialEntries: ["/home"] },
+    );
+    render(
+      <GlobalInfoContext.Provider value={createMockGlobalContext()}>
+        <RouterProvider router={router} />
+      </GlobalInfoContext.Provider>,
+    );
+    expect(screen.getByTestId("home-page")).toBeInTheDocument();
+
+    await act(async () => {
+      await router.navigate("/boards/controller", { flushSync: true });
+    });
+    const routeFallback = await screen.findByTestId("route-chunk-splash");
+
+    expect(routeFallback).toHaveClass("route-chunk-splash");
+    expect(routeFallback).not.toHaveClass(
+      "route-chunk-splash--initial",
+    );
+    expect(screen.getByText("Getting WorshipSync ready")).toBeInTheDocument();
+
+    await act(async () => { mockBoardControllerPending = null; finish(); });
+    expect(await screen.findByTestId("board-controller-page")).toBeInTheDocument();
+  });
+
+  it("retains offline guidance during bootstrap instead of rotating loading copy", () => {
+    render(
+      <GlobalInfoContext.Provider
+        value={createMockGlobalContext({
+          bootstrapStatus: "loading",
+          authServerStatus: "offline",
+          authServerRetryCount: 2,
+        })}
+      >
+        <MemoryRouter initialEntries={["/home"]}>
+          <AppRoutes />
+        </MemoryRouter>
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(screen.getByText(/Trying again \(attempt 2\)/)).toBeInTheDocument();
+    expect(screen.queryByText("Getting WorshipSync ready")).not.toBeInTheDocument();
   });
   it.each(["human", "display", "workstation"].flatMap((sessionKind) =>
     ["/stream", "/stream-info", "/projector", "/projector-full", "/monitor", "/credits", "/boards/display"]

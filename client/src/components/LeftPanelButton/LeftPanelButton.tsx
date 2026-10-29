@@ -23,12 +23,6 @@ import { isLocalMediaReferenceUrl } from "../../utils/localMediaReferenceUrl";
 type LeftPanelButtonProps = {
   isSelected: boolean;
   style?: React.CSSProperties | undefined;
-  /**
-   * Absolute route for this row. Callers build it from the controller they are
-   * on — this used to prefix "/controller" itself, which threw operators on an
-   * auxiliary controller onto the presentation controller.
-   */
-  to: string;
   title: string;
   subtitle?: string;
   type: string;
@@ -63,7 +57,6 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
   (
     {
       isSelected,
-      to,
       title,
       subtitle,
       type,
@@ -159,8 +152,6 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
           color={iconColorMap.get(type)}
           isSelected={isSelected}
           padding="py-1 px-2"
-          component="link"
-          to={to}
           onClick={onClick}
         >
           {thumbnailSrc && !isActive && !imageFailed && (

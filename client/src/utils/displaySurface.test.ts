@@ -48,6 +48,16 @@ describe("getDisplayPairingDestination", () => {
     );
   });
 
+  it("keeps query and hash on a non-generic return path", () => {
+    expect(
+      getDisplayPairingDestination(
+        "/stream?view=live#lower-third",
+        "stream",
+        "out_lobby",
+      ),
+    ).toBe("/stream?view=live&output=out_lobby#lower-third");
+  });
+
   it("binds output id onto generic and non-generic destinations", () => {
     expect(getDisplayPairingDestination("/home", "monitor", "out_lobby")).toBe(
       "/monitor?output=out_lobby",

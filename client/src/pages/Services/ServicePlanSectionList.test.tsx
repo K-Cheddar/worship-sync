@@ -287,6 +287,23 @@ const selectItemB = async (user: ReturnType<typeof userEvent.setup>) => {
 };
 
 describe("ServicePlanSectionList item-specific panels", () => {
+  it("lets editors classify sections and shows a subtle indicator for non-main phases", async () => {
+    const user = userEvent.setup();
+    renderList({ initialSections: [
+      { id: "section-a", name: "Section A", elements: [] },
+    ] });
+
+    expect(screen.queryByText("Pre-service")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "More tools for Section A" }));
+    expect(screen.getByRole("menuitemradio", { name: "Main service" })).toHaveAttribute("aria-checked", "true");
+    await user.click(screen.getByRole("menuitemradio", { name: "Post-service" }));
+
+    expect(screen.getByText("Post-service")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "More tools for Section A" }));
+    await user.click(screen.getByRole("menuitemradio", { name: "Main service" }));
+    expect(screen.queryByText("Post-service")).not.toBeInTheDocument();
+  });
+
   it("passes microphone and IEM catalogs to the inline row and assignment panel", async () => {
     const user = userEvent.setup();
     const microphones: ServicePlanMicrophone[] = [

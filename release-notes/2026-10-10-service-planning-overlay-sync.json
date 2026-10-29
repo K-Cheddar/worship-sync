@@ -3,5 +3,5 @@
   "date": "2026-10-10",
   "type": "fixed",
   "title": "Weekly overlay sync",
-  "description": "Native service plans can prepare reusable participant overlays from assigned Teams members and role titles, with per-item event labels and a preview before explicit sync. Sync stays disabled after a failed plan refresh until the data refreshes."
+  "description": "Sync main-service participant and song overlays with current Teams names, role titles, and song titles. Repeated events reuse distinct overlays, including saved library copies, while preserving formatting and leaving unused overlays untouched."
 }

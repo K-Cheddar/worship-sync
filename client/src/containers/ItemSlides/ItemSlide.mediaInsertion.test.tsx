@@ -96,7 +96,7 @@ describe("ItemSlide media insertion zones", () => {
             isMobile={false}
             draggedSection={null}
             isLive={isLive}
-            isStreamFormat={false}
+            previewMode="projector"
             getBibleInfo={() => ({ title: "", text: "" })}
             borderWidth="1px"
             hSize="text-sm"
@@ -126,7 +126,7 @@ describe("ItemSlide media insertion zones", () => {
           isMobile={false}
           draggedSection={null}
           isLive={false}
-          isStreamFormat={false}
+          previewMode="projector"
           getBibleInfo={() => ({ title: "", text: "" })}
           borderWidth="1px"
           hSize="text-sm"
@@ -190,7 +190,7 @@ describe("ItemSlide media insertion zones", () => {
           isMobile={false}
           draggedSection={null}
           isLive={false}
-          isStreamFormat={false}
+          previewMode="projector"
           getBibleInfo={() => ({ title: "", text: "" })}
           borderWidth="1px"
           hSize="text-sm"
@@ -229,7 +229,7 @@ describe("ItemSlide media insertion zones", () => {
           isMobile={false}
           draggedSection={null}
           isLive={false}
-          isStreamFormat={false}
+          previewMode="projector"
           getBibleInfo={() => ({ title: "", text: "" })}
           borderWidth="1px"
           hSize="text-sm"

@@ -62,16 +62,11 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { useChurchServiceTimeZone } from "../../context/churchServiceTimeZone";
 import { useToast } from "../../context/toastContext";
-import { useDispatch, useSelector } from "../../hooks";
-import { updateAllDocs } from "../../utils/dbUtils";
-import { initiateAllItemsList } from "../../store/allItemsSlice";
-import { upsertItemInAllDocs } from "../../store/allDocsSlice";
-import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
+import { useSelector } from "../../hooks";
 import { broadcastItemUpdate } from "../../store/store";
 import { applyPouchAudit } from "../../utils/pouchAudit";
-import { sortNamesInList } from "../../utils/sort";
 import { getYouTubeVideoReference } from "../../utils/youtube";
-import type { DBAllItems, DBItem } from "../../types";
+import type { DBItem } from "../../types";
 import {
   getServicePlan,
   getServicePlanAssignmentHistory,
@@ -126,6 +121,7 @@ import { getPlanningCenterPlanImport } from "../../api/planningCenter";
 import {
   DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
   getNewServicePlanImportAmbiguityIds,
+  preparePlanningCenterPdfImport,
   refreshServicePlanFromImport,
   type ServicePlanningRefreshOptions,
 } from "./servicePlanImportSync";
@@ -182,6 +178,10 @@ import {
   type ServicePlanDraftSnapshot,
 } from "./useServicePlanDraftHistory";
 import ServicePlanConflictDialog from "./ServicePlanConflictDialog";
+import ConfirmDialog from "../../components/Modal/ConfirmDialog";
+import { shareIdFromPublicServiceUrl } from "../shareIdFromPublicServiceUrl";
+import { getPublicServiceFlow } from "../../services/serviceFlowApi";
+import { exportWorshipSyncPlan, importWorshipSyncPlan, publicServiceFlowToSections } from "./servicePlanNativeTransfer";
 import { mergeServicePlan, applyServicePlanMergeChoices, type ServicePlanMergeResult } from "./servicePlanMerge";
 import { clearServicePlanRecoveryDraft, readServicePlanRecoveryDraft, saveServicePlanRecoveryDraft } from "./servicePlanRecovery";
 import { logAuthDiagnostic } from "../../utils/authDiagnostics";
@@ -266,18 +266,21 @@ const centerServicePlanLiveItem = (item: HTMLElement, container: HTMLElement) =>
 const ALL_TEAMS_FILTER_VALUE = "__everyone__";
 
 const SERVICE_PLAN_IMPORT_SOURCE_OPTIONS = [
+  { value: "worshipSync", label: "WorshipSync" },
   { value: "servicePlanning", label: "Service Planning" },
   { value: "planningCenter", label: "Planning Center account" },
   { value: "planningCenterPdf", label: "Planning Center PDF" },
 ];
 
 const servicePlanImportSourceLabel = (source: ServicePlanImportSource): string => {
+  if (source === "worshipSync") return "WorshipSync";
   if (source === "planningCenterPdf") return "Planning Center PDF";
   if (source === "planningCenter") return "Planning Center";
   return "Service Planning";
 };
 
 const parseImportSourceValue = (value: string): ServicePlanImportSource => {
+  if (value === "worshipSync") return "worshipSync";
   if (value === "planningCenterPdf") return "planningCenterPdf";
   if (value === "planningCenter") return "planningCenter";
   return "servicePlanning";
@@ -324,8 +327,11 @@ const ServicePlanSkeleton = () => (
 type ServicePlanImportPreview = {
   currentSections: ServicePlanSection[];
   sections: ServicePlanSection[];
+  importedSections: ServicePlanSection[];
   sourceImport: ServicePlanSourceImport;
   summary: ServicePlanImportSummary;
+  recalculateTimeline: boolean;
+  timelineAnchorStartTime: string;
 };
 
 type ServicePlanEditorTab = "plan" | "setlist" | "equipment" | "serving";
@@ -336,6 +342,14 @@ const formatAdjustedTimelineTime = (timeMs: number, timezone: string): string =>
     minute: "2-digit",
     timeZone: timezone,
   }).format(new Date(timeMs));
+
+const formatAdjustedPlanStartTime = (timeMs: number, timezone: string): string =>
+  formatPlanStartTimeDisplay(new Intl.DateTimeFormat("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZone: timezone,
+  }).format(new Date(timeMs)));
 
 const formatServicePlanEmailDate = (startsAt: string, timezone?: string) => {
   if (!timezone) return "Date unavailable";
@@ -538,13 +552,9 @@ const ServicePlanEditor = ({
   );
   const { db } = useContext(ControllerInfoContext) || {};
   const { showToast } = useToast();
-  const dispatch = useDispatch();
   const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
   const scrollbarWidth = useSelector(
     (state) => state.undoable.present.preferences.scrollbarWidth,
-  );
-  const isAllItemsInitialized = useSelector(
-    (state) => state.allItems?.isInitialized ?? false,
   );
   const [assignmentHistory, setAssignmentHistory] = useState<string[]>([]);
   const [microphones, setMicrophones] = useState<ServicePlanMicrophone[]>([]);
@@ -558,40 +568,6 @@ const ServicePlanEditor = ({
   const [pendingSongCreateRef, setPendingSongCreateRef] = useState<
     Extract<ServicePlanSongReference, { kind: "pending" }> | null
   >(null);
-
-  // The song library (allDocs.allSongDocs) is normally populated by the
-  // Controller page's own lifecycle hook — a session that opens straight to
-  // Teams and Services without ever visiting the Controller would otherwise
-  // see an empty library here (no search results, no import song matches).
-  useEffect(() => {
-    if (!db) return;
-    updateAllDocs(dispatch);
-  }, [db, dispatch]);
-
-  // Teams/Services can open without the Controller lifecycle. Initialize the
-  // shared lightweight index here too so embedded song creation can safely
-  // persist a complete list for older Controller clients.
-  useEffect(() => {
-    if (!db || isAllItemsInitialized) return;
-    let cancelled = false;
-
-    const initializeAllItems = async () => {
-      try {
-        const allItemsDoc = (await db.get("allItems")) as DBAllItems;
-        if (cancelled) return;
-        dispatch(
-          initiateAllItemsList(sortNamesInList(allItemsDoc.items || [])),
-        );
-      } catch (error) {
-        console.error("Could not initialize the song library index:", error);
-      }
-    };
-
-    initializeAllItems();
-    return () => {
-      cancelled = true;
-    };
-  }, [db, dispatch, isAllItemsInitialized]);
 
   const planKey = getServicePlanKey(occurrence);
   const editorIdentityKey = `${userId || ""}:${churchId || ""}:${planKey}`;
@@ -652,6 +628,9 @@ const ServicePlanEditor = ({
   const [importPcoPlanId, setImportPcoPlanId] = useState("");
   const [importing, setImporting] = useState(false);
   const planningCenterPdfInputRef = useRef<HTMLInputElement>(null);
+  const worshipSyncJsonInputRef = useRef<HTMLInputElement>(null);
+  const [worshipSyncImportKind, setWorshipSyncImportKind] = useState<"link" | "file">("link");
+  const [pendingNativeSections, setPendingNativeSections] = useState<ServicePlanSection[] | null>(null);
   const [importPreview, setImportPreview] = useState<ServicePlanImportPreview | null>(null);
   const [ambiguityDialog, setAmbiguityDialog] = useState<{
     prompt: boolean;
@@ -1660,8 +1639,10 @@ const ServicePlanEditor = ({
 
   const openImportSourceForm = (source: ServicePlanImportSource) => {
     handleImportSourceChange(source);
+    if (source === "worshipSync") setWorshipSyncImportKind("link");
     if (source === "planningCenterPdf") {
-      openPlanningCenterPdfPicker();
+      if (hasPlanContent) setShowImport(true);
+      else openPlanningCenterPdfPicker();
       return;
     }
     setShowImport(true);
@@ -1674,10 +1655,6 @@ const ServicePlanEditor = ({
         sourceImport?.source === "servicePlanning"
         ? sourceImport.source
         : readServicePlanImportSource();
-    if (preferredSource === "planningCenterPdf") {
-      openPlanningCenterPdfPicker();
-      return;
-    }
     setImportSource(preferredSource);
     writeServicePlanImportSource(preferredSource);
     setImportUrl(
@@ -1704,8 +1681,9 @@ const ServicePlanEditor = ({
       planningCenterPlanId?: string;
     } = {},
   ) => {
-    const importedSections = buildServicePlanSectionsFromImport(data, allSongDocs, {
+    const parsedSections = buildServicePlanSectionsFromImport(data, allSongDocs, {
       classifyExternalTitle: source === "servicePlanning",
+      preserveSourceTitle: source === "planningCenterPdf",
       knownPeople: [
         ...members.map((member) => memberName(member)),
         ...(churchIntegrations?.servicePlanning?.people || []).flatMap((person) => [
@@ -1714,6 +1692,10 @@ const ServicePlanEditor = ({
         ]),
       ],
     });
+    const pdfRefreshSections = source === "planningCenterPdf"
+      ? preparePlanningCenterPdfImport(sections || [], parsedSections)
+      : undefined;
+    const importedSections = pdfRefreshSections?.importedSections || parsedSections;
     const hasElements = importedSections.some((section) => section.elements.length > 0);
     const hasSourceTiming = importedSections.some((section) =>
       section.elements.some((element) => Boolean(element.startTime)),
@@ -1732,18 +1714,38 @@ const ServicePlanEditor = ({
     // A plan with no items yet has nothing to reconcile — a draft started
     // from scratch carries one empty section, which would otherwise survive
     // the refresh and leave a stray blank section above the imported ones.
-    const nextSections =
+    let nextSections =
       hasPlanContent && sections
-        ? refreshServicePlanFromImport(sections, importedSections, {
-          ...refreshOptions,
-          suggestLegacyMatches: true,
-          // Only plans imported before item-level provenance existed can have
-          // their unmarked items regarded as source-owned, and then only when
-          // removal was chosen. On a tracked plan those are operator items.
-          treatUnmarkedItemsAsSource:
-            refreshOptions.removeMissing && isLegacyUntrackedImport,
-        })
+        ? refreshServicePlanFromImport(
+            pdfRefreshSections?.currentSections || sections,
+            importedSections,
+            {
+              ...refreshOptions,
+              suggestLegacyMatches: true,
+              planningCenterPdfMatch: source === "planningCenterPdf",
+              // Only plans imported before item-level provenance existed can have
+              // their unmarked items regarded as source-owned, and then only when
+              // removal was chosen. PDF refreshes cannot distinguish legacy source
+              // rows from manual rows, so leave every unmarked PDF-plan item alone.
+              treatUnmarkedItemsAsSource:
+                source !== "planningCenterPdf" && refreshOptions.removeMissing && isLegacyUntrackedImport,
+            },
+        )
         : freshImportSections;
+    const recalculateTimeline = source === "planningCenterPdf" && !hasSourceTiming;
+    const existingAnchor = sections
+      ?.flatMap((section) => section.elements)
+      .map((element) => element.startTime?.trim() || "")
+      .find((startTime) => /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(startTime)) || "";
+    const timelineAnchorStartTime = existingAnchor || occurrenceLocalTime(
+      occurrence.startsAt,
+      planTimezone || "UTC",
+    );
+    if (source === "planningCenterPdf" && hasPlanContent && sections) {
+      if (recalculateTimeline && timelineAnchorStartTime) {
+        nextSections = applyPlanAnchorStartTime(nextSections, timelineAnchorStartTime);
+      }
+    }
     // One draft update, so undo reverts the whole import rather than peeling
     // it back a field at a time. The occurrence being planned names the plan
     // — the imported source's own plan label (its own date/service, not
@@ -1759,11 +1761,19 @@ const ServicePlanEditor = ({
       setImportPreview({
         currentSections: sections,
         sections: nextSections,
+        importedSections,
         sourceImport: nextSourceImport,
-        summary: summarizeServicePlanImport(sections, nextSections, {
-          microphones,
-          iemEquipment,
-        }),
+        summary: summarizeServicePlanImport(
+          sections,
+          nextSections,
+          { microphones, iemEquipment },
+          {
+            dependentTimingShifts: recalculateTimeline,
+            trackSameSectionMoves: source === "planningCenterPdf",
+          },
+        ),
+        recalculateTimeline,
+        timelineAnchorStartTime,
       });
       setShowImport(false);
       return;
@@ -1793,9 +1803,16 @@ const ServicePlanEditor = ({
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
+    const importEditorIdentityKey = editorIdentityKey;
+    const draftVersionAtStart = draftChangeVersionRef.current;
     setImporting(true);
     try {
       const text = await extractTextFromPdfFile(file);
+      if (currentEditorIdentityRef.current !== importEditorIdentityKey) return;
+      if (draftChangeVersionRef.current !== draftVersionAtStart) {
+        showToast("The plan changed. Import it again to review the latest draft.");
+        return;
+      }
       const data = parsePlanningCenterPdfText(text);
       applyImportedPlanData(data, "planningCenterPdf", "");
     } catch (error) {
@@ -1819,9 +1836,23 @@ const ServicePlanEditor = ({
     if (usingPcoAccount && (!churchId || !importPcoServiceTypeId || !importPcoPlanId))
       return;
     if (!usingPcoAccount && !trimmedUrl) return;
+    const importEditorIdentityKey = editorIdentityKey;
+    const draftVersionAtStart = draftChangeVersionRef.current;
     setImporting(true);
     const sourceLabel = servicePlanImportSourceLabel(importSource);
     try {
+      if (importSource === "worshipSync") {
+        const importEditorIdentityKey = editorIdentityKey;
+        const shareId = shareIdFromPublicServiceUrl(trimmedUrl);
+        if (!shareId) throw new Error("Enter a public WorshipSync service-plan link.");
+        const snapshot = await getPublicServiceFlow(shareId);
+        if (currentEditorIdentityRef.current !== importEditorIdentityKey) return;
+        const nextSections = publicServiceFlowToSections(snapshot.service, allSongDocs);
+        if (hasPlanContent) setPendingNativeSections(nextSections);
+        else applyNativeImportedSections(nextSections);
+        setShowImport(false);
+        return;
+      }
       let data: ServicePlanningImportData;
       let nextSourceUrl = "";
       let sourceExtras: {
@@ -1850,12 +1881,60 @@ const ServicePlanEditor = ({
         nextSourceUrl = trimmedUrl;
       }
 
+      if (currentEditorIdentityRef.current !== importEditorIdentityKey) return;
+      if (draftChangeVersionRef.current !== draftVersionAtStart) {
+        showToast("The plan changed. Import it again to review the latest draft.");
+        return;
+      }
       applyImportedPlanData(data, importSource, nextSourceUrl, sourceExtras);
     } catch (error) {
       showApiErrorToast(showToast, error, `Could not import from ${sourceLabel}.`);
     } finally {
       setImporting(false);
     }
+  };
+
+  const applyNativeImportedSections = (nextSections: ServicePlanSection[]) => {
+    updateDraft({ sections: nextSections, sourceImport: undefined });
+    setPendingNativeSections(null);
+    setImportUrl("");
+    setShowImport(false);
+    setIsEditing(true);
+    showAllTeamNotesForReview();
+    showToast("Imported WorshipSync plan. Review the content.", "success");
+  };
+
+  const handleWorshipSyncJsonSelected = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    const importEditorIdentityKey = editorIdentityKey;
+    setImporting(true);
+    try {
+      const text = await file.text();
+      if (currentEditorIdentityRef.current !== importEditorIdentityKey) return;
+      const parsed: unknown = JSON.parse(text);
+      const nextSections = importWorshipSyncPlan(parsed, { targetChurchId: churchId, songs: allSongDocs });
+      setShowImport(false);
+      if (hasPlanContent) setPendingNativeSections(nextSections);
+      else applyNativeImportedSections(nextSections);
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not import this WorshipSync plan file.");
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const downloadWorshipSyncPlan = () => {
+    if (!sections) return;
+    const file = exportWorshipSyncPlan(sections, churchId, allSongDocs);
+    const blob = new Blob([JSON.stringify(file, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `worshipsync-plan-${plan?.date || planKey.split("@").at(-1) || "service"}.json`;
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
   };
 
   const applyImportedDraft = (draft: {
@@ -1866,14 +1945,29 @@ const ServicePlanEditor = ({
     updateDraft(draft);
   };
 
+  const getSelectedImportSections = (selectedChangeKeys: string[]) => {
+    if (!importPreview) return undefined;
+    const selected = applySelectedServicePlanImportChanges(
+      importPreview.currentSections, importPreview.sections, importPreview.summary, new Set(selectedChangeKeys),
+    );
+    return selectedChangeKeys.length && importPreview.recalculateTimeline && importPreview.timelineAnchorStartTime
+      ? applyPlanAnchorStartTime(selected, importPreview.timelineAnchorStartTime)
+      : selected;
+  };
+
   const applyImportPreview = (selectedChangeKeys: string[]) => {
     if (!importPreview) return;
-    const selectedSections = applySelectedServicePlanImportChanges(
-      importPreview.currentSections,
-      importPreview.sections,
-      importPreview.summary,
-      new Set(selectedChangeKeys),
-    );
+    if (JSON.stringify(sections) !== JSON.stringify(importPreview.currentSections)) {
+      setImportPreview(null);
+      showToast("The plan changed. Import it again to review the latest draft.");
+      return;
+    }
+    const actionableKeys = new Set(importPreview.summary.changes
+      .map((change) => `${change.kind}:${change.id}`));
+    const hasSelectedChanges = selectedChangeKeys.some((key) => actionableKeys.has(key));
+    if (!hasSelectedChanges) return;
+    const selectedSections = getSelectedImportSections(selectedChangeKeys);
+    if (!selectedSections) return;
     applyImportedDraft({
       sections: selectedSections,
       planName: occurrence.name || service.name || "",
@@ -2326,19 +2420,9 @@ const ServicePlanEditor = ({
       );
       const savedResult = await db.put(audited);
       const saved = { ...audited, _rev: savedResult.rev };
-      dispatch(upsertItemInAllDocs(saved));
-      dispatch(
-        upsertItemInAllItemsList({
-          _id: saved._id,
-          name: saved.name,
-          type: saved.type,
-          listId: saved._id,
-          background: typeof saved.background === "string" ? saved.background : "",
-        }),
-      );
       broadcastItemUpdate(saved);
     },
-    [db, dispatch],
+    [db],
   );
   const viewLibrarySong = useMemo(() => {
     if (!viewSongRef || viewSongRef.kind !== "library") return null;
@@ -2477,6 +2561,20 @@ const ServicePlanEditor = ({
     plan && sections
       ? getServicePlanLiveProgress({ ...plan, sections }, nowMs)
       : null;
+  const adjustedTimelineProgress = useMemo(() => {
+    if (!plan || !sections) return null;
+    return getServicePlanLiveProgress(
+      { ...plan, sections },
+      Date.parse(plan.startsAt || ""),
+    );
+  }, [plan, sections]);
+  const plannedProgress = useMemo(() => {
+    if (!plan || !sections) return null;
+    return getServicePlanLiveProgress(
+      { ...plan, sections, publicLive: { mode: "schedule" } },
+      Date.parse(plan.startsAt || ""),
+    );
+  }, [plan, sections]);
   const liveElementId = liveProgress?.current?.item.id ?? null;
   const {
     isFollowingLive,
@@ -2571,19 +2669,29 @@ const ServicePlanEditor = ({
   const liveStartedAtLabel = liveStartedAt && planTimezone
     ? formatAdjustedTimelineTime(Date.parse(liveStartedAt), planTimezone)
     : null;
-  const adjustedStartTimes = useMemo(() => {
-    if (!planTimezone || !isTimelineAdjusted || !liveProgress || !liveElementId) return new Map<string, string>();
-    const liveIndex = liveProgress.items.findIndex(
-      (timed) => timed.item.id === liveElementId,
+  const { adjustedStartTimes, plannedStartTimes } = useMemo(() => {
+    if (!planTimezone || !isTimelineAdjusted || !adjustedTimelineProgress?.isAdjusted || !plannedProgress) {
+      return {
+        adjustedStartTimes: new Map<string, string>(),
+        plannedStartTimes: new Map<string, string>(),
+      };
+    }
+    const plannedItemsById = new Map(
+      plannedProgress.items.map((timed) => [timed.item.id, timed]),
     );
-    if (liveIndex < 0) return new Map<string, string>();
-    return new Map(
-      liveProgress.items.slice(liveIndex).map((timed) => [
-        timed.item.id,
-        formatAdjustedTimelineTime(timed.startsAtMs, planTimezone),
-      ]),
-    );
-  }, [isTimelineAdjusted, liveElementId, liveProgress, planTimezone]);
+    const adjustedTimes = new Map<string, string>();
+    const plannedTimes = new Map<string, string>();
+    adjustedTimelineProgress.items.forEach((timed) => {
+      const planned = plannedItemsById.get(timed.item.id);
+      if (!planned) return;
+      const adjustedTime = formatAdjustedPlanStartTime(timed.startsAtMs, planTimezone);
+      const plannedTime = formatAdjustedPlanStartTime(planned.startsAtMs, planTimezone);
+      if (adjustedTime === plannedTime) return;
+      adjustedTimes.set(timed.item.id, adjustedTime);
+      plannedTimes.set(timed.item.id, plannedTime);
+    });
+    return { adjustedStartTimes: adjustedTimes, plannedStartTimes: plannedTimes };
+  }, [adjustedTimelineProgress, isTimelineAdjusted, planTimezone, plannedProgress]);
   const shareActionsDisabled = !canEdit || publishing || !hasSections;
   const showLiveToolbarActions = Boolean(
     canEdit && !isEditing && isServiceDay && liveElementId,
@@ -2881,6 +2989,12 @@ const ServicePlanEditor = ({
                 Save as template
               </DropdownMenuItem>
               {canEdit && hasSections ? (
+                <DropdownMenuItem onSelect={downloadWorshipSyncPlan}>
+                  <Upload aria-hidden className="rotate-180" />
+                  Export WorshipSync plan
+                </DropdownMenuItem>
+              ) : null}
+              {canEdit && hasSections ? (
                 <DropdownMenuItem
                   disabled={importing}
                   onSelect={openImportUpdates}
@@ -3168,6 +3282,7 @@ const ServicePlanEditor = ({
               isManualLive={isManualLive}
               isTimelineAdjusted={isTimelineAdjusted}
               adjustedStartTimes={adjustedStartTimes}
+              plannedStartTimes={plannedStartTimes}
               liveStartedAtLabel={liveStartedAtLabel}
               publicLiveBusy={updatingPublicLive}
               onMakePublicLive={handleMakePublicLive}
@@ -3656,14 +3771,56 @@ const ServicePlanEditor = ({
                 onChange={(value) => {
                   const next = parseImportSourceValue(value);
                   if (next === "planningCenterPdf") {
-                    openPlanningCenterPdfPicker();
-                    setShowImport(false);
+                    handleImportSourceChange(next);
+                    if (hasPlanContent) {
+                      setShowImport(true);
+                    } else {
+                      openPlanningCenterPdfPicker();
+                      setShowImport(false);
+                    }
                     return;
                   }
                   handleImportSourceChange(next);
                 }}
               />
-              {importSource === "planningCenterPdf" ? (
+              {importSource === "worshipSync" ? (
+                <>
+                  <ButtonGroup aria-label="WorshipSync import type">
+                    <ButtonGroupItem
+                      isActive={worshipSyncImportKind === "link"}
+                      onClick={() => setWorshipSyncImportKind("link")}
+                    >
+                      Paste public link
+                    </ButtonGroupItem>
+                    <ButtonGroupItem
+                      isActive={worshipSyncImportKind === "file"}
+                      onClick={() => {
+                        setWorshipSyncImportKind("file");
+                        worshipSyncJsonInputRef.current?.click();
+                      }}
+                    >
+                      Upload JSON file
+                    </ButtonGroupItem>
+                  </ButtonGroup>
+                  {worshipSyncImportKind === "link" ? (
+                    <Input
+                      label="Public service-plan link"
+                      placeholder="https://.../services/..."
+                      value={importUrl}
+                      disabled={importing}
+                      onChange={(value) => setImportUrl(String(value))}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void handleImportPlan();
+                        }
+                      }}
+                    />
+                  ) : (
+                    <p className="text-xs text-gray-400">Choose a WorshipSync JSON plan file to import.</p>
+                  )}
+                </>
+              ) : importSource === "planningCenterPdf" ? (
                 <div className="space-y-2">
                   <p className="text-xs text-gray-400">
                     Choose a Planning Center order-of-service PDF. WorshipSync
@@ -3711,7 +3868,7 @@ const ServicePlanEditor = ({
                   }}
                 />
               )}
-              {hasPlanContent && importSource !== "planningCenterPdf" ? (
+              {hasPlanContent && importSource !== "planningCenterPdf" && importSource !== "worshipSync" ? (
                 <fieldset className="space-y-2">
                   <legend className="text-sm font-medium text-gray-100">
                     Update from {servicePlanImportSourceLabel(importSource)}
@@ -3756,7 +3913,23 @@ const ServicePlanEditor = ({
                   </div>
                 </fieldset>
               ) : null}
-              {hasPlanContent && importSource !== "planningCenterPdf" ? (
+              {hasPlanContent && importSource === "planningCenterPdf" ? (
+                <fieldset className="space-y-2">
+                  <legend className="text-sm font-medium text-gray-100">
+                    Update from Planning Center PDF
+                  </legend>
+                  <Checkbox
+                    label="Remove source items no longer listed"
+                    checked={refreshOptions.removeMissing}
+                    disabled={importing}
+                    onCheckedChange={(checked) => updateRefreshOption("removeMissing", checked)}
+                  />
+                  <p className="text-xs text-gray-400">
+                    Missing source items appear in the import review. Items without source tracking stay in the plan.
+                  </p>
+                </fieldset>
+              ) : null}
+              {hasPlanContent && importSource !== "planningCenterPdf" && importSource !== "worshipSync" ? (
                 <p className="text-xs text-gray-400">
                   Removing items is off by default. Turn it on only when this
                   imported plan is the source of truth.
@@ -3766,10 +3939,12 @@ const ServicePlanEditor = ({
                 <p className="text-xs text-amber-200">
                   This plan predates source tracking. Possible cross-section
                   matches are offered one item at a time for your confirmation.
-                  If you remove missing items, unmarked items are treated as source items.
+                  {importSource === "planningCenterPdf"
+                    ? " Unmarked items stay in the plan because their source cannot be confirmed."
+                    : " If you remove missing items, unmarked items are treated as source items."}
                 </p>
               ) : null}
-              {importSource !== "planningCenterPdf" ? (
+              {importSource !== "planningCenterPdf" && !(importSource === "worshipSync" && worshipSyncImportKind === "file") ? (
                 <Button
                   variant="cta"
                   svg={hasPlanContent ? RefreshCw : Upload}
@@ -3788,7 +3963,7 @@ const ServicePlanEditor = ({
                 >
                   {importing
                     ? "Importing…"
-                    : hasPlanContent
+                    : hasPlanContent && importSource !== "worshipSync"
                       ? "Apply updates"
                       : "Import plan"}
                 </Button>
@@ -3806,10 +3981,36 @@ const ServicePlanEditor = ({
         aria-label="Planning Center PDF"
         onChange={(event) => void handlePlanningCenterPdfSelected(event)}
       />
+      <input
+        ref={worshipSyncJsonInputRef}
+        type="file"
+        accept="application/json,.json"
+        className="sr-only"
+        aria-label="WorshipSync JSON plan"
+        onChange={(event) => void handleWorshipSyncJsonSelected(event)}
+      />
+
+      <ConfirmDialog
+        open={Boolean(pendingNativeSections)}
+        title="Replace this plan's content?"
+        confirmLabel="Replace content"
+        destructive
+        onCancel={() => setPendingNativeSections(null)}
+        onConfirm={() => pendingNativeSections && applyNativeImportedSections(pendingNativeSections)}
+      >
+        <p className="text-sm text-gray-200">
+          This service already has plan items. Importing will replace its sections and items. The service date, occurrence, and publishing settings will stay the same.
+        </p>
+      </ConfirmDialog>
 
       {importPreview ? (
         <ServicePlanImportReviewWindow
           summary={importPreview.summary}
+          currentSections={importPreview.currentSections}
+          proposedSections={importPreview.sections}
+          importedSections={importPreview.importedSections}
+          importLabel={importPreview.sourceImport.source === "planningCenterPdf" ? "Updated PDF" : "Updated import"}
+          getSelectedSections={getSelectedImportSections}
           onApply={applyImportPreview}
           onClose={() => setImportPreview(null)}
         />
@@ -3821,6 +4022,7 @@ const ServicePlanEditor = ({
           batchTotal={ambiguityDialog.batchTotal}
           completedCount={ambiguityDialog.completedCount}
           prompt={ambiguityDialog.prompt}
+          updatedNoteLabel={sourceImport?.source === "planningCenterPdf" ? "Updated PDF note" : "Updated source note"}
           onLater={() => {
             if (!sections) { setAmbiguityDialog(null); return; }
             const ids = new Set(ambiguityDialog.elementIds);

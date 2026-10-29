@@ -183,11 +183,10 @@ jest.mock("../../../components/Modal/Modal", () => ({
 const makeBaseState = (overrides: Partial<any> = {}) => {
   const base = {
     allDocs: {
+      isInitialized: true,
       allSongDocs: [],
     },
-    allItems: {
-      isAllItemsLoading: false,
-    },
+
     undoable: {
       present: {
         item: {
@@ -953,6 +952,7 @@ describe("LyricsEditor", () => {
   it("imports sections from another song into the current arrangement and appends them to song order by default", async () => {
     mockState = makeBaseState({
       allDocs: {
+      isInitialized: true,
         allSongDocs: [
           {
             _id: "source-song",

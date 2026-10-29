@@ -29,6 +29,7 @@ function buildCommitPayload(
 export function useOverlayDraft(
   selectedOverlay: OverlayInfo,
   onCommit: (overlay: OverlayInfo) => void,
+  onDraftPendingChange?: (overlayId: string, isPending: boolean) => void,
 ) {
   const [draft, setDraft] = useState<OverlayInfo>(selectedOverlay);
   const draftRef = useRef(draft);
@@ -40,6 +41,8 @@ export function useOverlayDraft(
   const prevSerializedRef = useRef("");
   const onCommitRef = useRef(onCommit);
   onCommitRef.current = onCommit;
+  const onDraftPendingChangeRef = useRef(onDraftPendingChange);
+  onDraftPendingChangeRef.current = onDraftPendingChange;
   const selectedOverlayRef = useRef(selectedOverlay);
   selectedOverlayRef.current = selectedOverlay;
 
@@ -49,6 +52,9 @@ export function useOverlayDraft(
       debounceTimerRef.current = null;
     }
     const normalized = normalizeOverlayForSync(nextOverlay);
+    if (isDirtyRef.current && draftRef.current.id) {
+      onDraftPendingChangeRef.current?.(draftRef.current.id, false);
+    }
     setDraft(normalized);
     draftRef.current = normalized;
     lastCommittedRef.current = normalized;
@@ -64,6 +70,7 @@ export function useOverlayDraft(
       const draft = draftRef.current;
       if (!draft.id || draft.id !== fromRedux.id) return;
       const next = buildCommitPayload(fromRedux, draft);
+      onDraftPendingChangeRef.current?.(draft.id, false);
       draftRef.current = next;
       setDraft(next);
       lastCommittedRef.current = next;
@@ -74,13 +81,14 @@ export function useOverlayDraft(
 
   const patchDraft = useCallback(
     (partial: Partial<OverlayInfo>) => {
-      setDraft((prev) => {
-        const next = { ...prev, ...partial };
-        draftRef.current = next;
-        isDirtyRef.current = true;
-        scheduleCommit();
-        return next;
-      });
+      const next = { ...draftRef.current, ...partial };
+      if (!isDirtyRef.current && next.id) {
+        onDraftPendingChangeRef.current?.(next.id, true);
+      }
+      draftRef.current = next;
+      isDirtyRef.current = true;
+      setDraft(next);
+      scheduleCommit();
     },
     [scheduleCommit],
   );
@@ -95,9 +103,11 @@ export function useOverlayDraft(
     if (!isDirtyRef.current || draft.id !== fromRedux.id) return;
     const next = buildCommitPayload(fromRedux, draft);
     if (_.isEqual(next, lastCommittedRef.current)) {
+      onDraftPendingChangeRef.current?.(draft.id, false);
       isDirtyRef.current = false;
       return;
     }
+    onDraftPendingChangeRef.current?.(draft.id, false);
     draftRef.current = next;
     setDraft(next);
     lastCommittedRef.current = next;
@@ -168,16 +178,17 @@ export function useOverlayDraft(
       }
       const fromRedux = selectedOverlayRef.current;
       const draft = draftRef.current;
-      if (
-        isDirtyRef.current &&
-        draft.id &&
-        draft.id === fromRedux.id &&
-        !_.isEqual(
-          buildCommitPayload(fromRedux, draft),
-          lastCommittedRef.current,
-        )
-      ) {
-        onCommitRef.current(buildCommitPayload(fromRedux, draft));
+      if (isDirtyRef.current && draft.id) {
+        onDraftPendingChangeRef.current?.(draft.id, false);
+        if (
+          draft.id === fromRedux.id &&
+          !_.isEqual(
+            buildCommitPayload(fromRedux, draft),
+            lastCommittedRef.current,
+          )
+        ) {
+          onCommitRef.current(buildCommitPayload(fromRedux, draft));
+        }
       }
     },
     [],

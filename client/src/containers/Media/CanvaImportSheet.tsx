@@ -1,3 +1,4 @@
+import type { PresentationViewAction } from "../../context/transferModel";
 import { useContext, useEffect, useMemo, useState } from "react";
 import { ExternalLink, Image as ImageIcon, Link2, PanelsTopLeft, Search, Video } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -68,7 +69,7 @@ type Props = {
     pages: MediaType[],
     designTitle: string,
     options?: { navigateToItem?: boolean; idempotencyKey?: string },
-  ) => string | void | Promise<string | void>;
+  ) => PresentationViewAction | void | Promise<PresentationViewAction | void>;
   existingMedia: readonly MediaType[];
   getCurrentMedia?: () => readonly MediaType[];
   sourceMedia?: MediaType | null;
@@ -428,8 +429,8 @@ const CanvaImportSheet = ({
           const latestById = new Map(getLatestMedia().map((mediaItem) => [mediaItem.id, mediaItem]));
           const currentPages = customItemPages.map((page) => latestById.get(page.id)).filter((page): page is MediaType => Boolean(page));
           if (currentPages.length !== customItemPages.length) throw new Error("One or more imported pages are no longer in Media.");
-          const viewPath = await onCreateDeckItem(currentPages, itemName, { navigateToItem: false, idempotencyKey: customItemIdempotencyKey });
-          return viewPath;
+          const viewPresentation = await onCreateDeckItem(currentPages, itemName, { navigateToItem: false, idempotencyKey: customItemIdempotencyKey });
+          return viewPresentation;
         },
         ...(onUnprocessedAssetCleanup ? { cleanupRetry: retryCanvaCleanup } : {}),
         finalize: async (result, signal, onPagesPersisted) => {
@@ -468,14 +469,14 @@ const CanvaImportSheet = ({
               return mediaItem ? [mediaItem] : [];
             });
           };
-          const createDeckIfRequested = async (pagesToUse: MediaType[]): Promise<{ viewPath?: string; customItemError?: string }> => {
+          const createDeckIfRequested = async (pagesToUse: MediaType[]): Promise<{ viewPresentation?: PresentationViewAction; customItemError?: string }> => {
             if (signal.aborted) throw new Error("Canva import cancelled.");
             if (!includeCustomItem) return {};
             if (!pagesToUse.length || !onCreateDeckItem) return { customItemError: "No saved media is available to create the custom item." };
             customItemPages = pagesToUse;
             try {
-              const viewPath = await onCreateDeckItem(pagesToUse, itemName, { navigateToItem: false, idempotencyKey: customItemIdempotencyKey });
-              return typeof viewPath === "string" ? { viewPath } : {};
+              const viewPresentation = await onCreateDeckItem(pagesToUse, itemName, { navigateToItem: false, idempotencyKey: customItemIdempotencyKey });
+              return viewPresentation ? { viewPresentation } : {};
             } catch (customError) {
               return { customItemError: customError instanceof Error ? customError.message : "Try again." };
             }

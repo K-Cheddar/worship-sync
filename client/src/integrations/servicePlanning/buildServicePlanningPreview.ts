@@ -17,7 +17,7 @@ import {
   mapServicePlanningRows,
   type ServicePlanningMappedRow,
 } from "./mapServicePlanningToOverlays";
-import { findOverlayForServicePlanningCandidate } from "./findBestOverlayMatch";
+import { findOverlayForServicePlanningCandidate, planNativeOverlaySync } from "./findBestOverlayMatch";
 import { findBestServicePlanningSongMatch } from "./findServicePlanningSongMatch";
 import { cleanPlanningTitle } from "./cleanPlanningTitle";
 import { parseBibleReference, type ParsedBibleRef } from "./parseBibleReference";
@@ -112,10 +112,15 @@ export const getRepeatedOverlayDedupeKey = (
 export const overlayPlanHasExecutableChange = (
   overlayPlan: OverlaySyncPlanItem[],
   overlays: OverlayInfo[],
+  overlayLibrary: OverlayInfo[] = [],
 ): boolean => {
   const claimed = new Set<string>();
-  for (const item of overlayPlan) {
+  for (const item of planNativeOverlaySync(overlayPlan, overlays, overlayLibrary)) {
     if (item.action === "skip") continue;
+    if (item.sourceKind === "native") {
+      if (item.action !== "update" || !item.placementOnly) return true;
+      continue;
+    }
     const excluded = new Set(claimed);
     if (item.action === "clone" && item.targetOverlayId) {
       excluded.add(item.targetOverlayId);
@@ -153,6 +158,7 @@ export type BuildServicePlanningPreviewInput = {
   servicePlanning: ServicePlanningConfig;
   /** Current overlays list, used to decide update vs clone vs create. */
   overlays: OverlayInfo[];
+  overlayLibrary?: OverlayInfo[];
   /** Canonical merged song library, used to match planning titles to songs. */
   songLibrary: ServiceItem[];
   /** Current church's custom-item index, resolved by stable document id. */
@@ -175,6 +181,7 @@ export const buildServicePlanningPreview = ({
   importData,
   servicePlanning: sp,
   overlays,
+  overlayLibrary = [],
   songLibrary,
   customDocumentLibrary = [],
   activeOutlineList,
@@ -210,9 +217,7 @@ export const buildServicePlanningPreview = ({
       elementType: block.source.elementType,
       title: block.source.title,
       ledBy: block.source.ledBy,
-      ...(strictNativeMatch
-        ? { duplicateExactMatchesAreAmbiguous: true }
-        : {}),
+      ...(strictNativeMatch ? { sourceKind: "native" as const, isSong: block.isSong } : {}),
     };
     for (const candidate of block.candidates) {
       const repeatedOverlayKey = getRepeatedOverlayDedupeKey(block, candidate);
@@ -248,14 +253,23 @@ export const buildServicePlanningPreview = ({
         continue;
       }
 
+      if (strictNativeMatch) {
+        overlayPlan.push({
+          ...planItemBase,
+          personIndex: candidate.personIndex,
+          rawNameToken: candidate.rawNameToken,
+          action: "create",
+          patch: { ...candidate.patch },
+          resolutionNotice: candidate.resolutionNotice,
+        });
+        continue;
+      }
+
       const resolution = findOverlayForServicePlanningCandidate(
         block.source.elementType,
         candidate.patch.event,
         overlays,
         previewUsedOverlayIds,
-        {
-          duplicateExactMatchesAreAmbiguous: strictNativeMatch,
-        },
       );
       if (resolution.kind === "ambiguous") {
         allCandidatesResolvable = false;
@@ -268,9 +282,7 @@ export const buildServicePlanningPreview = ({
           ...(candidate.resolutionNotice
             ? { resolutionNotice: candidate.resolutionNotice }
             : {}),
-          reason: strictNativeMatch
-            ? `More than one overlay uses the event label "${candidate.patch.event || block.source.elementType}". Remove the duplicate or give the item a unique event label before syncing.`
-            : `More than one overlay could match "${candidate.patch.event || block.source.elementType}". Adjust the event mapping before syncing this item.`,
+          reason: `More than one overlay could match "${candidate.patch.event || block.source.elementType}". Adjust the event mapping before syncing this item.`,
         });
         continue;
       }
@@ -545,7 +557,8 @@ export const buildServicePlanningPreview = ({
 
   return {
     overlayCandidates,
-    overlayPlan,
+    overlayPlan: planNativeOverlaySync(overlayPlan, overlays, overlayLibrary),
+    ...(nativeOverlayCandidates ? { overlayLibrary } : {}),
     outlineCandidates: dedupedOutlineCandidates,
     lineItems: lineItems.map((item) => {
       if (!item.selectedForOutline || !item.headingName) {

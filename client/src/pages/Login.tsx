@@ -689,7 +689,7 @@ const Login = () => {
 
   const shellReturnPath = peekPublicShellAuthReturnPath();
   const shellReturnPathname = shellReturnPath
-    ? shellReturnPath.split("?")[0]
+    ? shellReturnPath.split(/[?#]/, 1)[0]
     : null;
   const guestDestination =
     getAuthRedirectPathnameFromState(location.state) ??

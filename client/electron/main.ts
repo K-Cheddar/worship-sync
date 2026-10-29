@@ -77,13 +77,16 @@ import {
 } from "./updaterHelpers";
 import {
   isTrustedControllerIpcSender,
+  isTrustedDesktopCaptureIpcSender,
   isTrustedWorshipSyncIpcSender,
 } from "./ipcSenderAuthorization";
 import {
+  CHAT_TASKBAR_OVERLAY_BADGES,
   bindChatTaskbarLifecycle,
   createChatTaskbarController,
   findChatTaskbarOverlayIconPath,
   registerChatTaskbarIpcHandlers,
+  type ChatTaskbarOverlayIcons,
 } from "./chatTaskbar";
 import { createLyricsImportService } from "../../lyricsImport.js";
 import {
@@ -184,29 +187,53 @@ const getIconPath = (): string | undefined => {
   return undefined;
 };
 
-const getChatTaskbarOverlayIcon = (): NativeImage | null => {
-  if (process.platform !== "win32") return null;
-  const iconPath = findChatTaskbarOverlayIconPath({
-    resourcesPath: process.resourcesPath,
-    appPath: app.getAppPath(),
-    mainDirectory: __dirname,
-    exists: existsSync,
-  });
-  if (!iconPath) {
-    console.warn("Chat taskbar overlay icon was not found in build resources.");
-    return null;
-  }
-  try {
-    const overlayIcon = nativeImage.createFromPath(iconPath);
-    if (overlayIcon.isEmpty()) {
-      console.warn(`Chat taskbar overlay icon could not be loaded: ${iconPath}`);
-      return null;
+const getChatTaskbarOverlayIcons = (): ChatTaskbarOverlayIcons => {
+  const overlayIcons: ChatTaskbarOverlayIcons = {
+    "1": null,
+    "2": null,
+    "3": null,
+    "4": null,
+    "5": null,
+    "6": null,
+    "7": null,
+    "8": null,
+    "9": null,
+    "9+": null,
+  };
+  if (process.platform !== "win32") return overlayIcons;
+
+  for (const badge of CHAT_TASKBAR_OVERLAY_BADGES) {
+    const iconPath = findChatTaskbarOverlayIconPath(
+      {
+        resourcesPath: process.resourcesPath,
+        appPath: app.getAppPath(),
+        mainDirectory: __dirname,
+        exists: existsSync,
+      },
+      badge,
+    );
+    if (!iconPath) {
+      console.warn(
+        `Chat taskbar overlay icon ${badge} was not found in build resources.`,
+      );
+      continue;
     }
-    return overlayIcon;
-  } catch {
-    console.warn(`Chat taskbar overlay icon could not be loaded: ${iconPath}`);
-    return null;
+
+    try {
+      const overlayIcon = nativeImage.createFromPath(iconPath);
+      if (overlayIcon.isEmpty()) {
+        console.warn(
+          `Chat taskbar overlay icon could not be loaded: ${iconPath}`,
+        );
+        continue;
+      }
+      overlayIcons[badge] = overlayIcon;
+    } catch {
+      console.warn(`Chat taskbar overlay icon could not be loaded: ${iconPath}`);
+    }
   }
+
+  return overlayIcons;
 };
 
 /** Attach cut, copy, paste, select all context menu to a window's webContents. */
@@ -287,7 +314,7 @@ let mainWindow: BrowserWindow | null = null;
 const chatTaskbarController = createChatTaskbarController({
   platform: process.platform,
   getWindow: () => mainWindow,
-  overlayIcon: getChatTaskbarOverlayIcon(),
+  overlayIcons: getChatTaskbarOverlayIcons(),
 });
 let windowStateManager: WindowStateManager;
 let mediaCacheManager: MediaCacheManager;
@@ -653,7 +680,8 @@ const destroyLocalVideoCaptureHost = (): void => {
 
 /**
  * Own USB capture outside the controller window so reloads and route changes do
- * not tear down the physical device or freeze live output windows.
+ * not tear down the physical device or freeze live output windows. Local views
+ * wait for this host's publisher before attempting Chromium capture sharing.
  */
 const createLocalVideoCaptureHost = (): void => {
   if (
@@ -1577,31 +1605,40 @@ ipcMain.handle("get-displays", () => {
 const DESKTOP_CAPTURE_THUMBNAIL_SIZE = { width: 320, height: 180 };
 
 /**
- * Lists screens and windows the operator can send to an output. Thumbnails are
- * only rendered for the picker, so background re-resolution of a saved share
- * stays cheap during live use.
+ * Lists sources for the controller picker and for restoring saved shares in
+ * trusted outputs and the hidden capture host. Only the picker contexts may
+ * request thumbnails; restore requests need source ids and names only.
  */
-/**
- * Desktop capture listing is used by the controller picker and by the hidden
- * capture host when re-resolving a saved screen/window share after handoff.
- */
-const assertDesktopCaptureIpcSender = (sender: WebContents): void => {
+const assertDesktopCaptureIpcSender = (
+  sender: WebContents,
+  withThumbnails: boolean,
+): void => {
+  const displayWindows = listDisplayWindowKeys().map(
+    (windowKey) => getDisplayWindow(windowKey) as BrowserWindow | null,
+  );
   if (
-    isTrustedControllerIpcSender(sender, mainWindow) ||
-    isTrustedControllerIpcSender(sender, localVideoCaptureHost)
+    isTrustedDesktopCaptureIpcSender(
+      sender,
+      mainWindow,
+      localVideoCaptureHost,
+      displayWindows,
+      withThumbnails,
+    )
   ) {
     return;
   }
   throw new Error(
-    "This action is only available from the controller or capture host window.",
+    withThumbnails
+      ? "Capture thumbnails are only available to the controller or capture host window."
+      : "This action is only available from a trusted WorshipSync window.",
   );
 };
 
 ipcMain.handle(
   "get-desktop-capture-sources",
   async (event, options?: { withThumbnails?: boolean }) => {
-    assertDesktopCaptureIpcSender(event.sender);
     const withThumbnails = options?.withThumbnails === true;
+    assertDesktopCaptureIpcSender(event.sender, withThumbnails);
     const sources = await desktopCapturer.getSources({
       types: ["screen", "window"],
       fetchWindowIcons: false,

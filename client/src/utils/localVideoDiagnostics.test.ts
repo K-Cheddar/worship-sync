@@ -66,6 +66,21 @@ describe("localVideoDiagnostics", () => {
     expect(__getLocalVideoDiagnosticsForTests().size).toBe(0);
   });
 
+  it("counts distinct fallbacks across direct, realtime and buffered handoffs", () => {
+    localStorage.setItem("worshipsync_local_video_debug", "true");
+    startLocalVideoView("camera-1", "view", { path: "DIRECT" });
+    updateLocalVideoView("camera-1", "view", {
+      fallbackFrom: "DIRECT", fallbackAt: "first", fallbackReason: "NotReadableError",
+    });
+    startLocalVideoView("camera-1", "view", { path: "REALTIME_WEBCODECS" });
+    updateLocalVideoView("camera-1", "view", {
+      path: "BUFFERED_MSE", fallbackFrom: "REALTIME_WEBCODECS", fallbackAt: "second", fallbackReason: "REALTIME_UNHEALTHY",
+    });
+    expect(__getLocalVideoDiagnosticsForTests().get("camera-1")?.views.get("view")).toEqual(expect.objectContaining({
+      path: "BUFFERED_MSE", fallbackFrom: "REALTIME_WEBCODECS", fallbackCount: 2,
+    }));
+  });
+
   it("keeps actual negotiated settings and aggregates encoder drops", () => {
     localStorage.setItem("worshipsync_local_video_debug", "true");
     recordLocalVideoCapture("camera-1", {

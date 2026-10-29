@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import MemberAccessSheet from "./MemberAccessSheet";
 import type { InviteAccessDraft, Member } from "../accountTypes";
+import { DEFAULT_INVITE_ACCESS_DRAFT } from "../accountInviteAccess";
 import { useAccountPage } from "../AccountPageContext";
 import {
   updateChurchInviteAccess,
@@ -156,14 +157,17 @@ const renderMemberSheet = () => {
   return { ...view, context, setters, getDrafts: () => ({ access, teamsAccess, servicesAccess, teamScopeIds }) };
 };
 
-const renderInviteSheet = (kind: "invite-draft" | "invite") => {
-  let draft: InviteAccessDraft = {
+const renderInviteSheet = (
+  kind: "invite-draft" | "invite",
+  initialDraft: InviteAccessDraft = {
     role: "member",
     controllerAccess: "full",
     teamsAccess: "view",
     servicesAccess: "edit",
     teamScopeIds: ["worship"],
-  };
+  },
+) => {
+  let draft = initialDraft;
   const invite = {
     inviteId: "invite-1",
     email: "person@example.com",
@@ -213,6 +217,12 @@ const renderInviteSheet = (kind: "invite-draft" | "invite") => {
 };
 
 describe("MemberAccessSheet independent access axes", () => {
+  it("shows the default Services view permission for a new invite", () => {
+    renderInviteSheet("invite-draft", DEFAULT_INVITE_ACCESS_DRAFT);
+
+    expect(screen.getByRole("combobox", { name: "Service access" })).toHaveValue("view");
+  });
+
   it("keeps existing admins at immutable Full access despite stale drafts", () => {
     jest.clearAllMocks();
     const { rerender, context, setters } = renderMemberSheet();

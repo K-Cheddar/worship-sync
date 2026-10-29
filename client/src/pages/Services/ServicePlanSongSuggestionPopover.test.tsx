@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Provider } from "react-redux";
 import ServicePlanSongSuggestionPopover from "./ServicePlanSongSuggestionPopover";
-import type { DBItem, ServiceItem } from "../../types";
+import type { DBItem } from "../../types";
 
 const songDoc = (name: string): DBItem =>
   ({ _id: name, name, type: "song" }) as unknown as DBItem;
@@ -12,9 +12,6 @@ const createTestStore = (songs: string[]) =>
   configureStore({
     reducer: {
       allDocs: (state = { allSongDocs: songs.map(songDoc) }) => state,
-      allItems: (
-        state = { list: [] as ServiceItem[], isAllItemsLoading: false },
-      ) => state,
     },
     middleware: (getDefaultMiddleware) =>
       getDefaultMiddleware({ serializableCheck: false, immutableCheck: false }),

@@ -5,12 +5,17 @@ import { getFreeSectionDisplayName, getFreeSectionNumber } from "../../utils/fre
 import { cn } from "../../utils/cnHelper";
 import LocalVideoInputSlideBadge from "../../components/LocalVideoInputSlideBadge/LocalVideoInputSlideBadge";
 import StaticSlideThumbnail from "./StaticSlideThumbnail";
+import type { ThumbnailPreviewMode } from "../../context/thumbnailPreviewMode";
+import type { ResolvedDisplaySettings } from "../../utils/displaySettings";
 
 type ContinuousStaticItemSlideProps = {
   slide: ItemSlideType;
   index: number;
   itemType: string;
-  isStreamFormat: boolean;
+  previewMode: ThumbnailPreviewMode;
+  monitorSlide?: ItemSlideType;
+  nextSlide?: ItemSlideType;
+  monitorSettings?: ResolvedDisplaySettings;
   timerInfo?: TimerInfo;
   formattedSections?: FormattedSection[];
   isLive: boolean;
@@ -27,7 +32,10 @@ const ContinuousStaticItemSlide = ({
   slide,
   index,
   itemType,
-  isStreamFormat,
+  previewMode,
+  monitorSlide,
+  nextSlide,
+  monitorSettings,
   timerInfo,
   formattedSections = [],
   isLive,
@@ -104,7 +112,10 @@ const ContinuousStaticItemSlide = ({
       <StaticSlideThumbnail
         slide={slide}
         itemType={itemType}
-        isStreamFormat={isStreamFormat}
+        previewMode={previewMode}
+        monitorSlide={monitorSlide}
+        nextSlide={nextSlide}
+        monitorSettings={monitorSettings}
         timerInfo={timerInfo}
         scaleFactor={thumbnailScaleFactor}
         bibleInfo={bibleInfo}

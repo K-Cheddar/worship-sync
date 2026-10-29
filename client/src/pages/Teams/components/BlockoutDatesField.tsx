@@ -161,7 +161,7 @@ const BlockoutDatesField = ({
           {description}
         </p>
       ) : null}
-      <div className={cn("space-y-3", isVolunteer && "max-w-3xl")}>
+      <div className={isVolunteer ? "max-w-3xl space-y-2" : "space-y-3"}>
         {items.length === 0 && emptyLabel ? (
           <p className="text-sm text-gray-400">{emptyLabel}</p>
         ) : null}
@@ -169,9 +169,10 @@ const BlockoutDatesField = ({
           <div
             key={item.id}
             className={cn(
-              "space-y-3 rounded-lg",
+              "rounded-lg",
+              isVolunteer ? "space-y-2" : "space-y-3",
               isVolunteer
-                ? "border border-gray-700/80 bg-gray-950/30 p-2.5"
+                ? "border border-gray-700/80 bg-gray-950/30 p-2"
                 : "p-3",
               !isVolunteer && (isBoard ? "bg-stone-950/40" : "border border-stone-700 bg-stone-950/60"),
             )}

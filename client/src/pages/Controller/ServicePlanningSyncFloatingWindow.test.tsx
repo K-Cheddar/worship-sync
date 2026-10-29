@@ -14,6 +14,7 @@ import servicePlanningImportReducer, {
   startServicePlanningSync,
   completeServicePlanningSync,
   advanceServicePlanningSyncStep,
+  failServicePlanningSync,
 } from "../../store/servicePlanningImportSlice";
 import allDocsReducer from "../../store/allDocsSlice";
 import { setActiveItemInList } from "../../store/itemListSlice";
@@ -34,6 +35,9 @@ jest.mock("../../hooks/useServicePlanningImport", () => ({
   useServicePlanningImport: jest.fn(),
   overlayPlanHasExecutableChange: (plan: Array<{ action: string }>) =>
     Array.isArray(plan) && plan.some((item) => item.action !== "skip"),
+}));
+jest.mock("../Services/useServicePlanSongLibrary", () => ({
+  useServicePlanSongLibrary: () => ({ songs: [], isLoading: false }),
 }));
 const mockPushPlanToOutline = jest.fn();
 const mockLoadPreview = jest.fn();
@@ -99,6 +103,10 @@ const mockPlanSource = {
   plansError: null as string | null,
   isPlanSourced: false,
   isPlanPreviewStale: false,
+  isNativeOverlayMappingReady: true,
+  nativeOverlayMappingKey: "test-mapping",
+  nativeOverlayMappingFresh: true,
+  isNativeOverlayPreviewFresh: () => mockPlanSource.nativeOverlayMappingFresh,
   refresh: jest.fn(),
   refreshPlans: jest.fn(),
 };
@@ -134,11 +142,38 @@ const wrapImport = (preview: any) => ({
 });
 
 describe("ServicePlanningSyncFloatingWindow", () => {
+  it("never offers import controls or displays a historical URL preview without a selected saved plan", async () => {
+    mockPlanSource.selectedPlanKey = null;
+    mockPlanSource.isPlanSourced = false;
+    const store = configureStore({ reducer: {
+      servicePlanningImport: servicePlanningImportReducer, allDocs: allDocsReducer,
+    } });
+    store.dispatch(setServicePlanningServiceOutline(wrapImport({
+      overlayCandidates: [], overlayPlan: [], outlineCandidates: [], teamAssignments: [],
+      lineItems: [{
+        sectionName: "Other service", headingName: "Other service", sourceRowIndex: 0,
+        elementType: "Announcement", title: "Historical URL content", ledBy: "",
+        selectedForOutline: false, outlineItemType: "none", matchedLibraryItem: null,
+        parsedRef: null, overlayReady: false, outlineAlreadyPresent: false,
+      }],
+    })));
+    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+    renderWindow(store);
+    expect(screen.queryByRole("button", { name: "Import" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Planning URL")).not.toBeInTheDocument();
+    expect(screen.queryByText("Historical URL content")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Updated .*2026/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sync All" })).toBeDisabled();
+    expect(screen.getByText("Choose a saved plan to review it in the controller.")).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Refresh" }));
+    expect(mockPlanSource.refreshPlans).toHaveBeenCalled();
+    expect(mockLoadPreview).not.toHaveBeenCalled();
+  });
+
   beforeEach(() => {
     mockPushPlanToOutline.mockReset();
     mockLoadPreview.mockReset();
     mockedUseServicePlanningImport.mockReturnValue({
-      loadPreview: mockLoadPreview,
       loadPlanPreview: jest.fn(),
       runImport: jest.fn(),
       planOutlineSyncSteps: jest.fn(),
@@ -146,6 +181,9 @@ describe("ServicePlanningSyncFloatingWindow", () => {
       planOverlaySyncSteps: jest.fn(),
       executeOutlineSyncStep: jest.fn(),
       executeOverlaySyncStep: jest.fn(),
+      isNativeOverlayMappingReady: true,
+      nativeOverlayMappingKey: "test-mapping",
+      isNativeOverlayPreviewFresh: jest.fn(() => true),
       isServicePlanningEnabled: true,
       servicePlanningAvailabilityMessage: null,
     });
@@ -157,9 +195,11 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     mockPlanSource.savedPlans = [];
     mockPlanSource.selectedPlan = null;
     mockPlanSource.selectedPlanDetails = null;
-    mockPlanSource.selectedPlanKey = null;
-    mockPlanSource.isPlanSourced = false;
+    mockPlanSource.selectedPlanKey = "saved-plan";
+    mockPlanSource.isPlanSourced = true;
     mockPlanSource.isPlanPreviewStale = false;
+    mockPlanSource.isNativeOverlayMappingReady = true;
+    mockPlanSource.nativeOverlayMappingFresh = true;
     mockPlanSource.refresh.mockReset();
     mockPlanSource.isLoading = false;
     mockPlanSource.isRefreshing = false;
@@ -172,6 +212,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
   });
 
   it("stays hidden on initial hydration until the user explicitly opens it", () => {
+    mockPlanSource.selectedPlan = { planKey: "saved-plan", serviceId: "service", name: "May 2, 2026 - 10 AM", date: "2026-05-02" };
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
@@ -222,7 +263,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
 
     expect(
       screen.getByRole("button", {
-        name: "Select service plan: May 2, 2026 - 10 AM",
+        name: /^Select service plan: May 2, 2026 - 10 AM/,
       }),
     ).toBeInTheDocument();
   });
@@ -314,10 +355,15 @@ describe("ServicePlanningSyncFloatingWindow", () => {
       reducer: { servicePlanningImport: servicePlanningImportReducer, allDocs: allDocsReducer },
     });
     store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+    const consoleError = jest.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      renderWindow(store);
 
-    renderWindow(store);
-
-    expect(await screen.findByText("Welcome")).toBeInTheDocument();
+      expect(await screen.findByText("Welcome")).toBeInTheDocument();
+      expect(consoleError.mock.calls.flat().join(" ")).not.toMatch(/same key/i);
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it("keeps a same-plan view mounted and updates its content during refresh", async () => {
@@ -561,7 +607,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
       .not.toBeInTheDocument();
   });
 
-  it("shows an expanded native-plan summary that collapses as one card", async () => {
+  it("starts the native-plan summary collapsed and expands as one card", async () => {
     const item = { _id: "song-1", name: "What A Beautiful Name", type: "song", listId: "song-link" };
     const fallback = { sectionName: "Announcements", headingName: "Welcome & Notices", reason: "mapped-heading-missing", listId: item.listId, title: item.name };
     mockPushPlanToOutline.mockImplementation(async (_plan, _isCurrent, onItemAdded) => {
@@ -570,6 +616,8 @@ describe("ServicePlanningSyncFloatingWindow", () => {
         items: [item],
         insertedCount: 1,
         skippedTitles: ["Example Song"],
+        unresolvedAttachments: [{ listId: "missing", title: "Example Song", reason: 'Linked song "Example Song" was not found in the library (ID: missing).' }],
+        alreadyPresent: [{ listId: "existing", title: "Existing song" }],
         placementFallbacks: [fallback],
       };
     });
@@ -602,15 +650,22 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     renderWindow(store);
 
     await userEvent.setup().click(await screen.findByRole("button", { name: "Sync outline" }));
-    const summaryButton = await screen.findByRole("button", { name: /1 outline · 0 overlays · 1 skipped/i });
+    const summaryButton = await screen.findByRole("button", { name: /1 added · 1 already in outline · 0 updated · 0 created · 1 skipped/i });
     const summaryCard = screen.getByLabelText("Most recent sync");
     const summary = within(summaryCard);
+    expect(summaryButton).toHaveAttribute("aria-expanded", "false");
+    const warningIcon = within(summaryButton).getByRole("img", {
+      name: "Sync completed with skipped attachments",
+    });
+    expect(warningIcon).toHaveClass("shrink-0", "text-amber-300");
+    expect(summary.queryByText("What A Beautiful Name")).not.toBeInTheDocument();
+    await userEvent.setup().click(summaryButton);
     expect(summaryButton).toHaveAttribute("aria-expanded", "true");
     expect(summary.getByText("Outline added · 1")).toBeInTheDocument();
     expect(summary.getByText("What A Beautiful Name")).toBeInTheDocument();
     expect(summary.getByText("Skipped · 1")).toBeInTheDocument();
     expect(summary.getByText("Example Song")).toBeInTheDocument();
-    expect(summary.getByText(/Unresolved Service Plan attachment/)).toBeInTheDocument();
+    expect(summary.getByText(/Linked song "Example Song" was not found.*missing/)).toBeInTheDocument();
     expect(summary.getByText(/Added at end — mapped heading "Welcome & Notices" wasn't found\./)).toBeInTheDocument();
     expect(summary.getByRole("heading", { name: "Outline added · 1" })).toHaveClass("text-cyan-300");
     expect(summary.getByRole("heading", { name: "Skipped · 1" })).toHaveClass("text-amber-300");
@@ -619,7 +674,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     expect(summaryButton).toHaveAttribute("aria-expanded", "false");
     expect(summary.queryByText("What A Beautiful Name")).not.toBeInTheDocument();
     expect(summary.queryByText("Example Song")).not.toBeInTheDocument();
-    expect(summaryButton).toHaveTextContent("1 outline · 0 overlays · 1 skipped");
+    expect(summaryButton).toHaveTextContent("1 added · 1 already in outline · 0 updated · 0 created · 1 skipped");
     expect(summary.queryByText(/Outline added ·/)).not.toBeInTheDocument();
 
     await userEvent.setup().click(summaryButton);
@@ -654,6 +709,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: "Sync outline" }));
     const summary = within(await screen.findByLabelText("Most recent sync"));
     expect(await summary.findByText("Sync incomplete")).toBeInTheDocument();
+    await userEvent.setup().click(summary.getByRole("button"));
     expect(summary.getByText("Could not load Bible passage")).toBeInTheDocument();
     expect(summary.queryAllByText("Outline added · 1")).toHaveLength(Number(committed));
     expect(summary.queryAllByText(/Added at end — heading "Call to Prayer" was removed before insertion\./)).toHaveLength(Number(committed));
@@ -680,8 +736,13 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     store.dispatch(completeServicePlanningSync());
 
     renderWindow(store);
-    const summaryButton = await screen.findByRole("button", { name: /0 outline · 2 overlays · 1 skipped/i });
-    expect(summaryButton).toHaveAttribute("aria-expanded", "true");
+    const summaryButton = await screen.findByRole("button", { name: /0 added · 1 updated · 1 created · 1 skipped/i });
+    expect(summaryButton).toHaveAttribute("aria-expanded", "false");
+    expect(within(summaryButton).getByText("0 added")).toHaveClass("text-cyan-300");
+    expect(within(summaryButton).getByText("1 updated")).toHaveClass("text-green-300");
+    expect(within(summaryButton).getByText("1 created")).toHaveClass("text-sky-300");
+    expect(within(summaryButton).getByText("1 skipped")).toHaveClass("text-amber-300");
+    await userEvent.setup().click(summaryButton);
     expect(screen.getByText("Overlays updated · 1")).toBeInTheDocument();
     expect(screen.getByText("Overlays created · 1")).toBeInTheDocument();
     expect(screen.queryByText("Outline added · 0")).not.toBeInTheDocument();
@@ -702,9 +763,43 @@ describe("ServicePlanningSyncFloatingWindow", () => {
       store.dispatch(completeServicePlanningSync());
     });
 
-    expect(await screen.findByRole("button", { name: /0 outline · 1 overlays · 0 skipped/i })).toHaveAttribute("aria-expanded", "true");
+    const nextSummaryButton = await screen.findByRole("button", { name: /0 added · 1 updated · 0 created · 0 skipped/i });
+    expect(nextSummaryButton).toHaveAttribute("aria-expanded", "false");
+    expect(within(nextSummaryButton).queryByRole("img")).not.toBeInTheDocument();
+    await userEvent.setup().click(nextSummaryButton);
     expect(screen.getByText("New Person — Host")).toBeInTheDocument();
     expect(screen.queryByText("Clarence Jones — Sabbath School Host")).not.toBeInTheDocument();
+  });
+
+  it("shows the error indicator when skipped attachments and errors are both present", async () => {
+    const store = configureStore({
+      reducer: { servicePlanningImport: servicePlanningImportReducer, allDocs: allDocsReducer },
+    });
+    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+    store.dispatch(startServicePlanningSync({ mode: "overlays" }));
+    store.dispatch(recordServicePlanningSyncResult({
+      overlaysSkipped: 1,
+      reasons: ["The matching overlay was unavailable."],
+    }));
+    store.dispatch(failServicePlanningSync("Overlay persistence failed."));
+
+    renderWindow(store);
+
+    const summaryButton = await screen.findByRole("button", {
+      name: /1 skipped · 1 errors/i,
+    });
+    expect(summaryButton).toHaveAttribute("aria-expanded", "false");
+    expect(within(summaryButton).getByRole("img", {
+      name: "Sync completed with errors",
+    })).toHaveClass("shrink-0", "text-red-400");
+    expect(within(summaryButton).queryByRole("img", {
+      name: "Sync completed with skipped attachments",
+    })).not.toBeInTheDocument();
+
+    await userEvent.setup().click(summaryButton);
+    const summary = within(screen.getByLabelText("Most recent sync"));
+    expect(summary.getByText("The matching overlay was unavailable.")).toBeInTheDocument();
+    expect(summary.getByText("Overlay persistence failed.")).toBeInTheDocument();
   });
 
   it("combines native outline additions and automatically eligible overlays after Sync All", async () => {
@@ -712,7 +807,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const fallback = { sectionName: "Worship", headingName: "Praise and Worship", reason: "mapped-heading-missing", listId: song.listId, title: song.name };
     mockPushPlanToOutline.mockImplementation(async (_plan, _isCurrent, onItemAdded) => {
       await onItemAdded?.(song, fallback);
-      return { items: [song], insertedCount: 1, skippedTitles: [], placementFallbacks: [fallback] };
+      return { items: [song], insertedCount: 1, skippedTitles: [], unresolvedAttachments: [], alreadyPresent: [], placementFallbacks: [fallback] };
     });
     mockPlanSource.isPlanSourced = true;
     mockPlanSource.selectedPlanKey = "service-1@2026-07-30";
@@ -779,8 +874,9 @@ describe("ServicePlanningSyncFloatingWindow", () => {
       store.dispatch(completeServicePlanningSync());
     });
 
-    const summaryButton = await screen.findByRole("button", { name: /1 outline · 1 overlays · 0 skipped/i });
-    expect(summaryButton).toHaveAttribute("aria-expanded", "true");
+    const summaryButton = await screen.findByRole("button", { name: /1 added · 0 already in outline · 1 updated · 0 created · 0 skipped/i });
+    expect(summaryButton).toHaveAttribute("aria-expanded", "false");
+    await userEvent.setup().click(summaryButton);
     const summary = within(screen.getByLabelText("Most recent sync"));
     expect(summary.getByText("What A Beautiful Name")).toBeInTheDocument();
     expect(summary.getByText(/Added at end — mapped heading "Praise and Worship" wasn't found\./)).toBeInTheDocument();
@@ -794,6 +890,8 @@ describe("ServicePlanningSyncFloatingWindow", () => {
       items: typeof song[];
       insertedCount: number;
       skippedTitles: string[];
+      unresolvedAttachments: [];
+      alreadyPresent: [];
       placementIssues: [];
     }) => void;
     mockPushPlanToOutline.mockImplementation(
@@ -858,6 +956,8 @@ describe("ServicePlanningSyncFloatingWindow", () => {
         items: [song],
         insertedCount: 1,
         skippedTitles: [],
+        unresolvedAttachments: [],
+        alreadyPresent: [],
         placementIssues: [],
       });
       await Promise.resolve();
@@ -1303,6 +1403,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
   });
 
   it("shows every planning row in one list with selection badges", () => {
+    mockPlanSource.selectedPlan = { planKey: "saved-plan", serviceId: "service", name: "May 2, 2026 - 10 AM", date: "2026-05-02" };
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
@@ -1362,10 +1463,10 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     expect(screen.getByRole("tab", { name: "Plan" })).toBeInTheDocument();
     expect(
       screen.getByRole("button", {
-        name: "Select service plan: May 2, 2026 - 10 AM",
+        name: /^Select service plan: May 2, 2026 - 10 AM/,
       }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/Imported .*2026/i)).toBeInTheDocument();
+    expect(screen.getByText(/Updated .*2026/i)).toBeInTheDocument();
     expect(screen.getByText("Church Updates")).toBeInTheDocument();
     expect(screen.queryByText("free")).not.toBeInTheDocument();
     expect(screen.getByText("Assigned:")).toBeInTheDocument();
@@ -1687,7 +1788,14 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     expect(screen.queryByText("Outline pending")).not.toBeInTheDocument();
   });
 
-  it("normalizes Sync All to outline when overlays have no executable changes", () => {
+  it("uses native Sync Outline for Sync All when overlays have no executable changes", async () => {
+    mockPlanSource.selectedPlanDetails = {
+      planKey: "saved-plan", name: "Saved service", date: "2026-10-27", sections: [{ id: "worship", name: "Worship", elements: [{
+        id: "song", type: "song", title: { blocks: [] },
+        songRef: { kind: "library", songId: "song-1", songName: "Welcome Song" },
+      }] }],
+    };
+    mockPushPlanToOutline.mockResolvedValue({ items: [], insertedCount: 0, skippedTitles: [], unresolvedAttachments: [], alreadyPresent: [], placementFallbacks: [] });
     const store = configureStore({
       reducer: {
         servicePlanningImport: servicePlanningImportReducer,
@@ -1755,8 +1863,8 @@ describe("ServicePlanningSyncFloatingWindow", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Sync All" }));
 
-    expect(store.getState().servicePlanningImport.sync.status).toBe("running");
-    expect(store.getState().servicePlanningImport.sync.mode).toBe("outline");
+    await waitFor(() => expect(mockPushPlanToOutline).toHaveBeenCalled());
+    expect(store.getState().servicePlanningImport.sync.status).toBe("idle");
   });
 
   it("hides overlay sync actions when the controller is outline-only", () => {
@@ -2045,6 +2153,13 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     mockPlanSource.selectedPlanKey = "service-1@2026-05-02";
     mockPlanSource.isPlanPreviewStale = false;
 
+    mockPlanSource.selectedPlanDetails = {
+      planKey: mockPlanSource.selectedPlanKey, name: "Saved service", date: "2026-05-02",
+      sections: [{ id: "worship", name: "Worship", elements: [{
+        id: "song", type: "song", title: { blocks: [] },
+        songRef: { kind: "library", songId: "song-1", songName: "Song" },
+      }] }],
+    };
     const view = renderWindow(store);
     expect(screen.getByRole("button", { name: "Sync overlays" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Sync outline" })).toBeEnabled();
@@ -2065,6 +2180,52 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     expect(
       screen.getByText(/refresh before syncing/i),
     ).toBeInTheDocument();
+  });
+
+  it("keeps outline sync available while native overlay mappings are unverified", () => {
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
+        undoable: () => ({
+          present: {
+            itemLists: { selectedList: { _id: "outline-1", name: "Sunday" } },
+            itemList: { isLoading: false, list: [] },
+          },
+        }),
+      },
+    });
+    mockPlanSource.selectedPlanKey = "service-1@2026-05-02";
+    mockPlanSource.selectedPlanDetails = {
+      planKey: mockPlanSource.selectedPlanKey,
+      name: "Saved service",
+      date: "2026-05-02",
+      sections: [{ id: "worship", name: "Worship", elements: [{
+        id: "song",
+        type: "song",
+        title: { blocks: [] },
+        songRef: { kind: "library", songId: "song-1", songName: "Song" },
+      }] }],
+    };
+    mockPlanSource.isNativeOverlayMappingReady = false;
+    mockPlanSource.nativeOverlayMappingFresh = false;
+    store.dispatch(setServicePlanningServiceOutline(wrapImport({
+      nativeOverlayMappingKey: "unverified",
+      nativeOverlaySummary: { selectedItemCount: 1 },
+      overlayCandidates: [],
+      overlayPlan: [{ action: "create", elementType: "Sermon" }],
+      outlineCandidates: [],
+      lineItems: [],
+      teamAssignments: [],
+    }) as any));
+    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+
+    renderWindow(store);
+
+    expect(screen.getByRole("button", { name: "Sync overlays" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Sync outline" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Sync All" })).toBeEnabled();
+    expect(screen.getByText(/settings are loading/i)).toBeInTheDocument();
   });
 
   it("keeps saved-plan sync disabled and retries the selected plan when no preview could be built", async () => {

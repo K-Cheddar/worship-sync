@@ -119,7 +119,7 @@ describe("insertServicePlanningOutlineCandidates", () => {
           listId: "list-heading-1",
         },
       ],
-      allItems: [],
+      libraryItems: [],
       db: undefined,
       bibleDb: undefined,
       defaultBibleBackground: "#000",
@@ -130,7 +130,7 @@ describe("insertServicePlanningOutlineCandidates", () => {
     expect(mockedCreateBibleItemFromParsedReference).toHaveBeenCalled();
     expect(result.inserted).toBe(1);
     expect(result.listChanged).toBe(true);
-    expect(result.createdAllItems).toEqual([
+    expect(result.createdItems).toEqual([
       expect.objectContaining({
         _id: "bible-john-3",
         name: "John 3:16-17 NIV",
@@ -151,7 +151,7 @@ describe("insertServicePlanningOutlineCandidates", () => {
     const result = await insertServicePlanningOutlineCandidates({
       outlineCandidates: [],
       currentList: [],
-      allItems: [],
+      libraryItems: [],
       db: undefined,
       bibleDb: undefined,
       defaultBibleBackground: "#000",
@@ -265,7 +265,7 @@ describe("insertServicePlanningOutlineCandidates", () => {
         type: "heading",
         listId: "heading-list-1",
       }],
-      allItems: [],
+      libraryItems: [],
       db: undefined,
       bibleDb: undefined,
       defaultBibleBackground: "#000",
@@ -324,7 +324,7 @@ describe("insertServicePlanningOutlineCandidates", () => {
     const first = await insertServicePlanningOutlineCandidates({
       outlineCandidates: candidates,
       currentList: initialList,
-      allItems: [],
+      libraryItems: [],
       db: undefined,
       bibleDb: undefined,
       defaultBibleBackground: "#000",
@@ -343,7 +343,7 @@ describe("insertServicePlanningOutlineCandidates", () => {
     const second = await insertServicePlanningOutlineCandidates({
       outlineCandidates: candidates,
       currentList: first.newList,
-      allItems: first.createdAllItems,
+      libraryItems: first.createdItems,
       db: undefined,
       bibleDb: undefined,
       defaultBibleBackground: "#000",
@@ -427,7 +427,7 @@ describe("insertServicePlanningOutlineCandidates", () => {
           listId: "list-heading-praise",
         },
       ],
-      allItems: [],
+      libraryItems: [],
       db: undefined,
       bibleDb: undefined,
       defaultBibleBackground: "#000",
@@ -441,7 +441,7 @@ describe("insertServicePlanningOutlineCandidates", () => {
     const second = await executeServicePlanningOutlineSyncStep({
       step,
       currentList: first.newList,
-      allItems: [],
+      libraryItems: [],
       db: undefined,
       bibleDb: undefined,
       defaultBibleBackground: "#000",
@@ -489,7 +489,7 @@ describe("insertServicePlanningOutlineCandidates", () => {
           listId: "list-song-welcome",
         },
       ],
-      allItems: [],
+      libraryItems: [],
       db: undefined,
       bibleDb: undefined,
       defaultBibleBackground: "#000",
@@ -545,7 +545,7 @@ describe("insertServicePlanningOutlineCandidates", () => {
           listId: "list-bible-john-3",
         },
       ],
-      allItems: [],
+      libraryItems: [],
       db: undefined,
       bibleDb: undefined,
       defaultBibleBackground: "#000",

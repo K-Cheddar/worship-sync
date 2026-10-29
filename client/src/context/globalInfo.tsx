@@ -40,6 +40,12 @@ import generateRandomId from "../utils/generateRandomId";
 import { syncTimers } from "../store/timersSlice";
 import { syncServicesFromRemote } from "../store/serviceTimesSlice";
 import {
+  beginActiveControllerPresence,
+  getControllerPresenceScope,
+  isFreshActiveControllerRecord,
+  notifyActiveControllerPresenceChanged,
+} from "../utils/activeControllerPresence";
+import {
   AuthBootstrap,
   AuthApiError,
   createChurchAccount,
@@ -136,7 +142,11 @@ import {
   reloadElectronDisplayWindows,
 } from "../utils/environment";
 import { getTrustedDeviceLabel } from "../utils/deviceInfo";
-import { getHumanPostAuthPath } from "../utils/authRedirectPath";
+import {
+  getHumanPostAuthPath,
+  isPostAuthDestination,
+  sanitizeAuthRedirectTo,
+} from "../utils/authRedirectPath";
 import { resolveAccountDisplayNameForAudit } from "../utils/displayName";
 import { setAuditSnapshot } from "../utils/pouchAudit";
 import {
@@ -1149,9 +1159,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       }
       reloadElectronDisplayWindows();
       setAuthServerStatus("online");
+      const sanitizedPostAuthPath = sanitizeAuthRedirectTo(postAuthPath);
       const safePostAuthPath =
-        postAuthPath && postAuthPath.split("?", 1)[0] !== "/login"
-          ? postAuthPath
+        sanitizedPostAuthPath && isPostAuthDestination(sanitizedPostAuthPath)
+          ? sanitizedPostAuthPath
           : getHumanPostAuthPath(location);
       navigate(safePostAuthPath, { replace: true });
     },
@@ -1917,6 +1928,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   // instanceRef points at the current church before .info/connected fires).
   useEffect(() => {
     if (!firebaseDb || !isSharedDataScopeReady) return;
+    const controllerPresence = beginActiveControllerPresence(
+      getControllerPresenceScope(churchId, database),
+    );
 
     // Listen for changes in active instances. Uses permission_denied recovery
     // (same as TimerManager's activeInstances listener) so it can't lose the
@@ -1931,6 +1945,51 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           string,
           Partial<Instance>
         > | null;
+        if (data) {
+          const now = Date.now();
+          let inventoryUncertain = false;
+          const activeControllerHostIds = Object.entries(data).flatMap(
+            ([instanceId, instance]) => {
+              if (!instance || typeof instance !== "object") {
+                inventoryUncertain = true;
+                return [];
+              }
+              const mightBeController =
+                instance.isOnController === true ||
+                instance.presenceSurface === "controller";
+              if (!mightBeController) return [];
+              if (typeof instance.database !== "string") {
+                inventoryUncertain = true;
+                return [];
+              }
+              if (instance.database.toLowerCase() !== database.toLowerCase()) {
+                return [];
+              }
+              const lastActive = Date.parse(instance.lastActive || "");
+              if (!Number.isFinite(lastActive)) {
+                inventoryUncertain = true;
+                return [];
+              }
+              if (lastActive - now > 5 * 60 * 1000) {
+                inventoryUncertain = true;
+                return [];
+              }
+              if (!isFreshActiveControllerRecord(instance.lastActive || "", now)) {
+                return [];
+              }
+              if (!instanceId) {
+                inventoryUncertain = true;
+                return [];
+              }
+              return [instanceId];
+            },
+          );
+          controllerPresence.publish(
+            inventoryUncertain ? null : activeControllerHostIds,
+          );
+        } else {
+          controllerPresence.publish([]);
+        }
         if (data) {
           // Clean up stale instances (older than 1 hour)
           const now = Date.now();
@@ -1966,7 +2025,11 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           setActiveInstances([]);
         }
       },
-      { label: "active instances" }
+      {
+        label: "active instances",
+        onError: () => controllerPresence.publish(null),
+        onPermissionDenied: () => controllerPresence.publish(null),
+      }
     );
 
     // Set this instance as active only if on controller page
@@ -2009,6 +2072,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     // Cleanup function
     return () => {
       unsubscribe();
+      controllerPresence.release();
       clearInterval(updateInterval);
       const staleInstanceRef = instanceRef.current;
       instanceRef.current = null;
@@ -2373,7 +2437,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     const connectedRef = ref(firebaseDb, ".info/connected");
     const unsubscribe = onValue(connectedRef, (snap) => {
       const isConnected = snap.val() === true;
+      const connectionChanged = globalFireDbInfo.isConnected !== isConnected;
       globalFireDbInfo.isConnected = isConnected;
+      if (connectionChanged) notifyActiveControllerPresenceChanged();
       setRealtimeConnected(isConnected);
       if (!isConnected) {
         wasRealtimeConnectedRef.current = false;

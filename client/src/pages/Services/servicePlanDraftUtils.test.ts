@@ -39,6 +39,7 @@ describe("createEmptyServicePlanSections", () => {
     const sections = createEmptyServicePlanSections();
     expect(sections).toHaveLength(1);
     expect(sections[0].elements).toEqual([]);
+    expect(sections[0].phase).toBe("main");
   });
 });
 
@@ -379,10 +380,16 @@ describe("cloneSectionsForTemplate", () => {
   it("strips dated import provenance while preserving reusable structure and equipment", () => {
     const imported = section("source-section", {
       sourcePlanningManaged: true,
+      phase: "pre",
       elements: [{
         id: "source-row",
         sourceOccurrenceId: "external-row-1",
         sourcePlanningManaged: true,
+        planningCenterPdfMatchKey: "old-pdf-evidence",
+        planningCenterPdfMatchReviewRequired: true,
+        planningCenterPdfSourcePosition: 2,
+        importMatchCurrentId: "transient-match",
+        legacyImportMatchCandidateForId: "transient-review",
         type: "free",
         title: plainTextToRichText("Prayer"),
         notes: plainTextToRichText("Keep this reusable cue."),
@@ -414,6 +421,7 @@ describe("cloneSectionsForTemplate", () => {
     const [templateElement] = template.elements;
 
     expect(template.sourcePlanningManaged).toBeUndefined();
+    expect(template.phase).toBe("pre");
     expect(templateElement).toMatchObject({
       notes: plainTextToRichText("Keep this reusable cue."),
       durationSeconds: 90,
@@ -425,6 +433,11 @@ describe("cloneSectionsForTemplate", () => {
     expect(templateElement).toMatchObject({
       sourcePlanningManaged: undefined,
       sourceOccurrenceId: undefined,
+      planningCenterPdfMatchKey: undefined,
+      planningCenterPdfMatchReviewRequired: undefined,
+      planningCenterPdfSourcePosition: undefined,
+      importMatchCurrentId: undefined,
+      legacyImportMatchCandidateForId: undefined,
         contentOrder: undefined,
       servicePlanningImport: undefined,
       importAmbiguity: undefined,
@@ -563,6 +576,7 @@ describe("cloneSectionsFromTemplate", () => {
   const templateSections = (): ServicePlanSection[] => [
     {
       id: "section-1",
+      phase: "post",
       name: "Panel",
       elements: [
         {
@@ -581,6 +595,7 @@ describe("cloneSectionsFromTemplate", () => {
   it("keeps a standing group label on the way out to a plan", () => {
     const [section] = cloneSectionsFromTemplate(templateSections());
     const [element] = section.elements;
+    expect(section.phase).toBe("post");
 
     // The save-direction clone strips every name; running it here too would
     // erase "Audience" and leave the mic looking unassigned every week.

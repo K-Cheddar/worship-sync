@@ -132,6 +132,19 @@ export const overlaysSlice = createSlice({
         id: overlay.id || generateRandomId(),
       }));
     },
+    /** Apply remote content for existing IDs without replacing list membership or order. */
+    updateOverlaysByIdFromRemote: (
+      state,
+      action: PayloadAction<OverlayInfo[]>,
+    ) => {
+      const remoteById = new Map(
+        action.payload.map((overlay) => [overlay.id, overlay]),
+      );
+      state.list = state.list.map((overlay) => {
+        const remote = remoteById.get(overlay.id);
+        return remote ? { ...overlay, ...remote, id: overlay.id } : overlay;
+      });
+    },
     deleteOverlayFromList: (state, action: PayloadAction<string>) => {
       state.list = state.list.filter(
         (overlay) => overlay.id !== action.payload
@@ -237,6 +250,7 @@ export const {
   initiateOverlayList,
   setIsInitialized,
   updateOverlayListFromRemote,
+  updateOverlaysByIdFromRemote,
   setHasPendingUpdate: setHasPendingListUpdate,
   updateInitialList,
   addToInitialList,

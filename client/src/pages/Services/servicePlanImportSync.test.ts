@@ -7,6 +7,8 @@ import {
   DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
   getNewServicePlanImportAmbiguityIds,
   mergeImportedAssignees,
+  preparePlanningCenterPdfImport,
+  resolveServicePlanImportNoteConflict,
   refreshServicePlanFromImport,
 } from "./servicePlanImportSync";
 import {
@@ -15,6 +17,7 @@ import {
   summarizeServicePlanImport,
 } from "./servicePlanImportSummary";
 import { buildServicePlanSectionsFromImport } from "./servicePlanFromImport";
+import { parsePlanningCenterPdfText } from "./planningCenterPdfParser";
 import { applyReviewedServicePlanParts, reconcileReviewedServicePlanParts, servicePlanNoteFingerprint, servicePlanResourceFingerprint } from "./servicePlanImportOwnership";
 import { createServicePlanLinkResource, createServicePlanTextResource } from "./servicePlanResources";
 import { getServicePlanSongReferenceFingerprint } from "./servicePlanSongAttachmentUtils";
@@ -57,6 +60,24 @@ describe("getNewServicePlanImportAmbiguityIds", () => {
     })])];
 
     expect(getNewServicePlanImportAmbiguityIds(current, next)).toEqual([]);
+  });
+
+  it("does not open interpretation review for confirmed informational metadata", () => {
+    const informational = {
+      source: "servicePlanning" as const,
+      sourceKey: "Worship:0",
+      sourceElementType: "Special Feature",
+      sourceTitle: "Welcome",
+      sourceLedBy: "",
+      parts: [],
+      reasons: ["Source details are informational only."],
+      status: "confirmed" as const,
+      sourceFingerprint: "informational-only",
+    };
+
+    expect(getNewServicePlanImportAmbiguityIds([], [section("s1", "Worship", [
+      element("e1", "Welcome", { importAmbiguity: informational }),
+    ])])).toEqual([]);
   });
 
   it("does not repeat an unchanged review after source rows move", () => {
@@ -955,6 +976,1387 @@ describe("stable external row identity", () => {
     expect(responseItems.map(({ id }) => id)).toEqual(["moving-sermon", "response-song"]);
     expect(responseItems[0]).toMatchObject({ id: "moving-sermon", sourceOccurrenceId: "pco-sermon" });
     expect(richTextToPlainText(responseItems[0].notes)).toBe("Operator notes");
+  });
+});
+
+describe("Planning Center PDF refresh matching", () => {
+  const pdfRefreshOptions = {
+    ...DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+    planningCenterPdfMatch: true,
+  };
+  const pdfReviewOptions = { ...pdfRefreshOptions, suggestLegacyMatches: true };
+
+  it("restores legacy PDF prefixes and applies one insertion without losing song or local equipment data", () => {
+    const songs = [
+      { _id: "how-great", name: "How Great Thou Art" },
+      { _id: "faithfulness", name: "Great Is Thy Faithfulness" },
+      { _id: "surrender", name: "I Surrender All" },
+    ];
+    const buildPdfSections = (text: string) => buildServicePlanSectionsFromImport(
+      parsePlanningCenterPdfText(text),
+      songs,
+      { preserveSourceTitle: true },
+    );
+    const baseline = buildPdfSections(`Sunday Worship
+Worship
+5:00 Opening Song: How Great Thou Art
+5:00 Song: Great Is Thy Faithfulness
+5:00 Appeal Song: I Surrender All
+5:00 Closing Prayer`);
+    const saved = [section("saved", "Worship", baseline[0].elements.map((item, index) => ({
+      ...item,
+      id: `saved-${index}`,
+      // Reproduce a plan saved before the PDF title mapping fix.
+      ...(index < 3 ? { title: plainTextToRichText(item.sourceContentTitleRaw || "") } : {}),
+      ...(index < 3 ? {
+        assignees: [{ id: `slot-${index}`, name: `Singer ${index}`, microphoneIds: [`mic-${index}`], iemIds: [`iem-${index}`] }],
+      } : {}),
+    })))];
+    const update = buildPdfSections(`Sunday Worship
+Worship
+5:00 Opening Song: How Great Thou Art
+5:00 Song: Great Is Thy Faithfulness
+5:00 Appeal Song: I Surrender All
+3:00 Ministry Spotlight
+5:00 Closing Prayer`);
+    const prepared = preparePlanningCenterPdfImport(saved, update);
+    const preview = refreshServicePlanFromImport(
+      prepared.currentSections,
+      prepared.importedSections,
+      pdfReviewOptions,
+    );
+    const summary = summarizeServicePlanImport(saved, preview, {}, { trackSameSectionMoves: true });
+
+    expect(summary.changes).toHaveLength(4);
+    expect(summary.changes.filter(({ kind }) => kind === "updated")).toHaveLength(3);
+    expect(summary.changes.filter(({ kind }) => kind === "added")).toHaveLength(1);
+    const applied = applySelectedServicePlanImportChanges(
+      saved,
+      preview,
+      summary,
+      new Set(summary.changes.map(servicePlanImportChangeKey)),
+    );
+    const elements = applied[0].elements;
+    expect(elements.slice(0, 3).map(({ id, title, songRef, assignees }) => ({
+      id,
+      title: richTextToPlainText(title),
+      songRef,
+      assignees,
+    }))).toEqual([
+      {
+        id: "saved-0",
+        title: "Opening Song: How Great Thou Art",
+        songRef: { kind: "library", songId: "how-great", songName: "How Great Thou Art" },
+        assignees: [{ id: "slot-0", name: "Singer 0", microphoneIds: ["mic-0"], iemIds: ["iem-0"] }],
+      },
+      {
+        id: "saved-1",
+        title: "Song: Great Is Thy Faithfulness",
+        songRef: { kind: "library", songId: "faithfulness", songName: "Great Is Thy Faithfulness" },
+        assignees: [{ id: "slot-1", name: "Singer 1", microphoneIds: ["mic-1"], iemIds: ["iem-1"] }],
+      },
+      {
+        id: "saved-2",
+        title: "Appeal Song: I Surrender All",
+        songRef: { kind: "library", songId: "surrender", songName: "I Surrender All" },
+        assignees: [{ id: "slot-2", name: "Singer 2", microphoneIds: ["mic-2"], iemIds: ["iem-2"] }],
+      },
+    ]);
+    expect(elements.map(({ title }) => richTextToPlainText(title))).toEqual([
+      "Opening Song: How Great Thou Art",
+      "Song: Great Is Thy Faithfulness",
+      "Appeal Song: I Surrender All",
+      "Ministry Spotlight",
+      "Closing Prayer",
+    ]);
+    expect(elements[3].id).not.toBe("saved-3");
+
+    const correctedSaved = [section("saved", "Worship", saved[0].elements.map((item, index) => ({
+      ...item,
+      title: baseline[0].elements[index].title,
+    })))];
+    const correctedPreparation = preparePlanningCenterPdfImport(correctedSaved, update);
+    const correctedPreview = refreshServicePlanFromImport(
+      correctedPreparation.currentSections,
+      correctedPreparation.importedSections,
+      pdfReviewOptions,
+    );
+    const correctedSummary = summarizeServicePlanImport(
+      correctedSaved,
+      correctedPreview,
+      {},
+      { trackSameSectionMoves: true },
+    );
+    expect(correctedSummary.changes.map(({ kind }) => kind)).toEqual(["added"]);
+  });
+
+  it("keeps a declined legacy singleton reviewable even when its old server lost all PDF keys", () => {
+    const current = [section("saved", "Worship", [element("local", "Prayer", {
+      sourcePlanningManaged: true, planningCenterPdfMatchReviewRequired: true, durationSeconds: 180,
+      assignees: [{ id: "slot", microphoneIds: ["mic"] }],
+    })])];
+    const prepared = preparePlanningCenterPdfImport(current, [section("source", "Worship", [element("incoming", "Prayer", { durationSeconds: 180 })])]);
+    const next = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfReviewOptions);
+    const summary = summarizeServicePlanImport(current, next);
+    expect(summary.changes.map(servicePlanImportChangeKey)).toEqual(["legacy_match:local"]);
+    expect(applySelectedServicePlanImportChanges(current, next, summary, new Set())).toBe(current);
+  });
+
+  const withLocalPrayerData = (source: ServicePlanElement, index: number) => {
+    const note = plainTextToRichText(`Local note ${index}`);
+    const attachment = createServicePlanTextResource({
+      title: `Local attachment ${index}`,
+      text: plainTextToRichText(`Attachment text ${index}`),
+    });
+    return {
+      ...source,
+      id: `local-prayer-${index}`,
+      notes: note,
+      assignees: [{
+        id: `slot-${index}`,
+        memberId: `member-${index}`,
+        name: `Person ${index}`,
+        microphoneIds: [`mic-${index}`],
+        iemIds: [`iem-${index}`],
+      }],
+      positionId: `position-${index}`,
+      scheduledPositionIds: [`position-${index}`],
+      resources: [attachment],
+    };
+  };
+  const expectUniqueElementIds = (sections: ServicePlanSection[]) => {
+    const ids = sections.flatMap(({ elements }) => elements.map(({ id }) => id));
+    expect(ids).toHaveLength(new Set(ids).size);
+  };
+
+  it("does not let PDF review state block a reliable account-import identity", () => {
+    const current = [section("section", "Worship", [element("local-prayer", "Prayer", {
+      sourceOccurrenceId: "pco-prayer-1",
+      sourcePlanningManaged: true,
+      planningCenterPdfMatchReviewRequired: true,
+      notes: plainTextToRichText("Keep this note"),
+    })])];
+    const incoming = [section("incoming", "Worship", [element("pco-prayer-1", "Prayer", {
+      sourceOccurrenceId: "pco-prayer-1",
+      durationSeconds: 300,
+    })])];
+
+    const [refreshed] = refreshServicePlanFromImport(
+      current,
+      incoming,
+      DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+    );
+
+    expect(refreshed.elements).toHaveLength(1);
+    expect(refreshed.elements[0]).toMatchObject({
+      id: "local-prayer",
+      sourceOccurrenceId: "pco-prayer-1",
+      planningCenterPdfMatchReviewRequired: true,
+      durationSeconds: 300,
+      notes: plainTextToRichText("Keep this note"),
+    });
+  });
+
+  it("preserves an existing start time when the incoming item has duration only", () => {
+    const current = [section("section", "Worship", [element("welcome", "Welcome", {
+      sourcePlanningManaged: true,
+      startTime: "09:00",
+      durationSeconds: 300,
+    })])];
+    const incoming = [section("incoming", "Worship", [element("source-welcome", "Welcome", {
+      durationSeconds: 480,
+    })])];
+
+    const refreshed = refreshServicePlanFromImport(current, incoming, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+
+    expect(refreshed[0].elements[0]).toMatchObject({ startTime: "09:00", durationSeconds: 480 });
+  });
+
+  it("does not let an additional PDF Prayer inherit a source-managed Special Music row by position", () => {
+    const specialMusicNote = "Choir selection before the message";
+    const updatedPrayerNote = "Dedication prayer for incoming ministry volunteers";
+    const sourceState = (title: string, ledBy = "", note = "") => ({
+      observed: { elementType: title, title, ledBy, note },
+      applied: { elementType: title, title, ledBy, note },
+      pendingFields: [] as Array<"elementType" | "title" | "ledBy" | "note">,
+    });
+    const localAttachment = createServicePlanTextResource({
+      title: "Choir arrangement",
+      text: plainTextToRichText("Choir entrance after the welcome"),
+    });
+    const baseline = [section("baseline", "Worship", [
+      element("baseline-prayer", "Prayer", {
+        sourcePlanningManaged: true,
+        durationSeconds: 300,
+        servicePlanningImport: sourceState("Prayer", "Elder Naomi Brooks"),
+      }),
+      element("baseline-special-music", "Special Music", {
+        sourcePlanningManaged: true,
+        sourceElementTypeRaw: "Special Music",
+        sourceLedByRaw: "Youth Choir",
+        sourceNoteRaw: specialMusicNote,
+        notes: plainTextToRichText(specialMusicNote),
+        assignees: [{
+          id: "choir-slot",
+          name: "Youth Choir",
+          microphoneIds: ["handheld-1", "handheld-2", "handheld-3"],
+          iemIds: ["iem-choir"],
+        }],
+        positionId: "choir-position",
+        scheduledPositionIds: ["choir-position"],
+        resources: [localAttachment],
+        servicePlanningImport: sourceState("Special Music", "Youth Choir", specialMusicNote),
+      }),
+      element("baseline-sermon", "Sermon", { sourcePlanningManaged: true }),
+      element("baseline-offering", "Offering", { sourcePlanningManaged: true }),
+    ])];
+    const initial = preparePlanningCenterPdfImport([], baseline).importedSections;
+    const current = [section("saved", "Worship", initial[0].elements.map((item) => ({
+      ...item,
+      id: item.id === "baseline-prayer" ? "saved-prayer" : item.id,
+    })))];
+    const incoming = [section("updated", "Worship", [
+      element("updated-prayer-naomi", "Prayer", {
+        sourcePlanningManaged: true,
+        durationSeconds: 300,
+        sourceLedByRaw: "Elder Naomi Brooks",
+        servicePlanningImport: sourceState("Prayer", "Elder Naomi Brooks"),
+        assignees: [{ id: "naomi", name: "Elder Naomi Brooks" }],
+      }),
+      element("updated-prayer-peter", "Prayer", {
+        sourcePlanningManaged: true,
+        durationSeconds: 300,
+        sourceLedByRaw: "Elder Peter Grant",
+        sourceNoteRaw: updatedPrayerNote,
+        notes: plainTextToRichText(updatedPrayerNote),
+        servicePlanningImport: sourceState("Prayer", "Elder Peter Grant", updatedPrayerNote),
+        assignees: [{ id: "peter", name: "Elder Peter Grant" }],
+      }),
+      element("updated-sermon", "Sermon", { sourcePlanningManaged: true }),
+      element("updated-offering", "Offering", { sourcePlanningManaged: true }),
+    ])];
+
+    const prepared = preparePlanningCenterPdfImport(current, incoming);
+    const preview = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfReviewOptions);
+    const specialMusic = preview.flatMap(({ elements }) => elements).find(({ id }) => id === "baseline-special-music");
+    const newPrayer = preview.flatMap(({ elements }) => elements).find(({ id }) => id === "updated-prayer-peter");
+
+    expect(specialMusic).toMatchObject({
+      title: plainTextToRichText("Special Music"),
+      notes: plainTextToRichText(specialMusicNote),
+      assignees: [{
+        id: "choir-slot",
+        name: "Youth Choir",
+        microphoneIds: ["handheld-1", "handheld-2", "handheld-3"],
+        iemIds: ["iem-choir"],
+      }],
+      positionId: "choir-position",
+      scheduledPositionIds: ["choir-position"],
+      resources: [localAttachment],
+    });
+    expect(newPrayer).toMatchObject({
+      title: plainTextToRichText("Prayer"),
+      notes: plainTextToRichText(updatedPrayerNote),
+      assignees: [{ id: "peter", name: "Elder Peter Grant" }],
+    });
+
+    const summary = summarizeServicePlanImport(current, preview, {}, { trackSameSectionMoves: true });
+    expect(summary.changes.map(servicePlanImportChangeKey)).toContain("added:updated-prayer-peter");
+    const applied = applySelectedServicePlanImportChanges(
+      current,
+      preview,
+      summary,
+      new Set(["added:updated-prayer-peter"]),
+    );
+    expect(applied[0].elements.find(({ id }) => id === "baseline-special-music")).toEqual(specialMusic);
+    expect(applied[0].elements.find(({ id }) => id === "updated-prayer-peter")).toMatchObject({
+      title: plainTextToRichText("Prayer"),
+      notes: plainTextToRichText(updatedPrayerNote),
+      assignees: [{ id: "peter", name: "Elder Peter Grant" }],
+    });
+  });
+
+  it("still applies a PDF title change when the source row has a reliable identity", () => {
+    const note = plainTextToRichText("Keep this local note");
+    const current = [section("saved", "Worship", [element("local-special", "Special Music", {
+      sourcePlanningManaged: true,
+      sourceOccurrenceId: "pco-row-1",
+      sourceElementTypeRaw: "Special Music",
+      notes: note,
+      assignees: [{ id: "choir-slot", name: "Youth Choir", microphoneIds: ["mic-1", "mic-2", "mic-3"] }],
+      resources: [createServicePlanTextResource({ title: "Choir part", text: note })],
+    })])];
+    const incoming = [section("updated", "Worship", [element("source-row", "Prayer", {
+      sourcePlanningManaged: true,
+      sourceOccurrenceId: "pco-row-1",
+      sourceElementTypeRaw: "Prayer",
+    })])];
+    const prepared = preparePlanningCenterPdfImport(current, incoming);
+
+    const refreshed = refreshServicePlanFromImport(
+      prepared.currentSections,
+      prepared.importedSections,
+      pdfRefreshOptions,
+    );
+
+    expect(refreshed[0].elements).toHaveLength(1);
+    expect(refreshed[0].elements[0]).toMatchObject({
+      id: "local-special",
+      sourceOccurrenceId: "pco-row-1",
+      title: plainTextToRichText("Prayer"),
+      notes: note,
+      assignees: [{ id: "choir-slot", name: "Youth Choir", microphoneIds: ["mic-1", "mic-2", "mic-3"] }],
+    });
+    expect(refreshed[0].elements[0].resources?.[0].title).toBe("Choir part");
+  });
+
+  it("keeps a partially approved baseline through two PDF updates, reload, and reimport", () => {
+    const state = (title: string, ledBy = "", note = "") => ({
+      observed: { elementType: title, title, ledBy, note },
+      applied: { elementType: title, title, ledBy, note },
+      pendingFields: [] as Array<"elementType" | "title" | "ledBy" | "note">,
+    });
+    const oldChoirNote = "Choir selection before the message";
+    const localResource = createServicePlanTextResource({ title: "Choir chart", text: plainTextToRichText("Local arrangement") });
+    const baseline = preparePlanningCenterPdfImport([], [section("baseline", "Worship", [
+      element("baseline-prayer", "Prayer", {
+        sourcePlanningManaged: true,
+        durationSeconds: 300,
+        servicePlanningImport: state("Prayer", "Elder Naomi Brooks"),
+      }),
+      element("baseline-special", "Special Music", {
+        sourcePlanningManaged: true,
+        sourceNoteRaw: oldChoirNote,
+        notes: plainTextToRichText(oldChoirNote),
+        assignees: [{ id: "choir", name: "Youth Choir", microphoneIds: ["mic-1", "mic-2", "mic-3"], iemIds: ["iem-1"] }],
+        resources: [localResource],
+        servicePlanningImport: state("Special Music", "Youth Choir", oldChoirNote),
+      }),
+      element("baseline-sermon", "Sermon", { sourcePlanningManaged: true }),
+      element("baseline-offering", "Offering", { sourcePlanningManaged: true }),
+    ])]).importedSections;
+    const current = [section("saved", "Worship", baseline[0].elements.map((item) => ({
+      ...item,
+      id: item.id === "baseline-prayer" ? "saved-prayer" : item.id,
+    })))];
+    const runPdfRefresh = (sections: ServicePlanSection[], incoming: ServicePlanSection[]) => {
+      const prepared = preparePlanningCenterPdfImport(sections, incoming);
+      const preview = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfReviewOptions);
+      return {
+        preview,
+        summary: summarizeServicePlanImport(sections, preview, {}, { trackSameSectionMoves: true }),
+      };
+    };
+    const updatedOne = [section("update-1", "Worship", [
+      element("update-1-naomi", "Prayer", { sourcePlanningManaged: true, durationSeconds: 300, servicePlanningImport: state("Prayer", "Elder Naomi Brooks") }),
+      element("update-1-peter", "Prayer", {
+        sourcePlanningManaged: true,
+        durationSeconds: 300,
+        sourceNoteRaw: "Dedication prayer for incoming ministry volunteers",
+        notes: plainTextToRichText("Dedication prayer for incoming ministry volunteers"),
+        servicePlanningImport: state("Prayer", "Elder Peter Grant", "Dedication prayer for incoming ministry volunteers"),
+        assignees: [{ id: "peter", name: "Elder Peter Grant" }],
+      }),
+      element("update-1-sermon", "Sermon", { sourcePlanningManaged: true }),
+      element("update-1-offering", "Offering", { sourcePlanningManaged: true }),
+    ])];
+    const first = runPdfRefresh(current, updatedOne);
+    const firstAddition = first.summary.changes.find((change) => change.kind === "added" && change.id === "update-1-peter");
+    expect(firstAddition).toBeDefined();
+    const afterFirst = applySelectedServicePlanImportChanges(
+      current,
+      first.preview,
+      first.summary,
+      new Set(firstAddition ? [servicePlanImportChangeKey(firstAddition)] : []),
+    );
+    const specialAfterFirst = afterFirst[0].elements.find(({ id }) => id === "baseline-special");
+    expect(specialAfterFirst).toMatchObject({
+      title: plainTextToRichText("Special Music"),
+      notes: plainTextToRichText(oldChoirNote),
+      assignees: [{ id: "choir", name: "Youth Choir", microphoneIds: ["mic-1", "mic-2", "mic-3"], iemIds: ["iem-1"] }],
+      resources: [localResource],
+    });
+    expect(afterFirst[0].elements.find(({ id }) => id === "update-1-peter")).toMatchObject({
+      title: plainTextToRichText("Prayer"),
+      assignees: [{ id: "peter", name: "Elder Peter Grant" }],
+      notes: plainTextToRichText("Dedication prayer for incoming ministry volunteers"),
+    });
+
+    const reloadedAfterFirst = JSON.parse(JSON.stringify(afterFirst)) as ServicePlanSection[];
+    reloadedAfterFirst.forEach(({ elements }) => elements.forEach((item) => {
+      delete item.planningCenterPdfMatchKey;
+      delete item.planningCenterPdfSourcePosition;
+    }));
+    const updatedTwo = [section("update-2", "Worship", [
+      element("update-2-peter", "Prayer", { sourcePlanningManaged: true, durationSeconds: 300, servicePlanningImport: state("Prayer", "Elder Peter Grant", "Dedication prayer for incoming ministry volunteers"), notes: plainTextToRichText("Dedication prayer for incoming ministry volunteers"), sourceNoteRaw: "Dedication prayer for incoming ministry volunteers", assignees: [{ id: "peter", name: "Elder Peter Grant" }] }),
+      element("update-2-naomi", "Prayer", { sourcePlanningManaged: true, durationSeconds: 300, servicePlanningImport: state("Prayer", "Elder Naomi Brooks"), assignees: [{ id: "naomi", name: "Elder Naomi Brooks" }] }),
+      element("update-2-new", "Prayer", { sourcePlanningManaged: true, durationSeconds: 300, sourceNoteRaw: "Prayer for the new ministry team", notes: plainTextToRichText("Prayer for the new ministry team"), servicePlanningImport: state("Prayer", "Elder Sarah Grant", "Prayer for the new ministry team"), assignees: [{ id: "sarah", name: "Elder Sarah Grant" }] }),
+      element("update-2-sermon", "Sermon", { sourcePlanningManaged: true }),
+      element("update-2-offering", "Offering", { sourcePlanningManaged: true }),
+    ])];
+    const second = runPdfRefresh(reloadedAfterFirst, updatedTwo);
+    expect(second.preview[0].elements.find(({ id }) => id === "baseline-special")).toMatchObject({
+      title: plainTextToRichText("Special Music"),
+      notes: plainTextToRichText(oldChoirNote),
+      assignees: [{ id: "choir", name: "Youth Choir", microphoneIds: ["mic-1", "mic-2", "mic-3"], iemIds: ["iem-1"] }],
+      resources: [localResource],
+    });
+    const secondAdditions = second.summary.changes.filter((change) => change.kind === "added");
+    const afterSecond = applySelectedServicePlanImportChanges(
+      reloadedAfterFirst,
+      second.preview,
+      second.summary,
+      new Set(secondAdditions.map(servicePlanImportChangeKey)),
+    );
+    const prayerItems = afterSecond[0].elements.filter(({ title }) => richTextToPlainText(title) === "Prayer");
+    expectUniqueElementIds(afterSecond);
+    expect(prayerItems.some((item) => item.id === "baseline-special")).toBe(false);
+    expect(afterSecond[0].elements.find(({ id }) => id === "baseline-special")).toMatchObject({
+      title: plainTextToRichText("Special Music"),
+      notes: plainTextToRichText(oldChoirNote),
+      assignees: [{ id: "choir", name: "Youth Choir", microphoneIds: ["mic-1", "mic-2", "mic-3"], iemIds: ["iem-1"] }],
+      resources: [localResource],
+    });
+
+    const persistedAfterSecond = JSON.parse(JSON.stringify(afterSecond)) as ServicePlanSection[];
+    persistedAfterSecond.forEach(({ elements }) => elements.forEach((item) => {
+      delete item.planningCenterPdfMatchKey;
+      delete item.planningCenterPdfSourcePosition;
+    }));
+    const repeated = runPdfRefresh(persistedAfterSecond, updatedTwo);
+    expect(repeated.summary.changes.filter((change) => change.kind === "added")).toEqual([]);
+    expect(repeated.preview[0].elements.find(({ id }) => id === "baseline-special")).toMatchObject({
+      title: plainTextToRichText("Special Music"),
+      notes: plainTextToRichText(oldChoirNote),
+      assignees: [{ id: "choir", name: "Youth Choir", microphoneIds: ["mic-1", "mic-2", "mic-3"], iemIds: ["iem-1"] }],
+      resources: [localResource],
+    });
+    expectUniqueElementIds(repeated.preview);
+  });
+
+  it("uses duration fingerprints to preserve duplicate-title edits when rows reorder", () => {
+    const firstImport = [section("pdf", "Worship", [
+      element("short-source", "Prayer", { durationSeconds: 120, sourcePlanningManaged: true }),
+      element("long-source", "Prayer", { durationSeconds: 420, sourcePlanningManaged: true }),
+    ])];
+    const initial = preparePlanningCenterPdfImport([], firstImport).importedSections;
+    const note = plainTextToRichText("Keep this local note");
+    const resource = createServicePlanTextResource({ title: "Local attachment", text: note });
+    const current = [section("section", "Worship", initial[0].elements.map((item, index) => ({
+      ...item,
+      id: index === 0 ? "local-short" : "local-long",
+      notes: note,
+      assignees: [{ id: `slot-${index}`, name: "Avery", microphoneIds: ["mic-1"], iemIds: ["iem-1"] }],
+      resources: [resource],
+    })))];
+    const reordered = [section("pdf-next", "Worship", [
+      element("incoming-long", "Prayer", { durationSeconds: 420, sourcePlanningManaged: true }),
+      element("incoming-short", "Prayer", { durationSeconds: 120, sourcePlanningManaged: true }),
+    ])];
+    const prepared = preparePlanningCenterPdfImport(current, reordered);
+    const refreshed = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfRefreshOptions);
+    const summary = summarizeServicePlanImport(current, refreshed, {}, {
+      trackSameSectionMoves: true,
+    });
+    const applied = applySelectedServicePlanImportChanges(
+      current,
+      refreshed,
+      summary,
+      new Set(summary.changes.map(servicePlanImportChangeKey)),
+    );
+
+    expect(summary.changes.filter(({ kind }) => kind === "moved").map(({ id }) => id)).toEqual([
+      "local-long",
+    ]);
+    expect(applied[0].elements.map(({ id }) => id)).toEqual(["local-long", "local-short"]);
+    expect(applied[0].elements.map((item) => item.durationSeconds)).toEqual([420, 120]);
+    expect(applied[0].elements.map((item) => richTextToPlainText(item.notes))).toEqual([
+      "Keep this local note",
+      "Keep this local note",
+    ]);
+    expect(applied[0].elements.map((item) => item.assignees?.[0])).toEqual([
+      { id: "slot-1", name: "Avery", microphoneIds: ["mic-1"], iemIds: ["iem-1"] },
+      { id: "slot-0", name: "Avery", microphoneIds: ["mic-1"], iemIds: ["iem-1"] },
+    ]);
+    expect(applied[0].elements.every((item) => item.resources?.[0].id === resource.id)).toBe(true);
+  });
+
+  it("keeps duplicate PDF rows reviewable when one neighbor match competes for another row's synthetic identity", () => {
+    const initial = preparePlanningCenterPdfImport([], [section("pdf", "Worship", [
+      element("source-opening", "Opening", { sourcePlanningManaged: true }),
+      element("source-prayer-a", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+      element("source-response", "Response", { sourcePlanningManaged: true }),
+      element("source-prayer-b", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+      element("source-closing", "Closing", { sourcePlanningManaged: true }),
+    ])]).importedSections[0].elements;
+    const localPrayerA = withLocalPrayerData(initial[1], 1);
+    const localPrayerB = withLocalPrayerData(initial[3], 2);
+    const current = [section("section", "Worship", [
+      { ...initial[0], id: "local-opening" },
+      localPrayerA,
+      { ...initial[2], id: "local-response" },
+      localPrayerB,
+      { ...initial[4], id: "local-closing" },
+    ])];
+    const incoming = [section("pdf-next", "Worship", [
+      element("incoming-response", "Response", { sourcePlanningManaged: true }),
+      element("incoming-confident-prayer", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+      element("incoming-closing", "Closing", { sourcePlanningManaged: true }),
+      element("incoming-opening", "Opening", { sourcePlanningManaged: true }),
+      element("incoming-uncertain-prayer", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+    ])];
+
+    const prepared = preparePlanningCenterPdfImport(current, incoming);
+    const preparedPrayers = prepared.importedSections[0].elements.filter(({ title }) =>
+      richTextToPlainText(title) === "Prayer",
+    );
+    expect(preparedPrayers.map(({ planningCenterPdfMatchKey }) => planningCenterPdfMatchKey))
+      .toHaveLength(new Set(preparedPrayers.map(({ planningCenterPdfMatchKey }) => planningCenterPdfMatchKey)).size);
+
+    const preview = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfReviewOptions);
+    const summary = summarizeServicePlanImport(current, preview, {}, { trackSameSectionMoves: true });
+    const previewItems = preview.flatMap(({ elements }) => elements);
+    const prayerSuggestions = summary.changes.filter(({ kind }) => kind === "legacy_match");
+
+    expect(prayerSuggestions.map(({ id }) => id)).toEqual(["local-prayer-1"]);
+    expectUniqueElementIds(preview);
+    expect(previewItems.find(({ id }) => id === "local-prayer-2")).toMatchObject({
+      planningCenterPdfSourcePosition: 1,
+      notes: plainTextToRichText("Local note 2"),
+      assignees: [{ id: "slot-2", microphoneIds: ["mic-2"], iemIds: ["iem-2"] }],
+      resources: [{ id: localPrayerB.resources?.[0].id }],
+    });
+    expect(previewItems.some(({ legacyImportMatchCandidateForId, planningCenterPdfSourcePosition }) =>
+      legacyImportMatchCandidateForId === "local-prayer-1" && planningCenterPdfSourcePosition === 4,
+    )).toBe(true);
+    expect(applySelectedServicePlanImportChanges(current, preview, summary, new Set())).toEqual(current);
+
+    const accepted = applySelectedServicePlanImportChanges(
+      current,
+      preview,
+      summary,
+      new Set([servicePlanImportChangeKey(prayerSuggestions[0])]),
+    );
+    expect(accepted[0].elements.filter(({ id }) => id === "local-prayer-1")).toHaveLength(1);
+    expect(accepted[0].elements.find(({ id }) => id === "local-prayer-1")).toMatchObject({
+      notes: plainTextToRichText("Local note 1"),
+      assignees: [{ id: "slot-1", microphoneIds: ["mic-1"], iemIds: ["iem-1"] }],
+      resources: [{ id: localPrayerA.resources?.[0].id }],
+    });
+  });
+
+  it("keeps a declined keyless PDF match protected after an unrelated addition and server reload", () => {
+    const initial = [
+      element("opening", "Opening", { sourcePlanningManaged: true }),
+      element("prayer-a", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+      element("response", "Response", { sourcePlanningManaged: true }),
+      element("prayer-b", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+      element("closing", "Closing", { sourcePlanningManaged: true }),
+    ];
+    const declined = withLocalPrayerData(initial[1], 1);
+    const confident = withLocalPrayerData(initial[3], 2);
+    const current = [section("current", "Worship", [initial[0], declined, initial[2], confident, initial[4]])];
+    const addition = element("incoming-addition", "New item", { sourcePlanningManaged: true });
+    // Exercise the selected-apply boundary with an explicitly keyless PDF suggestion.
+    const preview = [section("current", "Worship", [
+      ...current[0].elements,
+      { ...declined, id: "incoming-review", legacyImportMatchCandidateForId: declined.id, planningCenterPdfSourcePosition: 4 },
+      addition,
+    ])];
+    const candidate = preview[0].elements.find(({ legacyImportMatchCandidateForId }) => legacyImportMatchCandidateForId === declined.id);
+    expect(candidate).toMatchObject({ planningCenterPdfSourcePosition: 4 });
+    expect(candidate?.planningCenterPdfMatchKey).toBeUndefined();
+    const summary = summarizeServicePlanImport(current, preview, {}, { trackSameSectionMoves: true });
+    expect(summary.changes.filter(({ kind }) => kind === "legacy_match").map(({ id }) => id)).toEqual([declined.id]);
+    const applied = applySelectedServicePlanImportChanges(current, preview, summary, new Set(["added:incoming-addition"]));
+    expect(applied[0].elements.find(({ id }) => id === declined.id)).toEqual({
+      ...declined, planningCenterPdfMatchReviewRequired: true,
+    });
+    expect(applied[0].elements.filter(({ id }) => id !== "incoming-addition" && id !== declined.id))
+      .toEqual(current[0].elements.filter(({ id }) => id !== declined.id));
+
+    // Server normalization retains the review flag, but drops PDF keys/positions.
+    const reloaded = JSON.parse(JSON.stringify(applied)) as ServicePlanSection[];
+    reloaded.forEach(({ elements }) => elements.forEach((item) => {
+      delete item.planningCenterPdfMatchKey;
+      delete item.planningCenterPdfSourcePosition;
+    }));
+    const subsequentIncoming = [section("next-import", "Worship", [
+      ...initial, addition,
+    ])];
+    const subsequent = preparePlanningCenterPdfImport(reloaded, subsequentIncoming);
+    const nextPreview = refreshServicePlanFromImport(subsequent.currentSections, subsequent.importedSections, pdfReviewOptions);
+    const nextSummary = summarizeServicePlanImport(reloaded, nextPreview, {}, { trackSameSectionMoves: true });
+    expect(nextSummary.changes.map(servicePlanImportChangeKey)).toEqual([`legacy_match:${declined.id}`]);
+    expect(nextPreview[0].elements.find(({ id }) => id === declined.id)).toEqual(subsequent.currentSections[0].elements.find(({ id }) => id === declined.id));
+    expectUniqueElementIds(nextPreview);
+    expect(applySelectedServicePlanImportChanges(reloaded, nextPreview, nextSummary, new Set())).toEqual(reloaded);
+    const approved = applySelectedServicePlanImportChanges(reloaded, nextPreview, nextSummary, new Set([`legacy_match:${declined.id}`]));
+    expect(approved[0].elements.find(({ id }) => id === declined.id)?.planningCenterPdfMatchReviewRequired).toBeUndefined();
+    expect(approved[0].elements.find(({ id }) => id === declined.id)).toMatchObject({
+      notes: declined.notes, assignees: declined.assignees, resources: declined.resources,
+    });
+  });
+
+  it.each([
+    [false, false], [true, false], [false, true], [true, true],
+  ])("reserves a review-only Prayer when a third identical occurrence has no identity (removeMissing=%s, serverReload=%s)", (removeMissing, serverReload) => {
+    const initial = preparePlanningCenterPdfImport([], [section("pdf", "Worship", [
+      element("opening", "Opening", { sourcePlanningManaged: true }),
+      element("prayer-a", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+      element("response", "Response", { sourcePlanningManaged: true }),
+      element("prayer-b", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+      element("closing", "Closing", { sourcePlanningManaged: true }),
+    ])]).importedSections[0].elements;
+    const reserved = withLocalPrayerData(initial[1], 1);
+    const confident = withLocalPrayerData(initial[3], 2);
+    const current = [section("section", "Worship", [initial[0], reserved, initial[2], confident, initial[4]])];
+    const incoming = [section("pdf-next", "Worship", [
+      element("incoming-opening", "Opening", { sourcePlanningManaged: true }),
+      element("incoming-review", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+      element("incoming-extra", "Prayer", {
+        durationSeconds: 300, sourcePlanningManaged: true,
+        sourceNoteRaw: "New occurrence note", notes: plainTextToRichText("New occurrence note"),
+      }),
+      element("incoming-response", "Response", { sourcePlanningManaged: true }),
+      element("incoming-confident", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+      element("incoming-closing", "Closing", { sourcePlanningManaged: true }),
+    ])];
+    const refresh = (sections: ServicePlanSection[]) => {
+      const prepared = preparePlanningCenterPdfImport(sections, incoming);
+      const preview = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, { ...pdfReviewOptions, removeMissing });
+      return { prepared, preview, summary: summarizeServicePlanImport(sections, preview, {}, { trackSameSectionMoves: true }) };
+    };
+    const { prepared, preview, summary } = refresh(current);
+    const preparedItems = prepared.importedSections[0].elements;
+    expect(preparedItems[1].legacyImportMatchCandidateForId).toBe(reserved.id);
+    expect(preparedItems[2].planningCenterPdfMatchKey).toBeUndefined();
+    expect(preparedItems[4].planningCenterPdfMatchKey).toBe(confident.planningCenterPdfMatchKey);
+    expect(preview[0].elements.find(({ id }) => id === confident.id)).toMatchObject({
+      ...confident, planningCenterPdfSourcePosition: 4,
+    });
+    expect(preview[0].elements.find(({ id }) => id === reserved.id)).toEqual(reserved);
+    expect(summary.changes.map(servicePlanImportChangeKey)).toEqual([
+      `legacy_match:${reserved.id}`, "added:incoming-extra",
+    ]);
+    expectUniqueElementIds(preview);
+    expect(applySelectedServicePlanImportChanges(current, preview, summary, new Set())).toEqual(current);
+
+    const approvedMatch = applySelectedServicePlanImportChanges(current, preview, summary, new Set([`legacy_match:${reserved.id}`]));
+    expect(approvedMatch[0].elements.map(({ id }) => id)).toEqual(current[0].elements.map(({ id }) => id));
+    expect(approvedMatch[0].elements.find(({ id }) => id === reserved.id)).toMatchObject({ ...reserved, planningCenterPdfMatchKey: expect.any(String) });
+    expect(approvedMatch[0].elements.filter(({ id }) => id !== reserved.id)).toEqual(current[0].elements.filter(({ id }) => id !== reserved.id));
+
+    const approvedAddition = applySelectedServicePlanImportChanges(current, preview, summary, new Set(["added:incoming-extra"]));
+    expectUniqueElementIds(approvedAddition);
+    expect(approvedAddition[0].elements.find(({ id }) => id === reserved.id)).toEqual({
+      ...reserved, planningCenterPdfMatchReviewRequired: true,
+    });
+    expect(approvedAddition[0].elements.find(({ id }) => id === confident.id)).toEqual(confident);
+    expect(approvedAddition[0].elements.find(({ id }) => id === "incoming-extra")).toMatchObject({
+      notes: plainTextToRichText("New occurrence note"),
+    });
+    const addition = approvedAddition[0].elements.find(({ id }) => id === "incoming-extra");
+    expect([addition?.assignees, addition?.resources]).toEqual([undefined, undefined]);
+    const reloaded = JSON.parse(JSON.stringify(approvedAddition)) as ServicePlanSection[];
+    // The server persists the review-required flag but omits these transient
+    // PDF fingerprints and source positions; recovery drafts retain both.
+    if (serverReload) reloaded.forEach(({ elements }) => elements.forEach((item) => {
+      delete item.planningCenterPdfMatchKey;
+      delete item.planningCenterPdfSourcePosition;
+    }));
+    const repeated = refresh(reloaded);
+    expectUniqueElementIds(repeated.preview);
+    // Confirmed/new rows now carry distinct durable evidence. Only the declined
+    // occurrence remains reserved, including after the older server round trip.
+    expect(repeated.summary.changes.map(servicePlanImportChangeKey)).toEqual([`legacy_match:${reserved.id}`]);
+    expect(applySelectedServicePlanImportChanges(reloaded, repeated.preview, repeated.summary, new Set())).toEqual(reloaded);
+    const acceptedAll = applySelectedServicePlanImportChanges(reloaded, repeated.preview, repeated.summary, new Set(repeated.summary.changes.map(servicePlanImportChangeKey)));
+    const finalRefresh = refresh(acceptedAll);
+    expect(finalRefresh.summary.changes).toEqual([]);
+    expect(applySelectedServicePlanImportChanges(acceptedAll, finalRefresh.preview, finalRefresh.summary, new Set())).toEqual(acceptedAll);
+  });
+
+  it.each(["label", "order", "identity"] as const)("excludes a reserved current item from same-section %s matching", (matchBy) => {
+    const reserved = withLocalPrayerData(element("source", "Prayer", {
+      durationSeconds: 300, sourcePlanningManaged: true,
+      planningCenterPdfMatchKey: "reserved-key", planningCenterPdfSourcePosition: 0,
+    }), 1);
+    const current = [section("current", "Worship", [reserved])];
+    const incoming = [section("incoming", "Worship", [
+      element("review", "Prayer", { legacyImportMatchCandidateForId: reserved.id, planningCenterPdfMatchKey: "review-key" }),
+      element("extra", matchBy === "order" ? "New item" : "Prayer", {
+        ...(matchBy === "identity" ? { planningCenterPdfMatchKey: reserved.planningCenterPdfMatchKey } : {}),
+        sourcePlanningManaged: true,
+      }),
+    ])];
+    const preview = refreshServicePlanFromImport(current, incoming, { ...pdfReviewOptions, removeMissing: true });
+    expect(preview[0].elements.find(({ id }) => id === reserved.id)).toEqual(reserved);
+    expect(summarizeServicePlanImport(current, preview).changes.map(servicePlanImportChangeKey)).toEqual([
+      `legacy_match:${reserved.id}`, "added:extra",
+    ]);
+  });
+
+  it.each([
+    ["pdf", false], ["pdf", true], ["template", false], ["template", true],
+  ] as const)("protects a review reservation from %s relocation to a new section=%s", (identityKind, newSection) => {
+    const identity = identityKind === "pdf"
+      ? { planningCenterPdfMatchKey: "reserved-key" }
+      : { sourceTemplateElementId: "template-prayer" };
+    const reserved = withLocalPrayerData(element("source", "Prayer", { sourcePlanningManaged: true, ...identity }), 1);
+    const independent = element("independent", "Response", { sourcePlanningManaged: true, sourceOccurrenceId: "pco-response" });
+    const current = [
+      section("origin", "Worship", [reserved, independent]),
+      ...(!newSection ? [section("destination", "Closing", [])] : []),
+    ];
+    const incoming = [section("incoming-destination", "Closing", [
+      element("review", "Reviewed Prayer", {
+        sourcePlanningManaged: true, legacyImportMatchCandidateForId: reserved.id,
+        planningCenterPdfMatchKey: "review-key",
+      }),
+      element("extra", "Prayer", {
+        sourcePlanningManaged: true,
+        ...(identityKind === "pdf" ? identity : {}),
+      }),
+      element("incoming-independent", "Response", { sourceOccurrenceId: "pco-response" }),
+    ])];
+    const preview = refreshServicePlanFromImport(current, incoming, { ...pdfReviewOptions, removeMissing: true });
+    const summary = summarizeServicePlanImport(current, preview);
+    expect(preview.find(({ id }) => id === "origin")?.elements).toEqual([reserved]);
+    expect(preview.find(({ name }) => name === "Closing")?.elements.map(({ id }) => id)).toEqual(["review", "extra", independent.id]);
+    expect(summary.changes.map(servicePlanImportChangeKey)).toEqual([
+      `legacy_match:${reserved.id}`, "added:extra", `moved:${independent.id}`,
+    ]);
+    expect(applySelectedServicePlanImportChanges(current, preview, summary, new Set())).toEqual(current);
+    const acceptedMove = applySelectedServicePlanImportChanges(current, preview, summary, new Set([`moved:${independent.id}`]));
+    expect(acceptedMove.find(({ id }) => id === "origin")?.elements).toEqual([{ ...reserved, planningCenterPdfMatchReviewRequired: true }]);
+    const acceptedReview = applySelectedServicePlanImportChanges(current, preview, summary, new Set([`legacy_match:${reserved.id}`]));
+    expect(acceptedReview.find(({ id }) => id === "origin")?.elements).toEqual([independent]);
+    expect(acceptedReview.find(({ name }) => name === "Closing")?.elements).toEqual([
+      expect.objectContaining({ ...reserved, title: plainTextToRichText("Reviewed Prayer"), planningCenterPdfMatchKey: "review-key" }),
+    ]);
+    expectUniqueElementIds(acceptedReview);
+  });
+
+  it("keeps reserved current slots fixed during PDF ordering", () => {
+    const reserved = withLocalPrayerData(element("source", "Prayer", {
+      sourcePlanningManaged: true, planningCenterPdfMatchKey: "reserved-key", planningCenterPdfSourcePosition: 8,
+    }), 1);
+    const first = element("first", "Opening", { sourcePlanningManaged: true, planningCenterPdfSourcePosition: 2 });
+    const last = element("last", "Closing", { sourcePlanningManaged: true, planningCenterPdfSourcePosition: 0 });
+    const current = [section("current", "Worship", [first, reserved, last])];
+    const incoming = [section("incoming", "Worship", [
+      last,
+      element("review", "Prayer", { legacyImportMatchCandidateForId: reserved.id, planningCenterPdfSourcePosition: 1 }),
+      first,
+    ])];
+    const ordered = refreshServicePlanFromImport(current, incoming, pdfReviewOptions);
+    expect(ordered[0].elements.filter((item) => !item.legacyImportMatchCandidateForId).map(({ id }) => id))
+      .toEqual([last.id, reserved.id, first.id]);
+    expect(ordered[0].elements.find(({ id }) => id === reserved.id)).toEqual(reserved);
+  });
+
+  it("resolves both identical-duration occurrences by their distinct context after reordering", () => {
+    const initial = preparePlanningCenterPdfImport([], [section("pdf", "Worship", [
+      element("anchor-a", "Anchor A", { sourcePlanningManaged: true }),
+      element("prayer-a", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+      element("anchor-b", "Anchor B", { sourcePlanningManaged: true }),
+      element("anchor-x", "Anchor X", { sourcePlanningManaged: true }),
+      element("anchor-c", "Anchor C", { sourcePlanningManaged: true }),
+      element("prayer-b", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+      element("anchor-d", "Anchor D", { sourcePlanningManaged: true }),
+    ])]).importedSections[0].elements;
+    const noteA = plainTextToRichText("Local A");
+    const noteB = plainTextToRichText("Local B");
+    const current = [section("section", "Worship", initial.map((item) => ({
+      ...item,
+      id: item.id === "prayer-a" ? "local-a" : item.id === "prayer-b" ? "local-b" : item.id,
+      ...(item.id === "prayer-a" ? { notes: noteA } : {}),
+      ...(item.id === "prayer-b" ? { notes: noteB } : {}),
+    })))];
+    const incoming = [section("pdf-next", "Worship", [
+      element("incoming-anchor-c", "Anchor C", { sourcePlanningManaged: true }),
+      element("incoming-prayer-b", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+      element("incoming-anchor-d", "Anchor D", { sourcePlanningManaged: true }),
+      element("incoming-anchor-a", "Anchor A", { sourcePlanningManaged: true }),
+      element("incoming-prayer-a", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+      element("incoming-anchor-b", "Anchor B", { sourcePlanningManaged: true }),
+    ])];
+    const prepared = preparePlanningCenterPdfImport(current, incoming);
+    const refreshed = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfRefreshOptions);
+
+    expectUniqueElementIds(refreshed);
+    expect(refreshed[0].elements.filter(({ id }) => id.startsWith("local-")).map(({ id, notes }) => ({
+      id,
+      notes: richTextToPlainText(notes),
+    }))).toEqual([
+      { id: "local-b", notes: "Local B" },
+      { id: "local-a", notes: "Local A" },
+    ]);
+    const preparedPrayerKeys = prepared.importedSections[0].elements
+      .filter(({ title }) => richTextToPlainText(title) === "Prayer")
+      .map(({ planningCenterPdfMatchKey }) => planningCenterPdfMatchKey);
+    expect(preparedPrayerKeys).toHaveLength(2);
+    expect(new Set(preparedPrayerKeys).size).toBe(2);
+  });
+
+  it("keeps incoming rows separately reviewable when multiple identical occurrences compete for one existing row", () => {
+    const initial = preparePlanningCenterPdfImport([], [section("pdf", "Worship", [
+      element("opening", "Opening", { sourcePlanningManaged: true }),
+      element("prayer", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+      element("closing", "Closing", { sourcePlanningManaged: true }),
+    ])]).importedSections[0].elements;
+    const localPrayer = withLocalPrayerData(initial[1], 1);
+    const current = [section("section", "Worship", [
+      { ...initial[0], id: "local-opening" },
+      localPrayer,
+      { ...initial[2], id: "local-closing" },
+    ])];
+    const incoming = [section("pdf-next", "Worship", [
+      element("incoming-opening", "Opening", { sourcePlanningManaged: true }),
+      element("incoming-prayer-one", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+      element("incoming-prayer-two", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+      element("incoming-closing", "Closing", { sourcePlanningManaged: true }),
+    ])];
+    const prepared = preparePlanningCenterPdfImport(current, incoming);
+    const preview = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfReviewOptions);
+    const summary = summarizeServicePlanImport(current, preview);
+    const suggestions = summary.changes.filter(({ kind }) => kind === "legacy_match");
+    const additions = summary.changes.filter(({ kind }) => kind === "added");
+
+    expect(suggestions.map(({ id }) => id)).toEqual(["local-prayer-1"]);
+    expect(additions.map(({ id }) => id)).toEqual(["incoming-prayer-two"]);
+    const previewIds = preview.flatMap(({ elements }) => elements.map(({ id }) => id));
+    expectUniqueElementIds(preview);
+    expect(previewIds).toEqual(expect.arrayContaining(["local-prayer-1", "incoming-prayer-two"]));
+    expect(applySelectedServicePlanImportChanges(current, preview, summary, new Set())).toEqual(current);
+    expect(applySelectedServicePlanImportChanges(
+      current,
+      preview,
+      summary,
+      new Set([servicePlanImportChangeKey(suggestions[0])]),
+    )[0].elements.find(({ id }) => id === "local-prayer-1")).toMatchObject({
+      notes: plainTextToRichText("Local note 1"),
+      assignees: [{ id: "slot-1", microphoneIds: ["mic-1"], iemIds: ["iem-1"] }],
+      resources: [{ id: localPrayer.resources?.[0].id }],
+    });
+  });
+
+  it("matches reliable occurrence IDs ahead of PDF context and review flags", () => {
+    const current = [section("section", "Worship", [
+      element("local-a", "Prayer", {
+        sourceOccurrenceId: "pco-a",
+        sourcePlanningManaged: true,
+        planningCenterPdfMatchKey: JSON.stringify(["planningCenterPdf", "prayer", "duplicate", 300, 0]),
+        planningCenterPdfMatchReviewRequired: true,
+        durationSeconds: 300,
+        notes: plainTextToRichText("A"),
+      }),
+      element("local-b", "Prayer", {
+        sourceOccurrenceId: "pco-b",
+        sourcePlanningManaged: true,
+        planningCenterPdfMatchKey: JSON.stringify(["planningCenterPdf", "prayer", "duplicate", 300, 1]),
+        durationSeconds: 300,
+        notes: plainTextToRichText("B"),
+      }),
+    ])];
+    const incoming = [section("pdf-next", "Worship", [
+      element("incoming-b", "Prayer", { sourceOccurrenceId: "pco-b", durationSeconds: 300 }),
+      element("incoming-a", "Prayer", { sourceOccurrenceId: "pco-a", durationSeconds: 300 }),
+    ])];
+    const prepared = preparePlanningCenterPdfImport(current, incoming);
+    const refreshed = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfRefreshOptions);
+
+    expectUniqueElementIds(refreshed);
+    expect(refreshed[0].elements.map(({ id }) => id)).toEqual(["local-b", "local-a"]);
+    expect(refreshed[0].elements.map(({ notes }) => richTextToPlainText(notes))).toEqual(["B", "A"]);
+    expect(refreshed[0].elements.find(({ id }) => id === "local-a"))
+      .toHaveProperty("planningCenterPdfMatchReviewRequired", true);
+  });
+
+  it("keeps incoming duplicates reviewable when saved PDF identities are already duplicated", () => {
+    const duplicateKey = JSON.stringify(["planningCenterPdf", "prayer", "duplicate", 300, 0]);
+    const current = [section("section", "Worship", [
+      withLocalPrayerData(element("source-one", "Prayer", {
+        sourcePlanningManaged: true,
+        planningCenterPdfMatchKey: duplicateKey,
+        durationSeconds: 300,
+      }), 1),
+      withLocalPrayerData(element("source-two", "Prayer", {
+        sourcePlanningManaged: true,
+        planningCenterPdfMatchKey: duplicateKey,
+        durationSeconds: 300,
+      }), 2),
+    ])];
+    const incoming = [section("pdf-next", "Worship", [
+      element("incoming-one", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+      element("incoming-two", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+    ])];
+    const prepared = preparePlanningCenterPdfImport(current, incoming);
+    const preview = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfReviewOptions);
+    const summary = summarizeServicePlanImport(current, preview);
+
+    expect(summary.changes.filter(({ kind }) => kind === "legacy_match").map(({ id }) => id))
+      .toEqual(["local-prayer-1", "local-prayer-2"]);
+    expectUniqueElementIds(preview);
+    expect(preview.flatMap(({ elements }) => elements).map(({ id }) => id))
+      .toEqual(expect.arrayContaining(["incoming-one", "incoming-two", "local-prayer-1", "local-prayer-2"]));
+    expect(applySelectedServicePlanImportChanges(current, preview, summary, new Set())).toEqual(current);
+  });
+
+  it("matches the sole changed-duration duplicate in its section and preserves local data", () => {
+    const currentImport = [section("pdf", "Worship", [
+      element("short-source", "Prayer", { durationSeconds: 120, sourcePlanningManaged: true }),
+      element("long-source", "Prayer", { durationSeconds: 420, sourcePlanningManaged: true }),
+    ])];
+    const initial = preparePlanningCenterPdfImport([], currentImport).importedSections;
+    const note = plainTextToRichText("Keep this local note");
+    const attachment = createServicePlanTextResource({ title: "Local attachment", text: note });
+    const current = [section("section", "Worship", initial[0].elements.map((item, index) => ({
+      ...item,
+      id: index === 0 ? "local-short" : "local-long",
+      notes: note,
+      assignees: [{ id: `slot-${index}`, name: "Avery", microphoneIds: ["mic-1"], iemIds: ["iem-1"] }],
+      resources: [attachment],
+    })))];
+    const revised = [section("pdf-next", "Worship", [
+      element("incoming-short", "Prayer", { durationSeconds: 180, sourcePlanningManaged: true }),
+      element("incoming-long", "Prayer", { durationSeconds: 420, sourcePlanningManaged: true }),
+    ])];
+    const prepared = preparePlanningCenterPdfImport(current, revised);
+    const refreshed = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfRefreshOptions);
+
+    expect(refreshed[0].elements.find(({ id }) => id === "local-short")).toMatchObject({
+      durationSeconds: 180,
+      notes: note,
+      assignees: [{ id: "slot-0", name: "Avery", microphoneIds: ["mic-1"], iemIds: ["iem-1"] }],
+      resources: [{ id: attachment.id }],
+    });
+    expect(refreshed[0].elements.find(({ id }) => id === "local-long")?.durationSeconds).toBe(420);
+    expect(refreshed[0].elements.map(({ id }) => id)).toEqual(["local-short", "local-long"]);
+  });
+
+  it("offers source-order suggestions for ambiguous duplicate duration changes", () => {
+    const initial = preparePlanningCenterPdfImport([], [section("pdf", "Worship", [
+      element("short-source", "Prayer", { durationSeconds: 120, sourcePlanningManaged: true }),
+      element("long-source", "Prayer", { durationSeconds: 420, sourcePlanningManaged: true }),
+    ])]).importedSections;
+    const note = plainTextToRichText("Keep each local note");
+    const current = [section("section", "Worship", initial[0].elements.map((item, index) => ({
+      ...item,
+      id: index === 0 ? "local-short" : "local-long",
+      notes: note,
+    })))];
+    const revised = [section("pdf-next", "Worship", [
+      element("incoming-short", "Prayer", { durationSeconds: 180, sourcePlanningManaged: true }),
+      element("incoming-long", "Prayer", { durationSeconds: 480, sourcePlanningManaged: true }),
+    ])];
+    const prepared = preparePlanningCenterPdfImport(current, revised);
+    const refreshed = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, {
+        ...pdfRefreshOptions,
+        suggestLegacyMatches: true,
+      });
+    const summary = summarizeServicePlanImport(current, refreshed);
+    const suggestions = summary.changes.filter(({ kind }) => kind === "legacy_match");
+
+    expect(suggestions.map(({ id }) => id)).toEqual(["local-short", "local-long"]);
+    expect(refreshed.flatMap(({ elements }) => elements)
+      .filter((item) => item.legacyImportMatchCandidateForId)
+      .map((item) => item.legacyImportMatchCandidateForId))
+      .toEqual(["local-short", "local-long"]);
+    expect(applySelectedServicePlanImportChanges(current, refreshed, summary, new Set()))
+      .toEqual(current);
+
+    const acceptedOne = applySelectedServicePlanImportChanges(
+      current,
+      refreshed,
+      summary,
+      new Set([servicePlanImportChangeKey(suggestions[0])]),
+    );
+    expect(acceptedOne[0].elements).toMatchObject([
+      { id: "local-short", durationSeconds: 180, notes: note },
+      { id: "local-long", durationSeconds: 420, notes: note },
+    ]);
+  });
+
+  it("offers an individual confirmation when one changed row could match either duplicate", () => {
+    const initial = preparePlanningCenterPdfImport([], [section("pdf", "Worship", [
+      element("short-source", "Prayer", { durationSeconds: 120, sourcePlanningManaged: true }),
+      element("long-source", "Prayer", { durationSeconds: 420, sourcePlanningManaged: true }),
+    ])]).importedSections;
+    const current = [section("section", "Worship", initial[0].elements.map((item, index) => ({
+      ...item,
+      id: index === 0 ? "local-short" : "local-long",
+    })))];
+    const prepared = preparePlanningCenterPdfImport(current, [section("pdf-next", "Worship", [
+      element("incoming", "Prayer", { durationSeconds: 180, sourcePlanningManaged: true }),
+    ])]);
+    const refreshed = refreshServicePlanFromImport(
+      prepared.currentSections,
+      prepared.importedSections,
+      { ...pdfRefreshOptions, suggestLegacyMatches: true },
+    );
+    const summary = summarizeServicePlanImport(current, refreshed);
+
+    expect(prepared.importedSections[0].elements[0].legacyImportMatchCandidateForId)
+      .toBe("local-short");
+    expect(summary.changes.map(({ kind, id }) => ({ kind, id }))).toEqual([
+      { kind: "legacy_match", id: "local-short" },
+    ]);
+    expect(applySelectedServicePlanImportChanges(current, refreshed, summary, new Set()))
+      .toEqual(current);
+  });
+
+  it("keeps ambiguous duplicate proposals selective through apply and repeated PDF refresh", () => {
+    const initial = preparePlanningCenterPdfImport([], [section("pdf", "Worship", [
+      element("opening-source", "Opening", { sourcePlanningManaged: true }),
+      element("short-source", "Prayer", { durationSeconds: 120, sourcePlanningManaged: true }),
+      element("long-source", "Prayer", { durationSeconds: 420, sourcePlanningManaged: true }),
+      element("closing-source", "Closing", { sourcePlanningManaged: true }),
+    ])]).importedSections[0].elements;
+    const note = plainTextToRichText("Operator added manual item");
+    const current = [section("section", "Worship", [
+      { ...initial[0], id: "opening" },
+      withLocalPrayerData(initial[1], 1),
+      element("manual-a", "Manual item A", { notes: note }),
+      withLocalPrayerData(initial[2], 2),
+      element("manual-b", "Manual item B", { notes: note }),
+      { ...initial[3], id: "closing" },
+    ])];
+    const incoming = [section("pdf-next", "Worship", [
+      element("incoming-opening", "Opening", { sourcePlanningManaged: true }),
+      element("incoming-short", "Prayer", { durationSeconds: 180, sourcePlanningManaged: true }),
+      element("incoming-long", "Prayer", { durationSeconds: 480, sourcePlanningManaged: true }),
+      element("incoming-closing", "Closing", { sourcePlanningManaged: true }),
+    ])];
+    const prepared = preparePlanningCenterPdfImport(current, incoming);
+    const preview = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfReviewOptions);
+    const summary = summarizeServicePlanImport(current, preview);
+    const matches = summary.changes.filter(({ kind }) => kind === "legacy_match");
+
+    expect(matches.map(({ id }) => id)).toEqual(["local-prayer-1", "local-prayer-2"]);
+    const previewItems = preview.flatMap(({ elements }) => elements);
+    expect(previewItems.map(({ id }) => id)).toHaveLength(new Set(previewItems.map(({ id }) => id)).size);
+    expect(previewItems.filter(({ id }) => id === "local-prayer-1")).toHaveLength(1);
+    expect(previewItems.filter(({ id }) => id === "local-prayer-2")).toHaveLength(1);
+    expect(previewItems.filter(({ id }) => id.startsWith("manual-")).map(({ id }) => id))
+      .toEqual(["manual-a", "manual-b"]);
+    expect(previewItems.filter(({ legacyImportMatchCandidateForId }) => legacyImportMatchCandidateForId))
+      .toHaveLength(2);
+
+    const accepted = applySelectedServicePlanImportChanges(
+      current,
+      preview,
+      summary,
+      new Set([servicePlanImportChangeKey(matches[0])]),
+    );
+    expectUniqueElementIds(accepted);
+    expect(accepted[0].elements.map(({ id }) => id).filter((id) => id.startsWith("manual-")))
+      .toEqual(["manual-a", "manual-b"]);
+    expect(accepted[0].elements.find(({ id }) => id === "local-prayer-1")).toMatchObject({
+      durationSeconds: 180,
+      notes: plainTextToRichText("Local note 1"),
+      assignees: [{ id: "slot-1", memberId: "member-1", microphoneIds: ["mic-1"], iemIds: ["iem-1"] }],
+      positionId: "position-1",
+      scheduledPositionIds: ["position-1"],
+      resources: [{ id: current[0].elements[1].resources?.[0].id }],
+    });
+    expect(accepted[0].elements.find(({ id }) => id === "local-prayer-2")).toMatchObject({
+      durationSeconds: 420,
+      planningCenterPdfMatchReviewRequired: true,
+      notes: plainTextToRichText("Local note 2"),
+      assignees: [{ id: "slot-2", microphoneIds: ["mic-2"], iemIds: ["iem-2"] }],
+      resources: [{ id: current[0].elements[3].resources?.[0].id }],
+    });
+
+    const repeatedPreparation = preparePlanningCenterPdfImport(accepted, incoming);
+    const repeated = refreshServicePlanFromImport(repeatedPreparation.currentSections, repeatedPreparation.importedSections, pdfReviewOptions);
+    expectUniqueElementIds(repeated);
+    const repeatedSummary = summarizeServicePlanImport(accepted, repeated);
+    expect(repeatedSummary.changes.filter(({ kind }) => kind === "legacy_match").map(({ id }) => id))
+      .toEqual(["local-prayer-2"]);
+    expect(applySelectedServicePlanImportChanges(accepted, repeated, repeatedSummary, new Set()))
+      .toEqual(accepted);
+    expect(repeated.flatMap(({ elements }) => elements).filter(({ id }) => id === "local-prayer-2"))
+      .toHaveLength(1);
+    expect(repeated[0].elements.filter(({ id }) => id.startsWith("manual-")).map(({ id }) => id))
+      .toEqual(["manual-a", "manual-b"]);
+  });
+
+  it.each([
+    {
+      insertion: "at the beginning of the duplicate group",
+      prayerOrder: ["incoming-new", "incoming-one", "incoming-two"],
+    },
+    {
+      insertion: "between identical occurrences",
+      prayerOrder: ["incoming-one", "incoming-new", "incoming-two"],
+    },
+  ])("requires review when an identical Prayer is inserted $insertion", ({ insertion, prayerOrder }) => {
+    const initial = preparePlanningCenterPdfImport([], [section("pdf", "Worship", [
+      element("opening-source", "Opening", { sourcePlanningManaged: true }),
+      element("first-prayer", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+      element("response-source", "Response", { sourcePlanningManaged: true }),
+      element("second-prayer", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+      element("closing-source", "Closing", { sourcePlanningManaged: true }),
+    ])]).importedSections[0].elements;
+    const current = [section("section", "Worship", [
+      { ...initial[0], id: "opening" },
+      withLocalPrayerData(initial[1], 1),
+      { ...initial[2], id: "response" },
+      withLocalPrayerData(initial[3], 2),
+      { ...initial[4], id: "closing" },
+    ])];
+    const prayerElements = prayerOrder.map((id) => element(id, "Prayer", {
+        durationSeconds: 300,
+        sourcePlanningManaged: true,
+      }));
+    const incomingElements = insertion === "between identical occurrences"
+      ? [
+          element("incoming-opening", "Opening", { sourcePlanningManaged: true }),
+          prayerElements[0],
+          element("incoming-response", "Response", { sourcePlanningManaged: true }),
+          prayerElements[1],
+          prayerElements[2],
+          element("incoming-closing", "Closing", { sourcePlanningManaged: true }),
+        ]
+      : [
+          element("incoming-opening", "Opening", { sourcePlanningManaged: true }),
+          ...prayerElements,
+          element("incoming-response", "Response", { sourcePlanningManaged: true }),
+          element("incoming-closing", "Closing", { sourcePlanningManaged: true }),
+        ];
+    const prepared = preparePlanningCenterPdfImport(current, [section("pdf-next", "Worship", incomingElements)]);
+    const preview = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfReviewOptions);
+    const summary = summarizeServicePlanImport(current, preview);
+
+    expectUniqueElementIds(preview);
+    expect(summary.changes.filter(({ kind }) => kind === "legacy_match").length).toBeGreaterThan(0);
+    expect(applySelectedServicePlanImportChanges(current, preview, summary, new Set())).toEqual(current);
+    for (const id of ["local-prayer-1", "local-prayer-2"]) {
+      expect(preview.flatMap(({ elements }) => elements).filter(({ id: itemId }) => itemId === id))
+        .toHaveLength(1);
+    }
+    expect(preview[0].elements.find(({ id }) => id === "local-prayer-1")?.notes)
+      .toEqual(plainTextToRichText("Local note 1"));
+    expect(preview[0].elements.find(({ id }) => id === "local-prayer-2")?.notes)
+      .toEqual(plainTextToRichText("Local note 2"));
+  });
+
+  it("keeps both local occurrences when one identical-duration duplicate is removed from the PDF", () => {
+    const initial = preparePlanningCenterPdfImport([], [section("pdf", "Worship", [
+      element("first-prayer", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+      element("second-prayer", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+      element("third-prayer", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+    ])]).importedSections[0].elements;
+    const current = [section("section", "Worship", initial.map((item, index) => withLocalPrayerData(item, index + 1)))];
+    const incoming = [section("pdf-next", "Worship", [
+      element("incoming-one", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+      element("incoming-two", "Prayer", { durationSeconds: 300, sourcePlanningManaged: true }),
+    ])];
+    const prepared = preparePlanningCenterPdfImport(current, incoming);
+    const preview = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfReviewOptions);
+    const summary = summarizeServicePlanImport(current, preview);
+
+    expectUniqueElementIds(preview);
+    expect(summary.changes.filter(({ kind }) => kind === "legacy_match").map(({ id }) => id))
+      .toEqual(["local-prayer-1", "local-prayer-2"]);
+    expect(summary.changes.filter(({ kind }) => kind === "removed")).toEqual([]);
+    expect(applySelectedServicePlanImportChanges(current, preview, summary, new Set())).toEqual(current);
+    expect(preview[0].elements.map(({ id }) => id).filter((id) => id.startsWith("local-prayer-")))
+      .toEqual(["local-prayer-1", "local-prayer-2", "local-prayer-3"]);
+    expect(preview[0].elements.filter(({ legacyImportMatchCandidateForId }) => legacyImportMatchCandidateForId))
+      .toHaveLength(2);
+  });
+
+  it("uses reliable occurrence IDs to keep identical-duration rows attached through a reorder", () => {
+    const current = [section("section", "Worship", [
+      element("local-a", "Prayer", { sourcePlanningManaged: true, sourceOccurrenceId: "pdf-a", durationSeconds: 300, notes: plainTextToRichText("A") }),
+      element("local-b", "Prayer", { sourcePlanningManaged: true, sourceOccurrenceId: "pdf-b", durationSeconds: 300, notes: plainTextToRichText("B") }),
+    ])];
+    const incoming = [section("pdf-next", "Worship", [
+      element("incoming-b", "Prayer", { sourcePlanningManaged: true, sourceOccurrenceId: "pdf-b", durationSeconds: 300 }),
+      element("incoming-a", "Prayer", { sourcePlanningManaged: true, sourceOccurrenceId: "pdf-a", durationSeconds: 300 }),
+    ])];
+    const prepared = preparePlanningCenterPdfImport(current, incoming);
+    const refreshed = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfRefreshOptions);
+
+    expectUniqueElementIds(refreshed);
+    expect(refreshed[0].elements.map(({ id }) => id)).toEqual(["local-b", "local-a"]);
+    expect(refreshed[0].elements.map(({ notes }) => richTextToPlainText(notes)))
+      .toEqual(["B", "A"]);
+  });
+
+  it("matches changed duplicate durations when neighboring items identify each occurrence", () => {
+    const source = [section("pdf", "Worship", [
+      element("opening", "Opening", { sourcePlanningManaged: true }),
+      element("short-prayer", "Prayer", { durationSeconds: 120, sourcePlanningManaged: true }),
+      element("response", "Response", { sourcePlanningManaged: true }),
+      element("long-prayer", "Prayer", { durationSeconds: 420, sourcePlanningManaged: true }),
+      element("closing", "Closing", { sourcePlanningManaged: true }),
+    ])];
+    const initial = preparePlanningCenterPdfImport([], source).importedSections;
+    const current = [section("section", "Worship", initial[0].elements.map((item, index) => ({
+      ...item,
+      id: ["local-opening", "local-short", "local-response", "local-long", "local-closing"][index],
+    })))];
+    const incoming = [section("pdf-next", "Worship", [
+      element("incoming-opening", "Opening", { sourcePlanningManaged: true }),
+      element("incoming-short", "Prayer", { durationSeconds: 180, sourcePlanningManaged: true }),
+      element("incoming-response", "Response", { sourcePlanningManaged: true }),
+      element("incoming-long", "Prayer", { durationSeconds: 480, sourcePlanningManaged: true }),
+      element("incoming-closing", "Closing", { sourcePlanningManaged: true }),
+    ])];
+    const prepared = preparePlanningCenterPdfImport(current, incoming);
+    const refreshed = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, {
+      ...pdfRefreshOptions,
+      suggestLegacyMatches: true,
+    });
+
+    expect(refreshed[0].elements.map(({ id }) => id)).toEqual([
+      "local-opening",
+      "local-short",
+      "local-response",
+      "local-long",
+      "local-closing",
+    ]);
+    expect(refreshed[0].elements.filter(({ title }) => richTextToPlainText(title) === "Prayer")
+      .map(({ id, durationSeconds, legacyImportMatchCandidateForId }) => ({
+        id,
+        durationSeconds,
+        legacyImportMatchCandidateForId,
+      })))
+      .toEqual([
+        { id: "local-short", durationSeconds: 180, legacyImportMatchCandidateForId: undefined },
+        { id: "local-long", durationSeconds: 480, legacyImportMatchCandidateForId: undefined },
+      ]);
+  });
+
+  it("keeps a manual duplicate-title item independent of PDF identities", () => {
+    const source = element("source-prayer", "Prayer", {
+      sourcePlanningManaged: true,
+      durationSeconds: 120,
+    });
+    const manual = element("manual-prayer", "Prayer", {
+      durationSeconds: 120,
+      notes: plainTextToRichText("Manual note"),
+      assignees: [{ id: "manual-slot", name: "Jordan", microphoneIds: ["mic-2"] }],
+    });
+    const current = [section("section", "Worship", [source, manual])];
+    const incoming = [section("pdf", "Worship", [
+      element("incoming-one", "Prayer", { durationSeconds: 120, sourcePlanningManaged: true }),
+      element("incoming-two", "Prayer", { durationSeconds: 120, sourcePlanningManaged: true }),
+    ])];
+    const prepared = preparePlanningCenterPdfImport(current, incoming);
+    const preparedManual = prepared.currentSections[0].elements.find(({ id }) => id === "manual-prayer");
+    const refreshed = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, {
+        ...pdfRefreshOptions,
+        suggestLegacyMatches: true,
+      });
+
+    expect(preparedManual).not.toHaveProperty("planningCenterPdfMatchKey");
+    expect(preparedManual).not.toHaveProperty("planningCenterPdfSourcePosition");
+    expect(refreshed[0].elements.find(({ id }) => id === "manual-prayer")).toMatchObject({
+      id: "manual-prayer",
+      notes: plainTextToRichText("Manual note"),
+      assignees: [{ id: "manual-slot", name: "Jordan", microphoneIds: ["mic-2"] }],
+    });
+    expect(refreshed[0].elements.map(({ id }) => id)).toContain("manual-prayer");
+  });
+
+  it("still offers a unique match for a legacy PDF plan without item ownership markers", () => {
+    const note = plainTextToRichText("Legacy local note");
+    const current = [section("legacy-section", "Worship", [element("legacy-prayer", "Prayer", {
+      durationSeconds: 120,
+      notes: note,
+    })], false)];
+    const prepared = preparePlanningCenterPdfImport(current, [section("pdf", "Worship", [
+      element("incoming-prayer", "Prayer", { durationSeconds: 180, sourcePlanningManaged: true }),
+    ])]);
+    const refreshed = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, {
+      ...pdfRefreshOptions,
+      suggestLegacyMatches: true,
+    });
+    const summary = summarizeServicePlanImport(current, refreshed);
+    const match = summary.changes.find(({ kind }) => kind === "legacy_match");
+
+    expect(match?.id).toBe("legacy-prayer");
+    expect(match?.kind).toBe("legacy_match");
+    const accepted = applySelectedServicePlanImportChanges(
+      current,
+      refreshed,
+      summary,
+      new Set(match ? [servicePlanImportChangeKey(match)] : []),
+    );
+    expect(accepted[0].elements[0]).toMatchObject({
+      id: "legacy-prayer",
+      durationSeconds: 180,
+      notes: note,
+      sourcePlanningManaged: true,
+    });
+  });
+
+  it("offers only missing source-owned items for optional removal and preserves declined removals", () => {
+    const current = [section("section", "Worship", [
+      element("missing", "Opening", { sourcePlanningManaged: true, startTime: "09:00" }),
+      element("kept", "Prayer", { sourcePlanningManaged: true, startTime: "09:05", durationSeconds: 300 }),
+      element("manual", "Manual item", { startTime: "09:10" }),
+    ])];
+    const incoming = [section("pdf", "Worship", [
+      element("incoming-prayer", "Prayer", { sourcePlanningManaged: true, durationSeconds: 420 }),
+    ])];
+    const prepared = preparePlanningCenterPdfImport(current, incoming);
+    const preserved = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, {
+      ...pdfRefreshOptions,
+      suggestLegacyMatches: true,
+      removeMissing: false,
+    });
+    const proposed = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, {
+      ...pdfRefreshOptions,
+      suggestLegacyMatches: true,
+      removeMissing: true,
+    });
+    const summary = summarizeServicePlanImport(current, proposed);
+
+    expect(preserved[0].elements.map(({ id }) => id)).toEqual(["missing", "kept", "manual"]);
+    expect(summary.changes.filter(({ kind }) => kind === "removed").map(({ id }) => id))
+      .toEqual(["missing"]);
+    expect(proposed[0].elements.map(({ id }) => id)).toContain("manual");
+    expect(applySelectedServicePlanImportChanges(current, proposed, summary, new Set()))
+      .toEqual(current);
+    const declinedRemoval = applySelectedServicePlanImportChanges(
+      current,
+      proposed,
+      summary,
+      new Set(["updated:kept"]),
+    );
+    expect(declinedRemoval[0].elements.map(({ id }) => id)).toEqual(["missing", "kept", "manual"]);
+    expect(declinedRemoval[0].elements.find(({ id }) => id === "kept")?.durationSeconds).toBe(420);
+    expect(applySelectedServicePlanImportChanges(
+      current,
+      proposed,
+      summary,
+      new Set(["removed:missing"]),
+    )[0].elements.map(({ id }) => id)).toEqual(["kept", "manual"]);
+  });
+
+  it("keeps a repeated PDF refresh idempotent", () => {
+    const source = [section("pdf", "Worship", [
+      element("short-source", "Prayer", { durationSeconds: 120, sourcePlanningManaged: true }),
+      element("long-source", "Prayer", { durationSeconds: 420, sourcePlanningManaged: true }),
+    ])];
+    const first = preparePlanningCenterPdfImport([], source).importedSections;
+    const current = [section("section", "Worship", first[0].elements.map((item, index) => ({
+      ...item,
+      id: `local-${index}`,
+      startTime: index === 0 ? "09:00" : "09:02",
+    })))];
+    const prepared = preparePlanningCenterPdfImport(current, source);
+    const refreshed = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, pdfRefreshOptions);
+    const repeatedPreparation = preparePlanningCenterPdfImport(refreshed, source);
+    const repeated = refreshServicePlanFromImport(repeatedPreparation.currentSections, repeatedPreparation.importedSections, pdfRefreshOptions);
+
+    expect(summarizeServicePlanImport(refreshed, repeated).changes).toEqual([]);
   });
 });
 
@@ -3761,5 +5163,144 @@ describe("handing a template's microphone plan to imported people", () => {
       name: "Chorale",
       microphoneIds: ["choir-l", "choir-r", "choir-c"],
     });
+  });
+});
+
+describe("source note conflict decisions", () => {
+  const reason = "The external Note changed, but existing Notes lack reliable source provenance or were edited locally. Review Notes before applying the update.";
+  const oldNote = "Choir selection before the message";
+  const updatedNote = "Dedication prayer for incoming ministry volunteers";
+  const source = (note: string) => ({ elementType: "Prayer", title: "Prayer", ledBy: "", note });
+  const incomingElement = (): ServicePlanElement => element("incoming", "Prayer", {
+    sourcePlanningManaged: true,
+    sourceNoteRaw: updatedNote,
+    notes: plainTextToRichText(updatedNote),
+    servicePlanningImport: { observed: source(updatedNote), applied: source(updatedNote), pendingFields: [] },
+  });
+  const currentElement = (withManagedNote: boolean): ServicePlanElement => {
+    const oldBlock = { ...plainTextToRichText(withManagedNote ? "Locally edited imported note" : oldNote).blocks[0], id: "source-note" };
+    const localBlock = { ...plainTextToRichText("Operator-only note").blocks[0], id: "operator-note" };
+    const originalSourceBlock = { ...plainTextToRichText(oldNote).blocks[0], id: "source-note" };
+    return element("current", "Prayer", {
+      sourcePlanningManaged: true,
+      sourceNoteRaw: oldNote,
+      notes: { blocks: [oldBlock, ...(withManagedNote ? [localBlock] : [])] },
+      servicePlanningImport: {
+        observed: source(oldNote),
+        applied: source(oldNote),
+        pendingFields: [],
+        ...(withManagedNote ? {
+          managedNotes: [{ id: "source-note", fingerprint: servicePlanNoteFingerprint(originalSourceBlock) }],
+        } : {}),
+      },
+      importAmbiguity: {
+        source: "servicePlanning",
+        sourceKey: "Worship:0",
+        sourceElementType: "Prayer",
+        sourceTitle: "Prayer",
+        sourceLedBy: "",
+        sourceNote: updatedNote,
+        parts: [],
+        reasons: [reason],
+        status: "unresolved",
+        sourceFingerprint: "note-conflict",
+        sourceNoteConflict: { sourceFingerprint: JSON.stringify(updatedNote), existingNotesFingerprint: "before-resolution" },
+      },
+    });
+  };
+
+  it("lets the operator keep local notes and records the updated source note as pending", () => {
+    const current = currentElement(false);
+    const [conflicted] = refreshServicePlanFromImport(
+      [section("current-section", "Worship", [current])],
+      [section("incoming-section", "Worship", [incomingElement()])],
+      DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+    );
+    const conflictItem = conflicted.elements[0];
+    expect(conflictItem.importAmbiguity?.sourceNoteConflict).toBeDefined();
+    expect(conflictItem.importAmbiguity?.status).toBe("unresolved");
+
+    const kept = resolveServicePlanImportNoteConflict(conflictItem, "keepExisting");
+    expect(kept.notes).toEqual(current.notes);
+    expect(kept.servicePlanningImport).toMatchObject({
+      observed: { note: updatedNote },
+      applied: { note: oldNote },
+      pendingFields: ["note"],
+    });
+    expect(kept.importAmbiguity).toMatchObject({
+      status: "acknowledged",
+      sourceNoteConflict: { resolution: "keepExisting" },
+    });
+
+    const reloaded = JSON.parse(JSON.stringify(kept)) as ServicePlanElement;
+    const repeated = refreshServicePlanFromImport(
+      [section("current-section", "Worship", [reloaded])],
+      [section("incoming-section", "Worship", [incomingElement()])],
+      DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+    );
+    expect(repeated[0].elements[0]).toEqual(reloaded);
+    expect(getNewServicePlanImportAmbiguityIds([section("current-section", "Worship", [reloaded])], repeated)).toEqual([]);
+  });
+
+  it("uses the updated source note while preserving locally edited and independent note paragraphs", () => {
+    const current = currentElement(true);
+    const [conflicted] = refreshServicePlanFromImport(
+      [section("current-section", "Worship", [current])],
+      [section("incoming-section", "Worship", [incomingElement()])],
+      DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+    );
+
+    const updated = resolveServicePlanImportNoteConflict(conflicted.elements[0], "useUpdated");
+
+    expect(richTextToPlainText(updated.notes)).toContain(updatedNote);
+    expect(richTextToPlainText(updated.notes)).toContain("Locally edited imported note");
+    expect(richTextToPlainText(updated.notes)).toContain("Operator-only note");
+    expect(new Set(updated.notes?.blocks.map(({ id }) => id)).size).toBe(updated.notes?.blocks.length);
+    expect(updated.servicePlanningImport).toMatchObject({
+      observed: { note: updatedNote },
+      applied: { note: updatedNote },
+      pendingFields: [],
+      managedNotes: [{ id: expect.not.stringMatching(/^source-note$/) }],
+    });
+    expect(updated.importAmbiguity).toMatchObject({
+      status: "confirmed",
+      sourceNoteConflict: { resolution: "useUpdated" },
+    });
+  });
+
+  it("makes an explicit use choice replace unowned existing notes and stays resolved after refresh", () => {
+    const current = currentElement(false);
+    const [conflicted] = refreshServicePlanFromImport(
+      [section("current-section", "Worship", [current])],
+      [section("incoming-section", "Worship", [incomingElement()])],
+      DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+    );
+
+    const updated = resolveServicePlanImportNoteConflict(conflicted.elements[0], "useUpdated");
+    const repeated = refreshServicePlanFromImport(
+      [section("current-section", "Worship", [updated])],
+      [section("incoming-section", "Worship", [incomingElement()])],
+      DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+    );
+
+    expect(richTextToPlainText(updated.notes)).toBe(updatedNote);
+    expect(updated.servicePlanningImport?.pendingFields).toEqual([]);
+    expect(richTextToPlainText(repeated[0].elements[0].notes)).toBe(updatedNote);
+    expect(repeated[0].elements[0].importAmbiguity?.status).toBe("confirmed");
+  });
+
+  it("accepts an empty updated source note while preserving edited and operator-owned paragraphs", () => {
+    const current = currentElement(true);
+    current.servicePlanningImport!.observed.note = "";
+    current.importAmbiguity!.sourceNote = "";
+    current.importAmbiguity!.sourceNoteConflict!.sourceFingerprint = JSON.stringify("");
+
+    const updated = resolveServicePlanImportNoteConflict(current, "useUpdated");
+
+    expect(richTextToPlainText(updated.notes)).toContain("Locally edited imported note");
+    expect(richTextToPlainText(updated.notes)).toContain("Operator-only note");
+    expect(updated.sourceNoteRaw).toBeUndefined();
+    expect(updated.servicePlanningImport).toMatchObject({ applied: { note: "" }, pendingFields: [] });
+    expect(updated.servicePlanningImport?.managedNotes).toBeUndefined();
   });
 });

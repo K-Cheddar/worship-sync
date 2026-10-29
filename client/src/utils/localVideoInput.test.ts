@@ -80,7 +80,16 @@ describe("localVideoInput", () => {
     ).toBe("Allow camera access on this device, then try again.");
     expect(
       getVideoInputErrorMessage(new DOMException("busy", "NotReadableError")),
-    ).toBe("Close other apps using this input, then try again.");
+    ).toBe(
+      "The camera could not be started. Check that it is connected and available, then try again.",
+    );
+    expect(
+      getVideoInputErrorMessage(
+        Object.assign(new Error("aborted"), { name: "AbortError" }),
+      ),
+    ).toBe(
+      "The camera could not be started. Check that it is connected and available, then try again.",
+    );
     expect(
       getVideoInputErrorMessage(
         new DOMException("denied", "NotAllowedError"),
@@ -89,7 +98,9 @@ describe("localVideoInput", () => {
     ).toBe("Allow video and sound access on this device, then try again.");
     expect(
       getAudioInputErrorMessage(new DOMException("busy", "NotReadableError")),
-    ).toBe("Close other apps using the audio input, then try again.");
+    ).toBe(
+      "The sound input could not be started. Check that it is connected and available, then try again.",
+    );
   });
 
   it("detects OS device-busy errors for relay fallback", () => {
@@ -242,7 +253,9 @@ describe("localVideoInput", () => {
         new DOMException("busy", "NotReadableError"),
         "device",
       ),
-    ).toBe("Close other apps using this input, then try again.");
+    ).toBe(
+      "The camera could not be started. Check that it is connected and available, then try again.",
+    );
   });
 
   it("relinks a logical input without changing its saved source id", () => {

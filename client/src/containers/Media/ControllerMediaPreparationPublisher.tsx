@@ -139,11 +139,8 @@ const DestinationManifestPublisher = ({
  * controller route, so publication does not depend on an output window,
  * preview role, editor, selected slide, or Electron being available.
  */
-const ControllerMediaPreparationPublisher = ({
-  currentItemId,
-}: {
-  currentItemId?: string;
-}) => {
+const ControllerMediaPreparationPublisher = () => {
+  const currentItemId = useSelector((state) => state.undoable.present.item.type ? state.undoable.present.item._id : undefined);
   const controllerProfile = useActiveControllerProfile();
   const displayOutputs = useSelector(selectDisplayOutputs);
   const controllerProfiles = useSelector(selectControllerProfiles);

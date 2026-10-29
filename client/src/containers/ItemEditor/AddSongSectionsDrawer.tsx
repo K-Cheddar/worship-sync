@@ -347,7 +347,7 @@ const AddSongSectionsDrawer = ({
             key={row.song._id}
             row={row}
             index={index}
-            searchValue={searchValue}
+            searchValue={debouncedSearchValue}
             selectedSongId={selectedSongId}
             currentSongId={currentSongId}
             onSelectSong={selectSongAndShowSections}
@@ -375,7 +375,7 @@ const AddSongSectionsDrawer = ({
           setSelectedArrangementIndex(index);
           setSelectedSectionIds([]);
         }}
-        searchHighlight={searchValue}
+        searchHighlight={debouncedSearchValue}
         arrangementSelectId="import-song-arrangement"
         selectedSectionIds={selectedSectionIds}
         onToggleSection={toggleSection}

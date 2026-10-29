@@ -20,6 +20,7 @@ import {
   createNewItemList,
 } from "./itemUtil";
 import type { MediaType, ServiceItem, BibleInfo, verseType } from "../types";
+import { isBibleDocumentActivityIdle } from "./contentReplicationActivity";
 
 jest.mock("./generateRandomId", () => ({
   __esModule: true,
@@ -532,6 +533,29 @@ Let Your fire fall`;
       expect(textBox?.words).toContain("Welcome and greeting");
     });
 
+    it("creates a named custom item without an initial slide", async () => {
+      const db = {
+        get: jest.fn().mockRejectedValue(Object.assign(new Error("missing"), { status: 404 })),
+        put: jest.fn().mockResolvedValue({ ok: true, id: "Welcome Slides", rev: "1-created" }),
+      };
+      const item = await createNewFreeForm({
+        name: "Welcome Slides",
+        text: "",
+        list: [],
+        db: db as never,
+        background: "#1a1a1a",
+        brightness: 100,
+        emptyItem: true,
+      });
+
+      expect(item.type).toBe("free");
+      expect(item.name).toBe("Welcome Slides");
+      expect(item.slides).toEqual([]);
+      expect(db.put).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "Welcome Slides", slides: [] }),
+      );
+    });
+
     it("reuses the full existing custom-item document without replacing edited slides or media", async () => {
       const persistedSlide = {
         id: "edited-slide",
@@ -685,6 +709,50 @@ Let Your fire fall`;
   });
 
   describe("createNewBible", () => {
+    it("keeps Bible creation activity active until its local document write settles", async () => {
+      let finishPut!: (result: { ok: true; rev: string }) => void;
+      const db = {
+        name: "bible-create-activity-test-db",
+        get: jest.fn(async () => { throw Object.assign(new Error("missing"), { status: 404 }); }),
+        put: jest.fn(() => new Promise<{ ok: true; rev: string }>((resolve) => {
+          finishPut = resolve;
+        })),
+      };
+      const pending = createNewBible({
+        name: "Genesis 1",
+        book: "Genesis",
+        chapter: "1",
+        version: "NKJV",
+        verses: [{ name: "1", index: 0, text: "In the beginning" }],
+        list: [],
+        db: db as never,
+        background: "",
+        brightness: 100,
+        fontMode: "fit",
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(db.put).toHaveBeenCalledTimes(1);
+      expect(isBibleDocumentActivityIdle(db.name)).toBe(false);
+
+      finishPut({ ok: true, rev: "1-created" });
+      await pending;
+      expect(isBibleDocumentActivityIdle(db.name)).toBe(true);
+    });
+
+    it("avoids an existing document ID even when its display name was changed", async () => {
+      const item = await createNewBible({
+        name: "John 3:16 NKJV",
+        book: "John", chapter: "3", version: "NKJV",
+        verses: [{ name: "16", index: 15, text: "For God so loved" }],
+        list: [{ _id: "John 3:16 NKJV", name: "Renamed reading", type: "bible", listId: "reading" }],
+        db: undefined, background: "bible.jpg", brightness: 47, fontMode: "fit",
+      });
+      expect(item._id).toBe("John 3:16 NKJV (1)");
+      expect(item.name).toBe("John 3:16 NKJV");
+      expect(item.background).toBe("bible.jpg");
+    });
+
     it("creates a new bible item with book, chapter, version and verses", async () => {
       const list: ServiceItem[] = [];
       const verses = [

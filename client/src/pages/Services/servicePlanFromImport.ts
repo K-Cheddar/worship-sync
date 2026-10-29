@@ -151,7 +151,12 @@ const buildElementFromRow = <
   row: EventData,
   songs: T[],
   sourceMarksSongs: boolean,
-  options: { classifyExternalTitle?: boolean; knownPeople?: string[]; sourceKey?: string } = {},
+  options: {
+    classifyExternalTitle?: boolean;
+    knownPeople?: string[];
+    sourceKey?: string;
+    preserveSourceTitle?: boolean;
+  } = {},
 ): ServicePlanElement => {
   const contentTitle = getImportedContentTitle(row);
   const classification = options.classifyExternalTitle
@@ -169,7 +174,9 @@ const buildElementFromRow = <
       : guessServicePlanElementType(row.elementType, contentTitle, {
           skipSongWords: sourceMarksSongs,
         });
-  const rawTitle = chooseServicePlanElementTitle(row);
+  const rawTitle = options.preserveSourceTitle
+    ? row.title?.trim() || chooseServicePlanElementTitle(row)
+    : chooseServicePlanElementTitle(row);
   const ledBy = row.ledBy?.trim();
   // Structured imports (Planning Center paste) may already split people; Service
   // Planning printouts still arrive as one Led-by string.
@@ -476,7 +483,11 @@ export const buildServicePlanSectionsFromImport = <
 >(
   data: ServicePlanningImportData,
   songs: T[],
-  options: { classifyExternalTitle?: boolean; knownPeople?: string[] } = {},
+  options: {
+    classifyExternalTitle?: boolean;
+    knownPeople?: string[];
+    preserveSourceTitle?: boolean;
+  } = {},
 ): ServicePlanSection[] => {
   // Service Planning marks its own songs with a music icon. When a plan uses
   // those markers they settle the question completely — an unmarked row is not

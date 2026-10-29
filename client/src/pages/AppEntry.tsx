@@ -17,7 +17,7 @@ import Button from "../components/Button/Button";
 import Icon from "../components/Icon/Icon";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { useAppInstallChrome } from "../hooks/useAppInstallChrome";
-import { getAuthRedirectPathnameFromState } from "../utils/authRedirectPath";
+import { getAuthRedirectToFromState } from "../utils/authRedirectPath";
 import { getStoredServerSessionHint } from "../utils/authStorage";
 import { isCreateChurchUiEnabled } from "../utils/devFeatures";
 import { getAllowedRouteOrDefault } from "../utils/sessionRouteAccess";
@@ -63,7 +63,8 @@ const AppEntry = () => {
   const [entryStep, setEntryStep] = useState<EntryStep>("landing");
   const [isRetryingAuthConnection, setIsRetryingAuthConnection] =
     useState(false);
-  const requestedPath = getAuthRedirectPathnameFromState(location.state) ?? "";
+  const requestedTo = getAuthRedirectToFromState(location.state) ?? "";
+  const requestedPathname = requestedTo.split(/[?#]/, 1)[0];
   const authServerStatus = context?.authServerStatus;
   const isAuthConnectionNoticeVisible =
     authServerStatus === "offline" || authServerStatus === "checking";
@@ -72,19 +73,24 @@ const AppEntry = () => {
   const hasStoredServerSession = storedServerSessionHint !== null;
   const isStoredServerSessionBlocked =
     isServerBackedModeDisabled && hasStoredServerSession;
+  const requestedFrom =
+    typeof location.state === "object" &&
+    location.state !== null &&
+    "from" in location.state
+      ? location.state.from
+      : null;
 
   const nextState = useMemo(
     () => ({
-      from:
-        requestedPath && requestedPath !== "/"
-          ? { pathname: requestedPath }
-          : location,
+      from: requestedTo && requestedTo !== "/" ? requestedFrom : location,
     }),
-    [location, requestedPath],
+    [location, requestedFrom, requestedTo],
   );
 
   const guestDestination =
-    requestedPath && requestedPath !== "/" ? requestedPath : "/home";
+    requestedPathname && requestedPathname !== "/"
+      ? requestedPathname
+      : "/home";
   const { installMenuItems, installHelpDialogs } = useAppInstallChrome();
 
   const handleRetryAuthConnection = async () => {
@@ -103,14 +109,14 @@ const AppEntry = () => {
   if (context?.sessionKind === "human") {
     return (
       <Navigate
-        to={requestedPath && requestedPath !== "/" ? requestedPath : "/home"}
+        to={requestedTo && requestedTo !== "/" ? requestedTo : "/home"}
         replace
       />
     );
   }
 
   if (context?.loginState === "guest") {
-    const nextPath = getAllowedRouteOrDefault(requestedPath, {
+    const nextPath = getAllowedRouteOrDefault(guestDestination, {
       loginState: context.loginState,
       sessionKind: context.sessionKind,
       access: context.access,
@@ -126,19 +132,21 @@ const AppEntry = () => {
       loginState: context.loginState,
       sessionKind: context.sessionKind,
       access: context.access,
+      role: context.role,
+      permissions: context.permissions,
       operatorName: context.operatorName,
       displaySurfaceType: context.device?.surfaceType,
       displayOutputId: context.device?.outputId,
     };
     const nextPath =
-      requestedPath && requestedPath !== "/"
-        ? getAllowedRouteOrDefault(requestedPath, routeContext)
+      requestedTo && requestedTo !== "/"
+        ? getAllowedRouteOrDefault(requestedTo, routeContext)
         : "/home";
     return <Navigate to={nextPath} replace />;
   }
 
   if (context?.sessionKind === "display") {
-    const nextPath = getAllowedRouteOrDefault(requestedPath, {
+    const nextPath = getAllowedRouteOrDefault(requestedTo, {
       loginState: context.loginState,
       sessionKind: context.sessionKind,
       access: context.access,

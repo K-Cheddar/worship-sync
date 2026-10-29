@@ -10,6 +10,7 @@ import { clearDisplayToken, clearWorkstationToken, setDisplayToken, setWorkstati
 import { getDisplayPairingDestination } from "../utils/displaySurface";
 import { isElectron } from "../utils/environment";
 import { getPairingCodeErrorMessage } from "../utils/authUserMessages";
+import { getAuthRedirectToFromState } from "../utils/authRedirectPath";
 import { GlobalInfoContext } from "../context/globalInfo";
 import type { DevicePairingRequestStartResponse, RedeemDisplayPairingResponse, RedeemWorkstationPairingResponse } from "../api/authTypes";
 
@@ -30,7 +31,7 @@ const WorkstationPair = ({ lockedPairType }: { lockedPairType: "workstation" | "
   const pollInFlightRef = useRef(false);
   const qrExchangeInFlightRef = useRef(false);
   const qrExchangeFailedRequestIdRef = useRef("");
-  const returnPath = typeof location.state === "object" && location.state && "from" in location.state && typeof (location.state as { from?: { pathname?: string } }).from?.pathname === "string" ? (location.state as { from: { pathname: string } }).from.pathname : "";
+  const returnPath = getAuthRedirectToFromState(location.state) ?? "";
   const deviceName = lockedPairType === "display" ? "display" : "workstation";
 
   useEffect(() => { const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") navigate("/"); }; window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey); }, [navigate]);

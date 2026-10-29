@@ -339,6 +339,14 @@ export const buildLocalVideoInputPresentation = (
 export const resolveLocalVideoInputBinding = (sourceId: string) =>
   readLocalBindings().find((binding) => binding.sourceId === sourceId);
 
+/** Find an existing local logical source for a selected physical camera. */
+export const resolveLocalVideoInputBindingForDevice = (deviceId: string) =>
+  readLocalBindings().find(
+    (binding) =>
+      binding.deviceId === deviceId &&
+      !isDesktopCaptureKind(binding.captureKind),
+  );
+
 export const resolveLocalVideoInputDeviceId = (sourceId: string) =>
   resolveLocalVideoInputBinding(sourceId)?.deviceId;
 
@@ -346,7 +354,7 @@ export const getVideoInputErrorMessage = (
   error: unknown,
   includesAudio = false,
 ) => {
-  const name = error instanceof DOMException ? error.name : "";
+  const name = error instanceof Error ? error.name : "";
   if (name === "NotAllowedError" || name === "SecurityError") {
     return includesAudio
       ? "Allow video and sound access on this device, then try again."
@@ -356,7 +364,7 @@ export const getVideoInputErrorMessage = (
     return "Reconnect the video input, then try again.";
   }
   if (name === "NotReadableError" || name === "AbortError") {
-    return "Close other apps using this input, then try again.";
+    return "The camera could not be started. Check that it is connected and available, then try again.";
   }
   return "Check the input connection and camera permission, then try again.";
 };
@@ -377,8 +385,7 @@ export const isLocalVideoDeviceBusyError = (error: unknown) => {
 };
 
 export const isDesktopCaptureSourceMissingError = (error: unknown) =>
-  error instanceof Error &&
-  error.name === "DesktopCaptureSourceMissingError";
+  error instanceof Error && error.name === "DesktopCaptureSourceMissingError";
 
 /** Desktop shares fail for different reasons than a cable, so guide differently. */
 export const getDesktopCaptureErrorMessage = (
@@ -418,7 +425,7 @@ export const getLocalVideoSourceErrorMessage = (
     : getVideoInputErrorMessage(error, includesAudio);
 
 export const getAudioInputErrorMessage = (error: unknown) => {
-  const name = error instanceof DOMException ? error.name : "";
+  const name = error instanceof Error ? error.name : "";
   if (name === "NotAllowedError" || name === "SecurityError") {
     return "Allow sound access on this device, then try again.";
   }
@@ -426,7 +433,7 @@ export const getAudioInputErrorMessage = (error: unknown) => {
     return "Reconnect the audio input, then try again.";
   }
   if (name === "NotReadableError" || name === "AbortError") {
-    return "Close other apps using the audio input, then try again.";
+    return "The sound input could not be started. Check that it is connected and available, then try again.";
   }
   return "Check the audio input and sound permission, then try again.";
 };

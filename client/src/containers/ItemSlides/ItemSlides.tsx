@@ -1,4 +1,7 @@
-import { ImageOff, Plus, Trash2, Copy, ZoomIn, ZoomOut } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../../components/ui/DropdownMenu";
+import SegmentedControl from "../../components/SegmentedControl/SegmentedControl";
+import Select from "../../components/Select/Select";
+import { ImageOff, Plus, Trash2, Copy, ZoomIn, ZoomOut, MoreHorizontal } from "lucide-react";
 import ActionBar, {
   type ActionBarItem as ActionBarItemDef,
 } from "../../components/ActionBar/ActionBar";
@@ -8,7 +11,6 @@ import {
   clearBackgroundTargetSelection,
   clearSlideBackgroundsOnSubset,
   removeSlidesByIds,
-  setActiveItem,
   setBackgroundTargetSlideIds,
   setBackgroundTargetRangeAnchorId,
   setMobileBackgroundTargetSelectMode,
@@ -26,7 +28,8 @@ import {
   setSlidesMobile,
   setMonitorTimerId,
 } from "../../store/preferencesSlice";
-import { setActiveItemInList } from "../../store/itemListSlice";
+import { selectControllerItem } from "../../store/controllerItemSelection";
+import { isControllerWorkspacePath } from "../../utils/controllerWorkspace";
 import { useDispatch, useSelector } from "../../hooks";
 import {
   selectOutputSlots,
@@ -73,12 +76,11 @@ import {
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import {
   useActiveControllerProfile,
-  useControllerBasePath,
 } from "../../context/activeController";
 import { keepElementInView } from "../../utils/generalUtils";
 import { RootState } from "../../store/store";
 import generateRandomId from "../../utils/generateRandomId";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { cn } from "../../utils/cnHelper";
 import { updateTimer } from "../../store/timersSlice";
@@ -96,6 +98,8 @@ import {
 import {
   resolveOutputDefaults,
   shouldSendNextSlideForOutput,
+  resolveDisplaySettings,
+  type ResolvedDisplaySettings,
 } from "../../utils/displaySettings";
 import {
   ItemSlideType,
@@ -136,17 +140,30 @@ import {
 import VideoBackgroundControls from "../../components/VideoBackgroundControls/VideoBackgroundControls";
 import { useOutlineItemDocs } from "../../hooks/useOutlineItemDocs";
 import {
-  getControllerItemPath,
   getNonHeadingOutlineItems,
-  prepareItemForEditor,
   resolveSlidesForOutlineItem,
 } from "../../utils/outlineSlideSections";
 import MediaDragPreview from "../Media/MediaDragPreview";
 import { usePresentationControllerMode } from "../../context/presentationControllerMode";
+import {
+  useThumbnailPreviewMode,
+  type ThumbnailPreviewMode,
+} from "../../context/thumbnailPreviewMode";
 import { useStaticThumbnailScaleFactor } from "./staticThumbnailGeometry";
+import { getControllerOutputs } from "../../utils/controllerProfiles";
 
 /** Keep capture warm while the display window takes over the stream. */
 const LOCAL_VIDEO_TRANSMIT_HANDOFF_MS = 5_000;
+const THUMBNAIL_PREVIEW_MODES: readonly ThumbnailPreviewMode[] = [
+  "projector",
+  "monitor",
+  "stream",
+];
+const THUMBNAIL_PREVIEW_LABELS: Record<ThumbnailPreviewMode, string> = {
+  projector: "Projector",
+  monitor: "Monitor",
+  stream: "Stream",
+};
 
 const haveSameSlideOrder = (
   firstSlides: ItemSlideType[],
@@ -247,6 +264,7 @@ export const ItemSlidesDndContext = createContext<"local" | "ancestor">(
 
 const ItemSlidesContent = () => {
   const { mode } = usePresentationControllerMode();
+  const { previewMode, setPreviewMode } = useThumbnailPreviewMode();
   const isPresentMode = mode === "present";
   const dndMode = useContext(ItemSlidesDndContext);
   const { active, over } = useDndContext();
@@ -343,14 +361,13 @@ const ItemSlidesContent = () => {
   const {
     slidesPerRow,
     slidesPerRowMobile,
-    shouldShowStreamFormat,
     shouldShowItemEditor,
     monitorSettings: churchMonitorSettings,
   } = useSelector((state: RootState) => state.undoable.present.preferences);
 
   const mediaList = useSelector((state: RootState) => state.media.list);
 
-  const { isMobile } = useContext(ControllerInfoContext) || {};
+  const { isMobile, db } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
   const showToast = useContext(ToastContext)?.showToast;
 
@@ -375,6 +392,34 @@ const ItemSlidesContent = () => {
   // Targeting resolves against the controller this grid is being operated from,
   // so an auxiliary controller can only ever reach its own displays.
   const controllerProfile = useActiveControllerProfile();
+  const controllerOutputs = useMemo(
+    () => getControllerOutputs(controllerProfile, displayOutputs),
+    [controllerProfile, displayOutputs],
+  );
+  const availablePreviewModes = useMemo(
+    () =>
+      THUMBNAIL_PREVIEW_MODES.filter((candidate) =>
+        controllerOutputs.some((output) => output.type === candidate),
+      ),
+    [controllerOutputs],
+  );
+  const effectivePreviewMode = availablePreviewModes.includes(previewMode)
+    ? previewMode
+    : (availablePreviewModes[0] ?? "projector");
+  const monitorPreviewSettings: ResolvedDisplaySettings = useMemo(() => {
+    const monitorOutput = controllerOutputs.find(
+      (output) => output.type === "monitor",
+    );
+    return resolveDisplaySettings(
+      resolveOutputDefaults(
+        monitorOutput?.settings,
+        churchMonitorSettings,
+        "monitor",
+      ),
+      undefined,
+      "monitor",
+    );
+  }, [churchMonitorSettings, controllerOutputs]);
   const sendTargets = useMemo(
     () => ({
       projector: getSendTargetIdsForType(
@@ -575,8 +620,6 @@ const ItemSlidesContent = () => {
   ]);
 
   const isCollapsedContinuous = shouldShowItemEditor === false;
-  const navigate = useNavigate();
-  const controllerBasePath = useControllerBasePath();
   const outlineList = useSelector(
     (state: RootState) => state.undoable.present.itemList?.list,
   );
@@ -711,6 +754,21 @@ const ItemSlidesContent = () => {
     (dragPreviewItemIdentityRef.current === itemIdentity
       ? dragPreviewSlides
       : null) ?? slidesToRender;
+  const monitorPreviewSlides = useMemo(() => {
+    if (
+      effectivePreviewMode !== "monitor" ||
+      type !== "free" ||
+      !monitorPreviewSettings.showNextSlide
+    ) {
+      return renderedSlides;
+    }
+    return ensureSlidesHaveMonitorBandFormatting(renderedSlides);
+  }, [
+    effectivePreviewMode,
+    monitorPreviewSettings.showNextSlide,
+    renderedSlides,
+    type,
+  ]);
 
   useEffect(() => {
     if (debouncedSlidesItemIdentityRef.current === itemIdentity) return;
@@ -1282,29 +1340,16 @@ const ItemSlidesContent = () => {
         index: targetIndex,
       };
 
-      dispatch(setActiveItemInList(neighbor.listId));
-      const doc = neighborDocsById.get(neighbor._id);
-      if (doc) {
-        dispatch(
-          setActiveItem({
-            ...prepareItemForEditor(doc, neighbor.listId),
-            selectedSlide: targetIndex,
-          }),
-        );
-      }
-      navigate(getControllerItemPath(neighbor, controllerBasePath), {
-        replace: true,
-      });
+      void dispatch(selectControllerItem(neighbor, db, targetIndex));
       return true;
     },
     [
       _id,
-      controllerBasePath,
       dispatch,
       isCollapsedContinuous,
       listId,
-      navigate,
       neighborDocsById,
+      db,
       outlineItems,
     ],
   );
@@ -1343,7 +1388,7 @@ const ItemSlidesContent = () => {
         target.tagName === "INPUT" ||
         target.tagName === "TEXTAREA" ||
         target.isContentEditable;
-      if (!location.pathname.includes("item") || isLyricsEditorOpen || isTyping) return;
+      if (!isControllerWorkspacePath(location.pathname) || isLyricsEditorOpen || isTyping) return;
       if (e.key === " ") {
         e.preventDefault();
         if (e.shiftKey) {
@@ -1799,6 +1844,9 @@ const ItemSlidesContent = () => {
     type === "free" && isSlideDragData(active?.data.current)
       ? renderedSlides.find((slide) => slide.id === active.id)
       : null;
+  const activeSlideIndex = activeSlide
+    ? renderedSlides.findIndex((slide) => slide.id === activeSlide.id)
+    : -1;
   const getContainerInsertionIndex = () => {
     if (!active?.rect?.current?.translated || slides.length === 0) {
       return slides.length;
@@ -1936,8 +1984,40 @@ const ItemSlidesContent = () => {
             />
           </div>
         ) : null}
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 px-2 py-1 max-md:content-start">
-          <div className="flex shrink-0 items-center gap-1">
+        <div className={cn("flex min-w-0 flex-1 items-center gap-2 px-2 py-1", isMobile && !isPresentMode ? "flex-nowrap" : "flex-wrap max-md:content-start")} data-testid="slide-thumbnail-toolbar">
+          {!isPresentMode && availablePreviewModes.length > 0 && (
+            isMobile ? (
+              <div className="flex shrink-0 items-center gap-1 text-xs text-gray-300">
+                <span>View</span>
+                <Select
+                  aria-label="Thumbnail view"
+                  size="sm"
+                  className="w-24"
+                  value={effectivePreviewMode}
+                  onChange={(value) => setPreviewMode(value as ThumbnailPreviewMode)}
+                  options={availablePreviewModes.map((option) => ({
+                    value: option,
+                    label: THUMBNAIL_PREVIEW_LABELS[option],
+                  }))}
+                />
+              </div>
+            ) : (
+              <div className="flex shrink-0 items-center gap-1 text-xs text-gray-300">
+                <span>View</span>
+                <SegmentedControl
+                  ariaLabel="Thumbnail view"
+                  variant="compact"
+                  value={effectivePreviewMode}
+                  onChange={setPreviewMode}
+                  options={availablePreviewModes.map((option) => ({
+                    value: option,
+                    label: THUMBNAIL_PREVIEW_LABELS[option],
+                  }))}
+                />
+              </div>
+            )
+          )}
+          <div className="flex min-w-0 flex-1 items-center gap-1 md:flex-none">
             <Button
               variant="tertiary"
               className="min-h-0 h-7 w-7 justify-center p-0"
@@ -1947,7 +2027,7 @@ const ItemSlidesContent = () => {
               disabled={size >= slidesGridColsMax}
               onClick={() => setSlideGridSize(size + 1)}
             />
-            <div className="w-36 shrink-0">
+            <div className="w-36 min-w-5 flex-1 md:shrink-0">
               <Slider
                 className="w-full"
                 value={[slideZoomSliderValue]}
@@ -1985,8 +2065,21 @@ const ItemSlidesContent = () => {
               className="min-w-0 flex-1 max-md:order-3 max-md:basis-full md:rounded-none md:border-0 md:bg-transparent md:p-0"
             />
           ) : null}
-          {slideActionBarItems.length > 0 ? (
-            <div className="ml-auto flex shrink-0 items-center justify-end gap-2">
+          {slideActionBarItems.length > 0 && isMobile && !isPresentMode ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="tertiary" svg={MoreHorizontal} aria-label="More slide actions" title="More slide actions" className="shrink-0" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-40">
+                {slideActionBarItems.map((action) => (
+                  <DropdownMenuItem key={action.id} disabled={action.disabled} className={action.overflowMenuItemClassName} onSelect={() => action.onOverflowSelect?.()}>
+                    {action.renderOverflowItem ? action.renderOverflowItem() : action.label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : slideActionBarItems.length > 0 ? (
+            <div className="ml-auto flex shrink-0 items-center justify-end gap-2 md:min-w-11 md:flex-1 md:shrink">
               {isSlideSubsetSelecting ? (
                 <div
                   className="flex shrink-0 items-baseline gap-1 text-xs"
@@ -2029,7 +2122,8 @@ const ItemSlidesContent = () => {
             size={size}
             sizeConfig={sizeConfig}
             isMobile={isMobile || false}
-            isStreamFormat={shouldShowStreamFormat}
+            previewMode={effectivePreviewMode}
+            monitorSettings={monitorPreviewSettings}
             canEdit={canEdit}
             selectedSlide={selectedSlide}
             liveSlideIds={liveSlideIds}
@@ -2086,7 +2180,10 @@ const ItemSlidesContent = () => {
                   onRenameSection={
                     isPresentMode ? undefined : renameFreeSection
                   }
-                  isStreamFormat={shouldShowStreamFormat}
+                  previewMode={effectivePreviewMode}
+                  monitorSlide={monitorPreviewSlides[index] ?? slide}
+                  nextSlide={monitorPreviewSlides[index + 1]}
+                  monitorSettings={monitorPreviewSettings}
                   getBibleInfo={getBibleInfo}
                   borderWidth={sizeConfig.borderWidth}
                   hSize={sizeConfig.hSize}
@@ -2159,7 +2256,10 @@ const ItemSlidesContent = () => {
               isMobile={isMobile || false}
               draggedSection={null}
               formattedSections={formattedSections}
-              isStreamFormat={shouldShowStreamFormat}
+              previewMode={effectivePreviewMode}
+              monitorSlide={monitorPreviewSlides[activeSlideIndex] ?? activeSlide}
+              nextSlide={monitorPreviewSlides[activeSlideIndex + 1]}
+              monitorSettings={monitorPreviewSettings}
               getBibleInfo={getBibleInfo}
               borderWidth={sizeConfig.borderWidth}
               hSize={sizeConfig.hSize}
