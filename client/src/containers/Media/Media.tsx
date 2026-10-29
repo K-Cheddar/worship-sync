@@ -54,6 +54,7 @@ import { supportsDesktopCapture } from "../../utils/desktopCapture";
 import { useNativeFileDrop } from "./useNativeFileDrop";
 import { MediaAddControl } from "./MediaAddControl";
 import { MediaSourceAddMenu } from "./MediaSourceAddMenu";
+import DownloadVideoDialog from "./DownloadVideoDialog";
 
 const MEDIA_LIBRARY_FORM_POPOVER_CLASS =
   "w-72 border border-gray-600 bg-gray-900 p-3 text-white";
@@ -86,6 +87,8 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
   );
   const [canvaOauthConfigured, setCanvaOauthConfigured] = useState(false);
   const [isVideoInputOpen, setIsVideoInputOpen] = useState(false);
+  const [isVideoDownloadOpen, setIsVideoDownloadOpen] = useState(false);
+  const [isVideoDownloaderAvailable, setIsVideoDownloaderAvailable] = useState(false);
   const [videoInputToEdit, setVideoInputToEdit] =
     useState<LocalVideoInputMediaSource>();
   const [videoInputMode, setVideoInputMode] =
@@ -154,6 +157,18 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
       active = false;
     };
   }, [churchId]);
+
+  useEffect(() => {
+    let active = true;
+    const checkAvailability = window.electronAPI?.isVideoDownloaderAvailable;
+    if (!checkAvailability) return;
+    void checkAvailability().then((available) => {
+      if (active) setIsVideoDownloaderAvailable(available);
+    }).catch(() => {
+      if (active) setIsVideoDownloaderAvailable(false);
+    });
+    return () => { active = false; };
+  }, []);
 
   const selectedCount = c.selectedMediaIds.size;
   const mediaRenameWindowRef = useRef<FloatingWindowHandle>(null);
@@ -281,6 +296,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
                 onAddVideoInput={() => openVideoInputPicker("device")}
                 onAddScreenShare={supportsDesktopCapture() ? () => openVideoInputPicker("desktop") : undefined}
                 onImportFromCanva={canvaOauthConfigured ? openCanva : undefined}
+                onDownloadVideo={isVideoDownloaderAvailable ? () => setIsVideoDownloadOpen(true) : undefined}
                 mediaUploadDisabled={c.isMediaReadOnly}
                 isGuestSession={c.isGuestSession}
               />
@@ -305,6 +321,17 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           onUploadComplete={notifyStorageUsageChanged}
           uploadDisabled={c.isMediaReadOnly}
         />
+        {isVideoDownloaderAvailable ? (
+          <DownloadVideoDialog
+            open={isVideoDownloadOpen}
+            onOpenChange={setIsVideoDownloadOpen}
+            disabled={c.isMediaReadOnly}
+            isGuestSession={c.isGuestSession}
+            onMediaAdded={addLocalMedia}
+            onMediaPatched={(id, patch) => dispatch(updateMediaItemFields({ id, patch }))}
+            onUploadComplete={notifyStorageUsageChanged}
+          />
+        ) : null}
         {isVideoInputOpen ? (
           <LocalVideoInputPicker
             hideTrigger

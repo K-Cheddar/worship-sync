@@ -61,6 +61,9 @@ import {
   type LocalAssetImport,
   type LocalAssetMetadata,
 } from "./localAssetStore";
+import { VideoDownloader } from "./videoDownloader";
+import { resolveVideoToolPaths } from "./videoDownloaderBinaries";
+import { registerVideoDownloaderIpc } from "./videoDownloaderIpc";
 import {
   DESKTOP_AUTH_CALLBACK_CHANNEL,
   WORSHIPSYNC_PROTOCOL_SCHEME,
@@ -319,6 +322,8 @@ const chatTaskbarController = createChatTaskbarController({
 let windowStateManager: WindowStateManager;
 let mediaCacheManager: MediaCacheManager;
 let localAssetStore: LocalAssetStore;
+let videoDownloader: VideoDownloader | null = null;
+let isVideoDownloaderShutdownPending = false;
 let localVideoCaptureHost: BrowserWindow | null = null;
 let isUploadInProgress = false;
 let isAppClosing = false;
@@ -337,6 +342,20 @@ const assertControllerIpcSender = (sender: WebContents): void => {
     );
   }
 };
+
+registerVideoDownloaderIpc({
+  ipcMain,
+  assertControllerSender: assertControllerIpcSender,
+  getDownloader: () => videoDownloader,
+  getLocalAssetStore: () => localAssetStore ?? null,
+});
+
+app.on("before-quit", (event) => {
+  if (!videoDownloader || isVideoDownloaderShutdownPending) return;
+  event.preventDefault();
+  isVideoDownloaderShutdownPending = true;
+  void videoDownloader.shutdown().finally(() => app.quit());
+});
 
 const assertMediaCacheIpcSender = (sender: WebContents): void => {
   const knownWindows = [
@@ -817,10 +836,10 @@ const createWindow = () => {
 
       const result = await dialog.showMessageBox(mainWindow!, {
         type: "warning",
-        title: "Upload in Progress",
-        message: "A video upload is currently in progress.",
+        title: "Media Transfer in Progress",
+        message: "A video download or upload is currently in progress.",
         detail:
-          "If you close the app now, your upload will be cancelled and you may lose progress. Do you want to close anyway?",
+          "If you close the app now, the transfer will be cancelled and you may lose progress. Do you want to close anyway?",
         buttons: ["Cancel", "Close Anyway"],
         defaultId: 0,
         cancelId: 0,
@@ -913,6 +932,24 @@ app.whenReady().then(() => {
   localAssetStore = new LocalAssetStore(
     join(app.getPath("userData"), "local-assets"),
   );
+  const videoToolPaths = resolveVideoToolPaths({
+    platform: process.platform,
+    arch: process.arch,
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    appPath: app.getAppPath(),
+  });
+  if (videoToolPaths) {
+    videoDownloader = new VideoDownloader({
+      rootDirectory: join(app.getPath("userData"), "video-downloads"),
+      ...videoToolPaths,
+    });
+    videoDownloader.on("progress", (event) => {
+      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+        mainWindow.webContents.send("video-download-progress", event);
+      }
+    });
+  }
   const attachCspHeaders = (targetSession: Electron.Session) => {
     targetSession.webRequest.onHeadersReceived((details, callback) => {
       if (!shouldAttachAppCsp(details, app.isPackaged)) {
