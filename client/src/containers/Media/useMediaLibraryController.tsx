@@ -806,7 +806,7 @@ export function useMediaLibraryController({
         type: "free",
         name: displayName,
         outputIds: projectorTargetIds,
-        videoPlayback: buildVideoPlaybackCueForSend(slide),
+        videoPlayback: buildVideoPlaybackCueForSend(slide, { itemType: "free" }),
       }),
     );
     showToast(

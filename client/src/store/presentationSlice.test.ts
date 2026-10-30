@@ -7,6 +7,7 @@ import {
 } from "./presentationSlice";
 import { createPresentation } from "../test/fixtures";
 import { setServerTimeOffset } from "../utils/serverTime";
+import { resolveEditorPreviewVideoPlayback } from "../utils/videoBackgroundPlayback";
 import type { ItemSlideType } from "../types";
 
 /**
@@ -3942,4 +3943,26 @@ describe("presentationSlice", () => {
       });
     });
   });
+
+  it("round trips loop-only transport changes across Projector, Monitor, Stream, and editor resolution", () => {
+    const cue = { mediaKey: "remote:clip", positionSeconds: 12, paused: false, atServerMs: Date.now(), generation: 1, applySeek: false, loop: true };
+    const slide: ItemSlideType = { id: "clip-slide", type: "Section", name: "Clip", boxes: [{ width: 100, height: 100, mediaInfo: { type: "video", id: "clip", background: "https://cdn.example/clip.mp4" } as NonNullable<ItemSlideType["boxes"][number]["mediaInfo"]> }] };
+    const presentation = { type: "free", name: "Clip", slide, videoPlayback: cue };
+    const store = createStore({ presentation: { isProjectorTransmitting: true, isMonitorTransmitting: true, isStreamTransmitting: true, projectorInfo: presentation, monitorInfo: presentation, streamInfo: presentation } });
+    const before = store.getState().presentation;
+    const nextCue = { ...cue, loop: false, generation: 2 };
+    store.dispatch(presentationSlice.actions.updateVideoPlayback({ outputIds: ["projector", "monitor", "stream"], videoPlayback: nextCue }));
+    const next = store.getState().presentation;
+    expect(Object.values(next.outputs).map((slot) => slot.info.videoPlayback)).toEqual([nextCue, nextCue, nextCue]);
+    expect(next.outputs.projector.info.slide).toBe(before.outputs.projector.info.slide);
+    expect(next.outputs.projector.prevInfo).toBe(before.outputs.projector.prevInfo);
+    const restored = fromLegacyPresentationShape(JSON.parse(JSON.stringify(toLegacyPresentationShape(next))));
+    expect(resolveEditorPreviewVideoPlayback(restored.outputs, slide)).toEqual(nextCue);
+    expect(restored.outputs.stream.info.videoPlayback?.loop).toBe(false);
+    for (const outputType of ["projector", "monitor", "stream"] as const) {
+      store.dispatch(presentationSlice.actions.applyRemoteVideoPlayback({ videoPlayback: cue, outputType }));
+    }
+    expect(store.getState().presentation.outputs.projector.info.videoPlayback).toEqual(nextCue);
+  });
+
 });

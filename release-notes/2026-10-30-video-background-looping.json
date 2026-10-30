@@ -1,0 +1,7 @@
+{
+  "id": "video-background-looping",
+  "date": "2026-10-30",
+  "type": "new",
+  "title": "Choose when video backgrounds loop",
+  "description": "Set looping for each slide in Edit or Present mode. Songs loop by default, custom items play once and hold their final frame, and live changes keep playback in place."
+}

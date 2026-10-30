@@ -253,6 +253,8 @@ const loadStoreWithItemPersistence = () => {
     selectControllerItem: selectionModule!.selectControllerItem,
     deferredMutations: mutationsModule!,
     updateSlides: itemSliceModule.updateSlides,
+    updateSlideVideoBackgroundLoop: itemSliceModule.updateSlideVideoBackgroundLoop,
+    updateSlideVideoBackgroundSendMode: itemSliceModule.updateSlideVideoBackgroundSendMode,
     db,
     postMessage,
     setGlobalDb: (next: unknown) => { mockActiveItemDb = next; },
@@ -339,6 +341,26 @@ describe("item content integrity investigation", () => {
   };
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => jest.useRealTimers());
+
+  it("persists slide loop overrides to the original item after navigation and restores both settings", async () => {
+    const { docs, select, tick, store, updateSlideVideoBackgroundLoop, updateSlideVideoBackgroundSendMode } = setup();
+    const beforeB = clone(docs.get("song-B"));
+    select("song-A");
+    await store.dispatch(updateSlideVideoBackgroundLoop({ loop: false }));
+    await store.dispatch(updateSlideVideoBackgroundSendMode({ mode: "restart" }));
+    select("song-B");
+    await tick();
+    expect(docs.get("song-A")).toMatchObject({
+      slides: [expect.objectContaining({ videoBackgroundLoop: false, videoBackgroundSendMode: "restart" })],
+      arrangements: [expect.objectContaining({ slides: [expect.objectContaining({ videoBackgroundLoop: false, videoBackgroundSendMode: "restart" })] })],
+    });
+    expect(docs.get("song-B")).toEqual(beforeB);
+    select("song-A");
+    expect(store.getState().undoable.present.item.slides[0]).toMatchObject({ videoBackgroundLoop: false, videoBackgroundSendMode: "restart" });
+    await store.dispatch(updateSlideVideoBackgroundLoop({ loop: true }));
+    await tick();
+    expect(docs.get("song-A")).toMatchObject({ slides: [expect.objectContaining({ videoBackgroundLoop: true, videoBackgroundSendMode: "restart" })] });
+  });
 
   it("preserves newer unsaved input through an earlier local Pouch change and save acknowledgment", async () => {
     const { select, edit, tick, db, commit, store, docs } = setup();
@@ -4627,6 +4649,25 @@ describe("store module", () => {
       toLegacyPresentationShape(store.getState().presentation).projectorInfo
         .name,
     ).toBe("New Projector");
+  });
+
+  it.each(["projector", "monitor", "stream"] as const)("syncs live %s loop changes without advancing slide time and ignores a stale cue", async (outputType) => {
+    const { store, presentationSlice } = loadStoreWithPresentationSync();
+    const sliceNames = {
+      projector: { remote: "updateProjectorFromRemote", debounced: "debouncedUpdateProjector", info: "projectorInfo" },
+      monitor: { remote: "updateMonitorFromRemote", debounced: "debouncedUpdateMonitor", info: "monitorInfo" },
+      stream: { remote: "updateStreamFromRemote", debounced: "debouncedUpdateStream", info: "streamInfo" },
+    };
+    const names = sliceNames[outputType];
+    const cue = { mediaKey: "remote:clip", positionSeconds: 12, paused: false, atServerMs: 1_000_000, generation: 5, applySeek: false, loop: true };
+    const presentation = createScreenPresentation(outputType, 500, { videoPlayback: cue });
+    store.dispatch(presentationSlice.actions[names.remote](presentation));
+    store.dispatch({ type: names.debounced, payload: { ...presentation, videoPlayback: { ...cue, loop: false, generation: 6 } } });
+    await waitForListenerDelay();
+    expect(toLegacyPresentationShape(store.getState().presentation)[names.info]).toMatchObject({ time: 500, videoPlayback: { positionSeconds: 12, loop: false, generation: 6, applySeek: false } });
+    store.dispatch({ type: names.debounced, payload: presentation });
+    await waitForListenerDelay();
+    expect(toLegacyPresentationShape(store.getState().presentation)[names.info].videoPlayback.loop).toBe(false);
   });
 
   it("applies newer remote videoPlayback cues without a newer slide time", async () => {

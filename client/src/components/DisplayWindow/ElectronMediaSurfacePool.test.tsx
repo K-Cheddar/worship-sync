@@ -2,6 +2,10 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { Box } from "../../types";
 import {
   getVideoPreviewSnapshot,
+  restartVideoPreview,
+  seekVideoPreview,
+  pauseVideoPreview,
+  playVideoPreview,
   resetVideoBackgroundPlaybackForTests,
 } from "../../utils/videoBackgroundPlayback";
 import type {
@@ -1777,4 +1781,124 @@ describe("ElectronMediaSurfacePool", () => {
     expect(screen.getByTestId("electron-media-surface-video-remote:live")).toHaveAttribute("src", "media-cache://clip.mp4");
     expect(screen.getByTestId("electron-media-surface-remote:failed")).toHaveAttribute("data-prepared-state", "error");
   });
+
+  it("retains a completed surface and supports pause, seek, resume, and replay without preparing again", async () => {
+    const cue = { mediaKey: candidate.mediaKey, positionSeconds: 0, paused: false, atServerMs: Date.now(), generation: 1, applySeek: true, loop: false };
+    const renderPool = (playback = cue) => <ElectronMediaSurfacePool enabled candidates={[candidate]} views={[makeView(candidate.mediaKey, candidate.source, true, playback)]} />;
+    const { rerender } = render(renderPool());
+    const video = screen.getByTestId("electron-media-surface-video-remote:clip") as HTMLVideoElement;
+    Object.defineProperty(video, "duration", { configurable: true, value: 40 });
+    await waitFor(() => expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute("data-media-lifecycle", "active-playing"));
+    const loadCount = (HTMLMediaElement.prototype.load as jest.Mock).mock.calls.length;
+    const play = HTMLMediaElement.prototype.play as jest.Mock;
+    play.mockClear();
+    video.currentTime = 40;
+    video.pause();
+    fireEvent.ended(video);
+    jest.useFakeTimers();
+    act(() => { jest.advanceTimersByTime(5000); });
+    expect(video.currentTime).toBe(40);
+    expect(play).not.toHaveBeenCalled();
+    expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute("data-media-lifecycle", "active-playing");
+    jest.useRealTimers();
+    rerender(renderPool({ ...cue, positionSeconds: 40, paused: true, generation: 2, atServerMs: Date.now() }));
+    expect(video.currentTime).toBe(40);
+    rerender(renderPool({ ...cue, positionSeconds: 12, paused: true, generation: 3, atServerMs: Date.now() }));
+    expect(video.currentTime).toBe(12);
+    rerender(renderPool({ ...cue, positionSeconds: 12, applySeek: false, generation: 4, atServerMs: Date.now() }));
+    await waitFor(() => expect(play).toHaveBeenCalledTimes(1));
+    video.currentTime = 40;
+    video.pause();
+    rerender(renderPool({ ...cue, generation: 5, atServerMs: Date.now() }));
+    expect(video.currentTime).toBeLessThan(0.1);
+    await waitFor(() => expect(play).toHaveBeenCalledTimes(2));
+    expect(HTMLMediaElement.prototype.load).toHaveBeenCalledTimes(loadCount);
+    expect(screen.getByTestId("electron-media-surface-video-remote:clip")).toBe(video);
+  });
+
+  it.each([false, true])("late joins a completed cue (paused=%s) with a painted final frame", async (paused) => {
+    let currentTime = 0;
+    Object.defineProperty(HTMLMediaElement.prototype, "currentTime", {
+      configurable: true,
+      get: () => currentTime,
+      set(value: number) {
+        currentTime = value;
+        window.setTimeout(() => this.dispatchEvent(new Event("seeked")), 0);
+      },
+    });
+    const cue = { mediaKey: candidate.mediaKey, positionSeconds: 40, paused, atServerMs: Date.now() - 10_000, generation: 1, applySeek: false, loop: false };
+    render(<ElectronMediaSurfacePool enabled candidates={[candidate]} views={[makeView(candidate.mediaKey, candidate.source, true, cue)]} />);
+    const video = screen.getByTestId("electron-media-surface-video-remote:clip") as HTMLVideoElement;
+    Object.defineProperty(video, "duration", { configurable: true, value: 40 });
+    await waitFor(() => expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute("data-media-lifecycle", "active-playing"));
+    expect(currentTime).toBe(40);
+    expect(video.paused).toBe(true);
+    // Only preparation calls play. Activation of the final frame must not.
+    expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
+  });
+
+  it("changes looping on READY and active surfaces without changing generation, source, or playhead", async () => {
+    const cue = { mediaKey: candidate.mediaKey, positionSeconds: 0, paused: false, atServerMs: Date.now(), generation: 1, applySeek: false, loop: true };
+    const { rerender } = render(<ElectronMediaSurfacePool enabled candidates={[candidate]} views={[{ ...view(false), loop: true }]} />);
+    const video = screen.getByTestId("electron-media-surface-video-remote:clip") as HTMLVideoElement;
+    Object.defineProperty(video, "duration", { configurable: true, value: 40 });
+    await waitFor(() => expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute("data-prepared-state", "ready"));
+    const loadCount = (HTMLMediaElement.prototype.load as jest.Mock).mock.calls.length;
+    const playCount = (HTMLMediaElement.prototype.play as jest.Mock).mock.calls.length;
+    rerender(<ElectronMediaSurfacePool enabled candidates={[candidate]} views={[{ ...view(false), loop: false }]} />);
+    expect(video.loop).toBe(false);
+    expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(playCount);
+    expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute("data-prepared-state", "ready");
+    rerender(<ElectronMediaSurfacePool enabled candidates={[candidate]} views={[makeView(candidate.mediaKey, candidate.source, true, cue)]} />);
+    await waitFor(() => expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute("data-media-lifecycle", "active-playing"));
+    const livePlayCount = (HTMLMediaElement.prototype.play as jest.Mock).mock.calls.length;
+    video.currentTime = 9;
+    rerender(<ElectronMediaSurfacePool enabled candidates={[candidate]} views={[makeView(candidate.mediaKey, candidate.source, true, { ...cue, positionSeconds: 9, atServerMs: Date.now(), generation: 2, loop: false })]} />);
+    expect(video.loop).toBe(false);
+    expect(video.currentTime).toBe(9);
+    expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(livePlayCount);
+    expect(HTMLMediaElement.prototype.load).toHaveBeenCalledTimes(loadCount);
+    expect(screen.getByTestId("electron-media-surface-video-remote:clip")).toBe(video);
+  });
+
+  it("replays a completed editor surface through the existing preview transport", async () => {
+    render(<ElectronMediaSurfacePool enabled route="editor" role="editor-preview" candidates={[candidate]} views={[{ ...view(true), loop: false, reportsEditorTransport: true }]} />);
+    const video = screen.getByTestId("electron-media-surface-video-remote:clip") as HTMLVideoElement;
+    Object.defineProperty(video, "duration", { configurable: true, value: 40 });
+    await waitFor(() => expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute("data-media-lifecycle", "active-playing"));
+    video.currentTime = 40;
+    video.pause();
+    fireEvent.ended(video);
+    expect(getVideoPreviewSnapshot(candidate.mediaKey).currentTime).toBe(40);
+    act(() => restartVideoPreview(candidate.mediaKey));
+    await waitFor(() => expect(video.paused).toBe(false));
+    expect(video.currentTime).toBe(0);
+    act(() => pauseVideoPreview(candidate.mediaKey));
+    act(() => seekVideoPreview(candidate.mediaKey, 12));
+    expect(video.paused).toBe(true);
+    expect(video.currentTime).toBe(12);
+    act(() => playVideoPreview(candidate.mediaKey));
+    await waitFor(() => expect(video.paused).toBe(false));
+  });
+
+
+  it("lets Restart supersede a late-join final-frame seek that is still pending", async () => {
+    const { rerender } = render(<ElectronMediaSurfacePool enabled candidates={[candidate]} views={[view(false)]} />);
+    const video = screen.getByTestId("electron-media-surface-video-remote:clip") as HTMLVideoElement;
+    Object.defineProperty(video, "duration", { configurable: true, value: 40 });
+    await waitFor(() => expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute("data-prepared-state", "ready"));
+    let currentTime = 0;
+    Object.defineProperty(video, "currentTime", { configurable: true, get: () => currentTime, set: (value: number) => { currentTime = value; } });
+    const cue = { mediaKey: candidate.mediaKey, positionSeconds: 40, paused: false, atServerMs: Date.now(), generation: 1, applySeek: false, loop: false };
+    rerender(<ElectronMediaSurfacePool enabled candidates={[candidate]} views={[makeView(candidate.mediaKey, candidate.source, true, cue)]} />);
+    await waitFor(() => expect(currentTime).toBe(40));
+    rerender(<ElectronMediaSurfacePool enabled candidates={[candidate]} views={[makeView(candidate.mediaKey, candidate.source, true, { ...cue, positionSeconds: 0, generation: 2, applySeek: true, atServerMs: Date.now() })]} />);
+    await waitFor(() => expect(video.paused).toBe(false));
+    fireEvent.seeked(video);
+    await act(async () => { await Promise.resolve(); });
+    expect(currentTime).toBeLessThan(0.1);
+    expect(video.paused).toBe(false);
+    expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute("data-media-lifecycle", "active-playing");
+  });
+
 });

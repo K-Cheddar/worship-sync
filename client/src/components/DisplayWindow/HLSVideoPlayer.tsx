@@ -4,6 +4,7 @@ import { Box, VideoBackgroundPlaybackCue } from "../../types";
 import {
   createVideoPreviewReporter,
   logVideoCue,
+  isVideoPlaybackComplete,
   resolveVideoCueCorrection,
   resolveVideoCueDrift,
   resolveVideoPlaybackPosition,
@@ -51,6 +52,7 @@ type HLSPlayerProps = {
   mediaKey?: string;
   /** Live/output cue applied when this surface is following a send. */
   playback?: VideoBackgroundPlaybackCue;
+  loop?: boolean;
   outputId?: string;
   windowRole?: string;
 };
@@ -190,7 +192,11 @@ const applyCueToVideo = (
     video.pause();
     return;
   }
-  startPlayback(video, expectedSrc);
+  if (isVideoPlaybackComplete(video.loop, video.currentTime, finiteDuration(video))) {
+    video.pause();
+    return;
+  }
+  if (video.paused) startPlayback(video, expectedSrc);
 };
 
 const cueBelongsToMedia = (
@@ -214,6 +220,7 @@ const HLSPlayer = ({
   suspendPlayback = false,
   mediaKey,
   playback,
+  loop = true,
   outputId,
   windowRole,
 }: HLSPlayerProps) => {
@@ -500,6 +507,7 @@ const HLSPlayer = ({
     if (!video) return;
     video.playbackRate = 1;
     rateCorrectionStartedAtRef.current = null;
+    if (!video.loop) return;
     const cue = playbackRef.current;
     if (!cueBelongsToMedia(cue, mediaKeyRef.current)) return;
     video.currentTime = cue
@@ -645,6 +653,7 @@ const HLSPlayer = ({
         video.addEventListener("loadedmetadata", handleLoadedMetadata);
 
         const handleHlsEnded = () => {
+          if (!video.loop) return;
           if (hlsRef.current) hlsRef.current.startLoad(0);
           handleEnded();
         };
@@ -790,14 +799,17 @@ const HLSPlayer = ({
       cueBelongsToMedia(cue, mediaKeyRef.current) &&
       video.paused &&
       cue &&
-      !cue.paused
+      !cue.paused &&
+      readySrcRef.current === srcRef.current &&
+      !isVideoPlaybackComplete(video.loop, video.currentTime, finiteDuration(video))
     ) {
       startPlayback(video, srcRef.current);
     } else if (
       video.paused &&
       !cue &&
       playbackRoleRef.current !== "preview" &&
-      readySrcRef.current === srcRef.current
+      readySrcRef.current === srcRef.current &&
+      !isVideoPlaybackComplete(video.loop, video.currentTime, finiteDuration(video))
     ) {
       startPlayback(video, srcRef.current);
     }
@@ -828,6 +840,11 @@ const HLSPlayer = ({
         return;
       }
       if (syncedSrcRef.current !== srcRef.current) return;
+      if (!video.loop && (video.ended || isVideoPlaybackComplete(false, video.currentTime, finiteDuration(video)))) {
+        video.playbackRate = 1;
+        rateCorrectionStartedAtRef.current = null;
+        return;
+      }
       if (video.paused) {
         video.playbackRate = 1;
         rateCorrectionStartedAtRef.current = null;
@@ -921,6 +938,7 @@ const HLSPlayer = ({
     video.addEventListener("seeked", report);
     video.addEventListener("loadedmetadata", report);
     video.addEventListener("durationchange", report);
+    video.addEventListener("ended", report);
     report();
 
     return () => {
@@ -930,6 +948,7 @@ const HLSPlayer = ({
       video.removeEventListener("seeked", report);
       video.removeEventListener("loadedmetadata", report);
       video.removeEventListener("durationchange", report);
+      video.removeEventListener("ended", report);
       reporter.clear();
     };
   }, [transportRole, mediaKey]);
@@ -995,7 +1014,7 @@ const HLSPlayer = ({
       }}
       autoPlay={false}
       muted={muted}
-      loop
+      loop={playback?.loop ?? loop}
       onError={onError}
     />
   );

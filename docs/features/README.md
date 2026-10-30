@@ -24,6 +24,8 @@ The [Manual item-library search contract](item-library-search.md) records shared
 
 The [Item document storage contract](item-document-storage.md) records document ownership, the shared PouchDB cache lifecycle, independent outlines and historical-index safety confirmed October 26, 2026.
 
+The [Video background playback contract](video-background-playback.md) records slide-level looping defaults, final-frame retention, replay, and uninterrupted live preference changes confirmed October 30, 2026.
+
 ## Feature inventory
 
 Only workflows specifically labeled as confirmed contracts are documented as owner-confirmed. All other registry workflows are **inventory only**: their broad labels are observed from current product surfaces and need product-owner validation before being treated as behavioral contracts. Implementation references help locate features; they are not requirements.
