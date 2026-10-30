@@ -1,3 +1,12 @@
+## [2.48.1](https://github.com/K-Cheddar/worship-sync/compare/v2.48.0...v2.48.1) (2026-10-30)
+
+
+### Bug Fixes
+
+* **controller:** restore outline title wrapping ([6b289a0](https://github.com/K-Cheddar/worship-sync/commit/6b289a0426988dc3e178944b08e6c8aac265317d))
+* **timer:** enable time editing in Present mode ([c1003e4](https://github.com/K-Cheddar/worship-sync/commit/c1003e49d0ac82315f4625f3f702974a8b51b91e))
+* **toolbar:** hide video diagnostics in overlay present mode ([8d725ad](https://github.com/K-Cheddar/worship-sync/commit/8d725ade16e66a225a0cdb56c1b58180b09e36df))
+
 # [2.48.0](https://github.com/K-Cheddar/worship-sync/compare/v2.47.1...v2.48.0) (2026-10-29)
 
 
