@@ -159,6 +159,7 @@ function createMediaDeletionActivityHandoff(
   let ownerActive = true;
   let activityDismissed = false;
   let detachedCleanupRetry: (() => void | Promise<void>) | undefined;
+  let detachedDeleteRetry: (() => void | Promise<void>) | undefined;
   let detachedCleanupRetryLabel = "Retry cleanup";
   let lastTransfer: Transfer | undefined;
   const routeActions = new Map<string, () => void>();
@@ -194,6 +195,7 @@ function createMediaDeletionActivityHandoff(
       return;
     }
     if (activityDismissed) return;
+    replaceAction(detachedActions, "retry-delete", transfer.actions?.some((action) => action.key === "retry-delete") ? detachedDeleteRetry : undefined);
     activityActions?.updateTransfer({
       ...transfer,
       canCancel: continueAfterOwnerRetires ? transfer.canCancel ?? false : false,
@@ -201,6 +203,8 @@ function createMediaDeletionActivityHandoff(
       actions: [
         ...(continueAfterOwnerRetires ? transfer.actions?.filter((action) => action.key === "cancel") ?? [] : []),
         ...(detachedCleanupRetry ? [{ key: "retry-cleanup", label: detachedCleanupRetryLabel }] : []),
+        ...(detachedDeleteRetry && transfer.actions?.some((action) => action.key === "retry-delete")
+          ? [{ key: "retry-delete", label: "Retry deletion" }] : []),
         ...((continueAfterOwnerRetires && (transfer.status === "active" || transfer.status === "queued"))
           ? []
           : [{ key: "dismiss", label: "Dismiss" }]),
@@ -227,6 +231,10 @@ function createMediaDeletionActivityHandoff(
       }
       publishRetired();
     }
+  };
+
+  const setDetachedDeleteRetry = (handler: () => void | Promise<void>) => {
+    detachedDeleteRetry = handler;
   };
 
   const registerRouteAction = (key: string, handler: () => void | Promise<void>) => {
@@ -256,7 +264,7 @@ function createMediaDeletionActivityHandoff(
     }
   };
 
-  return { publish, registerRouteAction, retire, setDetachedCleanupRetry };
+  return { publish, registerRouteAction, retire, setDetachedCleanupRetry, setDetachedDeleteRetry };
 }
 
 export type MediaLibraryPageMode = "default" | "overlayController";
@@ -1737,6 +1745,7 @@ export function useMediaLibraryController({
               "error",
             );
           }
+          return false;
         }
         const getFinalState = () => {
           if (!isOperationUiScopeCurrent()) return tagAutomaticRehomes(next);
@@ -1983,6 +1992,13 @@ export function useMediaLibraryController({
         databaseName: db?.name ?? null,
       };
       const isOperationUiScopeCurrent = () => isCurrentUiScope(operationScope);
+      const sessionAtStart = store.getState().allDocs.session;
+      const contentOwnerAtStart = getActiveContentDatabaseOwner();
+      const isOriginalSession = () =>
+        store.getState().allDocs.session === sessionAtStart &&
+        getActiveContentDatabaseOwner() === contentOwnerAtStart &&
+        activeScopeRef.current.db === operationScope.db &&
+        activeScopeRef.current.churchId === operationScope.churchId;
       const mediaAtStart = store.getState().media;
       let changeBase = { list: mediaAtStart.list, folders: mediaAtStart.folders };
       let target = changeBase.folders.find((f) => f.id === folderId);
@@ -2274,8 +2290,9 @@ export function useMediaLibraryController({
 
       const enqueueFolderRetry = (
         run: (control: MediaFolderDeletionQueueControl) => Promise<void>,
+        requiresOriginalSession = false,
       ) => {
-        if (!activityActions) return false;
+        if (!activityActions || (requiresOriginalSession && !isOriginalSession())) return false;
         const transfer = activityActions.getTransfer(activityId);
         if (!transfer) return false;
         const recoveryTransfer = transfer;
@@ -2286,6 +2303,7 @@ export function useMediaLibraryController({
           transfer,
           run: async (retryControl) => {
             queueControl = retryControl;
+            if (requiresOriginalSession && !isOriginalSession()) return;
             await run(retryControl);
           },
           cancelQueued: () => {
@@ -2316,7 +2334,7 @@ export function useMediaLibraryController({
             ),
         });
         if (!control) {
-          showToast(
+          if (ownerActive && isOperationUiScopeCurrent()) showToast(
             "This folder already has a deletion queued or running.",
             "error",
           );
@@ -2504,7 +2522,7 @@ export function useMediaLibraryController({
           );
         });
       });
-      register("retry-delete", async () => {
+      const retryFolderDeletion = async () => {
         enqueueFolderRetry(async (control) => {
           const retryRows = deleteFailedRows;
           if (!retryRows.length) return;
@@ -2515,8 +2533,10 @@ export function useMediaLibraryController({
           } finally {
             retryClaim.release();
           }
-        });
-      });
+        }, true);
+      };
+      register("retry-delete", retryFolderDeletion);
+      activityHandoff.setDetachedDeleteRetry(retryFolderDeletion);
       register("dismiss", () => {
         if (fileStates.some((file) => file.status === "active")) return;
         retireOwner();

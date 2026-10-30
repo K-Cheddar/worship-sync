@@ -45,6 +45,10 @@ The authoritative per-item media document is read before deletion and its exact
 revision is tombstoned before provider cleanup. Reference sweeps have rollback
 support for conflicts and failures. Keep Contents updates saved route folders
 and the shared library document through the existing media-library flush path.
+Saved route repair must succeed before the folder is removed; a failed repair
+leaves any completed repairs in place for a safe retry. Failed folder deletion
+can be retried from Activity after navigating away within the same session.
+Retries do not resume after logout or a church-session change.
 
 Cancellation is honored for queued work and for active subtree deletion while
 the job is still stopping uploads, before it starts the reference sweep for the

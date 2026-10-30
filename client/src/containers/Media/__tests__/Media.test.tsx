@@ -1709,6 +1709,51 @@ describe("Media", () => {
     expect(dbB.put).not.toHaveBeenCalled();
   });
 
+  it("keeps the folder when saved route repair partially fails and safely retries", async () => {
+    const media = { ...makeBaseState().media.list[0], id: "kept-media", folderId: "folder-1" };
+    const folders = [{ id: "folder-1", name: "Sermon slides", parentId: null }];
+    mockState = makeBaseState({ media: { list: [media], folders } });
+    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-item-song": "folder-1" };
+    mockState.undoable.present.preferences.mediaRouteFoldersControllerProfileId = "presentation";
+    mockRepairPersistedMediaRouteFolders.mockRejectedValueOnce(new Error("route write failed"));
+    await renderMedia();
+    const deleteFolder = async () => {
+      await userEvent.click(screen.getByRole("button", { name: "Delete folder" }));
+      await userEvent.click(screen.getByRole("radio", { name: "Delete folder but keep contents" }));
+      await userEvent.click(screen.getByRole("button", { name: /^Delete$/ }));
+    };
+    await deleteFolder();
+    await waitFor(() => expect(mockUpdateTransfer).toHaveBeenCalledWith(expect.objectContaining({ status: "failed", phase: expect.objectContaining({ label: "Folder changes need attention" }) })));
+    expect(mockFlushMediaLibraryDocToPouch).not.toHaveBeenCalled();
+    expect(mockDispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: "media/setMediaListAndFolders" }));
+    await waitFor(() => expect(mockActiveFolderDeletion).toBeNull());
+    await deleteFolder();
+    await waitFor(() => expect(mockUpdateTransfer).toHaveBeenCalledWith(expect.objectContaining({ status: "complete", phase: expect.objectContaining({ label: "Folder deletion complete" }) })));
+    expect(mockRepairPersistedMediaRouteFolders).toHaveBeenCalledTimes(2);
+    expect(mockFlushMediaLibraryDocToPouch).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry a detached folder deletion after the session changes", async () => {
+    const media = { ...makeBaseState().media.list[0], id: "folder-media", folderId: "folder-1" };
+    mockState = makeBaseState({ media: { list: [media], folders: [{ id: "folder-1", name: "Folder", parentId: null }] } });
+    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-item-song": "folder-1" };
+    mockState.undoable.present.preferences.mediaRouteFoldersControllerProfileId = "presentation";
+    mockDeleteMediaItemAtRevisionFromPouch.mockRejectedValueOnce(new Error("disk unavailable"));
+    const { view } = await renderMedia();
+    await userEvent.click(screen.getByRole("button", { name: "Delete folder" }));
+    await userEvent.click(screen.getByRole("radio", { name: "Delete folder and contents" }));
+    await userEvent.click(screen.getByRole("button", { name: /^Delete$/ }));
+    await waitFor(() => expect(mockUpdateTransfer).toHaveBeenCalledWith(expect.objectContaining({ status: "failed", actions: expect.arrayContaining([expect.objectContaining({ key: "retry-delete" })]) })));
+    const id = mockUpdateTransfer.mock.calls.at(-1)![0].id;
+    view.unmount();
+    const retry = mockTransferActionHandlers.get(`${id}:retry-delete`);
+    expect(retry).toBeDefined();
+    mockState = { ...mockState, allDocs: { ...mockState.allDocs, session: mockState.allDocs.session + 1 } };
+    await act(async () => { await retry?.(); });
+    expect(mockDeleteMediaItemAtRevisionFromPouch).toHaveBeenCalledTimes(1);
+    expect(mockEnqueueMediaFolderDeletion).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps same-church keep-contents Redux, route broadcast, and persistence behavior", async () => {
     const media = { ...makeBaseState().media.list[0], id: "kept-media", folderId: "folder-1" };
     const folders = [{ id: "folder-1", name: "Sermon slides", parentId: null }];
@@ -2161,7 +2206,21 @@ describe("Media", () => {
     expect(mockGetTransfer(folderTransferId)).toBeDefined();
     await act(async () => { rejectDelete(new Error("disk unavailable after unmount")); });
     await waitFor(() => expect(mockGetTransfer(folderTransferId)).toEqual(expect.objectContaining({ status: "failed" })));
-    expect(mockGetTransfer(folderTransferId).actions).toEqual([{ key: "dismiss", label: "Dismiss" }]);
+    expect(mockGetTransfer(folderTransferId).actions).toEqual([
+      { key: "retry-delete", label: "Retry deletion" },
+      { key: "dismiss", label: "Dismiss" },
+    ]);
+    const dispatchCount = mockDispatch.mock.calls.length;
+    const retryTombstone = deferred<"deleted">();
+    mockDeleteMediaItemAtRevisionFromPouch.mockReturnValueOnce(retryTombstone.promise);
+    const retry = mockTransferActionHandlers.get(`${folderTransferId}:retry-delete`);
+    await act(async () => { await retry?.(); await retry?.(); });
+    await waitFor(() => expect(mockDeleteMediaItemAtRevisionFromPouch).toHaveBeenCalledTimes(2));
+    await act(async () => { retryTombstone.resolve("deleted"); await retryTombstone.promise; });
+    await waitFor(() => expect(mockGetTransfer(folderTransferId).status).toBe("complete"));
+    expect(mockDeleteMediaItemAtRevisionFromPouch).toHaveBeenCalledTimes(2);
+    expect(mockDispatch).toHaveBeenCalledTimes(dispatchCount);
+    expect(mockGetTransfer(folderTransferId).phase.label).toBe("Folder deletion complete");
     await act(async () => { await mockTransferActionHandlers.get(`${folderTransferId}:dismiss`)?.(); });
     expect(mockRemoveTransfer).toHaveBeenCalledWith(folderTransferId);
     expect(mockGetTransfer(folderTransferId)).toBeUndefined();
