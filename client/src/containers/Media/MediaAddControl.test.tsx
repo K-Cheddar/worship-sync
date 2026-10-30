@@ -25,6 +25,7 @@ beforeEach(() => {
     startCanvaTransfer: jest.fn(),
     startResourceUpload: jest.fn(),
     registerResourceUploadListener: jest.fn(() => jest.fn()),
+    enqueueMediaFolderDeletion: jest.fn(),
   });
 });
 
@@ -45,6 +46,7 @@ it("opens Activity without showing a global percentage", async () => {
     startCanvaTransfer: jest.fn(),
     startResourceUpload: jest.fn(),
     registerResourceUploadListener: jest.fn(() => jest.fn()),
+    enqueueMediaFolderDeletion: jest.fn(),
   });
   render(
     <MediaAddControl>
@@ -75,6 +77,7 @@ it("uses amber for Sources Activity when an operation needs attention", () => {
     startCanvaTransfer: jest.fn(),
     startResourceUpload: jest.fn(),
     registerResourceUploadListener: jest.fn(() => jest.fn()),
+    enqueueMediaFolderDeletion: jest.fn(),
   });
   render(<MediaAddControl><button type="button">Add media</button></MediaAddControl>);
   expect(screen.getByRole("button", { name: "Show Activity · 1 needs attention" })).toBeInTheDocument();
@@ -95,6 +98,7 @@ it("uses a completion icon for finished work while retaining its accessible summ
     startCanvaTransfer: jest.fn(),
     startResourceUpload: jest.fn(),
     registerResourceUploadListener: jest.fn(() => jest.fn()),
+    enqueueMediaFolderDeletion: jest.fn(),
   });
   render(<MediaAddControl><button type="button">Add media</button></MediaAddControl>);
   expect(screen.getByRole("button", { name: "Show Activity" })).toBeInTheDocument();
@@ -115,6 +119,7 @@ it("shows an Activity menu item when the panel is minimized", async () => {
     startCanvaTransfer: jest.fn(),
     startResourceUpload: jest.fn(),
     registerResourceUploadListener: jest.fn(() => jest.fn()),
+    enqueueMediaFolderDeletion: jest.fn(),
   });
   const user = userEvent.setup();
   render(<DropdownMenu><DropdownMenuTrigger>Open menu</DropdownMenuTrigger><DropdownMenuContent><ShowTransfersMenuItem /></DropdownMenuContent></DropdownMenu>);
