@@ -4670,6 +4670,27 @@ describe("store module", () => {
     expect(toLegacyPresentationShape(store.getState().presentation)[names.info].videoPlayback.loop).toBe(false);
   });
 
+  it.each(["projector", "monitor", "stream"] as const)("delivers a cue-less %s Loop update and later explicit transport at the same slide time", async (outputType) => {
+    const { store, presentationSlice } = loadStoreWithPresentationSync();
+    const names = {
+      projector: { remote: "updateProjectorFromRemote", debounced: "debouncedUpdateProjector", info: "projectorInfo" },
+      monitor: { remote: "updateMonitorFromRemote", debounced: "debouncedUpdateMonitor", info: "monitorInfo" },
+      stream: { remote: "updateStreamFromRemote", debounced: "debouncedUpdateStream", info: "streamInfo" },
+    }[outputType];
+    const presentation = createScreenPresentation(outputType, 500);
+    store.dispatch(presentationSlice.actions[names.remote](presentation));
+    const policy = { mediaKey: "remote:clip", positionSeconds: 0, paused: false, atServerMs: 1_000_000, generation: 5, applySeek: false, loop: false, loopOnly: true };
+    store.dispatch({ type: names.debounced, payload: { ...presentation, videoPlayback: policy } });
+    await waitForListenerDelay();
+    expect(toLegacyPresentationShape(store.getState().presentation)[names.info]).toMatchObject({ time: 500, videoPlayback: { loop: false, loopOnly: true, generation: 5 } });
+    const { loopOnly: _policyOnly, ...transport } = policy;
+    store.dispatch({ type: names.debounced, payload: { ...presentation, videoPlayback: { ...transport, positionSeconds: 12, applySeek: true, generation: 6 } } });
+    await waitForListenerDelay();
+    const applied = toLegacyPresentationShape(store.getState().presentation)[names.info];
+    expect(applied).toMatchObject({ time: 500, videoPlayback: { positionSeconds: 12, applySeek: true, generation: 6 } });
+    expect(applied.videoPlayback.loopOnly).toBeUndefined();
+  });
+
   it("applies newer remote videoPlayback cues without a newer slide time", async () => {
     const { store, presentationSlice } = loadStoreWithPresentationSync();
     const slide = createScreenSlide("video-slide", "playing");

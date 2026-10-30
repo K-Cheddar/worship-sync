@@ -12,6 +12,7 @@ const mockDispatch = jest.fn();
 const mockSendModeChange = jest.fn();
 const mockLoopChange = jest.fn();
 let mockLiveCue: VideoBackgroundPlaybackCue;
+let mockHasLiveCue = true;
 
 let mockServerTime = 1_006_000;
 jest.mock("../../utils/serverTime", () => ({ serverNow: () => mockServerTime }));
@@ -25,7 +26,7 @@ jest.mock("../../hooks", () => ({
           projector: {
             isTransmitting: true,
             info: {
-              videoPlayback: mockLiveCue,
+              videoPlayback: mockHasLiveCue ? mockLiveCue : undefined,
             },
           },
         },
@@ -60,6 +61,7 @@ describe("VideoBackgroundControls", () => {
   beforeEach(() => {
     resetVideoBackgroundPlaybackForTests();
     mockServerTime = 1_006_000;
+    mockHasLiveCue = true;
     mockLiveCue = { mediaKey: "remote:video-1", positionSeconds: 12, paused: false, atServerMs: 1_000_000, generation: 3, applySeek: false, loop: true };
     mockDispatch.mockClear();
     mockSendModeChange.mockClear();
@@ -379,6 +381,31 @@ describe("VideoBackgroundControls", () => {
     unmount();
     expect(jest.getTimerCount()).toBe(0);
     jest.useRealTimers();
+  });
+
+
+  it("updates a transmitting cue-less video without introducing a transport clock", async () => {
+    mockHasLiveCue = false;
+    const commands: string[] = [];
+    const unsubscribe = subscribeVideoPreviewCommands("remote:video-1", (command) => commands.push(command.type));
+    const user = userEvent.setup();
+    const { rerender } = render(<VideoBackgroundControls media={media} mediaKey="remote:video-1" syncOutputIds={["projector"]} sendMode="continue" onSendModeChange={mockSendModeChange} loop onLoopChange={mockLoopChange} />);
+    await user.click(screen.getByRole("switch", { name: "Loop:" }));
+    expect(mockLoopChange).toHaveBeenCalledWith(false);
+    expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({ payload: {
+      outputIds: ["projector"],
+      videoPlayback: expect.objectContaining({ mediaKey: "remote:video-1", loop: false, loopOnly: true, applySeek: false }),
+    } }));
+    expect(commands).toEqual([]);
+    // Subsequent loop-only cues still use measured preview transport, rather
+    // than advancing the cue's non-authoritative fallback position.
+    mockHasLiveCue = true;
+    mockLiveCue = { ...mockLiveCue, loopOnly: true, loop: false, positionSeconds: 0 };
+    rerender(<VideoBackgroundControls media={media} mediaKey="remote:video-1" syncOutputIds={["projector"]} sendMode="continue" onSendModeChange={mockSendModeChange} loop={false} onLoopChange={mockLoopChange} />);
+    expect(screen.getByText("0:12")).toBeInTheDocument();
+    await user.click(screen.getByRole("switch", { name: "Loop:" }));
+    expect(mockDispatch).toHaveBeenLastCalledWith(expect.objectContaining({ payload: expect.objectContaining({ videoPlayback: expect.objectContaining({ loop: true, loopOnly: true }) }) }));
+    unsubscribe();
   });
 
 });

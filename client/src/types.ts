@@ -1100,6 +1100,8 @@ export type VideoBackgroundPlaybackCue = {
   paused: boolean;
   /** Legacy cues loop; new sends carry the effective slide preference. */
   loop?: boolean;
+  /** Policy update for cue-less playback; do not apply a transport clock. */
+  loopOnly?: boolean;
   atServerMs: number;
   /** Bumped on every send so live players can re-apply the same position. */
   generation: number;

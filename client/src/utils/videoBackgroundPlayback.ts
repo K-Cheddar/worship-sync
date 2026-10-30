@@ -401,7 +401,7 @@ export type VideoTransportUpdate = {
 };
 
 export const buildVideoPlaybackCue = (
-  update: VideoTransportUpdate,
+  update: VideoTransportUpdate & Pick<VideoBackgroundPlaybackCue, "loopOnly">,
 ): VideoBackgroundPlaybackCue => ({
   mediaKey: update.mediaKey,
   positionSeconds: update.positionSeconds,
@@ -410,6 +410,7 @@ export const buildVideoPlaybackCue = (
   generation: nextCueGeneration(),
   applySeek: update.applySeek,
   ...(update.loop !== undefined ? { loop: update.loop } : {}),
+  ...(update.loopOnly ? { loopOnly: true } : {}),
 });
 
 /** Applies operator transport and updates the local preview snapshot. */
@@ -539,7 +540,9 @@ export const buildVideoPlaybackCueForSend = (
   // mounted, has an empty snapshot and would otherwise restart a live video
   // from zero. The operator's own scrub still wins over the live playhead.
   const liveCue =
-    options?.liveCue?.mediaKey === mediaKey ? options.liveCue : undefined;
+    options?.liveCue?.mediaKey === mediaKey && !options.liveCue.loopOnly
+      ? options.liveCue
+      : undefined;
   if (liveCue && !dirty) {
     const knownDuration =
       (samePreview ? snapshot.duration : 0) ||

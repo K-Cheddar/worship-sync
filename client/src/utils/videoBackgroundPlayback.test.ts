@@ -6,6 +6,7 @@ import type {
 import { serverNow } from "./serverTime";
 import {
   buildVideoPlaybackCueForSend,
+  buildVideoPlaybackCue,
   createVideoPreviewReporter,
   formatVideoClock,
   getSlideVideoBackgroundMedia,
@@ -780,6 +781,17 @@ describe("slide video looping", () => {
     expect(resolveEditorPreviewVideoPlayback(outputs, slide)).toEqual(songCue);
     expect(resolveEditorPreviewVideoPlayback(outputs, other)).toEqual(otherCue);
     expect(resolveSyncedVideoPlayback(outputs, "remote:video-1", ["projector"])).toEqual(songCue);
+  });
+
+
+  it("keeps policy-only fallback positions out of subsequent Continue transport", () => {
+    const slide = slideWithVideo(videoMedia({ duration: 40 }));
+    const liveCue = buildVideoPlaybackCue({ mediaKey: "remote:video-1", positionSeconds: 0, paused: false, applySeek: false, loop: false, loopOnly: true });
+    expect(liveCue.loopOnly).toBe(true);
+    reportVideoPreviewState({ mediaKey: "remote:video-1", currentTime: 27, duration: 40, paused: false });
+    const sent = buildVideoPlaybackCueForSend(slide, { liveCue });
+    expect(sent).toMatchObject({ positionSeconds: 27, paused: false });
+    expect(sent?.loopOnly).toBeUndefined();
   });
 
 });

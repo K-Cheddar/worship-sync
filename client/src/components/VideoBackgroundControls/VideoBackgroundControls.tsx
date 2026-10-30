@@ -93,7 +93,7 @@ const VideoBackgroundControls = ({
   // Live cues carry a timestamp rather than a ticking playhead, so the clock
   // has to advance itself. Off-air the preview element reports its own
   // playhead and this timer would only cost redundant renders.
-  const liveCue = syncLive ? syncedCue : undefined;
+  const liveCue = syncLive && !syncedCue?.loopOnly ? syncedCue : undefined;
 
   useEffect(() => {
     if (!liveCue || liveCue.paused || isScrubbing) return;
@@ -265,7 +265,7 @@ const VideoBackgroundControls = ({
           labelClassName="text-xs"
           onChange={(nextLoop) => {
             onLoopChange(nextLoop);
-            if (!liveCue) return;
+            if (!syncLive) return;
             // Rebase with the old loop policy before changing it: a clip that
             // has wrapped must keep its current frame when looping is disabled.
             dispatch(updateVideoPlayback({
@@ -275,6 +275,9 @@ const VideoBackgroundControls = ({
                 paused: isPaused,
                 applySeek: false,
                 loop: nextLoop,
+                // A preview cannot supply an unknown output's clock. Update
+                // policy without letting drift correction seek that output.
+                loopOnly: liveCue ? undefined : true,
               }),
               outputIds: syncOutputIds,
             }));

@@ -219,11 +219,12 @@ const HLSPlayer = ({
   transportRole = "none",
   suspendPlayback = false,
   mediaKey,
-  playback,
+  playback: incomingPlayback,
   loop = true,
   outputId,
   windowRole,
 }: HLSPlayerProps) => {
+  const playback = incomingPlayback?.loopOnly ? undefined : incomingPlayback;
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
   const resolvedSrc = useResolvedLocalVideoSource(src);
@@ -1014,7 +1015,7 @@ const HLSPlayer = ({
       }}
       autoPlay={false}
       muted={muted}
-      loop={playback?.loop ?? loop}
+      loop={incomingPlayback?.loop ?? loop}
       onError={onError}
     />
   );

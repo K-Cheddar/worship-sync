@@ -411,7 +411,7 @@ const withPreparationWatchdog = async <T,>(
 
 const PreparedSurface = ({
   candidate,
-  view,
+  view: incomingView,
   enabled,
   onStatusChange,
   route,
@@ -442,6 +442,9 @@ const PreparedSurface = ({
   retrySignal?: number;
   stageRect?: SurfaceRect;
 }) => {
+  const view = useMemo(() => incomingView?.playback?.loopOnly
+    ? { ...incomingView, loop: incomingView.playback.loop, playback: undefined }
+    : incomingView, [incomingView]);
   const videoRef = useRef<HTMLVideoElement>(null);
   const stateRef = useRef(initialPreparedVideoSurfaceState);
   const [state, setState] = useState(initialPreparedVideoSurfaceState);
