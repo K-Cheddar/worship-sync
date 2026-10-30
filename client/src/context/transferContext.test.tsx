@@ -59,6 +59,10 @@ const folderDeletionTransfer = (id: string, folder: string): Transfer => ({
   canCancel: true,
   blocksUnload: true,
 });
+const folderDeletionScope = {
+  churchId: "test-church",
+  databaseName: "media-test",
+};
 
 test("keeps Canva jobs alive across route changes and shares the panel with media uploads", async () => {
   const user = userEvent.setup();
@@ -638,6 +642,7 @@ test("starts a second folder deletion while the first runs, preserves FIFO order
       <button onClick={() => activity.enqueueMediaFolderDeletion({
         id: "folder-delete-first",
         folderId: "folder-first",
+        scope: folderDeletionScope,
         transfer: folderDeletionTransfer("folder-delete-first", "First"),
         run: async () => {
           started.push("first");
@@ -652,6 +657,7 @@ test("starts a second folder deletion while the first runs, preserves FIFO order
       <button onClick={() => activity.enqueueMediaFolderDeletion({
         id: "folder-delete-second",
         folderId: "folder-second",
+        scope: folderDeletionScope,
         transfer: folderDeletionTransfer("folder-delete-second", "Second"),
         run: async () => {
           started.push("second");
@@ -686,12 +692,12 @@ test("cancels a queued folder deletion without starting it", async () => {
     const activity = useTransferActions();
     return <>
       <button onClick={() => activity.enqueueMediaFolderDeletion({
-        id: "queued-delete-first", folderId: "first", transfer: folderDeletionTransfer("queued-delete-first", "First"),
+        id: "queued-delete-first", folderId: "first", scope: folderDeletionScope, transfer: folderDeletionTransfer("queued-delete-first", "First"),
         run: async () => firstGate.promise,
         cancelQueued: () => undefined, cancelRequested: () => undefined, cancelUnavailable: () => undefined,
       })}>Start first deletion</button>
       <button onClick={() => activity.enqueueMediaFolderDeletion({
-        id: "queued-delete-second", folderId: "second", transfer: folderDeletionTransfer("queued-delete-second", "Second"),
+        id: "queued-delete-second", folderId: "second", scope: folderDeletionScope, transfer: folderDeletionTransfer("queued-delete-second", "Second"),
         run: secondRun,
         cancelQueued: () => { secondCancel(); activity.updateTransfer({ ...folderDeletionTransfer("queued-delete-second", "Second"), status: "cancelled", phase: { key: "cancelled", label: "Deletion cancelled" }, canCancel: false, blocksUnload: false }); },
         cancelRequested: () => undefined, cancelUnavailable: () => undefined,
@@ -717,7 +723,7 @@ test("supports active cancellation before folder deletion reaches its safe stop 
   const Harness = () => {
     const activity = useTransferActions();
     return <button onClick={() => activity.enqueueMediaFolderDeletion({
-      id: "active-delete", folderId: "active-folder", transfer: folderDeletionTransfer("active-delete", "Active"),
+      id: "active-delete", folderId: "active-folder", scope: folderDeletionScope, transfer: folderDeletionTransfer("active-delete", "Active"),
       run: async (control) => {
         activity.updateTransfer({ ...folderDeletionTransfer("active-delete", "Active"), status: "active", phase: { key: "active", label: "Stopping cloud uploads" }, actions: [{ key: "cancel", label: "Cancel Delete folder Active" }] });
         await gate.promise;
@@ -752,6 +758,7 @@ test("rejects cancellation after a folder deletion marks its mutation boundary",
     return <>
       <button onClick={() => actions.enqueueMediaFolderDeletion({
         id: "irreversible-delete", folderId: "irreversible-folder", transfer: folderDeletionTransfer("irreversible-delete", "Irreversible"),
+        scope: folderDeletionScope,
         run: async (control) => {
           control.setCancellationAvailable(false);
           actions.updateTransfer({ ...folderDeletionTransfer("irreversible-delete", "Irreversible"), status: "active", phase: { key: "active", label: "Deleting media" }, canCancel: false, actions: [] });
@@ -788,15 +795,15 @@ test("queues overlapping parent and child folder requests in order", async () =>
     const activity = useTransferActions();
     return <>
       <button onClick={() => outcomes.push(activity.enqueueMediaFolderDeletion({
-        id: "parent-delete", folderId: "parent", transfer: folderDeletionTransfer("parent-delete", "Parent"),
+        id: "parent-delete", folderId: "parent", scope: folderDeletionScope, transfer: folderDeletionTransfer("parent-delete", "Parent"),
         run: async () => { started.push("parent"); await gate.promise; }, cancelQueued: () => undefined, cancelRequested: () => undefined, cancelUnavailable: () => undefined,
       }) ? "accepted" : null)}>Start parent deletion</button>
       <button onClick={() => outcomes.push(activity.enqueueMediaFolderDeletion({
-        id: "child-delete", folderId: "child", transfer: folderDeletionTransfer("child-delete", "Child"),
+        id: "child-delete", folderId: "child", scope: folderDeletionScope, transfer: folderDeletionTransfer("child-delete", "Child"),
         run: async () => { started.push("child"); }, cancelQueued: () => undefined, cancelRequested: () => undefined, cancelUnavailable: () => undefined,
       }) ? "accepted" : null)}>Start child deletion</button>
       <button onClick={() => outcomes.push(activity.enqueueMediaFolderDeletion({
-        id: "child-delete-duplicate", folderId: "child", transfer: folderDeletionTransfer("child-delete-duplicate", "Child duplicate"),
+        id: "child-delete-duplicate", folderId: "child", scope: folderDeletionScope, transfer: folderDeletionTransfer("child-delete-duplicate", "Child duplicate"),
         run: async () => undefined, cancelQueued: () => undefined, cancelRequested: () => undefined, cancelUnavailable: () => undefined,
       }) ? "accepted" : null)}>Repeat child deletion</button>
     </>;
@@ -819,7 +826,7 @@ test("keeps folder deletion activity alive while the Activity panel is closed", 
   const Harness = () => {
     const activity = useTransferActions();
     return <button onClick={() => activity.enqueueMediaFolderDeletion({
-      id: "panel-close-delete", folderId: "panel-close-folder", transfer: folderDeletionTransfer("panel-close-delete", "Panel close"),
+      id: "panel-close-delete", folderId: "panel-close-folder", scope: folderDeletionScope, transfer: folderDeletionTransfer("panel-close-delete", "Panel close"),
       run: async () => {
         await gate.promise;
         activity.updateTransfer({ ...folderDeletionTransfer("panel-close-delete", "Panel close"), status: "complete", phase: { key: "complete", label: "Folder deletion complete" }, canCancel: false, blocksUnload: false, actions: [{ key: "dismiss", label: "Dismiss" }] });

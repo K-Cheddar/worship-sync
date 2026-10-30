@@ -79,9 +79,15 @@ export type MediaFolderDeletionQueueControl = {
   setCancellationAvailable: (available: boolean) => void;
 };
 
+export type MediaFolderDeletionQueueScope = {
+  churchId: string;
+  databaseName: string | null;
+};
+
 export type MediaFolderDeletionQueueJob = {
   id: string;
   folderId: string;
+  scope: MediaFolderDeletionQueueScope;
   transfer: Transfer;
   run: (control: MediaFolderDeletionQueueControl) => Promise<void>;
   cancelQueued: () => void | Promise<void>;
@@ -95,6 +101,11 @@ type MediaFolderDeletionQueueEntry = MediaFolderDeletionQueueJob & {
   cancellationRequested: boolean;
   unregisterCancel?: () => void;
 };
+
+const getMediaFolderDeletionQueueEntryKey = (
+  scope: MediaFolderDeletionQueueScope,
+  id: string,
+) => JSON.stringify([scope.churchId, scope.databaseName, id]);
 
 type TransferContextValue = {
   transfers: Transfer[];
@@ -572,7 +583,9 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
         entry.cancellationAvailable = false;
         entry.unregisterCancel?.();
         if (queue.active === entry) queue.active = null;
-        queue.entries.delete(entry.id);
+        queue.entries.delete(
+          getMediaFolderDeletionQueueEntryKey(entry.scope, entry.id),
+        );
         drainMediaFolderDeletionQueueRef.current();
       });
   }, [updateTransfer]);
@@ -587,9 +600,16 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
         (entry): entry is MediaFolderDeletionQueueEntry => Boolean(entry),
       );
       const duplicateFolderRequest = activeOrQueued.some(
-        (entry) => entry.folderId === job.folderId,
+        (entry) =>
+          entry.folderId === job.folderId &&
+          entry.scope.churchId === job.scope.churchId &&
+          entry.scope.databaseName === job.scope.databaseName,
       );
-      if (queue.entries.has(job.id) || duplicateFolderRequest) return null;
+      const queueEntryKey = getMediaFolderDeletionQueueEntryKey(
+        job.scope,
+        job.id,
+      );
+      if (queue.entries.has(queueEntryKey) || duplicateFolderRequest) return null;
 
       const entry: MediaFolderDeletionQueueEntry = {
         ...job,
@@ -597,7 +617,7 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
         cancellationAvailable: true,
         cancellationRequested: false,
       };
-      queue.entries.set(entry.id, entry);
+      queue.entries.set(queueEntryKey, entry);
       queue.pending.push(entry);
       updateTransfer({
         ...job.transfer,
@@ -621,7 +641,7 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
             entry.cancellationAvailable = false;
             entry.unregisterCancel?.();
             entry.unregisterCancel = undefined;
-            queue.entries.delete(entry.id);
+            queue.entries.delete(queueEntryKey);
             try {
               await entry.cancelQueued();
             } catch (error) {

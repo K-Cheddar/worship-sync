@@ -29,6 +29,15 @@ Queue and Cancellation,”** confirms these behaviors:
   direct media and child folders to the selected folder's parent.
 - Failed work does not stop later queued jobs. Existing retry and cleanup
   recovery remains available in Activity.
+- Accepting a deletion closes its confirmation dialog, but does not navigate
+  away immediately. After deletion and folder persistence succeed, Media returns
+  to the parent only if the operator is still viewing the deleted folder.
+  Failed or cancelled work leaves the operator on the current route.
+- Cancelling a queued retry restores the original partial or failed Activity
+  status, progress, errors, and recovery actions, with a note that the retry did
+  not start.
+- Duplicate requests are identified by folder ID within the originating church
+  and PouchDB database. The same folder ID in a different scope can be queued.
 
 ## Persistence and cancellation boundary
 
@@ -47,7 +56,8 @@ mid-mutation.
 
 ## Shared controllers
 
-The sequential queue belongs to one controller's Activity provider. Other
+The sequential queue belongs to one controller's Activity provider. Its folder
+deduplication is scoped to the originating church and database. Other
 controllers may submit work independently. Per-item revision checks ensure a
 controller that finds an item already removed does not delete its provider copy
 again; Cloudinary cleanup treats an already-missing asset as success and the
