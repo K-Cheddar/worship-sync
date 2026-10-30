@@ -599,13 +599,37 @@ describe("Toolbar", () => {
     ).toBeInTheDocument();
   });
 
-  it("places Videos in the Configurations row instead of the primary row", () => {
-    mockPathname = "/controller/preferences";
-    renderToolbar({ access: "full", itemType: "song" });
+  it.each(["default", "aux"] as const)(
+    "keeps Videos in the %s controller Configurations row",
+    (variant) => {
+      mockPathname = "/controller/preferences";
+      renderToolbar({ access: "full", itemType: "song", variant });
 
-    const videosButton = screen.getByTestId("videos-button");
-    expect(videosButton).toBeVisible();
-    expect(screen.getByTestId("toolbar-primary-row")).not.toContainElement(videosButton);
+      const videosButton = screen.getByTestId("videos-button");
+      expect(videosButton).toBeVisible();
+      expect(screen.getByTestId("toolbar-primary-row")).not.toContainElement(videosButton);
+    },
+  );
+
+  it("shows overlay Videos only in Edit mode and updates immediately when switching modes", () => {
+    renderToolbarOverlay({ access: "full", workspaceMode: "present" });
+
+    expect(screen.queryByTestId("videos-button")).not.toBeInTheDocument();
+
+    act(() => {
+      screen.getByRole("button", { name: "Edit" }).click();
+    });
+    expect(screen.getByTestId("videos-button")).toBeInTheDocument();
+
+    act(() => {
+      screen.getByRole("button", { name: "Present" }).click();
+    });
+    expect(screen.queryByTestId("videos-button")).not.toBeInTheDocument();
+
+    act(() => {
+      screen.getByRole("button", { name: "Edit" }).click();
+    });
+    expect(screen.getByTestId("videos-button")).toBeInTheDocument();
   });
 
   it("keeps overlay live controls in a single Present-mode toolbar row", () => {
@@ -616,6 +640,7 @@ describe("Toolbar", () => {
     expect(within(primaryRow).getByText("Menu")).toBeInTheDocument();
     expect(within(primaryRow).getByRole("button", { name: "Present" })).toBeInTheDocument();
     expect(within(primaryRow).getByText("Undo")).toBeInTheDocument();
+    expect(within(primaryRow).queryByTestId("videos-button")).not.toBeInTheDocument();
     expect(within(primaryRow).getByText("Outlines")).toBeInTheDocument();
     expect(within(primaryRow).getByRole("button", { name: "Open Service Plan" })).toBeInTheDocument();
     expect(within(primaryRow).getByRole("button", { name: "Overlays" })).toBeInTheDocument();
@@ -636,6 +661,7 @@ describe("Toolbar", () => {
     expect(within(secondaryRow).getByRole("button", { name: "Displays" })).toBeInTheDocument();
     expect(within(secondaryRow).queryByRole("button", { name: "Generate Credits" })).not.toBeInTheDocument();
     expect(within(secondaryRow).queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("videos-button")).toBeInTheDocument();
     expect(screen.getByText("Undo")).toBeInTheDocument();
     expect(screen.getByTestId("full-user")).toBeInTheDocument();
   });
