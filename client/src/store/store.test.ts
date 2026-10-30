@@ -5985,8 +5985,9 @@ describe("item list outline persistence", () => {
     );
   });
 
-  it("defers Bible cleanup until an outgoing outline save settles and checks its reference", async () => {
+  it.each([false, true])("protects outgoing Bible references until saved, including retained failed drafts (save fails: %s)", async (saveFails) => {
     jest.useFakeTimers();
+    const log = jest.spyOn(console, "error").mockImplementation(() => {});
     const {
       store,
       itemListSlice,
@@ -6061,6 +6062,7 @@ describe("item list outline persistence", () => {
       if (document._id === "outline-a") {
         signalOutgoingSaveStarted();
         await outgoingSaveGate;
+        if (saveFails) throw new Error("outline save failed");
         sequence += 1;
         outlineA = { ...document, _rev: `${sequence}-outline-a` };
         return { ok: true, rev: outlineA._rev };
@@ -6104,11 +6106,12 @@ describe("item list outline persistence", () => {
 
     finishOutgoingSave();
     await flushBibleCleanup();
-    expect(outlineA.items).toEqual([expect.objectContaining({ _id: bibleDoc._id })]);
-    expect(db.allDocs).toHaveBeenCalledTimes(1);
+    expect(outlineA.items).toEqual(saveFails ? [] : [expect.objectContaining({ _id: bibleDoc._id })]);
+    expect(db.allDocs).toHaveBeenCalledTimes(saveFails ? 0 : 1);
     expect(db.bulkDocs).not.toHaveBeenCalled();
 
     presence.release();
+    log.mockRestore();
     jest.useRealTimers();
   });
 
