@@ -1362,7 +1362,16 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
           />
         );
       }
-      if (type === "timer") return <TimerControls variant="controlsOnly" className="w-full" />;
+      if (type === "timer") {
+        return (
+          <TimerControls
+            variant="controlsOnly"
+            showTimeInput
+            timeInputLayout="stacked"
+            className="w-full"
+          />
+        );
+      }
       return null;
     }
     if (selectedSlideMediaSource) {
