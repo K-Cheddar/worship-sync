@@ -291,11 +291,6 @@ jest.mock("../BibleItemActions", () => ({
   default: () => <div data-testid="bible-actions" />,
 }));
 
-jest.mock("../../../components/TimerControls/TimerControls", () => ({
-  __esModule: true,
-  default: () => <div data-testid="timer-controls" />,
-}));
-
 const makeBaseState = (overrides: Partial<any> = {}) => {
   const base = {
     undoable: {
@@ -344,6 +339,9 @@ const makeBaseState = (overrides: Partial<any> = {}) => {
     },
     presentation: {
       outputs: {},
+    },
+    timers: {
+      timers: [],
     },
     media: {
       list: [],
@@ -585,6 +583,112 @@ describe("SlideEditor", () => {
 
     expect(displayWindowCapture.className).toContain("lg:max-h-[42vh]");
     expect(displayWindowCapture.showBorder).toBeUndefined();
+  });
+
+  it.each([
+    ["timer", "hh:mm:ss"],
+    ["countdown", "Countdown To"],
+  ] as const)(
+    "shows the %s time input with playback controls in Present mode",
+    (timerType, inputLabel) => {
+      mockState = makeBaseState({
+        undoable: {
+          present: {
+            item: {
+              _id: "timer-1",
+              type: "timer",
+              slides: [
+                {
+                  id: "timer-slide",
+                  type: "Media",
+                  name: "Timer",
+                  boxes: [
+                    { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+                    { width: 100, height: 100, words: "00:00", x: 0, y: 0 },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+        timers: {
+          timers: [
+            {
+              id: "timer-1",
+              timerType,
+              duration: 300,
+              countdownTime: "19:30",
+              status: "stopped",
+              showMinutesOnly: false,
+            },
+          ],
+        },
+      });
+
+      render(
+        <GlobalInfoContext.Provider
+          value={{ access: "full", hostId: "host-1" } as any}
+        >
+          <SlideEditor access="full" presentationMode="present" />
+        </GlobalInfoContext.Provider>,
+      );
+
+      expect(screen.getByRole("combobox", { name: inputLabel })).toBeInTheDocument();
+      expect(screen.getByTitle("Play")).toBeInTheDocument();
+      expect(screen.getByTitle("Pause")).toBeInTheDocument();
+      expect(screen.getByTitle("Stop")).toBeInTheDocument();
+      expect(screen.getByTitle("Reset")).toBeInTheDocument();
+      expect(screen.queryByText("Full timer")).not.toBeInTheDocument();
+      expect(screen.queryByText("Minutes only")).not.toBeInTheDocument();
+    },
+  );
+
+  it("keeps the full timer settings in Edit mode", () => {
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            _id: "timer-1",
+            type: "timer",
+            slides: [
+              {
+                id: "timer-slide",
+                type: "Media",
+                name: "Timer",
+                boxes: [
+                  { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+                  { width: 100, height: 100, words: "00:00", x: 0, y: 0 },
+                ],
+              },
+            ],
+          },
+        },
+        timers: {
+          timers: [
+            {
+              id: "timer-1",
+              timerType: "timer",
+              duration: 300,
+              countdownTime: "19:30",
+              status: "stopped",
+              showMinutesOnly: false,
+            },
+          ],
+        },
+      },
+    });
+
+    render(
+      <GlobalInfoContext.Provider
+        value={{ access: "full", hostId: "host-1" } as any}
+      >
+        <SlideEditor access="full" presentationMode="edit" />
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(screen.getByRole("combobox", { name: "hh:mm:ss" })).toBeInTheDocument();
+    expect(screen.getByText("Full timer:")).toBeInTheDocument();
+    expect(screen.getByText("Minutes only:")).toBeInTheDocument();
   });
 
   it("uses a preview-only Present skeleton with Present sizing while loading", () => {
@@ -1629,6 +1733,11 @@ describe("SlideEditor", () => {
         screen.getByTestId("timer-item-editor-collapsed-controls"),
       ).toBeInTheDocument();
       expect(screen.queryByTestId("display-window")).not.toBeInTheDocument();
+      expect(screen.getByRole("combobox", { name: "hh:mm:ss" })).toBeInTheDocument();
+      expect(
+        screen.getByTestId("timer-time-input-container"),
+      ).toHaveClass("hidden", "lg:block");
+      expect(screen.getByTitle("Play")).toBeInTheDocument();
     });
 
     it("keeps hidden editor mounted when collapsed for non-timer items", () => {

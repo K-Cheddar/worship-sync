@@ -16,14 +16,17 @@ type TimerControlsProps = {
   className?: string;
   /** When collapsed in the item editor, show only play/pause/stop/reset. */
   variant?: "full" | "controlsOnly";
-  /** Show the timer's editable time value alongside compact controls on desktop. */
+  /** Show the timer's editable time value alongside compact controls. */
   showTimeInput?: boolean;
+  /** Stack the time input below the controls; inline preserves the collapsed editor layout. */
+  timeInputLayout?: "inline" | "stacked";
 };
 
 const TimerControls = ({
   className,
   variant = "full",
   showTimeInput = false,
+  timeInputLayout = "inline",
 }: TimerControlsProps) => {
   const dispatch = useDispatch();
   const { hostId, access } = useContext(GlobalInfoContext) || {};
@@ -103,6 +106,9 @@ const TimerControls = ({
     updateTimerState({ showMinutesOnly: checked });
   };
 
+  const isStackedTimeInput =
+    variant === "controlsOnly" && showTimeInput && timeInputLayout === "stacked";
+
   const controlButtons = (
     <TimerControlButtons
       status={timer?.status || "stopped"}
@@ -110,7 +116,13 @@ const TimerControls = ({
       onPause={handlePause}
       onStop={handleStop}
       disabled={!canControlTimer}
-      className={showTimeInput ? "lg:w-auto" : undefined}
+      className={
+        isStackedTimeInput
+          ? "w-full"
+          : showTimeInput
+            ? "lg:w-auto"
+            : undefined
+      }
     />
   );
 
@@ -118,25 +130,41 @@ const TimerControls = ({
     return (
       <div
         className={cn(
-          "flex items-center justify-center gap-3 border border-gray-600 rounded-md w-full p-2 lg:flex-row",
+          "flex border border-gray-600 rounded-md w-full p-2",
+          isStackedTimeInput
+            ? "min-w-0 flex-col items-stretch gap-2"
+            : "flex-row items-center justify-center gap-3 lg:flex-row",
           className
         )}
         data-variant="controlsOnly"
+        data-testid="timer-controls-container"
       >
         {controlButtons}
         {showTimeInput ? (
-          <div className="hidden min-w-0 flex-1 lg:block lg:max-w-xs">
+          <div
+            className={cn(
+              "min-w-0 flex-1",
+              isStackedTimeInput
+                ? "w-full"
+                : "hidden lg:block lg:max-w-xs"
+            )}
+            data-testid="timer-time-input-container"
+          >
             {timerType === "countdown" ? (
               <CountdownTimeInput
                 countdownTime={countdownTime}
                 onTimeChange={handleCountdownTimeChange}
                 disabled={!canControlTimer}
+                className={isStackedTimeInput ? "w-full" : undefined}
+                labelLayout={isStackedTimeInput ? "stacked" : undefined}
               />
             ) : (
               <DurationInputs
                 duration={duration}
                 onDurationChange={handleDurationChange}
                 disabled={!canControlTimer}
+                className={isStackedTimeInput ? "w-full" : undefined}
+                labelLayout={isStackedTimeInput ? "stacked" : undefined}
               />
             )}
           </div>
