@@ -414,7 +414,7 @@ const Toolbar = ({
                   <Menu variant="overlay" />
                 </div>
                 {modeToggle}
-                <MediaSurfaceDiagnostics />
+                {mode === "edit" && <MediaSurfaceDiagnostics />}
                 {!isLyricsEditorOpen && !isViewOnlyAccess(access) && <Undo />}
                 <ToolbarOverlay
                   toolbarRow={mode === "edit" ? "primary" : "present"}
