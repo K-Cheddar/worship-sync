@@ -1451,4 +1451,112 @@ describe("HLSVideoPlayer", () => {
       duration: 40,
     });
   });
+
+  it.each(["native", "hls", "native-hls"])("holds the final frame after %s completion without recovery or reload", (kind) => {
+    jest.useFakeTimers();
+    mockIsSupported.mockReturnValue(kind === "hls");
+    (HTMLMediaElement.prototype.canPlayType as jest.Mock).mockReturnValue(kind === "native-hls" ? "probably" : "");
+    const restorePaused = stubPaused(true);
+    const src = kind === "native" ? "media-cache://once.mp4" : "https://cdn.example.com/once.m3u8";
+    const cue = { mediaKey: "once", positionSeconds: 0, paused: false, atServerMs: 1_000_000, generation: 1, applySeek: true, loop: false };
+    render(<HLSPlayer src={src} mediaKey="once" playback={cue} transportRole="editor" />);
+    const video = screen.getByTestId("hls-video-player") as HTMLVideoElement;
+    Object.defineProperty(video, "duration", { configurable: true, value: 40 });
+    fireEvent.loadedMetadata(video);
+    const play = HTMLMediaElement.prototype.play as jest.Mock;
+    play.mockClear();
+    video.currentTime = 40;
+    Object.defineProperty(video, "ended", { configurable: true, value: true });
+    fireEvent.ended(video);
+    mockServerNow.mockReturnValue(1_080_000);
+    act(() => { jest.advanceTimersByTime(8000); });
+    expect(video.loop).toBe(false);
+    expect(video.currentTime).toBe(40);
+    expect(play).not.toHaveBeenCalled();
+    expect(getVideoPreviewSnapshot("once")).toMatchObject({ currentTime: 40, paused: true });
+    expect(mockInstances.map((instance) => instance.startLoad.mock.calls)).toEqual(kind === "hls" ? [[]] : []);
+    restorePaused();
+    jest.useRealTimers();
+  });
+
+  it("late joins a completed non-looping cue and supports pause, seek, resume, and replay", () => {
+    const restorePaused = stubPaused(true);
+    const pause = jest.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    const cue = { mediaKey: "once", positionSeconds: 39, paused: false, atServerMs: 990_000, generation: 1, applySeek: false, loop: false };
+    const { rerender } = render(<HLSPlayer src="media-cache://once.mp4" mediaKey="once" playback={cue} />);
+    const video = screen.getByTestId("hls-video-player") as HTMLVideoElement;
+    Object.defineProperty(video, "duration", { configurable: true, value: 40 });
+    fireEvent.loadedMetadata(video);
+    expect(video.currentTime).toBe(40);
+    expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+    rerender(<HLSPlayer src="media-cache://once.mp4" mediaKey="once" playback={{ ...cue, positionSeconds: 40, paused: true, atServerMs: 1_000_000, generation: 2 }} />);
+    expect(video.currentTime).toBe(40);
+    rerender(<HLSPlayer src="media-cache://once.mp4" mediaKey="once" playback={{ ...cue, positionSeconds: 12, paused: true, atServerMs: 1_000_000, applySeek: true, generation: 3 }} />);
+    expect(video.currentTime).toBe(12);
+    rerender(<HLSPlayer src="media-cache://once.mp4" mediaKey="once" playback={{ ...cue, positionSeconds: 12, atServerMs: 1_000_000, generation: 4 }} />);
+    expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
+    video.currentTime = 40;
+    rerender(<HLSPlayer src="media-cache://once.mp4" mediaKey="once" playback={{ ...cue, positionSeconds: 0, atServerMs: 1_000_000, applySeek: true, generation: 5 }} />);
+    expect(video.currentTime).toBe(0);
+    expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId("hls-video-player")).toBe(video);
+    expect(HTMLMediaElement.prototype.load).toHaveBeenCalledTimes(1);
+    pause.mockRestore();
+    restorePaused();
+  });
+
+  it("changes the loop policy of a running same-video surface without playback or readiness work", () => {
+    const restorePaused = stubPaused(false);
+    const cue = { mediaKey: "once", positionSeconds: 5, paused: false, atServerMs: 1_000_000, generation: 1, applySeek: false, loop: true };
+    const ready = jest.fn();
+    const { rerender } = render(<HLSPlayer src="media-cache://once.mp4" mediaKey="once" playback={cue} onLoadedData={ready} />);
+    const video = screen.getByTestId("hls-video-player") as HTMLVideoElement;
+    Object.defineProperty(video, "duration", { configurable: true, value: 40 });
+    video.currentTime = 5;
+    fireEvent.loadedMetadata(video);
+    const loadCount = (HTMLMediaElement.prototype.load as jest.Mock).mock.calls.length;
+    const playCount = (HTMLMediaElement.prototype.play as jest.Mock).mock.calls.length;
+    video.currentTime = 9;
+    rerender(<HLSPlayer src="media-cache://once.mp4" mediaKey="once" playback={{ ...cue, positionSeconds: 9, loop: false, generation: 2 }} onLoadedData={ready} />);
+    expect(video.loop).toBe(false);
+    expect(video.currentTime).toBe(9);
+    expect(screen.getByTestId("hls-video-player")).toBe(video);
+    expect(HTMLMediaElement.prototype.load).toHaveBeenCalledTimes(loadCount);
+    expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(playCount);
+    expect(video.style.visibility).toBe("visible");
+    restorePaused();
+  });
+
+
+  it.each([false, true])("changes looping without disturbing cue-less playback (paused=%s)", (paused) => {
+    jest.useFakeTimers();
+    const restorePaused = stubPaused(paused);
+    const pause = jest.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    const src = "media-cache://legacy.mp4";
+    const { rerender } = render(<HLSPlayer src={src} mediaKey="legacy" />);
+    const video = screen.getByTestId("hls-video-player") as HTMLVideoElement;
+    Object.defineProperty(video, "duration", { configurable: true, value: 40 });
+    fireEvent.loadedMetadata(video);
+    video.currentTime = 27;
+    const play = HTMLMediaElement.prototype.play as jest.Mock;
+    play.mockClear();
+    pause.mockClear();
+    rerender(<HLSPlayer src={src} mediaKey="legacy" playback={{ mediaKey: "legacy", positionSeconds: 0, paused: !paused, atServerMs: 1_000_000, generation: 10, applySeek: false, loop: false, loopOnly: true }} />);
+    expect(video.loop).toBe(false);
+    mockServerNow.mockReturnValue(1_010_000);
+    act(() => { jest.advanceTimersByTime(6000); });
+    expect(video.currentTime).toBe(27);
+    expect(play).not.toHaveBeenCalled();
+    expect(pause).not.toHaveBeenCalled();
+    expect(screen.getByTestId("hls-video-player")).toBe(video);
+    expect(HTMLMediaElement.prototype.load).toHaveBeenCalledTimes(1);
+    // The next explicit transport cue resumes normal seek/clock authority.
+    rerender(<HLSPlayer src={src} mediaKey="legacy" playback={{ mediaKey: "legacy", positionSeconds: 5, paused: true, atServerMs: 1_010_000, generation: 11, applySeek: true, loop: false }} />);
+    expect(video.currentTime).toBe(5);
+    expect(pause).toHaveBeenCalled();
+    pause.mockRestore();
+    restorePaused();
+    jest.useRealTimers();
+  });
+
 });

@@ -31,6 +31,8 @@ import {
 } from "../../utils/electronMediaSurfaceDiagnostics";
 import {
   createVideoPreviewReporter,
+  isVideoPlaybackComplete,
+  subscribeVideoPreviewCommands,
   resolveVideoCueDrift,
   resolveVideoCueCorrection,
   resolveVideoPlaybackPosition,
@@ -265,6 +267,7 @@ const waitForAdvancingFrame = (
       frameRequest = undefined;
       if (animationFrame != null) window.cancelAnimationFrame(animationFrame);
       animationFrame = undefined;
+      video.removeEventListener("ended", handleEnded);
     };
     const timeoutId = window.setTimeout(() => {
       if (settled) return;
@@ -274,13 +277,17 @@ const waitForAdvancingFrame = (
     }, PRESENTED_FRAME_TIMEOUT_MS);
 
     const finish = (metadata: MediaSurfaceFrameMetadata) => {
-      if (settled || !isAdvancingMediaFrame(baseline, metadata)) return false;
+      if (settled || (!isAdvancingMediaFrame(baseline, metadata) &&
+        !isVideoPlaybackComplete(video.loop, video.currentTime, video.duration))) return false;
       settled = true;
       window.clearTimeout(timeoutId);
       cleanup();
       resolve(metadata);
       return true;
     };
+
+    const handleEnded = () => { finish(readFrameMetadata(video)); };
+    video.addEventListener("ended", handleEnded);
 
     const requestNext = () => {
       if (settled) return;
@@ -404,7 +411,7 @@ const withPreparationWatchdog = async <T,>(
 
 const PreparedSurface = ({
   candidate,
-  view,
+  view: incomingView,
   enabled,
   onStatusChange,
   route,
@@ -435,6 +442,9 @@ const PreparedSurface = ({
   retrySignal?: number;
   stageRect?: SurfaceRect;
 }) => {
+  const view = useMemo(() => incomingView?.playback?.loopOnly
+    ? { ...incomingView, loop: incomingView.playback.loop, playback: undefined }
+    : incomingView, [incomingView]);
   const videoRef = useRef<HTMLVideoElement>(null);
   const stateRef = useRef(initialPreparedVideoSurfaceState);
   const [state, setState] = useState(initialPreparedVideoSurfaceState);
@@ -583,6 +593,7 @@ const PreparedSurface = ({
       "seeked",
       "loadedmetadata",
       "durationchange",
+      "ended",
     ] as const;
     events.forEach((event) => video.addEventListener(event, report));
     report();
@@ -956,7 +967,9 @@ const PreparedSurface = ({
       return;
     }
     const cue = viewRef.current?.playback;
-    if (cue?.mediaKey === candidate.mediaKey && cue.paused) return;
+    const holdsFinalFrame = cue?.mediaKey === candidate.mediaKey &&
+      isVideoPlaybackComplete(false, resolveVideoPlaybackPosition(cue, video.duration), video.duration);
+    if (cue?.mediaKey === candidate.mediaKey && cue.paused && !holdsFinalFrame) return;
     if (
       playingGenerationRef.current === stateRef.current.generation &&
       (!video.paused || playbackInFlightRef.current)
@@ -991,7 +1004,9 @@ const PreparedSurface = ({
         const duration = Number.isFinite(video.duration)
           ? video.duration
           : undefined;
-        const drift = resolveVideoCueDrift(cue, video.currentTime, duration);
+        const drift = holdsFinalFrame
+          ? resolveVideoPlaybackPosition(cue, duration) - video.currentTime
+          : resolveVideoCueDrift(cue, video.currentTime, duration);
         if (!Number.isFinite(drift) ||
             Math.abs(drift) > VIDEO_CUE_DRIFT_TOLERANCE_SECONDS) {
           const target = resolveVideoPlaybackPosition(cue, duration);
@@ -1005,7 +1020,7 @@ const PreparedSurface = ({
         playbackAttemptRef.current !== playbackAttempt ||
         !shouldPlayRef.current ||
         (viewRef.current?.playback?.mediaKey === candidate.mediaKey &&
-          viewRef.current.playback.paused)
+          viewRef.current.playback.paused && !holdsFinalFrame)
       ) {
         restoreAfterAbortedPlay(generation, playbackAttempt, playheadChanged);
         return;
@@ -1026,7 +1041,8 @@ const PreparedSurface = ({
         playCalledTimestamp: playCalledAt,
         playRequestTimestamp: playCalledAt,
       });
-      await withPreparationWatchdog(
+      if (holdsFinalFrame) video.pause();
+      else await withPreparationWatchdog(
         Promise.resolve(video.play()),
         "presented-frame",
       );
@@ -1034,7 +1050,7 @@ const PreparedSurface = ({
         playbackAttemptRef.current !== playbackAttempt ||
         !shouldPlayRef.current ||
         (viewRef.current?.playback?.mediaKey === candidate.mediaKey &&
-          viewRef.current.playback.paused)
+          viewRef.current.playback.paused && !holdsFinalFrame)
       ) {
         restoreAfterAbortedPlay(generation, playbackAttempt, playheadChanged);
         return;
@@ -1045,13 +1061,18 @@ const PreparedSurface = ({
         sendToPlayRequestMs: playCalledAt - sendRequestedAt,
         sendToPlayResolvedMs: playResolvedAt - sendRequestedAt,
       });
-      const frame = await waitForAdvancingFrame(video);
+      // A late-joining output can arrive after completion. Present the sought
+      // final frame without calling play(), which would restart an ended clip.
+      if (holdsFinalFrame) {
+        await withPreparationWatchdog(waitForPresentedFrame(video), "presented-frame");
+      }
+      const frame = holdsFinalFrame ? readFrameMetadata(video) : await waitForAdvancingFrame(video);
       if (
         stateRef.current.generation !== generation ||
         playbackAttemptRef.current !== playbackAttempt ||
         !shouldPlayRef.current ||
         (viewRef.current?.playback?.mediaKey === candidate.mediaKey &&
-          viewRef.current.playback.paused)
+          viewRef.current.playback.paused && !holdsFinalFrame)
       ) {
         restoreAfterAbortedPlay(generation, playbackAttempt, playheadChanged);
         return;
@@ -1070,8 +1091,9 @@ const PreparedSurface = ({
         lastUsedAt: Date.now(),
       });
     } catch (error) {
+      if (stateRef.current.generation !== generation ||
+        playbackAttemptRef.current !== playbackAttempt) return;
       playbackInFlightRef.current = false;
-      if (stateRef.current.generation !== generation) return;
       const message = getPreparedVideoSurfaceErrorMessage("playback", error);
       if (
         !shouldPlayRef.current ||
@@ -1385,7 +1407,8 @@ const PreparedSurface = ({
     }
     if (stateRef.current.phase === "ready") {
       const cue = view?.playback;
-      if (cue?.mediaKey === candidate.mediaKey && cue.paused) return;
+      if (cue?.mediaKey === candidate.mediaKey && cue.paused &&
+        !isVideoPlaybackComplete(false, resolveVideoPlaybackPosition(cue, videoRef.current?.duration), videoRef.current?.duration)) return;
       if (cue?.mediaKey === candidate.mediaKey) {
         lastCueGenerationRef.current = cue.generation;
       }
@@ -1408,29 +1431,56 @@ const PreparedSurface = ({
     if (!video || !cue || cue.mediaKey !== candidate.mediaKey) return;
     if (lastCueGenerationRef.current === cue.generation) return;
     lastCueGenerationRef.current = cue.generation;
-    // A READY surface already owns the retained starting frame. Applying a
-    // synchronization seek here would invalidate that frame between the
-    // operator request and the transition; the playback-rate correction loop
-    // can reconcile a later cue without blocking the handoff.
-    if (cue.applySeek && stateRef.current.phase === "idle") {
-      video.currentTime = resolveVideoPlaybackPosition(
+    const supersedesActivation = playbackInFlightRef.current && cue.applySeek && !cue.paused;
+    if (supersedesActivation) {
+      // Operator transport supersedes an activation still waiting on a seek
+      // or frame. Its late completion must not pause/reset the newer request.
+      playbackAttemptRef.current += 1;
+      playbackInFlightRef.current = false;
+      playingGenerationRef.current = undefined;
+    }
+    // READY retains its prepared frame until activation. Active transport must
+    // apply explicit seeks immediately, including replay after completion.
+    if ((cue.applySeek || cue.paused) &&
+      (stateRef.current.phase === "idle" || stateRef.current.phase === "playing")) {
+      const target = resolveVideoPlaybackPosition(
         cue,
         Number.isFinite(video.duration) ? video.duration : undefined,
       );
+      if (Math.abs(video.currentTime - target) > 0.05) video.currentTime = target;
     }
     if (cue.paused) {
       video.pause();
       correctionStartedAtRef.current = undefined;
       return;
     }
+    if (isVideoPlaybackComplete(video.loop, video.currentTime, video.duration)) return;
     if (
       view.shouldPlay &&
-      video.paused &&
+      (video.paused || supersedesActivation) &&
       stateRef.current.phase === "playing"
     ) {
       void play();
     }
   }, [candidate.mediaKey, play, view?.playback, view?.shouldPlay]);
+
+  useEffect(() => {
+    if (!view?.reportsEditorTransport || view.playback) return;
+    return subscribeVideoPreviewCommands(candidate.mediaKey, (command) => {
+      const video = videoRef.current;
+      if (!video) return;
+      video.playbackRate = 1;
+      correctionStartedAtRef.current = undefined;
+      if (command.type === "pause") {
+        video.pause();
+        return;
+      }
+      if (command.type === "seek" || command.type === "restart") {
+        video.currentTime = command.type === "restart" ? 0 : command.positionSeconds;
+      }
+      if (command.type !== "seek") void play();
+    });
+  }, [candidate.mediaKey, play, view?.playback, view?.reportsEditorTransport]);
 
   useEffect(() => {
     if (!view?.shouldPlay || state.phase !== "playing") return;
@@ -1442,6 +1492,7 @@ const PreparedSurface = ({
         !cue ||
         cue.mediaKey !== candidate.mediaKey ||
         cue.paused ||
+        (!video.loop && (video.ended || isVideoPlaybackComplete(false, video.currentTime, video.duration))) ||
         video.paused
       ) {
         video.playbackRate = 1;
@@ -1545,7 +1596,7 @@ const PreparedSurface = ({
         muted={view?.muted ?? true}
         playsInline
         preload="auto"
-        loop
+        loop={view?.playback?.loop ?? view?.loop ?? true}
         data-testid={`electron-media-surface-video-${candidate.mediaKey}`}
         className={`absolute inset-0 h-full w-full ${
           videoBox?.shouldKeepAspectRatio ? "object-contain" : "object-cover"

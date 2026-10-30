@@ -70,7 +70,7 @@ import {
   deleteSongAudioBeforeClearingMetadata,
   persistSongAudioAttachment,
 } from "../../utils/persistSongAudioAttachment";
-import { resolveEditorPreviewVideoPlayback } from "../../utils/videoBackgroundPlayback";
+import { getSlideVideoBackgroundLoop, resolveEditorPreviewVideoPlayback } from "../../utils/videoBackgroundPlayback";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import { AccessType } from "../../context/globalInfo";
 import { ToastContext } from "../../context/toastContext";
@@ -1362,7 +1362,16 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
           />
         );
       }
-      if (type === "timer") return <TimerControls variant="controlsOnly" className="w-full" />;
+      if (type === "timer") {
+        return (
+          <TimerControls
+            variant="controlsOnly"
+            showTimeInput
+            timeInputLayout="stacked"
+            className="w-full"
+          />
+        );
+      }
       return null;
     }
     if (selectedSlideMediaSource) {
@@ -1481,6 +1490,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
               disabled={!canEdit || isPresentMode}
               shouldPlayVideo
               videoPlayback={editorVideoPlayback}
+              videoBackgroundLoop={getSlideVideoBackgroundLoop(slides[selectedSlide], type)}
               localVideoInput={editorLocalVideoInput}
               canCaptureLocalVideo={Boolean(editorLocalVideoInput)}
             />

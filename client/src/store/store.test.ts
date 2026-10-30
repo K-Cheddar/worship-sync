@@ -253,6 +253,8 @@ const loadStoreWithItemPersistence = () => {
     selectControllerItem: selectionModule!.selectControllerItem,
     deferredMutations: mutationsModule!,
     updateSlides: itemSliceModule.updateSlides,
+    updateSlideVideoBackgroundLoop: itemSliceModule.updateSlideVideoBackgroundLoop,
+    updateSlideVideoBackgroundSendMode: itemSliceModule.updateSlideVideoBackgroundSendMode,
     db,
     postMessage,
     setGlobalDb: (next: unknown) => { mockActiveItemDb = next; },
@@ -339,6 +341,26 @@ describe("item content integrity investigation", () => {
   };
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => jest.useRealTimers());
+
+  it("persists slide loop overrides to the original item after navigation and restores both settings", async () => {
+    const { docs, select, tick, store, updateSlideVideoBackgroundLoop, updateSlideVideoBackgroundSendMode } = setup();
+    const beforeB = clone(docs.get("song-B"));
+    select("song-A");
+    await store.dispatch(updateSlideVideoBackgroundLoop({ loop: false }));
+    await store.dispatch(updateSlideVideoBackgroundSendMode({ mode: "restart" }));
+    select("song-B");
+    await tick();
+    expect(docs.get("song-A")).toMatchObject({
+      slides: [expect.objectContaining({ videoBackgroundLoop: false, videoBackgroundSendMode: "restart" })],
+      arrangements: [expect.objectContaining({ slides: [expect.objectContaining({ videoBackgroundLoop: false, videoBackgroundSendMode: "restart" })] })],
+    });
+    expect(docs.get("song-B")).toEqual(beforeB);
+    select("song-A");
+    expect(store.getState().undoable.present.item.slides[0]).toMatchObject({ videoBackgroundLoop: false, videoBackgroundSendMode: "restart" });
+    await store.dispatch(updateSlideVideoBackgroundLoop({ loop: true }));
+    await tick();
+    expect(docs.get("song-A")).toMatchObject({ slides: [expect.objectContaining({ videoBackgroundLoop: true, videoBackgroundSendMode: "restart" })] });
+  });
 
   it("preserves newer unsaved input through an earlier local Pouch change and save acknowledgment", async () => {
     const { select, edit, tick, db, commit, store, docs } = setup();
@@ -4629,6 +4651,46 @@ describe("store module", () => {
     ).toBe("New Projector");
   });
 
+  it.each(["projector", "monitor", "stream"] as const)("syncs live %s loop changes without advancing slide time and ignores a stale cue", async (outputType) => {
+    const { store, presentationSlice } = loadStoreWithPresentationSync();
+    const sliceNames = {
+      projector: { remote: "updateProjectorFromRemote", debounced: "debouncedUpdateProjector", info: "projectorInfo" },
+      monitor: { remote: "updateMonitorFromRemote", debounced: "debouncedUpdateMonitor", info: "monitorInfo" },
+      stream: { remote: "updateStreamFromRemote", debounced: "debouncedUpdateStream", info: "streamInfo" },
+    };
+    const names = sliceNames[outputType];
+    const cue = { mediaKey: "remote:clip", positionSeconds: 12, paused: false, atServerMs: 1_000_000, generation: 5, applySeek: false, loop: true };
+    const presentation = createScreenPresentation(outputType, 500, { videoPlayback: cue });
+    store.dispatch(presentationSlice.actions[names.remote](presentation));
+    store.dispatch({ type: names.debounced, payload: { ...presentation, videoPlayback: { ...cue, loop: false, generation: 6 } } });
+    await waitForListenerDelay();
+    expect(toLegacyPresentationShape(store.getState().presentation)[names.info]).toMatchObject({ time: 500, videoPlayback: { positionSeconds: 12, loop: false, generation: 6, applySeek: false } });
+    store.dispatch({ type: names.debounced, payload: presentation });
+    await waitForListenerDelay();
+    expect(toLegacyPresentationShape(store.getState().presentation)[names.info].videoPlayback.loop).toBe(false);
+  });
+
+  it.each(["projector", "monitor", "stream"] as const)("delivers a cue-less %s Loop update and later explicit transport at the same slide time", async (outputType) => {
+    const { store, presentationSlice } = loadStoreWithPresentationSync();
+    const names = {
+      projector: { remote: "updateProjectorFromRemote", debounced: "debouncedUpdateProjector", info: "projectorInfo" },
+      monitor: { remote: "updateMonitorFromRemote", debounced: "debouncedUpdateMonitor", info: "monitorInfo" },
+      stream: { remote: "updateStreamFromRemote", debounced: "debouncedUpdateStream", info: "streamInfo" },
+    }[outputType];
+    const presentation = createScreenPresentation(outputType, 500);
+    store.dispatch(presentationSlice.actions[names.remote](presentation));
+    const policy = { mediaKey: "remote:clip", positionSeconds: 0, paused: false, atServerMs: 1_000_000, generation: 5, applySeek: false, loop: false, loopOnly: true };
+    store.dispatch({ type: names.debounced, payload: { ...presentation, videoPlayback: policy } });
+    await waitForListenerDelay();
+    expect(toLegacyPresentationShape(store.getState().presentation)[names.info]).toMatchObject({ time: 500, videoPlayback: { loop: false, loopOnly: true, generation: 5 } });
+    const { loopOnly: _policyOnly, ...transport } = policy;
+    store.dispatch({ type: names.debounced, payload: { ...presentation, videoPlayback: { ...transport, positionSeconds: 12, applySeek: true, generation: 6 } } });
+    await waitForListenerDelay();
+    const applied = toLegacyPresentationShape(store.getState().presentation)[names.info];
+    expect(applied).toMatchObject({ time: 500, videoPlayback: { positionSeconds: 12, applySeek: true, generation: 6 } });
+    expect(applied.videoPlayback.loopOnly).toBeUndefined();
+  });
+
   it("applies newer remote videoPlayback cues without a newer slide time", async () => {
     const { store, presentationSlice } = loadStoreWithPresentationSync();
     const slide = createScreenSlide("video-slide", "playing");
@@ -5985,8 +6047,9 @@ describe("item list outline persistence", () => {
     );
   });
 
-  it("defers Bible cleanup until an outgoing outline save settles and checks its reference", async () => {
+  it.each([false, true])("protects outgoing Bible references until saved, including retained failed drafts (save fails: %s)", async (saveFails) => {
     jest.useFakeTimers();
+    const log = jest.spyOn(console, "error").mockImplementation(() => {});
     const {
       store,
       itemListSlice,
@@ -6061,6 +6124,7 @@ describe("item list outline persistence", () => {
       if (document._id === "outline-a") {
         signalOutgoingSaveStarted();
         await outgoingSaveGate;
+        if (saveFails) throw new Error("outline save failed");
         sequence += 1;
         outlineA = { ...document, _rev: `${sequence}-outline-a` };
         return { ok: true, rev: outlineA._rev };
@@ -6104,11 +6168,12 @@ describe("item list outline persistence", () => {
 
     finishOutgoingSave();
     await flushBibleCleanup();
-    expect(outlineA.items).toEqual([expect.objectContaining({ _id: bibleDoc._id })]);
-    expect(db.allDocs).toHaveBeenCalledTimes(1);
+    expect(outlineA.items).toEqual(saveFails ? [] : [expect.objectContaining({ _id: bibleDoc._id })]);
+    expect(db.allDocs).toHaveBeenCalledTimes(saveFails ? 0 : 1);
     expect(db.bulkDocs).not.toHaveBeenCalled();
 
     presence.release();
+    log.mockRestore();
     jest.useRealTimers();
   });
 

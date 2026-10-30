@@ -750,10 +750,9 @@ const DisplayBoxTransitionStage = ({
     if (media.kind !== "fileVideo") return undefined;
 
     const lanePlayback = lanePlaybackRef.current[laneId];
-    if (lanePlayback?.mediaKey === media.mediaKey) return lanePlayback.cue;
-
     const activeCue = mediaPlayback?.activeFileVideoPlayback;
     if (activeCue?.mediaKey === media.mediaKey) return activeCue;
+    if (lanePlayback?.mediaKey === media.mediaKey) return lanePlayback.cue;
     return undefined;
   };
 
@@ -1920,6 +1919,7 @@ const DisplayBoxTransitionStage = ({
           laneView.laneId,
           laneView.mediaSnapshot.backgroundMedia,
         ),
+        loop: media.loop,
       });
       return views;
     }, new Map<string, ElectronMediaSurfaceView>()).values(),

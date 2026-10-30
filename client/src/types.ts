@@ -133,6 +133,8 @@ export type ItemSlideType = {
   boxes: Box[];
   mediaSource?: SlideMediaSource;
   videoBackgroundSendMode?: VideoBackgroundSendMode;
+  /** Missing values resolve from the owning item type. */
+  videoBackgroundLoop?: boolean;
   /** Pre-calculated boxes for monitor "current" band (50% height). Set when slide is formatted. */
   monitorCurrentBandBoxes?: Box[];
   /** Pre-calculated boxes for monitor "next" band (30% height). Set when slide is formatted. */
@@ -1096,6 +1098,10 @@ export type VideoBackgroundPlaybackCue = {
   /** Playhead at `atServerMs`. */
   positionSeconds: number;
   paused: boolean;
+  /** Legacy cues loop; new sends carry the effective slide preference. */
+  loop?: boolean;
+  /** Policy update for cue-less playback; do not apply a transport clock. */
+  loopOnly?: boolean;
   atServerMs: number;
   /** Bumped on every send so live players can re-apply the same position. */
   generation: number;

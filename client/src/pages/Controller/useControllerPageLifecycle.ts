@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useRef } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useRef } from "react";
 import { useStore } from "react-redux";
 import { useDispatch, useSelector } from "../../hooks";
 import _ from "lodash";
@@ -93,6 +93,7 @@ import {
 } from "../../context/activeController";
 import { ActionCreators } from "redux-undo";
 import { loadOrCreateControllerMediaRouteFolders } from "../../utils/controllerMediaRouteFolders";
+import { getOutlineDatabaseKey, getOutlineOwnerKey, setOutlineContentDatabase } from "../../store/outlineContent";
 
 /**
  * Shared DB sync, preferences, overlays, media cache, and teardown for controller-like pages.
@@ -117,6 +118,10 @@ export const useControllerPageLifecycle = () => {
   const selectedList = useSelector(
     (state) => state.undoable.present.itemLists.selectedList,
   );
+  const outlineLoadGeneration = useSelector((state) => state.undoable.present.itemList.outlineLoadGeneration);
+  useLayoutEffect(() => {
+    dispatch(setOutlineContentDatabase(db ? getOutlineDatabaseKey(db) : ""));
+  }, [db, dispatch]);
   const databaseRef = useRef(db);
   databaseRef.current = db;
   const selectedOutlineIdentityRef = useRef({
@@ -189,6 +194,7 @@ export const useControllerPageLifecycle = () => {
   const updateOutlineFromExternal = useCallback(
     async (event: CustomEventInit) => {
       try {
+        if (databaseRef.current !== db || (store.getState() as RootState).undoable.present.itemLists.contentDatabaseKey !== (db ? getOutlineDatabaseKey(db) : "")) return;
         const updates = event.detail;
         if (!Array.isArray(updates)) return;
         let refetchOverlayHistory = false;
@@ -199,6 +205,7 @@ export const useControllerPageLifecycle = () => {
           if (currentSelectedList?._id && _update._id === currentSelectedList._id) {
             const update = _update as DBItemListDetails;
             const selectionIdentity = selectedOutlineIdentityRef.current;
+            const outlineGeneration = currentState.undoable.present.itemList.outlineLoadGeneration;
             const syncGeneration = ++serviceListSyncGenerationRef.current;
             dispatch(
               setServicePlanningOutlinePlanBinding(
@@ -236,6 +243,7 @@ export const useControllerPageLifecycle = () => {
                 databaseRef.current !== dbAtRead ||
                 latestSelectionIdentity.generation !== selectionIdentity.generation ||
                 latestState.undoable.present.itemLists.selectedList?._id !== update._id ||
+                latestState.undoable.present.itemList.outlineLoadGeneration !== outlineGeneration ||
                 syncGeneration !== serviceListSyncGenerationRef.current ||
                 latestOverlays.hasPendingUpdate ||
                 !_.isEqual(
@@ -299,7 +307,7 @@ export const useControllerPageLifecycle = () => {
         console.error(e);
       }
     },
-    [dispatch, cloud, store],
+    [dispatch, cloud, store, db],
   );
 
   const updateMediaFromExternal = useCallback(
@@ -675,23 +683,33 @@ export const useControllerPageLifecycle = () => {
 
   useEffect(() => {
     let cancelled = false;
+    const ownerState = (store.getState() as RootState).undoable.present;
+    const ownerKey = getOutlineOwnerKey(db ? getOutlineDatabaseKey(db) : "", selectedList?._id);
+    const generation = ownerState.itemList.outlineLoadGeneration;
+    const isCurrent = () => {
+      const current = (store.getState() as RootState).undoable.present;
+      return !cancelled && databaseRef.current === db &&
+        current.itemList.outlineOwnerKey === ownerKey && current.itemList.outlineLoadGeneration === generation;
+    };
 
     const getItemList = async () => {
       if (!db || !cloud) return;
       // No selected outline (empty registry): leave empty state, never keep skeletons.
       if (!selectedList?._id) {
-        if (cancelled) return;
+        if (!isCurrent()) return;
         dispatch(initiateItemList([]));
+        dispatch(initiateOverlayList([]));
         dispatch(setServicePlanningOutlinePlanBinding(null));
         dispatch(setItemListIsLoading(false));
         return;
       }
+      if (!isCurrent()) return;
       dispatch(setItemListIsLoading(true));
       try {
         const response: DBItemListDetails | undefined = await db.get(
           selectedList._id,
         );
-        if (cancelled) return;
+        if (!isCurrent()) return;
         const itemList = response?.items || [];
         const overlayIds = response?.overlays || [];
         dispatch(
@@ -702,20 +720,22 @@ export const useControllerPageLifecycle = () => {
         if (!(store.getState() as RootState).undoable.present.itemList.hasPendingUpdate) {
           dispatch(initiateItemList(formatItemList(itemList, cloud)));
         }
+        dispatch(setItemListIsInitialized(true));
         const formattedOverlays = await getOverlaysByIds(db, overlayIds);
-        if (cancelled) return;
+        if (!isCurrent()) return;
         if (!(store.getState() as RootState).undoable.present.overlays.hasPendingUpdate) {
           dispatch(initiateOverlayList(formattedOverlays));
         }
+        dispatch(setOverlaysIsInitialized(true));
         const overlayHistory = await getAllOverlayHistory(db);
-        if (cancelled) return;
+        if (!isCurrent()) return;
         dispatch(mergeOverlayHistoryFromDb(overlayHistory));
       } catch (e) {
-        if (cancelled) return;
+        if (!isCurrent()) return;
         console.error(e);
         dispatch(setServicePlanningOutlinePlanBinding(null));
       }
-      if (!cancelled) {
+      if (isCurrent()) {
         dispatch(setItemListIsLoading(false));
       }
     };
@@ -724,7 +744,7 @@ export const useControllerPageLifecycle = () => {
     return () => {
       cancelled = true;
     };
-  }, [dispatch, db, selectedList, cloud, bootstrapReady, store]);
+  }, [dispatch, db, selectedList, cloud, bootstrapReady, store, outlineLoadGeneration]);
 
   useEffect(() => {
     if (!updater) return;

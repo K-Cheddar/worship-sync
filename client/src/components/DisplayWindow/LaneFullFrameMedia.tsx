@@ -263,6 +263,7 @@ const LaneFullFrameMedia = ({
             suspendPlayback={suspendPlayback}
             mediaKey={fileMediaKey}
             playback={playback}
+            loop={media.loop}
             outputId={outputId}
             windowRole={windowRole}
           />

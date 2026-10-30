@@ -14,7 +14,7 @@ import {
   updateList,
   updateOverlayInList,
 } from "../../store/overlaysSlice";
-import { useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import Overlay from "./Overlay";
 import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
 
@@ -77,11 +77,11 @@ const Overlays = ({
   isDetailActive = true,
   onDetailRequested,
 }: OverlaysProps) => {
-  const { list, initialList, overlayHistory } = useSelector(
+  const { list, initialList, overlayHistory, outlineOwnerKey } = useSelector(
     (state: RootState) => state.undoable.present.overlays,
   );
 
-  const { selectedOverlay: _selectedOverlay, isOverlayLoading } = useSelector(
+  const { selectedOverlay: _selectedOverlay, isOverlayLoading, outlineOwnerKey: editorOwnerKey } = useSelector(
     (state: RootState) => state.undoable.present.overlay,
   );
 
@@ -120,12 +120,21 @@ const Overlays = ({
     }),
     [defaultParticipantFormatting],
   );
-  const selectedOverlay = _selectedOverlay ?? defaultSelectedOverlay;
+  const selectedOverlay = _selectedOverlay && editorOwnerKey === outlineOwnerKey && list.some((overlay) => overlay.id === _selectedOverlay.id)
+    ? _selectedOverlay
+    : defaultSelectedOverlay;
+  const isRetiredOverlaySelection = !!_selectedOverlay && selectedOverlay !== _selectedOverlay;
 
   const dispatch = useDispatch();
   const { isMobile, db } = useContext(ControllerInfoContext) || {
     isMobile: false,
   };
+  // Keep the hidden editor's accepted draft tied to the DB that selected it.
+  const editorDatabaseRef = useRef({ ownerKey: editorOwnerKey, database: db });
+  if (editorOwnerKey === outlineOwnerKey && editorOwnerKey !== editorDatabaseRef.current.ownerKey) {
+    editorDatabaseRef.current = { ownerKey: editorOwnerKey, database: db };
+  }
+  const editorDatabase = editorDatabaseRef.current.database;
   const { access } = useContext(GlobalInfoContext) || {};
   const canMutateOverlays = !isViewOnlyAccess(access);
   const { mode } = usePresentationControllerMode();
@@ -250,6 +259,15 @@ const Overlays = ({
   const handleOverlayUpdate = useCallback(
     async (overlay: OverlayInfo) => {
       if (!overlay.id) return;
+      if (isRetiredOverlaySelection) {
+        if (!editorDatabase) return;
+        try {
+          await persistExistingOverlayDoc(editorDatabase, overlay);
+        } catch (error) {
+          console.error("Error persisting outgoing overlay", error);
+        }
+        return;
+      }
 
       // Draft flushes can arrive after selection swaps; persist by payload id so edits are not dropped.
       if (selectedOverlay.id && overlay.id !== selectedOverlay.id) {
@@ -267,7 +285,7 @@ const Overlays = ({
       dispatch(updateOverlay(overlay));
       dispatch(updateOverlayInList(overlay));
     },
-    [db, dispatch, selectedOverlay.id],
+    [db, dispatch, selectedOverlay.id, isRetiredOverlaySelection, editorDatabase],
   );
 
   const handleApplyFormattingToAll = async (formatting: OverlayFormatting) => {
@@ -409,18 +427,20 @@ const Overlays = ({
     selectedOverlay.name || selectedOverlay.url ? "Copied." : "Added.";
 
   const overlayEditor = (
-    <OverlayEditor
-      selectedOverlay={selectedOverlay}
-      isOverlayLoading={isOverlayLoading}
-      setShowPreview={setShowPreview}
-      showPreview={showPreview}
-      setIsStyleDrawerOpen={setIsStyleDrawerOpen}
-      setIsTemplateDrawerOpen={setIsTemplateDrawerOpen}
-      isMobile={isMobile}
-      handleOverlayUpdate={handleOverlayUpdate}
-      handleFormattingChange={handleFormattingChange}
-      readOnly={!canMutateOverlays}
-    />
+    <div hidden={isRetiredOverlaySelection}>
+      <OverlayEditor
+        selectedOverlay={_selectedOverlay ?? defaultSelectedOverlay}
+        isOverlayLoading={isOverlayLoading}
+        setShowPreview={setShowPreview}
+        showPreview={showPreview}
+        setIsStyleDrawerOpen={setIsStyleDrawerOpen}
+        setIsTemplateDrawerOpen={setIsTemplateDrawerOpen}
+        isMobile={isMobile}
+        handleOverlayUpdate={handleOverlayUpdate}
+        handleFormattingChange={handleFormattingChange}
+        readOnly={!canMutateOverlays || isRetiredOverlaySelection}
+      />
+    </div>
   );
 
   return (
