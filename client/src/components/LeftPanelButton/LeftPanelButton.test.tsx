@@ -11,17 +11,20 @@ jest.mock("../Button/Button", () => ({
     to,
     svg,
     iconSize,
+    wrap,
   }: {
     children?: ReactNode;
     to?: string;
     svg?: FunctionComponent;
     iconSize?: string;
+    wrap?: boolean;
   }) => (
     <div
       data-testid="left-panel-link"
       data-to={to}
       data-has-svg={svg ? "true" : "false"}
       data-icon-size={iconSize}
+      data-wrap={wrap ? "true" : "false"}
     >
       {children}
     </div>
@@ -68,6 +71,24 @@ describe("LeftPanelButton", () => {
   it("uses a local selection button without an item URL", () => {
     render(<LeftPanelButton isSelected={false} title="Welcome" type="song" id="list-1" />);
     expect(screen.getByTestId("left-panel-link")).not.toHaveAttribute("data-to");
+  });
+
+  it("keeps the full title in its tooltip and prepares it for three-line wrapping", () => {
+    const title = "A long outline item name that wraps while preserving its full tooltip";
+    render(
+      <LeftPanelButton
+        isSelected={false}
+        title={title}
+        subtitle="Arrangement"
+        type="song"
+        id="list-1"
+      />,
+    );
+
+    expect(screen.getByTestId("left-panel-link")).toHaveAttribute("data-wrap", "true");
+    expect(screen.getByText(title)).toHaveAttribute("title", title);
+    expect(screen.getByText(title)).toHaveClass("line-clamp-3", "wrap-break-word");
+    expect(screen.getByText("Arrangement")).toHaveClass("truncate");
   });
 
   it("shows a small type icon alongside the slide thumbnail", () => {
