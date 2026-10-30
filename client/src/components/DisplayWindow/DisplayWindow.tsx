@@ -342,6 +342,8 @@ type DisplayWindowProps = {
   prevLocalVideoInput?: LocalVideoInputPresentation;
   /** Live file/HLS background playhead synced from the controller preview. */
   videoPlayback?: VideoBackgroundPlaybackCue;
+  /** Effective slide preference for previews that have no live cue. */
+  videoBackgroundLoop?: boolean;
 };
 
 const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
@@ -403,6 +405,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       localVideoInput,
       prevLocalVideoInput,
       videoPlayback,
+      videoBackgroundLoop = true,
     }: DisplayWindowProps,
     ref,
   ) => {
@@ -1366,6 +1369,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
             ? localVideoInput
             : undefined,
           resolvedFileVideoUrl: desiredVideoUrl,
+          loop: activeVideoPlayback?.loop ?? videoBackgroundLoop,
         }),
       [
         boxes,
@@ -1375,6 +1379,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         localVideoInput,
         shouldPlayVideo,
         showBackground,
+        activeVideoPlayback?.loop,
+        videoBackgroundLoop,
       ],
     );
 
@@ -1594,6 +1600,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
             suspendPlayback={suspendVideoPlayback}
             mediaKey={isEditor ? videoMediaKey : undefined}
             playback={activeVideoPlayback}
+            loop={videoBackgroundLoop}
             outputId={outputId}
             windowRole={displayType ?? "unknown"}
           />
@@ -1807,6 +1814,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               preparedMediaContext={preparedMediaContext}
               videoBox={videoBox}
               playback={activeVideoPlayback}
+              loop={videoBackgroundLoop}
               volume={localVideoVolume}
               onCurrentFrameReady={reportEditorPreparedActive}
             />

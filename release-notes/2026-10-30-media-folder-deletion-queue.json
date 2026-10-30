@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-30-media-folder-deletion-queue",
+  "date": "2026-10-30",
+  "type": "improved",
+  "title": "Queue folder deletions",
+  "description": "Queue folder deletions in order, track each in Activity, cancel safely, keep the current folder open until deletion succeeds, and preserve recovery details when a queued retry is cancelled."
+}

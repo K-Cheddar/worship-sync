@@ -1,9 +1,10 @@
-import type { ReactNode } from "react";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { Fragment, type ReactNode } from "react";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import ServiceItems from "./ServiceItems";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
+import { removeItemsFromList, updateItemList } from "../../store/itemListSlice";
 
 const mockDispatch: jest.Mock = jest.fn((action) => {
   if (typeof action === "function") return action(mockDispatch, () => ({ ...mockState, undoable: { present: { ...mockState.undoable.present, item: {} } } }));
@@ -13,6 +14,7 @@ const mockUseDisplayedUpcomingService = jest.fn();
 const mockUseNextServiceCountdownText = jest.fn();
 const mockNavigate = jest.fn();
 const mockRequestOutlineSelectionScroll = jest.fn();
+let mockDndOnDragEnd: ((event: never) => void) | undefined;
 let mockState: any;
 
 jest.mock("../../hooks", () => ({
@@ -36,7 +38,16 @@ jest.mock("../../utils/dndUtils", () => ({
 }));
 
 jest.mock("@dnd-kit/core", () => ({
-  DndContext: ({ children }: { children: ReactNode }) => <>{children}</>,
+  DndContext: ({
+    children,
+    onDragEnd,
+  }: {
+    children: ReactNode;
+    onDragEnd?: (event: never) => void;
+  }) => {
+    mockDndOnDragEnd = onDragEnd;
+    return <>{children}</>;
+  },
   DragOverlay: ({ children }: { children: ReactNode }) => <>{children}</>,
   useDroppable: () => ({ setNodeRef: jest.fn() }),
 }));
@@ -69,9 +80,18 @@ jest.mock("../Toolbar/ToolbarElements/Outlines", () => ({
 
 jest.mock("../../components/ActionBar/ActionBar", () => ({
   __esModule: true,
-  default: ({ items }: { items?: Array<{ label: string }> }) => (
+  default: ({
+    items,
+  }: {
+    items?: Array<{
+      label: string;
+      renderButton: (isMeasure: boolean) => ReactNode;
+    }>;
+  }) => (
     <div data-testid="action-bar">
-      {items?.map((item) => <span key={item.label}>{item.label}</span>)}
+      {items?.map((item) => (
+        <Fragment key={item.label}>{item.renderButton(false)}</Fragment>
+      ))}
     </div>
   ),
 }));
@@ -135,6 +155,7 @@ jest.mock("./ServiceOutlineSkeleton", () => ({
 describe("ServiceItems", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockDndOnDragEnd = undefined;
     mockState = {
       undoable: {
         present: {
@@ -333,6 +354,56 @@ describe("ServiceItems", () => {
 
     expect(screen.getByTestId("action-bar")).toHaveTextContent("Service plan");
     expect(screen.getByTestId("action-bar")).not.toHaveTextContent("Add heading");
+  });
+
+  it("reorders outline rows through the sortable drag end handler", () => {
+    const rows = [
+      { name: "Song A", _id: "song-a", listId: "row-a", type: "song" },
+      { name: "Song B", _id: "song-b", listId: "row-b", type: "song" },
+    ];
+    mockState.undoable.present.itemList.list = rows;
+
+    render(
+      <ControllerInfoContext.Provider value={{ access: "full", isMobile: false } as any}>
+        <GlobalInfoContext.Provider value={{ access: "full" } as any}>
+          <ServiceItems />
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>,
+    );
+
+    expect(mockDndOnDragEnd).toBeDefined();
+    act(() => {
+      mockDndOnDragEnd?.({
+        active: { id: "row-a" },
+        over: { id: "row-b" },
+      } as never);
+    });
+
+    expect(mockDispatch).toHaveBeenCalledWith(updateItemList([rows[1], rows[0]]));
+  });
+
+  it("multi-selects outline rows and dispatches bulk delete for the selected items", () => {
+    mockState.undoable.present.itemList.list = [
+      { name: "Song A", _id: "song-a", listId: "row-a", type: "song" },
+      { name: "Song B", _id: "song-b", listId: "row-b", type: "song" },
+    ];
+    render(
+      <ControllerInfoContext.Provider value={{ access: "full", isMobile: false } as any}>
+        <GlobalInfoContext.Provider value={{ access: "full" } as any}>
+          <ServiceItems />
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Song A" }));
+    fireEvent.click(screen.getByRole("button", { name: "Song B" }), {
+      ctrlKey: true,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Delete selected (2)" }));
+
+    expect(mockDispatch).toHaveBeenCalledWith(
+      removeItemsFromList(["row-a", "row-b"]),
+    );
   });
 
   it("requests a return to the selected slide when the current outline item is clicked again", () => {

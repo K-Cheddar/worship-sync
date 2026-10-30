@@ -8,7 +8,7 @@ import {
   Reducer,
   Middleware,
 } from "@reduxjs/toolkit";
-import undoable, { ActionCreators } from "redux-undo";
+import undoable, { ActionCreators, newHistory } from "redux-undo";
 import {
   presentationSlice,
   setStreamItemContentBlockedFromRemote,
@@ -46,6 +46,7 @@ import { itemLibraryUiSlice } from "./itemLibraryUiSlice";
 import { createItemSlice } from "./createItemSlice";
 import { preferencesSlice } from "./preferencesSlice";
 import { itemListsSlice } from "./itemListsSlice";
+import { activateOutlineContent, getOutlineDatabaseKey, getOutlineOwnerKey, hasPendingOutlineDraftsForDatabase, setOutlineContentDatabase } from "./outlineContent";
 import { isMediaLoadSettled, mediaItemsSlice } from "./mediaSlice";
 import mediaCacheMapReducer, { setMediaCacheMap } from "./mediaCacheMapSlice";
 import { overlaySlice } from "./overlaySlice";
@@ -861,6 +862,9 @@ const excludedActions: string[] = [
   itemListSlice.actions.updateItemListFromRemote.toString(),
   itemListSlice.actions.setItemListIsLoading.toString(),
   itemListSlice.actions.setHasPendingUpdate.toString(),
+  itemListSlice.actions.acknowledgeOutlineSave.toString(),
+  overlaysSlice.actions.acknowledgeOutlineSave.toString(),
+  setOutlineContentDatabase.toString(),
   itemListSlice.actions.forceUpdate.toString(),
   itemListSlice.actions.setActiveItemInList.toString(),
   itemListsSlice.actions.initiateItemLists.toString(),
@@ -1653,6 +1657,7 @@ listenerMiddleware.startListening({
         const hasPendingWrites =
           currentPresent.item.hasPendingUpdate ||
           currentPresent.itemList.hasPendingUpdate ||
+          hasPendingOutlineDraftsForDatabase(currentPresent.itemList.pendingByOutline, database) ||
           Object.values(currentState.autosaveIndicator.debouncedSaveDepth).some(
             (depth) => depth > 0,
           ) ||
@@ -1750,8 +1755,12 @@ listenerMiddleware.startListening({
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     const state = (currentState as RootState).undoable.present.itemList;
+    const previous = (previousState as RootState).undoable.present.itemList;
+    const outlineOwnerChanged = state.outlineOwnerKey !== previous.outlineOwnerKey;
+    const savingOutgoingOutline = !isStoreResetAction(action) &&
+      outlineOwnerChanged && previous.isInitialized && previous.hasPendingUpdate;
     // Don't save until initialization is complete
-    if (!state.isInitialized) return false;
+    if (!state.isInitialized && !savingOutgoingOutline) return false;
 
     const excluded = isAnyOf(
       itemListSlice.actions.initiateItemList,
@@ -1759,19 +1768,16 @@ listenerMiddleware.startListening({
       itemListSlice.actions.setActiveItemInList,
       itemListSlice.actions.updateItemListFromRemote,
       itemListSlice.actions.setHasPendingUpdate,
+      itemListSlice.actions.acknowledgeOutlineSave,
       itemListSlice.actions.addToInitialItems,
       itemListSlice.actions.setIsInitialized,
     );
     const itemListChanged =
       (currentState as RootState).undoable.present.itemList !==
       (previousState as RootState).undoable.present.itemList;
-    const savingOutgoingOutline =
-      itemListsSlice.actions.selectItemList.match(action) &&
-      (currentState as RootState).undoable.present.itemLists.selectedList?._id !==
-        (previousState as RootState).undoable.present.itemLists.selectedList?._id &&
-      !!(previousState as RootState).undoable.present.itemList.hasPendingUpdate;
     if (
       itemListChanged &&
+      !outlineOwnerChanged &&
       !excluded(action) &&
       !isStoreResetAction(action)
     ) {
@@ -1786,7 +1792,7 @@ listenerMiddleware.startListening({
       );
     }
     return (
-      (itemListChanged &&
+      ((itemListChanged || itemListSlice.actions.forceUpdate.match(action)) &&
       !excluded(action) &&
       !!(currentState as RootState).undoable.present.itemList
         .hasPendingUpdate &&
@@ -1796,8 +1802,13 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
-    const dbAtStart = db;
-    const isSavingOutgoingOutline = itemListsSlice.actions.selectItemList.match(action);
+    const originalPresent = (listenerApi.getOriginalState() as RootState).undoable.present;
+    const isSavingOutgoingOutline = originalPresent.itemList.outlineOwnerKey !==
+      (listenerApi.getState() as RootState).undoable.present.itemList.outlineOwnerKey &&
+      originalPresent.itemList.hasPendingUpdate && originalPresent.itemList.isInitialized;
+    const dbAtStart = isSavingOutgoingOutline
+      ? (action as OutlineDatabaseAction).meta?.outgoingOutlineDatabase ?? db
+      : db;
     const churchAtStart = globalFireDbInfo?.churchId;
 
     listenerApi.cancelActiveListeners();
@@ -1808,16 +1819,15 @@ listenerMiddleware.startListening({
     // Always read post-debounce state so we never persist a closed-over
     // pre-delay snapshot after remote hydrate or a newer local edit.
     const present = (isSavingOutgoingOutline
-      ? (listenerApi.getOriginalState() as RootState)
-      : (listenerApi.getState() as RootState)
-    ).undoable.present;
+      ? originalPresent
+      : (listenerApi.getState() as RootState).undoable.present);
     const { list, hasPendingUpdate, isInitialized } = present.itemList;
+    const ownerKey = present.itemList.outlineOwnerKey;
     const { selectedList } = present.itemLists;
 
     if (
       !dbAtStart ||
-      db !== dbAtStart ||
-      globalFireDbInfo?.churchId !== churchAtStart ||
+      (!isSavingOutgoingOutline && (db !== dbAtStart || globalFireDbInfo?.churchId !== churchAtStart)) ||
       !isInitialized ||
       !hasPendingUpdate ||
       !selectedList
@@ -1828,24 +1838,26 @@ listenerMiddleware.startListening({
     const releaseOutlinePersistence = beginOutlinePersistence(dbAtStart);
     let persistenceSucceeded = false;
     try {
-      const persisted = await persistServiceListItems(
+      const saving = persistServiceListItems(
         dbAtStart,
         selectedList._id,
         [...list],
       );
+      // Returning to a retained draft can require a retry as well as the
+      // outgoing save. Start both through the existing field save lane.
+      if (isSavingOutgoingOutline && (listenerApi.getState() as RootState).undoable.present.itemList.hasPendingUpdate) {
+        listenerApi.dispatch(itemListSlice.actions.forceUpdate());
+      }
+      const persisted = await saving;
       if (!persisted) return;
       persistenceSucceeded = true;
 
+      if (ownerKey) listenerApi.dispatch(itemListSlice.actions.acknowledgeOutlineSave({ ownerKey, list }));
       listenerApi.throwIfCancelled();
       if (db !== dbAtStart || globalFireDbInfo?.churchId !== churchAtStart) return;
       const afterPutState = (listenerApi.getState() as RootState).undoable.present;
       const afterPut = afterPutState.itemList;
-      if (
-        afterPut.list === list &&
-        afterPut.hasPendingUpdate
-      ) {
-        listenerApi.dispatch(itemListSlice.actions.setHasPendingUpdate(false));
-      }
+      if (afterPut.outlineOwnerKey !== ownerKey || afterPut.list !== list) return;
 
       safePostMessage({
         type: "update",
@@ -1883,6 +1895,7 @@ listenerMiddleware.startListening({
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     const state = (currentState as RootState).undoable.present.itemLists;
+    const previous = (previousState as RootState).undoable.present.itemLists;
     // Don't save until initialization is complete
     if (!state.isInitialized) return false;
 
@@ -1894,8 +1907,7 @@ listenerMiddleware.startListening({
       itemListsSlice.actions.setOutlineScope,
     );
     return (
-      (currentState as RootState).undoable.present.itemLists !==
-        (previousState as RootState).undoable.present.itemLists &&
+      (state.currentLists !== previous.currentLists || state.activeList !== previous.activeList || state.selectedIdByScope !== previous.selectedIdByScope) &&
       !excluded(action) &&
       !isStoreResetAction(action)
     );
@@ -2051,6 +2063,7 @@ listenerMiddleware.startListening({
       overlaysSlice.actions.updateOverlayListFromRemote,
       overlaysSlice.actions.updateOverlaysByIdFromRemote,
       overlaysSlice.actions.setHasPendingUpdate,
+      overlaysSlice.actions.acknowledgeOutlineSave,
       overlaysSlice.actions.updateInitialList,
       overlaysSlice.actions.addToInitialList,
       overlaysSlice.actions.mergeOverlayHistoryFromDb,
@@ -2062,12 +2075,12 @@ listenerMiddleware.startListening({
       (currentState as RootState).undoable.present.overlays !==
       (previousState as RootState).undoable.present.overlays;
     const savingOutgoingOutline =
-      itemListsSlice.actions.selectItemList.match(action) &&
-      (currentState as RootState).undoable.present.itemLists.selectedList?._id !==
-        (previousState as RootState).undoable.present.itemLists.selectedList?._id &&
+      !isStoreResetAction(action) &&
+      (currentState as RootState).undoable.present.overlays.outlineOwnerKey !==
+        (previousState as RootState).undoable.present.overlays.outlineOwnerKey &&
       !!(previousState as RootState).undoable.present.overlays.hasPendingUpdate;
     return (
-      ((overlaysChanged &&
+      (((overlaysChanged || overlaysSlice.actions.forceUpdate.match(action)) &&
       !excluded(action) &&
       !!(currentState as RootState).undoable.present.overlays
         .hasPendingUpdate &&
@@ -2076,18 +2089,23 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
-    const dbAtStart = db;
+    const originalState = listenerApi.getOriginalState() as RootState;
+    const isSavingOutgoingOutline = originalState.undoable.present.overlays.outlineOwnerKey !==
+      (listenerApi.getState() as RootState).undoable.present.overlays.outlineOwnerKey &&
+      originalState.undoable.present.overlays.hasPendingUpdate;
+    const dbAtStart = isSavingOutgoingOutline
+      ? (action as OutlineDatabaseAction).meta?.outgoingOutlineDatabase ?? db
+      : db;
     if (!dbAtStart) return;
-    const isSavingOutgoingOutline = itemListsSlice.actions.selectItemList.match(action);
     const churchAtStart = globalFireDbInfo?.churchId;
     listenerApi.cancelActiveListeners();
     if (!isSavingOutgoingOutline) {
       await listenerApi.delay(1500);
     }
 
-    if (db !== dbAtStart || globalFireDbInfo?.churchId !== churchAtStart) return;
+    if (!isSavingOutgoingOutline && (db !== dbAtStart || globalFireDbInfo?.churchId !== churchAtStart)) return;
     const state = isSavingOutgoingOutline
-      ? (listenerApi.getOriginalState() as RootState)
+      ? originalState
       : (listenerApi.getState() as RootState);
     if (
       !isSavingOutgoingOutline &&
@@ -2096,27 +2114,28 @@ listenerMiddleware.startListening({
       return;
     }
     const { list } = state.undoable.present.overlays;
+    const ownerKey = state.undoable.present.overlays.outlineOwnerKey;
     const { selectedList } = state.undoable.present.itemLists;
 
     if (!selectedList) return;
     const listId = selectedList._id;
     try {
-      const persisted = await persistServiceListOverlays(
+      const saving = persistServiceListOverlays(
         dbAtStart,
         listId,
         list.map((overlay) => overlay.id),
       );
+      if (isSavingOutgoingOutline && (listenerApi.getState() as RootState).undoable.present.overlays.hasPendingUpdate) {
+        listenerApi.dispatch(overlaysSlice.actions.forceUpdate());
+      }
+      const persisted = await saving;
       if (!persisted) return;
 
+      if (ownerKey) listenerApi.dispatch(overlaysSlice.actions.acknowledgeOutlineSave({ ownerKey, list }));
       listenerApi.throwIfCancelled();
       if (db !== dbAtStart || globalFireDbInfo?.churchId !== churchAtStart) return;
       const latest = (listenerApi.getState() as RootState).undoable.present;
-      if (
-        latest.overlays.list === list &&
-        latest.overlays.hasPendingUpdate
-      ) {
-        listenerApi.dispatch(overlaysSlice.actions.setHasPendingUpdate(false));
-      }
+      if (latest.overlays.outlineOwnerKey !== ownerKey || latest.overlays.list !== list) return;
       safePostMessage({
         type: "update",
         data: { docs: persisted, hostId: globalHostId },
@@ -4165,7 +4184,11 @@ const combinedReducers = combineReducers({
   controllerProfiles: controllerProfilesSlice.reducer,
 });
 
-const rootReducer: Reducer = (state: RootState, action: Action) => {
+type OutlineDatabaseAction = Action & {
+  meta?: { outlineDatabaseKey?: string; outgoingOutlineDatabase?: typeof db; outlineOwnerKey?: string };
+};
+
+const rootReducer: Reducer = (state: RootState, action: OutlineDatabaseAction) => {
   if (action.type === "RESET") {
     state = {} as RootState;
   } else if (action.type === "RESET_CONTROLLER_SESSION") {
@@ -4179,7 +4202,48 @@ const rootReducer: Reducer = (state: RootState, action: Action) => {
       itemLibraryUi: state?.itemLibraryUi,
     } as RootState;
   }
-  return combinedReducers(state, action);
+  const next = combinedReducers(state, action);
+  const present = next.undoable.present;
+  const databaseKey = action.meta?.outlineDatabaseKey ?? present.itemLists.contentDatabaseKey ?? "";
+  const ownerKey = getOutlineOwnerKey(databaseKey, present.itemLists.selectedList?._id);
+  if (present.itemList.outlineOwnerKey === ownerKey) return next;
+
+  // Selection and content retirement must be one observable Redux transition,
+  // including scope changes and registry-driven fallback selection.
+  const activate = activateOutlineContent({ ownerKey, hasSelection: !!present.itemLists.selectedList });
+  const adoptingUnselectedDatabase = !state?.undoable?.present.itemLists.selectedList &&
+    !present.itemLists.selectedList && !state?.undoable?.present.itemLists.contentDatabaseKey;
+  const activatedPresent = {
+    ...present,
+    itemLists: { ...present.itemLists, contentDatabaseKey: databaseKey },
+    itemList: adoptingUnselectedDatabase ? { ...present.itemList, outlineOwnerKey: ownerKey } : itemListSlice.reducer(present.itemList, activate),
+    overlays: adoptingUnselectedDatabase ? { ...present.overlays, outlineOwnerKey: ownerKey } : overlaysSlice.reducer(present.overlays, activate),
+  };
+  return {
+    ...next,
+    undoable: newHistory([], activatedPresent, []),
+    servicePlanningImport: servicePlanningImportSlice.reducer(next.servicePlanningImport,
+      servicePlanningImportSlice.actions.setServicePlanningOutlinePlanBinding(null)),
+  };
+};
+
+// Carry concrete database ownership into the pure reducer and outgoing-save
+// listeners. A DB change can retire the same outline ID in another session.
+let lastOutlineDatabase: typeof db;
+const outlineDatabaseMiddleware: Middleware = (api) => (next) => (input: unknown) => {
+  if (typeof input !== "object" || input === null || !("type" in input)) return next(input);
+  let action = input as OutlineDatabaseAction;
+  if (overlaySlice.actions.selectOverlay.type === action.type) {
+    action = { ...action, meta: { ...action.meta, outlineOwnerKey: (api.getState() as RootState).undoable.present.itemList.outlineOwnerKey } };
+  }
+  const isDatabaseAction = setOutlineContentDatabase.type === action.type;
+  if (db === lastOutlineDatabase && !isDatabaseAction) return next(action);
+  const outgoingOutlineDatabase = lastOutlineDatabase;
+  lastOutlineDatabase = db;
+  const outlineDatabaseKey = isDatabaseAction
+    ? (action as ReturnType<typeof setOutlineContentDatabase>).payload
+    : db ? getOutlineDatabaseKey(db) : "";
+  return next({ ...action, meta: { ...action.meta, outlineDatabaseKey, outgoingOutlineDatabase } });
 };
 
 const itemOwnerTransitionMiddleware: Middleware = (api) => (next) => (action: any) => {
@@ -4268,6 +4332,7 @@ const store = configureStore({
     getDefaultMiddleware({
       serializableCheck: false,
     }).prepend(
+      outlineDatabaseMiddleware,
       itemOwnerTransitionMiddleware,
       listenerMiddleware.middleware,
     ),

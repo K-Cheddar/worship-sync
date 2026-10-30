@@ -6,9 +6,11 @@ import type {
 import { serverNow } from "./serverTime";
 import {
   buildVideoPlaybackCueForSend,
+  buildVideoPlaybackCue,
   createVideoPreviewReporter,
   formatVideoClock,
   getSlideVideoBackgroundMedia,
+  getSlideVideoBackgroundLoop,
   getVideoBackgroundMediaKey,
   getVideoPreviewSnapshot,
   isFileVideoBackground,
@@ -714,4 +716,82 @@ describe("videoBackgroundPlayback", () => {
       });
     });
   });
+});
+
+
+describe("slide video looping", () => {
+  beforeEach(() => {
+    resetVideoBackgroundPlaybackForTests();
+    (serverNow as jest.Mock).mockReturnValue(1_000_000);
+  });
+
+  it.each(["song", "free", "video", "bible", undefined])("resolves legacy %s slides without a migration", (itemType) => {
+    const slide = slideWithVideo(videoMedia());
+    expect(getSlideVideoBackgroundLoop(slide, itemType)).toBe(itemType !== "free");
+    expect(buildVideoPlaybackCueForSend(slide, { itemType })?.loop).toBe(itemType !== "free");
+    expect(slide.videoBackgroundLoop).toBeUndefined();
+  });
+
+  it.each(["song", "free", "bible"])("honors both explicit overrides on %s", (itemType) => {
+    const slide = slideWithVideo(videoMedia());
+    expect(getSlideVideoBackgroundLoop({ ...slide, videoBackgroundLoop: false }, itemType)).toBe(false);
+    expect(getSlideVideoBackgroundLoop({ ...slide, videoBackgroundLoop: true }, itemType)).toBe(true);
+  });
+
+  it("clamps non-looping clocks and uses linear drift across the duration boundary", () => {
+    const cue = { positionSeconds: 58, paused: false, atServerMs: 1_000_000, loop: false };
+    expect(resolveVideoPlaybackPosition(cue, 60, 1_010_000)).toBe(60);
+    expect(resolveVideoCueDrift(cue, 1, 60, 1_010_000)).toBe(59);
+    expect(resolveVideoCueDrift(cue, 60, 60, 1_010_000)).toBe(0);
+    expect(resolveVideoPlaybackPosition({ ...cue, paused: true, positionSeconds: 60 }, 60)).toBe(60);
+    expect(resolveVideoPlaybackPosition({ ...cue, loop: true }, 60, 1_010_000)).toBe(8);
+  });
+
+  it("keeps Continue independent from loop and preserves completed live playback", () => {
+    const slide = slideWithVideo(videoMedia({ duration: 40 }));
+    const liveCue = { mediaKey: "remote:video-1", positionSeconds: 39, paused: false, atServerMs: 990_000, generation: 1, applySeek: false, loop: false };
+    expect(buildVideoPlaybackCueForSend({ ...slide, videoBackgroundLoop: false }, { liveCue })).toMatchObject({ positionSeconds: 40, paused: true, loop: false, applySeek: false });
+    expect(buildVideoPlaybackCueForSend({ ...slide, videoBackgroundLoop: true }, { liveCue })).toMatchObject({ positionSeconds: 40, paused: true, loop: true, applySeek: false });
+    expect(buildVideoPlaybackCueForSend({ ...slide, videoBackgroundLoop: false, videoBackgroundSendMode: "restart" }, { liveCue })).toMatchObject({ positionSeconds: 0, paused: false, loop: false, applySeek: true });
+  });
+
+  it("continues a completed preview and replays it only on Start over", () => {
+    reportVideoPreviewState({ mediaKey: "remote:video-1", currentTime: 40, duration: 40, paused: true });
+    const slide = { ...slideWithVideo(videoMedia()), videoBackgroundLoop: false };
+    expect(buildVideoPlaybackCueForSend(slide)).toMatchObject({ positionSeconds: 40, paused: true, loop: false });
+    expect(buildVideoPlaybackCueForSend({ ...slide, videoBackgroundSendMode: "restart" })).toMatchObject({ positionSeconds: 0, paused: false, loop: false });
+  });
+
+  it("reuses the live playhead across slides with different loop settings", () => {
+    const slide = slideWithVideo(videoMedia({ duration: 40 }));
+    const liveCue = { mediaKey: "remote:video-1", positionSeconds: 38, paused: false, atServerMs: 990_000, generation: 1, applySeek: false, loop: true };
+    expect(buildVideoPlaybackCueForSend({ ...slide, id: "second", videoBackgroundLoop: false }, { liveCue })).toMatchObject({ positionSeconds: 8, loop: false, applySeek: false });
+    expect(buildVideoPlaybackCueForSend({ ...slide, id: "third", videoBackgroundLoop: true }, { liveCue: { ...liveCue, loop: false, positionSeconds: 5 } })).toMatchObject({ positionSeconds: 15, loop: true, applySeek: false });
+  });
+
+  it("isolates editor and transport cues when different slides share a video on different outputs", () => {
+    const slide = slideWithVideo(videoMedia());
+    const other = { ...slide, id: "other", videoBackgroundLoop: false };
+    const songCue = { mediaKey: "remote:video-1", positionSeconds: 12, paused: false, atServerMs: 1_000_000, generation: 1, applySeek: false, loop: true };
+    const otherCue = { ...songCue, positionSeconds: 40, generation: 2, loop: false };
+    const outputs = {
+      projector: { isTransmitting: true, info: { slide, videoPlayback: songCue } },
+      monitor: { isTransmitting: true, info: { slide: other, videoPlayback: otherCue } },
+    };
+    expect(resolveEditorPreviewVideoPlayback(outputs, slide)).toEqual(songCue);
+    expect(resolveEditorPreviewVideoPlayback(outputs, other)).toEqual(otherCue);
+    expect(resolveSyncedVideoPlayback(outputs, "remote:video-1", ["projector"])).toEqual(songCue);
+  });
+
+
+  it("keeps policy-only fallback positions out of subsequent Continue transport", () => {
+    const slide = slideWithVideo(videoMedia({ duration: 40 }));
+    const liveCue = buildVideoPlaybackCue({ mediaKey: "remote:video-1", positionSeconds: 0, paused: false, applySeek: false, loop: false, loopOnly: true });
+    expect(liveCue.loopOnly).toBe(true);
+    reportVideoPreviewState({ mediaKey: "remote:video-1", currentTime: 27, duration: 40, paused: false });
+    const sent = buildVideoPlaybackCueForSend(slide, { liveCue });
+    expect(sent).toMatchObject({ positionSeconds: 27, paused: false });
+    expect(sent?.loopOnly).toBeUndefined();
+  });
+
 });
