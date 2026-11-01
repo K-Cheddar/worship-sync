@@ -100,6 +100,7 @@ const makeHarness = (overrides: Partial<DesktopVideoDownloadDependencies> = {}) 
     registerLocalMedia: jest.fn(async () => undefined),
     registerCloudMedia: jest.fn(async () => undefined),
     removeUnregisteredLocalMedia: jest.fn(async () => undefined),
+    removeUnregisteredCloudMedia: jest.fn(async () => undefined),
     uploadToCloud: jest.fn(async () => muxResult),
     buildCloudPatch: jest.fn((_media, result, churchId) => ({
       muxPlaybackId: result.playbackId,
@@ -280,6 +281,59 @@ describe("desktop video download lifecycle manager", () => {
     expect(registerCloudMedia).toHaveBeenCalledTimes(2);
     expect(harness.deps.notifyCloudStorageChanged).toHaveBeenCalledTimes(1);
     expect(harness.transfers.get(`video-download-${jobId}`)?.status).toBe("complete");
+  });
+
+  it("reconciles an uploaded Mux asset before dismissing an unregistered cloud failure", async () => {
+    const registerCloudMedia = jest.fn().mockRejectedValue(new Error("Cloud media record write failed."));
+    const removeUnregisteredCloudMedia = jest.fn(async () => undefined);
+    const harness = makeHarness({ registerCloudMedia, removeUnregisteredCloudMedia });
+    const jobId = harness.start("cloud");
+    await harness.manager.handleProgress(completion(jobId));
+    expect(harness.transfers.get(`video-download-${jobId}`)?.status).toBe("failed");
+
+    await harness.action(jobId, "dismiss");
+
+    expect(removeUnregisteredCloudMedia).toHaveBeenCalledWith(muxResult, expect.objectContaining({ churchId: "church-a" }));
+    expect(harness.transfers.has(`video-download-${jobId}`)).toBe(false);
+  });
+
+  it("keeps the Activity job recoverable when Mux reference reconciliation or cleanup is uncertain", async () => {
+    const registerCloudMedia = jest.fn().mockRejectedValue(new Error("Cloud media record write failed."));
+    const removeUnregisteredCloudMedia = jest.fn()
+      .mockRejectedValueOnce(new Error("Pouch is unavailable."))
+      .mockResolvedValueOnce(undefined);
+    const harness = makeHarness({ registerCloudMedia, removeUnregisteredCloudMedia });
+    const jobId = harness.start("cloud");
+    await harness.manager.handleProgress(completion(jobId));
+
+    await harness.action(jobId, "dismiss");
+    expect(harness.transfers.get(`video-download-${jobId}`)).toMatchObject({
+      status: "failed",
+      actions: expect.arrayContaining([expect.objectContaining({ key: "retry-cleanup" })]),
+    });
+    expect(harness.transfers.has(`video-download-${jobId}`)).toBe(true);
+
+    await harness.action(jobId, "retry-cleanup");
+    expect(removeUnregisteredCloudMedia).toHaveBeenCalledTimes(2);
+    expect(harness.transfers.has(`video-download-${jobId}`)).toBe(true);
+    expect(harness.transfers.get(`video-download-${jobId}`)?.status).toBe("failed");
+
+    await harness.action(jobId, "dismiss");
+    expect(harness.transfers.has(`video-download-${jobId}`)).toBe(false);
+  });
+
+  it("preserves an uploaded Mux asset that reconciliation finds registered", async () => {
+    const registeredCloudMedia = { ...media, muxAssetId: muxResult.assetId };
+    const registerCloudMedia = jest.fn().mockRejectedValue(new Error("Confirmation failed after commit."));
+    const removeUnregisteredCloudMedia = jest.fn(async () => registeredCloudMedia);
+    const harness = makeHarness({ registerCloudMedia, removeUnregisteredCloudMedia });
+    const jobId = harness.start("cloud");
+    await harness.manager.handleProgress(completion(jobId));
+    await harness.action(jobId, "dismiss");
+
+    expect(removeUnregisteredCloudMedia).toHaveBeenCalledWith(muxResult, expect.objectContaining({ churchId: "church-a" }));
+    expect(harness.deps.notifyCloudStorageChanged).toHaveBeenCalled();
+    expect(harness.transfers.has(`video-download-${jobId}`)).toBe(false);
   });
 
   it("does not cancel or delete a successful Mux asset while its Media Library reference is saving", async () => {

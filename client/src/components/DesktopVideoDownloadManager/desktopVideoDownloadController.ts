@@ -52,6 +52,11 @@ export type DesktopVideoDownloadDependencies = {
     assetId: string | undefined,
     owner: DesktopVideoDownloadOwner,
   ) => Promise<MediaType | undefined>;
+  /** Reconcile a successful Mux asset before deleting or discarding its retry state. */
+  removeUnregisteredCloudMedia: (
+    result: MuxUploadResult,
+    owner: DesktopVideoDownloadOwner,
+  ) => Promise<MediaType | undefined>;
   uploadToCloud: (
     jobId: string,
     fileName: string,
@@ -479,6 +484,9 @@ export class DesktopVideoDownloadManager {
         await runtime.retryMuxCleanup();
         runtime.retryMuxCleanup = undefined;
       }
+      if (runtime.cloudResult && !runtime.cloudMediaRegistered) {
+        await this.reconcileUnregisteredCloudMedia(runtime);
+      }
       if (!runtime.localMediaRegistered) {
         await this.removeUnregisteredAsset(runtime);
         if (!runtime.localMediaRegistered) {
@@ -607,6 +615,9 @@ export class DesktopVideoDownloadManager {
         await runtime.retryMuxCleanup();
         runtime.retryMuxCleanup = undefined;
       }
+      if (runtime.cloudResult && !runtime.cloudMediaRegistered) {
+        await this.reconcileUnregisteredCloudMedia(runtime);
+      }
       if (!runtime.localMediaRegistered) await this.removeUnregisteredAsset(runtime);
       await this.cleanupNative(runtime);
     } catch (error) {
@@ -618,6 +629,20 @@ export class DesktopVideoDownloadManager {
     runtime.unregisterActions.forEach((unregister) => unregister());
     runtime.unregisterActions = [];
     this.deps.transfer.removeTransfer(runtime.transferId);
+  }
+
+  private async reconcileUnregisteredCloudMedia(runtime: Runtime) {
+    if (!runtime.cloudResult || runtime.cloudMediaRegistered) return;
+    const persisted = await this.deps.removeUnregisteredCloudMedia(runtime.cloudResult, runtime.owner);
+    if (persisted) {
+      runtime.media = persisted;
+      runtime.cloudMediaRegistered = true;
+      this.deps.notifyCloudStorageChanged();
+    } else {
+      // The provider confirmed deletion, so a future Retry must create a new
+      // asset instead of trying to register the one just removed.
+      runtime.cloudResult = undefined;
+    }
   }
 
   private assertCurrentOwner(runtime: Runtime) {
