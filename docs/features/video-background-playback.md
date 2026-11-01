@@ -46,6 +46,11 @@ Continue / Start over remain separate from looping. Preparation, source caching,
 
 ## Acceptance criteria
 
+The October 30 five-findings correction confirms that a live Loop change with
+unknown or invalid duration uses the existing `loopOnly` policy cue. Outputs keep
+their actual position and pause state until natural completion or explicit
+transport. Only a valid known duration permits rebasing the wrapped live clock.
+
 - Missing and explicit preferences resolve correctly, save, restore, and remain independent of send mode.
 - Completion retains a visible final frame and never triggers automatic replay or stall correction.
 - Late joins and transport commands work after completion, including Restart during a pending terminal seek.

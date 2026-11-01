@@ -1,6 +1,17 @@
 import { persistExistingOverlayDoc } from "./persistOverlayDoc";
 
 describe("persistExistingOverlayDoc", () => {
+  it("does not write if the originating session retires during the read", async () => {
+    let active = true;
+    const get = jest.fn(async () => {
+      active = false;
+      return { _id: "overlay-X", _rev: "1-current", id: "X", name: "Original" };
+    });
+    const put = jest.fn();
+    await expect(persistExistingOverlayDoc({ get, put }, { id: "X", name: "Pending" }, () => active))
+      .rejects.toThrow("Overlay save is no longer active.");
+    expect(put).not.toHaveBeenCalled();
+  });
   it("retries after a Pouch conflict and returns the persisted doc", async () => {
     const get = jest
       .fn()

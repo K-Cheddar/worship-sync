@@ -28,6 +28,8 @@ const mockDispatch = jest.fn();
 const mockDeleteMediaItemsFromPouch = jest.fn();
 const mockDeleteMediaItemAtRevisionFromPouch = jest.fn();
 const mockReadMediaItemForDeletion = jest.fn();
+const mockLoadMediaLibrary = jest.fn();
+let mockActivityAvailable = true;
 const mockSweepMediaReferencesBeforeDelete = jest.fn();
 const mockDeleteCloudinaryMediaAsset = jest.fn();
 const mockDeleteMuxAsset = jest.fn();
@@ -89,7 +91,7 @@ const mockEnqueueMediaFolderDeletion = jest.fn((job: any) => {
   if (existing.some((entry) => entry.folderId === job.folderId)) return null;
   const entry = { ...job, started: false, cancellationAvailable: true, cancellationRequested: false };
   mockFolderDeletionQueue.push(entry);
-  mockUpdateTransfer({ ...job.transfer, status: "queued", actions: [{ key: "cancel", label: `Cancel ${job.transfer.name}` }] });
+  mockUpdateTransfer({ ...job.transfer, status: "queued", phase: { key: "queued", label: "Waiting in deletion queue" }, canCancel: true, blocksUnload: true, actions: [{ key: "cancel", label: `Cancel ${job.transfer.name}` }] });
   entry.unregisterCancel = mockRegisterTransferAction(job.id, "cancel", async () => {
     if (entry.cancellationRequested) return;
     if (!entry.started) {
@@ -117,7 +119,12 @@ const mockEnqueueMediaFolderDeletion = jest.fn((job: any) => {
     setCancellationAvailable: (available: boolean) => { entry.cancellationAvailable = available; },
   };
 });
-const mockRemoveTransfer = jest.fn((id: string) => mockTransfers.delete(id));
+const mockRemoveTransfer = jest.fn((id: string) => {
+  mockTransfers.delete(id);
+  for (const key of mockTransferActionHandlers.keys()) {
+    if (key.startsWith(`${id}:`)) mockTransferActionHandlers.delete(key);
+  }
+});
 const mockUpdateSlideBackground = jest.fn((payload: any) => ({
   type: "item/updateSlideBackground",
   payload,
@@ -177,13 +184,13 @@ jest.mock("../../../context/transferContext", () => ({
     runTransferAction: jest.fn(),
   }),
   useOptionalTransfers: () => null,
-  useOptionalTransferActions: () => ({
+  useOptionalTransferActions: () => mockActivityAvailable ? ({
     updateTransfer: mockUpdateTransfer,
     getTransfer: mockGetTransfer,
     registerTransferAction: mockRegisterTransferAction,
     removeTransfer: mockRemoveTransfer,
     enqueueMediaFolderDeletion: mockEnqueueMediaFolderDeletion,
-  }),
+  }) : null,
   getTransferOverview: () => ({
     progress: null,
     activeCount: 0,
@@ -379,6 +386,7 @@ jest.mock("../../../utils/flushMediaLibraryDoc", () => ({
 
 jest.mock("../../../utils/mediaDocUtils", () => ({
   ...jest.requireActual("../../../utils/mediaDocUtils"),
+  loadMediaLibrary: (...args: unknown[]) => mockLoadMediaLibrary(...args),
   readMediaItemForDeletion: (...args: unknown[]) =>
     mockReadMediaItemForDeletion(...args),
 }));
@@ -603,10 +611,14 @@ const renderMedia = async ({
 describe("Media", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    setActiveContentDatabase(null);
     mockUpdateTransfer.mockClear();
     mockTransfers.clear();
     mockTransferActionHandlers.clear();
     mockFolderDeletionQueue = [];
+    mockActivityAvailable = true;
+    mockLoadMediaLibrary.mockReset();
+    mockLoadMediaLibrary.mockImplementation(async () => ({ list: mockState.media.list, folders: mockState.media.folders }));
     mockActiveFolderDeletion = null;
     mockEnqueueMediaFolderDeletion.mockClear();
     mockFlushMediaLibraryDocToPouch.mockResolvedValue({ ok: true });
@@ -1653,7 +1665,7 @@ describe("Media", () => {
     );
   });
 
-  it("finishes keep-contents persistence for A without publishing A state after switching to B", async () => {
+  it("stops keep-contents persistence for A after switching to B", async () => {
     const mediaA = { ...makeBaseState().media.list[0], id: "same-media", name: "A image", folderId: "same-folder" };
     const foldersA = [{ id: "same-folder", name: "A folder", parentId: null }];
     mockState = makeBaseState({ media: { list: [mediaA], folders: foldersA } });
@@ -1666,7 +1678,7 @@ describe("Media", () => {
     await userEvent.click(screen.getByRole("button", { name: "Delete folder" }));
     await userEvent.click(screen.getByRole("radio", { name: "Delete folder but keep contents" }));
     await userEvent.click(screen.getByRole("button", { name: /^Delete$/ }));
-    await waitFor(() => expect(mockRepairPersistedMediaRouteFolders).toHaveBeenCalledWith(dbA, new Set(["same-folder"]), MEDIA_LIBRARY_ROOT_VIEW));
+    await waitFor(() => expect(mockRepairPersistedMediaRouteFolders).toHaveBeenCalledWith(dbA, new Set(["same-folder"]), MEDIA_LIBRARY_ROOT_VIEW, expect.any(Function)));
     const activityId = mockUpdateTransfer.mock.calls.at(-1)![0].id;
 
     const mediaB = { ...mediaA, name: "B image" };
@@ -1690,21 +1702,9 @@ describe("Media", () => {
       list: expect.arrayContaining([expect.objectContaining({ name: "A image" })]),
     }));
     expect(mockNavigate).toHaveBeenCalledTimes(navigationCountAtB);
-    expect(mockFlushMediaLibraryDocToPouch).toHaveBeenCalledWith(
-      dbA,
-      expect.arrayContaining([expect.objectContaining({ id: "same-media", name: "A image", folderId: null })]),
-      [],
-      expect.any(Function),
-      expect.objectContaining({ list: [mediaA], folders: foldersA }),
-      expect.objectContaining({
-        allowOriginalOwnerPersistenceAfterScopeChange: true,
-        publishIfCurrent: expect.any(Function),
-      }),
-    );
-    await act(async () => {
-      await mockFlushMediaLibraryDocToPouch.mock.results.at(-1)?.value;
-    });
-    expect(mockGetTransfer(activityId)?.status).toBe("complete");
+    expect(mockFlushMediaLibraryDocToPouch).not.toHaveBeenCalled();
+    expect(mockGetTransfer(activityId)).toBeUndefined();
+    expect(dbA.allDocs).not.toHaveBeenCalled();
     expect(dbB.allDocs).not.toHaveBeenCalled();
     expect(dbB.put).not.toHaveBeenCalled();
   });
@@ -1805,14 +1805,18 @@ describe("Media", () => {
     await userEvent.click(screen.getByRole("radio", { name: "Delete folder but keep contents" }));
     await userEvent.click(screen.getByRole("button", { name: /^Delete$/ }));
     await waitFor(() => expect(mockRepairPersistedMediaRouteFolders).toHaveBeenCalledWith(
-      db, new Set(["folder-1"]), MEDIA_LIBRARY_ROOT_VIEW,
+      db, new Set(["folder-1"]), MEDIA_LIBRARY_ROOT_VIEW, expect.any(Function),
     ));
     expect(screen.queryByRole("dialog", { name: 'Delete folder: "Sermon slides"' })).not.toBeInTheDocument();
 
     const renamed = { ...original, name: "Concurrent rename" };
     const addedDuringRepair = { ...baseMedia, id: "added-during-repair", name: "Concurrent addition", folderId: "folder-1" };
     const outsideEdit = { ...baseMedia, id: "outside", name: "Edited outside item" };
-    mockState = makeBaseState({ media: { list: [renamed, addedDuringRepair, outsideEdit], folders } });
+    const concurrentState = makeBaseState({ media: { list: [renamed, addedDuringRepair, outsideEdit], folders } });
+    mockState = {
+      ...concurrentState,
+      allDocs: { ...concurrentState.allDocs, session: mockState.allDocs.session },
+    };
     await act(async () => {
       repair.resolve([]);
       await repair.promise;
@@ -1869,7 +1873,11 @@ describe("Media", () => {
     const concurrentChild = { id: "concurrent-child", name: "Added child folder", parentId: "child" };
     const concurrentNested = { id: "concurrent-nested", name: "Nested concurrent folder", parentId: "concurrent-child" };
     const latestFolders = [...folders, concurrentChild, concurrentNested];
-    mockState = makeBaseState({ media: { list: [renamedOutside, addedOutside, addedInside], folders: latestFolders } });
+    const concurrentState = makeBaseState({ media: { list: [renamedOutside, addedOutside, addedInside], folders: latestFolders } });
+    mockState = {
+      ...concurrentState,
+      allDocs: { ...concurrentState.allDocs, session: mockState.allDocs.session },
+    };
 
     await act(async () => {
       cleanup.resolve();
@@ -1894,7 +1902,7 @@ describe("Media", () => {
     ]));
   });
 
-  it("continues subtree finalization in A after tombstone and provider cleanup while B is active", async () => {
+  it("stops subtree finalization in A after the church session changes", async () => {
     const mediaA = {
       ...makeBaseState().media.list[0],
       id: "same-media",
@@ -1907,11 +1915,10 @@ describe("Media", () => {
     mockState = makeBaseState({ media: { list: [mediaA], folders: foldersA } });
     mockState.undoable.present.preferences.mediaRouteFolders = { "controller-item-song": "same-folder" };
     mockState.undoable.present.preferences.mediaRouteFoldersControllerProfileId = "presentation";
-    const cleanup = deferred<void>();
-    const flush = deferred<{ ok: true } | { ok: false; error: unknown }>();
-    mockDeleteCloudinaryMediaAsset.mockReturnValueOnce(cleanup.promise);
-    mockFlushMediaLibraryDocToPouch.mockReturnValueOnce(flush.promise);
     const dbA = { allDocs: jest.fn().mockResolvedValue({ rows: [] }), put: jest.fn() };
+    setActiveContentDatabase({ scopeId: "church-1-db-a", databaseKey: "a", churchId: "church-1" }, dbA as never);
+    const cleanup = deferred<void>();
+    mockDeleteCloudinaryMediaAsset.mockReturnValueOnce(cleanup.promise);
     const { view, rerenderScope } = await renderMedia({ dbOverride: dbA });
 
     await userEvent.click(screen.getByRole("button", { name: "Delete folder" }));
@@ -1919,9 +1926,13 @@ describe("Media", () => {
     await userEvent.click(screen.getByRole("button", { name: /^Delete$/ }));
     await waitFor(() => expect(mockDeleteMediaItemAtRevisionFromPouch).toHaveBeenCalled());
     await waitFor(() => expect(mockDeleteCloudinaryMediaAsset).toHaveBeenCalledWith("church-1", "a-asset"));
+    const activityId = mockUpdateTransfer.mock.calls.at(-1)![0].id;
 
     const dbB = { allDocs: jest.fn(), put: jest.fn() };
-    mockState = makeBaseState({ media: { list: [{ ...mediaA, name: "B image" }], folders: [{ ...foldersA[0], name: "B folder" }] } });
+    const sessionAtStart = mockState.allDocs.session;
+    const stateB = makeBaseState({ media: { list: [{ ...mediaA, name: "B image" }], folders: [{ ...foldersA[0], name: "B folder" }] } });
+    mockState = { ...stateB, allDocs: { ...stateB.allDocs, session: sessionAtStart } };
+    setActiveContentDatabase({ scopeId: "church-2-db-b", databaseKey: "b", churchId: "church-2" }, dbB as never);
     mockBroadcastTarget = { postMessage: jest.fn() };
     rerenderScope(dbB, "church-2");
     const dispatchCountAtB = mockDispatch.mock.calls.length;
@@ -1931,36 +1942,21 @@ describe("Media", () => {
       cleanup.resolve();
       await cleanup.promise;
     });
-    await waitFor(() => expect(mockFlushMediaLibraryDocToPouch).toHaveBeenCalledWith(
-      dbA,
-      [],
-      [],
-      expect.any(Function),
-      expect.objectContaining({ list: [mediaA], folders: foldersA }),
-      expect.objectContaining({ allowOriginalOwnerPersistenceAfterScopeChange: true }),
-    ));
-    const getAStateForPersistence = mockFlushMediaLibraryDocToPouch.mock.calls.at(-1)?.[3] as () => { list: unknown[]; folders: unknown[] };
-    expect(getAStateForPersistence()).toEqual({ list: [], folders: [] });
-    expect(mockRepairPersistedMediaRouteFolders).toHaveBeenCalledWith(dbA, new Set(["same-folder"]), MEDIA_LIBRARY_ROOT_VIEW);
-    const activityId = mockUpdateTransfer.mock.calls.at(-1)![0].id;
-    expect(mockGetTransfer(activityId)?.status).toBe("active");
+    await waitFor(() => expect(mockGetTransfer(activityId)).toBeUndefined());
+    expect(mockFlushMediaLibraryDocToPouch).not.toHaveBeenCalled();
+    expect(mockRepairPersistedMediaRouteFolders).not.toHaveBeenCalled();
     expect(mockBroadcastTarget.postMessage).not.toHaveBeenCalled();
     expect(mockDispatch.mock.calls.slice(dispatchCountAtB).map(([action]) => action.type)).not.toContain("preferences/repairActiveMediaRouteFolders");
     expect(mockDispatch.mock.calls.slice(dispatchCountAtB).map(([action]) => action.type)).not.toContain("media/setMediaListAndFolders");
     expect(mockNavigate).toHaveBeenCalledTimes(navigationCountAtB);
 
-    await act(async () => flush.resolve({ ok: true }));
-    await waitFor(() => expect(mockGetTransfer(activityId)).toEqual(expect.objectContaining({
-      status: "complete",
-      phase: expect.objectContaining({ label: "Folder deletion complete" }),
-    })));
     expect(mockDeleteMediaItemAtRevisionFromPouch).toHaveBeenCalledTimes(1);
     expect(dbB.allDocs).not.toHaveBeenCalled();
     expect(dbB.put).not.toHaveBeenCalled();
     expect(view.container).toBeInTheDocument();
   });
 
-  it("keeps detached Activity failed when A folder finalization fails, then retries against A", async () => {
+  it("retires detached folder deletion when the church session changes during cleanup", async () => {
     const mediaA = {
       ...makeBaseState().media.list[0],
       id: "same-media",
@@ -1972,11 +1968,8 @@ describe("Media", () => {
     mockState = makeBaseState({ media: { list: [mediaA], folders: foldersA } });
     mockState.undoable.present.preferences.mediaRouteFolders = { "controller-item-song": "same-folder" };
     mockState.undoable.present.preferences.mediaRouteFoldersControllerProfileId = "presentation";
-    mockFlushMediaLibraryDocToPouch
-      .mockResolvedValueOnce({ ok: false, error: new Error("folder write failed") })
-      .mockResolvedValueOnce({ ok: true });
     const dbA = { allDocs: jest.fn().mockResolvedValue({ rows: [] }), put: jest.fn() };
-    const { view, rerenderScope } = await renderMedia({ dbOverride: dbA });
+    const { rerenderScope } = await renderMedia({ dbOverride: dbA });
     const cleanup = deferred<void>();
     mockDeleteCloudinaryMediaAsset.mockReturnValueOnce(cleanup.promise);
 
@@ -1986,7 +1979,8 @@ describe("Media", () => {
     await waitFor(() => expect(mockDeleteMediaItemAtRevisionFromPouch).toHaveBeenCalled());
     await waitFor(() => expect(mockDeleteCloudinaryMediaAsset).toHaveBeenCalled());
     const dbB = { allDocs: jest.fn(), put: jest.fn() };
-    mockState = makeBaseState({ media: { list: [mediaA], folders: foldersA } });
+    const stateB = makeBaseState({ media: { list: [mediaA], folders: foldersA } });
+    mockState = { ...stateB, allDocs: { ...stateB.allDocs, session: mockState.allDocs.session + 1 } };
     mockBroadcastTarget = { postMessage: jest.fn() };
     rerenderScope(dbB, "church-2");
     const dispatchCountAtB = mockDispatch.mock.calls.length;
@@ -1997,29 +1991,9 @@ describe("Media", () => {
     });
 
     const activityId = mockUpdateTransfer.mock.calls.at(-1)![0].id;
-    await waitFor(() => expect(mockGetTransfer(activityId)).toEqual(expect.objectContaining({
-      status: "partial",
-      phase: expect.objectContaining({ label: "Folder finalization needs attention" }),
-      error: expect.objectContaining({ message: expect.stringContaining("folder write failed") }),
-    })));
-    expect(mockGetTransfer(activityId).phase.label).not.toBe("Folder deletion complete");
-    view.unmount();
-    await waitFor(() => expect(mockGetTransfer(activityId)?.actions).toEqual([
-      { key: "retry-cleanup", label: "Retry folder finalization" },
-      { key: "dismiss", label: "Dismiss" },
-    ]));
-
-    await act(async () => {
-      await mockTransferActionHandlers.get(`${activityId}:retry-cleanup`)?.();
-    });
-
-    expect(mockFlushMediaLibraryDocToPouch).toHaveBeenCalledTimes(2);
-    expect(mockFlushMediaLibraryDocToPouch.mock.calls[0][0]).toBe(dbA);
-    expect(mockFlushMediaLibraryDocToPouch.mock.calls[1][0]).toBe(dbA);
-    expect(mockGetTransfer(activityId)).toEqual(expect.objectContaining({
-      status: "complete",
-      phase: expect.objectContaining({ label: "Folder deletion complete" }),
-    }));
+    await waitFor(() => expect(mockGetTransfer(activityId)).toBeUndefined());
+    expect(mockFlushMediaLibraryDocToPouch).not.toHaveBeenCalled();
+    expect(mockRepairPersistedMediaRouteFolders).not.toHaveBeenCalled();
     expect(mockBroadcastTarget.postMessage).not.toHaveBeenCalled();
     expect(dbB.allDocs).not.toHaveBeenCalled();
     expect(dbB.put).not.toHaveBeenCalled();
@@ -2219,7 +2193,7 @@ describe("Media", () => {
     await act(async () => { retryTombstone.resolve("deleted"); await retryTombstone.promise; });
     await waitFor(() => expect(mockGetTransfer(folderTransferId).status).toBe("complete"));
     expect(mockDeleteMediaItemAtRevisionFromPouch).toHaveBeenCalledTimes(2);
-    expect(mockDispatch).toHaveBeenCalledTimes(dispatchCount);
+    expect(mockDispatch.mock.calls.slice(dispatchCount).map(([action]) => action.type)).toEqual([]);
     expect(mockGetTransfer(folderTransferId).phase.label).toBe("Folder deletion complete");
     await act(async () => { await mockTransferActionHandlers.get(`${folderTransferId}:dismiss`)?.(); });
     expect(mockRemoveTransfer).toHaveBeenCalledWith(folderTransferId);
@@ -2347,6 +2321,364 @@ describe("Media", () => {
     expect(mockDeleteMediaItemAtRevisionFromPouch.mock.invocationCallOrder[0]).toBeLessThan(
       mockDeleteMuxAsset.mock.invocationCallOrder[0],
     );
+  });
+
+  const mountFolderQueue = () => {
+    const base = makeBaseState().media.list[0];
+    const persisted = {
+      list: [
+        { ...base, id: "a-item", folderId: "a", publicId: "asset-a" },
+        { ...base, id: "moved", folderId: "b", publicId: "asset-moved" },
+        { ...base, id: "stays", folderId: "b", publicId: "asset-stays" },
+      ],
+      folders: [
+        { id: "a", name: "A", parentId: null as string | null },
+        { id: "b", name: "B", parentId: null as string | null },
+        { id: "outside", name: "Outside", parentId: null as string | null },
+      ],
+    };
+    // Redux deliberately remains at request-time membership. Only Pouch changes.
+    mockState = makeBaseState({ media: {
+      list: persisted.list.map((row) => ({ ...row })),
+      folders: persisted.folders.map((folder) => ({ ...folder })),
+    } });
+    const db = {
+      name: "originating-db",
+      get: jest.fn(async (id: string) => {
+        if (id === "media-library-meta") return { schemaVersion: 2 };
+        if (id === "media-folders") return { folders: persisted.folders.map((folder) => ({ ...folder })) };
+        throw new Error(`Unexpected document ${id}`);
+      }),
+      allDocs: jest.fn(async () => ({ rows: persisted.list.map((item) => ({ doc: { ...item, _id: `media-item:${item.id}`, docType: "mediaItem" } })) })),
+    };
+    mockLoadMediaLibrary.mockImplementation(jest.requireActual("../../../utils/mediaDocUtils").loadMediaLibrary);
+    mockReadMediaItemForDeletion.mockImplementation(async (_db, id: string) => {
+      const item = persisted.list.find((row) => row.id === id);
+      return item ? { item, doc: { ...item, _id: `media-item:${id}`, _rev: "1-current", docType: "mediaItem" } } : null;
+    });
+    mockDeleteMediaItemAtRevisionFromPouch.mockImplementation(async (_db, doc) => {
+      persisted.list = persisted.list.filter((row) => row.id !== doc.id);
+      return "deleted";
+    });
+    const view = renderHook(() => useMediaLibraryController(), {
+      wrapper: ({ children }) => <ControllerInfoContext.Provider value={{ db } as never}><GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>{children}</GlobalInfoContext.Provider></ControllerInfoContext.Provider>,
+    });
+    return { ...view, persisted, db };
+  };
+
+  it.each([["delete", true], ["keep", true], ["keep", false]] as const)("reads persisted B membership for queued %s (navigate=%s)", async (mode, navigateAway) => {
+    const { result, unmount, persisted, db } = mountFolderQueue();
+    const holdA = deferred<void>();
+    mockDeleteCloudinaryMediaAsset.mockReturnValueOnce(holdA.promise);
+    await act(async () => { await result.current.handleDeleteFolderSubtree("a"); });
+    await waitFor(() => expect(mockDeleteCloudinaryMediaAsset).toHaveBeenCalledWith("church-1", "asset-a"));
+    await act(async () => {
+      if (mode === "delete") await result.current.handleDeleteFolderSubtree("b");
+      else await result.current.handleDeleteFolderKeepContents("b");
+    });
+    const bId = mockEnqueueMediaFolderDeletion.mock.calls[1][0].id;
+    persisted.list = persisted.list.map((row) => row.id === "moved" ? { ...row, folderId: "outside" } : row);
+    persisted.folders = persisted.folders.map((folder) => folder.id === "b" ? { ...folder, parentId: "outside" } : folder);
+    const readsBeforeB = db.allDocs.mock.calls.length;
+    if (navigateAway) unmount();
+    await act(async () => { holdA.resolve(); });
+    await waitFor(() => expect(mockGetTransfer(bId)?.status).toBe("complete"));
+    expect(db.allDocs.mock.calls.length).toBeGreaterThan(readsBeforeB);
+    expect(mockLoadMediaLibrary).toHaveBeenLastCalledWith(db);
+    expect(persisted.list).toContainEqual(expect.objectContaining({ id: "moved", folderId: "outside" }));
+    expect(mockReadMediaItemForDeletion.mock.calls.map(([, id]) => id)).not.toContain("moved");
+    expect(mockSweepMediaReferencesBeforeDelete.mock.calls.flatMap(([, ids]) => [...ids])).not.toContain("moved");
+    expect(mockDeleteCloudinaryMediaAsset).not.toHaveBeenCalledWith("church-1", "asset-moved");
+    expect(mockRepairPersistedMediaRouteFolders).toHaveBeenCalledWith(db, new Set(["b"]), "outside", expect.any(Function));
+    expect(mockFlushMediaLibraryDocToPouch.mock.calls.at(-1)?.[4]).toMatchObject({ list: expect.arrayContaining([expect.objectContaining({ id: "moved", folderId: "outside" })]) });
+    expect(mockFlushMediaLibraryDocToPouch.mock.calls.at(-1)?.[1]).toContainEqual(expect.objectContaining({ id: "moved", folderId: "outside" }));
+    expect(mockGetTransfer(bId).files ?? []).not.toContainEqual(expect.objectContaining({ id: "moved" }));
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it.each(["delete", "keep"])("skips a removed folder after navigation for %s", async (mode) => {
+    const { result, unmount, persisted } = mountFolderQueue();
+    const read = deferred<void>();
+    mockLoadMediaLibrary.mockImplementationOnce(async (db) => {
+      await read.promise;
+      return jest.requireActual("../../../utils/mediaDocUtils").loadMediaLibrary(db);
+    });
+    await act(async () => {
+      if (mode === "delete") await result.current.handleDeleteFolderSubtree("b");
+      else await result.current.handleDeleteFolderKeepContents("b");
+    });
+    const bRow = { ...makeBaseState().media.list[0], id: "orphan", folderId: "b" };
+    persisted.list = [bRow];
+    persisted.folders = persisted.folders.filter((folder) => folder.id !== "b");
+    unmount();
+    await act(async () => { read.resolve(); });
+    const id = mockEnqueueMediaFolderDeletion.mock.calls.at(-1)?.[0].id;
+    await waitFor(() => expect(mockGetTransfer(id)?.phase.label).toBe("Folder already removed"));
+    expect(persisted.list).toEqual([bRow]);
+    expect(mockSweepMediaReferencesBeforeDelete).not.toHaveBeenCalled();
+    expect(mockDeleteCloudinaryMediaAsset).not.toHaveBeenCalled();
+    expect(mockFlushMediaLibraryDocToPouch).not.toHaveBeenCalled();
+  });
+
+  it("keeps persisted membership while merging newer UI edits during Keep Contents route repair", async () => {
+    const { result, persisted } = mountFolderQueue();
+    persisted.list = persisted.list.map((row) => row.id === "moved" ? { ...row, folderId: "outside" } : row);
+    persisted.folders = persisted.folders.map((folder) => folder.id === "b" ? { ...folder, parentId: "outside" } : folder);
+    const repair = deferred<unknown[]>();
+    mockRepairPersistedMediaRouteFolders.mockReturnValueOnce(repair.promise);
+    await act(async () => { await result.current.handleDeleteFolderKeepContents("b"); });
+    await waitFor(() => expect(mockRepairPersistedMediaRouteFolders).toHaveBeenCalled());
+    mockState = { ...mockState, media: {
+      ...mockState.media,
+      list: mockState.media.list.map((row: { id: string; name: string }) => row.id === "stays" ? { ...row, name: "New UI name" } : row),
+    } };
+    await act(async () => { repair.resolve([]); });
+    const id = mockEnqueueMediaFolderDeletion.mock.calls[0][0].id;
+    await waitFor(() => expect(mockGetTransfer(id)?.status).toBe("complete"));
+    expect(mockFlushMediaLibraryDocToPouch.mock.calls.at(-1)?.[1]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "moved", folderId: "outside" }),
+      expect.objectContaining({ id: "stays", folderId: "outside", name: "New UI name" }),
+    ]));
+    expect(mockSweepMediaReferencesBeforeDelete).not.toHaveBeenCalled();
+    expect(mockDeleteCloudinaryMediaAsset).not.toHaveBeenCalled();
+  });
+
+  it.each(["delete", "keep"])("fails safely when the authoritative %s read fails", async (mode) => {
+    const { result, unmount, db } = mountFolderQueue();
+    db.allDocs.mockRejectedValueOnce(new Error("persisted membership unavailable"));
+    await act(async () => {
+      if (mode === "delete") await result.current.handleDeleteFolderSubtree("b");
+      else await result.current.handleDeleteFolderKeepContents("b");
+      unmount();
+    });
+    const id = mockEnqueueMediaFolderDeletion.mock.calls[0][0].id;
+    await waitFor(() => expect(mockGetTransfer(id)).toMatchObject({ status: "failed", canCancel: false, blocksUnload: false }));
+    expect(mockSweepMediaReferencesBeforeDelete).not.toHaveBeenCalled();
+    expect(mockDeleteMediaItemAtRevisionFromPouch).not.toHaveBeenCalled();
+    expect(mockDeleteCloudinaryMediaAsset).not.toHaveBeenCalled();
+    expect(mockFlushMediaLibraryDocToPouch).not.toHaveBeenCalled();
+  });
+
+  it.each(["run", "cancel"])("removes old-session retry Activity at its queued %s boundary", async (boundary) => {
+    const { result, unmount } = mountFolderQueue();
+    mockDeleteMediaItemAtRevisionFromPouch.mockRejectedValueOnce(new Error("write failed"));
+    await act(async () => { await result.current.handleDeleteFolderSubtree("b"); });
+    const bId = mockEnqueueMediaFolderDeletion.mock.calls[0][0].id;
+    await waitFor(() => expect(mockGetTransfer(bId)?.actions).toContainEqual({ key: "retry-delete", label: "Retry deletion" }));
+    await waitFor(() => expect(mockActiveFolderDeletion).toBeNull());
+    const holdA = deferred<void>();
+    mockDeleteCloudinaryMediaAsset.mockReturnValueOnce(holdA.promise);
+    await act(async () => { await result.current.handleDeleteFolderSubtree("a"); });
+    await waitFor(() => expect(mockDeleteCloudinaryMediaAsset).toHaveBeenCalledWith("church-1", "asset-a"));
+    const retry = mockTransferActionHandlers.get(`${bId}:retry-delete`)!;
+    await act(async () => { await retry(); });
+    expect(mockGetTransfer(bId)?.status).toBe("queued");
+    const attempts = mockDeleteMediaItemAtRevisionFromPouch.mock.calls.length;
+    mockState = { ...mockState, allDocs: { ...mockState.allDocs, session: mockState.allDocs.session + 1 } };
+    await act(async () => {
+      if (boundary === "cancel") await mockTransferActionHandlers.get(`${bId}:cancel`)?.();
+    });
+    unmount();
+    await act(async () => { holdA.resolve(); });
+    await waitFor(() => expect(mockActiveFolderDeletion).toBeNull());
+    expect(mockGetTransfer(bId)).toBeUndefined();
+    expect(mockTransferActionHandlers.has(`${bId}:cancel`)).toBe(false);
+    expect(mockTransferActionHandlers.has(`${bId}:retry-delete`)).toBe(false);
+    await act(async () => { await retry(); });
+    expect(mockDeleteMediaItemAtRevisionFromPouch).toHaveBeenCalledTimes(attempts);
+    expect(mockEnqueueMediaFolderDeletion).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(["delete", "keep"])("rejects %s accurately without the Activity provider", async (mode) => {
+    mockActivityAvailable = false;
+    const { result, unmount } = mountFolderQueue();
+    let accepted;
+    await act(async () => {
+      accepted = mode === "delete"
+        ? await result.current.handleDeleteFolderSubtree("b")
+        : await result.current.handleDeleteFolderKeepContents("b");
+    });
+    unmount();
+    expect(accepted).toBe(false);
+    expect(mockShowToast).toHaveBeenCalledWith("Activity service is unavailable. Reopen the controller and try again.", "error");
+    expect(mockRegisterTransferAction).not.toHaveBeenCalled();
+    expect(mockEnqueueMediaFolderDeletion).not.toHaveBeenCalled();
+    expect(mockLoadMediaLibrary).not.toHaveBeenCalled();
+  });
+
+  it.each(["delete", "keep"])("cleans up rejected %s handoffs and retains duplicate-folder feedback", async (mode) => {
+    const { result, unmount } = mountFolderQueue();
+    mockEnqueueMediaFolderDeletion.mockReturnValueOnce(null);
+    let accepted;
+    await act(async () => {
+      accepted = mode === "delete"
+        ? await result.current.handleDeleteFolderSubtree("b")
+        : await result.current.handleDeleteFolderKeepContents("b");
+    });
+    unmount();
+    expect(accepted).toBe(false);
+    expect(mockShowToast).toHaveBeenCalledWith("This folder already has a deletion queued or running.", "error");
+    expect(mockTransferActionHandlers.size).toBe(0);
+    expect(mockTransfers.size).toBe(0);
+    expect(mockLoadMediaLibrary).not.toHaveBeenCalled();
+  });
+
+  it.each(["delete", "keep"])("stops queued %s after the church session changes during the authoritative read", async (mode) => {
+    const { result, unmount } = mountFolderQueue();
+    const read = deferred<void>();
+    mockLoadMediaLibrary.mockImplementationOnce(async (db) => {
+      await read.promise;
+      return jest.requireActual("../../../utils/mediaDocUtils").loadMediaLibrary(db);
+    });
+    await act(async () => {
+      if (mode === "delete") await result.current.handleDeleteFolderSubtree("b");
+      else await result.current.handleDeleteFolderKeepContents("b");
+    });
+    const id = mockEnqueueMediaFolderDeletion.mock.calls[0][0].id;
+    mockState = { ...mockState, allDocs: { ...mockState.allDocs, session: mockState.allDocs.session + 1 } };
+    unmount();
+    await act(async () => { read.resolve(); });
+    await waitFor(() => expect(mockActiveFolderDeletion).toBeNull());
+    expect(mockGetTransfer(id)).toBeUndefined();
+    expect(mockTransferActionHandlers.has(`${id}:cancel`)).toBe(false);
+    expect(mockSweepMediaReferencesBeforeDelete).not.toHaveBeenCalled();
+    expect(mockDeleteMediaItemAtRevisionFromPouch).not.toHaveBeenCalled();
+    expect(mockRepairPersistedMediaRouteFolders).not.toHaveBeenCalled();
+    expect(mockFlushMediaLibraryDocToPouch).not.toHaveBeenCalled();
+  });
+
+  it("rechecks persisted membership after upload cleanup and keeps an item moved out during the wait", async () => {
+    const { result, persisted, db } = mountFolderQueue();
+    const uploadCleanup = deferred<void>();
+    const upload = claimMediaUpload("moved")!;
+    const cancelUpload = jest.fn(() => uploadCleanup.promise.then(() => upload.release()));
+    upload.setCancel(cancelUpload);
+
+    await act(async () => { await result.current.handleDeleteFolderSubtree("b"); });
+    await waitFor(() => expect(cancelUpload).toHaveBeenCalled());
+    persisted.list = persisted.list.map((row) => row.id === "moved" ? { ...row, folderId: "outside" } : row);
+
+    await act(async () => { uploadCleanup.resolve(); });
+    const id = mockEnqueueMediaFolderDeletion.mock.calls[0][0].id;
+    await waitFor(() => expect(mockGetTransfer(id)?.status).toBe("complete"));
+    expect(mockLoadMediaLibrary.mock.calls.filter(([database]) => database === db).length).toBeGreaterThan(1);
+    expect(mockReadMediaItemForDeletion.mock.calls.map(([, mediaId]) => mediaId)).not.toContain("moved");
+    expect(mockSweepMediaReferencesBeforeDelete.mock.calls.flatMap(([, ids]) => [...ids])).not.toContain("moved");
+    expect(mockDeleteCloudinaryMediaAsset).not.toHaveBeenCalledWith("church-1", "asset-moved");
+    expect(persisted.list).toContainEqual(expect.objectContaining({ id: "moved", folderId: "outside" }));
+    expect(mockGetTransfer(id)?.files).not.toContainEqual(expect.objectContaining({ id: "moved" }));
+  });
+
+  it("retires active deletion when the church session changes while waiting for an upload", async () => {
+    const { result, unmount } = mountFolderQueue();
+    const uploadCleanup = deferred<void>();
+    const upload = claimMediaUpload("moved")!;
+    upload.setCancel(() => uploadCleanup.promise.then(() => upload.release()));
+
+    await act(async () => { await result.current.handleDeleteFolderSubtree("b"); });
+    await waitFor(() => expect(mockActiveFolderDeletion?.folderId).toBe("b"));
+    mockState = { ...mockState, allDocs: { ...mockState.allDocs, session: mockState.allDocs.session + 1 } };
+    unmount();
+    await act(async () => { uploadCleanup.resolve(); });
+
+    const id = mockEnqueueMediaFolderDeletion.mock.calls[0][0].id;
+    await waitFor(() => expect(mockActiveFolderDeletion).toBeNull());
+    expect(mockGetTransfer(id)).toBeUndefined();
+    expect(mockSweepMediaReferencesBeforeDelete).not.toHaveBeenCalled();
+    expect(mockDeleteMediaItemAtRevisionFromPouch).not.toHaveBeenCalled();
+    expect(mockRepairPersistedMediaRouteFolders).not.toHaveBeenCalled();
+    expect(mockFlushMediaLibraryDocToPouch).not.toHaveBeenCalled();
+  });
+
+  it("stops Keep Contents after route repair if the church session retires", async () => {
+    const { result, unmount } = mountFolderQueue();
+    const routeRepair = deferred<unknown[]>();
+    mockRepairPersistedMediaRouteFolders.mockReturnValueOnce(routeRepair.promise);
+    await act(async () => { await result.current.handleDeleteFolderKeepContents("b"); });
+    await waitFor(() => expect(mockRepairPersistedMediaRouteFolders).toHaveBeenCalled());
+    mockState = { ...mockState, allDocs: { ...mockState.allDocs, session: mockState.allDocs.session + 1 } };
+    unmount();
+    await act(async () => { routeRepair.resolve([]); });
+
+    const id = mockEnqueueMediaFolderDeletion.mock.calls[0][0].id;
+    await waitFor(() => expect(mockActiveFolderDeletion).toBeNull());
+    expect(mockGetTransfer(id)).toBeUndefined();
+    expect(mockFlushMediaLibraryDocToPouch).not.toHaveBeenCalled();
+    expect(mockBroadcastRouteFolderDocs).not.toHaveBeenCalled();
+  });
+
+  it("restores the previous failure and executable recovery when a same-session queued retry is cancelled", async () => {
+    const { result } = mountFolderQueue();
+    mockDeleteMediaItemAtRevisionFromPouch.mockRejectedValueOnce(new Error("write failed"));
+    await act(async () => { await result.current.handleDeleteFolderSubtree("b"); });
+    const bId = mockEnqueueMediaFolderDeletion.mock.calls[0][0].id;
+    await waitFor(() => expect(mockGetTransfer(bId)?.status).toBe("partial"));
+    await waitFor(() => expect(mockActiveFolderDeletion).toBeNull());
+    const recovery = mockGetTransfer(bId);
+    const holdA = deferred<void>();
+    mockDeleteCloudinaryMediaAsset.mockReturnValueOnce(holdA.promise);
+    await act(async () => { await result.current.handleDeleteFolderSubtree("a"); });
+    await waitFor(() => expect(mockDeleteCloudinaryMediaAsset).toHaveBeenCalledWith("church-1", "asset-a"));
+    await act(async () => { await mockTransferActionHandlers.get(`${bId}:retry-delete`)?.(); });
+    expect(mockGetTransfer(bId)).toMatchObject({ status: "queued", canCancel: true, blocksUnload: true });
+    await act(async () => { await mockTransferActionHandlers.get(`${bId}:cancel`)?.(); });
+    expect(mockGetTransfer(bId)).toMatchObject({
+      ...recovery,
+      detail: expect.stringContaining("Retry cancelled; no additional cleanup work was started."),
+      canCancel: false,
+      blocksUnload: false,
+    });
+    await act(async () => { holdA.resolve(); });
+    await waitFor(() => expect(mockActiveFolderDeletion).toBeNull());
+    await act(async () => { await mockTransferActionHandlers.get(`${bId}:retry-delete`)?.(); });
+    await waitFor(() => expect(mockGetTransfer(bId)?.status).toBe("complete"));
+  });
+
+  it("refreshes membership again when a deletion retry waits behind another folder", async () => {
+    const { result, unmount, persisted } = mountFolderQueue();
+    mockDeleteMediaItemAtRevisionFromPouch.mockRejectedValueOnce(new Error("write failed"));
+    await act(async () => { await result.current.handleDeleteFolderSubtree("b"); });
+    const bId = mockEnqueueMediaFolderDeletion.mock.calls[0][0].id;
+    await waitFor(() => expect(mockGetTransfer(bId)?.status).toBe("partial"));
+    await waitFor(() => expect(mockActiveFolderDeletion).toBeNull());
+    const holdA = deferred<void>();
+    mockDeleteCloudinaryMediaAsset.mockReturnValueOnce(holdA.promise);
+    await act(async () => { await result.current.handleDeleteFolderSubtree("a"); });
+    await waitFor(() => expect(mockDeleteCloudinaryMediaAsset).toHaveBeenCalledWith("church-1", "asset-a"));
+    await act(async () => { await mockTransferActionHandlers.get(`${bId}:retry-delete`)?.(); });
+    persisted.list = persisted.list.map((row) => row.id === "moved" ? { ...row, folderId: "outside" } : row);
+    const sweeps = mockSweepMediaReferencesBeforeDelete.mock.calls.length;
+    unmount();
+    await act(async () => { holdA.resolve(); });
+    await waitFor(() => expect(mockGetTransfer(bId)?.status).toBe("complete"));
+    expect(mockSweepMediaReferencesBeforeDelete).toHaveBeenCalledTimes(sweeps);
+    expect(mockDeleteCloudinaryMediaAsset).not.toHaveBeenCalledWith("church-1", "asset-moved");
+    expect(persisted.list).toContainEqual(expect.objectContaining({ id: "moved", folderId: "outside" }));
+    expect(mockGetTransfer(bId)?.files).not.toContainEqual(expect.objectContaining({ id: "moved" }));
+  });
+
+  it("keeps deletion recovery after upload cleanup succeeds but its fresh membership read fails", async () => {
+    const { result } = mountFolderQueue();
+    const upload = claimMediaUpload("moved")!;
+    const retryCleanup = jest.fn().mockResolvedValue(undefined);
+    upload.setCancel(() => upload.release());
+    upload.failCleanup(new Error("upload cleanup failed"), retryCleanup);
+    await act(async () => { await result.current.handleDeleteFolderSubtree("b"); });
+    const id = mockEnqueueMediaFolderDeletion.mock.calls[0][0].id;
+    await waitFor(() => expect(mockGetTransfer(id)?.actions).toContainEqual({ key: "retry-cleanup", label: "Retry cleanup" }));
+    await waitFor(() => expect(mockActiveFolderDeletion).toBeNull());
+    mockLoadMediaLibrary.mockRejectedValueOnce(new Error("membership read failed"));
+    await act(async () => { await mockTransferActionHandlers.get(`${id}:retry-cleanup`)?.(); });
+    await waitFor(() => expect(mockGetTransfer(id)).toMatchObject({
+      status: "failed",
+      actions: expect.arrayContaining([{ key: "retry-delete", label: "Retry deletion" }]),
+    }));
+    expect(retryCleanup).toHaveBeenCalledTimes(1);
+    expect(mockDeleteMediaItemAtRevisionFromPouch).not.toHaveBeenCalled();
+    await waitFor(() => expect(mockActiveFolderDeletion).toBeNull());
+    await act(async () => { await mockTransferActionHandlers.get(`${id}:retry-delete`)?.(); });
+    await waitFor(() => expect(mockGetTransfer(id)?.status).toBe("complete"));
+    expect(retryCleanup).toHaveBeenCalledTimes(1);
   });
 
   it("sends media-library videos with the custom-item non-looping default", async () => {

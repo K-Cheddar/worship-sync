@@ -45,12 +45,13 @@ jest.mock("../../utils/formatItemList", () => ({ formatItemList: (items: unknown
 jest.mock("firebase/database", () => ({ ref: jest.fn(), onValue: jest.fn() }));
 jest.mock("../../containers/Overlays/OverlayEditor", () => {
   const { useOverlayDraft } = jest.requireActual<typeof import("../../hooks/useOverlayDraft")>("../../hooks/useOverlayDraft");
-  return ({ selectedOverlay, readOnly, handleOverlayUpdate }: {
+  return ({ selectedOverlay, readOnly, handleOverlayUpdate, draftOwner }: {
     selectedOverlay: import("../../types").OverlayInfo;
     readOnly: boolean;
     handleOverlayUpdate: (overlay: import("../../types").OverlayInfo) => void;
+    draftOwner?: { isCurrent: () => boolean };
   }) => {
-    const { draft, patchDraft } = useOverlayDraft(selectedOverlay, handleOverlayUpdate);
+    const { draft, patchDraft } = useOverlayDraft(selectedOverlay, handleOverlayUpdate, undefined, draftOwner);
     return <input aria-label="Overlay editor" value={draft.name} disabled={!selectedOverlay.id || readOnly} onChange={(event) => patchDraft({ name: event.target.value })} />;
   };
 });
@@ -238,6 +239,47 @@ describe("outline switching with real reducers, listeners and PouchDB boundaries
     expect(mockDatabase.put).not.toHaveBeenCalled();
     expect(present().overlays.list[0]?.name).toBe("a");
     expect(screen.getByRole("textbox", { name: "Overlay editor", hidden: true })).not.toBeVisible();
+  });
+
+  it.each(["a", "b"])("flushes an outgoing draft to A when church B selects overlay %s", async (id) => {
+    const oldDb = mockDatabase!;
+    const view = mount(true); await drain();
+    act(() => { store.dispatch(overlaySlice.actions.selectOverlay(overlay("a"))); });
+    fireEvent.change(screen.getByRole("textbox", { name: "Overlay editor" }), { target: { value: "A pending draft" } });
+    mockDatabase = database(); view.changeDatabase(); await drain();
+    act(() => { store.dispatch(overlaySlice.actions.selectOverlay(overlay(id))); });
+    await drain();
+    await act(async () => { await jest.advanceTimersByTimeAsync(2000); });
+    expect(oldDb.overlayDocs.get("overlay-a")?.name).toBe("A pending draft");
+    expect(mockDatabase.overlayDocs.get("overlay-a")?.name).toBe("a");
+    expect(mockDatabase.overlayDocs.get("overlay-b")?.name).toBe("b");
+    expect(mockDatabase.put).not.toHaveBeenCalled();
+    expect(store.getState().undoable.present.overlay.selectedOverlay).toMatchObject({ id, name: id });
+    expect(present().overlays.list[0]?.name).toBe("a");
+  });
+
+  it("unmounts an outgoing draft after a database change without writing to B", async () => {
+    const oldDb = mockDatabase!;
+    const view = mount(true); await drain();
+    act(() => { store.dispatch(overlaySlice.actions.selectOverlay(overlay("a"))); });
+    fireEvent.change(screen.getByRole("textbox", { name: "Overlay editor" }), { target: { value: "A pending at unmount" } });
+    mockDatabase = database(); view.changeDatabase(); await drain();
+    view.unmount(); await drain();
+    expect(oldDb.overlayDocs.get("overlay-a")?.name).toBe("A pending at unmount");
+    expect(mockDatabase.overlayDocs.get("overlay-a")?.name).toBe("a");
+    expect(mockDatabase.put).not.toHaveBeenCalled();
+  });
+
+  it("discards a pending overlay draft after logout instead of saving during unmount", async () => {
+    const oldDb = mockDatabase!;
+    const view = mount(true); await drain();
+    act(() => { store.dispatch(overlaySlice.actions.selectOverlay(overlay("a"))); });
+    fireEvent.change(screen.getByRole("textbox", { name: "Overlay editor" }), { target: { value: "Do not save after logout" } });
+    act(() => { store.dispatch({ type: "RESET" }); });
+    view.unmount(); await drain();
+    await act(async () => { await jest.advanceTimersByTimeAsync(2000); });
+    expect(oldDb.overlayDocs.get("overlay-a")?.name).toBe("a");
+    expect(oldDb.put).not.toHaveBeenCalled();
   });
 
   it.each(["items", "overlays", "both"])("fully initializes B's empty %s and keeps overlay history", async (field) => {

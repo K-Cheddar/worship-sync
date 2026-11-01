@@ -275,9 +275,9 @@ const VideoBackgroundControls = ({
                 paused: isPaused,
                 applySeek: false,
                 loop: nextLoop,
-                // A preview cannot supply an unknown output's clock. Update
-                // policy without letting drift correction seek that output.
-                loopOnly: liveCue ? undefined : true,
+                // Without duration we cannot wrap the live clock. Let each
+                // output keep its actual playhead, just as for cue-less sends.
+                loopOnly: liveCue && duration > 0 ? undefined : true,
               }),
               outputIds: syncOutputIds,
             }));

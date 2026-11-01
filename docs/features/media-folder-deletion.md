@@ -50,13 +50,28 @@ leaves any completed repairs in place for a safe retry. Failed folder deletion
 can be retried from Activity after navigating away within the same session.
 Retries do not resume after logout or a church-session change.
 
+The October 30 five-findings correction confirms that every queued job reads
+folder structure and membership from its originating PouchDB when it starts,
+including after Media navigation and again after upload cleanup waits. Each item
+is checked against the persisted target subtree before its reference sweep and
+revision-aware tombstone. Unreadable authoritative state stops the job; an
+already-removed folder or a moved item cannot cause additional media deletion.
+Session-invalid queued deletions and deletion retries retire their Activity and
+actions. Active work stops starting new mutation or provider-cleanup steps after
+the originating church session retires; an in-flight database operation may
+settle against its captured database, and a reversible reference sweep is rolled
+back when possible. Missing Activity infrastructure reports service
+unavailability without bypassing the queue.
+
 Cancellation is honored for queued work and for active subtree deletion while
 the job is still stopping uploads, before it starts the reference sweep for the
-first media item. Once that sweep is about to begin, cancellation becomes
-unavailable and the current job finishes its database and cloud-cleanup steps.
-Keep Contents becomes non-cancellable immediately before its first saved-route
-or media-library write. This boundary favors consistency over stopping work
-mid-mutation.
+first media item. Once that sweep is about to begin, operator cancellation
+becomes unavailable so the current item's database and cloud-cleanup steps can
+finish safely. A logout or church-session change remains an ownership boundary:
+the job stops at its next safe checkpoint and does not begin work for later
+items. Keep Contents becomes non-cancellable immediately before its first
+saved-route or media-library write. This boundary favors consistency over
+stopping work mid-mutation.
 
 ## Shared controllers
 

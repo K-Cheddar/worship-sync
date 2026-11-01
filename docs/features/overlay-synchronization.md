@@ -72,6 +72,11 @@ Regression coverage: `useServicePlanningImport.test.ts`, `useCurrentServicePlanS
 
 ## Product decisions
 
+- **Question/problem:** Can an outgoing editor draft use a newly selected church's database?
+  - **Approved behavior:** No. Draft persistence retains its originating database and owner until committed or explicitly discarded. Identical overlay IDs in different churches are distinct documents. Selection changes, debounce, remote replacement, and unmount honor this ownership; session retirement prevents later saves.
+  - **Approval source/date:** Product-owner five-review-findings request, 2026-10-30.
+  - **Regression coverage:** `useOverlayDraft.test.tsx`, `persistOverlayDoc.test.ts`, and `outlineSwitch.integration.test.tsx`.
+
 - **Question/problem:** Should overlay content replication depend on visiting the Overlays page?
   - **Approved behavior:** Handle overlay-document replication and cross-window updates throughout the controller session, including while the operator is working on a song. Update existing list rows by ID without changing membership or order; preserve selected local drafts through the existing conflict buffer. Opening Overlays shows the already refreshed values without requiring another event or selection.
   - **Approval source/date:** Product-owner correctness request, 2026-10-28.

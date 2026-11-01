@@ -1902,6 +1902,50 @@ describe("ElectronMediaSurfacePool", () => {
   });
 
 
+  it("keeps a running prepared surface at its playhead through unknown-duration loop changes and natural end", async () => {
+    const cue = { mediaKey: candidate.mediaKey, positionSeconds: 0, paused: false, atServerMs: Date.now(), generation: 1, applySeek: true, loop: true };
+    const tree = (playback: typeof cue & { loopOnly?: boolean }) => <ElectronMediaSurfacePool enabled candidates={[candidate]} views={[makeView(candidate.mediaKey, candidate.source, true, playback)]} />;
+    const { rerender } = render(tree(cue));
+    const video = screen.getByTestId("electron-media-surface-video-remote:clip") as HTMLVideoElement;
+    Object.defineProperty(video, "duration", { configurable: true, value: 40 });
+    await waitFor(() => expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute("data-media-lifecycle", "active-playing"));
+    video.currentTime = 18;
+    const play = HTMLMediaElement.prototype.play as jest.Mock;
+    const pause = HTMLMediaElement.prototype.pause as jest.Mock;
+    play.mockClear(); pause.mockClear();
+    const loadCount = (HTMLMediaElement.prototype.load as jest.Mock).mock.calls.length;
+    const policy = { ...cue, positionSeconds: 144, atServerMs: Date.now(), generation: 2, applySeek: false, loop: false, loopOnly: true };
+    rerender(tree(policy));
+    jest.useFakeTimers();
+    act(() => { jest.advanceTimersByTime(6000); });
+    expect(video.currentTime).toBe(18);
+    expect(video.loop).toBe(false);
+    expect(video.paused).toBe(false);
+    expect(play).not.toHaveBeenCalled();
+    expect(pause).not.toHaveBeenCalled();
+    video.currentTime = 39;
+    fireEvent.timeUpdate(video);
+    expect(video.currentTime).toBe(39);
+    video.currentTime = 40;
+    video.pause(); fireEvent.ended(video);
+    act(() => { jest.advanceTimersByTime(6000); });
+    expect(video.currentTime).toBe(40);
+    expect(play).not.toHaveBeenCalled();
+    rerender(tree({ ...policy, loop: true, generation: 3 }));
+    expect(video.currentTime).toBe(40);
+    expect(video.paused).toBe(true);
+    expect(play).not.toHaveBeenCalled();
+    jest.useRealTimers();
+    rerender(tree({ ...cue, positionSeconds: 0, generation: 4, atServerMs: Date.now() }));
+    expect(video.currentTime).toBeLessThan(0.1);
+    await waitFor(() => expect(video.paused).toBe(false));
+    rerender(tree({ ...cue, positionSeconds: 5, paused: true, generation: 5, atServerMs: Date.now() }));
+    expect(video.currentTime).toBe(5);
+    expect(video.paused).toBe(true);
+    expect(screen.getByTestId("electron-media-surface-video-remote:clip")).toBe(video);
+    expect(HTMLMediaElement.prototype.load).toHaveBeenCalledTimes(loadCount);
+  });
+
   it.each([false, true])("updates a cue-less prepared surface's loop without transport (paused=%s)", async (paused) => {
     const { rerender } = render(<ElectronMediaSurfacePool enabled candidates={[candidate]} views={[view(true)]} />);
     const video = screen.getByTestId("electron-media-surface-video-remote:clip") as HTMLVideoElement;

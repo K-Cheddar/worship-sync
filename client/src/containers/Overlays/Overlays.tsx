@@ -3,7 +3,8 @@ import { selectOverlayTargetIds } from "../../store/selectLiveOutputs";
 import { Plus, Check, FolderOpen, History } from "lucide-react";
 
 import { useDispatch, useSelector } from "../../hooks";
-import { shallowEqual } from "react-redux";
+import { shallowEqual, useStore } from "react-redux";
+import { getActiveContentDatabaseOwner } from "../../store/deferredItemMutations";
 import {
   addOverlayToList,
   deleteOverlayFromList,
@@ -126,15 +127,39 @@ const Overlays = ({
   const isRetiredOverlaySelection = !!_selectedOverlay && selectedOverlay !== _selectedOverlay;
 
   const dispatch = useDispatch();
+  const store = useStore<RootState>();
+  const session = useSelector((state: RootState) => state.allDocs.session);
   const { isMobile, db } = useContext(ControllerInfoContext) || {
     isMobile: false,
   };
-  // Keep the hidden editor's accepted draft tied to the DB that selected it.
-  const editorDatabaseRef = useRef({ ownerKey: editorOwnerKey, database: db });
-  if (editorOwnerKey === outlineOwnerKey && editorOwnerKey !== editorDatabaseRef.current.ownerKey) {
-    editorDatabaseRef.current = { ownerKey: editorOwnerKey, database: db };
+  const currentDatabaseRef = useRef(db);
+  currentDatabaseRef.current = db;
+  const contentOwner = getActiveContentDatabaseOwner();
+  // A retired selection retains its original destination until replaced.
+  const editorDatabaseRef = useRef({ ownerKey: editorOwnerKey, database: db, session, contentOwner });
+  if (editorOwnerKey === outlineOwnerKey && (
+    editorOwnerKey !== editorDatabaseRef.current.ownerKey ||
+    db !== editorDatabaseRef.current.database ||
+    session !== editorDatabaseRef.current.session ||
+    contentOwner !== editorDatabaseRef.current.contentOwner
+  )) {
+    editorDatabaseRef.current = { ownerKey: editorOwnerKey, database: db, session, contentOwner };
   }
-  const editorDatabase = editorDatabaseRef.current.database;
+  const editorOrigin = editorDatabaseRef.current;
+  const draftOwner = useMemo(() => {
+    const isSessionCurrent = () => store.getState().allDocs.session === editorOrigin.session &&
+      getActiveContentDatabaseOwner() === editorOrigin.contentOwner;
+    return {
+      database: editorOrigin.database,
+      isSessionCurrent,
+      isCurrent: () => {
+        const present = store.getState().undoable.present;
+        return isSessionCurrent() && currentDatabaseRef.current === editorOrigin.database &&
+          present.overlay.outlineOwnerKey === editorOrigin.ownerKey &&
+          present.overlays.outlineOwnerKey === editorOrigin.ownerKey;
+      },
+    };
+  }, [editorOrigin, store]);
   const { access } = useContext(GlobalInfoContext) || {};
   const canMutateOverlays = !isViewOnlyAccess(access);
   const { mode } = usePresentationControllerMode();
@@ -258,26 +283,15 @@ const Overlays = ({
 
   const handleOverlayUpdate = useCallback(
     async (overlay: OverlayInfo) => {
-      if (!overlay.id) return;
-      if (isRetiredOverlaySelection) {
-        if (!editorDatabase) return;
+      if (!overlay.id || !draftOwner.isSessionCurrent()) return;
+      const currentSelection = store.getState().undoable.present.overlay.selectedOverlay;
+      if (!draftOwner.isCurrent() || overlay.id !== currentSelection?.id) {
+        if (draftOwner.isCurrent()) dispatch(updateOverlayInList(overlay));
+        if (!draftOwner.database) return;
         try {
-          await persistExistingOverlayDoc(editorDatabase, overlay);
+          await persistExistingOverlayDoc(draftOwner.database, overlay, draftOwner.isSessionCurrent);
         } catch (error) {
-          console.error("Error persisting outgoing overlay", error);
-        }
-        return;
-      }
-
-      // Draft flushes can arrive after selection swaps; persist by payload id so edits are not dropped.
-      if (selectedOverlay.id && overlay.id !== selectedOverlay.id) {
-        dispatch(updateOverlayInList(overlay));
-        const dbAtStart = db;
-        if (!dbAtStart) return;
-        try {
-          await persistExistingOverlayDoc(dbAtStart, overlay);
-        } catch (error) {
-          console.error("Error persisting non-selected overlay", error);
+          if (draftOwner.isSessionCurrent()) console.error("Error persisting outgoing overlay", error);
         }
         return;
       }
@@ -285,7 +299,7 @@ const Overlays = ({
       dispatch(updateOverlay(overlay));
       dispatch(updateOverlayInList(overlay));
     },
-    [db, dispatch, selectedOverlay.id, isRetiredOverlaySelection, editorDatabase],
+    [dispatch, draftOwner, store],
   );
 
   const handleApplyFormattingToAll = async (formatting: OverlayFormatting) => {
@@ -437,6 +451,7 @@ const Overlays = ({
         setIsTemplateDrawerOpen={setIsTemplateDrawerOpen}
         isMobile={isMobile}
         handleOverlayUpdate={handleOverlayUpdate}
+        draftOwner={draftOwner}
         handleFormattingChange={handleFormattingChange}
         readOnly={!canMutateOverlays || isRetiredOverlaySelection}
       />
