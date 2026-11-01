@@ -1,5 +1,6 @@
-import { createSlice, PayloadAction } from "@reduxjs/toolkit";
+import { createSlice, original, PayloadAction } from "@reduxjs/toolkit";
 import isEqual from "lodash/isEqual";
+import { activateOutlineContent } from "./outlineContent";
 import { ServiceItem } from "../types";
 import generateRandomId from "../utils/generateRandomId";
 import {
@@ -38,6 +39,9 @@ type UpdateItemListFromRemotePayload =
   | { items: ServiceItem[]; outlineId?: string };
 
 type ItemListState = {
+  outlineOwnerKey?: string;
+  outlineLoadGeneration?: number;
+  pendingByOutline?: Record<string, ServiceItem[]>;
   list: ServiceItem[];
   isLoading: boolean;
   loadError: string | null;
@@ -114,6 +118,7 @@ export const itemListSlice = createSlice({
       if (!state.syncBaseline) state.syncBaseline = [];
       if (!state.remoteConflicts) state.remoteConflicts = {};
       if (!state.pendingRevisionResolutions) state.pendingRevisionResolutions = {};
+      if (state.outlineOwnerKey) delete state.pendingByOutline?.[state.outlineOwnerKey];
       const previouslyLoadedOutlineId = state.loadedOutlineId;
       const previousList = state.list;
       const payload = Array.isArray(action.payload)
@@ -152,6 +157,7 @@ export const itemListSlice = createSlice({
       if (!state.syncBaseline) state.syncBaseline = [];
       if (!state.remoteConflicts) state.remoteConflicts = {};
       if (!state.pendingRevisionResolutions) state.pendingRevisionResolutions = {};
+      if (state.outlineOwnerKey) delete state.pendingByOutline?.[state.outlineOwnerKey];
       const payload = Array.isArray(action.payload)
         ? { items: action.payload }
         : action.payload;
@@ -531,6 +537,16 @@ export const itemListSlice = createSlice({
     },
     setHasPendingUpdate: (state, action: PayloadAction<boolean>) => {
       state.hasPendingUpdate = action.payload;
+      if (!action.payload && state.outlineOwnerKey) delete state.pendingByOutline?.[state.outlineOwnerKey];
+    },
+    acknowledgeOutlineSave: (state, action: PayloadAction<{ ownerKey: string; list: ServiceItem[] }>) => {
+      const before = original(state)!;
+      const { ownerKey, list } = action.payload;
+      if (before.pendingByOutline?.[ownerKey] === list) delete state.pendingByOutline![ownerKey];
+      if (state.outlineOwnerKey === ownerKey && before.list === list) {
+        state.hasPendingUpdate = false;
+        delete state.pendingByOutline?.[ownerKey];
+      }
     },
     forceUpdate: (state) => {
       state.hasPendingUpdate = true;
@@ -540,9 +556,27 @@ export const itemListSlice = createSlice({
     },
   },
   extraReducers: (builder) => {
-    // Runs after every row mutation, including image/heading helpers. There is
-    // one latest draft per outline, rather than a snapshot from notice time.
+    builder.addCase(activateOutlineContent, (state, action) => {
+      if (state.outlineOwnerKey && state.hasPendingUpdate) {
+        state.pendingByOutline ??= {};
+        state.pendingByOutline[state.outlineOwnerKey] = state.list;
+      } else if (state.outlineOwnerKey) {
+        delete state.pendingByOutline?.[state.outlineOwnerKey];
+      }
+      const draft = state.pendingByOutline?.[action.payload.ownerKey];
+      state.outlineOwnerKey = action.payload.ownerKey;
+      state.outlineLoadGeneration = (state.outlineLoadGeneration ?? 0) + 1;
+      state.list = draft ?? [];
+      state.hasPendingUpdate = !!draft;
+      state.isInitialized = !!draft || !action.payload.hasSelection;
+      state.isLoading = action.payload.hasSelection;
+      state.initialItems = state.list.map((item) => item.listId);
+      state.selectedItemListId = "";
+      state.insertPointIndex = -1;
+    });
     builder.addMatcher((action) => action.type.startsWith("itemList/"), (state) => {
+      // Keep the latest retained draft in sync with mutations made while a
+      // revision conflict is being reviewed.
       const conflict = state.loadedOutlineId && state.remoteConflicts?.[state.loadedOutlineId];
       if (conflict) {
         conflict.localItems = state.list;
@@ -576,6 +610,7 @@ export const {
   recordOutlineConflict,
   markItemListPersisted,
   setHasPendingUpdate,
+  acknowledgeOutlineSave,
   addToInitialItems,
   forceUpdate,
   attachCloudCopyToLocalImageInItemList,

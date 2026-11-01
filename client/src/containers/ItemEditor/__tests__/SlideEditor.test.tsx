@@ -17,6 +17,7 @@ import {
 const mockDispatch = jest.fn();
 let mockState: any;
 let mockActiveControllerType = "presentation";
+let mockUseRealPanels = false;
 
 const mockSetIsLyricsEditorOpen = jest.fn((value: boolean) => ({
   type: "item/setIsLyricsEditorOpen",
@@ -122,6 +123,9 @@ jest.mock("../../../store/allDocsSlice", () => ({
 
 jest.mock("../../../store/preferencesSlice", () => ({
   setShouldShowItemEditor: (value: boolean) => mockSetShouldShowItemEditor(value),
+  setFocusMediaId: (value: string) => ({ type: "preferences/setFocusMediaId", payload: value }),
+  setIsMediaExpanded: (value: boolean) => ({ type: "preferences/setIsMediaExpanded", payload: value }),
+  setRequestOpenMediaPanel: (value: boolean) => ({ type: "preferences/setRequestOpenMediaPanel", payload: value }),
 }));
 
 jest.mock("../../../store/mediaSlice", () => ({
@@ -182,6 +186,8 @@ const displayWindowCapture: {
   videoPlayback: unknown;
   localVideoInput: unknown;
   canCaptureLocalVideo: boolean | undefined;
+  selectedBox: number | undefined;
+  selectBox: ((index: number) => void) | undefined;
 } = {
   className: undefined,
   showBorder: undefined,
@@ -189,6 +195,8 @@ const displayWindowCapture: {
   videoPlayback: undefined,
   localVideoInput: undefined,
   canCaptureLocalVideo: undefined,
+  selectedBox: undefined,
+  selectBox: undefined,
 };
 
 jest.mock("../../../components/DisplayWindow/DisplayWindow", () => ({
@@ -201,7 +209,11 @@ jest.mock("../../../components/DisplayWindow/DisplayWindow", () => ({
     videoPlayback?: unknown;
     localVideoInput?: unknown;
     canCaptureLocalVideo?: boolean;
+    selectedBox?: number;
+    selectBox?: (index: number) => void;
   }) => {
+    displayWindowCapture.selectedBox = props.selectedBox;
+    displayWindowCapture.selectBox = props.selectBox;
     displayWindowCapture.className = props.className;
     displayWindowCapture.showBorder = props.showBorder;
     if (props.onChange) displayWindowCapture.onChange = props.onChange;
@@ -223,34 +235,29 @@ jest.mock("../../../components/DisplayWindow/DisplayWindow", () => ({
 
 jest.mock("../../../components/SectionTextEditor/SectionTextEditor", () => ({
   __esModule: true,
-  default: ({
-    disabled,
-    sectionName,
-    value,
-    onChange,
-  }: {
-    disabled?: boolean;
-    sectionName: string;
-    value: string;
-    onChange: (v: string, cursor?: number) => void;
-  }) => (
-    <div data-testid="section-text-editor" data-disabled={disabled ? "true" : "false"}>
-      <span>{sectionName}</span>
-      <span>{value}</span>
-      <button
-        type="button"
-        onClick={() => onChange("Updated section text", 3)}
-        disabled={disabled}
-      >
-        trigger-section-change
-      </button>
-    </div>
-  ),
+  default: (props: { disabled?: boolean; sectionName: string; value: string; onChange: (v: string, cursor?: number) => void }) => {
+    if (mockUseRealPanels) {
+      const Actual = jest.requireActual("../../../components/SectionTextEditor/SectionTextEditor").default;
+      return <Actual {...props} />;
+    }
+    return (
+      <div data-testid="section-text-editor" data-disabled={props.disabled ? "true" : "false"}>
+        <span>{props.sectionName}</span><span>{props.value}</span>
+        <button type="button" onClick={() => props.onChange("Updated section text", 3)} disabled={props.disabled}>trigger-section-change</button>
+      </div>
+    );
+  },
 }));
 
 jest.mock("../../../components/SlideBoxes/SlideBoxes", () => ({
   __esModule: true,
-  default: () => <div data-testid="slide-boxes" />,
+  default: (props: any) => {
+    if (mockUseRealPanels) {
+      const Actual = jest.requireActual("../../../components/SlideBoxes/SlideBoxes").default;
+      return <Actual {...props} />;
+    }
+    return <div data-testid="slide-boxes" />;
+  },
 }));
 
 jest.mock("../../../components/LocalVideoInputDetails/LocalVideoInputDetails", () => ({
@@ -283,11 +290,6 @@ jest.mock("../../../components/LocalVideoInputPicker/LocalVideoInputPicker", () 
 jest.mock("../BibleItemActions", () => ({
   __esModule: true,
   default: () => <div data-testid="bible-actions" />,
-}));
-
-jest.mock("../../../components/TimerControls/TimerControls", () => ({
-  __esModule: true,
-  default: () => <div data-testid="timer-controls" />,
 }));
 
 const makeBaseState = (overrides: Partial<any> = {}) => {
@@ -338,6 +340,9 @@ const makeBaseState = (overrides: Partial<any> = {}) => {
     },
     presentation: {
       outputs: {},
+    },
+    timers: {
+      timers: [],
     },
     media: {
       list: [],
@@ -450,6 +455,7 @@ describe("SlideEditor", () => {
         : undefined,
     );
     mockActiveControllerType = "presentation";
+    mockUseRealPanels = false;
     displayWindowCapture.className = undefined;
     displayWindowCapture.showBorder = undefined;
     displayWindowCapture.onChange = null;
@@ -459,6 +465,69 @@ describe("SlideEditor", () => {
     mockState = makeBaseState();
     mockShowToast = jest.fn<any, any[]>(() => "toast-1");
     mockRemoveToast = jest.fn();
+  });
+
+  it("switches panels, keeps the view across slides, and resets it for each item", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<SlideEditor access="full" />);
+    expect(screen.getByRole("button", { name: "Text" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("group", { name: "Slide editor view" })).toHaveClass("bg-gray-900", "p-0.5", "w-full");
+    expect(screen.getByRole("button", { name: "Text" })).toHaveClass("bg-cyan-600", "flex-1");
+    expect(screen.getByRole("button", { name: "Boxes" })).toHaveClass("flex-1");
+    expect(screen.getByTestId("section-text-editor")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Boxes" }));
+    expect(screen.getByTestId("slide-boxes")).toBeVisible();
+    expect(screen.getByTestId("section-text-editor")).not.toBeVisible();
+    mockState.undoable.present.item.slides.push({ ...mockState.undoable.present.item.slides[0], id: "s2" });
+    mockState.undoable.present.item.selectedSlide = 1;
+    rerender(<SlideEditor access="full" />);
+    expect(screen.getByRole("button", { name: "Boxes" })).toHaveAttribute("aria-pressed", "true");
+    mockState.undoable.present.item._id = "another-item";
+    rerender(<SlideEditor access="full" />);
+    expect(screen.getByRole("button", { name: "Text" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("section-text-editor")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Boxes" }));
+    await user.click(screen.getByRole("button", { name: "Text" }));
+    expect(screen.getByTestId("section-text-editor")).toBeVisible();
+  });
+
+  it("uses the section name in the mobile toggle without repeating the heading", () => {
+    mockUseRealPanels = true;
+    render(
+      <ControllerInfoContext.Provider value={createMockControllerContext({ isMobile: true }) as never}>
+        <SlideEditor access="full" />
+      </ControllerInfoContext.Provider>,
+    );
+    expect(screen.getByRole("button", { name: "Section 1" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByText("Section 1", { selector: "p" })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: /Section Text/ })).toBeVisible();
+  });
+
+  it("keeps a text draft mounted and shares box selection with the display", async () => {
+    mockUseRealPanels = true;
+    mockState.undoable.present.item.slides[0].boxes[0].id = "background";
+    mockState.undoable.present.item.slides[0].boxes[1].id = "text";
+    const user = userEvent.setup();
+    const { rerender } = render(<SlideEditor access="full" />);
+    const text = screen.getByRole("textbox", { name: /Section Text/ });
+    fireEvent.change(text, { target: { value: "A pending draft" } });
+    await user.click(screen.getByRole("button", { name: "Boxes" }));
+    expect(text).not.toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "BG" }));
+    expect(mockDispatch).toHaveBeenCalledWith({ type: "item/setSelectedBox", payload: 0 });
+    mockState.undoable.present.item.selectedBox = 0;
+    rerender(<SlideEditor access="full" />);
+    expect(displayWindowCapture.selectedBox).toBe(0);
+    expect(screen.getByRole("button", { name: "BG" })).toHaveAttribute("aria-pressed", "true");
+    act(() => displayWindowCapture.selectBox?.(1));
+    expect(mockDispatch).toHaveBeenCalledWith({ type: "item/setSelectedBox", payload: 1 });
+    mockState.undoable.present.item.selectedBox = 1;
+    rerender(<SlideEditor access="full" />);
+    expect(screen.getByRole("button", { name: "Hello" })).toHaveAttribute("aria-pressed", "true");
+    await user.click(screen.getByRole("button", { name: "Text" }));
+    expect(text).toBeVisible();
+    expect(text).toHaveValue("A pending draft");
+    expect(mockApplyOwnedContentMutation).toHaveBeenCalledWith(expect.objectContaining({ mutation: expect.objectContaining({ kind: "sectionTextDraft", value: "A pending draft" }) }));
   });
 
   it.each(["song", "church", "unmount"])("keeps a deferred MP3 upload on its original database after %s changes", async (transition) => {
@@ -521,6 +590,112 @@ describe("SlideEditor", () => {
 
     expect(displayWindowCapture.className).toContain("lg:max-h-[42vh]");
     expect(displayWindowCapture.showBorder).toBeUndefined();
+  });
+
+  it.each([
+    ["timer", "hh:mm:ss"],
+    ["countdown", "Countdown To"],
+  ] as const)(
+    "shows the %s time input with playback controls in Present mode",
+    (timerType, inputLabel) => {
+      mockState = makeBaseState({
+        undoable: {
+          present: {
+            item: {
+              _id: "timer-1",
+              type: "timer",
+              slides: [
+                {
+                  id: "timer-slide",
+                  type: "Media",
+                  name: "Timer",
+                  boxes: [
+                    { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+                    { width: 100, height: 100, words: "00:00", x: 0, y: 0 },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+        timers: {
+          timers: [
+            {
+              id: "timer-1",
+              timerType,
+              duration: 300,
+              countdownTime: "19:30",
+              status: "stopped",
+              showMinutesOnly: false,
+            },
+          ],
+        },
+      });
+
+      render(
+        <GlobalInfoContext.Provider
+          value={{ access: "full", hostId: "host-1" } as any}
+        >
+          <SlideEditor access="full" presentationMode="present" />
+        </GlobalInfoContext.Provider>,
+      );
+
+      expect(screen.getByRole("combobox", { name: inputLabel })).toBeInTheDocument();
+      expect(screen.getByTitle("Play")).toBeInTheDocument();
+      expect(screen.getByTitle("Pause")).toBeInTheDocument();
+      expect(screen.getByTitle("Stop")).toBeInTheDocument();
+      expect(screen.getByTitle("Reset")).toBeInTheDocument();
+      expect(screen.queryByText("Full timer")).not.toBeInTheDocument();
+      expect(screen.queryByText("Minutes only")).not.toBeInTheDocument();
+    },
+  );
+
+  it("keeps the full timer settings in Edit mode", () => {
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            _id: "timer-1",
+            type: "timer",
+            slides: [
+              {
+                id: "timer-slide",
+                type: "Media",
+                name: "Timer",
+                boxes: [
+                  { width: 100, height: 100, words: "BG", x: 0, y: 0 },
+                  { width: 100, height: 100, words: "00:00", x: 0, y: 0 },
+                ],
+              },
+            ],
+          },
+        },
+        timers: {
+          timers: [
+            {
+              id: "timer-1",
+              timerType: "timer",
+              duration: 300,
+              countdownTime: "19:30",
+              status: "stopped",
+              showMinutesOnly: false,
+            },
+          ],
+        },
+      },
+    });
+
+    render(
+      <GlobalInfoContext.Provider
+        value={{ access: "full", hostId: "host-1" } as any}
+      >
+        <SlideEditor access="full" presentationMode="edit" />
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(screen.getByRole("combobox", { name: "hh:mm:ss" })).toBeInTheDocument();
+    expect(screen.getByText("Full timer:")).toBeInTheDocument();
+    expect(screen.getByText("Minutes only:")).toBeInTheDocument();
   });
 
   it("uses a preview-only Present skeleton with Present sizing while loading", () => {
@@ -906,18 +1081,11 @@ describe("SlideEditor", () => {
     expect(displayWindowCapture.videoPlayback).toBeUndefined();
   });
 
-  it("renders box tools panel when toolbar section is box-tools", () => {
-    mockState = makeBaseState({
-      undoable: {
-        present: {
-          preferences: { toolbarSection: "box-tools" },
-        },
-      },
-    });
-
+  it("does not use the obsolete toolbar section to open boxes", () => {
+    mockState = makeBaseState({ undoable: { present: { preferences: { toolbarSection: "box-tools" } } } });
     render(<SlideEditor access="full" />);
-    expect(screen.getByTestId("slide-boxes")).toBeInTheDocument();
-    expect(screen.queryByTestId("section-text-editor")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("slide-boxes")).not.toBeInTheDocument();
+    expect(screen.getByTestId("section-text-editor")).toBeVisible();
   });
 
   it("dispatches edit-mode action when song Edit Lyrics is clicked", async () => {
@@ -1662,6 +1830,11 @@ describe("SlideEditor", () => {
         screen.getByTestId("timer-item-editor-collapsed-controls"),
       ).toBeInTheDocument();
       expect(screen.queryByTestId("display-window")).not.toBeInTheDocument();
+      expect(screen.getByRole("combobox", { name: "hh:mm:ss" })).toBeInTheDocument();
+      expect(
+        screen.getByTestId("timer-time-input-container"),
+      ).toHaveClass("hidden", "lg:block");
+      expect(screen.getByTitle("Play")).toBeInTheDocument();
     });
 
     it("keeps hidden editor mounted when collapsed for non-timer items", () => {

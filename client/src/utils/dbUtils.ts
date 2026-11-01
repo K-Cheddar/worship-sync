@@ -52,6 +52,14 @@ import {
 import { formatItemInfo } from "./formatItemInfo";
 import { formatSong, getFormattedSections } from "./overflow";
 
+export {
+  BIBLE_ITEM_CLEANUP_GRACE_PERIOD_MS,
+  MAX_BIBLE_ITEM_CLEANUP_RETRY_DELAY_MS,
+  cancelBibleItemCleanupRetry,
+  deleteUnusedBibleItems,
+  scheduleBibleItemCleanupRetry,
+} from "./bibleItemCleanup";
+
 /**
  * Returns a map of overlay id -> list of item list names that include that overlay.
  */

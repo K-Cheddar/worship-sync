@@ -39,6 +39,7 @@ import { formatBible, formatFree, formatSong } from "./overflow";
 import { createNewSlide } from "./slideCreation";
 import { sortNamesInList } from "./sort";
 import { DEFAULT_OUTLINE_SCOPE } from "./outlineScope";
+import { trackBibleDocumentActivity } from "./contentReplicationActivity";
 
 type CreateSectionsType = {
   formattedLyrics?: FormattedLyrics[];
@@ -263,12 +264,14 @@ export const createNewBible = async ({
   brightness,
   fontMode,
 }: CreateNewBibleType): Promise<ItemState> => {
-  const _name = makeUnique({ value: name, property: "name", list });
+  // Bible display names stay canonical across imports; only IDs gain suffixes.
+  // Checking names can reuse a suffixed document and discard the new slides.
+  const _id = makeUnique({ value: name, property: "_id", list });
 
   const newItem: ItemState = {
     name,
     type: "bible",
-    _id: _name,
+    _id,
     selectedArrangement: 0,
     shouldSkipTitle: false,
     arrangements: [],
@@ -296,8 +299,14 @@ export const createNewBible = async ({
     brightness,
   });
 
-  const _item = await createNewItemInDb({ item, db });
-  return _item;
+  const endBibleDocumentActivity = db?.name
+    ? trackBibleDocumentActivity(db.name)
+    : null;
+  try {
+    return await createNewItemInDb({ item, db });
+  } finally {
+    endBibleDocumentActivity?.();
+  }
 };
 
 type FormatBibleFromScratchType = {
@@ -985,7 +994,11 @@ export const createNewItemList = async ({
       controllerScope,
     );
   } catch (error) {
-    db.put({
+    const readError = error as { status?: number | string; name?: string } | null;
+    if (readError?.status !== 404 && readError?.status !== "404" && readError?.name !== "not_found") {
+      throw error;
+    }
+    await db.put({
       ...list,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -1046,7 +1059,7 @@ export const createItemListFromExisting = async ({
       items: response.items,
       overlays: newOverlays,
     };
-    db.put({
+    await db.put({
       ...newList,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),

@@ -23,6 +23,13 @@ type StaticMonitorThumbnailProps = {
   scaleFactor: number;
 };
 
+// Representative samples keep thumbnail chrome static without per-slide clocks.
+const PREVIEW_CLOCK_TIME = new Date(2000, 0, 1, 10, 30).toLocaleTimeString([], {
+  hour: "numeric",
+  minute: "2-digit",
+});
+const PREVIEW_TIMER_TIME = "05:00";
+
 const isMonitorNextSlideType = (itemType: string) =>
   itemType === "song" || itemType === "bible" || itemType === "free";
 
@@ -65,14 +72,11 @@ const StaticMonitorThumbnail = ({
       <div className="flex flex-1 justify-start items-center min-w-0 h-full">
         {settings.showClock && (
           <span
-            className="text-white whitespace-nowrap"
+            className="text-white whitespace-nowrap tabular-nums"
             style={{ fontSize: `${settings.clockFontSize}px` }}
             data-testid="monitor-preview-clock"
           >
-            {new Date().toLocaleTimeString([], {
-              hour: "numeric",
-              minute: "2-digit",
-            })}
+            {PREVIEW_CLOCK_TIME}
           </span>
         )}
       </div>
@@ -106,11 +110,11 @@ const StaticMonitorThumbnail = ({
       <div className="flex flex-1 justify-end items-center min-w-0 h-full">
         {settings.showTimer && (
           <span
-            className="text-white whitespace-nowrap"
+            className="text-white whitespace-nowrap tabular-nums"
             style={{ fontSize: `${settings.timerFontSize}px` }}
             data-testid="monitor-preview-timer"
           >
-            Timer
+            {PREVIEW_TIMER_TIME}
           </span>
         )}
       </div>

@@ -97,6 +97,19 @@ describe("AllToolsDrawer quick toolbar targets", () => {
     expect(screen.getByRole("button", { name: "All Tools" })).toBeInTheDocument();
   });
 
+  it("shows scrollable quick controls on mobile while retaining All Tools", () => {
+    render(
+      <AllToolsDrawer isOpen={false} onClose={jest.fn()} onToggle={jest.fn()}
+        isMobile={true} showBibleMode={true} showStreamFormatting={false} showOutputTargets={false}>
+        {(targets) => targets.quickFontSize && createPortal(<button type="button">Font Size</button>, targets.quickFontSize)}
+      </AllToolsDrawer>,
+    );
+    expect(screen.getByTestId("quick-editing-toolbar-scroll")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Font Size" })).toBeVisible();
+    expect(screen.getByTestId("quick-editing-toolbar-groups")).toHaveClass("min-w-max");
+    expect(screen.getByRole("button", { name: "All Tools" })).toBeVisible();
+  });
+
   it("omits the Bible group target for non-Bible items", () => {
     render(
       <AllToolsDrawer

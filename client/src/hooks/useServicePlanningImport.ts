@@ -840,17 +840,10 @@ export const useServicePlanningImport = () => {
             return skipStep("The Controller changed. Refresh the plan before syncing.");
           }
           const newId = generateRandomId();
-          const { templatesByType, defaultTemplateIdsByType } =
-            store.getState().undoable.present.overlayTemplates;
           let built = buildClonedParticipantOverlay(
             template,
             step.patch,
             newId,
-            getConfiguredDefaultFormatting(
-              "participant",
-              templatesByType,
-              defaultTemplateIdsByType,
-            ),
           );
           if (step.targetOverlaySource === "library") {
             built = applyServicePlanningOverlayPatch({ ...template, id: newId }, step.patch);

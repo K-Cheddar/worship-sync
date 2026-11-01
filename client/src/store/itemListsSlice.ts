@@ -15,6 +15,8 @@ import {
 import type { RegistrySaveState } from "../utils/itemListsRegistryQueue";
 
 type ItemListState = {
+  /** Runtime-only concrete DB identity; never written to the outline registry. */
+  contentDatabaseKey?: string;
   currentLists: ItemList[];
   /**
    * The church-wide "live service" outline. Presentation-scoped only: credits,

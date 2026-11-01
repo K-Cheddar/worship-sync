@@ -48,18 +48,22 @@ describe("overlaysSlice", () => {
       expect(state.initialList).toEqual(["o1"]);
     });
 
-    it("initiateOverlayList with empty payload clears list", () => {
+    it("initiateOverlayList with empty payload resets outline state and retains history", () => {
       const store = createStore({
         overlays: {
-          hasPendingUpdate: false,
+          hasPendingUpdate: true,
           list: [createOverlay({ id: "o1", name: "O1" })],
           initialList: ["o1"],
-          isInitialized: true,
-          overlayHistory: {},
+          isInitialized: false,
+          overlayHistory: { "participant.name": ["Saved history"] },
         },
       });
       store.dispatch(initiateOverlayList([]));
       expect(store.getState().overlays.list).toHaveLength(0);
+      expect(store.getState().overlays.initialList).toEqual([]);
+      expect(store.getState().overlays.hasPendingUpdate).toBe(false);
+      expect(store.getState().overlays.isInitialized).toBe(true);
+      expect(store.getState().overlays.overlayHistory).toEqual({ "participant.name": ["Saved history"] });
     });
 
     it("updateOverlayList replaces list and sets hasPendingUpdate", () => {

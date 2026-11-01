@@ -16,7 +16,7 @@ import { itemDocumentToLibraryEntry } from "../../utils/itemLibrary";
  *     everything else on the same element still goes out;
  *   - unattached elements and generic resources → no outline item.
  *
- * Idempotency is per attachment, not per element: every item an element pushes
+ * Idempotency is per attachment for non-song content: every item an element pushes
  * takes a listId derived from the element and what is attached to it (see
  * `outlineListIdFor`), so a re-push adds exactly the items that are missing
  * from the live list. That is what lets an element push its resolved songs now
@@ -24,9 +24,10 @@ import { itemDocumentToLibraryEntry } from "../../utils/itemLibrary";
  * duplicating an element's surviving items after the operator deleted one of
  * them. True update-in-place for an edited-then-re-pushed element
  * (repositioning it back under its original heading) is out of scope for v1.
+ * Songs additionally use their library IDs to avoid automatic duplicates.
  */
 import type PouchDB from "pouchdb-browser";
-import type { DBItem, ServiceItem } from "../../types";
+import type { BibleFontMode, DBItem, MediaType, ServiceItem } from "../../types";
 import { createBibleItemFromParsedReference } from "../../utils/servicePlanningBibleImport";
 import { parseBibleReference } from "../../integrations/servicePlanning/parseBibleReference";
 import { richTextToPlainText } from "../../types/richText";
@@ -48,6 +49,8 @@ export type ServicePlanOutlinePushResult = {
   insertedCount: number;
   /** Titles of elements carrying an attachment that still can't be pushed. */
   skippedTitles: string[];
+  unresolvedAttachments: { listId: string; title: string; reason: string }[];
+  alreadyPresent: { listId: string; title: string }[];
   /** Successful outline-end insertions whose requested heading was missing. */
   placementFallbacks: ServicePlanOutlinePlacementFallback[];
 };
@@ -127,7 +130,7 @@ type ElementOutlinePlan = {
   planned: PlannedOutlineItem[];
   /** An attached song still has no library doc, so it can't be pushed yet. */
   hasUnresolvedAttachment: boolean;
-  unresolvedAttachments: { listId: string; title: string }[];
+  unresolvedAttachments: { listId: string; title: string; reason: string }[];
 };
 
 export type ServicePlanOutlineStep = {
@@ -150,12 +153,15 @@ export type ServicePlanOutlinePreviewEntry = {
   status: "already-present" | "ready" | "unresolved";
   destination?: ServicePlanOutlineDestination;
   placementFallback?: ServicePlanOutlinePlacementIssue;
+  reason?: string;
+  songId?: string;
 };
 
 export type ServicePlanOutlinePlan = {
   previewEntries: ServicePlanOutlinePreviewEntry[];
   steps: ServicePlanOutlineStep[];
   skippedTitles: string[];
+  unresolvedAttachments: { listId: string; title: string; reason: string }[];
 };
 
 /** Insert immediately before the next heading, or at the list end. */
@@ -196,9 +202,7 @@ const planElementOutlineItems = (
   const title = richTextToPlainText(element.title).trim() || "Untitled";
   const planned: PlannedOutlineItem[] = [];
   let hasUnresolvedAttachment = false;
-  const unresolvedAttachments: { listId: string; title: string }[] = [];
-  // An element may legitimately attach the same song twice (a reprise); the
-  // occurrence count keeps those from collapsing onto one listId.
+  const unresolvedAttachments: { listId: string; title: string; reason: string }[] = [];
   for (const [attachmentIndex, resource] of getServicePlanElementContentResources(element).entries()) {
     const occurrenceId = resource.id || `${resource.type}-${attachmentIndex}`;
     const listId = outlineListIdFor(element, `attachment:${occurrenceId}`, 0);
@@ -222,7 +226,10 @@ const planElementOutlineItems = (
       // A saved-plan link is authoritative. Never substitute a same-titled
       // song when its id is missing or no longer resolves.
       hasUnresolvedAttachment = true;
-      unresolvedAttachments.push({ listId, title: resource.title || title });
+      const attachmentTitle = resource.title || songRef?.songName || songRef?.title || title;
+      unresolvedAttachments.push({ listId, title: attachmentTitle, reason: linkedSongId
+        ? `Linked song "${attachmentTitle}" was not found in the library (ID: ${linkedSongId}).`
+        : `Linked song "${attachmentTitle}" has no available library reference (attachment: ${occurrenceId}).` });
       continue;
     }
     if (resource.type === "scripture") {
@@ -249,7 +256,7 @@ const planElementOutlineItems = (
         });
       } else {
         hasUnresolvedAttachment = true;
-        unresolvedAttachments.push({ listId, title: resource.title || title });
+        unresolvedAttachments.push({ listId, title: resource.title || title, reason: `Scripture reference "${resource.title || title}" could not be resolved (attachment: ${occurrenceId}).` });
       }
       continue;
     }
@@ -260,7 +267,7 @@ const planElementOutlineItems = (
       );
       if (!documentId || !document) {
         hasUnresolvedAttachment = true;
-        unresolvedAttachments.push({ listId, title: resource.title || title });
+        unresolvedAttachments.push({ listId, title: resource.title || title, reason: `Linked custom document "${resource.title || title}" is no longer available (${documentId ? `ID: ${documentId}` : `attachment: ${occurrenceId}`}).` });
         continue;
       }
       planned.push({ kind: "custom-document", listId, document });
@@ -274,24 +281,36 @@ const planElementOutlineItems = (
 };
 
 /** The planned items not already on the list — what a push would really add. */
-const missingPlannedItems = (
-  list: ServiceItem[],
-  plan: ElementOutlinePlan,
-): PlannedOutlineItem[] =>
-  hasLegacyPushOnList(list, plan.element)
-    ? []
-    : plan.planned.filter(({ listId }) => !findExistingListId(list, listId));
+export const isServicePlanItemAlreadyInOutline = (list: ServiceItem[], planned: PlannedOutlineItem): boolean =>
+  planned.kind === "song"
+    ? list.some((item) => item.type === "song" && item._id === planned.song._id)
+    : !!findExistingListId(list, planned.listId);
+
+export const availableSongOutlineListId = (list: ServiceItem[], listId: string): string => {
+  let available = listId;
+  let suffix = 1;
+  while (findExistingListId(list, available)) available = `${listId}::${suffix++}`;
+  return available;
+};
 
 export const buildServicePlanOutlineItem = async ({
   step,
   list,
   db,
   bibleDb,
+  background = "",
+  mediaInfo,
+  brightness = 100,
+  fontMode = "fit",
 }: {
   step: ServicePlanOutlineStep;
   list: ServiceItem[];
   db: PouchDB.Database | undefined;
   bibleDb: PouchDB.Database | undefined;
+  background?: string;
+  mediaInfo?: MediaType;
+  brightness?: number;
+  fontMode?: BibleFontMode;
 }): Promise<ServiceItem> => {
   const { planned } = step;
   if (planned.kind === "song") {
@@ -313,15 +332,13 @@ export const buildServicePlanOutlineItem = async ({
       db,
       bibleDb,
       libraryItems: list,
-      background: "",
-      brightness: 100,
-      fontMode: "fit",
+      background,
+      mediaInfo,
+      brightness,
+      fontMode,
     });
     return {
-      _id: created._id,
-      name: created.name,
-      type: "bible",
-      background: created.background,
+      ...itemDocumentToLibraryEntry(created),
       listId: planned.listId,
     };
   }
@@ -355,6 +372,7 @@ export const planServicePlanOutlineItems = ({
   const steps: ServicePlanOutlineStep[] = [];
   const previewEntries: ServicePlanOutlinePreviewEntry[] = [];
   const skippedTitles: string[] = [];
+  const unresolvedAttachments: ServicePlanOutlinePlan["unresolvedAttachments"] = [];
   let workingList = [...currentList];
 
   for (const section of plan.sections) {
@@ -372,19 +390,24 @@ export const planServicePlanOutlineItems = ({
     for (const elementPlan of elementPlans) {
       if (elementPlan.hasUnresolvedAttachment) {
         skippedTitles.push(elementPlan.title);
+        unresolvedAttachments.push(...elementPlan.unresolvedAttachments);
       }
     }
 
     const sectionSteps: ServicePlanOutlineStep[] = [];
     for (const elementPlan of elementPlans) {
-      const additions = missingPlannedItems(workingList, elementPlan);
+      const legacyPresent = hasLegacyPushOnList(workingList, elementPlan.element);
       const destination: ServicePlanOutlineDestination = placement.heading
         ? { kind: "heading", listId: placement.heading.listId, name: placement.heading.name }
         : { kind: "outline-end" };
       const placementFallback = !placement.heading && placement.rule && placement.issue
         ? { ...placement.issue, reason: "mapped-heading-missing" as const }
         : undefined;
-      for (const planned of elementPlan.planned) {
+      for (const candidate of elementPlan.planned) {
+        const planned = candidate.kind === "song" && !isServicePlanItemAlreadyInOutline(workingList, candidate)
+          ? { ...candidate, listId: availableSongOutlineListId(workingList, candidate.listId) }
+          : candidate;
+        const alreadyPresent = legacyPresent || isServicePlanItemAlreadyInOutline(workingList, planned);
         previewEntries.push({
           listId: planned.listId,
           title: planned.kind === "song" ? planned.song.name
@@ -392,15 +415,12 @@ export const planServicePlanOutlineItems = ({
               : planned.scriptureRef.label || `${planned.scriptureRef.book} ${planned.scriptureRef.chapter}${planned.scriptureRef.verseRange ? `:${planned.scriptureRef.verseRange}` : ""}`,
           sectionName: section.name,
           sectionId: section.id,
-          status: additions.includes(planned) ? "ready" : "already-present",
+          status: alreadyPresent ? "already-present" : "ready",
+          ...(planned.kind === "song" ? { songId: planned.song._id } : {}),
           destination,
           placementFallback,
         });
-      }
-      previewEntries.push(...elementPlan.unresolvedAttachments.map((attachment) => ({
-        ...attachment, sectionName: section.name, sectionId: section.id, status: "unresolved" as const,
-      })));
-      for (const planned of additions) {
+        if (alreadyPresent) continue;
         const step = {
           planned,
           element: elementPlan,
@@ -441,11 +461,14 @@ export const planServicePlanOutlineItems = ({
         const inserted = insertServicePlanOutlineItem(workingList, simulatedItem, step.destination);
         if (inserted) workingList = inserted;
       }
+      previewEntries.push(...elementPlan.unresolvedAttachments.map((attachment) => ({
+        ...attachment, sectionName: section.name, sectionId: section.id, status: "unresolved" as const,
+      })));
     }
     if (sectionSteps.length) steps.push(...sectionSteps);
   }
 
-  return { steps, skippedTitles, previewEntries };
+  return { steps, skippedTitles, previewEntries, unresolvedAttachments };
 };
 
 /** Resolve placement against the latest outline, including a heading removed during a build. */
@@ -472,6 +495,10 @@ export const buildServicePlanOutlineItems = async ({
   db,
   bibleDb,
   songs,
+  background,
+  mediaInfo,
+  brightness,
+  fontMode,
   customDocuments = [],
   sectionRules = [],
   isContextCurrent = () => true,
@@ -481,6 +508,10 @@ export const buildServicePlanOutlineItems = async ({
   db: PouchDB.Database | undefined;
   bibleDb?: PouchDB.Database | undefined;
   songs: ServiceItem[];
+  background?: string;
+  mediaInfo?: MediaType;
+  brightness?: number;
+  fontMode?: BibleFontMode;
   customDocuments?: Pick<DBItem, "_id" | "name" | "type">[];
   sectionRules?: ServicePlanningSectionRule[];
   isContextCurrent?: () => boolean;
@@ -497,7 +528,9 @@ export const buildServicePlanOutlineItems = async ({
   for (const step of planned.steps) {
     assertCurrentContext();
     // eslint-disable-next-line no-await-in-loop -- build and append in content order
-    const item = await buildServicePlanOutlineItem({ step, list: workingList, db, bibleDb });
+    const item = await buildServicePlanOutlineItem({
+      step, list: workingList, db, bibleDb, background, mediaInfo, brightness, fontMode,
+    });
     assertCurrentContext();
     const placed = placeServicePlanOutlineItem(workingList, item, step);
     items.push(item);
@@ -505,5 +538,7 @@ export const buildServicePlanOutlineItems = async ({
     workingList = placed.list;
   }
   assertCurrentContext();
-  return { items, insertedCount: items.length, skippedTitles: planned.skippedTitles, placementFallbacks };
+  return { items, insertedCount: items.length, skippedTitles: planned.skippedTitles, placementFallbacks,
+    unresolvedAttachments: planned.unresolvedAttachments,
+    alreadyPresent: planned.previewEntries.filter((entry) => entry.status === "already-present") };
 };

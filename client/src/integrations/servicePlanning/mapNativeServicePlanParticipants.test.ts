@@ -103,7 +103,9 @@ describe("mapNativeServicePlanParticipants", () => {
       { name: "Jordan Guest", title: "", event: repeatLastEventSuffix ? "Sabbath School Panelist" : "Sabbath School" },
     ]);
     expect(preview.overlayPlan.map((item) => item.action)).toEqual(
-      repeatLastEventSuffix ? ["update", "clone", "clone"] : ["update", "create", "create"],
+      repeatLastEventSuffix
+        ? ["update", "clone", "clone"]
+        : ["update", "create", "create"],
     );
     expect(preview.overlayPlan[1].resolutionNotice).toMatch(/multiple team roles/i);
   });

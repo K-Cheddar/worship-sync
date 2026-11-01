@@ -112,9 +112,10 @@ export const getRepeatedOverlayDedupeKey = (
 export const overlayPlanHasExecutableChange = (
   overlayPlan: OverlaySyncPlanItem[],
   overlays: OverlayInfo[],
+  overlayLibrary: OverlayInfo[] = [],
 ): boolean => {
   const claimed = new Set<string>();
-  for (const item of planNativeOverlaySync(overlayPlan, overlays)) {
+  for (const item of planNativeOverlaySync(overlayPlan, overlays, overlayLibrary)) {
     if (item.action === "skip") continue;
     if (item.sourceKind === "native") {
       if (item.action !== "update" || !item.placementOnly) return true;

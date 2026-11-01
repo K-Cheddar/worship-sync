@@ -94,6 +94,28 @@ describe("SlideBoxes", () => {
     };
   });
 
+  it("uses Redux selection and exposes only permitted box actions", () => {
+    const setLocked = jest.fn();
+    const props = { canEdit: true, canDeleteBox: (index: number) => index === 1, isBoxLocked: [true, false], setIsBoxLocked: setLocked };
+    const { rerender } = render(<SlideBoxes {...props} />);
+    expect(screen.getByRole("button", { name: /Video input: Booth camera/ })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Hello" }));
+    expect(mockDispatch).toHaveBeenCalledWith({ type: "item/setSelectedBox", payload: 1 });
+    mockState.undoable.present.item.selectedBox = 1;
+    rerender(<SlideBoxes {...props} />);
+    expect(screen.getByRole("button", { name: "Hello" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Lock" }));
+    expect(setLocked.mock.calls[0][0]([true, false])).toEqual([true, true]);
+    fireEvent.click(screen.getByRole("button", { name: "Add Box" }));
+    expect(mockDispatch).toHaveBeenCalledWith({ type: "item/setSelectedBox", payload: 2 });
+    fireEvent.click(screen.getByRole("button", { name: "Delete Hello" }));
+    expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({ type: "item/updateBoxes", payload: { boxes: [expect.objectContaining({ id: "b0" })] } }));
+    rerender(<SlideBoxes {...props} canEdit={false} />);
+    expect(screen.getByRole("button", { name: "Lock" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Add Box" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete Hello" })).not.toBeInTheDocument();
+  });
+
   it("labels the background box with the video input name", () => {
     render(
       <SlideBoxes

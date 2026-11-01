@@ -53,6 +53,7 @@ import {
 
 } from "../../store/presentationSlice";
 import { createItemFromProps, createNewBible } from "../../utils/itemUtil";
+import { trackBibleDocumentActivity } from "../../utils/contentReplicationActivity";
 import generateRandomId from "../../utils/generateRandomId";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
@@ -371,35 +372,41 @@ const Bible = () => {
     const versesToUse = verses.filter(
       ({ index }) => index >= startVerse && index <= endVerse,
     );
+    const endBibleDocumentActivity = db?.name
+      ? trackBibleDocumentActivity(db.name)
+      : null;
+    try {
+      const item = await createNewBible({
+        fontMode: defaultBibleFontMode,
+        name: createItemName || bibleItemName,
+        book: books[book].name,
+        chapter: chapters[chapter].name,
+        version,
+        verses: versesToUse,
+        db,
+        list,
+        background: defaultBibleBackground.background,
+        mediaInfo: defaultBibleBackground.mediaInfo,
+        brightness: defaultBibleBackgroundBrightness,
+      });
 
-    const item = await createNewBible({
-      fontMode: defaultBibleFontMode,
-      name: createItemName || bibleItemName,
-      book: books[book].name,
-      chapter: chapters[chapter].name,
-      version,
-      verses: versesToUse,
-      db,
-      list,
-      background: defaultBibleBackground.background,
-      mediaInfo: defaultBibleBackground.mediaInfo,
-      brightness: defaultBibleBackgroundBrightness,
-    });
+      const itemForList = {
+        _id: item._id,
+        name: item.name,
+        type: "bible",
+        background: item.background,
+        listId: generateRandomId(),
+      };
 
-    const itemForList = {
-      _id: item._id,
-      name: item.name,
-      type: "bible",
-      background: item.background,
-      listId: generateRandomId(),
-    };
+      const added = dispatch(addItemToItemList(itemForList));
+      dispatch(setActiveItem({ ...item, listId: added.payload.listId }));
+      dispatch(resetCreateItem());
+      setJustAdded(true);
 
-    const added = dispatch(addItemToItemList(itemForList));
-    dispatch(setActiveItem({ ...item, listId: added.payload.listId }));
-    dispatch(resetCreateItem());
-    setJustAdded(true);
-
-    setTimeout(() => setJustAdded(false), 2000);
+      setTimeout(() => setJustAdded(false), 2000);
+    } finally {
+      endBibleDocumentActivity?.();
+    }
   };
 
   const fetchBulkImportRows = useCallback(
@@ -512,33 +519,40 @@ const Bible = () => {
   };
 
   const addBulkRowToOutline = async (row: ExtractedBibleReference) => {
-    const item = await createBibleItemFromParsedReference({
-      parsedRef: {
-        book: row.book,
-        chapter: row.chapter,
-        verseRange: row.verseRange,
-        version: row.version,
-      },
-      db,
-      bibleDb,
-      libraryItems: list,
-      background: defaultBibleBackground.background,
-      mediaInfo: defaultBibleBackground.mediaInfo,
-      brightness: defaultBibleBackgroundBrightness,
-      fontMode: defaultBibleFontMode,
-      defaultVersion: version,
-    });
+    const endBibleDocumentActivity = db?.name
+      ? trackBibleDocumentActivity(db.name)
+      : null;
+    try {
+      const item = await createBibleItemFromParsedReference({
+        parsedRef: {
+          book: row.book,
+          chapter: row.chapter,
+          verseRange: row.verseRange,
+          version: row.version,
+        },
+        db,
+        bibleDb,
+        libraryItems: list,
+        background: defaultBibleBackground.background,
+        mediaInfo: defaultBibleBackground.mediaInfo,
+        brightness: defaultBibleBackgroundBrightness,
+        fontMode: defaultBibleFontMode,
+        defaultVersion: version,
+      });
 
-    const itemForList = {
-      _id: item._id,
-      name: item.name,
-      type: "bible",
-      background: item.background,
-      listId: generateRandomId(),
-    };
+      const itemForList = {
+        _id: item._id,
+        name: item.name,
+        type: "bible",
+        background: item.background,
+        listId: generateRandomId(),
+      };
 
-    const added = dispatch(addItemToItemList(itemForList));
-    dispatch(setActiveItem({ ...item, listId: added.payload.listId }));
+      const added = dispatch(addItemToItemList(itemForList));
+      dispatch(setActiveItem({ ...item, listId: added.payload.listId }));
+    } finally {
+      endBibleDocumentActivity?.();
+    }
   };
 
   const handleAddSelectedBulkRows = async () => {

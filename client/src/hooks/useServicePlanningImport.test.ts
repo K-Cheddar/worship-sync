@@ -1200,6 +1200,144 @@ describe("native overlay synchronization batches", () => {
     expect(db.docs.get("overlay-samuel")?.name).toBe("Samuel Muir");
   });
 
+  it("uses the same active-list target in preview and execution before an exact library match", async () => {
+    jest.useFakeTimers();
+    const active: OverlayInfo = {
+      id: "active-sermon",
+      name: "Previous Speaker",
+      title: "Pastor",
+      event: "Sermon",
+      duration: 14,
+      formatting: { participantOverlayPosition: "right" },
+      description: "Keep this note",
+    };
+    const library: OverlayInfo = {
+      id: "library-sermon",
+      name: "New Speaker",
+      title: "Guest Pastor",
+      event: "Sermon",
+      duration: 7,
+      description: "Library template",
+    };
+    const unrelated: OverlayInfo = {
+      id: "unrelated-overlay",
+      name: "Host",
+      event: "Welcome",
+      formatting: { participantOverlayPosition: "left" },
+    };
+    const db = memoryDb([active, library]);
+    const libraryBefore = { ...db.docs.get("overlay-library-sermon") };
+    const store = createSyncTestStore([active, unrelated]);
+    const { result } = renderHook(() => useServicePlanningImport(), {
+      wrapper: servicePlanningHookWrapper(store, db),
+    });
+    const source = makePlan([{ name: "New Speaker", event: "Sermon" }]);
+    let preview!: Awaited<ReturnType<typeof result.current.loadPlanPreview>>["preview"];
+    await act(async () => {
+      preview = (await result.current.loadPlanPreview(source.plan, [], source.projection)).preview;
+    });
+
+    expect(preview.overlayPlan[0]).toMatchObject({ action: "update", targetOverlayId: "active-sermon" });
+    const step = result.current.planOverlaySyncSteps(preview).steps[0];
+    expect(step).toMatchObject({ action: "update", targetOverlayId: preview.overlayPlan[0].targetOverlayId });
+    await act(async () => {
+      const pending = result.current.executeOverlaySyncStep(step);
+      await jest.runAllTimersAsync();
+      expect(await pending).toMatchObject({ overlaysUpdated: 1, resultOverlayId: "active-sermon" });
+    });
+
+    const after = store.getState().undoable.present.overlays.list;
+    expect(after.map((overlay) => overlay.id)).toEqual(["active-sermon", "unrelated-overlay"]);
+    expect(after[0]).toMatchObject({
+      id: "active-sermon",
+      name: "New Speaker",
+      title: "",
+      event: "Sermon",
+      duration: 14,
+      formatting: { participantOverlayPosition: "right" },
+      description: "Keep this note",
+    });
+    expect(db.docs.get("overlay-library-sermon")).toEqual(libraryBefore);
+  });
+
+  it("clones an exhausted active event overlay with its formatting and leaves the updated template intact", async () => {
+    jest.useFakeTimers();
+    const active: OverlayInfo = {
+      id: "active-cohost",
+      name: "Previous Host",
+      title: "Previous Title",
+      event: "Sabbath School Co-Host",
+      duration: 23,
+      formatting: {
+        participantOverlayPosition: "right",
+        participantOverlayColor: "#123456",
+      } as OverlayInfo["formatting"],
+      description: "Keep the active styling",
+    };
+    const db = memoryDb([active]);
+    const store = createSyncTestStore([active]);
+    const { result } = renderHook(() => useServicePlanningImport(), {
+      wrapper: servicePlanningHookWrapper(store, db),
+    });
+    const source = makePlan([
+      { name: "First Host", event: "Sabbath School Co-Host" },
+      { name: "Second Host", event: "Sabbath School Co-Host" },
+    ]);
+    let preview!: Awaited<ReturnType<typeof result.current.loadPlanPreview>>["preview"];
+    await act(async () => {
+      preview = (await result.current.loadPlanPreview(source.plan, [], source.projection)).preview;
+    });
+
+    expect(preview.overlayPlan.map((step) => [step.action, step.targetOverlayId])).toEqual([
+      ["update", "active-cohost"],
+      ["clone", "active-cohost"],
+    ]);
+    expect(preview.overlayPlan[1].targetOverlaySource).toBeUndefined();
+
+    let execution!: Awaited<ReturnType<typeof result.current.runImport>>;
+    await act(async () => {
+      const pending = result.current.runImport(preview, { overlays: true, outline: false });
+      await jest.runAllTimersAsync();
+      execution = await pending;
+    });
+
+    const overlays = store.getState().undoable.present.overlays.list;
+    const updatedTemplate = overlays.find((overlay) => overlay.id === "active-cohost");
+    const clone = overlays.find((overlay) => overlay.id !== "active-cohost");
+    expect(execution).toMatchObject({ overlaysUpdated: 2, overlaysSkipped: 0 });
+    expect(updatedTemplate).toMatchObject({
+      name: "First Host",
+      title: "",
+      formatting: active.formatting,
+      duration: active.duration,
+      description: active.description,
+    });
+    expect(clone).toMatchObject({
+      name: "Second Host",
+      title: "",
+      event: "Sabbath School Co-Host",
+      formatting: active.formatting,
+      duration: active.duration,
+      description: "",
+    });
+    expect(clone?.id).not.toBe(active.id);
+    expect(db.docs.get("overlay-active-cohost")).toMatchObject({ name: "First Host" });
+    expect(db.docs.get(`overlay-${clone?.id}`)).toMatchObject({
+      name: "Second Host",
+      formatting: active.formatting,
+    });
+    expect(overlayPlanHasExecutableChange(preview.overlayPlan, overlays)).toBe(false);
+
+    const writeCount = db.put.mock.calls.length;
+    await act(async () => {
+      const pending = result.current.runImport(preview, { overlays: true, outline: false });
+      await jest.runAllTimersAsync();
+      await pending;
+    });
+    expect(db.put).toHaveBeenCalledTimes(writeCount);
+    expect(store.getState().undoable.present.overlays.list).toHaveLength(2);
+  });
+
   it("resumes after a partial create failure without duplicating the durable first overlay", async () => {
     jest.useFakeTimers();
     const db = memoryDb([]);

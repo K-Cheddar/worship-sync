@@ -845,9 +845,10 @@ const SlideEditTools = ({
         </div>
       </div>
 
+      {(type === "timer" || type === "free" || type === "bible") && (
       <div
         data-testid="slide-formatting-mode-controls"
-        className="flex min-w-0 max-w-full flex-wrap items-center gap-1 lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4"
+        className="flex min-w-0 max-w-full flex-wrap items-center gap-1 border-t border-gray-600 pt-4"
       >
         {type === "timer" && (
           <PopoverPanel
@@ -927,10 +928,14 @@ const SlideEditTools = ({
           </>
         )}
       </div>
+      )}
 
       <div
         data-testid="slide-formatting-brightness-controls"
-        className="flex min-w-0 max-w-full flex-wrap items-center gap-1 lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4 lg:border-r-2 lg:pr-2 max-lg:border-b-2 max-lg:pb-4"
+        className={cn(
+          "flex min-w-0 max-w-full flex-wrap items-center gap-1 border-t border-gray-600 pt-4",
+          (canChangeAspectRatio || type === "song" || type === "free") && "border-b pb-4",
+        )}
       >
         <Icon size="md" svg={SunMedium} color="#fbbf24" />
         <Slider

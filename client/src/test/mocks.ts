@@ -62,6 +62,8 @@ export function createMockControllerContext(
   return {
     db: overrideDb ?? createMockPouchDB(),
     dbProgress: 100,
+    bootstrapReady: true,
+    canCreateBootstrapDocuments: () => true,
     isGuestSession: false,
     setIsMobile: jest.fn(),
     updater: new MockEventTarget(),

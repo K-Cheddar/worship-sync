@@ -77,7 +77,6 @@ export function MediaLibraryRenameMediaForm({
 
 type MediaLibraryFolderModalsProps = {
   selectedLibraryFilter: string | null;
-  onSelectLibraryFilter: (folderId: string | null) => void;
   folders: MediaFolder[];
   list: MediaType[];
   onUpdateFoldersAndList: (next: {
@@ -92,7 +91,6 @@ type MediaLibraryFolderModalsProps = {
 
 const MediaLibraryFolderModals = ({
   selectedLibraryFilter,
-  onSelectLibraryFilter,
   folders,
   list,
   onUpdateFoldersAndList,
@@ -122,7 +120,6 @@ const MediaLibraryFolderModals = ({
     deleteInFlightRef.current = true;
     setIsDeletePending(true);
     const folderId = selectedRealFolder.id;
-    const parentId = selectedRealFolder.parentId ?? MEDIA_LIBRARY_ROOT_VIEW;
     const deleteFolder = folderDeleteMode === "keep"
       ? onDeleteFolderKeepContents
       : onDeleteFolderSubtree;
@@ -130,11 +127,9 @@ const MediaLibraryFolderModals = ({
     setFolderDeleteMode(null);
     void (async () => {
       try {
-        // The accepted operation continues after its dialog closes. The subtree
-        // cleanup retains its Activity owner, while keep-contents reports persistence
-        // errors through the existing toast path. Navigate only when the folder is
-        // actually gone; partial media failures leave it open so failed rows are reachable.
-        if (await deleteFolder(folderId)) onSelectLibraryFilter(parentId);
+        // The operation continues after this dialog closes. Its Activity owner
+        // navigates after successful persistence if this folder is still open.
+        await deleteFolder(folderId);
       } finally {
         deleteInFlightRef.current = false;
         setIsDeletePending(false);
@@ -147,7 +142,6 @@ const MediaLibraryFolderModals = ({
     folderDeleteMode,
     onDeleteFolderKeepContents,
     onDeleteFolderSubtree,
-    onSelectLibraryFilter,
     onFolderDeleteOpenChange,
   ]);
 

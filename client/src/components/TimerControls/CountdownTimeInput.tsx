@@ -1,11 +1,13 @@
 import React from "react";
 import TimePicker from "../TimePicker/TimePicker";
+import type { TimePickerLabelLayout } from "../TimePicker/types";
 
 interface CountdownTimeInputProps {
   countdownTime: string;
   onTimeChange: (time: string) => void;
   className?: string;
   disabled?: boolean;
+  labelLayout?: TimePickerLabelLayout;
 }
 
 const CountdownTimeInput: React.FC<CountdownTimeInputProps> = ({
@@ -13,6 +15,7 @@ const CountdownTimeInput: React.FC<CountdownTimeInputProps> = ({
   onTimeChange,
   className = "",
   disabled = false,
+  labelLayout,
 }) => {
   return (
     <TimePicker
@@ -21,6 +24,7 @@ const CountdownTimeInput: React.FC<CountdownTimeInputProps> = ({
       onChange={(val) => onTimeChange(val as string)}
       disabled={disabled}
       className={className}
+      labelLayout={labelLayout}
     />
   );
 };

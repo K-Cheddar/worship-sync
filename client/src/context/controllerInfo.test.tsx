@@ -12,6 +12,7 @@ import ControllerInfoProvider, {
 } from "./controllerInfo";
 import { GlobalInfoContext } from "./globalInfo";
 import { createMockGlobalContext } from "../test/mocks";
+import { hasSuccessfulInitialContentReplication } from "../utils/contentReplicationActivity";
 
 const mockPouchInstances: Array<{
   name: string;
@@ -31,6 +32,8 @@ const liveSyncBatchSizes: number[] = [];
 const liveSyncOwners: string[] = [];
 const liveSyncOptions: Array<Record<string, unknown>> = [];
 const replicationCalls: Array<{ name: string; options?: Record<string, unknown> }> = [];
+const initialPullHandles: Array<{ emit: (event: string, value?: any) => void }> = [];
+let completeInitialPullAutomatically = true;
 
 const createSyncHandle = (completeAfterSetup = false) => {
   const listeners = new Map<string, (value?: any) => void>();
@@ -65,7 +68,9 @@ jest.mock("pouchdb-browser", () => {
       replicate: {
         to: jest.fn((_target: unknown, options?: Record<string, unknown>) => {
           replicationCalls.push({ name, options });
-          return createSyncHandle(true);
+          const handle = createSyncHandle(completeInitialPullAutomatically);
+          if (options?.batch_size === 150) initialPullHandles.push(handle);
+          return handle;
         }),
       },
       changes: jest.fn(() => createSyncHandle()),
@@ -90,6 +95,7 @@ const Probe = () => {
       <div data-testid="status">{context?.connectionStatus.status}</div>
       <div data-testid="message">{context?.connectionStatus.message}</div>
       <div data-testid="has-db">{context?.db ? "yes" : "no"}</div>
+      <div data-testid="bootstrap-ready">{context?.bootstrapReady ? "yes" : "no"}</div>
       <button type="button" onClick={() => context?.pullFromRemote()}>Pull</button>
     </div>
   );
@@ -104,6 +110,8 @@ describe("ControllerInfoProvider", () => {
     liveSyncOwners.length = 0;
     liveSyncOptions.length = 0;
     replicationCalls.length = 0;
+    initialPullHandles.length = 0;
+    completeInitialPullAutomatically = true;
     global.fetch = jest.fn() as jest.Mock;
     (global as unknown as { BroadcastChannel: typeof BroadcastChannel }).BroadcastChannel =
       jest.fn().mockImplementation(() => ({
@@ -203,6 +211,8 @@ describe("controller replication 413 batch policy", () => {
     liveSyncOwners.length = 0;
     liveSyncOptions.length = 0;
     replicationCalls.length = 0;
+    initialPullHandles.length = 0;
+    completeInitialPullAutomatically = true;
     global.fetch = jest.fn() as jest.Mock;
     (global as unknown as { BroadcastChannel: typeof BroadcastChannel }).BroadcastChannel =
       jest.fn().mockImplementation(() => ({
@@ -307,6 +317,67 @@ describe("controller replication 413 batch policy", () => {
     expect(replicationCalls.find(({ options }) => options?.retry === false)?.options).toEqual(expect.objectContaining({
       selector: { _id: { $ne: "media" } },
     }));
+  });
+
+  it("does not expose initial content replication as complete until its successful pull settles", async () => {
+    completeInitialPullAutomatically = false;
+    (global.fetch as jest.Mock).mockResolvedValue({
+      headers: { get: () => "application/json" },
+      json: async () => ({ success: true }),
+    });
+    const databaseName = "worship-sync-test";
+    render(
+      <Provider store={store}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+          <MemoryRouter initialEntries={["/controller"]}>
+            <ControllerInfoProvider><Probe /></ControllerInfoProvider>
+          </MemoryRouter>
+        </GlobalInfoContext.Provider>
+      </Provider>,
+    );
+
+    await waitFor(() => expect(initialPullHandles.length).toBeGreaterThan(0));
+    expect(hasSuccessfulInitialContentReplication(databaseName)).toBe(false);
+    expect(screen.getByTestId("has-db")).toHaveTextContent("yes");
+    act(() => initialPullHandles.at(-1)!.emit("change", { pending: 0 }));
+    expect(screen.getByTestId("progress")).toHaveTextContent("100");
+    expect(screen.getByTestId("bootstrap-ready")).toHaveTextContent("no");
+    act(() => initialPullHandles[initialPullHandles.length - 1].emit("complete"));
+    await waitFor(() => {
+      expect(hasSuccessfulInitialContentReplication(databaseName)).toBe(true);
+    });
+    expect(screen.getByTestId("bootstrap-ready")).toHaveTextContent("yes");
+  });
+
+  it.each(["cancelled", "failed"])("does not enable bootstrap defaults after a %s initial pull", async (outcome) => {
+    completeInitialPullAutomatically = false;
+    (global.fetch as jest.Mock).mockResolvedValue({ headers: { get: () => "application/json" }, json: async () => ({ success: true }) });
+    render(<Provider store={store}><GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+      <MemoryRouter initialEntries={["/controller"]}><ControllerInfoProvider><Probe /></ControllerInfoProvider></MemoryRouter>
+    </GlobalInfoContext.Provider></Provider>);
+    await waitFor(() => expect(initialPullHandles.length).toBeGreaterThan(0));
+    act(() => initialPullHandles.at(-1)!.emit("complete", outcome === "cancelled" ? { status: "cancelled" } : { ok: false, errors: [{ status: 500 }] }));
+    expect(screen.getByTestId("bootstrap-ready")).toHaveTextContent("no");
+    expect(liveSyncHandles).toHaveLength(0);
+  });
+
+  it("ignores a previous church's delayed initial pull", async () => {
+    completeInitialPullAutomatically = false;
+    (global.fetch as jest.Mock).mockResolvedValue({ headers: { get: () => "application/json" }, json: async () => ({ success: true }) });
+    const tree = (church: string) => <Provider store={store}><GlobalInfoContext.Provider value={createMockGlobalContext({ churchId: church, database: church }) as any}>
+      <MemoryRouter initialEntries={["/controller"]}><ControllerInfoProvider><Probe /></ControllerInfoProvider></MemoryRouter>
+    </GlobalInfoContext.Provider></Provider>;
+    const view = render(tree("a"));
+    await waitFor(() => expect(initialPullHandles).toHaveLength(1));
+    const oldPull = initialPullHandles[0];
+    view.rerender(tree("b"));
+    await waitFor(() => expect(initialPullHandles).toHaveLength(2));
+    act(() => oldPull.emit("complete", { ok: true }));
+    expect(screen.getByTestId("bootstrap-ready")).toHaveTextContent("no");
+    expect(liveSyncHandles).toHaveLength(0);
+    act(() => initialPullHandles[1].emit("complete", { ok: true }));
+    expect(screen.getByTestId("bootstrap-ready")).toHaveTextContent("yes");
+    expect(liveSyncOwners).toEqual(["worship-sync-b"]);
   });
 
   it("does not resume an old church sync after renewal finishes", async () => {

@@ -92,7 +92,9 @@ The current user request authorizes these rules for syncing a saved Service Plan
 - Count successful fallbacks as added content and explain the missing heading in the added item's summary. Report the fallback only after insertion, including in partial-success or combined outline/overlay summaries.
 - Accept whole-chapter Scripture such as Psalms 105 alongside explicit verse ranges. Use the existing Bible loader and requested version; invalid or unavailable passages must not produce empty items.
 - Retain stable attachment/list IDs and skip already-present items on repeated sync. Preserve saved Service Plan data.
+- Automatic outline sync adds a library song only when its document ID is absent from the outline and from earlier planned insertions; existing manual repetitions and their customizations remain intact. Informational resources and dismissed inferred references are ignored, while unresolved explicit attachments are reported with identifying details. Preview and the compact result summary distinguish already-present content from skipped attachments. (Confirmed by the current request, 2026-10-29.)
 - Library refreshes caused by indexing imported Bible items do not interrupt the remaining saved-plan attachments; outline, database, source-plan, and component ownership checks still apply.
+- Newly synced Scripture uses the configured Bible background, media, brightness, and font mode. Repeated passage names must receive unused document IDs so an older document cannot replace the generated slides. Existing outline items and their operator edits remain untouched. (Confirmed by the current request, 2026-10-29.)
 
 Regression coverage: `servicePlanOutlineBridge.test.ts`, `useServicePlanOutlinePush.test.tsx`, `ServicePlanningSyncFloatingWindow.test.tsx`.
 
@@ -121,6 +123,8 @@ The current user request confirms these native transfer behaviors:
 - Keep usable same-church library references. When churches differ, match songs by title when possible, retain usable content, and show unresolved song references for review.
 - Ask before replacing content in a populated destination. Apply the accepted import as one `updateDraft()` edit so undo and autosave remain available.
 - Native transfer is a one-time copy and must not create continuous source-refresh tracking. Existing public links and Planning Center / Service Planning behavior remain unchanged.
+- JSON and public-link imports belong to the full editor identity and draft version captured at start. Recheck after loading and before applying a replacement; retire pending proposals on identity changes. A changed draft requires another import, and stale completion cannot change the current import's loading state or show success. (Current request, 2026-10-29.)
+- Native JSON transfers preserve optional `pre`, `main`, and `post` section phases and order, including across churches. Legacy absence retains main-service semantics; format version 1, regenerated IDs, and ownership stripping remain unchanged. (Current request, 2026-10-29.)
 
 **Approval source/date:** Current user request, 2026-10-25.
 

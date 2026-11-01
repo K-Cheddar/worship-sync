@@ -2,13 +2,13 @@ import {
   Action,
   combineReducers,
   configureStore,
-  createListenerMiddleware,
   createAction,
+  createListenerMiddleware,
   isAnyOf,
   Reducer,
   Middleware,
 } from "@reduxjs/toolkit";
-import undoable, { ActionCreators } from "redux-undo";
+import undoable, { ActionCreators, newHistory } from "redux-undo";
 import {
   presentationSlice,
   setStreamItemContentBlockedFromRemote,
@@ -58,6 +58,7 @@ import { itemLibraryUiSlice } from "./itemLibraryUiSlice";
 import { createItemSlice } from "./createItemSlice";
 import { preferencesSlice } from "./preferencesSlice";
 import { itemListsSlice } from "./itemListsSlice";
+import { activateOutlineContent, getOutlineDatabaseKey, getOutlineOwnerKey, hasPendingOutlineDraftsForDatabase, setOutlineContentDatabase } from "./outlineContent";
 import { isMediaLoadSettled, mediaItemsSlice } from "./mediaSlice";
 import mediaCacheMapReducer, { setMediaCacheMap } from "./mediaCacheMapSlice";
 import { overlaySlice } from "./overlaySlice";
@@ -121,6 +122,23 @@ import { extractMediaUrlsFromBackgrounds } from "../utils/mediaCacheUtils";
 import { persistMediaStateChanges } from "../utils/mediaDocUtils";
 import { normalizeOverlayForSync } from "../utils/overlayUtils";
 import { persistExistingOverlayDoc } from "../utils/persistOverlayDoc";
+import {
+  cancelBibleItemCleanupRetry,
+  deleteUnusedBibleItems,
+  scheduleBibleItemCleanupRetry,
+} from "../utils/bibleItemCleanup";
+import {
+  getContentDatabaseSessionToken,
+  hasSuccessfulInitialContentReplication,
+  isBibleDocumentActivityIdle,
+  isContentReplicationIdle,
+  subscribeToContentActivity,
+} from "../utils/contentReplicationActivity";
+import {
+  getControllerPresenceScope,
+  isOnlyActiveController,
+  subscribeToActiveControllerPresence,
+} from "../utils/activeControllerPresence";
 import {
   persistServiceListItems,
   persistServiceListOverlays,
@@ -864,6 +882,9 @@ const excludedActions: string[] = [
   itemListSlice.actions.updateItemListFromRemote.toString(),
   itemListSlice.actions.setItemListIsLoading.toString(),
   itemListSlice.actions.setHasPendingUpdate.toString(),
+  itemListSlice.actions.acknowledgeOutlineSave.toString(),
+  overlaysSlice.actions.acknowledgeOutlineSave.toString(),
+  setOutlineContentDatabase.toString(),
   itemListSlice.actions.forceUpdate.toString(),
   itemListSlice.actions.setActiveItemInList.toString(),
   itemListSlice.actions.setItemListLoadError.toString(),
@@ -1394,6 +1415,8 @@ listenerMiddleware.startListening({
           hostId: globalHostId,
         },
       });
+    }).finally(() => {
+      listenerApi.dispatch(bibleCleanupOpportunity({}));
     });
   },
 });
@@ -1662,18 +1685,284 @@ listenerMiddleware.startListening({
   },
 });
 
+const pendingBibleCleanupByDatabase = new WeakMap<object, Set<string>>();
+const inFlightOutlinePersistenceByDatabase = new WeakMap<object, number>();
+const bibleCleanupOpportunity = createAction<{ immediate?: boolean }>(
+  "bibleCleanup/opportunity",
+);
+const INITIAL_BIBLE_RECONCILIATION_DELAY_MS = 1500;
+type BibleCleanupSessionState = {
+  status: "pending" | "complete";
+  notBefore: number;
+};
+const bibleCleanupSessions = new WeakMap<object, Map<symbol, BibleCleanupSessionState>>();
+const dueBibleCleanupRetries = new WeakMap<object, Set<symbol>>();
+
+const noteRemovedBibleOutlineItem = (
+  database: object | undefined,
+  outlineId: string | undefined,
+  previousItems: Array<{ _id: string; type?: string }>,
+  nextItems: Array<{ _id: string; type?: string }>,
+) => {
+  if (!database || !outlineId) return;
+  const nextBibleIds = new Set(
+    nextItems.filter((item) => item.type === "bible").map((item) => item._id),
+  );
+  const removedBible = previousItems.some(
+    (item) => item.type === "bible" && !nextBibleIds.has(item._id),
+  );
+  if (!removedBible) return;
+  const pending = pendingBibleCleanupByDatabase.get(database) ?? new Set<string>();
+  pending.add(outlineId);
+  pendingBibleCleanupByDatabase.set(database, pending);
+};
+
+const hasPendingBibleCleanup = (database: object, outlineId: string) =>
+  pendingBibleCleanupByDatabase.get(database)?.has(outlineId) ?? false;
+
+const beginOutlinePersistence = (database: object) => {
+  inFlightOutlinePersistenceByDatabase.set(
+    database,
+    (inFlightOutlinePersistenceByDatabase.get(database) ?? 0) + 1,
+  );
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const count = inFlightOutlinePersistenceByDatabase.get(database) ?? 0;
+    if (count <= 1) inFlightOutlinePersistenceByDatabase.delete(database);
+    else inFlightOutlinePersistenceByDatabase.set(database, count - 1);
+  };
+};
+
+const isOutlinePersistenceIdle = (database: object) =>
+  (inFlightOutlinePersistenceByDatabase.get(database) ?? 0) === 0;
+
+const getBibleCleanupSessionStates = (database: object) => {
+  const sessions = bibleCleanupSessions.get(database) ?? new Map();
+  bibleCleanupSessions.set(database, sessions);
+  return sessions;
+};
+
+const getDueBibleCleanupRetries = (database: object) => {
+  const due = dueBibleCleanupRetries.get(database) ?? new Set<symbol>();
+  dueBibleCleanupRetries.set(database, due);
+  return due;
+};
+
+const scheduleBibleCleanupAttempt = (
+  database: PouchDB.Database,
+  sessionToken: symbol,
+  cacheSession: number,
+  delayMs: number,
+) => {
+  scheduleBibleItemCleanupRetry(database, sessionToken, delayMs, () => {
+    const currentState = store.getState() as RootState;
+    if (
+      db !== database ||
+      getContentDatabaseSessionToken(database.name) !== sessionToken ||
+      currentState.allDocs.session !== cacheSession
+    ) {
+      return;
+    }
+    getDueBibleCleanupRetries(database).add(sessionToken);
+    store.dispatch(bibleCleanupOpportunity({ immediate: true }));
+  });
+};
+
+listenerMiddleware.startListening({
+  actionCreator: bibleCleanupOpportunity,
+  effect: async (action, listenerApi) => {
+    const database = db;
+    if (!database) return;
+
+    const sessionStates = getBibleCleanupSessionStates(database);
+    const dueRetries = getDueBibleCleanupRetries(database);
+    const sessionToken = getContentDatabaseSessionToken(database.name);
+    for (const staleToken of sessionStates.keys()) {
+      if (staleToken === sessionToken) continue;
+      cancelBibleItemCleanupRetry(database, staleToken);
+      sessionStates.delete(staleToken);
+      dueRetries.delete(staleToken);
+    }
+    if (
+      !sessionToken ||
+      !hasSuccessfulInitialContentReplication(database.name, sessionToken)
+    ) {
+      return;
+    }
+
+    const stateAtStart = listenerApi.getState() as RootState;
+    if (
+      !stateAtStart.allDocs.isInitialized ||
+      stateAtStart.allDocs.error !== null
+    ) {
+      if (sessionToken) {
+        cancelBibleItemCleanupRetry(database, sessionToken);
+        sessionStates.delete(sessionToken);
+        dueRetries.delete(sessionToken);
+      }
+      return;
+    }
+
+    let sessionState = sessionStates.get(sessionToken);
+    if (!sessionState) {
+      sessionState = {
+        status: "pending",
+        notBefore: Date.now() + INITIAL_BIBLE_RECONCILIATION_DELAY_MS,
+      };
+      sessionStates.set(sessionToken, sessionState);
+      scheduleBibleCleanupAttempt(
+        database,
+        sessionToken,
+        stateAtStart.allDocs.session,
+        INITIAL_BIBLE_RECONCILIATION_DELAY_MS,
+      );
+    }
+
+    const pendingOutlineCleanup =
+      (pendingBibleCleanupByDatabase.get(database)?.size ?? 0) > 0;
+    const retryIsDue = dueRetries.has(sessionToken);
+    if (
+      sessionState.status === "complete" &&
+      !pendingOutlineCleanup &&
+      !retryIsDue
+    ) {
+      return;
+    }
+    if (
+      !retryIsDue &&
+      !action.payload.immediate &&
+      Date.now() < sessionState.notBefore
+    ) {
+      return;
+    }
+
+    const cacheSession = stateAtStart.allDocs.session;
+    const cacheChangeVersion = stateAtStart.allDocs.changeVersion;
+    let cleanupWasBlockedByOutlinePersistence = false;
+    const cleanupResult = await deleteUnusedBibleItems({
+      db: database,
+      bibleItems: stateAtStart.allDocs.allBibleDocs,
+      canRun: () => {
+        const currentState = listenerApi.getState() as RootState;
+        const currentPresent = currentState.undoable.present;
+        const syncStatus = currentState.servicePlanningImport.sync.status;
+        const hasPendingWrites =
+          currentPresent.item.hasPendingUpdate ||
+          currentPresent.itemList.hasPendingUpdate ||
+          hasPendingOutlineDraftsForDatabase(currentPresent.itemList.pendingByOutline, database) ||
+          Object.values(currentState.autosaveIndicator.debouncedSaveDepth).some(
+            (depth) => depth > 0,
+          ) ||
+          itemAutosaveDebounces.size > 0 ||
+          itemAutosaveWriteQueues.size > 0 ||
+          pendingItemAutosaves.size > 0;
+        const presenceScope = getControllerPresenceScope(
+          globalFireDbInfo.churchId,
+          globalFireDbInfo.database,
+        );
+        const outlinePersistenceIdle = isOutlinePersistenceIdle(database);
+        if (!outlinePersistenceIdle) {
+          cleanupWasBlockedByOutlinePersistence = true;
+        }
+        return (
+          db === database &&
+          getContentDatabaseSessionToken(database.name) === sessionToken &&
+          hasSuccessfulInitialContentReplication(database.name, sessionToken) &&
+          currentState.allDocs.isInitialized &&
+          currentState.allDocs.error === null &&
+          currentState.allDocs.session === cacheSession &&
+          currentState.allDocs.changeVersion === cacheChangeVersion &&
+          currentPresent.itemList.isInitialized &&
+          currentPresent.itemLists.isInitialized &&
+          !hasPendingWrites &&
+          outlinePersistenceIdle &&
+          syncStatus !== "running" &&
+          syncStatus !== "cancelling" &&
+          isContentReplicationIdle(database.name) &&
+          isBibleDocumentActivityIdle(database.name) &&
+          globalFireDbInfo.isConnected === true &&
+          isOnlyActiveController(presenceScope, globalHostId) &&
+          !listenerApi.signal.aborted
+        );
+      },
+    });
+
+    if (db !== database || getContentDatabaseSessionToken(database.name) !== sessionToken) {
+      return;
+    }
+    if (cleanupResult === null) {
+      // A persistence completion can dispatch while an earlier cleanup attempt
+      // is still unwinding. Recheck after that attempt releases its per-db guard.
+      if (
+        cleanupWasBlockedByOutlinePersistence &&
+        isOutlinePersistenceIdle(database) &&
+        !listenerApi.signal.aborted
+      ) {
+        listenerApi.dispatch(bibleCleanupOpportunity({ immediate: true }));
+      }
+      return;
+    }
+
+    sessionState.status = "complete";
+    pendingBibleCleanupByDatabase.delete(database);
+    dueRetries.delete(sessionToken);
+    if (cleanupResult.retryAfterMs !== null) {
+      scheduleBibleCleanupAttempt(
+        database,
+        sessionToken,
+        cacheSession,
+        cleanupResult.retryAfterMs,
+      );
+    } else {
+      cancelBibleItemCleanupRetry(database, sessionToken);
+    }
+  },
+});
+
+listenerMiddleware.startListening({
+  matcher: isAnyOf(
+    allDocsSlice.actions.hydrateItemCache,
+    allDocsSlice.actions.applyItemDocumentChange,
+    allDocsSlice.actions.resetItemCache,
+    allDocsSlice.actions.setItemCacheError,
+    itemSlice.actions.setHasPendingUpdate,
+    itemSlice.actions.markItemPersisted,
+    itemListSlice.actions.initiateItemList,
+    itemListSlice.actions.setIsInitialized,
+    itemListSlice.actions.setHasPendingUpdate,
+    itemListsSlice.actions.initiateItemLists,
+    itemListsSlice.actions.setIsInitialized,
+    autosaveIndicatorSlice.actions.endKeyedDebouncedSave,
+    servicePlanningImportSlice.actions.completeServicePlanningSync,
+    servicePlanningImportSlice.actions.failServicePlanningSync,
+    servicePlanningImportSlice.actions.finishServicePlanningSyncCancellation,
+    servicePlanningImportSlice.actions.clearServicePlanningSyncState,
+  ),
+  effect: (_action, listenerApi) => {
+    listenerApi.dispatch(bibleCleanupOpportunity({}));
+  },
+});
+
 // handle ItemList updates
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     const state = (currentState as RootState).undoable.present.itemList;
+    const previous = (previousState as RootState).undoable.present.itemList;
+    const outlineOwnerChanged = state.outlineOwnerKey !== previous.outlineOwnerKey;
+    const savingOutgoingOutline = !isStoreResetAction(action) &&
+      (outlineOwnerChanged || itemListsSlice.actions.selectItemList.match(action)) &&
+      previous.isInitialized && previous.hasPendingUpdate;
     // Don't save until initialization is complete
-    if (!state.isInitialized) return false;
+    if (!state.isInitialized && !savingOutgoingOutline) return false;
 
     const excluded = isAnyOf(
       itemListSlice.actions.initiateItemList,
       itemListSlice.actions.setItemListIsLoading,
       itemListSlice.actions.setActiveItemInList,
       itemListSlice.actions.setHasPendingUpdate,
+      itemListSlice.actions.acknowledgeOutlineSave,
       itemListSlice.actions.addToInitialItems,
       itemListSlice.actions.setIsInitialized,
       itemListSlice.actions.markItemListPersisted,
@@ -1692,11 +1981,7 @@ listenerMiddleware.startListening({
     );
     const restoringResolution = itemListSlice.actions.initiateItemList.match(action) &&
       Boolean(selectedId && state.remoteConflicts?.[selectedId]?.resolutionChoice);
-    const savingOutgoingOutline =
-      itemListsSlice.actions.selectItemList.match(action) &&
-      (currentState as RootState).undoable.present.itemLists.selectedList?._id !==
-        (previousState as RootState).undoable.present.itemLists.selectedList?._id &&
-      !!(previousState as RootState).undoable.present.itemList.hasPendingUpdate;
+    const restoringDraft = itemListSlice.actions.initiateItemList.match(action) && state.hasPendingUpdate;
     const outgoingHasConflict = Boolean(
       (previousState as RootState).undoable.present.itemLists.selectedList?._id &&
       (previousState as RootState).undoable.present.itemList.remoteConflicts?.[
@@ -1705,9 +1990,25 @@ listenerMiddleware.startListening({
         (previousState as RootState).undoable.present.itemLists.selectedList!._id
       ].resolutionChoice,
     );
+    if (
+      itemListChanged &&
+      !outlineOwnerChanged &&
+      !excluded(action) &&
+      !isStoreResetAction(action)
+    ) {
+      const currentPresent = (currentState as RootState).undoable.present;
+      const previousPresent = (previousState as RootState).undoable.present;
+      noteRemovedBibleOutlineItem(
+        db,
+        currentPresent.itemLists.selectedList?._id ??
+          previousPresent.itemLists.selectedList?._id,
+        previousPresent.itemList.list,
+        currentPresent.itemList.list,
+      );
+    }
     return (
       ((itemListChanged || itemListSlice.actions.forceUpdate.match(action)) &&
-      (!excluded(action) || restoringResolution) &&
+      (!excluded(action) || restoringResolution || restoringDraft) &&
       !!(currentState as RootState).undoable.present.itemList
         .hasPendingUpdate &&
       !hasOutlineConflict &&
@@ -1717,10 +2018,16 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
-    const dbAtStart = db;
+    const originalPresent = (listenerApi.getOriginalState() as RootState).undoable.present;
+    const isSavingOutgoingOutline = originalPresent.itemList.outlineOwnerKey !==
+      (listenerApi.getState() as RootState).undoable.present.itemList.outlineOwnerKey &&
+      originalPresent.itemList.hasPendingUpdate && originalPresent.itemList.isInitialized;
+    const dbAtStart = isSavingOutgoingOutline
+      ? (action as OutlineDatabaseAction).meta?.outgoingOutlineDatabase ?? db
+      : db;
+    const churchAtStart = globalFireDbInfo?.churchId;
     const sessionAtStart = outlineAccountSession;
     const sessionIsCurrent = () => sessionAtStart === outlineAccountSession;
-    const isSavingOutgoingOutline = itemListsSlice.actions.selectItemList.match(action);
 
     listenerApi.cancelActiveListeners();
     if (!isSavingOutgoingOutline) {
@@ -1730,10 +2037,10 @@ listenerMiddleware.startListening({
     // Always read post-debounce state so we never persist a closed-over
     // pre-delay snapshot after remote hydrate or a newer local edit.
     const present = (isSavingOutgoingOutline
-      ? (listenerApi.getOriginalState() as RootState)
-      : (listenerApi.getState() as RootState)
-    ).undoable.present;
+      ? originalPresent
+      : (listenerApi.getState() as RootState).undoable.present);
     const { list, hasPendingUpdate, isInitialized } = present.itemList;
+    const ownerKey = present.itemList.outlineOwnerKey;
     const { selectedList } = present.itemLists;
     const baseline = present.itemList.syncBaseline ?? [];
     const loadedOutlineId = present.itemList.loadedOutlineId;
@@ -1751,7 +2058,7 @@ listenerMiddleware.startListening({
     if (
       !dbAtStart ||
       !sessionIsCurrent() ||
-      db !== dbAtStart ||
+      (!isSavingOutgoingOutline && (db !== dbAtStart || globalFireDbInfo?.churchId !== churchAtStart)) ||
       !isInitialized ||
       !hasPendingUpdate ||
       !selectedList ||
@@ -1763,6 +2070,8 @@ listenerMiddleware.startListening({
 
     const revisionResolution = present.itemList.pendingRevisionResolutions?.[selectedList._id];
     const submittedItems = revisionResolution?.items ?? list;
+    const releaseOutlinePersistence = beginOutlinePersistence(dbAtStart);
+    let persistenceSucceeded = false;
     try {
       const persisted = revisionResolution
         ? await resolveServiceListRevisionConflict(
@@ -1781,7 +2090,10 @@ listenerMiddleware.startListening({
             sessionIsCurrent,
           );
 
-      if (db !== dbAtStart || !sessionIsCurrent()) return;
+      persistenceSucceeded = true;
+      if (ownerKey) listenerApi.dispatch(itemListSlice.actions.acknowledgeOutlineSave({ ownerKey, list }));
+      listenerApi.throwIfCancelled();
+      if (!sessionIsCurrent() || (!isSavingOutgoingOutline && (db !== dbAtStart || globalFireDbInfo?.churchId !== churchAtStart))) return;
       const afterPutState = (listenerApi.getState() as RootState).undoable.present;
       const afterPut = afterPutState.itemList;
       if (conflictReviewIsCurrent() && (!afterPut.loadedOutlineId || afterPut.loadedOutlineId === selectedList._id || afterPut.remoteConflicts?.[selectedList._id]?.resolutionChoice)) {
@@ -1799,6 +2111,11 @@ listenerMiddleware.startListening({
           listenerApi.dispatch(itemListSlice.actions.forceUpdate());
         }
       }
+      // Returning to a retained draft can require a retry as well as the
+      // outgoing save. Start both through the existing field save lane.
+      if (isSavingOutgoingOutline && (listenerApi.getState() as RootState).undoable.present.itemList.hasPendingUpdate) {
+        listenerApi.dispatch(itemListSlice.actions.forceUpdate());
+      }
 
       safePostMessage({
         type: "update",
@@ -1807,6 +2124,7 @@ listenerMiddleware.startListening({
           hostId: globalHostId,
         },
       });
+
     } catch (error) {
       if (!sessionIsCurrent()) return;
       if (isListenerCancelledTaskError(error)) return;
@@ -1827,6 +2145,23 @@ listenerMiddleware.startListening({
         listenerApi.dispatch(itemListSlice.actions.failOutlineResolution(selectedList._id));
       }
       console.error("Failed to persist item list outline:", error);
+    } finally {
+      releaseOutlinePersistence();
+      const pendingBibleCleanup = hasPendingBibleCleanup(
+        dbAtStart,
+        selectedList._id,
+      );
+      if (
+        db === dbAtStart &&
+        globalFireDbInfo?.churchId === churchAtStart &&
+        (persistenceSucceeded || !pendingBibleCleanup)
+      ) {
+        listenerApi.dispatch(
+          bibleCleanupOpportunity({
+            immediate: persistenceSucceeded && pendingBibleCleanup,
+          }),
+        );
+      }
     }
   },
 });
@@ -2015,6 +2350,7 @@ listenerMiddleware.startListening({
       overlaysSlice.actions.updateOverlayListFromRemote,
       overlaysSlice.actions.updateOverlaysByIdFromRemote,
       overlaysSlice.actions.setHasPendingUpdate,
+      overlaysSlice.actions.acknowledgeOutlineSave,
       overlaysSlice.actions.updateInitialList,
       overlaysSlice.actions.addToInitialList,
       overlaysSlice.actions.mergeOverlayHistoryFromDb,
@@ -2026,12 +2362,12 @@ listenerMiddleware.startListening({
       (currentState as RootState).undoable.present.overlays !==
       (previousState as RootState).undoable.present.overlays;
     const savingOutgoingOutline =
-      itemListsSlice.actions.selectItemList.match(action) &&
-      (currentState as RootState).undoable.present.itemLists.selectedList?._id !==
-        (previousState as RootState).undoable.present.itemLists.selectedList?._id &&
+      !isStoreResetAction(action) &&
+      (currentState as RootState).undoable.present.overlays.outlineOwnerKey !==
+        (previousState as RootState).undoable.present.overlays.outlineOwnerKey &&
       !!(previousState as RootState).undoable.present.overlays.hasPendingUpdate;
     return (
-      ((overlaysChanged &&
+      (((overlaysChanged || overlaysSlice.actions.forceUpdate.match(action)) &&
       !excluded(action) &&
       !!(currentState as RootState).undoable.present.overlays
         .hasPendingUpdate &&
@@ -2040,19 +2376,25 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
-    const dbAtStart = db;
+    const originalState = listenerApi.getOriginalState() as RootState;
+    const isSavingOutgoingOutline = originalState.undoable.present.overlays.outlineOwnerKey !==
+      (listenerApi.getState() as RootState).undoable.present.overlays.outlineOwnerKey &&
+      originalState.undoable.present.overlays.hasPendingUpdate;
+    const dbAtStart = isSavingOutgoingOutline
+      ? (action as OutlineDatabaseAction).meta?.outgoingOutlineDatabase ?? db
+      : db;
     if (!dbAtStart) return;
-    const isSavingOutgoingOutline = itemListsSlice.actions.selectItemList.match(action);
     const sessionAtStart = outlineAccountSession;
     const sessionIsCurrent = () => sessionAtStart === outlineAccountSession;
+    const churchAtStart = globalFireDbInfo?.churchId;
     listenerApi.cancelActiveListeners();
     if (!isSavingOutgoingOutline) {
       await listenerApi.delay(1500);
     }
 
-    if (db !== dbAtStart || !sessionIsCurrent()) return;
+    if (!sessionIsCurrent() || (!isSavingOutgoingOutline && (db !== dbAtStart || globalFireDbInfo?.churchId !== churchAtStart))) return;
     const state = isSavingOutgoingOutline
-      ? (listenerApi.getOriginalState() as RootState)
+      ? originalState
       : (listenerApi.getState() as RootState);
     if (
       !isSavingOutgoingOutline &&
@@ -2061,27 +2403,30 @@ listenerMiddleware.startListening({
       return;
     }
     const { list } = state.undoable.present.overlays;
+    const ownerKey = state.undoable.present.overlays.outlineOwnerKey;
     const { selectedList } = state.undoable.present.itemLists;
 
     if (!selectedList) return;
     const listId = selectedList._id;
+    const releaseOutlinePersistence = beginOutlinePersistence(dbAtStart);
     try {
-      const persisted = await persistServiceListOverlays(
+      const saving = persistServiceListOverlays(
         dbAtStart,
         listId,
         list.map((overlay) => overlay.id),
         sessionIsCurrent,
       );
-
-      listenerApi.throwIfCancelled();
-      if (db !== dbAtStart || !sessionIsCurrent()) return;
-      const latest = (listenerApi.getState() as RootState).undoable.present;
-      if (
-        latest.overlays.list === list &&
-        latest.overlays.hasPendingUpdate
-      ) {
-        listenerApi.dispatch(overlaysSlice.actions.setHasPendingUpdate(false));
+      if (isSavingOutgoingOutline && (listenerApi.getState() as RootState).undoable.present.overlays.hasPendingUpdate) {
+        listenerApi.dispatch(overlaysSlice.actions.forceUpdate());
       }
+      const persisted = await saving;
+      if (!persisted) return;
+
+      if (ownerKey) listenerApi.dispatch(overlaysSlice.actions.acknowledgeOutlineSave({ ownerKey, list }));
+      listenerApi.throwIfCancelled();
+      if (!sessionIsCurrent() || (!isSavingOutgoingOutline && (db !== dbAtStart || globalFireDbInfo?.churchId !== churchAtStart))) return;
+      const latest = (listenerApi.getState() as RootState).undoable.present;
+      if (latest.overlays.outlineOwnerKey !== ownerKey || latest.overlays.list !== list) return;
       safePostMessage({
         type: "update",
         data: { docs: persisted, hostId: globalHostId },
@@ -2094,6 +2439,11 @@ listenerMiddleware.startListening({
         ? "Another saved outline version has a different overlay order. Your current order is still here and has not been saved."
         : "Could not save the overlay order. Your current order is still here. Check the connection and try again.";
       notifyPresentationSyncError(message);
+    } finally {
+      releaseOutlinePersistence();
+      if (db === dbAtStart && globalFireDbInfo?.churchId === churchAtStart) {
+        listenerApi.dispatch(bibleCleanupOpportunity({}));
+      }
     }
   },
 });
@@ -4144,7 +4494,11 @@ const outlineDraftDatabaseKey = (database: NonNullable<typeof db>) => database.n
 let outlineStateDatabase = db;
 let outlineAccountSession = 0;
 
-const rootReducer: Reducer = (state: RootState, action: Action) => {
+type OutlineDatabaseAction = Action & {
+  meta?: { outlineDatabaseKey?: string; outgoingOutlineDatabase?: typeof db; outlineOwnerKey?: string };
+};
+
+const rootReducer: Reducer = (state: RootState, action: OutlineDatabaseAction) => {
   const historyOutline = action.type === "@@redux-undo/UNDO" || action.type === "@@redux-undo/REDO"
     ? state?.undoable.present.itemList : undefined;
   const databaseChanged = outlineStateDatabase !== db;
@@ -4180,25 +4534,65 @@ const rootReducer: Reducer = (state: RootState, action: Action) => {
   } : db && (isStoreResetAction(action) || databaseChanged)
     ? outlineDraftsByDb.get(outlineDraftDatabaseKey(db)) ?? (databaseChanged ? { remoteConflicts: {}, pendingRevisionResolutions: {} } : undefined)
     : undefined;
-  if (!retained) return reduced;
-  const itemList = { ...reduced.undoable.present.itemList, ...retained };
-  const outlineId = itemList.loadedOutlineId;
-  if (historyOutline && outlineId && retained.remoteConflicts[outlineId]) {
-    const conflict = retained.remoteConflicts[outlineId];
-    itemList.remoteConflicts = { ...retained.remoteConflicts, [outlineId]: { ...conflict, localItems: itemList.list } };
-    itemList.syncBaseline = conflict.baselineItems;
-    itemList.hasPendingUpdate = true;
-  }
-  return {
-    ...reduced,
-    undoable: {
-      ...reduced.undoable,
-      present: {
-        ...reduced.undoable.present,
-        itemList,
+  let next = reduced;
+  if (retained) {
+    const itemList = { ...reduced.undoable.present.itemList, ...retained };
+    const outlineId = itemList.loadedOutlineId;
+    if (historyOutline && outlineId && retained.remoteConflicts[outlineId]) {
+      const conflict = retained.remoteConflicts[outlineId];
+      itemList.remoteConflicts = { ...retained.remoteConflicts, [outlineId]: { ...conflict, localItems: itemList.list } };
+      itemList.syncBaseline = conflict.baselineItems;
+      itemList.hasPendingUpdate = true;
+    }
+    next = {
+      ...reduced,
+      undoable: {
+        ...reduced.undoable,
+        present: { ...reduced.undoable.present, itemList },
       },
-    },
+    };
+  }
+  const present = next.undoable.present;
+  const databaseKey = action.meta?.outlineDatabaseKey ?? present.itemLists.contentDatabaseKey ?? "";
+  const ownerKey = getOutlineOwnerKey(databaseKey, present.itemLists.selectedList?._id);
+  if (present.itemList.outlineOwnerKey === ownerKey && present.itemLists.contentDatabaseKey === databaseKey) return next;
+
+  // Selection and content retirement must be one observable Redux transition,
+  // including scope changes and registry-driven fallback selection.
+  const activate = activateOutlineContent({ ownerKey, hasSelection: !!present.itemLists.selectedList });
+  const adoptingUnselectedDatabase = !state?.undoable?.present.itemLists.selectedList &&
+    !present.itemLists.selectedList && !state?.undoable?.present.itemLists.contentDatabaseKey;
+  const activatedPresent = {
+    ...present,
+    itemLists: { ...present.itemLists, contentDatabaseKey: databaseKey },
+    itemList: adoptingUnselectedDatabase ? { ...present.itemList, outlineOwnerKey: ownerKey } : itemListSlice.reducer(present.itemList, activate),
+    overlays: adoptingUnselectedDatabase ? { ...present.overlays, outlineOwnerKey: ownerKey } : overlaysSlice.reducer(present.overlays, activate),
   };
+  return {
+    ...next,
+    undoable: newHistory([], activatedPresent, []),
+    servicePlanningImport: servicePlanningImportSlice.reducer(next.servicePlanningImport,
+      servicePlanningImportSlice.actions.setServicePlanningOutlinePlanBinding(null)),
+  };
+};
+
+// Carry concrete database ownership into the pure reducer and outgoing-save
+// listeners. A DB change can retire the same outline ID in another session.
+let lastOutlineDatabase: typeof db;
+const outlineDatabaseMiddleware: Middleware = (api) => (next) => (input: unknown) => {
+  if (typeof input !== "object" || input === null || !("type" in input)) return next(input);
+  let action = input as OutlineDatabaseAction;
+  if (overlaySlice.actions.selectOverlay.type === action.type) {
+    action = { ...action, meta: { ...action.meta, outlineOwnerKey: (api.getState() as RootState).undoable.present.itemList.outlineOwnerKey } };
+  }
+  const isDatabaseAction = setOutlineContentDatabase.type === action.type;
+  if (db === lastOutlineDatabase && !isDatabaseAction) return next(action);
+  const outgoingOutlineDatabase = lastOutlineDatabase;
+  lastOutlineDatabase = db;
+  const outlineDatabaseKey = isDatabaseAction
+    ? (action as ReturnType<typeof setOutlineContentDatabase>).payload
+    : db ? getOutlineDatabaseKey(db) : "";
+  return next({ ...action, meta: { ...action.meta, outlineDatabaseKey, outgoingOutlineDatabase } });
 };
 
 const itemOwnerTransitionMiddleware: Middleware = (api) => (next) => (action: any) => {
@@ -4301,9 +4695,17 @@ const store = configureStore({
     getDefaultMiddleware({
       serializableCheck: false,
     }).prepend(
+      outlineDatabaseMiddleware,
       itemOwnerTransitionMiddleware,
       listenerMiddleware.middleware,
     ),
+});
+
+subscribeToContentActivity(() => {
+  store.dispatch(bibleCleanupOpportunity({}));
+});
+subscribeToActiveControllerPresence(() => {
+  store.dispatch(bibleCleanupOpportunity({}));
 });
 
 registerContentDatabaseFlushHandler(flushItemAutosavesForContentDatabase);

@@ -193,12 +193,13 @@ const Toolbar = ({
       !onItemPage ||
       mode === "present" ||
       section !== "editing" ||
+      !itemType ||
       isViewOnlyAccess(access) ||
       !canShowSlideAndBoxTools
     ) {
       setAllToolsOpen(false);
     }
-  }, [onItemPage, mode, section, access, canShowSlideAndBoxTools]);
+  }, [onItemPage, mode, section, access, canShowSlideAndBoxTools, itemType]);
 
   useEffect(() => {
     if (!activeControllerConfigurationRoute) return;
@@ -249,10 +250,11 @@ const Toolbar = ({
 
   const renderContextualToolbar = () => (
     <div
+      data-testid="toolbar-contextual-row"
       className={cn(
         "flex min-h-0 w-full min-w-0 flex-1 items-center px-2",
         "[&_[data-slot=input]]:!h-8 [&_[data-slot=input]]:!min-h-8 [&_[data-slot=select-trigger]]:!h-8 [&_[data-slot=select-trigger]]:!min-h-8",
-        isLyricsEditorOpen && "hidden",
+        (isLyricsEditorOpen || (section === "editing" && !itemType)) && "hidden",
       )}
     >
       {section === "configurations" ? (
@@ -303,7 +305,7 @@ const Toolbar = ({
         </div>
       ) : onItemPage && !isViewOnlyAccess(access) && canShowSlideAndBoxTools ? (
         <AllToolsDrawer
-          isOpen={allToolsOpen && mode === "edit"}
+          isOpen={allToolsOpen && mode === "edit" && Boolean(itemType)}
           onClose={() => setAllToolsOpen(false)}
           onToggle={() => setAllToolsOpen((open) => !open)}
           isMobile={isMobile}
@@ -371,13 +373,13 @@ const Toolbar = ({
               className="flex w-full min-w-0 items-center"
               data-testid="toolbar-primary-row"
             >
+              <div className="shrink-0 bg-homepage-canvas">
+                <Menu variant="default" />
+              </div>
               <div
-                className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-2 scrollbar-variable"
+                className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto pr-2 scrollbar-variable"
                 data-testid="toolbar-scroll-controls"
               >
-                <div className="sticky left-0 z-10 shrink-0 bg-homepage-canvas">
-                  <Menu variant="default" />
-                </div>
                 {modeToggle}
                 {mode === "edit" && !isLyricsEditorOpen && !isViewOnlyAccess(access) && <Undo />}
                 {mode === "edit" && renderConfigurationsButton()}
@@ -385,7 +387,7 @@ const Toolbar = ({
             </div>
             {mode === "edit" && (
               <>
-                <div className="w-full border-t border-gray-600" />
+                <div className={cn("w-full border-t border-gray-600", section === "editing" && !itemType && "hidden")} />
                 {renderContextualToolbar()}
               </>
             )}
@@ -412,7 +414,7 @@ const Toolbar = ({
                   <Menu variant="overlay" />
                 </div>
                 {modeToggle}
-                <MediaSurfaceDiagnostics />
+                {mode === "edit" && <MediaSurfaceDiagnostics />}
                 {!isLyricsEditorOpen && !isViewOnlyAccess(access) && <Undo />}
                 <ToolbarOverlay
                   toolbarRow={mode === "edit" ? "primary" : "present"}

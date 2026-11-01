@@ -341,6 +341,15 @@ describe("Toolbar", () => {
     expect(screen.queryByTestId("toolbar-status-area")).not.toBeInTheDocument();
   });
 
+  it.each(["default", "aux"] as const)("keeps the %s controller menu outside the scrolling controls", (variant) => {
+    renderToolbar({ access: "full", itemType: "song", variant });
+    const row = screen.getByTestId("toolbar-primary-row");
+    const scroll = screen.getByTestId("toolbar-scroll-controls");
+    expect(within(row).getByText("Menu")).toBeInTheDocument();
+    expect(within(scroll).queryByText("Menu")).not.toBeInTheDocument();
+    expect(within(scroll).getByRole("button", { name: "Edit" })).toBeInTheDocument();
+  });
+
   it("keeps undo and full toolbar content in Edit mode", () => {
     renderToolbar({ access: "full", itemType: "song", workspaceMode: "present" });
     act(() => {
@@ -372,6 +381,34 @@ describe("Toolbar", () => {
     renderToolbar({ access: "music", itemType: "bible" });
 
     expect(screen.queryByRole("button", { name: "All Tools" })).not.toBeInTheDocument();
+  });
+
+  it("hides item tools and closes the drawer when the active item is cleared", () => {
+    const { rerender } = renderToolbar({ access: "full", itemType: "song", workspaceMode: "edit" });
+    act(() => screen.getByRole("button", { name: "Edit" }).click());
+    act(() => screen.getByRole("button", { name: "All Tools" }).click());
+    expect(screen.getByTestId("all-tools-drawer")).toHaveAttribute("data-open", "true");
+
+    const refresh = () => rerender(
+      <ThumbnailPreviewModeProvider>
+        <GlobalInfoContext.Provider value={{ access: "full" } as any}>
+          <ControllerInfoContext.Provider value={{ isPhone: false, isMobile: false } as any}>
+            <PresentationControllerModeProvider><Toolbar className="toolbar" /></PresentationControllerModeProvider>
+            <PreviewModeProbe />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </ThumbnailPreviewModeProvider>,
+    );
+    mockState.undoable.present.item.type = "";
+    refresh();
+    expect(screen.getByTestId("toolbar-contextual-row")).toHaveClass("hidden");
+    expect(screen.getByTestId("all-tools-drawer")).toHaveAttribute("data-open", "false");
+
+    mockState.undoable.present.item.type = "song";
+    refresh();
+    expect(screen.getByTestId("toolbar-contextual-row")).not.toHaveClass("hidden");
+    expect(screen.getByTestId("all-tools-drawer")).toHaveAttribute("data-open", "false");
+    expect(screen.getByRole("button", { name: "All Tools" })).toBeInTheDocument();
   });
 
   it("shows slide and box tools for music access on song items", () => {
@@ -562,13 +599,37 @@ describe("Toolbar", () => {
     ).toBeInTheDocument();
   });
 
-  it("places Videos in the Configurations row instead of the primary row", () => {
-    mockPathname = "/controller/preferences";
-    renderToolbar({ access: "full", itemType: "song" });
+  it.each(["default", "aux"] as const)(
+    "keeps Videos in the %s controller Configurations row",
+    (variant) => {
+      mockPathname = "/controller/preferences";
+      renderToolbar({ access: "full", itemType: "song", variant });
 
-    const videosButton = screen.getByTestId("videos-button");
-    expect(videosButton).toBeVisible();
-    expect(screen.getByTestId("toolbar-primary-row")).not.toContainElement(videosButton);
+      const videosButton = screen.getByTestId("videos-button");
+      expect(videosButton).toBeVisible();
+      expect(screen.getByTestId("toolbar-primary-row")).not.toContainElement(videosButton);
+    },
+  );
+
+  it("shows overlay Videos only in Edit mode and updates immediately when switching modes", () => {
+    renderToolbarOverlay({ access: "full", workspaceMode: "present" });
+
+    expect(screen.queryByTestId("videos-button")).not.toBeInTheDocument();
+
+    act(() => {
+      screen.getByRole("button", { name: "Edit" }).click();
+    });
+    expect(screen.getByTestId("videos-button")).toBeInTheDocument();
+
+    act(() => {
+      screen.getByRole("button", { name: "Present" }).click();
+    });
+    expect(screen.queryByTestId("videos-button")).not.toBeInTheDocument();
+
+    act(() => {
+      screen.getByRole("button", { name: "Edit" }).click();
+    });
+    expect(screen.getByTestId("videos-button")).toBeInTheDocument();
   });
 
   it("keeps overlay live controls in a single Present-mode toolbar row", () => {
@@ -579,6 +640,7 @@ describe("Toolbar", () => {
     expect(within(primaryRow).getByText("Menu")).toBeInTheDocument();
     expect(within(primaryRow).getByRole("button", { name: "Present" })).toBeInTheDocument();
     expect(within(primaryRow).getByText("Undo")).toBeInTheDocument();
+    expect(within(primaryRow).queryByTestId("videos-button")).not.toBeInTheDocument();
     expect(within(primaryRow).getByText("Outlines")).toBeInTheDocument();
     expect(within(primaryRow).getByRole("button", { name: "Open Service Plan" })).toBeInTheDocument();
     expect(within(primaryRow).getByRole("button", { name: "Overlays" })).toBeInTheDocument();
@@ -599,6 +661,7 @@ describe("Toolbar", () => {
     expect(within(secondaryRow).getByRole("button", { name: "Displays" })).toBeInTheDocument();
     expect(within(secondaryRow).queryByRole("button", { name: "Generate Credits" })).not.toBeInTheDocument();
     expect(within(secondaryRow).queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("videos-button")).toBeInTheDocument();
     expect(screen.getByText("Undo")).toBeInTheDocument();
     expect(screen.getByTestId("full-user")).toBeInTheDocument();
   });

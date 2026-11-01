@@ -4,6 +4,7 @@ import { isPouchConflict } from "./persistOverlayDoc";
 import { getOutlineItemConflicts, reconcileOutlineItems, type OutlineItemChoices } from "./outlineSync";
 
 const SERVICE_LIST_PUT_MAX_ATTEMPTS = 4;
+const savesByDatabase = new WeakMap<ServiceListFieldDb, Map<string, Promise<unknown>>>();
 
 type RevisionHistory = { _rev?: string; _revisions?: { start: number; ids: string[] } };
 type RevisionDoc = DBItemListDetails & RevisionHistory & { _conflicts?: string[] };
@@ -323,7 +324,33 @@ const retireReviewedBranches = async (
   return !(verified._conflicts?.length);
 };
 
-async function persistServiceListField<K extends "items" | "overlays">(
+function persistServiceListField<K extends "items" | "overlays">(
+  db: ServiceListFieldDb,
+  listId: string,
+  field: K,
+  value: K extends "items" ? ServiceItem[] : string[],
+  baseline?: ServiceItem[],
+  isCurrent = () => true,
+): Promise<DBItemListDetails> {
+  let saves = savesByDatabase.get(db);
+  if (!saves) {
+    saves = new Map();
+    savesByDatabase.set(db, saves);
+  }
+  const key = JSON.stringify([listId, field]);
+  const previous = saves.get(key);
+  // Serialize same-field writes so the last user intention is always the last
+  // database write, even when an earlier PouchDB put is already in flight.
+  const saving = (previous?.catch(() => undefined) ?? Promise.resolve()).then(() =>
+    persistServiceListFieldNow(db, listId, field, value, baseline, isCurrent),
+  );
+  saves.set(key, saving);
+  return saving.finally(() => {
+    if (saves?.get(key) === saving) saves.delete(key);
+  });
+}
+
+async function persistServiceListFieldNow<K extends "items" | "overlays">(
   db: ServiceListFieldDb,
   listId: string,
   field: K,

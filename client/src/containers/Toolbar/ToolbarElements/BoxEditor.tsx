@@ -92,9 +92,11 @@ const PresetIcon = ({
   x,
   y,
   label,
-}: BoxDimensions & { label?: string }) => (
+  large = false,
+}: BoxDimensions & { label?: string; large?: boolean }) => (
   <div
-    className="relative box-border aspect-video w-8 shrink-0 overflow-hidden border border-current/60 bg-black/5"
+    className={`relative box-border aspect-video shrink-0 overflow-hidden border border-current/60 bg-black/5 ${large ? "w-16 md:w-10" : "w-8"}`}
+    data-testid="box-preset-icon"
     aria-hidden="true"
   >
     <div
@@ -107,7 +109,7 @@ const PresetIcon = ({
       }}
     />
     {label && (
-      <span className="pointer-events-none absolute inset-0 flex items-center justify-center text-[7px] font-bold uppercase text-white">
+      <span className={`pointer-events-none absolute inset-0 flex items-center justify-center font-bold uppercase text-white ${large ? "text-[10px] md:text-[7px]" : "text-[7px]"}`}>
         {label}
       </span>
     )}
@@ -467,8 +469,8 @@ const BoxEditor = ({
       key={preset.key}
       type="button"
       variant="tertiary"
-      className={compact ? "h-8 w-10 shrink-0 p-0" : "min-h-12 min-w-28 gap-2"}
-      padding={compact ? "p-0" : undefined}
+      className={compact ? "h-8 w-10 shrink-0 p-0" : "min-h-12 min-w-0 justify-center p-1"}
+      padding={compact ? "p-0" : "p-1"}
       title={
         compact
           ? `Apply ${preset.label} box preset to ${
@@ -479,8 +481,7 @@ const BoxEditor = ({
       aria-label={`Apply ${preset.label} box preset`}
       onClick={() => applyPreset(preset.dimensions)}
     >
-      <PresetIcon {...preset.dimensions} />
-      {!compact && <span className="text-xs">{preset.label}</span>}
+      <PresetIcon {...preset.dimensions} large={!compact} />
     </Button>
   );
 
@@ -533,13 +534,13 @@ const BoxEditor = ({
       className="flex min-w-0 flex-col gap-4"
     >
       <div className="flex flex-wrap items-center gap-2">
-        {(["x", "y", "width", "height"] as const).map((field) => (
+        {(["x", "y"] as const).map((field) => (
           <Input
             key={field}
             type="number"
             value={dimensions[field]}
             onChange={(value) => handleInputChange(field, value.toString())}
-            label={field === "x" || field === "y" ? field.toUpperCase() : field}
+            label={field.toUpperCase()}
             labelLayout="inline"
             labelFontSize="text-xs"
             min={0}
@@ -549,6 +550,24 @@ const BoxEditor = ({
             hideSpinButtons={false}
           />
         ))}
+        <div className="flex items-center gap-2">
+          {(["width", "height"] as const).map((field) => (
+            <Input
+              key={field}
+              type="number"
+              value={dimensions[field]}
+              onChange={(value) => handleInputChange(field, value.toString())}
+              label={field === "width" ? "Width" : "Height"}
+              labelLayout="inline"
+              labelFontSize="text-xs"
+              min={0}
+              max={100}
+              inputWidth="w-16"
+              inputTextSize="text-xs"
+              hideSpinButtons={false}
+            />
+          ))}
+        </div>
       </div>
       <div className="flex flex-col gap-1">
         <p className="text-xs font-medium">Layouts</p>
@@ -560,14 +579,14 @@ const BoxEditor = ({
           <Button
             type="button"
             variant="tertiary"
-            className="min-h-12 min-w-28 gap-2"
+            className="min-h-12 min-w-0 justify-center p-1"
+            padding="p-1"
             title="Match the selected box geometry across the chosen scope"
             aria-label="Apply Match box preset"
             disabled={!shouldApplyToAll}
             onClick={() => applyPreset(matchPreset.dimensions)}
           >
-            <PresetIcon {...matchPreset.dimensions} label="MATCH" />
-            <span className="text-xs">Match</span>
+            <PresetIcon {...matchPreset.dimensions} label="MATCH" large />
           </Button>
         </div>
       </div>

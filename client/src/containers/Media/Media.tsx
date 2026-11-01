@@ -441,7 +441,6 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
             </div>
             <MediaLibraryFolderModals
               selectedLibraryFilter={c.selectedLibraryFilter}
-              onSelectLibraryFilter={c.navigateToFolder}
               folders={c.folders}
               list={c.list}
               onUpdateFoldersAndList={c.applyFoldersAndList}

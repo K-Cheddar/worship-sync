@@ -5,6 +5,7 @@ export const itemDocumentToLibraryEntry = (doc: Pick<ServiceItem, "_id" | "name"
     ? doc.arrangements?.[doc.selectedArrangement ?? 0]?.slides?.[0] ?? doc.slides?.[0]
     : doc.slides?.[0];
   const mediaInfo = firstSlide?.boxes?.[0]?.mediaInfo;
+  const slideBackground = firstSlide?.boxes?.[0]?.background;
   const localImage = doc.localImage ?? mediaInfo?.localImage;
   const localVideoFile = doc.localVideoFile ?? mediaInfo?.localVideoFile;
   return {
@@ -13,8 +14,8 @@ export const itemDocumentToLibraryEntry = (doc: Pick<ServiceItem, "_id" | "name"
     type: doc.type,
     listId: doc._id,
     background: mediaInfo?.type === "video"
-      ? localVideoFile?.cloudUrl || mediaInfo.placeholderImage || doc.background || ""
-      : localImage?.cloudUrl || doc.background || "",
+      ? localVideoFile?.cloudUrl || mediaInfo.placeholderImage || doc.background || slideBackground || ""
+      : localImage?.cloudUrl || doc.background || slideBackground || "",
     ...(localImage ? { localImage } : {}),
     ...(localVideoFile ? { localVideoFile } : {}),
   };

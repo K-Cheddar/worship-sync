@@ -1,4 +1,6 @@
 import type { ServicePlanSection } from "../../types/servicePlan";
+import { mapNativeServicePlanParticipants } from "../../integrations/servicePlanning/mapNativeServicePlanParticipants";
+import { servicePlanToImportData } from "../../integrations/servicePlanning/servicePlanToImportData";
 import {
   exportWorshipSyncPlan,
   importWorshipSyncPlan,
@@ -30,6 +32,33 @@ const sourceSections: ServicePlanSection[] = [{
 }];
 
 describe("native WorshipSync plan transfer", () => {
+  it.each(["church-1", "church-2"])("preserves phases and order when transferred to %s", (targetChurchId) => {
+    const original: ServicePlanSection[] = ["pre", "main", "post"].map((phase) => ({
+      ...sourceSections[0], name: phase, phase: phase as ServicePlanSection["phase"],
+    }));
+    original.push({ ...sourceSections[0], name: "Legacy" });
+    const file = exportWorshipSyncPlan(original, "church-1");
+    expect(file.version).toBe(1);
+    expect(file.sections.map(({ phase }) => phase)).toEqual(["pre", "main", "post", undefined]);
+    const imported = importWorshipSyncPlan(JSON.parse(JSON.stringify(file)), { targetChurchId });
+    expect(imported.map(({ name }) => name)).toEqual(["pre", "main", "post", "Legacy"]);
+    expect(imported.map(({ phase }) => phase)).toEqual(["pre", "main", "post", undefined]);
+    const assignedSections = imported.map((section) => ({ ...section, elements: section.elements.map((element) => ({ ...element, assignees: [{ id: "assignee", name: "Alex" }] })) }));
+    const importData = servicePlanToImportData({ name: "Transferred", planKey: "service@2026-10-29", sections: assignedSections });
+    const mapping = mapNativeServicePlanParticipants({
+      sections: assignedSections,
+      importData,
+      participantOverlay: { status: "restricted", elements: [] },
+    });
+    expect(mapping.summary.selectedItemCount).toBe(2);
+    expect(mapping.overlayCandidates.map(({ source }) => source)).toEqual([importData.sections[1].rows[0], importData.sections[3].rows[0]]);
+  });
+
+  it("rejects an untrusted section phase outside the schema", () => {
+    const file = exportWorshipSyncPlan(sourceSections, "church-1");
+    expect(() => importWorshipSyncPlan({ ...file, sections: [{ ...file.sections[0], phase: "invalid" }] })).toThrow("invalid sections");
+  });
+
   it("exports and reimports editable content with attachments ordered and identities refreshed", () => {
     const file = exportWorshipSyncPlan(sourceSections, "church-1");
     expect(file.format).toBe(WORSHIPSYNC_PLAN_FORMAT);

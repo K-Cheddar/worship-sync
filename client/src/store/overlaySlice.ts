@@ -4,6 +4,8 @@ import { OverlayInfo } from "../types";
 import { normalizeOverlayForSync } from "../utils/overlayUtils";
 
 export type OverlayState = {
+  /** Runtime editor selection owner; retained drafts may outlive the outline. */
+  outlineOwnerKey?: string;
   selectedOverlay?: OverlayInfo;
   isOverlayLoading: boolean;
   hasPendingUpdate: boolean;
@@ -30,6 +32,7 @@ export const overlaySlice = createSlice({
   initialState,
   reducers: {
     selectOverlay: (state, action: PayloadAction<OverlayInfo | undefined>) => {
+      state.outlineOwnerKey = (action as typeof action & { meta?: { outlineOwnerKey?: string } }).meta?.outlineOwnerKey;
       if (!action.payload?.id) {
         state.selectedOverlay = undefined;
         state.baseOverlay = null;

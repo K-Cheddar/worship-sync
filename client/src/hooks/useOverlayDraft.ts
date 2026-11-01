@@ -30,6 +30,7 @@ export function useOverlayDraft(
   selectedOverlay: OverlayInfo,
   onCommit: (overlay: OverlayInfo) => void,
   onDraftPendingChange?: (overlayId: string, isPending: boolean) => void,
+  owner?: unknown,
 ) {
   const [draft, setDraft] = useState<OverlayInfo>(selectedOverlay);
   const draftRef = useRef(draft);
@@ -40,9 +41,17 @@ export function useOverlayDraft(
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevSerializedRef = useRef("");
   const onCommitRef = useRef(onCommit);
-  onCommitRef.current = onCommit;
   const onDraftPendingChangeRef = useRef(onDraftPendingChange);
-  onDraftPendingChangeRef.current = onDraftPendingChange;
+  const draftOwnerRef = useRef(owner);
+  const draftSourceRef = useRef(selectedOverlay);
+  const incomingRef = useRef({ onCommit, onDraftPendingChange, owner });
+  incomingRef.current = { onCommit, onDraftPendingChange, owner };
+  // Outgoing work retains its callbacks and baseline, including same-ID owners.
+  if (draftOwnerRef.current === owner && draftRef.current.id === selectedOverlay.id) {
+    onCommitRef.current = onCommit;
+    onDraftPendingChangeRef.current = onDraftPendingChange;
+    draftSourceRef.current = selectedOverlay;
+  }
   const selectedOverlayRef = useRef(selectedOverlay);
   selectedOverlayRef.current = selectedOverlay;
 
@@ -55,6 +64,10 @@ export function useOverlayDraft(
     if (isDirtyRef.current && draftRef.current.id) {
       onDraftPendingChangeRef.current?.(draftRef.current.id, false);
     }
+    draftOwnerRef.current = incomingRef.current.owner;
+    draftSourceRef.current = nextOverlay;
+    onCommitRef.current = incomingRef.current.onCommit;
+    onDraftPendingChangeRef.current = incomingRef.current.onDraftPendingChange;
     setDraft(normalized);
     draftRef.current = normalized;
     lastCommittedRef.current = normalized;
@@ -66,7 +79,7 @@ export function useOverlayDraft(
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     debounceTimerRef.current = setTimeout(() => {
       debounceTimerRef.current = null;
-      const fromRedux = selectedOverlayRef.current;
+      const fromRedux = draftSourceRef.current;
       const draft = draftRef.current;
       if (!draft.id || draft.id !== fromRedux.id) return;
       const next = buildCommitPayload(fromRedux, draft);
@@ -98,7 +111,7 @@ export function useOverlayDraft(
       clearTimeout(debounceTimerRef.current);
       debounceTimerRef.current = null;
     }
-    const fromRedux = selectedOverlayRef.current;
+    const fromRedux = draftSourceRef.current;
     const draft = draftRef.current;
     if (!isDirtyRef.current || draft.id !== fromRedux.id) return;
     const next = buildCommitPayload(fromRedux, draft);
@@ -132,14 +145,14 @@ export function useOverlayDraft(
     }
     const incoming = selectedOverlayRef.current;
     const current = draftRef.current;
-    if (current.id && incoming.id && current.id !== incoming.id) {
+    if (current.id && (current.id !== incoming.id || draftOwnerRef.current !== owner)) {
       if (isDirtyRef.current && !_.isEqual(current, lastCommittedRef.current)) {
         // Redux already points at the next overlay; commit the previous overlay as-is (normalized).
         onCommitRef.current(normalizeOverlayForSync(current));
       }
     }
     replaceDraft(incoming);
-  }, [replaceDraft, selectedOverlay.id]);
+  }, [owner, replaceDraft, selectedOverlay.id]);
 
   // Sync draft from Redux when props change (formatting-only merge while text is dirty).
   useEffect(() => {
@@ -176,7 +189,7 @@ export function useOverlayDraft(
         clearTimeout(debounceTimerRef.current);
         debounceTimerRef.current = null;
       }
-      const fromRedux = selectedOverlayRef.current;
+      const fromRedux = draftSourceRef.current;
       const draft = draftRef.current;
       if (isDirtyRef.current && draft.id) {
         onDraftPendingChangeRef.current?.(draft.id, false);

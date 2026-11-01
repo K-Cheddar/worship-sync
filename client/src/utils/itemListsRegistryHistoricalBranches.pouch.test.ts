@@ -63,6 +63,7 @@ describe("historical ItemLists branches in replicated PouchDB", () => {
       const remove = jest.spyOn(env.a, "remove");
 
       const winner = await loadOrCreateItemListsDoc(env.a);
+      if (!winner) throw new Error("Expected the existing ItemLists registry to load");
       expect(winner.itemLists).toEqual(desiredLists);
       expect(winner.activeList).toEqual(desiredLists[0]);
       expect(put).not.toHaveBeenCalled();
