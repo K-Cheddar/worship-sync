@@ -7,8 +7,15 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { useContext, useState, type ReactNode } from "react";
+import {
+  MemoryRouter,
+  Route,
+  Routes,
+  useLocation,
+} from "react-router-dom";
 import AppEntry from "./AppEntry";
+import AuthGate from "../components/AuthGate";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { createMockGlobalContext } from "../test/mocks";
 import { usePwaInstallPrompt } from "../hooks/usePwaInstallPrompt";
@@ -42,6 +49,48 @@ jest.mock("../hooks/usePwaInstallPrompt", () => ({
 
 const mockUsePwaInstallPrompt = jest.mocked(usePwaInstallPrompt);
 const mockGetAppOs = jest.mocked(getAppOs);
+
+const LoginReturnPathProbe = () => {
+  const location = useLocation();
+  const from = (location.state as {
+    from?: { pathname?: string; search?: string; hash?: string };
+  } | null)?.from;
+  return (
+    <div data-testid="login-return-path">
+      {`${from?.pathname ?? ""}${from?.search ?? ""}${from?.hash ?? ""}`}
+    </div>
+  );
+};
+
+const ExpiringSessionProvider = ({ children }: { children: ReactNode }) => {
+  const [expired, setExpired] = useState(false);
+  const context = {
+    ...createMockGlobalContext({
+      loginState: expired ? "idle" : "success",
+      sessionKind: expired ? null : "human",
+      bootstrapStatus: "ready",
+      authServerStatus: "online",
+    }),
+    expireSession: () => setExpired(true),
+  };
+
+  return (
+    <GlobalInfoContext.Provider value={context as any}>
+      {children}
+    </GlobalInfoContext.Provider>
+  );
+};
+
+const ExpireSessionButton = () => {
+  const context = useContext(GlobalInfoContext) as unknown as {
+    expireSession: () => void;
+  };
+  return (
+    <button type="button" onClick={context.expireSession}>
+      Expire session
+    </button>
+  );
+};
 
 describe("AppEntry", () => {
   beforeEach(() => {
@@ -114,6 +163,46 @@ describe("AppEntry", () => {
     expect(
       screen.getByRole("menuitem", { name: /^Install$/i }),
     ).toBeInTheDocument();
+  });
+
+  it("keeps a protected destination through session expiration and the sign-in entry", async () => {
+    const user = userEvent.setup();
+    render(
+      <ExpiringSessionProvider>
+        <MemoryRouter
+          initialEntries={[
+            {
+              pathname: "/current-service",
+              search: "?tab=plan",
+              hash: "#item-2",
+            },
+          ]}
+        >
+          <Routes>
+            <Route
+              path="/current-service"
+              element={
+                <AuthGate allowedKinds={["human", "workstation"]}>
+                  <>
+                    <div>Current service</div>
+                    <ExpireSessionButton />
+                  </>
+                </AuthGate>
+              }
+            />
+            <Route path="/" element={<AppEntry />} />
+            <Route path="/login" element={<LoginReturnPathProbe />} />
+          </Routes>
+        </MemoryRouter>
+      </ExpiringSessionProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Expire session" }));
+    await user.click(screen.getByRole("link", { name: "Sign in" }));
+
+    expect(await screen.findByTestId("login-return-path")).toHaveTextContent(
+      "/current-service?tab=plan#item-2",
+    );
   });
 
   it("keeps the product landing and shows an offline notice near more ways to get started", () => {

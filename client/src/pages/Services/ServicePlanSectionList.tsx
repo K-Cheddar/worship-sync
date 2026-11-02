@@ -61,6 +61,9 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "../../components/ui/DropdownMenu";
 import {
@@ -107,6 +110,7 @@ type ServicePlanLiveRowState = {
   isManualLive?: boolean;
   isTimelineAdjusted?: boolean;
   adjustedStartTimes?: ReadonlyMap<string, string>;
+  plannedStartTimes?: ReadonlyMap<string, string>;
   liveStartedAtLabel?: string | null;
   publicLiveBusy?: boolean;
   onMakePublicLive?: (elementId: string) => void;
@@ -117,6 +121,7 @@ type SortableSectionCardProps = ServicePlanLiveRowState & {
   canEdit: boolean;
   isEditing: boolean;
   onRename: (name: string) => void;
+  onPhaseChange: (phase: NonNullable<ServicePlanSection["phase"]>) => void;
   onRemove: () => void;
   isSelected: boolean;
   selectedElementId?: string;
@@ -179,6 +184,7 @@ const SortableSectionCard = ({
   canEdit,
   isEditing,
   onRename,
+  onPhaseChange,
   onRemove,
   isSelected,
   selectedElementId,
@@ -206,6 +212,7 @@ const SortableSectionCard = ({
   isManualLive = false,
   isTimelineAdjusted = false,
   adjustedStartTimes,
+  plannedStartTimes,
   liveStartedAtLabel = null,
   publicLiveBusy = false,
   onMakePublicLive,
@@ -304,12 +311,30 @@ const SortableSectionCard = ({
             {section.name.trim() || "Untitled section"}
           </h3>
         )}
+        {section.phase === "pre" || section.phase === "post" ? (
+          <span className="shrink-0 rounded-full border border-gray-700 bg-gray-900/70 px-1.5 py-0.5 text-[10px] font-medium text-gray-300">
+            {section.phase === "pre" ? "Pre-service" : "Post-service"}
+          </span>
+        ) : null}
         {allowEdit ? (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button type="button" variant="tertiary" iconSize="sm" className="max-md:min-h-0" svg={MoreHorizontal} aria-label={`More tools for ${section.name || "section"}`} />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuLabel className="text-xs text-gray-400">Section type</DropdownMenuLabel>
+              <DropdownMenuRadioGroup
+                value={section.phase ?? "main"}
+                onValueChange={(value) => {
+                  if (value === "pre" || value === "main" || value === "post") {
+                    onPhaseChange(value);
+                  }
+                }}
+              >
+                <DropdownMenuRadioItem value="pre">Pre-service</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="main">Main service</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="post">Post-service</DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
               <DropdownMenuItem onSelect={onRemove} className="text-red-200">
                 <Trash2 className="size-4" aria-hidden /> Remove section
               </DropdownMenuItem>
@@ -347,6 +372,7 @@ const SortableSectionCard = ({
                   isManualLive={isManualLive && liveElementId === element.id}
                   isAdjustedLive={isTimelineAdjusted && liveElementId === element.id}
                   adjustedStartTime={adjustedStartTimes?.get(element.id)}
+                  plannedStartTime={plannedStartTimes?.get(element.id)}
                   liveStartedAtDescription={
                     liveElementId === element.id ? liveStartedAtLabel || undefined : undefined
                   }
@@ -952,6 +978,14 @@ const ServicePlanSectionList = ({
                   onSectionsChange(
                     renameSection(sections, section.id, name),
                     `section:${section.id}:name`,
+                  )
+                }
+                onPhaseChange={(phase) =>
+                  onSectionsChange(
+                    sections.map((current) =>
+                      current.id === section.id ? { ...current, phase } : current,
+                    ),
+                    `section:${section.id}:phase`,
                   )
                 }
                 onRemove={() => handleRemoveSection(section.id)}

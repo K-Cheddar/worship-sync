@@ -2,8 +2,9 @@
  * How alike two song titles are, 0–1, for deciding whether a title printed on a
  * service plan names a song the library already has.
  *
- * This is deliberately not the library search ranking (`getMatchForString`).
- * That function ranks candidates against what a person typed, and its score
+ * This is deliberately separate from manual library search and the legacy
+ * title candidate ranking (`getMatchForString`). The latter function
+ * ranks candidate titles, and its score
  * reports which branch matched — exact, whole phrase, or loose word overlap —
  * rather than how alike two complete titles are. So its bands are far apart: an
  * exact hit scores 2x the search terms while "Great Is Your Faithfulness"

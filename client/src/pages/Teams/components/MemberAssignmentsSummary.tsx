@@ -90,11 +90,13 @@ const AssignmentLines = ({ groups }: { groups: AssignmentGroup[] }) => (
 type MemberAssignmentsDetailsProps = {
   assignments: MemberListAssignment[];
   memberName: string;
+  emptyLabel: string;
 };
 
 export const MemberAssignmentsDetails = ({
   assignments,
   memberName,
+  emptyLabel,
 }: MemberAssignmentsDetailsProps) => {
   const [open, setOpen] = useState(false);
   const assignmentTextRef = useRef<HTMLSpanElement>(null);
@@ -172,7 +174,7 @@ export const MemberAssignmentsDetails = ({
   );
 
   if (assignments.length === 0) {
-    return <p className="truncate text-xs leading-4 text-gray-500">No team assigned</p>;
+    return <p className="truncate text-xs leading-4 text-gray-500">{emptyLabel}</p>;
   }
 
   return (

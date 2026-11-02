@@ -4,6 +4,7 @@ import Toolbar, {
 } from "../../containers/Toolbar/Toolbar";
 import { ConnectionStatus } from "../../context/controllerInfo";
 import ControllerLoadingOverlay from "./ControllerLoadingOverlay";
+import { ThumbnailPreviewModeProvider } from "../../context/thumbnailPreviewMode";
 
 type ControllerPageShellProps = {
   children: ReactNode;
@@ -31,29 +32,31 @@ const ControllerPageShell = ({
   layoutRef,
 }: ControllerPageShellProps) => {
   return (
-    <div
-      onClick={onRootClick}
-      className="dark bg-homepage-canvas flex h-dvh w-dvw list-none flex-col overflow-hidden text-white"
-      style={
-        {
-          "--scrollbar-width": scrollbarWidth,
-        } as CSSProperties
-      }
-    >
-      <ControllerLoadingOverlay
-        dbProgress={dbProgress}
-        connectionStatus={connectionStatus}
-        user={user}
-        churchName={churchName}
-      />
-      <Toolbar
-        variant={toolbarVariant}
-        className="flex shrink-0 overflow-y-hidden border-b-2 border-gray-500 bg-homepage-canvas text-sm"
-      />
-      <div id="controller-main" className={mainClassName} ref={layoutRef}>
-        {children}
+    <ThumbnailPreviewModeProvider>
+      <div
+        onClick={onRootClick}
+        className="dark bg-homepage-canvas flex h-dvh w-dvw list-none flex-col overflow-hidden text-white"
+        style={
+          {
+            "--scrollbar-width": scrollbarWidth,
+          } as CSSProperties
+        }
+      >
+        <ControllerLoadingOverlay
+          dbProgress={dbProgress}
+          connectionStatus={connectionStatus}
+          user={user}
+          churchName={churchName}
+        />
+        <Toolbar
+          variant={toolbarVariant}
+          className="flex shrink-0 overflow-y-hidden border-b-2 border-gray-500 bg-homepage-canvas text-sm"
+        />
+        <div id="controller-main" className={mainClassName} ref={layoutRef}>
+          {children}
+        </div>
       </div>
-    </div>
+    </ThumbnailPreviewModeProvider>
   );
 };
 

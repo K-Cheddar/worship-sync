@@ -40,8 +40,15 @@ export const getEditableTeamScopeIds = (permissions?: MemberPermissions) =>
     .map(([teamId]) => teamId)
     .sort();
 
-export const buildTeamScopesPermissions = (teamIds: string[]) =>
-  Object.fromEntries(teamIds.map((teamId) => [teamId, "edit" as const]));
+export const buildTeamScopesPermissions = (
+  teamIds: string[],
+  permissions?: MemberPermissions,
+): NonNullable<MemberPermissions["teamScopes"]> => ({
+  ...Object.fromEntries(
+    Object.entries(permissions?.teamScopes || {}).filter(([, scope]) => scope === "view"),
+  ),
+  ...Object.fromEntries(teamIds.map((teamId) => [teamId, "edit" as const])),
+});
 
 export const getScopedEditTeamNames = (
   scopedTeamIds: string[],

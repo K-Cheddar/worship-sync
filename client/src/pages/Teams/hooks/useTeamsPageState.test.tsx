@@ -796,7 +796,16 @@ describe("useTeamsPageState bootstrap recovery", () => {
     expect(result.current.pageData.teams).toEqual([
       expect.objectContaining({ teamId: "worship" }),
     ]);
+    expect(result.current.pageData.schedules).toEqual([
+      expect.objectContaining({ scheduleId: "worship-schedule" }),
+    ]);
     expect(result.current.hasTeamsWorkspaceAccess).toBe(true);
+    expect(result.current.availableNavSections.map(({ path }) => path)).toEqual(
+      expect.arrayContaining([
+        "/teams-and-services/schedules",
+        "/teams-and-services/groups",
+      ]),
+    );
     expect(result.current.editableMemberIds).toEqual(new Set());
 
     mockGetTeamsBootstrap.mockRejectedValueOnce(

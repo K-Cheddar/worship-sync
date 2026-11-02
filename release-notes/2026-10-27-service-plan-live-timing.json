@@ -1,0 +1,7 @@
+{
+  "id": "service-plan-live-adjusted-times",
+  "date": "2026-10-27",
+  "type": "improved",
+  "title": "Live-adjusted service plan times",
+  "description": "Service plan timing stays aligned across the editor, controller, and shared views, with adjusted times distinguished from the planned schedule."
+}

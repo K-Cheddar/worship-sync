@@ -115,20 +115,9 @@ export const isNotificationEnabled = (category, preference) => {
 };
 
 /**
- * True when someone can edit team data anywhere in the church — the same bar
- * `requireTeamsEditForTeam` applies, evaluated against stored permissions.
- * @param {{ role?: string, teamsPermission?: string, teamScopes?: Record<string, string> }} params
- */
-export const isTeamEditorAnywhere = ({ role, teamsPermission, teamScopes }) => {
-  if (role === "admin") return true;
-  if (teamsPermission === "edit") return true;
-  return Object.values(teamScopes || {}).some((scope) => scope === "edit");
-};
-
-/**
  * Which categories to *show* this person.
  *
- * Owner categories are gated on edit access — offering a volunteer "someone
+ * Owner categories are gated on explicit Team Lead scopes — offering a volunteer "someone
  * responded to a schedule" implies mail they will never receive.
  *
  * Member categories are shown to **everyone signed in**, deliberately, and not
@@ -145,11 +134,9 @@ export const isTeamEditorAnywhere = ({ role, teamsPermission, teamScopes }) => {
  * @returns {string[]}
  */
 export const visibleNotificationCategories = ({
-  role,
-  teamsPermission,
   teamScopes,
 }) => {
-  const isOwner = isTeamEditorAnywhere({ role, teamsPermission, teamScopes });
+  const isOwner = Object.values(teamScopes || {}).some((scope) => scope === "edit");
   return NOTIFICATION_CATEGORY_KEYS.filter((key) => {
     const config = NOTIFICATION_CATEGORIES[key];
     if (config.offered === false) return false;

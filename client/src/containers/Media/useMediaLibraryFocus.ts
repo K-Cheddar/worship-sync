@@ -9,6 +9,7 @@ import type { VirtualMediaGridHandle } from "./VirtualMediaGrid";
 type UseMediaLibraryFocusArgs = {
   dispatch: AppDispatch;
   focusMediaId: string | null;
+  selectedMediaId: string | undefined;
   list: MediaType[];
   filteredList: MediaType[];
   isMediaLoading: boolean;
@@ -33,6 +34,7 @@ type UseMediaLibraryFocusArgs = {
 export function useMediaLibraryFocus({
   dispatch,
   focusMediaId,
+  selectedMediaId,
   list,
   filteredList,
   isMediaLoading,
@@ -77,6 +79,13 @@ export function useMediaLibraryFocus({
       focusAttemptRunnerRef.current();
     });
   }, []);
+
+  useEffect(() => {
+    if (focusPendingIdRef.current && selectedMediaId !== focusPendingIdRef.current) {
+      focusPendingIdRef.current = null;
+      cancelFocusWork();
+    }
+  }, [cancelFocusWork, selectedMediaId]);
 
   useEffect(() => {
     if (!focusMediaId) return;
@@ -209,7 +218,7 @@ export function useMediaLibraryFocus({
 
   useEffect(() => {
     tryFocusPendingMedia();
-  }, [tryFocusPendingMedia]);
+  }, [focusMediaId, tryFocusPendingMedia]);
 
   useEffect(
     () => () => {

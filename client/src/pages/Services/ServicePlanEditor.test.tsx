@@ -29,6 +29,7 @@ import {
   AuthApiError,
 } from "../../api/auth";
 import { getServicePlanningImportDataFromUrl } from "../../containers/Overlays/eventParser";
+import { getPublicServiceFlow } from "../../services/serviceFlowApi";
 import { extractTextFromPdfFile } from "./extractPdfText";
 import type {
   TeamPosition,
@@ -126,6 +127,9 @@ jest.mock("./ServicePlanLibraryPicker", () => ({
 jest.mock("../../containers/Overlays/eventParser", () => ({
   getServicePlanningImportDataFromUrl: jest.fn(),
 }));
+jest.mock("../../services/serviceFlowApi", () => ({
+  getPublicServiceFlow: jest.fn(),
+}));
 
 jest.mock("../../context/churchServiceTimeZone", () => ({
   useChurchServiceTimeZone: () => ({
@@ -148,7 +152,7 @@ jest.mock("../../hooks", () => ({
   useSelector: (selector: (state: unknown) => unknown) =>
     selector({
       allDocs: { allSongDocs: mockAllSongDocs },
-      allItems: { list: [], isAllItemsLoading: false },
+
       undoable: { present: { preferences: { scrollbarWidth: "thin" } } },
     }),
   useDispatch: () => jest.fn(),
@@ -165,6 +169,7 @@ const mockSaveServicePlanMicrophones = jest.mocked(saveServicePlanMicrophones);
 const mockGetServicePlanningImportDataFromUrl = jest.mocked(
   getServicePlanningImportDataFromUrl,
 );
+const mockGetPublicServiceFlow = jest.mocked(getPublicServiceFlow);
 const mockExtractTextFromPdfFile = jest.mocked(extractTextFromPdfFile);
 const mockPublishServicePlan = jest.mocked(publishServicePlan);
 const mockSaveServicePlan = jest.mocked(saveServicePlan);
@@ -421,6 +426,7 @@ describe("ServicePlanEditor", () => {
     mockAllSongDocs = [];
     mockExtractTextFromPdfFile.mockReset();
     mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: null });
+    mockGetPublicServiceFlow.mockReset();
     mockListServicePlanTemplates.mockResolvedValue({ success: true, templates: [] });
     mockSaveServicePlanTemplate.mockResolvedValue({
       success: true,
@@ -467,6 +473,186 @@ describe("ServicePlanEditor", () => {
       success: true,
       servicePlan: {} as ServicePlan,
     });
+  });
+
+  it.each(["link", "file"])("requires confirmation before a native %s plan replaces existing content", async (source) => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "plan-1", churchId: "church-1", planKey: "service-1@2026-07-26",
+        serviceId: "service-1", date: "2026-07-26", name: "Easter Sunday",
+        published: true, revision: 3,
+        sections: [{ id: "old-section", name: "Current", elements: [{ id: "old-item", type: "free", title: plainTextToRichText("Keep this until confirmed") }] }],
+      } as ServicePlan,
+    });
+    mockGetPublicServiceFlow.mockResolvedValue({
+      service: {
+        shareId: "source-share", title: "Source", startsAt: "2026-07-26T14:00:00Z", timezone: "UTC", revision: 7,
+        sections: [{ id: "public-section", title: "Imported", items: [{ id: "public-item", title: "Public item", durationSeconds: 45, notes: { blocks: [] } }] }],
+        live: { mode: "schedule" },
+      },
+    } as never);
+    localStorage.setItem("worshipsyncServicePlanImportSource", "worshipSync");
+
+    const user = userEvent.setup();
+    renderEditor();
+    await screen.findByText("Keep this until confirmed");
+    if (source === "link") {
+      await user.click(screen.getByRole("button", { name: /Plan actions/i }));
+      await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+      fireEvent.change(screen.getByLabelText(/Public service-plan link/i), { target: { value: "https://www.worshipsync.net/services/source-share" } });
+      await user.click(screen.getByRole("button", { name: /Import plan/i }));
+    } else {
+      const file = new File(["{}"], "plan.json", { type: "application/json" });
+      Object.defineProperty(file, "text", { value: async () => JSON.stringify({
+        format: "worshipsync-service-plan", version: 1, sections: [{ id: "source", name: "Imported", elements: [{ id: "source-item", type: "free", title: plainTextToRichText("Public item") }] }],
+      }) });
+      fireEvent.change(screen.getByLabelText("WorshipSync JSON plan"), { target: { files: [file] } });
+    }
+
+    expect(await screen.findByRole("heading", { name: "Replace this plan's content?" })).toBeInTheDocument();
+    expect(screen.getByText("Keep this until confirmed")).toBeInTheDocument();
+    expect(mockGetPublicServiceFlow.mock.calls).toEqual(source === "link" ? [["source-share"]] : []);
+    await user.click(screen.getByRole("button", { name: /Replace content/i }));
+    expect(await screen.findByDisplayValue("Imported")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Replace this plan's content?" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["link", "loading edit"], ["file", "loading edit"],
+    ["link", "confirmation edit"], ["file", "confirmation edit"],
+    ["link", "loading switch"], ["file", "loading switch"],
+    ["link", "confirmation switch"], ["file", "confirmation switch"],
+  ])("protects native %s imports across a %s", async (source, boundary) => {
+    const currentPlan: ServicePlan = {
+      planId: "plan-1", churchId: "church-1", planKey: "service-1@2026-07-26",
+      serviceId: "service-1", date: "2026-07-26", name: "Sunday",
+      sections: [{ id: "section", name: "Worship", elements: [{
+        id: "item", type: "free", title: plainTextToRichText("Current item"), durationSeconds: 300,
+      }] }],
+    };
+    mockGetServicePlan.mockResolvedValueOnce({ success: true, servicePlan: currentPlan })
+      .mockResolvedValue({ success: true, servicePlan: {
+        ...currentPlan, planId: "plan-2", planKey: "service-1@2026-08-02", date: "2026-08-02",
+        sections: [{ ...currentPlan.sections[0], elements: [{ ...currentPlan.sections[0].elements[0], title: plainTextToRichText("Upcoming item") }] }],
+      } });
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => { finish = resolve; });
+    const importedTitle = "Stale imported item";
+    mockGetPublicServiceFlow.mockReturnValue(gate.then(() => ({ service: {
+      shareId: "source", title: "Source", startsAt: occurrence.startsAt, timezone: "UTC", revision: 1,
+      sections: [{ id: "source", title: "Imported", items: [{ id: "source-item", title: importedTitle, durationSeconds: 45, notes: { blocks: [] } }] }],
+      live: { mode: "schedule" },
+    } })) as never);
+    const file = new File(["{}"], "plan.json", { type: "application/json" });
+    Object.defineProperty(file, "text", { value: () => gate.then(() => JSON.stringify({
+      format: "worshipsync-service-plan", version: 1, sections: [{ id: "source", name: "Imported", elements: [{ id: "source-item", type: "free", title: plainTextToRichText(importedTitle) }] }],
+    })) });
+    localStorage.setItem("worshipsyncServicePlanImportSource", "worshipSync");
+    const user = userEvent.setup();
+    const view = renderEditor({ initialEditing: true });
+    await screen.findByLabelText(/^Duration/i);
+    if (source === "link") {
+      await user.click(screen.getByRole("button", { name: /Plan actions/i }));
+      await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+      fireEvent.change(screen.getByLabelText(/Public service-plan link/i), { target: { value: "https://www.worshipsync.net/services/source" } });
+      await user.click(screen.getByRole("button", { name: /Import plan/i }));
+    } else {
+      fireEvent.change(screen.getByLabelText("WorshipSync JSON plan"), { target: { files: [file] } });
+    }
+    if (boundary.startsWith("confirmation")) {
+      await act(async () => { finish(); });
+      await screen.findByRole("heading", { name: "Replace this plan's content?" });
+    }
+    if (boundary.endsWith("switch")) {
+      view.rerender(editorTree({ occurrence: nextOccurrence }));
+      await screen.findByText("Upcoming item");
+    } else {
+      const duration = screen.getByLabelText(/^Duration/i);
+      fireEvent.change(duration, { target: { value: "20" } });
+      fireEvent.blur(duration);
+    }
+    if (boundary.startsWith("loading")) await act(async () => { finish(); });
+    if (boundary === "confirmation edit") await user.click(screen.getByRole("button", { name: /Replace content/i }));
+    expect(screen.queryByRole("heading", { name: "Replace this plan's content?" })).not.toBeInTheDocument();
+    expect(screen.queryByText(importedTitle)).not.toBeInTheDocument();
+    const switched = boundary.endsWith("switch");
+    if (!switched) await screen.findByText("The plan changed. Import it again to review the latest draft.");
+    expect(Boolean(screen.queryByText("Upcoming item"))).toBe(switched);
+    expect(Boolean(screen.queryByDisplayValue("20 min"))).toBe(!switched);
+    const savedElements = mockSaveServicePlan.mock.calls.flatMap(([, , body]) => body.sections ?? []).flatMap((section) => section.elements);
+    expect(savedElements.some((element) => richTextToPlainText(element.title) === importedTitle)).toBe(false);
+  });
+
+  it.each(["link", "file"])("keeps the current plan's import pending after a stale %s completion", async (source) => {
+    const plan: ServicePlan = {
+      planId: "a", churchId: "church-1", planKey: "service-1@2026-07-26", serviceId: "service-1", date: "2026-07-26", name: "Sunday",
+      sections: [{ id: "section", name: "Worship", elements: [{ id: "item", type: "free", title: plainTextToRichText("Current item") }] }],
+    };
+    mockGetServicePlan.mockResolvedValueOnce({ success: true, servicePlan: plan }).mockResolvedValue({ success: true, servicePlan: { ...plan, planId: "b", planKey: "service-1@2026-08-02", date: "2026-08-02" } });
+    let rejectOld!: (error: Error) => void;
+    const oldRead = new Promise<string>((_resolve, reject) => { rejectOld = reject; });
+    const pendingCurrentRead = new Promise<never>(() => undefined);
+    mockGetPublicServiceFlow.mockReturnValueOnce(oldRead as never).mockReturnValue(pendingCurrentRead);
+    localStorage.setItem("worshipsyncServicePlanImportSource", "worshipSync");
+    const user = userEvent.setup();
+    const view = renderEditor();
+    await screen.findByText("Current item");
+    const startLink = async () => {
+      await user.click(screen.getByRole("button", { name: /Plan actions/i }));
+      await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+      fireEvent.change(screen.getByLabelText(/Public service-plan link/i), { target: { value: "https://www.worshipsync.net/services/source" } });
+      await user.click(screen.getByRole("button", { name: /Import plan/i }));
+    };
+    if (source === "link") await startLink();
+    else {
+      const file = new File(["{}"], "slow.json", { type: "application/json" });
+      Object.defineProperty(file, "text", { value: () => oldRead });
+      fireEvent.change(screen.getByLabelText("WorshipSync JSON plan"), { target: { files: [file] } });
+      mockGetPublicServiceFlow.mockReset().mockReturnValue(pendingCurrentRead);
+    }
+    view.rerender(editorTree({ occurrence: nextOccurrence }));
+    await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(2));
+    await screen.findByText("Current item");
+    await startLink();
+    expect(screen.getByRole("button", { name: /Importing/ })).toBeDisabled();
+    await act(async () => { rejectOld(new Error("Previous plan download failed")); });
+    expect(screen.getByRole("button", { name: /Importing/ })).toBeDisabled();
+    expect(screen.queryByText(/Previous plan download failed/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Imported WorshipSync plan. Review the content.")).not.toBeInTheDocument();
+  });
+
+  it.each([["link", false], ["file", false], ["link", true], ["file", true]] as const)("protects direct native %s imports into an empty draft (edited: %s)", async (source, editDuringLoad) => {
+    const importedSections = [{ id: "source", name: "Imported", elements: [{ id: "source-item", type: "free", title: plainTextToRichText("New imported item") }] }];
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => { finish = resolve; });
+    mockGetPublicServiceFlow.mockReturnValue(gate.then(() => ({ service: {
+      shareId: "source", title: "Source", startsAt: occurrence.startsAt, timezone: "UTC", revision: 1,
+      sections: [{ id: "source", title: "Imported", items: [{ id: "source-item", title: "New imported item", durationSeconds: 45, notes: { blocks: [] } }] }], live: { mode: "schedule" },
+    } })) as never);
+    localStorage.setItem("worshipsyncServicePlanImportSource", "worshipSync");
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(await screen.findByRole("button", { name: /Start from scratch/i }));
+    if (source === "file") {
+      const file = new File(["{}"], "plan.json", { type: "application/json" });
+      Object.defineProperty(file, "text", { value: () => gate.then(() => JSON.stringify({ format: "worshipsync-service-plan", version: 1, sections: importedSections })) });
+      fireEvent.change(screen.getByLabelText("WorshipSync JSON plan"), { target: { files: [file] } });
+    } else {
+      await user.click(screen.getByRole("button", { name: /Plan actions/i }));
+      await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+      fireEvent.change(screen.getByLabelText(/Public service-plan link/i), { target: { value: "https://www.worshipsync.net/services/source" } });
+      await user.click(screen.getByRole("button", { name: /Import plan/i }));
+    }
+    if (editDuringLoad) {
+      const name = screen.getByDisplayValue("Service");
+      fireEvent.change(name, { target: { value: "Edited empty draft" } });
+      fireEvent.blur(name);
+    }
+    await act(async () => { finish(); });
+    expect(await screen.findByDisplayValue(editDuringLoad ? "Edited empty draft" : "Imported")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Replace this plan's content?" })).not.toBeInTheDocument();
+    expect(await screen.findByText(editDuringLoad ? "The plan changed. Import it again to review the latest draft." : "Imported WorshipSync plan. Review the content.")).toBeInTheDocument();
   });
 
   it("autosaves the canonical church-local plan date across a UTC date boundary", async () => {
@@ -1911,7 +2097,7 @@ describe("ServicePlanEditor", () => {
     await user.click(screen.getByRole("button", { name: /Apply updates/i }));
 
     expect(await screen.findByRole("checkbox", { name: "Confirm match for Sermon" })).not.toBeChecked();
-    expect(screen.getByText("Moved")).toBeInTheDocument();
+    expect(screen.getByText("Possible matches")).toBeInTheDocument();
     expect(screen.getByText("Message → Response & Celebration")).toBeInTheDocument();
     expect(screen.queryByText("Added")).not.toBeInTheDocument();
   });
@@ -1952,8 +2138,9 @@ in mins
 SMC Worship Experience
 15:00 SML
 Host: Charmers Malcolm
-4:00 Opening Song: Come Before His Presence
-Opening Song to begin the worship experience.
+4:00 Opening Song: How Great Thou Art
+4:00 Song: Great Is Thy Faithfulness
+4:00 Appeal Song: I Surrender All
 108:00`);
 
     const user = userEvent.setup();
@@ -1978,7 +2165,9 @@ Opening Song to begin the worship experience.
 
     expect(await screen.findByDisplayValue("SMC Worship Experience")).toBeInTheDocument();
     expect(screen.getByDisplayValue("SML")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("Come Before His Presence")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Opening Song: How Great Thou Art")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Song: Great Is Thy Faithfulness")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Appeal Song: I Surrender All")).toBeInTheDocument();
 
     await waitFor(() => {
       expect(mockExtractTextFromPdfFile).toHaveBeenCalledWith(file);
@@ -1996,11 +2185,22 @@ Opening Song to begin the worship experience.
     expect(body.sections?.[0]?.elements?.[0]?.assignees?.[0]?.name).toBe(
       "Host: Charmers Malcolm",
     );
-    expect(body.sections?.[0]?.elements?.[1]?.songRef).toEqual({
+    expect(body.sections?.[0]?.elements?.map((item) => item.startTime)).toEqual([
+      "10:00",
+      "10:15",
+      "10:19",
+      "10:23",
+    ]);
+    expect(body.sections?.[0]?.elements?.[2]?.songRef).toEqual({
       kind: "pending",
-      title: "Come Before His Presence",
+      title: "Great Is Thy Faithfulness",
       lyricsText: "",
     });
+    expect(body.sections?.[0]?.elements?.slice(1, 4).map(({ title }) => richTextToPlainText(title))).toEqual([
+      "Opening Song: How Great Thou Art",
+      "Song: Great Is Thy Faithfulness",
+      "Appeal Song: I Surrender All",
+    ]);
 
     view.unmount();
     renderEditor();
@@ -2013,6 +2213,512 @@ Opening Song to begin the worship experience.
     expect(localStorage.getItem("worshipsyncServicePlanImportSource")).toBe(
       "planningCenterPdf",
     );
+  });
+
+  it("resolves a PDF note conflict in the editor and autosaves the selected note decision", async () => {
+    const oldNote = "Choir selection before the message";
+    const updatedNote = "Dedication prayer for incoming ministry volunteers";
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        revision: 1,
+        sourceImport: {
+          source: "planningCenterPdf",
+          sourceUrl: "",
+          loadedAt: "2026-07-20T12:00:00.000Z",
+          planLabel: "Sunday worship",
+        },
+        sections: [{
+          id: "section-1",
+          sourcePlanningManaged: true,
+          name: "SMC Worship Experience",
+          elements: [{
+            id: "local-prayer",
+            sourcePlanningManaged: true,
+            type: "free",
+            title: plainTextToRichText("Prayer"),
+            notes: plainTextToRichText(oldNote),
+            sourceNoteRaw: oldNote,
+            assignees: [{ id: "local-assignee", name: "Elder Naomi Brooks", microphoneIds: ["mic-1", "mic-2", "mic-3"], iemIds: ["iem-1"] }],
+            servicePlanningImport: {
+              observed: { elementType: "Prayer", title: "Prayer", ledBy: "Elder Naomi Brooks", note: oldNote },
+              applied: { elementType: "Prayer", title: "Prayer", ledBy: "Elder Naomi Brooks", note: oldNote },
+              pendingFields: [],
+            },
+          }],
+        }],
+      } as ServicePlan,
+    });
+    mockExtractTextFromPdfFile.mockResolvedValue(`Main Worship Service
+Length
+in mins
+SMC Worship Experience
+5:00 Prayer
+${updatedNote}
+108:00`);
+
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+    fireEvent.change(screen.getByLabelText(/Planning Center PDF/i), {
+      target: { files: [new File(["%PDF-fake"], "updated-note.pdf", { type: "application/pdf" })] },
+    });
+
+    await screen.findByText(/change selected/i);
+    expect(await screen.findByRole("checkbox", { name: "Update Prayer" })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
+    expect(await screen.findByText(/1 imported item needs a quick interpretation review/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Review items" }));
+
+    const noteConflict = screen.getByRole("region", { name: "Note conflict" });
+    expect(within(noteConflict).getByText("Existing notes")).toBeInTheDocument();
+    expect(within(noteConflict).getByText(oldNote)).toBeInTheDocument();
+    expect(within(noteConflict).getByText("Updated PDF note")).toBeInTheDocument();
+    expect(within(noteConflict).getByText(updatedNote)).toBeInTheDocument();
+    expect(screen.queryByText("No mapping is needed for this item.")).not.toBeInTheDocument();
+    expect(within(noteConflict).getByText(/Using the updated note replaces all existing notes shown here/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("radio", { name: /Use updated PDF note/ }));
+    await user.click(screen.getByRole("button", { name: "Resolve note conflict & finish" }));
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), { timeout: 2_500 });
+
+    const [, , saved] = mockSaveServicePlan.mock.calls.at(-1)!;
+    const savedPrayer = saved.sections?.flatMap(({ elements }) => elements).find(({ id }) => id === "local-prayer");
+    expect(savedPrayer).toMatchObject({
+      notes: plainTextToRichText(updatedNote),
+      sourceNoteRaw: updatedNote,
+      servicePlanningImport: {
+        observed: { note: updatedNote },
+        applied: { note: updatedNote },
+        pendingFields: [],
+        managedNotes: [expect.objectContaining({ id: expect.any(String), fingerprint: expect.any(String) })],
+      },
+      importAmbiguity: {
+        status: "confirmed",
+        sourceNoteConflict: { resolution: "useUpdated" },
+      },
+    });
+    expect(savedPrayer?.assignees).toEqual([expect.objectContaining({
+      id: "local-assignee",
+      microphoneIds: ["mic-1", "mic-2", "mic-3"],
+      iemIds: ["iem-1"],
+    })]);
+  });
+
+  it.each([
+    ["two rows", "review"],
+    ["three rows", "review"],
+    ["three rows", "addition"],
+  ] as const)("keeps a collided Prayer review-only and saves only the selected %s / %s change", async (scenario, selection) => {
+    const prayerKey = (occurrenceIndex: number) => JSON.stringify([
+      "planningCenterPdf", "prayer", "duplicate", 300, occurrenceIndex,
+    ]);
+    const localPrayerA = {
+      id: "local-prayer-a",
+      sourcePlanningManaged: true,
+      planningCenterPdfMatchKey: prayerKey(0),
+      planningCenterPdfSourcePosition: 1,
+      type: "free" as const,
+      title: plainTextToRichText("Prayer"),
+      startTime: "09:05",
+      durationSeconds: 300,
+      notes: plainTextToRichText("Keep note A"),
+      assignees: [{ id: "slot-a", name: "Avery", microphoneIds: ["mic-a"], iemIds: ["iem-a"] }],
+      resources: [{ id: "attachment-a", type: "text", title: "Local attachment A" }],
+    };
+    const localPrayerB = {
+      id: "local-prayer-b",
+      sourcePlanningManaged: true,
+      planningCenterPdfMatchKey: prayerKey(1),
+      planningCenterPdfSourcePosition: 3,
+      type: "free" as const,
+      title: plainTextToRichText("Prayer"),
+      startTime: "09:15",
+      durationSeconds: 300,
+      notes: plainTextToRichText("Keep note B"),
+      assignees: [{ id: "slot-b", name: "Jordan", microphoneIds: ["mic-b"], iemIds: ["iem-b"] }],
+      resources: [{ id: "attachment-b", type: "text", title: "Local attachment B" }],
+    };
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        sourceImport: {
+          source: "planningCenterPdf",
+          sourceUrl: "",
+          loadedAt: "2026-07-20T12:00:00.000Z",
+          planLabel: "Sunday worship",
+        },
+        sections: [{
+          id: "section-1",
+          sourcePlanningManaged: true,
+          name: "Worship",
+          elements: [
+            { id: "local-opening", sourcePlanningManaged: true, type: "free", title: plainTextToRichText("Opening"), startTime: "09:00", durationSeconds: 300 },
+            localPrayerA,
+            { id: "local-response", sourcePlanningManaged: true, type: "free", title: plainTextToRichText("Response"), startTime: "09:10", durationSeconds: 300 },
+            localPrayerB,
+            { id: "local-closing", sourcePlanningManaged: true, type: "free", title: plainTextToRichText("Closing"), startTime: "09:20", durationSeconds: 300 },
+          ],
+        }],
+      } as ServicePlan,
+    });
+    const pdfRows = scenario === "two rows"
+      ? "5:00 Response\n5:00 Prayer\n5:00 Closing\n5:00 Opening\n5:00 Prayer"
+      : "5:00 Opening\n5:00 Prayer\n5:00 Prayer\nNew occurrence note\n5:00 Response\n5:00 Prayer\n5:00 Closing";
+    mockExtractTextFromPdfFile.mockResolvedValue(`Main Worship Service
+Length
+in mins
+Worship
+${pdfRows}
+108:00`);
+
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+    fireEvent.change(screen.getByLabelText(/Planning Center PDF/i), {
+      target: { files: [new File(["%PDF-fake"], "duplicate-prayers.pdf", { type: "application/pdf" })] },
+    });
+
+    const reviewMatch = await screen.findByRole("checkbox", { name: "Confirm match for Prayer" });
+    expect(reviewMatch).not.toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name: "Select all updates" }));
+    const selectedChange = selection === "review"
+      ? reviewMatch
+      : screen.getByRole("checkbox", { name: "Add Prayer" });
+    await user.click(selectedChange);
+    await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
+
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), { timeout: 2_500 });
+    const [, , body] = mockSaveServicePlan.mock.calls.at(-1)!;
+    const savedItems = body.sections?.flatMap(({ elements }) => elements) || [];
+    const savedPrayers = savedItems.filter(({ title }) => richTextToPlainText(title) === "Prayer");
+    expect(savedItems.map(({ id }) => id)).toHaveLength(new Set(savedItems.map(({ id }) => id)).size);
+    expect(savedPrayers).toHaveLength(selection === "addition" ? 3 : 2);
+    expect(savedPrayers.map(({ id }) => id)).toEqual(expect.arrayContaining(["local-prayer-a", "local-prayer-b"]));
+    expect(savedPrayers.find(({ id }) => id === "local-prayer-a")).toMatchObject({
+      planningCenterPdfSourcePosition: scenario === "two rows" ? 4 : 1,
+      notes: plainTextToRichText("Keep note A"),
+      assignees: [{ id: "slot-a", microphoneIds: ["mic-a"], iemIds: ["iem-a"] }],
+      resources: [{ id: "attachment-a" }],
+    });
+    expect(savedPrayers.find(({ id }) => id === "local-prayer-b")).toMatchObject({
+      planningCenterPdfSourcePosition: 3,
+      notes: plainTextToRichText("Keep note B"),
+      assignees: [{ id: "slot-b", microphoneIds: ["mic-b"], iemIds: ["iem-b"] }],
+      resources: [{ id: "attachment-b" }],
+    });
+    const addedPrayers = savedPrayers.filter(({ id }) => id !== "local-prayer-a" && id !== "local-prayer-b");
+    expect(addedPrayers.map(({ notes }) => richTextToPlainText(notes))).toEqual(selection === "addition" ? ["New occurrence note"] : []);
+    expect(savedPrayers.find(({ id }) => id === "local-prayer-a")?.planningCenterPdfMatchReviewRequired)
+      .toBe(selection === "addition" ? true : undefined);
+  });
+
+  it("refreshes a duration-only Planning Center PDF from the existing anchor and cascades reviewed times", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        sourceImport: {
+          source: "planningCenterPdf",
+          sourceUrl: "",
+          loadedAt: "2026-07-20T12:00:00.000Z",
+          planLabel: "Sunday worship",
+        },
+        sections: [{
+          id: "section-1",
+          sourcePlanningManaged: true,
+          name: "SMC Worship Experience",
+          elements: [
+            {
+              id: "welcome",
+              sourcePlanningManaged: true,
+              type: "free",
+              title: plainTextToRichText("Welcome"),
+              startTime: "09:00",
+              durationSeconds: 300,
+              durationMinutes: 5,
+            },
+            {
+              id: "prayer",
+              sourcePlanningManaged: true,
+              type: "free",
+              title: plainTextToRichText("Prayer"),
+              startTime: "09:05",
+              durationSeconds: 300,
+              durationMinutes: 5,
+            },
+          ],
+        }],
+      },
+    });
+    mockExtractTextFromPdfFile.mockResolvedValue(`Main Worship Service
+Length
+in mins
+SMC Worship Experience
+8:00 Welcome
+5:00 Prayer
+108:00`);
+
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+    expect(screen.getByRole("checkbox", { name: "Remove source items no longer listed" }))
+      .not.toBeChecked();
+    const file = new File(["%PDF-fake"], "updated-order.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByLabelText(/Planning Center PDF/i), { target: { files: [file] } });
+
+    expect(await screen.findByText(/1 change selected/i)).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Update Welcome" })).toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "Update Prayer" })).not.toBeInTheDocument();
+    await user.click(screen.getByText("Schedule impact (1)"));
+    expect(screen.getByText(/Prayer.*09:05.*09:08/)).toBeInTheDocument();
+    expect(screen.getByText(/Timing reflects the selected changes/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), { timeout: 2_500 });
+    const [, , body] = mockSaveServicePlan.mock.calls.at(-1)!;
+    expect(body.sections?.[0]?.elements?.map((item) => ({
+      id: item.id,
+      startTime: item.startTime,
+      durationSeconds: item.durationSeconds,
+    }))).toEqual([
+      { id: "welcome", startTime: "09:00", durationSeconds: 480 },
+      { id: "prayer", startTime: "09:08", durationSeconds: 300 },
+    ]);
+  });
+
+  it("reviews optional PDF removals and recalculates from a later section's start time", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        sourceImport: {
+          source: "planningCenterPdf",
+          sourceUrl: "",
+          loadedAt: "2026-07-20T12:00:00.000Z",
+          planLabel: "Sunday worship",
+        },
+        sections: [
+          { id: "empty-first", name: "Prelude", elements: [] },
+          {
+            id: "section-1",
+            sourcePlanningManaged: true,
+            name: "SMC Worship Experience",
+            elements: [
+              {
+                id: "opening",
+                sourcePlanningManaged: true,
+                type: "free",
+                title: plainTextToRichText("Opening"),
+                startTime: "09:00",
+                durationSeconds: 300,
+              },
+              {
+                id: "manual",
+                type: "free",
+                title: plainTextToRichText("Manual item"),
+                startTime: "09:05",
+                durationSeconds: 120,
+              },
+              {
+                id: "prayer",
+                sourcePlanningManaged: true,
+                type: "free",
+                title: plainTextToRichText("Prayer"),
+                startTime: "09:07",
+                durationSeconds: 300,
+              },
+              {
+                id: "song",
+                sourcePlanningManaged: true,
+                type: "free",
+                title: plainTextToRichText("Song"),
+                startTime: "09:12",
+                durationSeconds: 300,
+              },
+            ],
+          },
+        ],
+      },
+    });
+    mockExtractTextFromPdfFile.mockResolvedValue(`Main Worship Service
+Length
+in mins
+SMC Worship Experience
+5:00 Prayer
+5:00 Song
+108:00`);
+
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+    const removeMissing = screen.getByRole("checkbox", {
+      name: "Remove source items no longer listed",
+    });
+    expect(removeMissing).not.toBeChecked();
+    await user.click(removeMissing);
+
+    const file = new File(["%PDF-fake"], "updated-order.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByLabelText(/Planning Center PDF/i), { target: { files: [file] } });
+
+    expect(await screen.findByRole("checkbox", { name: "Remove Opening" })).toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name: "Select all updates" }));
+    await user.click(screen.getByRole("checkbox", { name: "Remove Opening" }));
+    expect(screen.getByRole("button", { name: "Apply 1 change" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
+
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), { timeout: 2_500 });
+    const [, , body] = mockSaveServicePlan.mock.calls.at(-1)!;
+    expect(body.sections?.[0]).toMatchObject({ id: "empty-first", elements: [] });
+    const refreshedItems = body.sections?.[1]?.elements || [];
+    expect(refreshedItems.map((item) => richTextToPlainText(item.title))).toEqual([
+      "Manual item",
+      "Prayer",
+      "Song",
+    ]);
+    expect(refreshedItems.map(({ id, startTime }) => ({ id, startTime }))).toEqual([
+      { id: "manual", startTime: "09:00" },
+      { id: "prayer", startTime: "09:02" },
+      { id: "song", startTime: "09:07" },
+    ]);
+  });
+
+  it.each(["reading", "reviewing"])("preserves edits made while %s a PDF import", async (phase) => {
+    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: {
+      planId: "church-1::service-1@2026-07-26", churchId: "church-1", planKey: "service-1@2026-07-26",
+      serviceId: "service-1", date: "2026-07-26", name: "Sunday Worship",
+      sourceImport: { source: "planningCenterPdf", sourceUrl: "", loadedAt: "2026-07-20T12:00:00Z", planLabel: "Sunday" },
+      sections: [{ id: "worship", name: "Worship", sourcePlanningManaged: true, elements: [
+        { id: "welcome", type: "free", title: plainTextToRichText("Welcome"), sourcePlanningManaged: true, durationSeconds: 300 },
+      ] }],
+    } });
+    let resolvePdf!: (value: string) => void;
+    mockExtractTextFromPdfFile.mockReturnValue(new Promise((resolve) => { resolvePdf = resolve; }));
+    const user = userEvent.setup();
+    renderEditor({ initialEditing: true });
+    await screen.findByLabelText(/^Duration/i);
+    await user.click(screen.getByRole("button", { name: /Plan actions/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+    fireEvent.change(screen.getByLabelText(/Planning Center PDF/i), { target: { files: [new File(["pdf"], "updated.pdf", { type: "application/pdf" })] } });
+    const finishReading = async () => {
+      await act(async () => { resolvePdf("Sunday Worship\nWorship\n8:00 Welcome"); });
+    };
+    if (phase === "reviewing") {
+      await finishReading();
+      await screen.findByRole("button", { name: "Apply 1 change" });
+    }
+    const duration = screen.getByLabelText(/^Duration/i);
+    fireEvent.change(duration, { target: { value: "20" } });
+    await waitFor(() => expect(duration).toHaveValue("20"));
+    fireEvent.blur(duration);
+    if (phase === "reading") await finishReading();
+    else await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
+    expect(await screen.findByText("The plan changed. Import it again to review the latest draft.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Apply 1 change" })).not.toBeInTheDocument();
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), { timeout: 2500 });
+    expect(mockSaveServicePlan.mock.calls.at(-1)![2].sections?.[0].elements[0].durationSeconds).toBe(1200);
+  });
+
+  it("ignores a PDF import that finishes after switching to another plan", async () => {
+    const currentPlan: ServicePlan = {
+      planId: "church-1::service-1@2026-07-26",
+      churchId: "church-1",
+      planKey: "service-1@2026-07-26",
+      serviceId: "service-1",
+      date: "2026-07-26",
+      name: "Easter Sunday",
+      sourceImport: {
+        source: "planningCenterPdf",
+        sourceUrl: "",
+        loadedAt: "2026-07-20T12:00:00.000Z",
+        planLabel: "Sunday worship",
+      },
+      sections: [{
+        id: "current-section",
+        sourcePlanningManaged: true,
+        name: "Worship",
+        elements: [{
+          id: "current-item",
+          sourcePlanningManaged: true,
+          type: "free",
+          title: plainTextToRichText("Current item"),
+        }],
+      }],
+    };
+    const nextPlan: ServicePlan = {
+      ...currentPlan,
+      planId: "church-1::service-1@2026-08-02",
+      planKey: "service-1@2026-08-02",
+      date: "2026-08-02",
+      sections: [{
+        id: "next-section",
+        name: "Worship",
+        elements: [{
+          id: "next-item",
+          type: "free",
+          title: plainTextToRichText("Upcoming item"),
+        }],
+      }],
+    };
+    mockGetServicePlan
+      .mockResolvedValueOnce({ success: true, servicePlan: currentPlan })
+      .mockResolvedValueOnce({ success: true, servicePlan: nextPlan });
+    let resolvePdfText: ((text: string) => void) | undefined;
+    mockExtractTextFromPdfFile.mockReturnValue(new Promise((resolve) => {
+      resolvePdfText = resolve;
+    }));
+
+    const user = userEvent.setup();
+    const view = renderEditor();
+    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+    const file = new File(["%PDF-fake"], "slow-order.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByLabelText(/Planning Center PDF/i), { target: { files: [file] } });
+    await waitFor(() => expect(mockExtractTextFromPdfFile).toHaveBeenCalledWith(file));
+
+    view.rerender(editorTree({ occurrence: nextOccurrence }));
+    await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("Upcoming item")).toBeInTheDocument();
+
+    await act(async () => {
+      resolvePdfText?.(`Main Worship Service
+Length
+in mins
+SMC Worship Experience
+5:00 Stale item
+108:00`);
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText("Stale item")).not.toBeInTheDocument();
+    expect(screen.getByText("Upcoming item")).toBeInTheDocument();
+    expect(mockSaveServicePlan).not.toHaveBeenCalled();
   });
 
   it("refreshes an existing plan with only the selected Service Planning fields", async () => {
@@ -2072,7 +2778,7 @@ Opening Song to begin the worship experience.
     expect(screen.getByRole("checkbox", { name: /Titles and content/i })).toBeChecked();
     await user.click(screen.getByRole("checkbox", { name: /Start times and durations/i }));
     await user.click(screen.getByRole("button", { name: /Apply updates/i }));
-    expect(await screen.findByText(/1 change ready to apply/i)).toBeInTheDocument();
+    expect(await screen.findByText(/1 change selected/i)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Apply 1 change/i }));
 
     await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), { timeout: 2_500 });
@@ -3001,6 +3707,93 @@ Opening Song to begin the worship experience.
     }
   });
 
+  it("shows remote Make Live times after the service plan refreshes on resume", async () => {
+    let nowMs = Date.parse("2026-07-26T14:01:00.000Z");
+    const nowSpy = jest.spyOn(Date, "now").mockImplementation(() => nowMs);
+    const initialPlan: ServicePlan = {
+      planId: "church-1::service-1@2026-07-26",
+      churchId: "church-1",
+      planKey: "service-1@2026-07-26",
+      serviceId: "service-1",
+      date: "2026-07-26",
+      name: "Easter Sunday",
+      startsAt: "2026-07-26T14:00:00.000Z",
+      timezone: "UTC",
+      revision: 4,
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        elements: [
+          {
+            id: "welcome",
+            type: "free",
+            title: plainTextToRichText("Welcome"),
+            startTime: "14:00",
+            durationSeconds: 300,
+          },
+          {
+            id: "message",
+            type: "free",
+            title: plainTextToRichText("Message"),
+            startTime: "14:05",
+            durationSeconds: 1_800,
+          },
+        ],
+      }],
+      publicLive: { mode: "schedule" },
+    };
+    const remoteLivePlan: ServicePlan = {
+      ...initialPlan,
+      publicLive: {
+        mode: "anchored",
+        currentElementId: "message",
+        startedAt: "2026-07-26T13:57:00.000Z",
+      },
+    };
+    let getServicePlanCallCount = 0;
+    mockGetServicePlan.mockImplementation(async () => ({
+      success: true,
+      servicePlan:
+        getServicePlanCallCount++ < 2 ? initialPlan : remoteLivePlan,
+    }));
+
+    try {
+      render(
+        <StrictMode>
+          {editorTree({})}
+        </StrictMode>,
+      );
+      expect(await screen.findByLabelText("Live on schedule: Welcome"))
+        .toBeInTheDocument();
+      await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(2));
+
+      act(() => {
+        Object.defineProperty(document, "visibilityState", {
+          configurable: true,
+          get: () => "hidden",
+        });
+        document.dispatchEvent(new Event("visibilitychange"));
+        nowMs += 10_001;
+        Object.defineProperty(document, "visibilityState", {
+          configurable: true,
+          get: () => "visible",
+        });
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+
+      await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(3));
+      expect(screen.getByLabelText("Live-adjusted time 01:57 PM; planned 02:05 PM"))
+        .toHaveClass("text-blue-300");
+      expect(screen.getByText("02:00 PM", { selector: "time" }))
+        .toHaveClass("text-gray-400");
+      expect(mockSaveServicePlan).not.toHaveBeenCalled();
+      expect(remoteLivePlan.sections[0].elements.map((element) => element.startTime))
+        .toEqual(["14:00", "14:05"]);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
   it("preserves an unsaved draft and merges an independent remote change on resume", async () => {
     let nowMs = Date.parse("2026-07-26T14:01:00.000Z");
     const nowSpy = jest.spyOn(Date, "now").mockImplementation(() => nowMs);
@@ -3302,6 +4095,15 @@ Opening Song to begin the worship experience.
         { mode: "anchored", currentElementId: "message" },
       );
     });
+    await user.click(screen.getByRole("button", { name: /Plan actions/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Return to planned schedule/i }));
+    await waitFor(() => {
+      expect(mockUpdateServicePlanPublicLive).toHaveBeenLastCalledWith(
+        "church-1",
+        planKey,
+        { mode: "schedule" },
+      );
+    });
   });
 
   it("offers an explicit publish for an unpublished plan", async () => {
@@ -3466,6 +4268,73 @@ Opening Song to begin the worship experience.
     });
     keepInView.mockRestore();
     layout.mockRestore();
+  });
+
+  it("keeps every adjusted time from the Make Live anchor after automatic advancement", async () => {
+    const nowMs = Date.parse("2026-07-26T14:06:00.000Z");
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(nowMs);
+    const livePlan: ServicePlan = {
+      planId: "church-1::service-1@2026-07-26",
+      churchId: "church-1",
+      planKey: "service-1@2026-07-26",
+      serviceId: "service-1",
+      date: "2026-07-26",
+      name: "Easter Sunday",
+      startsAt: "2026-07-26T14:00:00.000Z",
+      timezone: "UTC",
+      publicLive: {
+        mode: "anchored",
+        currentElementId: "song",
+        startedAt: "2026-07-26T14:02:00.000Z",
+      },
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        elements: [
+          {
+            id: "welcome",
+            type: "free",
+            title: plainTextToRichText("Welcome"),
+            startTime: "14:00",
+            durationSeconds: 300,
+          },
+          {
+            id: "song",
+            type: "free",
+            title: plainTextToRichText("Song"),
+            startTime: "14:05",
+            durationSeconds: 60,
+          },
+          {
+            id: "closing",
+            type: "free",
+            title: plainTextToRichText("Closing"),
+            startTime: "14:06",
+            durationSeconds: 600,
+          },
+        ],
+      }],
+    };
+    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: livePlan });
+
+    try {
+      const user = userEvent.setup();
+      renderEditor();
+
+      expect(await screen.findByLabelText("Live-adjusted time 02:02 PM; planned 02:05 PM"))
+        .toHaveClass("text-blue-300");
+      expect(screen.getByLabelText("Live-adjusted time 02:03 PM; planned 02:06 PM"))
+        .toHaveClass("text-blue-300");
+      expect(screen.getByText("02:00 PM", { selector: "time" })).toHaveClass("text-gray-400");
+      expect(screen.getByLabelText("Live, started 2:02 PM: Closing")).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: /^Edit$/i }));
+      expect(screen.getAllByLabelText("Time").map((input) => (input as HTMLInputElement).value))
+        .toEqual(["02:00 PM", "02:05 PM", "02:06 PM"]);
+      expect(mockSaveServicePlan).not.toHaveBeenCalled();
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it("follows by default and resumes the same live row inside the plan list", async () => {

@@ -1,5 +1,4 @@
 import { useContext, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 import TextArea from "../../../components/TextArea/TextArea";
@@ -34,7 +33,6 @@ import {
   type EntityListFilterState,
 } from "../components/EntityListFilters";
 import TeamEditorRelatedSection from "../components/TeamEditorRelatedSection";
-import TeamMemberProfileEditor from "./TeamMemberProfileEditor";
 import TeamMembersEditor from "../components/TeamMembersEditor";
 import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import EntityIconPicker from "@/components/icons/EntityIconPicker";
@@ -44,9 +42,13 @@ import { describeDeletionImpacts, memberName, normalizeSafeRosterMember, sortPos
 import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 import {
   buildGroupsReturnTo,
+  buildTeamsMemberEditPath,
   buildTeamsPositionsPath,
   buildTeamsQualificationsPath,
   buildTeamsRolesPath,
+  buildTeamsReturnNavigationState,
+  persistTeamsReturnTo,
+  teamsRoutePathname,
 } from "../teamsReturnNavigation";
 import { useTeamsRestoreOnMount, useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
 import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
@@ -103,7 +105,6 @@ const TeamManager = ({
   const context = useContext(GlobalInfoContext);
   const { showToast } = useToast();
   const churchId = context?.churchId || "";
-  const navigate = useNavigate();
   const [editing, setEditing] = useState<TeamRecord | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [listQuery, setListQuery] = useState("");
@@ -121,7 +122,6 @@ const TeamManager = ({
   const [candidateAdding, setCandidateAdding] = useState<{ teamId: string; memberId: string } | null>(null);
   const candidateAddInFlightRef = useRef(false);
   const [rosterMutationMemberId, setRosterMutationMemberId] = useState<string | null>(null);
-  const [teamProfileMember, setTeamProfileMember] = useState<TeamRosterMember | null>(null);
   const [rosterMutationBusy, setRosterMutationBusy] = useState(false);
   const [draft, setDraft] = useState<TeamPayload>({
     name: "",
@@ -141,12 +141,16 @@ const TeamManager = ({
   const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set());
   const pendingEditTeamIdRef = useRef<string | null>(null);
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
-  const { requestDiscardAction } = useTeamsNavigationGuard();
+  const { requestDiscardAction, requestNavigation } = useTeamsNavigationGuard();
+  const hasEditAuthorityForTeam = useCallback(
+    (teamId: string) => canEditTeams || canEditTeam(teamId),
+    [canEditTeam, canEditTeams],
+  );
   const currentEditingTeam = editing
     ? teams.find((team) => team.teamId === editing.teamId) || editing
     : null;
   const canEditCurrentTeam = editing
-    ? canEditTeam(editing.teamId)
+    ? hasEditAuthorityForTeam(editing.teamId)
     : canEditTeams;
 
   const editingTeamPositions = useMemo(() => {
@@ -195,6 +199,10 @@ const TeamManager = ({
   };
 
   const cancelEditing = () => {
+    requestDiscardAction(reset);
+  };
+
+  const returnToOrigin = () => {
     requestDiscardAction(() => finishEditing(reset));
   };
 
@@ -206,7 +214,6 @@ const TeamManager = ({
     setCandidateBusy(false);
     setCandidateError("");
     setRosterMutationMemberId(null);
-    setTeamProfileMember(null);
     setEditing(team);
     setShowCreate(true);
     setDraft({
@@ -220,9 +227,10 @@ const TeamManager = ({
   }, []);
 
   const selectTeam = useCallback((team: TeamRecord) => {
+    if (!hasEditAuthorityForTeam(team.teamId)) return;
     if (editing?.teamId === team.teamId) return;
     requestDiscardAction(() => startEditingTeam(team));
-  }, [editing?.teamId, requestDiscardAction, startEditingTeam]);
+  }, [editing?.teamId, hasEditAuthorityForTeam, requestDiscardAction, startEditingTeam]);
 
   useTeamsRestoreOnMount({
     onGroupsRestore: (restore) => {
@@ -236,9 +244,9 @@ const TeamManager = ({
     const team = teams.find((item) => item.teamId === editTeamId);
     if (!team) return;
     pendingEditTeamIdRef.current = null;
-    if (!canEditTeam(team.teamId)) return;
+    if (!hasEditAuthorityForTeam(team.teamId)) return;
     startEditingTeam(team);
-  }, [canEditTeam, startEditingTeam, teams]);
+  }, [hasEditAuthorityForTeam, startEditingTeam, teams]);
 
   const confirmDelete = async () => {
     if (!canEditTeams) return;
@@ -571,7 +579,7 @@ const TeamManager = ({
         listToolbar={
           <div className="space-y-3">
             {returnTo && !showCreate ? (
-              <TeamsReturnToolbar returnTo={returnTo} onBack={cancelEditing} />
+              <TeamsReturnToolbar returnTo={returnTo} onBack={returnToOrigin} />
             ) : null}
             <EntityListFilterToolbar
               entityLabel="Teams"
@@ -600,15 +608,15 @@ const TeamManager = ({
                 icon={team.icon}
                 archived={Boolean(team.archivedAt)}
                 compact
-                canEdit={canEditTeam(team.teamId)}
-                onTitleClick={canEditTeam(team.teamId) ? () => selectTeam(team) : undefined}
+                canEdit={hasEditAuthorityForTeam(team.teamId)}
+                onTitleClick={hasEditAuthorityForTeam(team.teamId) ? () => selectTeam(team) : undefined}
               />
             ))}
           </>
         }
         formHeaderActions={
           showCreate ? (
-            <TeamsReturnToolbar returnTo={returnTo} onBack={cancelEditing}>
+            <TeamsReturnToolbar returnTo={returnTo} onBack={returnToOrigin}>
               {editing ? (
                 <EntityFormDangerActions
                   archived={Boolean(editing.archivedAt)}
@@ -684,11 +692,23 @@ const TeamManager = ({
               else void addCandidate(memberId);
             }}
             onRemoveMember={setRosterMutationMemberId}
-            onManageMember={!canEditTeams && editing
-              ? (member) => setTeamProfileMember(member)
+            canManageMembers={Boolean(editing && canEditCurrentTeam)}
+            onManageMember={editing && canEditCurrentTeam
+              ? (member) => {
+                const returnTo = {
+                  ...buildGroupsReturnTo(editing.teamId),
+                  label: `Back to ${editing.name || "team"}`,
+                };
+                const to = buildTeamsMemberEditPath(member.memberId, editing.teamId);
+                requestNavigation(to, {
+                  state: buildTeamsReturnNavigationState(returnTo),
+                  onNavigated: () =>
+                    persistTeamsReturnTo(returnTo, teamsRoutePathname(to)),
+                });
+              }
               : undefined}
             onCreateMember={!canEditTeams && editing
-              ? () => navigate(TEAMS_SECTION_PATHS.members, {
+              ? () => requestNavigation(TEAMS_SECTION_PATHS.members, {
                 state: { teamsCreateMember: { teamId: editing.teamId } },
               })
               : undefined}
@@ -779,19 +799,6 @@ const TeamManager = ({
           </div>
         </div> : null}
       </Modal>
-      {editing ? (
-        <TeamMemberProfileEditor
-          churchId={churchId}
-          team={editing}
-          member={teamProfileMember}
-          positions={positions}
-          roles={roles}
-          qualificationAreas={qualificationAreas}
-          qualificationLevels={data.qualificationLevels}
-          onClose={() => setTeamProfileMember(null)}
-          onSaved={(memberId) => onRosterMutationReconcile(memberId)}
-        />
-      ) : null}
     </>
   );
 };

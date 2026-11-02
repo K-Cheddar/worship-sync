@@ -19,6 +19,7 @@ import {
   visibleServiceFlowNotesForItem,
   type ServiceFlowFilterPreference,
 } from "../../services/serviceFlowAudience";
+import { getServiceFlowProgress } from "../../services/serviceFlowProgress";
 import type { PublicServiceFlowResource, PublicServiceFlowSnapshot } from "../../services/serviceFlowTypes";
 import type { DBItem, ScrollbarWidth } from "../../types";
 import { useSelector } from "../../hooks";
@@ -36,7 +37,6 @@ import { useControllerBasePath } from "../../context/activeController";
 import { bibleRefToUrlParams, parseBibleReference } from "../../integrations/servicePlanning/parseBibleReference";
 import { formatServicePlanDuration } from "../Services/servicePlanDuration";
 import { getControllerServicePlanResourcePillClass } from "../Services/servicePlanChipStyles";
-import { getServicePlanLiveProgress } from "../Services/servicePlanLive";
 import {
   getServicePlanCustomDocumentDisplayLabel,
   getServicePlanResourceDefinition,
@@ -52,6 +52,14 @@ type ScriptureLocation = Pick<
 type SongViewerSelection =
   | { kind: "reference"; reference: ServicePlanSongReference }
   | { kind: "unavailable"; title: string };
+
+const formatControllerServiceTime = (timeMs: number, timezone: string) =>
+  new Intl.DateTimeFormat("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZone: timezone || "UTC",
+  }).format(new Date(timeMs));
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -405,10 +413,42 @@ const ControllerServicePlanView = ({
     () => snapshot ? snapshot.serverNowMs - Date.now() : 0,
     [snapshot],
   );
-  const currentItemId = getServicePlanLiveProgress({
-    ...plan,
-    startsAt: plan.startsAt || `${plan.date}T00:00:00.000Z`,
-  }, clientNow + serverOffsetMs)?.current?.item.id ?? null;
+  const liveProgress = useMemo(
+    () => getServiceFlowProgress(serviceSnapshot.service, clientNow + serverOffsetMs),
+    [clientNow, serverOffsetMs, serviceSnapshot.service],
+  );
+  const displayedTimeline = useMemo(
+    () => getServiceFlowProgress(serviceSnapshot.service, serviceSnapshot.serverNowMs),
+    [serviceSnapshot.serverNowMs, serviceSnapshot.service],
+  );
+  const plannedTimeline = useMemo(
+    () => getServiceFlowProgress(
+      { ...serviceSnapshot.service, live: { mode: "schedule" } },
+      serviceSnapshot.serverNowMs,
+    ),
+    [serviceSnapshot.serverNowMs, serviceSnapshot.service],
+  );
+  const displayedTimesByItemId = useMemo(() => {
+    const plannedById = new Map(
+      plannedTimeline.items.map((timed) => [timed.item.id, timed]),
+    );
+    return new Map(displayedTimeline.items.map((timed) => {
+      const planned = plannedById.get(timed.item.id);
+      const displayedTime = formatControllerServiceTime(
+        timed.startsAtMs,
+        serviceSnapshot.service.timezone,
+      );
+      const plannedTime = planned
+        ? formatControllerServiceTime(planned.startsAtMs, serviceSnapshot.service.timezone)
+        : "";
+      return [timed.item.id, {
+        displayedTime,
+        plannedTime,
+        isAdjusted: Boolean(plannedTime && displayedTime !== plannedTime),
+      }];
+    }));
+  }, [displayedTimeline, plannedTimeline, serviceSnapshot.service.timezone]);
+  const currentItemId = liveProgress.current?.item.id ?? null;
   const teams = useMemo(() => buildServiceFlowTeamLabels(serviceSnapshot), [serviceSnapshot]);
   const allRoles = useMemo(() => buildServiceFlowRoleOptions(serviceSnapshot), [serviceSnapshot]);
   const effectivePreference = useMemo(() => {
@@ -503,6 +543,7 @@ const ControllerServicePlanView = ({
           <ol className="divide-y divide-zinc-700">
             {section.items.map((item) => {
               const planItem = planItemsById.get(item.id);
+              const timing = displayedTimesByItemId.get(item.id);
               const isLive = currentItemId === item.id;
               const leadName = item.creditName?.trim() || (
                 planItem ? getServicePlanElementAssigneeNames(planItem).join(", ") : ""
@@ -535,7 +576,17 @@ const ControllerServicePlanView = ({
                   aria-current={isLive ? "true" : undefined}
                 >
                   <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-[11px] text-zinc-400">
-                    {planItem?.startTime ? <time className="shrink-0">{planItem.startTime}</time> : null}
+                    {timing ? (
+                      <time
+                        className={`shrink-0 ${timing.isAdjusted ? "text-blue-300" : "text-zinc-400"}`}
+                        title={timing.isAdjusted ? `Planned time: ${timing.plannedTime}` : undefined}
+                        aria-label={timing.isAdjusted
+                          ? `Live-adjusted time ${timing.displayedTime}; planned ${timing.plannedTime}`
+                          : undefined}
+                      >
+                        {timing.displayedTime}
+                      </time>
+                    ) : null}
                     {duration ? <span className="shrink-0">{duration}</span> : null}
                     <h4 className="min-w-0 flex-1 break-words whitespace-normal text-xs font-semibold text-zinc-100">{item.title}</h4>
                     {isLive ? <span className="shrink-0 rounded bg-emerald-400/15 px-1.5 py-0.5 font-semibold uppercase text-emerald-200">Live</span> : null}

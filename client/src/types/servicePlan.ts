@@ -11,8 +11,10 @@
  * TeamSchedule pattern — see server/teamsAuthHandlers.js and
  * client/src/api/auth.ts (getServicePlan/saveServicePlan/deleteServicePlan).
  */
+import type { ServicePlanSourceImport, ServicePlanImportSourceState } from "../../../shared/servicePlanImportMetadata";
 import type { RichTextDocument } from "./richText";
 import { getServicePlanScriptureResourceTitle } from "../../../shared/servicePlanScripture";
+export type { ServicePlanImportSource, ServicePlanSourceImport, ServicePlanningSourceSnapshot, ServicePlanImportSourceState } from "../../../shared/servicePlanImportMetadata";
 
 // Mirrors ServiceItem.type (client/src/types.ts) minus the presentation-only
 // "timer"/"service-time" kinds, so pushing a plan into the outline is 1:1.
@@ -141,9 +143,8 @@ export type ServicePlanAssignee = {
   iemIds?: string[];
 };
 
-/** Explicit opt-in for preparing participant overlays from one plan item. */
+/** Optional event label for participant overlays from one plan item. */
 export type ServicePlanParticipantOverlaySettings = {
-  enabled?: boolean;
   /** Blank or omitted uses the item title as the reusable overlay event. */
   eventLabel?: string;
 };
@@ -207,6 +208,12 @@ export type ServicePlanImportAmbiguity = {
   reasons: string[];
   status: "unresolved" | "deferred" | "confirmed" | "acknowledged";
   sourceFingerprint: string;
+  /** A changed source note that could not be reconciled without an operator decision. */
+  sourceNoteConflict?: {
+    sourceFingerprint: string;
+    existingNotesFingerprint: string;
+    resolution?: "keepExisting" | "useUpdated";
+  };
   /** Pending source songs that may correspond to more than one existing library occurrence. */
   songMappings?: Array<{
     incoming: Extract<ServicePlanSongReference, { kind: "pending" }>;
@@ -218,31 +225,6 @@ export type ServicePlanImportAmbiguity = {
   }>;
   /** URL extraction can be clear while attaching an external link still needs operator approval. */
   authorizationPending?: boolean;
-};
-
-export type ServicePlanningSourceSnapshot = {
-  elementType: string;
-  title: string;
-  ledBy: string;
-  note: string;
-};
-
-export type ServicePlanImportSourceState = {
-  observed: ServicePlanningSourceSnapshot;
-  applied: ServicePlanningSourceSnapshot;
-  pendingFields: Array<"elementType" | "title" | "ledBy" | "note">;
-  /** Exact imported assignee occurrences and their source fields. */
-  managedAssignees?: Array<{
-    id: string;
-    fields: Array<"title" | "ledBy">;
-    ledByIdentity?: string;
-    fingerprint: string;
-  }>;
-  /** Exact source-created shared Note paragraphs; older imports may omit provenance. */
-  managedNotes?: Array<{
-    id: string;
-    fingerprint: string;
-  }>;
 };
 
 /**
@@ -328,6 +310,16 @@ export type ServicePlanElement = {
   sourceTemplateElementType?: ServicePlanElementType;
   /** Import-preview-only link from a proposed legacy match to its current item ID. */
   legacyImportMatchCandidateForId?: string;
+  /** Transient confident PDF association, resolved once before field merging. */
+  importMatchCurrentId?: string;
+  /** Stable PDF-only matching evidence. Planning Center PDFs have no row IDs;
+   * duplicate-title rows use title and duration fingerprints, with ambiguous
+   * changed-duration pairs sent through the existing import review. */
+  planningCenterPdfMatchKey?: string;
+  /** Keeps a declined ambiguous PDF pair in individual review on later refreshes. */
+  planningCenterPdfMatchReviewRequired?: boolean;
+  /** Transient source order within the current PDF review; never a durable identity. */
+  planningCenterPdfSourcePosition?: number;
   /** Internal provenance flag used to safely reconcile later Service Planning
    * refreshes without treating operator-created items as source items. */
   sourcePlanningManaged?: boolean;
@@ -369,7 +361,7 @@ export type ServicePlanElement = {
   contentOrder?: string[];
   /** Everyone doing this item, and the microphones each of them carries. */
   assignees?: ServicePlanAssignee[];
-  /** Explicitly opts this item into the Controller's participant overlay preview. */
+  /** Optional label override for the Controller's participant overlay preview. */
   participantOverlay?: ServicePlanParticipantOverlaySettings;
   /**
    * @deprecated Superseded by `assignees`. Read only for plans saved before
@@ -626,6 +618,8 @@ export type ServicePlanSection = {
   id: string;
   /** See ServicePlanElement.sourcePlanningManaged. */
   sourcePlanningManaged?: boolean;
+  /** Service phase; omitted on legacy sections, which behave as main service. */
+  phase?: "pre" | "main" | "post";
   name: string;
   elements: ServicePlanElement[];
 };
@@ -656,21 +650,6 @@ export type ServicePlanTemplatePayload = {
   name: string;
   serviceId?: string;
   sections: ServicePlanSection[];
-};
-
-export type ServicePlanImportSource =
-  | "servicePlanning"
-  | "planningCenterPdf"
-  | "planningCenter";
-
-export type ServicePlanSourceImport = {
-  source: ServicePlanImportSource;
-  /** Planning URL for Service Planning / PCO account; empty for pasted PDF text. */
-  sourceUrl: string;
-  loadedAt: string;
-  planLabel: string;
-  planningCenterServiceTypeId?: string;
-  planningCenterPlanId?: string;
 };
 
 export type ServicePlan = {

@@ -21,6 +21,7 @@ export type AllDocsLookup = {
   allFreeFormDocs: DBItem[];
   allTimerDocs: DBItem[];
   allBibleDocs: DBItem[];
+  allServiceTimeDocs?: DBItem[];
 };
 
 export type OutlineSlideSection = {
@@ -101,22 +102,6 @@ type ActiveItemSlideSource = {
 const EMPTY_ITEM_SLIDES: ItemSlideType[] = [];
 const EMPTY_FORMATTED_SECTIONS: FormattedSection[] = [];
 
-/**
- * Route for an outline item on a given controller.
- *
- * `basePath` defaults to the main controller so existing callers are unchanged.
- * Auxiliary controllers live under their own path, and a hardcoded
- * "/controller" here would throw their operator out of the surface they are
- * driving mid-service. Get it from `useControllerBasePath`.
- */
-export const getControllerItemPath = (
-  item: Pick<ServiceItem, "_id" | "listId">,
-  basePath = "/controller",
-) =>
-  `${basePath}/item/${window.btoa(encodeURI(item._id))}/${window.btoa(
-    encodeURI(item.listId),
-  )}`;
-
 export const getNonHeadingOutlineItems = (
   list: ServiceItem[] | undefined,
 ): ServiceItem[] => (list ?? []).filter((item) => item.type !== "heading");
@@ -129,22 +114,9 @@ export const buildDocsById = (allDocs: AllDocsLookup | undefined) => {
     ...allDocs.allFreeFormDocs,
     ...allDocs.allTimerDocs,
     ...allDocs.allBibleDocs,
+    ...(allDocs.allServiceTimeDocs ?? []),
   ]) {
     if (doc?._id) map.set(doc._id, doc);
-  }
-  return map;
-};
-
-export const mergeDocsById = (
-  allDocs: AllDocsLookup | undefined,
-  extraDocs?: Map<string, DBItem> | Record<string, DBItem>,
-) => {
-  const map = buildDocsById(allDocs);
-  if (!extraDocs) return map;
-  const extras =
-    extraDocs instanceof Map ? extraDocs : Object.entries(extraDocs);
-  for (const [id, doc] of extras) {
-    if (!map.has(id) && doc?._id) map.set(id, doc);
   }
   return map;
 };

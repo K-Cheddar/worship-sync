@@ -144,6 +144,8 @@ it.each(["/#/home", "/#/controller", "/home", "/#/stream-editor", "/#/boards/pre
     mockOperator.mockReturnValue(pending.promise);
     await start(url);
     expect(screen.getByRole("img", { name: "WorshipSync" })).toBeInTheDocument();
+    expect(screen.getByText("Getting WorshipSync ready")).toBeInTheDocument();
+    expect(screen.getByText("Preparing your workspace…")).toBeInTheDocument();
     expect(screen.getByRole("main")).toHaveClass("bg-homepage-canvas");
     await act(async () => { pending.reject(new Error("Startup failed")); });
     expect(screen.getByRole("button", { name: "Reload page" })).toBeInTheDocument();

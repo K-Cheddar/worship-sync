@@ -11,13 +11,13 @@ import {
   UserRound,
   type LucideIcon,
 } from "lucide-react";
-import WorshipSyncImage from "../assets/WorshipSyncImage.png";
+import WorshipSyncWordmark from "../assets/WorshipSyncWordmark.png";
 import AuthScreenMain from "../components/AuthScreenMain";
 import Button from "../components/Button/Button";
 import Icon from "../components/Icon/Icon";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { useAppInstallChrome } from "../hooks/useAppInstallChrome";
-import { getAuthRedirectPathnameFromState } from "../utils/authRedirectPath";
+import { getAuthRedirectToFromState } from "../utils/authRedirectPath";
 import { getStoredServerSessionHint } from "../utils/authStorage";
 import { isCreateChurchUiEnabled } from "../utils/devFeatures";
 import { getAllowedRouteOrDefault } from "../utils/sessionRouteAccess";
@@ -63,7 +63,8 @@ const AppEntry = () => {
   const [entryStep, setEntryStep] = useState<EntryStep>("landing");
   const [isRetryingAuthConnection, setIsRetryingAuthConnection] =
     useState(false);
-  const requestedPath = getAuthRedirectPathnameFromState(location.state) ?? "";
+  const requestedTo = getAuthRedirectToFromState(location.state) ?? "";
+  const requestedPathname = requestedTo.split(/[?#]/, 1)[0];
   const authServerStatus = context?.authServerStatus;
   const isAuthConnectionNoticeVisible =
     authServerStatus === "offline" || authServerStatus === "checking";
@@ -72,19 +73,24 @@ const AppEntry = () => {
   const hasStoredServerSession = storedServerSessionHint !== null;
   const isStoredServerSessionBlocked =
     isServerBackedModeDisabled && hasStoredServerSession;
+  const requestedFrom =
+    typeof location.state === "object" &&
+    location.state !== null &&
+    "from" in location.state
+      ? location.state.from
+      : null;
 
   const nextState = useMemo(
     () => ({
-      from:
-        requestedPath && requestedPath !== "/"
-          ? { pathname: requestedPath }
-          : location,
+      from: requestedTo && requestedTo !== "/" ? requestedFrom : location,
     }),
-    [location, requestedPath],
+    [location, requestedFrom, requestedTo],
   );
 
   const guestDestination =
-    requestedPath && requestedPath !== "/" ? requestedPath : "/home";
+    requestedPathname && requestedPathname !== "/"
+      ? requestedPathname
+      : "/home";
   const { installMenuItems, installHelpDialogs } = useAppInstallChrome();
 
   const handleRetryAuthConnection = async () => {
@@ -103,14 +109,14 @@ const AppEntry = () => {
   if (context?.sessionKind === "human") {
     return (
       <Navigate
-        to={requestedPath && requestedPath !== "/" ? requestedPath : "/home"}
+        to={requestedTo && requestedTo !== "/" ? requestedTo : "/home"}
         replace
       />
     );
   }
 
   if (context?.loginState === "guest") {
-    const nextPath = getAllowedRouteOrDefault(requestedPath, {
+    const nextPath = getAllowedRouteOrDefault(guestDestination, {
       loginState: context.loginState,
       sessionKind: context.sessionKind,
       access: context.access,
@@ -126,19 +132,21 @@ const AppEntry = () => {
       loginState: context.loginState,
       sessionKind: context.sessionKind,
       access: context.access,
+      role: context.role,
+      permissions: context.permissions,
       operatorName: context.operatorName,
       displaySurfaceType: context.device?.surfaceType,
       displayOutputId: context.device?.outputId,
     };
     const nextPath =
-      requestedPath && requestedPath !== "/"
-        ? getAllowedRouteOrDefault(requestedPath, routeContext)
+      requestedTo && requestedTo !== "/"
+        ? getAllowedRouteOrDefault(requestedTo, routeContext)
         : "/home";
     return <Navigate to={nextPath} replace />;
   }
 
   if (context?.sessionKind === "display") {
-    const nextPath = getAllowedRouteOrDefault(requestedPath, {
+    const nextPath = getAllowedRouteOrDefault(requestedTo, {
       loginState: context.loginState,
       sessionKind: context.sessionKind,
       access: context.access,
@@ -277,14 +285,28 @@ const AppEntry = () => {
             </div>
 
             <div className="mt-6 flex flex-col items-center text-center">
-              <img
-                src={WorshipSyncImage}
-                alt="WorshipSync"
-                className="mx-auto max-w-[42%] sm:max-w-[36%]"
-                width={220}
-                height={201}
-                loading="eager"
-              />
+              <div
+                role="img"
+                aria-label="WorshipSync"
+                className="mx-auto flex w-[220px] max-w-[42%] flex-col items-center gap-2 sm:max-w-[36%]"
+              >
+                <img
+                  src={`${import.meta.env.BASE_URL}logo192.png`}
+                  alt=""
+                  className="aspect-square w-3/4 object-contain mb-4"
+                  width={192}
+                  height={192}
+                  loading="eager"
+                />
+                <img
+                  src={WorshipSyncWordmark}
+                  alt=""
+                  className="h-auto w-full object-contain"
+                  width={1204}
+                  height={94}
+                  loading="eager"
+                />
+              </div>
               <h1 className="mt-5 text-2xl font-semibold sm:text-3xl">
                 {isStoredServerSessionBlocked
                   ? "Reconnect to continue"

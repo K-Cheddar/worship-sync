@@ -3,6 +3,11 @@ import { createHash } from "node:crypto";
 const conflictMessage =
   "This account has conflicting roster links here. Ask a church administrator to correct the links, then try again.";
 
+const isFirestoreTransactionAborted = (error) => {
+  const code = String(error?.code || "").toLowerCase();
+  return code === "10" || code === "aborted";
+};
+
 export const volunteerIdentityClaimId = (churchId, userId) =>
   `volunteer_identity_${createHash("sha256")
     .update(`${String(churchId || "").trim()}\u0000${String(userId || "").trim()}`)
@@ -271,15 +276,24 @@ export const createVolunteerIdentityOperations = ({
   const linkRosterMember = async (args) => {
     const db = requireFirestore();
     if (db) {
-      return db.runTransaction(async (transaction) => {
-        const plan = await prepareRosterMemberLink({
-          ...args,
-          db,
-          transaction,
+      try {
+        return await db.runTransaction(async (transaction) => {
+          const plan = await prepareRosterMemberLink({
+            ...args,
+            db,
+            transaction,
+          });
+          plan.applyToTransaction(transaction);
+          return plan;
         });
-        plan.applyToTransaction(transaction);
-        return plan;
-      });
+      } catch (transactionError) {
+        if (isFirestoreTransactionAborted(transactionError)) {
+          throw linkConflict(
+            "This account's roster link changed during the request. Try again.",
+          );
+        }
+        throw transactionError;
+      }
     }
 
     const normalizedChurchId = String(args.churchId || "").trim();

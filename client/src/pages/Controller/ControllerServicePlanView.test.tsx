@@ -4,7 +4,7 @@ import { Provider } from "react-redux";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import store from "../../store/store";
 import { setActiveItemInList } from "../../store/itemListSlice";
-import { updateAllFreeFormDocs, updateAllSongDocs } from "../../store/allDocsSlice";
+import { hydrateItemCache } from "../../store/allDocsSlice";
 import { getServiceFlowProgress } from "../../services/serviceFlowProgress";
 import FloatingWindow from "../../components/FloatingWindow/FloatingWindow";
 import { FloatingWindowZIndexProvider } from "../../components/FloatingWindow/FloatingWindowZIndexContext";
@@ -15,6 +15,7 @@ import { plainTextToRichText } from "../../types/richText";
 import type { DBItem } from "../../types";
 import type { ServicePlan, ServicePlanElement } from "../../types/servicePlan";
 import scriptureFixtures from "../../../../shared/servicePlanScripture.fixtures.json";
+import { createServicePlanTextResource } from "../Services/servicePlanResources";
 
 jest.mock("../../hooks/useCachedMediaUrl", () => ({
   useCachedMediaUrl: (url?: string) => url,
@@ -95,7 +96,7 @@ const RouteProbe = () => {
 
 const TestProviders = ({ children }: { children: React.ReactNode }) => (
   <Provider store={store}>
-    <MemoryRouter initialEntries={["/controller/service-planning"]}>
+    <MemoryRouter initialEntries={["/controller"]}>
       {children}
     </MemoryRouter>
   </Provider>
@@ -105,7 +106,7 @@ const renderWithStore = (ui: React.ReactElement) => render(ui, { wrapper: TestPr
 
 const renderInFloatingWindow = (ui: React.ReactNode) => render(
   <Provider store={store}>
-    <MemoryRouter initialEntries={["/controller/service-planning"]}>
+    <MemoryRouter initialEntries={["/controller"]}>
       <FloatingWindowZIndexProvider>
         <FloatingWindow
           title="Service Plan"
@@ -159,13 +160,13 @@ const makeSongDoc = (id: string, lyrics: string): DBItem => ({
 describe("ControllerServicePlanView", () => {
   beforeEach(() => {
     localStorage.clear();
-    store.dispatch(updateAllSongDocs([]));
-    store.dispatch(updateAllFreeFormDocs([]));
+    store.dispatch(hydrateItemCache([]));
+    store.dispatch(hydrateItemCache([]));
   });
   afterEach(() => {
     jest.restoreAllMocks();
-    store.dispatch(updateAllSongDocs([]));
-    store.dispatch(updateAllFreeFormDocs([]));
+    store.dispatch(hydrateItemCache([]));
+    store.dispatch(hydrateItemCache([]));
   });
 
   it("keeps quiet roster roles selectable while rendering compact controller rows", async () => {
@@ -485,6 +486,93 @@ describe("ControllerServicePlanView", () => {
       .toBeInTheDocument();
   });
 
+  it("updates controller times and highlighting from a remote anchored snapshot", () => {
+    const nowMs = Date.parse("2026-09-25T18:01:00.000Z");
+    jest.spyOn(Date, "now").mockReturnValue(nowMs);
+    const scheduledPlan: ServicePlan = {
+      ...plan,
+      startsAt: "2026-09-25T18:00:00.000Z",
+      timezone: "UTC",
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        elements: [
+          {
+            id: "welcome",
+            type: "free",
+            title: plainTextToRichText("Welcome"),
+            startTime: "18:00",
+            durationSeconds: 120,
+          },
+          {
+            id: "song",
+            type: "free",
+            title: plainTextToRichText("Song"),
+            startTime: "18:02",
+            durationSeconds: 300,
+          },
+          {
+            id: "closing",
+            type: "free",
+            title: plainTextToRichText("Closing"),
+            startTime: "18:07",
+            durationSeconds: 60,
+          },
+        ],
+      }],
+    };
+    const scheduledSnapshot = buildServicePlanFlowSnapshot({
+      plan: scheduledPlan,
+      startsAt: scheduledPlan.startsAt!,
+      serverNowMs: nowMs,
+    });
+    const ui = (currentPlan: ServicePlan, currentSnapshot: typeof scheduledSnapshot) => (
+      <ControllerServicePlanView
+        {...brandColors}
+        plan={currentPlan}
+        snapshot={currentSnapshot}
+        churchId="church-1"
+        controllerProfileId="presentation"
+      />
+    );
+    const { rerender } = renderWithStore(ui(scheduledPlan, scheduledSnapshot));
+
+    expect(screen.getByText("18:00", { selector: "time" })).toHaveClass("text-zinc-400");
+    expect(screen.getByText("18:02", { selector: "time" })).toHaveClass("text-zinc-400");
+
+    const remotePlan = {
+      ...scheduledPlan,
+      publicLive: {
+        mode: "anchored" as const,
+        currentElementId: "song",
+        startedAt: "2026-09-25T17:58:00.000Z",
+      },
+    };
+    const remoteSnapshot = buildServicePlanFlowSnapshot({
+      plan: remotePlan,
+      startsAt: remotePlan.startsAt!,
+      serverNowMs: nowMs,
+    });
+    // The local plan still reflects the prior schedule; the fetched snapshot
+    // carries the live update received from the other browser.
+    rerender(ui(scheduledPlan, remoteSnapshot));
+
+    expect(screen.getByText("18:00", { selector: "time" })).toHaveClass("text-zinc-400");
+    const adjustedSongTime = screen.getByLabelText(
+      "Live-adjusted time 17:58; planned 18:02",
+    );
+    const adjustedClosingTime = screen.getByLabelText(
+      "Live-adjusted time 18:03; planned 18:07",
+    );
+    expect(adjustedSongTime).toHaveClass("text-blue-300");
+    expect(adjustedSongTime).toHaveAttribute("title", "Planned time: 18:02");
+    expect(adjustedClosingTime).toHaveClass("text-blue-300");
+    expect(within(screen.getByRole("listitem", { current: true })).getByRole("heading", { name: "Song" }))
+      .toBeInTheDocument();
+    expect(scheduledPlan.sections[0].elements.map((element) => element.startTime))
+      .toEqual(["18:00", "18:02", "18:07"]);
+  });
+
   it("filters the compact microphone cues by team while retaining shared notes", async () => {
     const user = userEvent.setup();
     renderWithStore(
@@ -507,7 +595,7 @@ describe("ControllerServicePlanView", () => {
     const user = userEvent.setup();
     const firstSong = makeSongDoc("song-first", "Lyrics for song-first");
     const secondSong = makeSongDoc("song-second", "Lyrics for song-second");
-    store.dispatch(updateAllSongDocs([firstSong, secondSong]));
+    store.dispatch(hydrateItemCache([firstSong, secondSong]));
     const element: ServicePlanElement = {
       id: "songs",
       type: "song",
@@ -741,7 +829,7 @@ describe("ControllerServicePlanView", () => {
         boxes: [{ id: "box-second", words: "Second document content", width: 80, height: 20, x: 10, y: 10 }],
       }],
     } as unknown as DBItem;
-    store.dispatch(updateAllFreeFormDocs([firstDocument, secondDocument]));
+    store.dispatch(hydrateItemCache([firstDocument, secondDocument]));
     const customPlan = makePlanWithElement({
       id: "custom-documents",
       type: "free",
@@ -818,6 +906,26 @@ describe("ControllerServicePlanView", () => {
       .toHaveTextContent("This custom document is no longer available in the library.");
   });
 
+  it("shows title-only and notes-only resources and previews their rich notes", async () => {
+    const user = userEvent.setup();
+    const notes = { blocks: [{ type: "paragraph" as const, spans: [{ text: "Formatted cue", bold: true, italic: true }] }] };
+    const resourcePlan = makePlanWithElement({
+      id: "notes-item", type: "free", title: plainTextToRichText("Cues"),
+      resources: [
+        createServicePlanTextResource({ title: "Title only", text: { blocks: [] } }),
+        createServicePlanTextResource({ title: "", text: notes }),
+      ],
+    });
+    renderWithStore(<ControllerServicePlanView
+      {...brandColors} plan={resourcePlan}
+      snapshot={buildServicePlanFlowSnapshot({ plan: resourcePlan, startsAt: resourcePlan.startsAt! })}
+      churchId="church-1" controllerProfileId="presentation"
+    />);
+    expect(screen.getByText("Title only")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "View Notes: Notes" }));
+    expect(screen.getByText("Formatted cue")).toHaveClass("font-bold", "italic");
+  });
+
   it("keeps text and media resources on the established content preview", async () => {
     const user = userEvent.setup();
     const previewPlan = makePlanWithElement({
@@ -877,7 +985,7 @@ describe("ControllerServicePlanView", () => {
       type: "free",
       slides: [],
     } as unknown as DBItem;
-    store.dispatch(updateAllFreeFormDocs([customDocument]));
+    store.dispatch(hydrateItemCache([customDocument]));
     const floatingPlan = makePlanWithElement({
       id: "floating-window-preview",
       type: "free",

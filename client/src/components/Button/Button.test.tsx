@@ -29,3 +29,24 @@ describe("Button mobile touch sizing", () => {
     );
   });
 });
+
+describe("Button text wrapping", () => {
+  it("keeps default buttons on one line and allows wrapping when requested", () => {
+    render(
+      <>
+        <Button>Toolbar action</Button>
+        <Button wrap>Long outline item name</Button>
+      </>,
+    );
+
+    expect(screen.getByRole("button", { name: "Toolbar action" })).toHaveClass(
+      "whitespace-nowrap",
+    );
+    expect(
+      screen.getByRole("button", { name: "Long outline item name" }),
+    ).toHaveClass("text-wrap", "whitespace-normal", "break-words");
+    expect(
+      screen.getByRole("button", { name: "Long outline item name" }),
+    ).not.toHaveClass("whitespace-nowrap");
+  });
+});

@@ -2,7 +2,7 @@ import {
   AUTH_DESKTOP_SIGN_IN_TIMED_OUT_MESSAGE,
   AUTH_EMAIL_CODE_EXPIRED_MESSAGE,
   AUTH_SIGN_IN_AGAIN_MESSAGE,
-  getAuthBootstrapLoadingDescription,
+  getAuthBootstrapOfflineDescription,
   getDesktopSignInErrorMessage,
   getFirebaseSignInMessage,
   getForgotPasswordErrorMessage,
@@ -235,25 +235,15 @@ describe("authUserMessages", () => {
     });
   });
 
-  describe("getAuthBootstrapLoadingDescription", () => {
-    it("describes connecting while checking", () => {
-      expect(getAuthBootstrapLoadingDescription("checking")).toBe(
-        "Connecting to WorshipSync…",
-      );
-    });
-    it("describes finishing when server responded", () => {
-      expect(getAuthBootstrapLoadingDescription("online")).toContain(
-        "WorshipSync",
-      );
-    });
-    it("describes offline without retries", () => {
-      expect(getAuthBootstrapLoadingDescription("offline")).toContain(
-        "WorshipSync",
+  describe("getAuthBootstrapOfflineDescription", () => {
+    it("keeps the connection guidance when there are no retry attempts yet", () => {
+      expect(getAuthBootstrapOfflineDescription()).toContain(
+        "Check your connection",
       );
     });
     it("includes attempt when offline with retries", () => {
       expect(
-        getAuthBootstrapLoadingDescription("offline", { retryCount: 2 }),
+        getAuthBootstrapOfflineDescription({ retryCount: 2 }),
       ).toContain("attempt 2");
     });
   });

@@ -40,6 +40,12 @@ import generateRandomId from "../utils/generateRandomId";
 import { syncTimers } from "../store/timersSlice";
 import { syncServicesFromRemote } from "../store/serviceTimesSlice";
 import {
+  beginActiveControllerPresence,
+  getControllerPresenceScope,
+  isFreshActiveControllerRecord,
+  notifyActiveControllerPresenceChanged,
+} from "../utils/activeControllerPresence";
+import {
   AuthBootstrap,
   AuthApiError,
   createChurchAccount,
@@ -136,7 +142,11 @@ import {
   reloadElectronDisplayWindows,
 } from "../utils/environment";
 import { getTrustedDeviceLabel } from "../utils/deviceInfo";
-import { getHumanPostAuthPath } from "../utils/authRedirectPath";
+import {
+  getHumanPostAuthPath,
+  isPostAuthDestination,
+  sanitizeAuthRedirectTo,
+} from "../utils/authRedirectPath";
 import { resolveAccountDisplayNameForAudit } from "../utils/displayName";
 import { setAuditSnapshot } from "../utils/pouchAudit";
 import {
@@ -363,6 +373,7 @@ type GlobalInfoContextType = {
     exchangeCode: string;
     method: Exclude<HumanAuthMethod, "password">;
   }) => Promise<boolean>;
+  claimEmailVerificationChallenge: (pendingAuthId: string) => void;
   verifyEmailCode: ({
     pendingAuthId,
     code,
@@ -469,7 +480,8 @@ type GlobalInfoContextType = {
   operatorName: string;
   device: AuthBootstrap["device"] | null;
   setOperatorName: (value: string) => void;
-  refreshAuthBootstrap: () => Promise<void>;
+  /** True only when fresh authenticated server state was applied. */
+  refreshAuthBootstrap: (options?: { requireFresh?: boolean }) => Promise<boolean>;
   refreshPresentationListeners: () => void;
   updateSelfDisplayName: (displayName: string) => Promise<boolean>;
   /** Categories to offer this person, server-derived so the catalog has one owner. */
@@ -667,6 +679,14 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     canEditServices ||
     permissions.services === "view";
   const pendingLinkCredentialRef = useRef<AuthCredential | null>(null);
+  const emailVerificationChallengeGenerationRef = useRef(0);
+  const emailVerificationOwnerRef = useRef<{
+    pendingAuthId: string;
+    generation: number;
+  } | null>(null);
+  const emailVerificationRequestGenerationRef = useRef(0);
+  const emailVerificationRequestRef = useRef<Promise<boolean> | null>(null);
+  const staleEmailVerificationSessionCsrfRef = useRef<string | null>(null);
   const instanceRef = useRef<ReturnType<typeof ref> | null>(null);
   const hasRehydratedTimersRef = useRef(false);
   const hasRehydratedServiceTimesRef = useRef(false);
@@ -861,7 +881,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     storageListenerCleanupRef.current?.();
     storageListenerCleanupRef.current = undefined;
   }, []);
-  const refreshAuthBootstrapPromiseRef = useRef<Promise<void> | null>(null);
+  const refreshAuthBootstrapPromiseRef = useRef<Promise<boolean> | null>(null);
   const recoverAuthSessionPromiseRef = useRef<Promise<boolean> | null>(null);
 
   const navigate = useNavigate();
@@ -1139,9 +1159,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       }
       reloadElectronDisplayWindows();
       setAuthServerStatus("online");
+      const sanitizedPostAuthPath = sanitizeAuthRedirectTo(postAuthPath);
       const safePostAuthPath =
-        postAuthPath && postAuthPath.split("?", 1)[0] !== "/login"
-          ? postAuthPath
+        sanitizedPostAuthPath && isPostAuthDestination(sanitizedPostAuthPath)
+          ? sanitizedPostAuthPath
           : getHumanPostAuthPath(location);
       navigate(safePostAuthPath, { replace: true });
     },
@@ -1561,10 +1582,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     [applyBootstrap, dispatch, navigate]
   );
 
-  const refreshAuthBootstrap = useCallback(async () => {
+  const refreshAuthBootstrap = useCallback(async (options?: { requireFresh?: boolean }): Promise<boolean> => {
     if (refreshAuthBootstrapPromiseRef.current) {
-      await refreshAuthBootstrapPromiseRef.current;
-      return;
+      const refreshed = await refreshAuthBootstrapPromiseRef.current;
+      // A mutation must not reuse a request that read access before it committed.
+      if (options?.requireFresh) return refreshAuthBootstrapRef.current();
+      return refreshed;
     }
 
     if (bootstrapStatusRef.current !== "ready") {
@@ -1617,16 +1640,16 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           }
           if (bootstrapError && isReachabilityError(bootstrapError)) {
             applyOfflineBootstrapFallback();
-            return;
+            return false;
           }
           setAuthServerStatus("offline");
           applyBootstrap(null, { clearWorkstationSessionOperator: true });
-          return;
+          return false;
         }
 
         if (bootstrap.authenticated) {
           applyBootstrap(bootstrap);
-          return;
+          return true;
         }
 
         const persistedUser = await waitForHumanAuthUser();
@@ -1645,7 +1668,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
             );
           }
           applyBootstrap(null, { clearWorkstationSessionOperator: true });
-          return;
+          return false;
         }
 
         try {
@@ -1669,7 +1692,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
             ) {
               setHumanApiToken(restoredSession.humanApiToken);
             }
-            return;
+            return Boolean(restoredSession.bootstrap.authenticated);
           }
 
           if (
@@ -1697,7 +1720,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
               ...getAuthErrorDetails(error),
             });
             applyOfflineBootstrapFallback();
-            return;
+            return false;
           }
 
           logAuthDiagnostic("error", "auth_session_restore_failed", {
@@ -1713,18 +1736,19 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         });
         if (isReachabilityError(error)) {
           applyOfflineBootstrapFallback();
-          return;
+          return false;
         }
         setAuthServerStatus("offline");
         applyBootstrap(null, { clearWorkstationSessionOperator: true });
       } finally {
         setBootstrapStatus("ready");
       }
+      return false;
     })();
 
     refreshAuthBootstrapPromiseRef.current = promise;
     try {
-      await promise;
+      return await promise;
     } finally {
       refreshAuthBootstrapPromiseRef.current = null;
     }
@@ -1904,6 +1928,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   // instanceRef points at the current church before .info/connected fires).
   useEffect(() => {
     if (!firebaseDb || !isSharedDataScopeReady) return;
+    const controllerPresence = beginActiveControllerPresence(
+      getControllerPresenceScope(churchId, database),
+    );
 
     // Listen for changes in active instances. Uses permission_denied recovery
     // (same as TimerManager's activeInstances listener) so it can't lose the
@@ -1918,6 +1945,51 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           string,
           Partial<Instance>
         > | null;
+        if (data) {
+          const now = Date.now();
+          let inventoryUncertain = false;
+          const activeControllerHostIds = Object.entries(data).flatMap(
+            ([instanceId, instance]) => {
+              if (!instance || typeof instance !== "object") {
+                inventoryUncertain = true;
+                return [];
+              }
+              const mightBeController =
+                instance.isOnController === true ||
+                instance.presenceSurface === "controller";
+              if (!mightBeController) return [];
+              if (typeof instance.database !== "string") {
+                inventoryUncertain = true;
+                return [];
+              }
+              if (instance.database.toLowerCase() !== database.toLowerCase()) {
+                return [];
+              }
+              const lastActive = Date.parse(instance.lastActive || "");
+              if (!Number.isFinite(lastActive)) {
+                inventoryUncertain = true;
+                return [];
+              }
+              if (lastActive - now > 5 * 60 * 1000) {
+                inventoryUncertain = true;
+                return [];
+              }
+              if (!isFreshActiveControllerRecord(instance.lastActive || "", now)) {
+                return [];
+              }
+              if (!instanceId) {
+                inventoryUncertain = true;
+                return [];
+              }
+              return [instanceId];
+            },
+          );
+          controllerPresence.publish(
+            inventoryUncertain ? null : activeControllerHostIds,
+          );
+        } else {
+          controllerPresence.publish([]);
+        }
         if (data) {
           // Clean up stale instances (older than 1 hour)
           const now = Date.now();
@@ -1953,7 +2025,11 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           setActiveInstances([]);
         }
       },
-      { label: "active instances" }
+      {
+        label: "active instances",
+        onError: () => controllerPresence.publish(null),
+        onPermissionDenied: () => controllerPresence.publish(null),
+      }
     );
 
     // Set this instance as active only if on controller page
@@ -1996,6 +2072,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     // Cleanup function
     return () => {
       unsubscribe();
+      controllerPresence.release();
       clearInterval(updateInterval);
       const staleInstanceRef = instanceRef.current;
       instanceRef.current = null;
@@ -2360,7 +2437,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     const connectedRef = ref(firebaseDb, ".info/connected");
     const unsubscribe = onValue(connectedRef, (snap) => {
       const isConnected = snap.val() === true;
+      const connectionChanged = globalFireDbInfo.isConnected !== isConnected;
       globalFireDbInfo.isConnected = isConnected;
+      if (connectionChanged) notifyActiveControllerPresenceChanged();
       setRealtimeConnected(isConnected);
       if (!isConnected) {
         wasRealtimeConnectedRef.current = false;
@@ -2897,59 +2976,172 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     [authServerStatus, finalizeHumanSignIn, isReachabilityError],
   );
 
-  const verifyEmailCode = useCallback(async ({
-    pendingAuthId,
-    code,
-  }: {
-    pendingAuthId: string;
-    code: string;
-  }) => {
-    if (authServerStatus !== "online") {
-      setAuthError("Could not reach the server. Check the connection and try again.");
-      setLoginState("idle");
-      return false;
-    }
-
-    setLoginState("loading");
-    setAuthError("");
-    try {
-      const response = await verifyEmailCodeRequest({
-        pendingAuthId,
-        code,
-        deviceId: getOrCreateDeviceId(),
-        userAgent: navigator.userAgent,
-        platform: navigator.platform,
-        deviceLabel: getTrustedDeviceLabel(),
-      });
-      const completedMethod =
-        consumePendingEmailCodeSignInMethod() ?? "password";
-      const pendingRedirect = getPendingProviderRedirectState();
-      setPendingProviderRedirectState(null);
-      setPendingDesktopEmailResendState(null);
-      finalizeHumanSignIn({
-        bootstrap: response.bootstrap,
-        method: completedMethod,
-        humanApiToken: response.humanApiToken,
-        postAuthPath: pendingRedirect?.returnPath,
-      });
-      return true;
-    } catch (error) {
-      console.error("verifyEmailCode error:", error);
-      if (isReachabilityError(error)) {
-        setAuthServerStatus("offline");
-        setAuthError("Could not reach the server. Check the connection and try again.");
-        setLoginState("idle");
-        return false;
+  const claimEmailVerificationChallenge = useCallback(
+    (pendingAuthId: string) => {
+      const normalizedPendingAuthId = pendingAuthId.trim();
+      if (!normalizedPendingAuthId) {
+        return;
       }
-      setAuthError(getVerifyEmailCodeErrorMessage(error));
-      setLoginState("error");
-      return false;
-    }
-  }, [
-    authServerStatus,
-    finalizeHumanSignIn,
-    isReachabilityError,
-  ]);
+
+      const current = emailVerificationOwnerRef.current;
+      if (current?.pendingAuthId === normalizedPendingAuthId) {
+        return;
+      }
+
+      const generation = ++emailVerificationChallengeGenerationRef.current;
+      emailVerificationOwnerRef.current = {
+        pendingAuthId: normalizedPendingAuthId,
+        generation,
+      };
+    },
+    [],
+  );
+
+  const verifyEmailCode = useCallback(
+    async ({
+      pendingAuthId,
+      code,
+    }: {
+      pendingAuthId: string;
+      code: string;
+    }) => {
+      const normalizedPendingAuthId = pendingAuthId.trim();
+      const ownerAtStart = emailVerificationOwnerRef.current;
+      const challengeGeneration = ownerAtStart?.generation ?? 0;
+      const requestGeneration =
+        ++emailVerificationRequestGenerationRef.current;
+      const previousRequest = emailVerificationRequestRef.current;
+      const isCurrentAttempt = () =>
+        requestGeneration === emailVerificationRequestGenerationRef.current &&
+        challengeGeneration === emailVerificationChallengeGenerationRef.current &&
+        (!ownerAtStart ||
+          ownerAtStart.pendingAuthId === normalizedPendingAuthId);
+
+      const clearStaleVerifiedSession = async (csrfToken?: string | null) => {
+        if (csrfToken) {
+          staleEmailVerificationSessionCsrfRef.current = csrfToken;
+        }
+        const staleCsrfToken = staleEmailVerificationSessionCsrfRef.current;
+        if (!staleCsrfToken) {
+          throw new Error("The earlier sign-in session could not be cleared.");
+        }
+        const result = await logoutSession(staleCsrfToken);
+        if (result?.success === false) {
+          throw new Error("The earlier sign-in session could not be cleared.");
+        }
+        staleEmailVerificationSessionCsrfRef.current = null;
+        clearCsrfToken();
+      };
+
+      const requestPromise = (async () => {
+        if (previousRequest) {
+          try {
+            await previousRequest;
+          } catch {
+            // A previous request owns its own error state and cleanup.
+          }
+        }
+        if (!isCurrentAttempt()) {
+          return false;
+        }
+
+        if (authServerStatus !== "online") {
+          setAuthError("Could not reach the server. Check the connection and try again.");
+          setLoginState("idle");
+          return false;
+        }
+
+        setLoginState("loading");
+        setAuthError("");
+        try {
+          if (staleEmailVerificationSessionCsrfRef.current) {
+            try {
+              await clearStaleVerifiedSession();
+            } catch (cleanupError) {
+              console.error("stale verifyEmailCode session cleanup error:", cleanupError);
+              if (isReachabilityError(cleanupError)) {
+                setAuthServerStatus("offline");
+              }
+              setAuthError(
+                "Could not clear the earlier sign-in. Check your connection and try again.",
+              );
+              setLoginState("error");
+              return false;
+            }
+          }
+          if (!isCurrentAttempt()) {
+            setLoginState("idle");
+            return false;
+          }
+
+          const response = await verifyEmailCodeRequest({
+            pendingAuthId: normalizedPendingAuthId,
+            code,
+            deviceId: getOrCreateDeviceId(),
+            userAgent: navigator.userAgent,
+            platform: navigator.platform,
+            deviceLabel: getTrustedDeviceLabel(),
+          });
+
+          if (!isCurrentAttempt()) {
+            try {
+              await clearStaleVerifiedSession(response.bootstrap?.csrfToken);
+            } catch (cleanupError) {
+              console.error("stale verifyEmailCode session cleanup error:", cleanupError);
+              if (isReachabilityError(cleanupError)) {
+                setAuthServerStatus("offline");
+              }
+              setAuthError(
+                "Could not clear the earlier sign-in. Check your connection and try again.",
+              );
+              setLoginState("error");
+              return false;
+            }
+            setLoginState("idle");
+            return false;
+          }
+
+          const completedMethod =
+            consumePendingEmailCodeSignInMethod() ?? "password";
+          const pendingRedirect = getPendingProviderRedirectState();
+          setPendingProviderRedirectState(null);
+          setPendingDesktopEmailResendState(null);
+          finalizeHumanSignIn({
+            bootstrap: response.bootstrap,
+            method: completedMethod,
+            humanApiToken: response.humanApiToken,
+            postAuthPath: pendingRedirect?.returnPath,
+          });
+          return true;
+        } catch (error) {
+          if (!isCurrentAttempt()) {
+            setLoginState("idle");
+            return false;
+          }
+          console.error("verifyEmailCode error:", error);
+          if (isReachabilityError(error)) {
+            setAuthServerStatus("offline");
+            setAuthError("Could not reach the server. Check the connection and try again.");
+            setLoginState("idle");
+            return false;
+          }
+          setAuthError(getVerifyEmailCodeErrorMessage(error));
+          setLoginState("error");
+          return false;
+        }
+      })();
+
+      emailVerificationRequestRef.current = requestPromise;
+      try {
+        return await requestPromise;
+      } finally {
+        if (emailVerificationRequestRef.current === requestPromise) {
+          emailVerificationRequestRef.current = null;
+        }
+      }
+    },
+    [authServerStatus, finalizeHumanSignIn, isReachabilityError],
+  );
 
   const resendEmailCode = useCallback(
     async ({ pendingAuthId }: { pendingAuthId: string }) => {
@@ -3268,6 +3460,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       uploadPreset,
       login,
       completeDesktopExchange,
+      claimEmailVerificationChallenge,
       verifyEmailCode,
       resendEmailCode,
       createChurchAccount: createChurchAccountHandler,
@@ -3342,6 +3535,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       uploadPreset,
       login,
       completeDesktopExchange,
+      claimEmailVerificationChallenge,
       verifyEmailCode,
       resendEmailCode,
       createChurchAccountHandler,

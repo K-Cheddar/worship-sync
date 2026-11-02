@@ -7,7 +7,13 @@ import { keepElementInView } from "../../utils/generalUtils";
 import { requestOutlineSelectionScroll } from "../../utils/outlineSelectionScroll";
 import type { DBItem, ItemSlideType, ServiceItem } from "../../types";
 
-const mockDispatch = jest.fn();
+const mockDispatch: jest.Mock = jest.fn((action) => {
+  if (typeof action === "function") return action(mockDispatch, () => ({
+    ...mockState,
+    allDocs: { ...mockState.allDocs, session: 1, allSongDocs: [...mockDocsById.values()] },
+  }));
+  return action;
+});
 const mockNavigate = jest.fn();
 const mockSelectSlide = jest.fn();
 const mockOnSlideGridClick = jest.fn();
@@ -29,6 +35,7 @@ jest.mock("../../hooks/useOutlineItemDocs", () => ({
 
 jest.mock("react-router-dom", () => ({
   useNavigate: () => mockNavigate,
+  useLocation: () => ({ pathname: "/controller" }),
 }));
 
 jest.mock("../../utils/generalUtils", () => ({
@@ -66,16 +73,19 @@ jest.mock("./ItemSlide", () => ({
     slideDomId,
     canEdit,
     onSlideGridClick,
+    previewMode,
   }: {
     index: number;
     slide: { name: string };
     slideDomId?: string;
     canEdit?: boolean;
     onSlideGridClick: (e: React.MouseEvent, index: number) => void;
+    previewMode: string;
   }) => (
     <button
       id={slideDomId}
       data-testid={canEdit ? `active-outline-slide-${slide.name}` : undefined}
+      data-preview-mode={previewMode}
       type="button"
       onClick={(event) => onSlideGridClick(event, index)}
     >
@@ -129,6 +139,7 @@ const sizeConfig = {
 const outlineScrollerUi = (
   scrollRef: { current: HTMLElement | null },
   selectedSlide = 0,
+  previewMode = "projector",
 ) => (
   <div
     ref={(node) => {
@@ -143,7 +154,7 @@ const outlineScrollerUi = (
       size={2}
       sizeConfig={sizeConfig}
       isMobile={false}
-      isStreamFormat={false}
+      previewMode={previewMode as "projector" | "monitor" | "stream"}
       canEdit
       selectedSlide={selectedSlide}
       liveSlideIds={new Set()}
@@ -164,7 +175,11 @@ const setBoundingRect = (element: HTMLElement, top: number, bottom: number) => {
   });
 };
 
-const renderScroller = (selectedSlide = 0, cols = 2) => {
+const renderScroller = (
+  selectedSlide = 0,
+  cols = 2,
+  previewMode: "projector" | "monitor" | "stream" = "projector",
+) => {
   const scrollRef = { current: null as HTMLElement | null };
   const setScrollNode = (node: HTMLElement | null) => {
     scrollRef.current = node;
@@ -191,7 +206,7 @@ const renderScroller = (selectedSlide = 0, cols = 2) => {
         size={cols}
         sizeConfig={sizeConfig}
         isMobile={false}
-        isStreamFormat={false}
+        previewMode={previewMode}
         canEdit
         selectedSlide={selectedSlide}
         liveSlideIds={new Set()}
@@ -220,7 +235,7 @@ const renderScroller = (selectedSlide = 0, cols = 2) => {
             size={cols}
             sizeConfig={sizeConfig}
             isMobile={false}
-            isStreamFormat={false}
+            previewMode={previewMode}
             canEdit
             selectedSlide={nextSlide}
             liveSlideIds={new Set()}
@@ -245,7 +260,7 @@ const renderScroller = (selectedSlide = 0, cols = 2) => {
             size={nextCols}
             sizeConfig={sizeConfig}
             isMobile={false}
-            isStreamFormat={false}
+            previewMode="projector"
             canEdit
             selectedSlide={selectedSlide}
             liveSlideIds={new Set()}
@@ -279,7 +294,7 @@ const renderScroller = (selectedSlide = 0, cols = 2) => {
             size={cols}
             sizeConfig={sizeConfig}
             isMobile={false}
-            isStreamFormat={false}
+            previewMode="projector"
             canEdit
             selectedSlide={selectedSlide}
             liveSlideIds={new Set()}
@@ -403,6 +418,28 @@ describe("OutlineItemSlidesScroller", () => {
       borderWidth: "2px",
     });
     expect(screen.queryByText("Section")).not.toBeInTheDocument();
+  });
+
+  it("applies Monitor preview to active and continuous outline slides", () => {
+    renderScroller(0, 2, "monitor");
+
+    expect(
+      screen.getByTestId("active-outline-slide-Song 1 A"),
+    ).toHaveAttribute("data-preview-mode", "monitor");
+    const continuousThumbnails = screen.getAllByTestId(
+      "static-slide-thumbnail",
+    );
+    expect(continuousThumbnails.length).toBeGreaterThan(0);
+    expect(
+      continuousThumbnails.every((thumbnail) =>
+        thumbnail.hasAttribute("data-preview-mode"),
+      ),
+    ).toBe(true);
+    expect(
+      continuousThumbnails.every((thumbnail) =>
+        thumbnail.getAttribute("data-preview-mode") === "monitor",
+      ),
+    ).toBe(true);
   });
 
   it("switches the active rendered section across sequential item changes", () => {
@@ -801,7 +838,7 @@ describe("OutlineItemSlidesScroller", () => {
           size={2}
           sizeConfig={sizeConfig}
           isMobile={false}
-          isStreamFormat={false}
+          previewMode="projector"
           canEdit
           selectedSlide={0}
           liveSlideIds={new Set()}
@@ -857,7 +894,7 @@ describe("OutlineItemSlidesScroller", () => {
           size={2}
           sizeConfig={sizeConfig}
           isMobile={false}
-          isStreamFormat={false}
+          previewMode="projector"
           canEdit
           selectedSlide={0}
           liveSlideIds={new Set()}
@@ -889,7 +926,7 @@ describe("OutlineItemSlidesScroller", () => {
           size={2}
           sizeConfig={sizeConfig}
           isMobile={false}
-          isStreamFormat={false}
+          previewMode="projector"
           canEdit
           selectedSlide={0}
           liveSlideIds={new Set()}

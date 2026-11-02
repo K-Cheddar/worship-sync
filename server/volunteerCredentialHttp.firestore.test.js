@@ -69,7 +69,9 @@ test("synthetic HTTPS redemption keeps authority isolated, bounds cookies, rejec
     assert.equal((await call("/api/volunteer/respond", { memberId: "admin" }, headers)).status, 200);
     assert.equal((await call("/api/volunteer/respond", {}, { ...headers, origin: "https://other.test" })).status, 403);
     await store.prepare(identity, { replace: true, requestKey: "synthetic-http-replacement" });
-    assert.equal((await call("/api/volunteer/session", undefined, { cookie })).status, 401);
+    const replacedSession = await call("/api/volunteer/session", undefined, { cookie });
+    assert.equal(replacedSession.status, 401);
+    assert.equal(replacedSession.body.accessStatus, "invalid");
     assert.equal((await call("/api/volunteer/redeem", { token: credential.token })).status, 404);
     const active = await store.prepare(identity);
     time += 91 * 24 * 60 * 60 * 1000;

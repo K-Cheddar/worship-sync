@@ -1,6 +1,6 @@
 import type { ParsedBibleRef } from "../integrations/servicePlanning/parseBibleReference";
 import type { ServicePlanningMappedRow } from "../integrations/servicePlanning/mapServicePlanningToOverlays";
-import type { ServiceItem } from "../types";
+import type { OverlayInfo, ServiceItem } from "../types";
 
 export type NativeServicePlanOverlaySummary = {
   status: "ready" | "restricted" | "failed";
@@ -79,7 +79,11 @@ export type OverlaySyncPlanItem = {
   personIndex: number;
   rawNameToken: string;
   action: "update" | "clone" | "create" | "skip";
-  /** Native plan matches never choose arbitrarily between duplicate event labels. */
+  /** Native steps execute the batch's selected target without rematching. */
+  sourceKind?: "native";
+  isSong?: boolean;
+  targetOverlaySource?: "library";
+  /** Legacy preview flag retained for stored-data compatibility. */
   duplicateExactMatchesAreAmbiguous?: boolean;
   /** Role-resolution detail shown before the operator synchronizes. */
   resolutionNotice?: string;
@@ -107,6 +111,10 @@ export type ServicePlanningTeamAssignment = {
 };
 
 export type ServicePlanningPreview = {
+  /** Mapping settings used by the native saved-plan overlay preview. */
+  nativeOverlayMappingKey?: string;
+  /** Native library snapshot used by the same batch planner on explicit retry. */
+  overlayLibrary?: OverlayInfo[];
   overlayCandidates: ServicePlanningMappedRow[];
   overlayPlan: OverlaySyncPlanItem[];
   outlineCandidates: OutlineItemCandidate[];

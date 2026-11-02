@@ -2411,7 +2411,7 @@ const IntakeManager = ({
       catch (error) { showApiErrorToast(showToast, error, "Could not refresh availability. Try again."); }
       finally { setRefreshingAvailability(false); }
     };
-    return <div className={teamsManagerPageRootClassName}>
+    return <div className={`${teamsManagerPageRootClassName} max-lg:min-h-fit max-lg:flex-none`}>
       <AvailabilityFormWorkspace
         key={`${churchId}:${activeSelectedForm.formId}`}
         rows={rows}

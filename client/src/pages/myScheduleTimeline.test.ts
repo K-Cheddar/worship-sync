@@ -32,6 +32,15 @@ describe("My Schedule grouping", () => {
     expect(myScheduleOccurrenceDate(occurrence, "America/New_York")).toBe("2026-10-31");
   });
 
+  it.each([
+    ["2026-03-09T03:30:00.000Z", "2026-03-08"],
+    ["2026-11-01T03:30:00.000Z", "2026-10-31"],
+  ])("resolves a legacy occurrence on the church calendar across DST (%s)", (startsAt, expectedDate) => {
+    const occurrence = assigned({ date: "", startsAt, occurrenceId: "legacy-without-date" });
+
+    expect(myScheduleOccurrenceDate(occurrence, "America/New_York")).toBe(expectedDate);
+  });
+
   it("sorts month groups by occurrence date", () => {
     const lateOctober = assigned({ occurrenceId: "october-31", date: "2026-10-31" });
     const november = assigned({ occurrenceId: "november-1", date: "2026-11-01", startsAt: "2026-11-01T04:00:00.000Z" });

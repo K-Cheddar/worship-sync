@@ -23,6 +23,7 @@ export function shouldKeepLocalListRowForRemoteOverlay(
   const {
     selectedOverlay,
     hasPendingUpdate,
+    pendingDraftOverlayId,
     baseOverlay,
     pendingRemoteOverlay,
     hasRemoteUpdate,
@@ -43,7 +44,9 @@ export function shouldKeepLocalListRowForRemoteOverlay(
   }
   const docMatchesBase =
     !!baseOverlay && _.isEqual(remoteNormalized, baseOverlay);
-  return !!hasPendingUpdate && !docMatchesBase;
+  const hasPendingLocalEdit =
+    hasPendingUpdate || pendingDraftOverlayId === selectedOverlay.id;
+  return hasPendingLocalEdit && !docMatchesBase;
 }
 
 /** After refetching all overlay docs, keep the selected row as local Redux overlay when buffering. */
@@ -80,6 +83,7 @@ export function syncSelectedOverlayFromRemote(
   const {
     selectedOverlay,
     hasPendingUpdate,
+    pendingDraftOverlayId,
     baseOverlay,
     pendingRemoteOverlay,
     hasRemoteUpdate,
@@ -99,7 +103,9 @@ export function syncSelectedOverlayFromRemote(
   );
 
   const docMatchesBase = !!baseOverlay && _.isEqual(normalized, baseOverlay);
-  const shouldBufferRemote = !!hasPendingUpdate && !docMatchesBase;
+  const hasPendingLocalEdit =
+    hasPendingUpdate || pendingDraftOverlayId === selectedOverlay.id;
+  const shouldBufferRemote = hasPendingLocalEdit && !docMatchesBase;
 
   if (shouldBufferRemote) {
     if (docMatchesCurrent) {

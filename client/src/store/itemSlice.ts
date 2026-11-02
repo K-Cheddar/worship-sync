@@ -24,7 +24,6 @@ import {
   getIndexFromSelectionHint,
   getSelectionHint,
 } from "../utils/selectionHint";
-import { updateAllItemsList } from "./allItemsSlice";
 import { updateItemList } from "./itemListSlice";
 import {
   getServiceItemListBackgroundPatch,
@@ -277,7 +276,7 @@ const applyItemDataToState = (
   const slideCount = getSlideCount(payload, nextArrangement);
 
   state.name = payload.name || state.name;
-  state.type = payload.type || state.type;
+  state.type = payload.type ?? state.type;
   state._id = payload._id || state._id;
   state.contentOwner = options && "contentOwner" in options
     ? options.contentOwner ?? undefined
@@ -318,6 +317,9 @@ export const itemSlice = createSlice({
   name: "item",
   initialState,
   reducers: {
+    setActiveItemOccurrence: (state, action: PayloadAction<string>) => {
+      state.listId = action.payload;
+    },
     setActiveItem: (state, action: PayloadAction<Partial<ItemState>>) => {
       applyItemDataToState(state, action.payload);
       resetBackgroundTargetUi(state);
@@ -698,7 +700,6 @@ const _updateItemInLists = ({
   dispatch,
 }: UpdateItemInListsType) => {
   const { list } = state.undoable.present.itemList;
-  const { list: allItemsList } = state.allItems;
   const { _id } = state.undoable.present.item;
 
   const updatedList = updateItemInList({
@@ -707,14 +708,6 @@ const _updateItemInLists = ({
     id: _id,
     list,
   });
-  const updatedAllItemsList = updateItemInList({
-    property,
-    value,
-    id: _id,
-    list: allItemsList,
-  });
-
-  dispatch(updateAllItemsList(updatedAllItemsList));
   dispatch(updateItemList(updatedList));
 };
 
@@ -728,12 +721,8 @@ const _patchItemInLists = ({
   dispatch: AppDispatch;
 }) => {
   const { list } = state.undoable.present.itemList;
-  const { list: allItemsList } = state.allItems;
   const { _id } = state.undoable.present.item;
 
-  dispatch(
-    updateAllItemsList(patchItemInList({ id: _id, list: allItemsList, patch })),
-  );
   dispatch(updateItemList(patchItemInList({ id: _id, list, patch })));
 };
 
@@ -1020,24 +1009,18 @@ export const updateSlideBackground = createAsyncThunk(
 );
 
 /**
- * Sets whether the next send of this slide's video background restarts from
- * the beginning or lets it keep playing, so a song can restart on its opener and
- * continue across the lyric advances after it.
+ * Both video preferences follow the same selected-slide persistence path in
+ * the flat deck and selected arrangement. Neither changes the other setting.
  */
-export const updateSlideVideoBackgroundSendMode = createAsyncThunk(
-  "item/updateSlideVideoBackgroundSendMode",
-  async (args: { mode: VideoBackgroundSendMode }, { dispatch, getState }) => {
+const updateSelectedSlideVideoBackground = createAsyncThunk(
+  "item/updateSelectedSlideVideoBackground",
+  async (settings: Pick<ItemSlideType, "videoBackgroundSendMode" | "videoBackgroundLoop">, { dispatch, getState }) => {
     const state = getState();
     const item = state.undoable.present.item;
 
-    const applyMode = (slide: ItemSlideType): ItemSlideType =>
-      slide.videoBackgroundSendMode === args.mode
-        ? slide
-        : { ...slide, videoBackgroundSendMode: args.mode };
-
     const mapSelected = (slides: ItemSlideType[]) =>
       slides.map((slide, index) =>
-        index === item.selectedSlide ? applyMode(slide) : slide,
+        index === item.selectedSlide ? { ...slide, ...settings } : slide,
       );
 
     const arrangementSlides =
@@ -1057,6 +1040,12 @@ export const updateSlideVideoBackgroundSendMode = createAsyncThunk(
     dispatch(_updateSlides(mapSelected(item.slides)));
   },
 );
+
+export const updateSlideVideoBackgroundSendMode = (args: { mode: VideoBackgroundSendMode }) =>
+  updateSelectedSlideVideoBackground({ videoBackgroundSendMode: args.mode });
+
+export const updateSlideVideoBackgroundLoop = (args: { loop: boolean }) =>
+  updateSelectedSlideVideoBackground({ videoBackgroundLoop: args.loop });
 
 export const updateSlideBackgroundsOnSubset = createAsyncThunk(
   "item/updateSlideBackgroundsOnSubset",
@@ -1288,6 +1277,7 @@ export const {
   _updateArrangements,
   clearTransientState,
   setActiveItem,
+  setActiveItemOccurrence,
   replaceMediaReferencesInActiveItem,
   attachCloudCopyToLocalImageInActiveItem,
   updateLocalImageReferenceInActiveItem,

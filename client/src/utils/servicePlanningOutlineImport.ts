@@ -1,3 +1,4 @@
+import { itemDocumentToLibraryEntry } from "./itemLibrary";
 import type PouchDB from "pouchdb-browser";
 import type { ParsedBibleRef } from "../integrations/servicePlanning/parseBibleReference";
 import type { BibleFontMode, MediaType, ServiceItem } from "../types";
@@ -12,7 +13,7 @@ import {
 type InsertServicePlanningOutlineCandidatesArgs = {
   outlineCandidates: OutlineItemCandidate[];
   currentList: ServiceItem[];
-  allItems: ServiceItem[];
+  libraryItems: ServiceItem[];
   db: PouchDB.Database | undefined;
   bibleDb?: Pick<PouchDB.Database, "get" | "put"> | undefined;
   defaultBibleBackground: string;
@@ -24,14 +25,14 @@ type InsertServicePlanningOutlineCandidatesArgs = {
 type InsertServicePlanningOutlineCandidatesResult = {
   newList: ServiceItem[];
   inserted: number;
-  createdAllItems: ServiceItem[];
+  createdItems: ServiceItem[];
   listChanged: boolean;
 };
 
 export type ExecuteServicePlanningOutlineStepResult = {
   newList: ServiceItem[];
   inserted: number;
-  createdAllItems: ServiceItem[];
+  createdItems: ServiceItem[];
   listChanged: boolean;
   activeListId?: string;
 };
@@ -353,7 +354,7 @@ const ensureHeadingInList = async ({
 export const executeServicePlanningOutlineSyncStep = async ({
   step,
   currentList,
-  allItems,
+  libraryItems,
   db,
   bibleDb,
   defaultBibleBackground,
@@ -381,15 +382,15 @@ export const executeServicePlanningOutlineSyncStep = async ({
     return {
       newList: ensured.newList,
       inserted: 0,
-      createdAllItems: [],
+      createdItems: [],
       listChanged: ensured.listChanged,
       activeListId: ensured.createdHeadingListId,
     };
   }
 
   let sourceItem: ServiceItem | null = null;
-  const createdAllItems: ServiceItem[] = [];
-  const currentAllItems = [...allItems];
+  const createdItems: ServiceItem[] = [];
+  const currentItems = [...libraryItems];
 
   if (
     step.kind !== "insertSongAtEnd" &&
@@ -404,7 +405,7 @@ export const executeServicePlanningOutlineSyncStep = async ({
     return {
       newList: ensured.newList,
       inserted: 0,
-      createdAllItems,
+      createdItems,
       listChanged: ensured.listChanged,
       activeListId: ensured.createdHeadingListId,
     };
@@ -423,7 +424,7 @@ export const executeServicePlanningOutlineSyncStep = async ({
       parsedRef: step.candidate.parsedRef as ParsedBibleRef,
       db,
       bibleDb,
-      allItems: currentAllItems,
+      libraryItems: currentItems,
       background: defaultBibleBackground,
       mediaInfo: defaultBibleMediaInfo,
       brightness: defaultBibleBackgroundBrightness,
@@ -436,7 +437,7 @@ export const executeServicePlanningOutlineSyncStep = async ({
       background: createdBible.background,
       listId: generateRandomId(),
     };
-    createdAllItems.push(sourceItem);
+    createdItems.push(sourceItem);
   } else if (
     (step.kind === "insertCustomDocument" ||
       step.kind === "insertCustomDocumentAtEnd") &&
@@ -444,12 +445,7 @@ export const executeServicePlanningOutlineSyncStep = async ({
   ) {
     const document = step.candidate.matchedLibraryItem;
     if (document?.type === "free") {
-      sourceItem = {
-        _id: document._id,
-        name: document.name,
-        type: "free",
-        listId: document.listId,
-      };
+      sourceItem = itemDocumentToLibraryEntry(document);
     }
   }
 
@@ -457,7 +453,7 @@ export const executeServicePlanningOutlineSyncStep = async ({
     return {
       newList: ensured.newList,
       inserted: 0,
-      createdAllItems,
+      createdItems,
       listChanged: ensured.listChanged,
       activeListId: ensured.createdHeadingListId,
     };
@@ -487,7 +483,7 @@ export const executeServicePlanningOutlineSyncStep = async ({
   return {
     newList,
     inserted: 1,
-    createdAllItems,
+    createdItems,
     listChanged: true,
     activeListId: outlineItem.listId,
   };
@@ -496,7 +492,7 @@ export const executeServicePlanningOutlineSyncStep = async ({
 export const insertServicePlanningOutlineCandidates = async ({
   outlineCandidates,
   currentList,
-  allItems,
+  libraryItems,
   db,
   bibleDb,
   defaultBibleBackground,
@@ -513,21 +509,21 @@ export const insertServicePlanningOutlineCandidates = async ({
     return {
       newList: currentList,
       inserted: 0,
-      createdAllItems: [],
+      createdItems: [],
       listChanged: false,
     };
   }
 
   let newList = [...currentList];
   let inserted = 0;
-  const createdAllItems: ServiceItem[] = [];
+  const createdItems: ServiceItem[] = [];
   let listChanged = false;
 
   for (const step of steps) {
     const result = await executeServicePlanningOutlineSyncStep({
       step,
       currentList: newList,
-      allItems: [...allItems, ...createdAllItems],
+      libraryItems: [...libraryItems, ...createdItems],
       db,
       bibleDb,
       defaultBibleBackground,
@@ -538,9 +534,9 @@ export const insertServicePlanningOutlineCandidates = async ({
 
     newList = result.newList;
     inserted += result.inserted;
-    createdAllItems.push(...result.createdAllItems);
+    createdItems.push(...result.createdItems);
     listChanged = listChanged || result.listChanged;
   }
 
-  return { newList, inserted, createdAllItems, listChanged };
+  return { newList, inserted, createdItems, listChanged };
 };

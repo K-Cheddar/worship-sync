@@ -3,7 +3,8 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { MemoryRouter } from "react-router-dom";
 import ItemLibrary from "./ItemLibrary";
-import allItemsReducer, { initiateAllItemsList } from "../../store/allItemsSlice";
+import itemLibraryUiReducer from "../../store/itemLibraryUiSlice";
+import { hydrateItemCache } from "../../store/allDocsSlice";
 import allDocsReducer from "../../store/allDocsSlice";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
@@ -33,14 +34,14 @@ const items: ServiceItem[] = [
 const createTestStore = () => {
   const store = configureStore({
     reducer: {
-      allItems: allItemsReducer,
+      itemLibraryUi: itemLibraryUiReducer,
       allDocs: allDocsReducer,
       undoable: (
         state = { present: { serviceTimes: { list: [] } } },
       ) => state,
     },
   });
-  store.dispatch(initiateAllItemsList(items));
+  store.dispatch(hydrateItemCache(items as never));
   return store;
 };
 

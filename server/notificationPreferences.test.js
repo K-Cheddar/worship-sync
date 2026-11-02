@@ -4,7 +4,6 @@ import assert from "node:assert/strict";
 import {
   NOTIFICATION_CATEGORY_KEYS,
   isNotificationEnabled,
-  isTeamEditorAnywhere,
   normalizeNotificationPreference,
   normalizeNotificationPreferences,
   visibleNotificationCategories,
@@ -49,29 +48,14 @@ test("an unknown category is muted rather than un-mutable", () => {
   assert.equal(isNotificationEnabled("", "on"), false);
 });
 
-test("team editors are recognized church-wide or per team", () => {
-  assert.equal(isTeamEditorAnywhere({ role: "admin" }), true);
-  assert.equal(isTeamEditorAnywhere({ teamsPermission: "edit" }), true);
-  assert.equal(
-    isTeamEditorAnywhere({ teamScopes: { "team-1": "edit" } }),
-    true,
-  );
-  assert.equal(
-    isTeamEditorAnywhere({ teamScopes: { "team-1": "view" } }),
-    false,
-  );
-  assert.equal(isTeamEditorAnywhere({ teamsPermission: "view" }), false);
-  assert.equal(isTeamEditorAnywhere({}), false);
-});
-
 test("a schedule-only volunteer is offered member categories only", () => {
   const visible = visibleNotificationCategories({ teamsPermission: "none" });
 
   assert.deepEqual(visible, ["scheduleAssignments", "scheduleReminders"]);
 });
 
-test("an editor sees owner categories too", () => {
-  const visible = visibleNotificationCategories({ teamsPermission: "edit" });
+test("an explicit Team Lead sees owner categories too", () => {
+  const visible = visibleNotificationCategories({ teamScopes: { media: "edit" } });
 
   assert.deepEqual(visible, [...NOTIFICATION_CATEGORY_KEYS]);
 });
@@ -81,7 +65,7 @@ test("every offered category has a dispatch behind it", () => {
   // mail that never arrived, which is worse than a missing preference — the
   // owner believes they are covered and stops checking. Any new category should
   // stay unoffered until its emails exist.
-  const offered = visibleNotificationCategories({ role: "admin" });
+  const offered = visibleNotificationCategories({ role: "admin", teamScopes: { media: "edit" } });
 
   assert.deepEqual(offered, [...NOTIFICATION_CATEGORY_KEYS]);
   assert.equal(isNotificationEnabled("scheduleResponses", "default"), true);
@@ -96,4 +80,10 @@ test("member categories are not gated on currently being on a roster", () => {
     "scheduleAssignments",
     "scheduleReminders",
   ]);
+});
+
+test("broad editors without Team Lead assignments see only personal categories", () => {
+  for (const access of [{ role: "admin" }, { teamsPermission: "edit" }, { teamScopes: { media: "view" } }]) {
+    assert.deepEqual(visibleNotificationCategories(access), ["scheduleAssignments", "scheduleReminders"]);
+  }
 });

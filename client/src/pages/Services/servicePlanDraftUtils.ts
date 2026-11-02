@@ -25,6 +25,7 @@ export const createEmptyServicePlanSection = (
   name = "New section",
 ): ServicePlanSection => ({
   id: generateRandomId(),
+  phase: "main",
   name,
   elements: [],
 });
@@ -310,6 +311,11 @@ export const cloneSectionsForTemplate = (
           sourceTemplateElementId: undefined,
           sourceTemplateElementType: undefined,
           sourcePlanningManaged: undefined,
+          planningCenterPdfMatchKey: undefined,
+          planningCenterPdfMatchReviewRequired: undefined,
+          planningCenterPdfSourcePosition: undefined,
+          importMatchCurrentId: undefined,
+          legacyImportMatchCandidateForId: undefined,
           servicePlanningImport: undefined,
           importAmbiguity: undefined,
           sourceSongReferenceDismissed: undefined,

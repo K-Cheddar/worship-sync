@@ -13,8 +13,6 @@ import { useSortable } from "@dnd-kit/sortable";
 import { useGSAP } from "@gsap/react";
 import cn from "classnames";
 import { getOutlineRowSelectionState } from "../../utils/outlineRowSelection";
-import { getControllerItemPath } from "../../utils/outlineSlideSections";
-import { useControllerBasePath } from "../../context/activeController";
 import { resolveServiceItemLocalImage } from "../../utils/resolveServiceItemLocalImage";
 import { resolveServiceItemLocalVideoFile } from "../../utils/resolveServiceItemLocalVideoFile";
 
@@ -64,7 +62,6 @@ const ServiceItem = ({
   onEnterMultiSelectMode,
   dragActiveId,
 }: ServiceItemsProps) => {
-  const controllerBasePath = useControllerBasePath();
   const dispatch = useDispatch();
   const mediaList = useSelector((state) => state.media.list);
   const localImage = resolveServiceItemLocalImage(item, mediaList);
@@ -251,7 +248,6 @@ const ServiceItem = ({
         !isSelected && !isInsertPoint && "border-b-transparent"
       )}
       isSelected={isSelected}
-      to={getControllerItemPath(item, controllerBasePath)}
       type={item.type}
       image={item.background}
       localImage={localImage}

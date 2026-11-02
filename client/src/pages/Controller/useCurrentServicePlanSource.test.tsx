@@ -3,10 +3,9 @@ import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
 import { render, waitFor, act } from "@testing-library/react";
 import servicePlanningImportReducer, {
-  markServicePlanningUrlSelection,
   setServicePlanningOutlinePlanBinding,
   setServicePlanningServiceOutline,
-  setStoredServicePlanningOutlineIfIdle,
+  setServicePlanningRestoredOutlineUnlessStale,
 } from "../../store/servicePlanningImportSlice";
 import itemListsReducer, { initiateItemLists } from "../../store/itemListsSlice";
 import controllerProfilesReducer, {
@@ -1078,7 +1077,6 @@ describe("useCurrentServicePlanSource", () => {
     renderHookWith(store, enabledGlobalInfo);
 
     await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalled());
-    expect(store.getState().servicePlanningImport.url).toBe("");
   });
 
   it("refetches a plan after its ID-only live change notification", async () => {
@@ -1720,7 +1718,7 @@ describe("useCurrentServicePlanSource", () => {
 
     renderHookWith(store, enabledGlobalInfo);
     await act(async () => {
-      store.dispatch(setStoredServicePlanningOutlineIfIdle(storedOutline));
+      store.dispatch(setServicePlanningRestoredOutlineUnlessStale(storedOutline));
       resolvePlans({
         success: true,
         servicePlans: [
@@ -1745,7 +1743,7 @@ describe("useCurrentServicePlanSource", () => {
     );
   });
 
-  it("keeps a URL preview imported during this Controller visit when the target binding changes", async () => {
+  it("keeps the saved plan selected when legacy URL state is restored during this visit", async () => {
     const store = makeStore();
     const urlOutline = {
       ...outlineFixture,
@@ -1758,9 +1756,8 @@ describe("useCurrentServicePlanSource", () => {
     await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
     await act(async () => {
       store.dispatch(setServicePlanningServiceOutline(urlOutline));
-      store.dispatch(markServicePlanningUrlSelection());
     });
-    await waitFor(() => expect(latestResult?.selectedPlanKey).toBeNull());
+    await waitFor(() => expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey));
 
     await act(async () => {
       store.dispatch(
@@ -1772,12 +1769,12 @@ describe("useCurrentServicePlanSource", () => {
       );
     });
 
-    expect(mockGetServicePlan).toHaveBeenCalledTimes(1);
-    expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1);
+    expect(mockGetServicePlan).toHaveBeenCalled();
+    expect(mockLoadPlanPreview).toHaveBeenCalled();
     expect(store.getState().servicePlanningImport.serviceOutline).toEqual(
-      urlOutline,
+      outlineFixture,
     );
-    expect(store.getState().servicePlanningImport.servicePlanKey).toBeNull();
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBe(planFixture.planKey);
   });
 
   it("keeps an explicit manual plan selected when its binding is cleared", async () => {
@@ -1957,6 +1954,60 @@ describe("useCurrentServicePlanSource", () => {
     expect(store.getState().servicePlanningImport.outlinePlanBinding).toEqual(
       expect.objectContaining({ planKey: "service-2@2026-08-01" }),
     );
+  });
+
+  it("keeps the latest manually selected binding when earlier persistence settles last", async () => {
+    const store = makeStore();
+    const database = {};
+    const firstWrite = createDeferred<void>();
+    const secondWrite = createDeferred<void>();
+    mockPersistItemListServicePlanBinding
+      .mockReturnValueOnce(firstWrite.promise)
+      .mockReturnValueOnce(secondWrite.promise);
+    renderHookWith(store, enabledGlobalInfo, { db: database });
+    await waitFor(() => expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey));
+
+    act(() => {
+      latestResult?.selectPlan("service-2@2026-08-01");
+      latestResult?.selectPlan(planFixture.planKey);
+    });
+    await waitFor(() => expect(mockPersistItemListServicePlanBinding).toHaveBeenCalledTimes(2));
+    expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey);
+
+    await act(async () => { secondWrite.resolve(undefined); });
+    await waitFor(() => expect(store.getState().servicePlanningImport.outlinePlanBinding?.planKey).toBe(planFixture.planKey));
+    await act(async () => { firstWrite.resolve(undefined); });
+
+    expect(store.getState().servicePlanningImport.outlinePlanBinding?.planKey).toBe(planFixture.planKey);
+    expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey);
+  });
+
+  it("persists reselecting the current binding after an earlier selection is queued", async () => {
+    const store = makeStore();
+    store.dispatch(setServicePlanningOutlinePlanBinding({
+      planKey: planFixture.planKey,
+      planName: planFixture.name,
+      linkedAt: "2026-08-01T08:00:00.000Z",
+    }));
+    const database = {};
+    const firstWrite = createDeferred<void>();
+    const secondWrite = createDeferred<void>();
+    mockPersistItemListServicePlanBinding
+      .mockReturnValueOnce(firstWrite.promise)
+      .mockReturnValueOnce(secondWrite.promise);
+    renderHookWith(store, enabledGlobalInfo, { db: database });
+    await waitFor(() => expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey));
+
+    act(() => latestResult?.selectPlan("service-2@2026-08-01"));
+    await waitFor(() => expect(mockPersistItemListServicePlanBinding).toHaveBeenCalledTimes(1));
+    act(() => latestResult?.selectPlan(planFixture.planKey));
+    await waitFor(() => expect(mockPersistItemListServicePlanBinding).toHaveBeenCalledTimes(2));
+
+    await act(async () => { secondWrite.resolve(undefined); });
+    await waitFor(() => expect(store.getState().servicePlanningImport.outlinePlanBinding?.planKey).toBe(planFixture.planKey));
+    await act(async () => { firstWrite.resolve(undefined); });
+
+    expect(store.getState().servicePlanningImport.outlinePlanBinding?.planKey).toBe(planFixture.planKey);
   });
 
   it("does not persist a binding for the automatic default selection on load", async () => {

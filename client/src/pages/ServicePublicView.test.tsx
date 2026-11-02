@@ -2,6 +2,8 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ServicePublicView from "./ServicePublicView";
 import type { PublicServiceFlowSnapshot } from "../services/serviceFlowTypes";
+import { buildServicePlanFlowSnapshot } from "./buildServicePlanFlowSnapshot";
+import { createServicePlanTextResource } from "./Services/servicePlanResources";
 
 const detailedSnapshot: PublicServiceFlowSnapshot = {
   success: true,
@@ -138,6 +140,78 @@ describe("ServicePublicView equipment assignments", () => {
     expect(localStorage.getItem("worshipsyncServicePublicTheme")).toBe("light");
   });
 
+  it("shows remote live-adjusted times in both themes and keeps planned times neutral", async () => {
+    const nowMs = Date.parse("2026-09-25T18:01:00.000Z");
+    jest.spyOn(Date, "now").mockReturnValue(nowMs);
+    const snapshotFor = (live: PublicServiceFlowSnapshot["service"]["live"]): PublicServiceFlowSnapshot => ({
+      ...detailedSnapshot,
+      serverNowMs: nowMs,
+      service: {
+        ...detailedSnapshot.service,
+        startsAt: "2026-09-25T18:00:00.000Z",
+        timelineStartsAt: "2026-09-25T18:00:00.000Z",
+        timezone: "UTC",
+        sections: [{
+          id: "worship",
+          title: "Worship",
+          items: [
+            { id: "welcome", title: "Welcome", durationSeconds: 120, notes: { blocks: [] } },
+            { id: "song", title: "Song", durationSeconds: 300, notes: { blocks: [] } },
+            { id: "closing", title: "Closing", durationSeconds: 60, notes: { blocks: [] } },
+          ],
+        }],
+        live,
+      },
+    });
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <ServicePublicView snapshot={snapshotFor({ mode: "schedule" })} />,
+    );
+
+    expect(screen.getByText("6:00 PM", { selector: "time" })).toHaveClass("text-neutral-300");
+    expect(screen.getByText("6:02 PM", { selector: "time" })).toHaveClass("text-neutral-300");
+
+    // A snapshot refresh carries the Make Live update from another browser.
+    rerender(
+      <ServicePublicView
+        snapshot={snapshotFor({
+          mode: "anchored",
+          currentItemId: "song",
+          startedAt: "2026-09-25T17:58:00.000Z",
+        })}
+      />,
+    );
+
+    expect(screen.getByText("6:00 PM", { selector: "time" })).toHaveClass("text-neutral-300");
+    const adjustedSongTime = screen.getByLabelText(
+      "Live-adjusted time 5:58 PM; planned 6:02 PM",
+    );
+    const adjustedClosingTime = screen.getByLabelText(
+      "Live-adjusted time 6:03 PM; planned 6:07 PM",
+    );
+    expect(adjustedSongTime).toHaveClass("text-blue-300");
+    expect(adjustedSongTime).toHaveAttribute("title", "Planned time: 6:02 PM");
+    expect(adjustedClosingTime).toHaveClass("text-blue-300");
+    expect(within(screen.getAllByRole("listitem")[1]).getByRole("heading", { name: "Song" }))
+      .toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Switch to light mode" }));
+    expect(adjustedSongTime).toHaveClass("text-blue-700");
+    expect(screen.getByText("6:00 PM", { selector: "time" })).toHaveClass("text-slate-600");
+
+    rerender(
+      <ServicePublicView
+        snapshot={snapshotFor({
+          mode: "anchored",
+          currentItemId: "song",
+          startedAt: "2026-09-25T18:02:00.000Z",
+        })}
+      />,
+    );
+    expect(screen.getByText("6:02 PM", { selector: "time" })).toHaveClass("text-slate-600");
+    expect(screen.queryByLabelText(/Live-adjusted time/)).not.toBeInTheDocument();
+  });
+
   it("keeps the anonymous public plan's equipment panel below its existing page top", () => {
     render(<ServicePublicView snapshot={detailedSnapshot} />);
 
@@ -226,6 +300,27 @@ describe("ServicePublicView equipment assignments", () => {
     expect(within(item).getByText("Opening Song")).toBeInTheDocument();
     expect(within(item).getByText("Psalm 100:1–5")).toBeInTheDocument();
     expect(within(item).getByText("John 4:23–24")).toBeInTheDocument();
+  });
+
+  it("shows title-only and notes-only resources and previews their rich notes", async () => {
+    const notes = { blocks: [{ type: "paragraph" as const, spans: [{ text: "Formatted cue", bold: true, italic: true }] }] };
+    const snapshot = buildServicePlanFlowSnapshot({
+      plan: {
+        planId: "resources", churchId: "church-1", planKey: "resources", serviceId: "service-1", date: "2099-09-06",
+        name: "Service", sections: [{ id: "main", name: "Main", elements: [{
+          id: "cues", type: "free", title: { blocks: [] },
+          resources: [
+            createServicePlanTextResource({ title: "Title only", text: { blocks: [] } }),
+            createServicePlanTextResource({ title: "", text: notes }),
+          ],
+        }] }],
+      },
+      startsAt: "2099-09-06T15:00:00.000Z",
+    });
+    render(<ServicePublicView snapshot={snapshot} />);
+    expect(screen.getByText("Title only")).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "View Notes: Notes" }));
+    expect(screen.getByText("Formatted cue")).toHaveClass("font-bold", "italic");
   });
 
   it("shows every resource type with wrapped titles, details, and safe links", async () => {

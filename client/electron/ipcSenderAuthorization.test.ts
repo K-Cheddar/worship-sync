@@ -1,5 +1,6 @@
 import {
   isTrustedControllerIpcSender,
+  isTrustedDesktopCaptureIpcSender,
   isTrustedWorshipSyncIpcSender,
 } from "./ipcSenderAuthorization";
 
@@ -53,5 +54,68 @@ describe("isTrustedControllerIpcSender", () => {
         [windowLike({ id: 2, windowDestroyed: true })],
       ),
     ).toBe(false);
+  });
+
+  it("allows trusted display outputs to restore source ids and names", () => {
+    const controller = windowLike({ id: 1 });
+    const captureHost = windowLike({ id: 2 });
+    const projector = windowLike({ id: 3 });
+    const monitor = windowLike({ id: 4 });
+    const stream = windowLike({ id: 5 });
+    const displayWindows = [projector, monitor, stream];
+
+    displayWindows.forEach((outputWindow) => {
+      expect(
+        isTrustedDesktopCaptureIpcSender(
+          { id: outputWindow.webContents.id },
+          controller,
+          captureHost,
+          displayWindows,
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it("denies unknown senders and keeps thumbnails limited to controller and capture host", () => {
+    const controller = windowLike({ id: 1 });
+    const captureHost = windowLike({ id: 2 });
+    const projector = windowLike({ id: 3 });
+    const displayWindows = [projector];
+
+    expect(
+      isTrustedDesktopCaptureIpcSender(
+        { id: 4 },
+        controller,
+        captureHost,
+        displayWindows,
+      ),
+    ).toBe(false);
+    expect(
+      isTrustedDesktopCaptureIpcSender(
+        { id: 3 },
+        controller,
+        captureHost,
+        displayWindows,
+        true,
+      ),
+    ).toBe(false);
+    expect(
+      isTrustedDesktopCaptureIpcSender(
+        { id: 1 },
+        controller,
+        captureHost,
+        displayWindows,
+        true,
+      ),
+    ).toBe(true);
+    expect(
+      isTrustedDesktopCaptureIpcSender(
+        { id: 2 },
+        controller,
+        captureHost,
+        displayWindows,
+        true,
+      ),
+    ).toBe(true);
   });
 });

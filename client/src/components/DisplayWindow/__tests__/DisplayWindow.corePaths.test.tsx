@@ -487,12 +487,16 @@ jest.mock("../HLSVideoPlayer", () => ({
     onLoadedData,
     muted,
     playbackRole,
+    playback,
+    loop,
   }: {
     src: string;
     originalSrc: string;
     onLoadedData?: () => void;
     muted?: boolean;
     playbackRole?: "preview" | "output";
+    playback?: { loop?: boolean };
+    loop?: boolean;
   }) => (
     <button
       type="button"
@@ -501,6 +505,7 @@ jest.mock("../HLSVideoPlayer", () => ({
       data-original-src={originalSrc}
       data-muted={muted ? "true" : "false"}
       data-playback-role={playbackRole}
+      data-video-loop={String(playback?.loop ?? loop ?? true)}
       onClick={() => onLoadedData?.()}
     />
   ),
@@ -2901,4 +2906,33 @@ describe("DisplayWindow core paths", () => {
       "Verse 2",
     );
   });
+
+  it.each(["projector", "monitor", "editor"] as const)("propagates live loop changes through the %s composition while retaining its video", async (displayType) => {
+    mockUseSelector.mockImplementation((selector) => selector({ ...baseState, displayOutputs: { ...baseState.displayOutputs, list: baseState.displayOutputs.list.map((output) => ({ ...output, settings: { showBackground: true } })) } }));
+    const boxes: Box[] = [{ ...baseBox, mediaInfo: { id: "clip", type: "video", background: "https://cdn.example/clip.mp4" } as MediaType }];
+    const cue = { mediaKey: "remote:clip", positionSeconds: 10, paused: false, atServerMs: Date.now(), generation: 1, applySeek: false, loop: false };
+    const { rerender } = render(<DisplayWindow displayType={displayType} boxes={boxes} shouldPlayVideo videoPlayback={cue} />);
+    const video = await screen.findByTestId("window-hls-player");
+    expect(video).toHaveAttribute("data-video-loop", "false");
+    rerender(<DisplayWindow displayType={displayType} boxes={boxes} shouldPlayVideo videoPlayback={{ ...cue, loop: true, generation: 2 }} />);
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.getByTestId("window-hls-player")).toBe(video);
+    expect(video).toHaveAttribute("data-video-loop", "true");
+  });
+
+  it("uses the resolved editor preference before any slide is live", async () => {
+    mockUseSelector.mockImplementation((selector) => selector({ ...baseState, displayOutputs: { ...baseState.displayOutputs, list: baseState.displayOutputs.list.map((output) => ({ ...output, settings: { showBackground: true } })) } }));
+    const boxes: Box[] = [{ ...baseBox, mediaInfo: { id: "clip", type: "video", background: "https://cdn.example/clip.mp4" } as MediaType }];
+    render(<DisplayWindow displayType="editor" boxes={boxes} shouldPlayVideo videoBackgroundLoop={false} />);
+    expect(await screen.findByTestId("window-hls-player")).toHaveAttribute("data-video-loop", "false");
+  });
+
+  it("propagates non-looping playback through the full monitor next-slide underlay", async () => {
+    mockUseSelector.mockImplementation((selector) => selector({ ...baseState, displayOutputs: { ...baseState.displayOutputs, list: baseState.displayOutputs.list.map((output) => ({ ...output, settings: { showBackground: true } })) } }));
+    const boxes: Box[] = [{ ...baseBox, mediaInfo: { id: "clip", type: "video", background: "https://cdn.example/clip.mp4" } as MediaType }];
+    const cue = { mediaKey: "remote:clip", positionSeconds: 40, paused: true, atServerMs: Date.now(), generation: 1, applySeek: false, loop: false };
+    render(<DisplayWindow displayType="monitor" monitorLayoutMode="full-monitor" boxes={boxes} nextBoxes={[baseBox]} shouldPlayVideo videoPlayback={cue} />);
+    expect(await screen.findByTestId("window-hls-player")).toHaveAttribute("data-video-loop", "false");
+  });
+
 });

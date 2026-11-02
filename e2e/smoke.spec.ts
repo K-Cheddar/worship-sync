@@ -1,20 +1,36 @@
 import { test, expect } from "./smokeFixtures";
-import { openEditableTeam } from "./smokeNavigation";
-
-const openHome = async (page: import("@playwright/test").Page) => {
-  await page.goto("/#/home", { waitUntil: "domcontentloaded" });
-  await expect(page.getByRole("main")).toBeVisible();
-};
+import {
+  homeNavigationDiagnostics,
+  openEditableTeam,
+  openHome,
+  teamsAndServicesHomeLink,
+} from "./smokeNavigation";
+import { E2E_CHURCH_ID } from "./testChurch";
+import { requirePresentationControllerHomeLink } from "./controllerTestData";
 
 const openTeamsAndServices = async (page: import("@playwright/test").Page) => {
-  await openHome(page);
-  const workspaceLink = page.getByRole("link", {
-    name: /^Teams and Services\b/,
-  });
-  await expect(
-    workspaceLink,
-    "The saved E2E account must have access to Teams and Services.",
-  ).toBeVisible();
+  const auth = await openHome(page);
+  const workspaceLink = teamsAndServicesHomeLink(page);
+  if (auth.bootstrapStatus === 200 && auth.authenticated && auth.canViewTeams) {
+    try {
+      await expect(workspaceLink).toBeVisible({ timeout: 15_000 });
+    } catch {
+      // Keep the failure classification below, with the loaded auth flags and
+      // current Home snapshot, rather than treating a late render as denial.
+    }
+  }
+  if ((await workspaceLink.count()) !== 1) {
+    const reason =
+      auth.bootstrapStatus !== 200 || auth.authenticated !== true
+        ? "The saved session is not authenticated in the Home application; Teams navigation cannot be evaluated."
+        : auth.sessionKind !== "human" || auth.churchId !== E2E_CHURCH_ID
+          ? `The E2E account must be a human session for church ${E2E_CHURCH_ID}; the Home link may be absent because this is the wrong identity.`
+          : auth.canViewTeams === false
+            ? "The Home link is correctly hidden: this account lacks canViewTeams. Grant Teams view/edit access or a team-scoped grant through the existing access controls."
+            : "The authenticated permission response allows Teams, but Home did not render its Teams and Services route link after loading. This indicates an application loading or homepage navigation regression.";
+    throw new Error(await homeNavigationDiagnostics(page, auth, reason));
+  }
+  await expect(workspaceLink).toBeVisible();
   await workspaceLink.click();
   await expect(page).toHaveURL(/#\/teams-and-services(?:\/|$)/);
   await expect(
@@ -23,13 +39,8 @@ const openTeamsAndServices = async (page: import("@playwright/test").Page) => {
 };
 
 test("core navigation opens the controller and Teams and Services workspace", async ({ page }) => {
-  await openHome(page);
-
-  const presentationLink = page.getByRole("link", { name: /^Presentation\b/ });
-  await expect(
-    presentationLink,
-    "The saved E2E account must have access to the Presentation controller.",
-  ).toBeVisible();
+  const auth = await openHome(page);
+  const presentationLink = await requirePresentationControllerHomeLink(page, auth);
   await presentationLink.click();
   await expect(page).toHaveURL(/#\/controller(?:\/|$)/);
   await expect(page.locator("#controller-main")).toBeVisible();

@@ -28,8 +28,9 @@ export type ServicePlanningCandidate = {
 export type ServicePlanningMappedRow = {
   source: EventData;
   rule?: ServicePlanningElementRule;
-  /** Native rows use exact event identity and reject duplicate exact labels. */
+  /** Native rows use batch matching by exact event, participant, and song. */
   sourceKind?: "native";
+  isSong?: boolean;
   matchKey: string;
   candidates: ServicePlanningCandidate[];
 };

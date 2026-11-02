@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-27-local-capture-playback",
+  "date": "2026-10-27",
+  "type": "improved",
+  "title": "Local capture playback",
+  "description": "The Add Video Input preview can join a camera already in use by WorshipSync, confirms a frame before showing it, and recovers on refresh. Direct playback remains available across supported desktop outputs, with compatibility playback elsewhere."
+}

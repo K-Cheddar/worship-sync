@@ -218,6 +218,8 @@ const renderRow = (
     structureOnly?: boolean;
     onReviewImportAmbiguity?: jest.Mock;
     isReviewing?: boolean;
+    adjustedStartTime?: string;
+    plannedStartTime?: string;
   } = {},
 ) => {
   const element = overrides.element ?? baseElement;
@@ -252,6 +254,8 @@ const renderRow = (
           onOpenContent={overrides.onOpenContent}
           onReviewImportAmbiguity={overrides.onReviewImportAmbiguity}
           isReviewing={overrides.isReviewing}
+          adjustedStartTime={overrides.adjustedStartTime}
+          plannedStartTime={overrides.plannedStartTime}
           canCreateLibrarySong={overrides.canCreateLibrarySong}
           resolvedSongRef={overrides.resolvedSongRef}
           microphones={overrides.microphones}
@@ -264,6 +268,42 @@ const renderRow = (
     </DndContext>,
   );
 };
+
+describe("live-adjusted start times", () => {
+  it("uses the planned time and neutral editor color when no adjustment is passed", () => {
+    renderRow({ canEdit: true, isEditing: false });
+
+    expect(screen.getByText("10:00 AM")).toHaveClass("text-gray-400");
+  });
+
+  it("shows changed times in blue with the planned time available to screen readers", () => {
+    renderRow({
+      canEdit: true,
+      isEditing: false,
+      adjustedStartTime: "10:10 AM",
+      plannedStartTime: "10:05 AM",
+    });
+
+    const adjustedTime = screen.getByLabelText(
+      "Live-adjusted time 10:10 AM; planned 10:05 AM",
+    );
+    expect(adjustedTime).toHaveTextContent("10:10 AM");
+    expect(adjustedTime).toHaveAttribute("title", "Planned time: 10:05 AM");
+    expect(adjustedTime).toHaveClass("text-blue-300");
+  });
+
+  it("keeps the planned display and edit field tied to the saved time", () => {
+    renderRow({
+      canEdit: true,
+      isEditing: true,
+      adjustedStartTime: "10:10 AM",
+      plannedStartTime: "10:05 AM",
+    });
+
+    expect(screen.getByLabelText("Time")).toHaveValue("10:00 AM");
+    expect(screen.queryByLabelText(/Live-adjusted time/)).not.toBeInTheDocument();
+  });
+});
 
 describe("import ambiguity indicator", () => {
   it("marks the active review row without changing selection", () => {

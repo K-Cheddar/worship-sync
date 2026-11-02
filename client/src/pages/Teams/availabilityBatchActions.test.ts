@@ -16,7 +16,7 @@ beforeEach(() => {
 });
 
 it("reuses an idempotency key for the same recipient set and starts a new key when selection changes", async () => {
-  const request = (memberIds: string[]) => prepareAvailabilityBatchForMembers({ churchId: "church-1", formId: "form-1", intentType: "availability_request", memberIds });
+  const request = (memberIds: string[], audienceType: "not_contacted" | "specific" = "not_contacted") => prepareAvailabilityBatchForMembers({ churchId: "church-1", formId: "form-1", intentType: "availability_request", audienceType, memberIds });
   jest.mocked(prepareAvailabilityNotificationBatch).mockRejectedValueOnce(new Error("temporary"));
   await expect(request(["member-b", "member-a"])).rejects.toThrow("temporary");
   await request(["member-a", "member-b"]);
@@ -26,4 +26,13 @@ it("reuses an idempotency key for the same recipient set and starts a new key wh
   expect(requests[0].memberIds).toEqual(["member-a", "member-b"]);
   expect(requests[1].requestKey).toBe(requests[0].requestKey);
   expect(requests[2].requestKey).not.toBe(requests[1].requestKey);
+});
+
+it("keeps idempotency keys separate between default selection and deliberate resends", async () => {
+  await prepareAvailabilityBatchForMembers({ churchId: "church-1", formId: "form-1", intentType: "availability_request", audienceType: "not_contacted", memberIds: ["member-a"] });
+  await prepareAvailabilityBatchForMembers({ churchId: "church-1", formId: "form-1", intentType: "availability_request", audienceType: "specific", memberIds: ["member-a"] });
+  const requests = jest.mocked(prepareAvailabilityNotificationBatch).mock.calls.map(([, body]) => body);
+  expect(requests[0].requestKey).not.toBe(requests[1].requestKey);
+  expect(requests[0].audienceType).toBe("not_contacted");
+  expect(requests[1].audienceType).toBe("specific");
 });

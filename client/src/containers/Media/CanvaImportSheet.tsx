@@ -1,3 +1,4 @@
+import type { PresentationViewAction } from "../../context/transferModel";
 import { useContext, useEffect, useMemo, useState } from "react";
 import { ExternalLink, Image as ImageIcon, Link2, PanelsTopLeft, Search, Video } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -68,7 +69,7 @@ type Props = {
     pages: MediaType[],
     designTitle: string,
     options?: { navigateToItem?: boolean; idempotencyKey?: string },
-  ) => string | void | Promise<string | void>;
+  ) => PresentationViewAction | void | Promise<PresentationViewAction | void>;
   existingMedia: readonly MediaType[];
   getCurrentMedia?: () => readonly MediaType[];
   sourceMedia?: MediaType | null;
@@ -220,10 +221,23 @@ const CanvaImportSheet = ({
       (_, index) => index + 1,
     );
     setPages(nextPages);
-    setSelectedPages(new Set(nextPages.slice(0, 25)));
-    setCustomItemName(design.title);
     const sourceMatchesDesign = initialSource?.designId === design.id;
-    if (sourceMatchesDesign) setFormat(initialSource.format);
+    setSelectedPages(new Set(
+      sourceMatchesDesign && initialSource.pageNumbers.length
+        ? initialSource.pageNumbers
+        : [1],
+    ));
+    setCustomItemName(design.title);
+    if (sourceMatchesDesign) {
+      setFormat(initialSource.format);
+      if (initialSource.format === "mp4") {
+        // Keep an existing multi-page combined video in combined mode when it
+        // is refreshed. New imports and single-page videos default to separate.
+        setMp4ImportMode(
+          initialSource.pageNumbers.length > 1 ? "combined" : "separate",
+        );
+      }
+    }
   };
 
   const openDesignFromLink = async () => {
@@ -415,8 +429,8 @@ const CanvaImportSheet = ({
           const latestById = new Map(getLatestMedia().map((mediaItem) => [mediaItem.id, mediaItem]));
           const currentPages = customItemPages.map((page) => latestById.get(page.id)).filter((page): page is MediaType => Boolean(page));
           if (currentPages.length !== customItemPages.length) throw new Error("One or more imported pages are no longer in Media.");
-          const viewPath = await onCreateDeckItem(currentPages, itemName, { navigateToItem: false, idempotencyKey: customItemIdempotencyKey });
-          return viewPath;
+          const viewPresentation = await onCreateDeckItem(currentPages, itemName, { navigateToItem: false, idempotencyKey: customItemIdempotencyKey });
+          return viewPresentation;
         },
         ...(onUnprocessedAssetCleanup ? { cleanupRetry: retryCanvaCleanup } : {}),
         finalize: async (result, signal, onPagesPersisted) => {
@@ -455,14 +469,14 @@ const CanvaImportSheet = ({
               return mediaItem ? [mediaItem] : [];
             });
           };
-          const createDeckIfRequested = async (pagesToUse: MediaType[]): Promise<{ viewPath?: string; customItemError?: string }> => {
+          const createDeckIfRequested = async (pagesToUse: MediaType[]): Promise<{ viewPresentation?: PresentationViewAction; customItemError?: string }> => {
             if (signal.aborted) throw new Error("Canva import cancelled.");
             if (!includeCustomItem) return {};
             if (!pagesToUse.length || !onCreateDeckItem) return { customItemError: "No saved media is available to create the custom item." };
             customItemPages = pagesToUse;
             try {
-              const viewPath = await onCreateDeckItem(pagesToUse, itemName, { navigateToItem: false, idempotencyKey: customItemIdempotencyKey });
-              return typeof viewPath === "string" ? { viewPath } : {};
+              const viewPresentation = await onCreateDeckItem(pagesToUse, itemName, { navigateToItem: false, idempotencyKey: customItemIdempotencyKey });
+              return viewPresentation ? { viewPresentation } : {};
             } catch (customError) {
               return { customItemError: customError instanceof Error ? customError.message : "Try again." };
             }
@@ -890,7 +904,7 @@ const CanvaImportSheet = ({
                     <p className="mt-2 text-xs text-gray-400">
                       {format === "png"
                         ? "PNG pages are still images. Use Media screen share for live Canva Present animations."
-                        : "MP4 bakes motion into one video. You advance in WorshipSync by playing the clip, not Canva Present."}
+                        : "MP4 bakes motion into video clips. By default, each selected page becomes its own video."}
                     </p>
                     {format === "mp4" ? (
                       <div className="mt-3">
@@ -925,8 +939,8 @@ const CanvaImportSheet = ({
                         </div>
                         <p className="mt-1 text-xs text-gray-400">
                           {mp4ImportMode === "combined"
-                            ? "Best for looping the whole presentation as one video."
-                            : "Import each page separately so you can choose when to show it."}
+                            ? "Play the selected pages together as one video."
+                            : "Keep pages as individual videos so you can choose when to show each one."}
                         </p>
                       </div>
                     ) : null}

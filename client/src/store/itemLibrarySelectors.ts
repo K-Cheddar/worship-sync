@@ -1,28 +1,24 @@
 import { createSelector } from "@reduxjs/toolkit";
 import type { RootState } from "./store";
-import { selectSongLibrary } from "./songLibrarySelectors";
-import type { ServiceItem } from "../types";
 
-const selectIndexedItems = (state: RootState) => state.allItems.list;
+import { itemDocumentToLibraryEntry } from "../utils/itemLibrary";
 
-/** Combines the existing library read models without another document load. */
-export const selectUnifiedItemLibrary = createSelector(
-  [selectIndexedItems, selectSongLibrary],
-  (items, { songs }) => {
-    const byId = new Map<string, ServiceItem>();
+export const selectItemDocuments = createSelector(
+  [(state: RootState) => state.allDocs.allSongDocs,
+    (state: RootState) => state.allDocs.allFreeFormDocs,
+    (state: RootState) => state.allDocs.allTimerDocs,
+    (state: RootState) => state.allDocs.allBibleDocs,
+    (state: RootState) => state.allDocs.allHeadingDocs,
+    (state: RootState) => state.allDocs.allServiceTimeDocs],
+  (songs, custom, timers, bibles, headings, serviceTimes) => [...(songs ?? []), ...(custom ?? []), ...(timers ?? []), ...(bibles ?? []), ...(headings ?? []), ...(serviceTimes ?? [])],
+);
 
-    for (const item of items) {
-      if (item.type === "free" || item.type === "timer") {
-        byId.set(item._id, item);
-      }
-    }
-    for (const song of songs) byId.set(song._id, song);
+export const selectItemEntries = createSelector([selectItemDocuments], (docs) =>
+  docs.map(itemDocumentToLibraryEntry).sort((a, b) =>
+    a.name.localeCompare(b.name, "en", { numeric: true }) || a.type.localeCompare(b.type) || a._id.localeCompare(b._id)),
+);
 
-    return [...byId.values()].sort(
-      (a, b) =>
-        a.name.localeCompare(b.name, "en", { numeric: true }) ||
-        a.type.localeCompare(b.type) ||
-        a._id.localeCompare(b._id),
-    );
-  },
+/** Every browsable library category uses the same document metadata adapter. */
+export const selectUnifiedItemLibrary = createSelector([selectItemEntries], (items) =>
+  items.filter((item) => ["song", "free", "timer"].includes(item.type)),
 );

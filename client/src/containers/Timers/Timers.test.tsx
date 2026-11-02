@@ -5,8 +5,7 @@ import { Provider } from "react-redux";
 import { MemoryRouter } from "react-router-dom";
 import Timers from "./Timers";
 import { allDocsSlice } from "../../store/allDocsSlice";
-import { allItemsSlice } from "../../store/allItemsSlice";
-import { createSongLibraryIndexRepairMiddleware } from "../../store/songLibraryIndexRepair";
+import { itemLibraryUiSlice } from "../../store/itemLibraryUiSlice";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
@@ -82,15 +81,12 @@ describe("Timers library recovery integration", () => {
   });
 
   it("shows a valid durable timer document missing from allItems", async () => {
-    const repairMiddleware = createSongLibraryIndexRepairMiddleware();
     const store = configureStore({
       reducer: {
-        allItems: allItemsSlice.reducer,
+        itemLibraryUi: itemLibraryUiSlice.reducer,
         allDocs: allDocsSlice.reducer,
         undoable: (state = { present: { serviceTimes: { list: [] } } }) => state,
       },
-      middleware: (getDefaultMiddleware) =>
-        getDefaultMiddleware().prepend(repairMiddleware.middleware),
     });
     const timerDoc = {
       _id: "11 AM Countdown",
@@ -99,9 +95,8 @@ describe("Timers library recovery integration", () => {
       background: "navy",
       timerInfo: { id: "11 AM Countdown", name: "11 AM Countdown" },
     } as DBItem;
-    store.dispatch(allItemsSlice.actions.initiateAllItemsList([]));
-    store.dispatch(allDocsSlice.actions.updateAllTimerDocs([timerDoc]));
-    expect(store.getState().allItems.list).toEqual([
+    store.dispatch(allDocsSlice.actions.hydrateItemCache([timerDoc]));
+    expect(store.getState().allDocs.allTimerDocs).toEqual([
       expect.objectContaining({ _id: "11 AM Countdown", type: "timer" }),
     ]);
 
@@ -132,7 +127,7 @@ describe("Timers library recovery integration", () => {
     } as any);
     const store = configureStore({
       reducer: {
-        allItems: allItemsSlice.reducer,
+        itemLibraryUi: itemLibraryUiSlice.reducer,
         allDocs: allDocsSlice.reducer,
         undoable: (state = { present: { serviceTimes: { list: [] } } }) => state,
       },
@@ -143,7 +138,7 @@ describe("Timers library recovery integration", () => {
       type: "timer",
       timerInfo: { id: "saved-timer", name: "Saved Timer" },
     } as DBItem;
-    store.dispatch(allItemsSlice.actions.initiateAllItemsList([timer as any]));
+    store.dispatch(allDocsSlice.actions.hydrateItemCache([timer]));
 
     render(
       <Provider store={store}>

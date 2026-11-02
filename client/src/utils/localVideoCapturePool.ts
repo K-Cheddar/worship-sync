@@ -16,7 +16,10 @@ import {
   DEFAULT_LOCAL_VIDEO_CAPTURE_FRAME_RATE,
   DEFAULT_LOCAL_VIDEO_CAPTURE_PROFILE,
 } from "./localVideoQuality";
-import { publishLocalVideoCaptureQuality } from "./localVideoCaptureQualityRelay";
+import {
+  publishLocalVideoCaptureQuality,
+  waitForLocalVideoCaptureHost,
+} from "./localVideoCaptureQualityRelay";
 import {
   localVideoDiagnosticsEnabled,
   recordLocalVideoCapture,
@@ -127,7 +130,10 @@ const ensurePublisher = (sourceId: string, entry: CaptureEntry) => {
         stopPreview: publishLocalVideoPreview(sourceId, video),
         stopRealtime: publishLocalVideoRealtime(sourceId, video, stream),
         stopMedia: publishLocalVideoMedia(sourceId, stream),
-        stopQuality: publishLocalVideoCaptureQuality(sourceId, stream),
+        stopQuality: publishLocalVideoCaptureQuality(
+          sourceId, stream,
+          Boolean(window.__ELECTRON__) && !isDesktopCaptureKind(entry.binding.captureKind),
+        ),
       });
       const playPromise = video.play();
       void playPromise?.catch(() => undefined);
@@ -140,6 +146,7 @@ const ensurePublisher = (sourceId: string, entry: CaptureEntry) => {
 
 const openCapture = async (
   binding: LocalVideoInputBinding,
+  shared = false,
 ): Promise<CaptureResult> => {
   const mediaDevices = navigator.mediaDevices;
   if (!mediaDevices?.getUserMedia) {
@@ -155,6 +162,9 @@ const openCapture = async (
     width: { ideal: DEFAULT_LOCAL_VIDEO_CAPTURE_PROFILE.width },
     height: { ideal: DEFAULT_LOCAL_VIDEO_CAPTURE_PROFILE.height },
     frameRate: { ideal: DEFAULT_LOCAL_VIDEO_CAPTURE_FRAME_RATE },
+    // Joined clients paint the host's native frames.
+    // Do not let a preview's track adapter scale audience frames down to 1080p.
+    ...(shared ? { resizeMode: { exact: "none" } } : {}),
   };
   const stream =
     desktopCapture?.stream ??
@@ -165,7 +175,7 @@ const openCapture = async (
   const videoTrack = stream.getVideoTracks()[0];
   if (videoTrack && localVideoDiagnosticsEnabled()) {
     recordLocalVideoCapture(binding.sourceId, {
-      captureOwner: "hidden-capture-host",
+      captureOwner: shared ? "chromium-shared-client" : "capture-owner",
       captureKind: binding.captureKind ?? "device",
       deviceLabel: binding.deviceLabel,
       requestedConstraints,
@@ -221,7 +231,17 @@ const stopEntry = async (entry: CaptureEntry) => {
 const openCaptureWithOwnership = (
   entry: CaptureEntry,
   binding: LocalVideoInputBinding,
+  shared = false,
 ) => {
+  if (shared && window.__ELECTRON__ && !isDesktopCaptureKind(binding.captureKind)) {
+    return waitForLocalVideoCaptureHost(binding.sourceId).then(() => {
+      // A view may retire while discovery is pending. Do not open its device.
+      if (capturesByBinding.get(entry.bindingKey) !== entry) {
+        throw new Error("Local capture consumer was released.");
+      }
+      return openCapture(binding, true);
+    });
+  }
   // Screen/window capture is not exclusive hardware. Electron can reopen the
   // same source id in every display window, so skip the broker lock and let
   // each window attach a local stream instead of relay latency.
@@ -265,6 +285,7 @@ const createEntry = (
   sourceId: string,
   binding: LocalVideoInputBinding,
   bindingKey: string,
+  shared: boolean,
 ) => {
   let entry: CaptureEntry;
   entry = {
@@ -275,7 +296,7 @@ const createEntry = (
     pendingPublishers: new Set(),
     publishers: new Map(),
   };
-  const promise = openCaptureWithOwnership(entry, binding)
+  const promise = openCaptureWithOwnership(entry, binding, shared)
     .then((result) => {
       const forgetEndedCapture = () => void stopEntry(entry);
       // Losing optional audio must not tear down a healthy video feed. The
@@ -300,7 +321,8 @@ const createEntry = (
 
 /**
  * Keeps one capture per physical video/audio binding inside a window. USB
- * cameras still elect one exclusive owner across app windows via Web Locks.
+ * capture owners still elect one exclusive owner via Web Locks. Explicit local
+ * Electron consumers can join only after that owner's publisher is ready.
  * Electron screen/window shares skip that lock so every output can reopen the
  * same source locally. Logical slides sharing one binding reuse tracks and may
  * add a relay publisher for their own stable source id.
@@ -310,7 +332,17 @@ export const acquireWarmLocalVideoCapture = async (
   binding: LocalVideoInputBinding,
   publish = false,
   consumerId = "legacy",
+  options?: { shared?: boolean },
 ) => {
+  const delegatedPublisher = publish && Boolean(window.__ELECTRON__) &&
+    !isDesktopCaptureKind(binding.captureKind) &&
+    !window.location.hash.startsWith("#/local-video-capture-host");
+  if (delegatedPublisher) {
+    // Picker/transmit preflights already accept ownership by another window.
+    // Warm the continuity host instead of briefly owning USB in the controller.
+    await waitForLocalVideoCaptureHost(sourceId);
+    throw new LocalVideoCaptureOwnedError();
+  }
   const bindingKey = bindingKeyFor(binding);
   let entry = capturesBySource.get(sourceId);
 
@@ -328,7 +360,8 @@ export const acquireWarmLocalVideoCapture = async (
       entry.sourceIds.add(sourceId);
       capturesBySource.set(sourceId, entry);
     } else {
-      entry = createEntry(sourceId, binding, bindingKey);
+      entry = createEntry(sourceId, binding, bindingKey,
+        !publish && options?.shared === true);
     }
   }
 

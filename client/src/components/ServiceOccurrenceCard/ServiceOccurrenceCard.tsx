@@ -151,7 +151,7 @@ const ServiceOccurrenceCard = ({
           aria-label={ariaLabel}
           aria-busy={ariaBusy || undefined}
           className={cn(
-            "flex min-h-[56px] w-full min-w-0 items-center gap-2 rounded-none px-2.5 py-2 text-left transition-colors hover:bg-white/[0.03] focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-orange-400",
+            "flex min-h-[56px] w-full min-w-0 items-center gap-2 rounded-none pr-2.5 pl-0 py-2 text-left transition-colors hover:bg-white/[0.03] focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-orange-400",
             (isNextUpcoming || isToday) && "pt-3",
           )}
           onClick={onOpen}

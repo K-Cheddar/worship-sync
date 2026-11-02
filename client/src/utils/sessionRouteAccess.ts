@@ -296,10 +296,14 @@ export const getAllowedRouteOrDefault = (
   if (!to || to === "/") {
     return getDefaultRouteForSession(context);
   }
-  const pathnameOnly = to.includes("?") ? to.slice(0, to.indexOf("?")) : to;
-  const searchSuffix = to.includes("?") ? to.slice(to.indexOf("?")) : "";
-  if (isRouteAllowedForSession(pathnameOnly, context)) {
-    return `${pathnameOnly}${searchSuffix}`;
+  const hashIndex = to.indexOf("#");
+  const beforeHash = hashIndex === -1 ? to : to.slice(0, hashIndex);
+  const searchIndex = beforeHash.indexOf("?");
+  const destinationPath = searchIndex === -1 ? beforeHash : beforeHash.slice(0, searchIndex);
+  const searchSuffix = searchIndex === -1 ? "" : beforeHash.slice(searchIndex);
+  const hashSuffix = hashIndex === -1 ? "" : to.slice(hashIndex);
+  if (isRouteAllowedForSession(destinationPath, context)) {
+    return `${destinationPath}${searchSuffix}${hashSuffix}`;
   }
   return getDefaultRouteForSession(context);
 };

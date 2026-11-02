@@ -103,7 +103,7 @@ const LyricsEditorPanel = ({
   const item = librarySong ?? controllerItem;
   const isLibraryEditor = Boolean(librarySong);
   const { allSongDocs } = useSelector((state: RootState) => state.allDocs);
-  const { isAllItemsLoading } = useSelector((state: RootState) => state.allItems);
+  const isItemCacheLoading = useSelector((state: RootState) => !state.allDocs.isInitialized);
   const formattedLyricsPerRow = useSelector(
     (state: RootState) =>
       state.undoable.present.preferences.formattedLyricsPerRow ?? 3,
@@ -1326,7 +1326,7 @@ const LyricsEditorPanel = ({
           songs={allSongDocs}
           isOpen={showImportDrawer}
           isMobile={isMobile || false}
-          isLoading={isAllItemsLoading}
+          isLoading={isItemCacheLoading}
           currentSongId={item._id}
           onImport={handleImportSections}
           onClose={() => setShowImportDrawer(false)}

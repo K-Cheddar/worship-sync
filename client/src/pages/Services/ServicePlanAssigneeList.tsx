@@ -405,7 +405,8 @@ const ServicePlanAssigneeList = ({
             <div
               key={assignee.id}
               className={cn(
-                "relative inline-flex min-w-0 w-full max-w-full items-center gap-1.5 rounded-md border py-1.5 pl-2 pr-10 md:w-auto md:gap-1 md:py-1 md:pl-1.5 md:pr-9",
+                "relative inline-flex min-w-0 w-full max-w-full items-center gap-1.5 rounded-md border py-1.5 pl-2 md:w-auto md:gap-1 md:py-1 md:pl-1.5",
+                allowEdit ? "pr-10 md:pr-9" : "pr-2 md:pr-1.5",
                 "flex-wrap",
                 isUnassigned
                   ? "border-gray-700/50 bg-gray-900/40"

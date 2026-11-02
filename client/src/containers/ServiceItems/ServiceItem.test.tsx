@@ -70,7 +70,7 @@ describe("ServiceItem", () => {
     expect(
       screen.getByRole("button", { name: /delete welcome slides/i })
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /welcome slides/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Welcome Slides", description: "" })).toBeInTheDocument();
   });
 
   it("does not render a per-row delete button in present mode", () => {
@@ -80,12 +80,12 @@ describe("ServiceItem", () => {
     expect(
       screen.queryByRole("button", { name: /delete welcome slides/i })
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /welcome slides/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Welcome Slides", description: "" })).toBeInTheDocument();
   });
 
   it("exposes data-list-id for outline row targeting", () => {
     renderWithProviders(<ServiceItem {...defaultProps} />);
-    expect(screen.getByRole("button", { name: "Welcome Slides" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Welcome Slides", description: /To pick up/ })).toHaveAttribute(
       "data-list-id",
       item.listId
     );

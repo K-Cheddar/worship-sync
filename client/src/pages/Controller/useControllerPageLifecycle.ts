@@ -1,13 +1,10 @@
-import { useCallback, useContext, useEffect, useRef } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useRef } from "react";
 import { useStore } from "react-redux";
 import { useDispatch, useSelector } from "../../hooks";
+import _ from "lodash";
 import {
-  initiateAllItemsList,
-  updateAllItemsListFromRemote,
-} from "../../store/allItemsSlice";
-import {
-  DBAllItems,
   DBItemListDetails,
+  DBOverlay,
   DBOverlayTemplates,
   isControllerMediaRouteFoldersDocId,
   getControllerMediaRouteFoldersDocId,
@@ -27,27 +24,25 @@ import {
   initiateOverlayList,
   mergeOverlayHistoryFromDb,
   updateOverlayListFromRemote,
+  updateOverlaysByIdFromRemote,
 } from "../../store/overlaysSlice";
 import { formatItemList } from "../../utils/formatItemList";
 import { setMediaCacheMap } from "../../store/mediaCacheMapSlice";
 import { GlobalInfoContext } from "../../context/globalInfo";
-import { sortNamesInList } from "../../utils/sort";
 import {
-  deleteUnusedBibleItems,
-  deleteUnusedHeadings,
   getAllOverlayHistory,
   getOverlaysByIds,
-  updateAllDocs,
 } from "../../utils/dbUtils";
 import {
-  loadOrCreateAllItemsDoc,
   loadOrCreatePreferencesBundle,
 } from "../../utils/controllerBootstrapDocs";
 import {
   mergeRemoteOverlayListWithLocalBuffer,
+  shouldKeepLocalListRowForRemoteOverlay,
   syncSelectedOverlayFromRemote,
   type OverlaySyncRootSlice,
 } from "../../utils/overlayRemoteSync";
+import { normalizeOverlayForSync } from "../../utils/overlayUtils";
 import { getMediaUrlsFromMediaDoc } from "../../utils/mediaCacheUtils";
 import {
   initiateMonitorSettings,
@@ -78,7 +73,6 @@ import {
   parseMediaReplicationDoc,
   requireMediaLibraryV2,
 } from "../../utils/mediaDocUtils";
-import { setIsInitialized as setAllItemsIsInitialized } from "../../store/allItemsSlice";
 import { setIsInitialized as setOverlaysIsInitialized } from "../../store/overlaysSlice";
 import { setIsInitialized as setItemListsIsInitialized } from "../../store/itemListsSlice";
 import { initiateServices } from "../../store/serviceTimesSlice";
@@ -90,7 +84,6 @@ import { useSyncOnReconnect } from "../../hooks";
 import { CONTROLLER_PAGE_READY, RootState } from "../../store/store";
 import {
   setServicePlanningOutlinePlanBinding,
-  setStoredServicePlanningOutlineIfIdle,
 } from "../../store/servicePlanningImportSlice";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useToast } from "../../context/toastContext";
@@ -100,6 +93,7 @@ import {
 } from "../../context/activeController";
 import { ActionCreators } from "redux-undo";
 import { loadOrCreateControllerMediaRouteFolders } from "../../utils/controllerMediaRouteFolders";
+import { getOutlineDatabaseKey, getOutlineOwnerKey, setOutlineContentDatabase } from "../../store/outlineContent";
 
 /**
  * Shared DB sync, preferences, overlays, media cache, and teardown for controller-like pages.
@@ -111,7 +105,7 @@ export const useControllerPageLifecycle = () => {
   const activeControllerId = useActiveControllerId();
   const activeControllerProfile = useActiveControllerProfile();
   const { showToast } = useToast();
-  const { db, cloud, updater, setIsMobile, setIsPhone, pullFromRemote } =
+  const { db, cloud, updater, setIsMobile, setIsPhone, pullFromRemote, bootstrapReady, canCreateBootstrapDocuments } =
     useContext(ControllerInfoContext) || {};
   const {
     access,
@@ -124,9 +118,35 @@ export const useControllerPageLifecycle = () => {
   const selectedList = useSelector(
     (state) => state.undoable.present.itemLists.selectedList,
   );
+  const outlineLoadGeneration = useSelector((state) => state.undoable.present.itemList.outlineLoadGeneration);
+  useLayoutEffect(() => {
+    dispatch(setOutlineContentDatabase(db ? getOutlineDatabaseKey(db) : ""));
+  }, [db, dispatch]);
+  const databaseRef = useRef(db);
+  databaseRef.current = db;
+  const selectedOutlineIdentityRef = useRef({
+    listId: selectedList?._id,
+    controllerId: activeControllerId,
+    generation: 0,
+  });
+  if (
+    selectedOutlineIdentityRef.current.listId !== selectedList?._id ||
+    selectedOutlineIdentityRef.current.controllerId !== activeControllerId
+  ) {
+    selectedOutlineIdentityRef.current = {
+      listId: selectedList?._id,
+      controllerId: activeControllerId,
+      generation: selectedOutlineIdentityRef.current.generation + 1,
+    };
+  }
+  const serviceListSyncGenerationRef = useRef(0);
+  const loadedPreferencesRef = useRef<{
+    db: PouchDB.Database;
+    baseline: RootState["undoable"]["present"]["preferences"];
+  } | null>(null);
   const allControllerSlicesInitialized = useSelector((state: RootState) =>
     Boolean(
-      state.allItems.isInitialized &&
+      state.allDocs.isInitialized &&
       state.undoable.present.preferences.isInitialized &&
       state.undoable.present.itemList.isInitialized &&
       state.undoable.present.itemLists.isInitialized &&
@@ -171,69 +191,123 @@ export const useControllerPageLifecycle = () => {
     };
   }, [refreshPresentationListeners, setIsMobile, setIsPhone]);
 
-  const updateAllItemsAndListFromExternal = useCallback(
+  const updateOutlineFromExternal = useCallback(
     async (event: CustomEventInit) => {
       try {
+        if (databaseRef.current !== db || (store.getState() as RootState).undoable.present.itemLists.contentDatabaseKey !== (db ? getOutlineDatabaseKey(db) : "")) return;
         const updates = event.detail;
         if (!Array.isArray(updates)) return;
         let refetchOverlayHistory = false;
         for (const _update of updates) {
-          if (selectedList && _update._id === selectedList._id) {
+          const currentState = store.getState() as RootState;
+          const currentSelectedList =
+            currentState.undoable.present.itemLists.selectedList;
+          if (currentSelectedList?._id && _update._id === currentSelectedList._id) {
             const update = _update as DBItemListDetails;
-            const itemList = update.items;
-            const overlaysIds = update.overlays || [];
-            dispatch(
-              setStoredServicePlanningOutlineIfIdle(
-                update.serviceOutline ?? null,
-              ),
-            );
+            const selectionIdentity = selectedOutlineIdentityRef.current;
+            const outlineGeneration = currentState.undoable.present.itemList.outlineLoadGeneration;
+            const syncGeneration = ++serviceListSyncGenerationRef.current;
             dispatch(
               setServicePlanningOutlinePlanBinding(
                 update.servicePlanBinding ?? null,
               ),
             );
             if (cloud) {
-              dispatch(
-                updateItemListFromRemote(formatItemList(itemList, cloud)),
-              );
-            }
-            const formattedOverlays = await getOverlaysByIds(db!, overlaysIds);
-            const mergedList = mergeRemoteOverlayListWithLocalBuffer(
-              formattedOverlays,
-              store.getState as () => OverlaySyncRootSlice,
-            );
-            dispatch(updateOverlayListFromRemote(mergedList));
-            const selectedOverlayId = (store.getState() as OverlaySyncRootSlice)
-              .undoable.present.overlay.selectedOverlay?.id;
-            if (selectedOverlayId) {
-              const match = mergedList.find((o) => o.id === selectedOverlayId);
-              if (match) {
-                syncSelectedOverlayFromRemote(
-                  dispatch,
-                  store.getState as () => OverlaySyncRootSlice,
-                  match,
-                );
+              const remoteItems = formatItemList(update.items || [], cloud);
+              if (
+                !currentState.undoable.present.itemList.hasPendingUpdate &&
+                !_.isEqual(currentState.undoable.present.itemList.list, remoteItems)
+              ) {
+                dispatch(updateItemListFromRemote(remoteItems));
               }
             }
-          }
-          if (_update._id === "allItems") {
-            const update = _update as DBAllItems;
-            dispatch(updateAllItemsListFromRemote(update.items));
+
+            const remoteOverlayIds = update.overlays || [];
+            const currentOverlayState = currentState.undoable.present.overlays;
+            const overlayIdsAtRead = currentOverlayState.list.map((o) => o.id);
+            if (
+              !currentOverlayState.hasPendingUpdate &&
+              !_.isEqual(overlayIdsAtRead, remoteOverlayIds)
+            ) {
+              const dbAtRead = databaseRef.current;
+              if (!dbAtRead) continue;
+              const overlaysAtRead = currentOverlayState.list;
+              const formattedOverlays = await getOverlaysByIds(
+                dbAtRead,
+                remoteOverlayIds,
+              );
+              const latestState = store.getState() as RootState;
+              const latestOverlays = latestState.undoable.present.overlays;
+              const latestSelectionIdentity = selectedOutlineIdentityRef.current;
+              if (
+                databaseRef.current !== dbAtRead ||
+                latestSelectionIdentity.generation !== selectionIdentity.generation ||
+                latestState.undoable.present.itemLists.selectedList?._id !== update._id ||
+                latestState.undoable.present.itemList.outlineLoadGeneration !== outlineGeneration ||
+                syncGeneration !== serviceListSyncGenerationRef.current ||
+                latestOverlays.hasPendingUpdate ||
+                !_.isEqual(
+                  latestOverlays.list.map((o) => o.id),
+                  overlayIdsAtRead,
+                )
+              ) {
+                continue;
+              }
+
+              const overlaysAtReadById = new Map(
+                overlaysAtRead.map((overlay) => [overlay.id, overlay]),
+              );
+              const latestOverlaysById = new Map(
+                latestOverlays.list.map((overlay) => [overlay.id, overlay]),
+              );
+              const changedWhileReading = new Set(
+                latestOverlays.list
+                  .filter((overlay) => {
+                    const previous = overlaysAtReadById.get(overlay.id);
+                    return previous && !_.isEqual(previous, overlay);
+                  })
+                  .map((overlay) => overlay.id),
+              );
+              const freshList = formattedOverlays.map((overlay) =>
+                changedWhileReading.has(overlay.id)
+                  ? latestOverlaysById.get(overlay.id) || overlay
+                  : overlay,
+              );
+              const mergedList = mergeRemoteOverlayListWithLocalBuffer(
+                freshList,
+                store.getState as () => OverlaySyncRootSlice,
+              );
+              dispatch(updateOverlayListFromRemote(mergedList));
+              const selectedOverlayId = (store.getState() as OverlaySyncRootSlice)
+                .undoable.present.overlay.selectedOverlay?.id;
+              if (selectedOverlayId) {
+                const match = freshList.find((o) => o.id === selectedOverlayId);
+                if (match) {
+                  syncSelectedOverlayFromRemote(
+                    dispatch,
+                    store.getState as () => OverlaySyncRootSlice,
+                    match,
+                  );
+                }
+              }
+            }
           }
           if (_update.docType === "overlay-history") {
             refetchOverlayHistory = true;
           }
         }
-        updateAllDocs(dispatch);
-        if (refetchOverlayHistory && db) {
-          const overlayHistory = await getAllOverlayHistory(db);
-          dispatch(mergeOverlayHistoryFromDb(overlayHistory));
+        const dbForHistory = databaseRef.current;
+        if (refetchOverlayHistory && dbForHistory) {
+          const overlayHistory = await getAllOverlayHistory(dbForHistory);
+          if (databaseRef.current === dbForHistory) {
+            dispatch(mergeOverlayHistoryFromDb(overlayHistory));
+          }
         }
       } catch (e) {
         console.error(e);
       }
     },
-    [dispatch, cloud, selectedList, db, store],
+    [dispatch, cloud, store, db],
   );
 
   const updateMediaFromExternal = useCallback(
@@ -271,7 +345,7 @@ export const useControllerPageLifecycle = () => {
     [dispatch],
   );
 
-  useGlobalBroadcast(updateAllItemsAndListFromExternal);
+  useGlobalBroadcast(updateOutlineFromExternal);
   useGlobalBroadcast(updateMediaFromExternal);
 
   const updatePreferencesFromExternal = useCallback(
@@ -304,6 +378,48 @@ export const useControllerPageLifecycle = () => {
   );
 
   useGlobalBroadcast(updatePreferencesFromExternal);
+
+  const updateOverlayFromExternal = useCallback(
+    (event: CustomEventInit) => {
+      try {
+        const updates = event.detail;
+        if (!Array.isArray(updates)) return;
+        const remoteOverlays = updates
+          .filter(
+            (_update): _update is DBOverlay =>
+              typeof _update?._id === "string" &&
+              _update._id.startsWith("overlay-"),
+          )
+          .map(normalizeOverlayForSync);
+        const getState = store.getState as () => OverlaySyncRootSlice;
+        const rowsToApply = remoteOverlays.filter(
+          (overlay) =>
+            !shouldKeepLocalListRowForRemoteOverlay(getState, overlay),
+        );
+
+        if (rowsToApply.length > 0) {
+          dispatch(updateOverlaysByIdFromRemote(rowsToApply));
+        }
+        for (const overlay of remoteOverlays) {
+          syncSelectedOverlayFromRemote(dispatch, getState, overlay);
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    },
+    [dispatch, store],
+  );
+
+  useEffect(() => {
+    if (!updater) return;
+
+    updater.addEventListener("update", updateOverlayFromExternal);
+
+    return () =>
+      updater.removeEventListener("update", updateOverlayFromExternal);
+  }, [updater, updateOverlayFromExternal]);
+
+  useGlobalBroadcast(updateOverlayFromExternal);
 
   useSyncOnReconnect(pullFromRemote);
 
@@ -345,7 +461,6 @@ export const useControllerPageLifecycle = () => {
       // Soft reset: clears presentation/session slices but keeps church
       // registries so Home does not flash built-in controller names.
       dispatch({ type: "RESET_CONTROLLER_SESSION" });
-      dispatch(setAllItemsIsInitialized(false));
       dispatch(setPreferencesIsInitialized(false));
       dispatch(setItemListIsInitialized(false));
       dispatch(setOverlaysIsInitialized(false));
@@ -387,38 +502,33 @@ export const useControllerPageLifecycle = () => {
   }, [db, loginState, dispatch]);
 
   useEffect(() => {
-    const getAllItems = async () => {
-      if (!db) return;
-      try {
-        const allItems = await loadOrCreateAllItemsDoc(db);
-        const items = allItems.items || [];
-        const sortedItems = sortNamesInList(items);
-        dispatch(initiateAllItemsList(sortedItems));
-        updateAllDocs(dispatch);
-        deleteUnusedBibleItems({ db, allItems });
-        deleteUnusedHeadings({ db, allItems });
-      } catch (error) {
-        console.error(error);
-        // Non-404 failure: unblock UI for this session only — do not write empty docs.
-        dispatch(initiateAllItemsList([]));
-        showToast(
-          "Could not load the item library. Reload the page before editing songs or items.",
-          "error",
-        );
-      }
-    };
-    void getAllItems();
-  }, [dispatch, db, showToast]);
-
-  useEffect(() => {
     if (!db) return;
+    let cancelled = false;
+    if (loadedPreferencesRef.current?.db !== db) {
+      loadedPreferencesRef.current = { db, baseline: (store.getState() as RootState).undoable.present.preferences };
+    }
+    const baseline = loadedPreferencesRef.current.baseline;
     const getPreferences = async () => {
       try {
-        const bundle = await loadOrCreatePreferencesBundle(db);
-        dispatch(initiatePreferences({ preferences: bundle.preferences, isMusic: access === "music" }));
-        dispatch(initiateQuickLinks(bundle.quickLinks));
-        dispatch(initiateMonitorSettings(bundle.monitorSettings));
+        const bundle = await loadOrCreatePreferencesBundle(db, canCreateBootstrapDocuments);
+        if (cancelled || !bundle) return;
+        // Reverification refreshes saved data, while edits made since the last
+        // hydration still belong to the operator's current draft.
+        const current = (store.getState() as RootState).undoable.present.preferences;
+        const preferences = {
+          ...bundle.preferences,
+          ..._.pickBy(current.preferences, (value, key) => !_.isEqual(value, _.get(baseline.preferences, key))),
+        };
+        const monitorSettings = {
+          ...bundle.monitorSettings,
+          ..._.pickBy(current.monitorSettings, (value, key) => !_.isEqual(value, _.get(baseline.monitorSettings, key))),
+        };
+        dispatch(initiatePreferences({ preferences, isMusic: access === "music" }));
+        dispatch(initiateQuickLinks(_.isEqual(current.quickLinks, baseline.quickLinks) ? bundle.quickLinks : current.quickLinks));
+        dispatch(initiateMonitorSettings(monitorSettings));
+        loadedPreferencesRef.current = { db, baseline: (store.getState() as RootState).undoable.present.preferences };
       } catch (e) {
+        if (cancelled) return;
         console.error(e);
         const fb = preferencesClusterLoadFallback;
         dispatch(
@@ -434,21 +544,24 @@ export const useControllerPageLifecycle = () => {
           "error",
         );
       } finally {
-        dispatch(setIsLoading(false));
-        dispatch(setPreferencesIsInitialized(true));
+        if (!cancelled) {
+          dispatch(setIsLoading(false));
+          dispatch(setPreferencesIsInitialized(true));
+        }
       }
     };
     void getPreferences();
-  }, [dispatch, db, access, showToast]);
+    return () => { cancelled = true; };
+  }, [dispatch, db, bootstrapReady, canCreateBootstrapDocuments, access, showToast, store]);
 
   useEffect(() => {
     if (!db || !activeControllerId) return;
     let isCurrent = true;
     const controllerProfileId = activeControllerId;
     dispatch(initiateMediaRouteFolders({ controllerProfileId, mediaRouteFolders: {} }));
-    void loadOrCreateControllerMediaRouteFolders(db, controllerProfileId).then(
+    void loadOrCreateControllerMediaRouteFolders(db, controllerProfileId, canCreateBootstrapDocuments).then(
       (doc) => {
-        if (isCurrent) dispatch(initiateMediaRouteFolders({
+        if (isCurrent) dispatch(updateControllerMediaRouteFoldersFromRemote({
           controllerProfileId,
           mediaRouteFolders: doc.mediaRouteFolders,
         }));
@@ -457,14 +570,16 @@ export const useControllerPageLifecycle = () => {
       console.error("Could not load controller media folder preferences", error);
     });
     return () => { isCurrent = false; };
-  }, [dispatch, db, activeControllerId]);
+  }, [dispatch, db, bootstrapReady, canCreateBootstrapDocuments, activeControllerId]);
 
   useEffect(() => {
     if (!db) return;
+    let cancelled = false;
     const getTemplates = async () => {
       try {
         const templates: DBOverlayTemplates | undefined =
           await db.get("overlay-templates");
+        if (cancelled || (store.getState() as RootState).undoable.present.overlayTemplates.hasPendingUpdate) return;
         const templatesByType: TemplatesByType | undefined =
           templates?.templatesByType;
         dispatch(
@@ -474,11 +589,13 @@ export const useControllerPageLifecycle = () => {
           }),
         );
       } catch (e) {
+        if (cancelled || (store.getState() as RootState).undoable.present.overlayTemplates.hasPendingUpdate) return;
         dispatch(initiateTemplates(undefined));
       }
     };
     getTemplates();
-  }, [dispatch, db]);
+    return () => { cancelled = true; };
+  }, [dispatch, db, bootstrapReady, store]);
 
   useEffect(() => {
     if (db && access !== "full") {
@@ -566,50 +683,59 @@ export const useControllerPageLifecycle = () => {
 
   useEffect(() => {
     let cancelled = false;
+    const ownerState = (store.getState() as RootState).undoable.present;
+    const ownerKey = getOutlineOwnerKey(db ? getOutlineDatabaseKey(db) : "", selectedList?._id);
+    const generation = ownerState.itemList.outlineLoadGeneration;
+    const isCurrent = () => {
+      const current = (store.getState() as RootState).undoable.present;
+      return !cancelled && databaseRef.current === db &&
+        current.itemList.outlineOwnerKey === ownerKey && current.itemList.outlineLoadGeneration === generation;
+    };
 
     const getItemList = async () => {
       if (!db || !cloud) return;
       // No selected outline (empty registry): leave empty state, never keep skeletons.
       if (!selectedList?._id) {
-        if (cancelled) return;
+        if (!isCurrent()) return;
         dispatch(initiateItemList([]));
-        dispatch(setStoredServicePlanningOutlineIfIdle(null));
+        dispatch(initiateOverlayList([]));
         dispatch(setServicePlanningOutlinePlanBinding(null));
         dispatch(setItemListIsLoading(false));
         return;
       }
+      if (!isCurrent()) return;
       dispatch(setItemListIsLoading(true));
       try {
         const response: DBItemListDetails | undefined = await db.get(
           selectedList._id,
         );
-        if (cancelled) return;
+        if (!isCurrent()) return;
         const itemList = response?.items || [];
         const overlayIds = response?.overlays || [];
-        dispatch(
-          setStoredServicePlanningOutlineIfIdle(
-            response?.serviceOutline ?? null,
-          ),
-        );
         dispatch(
           setServicePlanningOutlinePlanBinding(
             response?.servicePlanBinding ?? null,
           ),
         );
-        dispatch(initiateItemList(formatItemList(itemList, cloud)));
+        if (!(store.getState() as RootState).undoable.present.itemList.hasPendingUpdate) {
+          dispatch(initiateItemList(formatItemList(itemList, cloud)));
+        }
+        dispatch(setItemListIsInitialized(true));
         const formattedOverlays = await getOverlaysByIds(db, overlayIds);
-        if (cancelled) return;
-        dispatch(initiateOverlayList(formattedOverlays));
+        if (!isCurrent()) return;
+        if (!(store.getState() as RootState).undoable.present.overlays.hasPendingUpdate) {
+          dispatch(initiateOverlayList(formattedOverlays));
+        }
+        dispatch(setOverlaysIsInitialized(true));
         const overlayHistory = await getAllOverlayHistory(db);
-        if (cancelled) return;
+        if (!isCurrent()) return;
         dispatch(mergeOverlayHistoryFromDb(overlayHistory));
       } catch (e) {
-        if (cancelled) return;
+        if (!isCurrent()) return;
         console.error(e);
-        dispatch(setStoredServicePlanningOutlineIfIdle(null));
         dispatch(setServicePlanningOutlinePlanBinding(null));
       }
-      if (!cancelled) {
+      if (isCurrent()) {
         dispatch(setItemListIsLoading(false));
       }
     };
@@ -618,14 +744,14 @@ export const useControllerPageLifecycle = () => {
     return () => {
       cancelled = true;
     };
-  }, [dispatch, db, selectedList, cloud]);
+  }, [dispatch, db, selectedList, cloud, bootstrapReady, store, outlineLoadGeneration]);
 
   useEffect(() => {
     if (!updater) return;
-    updater.addEventListener("update", updateAllItemsAndListFromExternal);
+    updater.addEventListener("update", updateOutlineFromExternal);
     return () =>
-      updater.removeEventListener("update", updateAllItemsAndListFromExternal);
-  }, [updater, updateAllItemsAndListFromExternal]);
+      updater.removeEventListener("update", updateOutlineFromExternal);
+  }, [updater, updateOutlineFromExternal]);
 
   useEffect(() => {
     if (!updater) return;

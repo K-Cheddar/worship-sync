@@ -4,6 +4,8 @@ import { OverlayInfo } from "../types";
 import { normalizeOverlayForSync } from "../utils/overlayUtils";
 
 export type OverlayState = {
+  /** Runtime editor selection owner; retained drafts may outlive the outline. */
+  outlineOwnerKey?: string;
   selectedOverlay?: OverlayInfo;
   isOverlayLoading: boolean;
   hasPendingUpdate: boolean;
@@ -11,6 +13,8 @@ export type OverlayState = {
   baseOverlay: OverlayInfo | null;
   pendingRemoteOverlay: OverlayInfo | null;
   hasRemoteUpdate: boolean;
+  /** Selected overlay whose editor draft has not reached Redux yet. */
+  pendingDraftOverlayId: string | null;
 };
 
 const initialState: OverlayState = {
@@ -20,6 +24,7 @@ const initialState: OverlayState = {
   baseOverlay: null,
   pendingRemoteOverlay: null,
   hasRemoteUpdate: false,
+  pendingDraftOverlayId: null,
 };
 
 export const overlaySlice = createSlice({
@@ -27,11 +32,13 @@ export const overlaySlice = createSlice({
   initialState,
   reducers: {
     selectOverlay: (state, action: PayloadAction<OverlayInfo | undefined>) => {
+      state.outlineOwnerKey = (action as typeof action & { meta?: { outlineOwnerKey?: string } }).meta?.outlineOwnerKey;
       if (!action.payload?.id) {
         state.selectedOverlay = undefined;
         state.baseOverlay = null;
         state.pendingRemoteOverlay = null;
         state.hasRemoteUpdate = false;
+        state.pendingDraftOverlayId = null;
         return;
       }
       const normalized = normalizeOverlayForSync(action.payload);
@@ -39,12 +46,23 @@ export const overlaySlice = createSlice({
       state.baseOverlay = normalized;
       state.pendingRemoteOverlay = null;
       state.hasRemoteUpdate = false;
+      state.pendingDraftOverlayId = null;
     },
     setIsOverlayLoading: (state, action: PayloadAction<boolean>) => {
       state.isOverlayLoading = action.payload;
     },
     setHasPendingUpdate: (state, action: PayloadAction<boolean>) => {
       state.hasPendingUpdate = action.payload;
+    },
+    markOverlayDraftPending: (state, action: PayloadAction<string>) => {
+      if (state.selectedOverlay?.id === action.payload) {
+        state.pendingDraftOverlayId = action.payload;
+      }
+    },
+    clearOverlayDraftPending: (state, action: PayloadAction<string>) => {
+      if (state.pendingDraftOverlayId === action.payload) {
+        state.pendingDraftOverlayId = null;
+      }
     },
     forceUpdate: (state) => {
       state.hasPendingUpdate = true;
@@ -55,6 +73,7 @@ export const overlaySlice = createSlice({
         state.baseOverlay = null;
         state.pendingRemoteOverlay = null;
         state.hasRemoteUpdate = false;
+        state.pendingDraftOverlayId = null;
         // No selected overlay remains to persist; list deletion is handled by overlays slice.
         state.hasPendingUpdate = false;
         return;
@@ -117,6 +136,7 @@ export const overlaySlice = createSlice({
       state.baseOverlay = merged;
       state.pendingRemoteOverlay = null;
       state.hasRemoteUpdate = false;
+      state.pendingDraftOverlayId = null;
       /** Must persist their version to local DB + replication; overlay listener keys off this. */
       state.hasPendingUpdate = true;
     },
@@ -129,6 +149,8 @@ export const {
   updateOverlay,
   setIsOverlayLoading,
   setHasPendingUpdate,
+  markOverlayDraftPending,
+  clearOverlayDraftPending,
   forceUpdate,
   markOverlayPersisted,
   bufferRemoteOverlayUpdate,

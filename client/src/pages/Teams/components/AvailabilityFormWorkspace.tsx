@@ -73,6 +73,7 @@ const AvailabilityFormWorkspace = ({
   submissionReview,
 }: Props) => {
   const [historyMemberId, setHistoryMemberId] = useState("");
+  const [resendMemberId, setResendMemberId] = useState("");
   const [copying, setCopying] = useState(false);
   const [comparisonOpen, setComparisonOpen] = useState(false);
   const {
@@ -98,6 +99,18 @@ const AvailabilityFormWorkspace = ({
   const completion = rows.length
     ? Math.round((responded / rows.length) * 100)
     : 0;
+  const openNewSend = () => {
+    setResendMemberId("");
+    onSend();
+  };
+  const openResend = (memberId: string) => {
+    setResendMemberId(memberId);
+    onSend();
+  };
+  const closeSend = () => {
+    setResendMemberId("");
+    sendFlowProps.onClose();
+  };
   const intents = notificationIntents.filter(
     (intent) =>
       historyRecipient &&
@@ -112,7 +125,7 @@ const AvailabilityFormWorkspace = ({
   );
   return (
     <section
-      className="flex min-h-0 min-w-0 flex-1 flex-col rounded-lg bg-gray-900 p-4"
+      className="flex min-h-0 min-w-0 flex-1 flex-col rounded-lg bg-gray-900 p-4 max-lg:min-h-fit max-lg:flex-none"
       aria-label={`${form.name} workspace`}
     >
       <div className="mb-3">
@@ -143,7 +156,7 @@ const AvailabilityFormWorkspace = ({
         </div>
         {canEdit ? (
           <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <Button variant="cta" disabled={!form.active} onClick={onSend}>
+            <Button variant="cta" disabled={!form.active} onClick={openNewSend}>
               Send requests
             </Button>
             <Button
@@ -233,7 +246,7 @@ const AvailabilityFormWorkspace = ({
         <p className="mt-1.5 text-xs text-gray-400" aria-live="polite">
           {responded} of {rows.length} responded
           {refreshing ? " · Refreshing…" : ""}
-          {!historyLoaded ? " · Checking request history…" : ""}
+          {!historyLoaded ? <span aria-hidden="true" className="ml-2 inline-block h-3 w-28 animate-pulse rounded bg-white/10 align-middle" /> : null}
         </p>
       </section>
       {refreshError ? (
@@ -263,8 +276,10 @@ const AvailabilityFormWorkspace = ({
         canEdit={canEdit}
         busy={linkBusy}
         historyLoaded={historyLoaded}
+        historyError={historyError}
         serviceTimeZone={serviceTimeZone}
         {...recipientActions}
+        onResendLink={openResend}
         onHistory={setHistoryMemberId}
         onViewAvailability={() => setComparisonOpen(true)}
       />
@@ -282,7 +297,13 @@ const AvailabilityFormWorkspace = ({
         onClose={() => setComparisonOpen(false)}
       />
       {sendOpen && canEdit && form.active ? (
-        <AvailabilityFormSendFlow {...sendFlowProps} dialog />
+        <AvailabilityFormSendFlow
+          {...sendFlowProps}
+          dialog
+          initialAudience={resendMemberId ? "specific" : "not_contacted"}
+          initialMemberIds={resendMemberId ? [resendMemberId] : []}
+          onClose={closeSend}
+        />
       ) : null}
       <Modal
         isOpen={Boolean(historyRow)}

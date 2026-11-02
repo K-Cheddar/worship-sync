@@ -2,7 +2,7 @@
  * Pure logic for "who gets emailed when a team intake form is submitted."
  *
  * The recipient pool is *derived* from designated leads on the form's teams
- * (computed in authService against live roster/membership data) — this module
+ * (computed in authService against live account memberships) — this module
  * never stores a second list of people. Its job is the final filter/dedupe and
  * the digest coalescing decision, which are the easy-to-get-wrong parts.
  */
@@ -31,36 +31,15 @@ export const isIntakeNotificationEnabled = (preference) =>
 
 /**
  * True when a member is designated as a lead on at least one of the form's
- * teams. An empty formTeamIds means the form covers every team.
- * @param {{ teamMemberships?: Record<string, { teamId?: string, isTeamLead?: boolean }>, formTeamIds?: string[] }} params
+ * active teams. Callers resolve an all-teams form to actual active church teams;
+ * an empty list here never broadens the recipient pool.
+ * @param {{ teamScopes?: Record<string, string>, formTeamIds?: string[] }} params
  * @returns {boolean}
  */
 export const isTeamLeadForForm = ({
-  teamMemberships,
-  formTeamIds,
-}) => {
-  const memberships = teamMemberships || {};
-  const teamIds = formTeamIds || [];
-  return Object.values(memberships).some(
-    (membership) =>
-      membership?.isTeamLead === true &&
-      (teamIds.length === 0 || teamIds.includes(membership.teamId)),
-  );
-};
-
-/**
- * Existing permission rule used by schedule-response notifications.
- * @param {{ role?: string, teamsPermission?: string, teamScopes?: Record<string, string>, formTeamIds?: string[] }} params
- * @returns {boolean}
- */
-export const isTeamEditorForForm = ({
-  role,
-  teamsPermission,
   teamScopes,
   formTeamIds,
 }) => {
-  if (role === "admin") return true;
-  if (teamsPermission === "edit") return true;
   const scopes = teamScopes || {};
   return (formTeamIds || []).some((teamId) => scopes[teamId] === "edit");
 };
@@ -118,12 +97,12 @@ export const collectDigestSubmitterNames = (submissions, since) =>
  * @param {Array<{ email?: string, isTeamLead?: boolean, preference?: unknown }>} candidates
  * @returns {string[]}
  */
-export const selectIntakeNotifyRecipients = (candidates) => {
+export const selectIntakeNotifyRecipients = (candidates, category = "intakeSubmissions") => {
   const seen = new Set();
   const recipients = [];
   for (const candidate of candidates || []) {
     if (!candidate?.isTeamLead) continue;
-    if (!isIntakeNotificationEnabled(candidate.preference)) continue;
+    if (!isNotificationEnabled(category, candidate.preference)) continue;
     const email = String(candidate.email || "").trim();
     if (!email) continue;
     const key = email.toLowerCase();

@@ -199,6 +199,7 @@ export type ChurchMemberRow = {
   controllerAccess?: ControllerAccess;
   appAccess?: string;
   permissions?: MemberPermissions;
+  accessRevision?: string;
   user: AuthUserSummary | null;
 };
 
@@ -241,6 +242,8 @@ export type TeamMemberRecurringAvailability = {
 export type TeamRosterMember = {
   memberId: string;
   churchId: string;
+  /** Server-derived active roster membership status; hidden team IDs are never included. */
+  teamMembershipStatus?: "none" | "assigned" | "unknown";
   /** Optional display prefix, such as "Dr." or "Pastor". */
   title?: string;
   firstName: string;
@@ -608,6 +611,8 @@ export const onlyHydratedSchedules = (
 
 export type TeamsBootstrap = {
   editableMemberIds?: string[];
+  /** Members whose scoped team profile is complete in this authorized projection. */
+  teamProfileReadyMemberIds?: string[];
   /** Authenticated human's unique active roster link; null when unavailable. */
   selfMemberId?: string | null;
   success: boolean;
@@ -801,7 +806,8 @@ export type NotificationIntentType =
   | "assignment_confirmation"
   | "schedule_change"
   | "replacement_request"
-  | "schedule_initial_notification";
+  | "schedule_initial_notification"
+  | "custom_message";
 
 export type NotificationIntentStatus =
   | "preview"
@@ -816,7 +822,7 @@ export type NotificationIntent = {
   intentId: string;
   churchId: string;
   intentType: NotificationIntentType;
-  sourceType: "team_schedule" | "team_intake_recipient";
+  sourceType: "team_schedule" | "team_intake_recipient" | "custom_message";
   sourceId: string;
   sourceVersion: string;
   memberId: string;
@@ -856,6 +862,10 @@ export type NotificationBatchRecipient = {
   eligibilityStatus?: SmsMemberEligibilityStatus | "";
   eligible: boolean;
   exclusionReason?: string;
+  /** Server-keyed identity for approval renewal comparisons; never a phone number. */
+  destinationFingerprint?: string;
+  /** Server-keyed binding for the reviewed destination, consent, authorization and message estimate. */
+  approvalBindingFingerprint?: string;
   intentId?: string;
   status: NotificationIntentStatus | "excluded";
   attemptId?: string;
@@ -865,7 +875,9 @@ export type NotificationBatchRecipient = {
   message?: string;
   approvalVersion?: string;
   phoneNumberSnapshot?: string;
-  previousDeliveryStatus?: "first_send" | "failed" | "accepted" | "uncertain" | "handled";
+  previousDeliveryStatus?: "first_send" | "failed" | "accepted" | "sent" | "uncertain" | "handled";
+  previousSentAt?: string;
+  respondedAt?: string;
   exclusionKind?: "" | "guest" | "archived" | "unlinked" | "team_mismatch";
   assignments?: ScheduleSmsAssignment[];
   sourceFingerprint?: string;
@@ -901,15 +913,19 @@ export type NotificationBatch = {
   churchId: string;
   formId?: string;
   scheduleId?: string;
-  intentType: Extract<NotificationIntentType, "availability_request" | "availability_reminder"> | "schedule_initial_notification";
+  intentType: Extract<NotificationIntentType, "availability_request" | "availability_reminder"> | "schedule_initial_notification" | "custom_message";
+  audienceType?: "not_contacted" | "nonresponders" | "specific" | "first" | "reminder";
   reminderRound?: number;
-  status: "preparing" | "prepared" | "approved" | "dispatching" | "complete" | "partial" | "paused" | "sent" | "superseded";
+  status: "preparing" | "prepared" | "approved" | "dispatching" | "complete" | "partial" | "paused" | "sent" | "superseded" | "abandoned";
   selectedMemberIds: string[];
   recipients: NotificationBatchRecipient[];
   /** Persisted form recipients for the selected batch members, without token secrets. */
   intakeRecipients?: TeamIntakeRecipient[];
   intentIds: string[];
   approvalVersion: string;
+  message?: string;
+  dispatchStartedAt?: string;
+  abandonedAt?: string;
   summary: {
     requested: number;
     selected: number;
@@ -952,6 +968,7 @@ export type SmsDeliveryAttempt = {
   recipientId: string;
   /** Present on new attempts; legacy records are scoped by recipient lookup. */
   formId?: string;
+  notificationIntentId?: string;
   memberId: string;
   provider: string;
   purpose: "initial" | "reminder" | NotificationIntentType;
@@ -961,6 +978,8 @@ export type SmsDeliveryAttempt = {
   failureMessage?: string;
   createdAt: string;
   updatedAt: string;
+  acceptedAt?: string;
+  sentAt?: string;
 };
 
 export type TeamIntakeBlockoutRange = {
@@ -996,6 +1015,13 @@ export type TeamIntakeSubmission = {
   appliedMemberCreated?: boolean;
 };
 
+export type TeamIntakeMemberDetailField =
+  | "title"
+  | "firstName"
+  | "lastName"
+  | "birthDate"
+  | "email";
+
 export type TeamIntakePreview = {
   success: boolean;
   churchName: string;
@@ -1016,8 +1042,11 @@ export type TeamIntakePreview = {
     | "availabilityMessage"
     | "notesMessage"
   >;
-  /** Present only for a recipient-bound link; contains no contact or account data. */
-  recipient?: { firstName: string };
+  /** Present only for a recipient-bound link; missing fields only are disclosed. */
+  recipient?: {
+    firstName: string;
+    missingFields?: TeamIntakeMemberDetailField[];
+  };
   /** Allowlisted position fields only — the public link never ships internal columns. */
   positions: Pick<TeamPosition, "positionId" | "teamId" | "name" | "icon">[];
   /** Teams referenced by `positions`, for grouping the public form by team. */

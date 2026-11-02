@@ -5,9 +5,10 @@ import type { TeamsReturnTo } from "../teamsReturnNavigation";
 type TeamsReturnBackButtonProps = {
   returnTo: TeamsReturnTo;
   onClick: () => void;
+  disabled?: boolean;
 };
 
-const TeamsReturnBackButton = ({ returnTo, onClick }: TeamsReturnBackButtonProps) => (
+const TeamsReturnBackButton = ({ returnTo, onClick, disabled }: TeamsReturnBackButtonProps) => (
   <Button
     type="button"
     variant="tertiary"
@@ -16,6 +17,7 @@ const TeamsReturnBackButton = ({ returnTo, onClick }: TeamsReturnBackButtonProps
     padding="px-2 py-1"
     className="shrink-0 text-xs"
     onClick={onClick}
+    disabled={disabled}
   >
     {returnTo.label}
   </Button>

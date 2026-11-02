@@ -8,7 +8,6 @@ export const AUTOSAVE_DEBOUNCE_KEYS = {
   preferences: "debounced/preferences",
   serviceTimes: "debounced/serviceTimes",
   itemLists: "debounced/itemLists",
-  allItems: "debounced/allItems",
   teams: "debounced/teams",
 } as const;
 

@@ -1,3 +1,5 @@
+import { filterAndSortItemsForSearch } from "../../utils/songSearchUtils";
+import type { DBItem } from "../../types";
 import type { ServiceItem } from "../../types";
 import {
   findBestServicePlanningSongMatch,
@@ -170,4 +172,11 @@ describe("findServicePlanningSongMatch", () => {
 
     expect(matchScore).toBeGreaterThan(otherScore);
   });
+});
+
+it("does not use a manual lyric search hit as evidence of song identity", () => {
+  const song = { ...makeSong("Amazing Grace"), arrangements: [{ formattedLyrics: [{ words: "how sweet the sound" }] }] };
+  expect(filterAndSortItemsForSearch([song], [song as unknown as DBItem], "how sweet the sound")).toHaveLength(1);
+  expect(findBestServicePlanningSongMatch("how sweet the sound", [song])).toBeNull();
+  expect(findSongMatchSuggestions("how sweet the sound", [song])).toEqual([]);
 });

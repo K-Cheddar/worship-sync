@@ -1,4 +1,5 @@
-import { createSlice, PayloadAction } from "@reduxjs/toolkit";
+import { createSlice, original, PayloadAction } from "@reduxjs/toolkit";
+import { activateOutlineContent } from "./outlineContent";
 import { ServiceItem } from "../types";
 import generateRandomId from "../utils/generateRandomId";
 import {
@@ -7,6 +8,9 @@ import {
 } from "../utils/localImageAssets";
 
 type ItemListState = {
+  outlineOwnerKey?: string;
+  outlineLoadGeneration?: number;
+  pendingByOutline?: Record<string, ServiceItem[]>;
   list: ServiceItem[];
   isLoading: boolean;
   selectedItemListId: string; // each item has a unique listId even if their ids are the same
@@ -44,6 +48,7 @@ export const itemListSlice = createSlice({
       state.insertPointIndex = idx >= 0 ? idx : -1;
     },
     initiateItemList: (state, action: PayloadAction<ServiceItem[]>) => {
+      if (state.outlineOwnerKey) delete state.pendingByOutline?.[state.outlineOwnerKey];
       state.list = action.payload.map((item) => ({
         ...item,
         listId: item.listId || generateRandomId(),
@@ -54,6 +59,7 @@ export const itemListSlice = createSlice({
       state.hasPendingUpdate = false;
     },
     updateItemListFromRemote: (state, action: PayloadAction<ServiceItem[]>) => {
+      if (state.outlineOwnerKey) delete state.pendingByOutline?.[state.outlineOwnerKey];
       state.list = action.payload.map((item) => ({
         ...item,
         listId: item.listId || generateRandomId(),
@@ -217,6 +223,16 @@ export const itemListSlice = createSlice({
     },
     setHasPendingUpdate: (state, action: PayloadAction<boolean>) => {
       state.hasPendingUpdate = action.payload;
+      if (!action.payload && state.outlineOwnerKey) delete state.pendingByOutline?.[state.outlineOwnerKey];
+    },
+    acknowledgeOutlineSave: (state, action: PayloadAction<{ ownerKey: string; list: ServiceItem[] }>) => {
+      const before = original(state)!;
+      const { ownerKey, list } = action.payload;
+      if (before.pendingByOutline?.[ownerKey] === list) delete state.pendingByOutline![ownerKey];
+      if (state.outlineOwnerKey === ownerKey && before.list === list) {
+        state.hasPendingUpdate = false;
+        delete state.pendingByOutline?.[ownerKey];
+      }
     },
     forceUpdate: (state) => {
       state.hasPendingUpdate = true;
@@ -225,6 +241,24 @@ export const itemListSlice = createSlice({
       state.initialItems = [...state.initialItems, ...action.payload];
     },
   },
+  extraReducers: (builder) => builder.addCase(activateOutlineContent, (state, action) => {
+    if (state.outlineOwnerKey && state.hasPendingUpdate) {
+      state.pendingByOutline ??= {};
+      state.pendingByOutline[state.outlineOwnerKey] = state.list;
+    } else if (state.outlineOwnerKey) {
+      delete state.pendingByOutline?.[state.outlineOwnerKey];
+    }
+    const draft = state.pendingByOutline?.[action.payload.ownerKey];
+    state.outlineOwnerKey = action.payload.ownerKey;
+    state.outlineLoadGeneration = (state.outlineLoadGeneration ?? 0) + 1;
+    state.list = draft ?? [];
+    state.hasPendingUpdate = !!draft;
+    state.isInitialized = !!draft || !action.payload.hasSelection;
+    state.isLoading = action.payload.hasSelection;
+    state.initialItems = state.list.map((item) => item.listId);
+    state.selectedItemListId = "";
+    state.insertPointIndex = -1;
+  }),
 });
 
 export const {

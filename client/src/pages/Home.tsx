@@ -19,7 +19,6 @@ import Button from "../components/Button/Button";
 import Icon from "../components/Icon/Icon";
 import AnimateCollapse from "../components/AnimateCollapse/AnimateCollapse";
 import Toggle from "../components/Toggle/Toggle";
-import WorshipSyncIcon from "../assets/WorshipSyncIconNoBg.png";
 import WorshipSyncWordmark from "../assets/WorshipSyncWordmark.png";
 import Modal from "../components/Modal/Modal";
 import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
@@ -62,6 +61,7 @@ import {
   getEnabledDisplayOutputs,
   type DisplayOutput,
 } from "../utils/displayOutputs";
+import { cn } from "../utils/cnHelper";
 import {
   readHomeNavigationMetadata,
   writeHomeNavigationMetadata,
@@ -74,6 +74,7 @@ import {
   HOME_NAVIGATION_GRID_CLASS,
   HOME_TILE_CLASS,
   HOME_TILE_CONTENT_CLASS,
+  HOME_TILE_DESCRIPTION_SIZE_CLASS,
   HOME_TILE_ICON_CLASS,
   HomeNavigationLink,
   HomeNavigationSection,
@@ -243,7 +244,11 @@ const HomeLockedFeatureCard = ({
     component="button"
     type="button"
     onClick={onSelect}
-    className={`${HOME_TILE_CLASS} cursor-pointer justify-between gap-2`}
+    className={cn(
+      HOME_TILE_CLASS,
+      showDescriptions && HOME_TILE_DESCRIPTION_SIZE_CLASS,
+      "cursor-pointer",
+    )}
     wrap
     aria-label={
       showDescriptions && description
@@ -251,36 +256,29 @@ const HomeLockedFeatureCard = ({
         : `${title}. Sign in required.`
     }
   >
-    <span className={`${HOME_TILE_CONTENT_CLASS} justify-between gap-2`}>
-      <span className="flex min-w-0 flex-1 items-center gap-3">
-        <span
-          aria-hidden
-          className={`${HOME_TILE_ICON_CLASS} ${iconColorClass}`}
-        >
-          <Icon
-            svg={icon}
-            size="xl"
-            className={iconColorClass}
-            svgClassName={iconColorClass}
-          />
+    <span
+      className={`${HOME_TILE_CONTENT_CLASS} gap-3 py-[8px] sm:py-3 whitespace-normal`}
+    >
+      <span aria-hidden className={`${HOME_TILE_ICON_CLASS} ${iconColorClass}`}>
+        <Icon
+          svg={icon}
+          size="xl"
+          className={iconColorClass}
+          svgClassName={iconColorClass}
+        />
+      </span>
+      <span className="flex min-w-0 flex-1 flex-col items-start">
+        <span className="block break-words text-[15px] font-semibold leading-snug tracking-[-0.01em] sm:text-[17px]">
+          {title}
         </span>
         {showDescriptions && description ? (
-          <span className="min-w-0 flex-1">
-            <span className="block break-words text-[15px] font-semibold leading-snug tracking-[-0.01em] sm:text-[17px]">
-              {title}
-            </span>
-            <span className="mt-0.5 block break-words text-xs font-normal leading-snug text-gray-400">
-              {description}
-            </span>
+          <span className="mt-[5px] block break-words text-xs font-normal leading-snug text-gray-400 sm:mt-0.5">
+            {description}
           </span>
-        ) : (
-          <span className="min-w-0 break-words text-[15px] font-semibold leading-snug tracking-[-0.01em] sm:text-[17px]">
-            {title}
-          </span>
-        )}
-      </span>
-      <span className="shrink-0 rounded border border-gray-600 px-1.5 py-0.5 text-[10px] font-medium text-gray-300 sm:text-xs">
-        Sign in
+        ) : null}
+        <span className="mt-2 inline-flex shrink-0 items-center whitespace-nowrap rounded-full bg-gray-700/70 px-2 py-0.5 text-[10px] font-medium leading-4 text-gray-300">
+          Sign in
+        </span>
       </span>
     </span>
   </Button>
@@ -321,6 +319,7 @@ const HomeOutputGroup = ({
             icon={link.icon}
             iconColorClass={link.iconColorClass}
             pending={pending}
+            showDescriptions={showDescriptions}
           />
         ))}
       </div>
@@ -555,9 +554,9 @@ const Welcome = () => {
             className="pointer-events-none absolute left-1/2 hidden -translate-x-1/2 select-none items-center gap-2 lg:flex"
           >
             <img
-              src={WorshipSyncIcon}
+              src={`${import.meta.env.BASE_URL}logo192.png`}
               alt=""
-              className="h-7 w-auto object-contain"
+              className="h-6 w-auto object-contain"
             />
             <img
               src={WorshipSyncWordmark}
@@ -654,7 +653,7 @@ const Welcome = () => {
               {showMyTeams ? (
                 <HomeNavigationLink
                   title="My teams"
-                  to="/teams-and-services"
+                  to="/teams-and-services/groups"
                   {...PAGE_APPEARANCES.myTeams}
                   description="See your teams and responsibilities."
                   showDescriptions={showDescriptions}

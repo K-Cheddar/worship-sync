@@ -233,6 +233,7 @@ test("zero-recipient progress is valid and invitation counts stay unknown until 
   const progress = screen.getByRole("region", { name: "Response progress" });
   expect(within(progress).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "0");
   expect(within(progress).getByRole("progressbar")).toHaveAttribute("aria-valuetext", "0 of 0 responded");
+  expect(screen.getByRole("region", { name: "Loading volunteers" })).toBeInTheDocument();
   expect(within(progress).getAllByRole("definition").map((item) => item.textContent)).toEqual(["0", "—", "—"]);
 });
 
@@ -532,6 +533,8 @@ test("legacy workspace keeps general and personal links distinct and requires fi
   const selection = await screen.findByRole("dialog", {
     name: "Send requests",
   });
+  expect(within(selection).getByText("1 selected")).toBeInTheDocument();
+  await user.click(within(selection).getByRole("button", { name: "Change recipients" }));
   expect(
     await within(selection).findByRole("checkbox", { name: "Jane Smith" }),
   ).toBeChecked();

@@ -323,7 +323,7 @@ const AccountPeoplePage = () => {
                     </p>
                   </div>
                   <div className="flex w-full justify-end">
-                    {!isSelf && targetUserId ? (
+                    {targetUserId ? (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button
@@ -338,14 +338,12 @@ const AccountPeoplePage = () => {
                           />
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          {!isAdminMember ? (
+                          <DropdownMenuItem onSelect={() => openMemberAccessSheet(member)}>
+                            <UserRoundCog />
+                            Edit access
+                          </DropdownMenuItem>
+                          {!isSelf && (!isAdminMember ? (
                             <>
-                              <DropdownMenuItem
-                                onSelect={() => openMemberAccessSheet(member)}
-                              >
-                                <UserRoundCog />
-                                Edit access
-                              </DropdownMenuItem>
                               <DropdownMenuItem
                                 disabled={destructiveConfirmRunning}
                                 onSelect={() =>
@@ -377,8 +375,8 @@ const AccountPeoplePage = () => {
                               <Ban />
                               Remove admin
                             </DropdownMenuItem>
-                          )}
-                          <DropdownMenuItem
+                          ))}
+                          {!isSelf && <DropdownMenuItem
                             variant="destructive"
                             disabled={destructiveConfirmRunning}
                             onSelect={() =>
@@ -392,7 +390,7 @@ const AccountPeoplePage = () => {
                           >
                             <Ban />
                             Remove member
-                          </DropdownMenuItem>
+                          </DropdownMenuItem>}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     ) : null}

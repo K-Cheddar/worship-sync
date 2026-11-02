@@ -8,6 +8,7 @@ import overlaysReducer, {
   mergeOverlayIntoHistory,
   mergeOverlaysIntoHistory,
   updateList as updateOverlayList,
+  updateOverlaysByIdFromRemote,
   deleteOverlayFromList,
   setHasPendingListUpdate,
   updateOverlayHistoryEntry,
@@ -47,18 +48,22 @@ describe("overlaysSlice", () => {
       expect(state.initialList).toEqual(["o1"]);
     });
 
-    it("initiateOverlayList with empty payload clears list", () => {
+    it("initiateOverlayList with empty payload resets outline state and retains history", () => {
       const store = createStore({
         overlays: {
-          hasPendingUpdate: false,
+          hasPendingUpdate: true,
           list: [createOverlay({ id: "o1", name: "O1" })],
           initialList: ["o1"],
-          isInitialized: true,
-          overlayHistory: {},
+          isInitialized: false,
+          overlayHistory: { "participant.name": ["Saved history"] },
         },
       });
       store.dispatch(initiateOverlayList([]));
       expect(store.getState().overlays.list).toHaveLength(0);
+      expect(store.getState().overlays.initialList).toEqual([]);
+      expect(store.getState().overlays.hasPendingUpdate).toBe(false);
+      expect(store.getState().overlays.isInitialized).toBe(true);
+      expect(store.getState().overlays.overlayHistory).toEqual({ "participant.name": ["Saved history"] });
     });
 
     it("updateOverlayList replaces list and sets hasPendingUpdate", () => {
@@ -70,6 +75,37 @@ describe("overlaysSlice", () => {
       store.dispatch(updateOverlayList(list));
       expect(store.getState().overlays.list).toHaveLength(2);
       expect(store.getState().overlays.hasPendingUpdate).toBe(true);
+    });
+
+    it("applies a batch of remote overlay rows by ID without changing order or membership", () => {
+      const store = createStore();
+      store.dispatch(
+        initiateOverlayList([
+          createOverlay({ id: "a", name: "Before A" }),
+          createOverlay({ id: "b", name: "Before B" }),
+          createOverlay({ id: "c", name: "Keep C" }),
+        ]),
+      );
+
+      store.dispatch(
+        updateOverlaysByIdFromRemote([
+          createOverlay({ id: "a", name: "After A" }),
+          createOverlay({ id: "b", name: "After B" }),
+          createOverlay({ id: "missing", name: "Do not add" }),
+        ]),
+      );
+
+      expect(store.getState().overlays.list).toEqual([
+        expect.objectContaining({ id: "a", name: "After A" }),
+        expect.objectContaining({ id: "b", name: "After B" }),
+        expect.objectContaining({ id: "c", name: "Keep C" }),
+      ]);
+      expect(store.getState().overlays.list.map((overlay) => overlay.id)).toEqual([
+        "a",
+        "b",
+        "c",
+      ]);
+      expect(store.getState().overlays.hasPendingUpdate).toBe(false);
     });
 
     it("addOverlayToList inserts after selectedOverlayId", () => {

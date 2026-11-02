@@ -20,6 +20,7 @@ import {
 } from "../../../utils/localVideoRealtimeRelay";
 import { subscribeLocalVideoCaptureQuality } from "../../../utils/localVideoCaptureQualityRelay";
 import { supportsDirectElectronDesktopCapture } from "../../../utils/desktopCapture";
+import { reportLocalVideoIssue } from "../../../utils/localVideoIssues";
 import { applyLocalVideoCaptureProfile } from "../../../utils/localVideoQuality";
 import {
   __getLocalVideoDiagnosticsForTests,
@@ -78,6 +79,9 @@ jest.mock("../../../utils/desktopCapture", () => ({
   subscribeBrowserDesktopShares: jest.fn(() => jest.fn()),
   supportsDirectElectronDesktopCapture: jest.fn(() => false),
 }));
+jest.mock("../../../utils/localVideoIssues", () => ({
+  reportLocalVideoIssue: jest.fn(),
+}));
 jest.mock("../../../utils/localVideoQuality", () => ({
   applyLocalVideoCaptureProfile: jest.fn(() => Promise.resolve()),
   getLocalVideoCaptureFrameRateForRole: jest.fn((windowRole?: string) =>
@@ -103,6 +107,7 @@ const mockSubscribeCaptureQuality = jest.mocked(
 const mockSupportsDirectElectronDesktop = jest.mocked(
   supportsDirectElectronDesktopCapture,
 );
+const mockReportLocalVideoIssue = jest.mocked(reportLocalVideoIssue);
 const mockApplyLocalVideoCaptureProfile = jest.mocked(
   applyLocalVideoCaptureProfile,
 );
@@ -161,6 +166,173 @@ describe("LocalVideoInputView", () => {
   afterEach(() => {
     __resetLocalVideoDiagnosticsForTests();
     localStorage.removeItem("worshipsync_local_video_debug");
+  });
+
+  describe("local Electron device sharing", () => {
+    beforeEach(() => {
+      window.__ELECTRON__ = true;
+      mockSupportsRealtime.mockReturnValue(true);
+      jest.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    });
+    afterEach(() => {
+      delete window.__ELECTRON__;
+      jest.restoreAllMocks();
+      jest.useRealTimers();
+    });
+
+    it.each(["projector", "monitor", "stream", "editor", "projector-preview"])(
+      "prefers direct playback for %s without subscribing to video relays", async (windowRole) => {
+        render(<LocalVideoInputView input={input} windowRole={windowRole}
+          captureEnabled={false} receiveHighQuality publishPreview={windowRole === "editor"} />);
+        await waitFor(() => expect(screen.getByLabelText("USB Capture")).toHaveProperty("srcObject", stream));
+        expect(mockAcquireWarmCapture).toHaveBeenCalledWith("source-1", expect.any(Object),
+          false, expect.any(String), { shared: true });
+        expect(mockSubscribeRealtime).not.toHaveBeenCalled();
+        expect(mockSubscribeMedia).not.toHaveBeenCalled();
+        expect(mockSubscribePreview).not.toHaveBeenCalled();
+        expect(mockApplyLocalVideoCaptureProfile).not.toHaveBeenCalled();
+      },
+    );
+
+    it("supports simultaneous audience, controller and Aux views with separate leases", async () => {
+      const view = render(<>
+        <LocalVideoInputView input={input} windowRole="projector" captureEnabled={false} receiveHighQuality playAudio volume={0.35} />
+        <LocalVideoInputView input={input} windowRole="editor" captureEnabled={false} receiveHighQuality />
+        <LocalVideoInputView input={input} windowRole="projector-preview" captureEnabled={false} receiveHighQuality />
+      </>);
+      await waitFor(() => expect(mockAcquireWarmCapture).toHaveBeenCalledTimes(3));
+      const videos = screen.getAllByLabelText("USB Capture");
+      expect(videos.map((video) => (video as HTMLVideoElement).srcObject)).toEqual([stream, stream, stream]);
+      expect(new Set(mockAcquireWarmCapture.mock.calls.map((call) => call[3])).size).toBe(3);
+      expect(videos.map((video) => (video as HTMLVideoElement).muted)).toEqual([false, true, true]);
+      expect(videos[0]).toHaveProperty("volume", 0.35);
+      view.unmount();
+      expect(mockReleaseWarmCapture).toHaveBeenCalledTimes(3);
+      expect(stop).not.toHaveBeenCalled();
+    });
+
+    it("samples direct capture and drop statistics at most once a second", async () => {
+      localStorage.setItem("worshipsync_local_video_debug", "true");
+      const getSettings = jest.fn(() => ({ width: 1_920, height: 1_080, frameRate: 60 }));
+      const diagnosticStream = { ...stream, getVideoTracks: () => [{ ...track, getSettings }] } as unknown as MediaStream;
+      mockAcquireWarmCapture.mockResolvedValue({ stream: diagnosticStream });
+      render(<LocalVideoInputView input={input} captureEnabled={false} receiveHighQuality />);
+      const video = screen.getByLabelText("USB Capture");
+      const callbacks: VideoFrameRequestCallback[] = [];
+      Object.defineProperty(video, "requestVideoFrameCallback", { value: (callback: VideoFrameRequestCallback) => {
+        callbacks.push(callback);
+        return callbacks.length;
+      } });
+      Object.defineProperty(video, "getVideoPlaybackQuality", { value: () => ({ totalVideoFrames: 62, droppedVideoFrames: 2 }) });
+      await waitFor(() => expect(video).toHaveProperty("srcObject", diagnosticStream));
+      callbacks[0](0, { presentedFrames: 60 } as VideoFrameCallbackMetadata);
+      callbacks[2](16, { presentedFrames: 61 } as VideoFrameCallbackMetadata);
+      expect(getSettings).toHaveBeenCalledTimes(1);
+      const views = [...(__getLocalVideoDiagnosticsForTests().get("source-1")?.views.values() ?? [])];
+      expect(views).toEqual(expect.arrayContaining([expect.objectContaining({
+        captureSettings: { width: 1_920, height: 1_080, frameRate: 60 },
+        presentedFrames: 60, totalVideoFrames: 62, droppedVideoFrames: 2,
+      })]));
+    });
+
+    it("falls back once on a failed direct join without polling the device", async () => {
+      jest.useFakeTimers();
+      localStorage.setItem("worshipsync_local_video_debug", "true");
+      mockAcquireWarmCapture.mockRejectedValue(new DOMException("busy", "NotReadableError"));
+      render(<LocalVideoInputView input={input} captureEnabled={false} receiveHighQuality windowRole="projector" />);
+      await act(async () => { await jest.advanceTimersByTimeAsync(30_000); });
+      expect(mockAcquireWarmCapture).toHaveBeenCalledTimes(1);
+      expect(mockSubscribeRealtime).toHaveBeenCalledTimes(1);
+      expect(mockSubscribeMedia).not.toHaveBeenCalled();
+      const views = [...(__getLocalVideoDiagnosticsForTests().get("source-1")?.views.values() ?? [])];
+      expect(views).toEqual(expect.arrayContaining([expect.objectContaining({
+        path: "REALTIME_WEBCODECS", fallbackFrom: "DIRECT", fallbackReason: "NotReadableError", fallbackCount: 1,
+      })]));
+    });
+
+    it("uses MediaRecorder compatibility playback when WebCodecs is unavailable", async () => {
+      mockSupportsRealtime.mockReturnValue(false);
+      mockAcquireWarmCapture.mockRejectedValue(new DOMException("denied", "NotAllowedError"));
+      render(<LocalVideoInputView input={input} captureEnabled={false} receiveHighQuality playAudio volume={0.4} />);
+      await waitFor(() => expect(mockSubscribeMedia).toHaveBeenCalledWith("source-1", expect.any(HTMLVideoElement),
+        expect.objectContaining({ includeAudio: true })));
+      expect(mockSubscribeRealtime).not.toHaveBeenCalled();
+      expect(screen.getByLabelText("USB Capture")).toHaveProperty("volume", 0.4);
+    });
+
+    it("falls back when direct audio cannot join, preserving requested output sound", async () => {
+      mockAcquireWarmCapture.mockResolvedValue({ stream, audioError: new DOMException("audio busy", "NotReadableError") });
+      render(<LocalVideoInputView input={input} captureEnabled={false} receiveHighQuality playAudio volume={0.25} />);
+      await waitFor(() => expect(mockSubscribeRealtime).toHaveBeenCalledWith("source-1", expect.any(HTMLCanvasElement),
+        expect.objectContaining({ includeAudio: true, volume: 0.25 })));
+    });
+
+    it("falls back after a no-frame join and releases the direct lease", async () => {
+      jest.useFakeTimers();
+      render(<LocalVideoInputView input={input} captureEnabled={false} receiveHighQuality />);
+      await act(async () => { await jest.advanceTimersByTimeAsync(5_000); });
+      expect(mockSubscribeRealtime).toHaveBeenCalledTimes(1);
+      expect(mockReleaseWarmCapture).toHaveBeenCalled();
+      expect(mockAcquireWarmCapture).toHaveBeenCalledTimes(1);
+    });
+
+    it("releases hidden Electron previews without suspending the audience", async () => {
+      render(<>
+        <LocalVideoInputView input={input} windowRole="projector" captureEnabled={false} receiveHighQuality />
+        <LocalVideoInputView input={input} windowRole="projector-preview" captureEnabled={false} receiveHighQuality />
+      </>);
+      await waitFor(() => expect(mockAcquireWarmCapture).toHaveBeenCalledTimes(2));
+      const hidden = jest.spyOn(document, "hidden", "get").mockReturnValue(true);
+      fireEvent(document, new Event("visibilitychange"));
+      expect(mockReleaseWarmCapture).toHaveBeenCalledTimes(1);
+      expect(screen.getAllByLabelText("USB Capture")[0]).toHaveProperty("srcObject", stream);
+      hidden.mockRestore();
+    });
+
+    it("retries a new source once after the previous source used fallback", async () => {
+      mockAcquireWarmCapture.mockRejectedValueOnce(new DOMException("busy", "NotReadableError"));
+      const view = render(<LocalVideoInputView input={input} captureEnabled={false} receiveHighQuality />);
+      await waitFor(() => expect(mockSubscribeRealtime).toHaveBeenCalledTimes(1));
+      mockResolveBinding.mockReturnValue({ sourceId: "source-2", deviceId: "capture-2", deviceLabel: "Second camera" });
+      view.rerender(<LocalVideoInputView input={{ ...input, sourceId: "source-2", deviceLabel: "Second camera" }}
+        captureEnabled={false} receiveHighQuality />);
+      await waitFor(() => expect(screen.getByLabelText("Second camera")).toHaveProperty("srcObject", stream));
+      expect(mockAcquireWarmCapture).toHaveBeenCalledTimes(2);
+      expect(mockAcquireWarmCapture).toHaveBeenLastCalledWith("source-2", expect.any(Object), false, expect.any(String), { shared: true });
+    });
+
+    it("releases an inactive preview while the audience view stays attached", async () => {
+      const renderViews = (active: boolean) => <>
+        <LocalVideoInputView input={input} captureEnabled={false} receiveHighQuality windowRole="projector" />
+        <LocalVideoInputView input={input} captureEnabled={false} receiveHighQuality windowRole="editor" isActive={active} />
+      </>;
+      const view = render(renderViews(true));
+      await waitFor(() => expect(mockAcquireWarmCapture).toHaveBeenCalledTimes(2));
+      view.rerender(renderViews(false));
+      expect(mockReleaseWarmCapture).toHaveBeenCalledTimes(1);
+      expect(screen.getAllByLabelText("USB Capture")[0]).toHaveProperty("srcObject", stream);
+    });
+
+    it("does not let an old failure retire a newer lease for the same source", async () => {
+      let failOld!: (reason: unknown) => void;
+      mockAcquireWarmCapture.mockReturnValueOnce(new Promise((_resolve, reject) => { failOld = reject; }));
+      const view = render(<LocalVideoInputView input={input} captureEnabled={false} receiveHighQuality />);
+      view.rerender(<LocalVideoInputView input={input} captureEnabled={false} receiveHighQuality playAudio />);
+      await waitFor(() => expect(screen.getByLabelText("USB Capture")).toHaveProperty("srcObject", stream));
+      const oldLease = mockAcquireWarmCapture.mock.calls[0][3];
+      const newLease = mockAcquireWarmCapture.mock.calls[1][3];
+      await act(async () => { failOld(new Error("late failure")); });
+      expect(oldLease).not.toBe(newLease);
+      expect(mockReleaseWarmCapture).not.toHaveBeenCalledWith("source-1", newLease);
+      expect(mockSubscribeRealtime).not.toHaveBeenCalled();
+    });
+
+    it("keeps remote inputs out of local capture and relay acquisition", () => {
+      render(<LocalVideoInputView input={{ ...input, ownerDeviceId: "other-device" }} receiveHighQuality />);
+      expect(mockAcquireWarmCapture).not.toHaveBeenCalled();
+      expect(mockSubscribeRealtime).not.toHaveBeenCalled();
+      expect(mockSubscribeMedia).not.toHaveBeenCalled();
+    });
   });
 
   it("attaches the warm capture and releases its view lease on unmount", async () => {
@@ -227,6 +399,52 @@ describe("LocalVideoInputView", () => {
         "Choose the screen again on this computer, then try again.",
       ),
     ).not.toBeInTheDocument();
+  });
+
+  it("reports a direct desktop capture failure to the controller without audience error UI", async () => {
+    mockSupportsDirectElectronDesktop.mockReturnValue(true);
+    mockResolveBinding.mockReturnValue({
+      sourceId: "source-1",
+      deviceId: "screen:0:0",
+      deviceLabel: "Lyrics screen",
+      captureKind: "screen",
+      displaySourceName: "Lyrics screen",
+    });
+    mockAcquireWarmCapture.mockRejectedValue(
+      new Error("IPC authorization failed"),
+    );
+
+    render(
+      <LocalVideoInputView
+        input={{ ...input, captureKind: "screen", deviceLabel: "Lyrics screen" }}
+        captureEnabled={false}
+        receiveHighQuality
+        showErrors={false}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(mockReportLocalVideoIssue).toHaveBeenCalledWith(
+        "source-1",
+        "Choose the screen again on this computer, then try again.",
+      ),
+    );
+    expect(
+      screen.queryByText("Screen share unavailable"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps camera capture failures out of the desktop-share issue channel", async () => {
+    mockAcquireWarmCapture.mockRejectedValue(new Error("camera failure"));
+
+    render(<LocalVideoInputView input={input} />);
+
+    expect(
+      await screen.findByText(
+        "Check the input connection and camera permission, then try again.",
+      ),
+    ).toBeInTheDocument();
+    expect(mockReportLocalVideoIssue).not.toHaveBeenCalled();
   });
 
   it("shows no connecting chrome while the warm stream attaches", () => {

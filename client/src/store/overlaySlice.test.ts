@@ -10,6 +10,8 @@ import overlayReducer, {
   bufferRemoteOverlayUpdate,
   discardPendingRemoteOverlay,
   applyPendingRemoteOverlay,
+  clearOverlayDraftPending,
+  markOverlayDraftPending,
 } from "./overlaySlice";
 import { createOverlay } from "../test/fixtures";
 
@@ -27,6 +29,7 @@ describe("overlaySlice", () => {
       expect(state.isOverlayLoading).toBe(false);
       expect(state.hasRemoteUpdate).toBe(false);
       expect(state.pendingRemoteOverlay).toBeNull();
+      expect(state.pendingDraftOverlayId).toBeNull();
     });
   });
 
@@ -84,6 +87,21 @@ describe("overlaySlice", () => {
       const store = createStore();
       store.dispatch(forceUpdate());
       expect(store.getState().overlay.hasPendingUpdate).toBe(true);
+    });
+  });
+
+  describe("pending editor draft", () => {
+    it("tracks a pending editor draft only for its selected overlay", () => {
+      const store = createStore();
+      store.dispatch(selectOverlay(createOverlay({ id: "overlay-1", name: "Local" })));
+      store.dispatch(markOverlayDraftPending("overlay-1"));
+      expect(store.getState().overlay.pendingDraftOverlayId).toBe("overlay-1");
+
+      store.dispatch(clearOverlayDraftPending("another-overlay"));
+      expect(store.getState().overlay.pendingDraftOverlayId).toBe("overlay-1");
+
+      store.dispatch(clearOverlayDraftPending("overlay-1"));
+      expect(store.getState().overlay.pendingDraftOverlayId).toBeNull();
     });
   });
 

@@ -92,6 +92,19 @@ export const getSlideVideoBackgroundSendMode = (
   slide?: ItemSlideType | null,
 ): VideoBackgroundSendMode => slide?.videoBackgroundSendMode ?? "continue";
 
+export const getSlideVideoBackgroundLoop = (
+  slide?: ItemSlideType | null,
+  itemType?: string,
+): boolean => slide?.videoBackgroundLoop ?? itemType !== "free";
+
+/** A completed surface retains its last frame until an explicit seek/replay. */
+export const isVideoPlaybackComplete = (
+  loop: boolean | undefined,
+  position: number,
+  duration?: number,
+): boolean => loop === false && !!duration && Number.isFinite(duration) &&
+  duration > 0 && position >= duration;
+
 export const formatVideoClock = (seconds: number): string => {
   if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
   const total = Math.floor(seconds);
@@ -108,7 +121,7 @@ export const formatVideoClock = (seconds: number): string => {
 export const resolveVideoPlaybackPosition = (
   cue: Pick<
     VideoBackgroundPlaybackCue,
-    "positionSeconds" | "paused" | "atServerMs"
+    "positionSeconds" | "paused" | "atServerMs" | "loop"
   >,
   duration?: number,
   nowMs: number = serverNow(),
@@ -116,7 +129,9 @@ export const resolveVideoPlaybackPosition = (
   const elapsed = cue.paused ? 0 : Math.max(0, (nowMs - cue.atServerMs) / 1000);
   let position = Math.max(0, cue.positionSeconds + elapsed);
   if (duration && Number.isFinite(duration) && duration > 0) {
-    position %= duration;
+    position = cue.loop === false || cue.paused
+      ? Math.min(position, duration)
+      : position % duration;
   }
   return position;
 };
@@ -203,7 +218,7 @@ export const resolveVideoCueCorrection = (
 export const resolveVideoCueDrift = (
   cue: Pick<
     VideoBackgroundPlaybackCue,
-    "positionSeconds" | "paused" | "atServerMs"
+    "positionSeconds" | "paused" | "atServerMs" | "loop"
   >,
   actualSeconds: number,
   duration?: number,
@@ -211,7 +226,7 @@ export const resolveVideoCueDrift = (
 ): number => {
   const expected = resolveVideoPlaybackPosition(cue, duration, nowMs);
   let drift = expected - actualSeconds;
-  if (duration && Number.isFinite(duration) && duration > 0) {
+  if (cue.loop !== false && duration && Number.isFinite(duration) && duration > 0) {
     drift = ((drift % duration) + duration) % duration;
     if (drift > duration / 2) drift -= duration;
   }
@@ -382,10 +397,11 @@ export type VideoTransportUpdate = {
   positionSeconds: number;
   paused: boolean;
   applySeek: boolean;
+  loop?: boolean;
 };
 
 export const buildVideoPlaybackCue = (
-  update: VideoTransportUpdate,
+  update: VideoTransportUpdate & Pick<VideoBackgroundPlaybackCue, "loopOnly">,
 ): VideoBackgroundPlaybackCue => ({
   mediaKey: update.mediaKey,
   positionSeconds: update.positionSeconds,
@@ -393,6 +409,8 @@ export const buildVideoPlaybackCue = (
   atServerMs: serverNow(),
   generation: nextCueGeneration(),
   applySeek: update.applySeek,
+  ...(update.loop !== undefined ? { loop: update.loop } : {}),
+  ...(update.loopOnly ? { loopOnly: true } : {}),
 });
 
 /** Applies operator transport and updates the local preview snapshot. */
@@ -435,10 +453,14 @@ export const resolveSyncedVideoPlayback = (
     }
   >,
   mediaKey: string | undefined,
+  outputIds?: readonly string[],
 ): VideoBackgroundPlaybackCue | undefined => {
   if (!mediaKey) return undefined;
   let best: VideoBackgroundPlaybackCue | undefined;
-  for (const slot of Object.values(outputs)) {
+  const slots = outputIds
+    ? outputIds.map((id) => outputs[id]).filter(Boolean)
+    : Object.values(outputs);
+  for (const slot of slots) {
     if (!slot.isTransmitting) continue;
     const cue = slot.info.videoPlayback;
     if (cue?.mediaKey !== mediaKey) continue;
@@ -471,28 +493,28 @@ export const resolveEditorPreviewVideoPlayback = (
   );
   if (!mediaKey || !slide?.id) return undefined;
 
-  const isSelectedSlideLive = Object.values(outputs).some((slot) => {
-    if (!slot.isTransmitting || slot.info.slide?.id !== slide.id) return false;
-    return (
+  const selectedOutputIds = Object.entries(outputs).filter(([, slot]) => {
+    return slot.isTransmitting && slot.info.slide?.id === slide.id && (
       getVideoBackgroundMediaKey(
         getSlideVideoBackgroundMedia(slot.info.slide),
       ) === mediaKey
     );
-  });
-  if (!isSelectedSlideLive) return undefined;
+  }).map(([id]) => id);
+  if (!selectedOutputIds.length) return undefined;
 
-  return resolveSyncedVideoPlayback(outputs, mediaKey);
+  return resolveSyncedVideoPlayback(outputs, mediaKey, selectedOutputIds);
 };
 
 export const buildVideoPlaybackCueForSend = (
   slide?: ItemSlideType | null,
-  options?: { liveCue?: VideoBackgroundPlaybackCue },
+  options?: { liveCue?: VideoBackgroundPlaybackCue; itemType?: string },
 ): VideoBackgroundPlaybackCue | undefined => {
   const media = getSlideVideoBackgroundMedia(slide);
   const mediaKey = getVideoBackgroundMediaKey(media);
   if (!mediaKey) return undefined;
 
   const mode = getSlideVideoBackgroundSendMode(slide);
+  const loop = getSlideVideoBackgroundLoop(slide, options?.itemType);
   const generation = nextCueGeneration();
 
   if (mode === "restart") {
@@ -505,6 +527,7 @@ export const buildVideoPlaybackCueForSend = (
       atServerMs: serverNow(),
       generation,
       applySeek: true,
+      loop,
     };
   }
 
@@ -517,22 +540,24 @@ export const buildVideoPlaybackCueForSend = (
   // mounted, has an empty snapshot and would otherwise restart a live video
   // from zero. The operator's own scrub still wins over the live playhead.
   const liveCue =
-    options?.liveCue?.mediaKey === mediaKey ? options.liveCue : undefined;
+    options?.liveCue?.mediaKey === mediaKey && !options.liveCue.loopOnly
+      ? options.liveCue
+      : undefined;
   if (liveCue && !dirty) {
     const knownDuration =
       (samePreview ? snapshot.duration : 0) ||
       (typeof media?.duration === "number" ? media.duration : 0);
+    const positionSeconds = resolveVideoPlaybackPosition(liveCue, knownDuration || undefined);
     return {
       mediaKey,
-      positionSeconds: resolveVideoPlaybackPosition(
-        liveCue,
-        knownDuration || undefined,
-      ),
-      paused: false,
+      positionSeconds,
+      paused: (liveCue.loop === false || liveCue.paused) &&
+        isVideoPlaybackComplete(false, positionSeconds, knownDuration),
       atServerMs: serverNow(),
       generation,
       // Outputs are already there; only a surface loading this src fresh seeks.
       applySeek: false,
+      loop,
     };
   }
 
@@ -540,13 +565,14 @@ export const buildVideoPlaybackCueForSend = (
   return {
     mediaKey,
     positionSeconds: samePreview ? snapshot.currentTime : 0,
-    // Sending a slide always starts its video. An operator who paused the
-    // editor preview to line something up should not have to press play again
-    // on the way to air, and a paused background is never what a send means.
-    paused: false,
+    // Continue resumes a cued preview, but preserves a completed final frame.
+    // Restart/Start over is the explicit replay action.
+    paused: samePreview && snapshot.paused &&
+      isVideoPlaybackComplete(false, snapshot.currentTime, snapshot.duration),
     atServerMs: serverNow(),
     generation,
     applySeek: isFreshSend,
+    loop,
   };
 };
 

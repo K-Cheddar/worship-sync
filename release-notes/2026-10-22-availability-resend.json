@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-22-availability-resend",
+  "date": "2026-10-22",
+  "type": "improved",
+  "title": "Simpler availability messages and send recovery",
+  "description": "Forms and Messages now share the same reviewed send flow, with clear recipient groups, safe recovery after session errors, and deliberate follow-ups that preserve duplicate protection."
+}

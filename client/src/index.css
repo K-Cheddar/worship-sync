@@ -101,10 +101,6 @@ code {
     source-code-pro, Menlo, Monaco, Consolas, "Courier New", monospace;
 }
 
-button {
-  text-wrap: nowrap;
-}
-
 input[type="password"]::-webkit-textfield-decoration-container {
   display: none;
 }

@@ -168,7 +168,8 @@ it("C: explicit discard adopts the refreshed dates and revision together", async
   await user.click(screen.getByRole("button", { name: /Accept remaining assignments/ }));
   await screen.findByText(/Your saved information changed elsewhere/);
   await user.click(screen.getByRole("button", { name: "Discard changes" }));
-  expect(screen.getByRole("button", { name: "Save time off" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Save time off" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Discard changes" })).not.toBeInTheDocument();
   expect(screen.queryByText(/Your saved information changed elsewhere/)).not.toBeInTheDocument();
   await edit(user, "New edit");
   await user.click(screen.getByRole("button", { name: "Save time off" }));
@@ -223,7 +224,8 @@ it.each(["before", "after"])("D: a refresh resolving %s save completion cannot r
   if (order === "after") await act(async () => { refresh.resolve(snapshot(member("revision-a", "Original dates"))); });
   await openNotesEditor(user);
   expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue("Normalized saved dates");
-  expect(screen.getByRole("button", { name: "Save time off" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Save time off" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Discard changes" })).not.toBeInTheDocument();
   await edit(user, "Next edit");
   await user.click(screen.getByRole("button", { name: "Save time off" }));
   expect(f.operations.saveBlockouts).toHaveBeenLastCalledWith(dates("Next edit", "2099-12-03"), "revision-c");
@@ -243,7 +245,8 @@ it.each([
   await openEditor(user);
   await act(async () => { oldSave.resolve({ success: true, member: member("revision-c", "Old saved dates") }); });
   expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue("New identity dates");
-  expect(screen.getByRole("button", { name: "Save time off" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Save time off" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Discard changes" })).not.toBeInTheDocument();
   await edit(user, "New identity edit");
   await user.click(screen.getByRole("button", { name: "Save time off" }));
   expect(second.operations.saveBlockouts).toHaveBeenLastCalledWith(dates("New identity edit", "2099-12-04"), "revision-a");

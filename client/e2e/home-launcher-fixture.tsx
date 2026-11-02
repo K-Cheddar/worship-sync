@@ -10,6 +10,7 @@ import { getDefaultControllerProfiles } from "../src/utils/controllerProfiles";
 import { getDefaultDisplayOutputs } from "../src/utils/displayOutputs";
 import "../src/index.css";
 
+const isGuest = new URLSearchParams(window.location.search).get("guest") === "true";
 const churchId = "home-launcher-smoke-church";
 const store = configureStore({
   reducer: {
@@ -21,7 +22,7 @@ const store = configureStore({
 const defaultProfiles = getDefaultControllerProfiles();
 store.dispatch(setControllerProfilesForChurch({
   churchId,
-  data: [
+  data: isGuest ? defaultProfiles : [
     { ...defaultProfiles[0], name: "Text Master", order: 0 },
     { ...defaultProfiles[1], name: "Overlays", order: 1 },
     {
@@ -56,13 +57,13 @@ store.dispatch(setDisplayOutputsForChurch({
 }));
 
 const globalInfo = {
-  churchId,
-  loginState: "success",
-  role: "admin",
+  churchId: isGuest ? "" : churchId,
+  loginState: isGuest ? "guest" : "success",
+  role: isGuest ? "" : "admin",
   access: "full",
-  sessionKind: "human",
-  canViewTeams: true,
-  canViewServices: true,
+  sessionKind: isGuest ? null : "human",
+  canViewTeams: !isGuest,
+  canViewServices: !isGuest,
 };
 
 const root = createRoot(document.getElementById("root")!);

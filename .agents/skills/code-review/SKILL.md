@@ -16,6 +16,7 @@ Review as if you did not write the code. Do not assume passing tests prove corre
 4. Inspect surrounding architecture, callers, consumers, state ownership, data contracts, analogous features, and tests. For substantial workflows, trace the actual behavior from input through normalization, validation, preview and user decisions (when present), commit, persistence, publication, errors, and retry/recovery. Name the authoritative source at each boundary and verify that values and approved decisions survive the whole path; correctness of each changed function alone is not sufficient.
 5. Search for duplicated solutions and existing abstractions that should have been reused.
 6. Review lifecycle and failure behavior as applicable: initial load, retries, failures, partial failures, unmount, rapid repeated actions, switching entities during async work, offline/reconnect, stale remote updates, and duplicate events.
+   When reviewing a panel, modal, drawer, or editor, verify that closing/dismissing it does not unexpectedly navigate to another route. Return-navigation metadata must only be consumed by an explicit navigation action unless a documented workflow requires otherwise.
 7. Review contracts: persisted formats, API shapes, Firebase/Pouch/localStorage, Electron preload/IPC, and backward compatibility.
 8. Treat tests as evidence, not proof. Re-check completeness against every acceptance criterion and distinguish required verification from optional additional confidence checks.
 9. Independently trace the production entry point/runtime and compare its providers, authentication/permissions, data sources, mocks, fixtures, and wrapper with the tests. Follow interactive actions that mount deferred content. Require representative integration-level coverage when a composition gap creates meaningful risk, and check that regression tests retain the original failure condition when practical.
@@ -39,7 +40,7 @@ For substantial stateful changes, also complete the two independent passes in [a
 
 ### Required specialized guidance
 
-When applicable, load and apply the deeper domain guidance:
+For significant persistence/async changes, explicitly open and apply the applicable specialized skills during the review; prior familiarity or related unit tests do not establish that their guidance was applied:
 
 - Shared persisted writes, autosaves, PouchDB/Firebase writes, cross-client contention, or datastore switching: `$persisted-mutation-safety`.
 - Multi-stage async workflows, retries, uploads, durable jobs, or identity/lifetime boundaries: `$reliable-state-mutations`.
@@ -181,7 +182,15 @@ State required verification not completed separately from optional additional-co
 
 For each relevant review, record production-context verification as `Pass`, `Finding`, `Unverified`, or `Not applicable` with a reason. A missing, failing, or unperformed required context check prevents `Ready`; component tests that add production-missing context do not satisfy it.
 
-For substantial stateful reviews, include a compact evidence table here for only the highest-risk scenarios. Each row must name an invariant, concrete interleaving or recovery sequence, code path/symbols inspected, and the specific test that controls the critical transition—or state that coverage is missing or was not run. Mark each `Pass`, `Finding`, or `Unverified`; do not use empty checkboxes or treat test titles as evidence. Distinguish a confirmed defect from a theoretical risk or a coverage gap. A relevant high-risk path left unexamined or required verification left incomplete means `Not ready`; reserve `Ready with minor follow-up` for non-blocking, low-risk follow-up.
+For relevant high-risk workflows, use this concise evidence gate in this section (extend the existing stateful evidence table, do not add a second checklist):
+
+| Invariant | Production entry / authoritative owner | Consumer and writer | Async or persistence boundary / adversarial sequence | Exact test evidence | Result |
+| --- | --- | --- | --- | --- | --- |
+| Latest intent survives | Route/provider/store and concrete document/field | Both the reader and the committing writer | Older save starts -> newer save commits -> older retries | Exact test and controlled transition; inspected / executed, or **Missing test** | Pass / Finding / Unverified |
+
+Trace at least one concrete adversarial sequence per relevant failure mechanism. Inspect what the test actually controls and asserts; related unit tests or matching titles cannot make a high-risk review complete. Distinguish a confirmed defect from a risk or coverage gap. A relevant high-risk path left unexamined or required verification left incomplete means `Not ready`; reserve `Ready with minor follow-up` for non-blocking, low-risk follow-up. The [process-validation counterexamples](references/adversarial-review-validation.md) calibrate this gate.
+
+Declare comparison coverage explicitly: **Entire change set inspected**, **Risk-scoped review only** (name excluded areas), or **Tool-limited / truncated comparison** (name missing coverage). Check pagination, caps, and truncation in GitHub/API results; retrieve the remaining relevant files or record incomplete coverage. A capped response is never evidence of the complete diff. Separately list tests **inspected** and tests **actually executed**, with results.
 
 State the review scope: **fix verification** checks the reported defect; **workflow review** checks affected end-to-end paths and related failure scenarios; **production-readiness review** checks release-critical branch scope, required checks, unresolved findings, and regression risk. A passing focused review supports only its stated scope. Do not call a branch production-ready unless that broader review and its verification were actually performed; say explicitly when tests, CI, builds, or runtime reproduction were not performed.
 

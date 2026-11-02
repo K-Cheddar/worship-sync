@@ -1,3 +1,4 @@
+import { isControllerWorkspacePath } from "../../utils/controllerWorkspace";
 import {
   useCallback,
   useContext,
@@ -309,7 +310,7 @@ const MediaModal = ({
   const isLoading = item.isLoading;
 
   const itemSlideContext = useMemo(() => {
-    if (!location.pathname.includes("item")) return undefined;
+    if (!isControllerWorkspacePath(location.pathname)) return undefined;
     const arrangement = item.arrangements[item.selectedArrangement];
     const slides = arrangement?.slides?.length
       ? arrangement.slides
@@ -1262,7 +1263,6 @@ const MediaModal = ({
 
           <MediaLibraryFolderModals
             selectedLibraryFilter={selectedLibraryFilter}
-            onSelectLibraryFilter={navigateToFolder}
             folders={folders}
             list={fullList}
             onUpdateFoldersAndList={onUpdateFoldersAndList}

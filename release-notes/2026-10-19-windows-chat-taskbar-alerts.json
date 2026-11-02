@@ -1,7 +1,7 @@
 {
   "id": "2026-10-19-windows-chat-taskbar-alerts",
-  "date": "2026-10-19",
+  "date": "2026-10-27",
   "type": "new",
-  "title": "Windows chat taskbar alerts",
-  "description": "Unread team chat stays marked on the Windows taskbar until you view the latest messages, even when chat is minimized. New messages briefly draw your attention while WorshipSync is in the background."
+  "title": "Windows chat unread counts",
+  "description": "See how many team chat messages are unread from the Windows taskbar. The count stays visible until you view the latest messages, and new messages briefly draw your attention while WorshipSync is in the background."
 }

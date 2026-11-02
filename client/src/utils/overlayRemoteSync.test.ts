@@ -24,6 +24,7 @@ const remoteNew = normalizeOverlayForSync({
 function makeState(overlay: {
   selectedOverlay: typeof base;
   hasPendingUpdate: boolean;
+  pendingDraftOverlayId?: string | null;
   baseOverlay: typeof base | null;
   pendingRemoteOverlay: typeof base | null;
   hasRemoteUpdate: boolean;
@@ -35,6 +36,7 @@ function makeState(overlay: {
           selectedOverlay: overlay.selectedOverlay,
           isOverlayLoading: false,
           hasPendingUpdate: overlay.hasPendingUpdate,
+          pendingDraftOverlayId: overlay.pendingDraftOverlayId ?? null,
           baseOverlay: overlay.baseOverlay,
           pendingRemoteOverlay: overlay.pendingRemoteOverlay,
           hasRemoteUpdate: overlay.hasRemoteUpdate,
@@ -97,6 +99,28 @@ describe("shouldKeepLocalListRowForRemoteOverlay", () => {
     const getState = () => state;
     expect(shouldKeepLocalListRowForRemoteOverlay(getState, remoteNew)).toBe(
       false,
+    );
+  });
+
+  it("keeps the selected list row while an editor draft is still debouncing", () => {
+    const localRow = { ...base, name: "Committed name" };
+    const state = makeState({
+      selectedOverlay: localRow,
+      hasPendingUpdate: false,
+      pendingDraftOverlayId: "o1",
+      baseOverlay: base,
+      pendingRemoteOverlay: null,
+      hasRemoteUpdate: false,
+    });
+    const getState = () => state;
+
+    expect(shouldKeepLocalListRowForRemoteOverlay(getState, remoteNew)).toBe(
+      true,
+    );
+    const dispatch = jest.fn();
+    syncSelectedOverlayFromRemote(dispatch, getState, remoteNew);
+    expect(dispatch).toHaveBeenCalledWith(
+      overlaySlice.actions.bufferRemoteOverlayUpdate(remoteNew),
     );
   });
 

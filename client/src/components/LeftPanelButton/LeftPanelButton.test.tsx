@@ -11,17 +11,20 @@ jest.mock("../Button/Button", () => ({
     to,
     svg,
     iconSize,
+    wrap,
   }: {
     children?: ReactNode;
     to?: string;
     svg?: FunctionComponent;
     iconSize?: string;
+    wrap?: boolean;
   }) => (
     <div
       data-testid="left-panel-link"
       data-to={to}
       data-has-svg={svg ? "true" : "false"}
       data-icon-size={iconSize}
+      data-wrap={wrap ? "true" : "false"}
     >
       {children}
     </div>
@@ -65,28 +68,34 @@ describe("LeftPanelButton", () => {
     });
   });
 
-  it("uses the absolute route callers provide without prefixing /controller", () => {
+  it("uses a local selection button without an item URL", () => {
+    render(<LeftPanelButton isSelected={false} title="Welcome" type="song" id="list-1" />);
+    expect(screen.getByTestId("left-panel-link")).not.toHaveAttribute("data-to");
+  });
+
+  it("keeps the full title in its tooltip and prepares it for three-line wrapping", () => {
+    const title = "A long outline item name that wraps while preserving its full tooltip";
     render(
       <LeftPanelButton
         isSelected={false}
-        to="/aux-controller/abc/item/test/list-1"
-        title="Welcome"
+        title={title}
+        subtitle="Arrangement"
         type="song"
         id="list-1"
       />,
     );
 
-    expect(screen.getByTestId("left-panel-link")).toHaveAttribute(
-      "data-to",
-      "/aux-controller/abc/item/test/list-1",
-    );
+    expect(screen.getByTestId("left-panel-link")).toHaveAttribute("data-wrap", "true");
+    expect(screen.getByText(title)).toHaveAttribute("title", title);
+    expect(screen.getByText(title)).toHaveClass("line-clamp-3", "wrap-break-word");
+    expect(screen.getByText("Arrangement")).toHaveClass("truncate");
   });
 
   it("shows a small type icon alongside the slide thumbnail", () => {
     render(
       <LeftPanelButton
         isSelected={false}
-        to="/controller/item/test/list-1"
+
         title="Welcome Slides"
         type="free"
         id="list-1"
@@ -107,7 +116,7 @@ describe("LeftPanelButton", () => {
     render(
       <LeftPanelButton
         isSelected={false}
-        to="/controller/item/test/list-1"
+
         title="Welcome Slides"
         type="free"
         id="list-1"
@@ -123,7 +132,7 @@ describe("LeftPanelButton", () => {
     render(
       <LeftPanelButton
         isSelected={false}
-        to="/controller/item/test/list-1"
+
         title="Local clip"
         type="free"
         id="list-1"
@@ -145,7 +154,7 @@ describe("LeftPanelButton", () => {
     render(
       <LeftPanelButton
         isSelected={false}
-        to="/controller/item/test/list-1"
+
         title="Local clip"
         type="free"
         id="list-1"
@@ -178,7 +187,7 @@ describe("LeftPanelButton", () => {
     render(
       <LeftPanelButton
         isSelected={false}
-        to="/controller/item/test/list-1"
+
         title="Welcome Slides"
         type="free"
         id="list-1"
@@ -201,7 +210,7 @@ describe("LeftPanelButton", () => {
     render(
       <LeftPanelButton
         isSelected={false}
-        to="/controller/item/test/list-1"
+
         title="Upcoming Service"
         type="service-time"
         id="list-1"
@@ -219,7 +228,7 @@ describe("LeftPanelButton", () => {
     render(
       <LeftPanelButton
         isSelected={false}
-        to="/controller/item/test/list-2"
+
         title="Countdown"
         type="timer"
         id="list-2"

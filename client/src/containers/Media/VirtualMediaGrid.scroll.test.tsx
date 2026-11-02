@@ -4,6 +4,8 @@ import type { MediaFolder, MediaType } from "../../types";
 
 let visibleRowIndexes: number[] = [0];
 let mockScrollToIndex: jest.Mock;
+let mockScrollToOffset: jest.Mock;
+let mockMountRows = true;
 
 jest.mock("@tanstack/react-virtual", () => {
   const React = jest.requireActual("react") as typeof import("react");
@@ -29,7 +31,7 @@ jest.mock("@tanstack/react-virtual", () => {
       const scrollToIndex = React.useCallback(
         (index: number, options: { align: "auto" }) => {
           mockScrollToIndex(index, options);
-          visibleRowIndexes = [index];
+          if (mockMountRows) visibleRowIndexes = [index];
           forceRender((value) => value + 1);
         },
         [forceRender],
@@ -51,6 +53,7 @@ jest.mock("@tanstack/react-virtual", () => {
           measureElement: jest.fn(),
           measure: jest.fn(),
           scrollToIndex,
+          scrollToOffset: mockScrollToOffset,
         }),
         [count, indexes, scrollToIndex, starts],
       );
@@ -112,9 +115,9 @@ describe("VirtualMediaGrid media focus scrolling", () => {
 
   beforeEach(() => {
     visibleRowIndexes = [0];
-    mockScrollToIndex = jest.fn((index: number) => {
-      visibleRowIndexes = [index];
-    });
+    mockMountRows = true;
+    mockScrollToIndex = jest.fn();
+    mockScrollToOffset = jest.fn();
     frameCallbacks = [];
     requestAnimationFrameSpy = jest
       .spyOn(window, "requestAnimationFrame")
@@ -178,8 +181,9 @@ describe("VirtualMediaGrid media focus scrolling", () => {
       resultPromise = mediaGridRef.current!.scrollToMediaId("media-20");
     });
 
-    expect(mockScrollToIndex).toHaveBeenCalledWith(19, { align: "auto" });
+    expect(mockScrollToIndex).toHaveBeenCalledWith(19, { align: "auto", behavior: "instant" });
     expect(frameCallbacks).toHaveLength(1);
+    await flushFrame();
     await flushFrame();
 
     await expect(resultPromise).resolves.toEqual({ status: "success" });
@@ -208,6 +212,7 @@ describe("VirtualMediaGrid media focus scrolling", () => {
       resultPromise = mediaGridRef.current!.scrollToMediaId("media-1");
     });
     await flushFrame();
+    await flushFrame();
     await expect(
       resultPromise,
     ).resolves.toEqual({ status: "success" });
@@ -233,8 +238,9 @@ describe("VirtualMediaGrid media focus scrolling", () => {
       resultPromise = mediaGridRef.current!.scrollToMediaId("media-1");
     });
     await flushFrame();
+    await flushFrame();
     await expect(resultPromise).resolves.toEqual({ status: "success" });
-    expect(mockScrollToIndex).toHaveBeenCalledWith(1, { align: "auto" });
+    expect(mockScrollToIndex).toHaveBeenCalledWith(1, { align: "auto", behavior: "instant" });
   });
 
   it("cancels an older focus attempt when a newer request takes ownership", async () => {
@@ -251,13 +257,15 @@ describe("VirtualMediaGrid media focus scrolling", () => {
     firstController.abort();
 
     await expect(firstResult).resolves.toEqual({ status: "cancelled" });
+    expect(mockScrollToOffset).toHaveBeenCalledWith(0, { behavior: "instant" });
     let resultPromise!: ReturnType<VirtualMediaGridHandle["scrollToMediaId"]>;
     await act(async () => {
       resultPromise = mediaGridRef.current!.scrollToMediaId("media-1");
     });
     await flushFrame();
+    await flushFrame();
     await expect(resultPromise).resolves.toEqual({ status: "success" });
-    expect(mockScrollToIndex).toHaveBeenLastCalledWith(0, { align: "auto" });
+    expect(mockScrollToIndex).toHaveBeenLastCalledWith(0, { align: "auto", behavior: "instant" });
   });
 
   it("reports a target that is no longer in the current rows as not found", async () => {
@@ -270,4 +278,76 @@ describe("VirtualMediaGrid media focus scrolling", () => {
     ).resolves.toEqual({ status: "not-found" });
     expect(mockScrollToIndex).not.toHaveBeenCalled();
   });
+
+  it("keeps retrying an unmounted far row using its current index after regrouping", async () => {
+    mockMountRows = false;
+    const mediaGridRef = { current: null } as React.RefObject<VirtualMediaGridHandle | null>;
+    const scrollRef = { current: null } as React.RefObject<HTMLDivElement | null>;
+    const { rerender } = render(grid(mediaGridRef, scrollRef));
+    const settled = jest.fn();
+    await act(async () => {
+      void mediaGridRef.current!.scrollToMediaId("media-20").then(settled);
+    });
+    await flushFrame();
+    await flushFrame();
+    expect(settled).not.toHaveBeenCalled();
+    expect(mockScrollToIndex).toHaveBeenLastCalledWith(19, { align: "auto", behavior: "instant" });
+
+    // A filter/layout update changes the row while the request is pending.
+    rerender(grid(mediaGridRef, scrollRef, mediaItems.slice(10)));
+    mockMountRows = true;
+    await flushFrame();
+    expect(mockScrollToIndex).toHaveBeenLastCalledWith(9, { align: "auto", behavior: "instant" });
+    await flushFrame();
+    await flushFrame();
+    expect(settled).toHaveBeenCalledWith({ status: "success" });
+  });
+
+  it.each(["row measurements", "panel resizing"])(
+    "confirms visibility after %s move a mounted tile, scrolling only the media container",
+    async (change) => {
+      const mediaGridRef = { current: null } as React.RefObject<VirtualMediaGridHandle | null>;
+      const scrollRef = { current: null } as React.RefObject<HTMLDivElement | null>;
+      render(grid(mediaGridRef, scrollRef));
+      let targetTop = 1900;
+      let viewportHeight = 100;
+      const rect = (top: number, height: number) => ({
+        top, bottom: top + height, height, width: 100,
+        left: 0, right: 100, x: 0, y: top, toJSON: () => ({}),
+      }) as DOMRect;
+      getBoundingClientRectSpy.mockImplementation(function (this: HTMLElement) {
+        if (this.dataset.testid === "media-scroll") return rect(50, viewportHeight);
+        if (this.dataset.mediaId) return rect(50 + targetTop - scrollRef.current!.scrollTop, 60);
+        return rect(0, 80);
+      });
+      const container = scrollRef.current!;
+      const scrollTo = jest.fn();
+      container.scrollTo = scrollTo;
+      const pageScroll = jest.spyOn(window, "scrollTo");
+      const settled = jest.fn();
+      await act(async () => {
+        void mediaGridRef.current!.scrollToMediaId("media-20").then(settled);
+      });
+      await flushFrame();
+      // Initiating a scroll (even for a mounted tile) is not acknowledgement.
+      expect(scrollTo).toHaveBeenCalledWith({ top: 1860, behavior: "instant" });
+      expect(settled).not.toHaveBeenCalled();
+      scrollTo.mockImplementation(({ top }: ScrollToOptions) => {
+        container.scrollTop = top ?? 0;
+      });
+      await flushFrame(); // apply the correction
+      await flushFrame(); // first visible check
+      expect(settled).not.toHaveBeenCalled();
+
+      if (change === "row measurements") targetTop += 240;
+      else viewportHeight = 70;
+      await flushFrame(); // layout changes invalidate the visible check
+      expect(settled).not.toHaveBeenCalled();
+      await flushFrame();
+      await flushFrame();
+      expect(settled).toHaveBeenCalledWith({ status: "success" });
+      expect(pageScroll).not.toHaveBeenCalled();
+      pageScroll.mockRestore();
+    },
+  );
 });

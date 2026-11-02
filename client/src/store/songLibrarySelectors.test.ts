@@ -1,41 +1,29 @@
-import type { DBItem, ServiceItem } from "../types";
+import type { DBItem } from "../types";
 import type { RootState } from "./store";
 import { selectSongLibrary } from "./songLibrarySelectors";
 
 const songDoc = (id: string, name: string): DBItem =>
   ({ _id: id, name, type: "song" }) as DBItem;
 
-const songItem = (id: string, name: string): ServiceItem => ({
-  _id: id,
-  name,
-  type: "song",
-  listId: "",
-  background: "",
-});
 
 const createState = ({
-  items = [],
   documents = [],
   isLoading = false,
 }: {
-  items?: ServiceItem[];
   documents?: DBItem[];
   isLoading?: boolean;
 } = {}) =>
   ({
-    allItems: {
-      list: items,
-      isAllItemsLoading: isLoading,
-    },
+
     allDocs: {
       allSongDocs: documents,
+      isInitialized: !isLoading,
     },
-  }) as RootState;
+  }) as unknown as RootState;
 
 describe("selectSongLibrary", () => {
-  it("returns one complete library when the lightweight index is partial", () => {
+  it("derives the song library from cached documents", () => {
     const state = createState({
-      items: [songItem("song-new", "New Song")],
       documents: [
         songDoc("song-old", "Amazing Grace"),
         songDoc("song-new", "New Song"),
@@ -54,7 +42,7 @@ describe("selectSongLibrary", () => {
     expect(selectSongLibrary(state)).toBe(library);
   });
 
-  it("remains loading only while neither source has songs", () => {
+  it("remains loading until the document snapshot is available", () => {
     expect(selectSongLibrary(createState({ isLoading: true }))).toMatchObject({
       songs: [],
       isLoading: true,

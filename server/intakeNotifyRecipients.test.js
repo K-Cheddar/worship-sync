@@ -37,34 +37,31 @@ test("isIntakeNotificationEnabled opts leads in unless explicitly off", () => {
 test("isTeamLeadForForm: a lead on a selected team qualifies", () => {
   assert.equal(
     isTeamLeadForForm({
-      teamMemberships: { t1: { teamId: "t1", isTeamLead: true } },
+      teamScopes: { t1: "edit" },
       formTeamIds: ["t1"],
     }),
     true,
   );
   assert.equal(
     isTeamLeadForForm({
-      teamMemberships: { t2: { teamId: "t2", isTeamLead: true } },
+      teamScopes: { t2: "edit" },
       formTeamIds: ["t1"],
     }),
     false,
   );
   assert.equal(
     isTeamLeadForForm({
-      teamMemberships: { t1: { teamId: "t1", isTeamLead: true } },
+      teamScopes: { t1: "edit" },
       formTeamIds: [],
     }),
-    true,
+    false,
   );
 });
 
 test("isTeamLeadForForm: non-leads do not qualify", () => {
   assert.equal(
     isTeamLeadForForm({
-      teamMemberships: {
-        t1: { teamId: "t1", isTeamLead: false },
-        t2: { teamId: "t2" },
-      },
+      teamScopes: { t1: "view" },
       formTeamIds: ["t1", "t2"],
     }),
     false,

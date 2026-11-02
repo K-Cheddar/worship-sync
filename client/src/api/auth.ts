@@ -41,6 +41,8 @@ import type {
   MemberNotifications,
   NotificationIntent,
   NotificationIntentType,
+  NotificationIntentStatus,
+  SmsDeliveryAttemptStatus,
   NotificationBatch,
   ScheduleInitialSmsRecipient,
   ScheduleInitialSmsBatchHistoryEntry,
@@ -992,11 +994,11 @@ export const createChurchAccount = async (body: JsonBody) =>
     body: JSON.stringify(body),
   });
 
-export const logoutSession = async () =>
+export const logoutSession = async (csrfToken?: string) =>
   apiFetch<{ success: boolean }>("api/auth/logout", {
     method: "POST",
     body: JSON.stringify({}),
-  });
+  }, csrfToken ? { "x-csrf-token": csrfToken } : undefined);
 
 export const forgotPassword = async (email: string) =>
   apiFetch<{ success: boolean }>("api/auth/forgot-password", {
@@ -1135,11 +1137,17 @@ export const listChurchMembers = async (churchId: string) =>
 
 export type ChurchServiceTimeZoneResponse = {
   success: boolean;
-  serviceTimeZone: string;
+  serviceTimeZone: string | null;
   isConfigured: boolean;
   serviceTimeZoneRevision: string;
   legacyTimeZoneSuggestion?: string | null;
 };
+
+export type ConfiguredChurchServiceTimeZoneResponse =
+  ChurchServiceTimeZoneResponse & {
+    serviceTimeZone: string;
+    isConfigured: true;
+  };
 
 export const getChurchServiceTimeZone = async (churchId: string) =>
   apiFetch<ChurchServiceTimeZoneResponse>(
@@ -1152,7 +1160,7 @@ export const updateChurchServiceTimeZone = async (
   churchId: string,
   serviceTimeZone: string,
 ) =>
-  apiFetch<ChurchServiceTimeZoneResponse>(
+  apiFetch<ConfiguredChurchServiceTimeZoneResponse>(
     `api/churches/${churchId}/service-time-zone`,
     { method: "POST", body: JSON.stringify({ serviceTimeZone }) },
   );
@@ -1447,6 +1455,35 @@ export const getNotificationIntents = async (
   );
 };
 
+export type MessageHistoryEntry = {
+  historyId: string;
+  messageType: NotificationIntentType;
+  createdAt: string;
+  summary: string;
+  recipientCount: number;
+  status: "accepted" | "delivered" | "failed" | "unconfirmed" | "sending" | "not_sent";
+  recipients: {
+    memberId: string;
+    memberName: string;
+    status: NotificationIntentStatus;
+    deliveryStatus: SmsDeliveryAttemptStatus | "";
+    outcome: string;
+    failureMessage: string;
+  }[];
+};
+
+export const getMessageHistory = async (churchId: string, cursor = "") =>
+  apiFetch<{ success: boolean; entries: MessageHistoryEntry[]; nextCursor: string }>(
+    `api/churches/${churchId}/message-history${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+  );
+
+export const prepareCustomMessage = async (churchId: string, body: {
+  memberIds: string[]; message: string; requestKey: string;
+}) => apiFetch<{ success: boolean; batch: NotificationBatch }>(
+  `api/churches/${churchId}/notification-batches/custom/prepare`,
+  { method: "POST", body: JSON.stringify(body) },
+);
+
 export const getNotificationIntentPreview = async (
   churchId: string,
   intentId: string,
@@ -1535,6 +1572,7 @@ export const prepareAvailabilityNotificationBatch = async (
       NotificationIntentType,
       "availability_request" | "availability_reminder"
     >;
+      audienceType?: "not_contacted" | "nonresponders" | "specific" | "first" | "reminder";
     formId: string;
     memberIds: string[];
     requestKey: string;
@@ -1597,13 +1635,23 @@ export const dispatchAvailabilityNotificationBatch = async (
   churchId: string,
   batchId: string,
   approvalVersion: string,
+  acknowledgedUncertainMemberIds: string[] = [],
 ) =>
   apiFetch<{ success: boolean; batch: NotificationBatch }>(
     `api/churches/${churchId}/notification-batches/${encodeURIComponent(batchId)}/dispatch`,
     {
       method: "POST",
-      body: JSON.stringify({ confirmed: true, approvalVersion }),
+        body: JSON.stringify({ confirmed: true, approvalVersion, acknowledgedUncertainMemberIds }),
     },
+  );
+
+export const abandonPreparedAvailabilityBatch = async (
+  churchId: string,
+  batchId: string,
+) =>
+  apiFetch<{ success: boolean; batch: NotificationBatch }>(
+    `api/churches/${churchId}/notification-batches/${encodeURIComponent(batchId)}/abandon`,
+    { method: "POST", body: JSON.stringify({}) },
   );
 
 export const sendNotificationIntent = async (
@@ -1905,9 +1953,12 @@ export type TeamMemberTeamProfile = {
   membership: { roleId?: string; isTeamLead: boolean };
   qualifications: TeamMemberQualification[];
 };
-export type TeamMemberTeamProfilePatch = Partial<
+export type TeamMemberTeamProfileChanges = Partial<
   Pick<TeamMemberTeamProfile, "positionIds" | "desiredPositionIds" | "qualifications">
 > & { membership?: { roleId?: string | null; isTeamLead?: boolean } };
+export type TeamMemberTeamProfilePatch = TeamMemberTeamProfileChanges & {
+  baseProfile: TeamMemberTeamProfileChanges;
+};
 export type TeamMemberTeamProfileResponse = {
   member: TeamMemberProfile;
   teamProfile: TeamMemberTeamProfile;
@@ -3146,6 +3197,7 @@ export const updateChurchMemberAccess = async (
   userId: string,
   controllerAccess: ControllerAccess,
   permissions: MemberPermissions,
+  accessRevision?: string,
 ) =>
   apiFetch<{ success: boolean }>(
     `api/churches/${churchId}/members/${userId}/access`,
@@ -3155,6 +3207,7 @@ export const updateChurchMemberAccess = async (
         controllerAccess,
         appAccess: controllerAccess === "none" ? "member" : controllerAccess,
         permissions,
+        ...(accessRevision ? { accessRevision } : {}),
       }),
     },
   );

@@ -13,9 +13,6 @@ import {
   getSongAudioUrl,
   uploadSongAudio,
 } from "../../api/auth";
-import { useDispatch } from "../../hooks";
-import { upsertItemInAllDocs } from "../../store/allDocsSlice";
-import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
 import { applyPouchAudit } from "../../utils/pouchAudit";
 import { broadcastItemUpdate } from "../../store/store";
 import { deleteSongAudioBeforeClearingMetadata } from "../../utils/persistSongAudioAttachment";
@@ -58,7 +55,6 @@ const ViewSongSectionsDrawer = ({
   onRemoveSongAudio: onRemoveSongAudioOverride,
   onClose,
 }: ViewSongSectionsDrawerProps) => {
-  const dispatch = useDispatch();
   const { db } = useContext(ControllerInfoContext) || {};
   const { churchId, access } = useContext(GlobalInfoContext) || {};
   const persistenceScopeRef = useRef({ db, churchId });
@@ -132,20 +128,9 @@ const ViewSongSectionsDrawer = ({
       const saved = { ...audited, _rev: result.rev };
       if (!mountedRef.current || persistenceScopeRef.current.db !== db ||
         persistenceScopeRef.current.churchId !== churchId) return;
-      dispatch(upsertItemInAllDocs(saved));
-      dispatch(
-        upsertItemInAllItemsList({
-          _id: saved._id,
-          name: saved.name,
-          type: saved.type,
-          listId: saved._id,
-          background:
-            typeof saved.background === "string" ? saved.background : "",
-        }),
-      );
       broadcastItemUpdate(saved);
     },
-    [db, dispatch, song, churchId],
+    [db, song, churchId],
   );
 
   const persistSongLyrics = useCallback(
@@ -177,20 +162,9 @@ const ViewSongSectionsDrawer = ({
       const audited = applyPouchAudit(existing, next, { isNew: false });
       const result = await db.put(audited);
       const saved = { ...audited, _rev: result.rev };
-      dispatch(upsertItemInAllDocs(saved));
-      dispatch(
-        upsertItemInAllItemsList({
-          _id: saved._id,
-          name: saved.name,
-          type: saved.type,
-          listId: saved._id,
-          background:
-            typeof saved.background === "string" ? saved.background : "",
-        }),
-      );
       broadcastItemUpdate(saved);
     },
-    [db, dispatch, song],
+    [db, song],
   );
 
   const resolveSongAudioUrl = useCallback(

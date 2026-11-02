@@ -22,22 +22,85 @@ export const volunteerRequest = async <T>(path: string, body?: unknown, csrfToke
   return result as T;
 };
 
-let redemption: Promise<unknown> | undefined;
-export const openVolunteerSession = async () => {
-  const token = readVolunteerIngress();
-  if (token) {
-    if (!redemption) redemption = volunteerRequest("redeem", { token }).then((result) => {
-      clearVolunteerIngress(); return result;
-    }).catch((error: unknown) => {
-      redemption = undefined;
-      // A temporary failure (including a lost successful response) must
-      // retain the still-usable ingress in memory for an explicit retry.
-      if (error instanceof VolunteerApiError && [400, 401, 403, 404].includes(error.status)) clearVolunteerIngress();
+let redemption: { token: string; promise: Promise<unknown> } | undefined;
+
+const isAuthoritativeCredentialFailure = (error: unknown) =>
+  error instanceof VolunteerApiError &&
+  (error.details.accessStatus === "invalid" || error.details.accessStatus === "revoked");
+
+const redeemIngressToken = (token: string) => {
+  let promise!: Promise<unknown>;
+  promise = volunteerRequest("redeem", { token }).then((result) => {
+    // A different link may have arrived while this request was in flight.
+    // Never clear that newer credential when the older redemption settles.
+    if (readVolunteerIngress() === token) clearVolunteerIngress();
+    return result;
+  }).catch((error: unknown) => {
+    // Network errors, throttling, server failures, origin/prefetch rejection,
+    // and expired links are not proof that the bearer should be discarded.
+    if (readVolunteerIngress() === token && isAuthoritativeCredentialFailure(error)) {
+      clearVolunteerIngress();
+    }
+    throw error;
+  }).finally(() => {
+    if (redemption?.promise === promise) redemption = undefined;
+  });
+  redemption = { token, promise };
+  return redemption;
+};
+
+export const openVolunteerSession = async (): Promise<VolunteerSession> => {
+  while (true) {
+    const token = readVolunteerIngress();
+    const activeRedemption = redemption;
+
+    // Serialize different links because redemption writes the same browser
+    // cookie. The later link owns the next session read, even if the earlier
+    // response settles after the link changed.
+    if (activeRedemption && token && activeRedemption.token !== token) {
+      try {
+        await activeRedemption.promise;
+      } catch {
+        // The old token's failure must not prevent retrying the current link.
+      }
+      if (readVolunteerIngress() !== token) continue;
+      continue;
+    }
+
+    if (token) {
+      const flight = redemption?.token === token
+        ? redemption
+        : redeemIngressToken(token);
+      try {
+        await flight.promise;
+      } catch (error) {
+        const currentToken = readVolunteerIngress();
+        if (currentToken && currentToken !== token) continue;
+        throw error;
+      }
+      if (readVolunteerIngress() && readVolunteerIngress() !== token) continue;
+    } else if (redemption) {
+      try {
+        await redemption.promise;
+      } catch (error) {
+        if (readVolunteerIngress()) continue;
+        throw error;
+      }
+      if (readVolunteerIngress()) continue;
+    }
+
+    const tokenBeforeSession = readVolunteerIngress();
+    try {
+      const session = await volunteerRequest<VolunteerSession>("session");
+      const currentToken = readVolunteerIngress();
+      if (currentToken && currentToken !== tokenBeforeSession) continue;
+      return session;
+    } catch (error) {
+      const currentToken = readVolunteerIngress();
+      if (currentToken && currentToken !== tokenBeforeSession) continue;
       throw error;
-    }).finally(() => { redemption = undefined; });
-    await redemption;
+    }
   }
-  return volunteerRequest<VolunteerSession>("session");
 };
 
 export const personalScheduleAccess = (session: VolunteerSession): PersonalScheduleAccess => {

@@ -363,6 +363,9 @@ test("availability Send requests opens one dialog and cancel sends nothing", asy
   await user.click(screen.getByRole("button", { name: "Send requests" }));
   const dialog = screen.getByRole("dialog", { name: "Send requests" });
   expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  expect(within(dialog).getByText("1 selected")).toBeInTheDocument();
+  expect(within(dialog).queryByRole("checkbox", { name: "Rae Kim" })).not.toBeInTheDocument();
+  await user.click(within(dialog).getByRole("button", { name: "Change recipients" }));
   expect(within(dialog).getByRole("checkbox", { name: "Rae Kim" })).toBeInTheDocument();
   await user.click(within(dialog).getByRole("button", { name: "Close modal" }));
   expect(dispatchAvailabilityNotificationBatch).not.toHaveBeenCalled();
@@ -1062,7 +1065,7 @@ test("an existing form view exposes Send form", async () => {
   await openForm(user);
 
   await user.click(screen.getByRole("button", { name: "Send form" }));
-  expect(screen.getByRole("heading", { name: "Send form" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Send requests" })).toBeInTheDocument();
   expect(updateTeamIntakeForm).not.toHaveBeenCalled();
   expect(mockSendIntent).not.toHaveBeenCalled();
 });
@@ -1094,8 +1097,8 @@ test("refreshes history on every Send form open and ignores older history respon
   await waitFor(() => expect(getNotificationIntents).toHaveBeenCalledTimes(1));
 
   await user.click(screen.getByRole("button", { name: "Send form" }));
-  const sendRegion = screen.getByRole("region", { name: "Send form" });
-  expect(within(sendRegion).getByRole("checkbox", { name: "Rae Kim" })).toBeDisabled();
+  const sendRegion = screen.getByRole("region", { name: "Send requests" });
+  await waitFor(() => expect(within(sendRegion).queryByRole("checkbox", { name: "Rae Kim" })).not.toBeInTheDocument());
   await waitFor(() => expect(within(sendRegion).getAllByText("Already sent").length).toBeGreaterThan(0));
   expect(getNotificationIntents).toHaveBeenCalledTimes(2);
 
@@ -1103,19 +1106,19 @@ test("refreshes history on every Send form open and ignores older history respon
     resolveOlderIntents(historyPage([]));
     resolveOlderAttempts(attemptsPage);
   });
-  expect(within(sendRegion).getByRole("checkbox", { name: "Rae Kim" })).toBeDisabled();
+  expect(within(sendRegion).queryByRole("checkbox", { name: "Rae Kim" })).not.toBeInTheDocument();
   expect(within(sendRegion).getAllByText("Already sent").length).toBeGreaterThan(0);
 
   await user.click(within(sendRegion).getByRole("button", { name: "Close" }));
   await user.click(screen.getByRole("button", { name: "Send form" }));
-  const reopenedRegion = screen.getByRole("region", { name: "Send form" });
-  expect(within(reopenedRegion).getByRole("checkbox", { name: "Rae Kim" })).toBeDisabled();
+  const reopenedRegion = screen.getByRole("region", { name: "Send requests" });
+  expect(within(reopenedRegion).queryByRole("checkbox", { name: "Rae Kim" })).not.toBeInTheDocument();
   await waitFor(() => expect(getNotificationIntents).toHaveBeenCalledTimes(3));
   await act(async () => {
     resolveReopenIntents(historyPage([sentIntent]));
     resolveReopenAttempts(attemptsPage);
   });
-  expect(within(reopenedRegion).getByRole("checkbox", { name: "Rae Kim" })).toBeDisabled();
+  expect(within(reopenedRegion).queryByRole("checkbox", { name: "Rae Kim" })).not.toBeInTheDocument();
   expect(within(reopenedRegion).getAllByText("Already sent").length).toBeGreaterThan(0);
 });
 
@@ -1171,7 +1174,7 @@ test("a sent batch updates recipients and delivery counts in Forms without reloa
   render(<StatefulManager />);
   await openForm(user);
   await user.click(screen.getByRole("button", { name: "Send form" }));
-  expect(within(screen.getByRole("region", { name: "Send form" })).getByRole("checkbox", { name: "Rae Kim" })).toBeChecked();
+  expect(within(screen.getByRole("region", { name: "Send requests" })).getByRole("checkbox", { name: "Rae Kim" })).toBeChecked();
   await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
   const confirmation = await screen.findByRole("dialog", { name: "Review text messages" });
   expect(dispatchAvailabilityNotificationBatch).not.toHaveBeenCalled();

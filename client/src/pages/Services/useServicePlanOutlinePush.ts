@@ -1,3 +1,4 @@
+import { selectItemEntries } from "../../store/itemLibrarySelectors";
 /**
  * Wraps the outline bridge with the live PouchDB/Redux plumbing it needs
  * (ControllerInfoContext's db, the currently-selected item list). Intended for
@@ -11,11 +12,12 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { useDispatch, useSelector } from "../../hooks";
 import { updateItemList } from "../../store/itemListSlice";
-import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
 import {
   buildServicePlanOutlineItem,
   placeServicePlanOutlineItem,
   planServicePlanOutlineItems,
+  isServicePlanItemAlreadyInOutline,
+  availableSongOutlineListId,
   type ServicePlanOutlinePushResult,
   type ServicePlanOutlinePlacementFallback,
 } from "./servicePlanOutlineBridge";
@@ -23,6 +25,7 @@ import { useServicePlanSongLibrary } from "./useServicePlanSongLibrary";
 import type { ServicePlan } from "../../types/servicePlan";
 import type { ServiceItem } from "../../types";
 import type { RootState } from "../../store/store";
+import { trackBibleDocumentActivity } from "../../utils/contentReplicationActivity";
 
 const OUTLINE_STEP_DELAY_MS = 300;
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -56,85 +59,125 @@ export const useServicePlanOutlinePush = () => {
       onItemAdded?: (item: ServiceItem, fallback?: ServicePlanOutlinePlacementFallback) => Promise<void> | void,
       shouldContinue: () => boolean = () => true,
     ): Promise<ServicePlanOutlinePushResult> => {
-      const stateAtStart = store.getState().undoable.present;
-      const selectedListAtStart = stateAtStart.itemLists.selectedList;
-      if (!selectedListAtStart) {
-        throw new Error("Open or create an item list in the Controller first.");
-      }
-      if (selectedList?._id !== selectedListAtStart._id) {
-        throw new Error("The selected outline changed before the service plan could be imported.");
-      }
-      const startingContext = {
-        ...contextRef.current,
-        selectedList: selectedListAtStart,
-        db,
-        bibleDb,
-        songs,
-        customDocuments,
-      };
-      const startingList = stateAtStart.itemList.list;
-      // One run uses one mapping configuration even if integrations refresh
-      // while the operator is watching the visible per-item progress.
-      const sectionRulesSnapshot = (sectionRules ?? []).map((rule) => ({ ...rule }));
-      const isOutlineContextCurrent = () =>
-        mounted.current &&
-        store.getState().undoable.present.itemLists.selectedList?._id === startingContext.selectedList._id
-        &&
-        contextRef.current.selectedList?._id === startingContext.selectedList?._id
-        && contextRef.current.db === startingContext.db
-        && contextRef.current.bibleDb === startingContext.bibleDb;
-      const assertCurrent = () => {
-        if (!isSourcePlanCurrent()) {
-          throw new Error(
-            "The selected service plan changed or could not be verified. Refresh it before syncing.",
-          );
+      const endBibleDocumentActivity = db?.name
+        ? trackBibleDocumentActivity(db.name)
+        : null;
+      try {
+        const stateAtStart = store.getState().undoable.present;
+        const selectedListAtStart = stateAtStart.itemLists.selectedList;
+        const {
+          defaultBibleBackground,
+          defaultBibleBackgroundBrightness,
+          defaultBibleFontMode,
+        } = stateAtStart.preferences.preferences;
+        if (!selectedListAtStart) {
+          throw new Error("Open or create an item list in the Controller first.");
         }
-        if (!isOutlineContextCurrent()) {
+        if (selectedList?._id !== selectedListAtStart._id) {
           throw new Error("The selected outline changed before the service plan could be imported.");
         }
-      };
-      const planResult = planServicePlanOutlineItems({
-        plan,
-        currentList: startingList,
-        songs,
-        customDocuments,
-        sectionRules: sectionRulesSnapshot,
-      });
-      assertCurrent();
-      const items: ServiceItem[] = [];
-      const placementFallbacks: ServicePlanOutlinePlacementFallback[] = [];
-      for (const step of planResult.steps) {
-        if (!shouldContinue()) break;
+        const startingContext = {
+          ...contextRef.current,
+          selectedList: selectedListAtStart,
+          db,
+          bibleDb,
+          songs,
+          customDocuments,
+        };
+        const startingList = stateAtStart.itemList.list;
+        // One run uses one mapping configuration even if integrations refresh
+        // while the operator is watching the visible per-item progress.
+        const sectionRulesSnapshot = (sectionRules ?? []).map((rule) => ({ ...rule }));
+        const isOutlineContextCurrent = () =>
+          mounted.current &&
+          store.getState().undoable.present.itemLists.selectedList?._id === startingContext.selectedList._id
+          &&
+          contextRef.current.selectedList?._id === startingContext.selectedList?._id
+          && contextRef.current.db === startingContext.db
+          && contextRef.current.bibleDb === startingContext.bibleDb;
+        const assertCurrent = () => {
+          if (!isSourcePlanCurrent()) {
+            throw new Error(
+              "The selected service plan changed or could not be verified. Refresh it before syncing.",
+            );
+          }
+          if (!isOutlineContextCurrent()) {
+            throw new Error("The selected outline changed before the service plan could be imported.");
+          }
+        };
+        const planResult = planServicePlanOutlineItems({
+          plan,
+          currentList: startingList,
+          songs,
+          customDocuments,
+          sectionRules: sectionRulesSnapshot,
+        });
         assertCurrent();
-        let latestList = store.getState().undoable.present.itemList.list;
-        if (latestList.some((existing) => existing.listId === step.planned.listId)) continue;
-        // Build only the item that is about to be shown. In particular, a stop
-        // request must not pre-create Bible documents for later steps.
-        // eslint-disable-next-line no-await-in-loop -- order and visible progress are intentional
-        const item = await buildServicePlanOutlineItem({ step, list: latestList, db, bibleDb });
-        assertCurrent();
-        latestList = store.getState().undoable.present.itemList.list;
-        if (latestList.some((existing) => existing.listId === item.listId)) continue;
-        const placed = placeServicePlanOutlineItem(latestList, item, step);
-        assertCurrent();
-        dispatch(updateItemList(placed.list));
-        if (db && item.type === "bible") {
+        const items: ServiceItem[] = [];
+        const alreadyPresent = planResult.previewEntries.filter((entry) =>
+          entry.status === "already-present" && (!entry.songId || startingList.some(
+            (item) => item.type === "song" && item._id === entry.songId,
+          )),
+        );
+        const placementFallbacks: ServicePlanOutlinePlacementFallback[] = [];
+        for (const step of planResult.steps) {
+          if (!shouldContinue()) break;
           assertCurrent();
-          dispatch(upsertItemInAllItemsList({ ...item, listId: "" }));
+          let latestList = store.getState().undoable.present.itemList.list;
+          if (isServicePlanItemAlreadyInOutline(latestList, step.planned)) {
+            alreadyPresent.push({ listId: step.planned.listId, title: step.planned.kind === "song" ? step.planned.song.name : step.element.title, sectionName: step.sectionName, sectionId: "", status: "already-present" });
+            continue;
+          }
+          // Build only the item that is about to be shown. In particular, a stop
+          // request must not pre-create Bible documents for later steps.
+          // eslint-disable-next-line no-await-in-loop -- order and visible progress are intentional
+          const builtItem = await buildServicePlanOutlineItem({
+            step,
+            list: [...latestList, ...selectItemEntries(store.getState())],
+            db,
+            bibleDb,
+            background: defaultBibleBackground.background,
+            mediaInfo: defaultBibleBackground.mediaInfo,
+            brightness: defaultBibleBackgroundBrightness,
+            fontMode: defaultBibleFontMode,
+          });
+          const currentEntry = selectItemEntries(store.getState()).find((entry) => entry._id === builtItem._id);
+          let item = currentEntry ? { ...currentEntry, listId: builtItem.listId } : builtItem;
+          assertCurrent();
+          latestList = store.getState().undoable.present.itemList.list;
+          if (isServicePlanItemAlreadyInOutline(latestList, step.planned)) {
+            alreadyPresent.push({ listId: item.listId, title: item.name, sectionName: step.sectionName, sectionId: "", status: "already-present" });
+            continue;
+          }
+          if (step.planned.kind === "song") {
+            item = { ...item, listId: availableSongOutlineListId(latestList, item.listId) };
+          }
+          const placed = placeServicePlanOutlineItem(latestList, item, step);
+          assertCurrent();
+          dispatch(updateItemList(placed.list));
+          items.push(item);
+          if (placed.fallback) placementFallbacks.push(placed.fallback);
+          await onItemAdded?.(item, placed.fallback);
+          assertCurrent();
+          await delay(OUTLINE_STEP_DELAY_MS);
+          assertCurrent();
         }
-        items.push(item);
-        if (placed.fallback) placementFallbacks.push(placed.fallback);
-        await onItemAdded?.(item, placed.fallback);
-        assertCurrent();
-        await delay(OUTLINE_STEP_DELAY_MS);
-        assertCurrent();
+        return {
+          items,
+          insertedCount: items.length,
+          skippedTitles: planResult.skippedTitles,
+          placementFallbacks,
+          unresolvedAttachments: planResult.unresolvedAttachments,
+          alreadyPresent: [
+            ...alreadyPresent,
+            ...planResult.previewEntries.filter((entry) => entry.status === "already-present" && entry.songId &&
+              !startingList.some((item) => item.type === "song" && item._id === entry.songId) &&
+              store.getState().undoable.present.itemList.list.some((item) => item.type === "song" && item._id === entry.songId)),
+          ],
+        };
+      } finally {
+        endBibleDocumentActivity?.();
       }
-      return {
-        items,
-        insertedCount: items.length,
-        skippedTitles: planResult.skippedTitles,
-        placementFallbacks,
-      };
     },
     [db, bibleDb, customDocuments, dispatch, selectedList, songs, store, sectionRules],
   );

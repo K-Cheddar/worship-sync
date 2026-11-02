@@ -26,3 +26,24 @@ export const isTrustedWorshipSyncIpcSender = (
   sender: Pick<WebContents, "id">,
   windows: ReadonlyArray<TrustedWindowLike | null>,
 ) => windows.some((window) => isTrustedWindowIpcSender(sender, window));
+
+/**
+ * Display outputs may restore a saved share from its source id/name, while
+ * thumbnails remain limited to the controller and capture host picker.
+ */
+export const isTrustedDesktopCaptureIpcSender = (
+  sender: Pick<WebContents, "id">,
+  controllerWindow: TrustedWindowLike | null,
+  captureHostWindow: TrustedWindowLike | null,
+  displayWindows: ReadonlyArray<TrustedWindowLike | null>,
+  withThumbnails = false,
+) => {
+  if (
+    isTrustedWorshipSyncIpcSender(sender, [controllerWindow, captureHostWindow])
+  ) {
+    return true;
+  }
+  return (
+    !withThumbnails && isTrustedWorshipSyncIpcSender(sender, displayWindows)
+  );
+};

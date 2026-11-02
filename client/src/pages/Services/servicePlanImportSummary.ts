@@ -16,7 +16,7 @@ import type {
   ServicePlanMicrophone,
   ServicePlanSection,
 } from "../../types/servicePlan";
-import { insertNewServicePlanSectionRuns, placeServicePlanImportElements } from "./servicePlanImportSectionPlacement";
+import { insertNewServicePlanSectionRuns, placeServicePlanImportElements, servicePlanImportReorderIds } from "./servicePlanImportSectionPlacement";
 
 export type ServicePlanImportChangeKind = "added" | "removed" | "updated" | "moved" | "legacy_match" | "linked";
 
@@ -54,6 +54,13 @@ export type ServicePlanImportSummary = {
 export type ServicePlanImportEquipmentDisplayContext = {
   microphones?: ReadonlyArray<Pick<ServicePlanMicrophone, "id" | "name" | "type">>;
   iemEquipment?: ReadonlyArray<Pick<ServiceEquipment, "id" | "name" | "subtype">>;
+};
+
+export type ServicePlanImportSummaryOptions = {
+  /** Exclude derived start times; the review derives impact from selected operations. */
+  dependentTimingShifts?: boolean;
+  /** Include same-section item reordering in the review. */
+  trackSameSectionMoves?: boolean;
 };
 
 const itemName = (element: ServicePlanElement) =>
@@ -434,6 +441,7 @@ export const summarizeServicePlanImport = (
   currentSections: ServicePlanSection[],
   nextSections: ServicePlanSection[],
   displayContext: ServicePlanImportEquipmentDisplayContext = {},
+  options: ServicePlanImportSummaryOptions = {},
 ): ServicePlanImportSummary => {
   const currentItems = new Map<
     string,
@@ -489,11 +497,19 @@ export const summarizeServicePlanImport = (
         kind: "added",
         itemName: itemName(element),
         sectionName,
-        fields: [],
+        fields: options.dependentTimingShifts
+          ? [{
+              label: "Resulting time and duration",
+              before: "Not in the current plan",
+              after: formatTiming(element),
+            }]
+          : [],
       });
       return;
     }
-    const fields = changedFields(current.element, element, displayContext);
+    const fields = changedFields(current.element,
+      options.dependentTimingShifts ? { ...element, startTime: current.element.startTime } : element,
+      displayContext);
     if (current.sectionId !== sectionId) {
       changes.push({
         id,
@@ -529,6 +545,41 @@ export const summarizeServicePlanImport = (
       });
     }
   });
+  if (options.trackSameSectionMoves) {
+    const reservedIds = new Set(nextSections.flatMap((section) => section.elements.flatMap((element) =>
+      element.legacyImportMatchCandidateForId ? [element.legacyImportMatchCandidateForId, element.id] : [])));
+    const canReorder = (element: ServicePlanElement) => element.sourcePlanningManaged &&
+      !reservedIds.has(element.id) && (!element.planningCenterPdfMatchReviewRequired || Boolean(element.sourceOccurrenceId));
+    currentSections.forEach((currentSection) => {
+      const nextSection = nextSections.find((section) => section.id === currentSection.id);
+      if (!nextSection) return;
+      const nextIds = new Set(nextSection.elements.map(({ id }) => id));
+      const currentOrder = currentSection.elements
+        .filter((element) => canReorder(element) && nextIds.has(element.id))
+        .map(({ id }) => id);
+      const currentIds = new Set(currentOrder);
+      const nextOrder = nextSection.elements
+        .filter((element) => canReorder(element) && currentIds.has(element.id))
+        .map(({ id }) => id);
+      if (JSON.stringify(currentOrder) === JSON.stringify(nextOrder)) return;
+      const movedIds = servicePlanImportReorderIds(currentOrder, nextOrder);
+      movedIds.forEach((id) => {
+        if (changes.some((change) => change.kind === "moved" && change.id === id)) return;
+        const item = nextItems.get(id);
+        if (!item) return;
+        changes.push({
+          id,
+          sectionId: item.sectionId,
+          fromSectionId: currentSection.id,
+          fromSectionName: currentSection.name,
+          kind: "moved",
+          itemName: itemName(item.element),
+          sectionName: item.sectionName,
+          fields: [],
+        });
+      });
+    });
+  }
   currentItems.forEach(({ element, sectionId, sectionName }, id) => {
     if (nextItems.has(id)) return;
     changes.push({
@@ -537,7 +588,13 @@ export const summarizeServicePlanImport = (
       kind: "removed",
       itemName: itemName(element),
       sectionName,
-      fields: [],
+      fields: options.dependentTimingShifts
+        ? [{
+            label: "Time and duration",
+            before: formatTiming(element),
+            after: "Removed",
+          }]
+        : [],
     });
   });
 
@@ -622,6 +679,7 @@ export const applySelectedServicePlanImportChanges = (
       .filter((change) => selectedChangeKeys.has(servicePlanImportChangeKey(change)))
       .map((change) => [servicePlanImportChangeKey(change), change]),
   );
+  if (!selectedChanges.size) return currentSections;
   const nextSectionsById = new Map(nextSections.map((section) => [section.id, section]));
   const nextItemsById = new Map(
     nextSections.flatMap((section) =>
@@ -634,6 +692,15 @@ export const applySelectedServicePlanImportChanges = (
   const currentItemsById = new Map(currentSections.flatMap((section) =>
     section.elements.map((element) => [element.id, element] as const),
   ));
+  const declinedPdfMatchCandidateByCurrentId = new Map(
+    nextSections.flatMap((section) => section.elements.flatMap((element) =>
+      // Collision resolution may remove a PDF key; its source position still proves provenance.
+      element.legacyImportMatchCandidateForId && (element.planningCenterPdfMatchKey ||
+        typeof element.planningCenterPdfSourcePosition === "number")
+        ? [[element.legacyImportMatchCandidateForId, element] as const]
+        : [],
+    )),
+  );
   const withSourceAssociation = (
     element: ServicePlanElement,
     current: ServicePlanElement,
@@ -657,9 +724,39 @@ export const applySelectedServicePlanImportChanges = (
       result.sourceOccurrenceId = current.sourceOccurrenceId;
     }
     if (imported?.sourcePlanningManaged) result.sourcePlanningManaged = true;
+    if (imported?.planningCenterPdfMatchKey !== undefined) {
+      result.planningCenterPdfMatchKey = imported.planningCenterPdfMatchKey;
+    }
+    if (imported?.planningCenterPdfSourcePosition !== undefined) {
+      result.planningCenterPdfSourcePosition = imported.planningCenterPdfSourcePosition;
+    }
     return result;
   };
 
+  // Both existing and newly created sections execute the same operations.
+  const placementFor = (element: ServicePlanElement, sectionId: string): ServicePlanElement[] => {
+    const candidateId = element.legacyImportMatchCandidateForId;
+    if (candidateId) {
+      if (!selectedChangeFor("legacy_match", candidateId)) return [];
+      const confirmed = { ...element, id: candidateId };
+      delete confirmed.legacyImportMatchCandidateForId;
+      delete confirmed.planningCenterPdfMatchReviewRequired;
+      delete confirmed.importMatchCurrentId;
+      return [confirmed];
+    }
+    if (selectedChangeFor("added", element.id)) return [element];
+    const move = selectedChangeFor("moved", element.id);
+    if (!move || move.sectionId !== sectionId) return [];
+    const current = currentItemsById.get(element.id) || element;
+    return [withSourceAssociation(selectedChangeFor("updated", element.id) ? element : current, current, element, true)];
+  };
+  const reservedIds = new Set(nextSections.flatMap((section) => section.elements.flatMap((element) =>
+    element.legacyImportMatchCandidateForId ? [element.legacyImportMatchCandidateForId] : [])));
+  const sourceOrderFor = (section: ServicePlanSection) => section.elements.flatMap((element) => {
+    const candidateId = element.legacyImportMatchCandidateForId;
+    if (candidateId) return selectedChangeFor("legacy_match", candidateId) ? [{ ...element, id: candidateId }] : [];
+    return reservedIds.has(element.id) ? [] : [element];
+  });
   const result = currentSections.flatMap((currentSection) => {
     const nextSection = nextSectionsById.get(currentSection.id);
     const sectionChangeKeys = summary.changes
@@ -674,9 +771,13 @@ export const applySelectedServicePlanImportChanges = (
     const elements = currentSection.elements.flatMap((currentElement) => {
       if (selectedChangeFor("removed", currentElement.id)) return [];
       const confirmedLegacyMatch = selectedChangeFor("legacy_match", currentElement.id);
-      if (confirmedLegacyMatch) return [];
+      if (confirmedLegacyMatch) {
+        if (confirmedLegacyMatch.sectionId !== currentSection.id) return [];
+        const incoming = nextItemsById.get(confirmedLegacyMatch.incomingElementId || "");
+        return incoming ? placementFor(incoming, currentSection.id) : [currentElement];
+      }
       const move = selectedChangeFor("moved", currentElement.id);
-      if (move && move.sectionId !== currentSection.id) return [];
+      if (move) return [];
       const linked = Boolean(selectedChangeFor("linked", currentElement.id));
       if (selectedChangeFor("updated", currentElement.id)) {
         return [withSourceAssociation(
@@ -687,32 +788,13 @@ export const applySelectedServicePlanImportChanges = (
         )];
       }
       if (linked) return [withSourceAssociation(currentElement, currentElement, nextItemsById.get(currentElement.id), true)];
-      return [currentElement];
+      return declinedPdfMatchCandidateByCurrentId.has(currentElement.id)
+        ? [{ ...currentElement, planningCenterPdfMatchReviewRequired: true }]
+        : [currentElement];
     });
-    const placements = (nextSection?.elements || []).flatMap((nextElement) => {
-      const legacyMatchForId = nextElement.legacyImportMatchCandidateForId;
-      if (legacyMatchForId) {
-        const match = selectedChangeFor("legacy_match", legacyMatchForId);
-        return match
-          ? [{ ...nextElement, id: match.id, legacyImportMatchCandidateForId: undefined }]
-          : [];
-      }
-      if (selectedChangeFor("added", nextElement.id)) return [nextElement];
-      const move = selectedChangeFor("moved", nextElement.id);
-      if (!move || move.sectionId !== currentSection.id) return [];
-      const currentElement = currentItemsById.get(nextElement.id) || nextElement;
-      const baseElement = selectedChangeFor("updated", nextElement.id) ? nextElement : currentElement;
-      return [withSourceAssociation(baseElement, currentElement, nextElement, true)];
-    });
-    elements.push(...placements);
-    const sourceOrder = nextSection?.elements.map((element) => {
-      const legacyMatchForId = element.legacyImportMatchCandidateForId;
-      const match = legacyMatchForId ? selectedChangeFor("legacy_match", legacyMatchForId) : undefined;
-      return match ? { ...element, id: match.id } : element;
-    }) || [];
-    const orderedElements = placements.length && nextSection
-      ? placeServicePlanImportElements(elements, sourceOrder, placements)
-      : elements;
+    const placements = (nextSection?.elements || []).flatMap((element) => placementFor(element, currentSection.id));
+    const orderedElements = nextSection && placements.length
+      ? placeServicePlanImportElements(elements, sourceOrderFor(nextSection), placements) : elements;
 
     const allElementsRemoved =
       !nextSection &&
@@ -743,30 +825,11 @@ export const applySelectedServicePlanImportChanges = (
       currentSectionIdByNextIndex.set(index, nextSection.id);
       return;
     }
-    const elements = nextSection.elements.flatMap((element) => {
-      const legacyMatchForId = element.legacyImportMatchCandidateForId;
-      if (legacyMatchForId) {
-        const match = selectedChangeFor("legacy_match", legacyMatchForId);
-        return match
-          ? [{ ...element, id: match.id, legacyImportMatchCandidateForId: undefined }]
-          : [];
-      }
-      if (selectedChangeFor("added", element.id)) return [element];
-      const move = selectedChangeFor("moved", element.id);
-      if (!move || move.sectionId !== nextSection.id) return [];
-      const currentElement = currentItemsById.get(element.id) || element;
-      const baseElement = selectedChangeFor("updated", element.id) ? element : currentElement;
-      return [withSourceAssociation(baseElement, currentElement, element, true)];
-    });
+    const elements = nextSection.elements.flatMap((element) => placementFor(element, nextSection.id));
     if (elements.length) {
-      const sourceOrder = nextSection.elements.map((element) => {
-        const legacyMatchForId = element.legacyImportMatchCandidateForId;
-        const match = legacyMatchForId ? selectedChangeFor("legacy_match", legacyMatchForId) : undefined;
-        return match ? { ...element, id: match.id } : element;
-      });
       newSectionByNextIndex.set(index, {
         ...nextSection,
-        elements: placeServicePlanImportElements([], sourceOrder, elements),
+        elements: placeServicePlanImportElements([], sourceOrderFor(nextSection), elements),
       });
     }
   });

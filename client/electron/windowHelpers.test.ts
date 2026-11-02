@@ -85,6 +85,14 @@ describe("createDisplayWindow", () => {
 });
 
 describe("createAppWindowWebPreferences", () => {
+  it("shares the capture host's device identity partition with local consumers", () => {
+    const host = createAppWindowWebPreferences("C:/app", "capture-host");
+    const controller = createAppWindowWebPreferences("C:/app", "controller");
+    const output = createAppWindowWebPreferences("C:/app", "audience-output");
+    expect(host.partition).toBe("persist:worshipsync");
+    expect([controller.partition, output.partition]).toEqual([host.partition, host.partition]);
+    expect([host.backgroundThrottling, output.backgroundThrottling]).toEqual([false, false]);
+  });
   it("keeps controller and ordinary child windows eligible for background throttling", () => {
     expect(
       createAppWindowWebPreferences("C:/app/dist-electron/main", "controller")

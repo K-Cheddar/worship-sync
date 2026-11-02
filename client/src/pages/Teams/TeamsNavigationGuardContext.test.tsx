@@ -18,19 +18,40 @@ const DirtySource = ({ sourceId }: { sourceId: string }) => {
   return null;
 };
 
+const SavingSource = ({ isSaving }: { isSaving: boolean }) => {
+  const { setSavingSource } = useTeamsNavigationGuard();
+
+  useEffect(() => {
+    setSavingSource("saving", isSaving);
+    const finishSave = () => setSavingSource("saving", false);
+    window.addEventListener("finish-saving", finishSave);
+    return () => {
+      window.removeEventListener("finish-saving", finishSave);
+      setSavingSource("saving", false);
+    };
+  }, [isSaving, setSavingSource]);
+
+  return null;
+};
+
 const GuardHarness = () => {
   const [showFirstSource, setShowFirstSource] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
   const { requestNavigation } = useTeamsNavigationGuard();
 
   return (
     <>
       {showFirstSource ? <DirtySource sourceId="first" /> : null}
       <DirtySource sourceId="second" />
+      <SavingSource isSaving={isSaving} />
       <button type="button" onClick={() => setShowFirstSource(false)}>
         Unmount first form
       </button>
       <button type="button" onClick={() => requestNavigation("/members")}>
         Leave Teams
+      </button>
+      <button type="button" onClick={() => setIsSaving((current) => !current)}>
+        Toggle save
       </button>
     </>
   );
@@ -81,5 +102,29 @@ describe("TeamsNavigationGuardProvider", () => {
 
     goSpy.mockRestore();
     window.history.replaceState(originalState, "", originalUrl);
+  });
+
+  it("blocks leaving while a save is running and restores the dirty guard afterward", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter>
+        <TeamsNavigationGuardProvider>
+          <GuardHarness />
+        </TeamsNavigationGuardProvider>
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Toggle save" }));
+    await user.click(screen.getByRole("button", { name: "Leave Teams" }));
+
+    expect(screen.getByRole("dialog", { name: "Saving changes" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Discard changes" })).not.toBeInTheDocument();
+
+    fireEvent(window, new Event("finish-saving"));
+
+    expect(screen.queryByRole("dialog", { name: "Saving changes" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Leave Teams" }));
+    expect(screen.getByRole("dialog", { name: "Unsaved changes" })).toBeInTheDocument();
   });
 });

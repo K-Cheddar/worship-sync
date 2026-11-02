@@ -18,7 +18,6 @@ import {
   addItemToItemList,
   removeItemFromListById,
 } from "../../store/itemListSlice";
-import { removeItemFromAllItemsList } from "../../store/allItemsSlice";
 import { DBItem, ServiceItem } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
@@ -27,28 +26,18 @@ import { ActionCreators } from "redux-undo";
 import FilteredItem from "./FilteredItem";
 import ViewSongSectionsDrawer from "../SongSections/ViewSongSectionsDrawer";
 import ServicePlanCustomDocumentPreviewDialog from "../ServicePlanCustomDocumentPreviewDialog";
-import {
-  getMatchForString,
-  punctuationRegex,
-  updateWordMatches,
-} from "../../utils/generalUtils";
-import {
-  compareItemSearchRanks,
-  computeSongSearchEnrichment,
-} from "../../utils/songSearchUtils";
+import { filterAndSortItemsForSearch, prepareItemSearchDocuments } from "../../utils/songSearchUtils";
 import {
   createSongMetadataFromLrclib,
   getImportableLyricsFromTrack,
   type NormalizedLrclibTrack,
 } from "../../utils/lrclib";
 import { initialCreateItemState, setCreateItem } from "../../store/createItemSlice";
-import { removeItemFromAllDocs } from "../../store/allDocsSlice";
 import { ref, get, set } from "firebase/database";
 import { globalFireDbInfo } from "../../context/globalInfo";
 import { deleteTimer } from "../../store/timersSlice";
 import { getChurchDataPath } from "../../utils/firebasePaths";
 import { alternatingAdminListRowBg } from "../../utils/listRowStripes";
-import { getBoxPlainText } from "../../utils/presentationText";
 import { cn } from "../../utils/cnHelper";
 import { searchLrclibTracks } from "../../api/lrclib";
 import { deleteSongAudioWithRetry } from "../../api/auth";
@@ -69,7 +58,7 @@ import {
 } from "./filteredItemsVirtualRowHeight";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
 import { usePresentationControllerMode } from "../../context/presentationControllerMode";
-import type { LibraryFilter } from "../../store/allItemsSlice";
+import type { LibraryFilter } from "../../store/itemLibraryUiSlice";
 
 type FilteredItemsProps = {
   list: ServiceItem[];
@@ -117,7 +106,7 @@ type FilteredItemsProps = {
 
 export type filteredItemsListType = ServiceItem & {
   matchPercentage?: number;
-  /** Title/name match score; used to rank title hits above content-only hits. */
+  /** Weighted title coverage; overall relevance also considers content. */
   titleMatch?: number;
   matchRank?: number;
   matchedWords?: string;
@@ -195,27 +184,13 @@ const FilteredItems = ({
   }, [list, effectiveFilter]);
 
   const docsById = useMemo(() => {
+    prepareItemSearchDocuments(allDocs);
     const byId = new Map<string, DBItem>();
     for (const doc of allDocs) {
       byId.set(doc._id, doc);
     }
     return byId;
   }, [allDocs]);
-
-  const freeDocsByName = useMemo(() => {
-    const byName = new Map<string, DBItem>();
-    if (type !== "free" && effectiveFilter !== "free" && effectiveFilter !== "all") {
-      return byName;
-    }
-    for (const doc of allDocs) {
-      const key = doc.name.toLowerCase();
-      // Preserve the previous `find` semantics: first match by name wins.
-      if (!byName.has(key)) {
-        byName.set(key, doc);
-      }
-    }
-    return byName;
-  }, [allDocs, effectiveFilter, type]);
 
   const songArtistById = useMemo(() => {
     const byId = new Map<string, string>();
@@ -378,121 +353,11 @@ const FilteredItems = ({
   /** Attach mode always shows the primary action even for view-only library access. */
   const allowAdd = onAddItem ? true : canMutateLibrary;
 
-  // Memoize the search function. Runs synchronously on every debounced
-  // keystroke, so it stays O(n): doc lookups go through `docsById` /
-  // `freeDocsByName` instead of an `allDocs.find` per item.
-  const searchItems = useMemo(() => {
-    return (
-      rawSearchValue: string,
-      filter: LibraryFilter = effectiveFilter,
-    ): filteredItemsListType[] => {
-      const candidates = list.filter(
-        (item) =>
-          (item.type === "song" || item.type === "free" || item.type === "timer") &&
-          (filter === "all" || item.type === filter),
-      );
-      const cleanSearchValue = rawSearchValue
-        .replace(punctuationRegex, "")
-        .toLowerCase()
-        .trim();
-
-      if (cleanSearchValue === "") {
-        return candidates;
-      }
-
-      const results = candidates.map((item) => {
-        if (item.type === "song") {
-          const doc = docsById.get(item._id);
-          if (doc?.type === "song") {
-            const enriched = computeSongSearchEnrichment(doc, cleanSearchValue);
-            return {
-              ...item,
-              titleMatch: enriched.titleMatch,
-              matchRank: enriched.matchRank,
-              matchedWords: enriched.matchedWords,
-              showWords: enriched.showWords,
-            };
-          }
-          return {
-            ...item,
-            titleMatch: 0,
-            matchRank: 0,
-            matchedWords: "",
-            showWords: false,
-          };
-        }
-
-        const name = item.name.toLowerCase();
-        const titleMatch = getMatchForString({
-          string: name,
-          searchValue: cleanSearchValue,
-          allowPartial: true,
-        });
-        const wordMatches = [];
-        let hasLyricMatch = false;
-
-        if (item.type === "free") {
-          const customDoc =
-            type === "all"
-              ? docsById.get(item._id)
-              : freeDocsByName.get(name);
-          const slides = customDoc?.slides || [];
-
-          for (const slide of slides) {
-            for (const box of slide.boxes) {
-              const plainText = getBoxPlainText(box);
-              const wordMatch = getMatchForString({
-                string: plainText,
-                searchValue: cleanSearchValue,
-              });
-              if (wordMatch > 0) {
-                hasLyricMatch = true;
-                wordMatches.push({
-                  match: wordMatch,
-                  matchedWords: plainText,
-                });
-              }
-            }
-          }
-        }
-
-        const { updatedMatchedWords, updatedMatch } = updateWordMatches({
-          matchedWords: "",
-          match: titleMatch,
-          wordMatches,
-        });
-
-        return {
-          ...item,
-          titleMatch,
-          matchRank: titleMatch + updatedMatch,
-          matchedWords: updatedMatchedWords,
-          showWords: hasLyricMatch && titleMatch === 0, // Auto-expand if there's a lyric match but no title match
-        };
-      });
-
-      return results
-        .filter((item) => (item.matchRank ?? 0) > 0)
-        .sort((a, b) =>
-          compareItemSearchRanks(
-            {
-              titleMatch: a.titleMatch ?? 0,
-              matchRank: a.matchRank ?? 0,
-              name: a.name,
-              type: a.type,
-              id: a._id,
-            },
-            {
-              titleMatch: b.titleMatch ?? 0,
-              matchRank: b.matchRank ?? 0,
-              name: b.name,
-              type: b.type,
-              id: b._id,
-            },
-          ),
-        );
-    };
-  }, [list, docsById, freeDocsByName, effectiveFilter, type]);
+  const searchItems = useMemo(
+    () => (rawSearchValue: string, filter: LibraryFilter = effectiveFilter) =>
+      filterAndSortItemsForSearch(list, allDocs, rawSearchValue, filter),
+    [list, allDocs, effectiveFilter],
+  );
 
   // Debounced search effect
   useEffect(() => {
@@ -525,8 +390,6 @@ const FilteredItems = ({
       }
     }
 
-    dispatch(removeItemFromAllItemsList(item._id));
-    dispatch(removeItemFromAllDocs(item));
     dispatch(removeItemFromListById(item._id));
     dispatch(ActionCreators.clearHistory());
 
@@ -753,7 +616,7 @@ const FilteredItems = ({
           : (_item) => dispatch(addItemToItemList(_item))
       }
       setItemToBeDeleted={setItemToBeDeleted}
-      searchValue={searchValue}
+      searchValue={filteredSearchValue}
       artistName={songArtistById.get(item._id)}
       canMutateLibrary={canMutateLibrary}
       showAddButton={allowAdd}
@@ -843,7 +706,7 @@ const FilteredItems = ({
       <ViewSongSectionsDrawer
         song={viewSongDoc}
         isOpen={Boolean(viewSectionsSongId && viewSongDoc)}
-        searchHighlight={searchValue}
+        searchHighlight={filteredSearchValue}
         onClose={() => setViewSectionsSongId(null)}
       />
       <ServicePlanCustomDocumentPreviewDialog

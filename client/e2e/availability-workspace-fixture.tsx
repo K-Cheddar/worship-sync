@@ -8,6 +8,7 @@ import { GlobalInfoContext } from "../src/context/globalInfo";
 import { ToastProvider } from "../src/context/toastContext";
 import { TeamsNavigationGuardProvider } from "../src/pages/Teams/TeamsNavigationGuardContext";
 import { emptyData } from "../src/pages/Teams/teamsConstants";
+import { teamsSectionScrollClassName } from "../src/pages/Teams/teamsStyles";
 import { setServerTimeOffset } from "../src/utils/serverTime";
 import type { TeamIntakeForm } from "../src/api/authTypes";
 
@@ -37,7 +38,8 @@ const form: TeamIntakeForm = {
     name: "Sunday worship",
   })),
 };
-const members = ["Jane Smith", "John Davis", "Mary Wilson", ...Array.from({ length: 27 }, (_, index) => `Volunteer ${index + 4}`)].map(
+const longList = new URLSearchParams(location.search).has("longList");
+const members = ["Jane Smith", "John Davis", "Mary Wilson", ...Array.from({ length: longList ? 62 : 27 }, (_, index) => `Volunteer ${index + 4}`)].map(
   (name, index) => ({
     memberId: `member-${index}`,
     churchId: "church",
@@ -120,13 +122,29 @@ function Fixture() {
       >
         <ToastProvider>
           <TeamsNavigationGuardProvider>
-            <main className="flex h-dvh min-h-0 flex-col overflow-y-auto bg-gray-950 p-3 text-white sm:p-6">
-              <Routes>
-                <Route
-                  path="/teams-and-services/forms"
-                  element={<TeamsFormsPage />}
-                />
-              </Routes>
+            <main className="flex h-dvh min-h-0 flex-col overflow-hidden bg-gray-950 pb-[57px] text-white">
+              <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                <div
+                  data-testid="teams-page-scroll"
+                  data-mobile-header-scroll-owner="page"
+                  className={teamsSectionScrollClassName}
+                >
+                  <div className="flex min-h-0 flex-1 flex-col">
+                    <div className="flex min-h-0 flex-1 flex-col">
+                      <Routes>
+                        <Route
+                          path="/teams-and-services/forms"
+                          element={<TeamsFormsPage />}
+                        />
+                      </Routes>
+                    </div>
+                  </div>
+                </div>
+              </section>
+              <div
+                data-testid="teams-bottom-navigation"
+                className="fixed inset-x-0 bottom-0 z-30 h-[57px] border-t border-gray-800 bg-gray-900"
+              />
             </main>
           </TeamsNavigationGuardProvider>
         </ToastProvider>

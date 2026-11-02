@@ -1,9 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Music, X } from "lucide-react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import TextArea from "../../components/TextArea/TextArea";
 import { useSelector } from "../../hooks";
+import { useServicePlanSongLibrary } from "./useServicePlanSongLibrary";
+import { filterAndSortItemsForSearch, prepareItemSearchDocuments } from "../../utils/songSearchUtils";
 import {
   getServicePlanSongRefLabel,
   libraryServicePlanSongRef,
@@ -27,7 +29,17 @@ const MAX_SEARCH_RESULTS = 8;
  */
 const SongReferencePicker = ({ value, onChange, disabled }: SongReferencePickerProps) => {
   const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
+  const { songs } = useServicePlanSongLibrary();
+  const searchDocuments = useMemo(() => {
+    prepareItemSearchDocuments(allSongDocs);
+    return allSongDocs;
+  }, [allSongDocs]);
   const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  useEffect(() => {
+    const timeout = setTimeout(() => setDebouncedQuery(query), 250);
+    return () => clearTimeout(timeout);
+  }, [query]);
   const [pendingTitle, setPendingTitle] = useState(
     value?.kind === "pending" ? value.title : "",
   );
@@ -36,12 +48,10 @@ const SongReferencePicker = ({ value, onChange, disabled }: SongReferencePickerP
   );
 
   const results = useMemo(() => {
-    const trimmed = query.trim().toLowerCase();
-    if (!trimmed) return [];
-    return allSongDocs
-      .filter((doc) => doc.name?.toLowerCase().includes(trimmed))
+    if (!debouncedQuery.trim()) return [];
+    return filterAndSortItemsForSearch(songs, searchDocuments, debouncedQuery, "song")
       .slice(0, MAX_SEARCH_RESULTS);
-  }, [allSongDocs, query]);
+  }, [songs, searchDocuments, debouncedQuery]);
 
   if (value?.kind === "library") {
     return (
@@ -114,6 +124,7 @@ const SongReferencePicker = ({ value, onChange, disabled }: SongReferencePickerP
         disabled={disabled}
         onChange={(next) => setQuery(String(next))}
       />
+      {query !== debouncedQuery ? <p role="status" className="text-xs text-gray-400">Searching…</p> : null}
       {results.length > 0 ? (
         <ul className="space-y-1 rounded-md border border-gray-700 bg-gray-950/60 p-1">
           {results.map((doc) => {
@@ -127,6 +138,7 @@ const SongReferencePicker = ({ value, onChange, disabled }: SongReferencePickerP
                   onClick={() => {
                     onChange(songRef);
                     setQuery("");
+                    setDebouncedQuery("");
                   }}
                 >
                   {getServicePlanSongRefLabel(songRef)}

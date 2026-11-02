@@ -1,17 +1,24 @@
+import { createPortal } from "react-dom";
 import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
-
-import { Maximize2 } from "lucide-react";
-
-import { ItemState } from "../../../types";
+import { Minus, Plus } from "lucide-react";
+import type { ItemState } from "../../../types";
 import { useDispatch, useSelector } from "../../../hooks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RadioButton, {
   RadioGroup,
 } from "../../../components/RadioButton/RadioButton";
-import PopoverPanel from "../../../components/PopOver/PopoverPanel";
 import { updateBoxProperties } from "../../../utils/formatter";
-import { setItemFormatting } from "../../../store/itemSlice";
+import {
+  applyOwnedContentMutation,
+  setItemFormatting,
+} from "../../../store/itemSlice";
+import {
+  getItemMutationOwner,
+  scheduleOwnedItemMutation,
+  type ItemMutationOwner,
+  type PendingItemMutationHandle,
+} from "../../../store/deferredItemMutations";
 import { useToast } from "../../../context/toastContext";
 import {
   cleanItemNewlines,
@@ -22,6 +29,28 @@ const FORMAT_DEBOUNCE_MS = 500;
 const CLEANUP_TOAST_COOLDOWN_MS = 60_000;
 const cleanupToastLastShownAtByItem = new Map<string, number>();
 
+type BoxDimensions = { x: number; y: number; width: number; height: number };
+
+type BoxPreset = {
+  key: string;
+  label: string;
+  dimensions: BoxDimensions;
+};
+
+const BOX_PRESETS: BoxPreset[] = [
+  { key: "full", label: "Full", dimensions: { x: 0, y: 0, width: 100, height: 100 } },
+  { key: "middle", label: "50% Middle", dimensions: { x: 0, y: 20, width: 100, height: 55 } },
+  { key: "center", label: "90% Middle", dimensions: { x: 0, y: 10, width: 100, height: 90 } },
+  { key: "top", label: "Top 20%", dimensions: { x: 0, y: 0, width: 100, height: 20 } },
+  { key: "left", label: "Left Half", dimensions: { x: 0, y: 0, width: 50, height: 100 } },
+  { key: "right", label: "Right Half", dimensions: { x: 50, y: 0, width: 50, height: 100 } },
+  { key: "lower-third", label: "Lower Third", dimensions: { x: 0, y: 65, width: 100, height: 35 } },
+  { key: "middle-third", label: "Middle Third", dimensions: { x: 0, y: 35, width: 100, height: 35 } },
+  { key: "upper-third", label: "Upper Third", dimensions: { x: 0, y: 0, width: 100, height: 35 } },
+];
+
+const QUICK_PRESET_KEYS = ["full", "middle", "lower-third", "middle-third"];
+
 const cleanupNewlinesToastMessage = (itemKind: "song" | "free") =>
   itemKind === "song"
     ? "This song has extra blank lines. Remove them?"
@@ -29,9 +58,9 @@ const cleanupNewlinesToastMessage = (itemKind: "song" | "free") =>
 
 /** Keep the user's value for the changed field; adjust the partner only if needed to stay in bounds. */
 const constrainBoxAfterFieldChange = (
-  dims: { x: number; y: number; width: number; height: number },
-  field: "x" | "y" | "width" | "height",
-  value: number
+  dims: BoxDimensions,
+  field: keyof BoxDimensions,
+  value: number,
 ) => {
   const next = { ...dims, [field]: Math.max(0, Math.min(100, value)) };
   if (field === "height") {
@@ -47,17 +76,12 @@ const constrainBoxAfterFieldChange = (
 };
 
 /** Ensure box is in bounds by adjusting position (x, y) to fit size; size is not overwritten. */
-const sanitizeBoxToBounds = (dims: {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}) => {
-  const w = Math.max(0, Math.min(100, dims.width));
-  const h = Math.max(0, Math.min(100, dims.height));
-  const x = Math.max(0, Math.min(100 - w, dims.x));
-  const y = Math.max(0, Math.min(100 - h, dims.y));
-  return { x, y, width: w, height: h };
+const sanitizeBoxToBounds = (dims: BoxDimensions): BoxDimensions => {
+  const width = Math.max(0, Math.min(100, dims.width));
+  const height = Math.max(0, Math.min(100, dims.height));
+  const x = Math.max(0, Math.min(100 - width, dims.x));
+  const y = Math.max(0, Math.min(100 - height, dims.y));
+  return { x, y, width, height };
 };
 
 /** Mini CSS preview of a box preset (percent 0–100). */
@@ -67,16 +91,12 @@ const PresetIcon = ({
   x,
   y,
   label,
-}: {
-  width: number;
-  height: number;
-  x: number;
-  y: number;
-  label?: string;
-}) => (
+  large = false,
+}: BoxDimensions & { label?: string; large?: boolean }) => (
   <div
-    className="w-8 aspect-video border border-current/60 overflow-hidden bg-black/5 relative box-border shrink-0"
-    aria-hidden
+    className={`relative box-border aspect-video shrink-0 overflow-hidden border border-current/60 bg-black/5 ${large ? "w-16 md:w-10" : "w-8"}`}
+    data-testid="box-preset-icon"
+    aria-hidden="true"
   >
     <div
       className="absolute bg-current/50"
@@ -88,7 +108,7 @@ const PresetIcon = ({
       }}
     />
     {label && (
-      <span className="absolute inset-0 flex items-center justify-center text-[7px] font-bold uppercase text-white pointer-events-none">
+      <span className={`pointer-events-none absolute inset-0 flex items-center justify-center font-bold uppercase text-white ${large ? "text-[10px] md:text-[7px]" : "text-[7px]"}`}>
         {label}
       </span>
     )}
@@ -112,106 +132,103 @@ const CleanupNewlinesToastAction = ({
   </div>
 );
 
+type BoxEditorProps = {
+  updateItem: (item: ItemState, expectedOwner?: ItemMutationOwner) => void;
+  quickBoxLayoutTarget: HTMLElement | null;
+  quickBoxHeightTarget: HTMLElement | null;
+  drawerTarget: HTMLElement | null;
+};
+
 const BoxEditor = ({
   updateItem,
-  className,
-}: {
-  updateItem: (item: ItemState) => void;
-  isMobile: boolean;
-  className?: string;
-}) => {
+  quickBoxLayoutTarget,
+  quickBoxHeightTarget,
+  drawerTarget,
+}: BoxEditorProps) => {
   const dispatch = useDispatch();
   const { showToast, removeToast } = useToast();
   const item = useSelector((state) => state.undoable.present.item);
   const { selectedSlide, selectedBox, slides } = item;
+  const owner = getItemMutationOwner(item);
 
-  const boxes = useMemo(() => {
-    return slides[selectedSlide]?.boxes || [];
-  }, [slides, selectedSlide]);
-
-  const currentBox = useMemo(() => {
-    return boxes[selectedBox] || {};
-  }, [boxes, selectedBox]);
-
-  const [shouldApplyToAll, setShouldApplyToAll] = useState(
-    item.type === "free" ? false : true
+  const boxes = useMemo(
+    () => slides[selectedSlide]?.boxes || [],
+    [slides, selectedSlide],
   );
+  const currentBox = useMemo(
+    () => boxes[selectedBox] || {},
+    [boxes, selectedBox],
+  );
+  const slide = slides[selectedSlide];
 
-  const [dimensions, setDimensions] = useState(() => ({
-    x: currentBox.x ?? 0,
-    y: currentBox.y ?? 0,
-    width: currentBox.width ?? 0,
-    height: currentBox.height ?? 0,
-  }));
-
-  const formatTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [shouldApplyToAll, setShouldApplyToAll] = useState(item.type !== "free");
+  const [dimensions, setDimensions] = useState<BoxDimensions>(() =>
+    sanitizeBoxToBounds({
+      x: currentBox.x ?? 0,
+      y: currentBox.y ?? 0,
+      width: currentBox.width ?? 0,
+      height: currentBox.height ?? 0,
+    }),
+  );
+  const pendingDimensionsRef = useRef(dimensions);
+  const pendingGeometryRef = useRef<{
+    handle: PendingItemMutationHandle;
+    targetKey: string;
+  } | null>(null);
   const isEditingRef = useRef(false);
-  const itemRef = useRef(item);
   const pendingCleanupCheckRef = useRef(false);
-  const pendingDimensionsRef = useRef({
-    x: currentBox.x ?? 0,
-    y: currentBox.y ?? 0,
-    width: currentBox.width ?? 0,
-    height: currentBox.height ?? 0,
-  });
+  const itemRef = useRef(item);
+  itemRef.current = item;
 
-  useEffect(() => {
-    setShouldApplyToAll(item.type === "free" ? false : true);
-  }, [item.type]);
+  const targetKey = JSON.stringify([
+    owner?.scopeId,
+    owner?.databaseKey,
+    owner?.churchId,
+    owner?.itemId,
+    owner?.itemType,
+    item.type === "song"
+      ? item.arrangements[item.selectedArrangement]?.id
+      : null,
+    slide?.id,
+    currentBox.id ?? selectedBox,
+  ]);
 
-  useEffect(() => {
-    itemRef.current = item;
-  }, [item]);
-
-  useEffect(() => {
-    if (!isEditingRef.current) {
-      const next = sanitizeBoxToBounds({
-        x: currentBox.x ?? 0,
-        y: currentBox.y ?? 0,
-        width: currentBox.width ?? 0,
-        height: currentBox.height ?? 0,
-      });
-      setDimensions(next);
-      pendingDimensionsRef.current = next;
-    }
-  }, [currentBox.x, currentBox.y, currentBox.width, currentBox.height, selectedBox, selectedSlide]);
-
-  const commitBoxSize = useCallback(
-    ({
-      width,
-      height,
-      x,
-      y,
-    }: {
-      width: number;
-      height: number;
-      x: number;
-      y: number;
-    }) => {
-      const updatedItem = updateBoxProperties({
-        updatedProperties: { width, height, x, y },
-        item,
-        shouldFormatItem: true,
-        shouldApplyToAll: shouldApplyToAll,
-      });
-      updateItem(updatedItem);
-      return updatedItem;
+  const targetForItem = useCallback(
+    (targetItem: ItemState, boxIndex: number, shouldApplyAll: boolean) => {
+      const targetSlide = targetItem.slides[targetItem.selectedSlide];
+      const targetOwner = getItemMutationOwner(targetItem);
+      if (!targetOwner || !targetSlide?.id) return null;
+      const targetSectionNum = targetSlide.name.match(/Section (\d+)/)?.[1];
+      return {
+        owner: targetOwner,
+        slideId: targetSlide.id,
+        targetBoxId: targetSlide.boxes?.[boxIndex]?.id,
+        sectionNum: targetSectionNum
+          ? parseInt(targetSectionNum, 10)
+          : undefined,
+        arrangementId:
+          targetItem.type === "song"
+            ? targetItem.arrangements[targetItem.selectedArrangement]?.id
+            : undefined,
+        boxIndex,
+        applyToAll: shouldApplyAll,
+      };
     },
-    [item, shouldApplyToAll, updateItem]
+    [],
   );
 
   const runWithFormatting = useCallback(
-    (fn: () => void) => {
+    (targetOwner: ItemMutationOwner, action: () => void) => {
       dispatch(setItemFormatting(true));
-      setTimeout(() => {
+      scheduleOwnedItemMutation(targetOwner, 0, () => {
         try {
-          fn();
+          action();
         } finally {
           dispatch(setItemFormatting(false));
         }
-      }, 0);
+      });
     },
-    [dispatch]
+    [dispatch],
   );
 
   const handleToastCleanup = useCallback(
@@ -229,30 +246,30 @@ const BoxEditor = ({
         return;
       }
 
-      runWithFormatting(() => {
+      const currentOwner = getItemMutationOwner(currentItem);
+      if (!currentOwner) {
+        removeToast(toastId);
+        return;
+      }
+      runWithFormatting(currentOwner, () => {
         try {
-          updateItem(cleanItemNewlines(currentItem));
+          updateItem(cleanItemNewlines(currentItem), currentOwner);
         } finally {
           removeToast(toastId);
         }
       });
     },
-    [removeToast, runWithFormatting, updateItem]
+    [removeToast, runWithFormatting, updateItem],
   );
 
   const scheduleCleanupToastCheck = useCallback(
     (updatedItem: ItemState) => {
-      if (!updatedItem._id) {
-        return;
-      }
+      if (!updatedItem._id) return;
       const itemKind = updatedItem.type;
-      if (itemKind !== "song" && itemKind !== "free") {
-        return;
-      }
+      if (itemKind !== "song" && itemKind !== "free") return;
 
       setTimeout(() => {
         if (!itemHasCleanableNewlines(updatedItem)) return;
-
         const now = Date.now();
         const lastShownAt =
           cleanupToastLastShownAtByItem.get(updatedItem._id) ?? 0;
@@ -273,340 +290,392 @@ const BoxEditor = ({
         });
       }, 0);
     },
-    [handleToastCleanup, removeToast, showToast]
+    [handleToastCleanup, removeToast, showToast],
   );
 
-  const flushDebouncedFormat = useCallback(() => {
-    if (formatTimeoutRef.current) {
-      clearTimeout(formatTimeoutRef.current);
-      formatTimeoutRef.current = null;
-    }
-    isEditingRef.current = false;
-    const shouldCheckCleanup = pendingCleanupCheckRef.current;
-    pendingCleanupCheckRef.current = false;
-    const d = sanitizeBoxToBounds(pendingDimensionsRef.current);
-    runWithFormatting(() => {
-      const updatedItem = commitBoxSize({
-        width: d.width,
-        height: d.height,
-        x: d.x,
-        y: d.y,
+  const dispatchGeometry = useCallback(
+    (
+      target: NonNullable<ReturnType<typeof targetForItem>>,
+      next: BoxDimensions,
+      sourceItem: ItemState,
+      shouldCheckCleanup: boolean,
+    ) => {
+      const updatedItem = updateBoxProperties({
+        updatedProperties: next,
+        item: sourceItem,
+        shouldFormatItem: true,
+        shouldApplyToAll: target.applyToAll,
       });
-      if (shouldCheckCleanup) {
-        scheduleCleanupToastCheck(updatedItem);
-      }
-    });
-  }, [commitBoxSize, runWithFormatting, scheduleCleanupToastCheck]);
+      const { owner: targetOwner, ...mutationTarget } = target;
+      runWithFormatting(targetOwner, () => {
+        dispatch(
+          applyOwnedContentMutation({
+            owner: targetOwner,
+            mutation: {
+              kind: "boxProperties",
+              ...mutationTarget,
+              properties: next,
+              formatItem: true,
+            },
+          }),
+        );
+      });
+      if (shouldCheckCleanup) scheduleCleanupToastCheck(updatedItem);
+    },
+    [dispatch, runWithFormatting, scheduleCleanupToastCheck],
+  );
 
-  useEffect(() => {
-    return () => {
-      if (formatTimeoutRef.current) clearTimeout(formatTimeoutRef.current);
-    };
+  const flushPendingGeometry = useCallback(() => {
+    const pending = pendingGeometryRef.current;
+    if (!pending) return;
+    pendingGeometryRef.current = null;
+    pending.handle.flush();
   }, []);
 
-  const applyPreset = useCallback(
-    (dims: { width: number; height: number; x: number; y: number }) => {
-      if (formatTimeoutRef.current) {
-        clearTimeout(formatTimeoutRef.current);
-        formatTimeoutRef.current = null;
-      }
+  useEffect(() => {
+    setShouldApplyToAll(item.type !== "free");
+  }, [item.type]);
+
+  useEffect(() => {
+    if (pendingGeometryRef.current?.targetKey !== targetKey) {
+      flushPendingGeometry();
       isEditingRef.current = false;
       pendingCleanupCheckRef.current = false;
-      const next = sanitizeBoxToBounds(dims);
+    }
+    if (!isEditingRef.current) {
+      const next = sanitizeBoxToBounds({
+        x: currentBox.x ?? 0,
+        y: currentBox.y ?? 0,
+        width: currentBox.width ?? 0,
+        height: currentBox.height ?? 0,
+      });
+      setDimensions(next);
+      pendingDimensionsRef.current = next;
+    }
+  }, [
+    currentBox.height,
+    currentBox.width,
+    currentBox.x,
+    currentBox.y,
+    flushPendingGeometry,
+    targetKey,
+  ]);
+
+  useEffect(
+    () => () => {
+      flushPendingGeometry();
+    },
+    [flushPendingGeometry],
+  );
+
+  const applyPreset = useCallback(
+    (nextDimensions: BoxDimensions) => {
+      flushPendingGeometry();
+      const next = sanitizeBoxToBounds(nextDimensions);
+      const target = targetForItem(item, selectedBox, shouldApplyToAll);
+      if (!target) return;
+      isEditingRef.current = false;
+      pendingCleanupCheckRef.current = false;
+      setDimensions(next);
+      pendingDimensionsRef.current = next;
       const shouldCheckCleanup =
         next.width !== (currentBox.width ?? 0) ||
         next.height !== (currentBox.height ?? 0);
-
-      runWithFormatting(() => {
-        const updatedItem = commitBoxSize(next);
-        if (shouldCheckCleanup) {
-          scheduleCleanupToastCheck(updatedItem);
-        }
-      });
+      dispatchGeometry(target, next, item, shouldCheckCleanup);
     },
     [
-      commitBoxSize,
       currentBox.height,
       currentBox.width,
-      runWithFormatting,
-      scheduleCleanupToastCheck,
-    ]
+      dispatchGeometry,
+      flushPendingGeometry,
+      item,
+      selectedBox,
+      shouldApplyToAll,
+      targetForItem,
+    ],
   );
 
-  const scheduleFormat = useCallback(() => {
-    if (formatTimeoutRef.current) clearTimeout(formatTimeoutRef.current);
-    formatTimeoutRef.current = setTimeout(flushDebouncedFormat, FORMAT_DEBOUNCE_MS);
-  }, [flushDebouncedFormat]);
+  const handleInputChange = useCallback(
+    (field: keyof BoxDimensions, value: string) => {
+      const numValue = parseFloat(value);
+      if (Number.isNaN(numValue)) return;
 
-  const handleInputChange = (
-    field: "x" | "y" | "width" | "height",
-    value: string
-  ) => {
-    let numValue = parseFloat(value);
-    if (field === "x" || field === "y") {
-      if (numValue > 100) numValue = 100;
-      if (numValue < 0) numValue = 0;
-    }
-    if (!isNaN(numValue)) {
-      const newDims = constrainBoxAfterFieldChange(dimensions, field, numValue);
-      setDimensions(newDims);
-      pendingDimensionsRef.current = newDims;
-      isEditingRef.current = true;
-      if (field === "width" || field === "height") {
-        pendingCleanupCheckRef.current = true;
+      const target = targetForItem(item, selectedBox, shouldApplyToAll);
+      if (!target) return;
+
+      const targetChanged = Boolean(
+        pendingGeometryRef.current &&
+        pendingGeometryRef.current.targetKey !== targetKey
+      );
+      if (targetChanged) {
+        flushPendingGeometry();
       }
-      scheduleFormat();
-    }
-  };
+      const baseDimensions = targetChanged
+        ? sanitizeBoxToBounds({
+            x: currentBox.x ?? 0,
+            y: currentBox.y ?? 0,
+            width: currentBox.width ?? 0,
+            height: currentBox.height ?? 0,
+          })
+        : dimensions;
+      const next = constrainBoxAfterFieldChange(baseDimensions, field, numValue);
+      pendingGeometryRef.current?.handle.cancel();
+      isEditingRef.current = true;
+      pendingCleanupCheckRef.current =
+        pendingCleanupCheckRef.current || field === "width" || field === "height";
+      setDimensions(next);
+      pendingDimensionsRef.current = next;
 
-  const controls = (
-    <>
-      <div className="flex flex-wrap gap-2 items-center max-lg:justify-center">
-        <Input
-          type="number"
-          value={dimensions.x}
-          onChange={(value) => handleInputChange("x", value.toString())}
-          label="X"
-          labelLayout="inline"
-          labelFontSize="text-xs"
-          min={0}
-          max={100}
-          inputWidth="w-16"
-          inputTextSize="text-xs"
-          hideSpinButtons={false}
-        />
-        <Input
-          type="number"
-          value={dimensions.y}
-          onChange={(value) => handleInputChange("y", value.toString())}
-          label="Y"
-          labelLayout="inline"
-          labelFontSize="text-xs"
-          min={0}
-          max={100}
-          inputWidth="w-16"
-          inputTextSize="text-xs"
-          hideSpinButtons={false}
-        />
-        <Input
-          type="number"
-          value={dimensions.width}
-          onChange={(value) => handleInputChange("width", value.toString())}
-          label="Width"
-          labelLayout="inline"
-          labelFontSize="text-xs"
-          min={0}
-          max={100}
-          inputWidth="w-16"
-          inputTextSize="text-xs"
-          hideSpinButtons={false}
-        />
-        <Input
-          type="number"
-          value={dimensions.height}
-          onChange={(value) => handleInputChange("height", value.toString())}
-          label="Height"
-          labelLayout="inline"
-          labelFontSize="text-xs"
-          min={0}
-          max={100}
-          inputWidth="w-16"
-          inputTextSize="text-xs"
-          hideSpinButtons={false}
-        />
-      </div>
-      <div className="flex flex-wrap gap-2 items-center justify-center max-lg:pt-2">
-        <Button
-          variant="tertiary"
-          className="w-10 max-lg:w-18"
-          padding="p-0"
-          onClick={() =>
-            applyPreset({
-              width: 100,
-              height: 100,
-              x: 0,
-              y: 0,
-            })
-          }
-        >
-          <PresetIcon width={100} height={100} x={0} y={0} />
-        </Button>
-        <Button
-          variant="tertiary"
-          className="w-10 max-lg:w-18"
-          padding="p-0"
-          onClick={() =>
-            applyPreset({
-              width: 100,
-              height: 55,
-              x: 0,
-              y: 20,
-            })
-          }
-        >
-          <PresetIcon width={100} height={55} x={0} y={20} />
-        </Button>
-        <Button
-          variant="tertiary"
-          className="w-10 max-lg:w-18"
-          padding="p-0"
-          onClick={() =>
-            applyPreset({
-              width: 100,
-              height: 90,
-              x: 0,
-              y: 10,
-            })
-          }
-        >
-          <PresetIcon width={100} height={90} x={0} y={10} />
-        </Button>
-        <Button
-          variant="tertiary"
-          className="w-10 max-lg:w-18"
-          padding="p-0"
-          onClick={() =>
-            applyPreset({
-              width: 100,
-              height: 20,
-              x: 0,
-              y: 0,
-            })
-          }
-        >
-          <PresetIcon width={100} height={20} x={0} y={0} />
-        </Button>
-        <Button
-          variant="tertiary"
-          className="w-10 max-lg:w-18"
-          padding="p-0"
-          onClick={() =>
-            applyPreset({
-              width: 50,
-              height: 100,
-              x: 0,
-              y: 0,
-            })
-          }
-        >
-          <PresetIcon width={50} height={100} x={0} y={0} />
-        </Button>
-        <Button
-          variant="tertiary"
-          className="w-10 max-lg:w-18"
-          padding="p-0"
-          onClick={() =>
-            applyPreset({
-              width: 50,
-              height: 100,
-              x: 50,
-              y: 0,
-            })
-          }
-        >
-          <PresetIcon width={50} height={100} x={50} y={0} />
-        </Button>
-        <Button
-          variant="tertiary"
-          className="w-10 max-lg:w-18"
-          padding="p-0"
-          onClick={() =>
-            applyPreset({
-              width: 100,
-              height: 35,
-              x: 0,
-              y: 65,
-            })
-          }
-        >
-          <PresetIcon width={100} height={35} x={0} y={65} />
-        </Button>
-        <Button
-          variant="tertiary"
-          className="w-10 max-lg:w-18"
-          padding="p-0"
-          onClick={() =>
-            applyPreset({
-              width: 100,
-              height: 35,
-              x: 0,
-              y: 35,
-            })
-          }
-        >
-          <PresetIcon width={100} height={35} x={0} y={35} />
-        </Button>
-        <Button
-          variant="tertiary"
-          className="w-10 max-lg:w-18"
-          padding="p-0"
-          onClick={() =>
-            applyPreset({
-              width: 100,
-              height: 35,
-              x: 0,
-              y: 0,
-            })
-          }
-        >
-          <PresetIcon width={100} height={35} x={0} y={0} />
-        </Button>
-        <Button
-          variant="tertiary"
-          className="w-10 max-lg:w-18"
-          padding="p-0"
-          onClick={() =>
-            applyPreset({
-              width: currentBox.width ?? 0,
-              height: currentBox.height ?? 0,
-              x: currentBox.x ?? 0,
-              y: currentBox.y ?? 0,
-            })
-          }
-        >
-          <PresetIcon
-            width={currentBox.width ?? 0}
-            height={currentBox.height ?? 0}
-            x={currentBox.x ?? 0}
-            y={currentBox.y ?? 0}
-            label="MATCH"
-          />
-        </Button>
-      </div>
+      const capturedCleanupCheck = pendingCleanupCheckRef.current;
+      const capturedItem = item;
+      const capturedTarget = target;
+      let handle: PendingItemMutationHandle;
+      handle = scheduleOwnedItemMutation(target.owner, FORMAT_DEBOUNCE_MS, () => {
+        if (pendingGeometryRef.current?.handle === handle) {
+          pendingGeometryRef.current = null;
+        }
+        isEditingRef.current = false;
+        pendingCleanupCheckRef.current = false;
+        const finalDimensions = sanitizeBoxToBounds(pendingDimensionsRef.current);
+        dispatchGeometry(
+          capturedTarget,
+          finalDimensions,
+          capturedItem,
+          capturedCleanupCheck,
+        );
+      });
+      pendingGeometryRef.current = { handle, targetKey };
+    },
+    [
+      dimensions,
+      currentBox.height,
+      currentBox.width,
+      currentBox.x,
+      currentBox.y,
+      dispatchGeometry,
+      flushPendingGeometry,
+      item,
+      selectedBox,
+      shouldApplyToAll,
+      targetForItem,
+      targetKey,
+    ],
+  );
+
+  const applyPresetButton = (preset: BoxPreset, compact = false) => (
+    <Button
+      key={preset.key}
+      type="button"
+      variant="tertiary"
+      className={compact ? "h-8 w-10 shrink-0 p-0" : "min-h-12 min-w-0 justify-center p-1"}
+      padding={compact ? "p-0" : "p-1"}
+      title={
+        compact
+          ? `Apply ${preset.label} box preset to ${
+              shouldApplyToAll ? "all slides" : "the selected slide"
+            }`
+          : `Apply ${preset.label} box preset`
+      }
+      aria-label={`Apply ${preset.label} box preset`}
+      onClick={() => applyPreset(preset.dimensions)}
+    >
+      <PresetIcon {...preset.dimensions} large={!compact} />
+    </Button>
+  );
+
+  const matchPreset: BoxPreset = {
+    key: "match",
+    label: "Match",
+    dimensions: isEditingRef.current
+      ? dimensions
+      : {
+          x: currentBox.x ?? 0,
+          y: currentBox.y ?? 0,
+          width: currentBox.width ?? 0,
+          height: currentBox.height ?? 0,
+        },
+  };
+  const quickPresets = [
+    ...BOX_PRESETS.filter((preset) => QUICK_PRESET_KEYS.includes(preset.key)),
+    matchPreset,
+  ];
+
+  const scopeControls = (
+    <div className="flex flex-col gap-1">
+      <p className="text-xs font-medium">Apply changes to</p>
       <RadioGroup
         value={shouldApplyToAll ? "all" : "selected"}
-        onValueChange={(v) => setShouldApplyToAll(v === "all")}
-        className="flex gap-2 items-center justify-center max-lg:pt-2"
+        onValueChange={(value) => setShouldApplyToAll(value === "all")}
+        className="flex flex-wrap items-center gap-2"
+        aria-label="Apply changes to"
+        title="All slides applies this box's position and size across this item"
       >
         <RadioButton
-          className="text-xs w-fit"
+          className="w-fit text-xs"
           optionValue="selected"
-          label="Apply to selected"
+          label="This slide"
+          hideLabelColon
         />
         <RadioButton
-          label="Apply to all"
-          className="text-xs w-fit"
+          className="w-fit text-xs"
           optionValue="all"
+          label="All slides"
+          hideLabelColon
         />
       </RadioGroup>
-    </>
+    </div>
+  );
+
+  const fullControls = (
+    <div
+      data-testid="box-layout-drawer-controls"
+      className="flex min-w-0 flex-col gap-4"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        {(["x", "y"] as const).map((field) => (
+          <Input
+            key={field}
+            type="number"
+            value={dimensions[field]}
+            onChange={(value) => handleInputChange(field, value.toString())}
+            label={field.toUpperCase()}
+            labelLayout="inline"
+            labelFontSize="text-xs"
+            min={0}
+            max={100}
+            inputWidth="w-16"
+            inputTextSize="text-xs"
+            hideSpinButtons={false}
+          />
+        ))}
+        <div className="flex items-center gap-2">
+          {(["width", "height"] as const).map((field) => (
+            <Input
+              key={field}
+              type="number"
+              value={dimensions[field]}
+              onChange={(value) => handleInputChange(field, value.toString())}
+              label={field === "width" ? "Width" : "Height"}
+              labelLayout="inline"
+              labelFontSize="text-xs"
+              min={0}
+              max={100}
+              inputWidth="w-16"
+              inputTextSize="text-xs"
+              hideSpinButtons={false}
+            />
+          ))}
+        </div>
+      </div>
+      <div className="flex flex-col gap-1">
+        <p className="text-xs font-medium">Layouts</p>
+        <div
+          data-testid="box-layout-drawer-presets"
+          className="flex flex-wrap items-center gap-2"
+        >
+          {BOX_PRESETS.map((preset) => applyPresetButton(preset))}
+          <Button
+            type="button"
+            variant="tertiary"
+            className="min-h-12 min-w-0 justify-center p-1"
+            padding="p-1"
+            title="Match the selected box geometry across the chosen scope"
+            aria-label="Apply Match box preset"
+            disabled={!shouldApplyToAll}
+            onClick={() => applyPreset(matchPreset.dimensions)}
+          >
+            <PresetIcon {...matchPreset.dimensions} label="MATCH" large />
+          </Button>
+        </div>
+      </div>
+      {scopeControls}
+    </div>
+  );
+
+  const quickLayoutControls = (
+    <div
+      className="flex shrink-0 items-center gap-1"
+      role="group"
+      aria-label="Layout"
+      title="Box layout presets"
+    >
+      <span className="text-xs font-semibold">Layout</span>
+      {quickPresets.map((preset) =>
+        preset.key === "match" ? (
+          <Button
+            key={preset.key}
+            type="button"
+            variant="tertiary"
+            className="h-8 w-10 shrink-0 p-0"
+            padding="p-0"
+            title="Match the selected box geometry across all slides"
+            aria-label="Apply Match box preset"
+            disabled={!shouldApplyToAll}
+            onClick={() => applyPreset(preset.dimensions)}
+          >
+            <PresetIcon {...preset.dimensions} label="MATCH" />
+          </Button>
+        ) : (
+          applyPresetButton(preset, true)
+        ),
+      )}
+    </div>
+  );
+
+  const quickHeightControls = (
+    <div
+      className="flex shrink-0 items-center gap-1"
+      role="group"
+      aria-label="Height"
+    >
+      <Button
+        type="button"
+        variant="tertiary"
+        svg={Minus}
+        aria-label="Decrease box height"
+        title="Decrease box height"
+        onClick={() =>
+          handleInputChange("height", String(dimensions.height - 1))
+        }
+      />
+      <Input
+        type="number"
+        value={dimensions.height}
+        onChange={(value) => handleInputChange("height", value.toString())}
+        label="Height"
+        labelLayout="inline"
+        labelFontSize="text-xs"
+        min={0}
+        max={100}
+        inputWidth="w-14"
+        inputTextSize="text-xs"
+        hideSpinButtons={false}
+      />
+      <Button
+        type="button"
+        variant="tertiary"
+        svg={Plus}
+        aria-label="Increase box height"
+        title="Increase box height"
+        onClick={() =>
+          handleInputChange("height", String(dimensions.height + 1))
+        }
+      />
+    </div>
   );
 
   return (
-    <div className={`flex gap-2 items-center ${className || ""}`}>
-      <div className="max-lg:hidden flex gap-2 items-center flex-wrap">
-        {controls}
-      </div>
-      <PopoverPanel
-        TriggeringButton={
-          <Button className="lg:hidden" variant="tertiary" svg={Maximize2}>
-            Tools
-          </Button>
-        }
-      >
-        <div className="flex flex-col gap-4 items-center p-4">{controls}</div>
-      </PopoverPanel>
-    </div>
+    <>
+      {quickBoxLayoutTarget &&
+        createPortal(quickLayoutControls, quickBoxLayoutTarget)}
+      {quickBoxHeightTarget &&
+        createPortal(quickHeightControls, quickBoxHeightTarget)}
+      {drawerTarget &&
+        createPortal(
+          <div className="flex min-w-0 flex-col gap-4">{fullControls}</div>,
+          drawerTarget,
+        )}
+    </>
   );
 };
 

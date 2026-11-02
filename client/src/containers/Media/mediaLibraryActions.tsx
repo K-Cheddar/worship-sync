@@ -1,3 +1,4 @@
+import { isControllerWorkspacePath } from "../../utils/controllerWorkspace";
 import {
   FilePlus2,
   Image,
@@ -110,7 +111,7 @@ export function buildMediaActionRouteFlags(
   selectedQuickLink: QuickLinkType | null | undefined,
 ): MediaActionRouteFlags {
   return {
-    itemSlides: pathname.includes("item"),
+    itemSlides: isControllerWorkspacePath(pathname),
     overlayImage:
       (pathname.includes("overlays") || pageMode === "overlayController") &&
       selectedOverlay?.type === "image",
@@ -139,7 +140,7 @@ export function buildMediaLibraryBarActions(args: {
   dispatch: AppDispatch;
   onDeleteSingle: () => void;
   onDeleteMultiple: () => void;
-  /** When set (item route + slides), enables Apply to… / Clear… subset menus. */
+  /** When set (presentation workspace + slides), enables Apply to… / Clear… subset menus. */
   itemSlideContext?: {
     itemType: ItemType;
     slides: ItemSlideType[];

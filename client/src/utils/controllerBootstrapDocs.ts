@@ -1,7 +1,6 @@
 import type PouchDB from "pouchdb-browser";
 import { preferencesClusterLoadFallback } from "../store/preferencesSlice";
 import type {
-  DBAllItems,
   DBItemLists,
   DBMonitorSettingsDoc,
   DBPreferences,
@@ -37,46 +36,6 @@ const isPouchConflict = (error: unknown) => {
 
 const nowIso = () => new Date().toISOString();
 
-/**
- * get → on confirmed not_found put empty → re-get.
- * Any other read error is rethrown so we never invent empty data over a real failure.
- */
-async function loadOrCreateDoc<T extends { _id: string }>(
-  db: PouchDB.Database,
-  id: string,
-  factory: () => Omit<T, "_rev">,
-): Promise<T> {
-  try {
-    return (await db.get(id)) as T;
-  } catch (error) {
-    if (!isPouchNotFound(error)) throw error;
-  }
-
-  try {
-    await db.put(factory() as T);
-  } catch (error) {
-    if (!isPouchConflict(error)) throw error;
-  }
-
-  return (await db.get(id)) as T;
-}
-
-/** Empty song/library index for a brand-new church content database. */
-export async function loadOrCreateAllItemsDoc(
-  db: PouchDB.Database,
-): Promise<DBAllItems> {
-  return loadOrCreateDoc<DBAllItems>(db, "allItems", () => {
-    const now = nowIso();
-    return {
-      _id: "allItems",
-      items: [],
-      createdAt: now,
-      updatedAt: now,
-      docType: "allItems",
-    };
-  });
-}
-
 /** Matches the label used when operators click “Add New Service”. */
 export const DEFAULT_BOOTSTRAP_OUTLINE: ItemList = {
   _id: "New Outline",
@@ -86,6 +45,7 @@ export const DEFAULT_BOOTSTRAP_OUTLINE: ItemList = {
 async function ensureEmptyOutlineDetailDoc(
   db: PouchDB.Database,
   outline: ItemList,
+  canCreate: () => boolean,
 ) {
   await putIfMissing(db, outline._id, () => {
     const now = nowIso();
@@ -98,17 +58,19 @@ async function ensureEmptyOutlineDetailDoc(
       updatedAt: now,
       docType: "itemListDetails",
     };
-  });
+  }, canCreate);
 }
 
 /**
  * Outline registry. Brand-new churches get one named empty outline so the
  * service plan column is usable immediately (not stuck on skeleton loaders).
  * Also heals registries that were previously seeded with zero outlines.
+ * Unverified local absence returns undefined; it never authorizes defaults.
  */
 export async function loadOrCreateItemListsDoc(
   db: PouchDB.Database,
-): Promise<DBItemLists> {
+  canCreate: () => boolean = () => false,
+): Promise<DBItemLists | undefined> {
   let existing: DBItemLists | undefined;
   try {
     existing = (await db.get("ItemLists")) as DBItemLists;
@@ -119,9 +81,11 @@ export async function loadOrCreateItemListsDoc(
   if (existing && (existing.itemLists?.length ?? 0) > 0) {
     return existing;
   }
+  if (!canCreate()) return existing;
 
   const outline = DEFAULT_BOOTSTRAP_OUTLINE;
-  await ensureEmptyOutlineDetailDoc(db, outline);
+  await ensureEmptyOutlineDetailDoc(db, outline, canCreate);
+  if (!canCreate()) return existing;
 
   const now = nowIso();
   if (!existing) {
@@ -158,11 +122,13 @@ const putIfMissing = async (
   db: PouchDB.Database,
   id: string,
   factory: () => Record<string, unknown>,
+  canCreate: () => boolean,
 ) => {
   try {
     await db.get(id);
   } catch (error) {
     if (!isPouchNotFound(error)) throw error;
+    if (!canCreate()) return;
     try {
       await db.put(factory());
     } catch (putError) {
@@ -179,7 +145,8 @@ const putIfMissing = async (
  */
 export async function loadOrCreatePreferencesBundle(
   db: PouchDB.Database,
-): Promise<PreferencesBundle> {
+  canCreate: () => boolean = () => false,
+): Promise<PreferencesBundle | undefined> {
   let preferencesMissing = false;
   try {
     await db.get(PREFERENCES_POUCH_ID);
@@ -189,6 +156,7 @@ export async function loadOrCreatePreferencesBundle(
   }
 
   if (preferencesMissing) {
+    if (!canCreate()) return;
     const now = nowIso();
     const defaults = preferencesClusterLoadFallback;
     const preferences = {
@@ -218,6 +186,7 @@ export async function loadOrCreatePreferencesBundle(
           updatedAt: now,
           docType: "quickLinks",
         }) satisfies Omit<DBQuickLinksDoc, "_rev">,
+      canCreate,
     );
 
     await putIfMissing(
@@ -231,6 +200,7 @@ export async function loadOrCreatePreferencesBundle(
           updatedAt: now,
           docType: "monitorSettings",
         }) satisfies Omit<DBMonitorSettingsDoc, "_rev">,
+      canCreate,
     );
 
   }

@@ -6,6 +6,7 @@ import type {
   TeamService,
 } from "../../api/authTypes";
 import {
+  buildTeamsDataFromBootstrap,
   buildIntakeAvailabilityServiceOptions,
   filterBlockoutDatesForScheduleRange,
   findBlockoutRangeForDate,
@@ -18,6 +19,13 @@ import {
   serviceDateBlockedOut,
   sortTeamRosterMembersAlphabetically,
 } from "./teamsUtils";
+
+describe("Teams bootstrap normalization", () => {
+  it("preserves a truncated marker for fail-closed member assignment labels", () => {
+    expect(buildTeamsDataFromBootstrap({ truncated: true }).truncated).toBe(true);
+    expect(buildTeamsDataFromBootstrap({ truncated: false })).not.toHaveProperty("truncated");
+  });
+});
 
 const schedule = (
   overrides: Partial<TeamSchedule | TeamScheduleSummary>,

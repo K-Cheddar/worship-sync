@@ -5,7 +5,7 @@ import {
 import type { EventData } from "../../containers/Overlays/eventParser";
 import type { DBItem, OverlayInfo, ServiceItem } from "../../types";
 import type { ServicePlanningConfig } from "../../types/integrations";
-import { mergeSongLibraryItems } from "../../utils/songLibrary";
+import { itemDocumentToLibraryEntry } from "../../utils/itemLibrary";
 import { getOutlineCandidateLineItemKey, getServicePlanningLineItemKey } from "../../utils/servicePlanningSyncKeys";
 
 const song = (id: string, name: string): ServiceItem => ({
@@ -45,7 +45,7 @@ const servicePlanning: ServicePlanningConfig = {
 
 const buildPreview = (
   row: EventData,
-  allItems: ServiceItem[],
+  libraryEntries: ServiceItem[],
   allSongDocs: DBItem[] = [],
   customDocumentLibrary: ServiceItem[] = [],
 ) =>
@@ -57,7 +57,7 @@ const buildPreview = (
     },
     servicePlanning,
     overlays: [],
-    songLibrary: mergeSongLibraryItems(allItems, allSongDocs),
+    songLibrary: allSongDocs.length ? allSongDocs.map(itemDocumentToLibraryEntry) : libraryEntries,
     customDocumentLibrary,
     activeOutlineList: [],
   });
@@ -102,7 +102,7 @@ describe("buildServicePlanningPreview song matching", () => {
     expect(outlineCandidates[0].matchedLibraryItem?._id).toBe("song-42");
   });
 
-  it("matches a song document when the lightweight allItems index is incomplete", () => {
+  it("matches a song document from cached documents", () => {
     const { outlineCandidates, lineItems } = buildPreview(
       { ...baseRow, title: "How Great is Our God" },
       [],

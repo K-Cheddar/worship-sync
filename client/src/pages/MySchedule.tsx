@@ -1448,6 +1448,7 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
       title="My schedule"
       {...PAGE_APPEARANCES.mySchedule}
       showAccountNavigation={!access}
+      contentClassName="max-w-[90rem]"
     >
       <div className="flex w-full flex-col gap-4">
         {status === "loading" ? (
@@ -1531,7 +1532,7 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
             ) : null}
 
             {datedOccurrences.length > 0 ? (
-              <div className="flex flex-wrap items-end gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Input
                   label="Search"
                   className="w-full min-w-0 sm:w-auto sm:min-w-[16rem] sm:flex-1"
@@ -1539,11 +1540,12 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
                   placeholder="Song, position, person, or date"
                   onChange={(value) => setQuery(String(value))}
                 />
-                <div className="flex w-fit flex-col gap-1 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-1.5">
+                <div className="flex min-w-0 flex-1 flex-col gap-1 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-1.5">
                   <span className="px-0.5 text-xs font-semibold text-gray-200">Organize</span>
                   <SegmentedControl
                     ariaLabel="Organize services"
                     variant="compact"
+                    fullWidth
                     value={organizeMode}
                     onChange={setOrganizeMode}
                     options={MY_SCHEDULE_ORGANIZE_OPTIONS}
@@ -1552,6 +1554,7 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
                 {serviceOptions.length > 2 ? (
                   <Select
                     label="Service"
+                    className="min-w-0 flex-1"
                     value={serviceFilter}
                     options={serviceOptions}
                     onChange={(value) => setServiceFilter(String(value))}

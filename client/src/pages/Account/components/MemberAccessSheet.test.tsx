@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import MemberAccessSheet from "./MemberAccessSheet";
 import type { InviteAccessDraft, Member } from "../accountTypes";
+import { DEFAULT_INVITE_ACCESS_DRAFT } from "../accountInviteAccess";
 import { useAccountPage } from "../AccountPageContext";
 import {
   updateChurchInviteAccess,
@@ -90,6 +91,7 @@ jest.mock("../../../api/auth", () => ({
 }));
 
 const member: Member = {
+  accessRevision: "loaded-revision",
   membershipId: "membership-1",
   userId: "user-1",
   role: "member",
@@ -155,14 +157,17 @@ const renderMemberSheet = () => {
   return { ...view, context, setters, getDrafts: () => ({ access, teamsAccess, servicesAccess, teamScopeIds }) };
 };
 
-const renderInviteSheet = (kind: "invite-draft" | "invite") => {
-  let draft: InviteAccessDraft = {
+const renderInviteSheet = (
+  kind: "invite-draft" | "invite",
+  initialDraft: InviteAccessDraft = {
     role: "member",
     controllerAccess: "full",
     teamsAccess: "view",
     servicesAccess: "edit",
     teamScopeIds: ["worship"],
-  };
+  },
+) => {
+  let draft = initialDraft;
   const invite = {
     inviteId: "invite-1",
     email: "person@example.com",
@@ -212,6 +217,12 @@ const renderInviteSheet = (kind: "invite-draft" | "invite") => {
 };
 
 describe("MemberAccessSheet independent access axes", () => {
+  it("shows the default Services view permission for a new invite", () => {
+    renderInviteSheet("invite-draft", DEFAULT_INVITE_ACCESS_DRAFT);
+
+    expect(screen.getByRole("combobox", { name: "Service access" })).toHaveValue("view");
+  });
+
   it("keeps existing admins at immutable Full access despite stale drafts", () => {
     jest.clearAllMocks();
     const { rerender, context, setters } = renderMemberSheet();
@@ -232,7 +243,7 @@ describe("MemberAccessSheet independent access axes", () => {
     context.getMemberAccessValue.mockReturnValue("member");
     context.getMemberTeamsAccessValue.mockReturnValue("none");
     context.getMemberServicesAccessValue.mockReturnValue("none");
-    context.getMemberTeamScopeValue.mockReturnValue(["worship"]);
+    context.getMemberTeamScopeValue.mockReturnValue([]);
     context.getEditableTeamScopeIds.mockReturnValue([]);
     rerender(<MemberAccessSheet />);
 
@@ -248,7 +259,8 @@ describe("MemberAccessSheet independent access axes", () => {
     expect(servicesSelect).toHaveValue("edit");
     expect(screen.getByTestId("member-services-access-sheet-membership-1-selected-label")).toHaveTextContent("Edit");
     expect(servicesSelect).toBeDisabled();
-    expect(screen.queryByRole("group", { name: "Manage selected teams" })).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Team leads" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Worship" })).not.toBeChecked();
 
     fireEvent.change(accessSelect, {
       target: { value: "member" },
@@ -323,6 +335,7 @@ describe("MemberAccessSheet independent access axes", () => {
       "user-1",
       "none",
       { teams: "none", services: "none", teamScopes: { worship: "edit" } },
+      "loaded-revision",
     ));
   });
 
@@ -344,6 +357,7 @@ describe("MemberAccessSheet independent access axes", () => {
         services: "edit",
         teamScopes: { worship: "edit" },
       },
+      "loaded-revision",
     );
   });
 

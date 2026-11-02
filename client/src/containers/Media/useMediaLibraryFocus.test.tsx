@@ -28,6 +28,7 @@ const createProps = (
   return {
     dispatch: jest.fn() as unknown as AppDispatch,
     focusMediaId: "target-media",
+    selectedMediaId: "target-media",
     list,
     filteredList: overrides.filteredList ?? list,
     isMediaLoading: false,
@@ -259,5 +260,53 @@ describe("useMediaLibraryFocus", () => {
     pending[1]?.resolve({ status: "success" });
     await act(async () => undefined);
     expect(scrollToMediaId).toHaveBeenCalledTimes(2);
+  });
+
+  it("restarts repeated Show in Media clicks for the same item, including after success", async () => {
+    const pending: Array<{
+      signal: AbortSignal;
+      resolve: (result: { status: "success" }) => void;
+    }> = [];
+    const scrollToMediaId = jest.fn(
+      (_id: string, options?: { signal?: AbortSignal }) =>
+        new Promise<{ status: "success" }>((resolve) => {
+          pending.push({ signal: options!.signal!, resolve });
+        }),
+    );
+    const props = createProps({ mediaGridRef: { current: { scrollToMediaId } } });
+    const { rerender } = renderHook(useMediaLibraryFocus, { initialProps: props });
+    rerender({ ...props, focusMediaId: null });
+    rerender(props);
+    expect(pending[0].signal.aborted).toBe(true);
+    expect(scrollToMediaId).toHaveBeenCalledTimes(2);
+    await act(async () => pending[0].resolve({ status: "success" }));
+    expect(pending[1].signal.aborted).toBe(false);
+    await act(async () => pending[1].resolve({ status: "success" }));
+
+    rerender({ ...props, focusMediaId: null });
+    rerender(props);
+    expect(scrollToMediaId).toHaveBeenCalledTimes(3);
+    expect(props.setSelectedMedia).toHaveBeenLastCalledWith(target);
+    expect(props.setPreviewMedia).toHaveBeenLastCalledWith(target);
+    expect(props.setSearchTerm).toHaveBeenLastCalledWith("");
+    expect(props.setOriginFilter).toHaveBeenLastCalledWith("all");
+    expect(props.setTypeFilter).toHaveBeenLastCalledWith("all");
+  });
+
+  it("cancels pending scrolling when the operator selects another media item", async () => {
+    let signal!: AbortSignal;
+    const scrollToMediaId = jest.fn(
+      (_id: string, options?: { signal?: AbortSignal }) => {
+        signal = options!.signal!;
+        return new Promise<{ status: "success" }>(() => undefined);
+      },
+    );
+    const props = createProps({ mediaGridRef: { current: { scrollToMediaId } } });
+    const { rerender } = renderHook(useMediaLibraryFocus, { initialProps: props });
+    rerender({ ...props, focusMediaId: null });
+    rerender({ ...props, focusMediaId: null, selectedMediaId: other.id });
+    expect(signal.aborted).toBe(true);
+    await flushFrame();
+    expect(scrollToMediaId).toHaveBeenCalledTimes(1);
   });
 });

@@ -171,8 +171,19 @@ export const useTeamsPageState = (
   const [editableMemberIds, setEditableMemberIds] = useState<Set<string>>(
     () => new Set(),
   );
+  const [teamProfileReadyMemberIds, setTeamProfileReadyMemberIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const invalidateMemberEditability = useCallback((memberId: string) => {
     setEditableMemberIds((current) => {
+      if (!current.has(memberId)) return current;
+      const next = new Set(current);
+      next.delete(memberId);
+      return next;
+    });
+  }, []);
+  const invalidateTeamProfileReadiness = useCallback((memberId: string) => {
+    setTeamProfileReadyMemberIds((current) => {
       if (!current.has(memberId)) return current;
       const next = new Set(current);
       next.delete(memberId);
@@ -248,6 +259,7 @@ export const useTeamsPageState = (
     setAccessDenied(false);
     setMembershipAccessGranted(false);
     setEditableMemberIds(new Set());
+    setTeamProfileReadyMemberIds(new Set());
   }, [churchId]);
 
   useEffect(() => {
@@ -487,6 +499,7 @@ export const useTeamsPageState = (
     setMembershipAccessGranted(false);
     updateSelfMemberIdentity(null);
     setEditableMemberIds(new Set());
+    setTeamProfileReadyMemberIds(new Set());
     dataRef.current = emptyData;
     setData(emptyData);
     hydratedSchedulesRef.current.clear();
@@ -577,6 +590,7 @@ export const useTeamsPageState = (
         setMembershipAccessGranted(true);
         updateSelfMemberIdentity(response.selfMemberId);
         setEditableMemberIds(new Set(response.editableMemberIds || []));
+        setTeamProfileReadyMemberIds(new Set(response.teamProfileReadyMemberIds || []));
         const nextData = buildTeamsDataFromBootstrap(response);
         nextData.schedules = withRetainedHydration(nextData.schedules);
         lastSuccessfulBootstrapAtRef.current = Date.now();
@@ -827,6 +841,7 @@ export const useTeamsPageState = (
     setMembershipAccessGranted(true);
     updateSelfMemberIdentity(response.selfMemberId);
     setEditableMemberIds(new Set(response.editableMemberIds || []));
+    setTeamProfileReadyMemberIds(new Set(response.teamProfileReadyMemberIds || []));
     const nextData = buildTeamsDataFromBootstrap(response);
     nextData.schedules = withRetainedHydration(nextData.schedules);
     const changedKeys = teamsDataKeys.filter(
@@ -1433,6 +1448,8 @@ export const useTeamsPageState = (
     canViewServices,
     availableNavSections,
     editableMemberIds,
+    teamProfileReadyMemberIds,
+    invalidateTeamProfileReadiness,
     invalidateMemberEditability,
     canEditTeams,
     canEditAnyTeam,
@@ -1471,6 +1488,8 @@ export const useTeamsPageState = (
     canViewServices,
     availableNavSections,
     editableMemberIds,
+    teamProfileReadyMemberIds,
+    invalidateTeamProfileReadiness,
     invalidateMemberEditability,
     canEditTeams,
     canEditAnyTeam,

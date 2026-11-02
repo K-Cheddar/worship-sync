@@ -23,18 +23,21 @@ const renderSelect = ({
   selectGroups = groups,
   selectOptions = options,
   onChange = jest.fn(),
+  hideGroupFilters = false,
 }: {
   value?: string[];
   defaultGroupIds?: string[];
   selectGroups?: typeof groups;
   selectOptions?: EntityMultiSelectOption[];
   onChange?: jest.Mock;
+  hideGroupFilters?: boolean;
 } = {}) => {
   const view = render(
     <EntityMultiSelect
       label="Positions"
       options={selectOptions}
       groups={selectGroups}
+      hideGroupFilters={hideGroupFilters}
       groupFilterLabel="Filter positions by team"
       allGroupsLabel="All teams"
       searchThreshold={2}
@@ -52,6 +55,19 @@ const expectPressed = (name: string, pressed: boolean) =>
   expect(filter(name)).toHaveAttribute("aria-pressed", String(pressed));
 
 describe("EntityMultiSelect team filter", () => {
+  it("retains the team scope for options and Select all when filter chips are hidden", () => {
+    const { onChange } = renderSelect({
+      defaultGroupIds: ["t2"],
+      value: ["p5"],
+      hideGroupFilters: true,
+    });
+    expect(screen.queryByRole("group", { name: "Filter positions by team" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "All teams" })).not.toBeInTheDocument();
+    expect(optionNames()).toEqual(["ProducerMedia", "DirectorMedia"]);
+    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+    expect(onChange).toHaveBeenCalledWith(["p5", "p3", "p4"]);
+  });
+
   it("defaults to All teams and shows all options when there are no default groups", () => {
     renderSelect();
     expectPressed("All teams", true);

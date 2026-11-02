@@ -51,10 +51,10 @@ export const FLUSH_MEDIA_STALE_DB_MESSAGE =
 export type FlushMediaLibraryDocOptions = {
   /** Allows a workflow already authorized under this concrete DB to finish its write after a scope switch. */
   allowOriginalOwnerPersistenceAfterScopeChange?: boolean;
+  /** Prevents stale queued writes after the originating workspace or church session changes. */
+  canPersist?: () => boolean;
   /** Controls current-scope side effects such as broadcasts, Electron cache, and Redux cache publication. */
   publishIfCurrent?: () => boolean;
-  /** Prevents a deferred write when its originating workspace is no longer active. */
-  canPersist?: () => boolean;
   /** Media rows relocated only because their folder is being deleted with Keep Contents. */
   automaticMediaRehomeIds?: ReadonlySet<string>;
   /** Child folders relocated only because their parent is being deleted with Keep Contents. */

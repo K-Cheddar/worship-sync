@@ -1,10 +1,11 @@
+import { applyItemDocumentChange } from "../../store/allDocsSlice";
 import { configureStore } from "@reduxjs/toolkit";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Provider, useSelector } from "react-redux";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import allDocsReducer from "../../store/allDocsSlice";
-import allItemsReducer from "../../store/allItemsSlice";
+import itemLibraryUiReducer from "../../store/itemLibraryUiSlice";
 import {
   createMockControllerContext,
   createMockGlobalContext,
@@ -75,9 +76,15 @@ const renderPanel = (
   const store = configureStore({
     reducer: {
       allDocs: allDocsReducer,
-      allItems: allItemsReducer,
+      itemLibraryUi: itemLibraryUiReducer,
     },
   });
+  const originalPut = db.put;
+  db.put = jest.fn(async (doc: any) => {
+    const result = await originalPut(doc);
+    store.dispatch(applyItemDocumentChange({ id: doc._id, doc: { ...doc, _rev: result.rev } }));
+    return result;
+  }) as typeof db.put;
   render(
     <Provider store={store}>
       <ControllerInfoContext.Provider

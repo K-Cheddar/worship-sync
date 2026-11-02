@@ -4,7 +4,8 @@ import Button from "../../components/Button/Button";
 import Select from "../../components/Select/Select";
 import { richTextToPlainText } from "../../types/richText";
 import type { ServicePlanElement, ServicePlanImportAmbiguity, ServicePlanSection } from "../../types/servicePlan";
-import { applyReviewedServicePlanParts } from "./servicePlanImportOwnership";
+import { applyReviewedServicePlanParts, servicePlanNoteFingerprint } from "./servicePlanImportOwnership";
+import { resolveServicePlanImportNoteConflict } from "./servicePlanImportSync";
 
 type Props = {
   sections: ServicePlanSection[];
@@ -12,6 +13,7 @@ type Props = {
   prompt: boolean;
   onLater: () => void;
   onResolve: (elementId: string, changes: Partial<ServicePlanElement>) => void;
+  updatedNoteLabel?: string;
 };
 
 const destinations = [
@@ -46,19 +48,33 @@ const ServicePlanAmbiguityReview = ({
   prompt,
   onLater,
   onResolve,
+  updatedNoteLabel = "Updated source note",
   batchTotal,
   completedCount = 0,
 }: ReviewWindowProps) => {
   const [showPrompt, setShowPrompt] = useState(prompt);
   const [destinationsByPart, setDestinationsByPart] = useState<Record<string, string>>({});
   const [songChoicesByMapping, setSongChoicesByMapping] = useState<Record<string, string>>({});
+  const [noteConflictChoicesByElement, setNoteConflictChoicesByElement] = useState<Record<string, "keepExisting" | "useUpdated">>({});
   const elements = sections.flatMap((section) => section.elements.map((element) => ({ section, element })));
   const selected = elementIds.flatMap((id) => {
     const found = elements.find(({ element }) => element.id === id);
     return found ? [found] : [];
   });
   const active = selected[0];
+  const noteConflictChoice = active ? noteConflictChoicesByElement[active.element.id] || null : null;
   const ambiguity = active?.element.importAmbiguity;
+  const managedNotes = active?.element.servicePlanningImport?.managedNotes || [];
+  const managedNoteBlocks = active?.element.notes?.blocks.flatMap((block) => {
+    const managed = managedNotes.find(({ id }) => id === block.id);
+    return managed ? [{ block, managed }] : [];
+  }) || [];
+  const hasUnchangedManagedNote = managedNoteBlocks.some(({ block, managed }) =>
+    servicePlanNoteFingerprint(block) === managed.fingerprint,
+  );
+  const hasLocallyEditedManagedNote = managedNoteBlocks.some(({ block, managed }) =>
+    servicePlanNoteFingerprint(block) !== managed.fingerprint,
+  );
   const totalItems = Math.max(batchTotal || elementIds.length, 1);
   const currentItemNumber = Math.min(completedCount + 1, totalItems);
   const remainingCount = Math.max(elementIds.length - 1, 0);
@@ -92,13 +108,22 @@ const ServicePlanAmbiguityReview = ({
   const titleMayBeAssignee = ambiguity.reasons.some((reason) =>
     reason.toLocaleLowerCase().includes("descriptive content or an assignee"),
   );
-  const hasReviewChoices = ambiguity.parts.length > 0 || Boolean(ambiguity.songMappings?.length);
-  const primaryActionLabel = hasReviewChoices
-    ? hasMoreItems ? "Confirm & next" : "Confirm & finish"
+  const hasNoteConflict = Boolean(ambiguity.sourceNoteConflict && !ambiguity.sourceNoteConflict.resolution);
+  const hasInterpretationChoices = ambiguity.parts.length > 0 || Boolean(ambiguity.songMappings?.length);
+  const hasReviewChoices = hasNoteConflict || hasInterpretationChoices;
+  const useUpdatedNoteLabel = updatedNoteLabel === "Updated PDF note"
+    ? "Use updated PDF note"
+    : "Use updated source note";
+  const primaryActionLabel = hasNoteConflict
+    ? hasMoreItems ? "Resolve note conflict & next" : "Resolve note conflict & finish"
+    : hasReviewChoices
+      ? hasMoreItems ? "Confirm & next" : "Confirm & finish"
     : hasMoreItems ? "Keep as imported & next" : "Keep as imported";
 
   const applyInterpretation = (acknowledge = false) => {
+    if (hasNoteConflict && !noteConflictChoice) return;
     if (acknowledge) {
+      if (hasNoteConflict) return;
       onResolve(active.element.id, {
         importAmbiguity: {
           ...ambiguity,
@@ -108,12 +133,15 @@ const ServicePlanAmbiguityReview = ({
       });
       return;
     }
+    const noteResolvedElement = hasNoteConflict
+      ? resolveServicePlanImportNoteConflict(active.element, noteConflictChoice!)
+      : active.element;
     const resolvedParts = ambiguity.parts.map((part, index) => ({
       ...part,
       destination: (destinationsByPart[`${active.element.id}:${index}`] || part.destination) as typeof part.destination,
     }));
-    const reconciled = applyReviewedServicePlanParts(active.element, resolvedParts);
-    const currentSongs = active.element.songRefs || (active.element.songRef ? [active.element.songRef] : []);
+    const reconciled = applyReviewedServicePlanParts(noteResolvedElement, resolvedParts);
+    const currentSongs = noteResolvedElement.songRefs || (noteResolvedElement.songRef ? [noteResolvedElement.songRef] : []);
     const mappingKeys = new Map((ambiguity.songMappings || []).map((mapping, index) => [
       mapping,
       `${active.element.id}:${mapping.mappingId || JSON.stringify([mapping.sourceFingerprint, mapping.candidateOccurrenceIds, index])}`,
@@ -127,6 +155,9 @@ const ServicePlanAmbiguityReview = ({
     });
     const nextAmbiguity: ServicePlanImportAmbiguity = {
       ...ambiguity,
+      ...(noteResolvedElement.importAmbiguity?.sourceNoteConflict
+        ? { sourceNoteConflict: noteResolvedElement.importAmbiguity.sourceNoteConflict }
+        : {}),
       parts: reconciled.parts,
       songMappings: ambiguity.songMappings?.map((mapping) => {
         const occurrenceId = songChoicesByMapping[mappingKeys.get(mapping)!];
@@ -137,8 +168,10 @@ const ServicePlanAmbiguityReview = ({
             : { kind: "keep" },
         };
       }),
-      reasons: [],
-      status: "confirmed",
+      reasons: hasNoteConflict
+        ? ambiguity.reasons.filter((reason) => reason !== "The external Note changed, but existing Notes lack reliable source provenance or were edited locally. Review Notes before applying the update.")
+        : [],
+      status: hasNoteConflict && noteConflictChoice === "keepExisting" ? "acknowledged" : "confirmed",
       authorizationPending: false,
     };
     onResolve(active.element.id, {
@@ -181,7 +214,34 @@ const ServicePlanAmbiguityReview = ({
             <dt className="text-gray-500">Led By</dt><dd className="break-words text-gray-200">{ambiguity.sourceLedBy || "—"}</dd>
             <dt className="text-gray-500">Note</dt><dd className="break-words text-gray-200">{ambiguity.sourceNote || "—"}</dd>
           </dl>
-          {ambiguity.reasons.map((reason) => <p key={reason} className="rounded-md bg-amber-950/40 px-3 py-2 text-xs text-amber-100">{reason}</p>)}
+          {ambiguity.reasons.filter((reason) => !hasNoteConflict || !reason.startsWith("The external Note changed,")).map((reason) => <p key={reason} className="rounded-md bg-amber-950/40 px-3 py-2 text-xs text-amber-100">{reason}</p>)}
+          {hasNoteConflict ? (() => {
+            const existingNotes = richTextToPlainText(active.element.notes);
+            const updatedNote = active.element.servicePlanningImport?.observed.note ?? ambiguity.sourceNote ?? "";
+            const hasManagedNotes = managedNotes.length > 0;
+            return <section aria-label="Note conflict" className="space-y-3 rounded-md border border-amber-700/60 bg-amber-950/20 p-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div><p className="text-xs font-semibold text-amber-100">Existing notes</p><p className="mt-1 whitespace-pre-wrap break-words text-sm text-gray-100">{existingNotes || "No notes"}</p></div>
+                <div><p className="text-xs font-semibold text-amber-100">{updatedNoteLabel}</p><p className="mt-1 whitespace-pre-wrap break-words text-sm text-gray-100">{updatedNote || "No note"}</p></div>
+              </div>
+              <p className="text-xs text-gray-300">{hasManagedNotes
+                ? hasUnchangedManagedNote
+                  ? hasLocallyEditedManagedNote
+                    ? "Using the updated note replaces unchanged imported paragraphs and keeps paragraphs edited locally, along with other notes."
+                    : "Using the updated note replaces the imported note paragraphs and keeps other note paragraphs."
+                  : hasLocallyEditedManagedNote
+                    ? "No unchanged imported paragraph can be matched. Using the updated note keeps paragraphs edited locally and other notes, and adds the updated note when it contains text."
+                    : "No tracked imported paragraph can be matched. Using the updated note keeps existing notes and adds the updated note when it contains text."
+                : existingNotes.trim()
+                  ? "The existing notes have no reliable source markers. Using the updated note replaces all existing notes shown here."
+                  : "Using the updated note adds it to this item."}</p>
+              <fieldset className="space-y-2 text-sm">
+                <legend className="mb-1 text-xs font-semibold text-gray-200">Choose how to resolve this note conflict</legend>
+                <label className="flex items-start gap-2"><input type="radio" name={`note-conflict-${active.element.id}`} checked={noteConflictChoice === "keepExisting"} onChange={() => setNoteConflictChoicesByElement((current) => ({ ...current, [active.element.id]: "keepExisting" }))} /><span><span className="font-medium">Keep existing notes</span><span className="mt-0.5 block text-xs text-gray-400">Preserve these notes. The updated source note stays pending.</span></span></label>
+                <label className="flex items-start gap-2"><input type="radio" name={`note-conflict-${active.element.id}`} checked={noteConflictChoice === "useUpdated"} onChange={() => setNoteConflictChoicesByElement((current) => ({ ...current, [active.element.id]: "useUpdated" }))} /><span><span className="font-medium">{useUpdatedNoteLabel}</span><span className="mt-0.5 block text-xs text-gray-400">Apply the updated note using the ownership behavior described above.</span></span></label>
+              </fieldset>
+            </section>;
+          })() : null}
           {hasReviewChoices ? (
             <div className="space-y-2">
               {ambiguity.parts.map((part, index) => (
@@ -244,8 +304,8 @@ const ServicePlanAmbiguityReview = ({
               importAmbiguity: { ...ambiguity, status: "deferred" },
             })}
           >Leave for later</Button>
-          {hasReviewChoices ? <Button variant="secondary" onClick={() => applyInterpretation(true)}>Acknowledge as-is</Button> : null}
-          <Button variant="cta" onClick={() => applyInterpretation(!hasReviewChoices)}>{primaryActionLabel}</Button>
+          {hasReviewChoices && !hasNoteConflict ? <Button variant="secondary" onClick={() => applyInterpretation(true)}>Acknowledge as-is</Button> : null}
+          <Button variant="cta" disabled={hasNoteConflict && !noteConflictChoice} onClick={() => applyInterpretation(!hasReviewChoices)}>{primaryActionLabel}</Button>
         </div>
       </div>
     </FloatingWindow>

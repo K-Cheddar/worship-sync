@@ -1,18 +1,10 @@
 import { Cloudinary } from "@cloudinary/url-gen";
-import { globalDb } from "../context/controllerInfo";
-import {
-  updateAllBibleDocs,
-  updateAllFreeFormDocs,
-  updateAllSongDocs,
-  updateAllTimerDocs,
-} from "../store/allDocsSlice";
 import {
   allDocsType,
   Box,
   CreditsInfo,
   CREDIT_HISTORY_ID_PREFIX,
   CREDITS_OUTLINE_INDEX_PREFIX,
-  DBAllItems,
   DBCredit,
   DBCredits,
   DBCreditHistory,
@@ -26,7 +18,6 @@ import {
   DBOverlayHistory,
   ItemSlideType,
   OverlayHistoryKey,
-  ServiceItem,
   getCreditHistoryDocId,
   getOverlayHistoryDocId,
   OVERLAY_HISTORY_ID_PREFIX,
@@ -48,100 +39,13 @@ import {
 import { formatItemInfo } from "./formatItemInfo";
 import { formatSong, getFormattedSections } from "./overflow";
 
-type propsType = {
-  db: PouchDB.Database;
-  allItems: DBAllItems;
-};
-
-export const deleteUnusedBibleItems = async ({ db, allItems }: propsType) => {
-  const items = allItems.items;
-
-  const bibleItems = items.filter((item) => item.type === "bible");
-
-  const allItemLists: DBItemLists | undefined = await db.get("ItemLists");
-  const itemLists = allItemLists?.itemLists || [];
-  const bibleItemsInLists: ServiceItem[] = [];
-
-  for (const itemList of itemLists) {
-    const listDetails: DBItemListDetails = await db.get(itemList._id);
-    const listItems = listDetails?.items || [];
-    bibleItemsInLists.push(
-      ...listItems.filter((item) => item.type === "bible"),
-    );
-  }
-
-  const bibleItemsToBeDeleted = bibleItems.filter(
-    (bibleItem) =>
-      !bibleItemsInLists.some(
-        (bibleItemInList) => bibleItemInList._id === bibleItem._id,
-      ),
-  );
-
-  if (bibleItemsToBeDeleted.length === 0) return; // nothing to delete
-
-  const updatedItems = items.filter(
-    (item) => !bibleItemsToBeDeleted.includes(item),
-  );
-
-  // Remove bible items from all items and delete them individually
-  await db.put({
-    ...allItems,
-    items: updatedItems,
-    updatedAt: new Date().toISOString(),
-  });
-  for (const item of bibleItemsToBeDeleted) {
-    try {
-      const doc = await db.get(item._id);
-      db.remove(doc);
-    } catch (error) {
-      console.error(error);
-    }
-  }
-};
-
-export const deleteUnusedHeadings = async ({ db, allItems }: propsType) => {
-  const items = allItems.items;
-  const headingItems = items.filter((item) => item.type === "heading");
-
-  const allItemLists: DBItemLists | undefined = await db.get("ItemLists");
-  const itemLists = allItemLists?.itemLists || [];
-  const headingsInLists: ServiceItem[] = [];
-
-  for (const itemList of itemLists) {
-    const listDetails: DBItemListDetails = await db.get(itemList._id);
-    const listItems = listDetails?.items || [];
-    headingsInLists.push(
-      ...listItems.filter((item) => item.type === "heading"),
-    );
-  }
-
-  const headingsToBeDeleted = headingItems.filter(
-    (headingItem) =>
-      !headingsInLists.some(
-        (headingInList) => headingInList._id === headingItem._id,
-      ),
-  );
-
-  if (headingsToBeDeleted.length === 0) return;
-
-  const updatedItems = items.filter(
-    (item) => !headingsToBeDeleted.includes(item),
-  );
-
-  await db.put({
-    ...allItems,
-    items: updatedItems,
-    updatedAt: new Date().toISOString(),
-  });
-  for (const item of headingsToBeDeleted) {
-    try {
-      const doc = await db.get(item._id);
-      db.remove(doc);
-    } catch (error) {
-      console.error(error);
-    }
-  }
-};
+export {
+  BIBLE_ITEM_CLEANUP_GRACE_PERIOD_MS,
+  MAX_BIBLE_ITEM_CLEANUP_RETRY_DELAY_MS,
+  cancelBibleItemCleanupRetry,
+  deleteUnusedBibleItems,
+  scheduleBibleItemCleanupRetry,
+} from "./bibleItemCleanup";
 
 /**
  * Returns a map of overlay id -> list of item list names that include that overlay.
@@ -780,45 +684,6 @@ async function appendCreditIdToIndex(
   throw new Error("Could not update the credits index.");
 }
 
-export const updateAllDocs = async (
-  dispatch: Function,
-  db: PouchDB.Database | undefined = globalDb,
-  shouldApply: () => boolean = () => true,
-): Promise<boolean> => {
-  if (!db) return false;
-  try {
-    const allDocs: allDocsType = (await db.allDocs({
-      include_docs: true,
-    })) as allDocsType;
-    const allSongs = allDocs.rows
-      .filter((row) => (row.doc as any)?.type === "song")
-      .map((row) => row.doc as DBItem);
-
-    const allFreeFormDocs = allDocs.rows
-      .filter((row) => (row.doc as any)?.type === "free")
-      .map((row) => row.doc as DBItem);
-
-    const allTimers = allDocs.rows
-      .filter((row) => (row.doc as any)?.type === "timer")
-      .map((row) => row.doc as DBItem);
-
-    const allBibles = allDocs.rows
-      .filter((row) => (row.doc as any)?.type === "bible")
-      .map((row) => row.doc as DBItem);
-
-    if (!shouldApply()) return false;
-
-    dispatch(updateAllSongDocs(allSongs));
-    dispatch(updateAllFreeFormDocs(allFreeFormDocs));
-    dispatch(updateAllTimerDocs(allTimers));
-    dispatch(updateAllBibleDocs(allBibles));
-    return true;
-  } catch (error) {
-    console.error("Failed to save all docs", error);
-    return false;
-  }
-};
-
 export const formatAllDocs = async (
   db: PouchDB.Database,
   cloud: Cloudinary,
@@ -829,7 +694,7 @@ export const formatAllDocs = async (
       include_docs: true,
     })) as allDocsType;
 
-    const allItems = allDocs.rows.filter(
+    const itemDocuments = allDocs.rows.filter(
       (row) =>
         (row.doc as any)?.type === "song" ||
         (row.doc as any)?.type === "free" ||
@@ -837,7 +702,7 @@ export const formatAllDocs = async (
         (row.doc as any)?.type === "bible",
     );
 
-    for (const item of allItems) {
+    for (const item of itemDocuments) {
       try {
         const formattedItem = formatItemInfo(item.doc as DBItem, cloud);
         const updatedItem = {
@@ -896,33 +761,6 @@ export const formatAllSongs = async (
     }
   } catch (error) {
     console.error("Failed to format all songs", error);
-  }
-};
-
-export const formatAllItems = async (
-  db: PouchDB.Database,
-  cloud: Cloudinary,
-) => {
-  if (!db) return;
-  try {
-    const allItems: DBAllItems | undefined = await db.get("allItems");
-    const formattedItems = allItems?.items.map((item) => {
-      const updatedBackground =
-        item.background?.includes("http") || !item.background
-          ? item.background
-          : `https://res.cloudinary.com/portable-media/image/upload/v1/${item.background}`;
-      return {
-        ...item,
-        background: updatedBackground,
-      };
-    });
-    await db.put({
-      ...allItems,
-      items: formattedItems,
-      updatedAt: new Date().toISOString(),
-    });
-  } catch (error) {
-    console.error("Failed to format all items", error);
   }
 };
 

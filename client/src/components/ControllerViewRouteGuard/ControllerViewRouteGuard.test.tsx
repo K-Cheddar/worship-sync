@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Navigate, Route, Routes } from "react-router-dom";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import ControllerViewRouteGuard from "./ControllerViewRouteGuard";
 
@@ -27,7 +27,7 @@ const renderGuarded = (
             />
             <Route
               path="/controller/service-planning"
-              element={<div>Service Planning page</div>}
+              element={<Navigate to="/controller" replace />}
             />
             <Route
               path="/controller/item/:a/:b"
@@ -68,8 +68,8 @@ describe("ControllerViewRouteGuard", () => {
     expect(screen.getByText("Controller home")).toBeInTheDocument();
   });
 
-  it("redirects view access away from service planning", () => {
-    renderGuarded("view", "/controller/service-planning");
+  it.each(["view", "full", "music"] as const)("redirects legacy service planning for %s access", (access) => {
+    renderGuarded(access, "/controller/service-planning");
     expect(screen.queryByText("Service Planning page")).not.toBeInTheDocument();
     expect(screen.getByText("Controller home")).toBeInTheDocument();
   });

@@ -260,6 +260,7 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
     }, valid.token), false);
     assert.equal(await page.getByText("PRIVATE-DRAFT").count(), 0);
     await page.getByRole("button", { name: /Time off/i }).click();
+    await page.getByRole("button", { name: /Edit time off/i }).click();
     await page.getByRole("textbox", { name: /Notes/i }).fill("Volunteer unsaved dates");
     await memberRef.update({ updatedAt: "admin-revision-b", blockoutDates: [{
       startDate: "2099-11-02", endDate: "2099-11-02", notes: "Administrator saved dates",
@@ -295,7 +296,14 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
     assert.deepEqual((await scheduleRef.get()).data().responses[occurrenceId]["camera::0"], firstResponse);
     setServerFirestoreForTests(db);
     await page.getByText(/Your saved information changed elsewhere/).waitFor();
-    assert.equal(await page.getByRole("textbox", { name: /Notes/i }).inputValue(), "Volunteer unsaved dates");
+    const notesInput = page.getByPlaceholder("Notes (optional)");
+    if (await notesInput.count() === 0) {
+      // A refresh may return the row to its summary view; the draft should
+      // still be visible there and editable when the volunteer reopens it.
+      await page.getByText("Volunteer unsaved dates", { exact: true }).waitFor();
+      await page.getByRole("button", { name: /Edit time off/i }).click();
+    }
+    assert.equal(await page.getByPlaceholder("Notes (optional)").inputValue(), "Volunteer unsaved dates");
     assert.equal(await page.getByRole("button", { name: /Save time off/i }).isDisabled(), true);
     await page.getByText("Review saved dates").click();
     await page.getByText(/Administrator saved dates/).waitFor();
@@ -306,7 +314,9 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
     assert.deepEqual((await scheduleRef.get()).data().responses.past, ownSchedule.responses.past);
     assert.deepEqual((await scheduleRef.get()).data().responses[occurrenceId]["camera::1"], ownSchedule.responses[occurrenceId]["camera::1"]);
     await page.getByRole("button", { name: "Discard changes" }).click();
-    assert.equal(await page.getByRole("textbox", { name: /Notes/i }).inputValue(), "Administrator saved dates");
+    await page.getByText("Administrator saved dates", { exact: true }).waitFor();
+    await page.getByRole("button", { name: /Edit time off/i }).click();
+    assert.equal(await page.getByPlaceholder("Notes (optional)").inputValue(), "Administrator saved dates");
     await page.getByRole("button", { name: /Remove blockout/i }).click();
     await page.getByRole("button", { name: /Save time off/i }).click();
     await page.getByText("Time off saved.").waitFor();
@@ -326,7 +336,14 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
     await signedInPage.goto(`${base}/#/my-schedule`);
     await signedInPage.getByRole("button", { name: /Open Sunday Gathering/i }).waitFor();
     await signedInPage.getByRole("button", { name: /Change your response for Camera/ }).click();
+    const declineResponsePromise = signedInPage.waitForResponse((result) =>
+      /\/api\/churches\/[^/]+\/my-assignments\/respond$/.test(new URL(result.url()).pathname) &&
+      result.request().method() === "POST",
+    );
     await signedInPage.getByRole("button", { name: /Decline Camera/ }).click();
+    const declineResponse = await declineResponsePromise;
+    assert.equal(declineResponse.status(), 200);
+    assert.deepEqual(await declineResponse.json(), { success: true, response: "declined" });
     assert.equal((await scheduleRef.get()).get(`responses.${occurrenceId}.camera::0.response`), "declined");
     await signedInPage.close();
     for (const response of ["Decline", "Accept"]) {
@@ -356,7 +373,7 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
     await secondScheduleRef.update({ assignments: {} });
     await scheduleRef.update({ assignments: { [occurrenceId]: { "camera::1": expiredMemberId }, past: { "camera::0": memberId } } });
     await page.reload();
-    await page.getByRole("button", { name: /Open Sunday Gathering/i }).waitFor();
+    await page.getByText("You are not scheduled for anything coming up.", { exact: true }).waitFor();
     assert.equal(await page.getByRole("button", { name: /Accept Camera/ }).count(), 0);
     assert.equal(await page.getByRole("button", { name: /Time off/i }).count(), 1);
     await scheduleRef.update({ assignments: ownSchedule.assignments });
@@ -372,7 +389,13 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
     await adminPage.getByText("Personal link replaced. Previous links and sessions no longer work.", { exact: true }).waitFor();
     await adminPage.getByRole("button", { name: "Copy personal link", exact: true }).click();
     const replacement = { token: new URL(await adminPage.evaluate(() => navigator.clipboard.readText())).hash.slice(1) };
+    const invalidatedSessionPromise = page.waitForResponse((response) =>
+      new URL(response.url()).pathname === "/api/volunteer/session" && response.request().method() === "GET",
+    );
     await page.reload();
+    const invalidatedSession = await invalidatedSessionPromise;
+    assert.equal(invalidatedSession.status(), 401);
+    assert.equal((await invalidatedSession.json()).accessStatus, "invalid");
     await page.getByRole("button", { name: "Verify identity" }).waitFor();
     await page.goto(`${base}/s#${valid.token}`);
     await page.getByRole("button", { name: "Verify identity" }).waitFor();
@@ -380,6 +403,14 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
     await page.getByRole("button", { name: /Open Sunday Gathering/i }).waitFor();
     await page.getByRole("button", { name: /Time off/i }).click();
     await page.getByRole("button", { name: /Add single day/i }).click();
+    await page.getByRole("textbox", { name: "Day you're away" }).click();
+    const todayLabel = await page.evaluate(() => {
+      const date = new Date();
+      const day = date.getDate();
+      const suffix = day % 100 >= 11 && day % 100 <= 13 ? "th" : day % 10 === 1 ? "st" : day % 10 === 2 ? "nd" : day % 10 === 3 ? "rd" : "th";
+      return `Today, ${date.toLocaleDateString("en-US", { weekday: "long" })}, ${date.toLocaleDateString("en-US", { month: "long" })} ${day}${suffix}, ${date.getFullYear()}`;
+    });
+    await page.getByRole("dialog").getByRole("button", { name: todayLabel, exact: true }).click();
     await page.getByRole("textbox", { name: /Notes/i }).fill("Keep this unsaved draft after revocation");
     await adminPage.getByRole("button", { name: "Turn off personal access", exact: true }).click();
     await adminPage.getByText("Personal access turned off.", { exact: true }).waitFor();
@@ -437,6 +468,7 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
     await emptyPage.getByText("Review saved dates", { exact: true }).click();
     await emptyPage.getByRole("button", { name: "Discard changes", exact: true }).click();
     assert.equal((await emptyMemberRef.get()).data().blockoutDates[0].notes, "Travel with no assignments");
+    await emptyPage.getByRole("button", { name: /Edit time off/ }).click();
     await emptyPage.getByRole("textbox", { name: /Notes/i }).fill("Edited travel");
     await emptyPage.getByRole("button", { name: "Save time off", exact: true }).click();
     await emptyPage.getByText("Time off saved.", { exact: true }).waitFor();

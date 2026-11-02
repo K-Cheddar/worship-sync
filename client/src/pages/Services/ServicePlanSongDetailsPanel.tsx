@@ -10,9 +10,6 @@ import { ItemDetailsEditorFields, type ItemDetailsSavePayload } from "../../comp
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { deleteSongAudioWithRetry, getSongAudioUrl, uploadSongAudio } from "../../api/auth";
-import { useDispatch } from "../../hooks";
-import { upsertItemInAllDocs } from "../../store/allDocsSlice";
-import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
 import { broadcastItemUpdate } from "../../store/store";
 import { applyPouchAudit } from "../../utils/pouchAudit";
 import { deleteSongAudioBeforeClearingMetadata } from "../../utils/persistSongAudioAttachment";
@@ -25,7 +22,6 @@ type ServicePlanSongDetailsPanelProps = {
 };
 
 const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }: ServicePlanSongDetailsPanelProps) => {
-  const dispatch = useDispatch();
   const { db } = useContext(ControllerInfoContext) || {};
   const { churchId } = useContext(GlobalInfoContext) || {};
   const [arrangementIndex, setArrangementIndex] = useState(0);
@@ -53,16 +49,8 @@ const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }:
     const audited = applyPouchAudit(existing, next, { isNew: false });
     const result = await db.put(audited);
     const saved = { ...audited, _rev: result.rev };
-    dispatch(upsertItemInAllDocs(saved));
-    dispatch(upsertItemInAllItemsList({
-      _id: saved._id,
-      name: saved.name,
-      type: saved.type,
-      listId: saved._id,
-      background: typeof saved.background === "string" ? saved.background : "",
-    }));
     broadcastItemUpdate(saved);
-  }, [db, dispatch, song._id]);
+  }, [db, song._id]);
 
   const uploadSongAudioForEdit = useCallback(async (file: File) => {
     if (!churchId) throw new Error("Sign in to attach an MP3.");
@@ -119,16 +107,8 @@ const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }:
     const audited = applyPouchAudit(existing, next, { isNew: false });
     const result = await db.put(audited);
     const saved = { ...audited, _rev: result.rev };
-    dispatch(upsertItemInAllDocs(saved));
-    dispatch(upsertItemInAllItemsList({
-      _id: saved._id,
-      name: saved.name,
-      type: saved.type,
-      listId: saved._id,
-      background: typeof saved.background === "string" ? saved.background : "",
-    }));
     broadcastItemUpdate(saved);
-  }, [db, dispatch, song._id]);
+  }, [db, song._id]);
 
   return (
     <div className="space-y-4" aria-label={`Song details for ${song.name}`}>

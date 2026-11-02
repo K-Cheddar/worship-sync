@@ -10,7 +10,6 @@ import servicePlanningImportReducer, {
   setServicePlanningPlanOutline,
   setServicePlanningRestoredOutlineUnlessStale,
   setServicePlanningServiceOutline,
-  setStoredServicePlanningOutlineIfIdle,
   startServicePlanningSync,
 } from "../../store/servicePlanningImportSlice";
 import itemListsReducer, {
@@ -41,6 +40,8 @@ const mockPlanSyncItemsInOrder = jest.fn();
 const mockPlanOverlaySyncSteps = jest.fn();
 const mockExecuteOutlineSyncStep = jest.fn();
 const mockExecuteOverlaySyncStep = jest.fn();
+let mockNativeOverlayMappingFresh = true;
+let mockNativeOverlayMappingKey: string | undefined;
 
 jest.mock("../../context/toastContext", () => ({
   useToast: () => ({
@@ -61,6 +62,9 @@ jest.mock("../../hooks/useServicePlanningImport", () => ({
     planOverlaySyncSteps: mockPlanOverlaySyncSteps,
     executeOutlineSyncStep: mockExecuteOutlineSyncStep,
     executeOverlaySyncStep: mockExecuteOverlaySyncStep,
+    isNativeOverlayPreviewFresh: (preview: { nativeOverlayMappingKey?: string } | null) =>
+      mockNativeOverlayMappingFresh &&
+      Boolean(preview && preview.nativeOverlayMappingKey === mockNativeOverlayMappingKey),
   }),
 }));
 
@@ -182,6 +186,8 @@ describe("useServicePlanningSyncRunner", () => {
   beforeEach(() => {
     jest.useFakeTimers();
     jest.clearAllMocks();
+    mockNativeOverlayMappingFresh = true;
+    mockNativeOverlayMappingKey = undefined;
     mockShowToast.mockReturnValue("toast-1");
   });
 
@@ -208,7 +214,7 @@ describe("useServicePlanningSyncRunner", () => {
 
     render(
       <Provider store={store}>
-        <MemoryRouter initialEntries={["/controller/service-planning"]}>
+        <MemoryRouter initialEntries={["/controller"]}>
           <RunnerHarness />
         </MemoryRouter>
       </Provider>,
@@ -244,7 +250,7 @@ describe("useServicePlanningSyncRunner", () => {
       }),
     );
     store.dispatch(
-      setStoredServicePlanningOutlineIfIdle(serviceOutlineFixture as any),
+      setServicePlanningRestoredOutlineUnlessStale(serviceOutlineFixture as any),
     );
     store.dispatch(
       setServicePlanningRestoredOutlineUnlessStale(
@@ -259,7 +265,7 @@ describe("useServicePlanningSyncRunner", () => {
 
     render(
       <Provider store={store}>
-        <MemoryRouter initialEntries={["/controller/service-planning"]}>
+        <MemoryRouter initialEntries={["/controller"]}>
           <RunnerHarness />
         </MemoryRouter>
       </Provider>,
@@ -306,7 +312,7 @@ describe("useServicePlanningSyncRunner", () => {
 
     render(
       <Provider store={store}>
-        <MemoryRouter initialEntries={["/controller/service-planning"]}>
+        <MemoryRouter initialEntries={["/controller"]}>
           <RunnerHarness />
         </MemoryRouter>
       </Provider>,
@@ -390,7 +396,7 @@ describe("useServicePlanningSyncRunner", () => {
 
     render(
       <Provider store={store}>
-        <MemoryRouter initialEntries={["/controller/service-planning"]}>
+        <MemoryRouter initialEntries={["/controller"]}>
           <RunnerHarness />
         </MemoryRouter>
       </Provider>,
@@ -437,6 +443,111 @@ describe("useServicePlanningSyncRunner", () => {
     expect(state.preview).toEqual(previewFixture);
   });
 
+  it("stops Sync All before overlay execution if mapping settings change during outline sync", async () => {
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+        undoable: () => undoableState,
+      },
+    });
+    mockPlanOutlineSyncSteps.mockReturnValue([{ kind: "insertSong", candidate: { title: "Welcome" } }]);
+    mockPlanOverlaySyncSteps.mockReturnValue({
+      steps: [{ action: "update", elementType: "Sermon", targetOverlayId: "overlay-1", patch: { event: "Sermon" } }],
+      skippedCount: 0,
+      skipReasons: [],
+    });
+    mockPlanSyncItemsInOrder.mockReturnValue([
+      { phase: "outline", label: "Welcome", status: "pending" },
+      { phase: "overlays", label: "Sermon", status: "pending" },
+    ]);
+    mockExecuteOutlineSyncStep.mockResolvedValue({ inserted: 1, activeLabel: "Welcome" });
+    mockNativeOverlayMappingKey = "mapping-a";
+    store.dispatch(setServicePlanningServiceOutline({
+      ...serviceOutlineFixture,
+      preview: {
+        ...previewFixture,
+        nativeOverlayMappingKey: "mapping-a",
+        nativeOverlaySummary: { selectedItemCount: 1 },
+      },
+    } as any));
+
+    render(
+      <Provider store={store}>
+        <MemoryRouter initialEntries={["/controller"]}>
+          <RunnerHarness />
+        </MemoryRouter>
+      </Provider>,
+    );
+    act(() => { store.dispatch(startServicePlanningSync({ mode: "both" })); });
+    await waitFor(() => expect(mockExecuteOutlineSyncStep).toHaveBeenCalledTimes(1));
+    mockNativeOverlayMappingFresh = false;
+    await act(async () => { await jest.advanceTimersByTimeAsync(300); });
+
+    await waitFor(() => {
+      expect(store.getState().servicePlanningImport.sync.status).toBe("failed");
+    });
+    expect(store.getState().servicePlanningImport.sync.error).toMatch(/settings.*changed/i);
+    expect(mockExecuteOverlaySyncStep).not.toHaveBeenCalled();
+  });
+
+  it("does not run prepared overlay steps against a newer rebuilt preview", async () => {
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+        undoable: () => undoableState,
+      },
+    });
+    mockPlanOutlineSyncSteps.mockReturnValue([{ kind: "insertSong", candidate: { title: "Welcome" } }]);
+    mockPlanOverlaySyncSteps.mockReturnValue({
+      steps: [{ action: "update", elementType: "Sermon", targetOverlayId: "overlay-1", patch: { event: "Sermon" } }],
+      skippedCount: 0,
+      skipReasons: [],
+    });
+    mockPlanSyncItemsInOrder.mockReturnValue([
+      { phase: "outline", label: "Welcome", status: "pending" },
+      { phase: "overlays", label: "Sermon", status: "pending" },
+    ]);
+    mockExecuteOutlineSyncStep.mockResolvedValue({ inserted: 1, activeLabel: "Welcome" });
+    mockNativeOverlayMappingKey = "mapping-a";
+    store.dispatch(setServicePlanningServiceOutline({
+      ...serviceOutlineFixture,
+      preview: {
+        ...previewFixture,
+        nativeOverlayMappingKey: "mapping-a",
+        nativeOverlaySummary: { selectedItemCount: 1 },
+      },
+    } as any));
+
+    render(
+      <Provider store={store}>
+        <MemoryRouter initialEntries={["/controller"]}>
+          <RunnerHarness />
+        </MemoryRouter>
+      </Provider>,
+    );
+    act(() => { store.dispatch(startServicePlanningSync({ mode: "both" })); });
+    await waitFor(() => expect(mockExecuteOutlineSyncStep).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      mockNativeOverlayMappingKey = "mapping-b";
+      store.dispatch(setServicePlanningServiceOutline({
+        ...serviceOutlineFixture,
+        preview: {
+          ...previewFixture,
+          nativeOverlayMappingKey: "mapping-b",
+          nativeOverlaySummary: { selectedItemCount: 1 },
+        },
+      } as any));
+    });
+    await act(async () => { await jest.advanceTimersByTimeAsync(300); });
+
+    await waitFor(() => {
+      expect(store.getState().servicePlanningImport.sync.status).toBe("failed");
+    });
+    expect(store.getState().servicePlanningImport.sync.error).toMatch(/settings changed/i);
+    expect(mockExecuteOverlaySyncStep).not.toHaveBeenCalled();
+  });
+
   it("links the target outline after a plan-sourced outline sync completes", async () => {
     const store = configureStore({
       reducer: {
@@ -461,7 +572,7 @@ describe("useServicePlanningSyncRunner", () => {
     render(
       <Provider store={store}>
         <ControllerInfoContext.Provider value={{ db: {} } as any}>
-          <MemoryRouter initialEntries={["/controller/service-planning"]}>
+          <MemoryRouter initialEntries={["/controller"]}>
             <RunnerHarness />
           </MemoryRouter>
         </ControllerInfoContext.Provider>
@@ -772,7 +883,7 @@ describe("useServicePlanningSyncRunner", () => {
 
     render(
       <Provider store={store}>
-        <MemoryRouter initialEntries={["/controller/service-planning"]}>
+        <MemoryRouter initialEntries={["/controller"]}>
           <RunnerHarness />
         </MemoryRouter>
       </Provider>,

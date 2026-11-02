@@ -7,9 +7,30 @@ export type ChatTaskbarScope = {
   actorId: string;
 };
 
+export const CHAT_TASKBAR_OVERLAY_BADGES = [
+  "1",
+  "2",
+  "3",
+  "4",
+  "5",
+  "6",
+  "7",
+  "8",
+  "9",
+  "9+",
+] as const;
+
+export type ChatTaskbarOverlayBadge =
+  (typeof CHAT_TASKBAR_OVERLAY_BADGES)[number];
+
+export type ChatTaskbarOverlayIcons = Record<
+  ChatTaskbarOverlayBadge,
+  NativeImage | null
+>;
+
 export type ChatTaskbarUnreadState = {
   scope: ChatTaskbarScope | null;
-  unread: boolean;
+  unreadCount: number;
   revision: number;
 };
 
@@ -26,20 +47,26 @@ type ChatTaskbarController = {
 };
 
 const TASKBAR_FLASH_FALLBACK_MS = 8_000;
-const UNREAD_DESCRIPTION = "Unread team chat messages";
-const CHAT_TASKBAR_OVERLAY_ASSET = "chat-unread-overlay.png";
+const CHAT_TASKBAR_OVERLAY_ASSET_PREFIX = "chat-unread-overlay-";
 
-export const findChatTaskbarOverlayIconPath = (options: {
-  resourcesPath?: string;
-  appPath: string;
-  mainDirectory: string;
-  exists: (path: string) => boolean;
-}): string | null => {
+const getOverlayAssetName = (badge: ChatTaskbarOverlayBadge) =>
+  `${CHAT_TASKBAR_OVERLAY_ASSET_PREFIX}${badge === "9+" ? "9-plus" : badge}.png`;
+
+export const findChatTaskbarOverlayIconPath = (
+  options: {
+    resourcesPath?: string;
+    appPath: string;
+    mainDirectory: string;
+    exists: (path: string) => boolean;
+  },
+  badge: ChatTaskbarOverlayBadge,
+): string | null => {
+  const assetName = getOverlayAssetName(badge);
   const possiblePaths = [
-    join(options.resourcesPath || options.appPath, "buildResources", CHAT_TASKBAR_OVERLAY_ASSET),
-    join(options.mainDirectory, "../../buildResources", CHAT_TASKBAR_OVERLAY_ASSET),
-    join(options.appPath, "buildResources", CHAT_TASKBAR_OVERLAY_ASSET),
-    join(options.mainDirectory, "../buildResources", CHAT_TASKBAR_OVERLAY_ASSET),
+    join(options.resourcesPath || options.appPath, "buildResources", assetName),
+    join(options.mainDirectory, "../../buildResources", assetName),
+    join(options.appPath, "buildResources", assetName),
+    join(options.mainDirectory, "../buildResources", assetName),
   ];
   return possiblePaths.find(options.exists) ?? null;
 };
@@ -67,13 +94,23 @@ export const isValidChatTaskbarUnreadState = (
   if (!value || typeof value !== "object") return false;
   const state = value as Record<string, unknown>;
   return (
-    hasOnlyKeys(state, ["scope", "unread", "revision"]) &&
+    hasOnlyKeys(state, ["scope", "unreadCount", "revision"]) &&
     (state.scope === null || isValidScope(state.scope)) &&
-    typeof state.unread === "boolean" &&
-    (state.scope !== null || state.unread === false) &&
+    Number.isSafeInteger(state.unreadCount) &&
+    Number(state.unreadCount) >= 0 &&
+    (state.scope !== null || state.unreadCount === 0) &&
     Number.isSafeInteger(state.revision) &&
     Number(state.revision) > 0
   );
+};
+
+const getBadgeForUnreadCount = (
+  unreadCount: number,
+): ChatTaskbarOverlayBadge | null => {
+  if (unreadCount <= 0) return null;
+  return unreadCount >= 10
+    ? "9+"
+    : (String(unreadCount) as ChatTaskbarOverlayBadge);
 };
 
 const scopeKey = (scope: ChatTaskbarScope) =>
@@ -82,7 +119,7 @@ const scopeKey = (scope: ChatTaskbarScope) =>
 export const createChatTaskbarController = (options: {
   platform: NodeJS.Platform | string;
   getWindow: () => TaskbarWindow | null;
-  overlayIcon: NativeImage | null;
+  overlayIcons: ChatTaskbarOverlayIcons;
   setTimer?: typeof setTimeout;
   clearTimer?: typeof clearTimeout;
 }): ChatTaskbarController => {
@@ -90,7 +127,7 @@ export const createChatTaskbarController = (options: {
   const clearTimer = options.clearTimer ?? clearTimeout;
   let currentScopeKey: string | null = null;
   let currentRevision = 0;
-  let hasUnread = false;
+  let currentUnreadCount = 0;
   let overlayNeedsRefresh = false;
   let isFlashing = false;
   let flashTimer: ReturnType<typeof setTimeout> | null = null;
@@ -121,20 +158,20 @@ export const createChatTaskbarController = (options: {
     }
 
     const nextScopeKey = value.scope ? scopeKey(value.scope) : null;
-    const nextHasUnread = value.unread && nextScopeKey !== null;
     const didChange =
       nextScopeKey !== currentScopeKey ||
-      nextHasUnread !== hasUnread ||
+      value.unreadCount !== currentUnreadCount ||
       overlayNeedsRefresh;
     currentRevision = value.revision;
     currentScopeKey = nextScopeKey;
-    hasUnread = nextHasUnread;
+    currentUnreadCount = value.unreadCount;
     if (!didChange) return true;
 
+    const badge = getBadgeForUnreadCount(currentUnreadCount);
     try {
       window.setOverlayIcon(
-        hasUnread ? options.overlayIcon : null,
-        hasUnread ? UNREAD_DESCRIPTION : "",
+        badge ? options.overlayIcons[badge] : null,
+        badge ? `Unread team chat messages: ${badge}` : "",
       );
     } catch {
       // A missing or unavailable taskbar overlay must not interrupt chat.
@@ -166,7 +203,7 @@ export const createChatTaskbarController = (options: {
   const reset = () => {
     stopFlashing();
     currentScopeKey = null;
-    hasUnread = false;
+    currentUnreadCount = 0;
     const window = options.getWindow();
     if (!isWindows || !window || window.isDestroyed()) return;
     try {

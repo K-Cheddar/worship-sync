@@ -18,8 +18,10 @@ import {
   buildServiceTimeItem,
   removeParentheticalPhrases,
   createNewItemList,
+  createItemListFromExisting,
 } from "./itemUtil";
 import type { MediaType, ServiceItem, BibleInfo, verseType } from "../types";
+import { isBibleDocumentActivityIdle } from "./contentReplicationActivity";
 
 jest.mock("./generateRandomId", () => ({
   __esModule: true,
@@ -532,6 +534,29 @@ Let Your fire fall`;
       expect(textBox?.words).toContain("Welcome and greeting");
     });
 
+    it("creates a named custom item without an initial slide", async () => {
+      const db = {
+        get: jest.fn().mockRejectedValue(Object.assign(new Error("missing"), { status: 404 })),
+        put: jest.fn().mockResolvedValue({ ok: true, id: "Welcome Slides", rev: "1-created" }),
+      };
+      const item = await createNewFreeForm({
+        name: "Welcome Slides",
+        text: "",
+        list: [],
+        db: db as never,
+        background: "#1a1a1a",
+        brightness: 100,
+        emptyItem: true,
+      });
+
+      expect(item.type).toBe("free");
+      expect(item.name).toBe("Welcome Slides");
+      expect(item.slides).toEqual([]);
+      expect(db.put).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "Welcome Slides", slides: [] }),
+      );
+    });
+
     it("reuses the full existing custom-item document without replacing edited slides or media", async () => {
       const persistedSlide = {
         id: "edited-slide",
@@ -685,6 +710,50 @@ Let Your fire fall`;
   });
 
   describe("createNewBible", () => {
+    it("keeps Bible creation activity active until its local document write settles", async () => {
+      let finishPut!: (result: { ok: true; rev: string }) => void;
+      const db = {
+        name: "bible-create-activity-test-db",
+        get: jest.fn(async () => { throw Object.assign(new Error("missing"), { status: 404 }); }),
+        put: jest.fn(() => new Promise<{ ok: true; rev: string }>((resolve) => {
+          finishPut = resolve;
+        })),
+      };
+      const pending = createNewBible({
+        name: "Genesis 1",
+        book: "Genesis",
+        chapter: "1",
+        version: "NKJV",
+        verses: [{ name: "1", index: 0, text: "In the beginning" }],
+        list: [],
+        db: db as never,
+        background: "",
+        brightness: 100,
+        fontMode: "fit",
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(db.put).toHaveBeenCalledTimes(1);
+      expect(isBibleDocumentActivityIdle(db.name)).toBe(false);
+
+      finishPut({ ok: true, rev: "1-created" });
+      await pending;
+      expect(isBibleDocumentActivityIdle(db.name)).toBe(true);
+    });
+
+    it("avoids an existing document ID even when its display name was changed", async () => {
+      const item = await createNewBible({
+        name: "John 3:16 NKJV",
+        book: "John", chapter: "3", version: "NKJV",
+        verses: [{ name: "16", index: 15, text: "For God so loved" }],
+        list: [{ _id: "John 3:16 NKJV", name: "Renamed reading", type: "bible", listId: "reading" }],
+        db: undefined, background: "bible.jpg", brightness: 47, fontMode: "fit",
+      });
+      expect(item._id).toBe("John 3:16 NKJV (1)");
+      expect(item.name).toBe("John 3:16 NKJV");
+      expect(item.background).toBe("bible.jpg");
+    });
+
     it("creates a new bible item with book, chapter, version and verses", async () => {
       const list: ServiceItem[] = [];
       const verses = [
@@ -1175,6 +1244,49 @@ Let Your fire fall`;
   });
 
   describe("createNewItemList", () => {
+    it.each([false, true])("waits for the detail write before returning a new outline (failure: %s)", async (fail) => {
+      let finish!: () => void;
+      let entered!: () => void;
+      const gate = new Promise<void>((resolve) => { finish = resolve; });
+      const started = new Promise<void>((resolve) => { entered = resolve; });
+      const writeError = new Error("Detail write failed");
+      const db = {
+        get: jest.fn().mockRejectedValue({ status: 404 }),
+        put: jest.fn(() => {
+          entered();
+          const write = gate.then(() => { if (fail) throw writeError; return { rev: "1-new" }; });
+          void write.catch(() => undefined);
+          return write;
+        }),
+      };
+      let settled = false;
+      const result = createNewItemList({ db: db as never, name: "New Outline", currentLists: [], controllerScope: "aux" }).then(
+        (list) => { settled = true; return { list, error: undefined }; },
+        (error: unknown) => { settled = true; return { list: undefined, error }; },
+      );
+      await started;
+      await Promise.resolve();
+      const finishedBeforeWrite = settled;
+      finish();
+      const outcome = await result;
+      expect(finishedBeforeWrite).toBe(false);
+      expect(outcome.error).toBe(fail ? writeError : undefined);
+      expect(outcome.list).toEqual(fail ? undefined : { _id: "New Outline", name: "New Outline", controllerScope: "aux" });
+    });
+
+    it.each([401, 403, 500])("does not create an outline after a %s read failure", async (status) => {
+      const error = Object.assign(new Error("Read failed"), { status });
+      const db = { get: jest.fn().mockRejectedValue(error), put: jest.fn().mockResolvedValue({ rev: "1-new" }) };
+      await expect(createNewItemList({ db: db as never, name: "New Outline", currentLists: [] })).rejects.toBe(error);
+      expect(db.put).not.toHaveBeenCalled();
+    });
+
+    it("reuses an existing outline without writing", async () => {
+      const db = { get: jest.fn().mockResolvedValue({ _id: "New Outline", name: "Saved" }), put: jest.fn() };
+      await expect(createNewItemList({ db: db as never, name: "New Outline", currentLists: [], controllerScope: "aux" })).resolves.toEqual({ _id: "New Outline", name: "Saved", controllerScope: "aux" });
+      expect(db.put).not.toHaveBeenCalled();
+    });
+
     it("leaves presentation-scoped outlines unscoped on the registry entry", async () => {
       const list = await createNewItemList({
         db: undefined,
@@ -1199,5 +1311,22 @@ Let Your fire fall`;
         controllerScope: "ctrl_lobby",
       });
     });
+  });
+
+  it("does not return a copied outline when its final detail write fails", async () => {
+    const error = new Error("Copied outline write failed");
+    const log = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const db = {
+      get: jest.fn().mockResolvedValue({ _id: "source", name: "Source", items: [], overlays: [] }),
+      put: jest.fn(() => {
+        const write = Promise.reject(error);
+        void write.catch(() => undefined);
+        return write;
+      }),
+    };
+    const result = await createItemListFromExisting({ db: db as never, currentLists: [], list: { _id: "source", name: "Source" } });
+    expect(result).toBeNull();
+    expect(log).toHaveBeenCalledWith(error);
+    log.mockRestore();
   });
 });

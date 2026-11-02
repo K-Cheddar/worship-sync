@@ -14,6 +14,7 @@ import {
   __getLocalVideoDiagnosticsForTests,
   __resetLocalVideoDiagnosticsForTests,
 } from "./localVideoDiagnostics";
+import * as captureQuality from "./localVideoCaptureQualityRelay";
 
 const videoStop = jest.fn();
 const audioStop = jest.fn();
@@ -68,6 +69,71 @@ describe("localVideoCapturePool", () => {
     stopAllBrowserDesktopShares();
     localStorage.removeItem("worshipsync_local_video_debug");
     __resetLocalVideoDiagnosticsForTests();
+    delete window.__ELECTRON__;
+    window.location.hash = "";
+    jest.restoreAllMocks();
+  });
+
+  it("waits for the host then pools shared Electron consumers without taking its lock", async () => {
+    window.__ELECTRON__ = true;
+    let hostReady!: () => void;
+    jest.spyOn(captureQuality, "waitForLocalVideoCaptureHost").mockReturnValue(
+      new Promise<void>((resolve) => { hostReady = resolve; }),
+    );
+    const request = jest.fn();
+    Object.defineProperty(navigator, "locks", { configurable: true, value: { request } });
+    const projector = acquireWarmLocalVideoCapture("source-1", binding, false, "projector", { shared: true });
+    const controller = acquireWarmLocalVideoCapture("source-1", binding, false, "controller", { shared: true });
+    const aux = acquireWarmLocalVideoCapture("source-1", binding, false, "aux", { shared: true });
+    expect(getUserMedia).not.toHaveBeenCalled();
+    hostReady();
+    await Promise.all([projector, controller, aux]);
+    expect(request).not.toHaveBeenCalled();
+    expect(getUserMedia).toHaveBeenCalledTimes(2);
+    expect(getUserMedia).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      video: expect.objectContaining({ resizeMode: { exact: "none" } }),
+    }));
+    await releaseWarmLocalVideoCapture("source-1", "controller");
+    await releaseWarmLocalVideoCapture("source-1", "aux");
+    expect(videoStop).not.toHaveBeenCalled();
+    await releaseWarmLocalVideoCapture("source-1", "projector");
+    expect(videoStop).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not open capture after a waiting shared consumer retires", async () => {
+    window.__ELECTRON__ = true;
+    let hostReady!: () => void;
+    jest.spyOn(captureQuality, "waitForLocalVideoCaptureHost").mockReturnValue(
+      new Promise<void>((resolve) => { hostReady = resolve; }),
+    );
+    const pending = acquireWarmLocalVideoCapture("source-1", binding, false, "preview", { shared: true });
+    const rejected = pending.catch((error: unknown) => error);
+    const release = releaseWarmLocalVideoCapture("source-1", "preview");
+    hostReady();
+    expect(await rejected).toEqual(new Error("Local capture consumer was released."));
+    await release;
+    expect(getUserMedia).not.toHaveBeenCalled();
+  });
+
+  it("keeps the host exclusive even when shared capture is requested for a publisher", async () => {
+    window.__ELECTRON__ = true;
+    window.location.hash = "#/local-video-capture-host";
+    const discover = jest.spyOn(captureQuality, "waitForLocalVideoCaptureHost");
+    const request = jest.fn(async (_name, _options, callback) => callback(null));
+    Object.defineProperty(navigator, "locks", { configurable: true, value: { request } });
+    await expect(acquireWarmLocalVideoCapture("source-1", binding, true, "host", { shared: true }))
+      .rejects.toBeInstanceOf(LocalVideoCaptureOwnedError);
+    expect(discover).not.toHaveBeenCalled();
+    expect(getUserMedia).not.toHaveBeenCalled();
+  });
+
+  it("delegates Electron picker/transmit warming to the host without opening the device", async () => {
+    window.__ELECTRON__ = true;
+    const ready = jest.spyOn(captureQuality, "waitForLocalVideoCaptureHost").mockResolvedValue();
+    await expect(acquireWarmLocalVideoCaptureWithBusyRetry("source-1", binding, true, "transmit"))
+      .rejects.toBeInstanceOf(LocalVideoCaptureOwnedError);
+    expect(ready).toHaveBeenCalledTimes(1);
+    expect(getUserMedia).not.toHaveBeenCalled();
   });
 
   it("reuses one persistent capture for repeated consumers", async () => {

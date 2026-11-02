@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-25-worshipsync-plan-transfer",
+  "date": "2026-10-25",
+  "type": "new",
+  "title": "Move plans with WorshipSync",
+  "description": "Move plans with JSON files or public links, with draft protection during import. JSON transfers also keep pre-service and post-service sections."
+}

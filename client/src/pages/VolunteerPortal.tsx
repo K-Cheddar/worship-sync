@@ -24,8 +24,12 @@ const VolunteerPortal = () => {
     let active = true;
     void openVolunteerSession().then((value) => { if (active) { setSession(value); setStatus("ready"); } }).catch((error: unknown) => {
       if (!active) return;
-      const retryable = !(error instanceof VolunteerApiError) || error.status === 429 || error.status >= 500;
-      setStatus(retryable ? "error" : error.details.accessStatus || "invalid");
+      const accessStatus = error instanceof VolunteerApiError ? error.details.accessStatus : "";
+      if (accessStatus === "invalid" || accessStatus === "revoked" || accessStatus === "expired") {
+        setStatus(accessStatus);
+      } else {
+        setStatus("error");
+      }
     });
     return () => { active = false; mounted.current = false; controller.current?.abort(); };
   }, [retry]);

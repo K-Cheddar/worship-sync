@@ -103,6 +103,54 @@ describe("buildServicePlanSectionsFromImport", () => {
     expect(richTextToPlainText(matched.title)).toBe("Great Are You Lord");
   });
 
+  it("keeps PDF item wording while matching the extracted song title", () => {
+    const pdfData: ServicePlanningImportData = {
+      planLabel: "Sunday Service",
+      sections: [{
+        sectionName: "Worship",
+        rows: [
+          { elementType: "", title: "Opening Song: How Great Thou Art", songTitle: "How Great Thou Art", ledBy: "" },
+          { elementType: "", title: "Song: Great Is Thy Faithfulness", songTitle: "Great Is Thy Faithfulness", ledBy: "" },
+          { elementType: "", title: "Appeal Song: I Surrender All", songTitle: "I Surrender All", ledBy: "" },
+          { elementType: "", title: "Worship Entrance: Be Thou My Vision", songTitle: "Be Thou My Vision", ledBy: "" },
+        ],
+      }],
+      teamAssignments: [],
+    };
+    const pdfSongs = [
+      { _id: "great-thou-art", name: "How Great Thou Art" },
+      { _id: "great-faithfulness", name: "Great Is Thy Faithfulness" },
+      { _id: "surrender", name: "I Surrender All" },
+      { _id: "be-thou", name: "Be Thou My Vision" },
+    ];
+    const [pdfSection] = buildServicePlanSectionsFromImport(pdfData, pdfSongs, {
+      preserveSourceTitle: true,
+    });
+
+    expect(pdfSection.elements.map(({ title }) => richTextToPlainText(title))).toEqual([
+      "Opening Song: How Great Thou Art",
+      "Song: Great Is Thy Faithfulness",
+      "Appeal Song: I Surrender All",
+      "Worship Entrance: Be Thou My Vision",
+    ]);
+    expect(pdfSection.elements.map(({ songRef }) => songRef)).toEqual([
+      { kind: "library", songId: "great-thou-art", songName: "How Great Thou Art" },
+      { kind: "library", songId: "great-faithfulness", songName: "Great Is Thy Faithfulness" },
+      { kind: "library", songId: "surrender", songName: "I Surrender All" },
+      { kind: "library", songId: "be-thou", songName: "Be Thou My Vision" },
+    ]);
+    expect(pdfSection.elements.map(({ sourceContentTitleRaw }) => sourceContentTitleRaw)).toEqual([
+      "How Great Thou Art",
+      "Great Is Thy Faithfulness",
+      "I Surrender All",
+      "Be Thou My Vision",
+    ]);
+
+    // Other import sources continue to use the existing content-title selection.
+    const [ordinarySection] = buildServicePlanSectionsFromImport(pdfData, pdfSongs);
+    expect(richTextToPlainText(ordinarySection.elements[0].title)).toBe("How Great Thou Art");
+  });
+
   it("imports multiple Led by names as separate assignees", () => {
     const [section] = buildServicePlanSectionsFromImport(
       {

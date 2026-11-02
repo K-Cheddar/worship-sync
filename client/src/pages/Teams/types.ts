@@ -36,11 +36,13 @@ export type TeamsData = {
   intakeRecipients: TeamIntakeRecipient[];
   smsEligibilityByMemberId?: Record<string, SmsMemberEligibility>;
   smsDeliveryAttempts?: SmsDeliveryAttempt[];
+  /** True when a capped bootstrap makes authoritative membership counts incomplete. */
+  truncated?: boolean;
 };
 
 export type TeamsScheduleDrafts = Record<string, TeamSchedulePayload>;
 
-export type TeamsDataKey = Exclude<keyof TeamsData, "services" | "smsEligibilityByMemberId">;
+export type TeamsDataKey = Exclude<keyof TeamsData, "services" | "smsEligibilityByMemberId" | "truncated">;
 
 export type TeamsTab =
   | "schedule"

@@ -1,6 +1,8 @@
 import {
   publishLocalVideoCaptureQuality,
   subscribeLocalVideoCaptureQuality,
+  waitForLocalVideoCaptureHost,
+  subscribeLocalVideoCaptureDemand,
 } from "./localVideoCaptureQualityRelay";
 
 type MessageListener = (event: MessageEvent<unknown>) => void;
@@ -53,7 +55,78 @@ describe("localVideoCaptureQualityRelay", () => {
   });
 
   afterEach(() => {
+    delete window.__ELECTRON__;
     jest.useRealTimers();
+  });
+
+  it("notifies the host of standalone discovery and continuing quality demand", async () => {
+    const onDemand = jest.fn();
+    const stopDemand = subscribeLocalVideoCaptureDemand(onDemand);
+    const ready = waitForLocalVideoCaptureHost("standalone");
+    await advanceTimers(0);
+    expect(onDemand).toHaveBeenCalledWith("standalone");
+    const stopHost = publishLocalVideoCaptureQuality("standalone", {
+      getVideoTracks: () => [{}],
+    } as unknown as MediaStream, true);
+    await advanceTimers(0);
+    await ready;
+    const output = subscribeLocalVideoCaptureQuality("standalone", 640, 360);
+    await advanceTimers(2_000);
+    expect(onDemand.mock.calls.filter(([id]) => id === "standalone").length).toBeGreaterThan(1);
+    output.stop();
+    stopHost();
+    stopDemand();
+    expect(FakeBroadcastChannel.channels).toHaveLength(0);
+  });
+
+  it("answers discovery only after the capture publisher exists and cleans up", async () => {
+    const ready = waitForLocalVideoCaptureHost("source-1");
+    const stopOther = publishLocalVideoCaptureQuality("other", {
+      getVideoTracks: () => [{}],
+    } as unknown as MediaStream);
+    const onReady = jest.fn();
+    void ready.then(onReady);
+    await advanceTimers(500);
+    expect(onReady).not.toHaveBeenCalled();
+    const stopHost = publishLocalVideoCaptureQuality("source-1", {
+      getVideoTracks: () => [{}],
+    } as unknown as MediaStream);
+    await advanceTimers(0);
+    await ready;
+    expect(onReady).toHaveBeenCalledTimes(1);
+    stopOther();
+    stopHost();
+    expect(FakeBroadcastChannel.channels).toHaveLength(0);
+  });
+
+  it("bounds discovery when no host exists", async () => {
+    const result = waitForLocalVideoCaptureHost("missing").catch((error: unknown) => error);
+    await advanceTimers(3_000);
+    expect(await result).toEqual(new Error("Local capture host is not ready."));
+    expect(FakeBroadcastChannel.channels).toHaveLength(0);
+  });
+
+  it("keeps the Electron host at audience quality when only previews remain", async () => {
+    window.__ELECTRON__ = true;
+    const videoTrack = { applyConstraints: jest.fn().mockResolvedValue(undefined) };
+    const stopHost = publishLocalVideoCaptureQuality("source-1", {
+      getVideoTracks: () => [videoTrack],
+    } as unknown as MediaStream, true);
+    const preview = subscribeLocalVideoCaptureQuality("source-1", 640, 360,
+      { frameRate: 30, windowRole: "projector-preview" });
+    const audience = subscribeLocalVideoCaptureQuality("source-1", 2_560, 1_440,
+      { frameRate: 60, windowRole: "projector" });
+    await advanceTimers(250);
+    expect(videoTrack.applyConstraints).toHaveBeenLastCalledWith({
+      width: { ideal: 2_560 }, height: { ideal: 1_440 }, frameRate: { ideal: 60 },
+    });
+    audience.stop();
+    await advanceTimers(10_000);
+    expect(videoTrack.applyConstraints).toHaveBeenLastCalledWith({
+      width: { ideal: 1_920 }, height: { ideal: 1_080 }, frameRate: { ideal: 60 },
+    });
+    preview.stop();
+    stopHost();
   });
 
   it("applies only the highest active output requirement", async () => {

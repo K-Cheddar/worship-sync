@@ -16,11 +16,25 @@ The mobile bottom bar contains Services, Scheduling, and Teams only. Home remain
 
 The full Menu drawer uses the same utilities and functional groups on all viewport sizes: Home, What's New, About, and interface zoom remain accessible. Menu → Home resolves to the existing Home page. The bottom bar ends when leaving this shell, including when opening Home.
 
+The separate **My Teams** Home card opens `/teams-and-services/groups` directly. The administrative **Teams and Services** entry keeps its `/teams-and-services` destination, including its existing stored-route behavior.
+
 For Teams and Services below the desktop sidebar breakpoint, a compact 48px application toolbar stays visible while scrolling. It contains the universal Menu and compact sync/account controls; the page title and icon are omitted because the secondary route tabs identify the page. Route tabs stay directly below the toolbar in normal layout flow. Only the page's content scrollport moves. The Service Plan keeps its own compact details affordance and plan actions available. At desktop widths, the existing full toolbar, title, icon, and church branding remain unchanged. Other shared-shell consumers keep their current layout; optional header collapse support remains available to pages that explicitly opt in. The shell reserves the fixed bottom bar and safe-area height, and the fixed service-plan action bar uses the same clearance.
 
 Secondary route tabs use the shared Tabs primitive; labels never compress, horizontal scrolling keeps the selected tab visible, and browser history controls the selected state. The mobile bottom bar and menu behavior are unchanged.
 
 Teams and Services use the shared temporary pending-route mechanism to select a requested destination before its lazy page is ready. The Teams navigation guard continues to own unsaved-edit confirmation separately.
+
+## Editor action navigation contract
+
+For ordinary editors across Teams, Services, and Church Administration:
+
+- **Close** dismisses the current panel, modal, drawer, or editor.
+- **Cancel** abandons the current editing operation, confirming unsaved changes when needed.
+- **Back** navigates to an explicitly identified previous destination or parent view and respects dirty and active-save guards.
+- **Save** persists changes without navigating unless the workflow explicitly requires otherwise.
+- **Return context** supplies an optional destination; it must not override Close or Cancel automatically. Retain it while closing/reopening editors and consume it only on explicit return navigation, including its history and stored metadata.
+
+Use separate intention-revealing handlers for dismissal and navigation. Explicit workflow exits, such as canceling a dedicated full-page wizard, may differ when documented. **Approval source:** Member Editor Navigation and Navigation Antipatterns request, 2026-10-23.
 
 ## Boundaries
 
@@ -28,6 +42,7 @@ No pages are combined. Authorization and direct-route enforcement, data models, 
 
 ## Product decisions
 
+- **2026-10-23 — Open My Teams on the Teams page.** The My Teams Home card navigates directly to `/teams-and-services/groups`; the separate administrative Teams and Services entry retains its root route and stored navigation behavior. **Approval source:** current WorshipSync time-zone access fix request, 2026-10-23.
 - **2026-10-14 — Keep the Teams and Services toolbar visible while scrolling.** Approved behavior: use a compact, always-visible toolbar below the desktop sidebar breakpoint, remove the page title/icon from that row, keep route tabs directly below it, and let only the content scrollport move. Preserve the current desktop toolbar and other shared-shell layouts. The request identifies header collapse and sticky collisions as the source of layout instability and asks for more space in Service Plan while keeping its controls accessible. **Approval source:** Compact Mobile Toolbar and Navigation Layout request, 2026-10-14.
 
 ## Verification references

@@ -58,6 +58,20 @@ const songTitleFromItemTitle = (title: string): string | undefined => {
 const normalizeItemTitle = (title: string): string =>
   title.replace(/:+\s*$/, "").trim();
 
+/** One title meaning for parser rows, persisted source snapshots and matching.
+ * Category prefixes remain in rawTitle; only named song categories are removed. */
+export const normalizePlanningCenterPdfTitle = (value: string) => {
+  const rawTitle = normalizeItemTitle(value);
+  const songTitle = songTitleFromItemTitle(rawTitle);
+  const displayTitle = songTitle || rawTitle;
+  return {
+    rawTitle,
+    displayTitle,
+    matchingTitle: displayTitle.toLocaleLowerCase().replace(/\s+/g, " "),
+    songTitle,
+  };
+};
+
 /** Section titles are short and not a dated service header line. */
 const looksLikePrefixedSectionName = (line: string): boolean =>
   line.length > 0 && line.length <= 80 && !/\b20\d{2}\b/.test(line);
@@ -72,8 +86,7 @@ type DraftRow = {
 
 const flushDraft = (draft: DraftRow | null): EventData | null => {
   if (!draft) return null;
-  const title = normalizeItemTitle(draft.title);
-  const songTitle = songTitleFromItemTitle(title);
+  const { rawTitle: title, songTitle } = normalizePlanningCenterPdfTitle(draft.title);
   const ledBy = draft.assigneeLabels.join(", ");
   const note = draft.noteLines.join("\n").trim();
   const scriptureRefs = (() => {

@@ -24,11 +24,18 @@ it.each([429, 500, 503])("retains ingress only in memory for an explicit retry a
   expect(fetcher.mock.calls.filter(([path]) => String(path).endsWith("/redeem"))).toHaveLength(2);
 });
 
-it.each([400, 401, 403, 404, 410])("clears definitive invalid authority while retaining expired ingress for recovery (HTTP %s)", async (status) => {
+it.each([
+  [400, undefined, true],
+  [401, undefined, true],
+  [403, undefined, true],
+  [403, "revoked", false],
+  [404, "invalid", false],
+  [410, "expired", true],
+])("retains ingress unless the server identifies an invalid or revoked credential (HTTP %s, %s)", async (status, accessStatus, retained) => {
   const token = ingress();
-  jest.mocked(global.fetch).mockResolvedValueOnce(response({}, status));
+  jest.mocked(global.fetch).mockResolvedValueOnce(response({ accessStatus }, status));
   await expect(openVolunteerSession()).rejects.toBeInstanceOf(VolunteerApiError);
-  expect(readVolunteerIngress()).toBe(status === 410 ? token : "");
+  expect(readVolunteerIngress()).toBe(retained ? token : "");
 });
 
 it("retries a lost redemption response without requiring the link to be reopened", async () => {
@@ -62,3 +69,41 @@ it("coalesces concurrent redemption and retires it before a different personal l
   expect(redemptions).toHaveLength(2);
   expect(JSON.parse(String(redemptions[1][1]?.body))).toEqual({ token: nextToken });
 });
+
+it("does not reuse or return a stale redemption after the personal link changes in flight", async () => {
+  const firstToken = ingress("first-personal-link");
+  let finishFirstRedemption!: (value: Response) => void;
+  const fetcher = jest.mocked(global.fetch).mockImplementation((path, init) => {
+    if (String(path).endsWith("/session")) return Promise.resolve(response(session));
+    const body = JSON.parse(String(init?.body)) as { token: string };
+    if (body.token === firstToken) {
+      return new Promise((resolve) => { finishFirstRedemption = resolve; });
+    }
+    return Promise.resolve(response({ success: true }));
+  });
+  const firstOpen = openVolunteerSession();
+  await waitForMicrotasks();
+  const secondToken = ingress("second-personal-link");
+  const secondOpen = openVolunteerSession();
+
+  await actAsync(() => finishFirstRedemption(response({ success: true })));
+  const [firstSession, secondSession] = await Promise.all([firstOpen, secondOpen]);
+
+  expect(firstSession).toEqual(session);
+  expect(secondSession).toEqual(session);
+  expect(readVolunteerIngress()).toBe("");
+  const redemptions = fetcher.mock.calls.filter(([path]) => String(path).endsWith("/redeem"));
+  expect(redemptions).toHaveLength(2);
+  expect(JSON.parse(String(redemptions[0][1]?.body))).toEqual({ token: firstToken });
+  expect(JSON.parse(String(redemptions[1][1]?.body))).toEqual({ token: secondToken });
+});
+
+const waitForMicrotasks = async () => {
+  await Promise.resolve();
+  await Promise.resolve();
+};
+
+const actAsync = async (action: () => void) => {
+  action();
+  await waitForMicrotasks();
+};

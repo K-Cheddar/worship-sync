@@ -102,12 +102,46 @@ export const projectViewOnlySchedule = (schedule) => {
  * must receive the complete canonical active team set for this church.
  */
 export const projectTeamsBootstrapForAccess = ({ data, access } = {}) => {
+  const rawSource = data && typeof data === "object" ? data : {};
+  const sourceTeams = Array.isArray(rawSource.teams) ? rawSource.teams : null;
+  // Derive a coarse assignment status from the canonical source before applying
+  // the caller's team scope. Hidden team IDs and names never enter the projection.
+  const activeMembershipTeams = sourceTeams?.filter(
+    (team) => team && !team.archivedAt,
+  ) || [];
+  const canDetermineTeamMemberships = Boolean(
+    sourceTeams &&
+    rawSource.truncated !== true &&
+    activeMembershipTeams.every((team) =>
+      typeof (team.teamId || team.id) === "string" &&
+      (team.teamId || team.id).trim() !== "" &&
+      Array.isArray(team.memberIds) &&
+      team.memberIds.every((memberId) =>
+        typeof memberId === "string" && memberId.trim() !== "",
+      ),
+    ),
+  );
+  const memberIdsWithMembership = new Set(
+    activeMembershipTeams.flatMap((team) =>
+      Array.isArray(team.memberIds) ? team.memberIds : [],
+    ),
+  );
+  const getTeamMembershipStatus = (member) => {
+    if (!canDetermineTeamMemberships || !member?.memberId) return "unknown";
+    return memberIdsWithMembership.has(member.memberId) ? "assigned" : "none";
+  };
+  const source = {
+    ...rawSource,
+    members: (Array.isArray(rawSource.members) ? rawSource.members : []).map((member) =>
+      member && typeof member === "object"
+        ? { ...member, teamMembershipStatus: getTeamMembershipStatus(member) }
+        : member,
+    ),
+  };
   // Only Teams editors receive the raw church-wide projection. View-all users
   // still need the same read projection used by scoped readers so private
   // member fields and management-only schedule data do not cross the boundary.
-  if (access?.editAll === true) return data;
-
-  const source = data && typeof data === "object" ? data : {};
+  if (access?.editAll === true) return source;
   const visibleTeamIds = access?.viewAll === true
     ? new Set(
         (Array.isArray(source.teams) ? source.teams : [])
@@ -168,6 +202,11 @@ export const projectTeamsBootstrapForAccess = ({ data, access } = {}) => {
     Array.isArray(source.teamRoles) ? source.teamRoles : []
   ).filter((role) => role && projectedTeamIds.has(role.teamId));
   const roleById = new Map(teamRoles.map((role) => [role.roleId, role]));
+  const allRoleById = new Map(
+    (Array.isArray(source.teamRoles) ? source.teamRoles : [])
+      .filter((role) => role?.roleId)
+      .map((role) => [role.roleId, role]),
+  );
   const qualificationAreas = (
     Array.isArray(source.qualificationAreas) ? source.qualificationAreas : []
   ).filter((area) => area && projectedTeamIds.has(area.teamId));
@@ -179,6 +218,11 @@ export const projectTeamsBootstrapForAccess = ({ data, access } = {}) => {
   ).filter((level) => level && areaById.has(level.areaId));
   const levelById = new Map(
     qualificationLevels.map((level) => [level.levelId, level]),
+  );
+  const allLevelById = new Map(
+    (Array.isArray(source.qualificationLevels) ? source.qualificationLevels : [])
+      .filter((level) => level?.levelId)
+      .map((level) => [level.levelId, level]),
   );
   const memberIds = new Set(
     teams.flatMap((team) =>
@@ -193,6 +237,7 @@ export const projectTeamsBootstrapForAccess = ({ data, access } = {}) => {
 
   const members = [];
   const editableMemberIds = [];
+  const teamProfileReadyMemberIds = [];
   for (const memberId of memberIds) {
     const member = membersById.get(memberId);
     if (!member) continue;
@@ -208,6 +253,7 @@ export const projectTeamsBootstrapForAccess = ({ data, access } = {}) => {
     // schedule/intake-only truncation suppresses scoped member editing. Keep
     // failing closed until per-collection completeness is available.
     let hasUnresolvedOwnership = source.truncated === true;
+    let hasIncompleteTeamProfile = source.truncated === true;
     for (const field of [
       "positionIds",
       "desiredPositionIds",
@@ -262,6 +308,13 @@ export const projectTeamsBootstrapForAccess = ({ data, access } = {}) => {
         continue;
       }
       if (
+        typeof positionId !== "string" ||
+        position.positionId !== positionId ||
+        position.churchId !== member.churchId
+      ) {
+        hasIncompleteTeamProfile = true;
+      }
+      if (
         position.churchId !== undefined &&
         member.churchId !== undefined &&
         position.churchId !== member.churchId
@@ -271,12 +324,42 @@ export const projectTeamsBootstrapForAccess = ({ data, access } = {}) => {
       }
       addKnownTeamOwnership(position.teamId);
     }
+    const qualificationIds = new Set();
     for (const qualification of Array.isArray(member.qualifications)
       ? member.qualifications
       : []) {
       if (!qualification || typeof qualification !== "object" || Array.isArray(qualification)) {
         hasUnresolvedOwnership = true;
         continue;
+      }
+      const qualificationId = typeof qualification.qualificationId === "string"
+        ? qualification.qualificationId.trim()
+        : "";
+      if (
+        !qualificationId ||
+        qualification.qualificationId !== qualificationId ||
+        qualificationIds.has(qualificationId)
+      ) {
+        hasIncompleteTeamProfile = true;
+      }
+      qualificationIds.add(qualificationId);
+      if (
+        typeof qualification.areaId !== "string" ||
+        !qualification.areaId.trim() ||
+        qualification.areaId !== qualification.areaId.trim()
+      ) {
+        hasIncompleteTeamProfile = true;
+      }
+      if (
+        Object.hasOwn(qualification, "status") &&
+        !["in_training", "completed", "expired"].includes(qualification.status)
+      ) {
+        hasIncompleteTeamProfile = true;
+      }
+      for (const field of ["completedAt", "expiresAt", "notes"]) {
+        if (Object.hasOwn(qualification, field) && typeof qualification[field] !== "string") {
+          hasIncompleteTeamProfile = true;
+        }
       }
       const areaTeamId = allAreaById.get(qualification.areaId)?.teamId;
       if (qualification?.areaId && !allAreaById.has(qualification.areaId)) {
@@ -295,7 +378,36 @@ export const projectTeamsBootstrapForAccess = ({ data, access } = {}) => {
       if (qualification.teamId && areaTeamId && qualification.teamId !== areaTeamId) {
         hasUnresolvedOwnership = true;
       }
+      const area = allAreaById.get(qualification.areaId);
+      if (qualification.areaId && area && area.churchId !== member.churchId) {
+        hasIncompleteTeamProfile = true;
+      }
+      if (qualification.levelId) {
+        const level = allLevelById.get(qualification.levelId);
+        if (
+          !level ||
+          level.churchId !== member.churchId ||
+          level.areaId !== qualification.areaId ||
+          (level.levelId !== undefined && level.levelId !== qualification.levelId)
+        ) {
+          hasIncompleteTeamProfile = true;
+        }
+      }
       addKnownTeamOwnership(areaTeamId || qualification.teamId);
+    }
+    for (const [teamId, membership] of Object.entries(member.teamMemberships || {})) {
+      const roleId = membership?.roleId;
+      if (roleId === undefined || roleId === null || roleId === "") continue;
+      const role = allRoleById.get(roleId);
+      if (
+        typeof roleId !== "string" ||
+        !role ||
+        role.churchId !== member.churchId ||
+        role.teamId !== teamId ||
+        (role.roleId !== undefined && role.roleId !== roleId)
+      ) {
+        hasIncompleteTeamProfile = true;
+      }
     }
     const isFullyEditable =
       relevantTeamIds.size > 0 &&
@@ -305,12 +417,14 @@ export const projectTeamsBootstrapForAccess = ({ data, access } = {}) => {
       [...memberTeamIds].filter((teamId) => editableTeamIds.has(teamId)),
     );
     const projected = copyDefinedFields(member, READ_ONLY_MEMBER_FIELDS);
+    projected.teamMembershipStatus = member.teamMembershipStatus;
     projected.positionIds = (
       Array.isArray(member.positionIds) ? member.positionIds : []
     ).filter((positionId) => positionById.has(positionId));
 
     if (isFullyEditable) {
       editableMemberIds.push(memberId);
+      if (!hasIncompleteTeamProfile) teamProfileReadyMemberIds.push(memberId);
       projected.desiredPositionIds = (
         Array.isArray(member.desiredPositionIds)
           ? member.desiredPositionIds
@@ -385,6 +499,7 @@ export const projectTeamsBootstrapForAccess = ({ data, access } = {}) => {
   const result = {
     members,
     editableMemberIds,
+    teamProfileReadyMemberIds,
     positions,
     teams,
     teamRoles,

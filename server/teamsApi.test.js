@@ -15,8 +15,9 @@ process.env.RESEND_API_KEY = "";
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import express from "express";
 import twilio from "twilio";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { smsConsentIdForChurchPhone } from "./smsConsent.js";
 import { isPublicSharePathname } from "../client/src/utils/publicSharePathRedirect.ts";
 import { buildTeamSchedulePeriod } from "../client/src/pages/Teams/schedule/teamSchedulePeriod.ts";
@@ -64,6 +65,9 @@ import {
   setSmsProviderForServerTests,
 } from "./smsProvider.js";
 import { volunteerIdentityClaimId } from "./volunteerIdentity.js";
+import { createVolunteerContactIndex, volunteerContactIndexFields } from "./volunteerContactIndex.js";
+import { createVolunteerPersonalAccess } from "./volunteerPersonalAccess.js";
+import { createVolunteerRecovery } from "./volunteerRecovery.js";
 
 // Minimal stand-in for an SSE response: captures the `data:` frames the teams
 // broadcaster writes. Shares the same teamsSse.js singleton the handlers use.
@@ -205,6 +209,7 @@ const createHumanContext = async (
     churchId = `teams_api_church_${suffix}`,
     role = "admin",
     appAccess = "full",
+    controllerAccess,
     permissions,
   } = {},
 ) => {
@@ -218,6 +223,7 @@ const createHumanContext = async (
       churchId,
       role,
       appAccess,
+      controllerAccess,
       permissions,
     });
   // Test churches model an explicitly configured UTC church by default. Tests
@@ -2091,7 +2097,7 @@ test("church service timezone is stored separately from Chat browser hints", asy
     params: { churchId: context.churchId },
   });
   assert.equal(initial.statusCode, 200);
-  assert.equal(initial.payload.serviceTimeZone, "UTC");
+  assert.equal(initial.payload.serviceTimeZone, null);
   assert.equal(initial.payload.isConfigured, false);
   assert.equal(initial.payload.legacyTimeZoneSuggestion, "America/Los_Angeles");
 
@@ -2221,7 +2227,7 @@ test("service timezone read grants only the requested permission axis", async (t
     ["controller", "view", { teams: "none", services: "none" }, 200],
     ["services", "member", { teams: "none", services: "view" }, 200],
     ["teams", "member", { teams: "view", services: "none" }, 200],
-    ["no_access", "member", { teams: "none", services: "none" }, 403],
+    ["membership_only", "none", { teams: "none", services: "none" }, 200],
   ];
   const members = [];
   for (const [name, appAccess, permissions] of cases) {
@@ -2229,11 +2235,15 @@ test("service timezone read grants only the requested permission axis", async (t
       churchId: owner.churchId,
       role: "member",
       appAccess,
+      ...(name === "membership_only" ? { controllerAccess: "none" } : {}),
       permissions,
     }));
   }
   await setDoc(COLLECTIONS.churches, owner.churchId, {
     serviceTimeZone: "America/New_York",
+  }, { merge: true });
+  await setDoc("chatSettings", owner.churchId, {
+    timeZone: "America/Los_Angeles",
   }, { merge: true });
 
   for (const [index, [name, , , expectedStatus]] of cases.entries()) {
@@ -2242,7 +2252,21 @@ test("service timezone read grants only the requested permission axis", async (t
       context: member,
     });
     assert.equal(timezone.statusCode, expectedStatus, name);
-    if (name === "controller") {
+    if (name === "membership_only") {
+      assert.equal(timezone.payload.legacyTimeZoneSuggestion, undefined);
+      const bootstrap = await resolveRequestBootstrap(createReq({
+        params: { churchId: member.churchId },
+        headers: member.headers,
+        session: member.session,
+      }));
+      assert.equal(bootstrap.controllerAccess, "none");
+      assert.deepEqual(bootstrap.permissions, {
+        teams: "none",
+        services: "none",
+        teamScopes: {},
+      });
+    }
+    if (name === "controller" || name === "membership_only") {
       assert.equal(timezone.payload.serviceTimeZone, "America/New_York");
       assert.equal(timezone.payload.legacyTimeZoneSuggestion, undefined);
       assert.equal(
@@ -2255,6 +2279,43 @@ test("service timezone read grants only the requested permission axis", async (t
       );
     }
   }
+
+  await setDoc(COLLECTIONS.churches, owner.churchId, {
+    serviceTimeZone: null,
+  }, { merge: true });
+  const unconfiguredRestricted = await callHandler(
+    authHandlers.getChurchServiceTimeZone,
+    { context: members[3] },
+  );
+  assert.equal(unconfiguredRestricted.statusCode, 200);
+  assert.equal(unconfiguredRestricted.payload.serviceTimeZone, null);
+  assert.equal(unconfiguredRestricted.payload.isConfigured, false);
+  assert.equal(unconfiguredRestricted.payload.legacyTimeZoneSuggestion, undefined);
+
+  const unauthenticated = await callHandler(authHandlers.getChurchServiceTimeZone, {
+    context: { churchId: owner.churchId, headers: {}, session: createSession() },
+  });
+  assert.equal(unauthenticated.statusCode, 401);
+
+  const crossChurch = await callHandler(authHandlers.getChurchServiceTimeZone, {
+    context: members[3],
+    params: { churchId: "another-church" },
+  });
+  assert.equal(crossChurch.statusCode, 403);
+
+  const revokedUserId = "teams_api_admin_timezone_matrix_membership_only";
+  const [membership] = await queryDocs(COLLECTIONS.memberships, [
+    { field: "churchId", value: owner.churchId },
+    { field: "userId", value: revokedUserId },
+  ], { limit: 1 });
+  assert.ok(membership?.membershipId);
+  await setDoc(COLLECTIONS.memberships, membership.membershipId, {
+    status: "revoked",
+  }, { merge: true });
+  const revoked = await callHandler(authHandlers.getChurchServiceTimeZone, {
+    context: members[3],
+  });
+  assert.ok([401, 403].includes(revoked.statusCode));
 });
 
 test("paired workstations read timezone without expanding Teams or Services edit access", async (t) => {
@@ -2350,7 +2411,7 @@ test("church service timezone stream snapshots revisions for authorized readers"
     appAccess: "view",
     permissions: { services: "none", teams: "none" },
   });
-  const deniedReader = await createHumanContext("timezone_stream_denied", {
+  const membershipReader = await createHumanContext("timezone_stream_membership_only", {
     churchId: owner.churchId,
     role: "member",
     appAccess: "none",
@@ -2360,7 +2421,7 @@ test("church service timezone stream snapshots revisions for authorized readers"
     serviceTimeZoneRevision: "revision-stream-test",
   }, { merge: true });
 
-  for (const context of [owner, servicesReader, teamsReader, controllerReader]) {
+  for (const context of [owner, servicesReader, teamsReader, controllerReader, membershipReader]) {
     const stream = await callStreamHandler(authHandlers.streamChurchServiceTimeZone, { context });
     assert.equal(stream.headers["Content-Type"], "text/event-stream");
     assert.equal(stream.headers["Cache-Control"], "no-cache");
@@ -2388,11 +2449,11 @@ test("church service timezone stream snapshots revisions for authorized readers"
     assert.equal(stream.writes.length, writesBeforeClose);
   }
 
-  const denied = await callStreamHandler(authHandlers.streamChurchServiceTimeZone, {
-    context: deniedReader,
+  const unauthenticated = await callStreamHandler(authHandlers.streamChurchServiceTimeZone, {
+    context: { churchId: owner.churchId, headers: {}, session: createSession() },
   });
-  assert.equal(denied.res.statusCode, 403);
-  assert.equal(denied.writes.length, 0);
+  assert.equal(unauthenticated.res.statusCode, 401);
+  assert.equal(unauthenticated.writes.length, 0);
 
   const crossChurch = await callStreamHandler(authHandlers.streamChurchServiceTimeZone, {
     context: owner,
@@ -2675,6 +2736,12 @@ test("team-scoped edit can manage that team schedules and members only", async (
       teamScopes: { [mediaTeamId]: "edit" },
     },
   });
+
+  const timeZone = await callHandler(authHandlers.getChurchServiceTimeZone, {
+    context: scopedContext,
+  });
+  assert.equal(timeZone.statusCode, 200);
+  assert.equal(timeZone.payload.serviceTimeZone, "UTC");
 
   const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
     context: scopedContext,
@@ -5784,7 +5851,7 @@ test("service plan assignments expose only the selected plan's serving roster", 
   assert.equal(scopedResult.statusCode, 403);
 });
 
-test("native overlay projection resolves opted-in Teams assignees without roster details", async (t) => {
+test("native overlay projection resolves assigned people without opt-in or roster details", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const fixture = await seedEffectiveTeamsReadFixture("native_overlay_projection");
   const worshipRoleId = `${fixture.churchId}_worship_role`;
@@ -5833,13 +5900,13 @@ test("native overlay projection resolves opted-in Teams assignees without roster
     },
   }, { merge: false });
 
-  const planKey = "worship-service@2026-10-18";
+  const planKey = "worship-service@2026-10-24";
   const saved = await callHandler(authHandlers.saveServicePlan, {
     context: fixture.owner,
     params: { planKey },
     body: {
       serviceId: "worship-service",
-      date: "2026-10-18",
+      date: "2026-10-24",
       name: "Native overlay service",
       sections: [{
         id: "section-1",
@@ -5850,22 +5917,23 @@ test("native overlay projection resolves opted-in Teams assignees without roster
             type: "free",
             title: { blocks: [{ type: "paragraph", spans: [{ text: "Panel" }] }] },
             positionId: `${fixture.ids.av}_position`,
-            participantOverlay: { enabled: true, eventLabel: "Panelist" },
+            participantOverlay: { eventLabel: "Panelist" },
             assignees: [{ id: "assignee-av", memberId: fixture.sharedId, name: "Old name" }],
           },
           {
             id: "item-ambiguous",
             type: "free",
             title: { blocks: [{ type: "paragraph", spans: [{ text: "Unscoped panel" }] }] },
-            participantOverlay: { enabled: true },
             assignees: [{ id: "assignee-ambiguous", memberId: fixture.sharedId, name: "Old name" }],
           },
           {
             id: "item-guest",
             type: "free",
             title: { blocks: [{ type: "paragraph", spans: [{ text: "Guest Speaker" }] }] },
-            participantOverlay: { enabled: true },
-            assignees: [{ id: "assignee-guest", name: "Guest Speaker" }],
+            assignees: [
+              { id: "assignee-guest", name: "Guest Speaker" },
+              { id: "assignee-missing-member", memberId: "deleted-member", name: "Missing Member" },
+            ],
           },
           {
             id: "item-archived",
@@ -5888,7 +5956,20 @@ test("native overlay projection resolves opted-in Teams assignees without roster
             type: "free",
             title: { blocks: [{ type: "paragraph", spans: [{ text: "Announcements" }] }] },
             participantOverlay: { enabled: false },
-            assignees: [{ id: "assignee-disabled", name: "Not opted in" }],
+            assignees: [{ id: "assignee-disabled", name: "Previously disabled" }],
+          },
+          {
+            id: "item-empty",
+            type: "free",
+            title: { blocks: [{ type: "paragraph", spans: [{ text: "No participants" }] }] },
+            participantOverlay: { enabled: true, eventLabel: "No people" },
+            assignees: [],
+          },
+          {
+            id: "item-microphone",
+            type: "free",
+            title: { blocks: [{ type: "paragraph", spans: [{ text: "Microphone only" }] }] },
+            assignees: [{ id: "unassigned-mic", microphoneIds: ["mic-1"] }],
           },
         ],
       }],
@@ -5897,8 +5978,21 @@ test("native overlay projection resolves opted-in Teams assignees without roster
   assert.equal(saved.statusCode, 200, JSON.stringify(saved.payload));
   assert.deepEqual(
     saved.payload.servicePlan.sections[0].elements[0].participantOverlay,
-    { enabled: true, eventLabel: "Panelist" },
+    { eventLabel: "Panelist" },
   );
+  assert.equal(saved.payload.servicePlan.sections[0].elements[3].participantOverlay, undefined);
+
+  // Read old saved flags and a pre-multi-assignee item directly, without resaving.
+  const storedPlan = saved.payload.servicePlan;
+  storedPlan.sections[0].elements[2].participantOverlay = { enabled: true };
+  storedPlan.sections[0].elements[5].participantOverlay = { enabled: false };
+  storedPlan.sections[0].elements.push({
+    id: "item-legacy",
+    type: "free",
+    title: { blocks: [{ type: "paragraph", spans: [{ text: "Legacy guest" }] }] },
+    assignedName: "Legacy Guest",
+  });
+  await setDoc(COLLECTIONS.servicePlans, `${fixture.churchId}::${planKey}`, storedPlan, { merge: false });
 
   const result = await callHandler(authHandlers.getServicePlanAssignments, {
     context: fixture.owner,
@@ -5933,6 +6027,10 @@ test("native overlay projection resolves opted-in Teams assignees without roster
           name: "Guest Speaker",
           memberStatus: "guest",
           roleStatus: "not-applicable",
+        }, {
+          name: "Missing Member",
+          memberStatus: "missing",
+          roleStatus: "unavailable",
         }],
       },
       {
@@ -5951,6 +6049,14 @@ test("native overlay projection resolves opted-in Teams assignees without roster
           roleStatus: "missing",
         }],
       },
+      {
+        elementId: "item-disabled",
+        assignees: [{ name: "Previously disabled", memberStatus: "guest", roleStatus: "not-applicable" }],
+      },
+      {
+        elementId: "item-legacy",
+        assignees: [{ name: "Legacy Guest", memberStatus: "guest", roleStatus: "not-applicable" }],
+      },
     ],
   });
   const projectionJson = JSON.stringify(result.payload.participantOverlay);
@@ -5959,7 +6065,6 @@ test("native overlay projection resolves opted-in Teams assignees without roster
     "+15551234567",
     "Private roster note",
     "private/image-id",
-    "Not opted in",
     "Old name",
   ]) {
     assert.equal(projectionJson.includes(privateValue), false);
@@ -8248,6 +8353,7 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
               sourceSongReferenceDismissed: true,
               sourceSongReferenceDismissedFingerprint: "v1-fingerprint-a-b",
               sourceSongReferenceDismissedOccurrenceId: "source-occurrence-1",
+              planningCenterPdfMatchReviewRequired: true,
               type: "song",
               title: richText("Great Are You Lord"),
               sourceElementTypeRaw: "Special Music",
@@ -8412,6 +8518,10 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     created.payload.servicePlan.sections[0].elements[0].sourceSongReferenceDismissedOccurrenceId,
     "source-occurrence-1",
   );
+  assert.equal(
+    created.payload.servicePlan.sections[0].elements[0].planningCenterPdfMatchReviewRequired,
+    true,
+  );
 
   await flushAsyncWork();
   const createEvent = sseClient
@@ -8427,6 +8537,10 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   });
   assert.equal(fetched.statusCode, 200);
   assert.equal(fetched.payload.servicePlan.name, "Sunday Service");
+  assert.equal(
+    fetched.payload.servicePlan.sections[0].elements[0].planningCenterPdfMatchReviewRequired,
+    true,
+  );
   assert.equal(
     fetched.payload.servicePlan.sections[0].elements[0].importAmbiguity.status,
     "deferred",
@@ -9585,6 +9699,7 @@ test("service plan elements round-trip scripture refs and raw source strings", a
       sections: [
         {
           id: "section-1",
+          phase: "pre",
           name: "Worship",
           elements: [
             {
@@ -9670,6 +9785,12 @@ test("service plan elements round-trip scripture refs and raw source strings", a
   });
 
   assert.equal(saved.statusCode, 200);
+  assert.equal(saved.payload.servicePlan.sections[0].phase, "pre");
+  const reloaded = await callHandler(authHandlers.getServicePlan, {
+    context,
+    params: { planKey },
+  });
+  assert.equal(reloaded.payload.servicePlan.sections[0].phase, "pre");
   const [first, second, third] = saved.payload.servicePlan.sections[0].elements;
   assert.deepEqual(first.scriptureRef, {
     label: "John 3:16-18 (NIV)",
@@ -9725,6 +9846,53 @@ test("service plan elements round-trip scripture refs and raw source strings", a
   ]);
 });
 
+test("service plan title-only and notes-only resources survive save, reload, and public projection", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const { createServicePlanTextResource, createServicePlanGenericResource, createServicePlanLinkResource } =
+    await import("../client/src/pages/Services/servicePlanResources.ts");
+  const { buildServicePlanFlowSnapshot } = await import("../client/src/pages/buildServicePlanFlowSnapshot.ts");
+  const { buildPublicServicePlanSnapshot } = await import("./servicePlanPublic.js");
+  const context = await createAdminContext("service_plan_resource_validation");
+  const planKey = "svc1@2026-10-26";
+  const empty = { blocks: [] };
+  const notes = { blocks: [{ type: "paragraph", spans: [{ text: "Formatted notes", bold: true, italic: true }] }] };
+  const resources = [
+    createServicePlanTextResource({ title: "Title only", text: empty }),
+    createServicePlanTextResource({ title: "", text: notes }),
+    createServicePlanTextResource({ title: "Title and notes", text: notes }),
+    createServicePlanGenericResource({ title: "Generic title", notes: empty, url: "" }),
+    createServicePlanGenericResource({ title: "", notes, url: "" }),
+    createServicePlanGenericResource({ title: "", notes: empty, url: "https://example.com/other" }),
+    createServicePlanLinkResource({ title: "", url: "https://example.com/link" }),
+  ];
+  const saved = await callHandler(authHandlers.saveServicePlan, {
+    context, params: { planKey },
+    body: {
+      serviceId: "svc1", date: "2026-10-26", name: "Service",
+      startsAt: "2026-10-26T14:00:00.000Z", timezone: "UTC",
+      sections: [{ id: "main", name: "Main", elements: [{ id: "item", type: "free", title: richText("Welcome"), resources }] }],
+    },
+  });
+  assert.equal(saved.statusCode, 200);
+  const reloaded = await callHandler(authHandlers.getServicePlan, { context, params: { planKey } });
+  assert.equal(reloaded.statusCode, 200);
+  const plan = reloaded.payload.servicePlan;
+  assert.deepEqual(plan.sections[0].elements[0].resources, resources);
+  const serverSnapshot = buildPublicServicePlanSnapshot({ plan: { ...plan, published: true, publicLinkToken: "resource-test-share" } });
+  const clientSnapshot = buildServicePlanFlowSnapshot({ plan, startsAt: plan.startsAt });
+  const expected = [
+    { type: "text", title: "Title only" },
+    { type: "text", title: "Notes", detail: "Formatted notes", richTextContent: notes },
+    { type: "text", title: "Title and notes", detail: "Formatted notes", richTextContent: notes },
+    { type: "generic", title: "Generic title" },
+    { type: "generic", title: "Untitled resource", detail: "Formatted notes", richTextContent: notes },
+    { type: "generic", title: "example.com", url: "https://example.com/other" },
+    { type: "url", title: "example.com", url: "https://example.com/link" },
+  ];
+  assert.deepEqual(serverSnapshot.service.sections[0].items[0].resources, expected);
+  assert.deepEqual(clientSnapshot.service.sections[0].items[0].resources, expected);
+});
+
 test("service plan templates: create, update in place, list, scope, and delete", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("service_plan_templates");
@@ -9733,9 +9901,11 @@ test("service plan templates: create, update in place, list, scope, and delete",
   const sections = [
     {
       id: "section-1",
+      phase: "post",
       name: "Worship",
       elements: [{ id: "el-1", type: "free", title: richText("Welcome") }],
     },
+    { id: "legacy-section", name: "Legacy", phase: "before", elements: [] },
   ];
 
   const empty = await callHandler(authHandlers.listServicePlanTemplates, {
@@ -9752,7 +9922,9 @@ test("service plan templates: create, update in place, list, scope, and delete",
   const templateId = created.payload.template.templateId;
   assert.ok(templateId);
   assert.equal(created.payload.template.serviceId, "svc1");
+  assert.equal(created.payload.template.sections[0].phase, "post");
   assert.equal(created.payload.template.sections[0].elements.length, 1);
+  assert.equal(Object.hasOwn(created.payload.template.sections[1], "phase"), false);
 
   // A template with no serviceId is offered for every service.
   await callHandler(authHandlers.saveServicePlanTemplate, {
@@ -9927,6 +10099,7 @@ test("bulk template application creates fresh plans, skips existing plans, and p
         sections: [
           {
             id: "template-section",
+            phase: "pre",
             name: "Service",
             elements: [
               {
@@ -9975,6 +10148,8 @@ test("bulk template application creates fresh plans, skips existing plans, and p
   const sections = planDocs.map((plan) => plan.sections[0]);
   const elements = sections.map((section) => section.elements[0]);
   assert.equal(plans.payload.servicePlans.length, 2);
+  assert.equal(sections[0].phase, "pre");
+  assert.equal(sections[1].phase, "pre");
   assert.equal(planDocs[0].name, "Sabbath Service");
   assert.equal(planDocs[0].clonedFromPlanKey, templateId);
   assert.notEqual(sections[0].id, sections[1].id);
@@ -10498,6 +10673,195 @@ test("two members may share one contact email", async (t) => {
   assert.equal(first.statusCode, 200);
   assert.equal(second.statusCode, 200);
   assert.equal(second.payload.member.email, "parent@example.com");
+});
+
+test("Firestore member revision writes keep ready volunteer contact indexes current", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  if (!process.env.FIRESTORE_EMULATOR_HOST) {
+    t.skip("Requires Firestore emulator for the transactional contact-index path");
+    return;
+  }
+
+  const { initializeApp, deleteApp } = await import("firebase-admin/app");
+  const { getFirestore } = await import("firebase-admin/firestore");
+  const suffix = randomBytes(6).toString("hex");
+  const projectId = `demo-teams-contact-${suffix}`;
+  const app = initializeApp({ projectId }, projectId);
+  const db = getFirestore(app);
+  const secret = "synthetic-teams-contact-index-secret-only";
+  const coverageCollection = `contact_index_coverage_${suffix}`;
+  const memberCollection = COLLECTIONS.teamRosterMembers;
+  const collections = Object.fromEntries(
+    ["proofs", "challenges", "limits"].map((name) => [name, `contact_index_${name}_${suffix}`]),
+  );
+  const accessCollections = Object.fromEntries(
+    ["access", "credentials", "sessions"].map((name) => [name, `contact_index_${name}_${suffix}`]),
+  );
+  const previousSecret = process.env.AUTH_VOLUNTEER_PORTAL_SECRET;
+  process.env.AUTH_VOLUNTEER_PORTAL_SECRET = secret;
+  setServerFirestoreForTests(db);
+  t.after(async () => {
+    setServerFirestoreForTests(null);
+    if (previousSecret === undefined) delete process.env.AUTH_VOLUNTEER_PORTAL_SECRET;
+    else process.env.AUTH_VOLUNTEER_PORTAL_SECRET = previousSecret;
+    for (const collection of await db.listCollections()) await db.recursiveDelete(collection);
+    await db.terminate();
+    await deleteApp(app);
+  });
+
+  const admin = await createAdminContext(`contact_index_${suffix}`);
+  const oldEmail = "old-contact@example.test";
+  const newEmail = "new-contact@example.test";
+  const oldPhone = "+12125550123";
+  const newPhone = "+12125550124";
+  const created = await callHandler(authHandlers.createTeamRosterMember, {
+    context: admin,
+    body: {
+      firstName: "Contact",
+      lastName: "Index",
+      email: oldEmail,
+      phoneNumber: oldPhone,
+    },
+  });
+  assert.equal(created.statusCode, 200, JSON.stringify(created.payload));
+  const memberId = created.payload.member.memberId;
+  const identity = { churchId: admin.churchId, memberId };
+  const memberRef = db.collection(memberCollection).doc(memberId);
+  const index = createVolunteerContactIndex({ db, memberCollection, coverageCollection, secret });
+  assert.equal((await index.auditChurch(admin.churchId)).complete, true);
+  const coverage = await db.collection(coverageCollection).get();
+  assert.equal(coverage.docs.length, 1);
+  assert.equal(coverage.docs[0].data().ready, true);
+  const assertOwner = async (channel, address, expected) => {
+    assert.equal(await index.hasUniqueOwner(identity, channel, address), expected,
+      `${channel} ${address} owner should be ${expected ? "present" : "absent"}`);
+  };
+  const assertIndexMatchesCurrent = async () => {
+    const member = (await memberRef.get()).data();
+    const expected = volunteerContactIndexFields(member, secret);
+    assert.deepEqual(member.volunteerContactKeys, expected.volunteerContactKeys);
+    assert.equal(member.volunteerContactKeyId, expected.volunteerContactKeyId);
+  };
+  const save = (expectedUpdatedAt, fields = {}) => callHandler(authHandlers.updateTeamRosterMember, {
+    context: admin,
+    params: { memberId },
+    body: {
+      firstName: "Contact",
+      lastName: "Index",
+      expectedUpdatedAt,
+      ...fields,
+    },
+  });
+
+  const deliveries = [];
+  const access = createVolunteerPersonalAccess({
+    db,
+    memberCollection,
+    secret,
+    collections: accessCollections,
+  });
+  const recovery = createVolunteerRecovery({
+    db,
+    access,
+    secret,
+    memberCollection,
+    consentCollection: `contact_index_consents_${suffix}`,
+    contactIndexCoverageCollection: coverageCollection,
+    collections,
+    sendCode: async (delivery) => deliveries.push(delivery),
+  });
+  const requestKey = () => randomBytes(24).toString("base64url");
+  const enrolled = await recovery.start({
+    requestKey: requestKey(),
+    clientIp: "127.0.0.1",
+    enrollment: { identity, channel: "email", actorUid: "contact-index-admin" },
+  });
+  assert.equal(deliveries.length, 1);
+  const initial = await memberRef.get();
+  const initialVersion = initial.data().personalContactVersion || "";
+  assert.equal((await recovery.verify({
+    challengeId: enrolled.challengeId,
+    code: deliveries.at(-1).code,
+    completionKey: requestKey(),
+    enrollmentActorUid: "contact-index-admin",
+    enrollmentIdentity: identity,
+  })).success, true);
+  const proofBeforeChange = (await db.collection(collections.proofs).get()).docs[0].data();
+  assert.equal(proofBeforeChange.contactVersion, initialVersion);
+
+  // No teamMemberships field: this must exercise upsertTeamEntity's direct
+  // Firestore transaction.set branch with the revision precondition.
+  const emailChanged = await save(initial.data().updatedAt, { email: newEmail });
+  assert.equal(emailChanged.statusCode, 200, JSON.stringify(emailChanged.payload));
+  assert.notEqual(emailChanged.payload.member.personalContactVersion, initialVersion);
+  await assertIndexMatchesCurrent();
+  await assertOwner("email", newEmail, true);
+  await assertOwner("email", oldEmail, false);
+  await assertOwner("sms", oldPhone, true);
+  const staleProofs = await db.collection(collections.proofs).get();
+  assert.equal(staleProofs.size, 1, "contact edits must not create a verification proof");
+  assert.equal(staleProofs.docs[0].data().contactVersion, initialVersion);
+  await recovery.start({ requestKey: requestKey(), clientIp: "127.0.0.1", contact: oldEmail });
+  await recovery.start({ requestKey: requestKey(), clientIp: "127.0.0.1", contact: newEmail });
+  assert.equal(deliveries.length, 1, "old proofs cannot verify or recover through the new address");
+
+  const phoneChanged = await save(emailChanged.payload.member.updatedAt, { phoneNumber: newPhone });
+  assert.equal(phoneChanged.statusCode, 200, JSON.stringify(phoneChanged.payload));
+  assert.notEqual(
+    phoneChanged.payload.member.personalContactVersion,
+    emailChanged.payload.member.personalContactVersion,
+  );
+  await assertIndexMatchesCurrent();
+  await assertOwner("sms", newPhone, true);
+  await assertOwner("sms", oldPhone, false);
+  await assertOwner("email", newEmail, true);
+
+  const beforeUnrelated = (await memberRef.get()).data();
+  const unrelated = await save(beforeUnrelated.updatedAt, { notes: "Updated unrelated details" });
+  assert.equal(unrelated.statusCode, 200, JSON.stringify(unrelated.payload));
+  const afterUnrelated = (await memberRef.get()).data();
+  assert.equal(afterUnrelated.email, newEmail);
+  assert.equal(afterUnrelated.phoneNumber, newPhone);
+  assert.deepEqual(afterUnrelated.volunteerContactKeys, beforeUnrelated.volunteerContactKeys);
+  assert.equal(afterUnrelated.volunteerContactKeyId, beforeUnrelated.volunteerContactKeyId);
+  await assertIndexMatchesCurrent();
+
+  const staleRevision = afterUnrelated.updatedAt;
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const latest = await save(staleRevision, { notes: "Newer details" });
+  assert.equal(latest.statusCode, 200, JSON.stringify(latest.payload));
+  assert.notEqual(latest.payload.member.updatedAt, staleRevision);
+  const beforeStale = (await memberRef.get()).data();
+  const stale = await save(staleRevision, { email: "stale-contact@example.test" });
+  assert.equal(stale.statusCode, 409);
+  const afterStale = (await memberRef.get()).data();
+  assert.deepEqual(afterStale, beforeStale);
+  await assertIndexMatchesCurrent();
+  await assertOwner("email", newEmail, true);
+  await assertOwner("email", "stale-contact@example.test", false);
+
+  const team = await seedTeam(admin, { teamName: `Contact Index ${suffix}` });
+  const membershipEmail = "membership-contact@example.test";
+  const membershipUpdated = await save(afterStale.updatedAt, {
+    email: membershipEmail,
+    teamMemberships: { [team.teamId]: { isTeamLead: true, notes: "Team role retained" } },
+  });
+  assert.equal(membershipUpdated.statusCode, 200, JSON.stringify(membershipUpdated.payload));
+  assert.equal(membershipUpdated.payload.member.teamMemberships[team.teamId].isTeamLead, true);
+  await assertIndexMatchesCurrent();
+  await assertOwner("email", membershipEmail, true);
+  await assertOwner("email", newEmail, false);
+
+  const emailCleared = await save(membershipUpdated.payload.member.updatedAt, { email: "" });
+  assert.equal(emailCleared.statusCode, 200, JSON.stringify(emailCleared.payload));
+  await assertIndexMatchesCurrent();
+  await assertOwner("email", membershipEmail, false);
+  await assertOwner("sms", newPhone, true);
+  const phoneCleared = await save(emailCleared.payload.member.updatedAt, { phoneNumber: "" });
+  assert.equal(phoneCleared.statusCode, 200, JSON.stringify(phoneCleared.payload));
+  await assertIndexMatchesCurrent();
+  await assertOwner("sms", newPhone, false);
+  assert.deepEqual((await memberRef.get()).data().volunteerContactKeys, []);
 });
 
 test("updating a member without an email field keeps the existing address", async (t) => {
@@ -11956,6 +12320,9 @@ test("Controller None preserves independently granted global Teams and Services 
       services: "edit",
       teamScopes: { worship: "edit" },
     },
+  });
+  await setDoc(COLLECTIONS.teams, "worship", {
+    teamId: "worship", churchId: narrowed.churchId, name: "Worship",
   });
   const narrowedBootstrap = await callHandler(authHandlers.getAuthMe, {
     context: narrowed,
@@ -14015,6 +14382,7 @@ test("individual intake recipients personalize and automatically apply one audit
   );
   assert.equal(preview.statusCode, 200);
   assert.equal(preview.payload.recipient.firstName, "Kevin");
+  assert.ok(preview.payload.recipient.missingFields.includes("email"));
   assert.ok(!JSON.stringify(preview.payload).includes("Cheddar"));
   assert.ok(!JSON.stringify(preview.payload).includes("recipientTokenNonce"));
 
@@ -14038,7 +14406,7 @@ test("individual intake recipients personalize and automatically apply one audit
         body: {
           firstName: "",
           lastName: "",
-          email: "",
+          email: "kevin@example.com",
           positionIds: [positionIds.Vocal],
           occurrenceAvailability:
             availability === undefined ? {} : { [occurrenceId]: availability },
@@ -14078,6 +14446,7 @@ test("individual intake recipients personalize and automatically apply one audit
   assert.equal(firstSubmission.status, "applied");
   assert.equal(firstSubmission.appliedMemberId, memberId);
   assert.equal(firstMember.serviceAvailability[occurrenceId], "unavailable");
+  assert.equal(firstMember.email, "kevin@example.com");
   assert.equal(firstRecipient.submissionId, firstSubmissionId);
   assert.ok(firstRecipient.respondedAt);
 
@@ -14168,6 +14537,231 @@ test("individual intake recipients personalize and automatically apply one audit
     reactivatedPreview,
   );
   assert.equal(reactivatedPreview.statusCode, 200);
+});
+
+test("personalized intake exposes missing fields and saves them without replacing existing details", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const previousContactSecret = process.env.AUTH_VOLUNTEER_PORTAL_SECRET;
+  const contactSecret = "team-intake-profile-test-secret";
+  process.env.AUTH_VOLUNTEER_PORTAL_SECRET = contactSecret;
+  t.after(() => {
+    if (previousContactSecret === undefined) {
+      delete process.env.AUTH_VOLUNTEER_PORTAL_SECRET;
+    } else {
+      process.env.AUTH_VOLUNTEER_PORTAL_SECRET = previousContactSecret;
+    }
+  });
+
+  const context = await createAdminContext("intake_missing_member_details");
+  const { teamId, memberIds } = await seedTeam(context, {
+    teamName: "Worship",
+    members: [
+      { firstName: "Avery", lastName: "Morgan" },
+      { firstName: "Riley", lastName: "Jones" },
+    ],
+  });
+  const memberId = memberIds.Avery;
+  const memberMissingFirstNameId = memberIds.Riley;
+  await setDoc(
+    COLLECTIONS.teamRosterMembers,
+    memberId,
+    { lastName: " ", email: "", title: "", birthDate: null },
+    { merge: true },
+  );
+  await setDoc(
+    COLLECTIONS.teamRosterMembers,
+    memberMissingFirstNameId,
+    {
+      firstName: " ",
+      email: "riley@example.com",
+      title: "Ms.",
+      birthDate: { month: 5, day: 3 },
+    },
+    { merge: true },
+  );
+  const form = await callHandler(authHandlers.createTeamIntakeForm, {
+    context,
+    body: {
+      name: "Complete your profile",
+      startDate: calendarDaysFromToday(0),
+      endDate: calendarDaysFromToday(45),
+      responseDeadline: calendarDaysFromToday(45),
+      purpose: "general_intake",
+      teamIds: [teamId],
+      enabledFields: ["title", "firstName", "lastName", "email", "birthDate"],
+      active: true,
+    },
+  });
+  assert.equal(form.statusCode, 200, JSON.stringify(form.payload));
+  const formId = form.payload.form.formId;
+  const created = await callHandler(authHandlers.createTeamIntakeRecipients, {
+    context,
+    params: { formId },
+    body: { memberIds: [memberId, memberMissingFirstNameId] },
+  });
+  assert.equal(created.statusCode, 200, JSON.stringify(created.payload));
+  const recipient = created.payload.recipients[0];
+  const link = await callHandler(authHandlers.getTeamIntakeRecipientLink, {
+    context,
+    params: { recipientId: recipient.recipientId },
+  });
+  const token = link.payload.publicUrl.split("/a/")[1];
+
+  const preview = createRes();
+  await authHandlers.getTeamIntakePreview(
+    createReq({ query: { token, recipientOnly: "true" } }),
+    preview,
+  );
+  assert.equal(preview.statusCode, 200, JSON.stringify(preview.payload));
+  assert.deepEqual(
+    new Set(preview.payload.recipient.missingFields),
+    new Set(["lastName", "title", "birthDate", "email"]),
+  );
+  assert.equal(Object.hasOwn(preview.payload.recipient, "lastName"), false);
+  assert.equal(JSON.stringify(preview.payload).includes("avery@example.com"), false);
+
+  const submitted = createRes();
+  await authHandlers.submitTeamIntake(
+    createReq({
+      query: { token, recipientOnly: "true" },
+      body: {
+        firstName: "Changed",
+        lastName: "Lee",
+        title: "Dr.",
+        email: "  Volunteer@Example.COM ",
+        birthDate: { month: 3, day: 2, year: 2000 },
+        positionIds: [],
+        occurrenceAvailability: {},
+        blockoutRanges: [],
+      },
+    }),
+    submitted,
+  );
+  assert.equal(submitted.statusCode, 200, JSON.stringify(submitted.payload));
+  const member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+  assert.equal(member.firstName, "Avery");
+  assert.equal(member.lastName, "Lee");
+  assert.equal(member.title, "Dr.");
+  assert.equal(member.email, "volunteer@example.com");
+  assert.deepEqual(member.birthDate, { month: 3, day: 2, year: 2000 });
+  assert.deepEqual(
+    member.volunteerContactKeys,
+    volunteerContactIndexFields(member, contactSecret).volunteerContactKeys,
+  );
+  const savedSubmissions = await queryDocs(COLLECTIONS.teamIntakeSubmissions, [
+    { field: "formId", value: formId },
+  ]);
+  assert.equal(savedSubmissions[0].submittedMemberDetails, undefined);
+
+  const firstNameRecipient = created.payload.recipients.find(
+    (item) => item.memberId === memberMissingFirstNameId,
+  );
+  const firstNameLink = await callHandler(authHandlers.getTeamIntakeRecipientLink, {
+    context,
+    params: { recipientId: firstNameRecipient.recipientId },
+  });
+  const firstNameToken = firstNameLink.payload.publicUrl.split("/a/")[1];
+  const firstNamePreview = createRes();
+  await authHandlers.getTeamIntakePreview(
+    createReq({ query: { token: firstNameToken, recipientOnly: "true" } }),
+    firstNamePreview,
+  );
+  assert.deepEqual(firstNamePreview.payload.recipient.missingFields, ["firstName"]);
+
+  const firstNameSubmitted = createRes();
+  await authHandlers.submitTeamIntake(
+    createReq({
+      query: { token: firstNameToken, recipientOnly: "true" },
+      body: {
+        firstName: "Riley",
+        lastName: "Do not replace",
+        title: "Dr.",
+        email: "changed@example.net",
+        birthDate: { month: 1, day: 1, year: 1980 },
+        positionIds: [],
+        occurrenceAvailability: {},
+        blockoutRanges: [],
+      },
+    }),
+    firstNameSubmitted,
+  );
+  assert.equal(firstNameSubmitted.statusCode, 200, JSON.stringify(firstNameSubmitted.payload));
+  const completedFirstNameMember = await getDoc(
+    COLLECTIONS.teamRosterMembers,
+    memberMissingFirstNameId,
+  );
+  assert.equal(completedFirstNameMember.firstName, "Riley");
+  assert.equal(completedFirstNameMember.lastName, "Jones");
+  assert.equal(completedFirstNameMember.title, "Ms.");
+  assert.equal(completedFirstNameMember.email, "riley@example.com");
+  assert.deepEqual(completedFirstNameMember.birthDate, { month: 5, day: 3 });
+});
+
+test("personalized availability fallback accepts blank personal values and preserves availability", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("intake_availability_fallback");
+  const { teamId, memberIds } = await seedTeam(context, {
+    teamName: "Worship",
+    members: [{ firstName: "Avery", lastName: "Morgan" }],
+  });
+  const memberId = memberIds.Avery;
+  const serviceDate = calendarDaysFromToday(7);
+  const startsAt = `${serviceDate}T10:00:00.000Z`;
+  const occurrenceId = `service_1@${startsAt}`;
+  const form = await callHandler(authHandlers.createTeamIntakeForm, {
+    context,
+    body: {
+      name: "November availability",
+      startDate: calendarDaysFromToday(0),
+      endDate: calendarDaysFromToday(14),
+      responseDeadline: calendarDaysFromToday(14),
+      purpose: "team_availability",
+      teamIds: [teamId],
+      enabledFields: ["availability"],
+      availabilityOccurrences: [{
+        occurrenceId,
+        serviceId: "service_1",
+        name: "Sunday service",
+        serviceDate,
+        startsAt,
+      }],
+      active: true,
+    },
+  });
+  assert.equal(form.statusCode, 200, JSON.stringify(form.payload));
+  const formId = form.payload.form.formId;
+  const created = await callHandler(authHandlers.createTeamIntakeRecipients, {
+    context,
+    params: { formId },
+    body: { memberIds: [memberId] },
+  });
+  assert.equal(created.statusCode, 200, JSON.stringify(created.payload));
+  const link = await callHandler(authHandlers.getTeamIntakeRecipientLink, {
+    context,
+    params: { recipientId: created.payload.recipients[0].recipientId },
+  });
+  const token = link.payload.publicUrl.split("/a/")[1];
+
+  const submitted = createRes();
+  await authHandlers.submitTeamIntake(
+    createReq({
+      query: { token, recipientOnly: "true" },
+      body: {
+        firstName: "",
+        lastName: "",
+        title: "",
+        email: "",
+        birthDate: null,
+        occurrenceAvailability: { [occurrenceId]: "available" },
+      },
+    }),
+    submitted,
+  );
+  assert.equal(submitted.statusCode, 200, JSON.stringify(submitted.payload));
+  const member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+  assert.equal(member.firstName, "Avery");
+  assert.equal(member.lastName, "Morgan");
+  assert.equal(member.serviceAvailability[occurrenceId], "available");
 });
 
 test("notification requests accept personalized forms with blockout and notes fields", async (t) => {
@@ -14278,6 +14872,14 @@ test("individual intake recipient creation validates the full set before writing
   });
   assert.equal(failed.statusCode, 400);
 
+  const oversized = await callHandler(authHandlers.createTeamIntakeRecipients, {
+    context,
+    params: { formId },
+    body: { memberIds: Array.from({ length: 501 }, (_, index) => `member-${index + 1}`) },
+  });
+  assert.equal(oversized.statusCode, 400);
+  assert.equal(oversized.payload.errorMessage, "Choose 500 or fewer members, then try again.");
+
   const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
     context,
   });
@@ -14288,7 +14890,7 @@ test("individual intake recipient creation validates the full set before writing
   );
 });
 
-test("availability SMS batch uses the composed auth handlers and preserves accepted-send protection", async (t) => {
+test("availability SMS batch fences first invitations and allows reviewed resends through composed auth handlers", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("foundation_sms_batch");
   const { teamId, memberIds } = await seedTeam(context, {
@@ -14314,8 +14916,10 @@ test("availability SMS batch uses the composed auth handlers and preserves accep
   const previousToken = process.env.TWILIO_AUTH_TOKEN;
   process.env.TWILIO_STATUS_CALLBACK_URL = "https://worshipsync.net/api/webhooks/twilio/sms-status?configured=1";
   process.env.TWILIO_AUTH_TOKEN = "fake-signing-secret";
+  let providerSendCount = 0;
   const fake = createFakeSmsProvider({ sendMessage: async ({ statusCallbackUrl }) => {
-    const params = { MessageSid: "SM_foundation_batch", MessageStatus: "delivered", To: phoneNumber, AccountSid: "AC_test" };
+    const providerMessageId = `SM_foundation_batch_${++providerSendCount}`;
+    const params = { MessageSid: providerMessageId, MessageStatus: "delivered", To: phoneNumber, AccountSid: "AC_test" };
     const url = new URL(statusCallbackUrl);
     const response = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(payload) { this.payload = payload; return this; } };
     await authHandlers.handleSmsStatusWebhook({
@@ -14324,7 +14928,7 @@ test("availability SMS batch uses the composed auth handlers and preserves accep
     }, response);
     assert.equal(response.statusCode, 200);
     assert.equal(response.payload.updated, true);
-    return { providerMessageId: "SM_foundation_batch", status: "accepted" };
+    return { providerMessageId, status: "accepted" };
   } });
   setSmsProviderForServerTests(fake);
   try {
@@ -14352,12 +14956,174 @@ test("availability SMS batch uses the composed auth handlers and preserves accep
     await setDoc("smsDeliveryAttempts", intent.attemptId, { status: "undelivered" }, { merge: true });
     const again = await callHandler(authHandlers.prepareAvailabilityBatch, { context, body: { ...body, requestKey: "new_request" } });
     assert.equal(again.payload.batch.summary.eligible, 0);
-    assert.equal(again.payload.batch.recipients[0].status, "sent");
+    assert.equal(again.payload.batch.recipients[0].status, "excluded");
+    assert.equal(again.payload.batch.recipients[0].previousDeliveryStatus, "accepted");
     assert.equal(fake.calls.length, 1);
+
+    const recipientId = intent.recipientId;
+    const recipient = await getDoc("teamIntakeRecipients", recipientId);
+    await setDoc("teamIntakeRecipients", recipientId, { ...recipient, respondedAt: new Date().toISOString() }, { merge: false });
+    const resend = await callHandler(authHandlers.prepareAvailabilityBatch, {
+      context,
+      body: { ...body, audienceType: "specific", requestKey: "specific_resend" },
+    });
+    assert.equal(resend.statusCode, 200, JSON.stringify(resend.payload));
+    assert.equal(resend.payload.batch.summary.eligible, 1);
+    assert.notEqual(resend.payload.batch.intentIds[0], batch.intentIds[0]);
+    const resent = await callHandler(authHandlers.dispatchAvailabilityBatch, {
+      context,
+      params: { batchId: resend.payload.batch.batchId },
+      body: { confirmed: true, approvalVersion: resend.payload.batch.approvalVersion },
+    });
+    assert.equal(resent.statusCode, 200, JSON.stringify(resent.payload));
+    assert.equal(resent.payload.batch.summary.sent, 1);
+    assert.equal(fake.calls.length, 2);
   } finally {
     setSmsProviderForServerTests(null);
     if (previousCallback === undefined) delete process.env.TWILIO_STATUS_CALLBACK_URL; else process.env.TWILIO_STATUS_CALLBACK_URL = previousCallback;
     if (previousToken === undefined) delete process.env.TWILIO_AUTH_TOKEN; else process.env.TWILIO_AUTH_TOKEN = previousToken;
+  }
+});
+
+test("custom volunteer messages send through existing SMS eligibility and administrator authorization", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const admin = await createAdminContext("custom_volunteer_messages");
+  const { memberIds } = await seedTeam(admin, {
+    teamName: "Worship", members: [{ firstName: "Custom", lastName: "Recipient" }],
+  });
+  const memberId = memberIds.Custom;
+  const phoneNumber = "+19545551339";
+  await setDoc("teamRosterMembers", memberId, { phoneNumber }, { merge: true });
+  await seedSmsConsentForServerTests({ churchId: admin.churchId, phoneNumber, status: "opted_in" });
+  await setDoc("churchMessagingConfigs", admin.churchId, {
+    churchId: admin.churchId, provider: "twilio", providerAccountId: "AC_test",
+    messagingServiceId: "MG_test", registrationStatus: "approved", enabled: true,
+  }, { merge: false });
+  const viewer = await createHumanContext("custom_volunteer_messages_viewer", {
+    churchId: admin.churchId, role: "member", appAccess: "view", permissions: { teams: "view" },
+  });
+  const previousCallback = process.env.TWILIO_STATUS_CALLBACK_URL;
+  const previousToken = process.env.TWILIO_AUTH_TOKEN;
+  process.env.TWILIO_STATUS_CALLBACK_URL = "https://worshipsync.net/api/webhooks/twilio/sms-status?configured=1";
+  process.env.TWILIO_AUTH_TOKEN = "fake-signing-secret";
+  const fake = createFakeSmsProvider();
+  setSmsProviderForServerTests(fake);
+  const prepare = (context, message, requestKey) => callHandler(authHandlers.prepareCustomBatch, {
+    context, body: { memberIds: [memberId], message, requestKey },
+  });
+  const dispatch = (context, batch, confirmed = true) => callHandler(authHandlers.dispatchAvailabilityBatch, {
+    context, params: { batchId: batch.batchId },
+    body: { confirmed, approvalVersion: batch.approvalVersion },
+  });
+  try {
+    const firstPrepared = await prepare(admin, "Practice Friday.", "custom-operation-one");
+    assert.equal(firstPrepared.statusCode, 200, JSON.stringify(firstPrepared.payload));
+    assert.equal(firstPrepared.payload.batch.summary.eligible, 1);
+    assert.equal(firstPrepared.payload.enabled, undefined);
+    assert.equal(fake.calls.length, 0, "review and preparation never contact the provider");
+
+    const unconfirmed = await dispatch(admin, firstPrepared.payload.batch, false);
+    assert.equal(unconfirmed.statusCode, 400);
+    const denied = await dispatch(viewer, firstPrepared.payload.batch);
+    assert.equal(denied.statusCode, 403);
+    assert.equal(fake.calls.length, 0);
+
+    const sent = await dispatch(admin, firstPrepared.payload.batch);
+    assert.equal(sent.statusCode, 200, JSON.stringify(sent.payload));
+    assert.equal(sent.payload.batch.summary.sent, 1);
+    assert.equal(fake.calls.length, 1);
+    assert.equal(fake.calls[0].to, phoneNumber);
+    assert.equal(fake.calls[0].body, "Practice Friday. Reply STOP to opt out.");
+    await dispatch(admin, firstPrepared.payload.batch);
+    assert.equal(fake.calls.length, 1, "replaying the approved operation cannot send twice");
+
+    const secondPrepared = await prepare(admin, "Practice next Friday.", "custom-operation-two");
+    assert.equal(secondPrepared.statusCode, 200, JSON.stringify(secondPrepared.payload));
+    assert.notEqual(secondPrepared.payload.batch.batchId, firstPrepared.payload.batch.batchId);
+    const secondSend = await dispatch(admin, secondPrepared.payload.batch);
+    assert.equal(secondSend.statusCode, 200, JSON.stringify(secondSend.payload));
+    assert.equal(fake.calls.length, 2, "a deliberately reviewed new operation creates a new send");
+    const history = await callHandler(authHandlers.listMessageHistory, { context: admin });
+    assert.equal(history.statusCode, 200);
+    assert.equal(history.payload.entries.filter((entry) => entry.messageType === "custom_message").length, 2);
+  } finally {
+    setSmsProviderForServerTests(null);
+    if (previousCallback === undefined) delete process.env.TWILIO_STATUS_CALLBACK_URL; else process.env.TWILIO_STATUS_CALLBACK_URL = previousCallback;
+    if (previousToken === undefined) delete process.env.TWILIO_AUTH_TOKEN; else process.env.TWILIO_AUTH_TOKEN = previousToken;
+  }
+});
+
+test("custom SMS batch dispatch keeps the authenticated HTTP request and rejects invalid CSRF", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const admin = await createAdminContext("custom_message_http_dispatch");
+  const { memberIds } = await seedTeam(admin, {
+    teamName: "Worship", members: [{ firstName: "Http", lastName: "Recipient" }],
+  });
+  const memberId = memberIds.Http;
+  const phoneNumber = "+19545551341";
+  await setDoc("teamRosterMembers", memberId, { phoneNumber }, { merge: true });
+  await seedSmsConsentForServerTests({ churchId: admin.churchId, phoneNumber, status: "opted_in" });
+  await setDoc("churchMessagingConfigs", admin.churchId, {
+    churchId: admin.churchId, provider: "twilio", providerAccountId: "AC_test",
+    messagingServiceId: "MG_test", registrationStatus: "approved", enabled: true,
+  }, { merge: false });
+
+  const fake = createFakeSmsProvider();
+  setSmsProviderForServerTests(fake);
+  const app = express();
+  app.use(express.json());
+  app.post("/api/churches/:churchId/notification-batches/:batchId/dispatch", authHandlers.dispatchAvailabilityBatch);
+  const server = app.listen(0, "127.0.0.1");
+  try {
+    await new Promise((resolve, reject) => {
+      server.once("listening", resolve);
+      server.once("error", reject);
+    });
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const endpoint = `http://127.0.0.1:${address.port}/api/churches/${admin.churchId}/notification-batches`;
+    const prepared = await callHandler(authHandlers.prepareCustomBatch, {
+      context: admin,
+      body: { memberIds: [memberId], message: "Practice Friday.", requestKey: "http-custom-dispatch" },
+    });
+    assert.equal(prepared.statusCode, 200, JSON.stringify(prepared.payload));
+    assert.equal(fake.calls.length, 0, "preparing the approval does not contact the provider");
+
+    const sendHttp = async (csrfToken) => fetch(`${endpoint}/${prepared.payload.batch.batchId}/dispatch`, {
+      method: "POST",
+      headers: {
+        ...Object.fromEntries(Object.entries(admin.headers).filter(([name]) => name !== "x-csrf-token")),
+        ...(csrfToken === null ? {} : { "x-csrf-token": csrfToken }),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ confirmed: true, approvalVersion: prepared.payload.batch.approvalVersion }),
+    });
+
+    const missingCsrf = await sendHttp(null);
+    assert.equal(missingCsrf.status, 403);
+    assert.equal((await missingCsrf.json()).code, "AUTH_CSRF_MISMATCH");
+    const invalidCsrf = await sendHttp("invalid-csrf-token");
+    assert.equal(invalidCsrf.status, 403);
+    assert.equal((await invalidCsrf.json()).code, "AUTH_CSRF_MISMATCH");
+    assert.equal(fake.calls.length, 0, "invalid CSRF requests are rejected before dispatch");
+
+    const sent = await sendHttp(admin.headers["x-csrf-token"]);
+    const sentPayload = await sent.json();
+    assert.equal(sent.status, 200, JSON.stringify(sentPayload));
+    assert.equal(sentPayload.batch.summary.sent, 1);
+    assert.equal(sentPayload.batch.recipients[0].status, "sent");
+    assert.equal(fake.calls.length, 1, `the valid authenticated HTTP request reaches the provider once: ${JSON.stringify(sentPayload)}`);
+    assert.equal(fake.calls[0].to, phoneNumber);
+    assert.equal(fake.calls[0].body, "Practice Friday. Reply STOP to opt out.");
+
+    const replayed = await sendHttp(admin.headers["x-csrf-token"]);
+    assert.equal(replayed.status, 409);
+    assert.equal(fake.calls.length, 1, "replaying the approved operation does not call the provider again");
+  } finally {
+    setSmsProviderForServerTests(null);
+    if (server.listening) {
+      await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
   }
 });
 
@@ -17879,9 +18645,19 @@ test("effective Teams reads admit member appAccess through current roster links 
     churchId: fixture.churchId,
     userId: fixture.userId,
     role: "member",
-    appAccess: "member",
-    permissions: { teams: "none", teamScopes: {} },
+    controllerAccess: "none",
+    permissions: { teams: "none", services: "none", teamScopes: {} },
   });
+  await setDoc("chatSettings", fixture.churchId, {
+    timeZone: "America/Los_Angeles",
+  }, { merge: true });
+  const timeZone = await callHandler(authHandlers.getChurchServiceTimeZone, {
+    context,
+  });
+  assert.equal(timeZone.statusCode, 200);
+  assert.equal(timeZone.payload.serviceTimeZone, "UTC");
+  assert.equal(timeZone.payload.legacyTimeZoneSuggestion, undefined);
+
   const result = await callHandler(authHandlers.getTeamsBootstrap, { context });
   assert.equal(result.statusCode, 200);
   assert.deepEqual(
@@ -17896,7 +18672,9 @@ test("effective Teams reads admit member appAccess through current roster links 
       "lastName",
       "memberId",
       "positionIds",
+      "teamMembershipStatus",
     ]);
+    assert.equal(member.teamMembershipStatus, "assigned");
   }
   for (const field of [
     "intakeForms",
@@ -17908,13 +18686,26 @@ test("effective Teams reads admit member appAccess through current roster links 
     assert.equal(result.payload[field], undefined);
   }
   assertSafeReadSchedule(result.payload.schedules[0]);
+  assert.equal(
+    getMemberId(result.payload.schedules[0].assignments.occurrence.slot),
+    fixture.memberId,
+  );
   const detail = await callHandler(authHandlers.getTeamScheduleDetail, {
     context,
     params: { scheduleId: `${fixture.ids.worship}_schedule` },
   });
   assert.equal(detail.statusCode, 200);
   assertSafeReadSchedule(detail.payload.schedule);
+  assert.equal(
+    getMemberId(detail.payload.schedule.assignments.occurrence.slot),
+    fixture.memberId,
+  );
   assert.deepEqual(detail.payload.relatedSchedules, []);
+  const unrelatedSchedule = await callHandler(authHandlers.getTeamScheduleDetail, {
+    context,
+    params: { scheduleId: `${fixture.ids.av}_schedule` },
+  });
+  assert.equal(unrelatedSchedule.statusCode, 403);
   for (const handler of [
     authHandlers.getTeamIntakeSmsAttempts,
     authHandlers.listServicePlanTemplates,
@@ -17934,6 +18725,27 @@ test("effective Teams reads admit member appAccess through current roster links 
     body: { name: "Unsafe edit", memberIds: [] },
   });
   assert.equal(deniedWrite.statusCode, 403);
+  const deniedAssignment = await callHandler(
+    authHandlers.updateTeamScheduleAssignment,
+    {
+      context,
+      params: { scheduleId: `${fixture.ids.worship}_schedule` },
+      body: {
+        serviceId: "occurrence",
+        positionSlotKey: "slot",
+        memberId: fixture.memberId,
+      },
+    },
+  );
+  assert.equal(deniedAssignment.statusCode, 403);
+  const unchangedSchedule = await getDoc(
+    COLLECTIONS.teamSchedules,
+    `${fixture.ids.worship}_schedule`,
+  );
+  assert.deepEqual(unchangedSchedule.assignments.occurrence.slot, {
+    primaryMemberId: fixture.memberId,
+    shadows: [],
+  });
   await setDoc(
     COLLECTIONS.teams,
     fixture.ids.av,
@@ -19199,6 +20011,101 @@ test("team profile reads expose only the authorized shared-member slice", async 
   assert.equal(anonymousPatch.statusCode, 401);
 });
 
+test("team profile GET deduplicates bounded ownership reads for a multi-team member", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const fixture = await seedEffectiveTeamsReadFixture("team_profile_read_measurement");
+  const manager = await createHumanContext("team_profile_read_measurement_manager", {
+    churchId: fixture.churchId,
+    role: "member",
+    permissions: { teams: "none", teamScopes: { [fixture.ids.worship]: "edit" } },
+  });
+  const positionIds = [
+    `${fixture.ids.worship}_position`,
+    `${fixture.ids.av}_position`,
+    `${fixture.ids.worship}_position_extra`,
+    `${fixture.ids.av}_position_extra`,
+  ];
+  for (const [index, positionId] of positionIds.slice(2).entries()) {
+    const teamId = index === 0 ? fixture.ids.worship : fixture.ids.av;
+    await setDoc(COLLECTIONS.teamPositions, positionId, {
+      positionId,
+      churchId: fixture.churchId,
+      teamId,
+      name: `Extra ${index + 1}`,
+    }, { merge: false });
+  }
+  const areaIds = [
+    `${fixture.ids.worship}_area_one`,
+    `${fixture.ids.worship}_area_two`,
+    `${fixture.ids.av}_area_one`,
+  ];
+  for (const [index, areaId] of areaIds.entries()) {
+    const teamId = index === 2 ? fixture.ids.av : fixture.ids.worship;
+    await setDoc(COLLECTIONS.teamQualificationAreas, areaId, {
+      areaId,
+      churchId: fixture.churchId,
+      teamId,
+      name: `Skill area ${index + 1}`,
+    }, { merge: false });
+  }
+  const roleId = "team_profile_read_measurement_role";
+  await setDoc(COLLECTIONS.teamRoles, roleId, {
+    roleId,
+    churchId: fixture.churchId,
+    teamId: fixture.ids.worship,
+    name: "Worship lead",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId, {
+    positionIds,
+    desiredPositionIds: [...positionIds],
+    teamMemberships: {
+      [fixture.ids.worship]: { teamId: fixture.ids.worship, roleId },
+      [fixture.ids.av]: { teamId: fixture.ids.av },
+    },
+    qualifications: areaIds.map((areaId, index) => ({
+      qualificationId: `measurement-qualification-${index + 1}`,
+      areaId,
+      teamId: index === 2 ? fixture.ids.av : fixture.ids.worship,
+      status: "completed",
+    })),
+  }, { merge: true });
+
+  const observedReads = [];
+  setAuthReadObserverForServerTests((read) => {
+    if (read.type === "getDoc") observedReads.push(read);
+  });
+  let result;
+  try {
+    result = await callHandler(authHandlers.getTeamRosterMemberProfile, {
+      context: manager,
+      params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
+    });
+  } finally {
+    setAuthReadObserverForServerTests(null);
+  }
+
+  assert.equal(result.statusCode, 200, JSON.stringify(result.payload));
+  assert.equal(result.payload.teamProfile.positionIds.length, 2);
+  assert.equal(result.payload.teamProfile.qualifications.length, 2);
+  const measuredPositionAndAreaReads = observedReads.filter((read) =>
+    read.collectionName === COLLECTIONS.teamPositions && positionIds.includes(read.id) ||
+    read.collectionName === COLLECTIONS.teamQualificationAreas && areaIds.includes(read.id));
+  const measuredOwnerAndRoleReads = observedReads.filter((read) =>
+    read.collectionName === COLLECTIONS.teams && read.id === fixture.ids.av ||
+    read.collectionName === COLLECTIONS.teamRoles && read.id === roleId);
+  // Before: 4 positions + each owner team, 3 areas + each owner team, and the role = 15.
+  // After: 4 positions + 3 unique areas + one non-selected owner team + the role = 9.
+  assert.equal(measuredPositionAndAreaReads.length + measuredOwnerAndRoleReads.length, 9);
+  for (const positionId of positionIds) {
+    assert.equal(measuredPositionAndAreaReads.filter((read) => read.collectionName === COLLECTIONS.teamPositions && read.id === positionId).length, 1);
+  }
+  for (const areaId of areaIds) {
+    assert.equal(measuredPositionAndAreaReads.filter((read) => read.collectionName === COLLECTIONS.teamQualificationAreas && read.id === areaId).length, 1);
+  }
+  assert.equal(measuredOwnerAndRoleReads.filter((read) => read.collectionName === COLLECTIONS.teams && read.id === fixture.ids.av).length, 1);
+  assert.equal(measuredOwnerAndRoleReads.filter((read) => read.collectionName === COLLECTIONS.teamRoles && read.id === roleId).length, 1);
+});
+
 test("team profile patches replace one team slice and reject cross-team fields", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const fixture = await seedEffectiveTeamsReadFixture("team_profile_write_isolation");
@@ -19241,7 +20148,16 @@ test("team profile patches replace one team slice and reject cross-team fields",
     ],
   };
   await setDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId, original, { merge: true });
+  const loaded = await callHandler(authHandlers.getTeamRosterMemberProfile, {
+    context: worshipManager, params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
+  });
   const body = {
+    baseProfile: {
+      positionIds: loaded.payload.teamProfile.positionIds,
+      desiredPositionIds: loaded.payload.teamProfile.desiredPositionIds,
+      membership: loaded.payload.teamProfile.membership,
+      qualifications: loaded.payload.teamProfile.qualifications,
+    },
     positionIds: [`${fixture.ids.worship}_position`],
     desiredPositionIds: [],
     membership: { roleId: "worship-leader", isTeamLead: true },
@@ -19274,11 +20190,17 @@ test("team profile patches replace one team slice and reject cross-team fields",
   assert.equal(after.email, original.email);
   assert.equal(after.phoneNumber, original.phoneNumber);
   assert.equal(after.notes, original.notes);
-  const reject = async (patchBody) => callHandler(authHandlers.updateTeamRosterMemberProfile, {
-    context: worshipManager,
-    params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
-    body: patchBody,
-  });
+  const reject = async (patchBody) => {
+    const latest = await callHandler(authHandlers.getTeamRosterMemberProfile, {
+      context: worshipManager, params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
+    });
+    const { teamId: _teamId, ...baseProfile } = latest.payload.teamProfile;
+    return callHandler(authHandlers.updateTeamRosterMemberProfile, {
+      context: worshipManager,
+      params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
+      body: { ...patchBody, baseProfile },
+    });
+  };
   const clearRole = await reject({ membership: { roleId: null, isTeamLead: false } });
   assert.equal(clearRole.statusCode, 200, JSON.stringify(clearRole.payload));
   const afterRoleClear = await getDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId);
@@ -19443,15 +20365,15 @@ test("concurrent team profile saves preserve each team slice and removal blocks 
   const [worship, av, worshipAgain] = await Promise.all([
     callHandler(authHandlers.updateTeamRosterMemberProfile, {
       context: worshipManager, params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
-      body: { qualifications: [{ qualificationId: "worship-concurrent", areaId: worshipAreaId, teamId: fixture.ids.worship }] },
+      body: { qualifications: [{ qualificationId: "worship-concurrent", areaId: worshipAreaId, teamId: fixture.ids.worship }], baseProfile: { qualifications: [] } },
     }),
     callHandler(authHandlers.updateTeamRosterMemberProfile, {
       context: avManager, params: { teamId: fixture.ids.av, memberId: fixture.sharedId },
-      body: { qualifications: [{ qualificationId: "av-concurrent", areaId: avAreaId, teamId: fixture.ids.av }] },
+      body: { qualifications: [{ qualificationId: "av-concurrent", areaId: avAreaId, teamId: fixture.ids.av }], baseProfile: { qualifications: [] } },
     }),
     callHandler(authHandlers.updateTeamRosterMemberProfile, {
       context: worshipManager, params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
-      body: { membership: { isTeamLead: true } },
+      body: { membership: { isTeamLead: true }, baseProfile: { membership: { isTeamLead: false } } },
     }),
   ]);
   assert.equal(worship.statusCode, 200, JSON.stringify(worship.payload));
@@ -19473,6 +20395,77 @@ test("concurrent team profile saves preserve each team slice and removal blocks 
   const afterRemoval = await getDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId);
   assert.equal(afterRemoval.qualifications.some(({ qualificationId }) => qualificationId === "resurrect"), false);
   assert.ok(afterRemoval.qualifications.some(({ qualificationId }) => qualificationId === "av-concurrent"));
+});
+
+test("two editors of one team profile preserve different sections and reject stale replacements", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const fixture = await seedEffectiveTeamsReadFixture("same_team_profile_editors");
+  const managers = await Promise.all(["a", "b"].map((suffix) => createHumanContext(`same_team_editor_${suffix}`, {
+    churchId: fixture.churchId, role: "member",
+    permissions: { teams: "none", teamScopes: { [fixture.ids.worship]: "edit" } },
+  })));
+  const params = { teamId: fixture.ids.worship, memberId: fixture.sharedId };
+  const areaId = "same-team-area";
+  const roleId = "same-team-role";
+  await setDoc(COLLECTIONS.teamQualificationAreas, areaId, {
+    areaId, churchId: fixture.churchId, teamId: params.teamId, name: "Skills",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamRoles, roleId, {
+    roleId, churchId: fixture.churchId, teamId: params.teamId, name: "Captain",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamRosterMembers, params.memberId, {
+    qualifications: [{ qualificationId: "legacy-skill", areaId, status: "in_training" }],
+  }, { merge: true });
+  const read = async (context) => {
+    const result = await callHandler(authHandlers.getTeamRosterMemberProfile, { context, params });
+    assert.equal(result.statusCode, 200, JSON.stringify(result.payload));
+    return result.payload.teamProfile;
+  };
+  const save = (context, body) => callHandler(authHandlers.updateTeamRosterMemberProfile, { context, params, body });
+  // Both editors load before either saves. A adds a skill, then B edits only role.
+  const [profileA, profileB] = await Promise.all(managers.map(read));
+  const qualification = { qualificationId: "new-skill", areaId, teamId: params.teamId, status: "completed" };
+  assert.equal((await save(managers[0], {
+    qualifications: [...profileA.qualifications, qualification],
+    // Match bootstrap's complete projection of a legacy missing teamId.
+    baseProfile: { qualifications: profileA.qualifications.map((item) => ({ ...item, teamId: params.teamId })) },
+  })).statusCode, 200);
+  assert.equal((await save(managers[1], {
+    membership: { roleId }, baseProfile: { membership: profileB.membership },
+  })).statusCode, 200);
+  const persisted = await getDoc(COLLECTIONS.teamRosterMembers, params.memberId);
+  assert.ok(persisted.qualifications.some((item) => item.qualificationId === qualification.qualificationId));
+  assert.equal(persisted.teamMemberships[params.teamId].roleId, roleId);
+
+  // Each replacement/clear must compare its own original section, even when
+  // the same request also includes an otherwise valid update to another field.
+  const replacements = {
+    positionIds: [],
+    desiredPositionIds: [`${params.teamId}_position`],
+    membership: { roleId: null, isTeamLead: true },
+    qualifications: [],
+  };
+  for (const [section, replacement] of Object.entries(replacements)) {
+    const stale = await read(managers[1]);
+    const first = await save(managers[0], { [section]: replacement, baseProfile: { [section]: stale[section] } });
+    assert.equal(first.statusCode, 200, JSON.stringify(first.payload));
+    const beforeRejected = await getDoc(COLLECTIONS.teamRosterMembers, params.memberId);
+    const otherSection = section === "membership" ? "desiredPositionIds" : "membership";
+    const otherValue = section === "membership" ? [] : { roleId: stale.membership.roleId ? null : roleId };
+    const staleBody = {
+      [section]: stale[section], [otherSection]: otherValue,
+      baseProfile: { [section]: stale[section], [otherSection]: stale[otherSection] },
+    };
+    const rejected = await save(managers[1], staleBody);
+    assert.equal(rejected.statusCode, 409, `${section}: ${JSON.stringify(rejected.payload)}`);
+    assert.deepEqual(await getDoc(COLLECTIONS.teamRosterMembers, params.memberId), beforeRejected);
+    const retry = await save(managers[1], staleBody);
+    assert.equal(retry.statusCode, 409);
+  }
+  const beforeMissing = await getDoc(COLLECTIONS.teamRosterMembers, params.memberId);
+  assert.equal((await save(managers[1], { positionIds: [] })).statusCode, 409);
+  assert.deepEqual(await getDoc(COLLECTIONS.teamRosterMembers, params.memberId), beforeMissing);
+  assert.equal((await save(managers[1], { qualifications: [], baseProfile: { qualifications: [null] } })).statusCode, 400);
 });
 
 test("Services catalog reads follow Services grants while scoped Teams retain only planning catalogs", async (t) => {
@@ -19542,6 +20535,9 @@ test("Services catalog reads follow Services grants while scoped Teams retain on
     body: { microphones: [], audiences: [] },
   })).statusCode, 200);
 
+  await setDoc(COLLECTIONS.teams, "scoped-team", {
+    teamId: "scoped-team", churchId: owner.churchId, name: "Scoped team",
+  });
   const scoped = await createHumanContext("services_read_team_scope", {
     churchId: owner.churchId,
     role: "member",
@@ -21561,4 +22557,295 @@ test("team updates preserve omitted equipment flags and honor explicit enable an
   const disabled = await update({ usesMicrophoneAssignments: false, usesIemAssignments: false });
   assert.equal(disabled.payload.team.usesMicrophoneAssignments, false);
   assert.equal(disabled.payload.team.usesIemAssignments, false);
+});
+
+test("service plan note conflict decisions and ownership fingerprints survive save and reload", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("service_plan_note_conflict_round_trip");
+  const planKey = "svc1@2026-07-26";
+  const noteOwnership = [{ id: "source-note", fingerprint: "managed-note-fingerprint" }];
+  const noteConflict = {
+    sourceFingerprint: "updated-source-note-fingerprint",
+    existingNotesFingerprint: "existing-notes-fingerprint",
+    resolution: "keepExisting",
+  };
+  const saved = await callHandler(authHandlers.saveServicePlan, {
+    context,
+    params: { planKey },
+    body: {
+      serviceId: "svc1",
+      date: "2026-07-26",
+      name: "Sunday Service",
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        elements: [{
+          id: "special-music",
+          type: "free",
+          title: richText("Special Music"),
+          notes: richText("Choir selection before the message"),
+          sourcePlanningManaged: true,
+          servicePlanningImport: {
+            observed: { elementType: "Special Music", title: "Special Music", ledBy: "Youth Choir", note: "Updated PDF note" },
+            applied: { elementType: "Special Music", title: "Special Music", ledBy: "Youth Choir", note: "Old source note" },
+            pendingFields: ["note"],
+            managedNotes: noteOwnership,
+          },
+          importAmbiguity: {
+            source: "servicePlanning",
+            sourceKey: "Worship:1",
+            sourceElementType: "Special Music",
+            sourceTitle: "Special Music",
+            sourceLedBy: "Youth Choir",
+            sourceNote: "Updated PDF note",
+            parts: [],
+            reasons: [],
+            status: "acknowledged",
+            sourceFingerprint: "note-conflict-round-trip",
+            sourceNoteConflict: noteConflict,
+          },
+        }],
+      }],
+    },
+  });
+  assert.equal(saved.statusCode, 200);
+  assert.deepEqual(saved.payload.servicePlan.sections[0].elements[0].servicePlanningImport.managedNotes, noteOwnership);
+  assert.deepEqual(saved.payload.servicePlan.sections[0].elements[0].importAmbiguity.sourceNoteConflict, noteConflict);
+
+  const reloaded = await callHandler(authHandlers.getServicePlan, {
+    context,
+    params: { planKey },
+  });
+  assert.equal(reloaded.statusCode, 200);
+  assert.deepEqual(reloaded.payload.servicePlan.sections[0].elements[0].servicePlanningImport.managedNotes, noteOwnership);
+  assert.deepEqual(reloaded.payload.servicePlan.sections[0].elements[0].servicePlanningImport.pendingFields, ["note"]);
+  assert.deepEqual(reloaded.payload.servicePlan.sections[0].elements[0].importAmbiguity.sourceNoteConflict, noteConflict);
+});
+
+test("Planning Center PDF baseline save reload Update 1 preserves identity and proposes four operations", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const { readFile } = await import("node:fs/promises");
+  const { getDocument } = await import("../client/node_modules/pdfjs-dist/legacy/build/pdf.mjs");
+  const { reconstructPdfPageText } = await import("../client/src/pages/Services/pdfTextLayout.ts");
+  const { parsePlanningCenterPdfText } = await import("../client/src/pages/Services/planningCenterPdfParser.ts");
+  const { buildServicePlanSectionsFromImport, buildServicePlanSourceImport } = await import("../client/src/pages/Services/servicePlanFromImport.ts");
+  const { preparePlanningCenterPdfImport, refreshServicePlanFromImport, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS } = await import("../client/src/pages/Services/servicePlanImportSync.ts");
+  const { summarizeServicePlanImport, applySelectedServicePlanImportChanges, servicePlanImportChangeKey } = await import("../client/src/pages/Services/servicePlanImportSummary.ts");
+  const { applyPlanAnchorStartTime } = await import("../client/src/pages/Services/servicePlanTimingUtils.ts");
+  const { richTextToPlainText } = await import("../client/src/types/richText.ts");
+  const songNames = ["How Great Thou Art", "Great Is Thy Faithfulness", "I Surrender All"];
+  const songs = songNames.map((name, index) => ({ _id: `library-${index}`, name }));
+  const pdfBuildOptions = { preserveSourceTitle: true };
+  const parse = async (filename) => {
+    const data = new Uint8Array(await readFile(new URL(`./fixtures/planning-center/${filename}.pdf`, import.meta.url)));
+    const pdf = await getDocument({ data, useSystemFonts: true }).promise;
+    const pages = [];
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+      const page = await pdf.getPage(pageNumber);
+      pages.push(reconstructPdfPageText((await page.getTextContent()).items));
+    }
+    await pdf.destroy();
+    return parsePlanningCenterPdfText(pages.join("\n"));
+  };
+  const context = await createAdminContext("pdf_reconciliation_lifecycle");
+  const planKey = "svc1@2026-10-25";
+  let revision = 0;
+  const saveReload = async (sections, sourceImport) => {
+    const saved = await callHandler(authHandlers.saveServicePlan, {
+      context, params: { planKey },
+      body: { serviceId: "svc1", date: "2026-10-25", name: "Sunday Worship", baseRevision: revision, sections, sourceImport },
+    });
+    assert.equal(saved.statusCode, 200, JSON.stringify(saved.payload));
+    revision = saved.payload.servicePlan.revision;
+    const loaded = await callHandler(authHandlers.getServicePlan, { context, params: { planKey } });
+    assert.equal(loaded.statusCode, 200);
+    const stored = await getDoc(COLLECTIONS.servicePlans, `${context.churchId}::${planKey}`);
+    assert.deepEqual(stored.sections, loaded.payload.servicePlan.sections);
+    return loaded.payload.servicePlan;
+  };
+  const baselineData = await parse("01_Planning_Center_Baseline");
+  const sourceImport = buildServicePlanSourceImport(baselineData, "", "planningCenterPdf");
+  let plan = await saveReload(applyPlanAnchorStartTime(preparePlanningCenterPdfImport([], buildServicePlanSectionsFromImport(baselineData, songs, pdfBuildOptions)).importedSections, "10:00"), sourceImport);
+  const expectedSongTitles = ["Opening Song: How Great Thou Art", "Song: Great Is Thy Faithfulness", "Appeal Song: I Surrender All"];
+  const expectedUpdate1Order = [
+    "Prelude & Welcome", expectedSongTitles[0], "Prayer — Elder Naomi Brooks", expectedSongTitles[1],
+    "Scripture Reading", "Prayer — Elder David Cole", "Special Music", "Sermon", expectedSongTitles[2],
+    "Offering", "Ministry Spotlight — NEW", "Closing Prayer",
+  ];
+  assert.deepEqual(plan.sections[0].elements.filter((element) => element.songRef?.kind === "library").map((element) => richTextToPlainText(element.title)), expectedSongTitles);
+  assert.deepEqual(plan.sections[0].elements.filter((element) => element.songRef?.kind === "library").map((element) => element.songRef.songId), songs.map(({ _id }) => _id));
+  assert.deepEqual(plan.sections[0].elements.filter((element) => element.songRef?.kind === "library").map((element) => element.songRef.songName), songNames);
+  plan.sections[0].elements.forEach((element) => {
+    const index = songs.findIndex(({ _id }) => element.songRef?.kind === "library" && element.songRef.songId === _id);
+    if (index >= 0) element.assignees = [{ id: `slot-${index}`, name: `Singer ${index}`, microphoneIds: [`mic-${index}`], iemIds: [`iem-${index}`] }];
+  });
+  plan = await saveReload(plan.sections, sourceImport);
+  assert.deepEqual(plan.sections[0].elements.filter((element) => element.songRef?.kind === "library").map((element) => richTextToPlainText(element.title)), expectedSongTitles);
+  const originalIds = plan.sections[0].elements.map(({ id }) => id);
+  const updateData = await parse("02_Planning_Center_Update_1");
+  const prepared = preparePlanningCenterPdfImport(plan.sections, buildServicePlanSectionsFromImport(updateData, songs, pdfBuildOptions));
+  const next = applyPlanAnchorStartTime(refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, {
+    ...DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS, suggestLegacyMatches: true, planningCenterPdfMatch: true,
+  }), "10:00");
+  const summary = summarizeServicePlanImport(plan.sections, next, {}, { dependentTimingShifts: true, trackSameSectionMoves: true });
+  t.diagnostic(JSON.stringify({ added: summary.added, updated: summary.updated, moved: summary.moved, order: next[0].elements.map((item) => richTextToPlainText(item.title)) }));
+  assert.deepEqual([summary.updated, summary.added, summary.removed, summary.moved], [3, 1, 0, 0]);
+  const selected = applyPlanAnchorStartTime(applySelectedServicePlanImportChanges(plan.sections, next, summary, new Set(summary.changes.map(servicePlanImportChangeKey))), "10:00");
+  assert.equal(selected[0].elements.length, 12);
+  assert.deepEqual(selected[0].elements.filter(({ id }) => originalIds.includes(id)).map(({ id }) => id), originalIds);
+  assert.equal(richTextToPlainText(selected[0].elements[10].title), "Ministry Spotlight — NEW");
+  assert.equal(richTextToPlainText(selected[0].elements[11].title), "Closing Prayer");
+  assert.deepEqual(selected[0].elements.filter((item) => item.songRef?.kind === "library").map((item) => item.assignees[0].microphoneIds), [["mic-0"], ["mic-1"], ["mic-2"]]);
+  assert.deepEqual(selected[0].elements.filter((item) => item.songRef?.kind === "library").map((item) => item.assignees[0].iemIds), [["iem-0"], ["iem-1"], ["iem-2"]]);
+  assert.deepEqual(selected[0].elements.map(({ startTime }) => startTime), ["10:00", "10:07", "10:11", "10:14", "10:18", "10:21", "10:24", "10:29", "11:04", "11:08", "11:11", "11:15"]);
+  assert.deepEqual(selected[0].elements.map((item) => richTextToPlainText(item.title)), expectedUpdate1Order);
+  assert.equal(summary.changes.length, 4);
+  assert.deepEqual(selected[0].elements.filter((item) => item.songRef?.kind === "library").map((item) => item.songRef.songId), songs.map(({ _id }) => _id));
+  assert.equal(plan.sourceImport.source, "planningCenterPdf");
+  assert.equal(plan.sections[0].elements.some((element) => "planningCenterPdfSourcePosition" in element || "importMatchCurrentId" in element), false);
+  const review = (sections, data, removeMissing = false) => {
+    const prepared = preparePlanningCenterPdfImport(sections, buildServicePlanSectionsFromImport(data, songs, pdfBuildOptions));
+    const next = refreshServicePlanFromImport(prepared.currentSections, prepared.importedSections, {
+      ...DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS, suggestLegacyMatches: true, planningCenterPdfMatch: true, removeMissing,
+    });
+    const summary = summarizeServicePlanImport(sections, next, {}, { dependentTimingShifts: true, trackSameSectionMoves: true });
+    const apply = (keys) => keys.length
+      ? applyPlanAnchorStartTime(applySelectedServicePlanImportChanges(sections, next, summary, new Set(keys)), "10:00") : sections;
+    return { next, summary, apply };
+  };
+  // Partial approvals: additions never reorder existing rows; an update never
+  // applies an unrelated addition or duration. No selection preserves identity.
+  const first = review(plan.sections, updateData);
+  assert.equal(first.apply([]), plan.sections);
+  const addition = first.summary.changes.find(({ kind }) => kind === "added");
+  const additionOnly = first.apply([servicePlanImportChangeKey(addition)]);
+  assert.deepEqual(additionOnly[0].elements.filter(({ id }) => originalIds.includes(id)).map(({ id }) => id), originalIds);
+  assert.equal(additionOnly[0].elements[0].durationSeconds, 300);
+  const sermon = first.summary.changes.find(({ kind, itemName }) => kind === "updated" && itemName === "Sermon");
+  const updateOnly = first.apply([servicePlanImportChangeKey(sermon)]);
+  assert.deepEqual(updateOnly[0].elements.map(({ id }) => id), originalIds);
+  assert.equal(updateOnly[0].elements[7].durationSeconds, 2100);
+  assert.deepEqual(updateOnly[0].elements.slice(0, 7), plan.sections[0].elements.slice(0, 7));
+  // Test B: persist the applied Update 1 then repeat the identical real PDF.
+  plan = await saveReload(selected, buildServicePlanSourceImport(updateData, "", "planningCenterPdf"));
+  assert.deepEqual(plan.sections[0].elements.filter((item) => item.songRef?.kind === "library").map((item) => richTextToPlainText(item.title)), expectedSongTitles);
+  assert.deepEqual(plan.sections[0].elements.map((item) => richTextToPlainText(item.title)), expectedUpdate1Order);
+  assert.deepEqual(plan.sections[0].elements.filter((item) => item.songRef?.kind === "library").map((item) => item.songRef.songId), songs.map(({ _id }) => _id));
+  assert.deepEqual(plan.sections[0].elements.filter((item) => item.songRef?.kind === "library").map((item) => item.songRef.songName), songNames);
+  assert.deepEqual(plan.sections[0].elements.filter((item) => item.songRef?.kind === "library").map((item) => [item.assignees[0].microphoneIds[0], item.assignees[0].iemIds[0]]), [["mic-0", "iem-0"], ["mic-1", "iem-1"], ["mic-2", "iem-2"]]);
+  assert.deepEqual(review(plan.sections, updateData).summary.changes, []);
+  const localSong = plan.sections[0].elements.find((element) => element.songRef?.songId === "library-2");
+  localSong.notes = richText("Local arrangement cue");
+  localSong.resources = [{ id: "local-chart", type: "url", title: "Local chart", url: "https://example.org/chart" }];
+  const manual = { id: "operator-item", type: "free", title: richText("Operator cue"), notes: richText("Keep my cue") };
+  plan.sections[0].elements.splice(4, 0, manual);
+  plan = await saveReload(plan.sections, plan.sourceImport);
+  const savedManual = plan.sections[0].elements.find(({ id }) => id === manual.id);
+  // Test C: duration, minimal reorder, optional removal, duplicate additions
+  // and an uncertain same-title occurrence in the second representative PDF.
+  const secondData = await parse("03_Planning_Center_Update_2");
+  const second = review(plan.sections, secondData, true);
+  const uncertain = second.summary.changes.filter(({ kind }) => kind === "legacy_match");
+  const moves = second.summary.changes.filter(({ kind }) => kind === "moved");
+  const removals = second.summary.changes.filter(({ kind }) => kind === "removed");
+  assert.equal(uncertain.length, 1);
+  assert.equal(moves.length, 1);
+  assert.deepEqual(removals.map(({ itemName }) => itemName), ["Special Music"]);
+  assert.equal(second.summary.changes.some(({ id }) => id === manual.id), false);
+  assert.equal(uncertain[0].itemName, "Prayer — Elder David Cole");
+  const moveOnly = second.apply(moves.map(servicePlanImportChangeKey));
+  const movedSong = moveOnly[0].elements.find(({ id }) => id === localSong.id);
+  assert.deepEqual([movedSong.notes, movedSong.resources, movedSong.assignees, movedSong.songRef], [localSong.notes, localSong.resources, localSong.assignees, localSong.songRef]);
+  assert.equal(moveOnly[0].elements[0].durationSeconds, 420);
+  assert.equal(moveOnly[0].elements.some(({ id }) => id === removals[0].id), true);
+  const removeOnly = second.apply(removals.map(servicePlanImportChangeKey));
+  assert.deepEqual(removeOnly[0].elements.map(({ id }) => id), plan.sections[0].elements.filter(({ id }) => id !== removals[0].id).map(({ id }) => id));
+  const ordinaryKeys = second.summary.changes.filter(({ kind }) => kind !== "legacy_match").map(servicePlanImportChangeKey);
+  const declined = second.apply(ordinaryKeys);
+  const originalDavid = plan.sections[0].elements.find(({ id }) => id === uncertain[0].id);
+  const declinedDavid = declined[0].elements.find(({ id }) => id === originalDavid.id);
+  assert.deepEqual(declinedDavid, { ...originalDavid, startTime: declinedDavid.startTime, planningCenterPdfMatchReviewRequired: true });
+  plan = await saveReload(declined, buildServicePlanSourceImport(secondData, "", "planningCenterPdf"));
+  assert.equal(plan.sections[0].elements.find(({ id }) => id === originalDavid.id).planningCenterPdfMatchReviewRequired, true);
+  const repeated = review(plan.sections, secondData, true);
+  assert.deepEqual(repeated.summary.changes.map(({ kind, id }) => [kind, id]), [["legacy_match", originalDavid.id]]);
+  const confirmed = repeated.apply(repeated.summary.changes.map(servicePlanImportChangeKey));
+  plan = await saveReload(confirmed, plan.sourceImport);
+  assert.deepEqual(review(plan.sections, secondData, true).summary.changes, []);
+  assert.equal(plan.sections[0].elements.length, 15); // 14 source rows + manual cue
+  const sourceTitles = buildServicePlanSectionsFromImport(secondData, songs, pdfBuildOptions)[0].elements.map((item) => richTextToPlainText(item.title));
+  assert.deepEqual(plan.sections[0].elements.filter(({ id }) => id !== manual.id).map((item) => richTextToPlainText(item.title)), sourceTitles);
+  assert.equal(plan.sections[0].elements.some((item) => item.id === removals[0].id && richTextToPlainText(item.title).startsWith("Prayer")), false);
+  assert.deepEqual(plan.sections[0].elements.find(({ id }) => id === localSong.id).notes, localSong.notes);
+  assert.deepEqual(plan.sections[0].elements.find(({ id }) => id === localSong.id).resources, localSong.resources);
+  assert.deepEqual(plan.sections[0].elements.find(({ id }) => id === localSong.id).assignees, localSong.assignees);
+  const finalManual = plan.sections[0].elements.find(({ id }) => id === manual.id);
+  assert.deepEqual(finalManual, { ...savedManual, startTime: finalManual.startTime });
+  // Older saved plans have no PDF keys/positions; marked rows still reconcile
+  // canonically without migration or claiming the operator-created row.
+  const legacy = structuredClone(plan.sections);
+  legacy[0].elements.forEach((element) => { delete element.planningCenterPdfMatchKey; delete element.planningCenterPdfSourcePosition; });
+  assert.deepEqual(review(legacy, secondData, true).summary.changes, []);
+});
+
+test("service plan import contract retains source types, ownership and review decisions and omits transient associations", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("import_metadata_contract");
+  const managedAssignees = [{ id: "singer", fields: ["title", "ledBy"], ledByIdentity: "pco-person", fingerprint: JSON.stringify({ name: "Avery" }) }];
+  const songMappings = [{ incoming: { kind: "pending", title: "Response", lyricsText: "Verse", key: "D" }, candidateOccurrenceIds: ["song-one", "song-two"], mappingId: "source-song", sourceFingerprint: "source-fingerprint", resolution: { kind: "replace", occurrenceId: "song-two" } }];
+  for (const source of ["planningCenterPdf", "planningCenter", "servicePlanning", "worshipSync"]) {
+    const planKey = `${source}@2026-10-25`;
+    const sourceImport = { source, sourceUrl: source === "planningCenterPdf" ? "" : "https://example.org/plan", loadedAt: "2026-10-25T10:00:00Z", planLabel: "Sunday Worship", planningCenterServiceTypeId: "type-1", planningCenterPlanId: "plan-1" };
+    const snapshot = { elementType: "Song", title: "Response", ledBy: "Avery", note: "Source note" };
+    const element = {
+      id: "response", type: "song", title: richText("Response"), sourcePlanningManaged: true,
+      sourceOccurrenceId: "pco-row", sourceTemplateElementId: "template-item", sourceTemplateElementType: "free",
+      planningCenterPdfMatchKey: JSON.stringify(["planningCenterPdf", "response", "duplicate", 240, 0]),
+      planningCenterPdfMatchReviewRequired: true, planningCenterPdfSourcePosition: 42,
+      importMatchCurrentId: "transient-association", legacyImportMatchCandidateForId: "transient-candidate",
+      assignees: [{ id: "singer", name: "Avery", memberId: "member-1", microphoneIds: ["mic-1"], iemIds: ["iem-1"] }],
+      servicePlanningImport: { observed: snapshot, applied: snapshot, pendingFields: [], managedAssignees },
+      importAmbiguity: { source: "servicePlanning", sourceKey: "Worship:1", sourceElementType: "Song", sourceTitle: "Response", sourceLedBy: "Avery", parts: [], reasons: [], status: "confirmed", sourceFingerprint: "original", songMappings },
+      songRefs: [{ id: "song-one", kind: "library", songId: "library-1", songName: "Response", key: "D" }],
+    };
+    const saved = await callHandler(authHandlers.saveServicePlan, { context, params: { planKey }, body: {
+      serviceId: "svc1", date: "2026-10-25", name: "Sunday Worship", sourceImport,
+      sections: [{ id: "worship", name: "Worship", sourcePlanningManaged: true, elements: [element] }],
+    } });
+    assert.equal(saved.statusCode, 200, JSON.stringify(saved.payload));
+    const loaded = await callHandler(authHandlers.getServicePlan, { context, params: { planKey } });
+    assert.equal(loaded.statusCode, 200);
+    assert.deepEqual(loaded.payload.servicePlan.sourceImport, sourceImport);
+    const persisted = loaded.payload.servicePlan.sections[0].elements[0];
+    assert.deepEqual(persisted.servicePlanningImport.managedAssignees, managedAssignees);
+    assert.deepEqual(persisted.importAmbiguity.songMappings, songMappings);
+    assert.equal(persisted.sourceTemplateElementId, element.sourceTemplateElementId);
+    assert.equal(persisted.sourceTemplateElementType, element.sourceTemplateElementType);
+    assert.equal(persisted.planningCenterPdfMatchKey, element.planningCenterPdfMatchKey);
+    assert.equal(persisted.sourceOccurrenceId, element.sourceOccurrenceId);
+    assert.equal(persisted.planningCenterPdfMatchReviewRequired, true);
+    assert.deepEqual(persisted.assignees, element.assignees);
+    assert.equal(persisted.songRefs[0].key, "D");
+    assert.equal(["planningCenterPdfSourcePosition", "legacyImportMatchCandidateForId", "importMatchCurrentId"].some((key) => key in persisted), false);
+    const stored = await getDoc(COLLECTIONS.servicePlans, `${context.churchId}::${planKey}`);
+    assert.deepEqual(stored.sections, loaded.payload.servicePlan.sections);
+    if (source === "planningCenter") {
+      const { mapPlanningCenterPlanToImportData } = await import("./planningCenterPlanImport.js");
+      const { buildServicePlanSectionsFromImport } = await import("../client/src/pages/Services/servicePlanFromImport.ts");
+      const { refreshServicePlanFromImport, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS } = await import("../client/src/pages/Services/servicePlanImportSync.ts");
+      const data = mapPlanningCenterPlanToImportData({ plan: { id: "plan-1", attributes: { title: "Sunday" } }, items: [
+        { id: "header", attributes: { item_type: "header", title: "Worship" } },
+        { id: "pco-row", attributes: { item_type: "song", title: "Response", length: 300 } },
+      ] });
+      const next = refreshServicePlanFromImport(loaded.payload.servicePlan.sections, buildServicePlanSectionsFromImport(data, []), DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+      assert.deepEqual(next.flatMap(({ elements }) => elements.map(({ id }) => id)), ["response"]);
+      assert.equal(next[0].elements[0].durationSeconds, 300);
+      assert.deepEqual(next[0].elements[0].assignees[0].microphoneIds, ["mic-1"]);
+      const updated = await callHandler(authHandlers.saveServicePlan, { context, params: { planKey }, body: {
+        serviceId: "svc1", date: "2026-10-25", name: "Sunday Worship", baseRevision: saved.payload.servicePlan.revision, sections: next, sourceImport,
+      } });
+      assert.equal(updated.statusCode, 200);
+      assert.equal(updated.payload.servicePlan.sourceImport.planningCenterPlanId, "plan-1");
+    }
+  }
 });

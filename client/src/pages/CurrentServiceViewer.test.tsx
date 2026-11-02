@@ -476,6 +476,49 @@ describe("CurrentServiceViewer", () => {
     expect(getServicePlanViewer).toHaveBeenCalledTimes(1);
   });
 
+  it("renders the shared live-adjusted timeline for a current service plan", async () => {
+    const nowMs = Date.parse("2026-09-13T12:59:00.000Z");
+    jest.spyOn(Date, "now").mockReturnValue(nowMs);
+    localStorage.setItem("worshipsyncServicePublicTheme", "dark");
+    const livePlan: ServicePlan = {
+      ...plan,
+      startsAt: "2026-09-13T13:00:00.000Z",
+      timezone: "UTC",
+      publicLive: {
+        mode: "anchored",
+        currentElementId: "song",
+        startedAt: "2026-09-13T12:58:00.000Z",
+      },
+      sections: [{
+        id: "worship",
+        name: "Worship",
+        elements: [
+          { id: "welcome", type: "free", title: { blocks: [] }, startTime: "13:00", durationSeconds: 120 },
+          { id: "song", type: "free", title: { blocks: [] }, startTime: "13:02", durationSeconds: 300 },
+          { id: "closing", type: "free", title: { blocks: [] }, startTime: "13:07", durationSeconds: 60 },
+        ],
+      }],
+    };
+    const snapshot = buildServicePlanFlowSnapshot({
+      plan: livePlan,
+      startsAt: livePlan.startsAt!,
+      serverNowMs: nowMs,
+    });
+    jest.mocked(getServicePlanViewer).mockResolvedValue({
+      success: true,
+      plan: livePlan,
+      snapshot,
+    });
+
+    renderViewer([morningService], false, { sessionKind: "workstation" });
+
+    expect(await screen.findByLabelText("Live-adjusted time 12:58 PM; planned 1:02 PM"))
+      .toHaveClass("text-blue-300");
+    expect(screen.getByLabelText("Live-adjusted time 1:03 PM; planned 1:07 PM"))
+      .toHaveClass("text-blue-300");
+    expect(screen.getByText("1:00 PM", { selector: "time" })).toHaveClass("text-neutral-300");
+  });
+
   it("keeps branding and role-note filtering when the saved plan is unpublished", async () => {
     jest
       .spyOn(Date, "now")
@@ -899,6 +942,86 @@ describe("CurrentServiceViewer", () => {
     });
     expect(await screen.findByText("No Service Plan yet")).toBeInTheDocument();
     expect(getServicePlanViewer).toHaveBeenCalledTimes(2);
+  });
+
+  it("updates current-service timing from a remote live-state event", async () => {
+    const nowMs = Date.parse("2026-09-13T12:59:00.000Z");
+    jest.spyOn(Date, "now").mockReturnValue(nowMs);
+    const scheduledPlan: ServicePlan = {
+      ...plan,
+      startsAt: "2026-09-13T13:00:00.000Z",
+      timezone: "UTC",
+      publicLive: { mode: "schedule" },
+      sections: [{
+        id: "worship",
+        name: "Worship",
+        elements: [
+          {
+            id: "welcome",
+            type: "free",
+            title: { blocks: [{ type: "paragraph", spans: [{ text: "Welcome" }] }] },
+            startTime: "13:00",
+            durationSeconds: 120,
+          },
+          {
+            id: "song",
+            type: "free",
+            title: { blocks: [{ type: "paragraph", spans: [{ text: "Song" }] }] },
+            startTime: "13:02",
+            durationSeconds: 300,
+          },
+          {
+            id: "closing",
+            type: "free",
+            title: { blocks: [{ type: "paragraph", spans: [{ text: "Closing" }] }] },
+            startTime: "13:07",
+            durationSeconds: 60,
+          },
+        ],
+      }],
+    };
+    const remotePlan: ServicePlan = {
+      ...scheduledPlan,
+      publicLive: {
+        mode: "anchored",
+        currentElementId: "song",
+        startedAt: "2026-09-13T12:58:00.000Z",
+      },
+    };
+    jest.mocked(getServicePlanViewer)
+      .mockResolvedValueOnce({
+        success: true,
+        plan: scheduledPlan,
+        snapshot: buildServicePlanFlowSnapshot({
+          plan: scheduledPlan,
+          startsAt: scheduledPlan.startsAt!,
+          serverNowMs: nowMs,
+        }),
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        plan: remotePlan,
+        snapshot: buildServicePlanFlowSnapshot({
+          plan: remotePlan,
+          startsAt: remotePlan.startsAt!,
+          serverNowMs: nowMs,
+        }),
+      });
+
+    renderViewer([morningService]);
+    expect(await screen.findByRole("heading", { name: "Sunday Service" })).toBeInTheDocument();
+    const onMessage = jest.mocked(useTeamsLiveSync).mock.calls[0]?.[1];
+
+    act(() => {
+      onMessage?.({ type: "service-plan-updated", planKey: remotePlan.planKey });
+    });
+
+    expect(await screen.findByLabelText("Live-adjusted time 12:58 PM; planned 1:02 PM"))
+      .toHaveClass("text-blue-300");
+    expect(screen.getByLabelText("Live-adjusted time 1:03 PM; planned 1:07 PM"))
+      .toHaveClass("text-blue-300");
+    expect(screen.getByText("1:00 PM", { selector: "time" })).toHaveClass("text-neutral-300");
+    await waitFor(() => expect(getServicePlanViewer).toHaveBeenCalledTimes(2));
   });
 
   it("keeps the enriched snapshot visible while an SSE refresh is pending", async () => {

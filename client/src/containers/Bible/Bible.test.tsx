@@ -1,3 +1,4 @@
+import { allDocsSlice } from "../../store/allDocsSlice";
 import { configureStore } from "@reduxjs/toolkit";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Provider } from "react-redux";
@@ -9,7 +10,7 @@ import {
 } from "../../store/createItemSlice";
 import { bibleSlice } from "../../store/bibleSlice";
 import { presentationSlice } from "../../store/presentationSlice";
-import { allItemsSlice } from "../../store/allItemsSlice";
+import { itemLibraryUiSlice } from "../../store/itemLibraryUiSlice";
 import { itemListSlice } from "../../store/itemListSlice";
 import { itemSlice } from "../../store/itemSlice";
 import { preferencesSlice } from "../../store/preferencesSlice";
@@ -110,7 +111,8 @@ const createBibleStore = () => {
       createItem: createItemSlice.reducer,
       bible: bibleSlice.reducer,
       presentation: presentationSlice.reducer,
-      allItems: allItemsSlice.reducer,
+      itemLibraryUi: itemLibraryUiSlice.reducer,
+      allDocs: allDocsSlice.reducer,
       itemList: itemListSlice.reducer,
       item: itemSlice.reducer,
       undoable: (state = undoableState) => state,
@@ -137,12 +139,7 @@ const createBibleStore = () => {
         endVerse: 0,
       },
       presentation: presentationSlice.getInitialState(),
-      allItems: {
-        ...allItemsSlice.getInitialState(),
-        list: [],
-        isAllItemsLoading: false,
-        isInitialized: true,
-      },
+      itemLibraryUi: itemLibraryUiSlice.getInitialState(),
       itemList: itemListSlice.getInitialState(),
       item: itemSlice.getInitialState(),
       undoable: undoableState,

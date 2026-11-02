@@ -1,3 +1,5 @@
+import ControllerItemInitialization from "../Controller/ControllerItemInitialization";
+import { isControllerWorkspacePath } from "../../utils/controllerWorkspace";
 import { useContext, useEffect, useRef, useState } from "react";
 import {
   DndContext,
@@ -88,7 +90,7 @@ const AuxControllerBody = () => {
   const rightPanelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!/\/item\//.test(location.pathname)) {
+    if (!isControllerWorkspacePath(location.pathname)) {
       dispatch(setIsLyricsEditorOpen(false));
     }
   }, [location.pathname, dispatch]);
@@ -122,6 +124,7 @@ const AuxControllerBody = () => {
       onRootClick={handleElementClick}
       layoutRef={layoutRef}
     >
+      <ControllerItemInitialization />
       <ControllerMediaPreparationPublisher />
       <ServicePlanningSyncFloatingWindow allowOverlaySync={false} />
       {(access === "full" || access === "music") && <LyricsEditor />}
@@ -168,15 +171,8 @@ const AuxControllerBody = () => {
               </p>
             )}
             <Routes>
-              <Route
-                path="/"
-                element={
-                  <h2 className="mt-4 text-center text-2xl font-bold">
-                    No Item Selected
-                  </h2>
-                }
-              />
-              <Route path="item/:itemId/:listId" element={<Item />} />
+              <Route path="/" element={<Item />} />
+              <Route path="item/*" element={<Navigate to={controllerBasePath} replace />} />
               <Route path="free" element={<FreeForms />} />
               <Route path="create" element={<CreateItem />} />
               <Route path="songs" element={<Songs />} />

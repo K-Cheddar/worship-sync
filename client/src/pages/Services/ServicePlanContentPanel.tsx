@@ -25,7 +25,6 @@ import Icon from "../../components/Icon/Icon";
 import ContentPreviewDialog from "../../components/ContentPreview/ContentPreviewDialog";
 import { createSongAudioPreview } from "../../components/ContentPreview/contentPreview";
 import Input from "../../components/Input/Input";
-import Checkbox from "../../components/Checkbox/Checkbox";
 import DebouncedInput from "../../components/DebouncedInput/DebouncedInput";
 import RichTextEditor from "../../components/RichTextEditor/RichTextEditor";
 import ServiceFlowRichText from "../../components/ServiceFlowRichText/ServiceFlowRichText";
@@ -223,20 +222,10 @@ const ServicePlanContentPanel = ({
   );
   const itemLabel = richTextToPlainText(element.title).trim() || "Untitled item";
   const participantOverlay = element.participantOverlay ?? {};
-  const participantOverlayEnabled = participantOverlay.enabled === true;
-
-  const updateParticipantOverlay = (
-    changes: Partial<NonNullable<ServicePlanElement["participantOverlay"]>>,
-  ) => {
-    const enabled = changes.enabled ?? participantOverlayEnabled;
-    const eventLabel = changes.eventLabel ?? participantOverlay.eventLabel ?? "";
-    const next = {
-      ...(enabled ? { enabled: true } : {}),
-      ...(eventLabel.trim() ? { eventLabel: eventLabel.trim() } : {}),
-    };
+  const updateParticipantOverlayEventLabel = (eventLabel: string) => {
     onUpdate({
       participantOverlay:
-        Object.keys(next).length > 0 ? next : undefined,
+        eventLabel.trim() ? { eventLabel: eventLabel.trim() } : undefined,
     });
   };
   const audioSongs = useMemo(
@@ -410,8 +399,12 @@ const ServicePlanContentPanel = ({
       setResourceError("Enter a valid http or https URL.");
       return;
     }
-    if (resourceEditorMode === "text" && isRichTextEmpty(resourceText)) {
-      setResourceError("Add a note before saving.");
+    if (resourceEditorMode === "text" && !title && isRichTextEmpty(resourceText)) {
+      setResourceError("Add a title or notes before saving.");
+      return;
+    }
+    if (resourceEditorMode === "generic" && !title && !url && isRichTextEmpty(resourceNotes)) {
+      setResourceError("Add a title, notes, or URL before saving.");
       return;
     }
     const nextResource = resourceEditorMode === "url"
@@ -672,25 +665,26 @@ const ServicePlanContentPanel = ({
         </Button>
         <div className="space-y-3">
           <h3 className="text-sm font-semibold text-gray-100">{resourceEditorLabel(resourceEditorMode)}</h3>
-          <Input label="Title" value={resourceTitle} onChange={(value) => setResourceTitle(String(value))} autoFocus />
+          <Input label="Title (optional)" value={resourceTitle} onChange={(value) => setResourceTitle(String(value))} placeholder="Resource title (optional)" autoFocus />
           {resourceEditorMode !== "text" ? (
-            <Input label="URL (optional)" value={resourceUrl} onChange={(value) => setResourceUrl(String(value))} placeholder="https://…" />
+            <Input label={resourceEditorMode === "url" ? "URL" : "URL (optional)"} value={resourceUrl} onChange={(value) => setResourceUrl(String(value))} placeholder="https://…" />
           ) : null}
           {resourceEditorMode === "text" ? (
             <RichTextEditor
-              label="Notes"
+              label="Notes (optional)"
               value={resourceText}
               onChange={setResourceText}
               placeholder="Notes for this item (optional)"
             />
-          ) : (
+          ) : null}
+          {resourceEditorMode === "generic" ? (
             <RichTextEditor
               label="Notes (optional)"
               value={resourceNotes}
               onChange={setResourceNotes}
               placeholder="Notes about this resource (optional)"
             />
-          )}
+          ) : null}
           {resourceError ? <p className="text-sm text-red-300" role="alert">{resourceError}</p> : null}
           <Button variant="cta" className="w-full cursor-pointer justify-center" onClick={saveResource}>
             {editingResourceId ? "Save resource" : "Add resource"}
@@ -707,36 +701,19 @@ const ServicePlanContentPanel = ({
           Participant overlay
         </h3>
         {allowEdit ? (
-          <Checkbox
-            checked={participantOverlayEnabled}
-            onCheckedChange={(enabled) =>
-              updateParticipantOverlay({ enabled })
-            }
-            label="Include assigned people in overlay sync"
+          <DebouncedInput
+            label="Event label (optional)"
+            value={participantOverlay.eventLabel ?? ""}
+            onChange={updateParticipantOverlayEventLabel}
+            placeholder={itemLabel}
+            maxLength={120}
+            helperText={`Leave blank to use “${itemLabel}”.`}
           />
         ) : (
-          <p className="text-sm text-gray-300">
-            {participantOverlayEnabled ? "Included in overlay sync" : "Not included in overlay sync"}
+          <p className="text-xs text-gray-400">
+            Event: {participantOverlay.eventLabel?.trim() || itemLabel}
           </p>
         )}
-        {participantOverlayEnabled ? (
-          allowEdit ? (
-            <DebouncedInput
-              label="Event label (optional)"
-              value={participantOverlay.eventLabel ?? ""}
-              onChange={(eventLabel) =>
-                updateParticipantOverlay({ eventLabel })
-              }
-              placeholder={itemLabel}
-              maxLength={120}
-              helperText={`Leave blank to use “${itemLabel}”.`}
-            />
-          ) : (
-            <p className="text-xs text-gray-400">
-              Event: {participantOverlay.eventLabel?.trim() || itemLabel}
-            </p>
-          )
-        ) : null}
       </section>
 
       {allowEdit && displayResources.length > 1 ? (

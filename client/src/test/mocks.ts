@@ -32,6 +32,7 @@ export function createMockPouchDB(
 ): PouchDB.Database {
   return {
     get: jest.fn().mockResolvedValue({ _id: "credits", list: [] }),
+    info: jest.fn().mockResolvedValue({ update_seq: 0 }),
     put: jest.fn(),
     find: jest.fn(),
     createIndex: jest.fn(),
@@ -61,6 +62,8 @@ export function createMockControllerContext(
   return {
     db: overrideDb ?? createMockPouchDB(),
     dbProgress: 100,
+    bootstrapReady: true,
+    canCreateBootstrapDocuments: () => true,
     isGuestSession: false,
     setIsMobile: jest.fn(),
     updater: new MockEventTarget(),
@@ -89,6 +92,7 @@ export function createMockGlobalContext(
     firebaseDb: mockFirebaseDb,
     authenticateHumanWithFirebase: jest.fn(),
     login: jest.fn(),
+    claimEmailVerificationChallenge: jest.fn(),
     verifyEmailCode: jest.fn(),
     resendEmailCode: jest.fn(),
     createChurchAccount: jest.fn(),
@@ -144,7 +148,7 @@ export function createMockGlobalContext(
     operatorName: "",
     device: null,
     setOperatorName: jest.fn(),
-    refreshAuthBootstrap: jest.fn(() => Promise.resolve()),
+    refreshAuthBootstrap: jest.fn(() => Promise.resolve(true)),
     refreshPresentationListeners: jest.fn(),
     updateSelfDisplayName: jest.fn(() => Promise.resolve(true)),
     notificationCategories: [
@@ -180,6 +184,7 @@ export function createMockGlobalInfo(overrides: Record<string, unknown> = {}) {
     firebaseDb: mockFirebaseDb,
     authenticateHumanWithFirebase: jest.fn(),
     login: jest.fn(),
+    claimEmailVerificationChallenge: jest.fn(),
     verifyEmailCode: jest.fn(),
     resendEmailCode: jest.fn(),
     createChurchAccount: jest.fn(),
@@ -233,7 +238,7 @@ export function createMockGlobalInfo(overrides: Record<string, unknown> = {}) {
     operatorName: "",
     device: null,
     setOperatorName: jest.fn(),
-    refreshAuthBootstrap: jest.fn(() => Promise.resolve()),
+    refreshAuthBootstrap: jest.fn(() => Promise.resolve(true)),
     refreshPresentationListeners: jest.fn(),
     updateSelfDisplayName: jest.fn(() => Promise.resolve(true)),
     notificationCategories: [
