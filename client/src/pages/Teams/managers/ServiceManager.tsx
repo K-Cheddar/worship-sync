@@ -59,6 +59,10 @@ import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
 import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 import { useChurchServiceTimeZone } from "../../../context/churchServiceTimeZone";
 import ChurchServiceTimeZoneSettings from "../ChurchServiceTimeZoneSettings";
+import {
+  listPlanningCenterServiceTypes,
+  type PlanningCenterServiceType,
+} from "../../../api/planningCenter";
 
 const applyPositionCountDrafts = (
   requirements: PositionRequirement[] | undefined,
@@ -97,7 +101,13 @@ const ServiceManager = ({
 }: ServiceManagerProps) => {
   const dispatch = useDispatch();
   const { showToast } = useToast();
-  const churchId = useContext(GlobalInfoContext)?.churchId || "";
+  const globalInfo = useContext(GlobalInfoContext);
+  const churchId = globalInfo?.churchId || "";
+  const planningCenterConnected = Boolean(
+    globalInfo?.churchIntegrations?.planningCenter?.enabled &&
+      globalInfo?.churchIntegrations?.planningCenter?.connected,
+  );
+  const planningCenterAccountKey = globalInfo?.churchIntegrations?.planningCenter?.accountLabel || "";
   const churchTimeZone = useChurchServiceTimeZone();
   const formatServiceTimingForChurch = (service: TeamService | ServiceTime) => {
     if (service.reccurence === "one_time" && !churchTimeZone.timeZone) {
@@ -130,6 +140,11 @@ const ServiceManager = ({
   const [failedEditorKeys, setFailedEditorKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
+  const [planningCenterServiceTypes, setPlanningCenterServiceTypes] = useState<
+    PlanningCenterServiceType[]
+  >([]);
+  const [planningCenterServiceTypesLoading, setPlanningCenterServiceTypesLoading] = useState(false);
+  const [planningCenterServiceTypesError, setPlanningCenterServiceTypesError] = useState(false);
   const savingEditorKeysRef = useRef(new Set<string>());
   const pendingSavesRef = useRef(new Map<string, {
     expectedService: ServiceTime;
@@ -145,6 +160,34 @@ const ServiceManager = ({
       )
       : null,
   );
+
+  useEffect(() => {
+    if (!churchId || !planningCenterConnected) {
+      setPlanningCenterServiceTypes([]);
+      setPlanningCenterServiceTypesLoading(false);
+      setPlanningCenterServiceTypesError(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setPlanningCenterServiceTypesLoading(true);
+    setPlanningCenterServiceTypesError(false);
+    listPlanningCenterServiceTypes(churchId)
+      .then(({ items }) => {
+        if (!cancelled) setPlanningCenterServiceTypes(items);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPlanningCenterServiceTypes([]);
+          setPlanningCenterServiceTypesError(true);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setPlanningCenterServiceTypesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [churchId, planningCenterConnected, planningCenterAccountKey]);
 
   const reset = () => {
     setEditing(null);
@@ -178,6 +221,7 @@ const ServiceManager = ({
       id: current.id,
       name: current.name || "",
       defaultPlanTemplateId: current.defaultPlanTemplateId,
+      planningCenterServiceTypeId: current.planningCenterServiceTypeId,
       reccurence: recurrence,
     }));
   };
@@ -427,6 +471,27 @@ const ServiceManager = ({
     })),
     ...(selectedDefaultTemplateIsMissing
       ? [{ label: "Unavailable template", value: selectedDefaultTemplateId }]
+      : []),
+  ];
+  const selectedPlanningCenterServiceTypeId =
+    String(draft.planningCenterServiceTypeId || "").trim();
+  const selectedPlanningCenterServiceTypeIsMissing = Boolean(
+    selectedPlanningCenterServiceTypeId &&
+      !planningCenterServiceTypes.some(
+        (serviceType) => serviceType.id === selectedPlanningCenterServiceTypeId,
+      ),
+  );
+  const planningCenterServiceTypeOptions = [
+    { label: "No association", value: "" },
+    ...planningCenterServiceTypes.map((serviceType) => ({
+      label: serviceType.name,
+      value: serviceType.id,
+    })),
+    ...(selectedPlanningCenterServiceTypeIsMissing
+      ? [{
+          label: `Unavailable service type (${selectedPlanningCenterServiceTypeId})`,
+          value: selectedPlanningCenterServiceTypeId,
+        }]
       : []),
   ];
   // Positions are owned by teams, so group the requirement checklist by team. A
@@ -795,6 +860,36 @@ const ServiceManager = ({
           links in the template fill from that date&apos;s team schedules.
         </p>
       </div>
+
+      {planningCenterConnected ? (
+        <div className="space-y-1">
+          <Select
+            label="Planning Center service type"
+            value={selectedPlanningCenterServiceTypeId}
+            onChange={(value) =>
+              setDraft((current) => ({
+                ...current,
+                planningCenterServiceTypeId: String(value || "") || undefined,
+              }))
+            }
+            disabled={planningCenterServiceTypesLoading}
+            options={planningCenterServiceTypeOptions}
+          />
+          <p className="text-xs text-gray-400">
+            Used to find plans for this service. Choose a type only when it matches this service.
+          </p>
+          {planningCenterServiceTypesLoading ? (
+            <p role="status" className="text-xs text-gray-400">
+              Loading Planning Center service types…
+            </p>
+          ) : null}
+          {planningCenterServiceTypesError ? (
+            <p role="status" className="text-xs text-amber-200">
+              Could not load Planning Center service types. Your current association is unchanged.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       {combinableServices.length > 0 ? (
         <MultiCheckboxGroup

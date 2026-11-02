@@ -30,7 +30,7 @@ test("safePlanningCenterReturnTo accepts only local application paths", () => {
   }
 });
 
-const createConnectedService = async () => {
+const createConnectedService = async ({ getHandler } = {}) => {
   const calls = [];
   const httpClient = {
     async post(url, body) {
@@ -50,8 +50,8 @@ const createConnectedService = async () => {
       }
       throw new Error(`Unexpected POST ${url}`);
     },
-    async get(url) {
-      calls.push({ method: "get", url });
+    async get(url, config) {
+      calls.push({ method: "get", url, params: config?.params });
       if (url.endsWith("/oauth/userinfo")) {
         return {
           data: {
@@ -60,6 +60,8 @@ const createConnectedService = async () => {
           },
         };
       }
+      const handled = await getHandler?.(url, config);
+      if (handled) return handled;
       throw new Error(`Unexpected GET ${url}`);
     },
   };
@@ -84,6 +86,110 @@ const createConnectedService = async () => {
   await service.completeConnect({ state, code: "authorization-code" });
   return { service, pending, calls, httpClient };
 };
+
+test("Planning Center date discovery returns actual related service times", async () => {
+  const planEntry = {
+    type: "Plan",
+    id: "date-plan",
+    attributes: {
+      dates: "Sunday",
+      title: "Worship",
+      updated_at: "2026-10-31T12:00:00Z",
+      sort_date: "2026-11-01T13:00:00Z",
+      items_count: 4,
+    },
+    relationships: {
+      plan_times: {
+        data: [
+          { type: "PlanTime", id: "service-time" },
+          { type: "PlanTime", id: "rehearsal-time" },
+        ],
+      },
+    },
+  };
+  const included = [
+    {
+      type: "PlanTime",
+      id: "service-time",
+      attributes: { starts_at: "2026-11-01T14:00:00Z", time_type: "Service" },
+    },
+    {
+      type: "PlanTime",
+      id: "rehearsal-time",
+      attributes: { starts_at: "2026-11-01T13:00:00Z", time_type: "Rehearsal" },
+    },
+  ];
+  const { service, calls } = await createConnectedService({
+    getHandler: async (url) => String(url).endsWith("/service_types/7/plans")
+      ? { data: { data: [planEntry], included } }
+      : undefined,
+  });
+
+  const result = await service.listPlans({
+    churchId: "church-1",
+    serviceTypeId: "7",
+    filter: "date",
+    date: "2026-11-01",
+  });
+
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0].id, "date-plan");
+  assert.equal(result.items[0].updatedAt, "2026-10-31T12:00:00Z");
+  assert.deepEqual(result.items[0].serviceTimes, [
+    { startsAt: "2026-11-01T14:00:00Z", timeType: "service" },
+    { startsAt: "2026-11-01T13:00:00Z", timeType: "rehearsal" },
+  ]);
+  const listCalls = calls.filter((call) => call.url.endsWith("/service_types/7/plans"));
+  assert.equal(listCalls.length, 2);
+  assert.deepEqual(listCalls.map(({ params }) => params.filter).sort(), ["after", "before"]);
+  assert.ok(listCalls.every(({ params }) => params.include === "plan_times"));
+});
+
+test("Planning Center date discovery rejects malformed dates", async () => {
+  const { service, calls } = await createConnectedService();
+  await assert.rejects(
+    () => service.listPlans({
+      churchId: "church-1",
+      serviceTypeId: "7",
+      filter: "date",
+      date: "2026-02-30",
+    }),
+    /valid service date/,
+  );
+  assert.equal(
+    calls.some((call) => call.url.includes("/service_types/7/plans")),
+    false,
+  );
+});
+
+test("Planning Center date discovery intersects its date window for historical occurrences", async () => {
+  const plan = (id) => ({
+    type: "Plan",
+    id,
+    attributes: { dates: "Old Sunday", title: id, sort_date: "2020-01-01T12:00:00Z" },
+    relationships: { plan_times: { data: [] } },
+  });
+  const { service, calls } = await createConnectedService({
+    getHandler: async (_url, config) => config?.params?.filter === "after"
+      ? { data: { data: [plan("shared"), plan("after-only")] } }
+      : { data: { data: [plan("shared"), plan("before-only")] } },
+  });
+
+  const result = await service.listPlans({
+    churchId: "church-1",
+    serviceTypeId: "7",
+    filter: "date",
+    date: "2020-01-01",
+  });
+
+  assert.deepEqual(result.items.map(({ id }) => id), ["shared"]);
+  const requests = calls
+    .filter((call) => call.url.endsWith("/service_types/7/plans"))
+    .map(({ params }) => params);
+  assert.deepEqual(requests.map(({ filter }) => filter), ["after", "before"]);
+  assert.equal(requests[0].after, "2019-12-31T00:00:00.000Z");
+  assert.equal(requests[1].before, "2020-01-03T00:00:00.000Z");
+});
 
 test("Planning Center connect uses PKCE and records a church-scoped connection", async () => {
   const { service, pending } = await createConnectedService();

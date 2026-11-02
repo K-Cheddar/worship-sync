@@ -10,6 +10,13 @@ import type { TeamPosition, TeamRecord, TeamService } from "../../../api/authTyp
 import type { ServiceTime } from "../../../types";
 import type { ServicePlanTemplate } from "../../../types/servicePlan";
 import { toTeamService } from "../teamsUtils";
+import { listPlanningCenterServiceTypes } from "../../../api/planningCenter";
+
+jest.mock("../../../api/planningCenter", () => ({
+  listPlanningCenterServiceTypes: jest.fn(),
+}));
+
+const mockListPlanningCenterServiceTypes = jest.mocked(listPlanningCenterServiceTypes);
 
 const mockDispatch = jest.fn();
 let mockSelectorState: unknown = {};
@@ -89,11 +96,23 @@ const managerElement = (
   positions: TeamPosition[] = [],
   teams: TeamRecord[] = [],
   planTemplates: ServicePlanTemplate[] = [],
+  planningCenterConnected = false,
 ) => (
     <MemoryRouter>
       <ToastProvider>
         <GlobalInfoContext.Provider
-          value={{ churchId: "church-1" } as NonNullable<ContextType<typeof GlobalInfoContext>>}
+          value={{
+            churchId: "church-1",
+            ...(planningCenterConnected ? {
+              churchIntegrations: {
+                planningCenter: {
+                  enabled: true,
+                  connected: true,
+                  accountLabel: "Example Church",
+                },
+              },
+            } : {}),
+          } as NonNullable<ContextType<typeof GlobalInfoContext>>}
         >
           <TeamsNavigationGuardProvider>
             <ServiceManager
@@ -114,7 +133,8 @@ const renderManager = (
   positions: TeamPosition[] = [],
   teams: TeamRecord[] = [],
   planTemplates: ServicePlanTemplate[] = [],
-) => render(managerElement(services, positions, teams, planTemplates));
+  planningCenterConnected = false,
+) => render(managerElement(services, positions, teams, planTemplates, planningCenterConnected));
 
 const serviceFormSaveButton = () =>
   screen.getAllByRole("button", { name: /^(Create service|Save service|Saved|Created)$/ }).at(-1)!;
@@ -127,6 +147,9 @@ const findActions = (calls: unknown[][], type: string) =>
 beforeEach(() => {
   mockDispatch.mockClear();
   mockSelectorState = {};
+  mockListPlanningCenterServiceTypes.mockResolvedValue({
+    items: [{ id: "pco-type-new", name: "Sunday Worship" }],
+  });
   originalMatchMedia = window.matchMedia;
   // Desktop default: max-width queries do not match, so the edit panel stays open.
   window.matchMedia = makeMatchMedia(false);
@@ -546,5 +569,39 @@ describe("ServiceManager default plan template", () => {
         }),
       }),
     );
+  });
+});
+
+describe("ServiceManager Planning Center service association", () => {
+  it.each([
+    [undefined, "Sunday Worship", "pco-type-new"],
+    ["pco-type-old", "No association", undefined],
+  ])("saves the explicitly selected Planning Center association", async (
+    existingTypeId,
+    selectedLabel,
+    expectedTypeId,
+  ) => {
+    const user = userEvent.setup();
+    const currentService = service({
+      serviceId: "first",
+      name: "First Service",
+      planningCenterServiceTypeId: existingTypeId,
+    });
+    renderManager([currentService], [], [], [], true);
+
+    await user.click(screen.getByRole("button", { name: /Edit First Service/i }));
+    const serviceTypeSelect = await screen.findByRole("combobox", {
+      name: /^Planning Center service type:/,
+    });
+    await user.click(serviceTypeSelect);
+    await user.click(await screen.findByRole("option", { name: selectedLabel }));
+    await user.click(serviceFormSaveButton());
+
+    const update = findActions(mockDispatch.mock.calls, "serviceTimes/updateService")[0];
+    expect(update).toBeDefined();
+    expect(update.payload).toMatchObject({
+      changes: { planningCenterServiceTypeId: expectedTypeId },
+    });
+    expect(mockListPlanningCenterServiceTypes).toHaveBeenCalledWith("church-1");
   });
 });

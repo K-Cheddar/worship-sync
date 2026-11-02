@@ -1422,6 +1422,10 @@ export const buildServiceTimeUpdate = (
     positionRequirements:
       draft.positionRequirements ?? existing?.positionRequirements,
     defaultPlanTemplateId: draft.defaultPlanTemplateId || undefined,
+    planningCenterServiceTypeId:
+      "planningCenterServiceTypeId" in draft
+        ? String(draft.planningCenterServiceTypeId || "").trim() || undefined
+        : existing?.planningCenterServiceTypeId,
     serviceGroupId: draft.serviceGroupId,
     archivedAt: existing?.archivedAt || null,
     createdAt: existing?.createdAt || new Date().toISOString(),

@@ -1,10 +1,23 @@
 # Feature Contract: Service-plan import and refresh
 
-**Contract status:** Mixed; cross-section matching, relocation, and saved-plan outline sync rules are confirmed, broader workflow remains inventory only
+**Contract status:** Mixed; Planning Center discovery, matching, and review rules are confirmed, broader workflow remains inventory only
 
-**Approval source:** User requests, 2026-10-16 (cross-section matching, review, selection, and ordering) and 2026-10-18 (saved-plan outline fallbacks and whole-chapter Scripture)
+**Approval source:** User requests, 2026-10-16 (cross-section matching, review, selection, and ordering), 2026-10-18 (saved-plan outline fallbacks and whole-chapter Scripture), and 2026-11-01 (Planning Center discovery and update suggestions)
 
-**Last reviewed:** 2026-10-28
+**Last reviewed:** 2026-11-01
+
+## Planning Center discovery and update suggestions (confirmed 2026-11-01)
+
+When a saved Service Plan opens, WorshipSync may check the connected Planning Center account for a corresponding plan. This check requires the existing edit permission and never blocks opening or editing the WorshipSync plan.
+
+- A saved `planningCenter` source link takes priority. Fetch that exact service type and plan. If either identifier is missing or that source is unavailable, show the connection or source error and do not substitute a date-based match.
+- For an unlinked occurrence, use its authoritative service date and the church timezone. A confirmed service-to-service-type association may narrow the search. Administrators choose or change that association in existing Service setup; names are never used to silently create one.
+- First-time matching uses Planning Center's actual service times converted to the church timezone. Ignore formatted date labels, sort date, item count, array order, and non-service plan times. A unique match may be suggested; multiple candidates require an explicit choice. A combined occurrence has no single service-type association and searches connected types globally, then follows the same unique-or-explicit-choice rule.
+- An empty plan offers an Import action. A linked plan with no meaningful changes shows an unobtrusive up-to-date status. Changes open the existing selective import review. An unlinked plan with content is compared through the same reconciliation pipeline; users must review changes or explicitly link identical content before source identifiers are saved.
+- Discovery and comparison are read-only. Do not create a service plan, apply a template, save source identifiers, or change content until the user imports, selects changes, or confirms a source-only link. A declined suggestion stays dismissed for the current editing session; a changed source can produce a new suggestion.
+- Scope requests and previews to the church/account, occurrence, editor identity, and draft revision. Ignore stale responses, recheck the exact Planning Center content before apply, and reject stale previews. Do not open a suggested review or apply suggested changes while the plan is live.
+- Manual source selection and the default-template workflow remain available. Loading available Planning Center choices must preserve an existing service type or plan selection.
+- Phase 1 does not add webhooks, polling, unattended plan creation, two-way sync, or Planning Center write operations.
 
 ## Purpose
 

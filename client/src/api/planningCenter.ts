@@ -100,11 +100,17 @@ export type PlanningCenterServiceType = {
 export type PlanningCenterPlanSummary = {
   id: string;
   serviceTypeId: string;
+  serviceTypeName?: string;
   dates: string;
   title: string;
   label: string;
   itemsCount: number;
   sortDate: string;
+  updatedAt?: string;
+  serviceTimes?: Array<{
+    startsAt: string;
+    timeType: string;
+  }>;
   sourceUrl: string;
 };
 
@@ -151,6 +157,17 @@ export const listPlanningCenterPlans = (
     `${base(churchId)}/service-types/${encodeURIComponent(serviceTypeId)}/plans${
       params.size ? `?${params}` : ""
     }`,
+  );
+};
+
+export const listPlanningCenterPlansForDate = (
+  churchId: string,
+  serviceTypeId: string,
+  date: string,
+) => {
+  const params = new URLSearchParams({ filter: "date", date });
+  return fetchJson<{ items: PlanningCenterPlanSummary[] }>(
+    `${base(churchId)}/service-types/${encodeURIComponent(serviceTypeId)}/plans?${params}`,
   );
 };
 

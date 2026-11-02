@@ -117,7 +117,12 @@ import {
 import { parsePlanningCenterPdfText } from "./planningCenterPdfParser";
 import { extractTextFromPdfFile } from "./extractPdfText";
 import PlanningCenterAccountImportFields from "./PlanningCenterAccountImportFields";
-import { getPlanningCenterPlanImport } from "../../api/planningCenter";
+import {
+  getPlanningCenterPlanImport,
+  listPlanningCenterPlansForDate,
+  listPlanningCenterServiceTypes,
+  type PlanningCenterPlanSummary,
+} from "../../api/planningCenter";
 import {
   DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
   getNewServicePlanImportAmbiguityIds,
@@ -146,6 +151,11 @@ import {
   type ServicePlanTeamNoteOption,
 } from "./ServicePlanElementRow";
 import { servicePlanImportAmbiguityShouldQueue } from "./servicePlanningTitleClassifier";
+import {
+  isValidPlanningCenterId,
+  planningCenterPlanCandidateKey,
+  resolvePlanningCenterPlanCandidates,
+} from "./planningCenterDiscovery";
 import ServicePlanSectionList, {
   servicePlanSectionDomId,
   type ServicePlanSelection,
@@ -332,6 +342,29 @@ type ServicePlanImportPreview = {
   summary: ServicePlanImportSummary;
   recalculateTimeline: boolean;
   timelineAnchorStartTime: string;
+  editorIdentity: string;
+  draftVersion: number;
+  baseRevision: number;
+  scopeKey: string;
+  sourceFingerprint?: string;
+  suggestionKey?: string;
+  allowSourceLinkOnly: boolean;
+};
+
+type PlanningCenterSuggestion = {
+  key: string;
+  dismissalKey: string;
+  scopeKey: string;
+  editorIdentity: string;
+  draftVersion: number;
+  baseRevision: number;
+  kind: "checking" | "upToDate" | "available" | "ambiguous" | "updates" | "unavailable";
+  serviceTypeId?: string;
+  planId?: string;
+  candidate?: PlanningCenterPlanSummary;
+  candidates?: PlanningCenterPlanSummary[];
+  preview?: ServicePlanImportPreview;
+  message?: string;
 };
 
 type ServicePlanEditorTab = "plan" | "setlist" | "equipment" | "serving";
@@ -550,6 +583,13 @@ const ServicePlanEditor = ({
     churchIntegrations?.planningCenter?.enabled &&
     churchIntegrations?.planningCenter?.connected,
   );
+  const planningCenterConnectionKey = JSON.stringify({
+    churchId: churchId || "",
+    enabled: Boolean(churchIntegrations?.planningCenter?.enabled),
+    connected: Boolean(churchIntegrations?.planningCenter?.connected),
+    accountLabel: churchIntegrations?.planningCenter?.accountLabel || "",
+    lastError: churchIntegrations?.planningCenter?.lastError || "",
+  });
   const { db } = useContext(ControllerInfoContext) || {};
   const { showToast } = useToast();
   const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
@@ -573,14 +613,35 @@ const ServicePlanEditor = ({
   const editorIdentityKey = `${userId || ""}:${churchId || ""}:${planKey}`;
   const currentEditorIdentityRef = useRef(editorIdentityKey);
   currentEditorIdentityRef.current = editorIdentityKey;
+  const [sourceImport, setSourceImport] = useState<ServicePlanSourceImport | undefined>(
+    undefined,
+  );
+  const planningCenterScopeKey = JSON.stringify({
+    connection: planningCenterConnectionKey,
+    editorIdentity: editorIdentityKey,
+    serviceId: service.serviceId,
+    serviceIds: [...(occurrence.serviceIds || [occurrence.serviceId])].sort(),
+    groupId: occurrence.groupId || "",
+    serviceDate: occurrence.serviceDate || "",
+    startsAt: occurrence.startsAt,
+    timeZone: churchTimeZone,
+    serviceTypeId: service.planningCenterServiceTypeId || "",
+    linkedServiceTypeId: sourceImport?.source === "planningCenter"
+      ? sourceImport.planningCenterServiceTypeId || ""
+      : "",
+    linkedPlanId: sourceImport?.source === "planningCenter"
+      ? sourceImport.planningCenterPlanId || ""
+      : "",
+  });
+  const currentPlanningCenterScopeKeyRef = useRef(planningCenterScopeKey);
+  currentPlanningCenterScopeKeyRef.current = planningCenterScopeKey;
+  const currentPlanningCenterConnectionKeyRef = useRef(planningCenterConnectionKey);
+  currentPlanningCenterConnectionKeyRef.current = planningCenterConnectionKey;
   const defaultPlanTemplateId = service.defaultPlanTemplateId?.trim() || "";
 
   const [planName, setPlanName] = useState("");
   const [sections, setSections] = useState<ServicePlanSection[] | null>(null);
   const [selectedPlanTarget, setSelectedPlanTarget] = useState<ServicePlanSelection | null>(null);
-  const [sourceImport, setSourceImport] = useState<ServicePlanSourceImport | undefined>(
-    undefined,
-  );
 
   const notifyPlanTimingChange = useCallback(
     (
@@ -627,6 +688,14 @@ const ServicePlanEditor = ({
   const [importPcoServiceTypeId, setImportPcoServiceTypeId] = useState("");
   const [importPcoPlanId, setImportPcoPlanId] = useState("");
   const [importing, setImporting] = useState(false);
+  const [planningCenterSuggestion, setPlanningCenterSuggestion] =
+    useState<PlanningCenterSuggestion | null>(null);
+  const [selectedPlanningCenterCandidateKey, setSelectedPlanningCenterCandidateKey] =
+    useState("");
+  const [planningCenterRetryVersion, setPlanningCenterRetryVersion] = useState(0);
+  const planningCenterDiscoveryOperationRef = useRef<symbol | null>(null);
+  const dismissedPlanningCenterSuggestionKeyRef = useRef("");
+  const liveImportSafeRef = useRef(true);
   const planningCenterPdfInputRef = useRef<HTMLInputElement>(null);
   const worshipSyncJsonInputRef = useRef<HTMLInputElement>(null);
   const [worshipSyncImportKind, setWorshipSyncImportKind] = useState<"link" | "file">("link");
@@ -639,6 +708,10 @@ const ServicePlanEditor = ({
   };
   const [pendingNativeImport, setPendingNativeImport] = useState<NativeImportProposal | null>(null);
   const [importPreview, setImportPreview] = useState<ServicePlanImportPreview | null>(null);
+  const importPreviewRef = useRef(importPreview);
+  importPreviewRef.current = importPreview;
+  const importPreviewApplyOperationRef = useRef<symbol | null>(null);
+  const [isApplyingImportPreview, setIsApplyingImportPreview] = useState(false);
   const [ambiguityDialog, setAmbiguityDialog] = useState<{
     prompt: boolean;
     elementIds: string[];
@@ -664,7 +737,6 @@ const ServicePlanEditor = ({
   const [nowMs, setNowMs] = useState(() => serverNow());
   const [draftChangeVersion, setDraftChangeVersion] = useState(0);
   const draftChangeVersionRef = useRef(draftChangeVersion);
-  draftChangeVersionRef.current = draftChangeVersion;
   const [acknowledgedDraftVersion, setAcknowledgedDraftVersion] = useState(0);
   const [conflictPlan, setConflictPlan] = useState<ServicePlan | null>(null);
   const [mergeReview, setMergeReview] = useState<ServicePlanMergeResult | null>(null);
@@ -717,9 +789,13 @@ const ServicePlanEditor = ({
     if (!open) setPlanActionsView("root");
   }, []);
 
-  const markDraftChanged = useCallback(() => {
-    setDraftChangeVersion((version) => version + 1);
+  const incrementDraftChangeVersion = useCallback(() => {
+    const nextVersion = draftChangeVersionRef.current + 1;
+    draftChangeVersionRef.current = nextVersion;
+    setDraftChangeVersion(nextVersion);
   }, []);
+
+  const markDraftChanged = incrementDraftChangeVersion;
 
   const restoreDraftSnapshot = useCallback(
     (snapshot: ServicePlanDraftSnapshot) => {
@@ -854,11 +930,18 @@ const ServicePlanEditor = ({
     setPendingSongCreateRef(null);
     importOperationRef.current = null;
     setImporting(false);
+    planningCenterDiscoveryOperationRef.current = null;
+    setPlanningCenterSuggestion(null);
+    setSelectedPlanningCenterCandidateKey("");
+    dismissedPlanningCenterSuggestionKeyRef.current = "";
     setPendingNativeImport(null);
     setShowImport(false);
     setImportUrl("");
     setRefreshOptions(DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
     setImportPreview(null);
+    importPreviewRef.current = null;
+    importPreviewApplyOperationRef.current = null;
+    setIsApplyingImportPreview(false);
     setAmbiguityDialog(null);
     setPublicUrls(null);
     setEmailModalOpen(false);
@@ -868,6 +951,7 @@ const ServicePlanEditor = ({
     setRecoveryDraft(null);
     basePlanRef.current = null;
     pendingRemotePlanRef.current = null;
+    draftChangeVersionRef.current = 0;
     setDraftChangeVersion(0);
     setAcknowledgedDraftVersion(0);
     setIsEditing(initialEditing);
@@ -897,6 +981,7 @@ const ServicePlanEditor = ({
         );
         setPlanName(res.servicePlan?.name || occurrence.name || "");
         setSourceImport(res.servicePlan?.sourceImport);
+        draftChangeVersionRef.current = 0;
         setDraftChangeVersion(0);
         // Restores the share links for an already-published plan, so they
         // survive a reload instead of only existing in the publish response.
@@ -1102,7 +1187,7 @@ const ServicePlanEditor = ({
         setMergeChoices({});
         setConflictPlan(null);
         autosaveRef.current.acceptRemoteRevision(latestPlan);
-        setDraftChangeVersion((version) => version + 1);
+        incrementDraftChangeVersion();
         return;
       }
       setMergeReview(result);
@@ -1130,6 +1215,16 @@ const ServicePlanEditor = ({
     state: autosaveState,
     getRevision: getAutosaveRevision,
   } = autosave;
+
+  const getPlanningCenterBaseRevision = useCallback(
+    () => Math.max(
+      getAutosaveRevision(),
+      Number(basePlanRef.current?.revision) || 0,
+      Number(pendingRemotePlanRef.current?.revision) || 0,
+      Number(plan?.revision) || 0,
+    ),
+    [getAutosaveRevision, plan],
+  );
 
   const planRef = useRef<ServicePlan | null>(plan);
   planRef.current = plan;
@@ -1220,7 +1315,7 @@ const ServicePlanEditor = ({
             setConflictPlan(null);
             resetDraftHistory();
             currentAutosave.acceptRemoteRevision(servicePlan);
-            setDraftChangeVersion((version) => version + 1);
+            incrementDraftChangeVersion();
             notifyPlanTimingChange(result.plan.sections, servicePlan);
             logAuthDiagnostic("debug", "service_plan_remote_changes_merged", {
               editorInstanceId: editorInstanceIdRef.current, churchId: churchIdRef.current,
@@ -1252,7 +1347,7 @@ const ServicePlanEditor = ({
       resetDraftHistory();
       currentAutosave.acceptRemoteRevision(servicePlan);
     },
-    [editorIdentityKey, notifyPlanTimingChange, occurrence.name, resetDraftHistory, sections, planName, sourceImport],
+    [editorIdentityKey, incrementDraftChangeVersion, notifyPlanTimingChange, occurrence.name, resetDraftHistory, sections, planName, sourceImport],
   );
 
   const reconcilePlanOnResume = useCallback(async () => {
@@ -1446,7 +1541,7 @@ const ServicePlanEditor = ({
           setConflictPlan(null);
           setRecoveryDraft(null);
           autosave.acceptRemoteRevision(latest);
-          setDraftChangeVersion((version) => version + 1);
+          incrementDraftChangeVersion();
           return;
         }
         logAuthDiagnostic("warn", "service_plan_merge_review_restarted", {
@@ -1483,7 +1578,7 @@ const ServicePlanEditor = ({
     setMergeChoices({});
     setRecoveryDraft(null);
     autosave.acceptRemoteRevision(latest);
-    setDraftChangeVersion((version) => version + 1);
+    incrementDraftChangeVersion();
   };
 
   const restoreRecoveryDraft = async () => {
@@ -1682,7 +1777,7 @@ const ServicePlanEditor = ({
     setShowImport(true);
   };
 
-  const applyImportedPlanData = (
+  const prepareImportedPlanData = (
     data: ServicePlanningImportData,
     source: ServicePlanImportSource,
     nextSourceUrl: string,
@@ -1690,7 +1785,21 @@ const ServicePlanEditor = ({
       planningCenterServiceTypeId?: string;
       planningCenterPlanId?: string;
     } = {},
+    operationScope?: {
+      currentSections: ServicePlanSection[] | null;
+      editorIdentity: string;
+      draftVersion: number;
+      baseRevision: number;
+      scopeKey: string;
+      suggestionKey?: string;
+    },
   ) => {
+    const currentSections = operationScope
+      ? operationScope.currentSections
+      : sections;
+    const currentHasPlanContent = Boolean(
+      currentSections?.some((section) => section.elements.length > 0),
+    );
     const parsedSections = buildServicePlanSectionsFromImport(data, allSongDocs, {
       classifyExternalTitle: source === "servicePlanning",
       preserveSourceTitle: source === "planningCenterPdf",
@@ -1703,7 +1812,7 @@ const ServicePlanEditor = ({
       ],
     });
     const pdfRefreshSections = source === "planningCenterPdf"
-      ? preparePlanningCenterPdfImport(sections || [], parsedSections)
+      ? preparePlanningCenterPdfImport(currentSections || [], parsedSections)
       : undefined;
     const importedSections = pdfRefreshSections?.importedSections || parsedSections;
     const hasElements = importedSections.some((section) => section.elements.length > 0);
@@ -1725,9 +1834,9 @@ const ServicePlanEditor = ({
     // from scratch carries one empty section, which would otherwise survive
     // the refresh and leave a stray blank section above the imported ones.
     let nextSections =
-      hasPlanContent && sections
+      currentHasPlanContent && currentSections
         ? refreshServicePlanFromImport(
-            pdfRefreshSections?.currentSections || sections,
+            pdfRefreshSections?.currentSections || currentSections,
             importedSections,
             {
               ...refreshOptions,
@@ -1743,7 +1852,7 @@ const ServicePlanEditor = ({
         )
         : freshImportSections;
     const recalculateTimeline = source === "planningCenterPdf" && !hasSourceTiming;
-    const existingAnchor = sections
+    const existingAnchor = currentSections
       ?.flatMap((section) => section.elements)
       .map((element) => element.startTime?.trim() || "")
       .find((startTime) => /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(startTime)) || "";
@@ -1751,7 +1860,7 @@ const ServicePlanEditor = ({
       occurrence.startsAt,
       planTimezone || "UTC",
     );
-    if (source === "planningCenterPdf" && hasPlanContent && sections) {
+    if (source === "planningCenterPdf" && currentHasPlanContent && currentSections) {
       if (recalculateTimeline && timelineAnchorStartTime) {
         nextSections = applyPlanAnchorStartTime(nextSections, timelineAnchorStartTime);
       }
@@ -1767,33 +1876,84 @@ const ServicePlanEditor = ({
       source,
       sourceExtras,
     );
-    if (hasPlanContent && sections) {
-      setImportPreview({
-        currentSections: sections,
-        sections: nextSections,
-        importedSections,
-        sourceImport: nextSourceImport,
-        summary: summarizeServicePlanImport(
-          sections,
-          nextSections,
-          { microphones, iemEquipment },
-          {
-            dependentTimingShifts: recalculateTimeline,
-            trackSameSectionMoves: source === "planningCenterPdf",
-          },
-        ),
-        recalculateTimeline,
-        timelineAnchorStartTime,
-      });
+    const preview: ServicePlanImportPreview = {
+      currentSections: currentSections || [],
+      sections: nextSections,
+      importedSections,
+      sourceImport: nextSourceImport,
+      summary: summarizeServicePlanImport(
+        currentSections || [],
+        nextSections,
+        { microphones, iemEquipment },
+        {
+          dependentTimingShifts: recalculateTimeline,
+          trackSameSectionMoves: source === "planningCenterPdf",
+        },
+      ),
+      recalculateTimeline,
+      timelineAnchorStartTime,
+      editorIdentity: operationScope?.editorIdentity ?? editorIdentityKey,
+      draftVersion: operationScope?.draftVersion ?? draftChangeVersionRef.current,
+      baseRevision: operationScope?.baseRevision ?? (
+        pendingRemotePlanRef.current?.revision ??
+        basePlanRef.current?.revision ??
+        plan?.revision ??
+        0
+      ),
+      scopeKey: operationScope?.scopeKey ?? planningCenterScopeKey,
+      ...(source === "planningCenter"
+        ? { sourceFingerprint: JSON.stringify(data) }
+        : {}),
+      allowSourceLinkOnly: source === "planningCenter" && (
+        sourceImport?.source !== "planningCenter" ||
+        sourceImport.planningCenterServiceTypeId !== sourceExtras.planningCenterServiceTypeId ||
+        sourceImport.planningCenterPlanId !== sourceExtras.planningCenterPlanId
+      ) && isValidPlanningCenterId(sourceExtras.planningCenterServiceTypeId) &&
+        isValidPlanningCenterId(sourceExtras.planningCenterPlanId),
+      ...(operationScope?.suggestionKey
+        ? { suggestionKey: operationScope.suggestionKey }
+        : {}),
+    };
+    return {
+      currentHasPlanContent,
+      nextSections,
+      nextSourceImport,
+      preview,
+    };
+  };
+  // Discovery captures the draft identity before its network work. This ref
+  // gives it the current shared import pipeline only after that snapshot is
+  // revalidated, without rerunning a Planning Center request for each edit.
+  const prepareImportedPlanDataRef = useRef(prepareImportedPlanData);
+  prepareImportedPlanDataRef.current = prepareImportedPlanData;
+
+  const applyImportedPlanData = (
+    data: ServicePlanningImportData,
+    source: ServicePlanImportSource,
+    nextSourceUrl: string,
+    sourceExtras: {
+      planningCenterServiceTypeId?: string;
+      planningCenterPlanId?: string;
+    } = {},
+  ) => {
+    const prepared = prepareImportedPlanData(
+      data,
+      source,
+      nextSourceUrl,
+      sourceExtras,
+    );
+    if (prepared.currentHasPlanContent) {
+      setImportPreview(prepared.preview);
       setShowImport(false);
       return;
     }
     applyImportedDraft({
-      sections: nextSections,
+      sections: prepared.nextSections,
       planName: occurrence.name || service.name || "",
-      sourceImport: nextSourceImport,
+      sourceImport: prepared.nextSourceImport,
     });
-    const newAmbiguities = nextSections.flatMap((section) =>
+    setPlanningCenterSuggestion(null);
+    const newAmbiguities = prepared.nextSections.flatMap((section) =>
       section.elements.filter((element) => element.importAmbiguity && servicePlanImportAmbiguityShouldQueue(element.importAmbiguity)).map((element) => element.id),
     );
     if (newAmbiguities.length) openAmbiguityDialog(newAmbiguities, true);
@@ -1807,9 +1967,13 @@ const ServicePlanEditor = ({
     );
   };
 
-  const beginPlanImport = () => {
+  const beginPlanImport = (options: { planningCenter?: boolean } = {}) => {
+    planningCenterDiscoveryOperationRef.current = null;
+    setPlanningCenterSuggestion(null);
     const importEditorIdentityKey = editorIdentityKey;
     const draftVersionAtStart = draftChangeVersionRef.current;
+    const planningCenterScopeAtStart = planningCenterScopeKey;
+    const planningCenterConnectionAtStart = planningCenterConnectionKey;
     const operation = Symbol("plan-import");
     importOperationRef.current = operation;
     setImporting(true);
@@ -1817,8 +1981,160 @@ const ServicePlanEditor = ({
       importEditorIdentityKey, draftVersionAtStart, operation,
       isCurrentImport: () => isMountedRef.current
         && currentEditorIdentityRef.current === importEditorIdentityKey
+        && (!options.planningCenter || (
+          currentPlanningCenterScopeKeyRef.current === planningCenterScopeAtStart &&
+          currentPlanningCenterConnectionKeyRef.current === planningCenterConnectionAtStart
+        ))
         && importOperationRef.current === operation,
     };
+  };
+
+  const fetchPlanningCenterImport = async (
+    serviceTypeId: string,
+    planId: string,
+  ) => {
+    if (!churchId) throw new Error("A church is required to connect Planning Center.");
+    const imported = await getPlanningCenterPlanImport(
+      churchId,
+      serviceTypeId,
+      planId,
+    );
+    if (
+      String(imported.serviceTypeId) !== serviceTypeId ||
+      String(imported.planId) !== planId
+    ) {
+      throw new Error("Planning Center returned a different plan than the one selected.");
+    }
+    return {
+      imported,
+      data: {
+        planLabel: imported.planLabel,
+        sections: imported.sections,
+        teamAssignments: imported.teamAssignments,
+      } satisfies ServicePlanningImportData,
+      sourceUrl: imported.sourceUrl,
+      sourceExtras: {
+        planningCenterServiceTypeId: imported.serviceTypeId,
+        planningCenterPlanId: imported.planId,
+      },
+    };
+  };
+  const fetchPlanningCenterImportRef = useRef(fetchPlanningCenterImport);
+  fetchPlanningCenterImportRef.current = fetchPlanningCenterImport;
+
+  const importPlanningCenterSuggestion = async (
+    suggestion: PlanningCenterSuggestion,
+    candidate: PlanningCenterPlanSummary,
+  ) => {
+    if (!canEdit || !churchId || !planningCenterConnected || !liveImportSafeRef.current) {
+      if (!liveImportSafeRef.current) {
+        showToast("Plan updates are paused while this service is live. Review them after the service.");
+      }
+      return;
+    }
+    const currentRevision = getPlanningCenterBaseRevision();
+    if (
+      suggestion.scopeKey !== planningCenterScopeKey ||
+      suggestion.editorIdentity !== editorIdentityKey ||
+      suggestion.draftVersion !== draftChangeVersionRef.current ||
+      suggestion.baseRevision !== currentRevision ||
+      autosaveState !== "saved" ||
+      pendingRemotePlanRef.current
+    ) {
+      showToast("The plan changed. Check Planning Center again before reviewing updates.");
+      return;
+    }
+
+    const { isCurrentImport } = beginPlanImport({ planningCenter: true });
+    setPlanningCenterSuggestion({
+      ...suggestion,
+      kind: "checking",
+      message: "Loading the selected plan from Planning Center.",
+    });
+    const startingSections = sections;
+    const startingDraftVersion = draftChangeVersionRef.current;
+    const startingRevision = currentRevision;
+    const operationScope = {
+      currentSections: startingSections,
+      editorIdentity: editorIdentityKey,
+      draftVersion: startingDraftVersion,
+      baseRevision: startingRevision,
+      scopeKey: suggestion.scopeKey,
+      suggestionKey: suggestion.key,
+    };
+    const isCurrentSuggestionImport = () =>
+      isCurrentImport() &&
+      currentPlanningCenterScopeKeyRef.current === suggestion.scopeKey &&
+      draftChangeVersionRef.current === startingDraftVersion &&
+      getPlanningCenterBaseRevision() === startingRevision &&
+      JSON.stringify(sections) === JSON.stringify(startingSections) &&
+      liveImportSafeRef.current;
+    try {
+      const result = await fetchPlanningCenterImport(
+        candidate.serviceTypeId,
+        candidate.id,
+      );
+      if (!isCurrentSuggestionImport()) return;
+      const prepared = prepareImportedPlanData(
+        result.data,
+        "planningCenter",
+        result.sourceUrl,
+        result.sourceExtras,
+        operationScope,
+      );
+      if (
+        prepared.preview.summary.changes.length === 0 &&
+        !prepared.preview.allowSourceLinkOnly
+      ) {
+        setPlanningCenterSuggestion({
+          ...suggestion,
+          kind: "upToDate",
+          candidate,
+          preview: undefined,
+          message: "This plan is up to date with Planning Center.",
+        });
+        return;
+      }
+      if (prepared.currentHasPlanContent) {
+        setPlanningCenterSuggestion({
+          ...suggestion,
+          kind: prepared.preview.summary.changes.length === 0 ? "available" : "updates",
+          candidate,
+          preview: prepared.preview,
+          ...(prepared.preview.summary.changes.length === 0
+            ? { message: "The plans already match. Link this Planning Center plan for future update checks." }
+            : {}),
+        });
+        setImportPreview(prepared.preview);
+        return;
+      }
+      applyImportedDraft({
+        sections: prepared.nextSections,
+        planName: occurrence.name || service.name || "",
+        sourceImport: prepared.nextSourceImport,
+      });
+      const newAmbiguities = prepared.nextSections.flatMap((section) =>
+        section.elements
+          .filter((element) => element.importAmbiguity && servicePlanImportAmbiguityShouldQueue(element.importAmbiguity))
+          .map((element) => element.id),
+      );
+      if (newAmbiguities.length) openAmbiguityDialog(newAmbiguities, true);
+      setPlanningCenterSuggestion(null);
+      setIsEditing(true);
+      showAllTeamNotesForReview();
+      showToast("Imported from Planning Center. Review the plan.", "success");
+    } catch (error) {
+      if (!isCurrentSuggestionImport()) return;
+      setPlanningCenterSuggestion({
+        ...suggestion,
+        kind: "unavailable",
+        message: error instanceof Error
+          ? error.message
+          : "Could not load this Planning Center plan. Try again.",
+      });
+    } finally {
+      if (isCurrentImport()) setImporting(false);
+    }
   };
 
   const handlePlanningCenterPdfSelected = async (
@@ -1859,7 +2175,8 @@ const ServicePlanEditor = ({
     if (usingPcoAccount && (!churchId || !importPcoServiceTypeId || !importPcoPlanId))
       return;
     if (!usingPcoAccount && !trimmedUrl) return;
-    const { importEditorIdentityKey, draftVersionAtStart, operation, isCurrentImport } = beginPlanImport();
+    const { importEditorIdentityKey, draftVersionAtStart, operation, isCurrentImport } =
+      beginPlanImport({ planningCenter: usingPcoAccount });
     const sourceLabel = servicePlanImportSourceLabel(importSource);
     try {
       if (importSource === "worshipSync") {
@@ -1885,21 +2202,13 @@ const ServicePlanEditor = ({
       } = {};
 
       if (usingPcoAccount && churchId) {
-        const imported = await getPlanningCenterPlanImport(
-          churchId,
+        const result = await fetchPlanningCenterImport(
           importPcoServiceTypeId,
           importPcoPlanId,
         );
-        data = {
-          planLabel: imported.planLabel,
-          sections: imported.sections,
-          teamAssignments: imported.teamAssignments,
-        };
-        nextSourceUrl = imported.sourceUrl;
-        sourceExtras = {
-          planningCenterServiceTypeId: imported.serviceTypeId,
-          planningCenterPlanId: imported.planId,
-        };
+        data = result.data;
+        nextSourceUrl = result.sourceUrl;
+        sourceExtras = result.sourceExtras;
       } else {
         data = await getServicePlanningImportDataFromUrl(trimmedUrl);
         nextSourceUrl = trimmedUrl;
@@ -1986,6 +2295,13 @@ const ServicePlanEditor = ({
     updateDraft(draft);
   };
 
+  const closeImportPreview = () => {
+    importPreviewApplyOperationRef.current = null;
+    importPreviewRef.current = null;
+    setIsApplyingImportPreview(false);
+    setImportPreview(null);
+  };
+
   const getSelectedImportSections = (selectedChangeKeys: string[]) => {
     if (!importPreview) return undefined;
     const selected = applySelectedServicePlanImportChanges(
@@ -1996,37 +2312,169 @@ const ServicePlanEditor = ({
       : selected;
   };
 
-  const applyImportPreview = (selectedChangeKeys: string[]) => {
-    if (!importPreview) return;
-    if (JSON.stringify(sections) !== JSON.stringify(importPreview.currentSections)) {
-      setImportPreview(null);
-      showToast("The plan changed. Import it again to review the latest draft.");
+  const applyImportPreview = async (selectedChangeKeys: string[]) => {
+    const preview = importPreviewRef.current;
+    if (!preview || importPreviewApplyOperationRef.current) return;
+    const operation = Symbol("service-plan-import-apply");
+    importPreviewApplyOperationRef.current = operation;
+    setIsApplyingImportPreview(true);
+    const isCurrentPreview = () =>
+      isMountedRef.current &&
+      importPreviewApplyOperationRef.current === operation &&
+      importPreviewRef.current === preview &&
+      preview.editorIdentity === currentEditorIdentityRef.current &&
+      preview.draftVersion === draftChangeVersionRef.current &&
+      preview.baseRevision === getPlanningCenterBaseRevision() &&
+      (preview.sourceImport.source !== "planningCenter" ||
+        preview.scopeKey === currentPlanningCenterScopeKeyRef.current) &&
+      (!preview.suggestionKey || (
+        planningCenterSuggestion?.key === preview.suggestionKey &&
+        planningCenterSuggestion.scopeKey === preview.scopeKey
+      )) &&
+      (!preview.suggestionKey || liveImportSafeRef.current);
+    const closeStalePreview = () => {
+      if (
+        !isMountedRef.current ||
+        importPreviewApplyOperationRef.current !== operation ||
+        importPreviewRef.current !== preview
+      ) return;
+      closeImportPreview();
+      if (preview.sourceImport.source === "planningCenter") {
+        setPlanningCenterRetryVersion((version) => version + 1);
+      }
+      showToast(!liveImportSafeRef.current && preview.suggestionKey
+        ? "Plan updates are paused while this service is live. Review them after the service."
+        : preview.sourceImport.source === "planningCenter"
+          ? "The plan changed. Check Planning Center again before applying updates."
+          : "The plan changed. Import it again to review the latest draft.");
+    };
+
+    try {
+      if (!isCurrentPreview() || JSON.stringify(sections) !== JSON.stringify(preview.currentSections)) {
+        closeImportPreview();
+        if (preview.sourceImport.source === "planningCenter") {
+          setPlanningCenterRetryVersion((version) => version + 1);
+        }
+        showToast(!liveImportSafeRef.current && preview.suggestionKey
+          ? "Plan updates are paused while this service is live. Review them after the service."
+          : preview.sourceImport.source === "planningCenter"
+            ? "The plan changed. Check Planning Center again before applying updates."
+            : "The plan changed. Import it again to review the latest draft.");
+        return;
+      }
+
+      if (preview.sourceImport.source === "planningCenter") {
+        const serviceTypeId = preview.sourceImport.planningCenterServiceTypeId || "";
+        const planId = preview.sourceImport.planningCenterPlanId || "";
+        if (
+          !isValidPlanningCenterId(serviceTypeId) ||
+          !isValidPlanningCenterId(planId) ||
+          !preview.sourceFingerprint
+        ) {
+          closeImportPreview();
+          setPlanningCenterRetryVersion((version) => version + 1);
+          showToast("This Planning Center preview is no longer available. Check for updates again.");
+          return;
+        }
+        const latest = await fetchPlanningCenterImportRef.current(serviceTypeId, planId);
+        if (!isCurrentPreview()) {
+          closeStalePreview();
+          return;
+        }
+        if (JSON.stringify(latest.data) !== preview.sourceFingerprint) {
+          closeImportPreview();
+          setPlanningCenterRetryVersion((version) => version + 1);
+          showToast("Planning Center changed while you were reviewing. Review the latest updates.");
+          return;
+        }
+      }
+
+      if (!isCurrentPreview()) return;
+      const actionableKeys = new Set(preview.summary.changes
+        .map((change) => `${change.kind}:${change.id}`));
+      const hasSelectedChanges = selectedChangeKeys.some((key) => actionableKeys.has(key));
+      if (!hasSelectedChanges) {
+        if (preview.allowSourceLinkOnly && preview.summary.changes.length === 0) {
+          applyImportedDraft({
+            sections: preview.currentSections,
+            planName: occurrence.name || service.name || "",
+            sourceImport: preview.sourceImport,
+          });
+          closeImportPreview();
+          setIsEditing(true);
+          showToast("Planning Center plan linked. Future updates can be reviewed here.", "success");
+        }
+        return;
+      }
+      const selectedSections = applySelectedServicePlanImportChanges(
+        preview.currentSections,
+        preview.sections,
+        preview.summary,
+        new Set(selectedChangeKeys),
+      );
+      const selectedWithTimeline = selectedChangeKeys.length && preview.recalculateTimeline && preview.timelineAnchorStartTime
+        ? applyPlanAnchorStartTime(selectedSections, preview.timelineAnchorStartTime)
+        : selectedSections;
+      applyImportedDraft({
+        sections: selectedWithTimeline,
+        planName: occurrence.name || service.name || "",
+        sourceImport: preview.sourceImport,
+      });
+      const newAmbiguities = getNewServicePlanImportAmbiguityIds(
+        preview.currentSections,
+        selectedWithTimeline,
+      );
+      if (newAmbiguities.length) openAmbiguityDialog(newAmbiguities, true);
+      closeImportPreview();
+      setImportUrl("");
+      setIsEditing(true);
+      showAllTeamNotesForReview();
+      showToast(
+        `Imported from ${servicePlanImportSourceLabel(preview.sourceImport.source)}. Review the plan.`,
+        "success",
+      );
+      if (preview.suggestionKey) setPlanningCenterSuggestion(null);
+    } catch (error) {
+      if (isCurrentPreview()) {
+        showApiErrorToast(
+          showToast,
+          error,
+          "Could not verify the Planning Center plan. Try again.",
+        );
+      } else {
+        closeStalePreview();
+      }
+    } finally {
+      if (importPreviewApplyOperationRef.current === operation) {
+        importPreviewApplyOperationRef.current = null;
+        setIsApplyingImportPreview(false);
+      }
+    }
+  };
+
+  const reviewPlanningCenterSuggestion = (suggestion: PlanningCenterSuggestion) => {
+    const currentRevision = getPlanningCenterBaseRevision();
+    if (
+      !liveImportSafeRef.current ||
+      suggestion.editorIdentity !== currentEditorIdentityRef.current ||
+      suggestion.scopeKey !== currentPlanningCenterScopeKeyRef.current ||
+      suggestion.draftVersion !== draftChangeVersionRef.current ||
+      suggestion.baseRevision !== currentRevision ||
+      autosaveState !== "saved" ||
+      pendingRemotePlanRef.current
+    ) {
+      showToast(!liveImportSafeRef.current
+        ? "Plan updates are paused while this service is live. Review them after the service."
+        : "The plan changed. Check Planning Center again before reviewing updates.");
       return;
     }
-    const actionableKeys = new Set(importPreview.summary.changes
-      .map((change) => `${change.kind}:${change.id}`));
-    const hasSelectedChanges = selectedChangeKeys.some((key) => actionableKeys.has(key));
-    if (!hasSelectedChanges) return;
-    const selectedSections = getSelectedImportSections(selectedChangeKeys);
-    if (!selectedSections) return;
-    applyImportedDraft({
-      sections: selectedSections,
-      planName: occurrence.name || service.name || "",
-      sourceImport: importPreview.sourceImport,
-    });
-    const newAmbiguities = getNewServicePlanImportAmbiguityIds(
-      importPreview.currentSections,
-      selectedSections,
-    );
-    if (newAmbiguities.length) openAmbiguityDialog(newAmbiguities, true);
-    setImportPreview(null);
-    setImportUrl("");
-    setIsEditing(true);
-    showAllTeamNotesForReview();
-    showToast(
-      `Imported from ${servicePlanImportSourceLabel(importPreview.sourceImport.source)}. Review the plan.`,
-      "success",
-    );
+    if (suggestion.preview) {
+      setImportPreview(suggestion.preview);
+      return;
+    }
+    if (suggestion.candidate) {
+      void importPlanningCenterSuggestion(suggestion, suggestion.candidate);
+    }
   };
 
   const updateRefreshOption = (
@@ -2576,6 +3024,14 @@ const ServicePlanEditor = ({
   const isManualLive = isServicePlanManualLive(plan);
   const isTimelineAdjusted = isServicePlanTimelineAdjusted(plan);
   const isLiveOverridden = isServicePlanLiveOverridden(plan);
+  const liveProgress = plan && sections
+    ? getServicePlanLiveProgress({ ...plan, sections }, nowMs)
+    : null;
+  const liveElementId = liveProgress?.current?.item.id ?? null;
+  const isLiveImportUnsafe = Boolean(
+    liveElementId || isManualLive || isTimelineAdjusted || isLiveOverridden,
+  );
+  liveImportSafeRef.current = !isLiveImportUnsafe;
 
   /**
    * The live clock re-renders the whole plan, so it runs at second resolution
@@ -2598,10 +3054,6 @@ const ServicePlanEditor = ({
     return () => window.clearInterval(interval);
   }, [liveClockIntervalMs]);
 
-  const liveProgress =
-    plan && sections
-      ? getServicePlanLiveProgress({ ...plan, sections }, nowMs)
-      : null;
   const adjustedTimelineProgress = useMemo(() => {
     if (!plan || !sections) return null;
     return getServicePlanLiveProgress(
@@ -2616,7 +3068,459 @@ const ServicePlanEditor = ({
       Date.parse(plan.startsAt || ""),
     );
   }, [plan, sections]);
-  const liveElementId = liveProgress?.current?.item.id ?? null;
+  useEffect(() => {
+    if (
+      loading ||
+      !churchId ||
+      !canEdit ||
+      loadedEditorIdentityRef.current !== editorIdentityKey
+    ) {
+      planningCenterDiscoveryOperationRef.current = null;
+      setPlanningCenterSuggestion(null);
+      return undefined;
+    }
+    const discoveryChurchId = churchId;
+
+    const linkedToPlanningCenter = sourceImport?.source === "planningCenter";
+    const linkedServiceTypeId = sourceImport?.planningCenterServiceTypeId || "";
+    const linkedPlanId = sourceImport?.planningCenterPlanId || "";
+    const configuredServiceTypeId = String(
+      service.planningCenterServiceTypeId || "",
+    );
+    const hasAssociation = Boolean(configuredServiceTypeId);
+    const canShowConnectionState = linkedToPlanningCenter || hasAssociation;
+
+    if (!planningCenterConnected) {
+      planningCenterDiscoveryOperationRef.current = null;
+      setPlanningCenterSuggestion(
+        canShowConnectionState
+          ? {
+              key: planningCenterScopeKey,
+              dismissalKey: planningCenterScopeKey,
+              scopeKey: planningCenterScopeKey,
+              editorIdentity: editorIdentityKey,
+              draftVersion: draftChangeVersionRef.current,
+              baseRevision: getPlanningCenterBaseRevision(),
+              kind: "unavailable",
+              message: "Planning Center is disconnected. Reconnect to check this service plan.",
+            }
+          : null,
+      );
+      return undefined;
+    }
+
+    if (isLiveImportUnsafe) {
+      planningCenterDiscoveryOperationRef.current = null;
+      setPlanningCenterSuggestion(null);
+      if (importPreview?.suggestionKey) closeImportPreview();
+      return undefined;
+    }
+
+    if (showImport || importPreview || pendingNativeImport) {
+      planningCenterDiscoveryOperationRef.current = null;
+      return undefined;
+    }
+
+    if (
+      autosaveState !== "saved" ||
+      draftChangeVersion !== acknowledgedDraftVersion ||
+      pendingRemotePlanRef.current
+    ) {
+      planningCenterDiscoveryOperationRef.current = null;
+      setPlanningCenterSuggestion(null);
+      return undefined;
+    }
+
+    const operation = Symbol("planning-center-discovery");
+    planningCenterDiscoveryOperationRef.current = operation;
+    const scopeKeyAtStart = planningCenterScopeKey;
+    const connectionKeyAtStart = planningCenterConnectionKey;
+    const editorIdentityAtStart = editorIdentityKey;
+    const draftVersionAtStart = draftChangeVersionRef.current;
+    const baseRevisionAtStart = getPlanningCenterBaseRevision();
+    const currentSections = sections || [];
+    const currentHasPlanContent = currentSections.some(
+      (section) => section.elements.length > 0,
+    );
+    const serviceIds = [...new Set(
+      occurrence.serviceIds || [occurrence.serviceId],
+    )];
+    const isCombinedOccurrence = Boolean(occurrence.groupId) || serviceIds.length > 1;
+    const timeZoneAtStart = typeof churchTimeZone === "string" ? churchTimeZone : "";
+    const serviceDate = occurrence.serviceDate || plan?.date || (
+      timeZoneAtStart && occurrence.startsAt
+        ? calendarDateInTimeZone(new Date(occurrence.startsAt), timeZoneAtStart)
+        : ""
+    );
+    let active = true;
+
+    const isScopeCurrent = () =>
+      active &&
+      isMountedRef.current &&
+      currentEditorIdentityRef.current === editorIdentityAtStart &&
+      currentPlanningCenterScopeKeyRef.current === scopeKeyAtStart &&
+      currentPlanningCenterConnectionKeyRef.current === connectionKeyAtStart &&
+      planningCenterDiscoveryOperationRef.current === operation;
+    const isCurrent = () =>
+      isScopeCurrent() &&
+      loadedEditorIdentityRef.current === editorIdentityAtStart &&
+      draftChangeVersionRef.current === draftVersionAtStart &&
+      getPlanningCenterBaseRevision() === baseRevisionAtStart;
+    const showStaleResult = () => {
+      if (
+        !isScopeCurrent() ||
+        loadedEditorIdentityRef.current !== editorIdentityAtStart
+      ) return;
+      setPlanningCenterSuggestion({
+        key: `${scopeKeyAtStart}:stale`,
+        dismissalKey: `${scopeKeyAtStart}:stale`,
+        scopeKey: scopeKeyAtStart,
+        editorIdentity: editorIdentityAtStart,
+        draftVersion: draftChangeVersionRef.current,
+        baseRevision: getPlanningCenterBaseRevision(),
+        kind: "unavailable",
+        message: "This service plan changed while Planning Center was being checked. Check again to compare the latest plan.",
+      });
+    };
+    const setCurrentSuggestion = (
+      kind: PlanningCenterSuggestion["kind"],
+      details: Partial<PlanningCenterSuggestion> = {},
+    ) => {
+      if (!isCurrent()) return;
+      setPlanningCenterSuggestion({
+        key: `${scopeKeyAtStart}:${kind}`,
+        dismissalKey: `${scopeKeyAtStart}:${kind}`,
+        scopeKey: scopeKeyAtStart,
+        editorIdentity: editorIdentityAtStart,
+        draftVersion: draftVersionAtStart,
+        baseRevision: baseRevisionAtStart,
+        kind,
+        ...details,
+      });
+    };
+    const setCurrentPrompt = (
+      kind: "available" | "updates" | "ambiguous",
+      dismissalKey: string,
+      details: Partial<PlanningCenterSuggestion> = {},
+    ) => {
+      if (!isCurrent()) return;
+      if (dismissedPlanningCenterSuggestionKeyRef.current === dismissalKey) {
+        setPlanningCenterSuggestion(null);
+        return;
+      }
+      setPlanningCenterSuggestion({
+        key: `${scopeKeyAtStart}:${kind}:${dismissalKey}`,
+        dismissalKey,
+        scopeKey: scopeKeyAtStart,
+        editorIdentity: editorIdentityAtStart,
+        draftVersion: draftVersionAtStart,
+        baseRevision: baseRevisionAtStart,
+        kind,
+        ...details,
+      });
+    };
+
+    setPlanningCenterSuggestion({
+      key: `${scopeKeyAtStart}:checking`,
+      dismissalKey: `${scopeKeyAtStart}:checking`,
+      scopeKey: scopeKeyAtStart,
+      editorIdentity: editorIdentityAtStart,
+      draftVersion: draftVersionAtStart,
+      baseRevision: baseRevisionAtStart,
+      kind: "checking",
+    });
+    setSelectedPlanningCenterCandidateKey("");
+
+    const runDiscovery = async () => {
+      try {
+        if (linkedToPlanningCenter) {
+          if (
+            !isValidPlanningCenterId(linkedServiceTypeId) ||
+            !isValidPlanningCenterId(linkedPlanId)
+          ) {
+            setCurrentSuggestion("unavailable", {
+              serviceTypeId: linkedServiceTypeId,
+              planId: linkedPlanId,
+              message: "The saved Planning Center link is incomplete. Choose a plan in Import updates to reconnect it.",
+            });
+            return;
+          }
+          const fetched = await fetchPlanningCenterImportRef.current(
+            linkedServiceTypeId,
+            linkedPlanId,
+          );
+          if (!isCurrent()) {
+            showStaleResult();
+            return;
+          }
+          const prepared = prepareImportedPlanDataRef.current(
+            fetched.data,
+            "planningCenter",
+            fetched.sourceUrl,
+            fetched.sourceExtras,
+            {
+              currentSections,
+              editorIdentity: editorIdentityAtStart,
+              draftVersion: draftVersionAtStart,
+              baseRevision: baseRevisionAtStart,
+              scopeKey: scopeKeyAtStart,
+            },
+          );
+          const candidate: PlanningCenterPlanSummary = {
+            id: fetched.imported.planId,
+            serviceTypeId: fetched.imported.serviceTypeId,
+            dates: serviceDate,
+            title: fetched.imported.planLabel,
+            label: fetched.imported.planLabel,
+            itemsCount: fetched.imported.sections.reduce(
+              (total, section) => total + section.rows.length,
+              0,
+            ),
+            sortDate: "",
+            sourceUrl: fetched.sourceUrl,
+          };
+          const dataFingerprint = JSON.stringify(fetched.data);
+          if (!prepared.currentHasPlanContent) {
+            setCurrentPrompt(
+              "available",
+              `${scopeKeyAtStart}:${linkedServiceTypeId}:${linkedPlanId}:${dataFingerprint}`,
+              {
+                serviceTypeId: linkedServiceTypeId,
+                planId: linkedPlanId,
+                candidate,
+              },
+            );
+            return;
+          }
+          if (
+            prepared.preview.summary.changes.length === 0 &&
+            !prepared.preview.allowSourceLinkOnly
+          ) {
+            setCurrentSuggestion("upToDate", { candidate });
+            return;
+          }
+          const kind = prepared.preview.summary.changes.length > 0 ? "updates" : "available";
+          const dismissalKey = `${scopeKeyAtStart}:${linkedServiceTypeId}:${linkedPlanId}:${dataFingerprint}:${JSON.stringify(prepared.preview.summary.changes)}`;
+          const suggestionKey = `${scopeKeyAtStart}:${kind}:${dismissalKey}`;
+          setCurrentPrompt(
+            kind,
+            dismissalKey,
+            {
+              serviceTypeId: linkedServiceTypeId,
+              planId: linkedPlanId,
+              candidate,
+              preview: { ...prepared.preview, suggestionKey },
+              ...(kind === "available"
+                ? { message: "The plans already match. Link this Planning Center plan for future update checks." }
+                : {}),
+            },
+          );
+          return;
+        }
+
+        if (!/^(\d{4})-(\d{2})-(\d{2})$/.test(serviceDate) || !timeZoneAtStart) {
+          if (hasAssociation) {
+            setCurrentSuggestion("unavailable", {
+              message: "The service date or church time zone is unavailable, so Planning Center plans could not be checked.",
+            });
+          } else {
+            setPlanningCenterSuggestion(null);
+          }
+          return;
+        }
+
+        let serviceTypes: Array<{ id: string; name: string }>;
+        if (hasAssociation && !isCombinedOccurrence) {
+          if (!isValidPlanningCenterId(configuredServiceTypeId)) {
+            setCurrentSuggestion("unavailable", {
+              serviceTypeId: configuredServiceTypeId,
+              message: "The saved Planning Center service type is invalid. Update it in Service setup.",
+            });
+            return;
+          }
+          serviceTypes = [{ id: configuredServiceTypeId, name: "" }];
+        } else {
+          const response = await listPlanningCenterServiceTypes(discoveryChurchId);
+          if (!isCurrent()) {
+            showStaleResult();
+            return;
+          }
+          if (response.items.some((item) => !isValidPlanningCenterId(item.id))) {
+            throw new Error("Planning Center returned an invalid service type.");
+          }
+          serviceTypes = response.items.map(({ id, name }) => ({ id, name }));
+        }
+        if (!serviceTypes.length) {
+          setPlanningCenterSuggestion(null);
+          return;
+        }
+
+        const plans: PlanningCenterPlanSummary[] = [];
+        for (let index = 0; index < serviceTypes.length; index += 6) {
+          const batch = serviceTypes.slice(index, index + 6);
+          const planResponses = await Promise.all(
+            batch.map(async (serviceType) => {
+              const response = await listPlanningCenterPlansForDate(
+                discoveryChurchId,
+                serviceType.id,
+                serviceDate,
+              );
+              if (response.items.some((item) => item.serviceTypeId !== serviceType.id)) {
+                throw new Error("Planning Center returned plans for a different service type.");
+              }
+              return response.items.map((item) => ({
+                ...item,
+                serviceTypeName: serviceType.name,
+              }));
+            }),
+          );
+          if (!isCurrent()) {
+            showStaleResult();
+            return;
+          }
+          plans.push(...planResponses.flat());
+        }
+        const resolved = resolvePlanningCenterPlanCandidates(
+          plans,
+          { serviceDate, startsAt: occurrence.startsAt },
+          timeZoneAtStart,
+        );
+        if (!resolved.candidates.length) {
+          setPlanningCenterSuggestion(null);
+          return;
+        }
+        if (!resolved.uniqueCandidate) {
+          const dismissalKey = `${scopeKeyAtStart}:${JSON.stringify(
+            resolved.candidates.map((candidate) => ({
+              id: candidate.id,
+              serviceTypeId: candidate.serviceTypeId,
+              updatedAt: candidate.updatedAt,
+              itemsCount: candidate.itemsCount,
+              sortDate: candidate.sortDate,
+              dates: candidate.dates,
+              title: candidate.title,
+              serviceTimes: candidate.serviceTimes,
+            })),
+          )}`;
+          setSelectedPlanningCenterCandidateKey("");
+          setCurrentPrompt("ambiguous", dismissalKey, {
+            candidates: resolved.candidates,
+          });
+          return;
+        }
+
+        const candidate = resolved.uniqueCandidate;
+        const candidateKey = planningCenterPlanCandidateKey(candidate);
+        if (!currentHasPlanContent) {
+          const dismissalKey = `${scopeKeyAtStart}:${candidateKey}:${candidate.updatedAt || ""}:${candidate.itemsCount}:${candidate.sortDate}:${candidate.dates}:${candidate.title}:${JSON.stringify(candidate.serviceTimes || [])}`;
+          setCurrentPrompt("available", dismissalKey, {
+            candidate,
+            serviceTypeId: candidate.serviceTypeId,
+            planId: candidate.id,
+          });
+          return;
+        }
+
+        const fetched = await fetchPlanningCenterImportRef.current(
+          candidate.serviceTypeId,
+          candidate.id,
+        );
+        if (!isCurrent()) {
+          showStaleResult();
+          return;
+        }
+        const prepared = prepareImportedPlanDataRef.current(
+          fetched.data,
+          "planningCenter",
+          fetched.sourceUrl,
+          fetched.sourceExtras,
+          {
+            currentSections,
+            editorIdentity: editorIdentityAtStart,
+            draftVersion: draftVersionAtStart,
+            baseRevision: baseRevisionAtStart,
+            scopeKey: scopeKeyAtStart,
+          },
+        );
+        const dataFingerprint = JSON.stringify(fetched.data);
+        const kind = prepared.preview.summary.changes.length > 0 ? "updates" : "available";
+        const dismissalKey = `${scopeKeyAtStart}:${candidateKey}:${dataFingerprint}:${JSON.stringify(prepared.preview.summary.changes)}`;
+        const suggestionKey = `${scopeKeyAtStart}:${kind}:${dismissalKey}`;
+        if (kind === "available" && !prepared.preview.allowSourceLinkOnly) {
+          setCurrentSuggestion("upToDate", {
+            candidate,
+            message: "No Planning Center changes need review.",
+          });
+          return;
+        }
+        setCurrentPrompt(kind, dismissalKey, {
+          candidate,
+          serviceTypeId: candidate.serviceTypeId,
+          planId: candidate.id,
+          preview: { ...prepared.preview, suggestionKey },
+          ...(kind === "available"
+            ? { message: "The plans already match. Link this Planning Center plan for future update checks." }
+            : {}),
+        });
+      } catch (error) {
+        if (!isScopeCurrent()) return;
+        const staleDraft =
+          draftChangeVersionRef.current !== draftVersionAtStart ||
+          getPlanningCenterBaseRevision() !== baseRevisionAtStart;
+        setPlanningCenterSuggestion({
+          key: `${scopeKeyAtStart}:unavailable`,
+          dismissalKey: `${scopeKeyAtStart}:unavailable`,
+          scopeKey: scopeKeyAtStart,
+          editorIdentity: editorIdentityAtStart,
+          draftVersion: draftChangeVersionRef.current,
+          baseRevision: getPlanningCenterBaseRevision(),
+          kind: "unavailable",
+          message: staleDraft
+            ? "This service plan changed while Planning Center was being checked. Check again to compare the latest plan."
+            : error instanceof Error
+              ? error.message
+              : "Could not check Planning Center. Try again.",
+        });
+      }
+    };
+
+    void runDiscovery();
+    return () => {
+      active = false;
+      if (planningCenterDiscoveryOperationRef.current === operation) {
+        planningCenterDiscoveryOperationRef.current = null;
+      }
+    };
+  }, [
+    canEdit,
+    acknowledgedDraftVersion,
+    autosaveState,
+    churchId,
+    churchTimeZone,
+    editorIdentityKey,
+    getPlanningCenterBaseRevision,
+    loading,
+    draftChangeVersion,
+    importPreview,
+    occurrence.groupId,
+    occurrence.serviceDate,
+    occurrence.serviceId,
+    occurrence.serviceIds,
+    occurrence.startsAt,
+    plan?.date,
+    plan?.revision,
+    planningCenterConnected,
+    planningCenterConnectionKey,
+    planningCenterRetryVersion,
+    planningCenterScopeKey,
+    isLiveImportUnsafe,
+    service.planningCenterServiceTypeId,
+    sections,
+    showImport,
+    pendingNativeImport,
+    sourceImport,
+  ]);
+
   const {
     isFollowingLive,
     pauseLiveFollow,
@@ -3148,6 +4052,165 @@ const ServicePlanEditor = ({
         </SheetContent>
       </Sheet>
       {loadingInitialContent ? <ServicePlanSkeleton /> : null}
+
+      {!loadingInitialContent && canEdit && planningCenterSuggestion ? (
+        <section
+          aria-live="polite"
+          className={cn(
+            "mb-3 flex flex-col gap-2 rounded-lg border px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between",
+            planningCenterSuggestion.kind === "unavailable"
+              ? "border-amber-700/60 bg-amber-950/20"
+              : "border-cyan-800/70 bg-cyan-950/20",
+          )}
+          aria-label="Planning Center plan discovery"
+        >
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-gray-100">
+              {planningCenterSuggestion.kind === "checking"
+                ? "Checking Planning Center"
+                : planningCenterSuggestion.kind === "upToDate"
+                  ? "Planning Center plan is up to date"
+                  : planningCenterSuggestion.kind === "ambiguous"
+                    ? "More than one Planning Center plan matches this service"
+                    : planningCenterSuggestion.kind === "updates"
+                      ? "Planning Center updates available"
+                      : planningCenterSuggestion.kind === "unavailable"
+                        ? "Planning Center check unavailable"
+                        : "Planning Center plan found"}
+            </p>
+            {planningCenterSuggestion.kind === "checking" ? (
+              <p className="mt-0.5 text-xs text-gray-400">Matching the service date and start time.</p>
+            ) : null}
+            {planningCenterSuggestion.kind === "upToDate" ? (
+              <p className="mt-0.5 text-xs text-gray-400">{planningCenterSuggestion.message}</p>
+            ) : null}
+            {planningCenterSuggestion.kind === "updates" && planningCenterSuggestion.preview ? (
+              <p className="mt-0.5 text-xs text-gray-400">
+                {planningCenterSuggestion.preview.summary.added} added, {planningCenterSuggestion.preview.summary.updated} updated, {planningCenterSuggestion.preview.summary.moved} moved, {planningCenterSuggestion.preview.summary.removed} removed.
+              </p>
+            ) : null}
+            {planningCenterSuggestion.kind === "unavailable" ? (
+              <p className="mt-0.5 text-xs text-amber-100/90">{planningCenterSuggestion.message}</p>
+            ) : null}
+            {isLiveImportUnsafe && planningCenterSuggestion.kind !== "unavailable" ? (
+              <p className="mt-0.5 text-xs text-amber-100/90">Plan suggestions are paused during the live service.</p>
+            ) : null}
+            {planningCenterSuggestion.kind === "available" && planningCenterSuggestion.candidate ? (
+              <>
+                <p className="mt-0.5 truncate text-xs text-gray-400">{planningCenterSuggestion.candidate.label}</p>
+                {planningCenterSuggestion.message ? (
+                  <p className="mt-0.5 text-xs text-gray-400">{planningCenterSuggestion.message}</p>
+                ) : null}
+              </>
+            ) : null}
+          </div>
+          {planningCenterSuggestion.kind === "ambiguous" && planningCenterSuggestion.candidates ? (
+            <div className="flex min-w-0 flex-col gap-2 sm:w-80">
+              <Select
+                aria-label="Choose a Planning Center plan"
+                placeholder="Choose a plan"
+                options={planningCenterSuggestion.candidates.map((candidate) => ({
+                  value: `${candidate.serviceTypeId}:${candidate.id}`,
+                  label: [candidate.serviceTypeName, candidate.label]
+                    .filter(Boolean)
+                    .join(" · "),
+                }))}
+                value={selectedPlanningCenterCandidateKey}
+                disabled={importing || isLiveImportUnsafe}
+                onChange={setSelectedPlanningCenterCandidateKey}
+              />
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => {
+                    dismissedPlanningCenterSuggestionKeyRef.current = planningCenterSuggestion.dismissalKey;
+                    setPlanningCenterSuggestion(null);
+                  }}
+                  disabled={importing}
+                >
+                  Not now
+                </Button>
+                <Button
+                  type="button"
+                  variant="primary"
+                  disabled={
+                    importing || isLiveImportUnsafe || !selectedPlanningCenterCandidateKey ||
+                    !planningCenterSuggestion.candidates.some((candidate) =>
+                      `${candidate.serviceTypeId}:${candidate.id}` === selectedPlanningCenterCandidateKey,
+                    )
+                  }
+                  onClick={() => reviewPlanningCenterSuggestion({
+                    ...planningCenterSuggestion,
+                    candidate: planningCenterSuggestion.candidates?.find((candidate) =>
+                      `${candidate.serviceTypeId}:${candidate.id}` === selectedPlanningCenterCandidateKey,
+                    ),
+                  })}
+                >
+                  {planningCenterSuggestion.preview?.allowSourceLinkOnly &&
+                  planningCenterSuggestion.preview.summary.changes.length === 0
+                    ? "Review import"
+                    : hasPlanContent
+                      ? "Check updates"
+                      : "Import plan"}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+          {["available", "updates", "unavailable"].includes(planningCenterSuggestion.kind) ? (
+            <div className="flex shrink-0 items-center justify-end gap-2">
+              {planningCenterSuggestion.kind === "unavailable" && planningCenterConnected ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={importing || isLiveImportUnsafe}
+                  onClick={() => setPlanningCenterRetryVersion((value) => value + 1)}
+                >
+                  Try again
+                </Button>
+              ) : null}
+              {planningCenterSuggestion.kind !== "unavailable" ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={importing || isLiveImportUnsafe}
+                  onClick={() => {
+                    dismissedPlanningCenterSuggestionKeyRef.current = planningCenterSuggestion.dismissalKey;
+                    setPlanningCenterSuggestion(null);
+                  }}
+                >
+                  Not now
+                </Button>
+              ) : null}
+              {planningCenterSuggestion.kind === "updates" ? (
+                <Button
+                  type="button"
+                  variant="primary"
+                  disabled={importing || isLiveImportUnsafe}
+                  onClick={() => reviewPlanningCenterSuggestion(planningCenterSuggestion)}
+                >
+                  Review updates
+                </Button>
+              ) : null}
+              {planningCenterSuggestion.kind === "available" && planningCenterSuggestion.candidate ? (
+                <Button
+                  type="button"
+                  variant="primary"
+                  disabled={importing || isLiveImportUnsafe}
+                  onClick={() => reviewPlanningCenterSuggestion(planningCenterSuggestion)}
+                >
+                  {planningCenterSuggestion.preview?.allowSourceLinkOnly &&
+                  planningCenterSuggestion.preview.summary.changes.length === 0
+                    ? "Review import"
+                    : hasPlanContent
+                      ? "Check updates"
+                      : "Import plan"}
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
       {!loadingInitialContent && isEmpty && canEdit ? (
         <div
@@ -3882,6 +4945,7 @@ const ServicePlanEditor = ({
                 churchId && planningCenterConnected ? (
                   <PlanningCenterAccountImportFields
                     churchId={churchId}
+                    connectionKey={planningCenterConnectionKey}
                     disabled={importing}
                     serviceTypeId={importPcoServiceTypeId}
                     planId={importPcoPlanId}
@@ -4050,10 +5114,21 @@ const ServicePlanEditor = ({
           currentSections={importPreview.currentSections}
           proposedSections={importPreview.sections}
           importedSections={importPreview.importedSections}
-          importLabel={importPreview.sourceImport.source === "planningCenterPdf" ? "Updated PDF" : "Updated import"}
+          importLabel={importPreview.sourceImport.source === "planningCenter"
+            ? "Planning Center"
+            : importPreview.sourceImport.source === "planningCenterPdf"
+              ? "Updated PDF"
+              : "Updated import"}
+          reviewTitle={importPreview.sourceImport.source === "planningCenter"
+            ? "Review Planning Center updates"
+            : undefined}
+          noChangeApplyLabel={importPreview.allowSourceLinkOnly
+            ? "Link Planning Center plan"
+            : undefined}
+          applying={isApplyingImportPreview}
           getSelectedSections={getSelectedImportSections}
           onApply={applyImportPreview}
-          onClose={() => setImportPreview(null)}
+          onClose={closeImportPreview}
         />
       ) : null}
       {ambiguityDialog ? (

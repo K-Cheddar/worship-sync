@@ -576,6 +576,8 @@ export type ServiceTime = {
   positionRequirements?: PositionRequirement[];
   // template automatically used when the first plan for an occurrence is opened
   defaultPlanTemplateId?: string;
+  /** Confirmed Planning Center service type used for recurring plan discovery. */
+  planningCenterServiceTypeId?: string;
   // services sharing a non-empty serviceGroupId are "combined": when they fall on
   // the same date they merge into one schedule occurrence with a single shared set
   // of assignment cells (e.g. back-to-back 9am + 11am Sunday services).

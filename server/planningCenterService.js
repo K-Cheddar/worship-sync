@@ -570,22 +570,71 @@ export const createPlanningCenterService = ({
     };
   };
 
-  const listPlans = async ({ churchId, serviceTypeId, filter = "future" }) => {
+  const listPlans = async ({ churchId, serviceTypeId, filter = "future", date }) => {
     const typeId = safeId(serviceTypeId, "service type");
-    const planFilter =
-      filter === "past" || filter === "no_dates" ? filter : "future";
-    const { data } = await pcoGetCollection(
-      churchId,
-      `/services/v2/service_types/${encodeURIComponent(typeId)}/plans`,
-      {
+    const path = `/services/v2/service_types/${encodeURIComponent(typeId)}/plans`;
+    let data;
+    let included = [];
+    if (filter === "date") {
+      const plainDate = String(date || "").trim();
+      const timestamp = Date.parse(`${plainDate}T00:00:00.000Z`);
+      if (
+        !/^\d{4}-\d{2}-\d{2}$/.test(plainDate) ||
+        !Number.isFinite(timestamp) ||
+        new Date(timestamp).toISOString().slice(0, 10) !== plainDate
+      ) {
+        throw createClientError("Choose a valid service date.");
+      }
+      // Search a broad UTC window around the local occurrence date. The final
+      // match uses each included Service Plan time converted to the church
+      // timezone, so this window only narrows the API response.
+      const after = new Date(timestamp - 24 * 60 * 60 * 1000).toISOString();
+      const before = new Date(timestamp + 48 * 60 * 60 * 1000).toISOString();
+      const [afterPlans, beforePlans] = await Promise.all([
+        pcoGetCollection(churchId, path, {
+          filter: "after",
+          after,
+          order: "sort_date",
+          include: "plan_times",
+          per_page: 100,
+        }),
+        pcoGetCollection(churchId, path, {
+          filter: "before",
+          before,
+          order: "sort_date",
+          include: "plan_times",
+          per_page: 100,
+        }),
+      ]);
+      const beforePlanIds = new Set(beforePlans.data.map((entry) => String(entry.id)));
+      data = afterPlans.data.filter((entry) => beforePlanIds.has(String(entry.id)));
+      const includedByKey = new Map();
+      [...afterPlans.included, ...beforePlans.included].forEach((entry) => {
+        includedByKey.set(`${entry.type}:${entry.id}`, entry);
+      });
+      included = [...includedByKey.values()];
+    } else {
+      const planFilter =
+        filter === "past" || filter === "no_dates" ? filter : "future";
+      ({ data } = await pcoGetCollection(churchId, path, {
         filter: planFilter,
         order: planFilter === "past" ? "-sort_date" : "sort_date",
         per_page: 50,
-      },
+      }));
+    }
+    const planTimesById = new Map(
+      included
+        .filter((entry) => entry.type === "PlanTime")
+        .map((entry) => [String(entry.id), entry]),
     );
     return {
       items: data.map((entry) => {
         const attrs = entry.attributes || {};
+        const relatedPlanTimes = Array.isArray(
+          entry.relationships?.plan_times?.data,
+        )
+          ? entry.relationships.plan_times.data
+          : [];
         const dates =
           String(attrs.dates || attrs.short_dates || "").trim() || "No date";
         const title = String(attrs.title || attrs.series_title || "").trim();
@@ -597,6 +646,20 @@ export const createPlanningCenterService = ({
           label: title ? `${dates} · ${title}` : dates,
           itemsCount: Number(attrs.items_count) || 0,
           sortDate: attrs.sort_date || "",
+          ...(filter === "date" && attrs.updated_at
+            ? { updatedAt: String(attrs.updated_at).trim() }
+            : {}),
+          serviceTimes: relatedPlanTimes.flatMap((relationship) => {
+            const planTime = planTimesById.get(String(relationship.id));
+            const timeAttributes = planTime?.attributes || {};
+            const startsAt = String(timeAttributes.starts_at || "").trim();
+            return startsAt
+              ? [{
+                  startsAt,
+                  timeType: String(timeAttributes.time_type || "").trim().toLowerCase(),
+                }]
+              : [];
+          }),
           sourceUrl:
             String(attrs.planning_center_url || "").trim() ||
             `https://services.planningcenteronline.com/plans/${encodeURIComponent(String(entry.id))}`,

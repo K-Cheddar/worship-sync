@@ -2849,6 +2849,7 @@ app.get(
           churchId: req.params.churchId,
           serviceTypeId: req.params.serviceTypeId,
           filter: req.query.filter,
+          date: req.query.date,
         }),
       );
     } catch (error) {
