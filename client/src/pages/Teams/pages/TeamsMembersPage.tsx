@@ -13,6 +13,8 @@ const TeamsMembersPage = () => {
     invalidateTeamProfileReadiness,
     refreshMemberSmsEligibility,
     loading,
+    serviceTimeZone,
+    serviceTimeZoneStatus,
     canEditTeams,
     canEditTeam,
   } =
@@ -59,6 +61,8 @@ const TeamsMembersPage = () => {
       data={canEditScopedMembers ? managerData : pageData}
       canEdit={canEditScopedMembers}
       canEditAllTeams={canEditTeams}
+      serviceTimeZone={serviceTimeZone}
+      serviceTimeZoneStatus={serviceTimeZoneStatus}
       teamProfileReadyMemberIds={teamProfileReadyMemberIds}
       canManageMemberLifecycle={canEditTeams}
       canEditMember={(member) =>

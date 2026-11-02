@@ -11,6 +11,8 @@ type FormActionButtonsProps = {
   onCancel: () => void;
   /** Whether closing would discard edits. */
   hasPendingChanges?: boolean;
+  /** Whether the primary save action has fields to commit. */
+  hasPendingSaveChanges?: boolean;
   disabled?: boolean;
   /** Pin Close/Cancel and Save to the bottom of a scrollable form panel. */
   pinFooter?: boolean;
@@ -23,6 +25,7 @@ const FormActionButtons = ({
   onSave,
   onCancel,
   hasPendingChanges = true,
+  hasPendingSaveChanges = hasPendingChanges,
   disabled = false,
   pinFooter = false,
 }: FormActionButtonsProps) => (
@@ -41,15 +44,15 @@ const FormActionButtons = ({
       <Button
         variant="cta"
         className="flex-1 justify-center"
-        svg={isSaving || (!isCreate && !hasPendingChanges) ? undefined : Save}
+        svg={isSaving || (!isCreate && !hasPendingSaveChanges) ? undefined : Save}
         iconSize="sm"
         aria-busy={isSaving || undefined}
-        disabled={disabled || isSaving || (!isCreate && !hasPendingChanges)}
+        disabled={disabled || isSaving || (!isCreate && !hasPendingSaveChanges)}
         onClick={onSave}
       >
         {isSaving ? (
           isCreate ? "Creating…" : "Saving…"
-        ) : !isCreate && !hasPendingChanges ? (
+        ) : !isCreate && !hasPendingSaveChanges ? (
           <>
             <Check aria-hidden="true" data-testid="form-save-success-icon" className="size-4 shrink-0 text-emerald-300" />
             Saved
