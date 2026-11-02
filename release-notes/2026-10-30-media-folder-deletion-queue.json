@@ -3,5 +3,5 @@
   "date": "2026-10-30",
   "type": "improved",
   "title": "Queue folder deletions",
-  "description": "Queue folder deletions in order, track or cancel them in Activity, and keep moved media safe while waiting. Cancelling a queued retry preserves its recovery details."
+  "description": "Queue folder deletions in order, track or cancel them in Activity, and keep moved media safe while waiting. Retry recoverable folder changes from Activity."
 }

@@ -1713,6 +1713,7 @@ export function useMediaLibraryController({
       }
       const activityId = `media-folder-keep-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
       let queueControl: MediaFolderDeletionQueueControl | null = null;
+      let keepContentsRetryNeeded = false;
       const activityHandoff = createMediaDeletionActivityHandoff(activityId, activityActions, { continueAfterOwnerRetires: true });
       const publish = (status: Transfer["status"], phase: string, error?: string, detail?: string) => {
         const inProgress = status === "active" || status === "queued";
@@ -1732,7 +1733,10 @@ export function useMediaLibraryController({
           blocksUnload: inProgress,
           actions: [
             ...(cancellable ? [{ key: "cancel", label: cancellationRequested ? "Cancelling…" : `Cancel ${targetAtRequest.name}`, ...(cancellationRequested ? { pending: true } : {}) }] : []),
-            ...(!inProgress ? [{ key: "dismiss", label: "Dismiss" }] : []),
+            ...(!inProgress ? [
+              ...(keepContentsRetryNeeded ? [{ key: "retry-delete", label: "Retry deletion" }] : []),
+              { key: "dismiss", label: "Dismiss" },
+            ] : []),
           ],
         });
       };
@@ -2021,9 +2025,12 @@ export function useMediaLibraryController({
           retireInvalidSession(control);
           return;
         }
+        const retryingFailure = keepContentsRetryNeeded;
+        keepContentsRetryNeeded = false;
         activityHandoff.registerRouteAction("dismiss", dismiss);
         publish("active", "Preparing folder changes");
         if (control.isCancellationRequested()) {
+          keepContentsRetryNeeded = retryingFailure;
           publish(
             "cancelled",
             "Cancelled",
@@ -2059,6 +2066,7 @@ export function useMediaLibraryController({
             return;
           }
           if (control.isCancellationRequested()) {
+            keepContentsRetryNeeded = retryingFailure;
             publish("cancelled", "Cancelled", undefined, "No folder changes were made.");
             return;
           }
@@ -2075,6 +2083,7 @@ export function useMediaLibraryController({
             retireInvalidSession(control);
             return;
           }
+          keepContentsRetryNeeded = !removed;
           publish(
             removed ? "complete" : "failed",
             removed
@@ -2091,9 +2100,67 @@ export function useMediaLibraryController({
             error instanceof Error
               ? error.message
               : "Folder contents could not be saved.";
+          keepContentsRetryNeeded = true;
           publish("failed", "Folder changes need attention", message);
         }
       };
+      const retryKeepContents = async () => {
+        if (!keepContentsRetryNeeded) return;
+        if (!isOriginalSession()) {
+          retireInvalidSession();
+          return;
+        }
+        const recoveryTransfer = activityActions.getTransfer(activityId);
+        if (!recoveryTransfer) return;
+        const control = activityActions.enqueueMediaFolderDeletion({
+          id: activityId,
+          folderId,
+          scope: queueScope,
+          transfer: recoveryTransfer,
+          run: async (retryControl) => {
+            queueControl = retryControl;
+            if (!isOriginalSession()) {
+              retireInvalidSession(retryControl);
+              return;
+            }
+            await runKeepContents(retryControl);
+          },
+          cancelQueued: () => {
+            queueControl = null;
+            if (!isOriginalSession()) {
+              retireInvalidSession();
+              return;
+            }
+            const cancellationNote =
+              "Retry cancelled; no additional folder changes were started.";
+            const detail = recoveryTransfer.detail?.includes(cancellationNote)
+              ? recoveryTransfer.detail
+              : [recoveryTransfer.detail, cancellationNote]
+                  .filter(Boolean)
+                  .join(" · ");
+            const restoredTransfer = {
+              ...recoveryTransfer,
+              detail,
+              canCancel: false,
+              blocksUnload: false,
+            };
+            activityHandoff.publish(restoredTransfer);
+            activityActions.updateTransfer(restoredTransfer);
+          },
+          cancelRequested: () => publish("active", "Cancelling safely"),
+          cancelUnavailable: () =>
+            publish("active", "Cancellation unavailable", undefined, "Folder changes are being saved and will finish safely."),
+        });
+        if (!control) {
+          if (isOperationUiScopeCurrent()) {
+            showToast("This folder already has a deletion queued or running.", "error");
+          }
+          return;
+        }
+        queueControl = control;
+      };
+      activityHandoff.registerRouteAction("retry-delete", retryKeepContents);
+      activityHandoff.setDetachedDeleteRetry(retryKeepContents);
       const initialTransfer: Transfer = {
         id: activityId,
         type: "Media deletion",
@@ -2199,6 +2266,7 @@ export function useMediaLibraryController({
       const activityId = `media-folder-delete-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
       let queueControl: MediaFolderDeletionQueueControl | null = null;
       let fileStates: TransferFileActivity[] = [];
+      let folderReadFailed = false;
       const retainCurrentMembers = (rows: MediaType[]) => {
         const currentIds = new Set(removedRows.map((row) => row.id));
         const skippedIds = new Set(rows.filter((row) => !currentIds.has(row.id)).map((row) => row.id));
@@ -2272,7 +2340,7 @@ export function useMediaLibraryController({
                 ...(uploadCleanupRetry || providerFailedRows.length || folderFinalizationError
                   ? [{ key: "retry-cleanup", label: folderFinalizationError ? "Retry folder finalization" : "Retry cleanup" }]
                   : []),
-                ...(deleteFailedRows.length ? [{ key: "retry-delete", label: "Retry deletion" }] : []),
+                ...(deleteFailedRows.length || folderReadFailed ? [{ key: "retry-delete", label: "Retry deletion" }] : []),
                 { key: "dismiss", label: "Dismiss" },
                 ]),
               ],
@@ -2889,20 +2957,25 @@ export function useMediaLibraryController({
       });
       const retryFolderDeletion = async () => {
         enqueueFolderRetry(async (control) => {
+          const retryingInitialRead = folderReadFailed;
           try {
             if (!await refreshDeletionTarget()) {
               retireInvalidSession(control);
               return;
             }
+            folderReadFailed = false;
           } catch (error) {
             if (!isOriginalSession()) {
               retireInvalidSession(control);
               return;
             }
+            folderReadFailed = true;
             publish("failed", "Could not read the Media library", error instanceof Error ? error.message : "Check your connection and try again.");
             return;
           }
-          const retryRows = retainCurrentMembers(deleteFailedRows);
+          const retryRows = retryingInitialRead
+            ? removedRows
+            : retainCurrentMembers(deleteFailedRows);
           deleteFailedRows = retryRows;
           refreshFileStates(retryRows, true);
           if (!retryRows.length) {
@@ -2948,6 +3021,7 @@ export function useMediaLibraryController({
             retireInvalidSession(control);
             return;
           }
+          folderReadFailed = false;
           fileStates = removedRows.map((row) => ({
             id: row.id,
             name: row.name || "Untitled media",
@@ -2961,10 +3035,12 @@ export function useMediaLibraryController({
             return;
           }
           fileStates = [];
+          folderReadFailed = true;
           publish("failed", "Could not read the Media library", error instanceof Error ? error.message : "Check your connection and try again.");
           return;
         }
         if (!target) {
+          folderReadFailed = false;
           fileStates = [];
           publish(
             "complete",
