@@ -90,6 +90,7 @@
     "esbuild": "^0.27.2"
   },
   "scripts": {
+    "preelectron": "node scripts/prepare-video-tools.mjs",
     "dev": "npm run electron",
     "build": "vite build",
     "build:heroku": "vite build --mode heroku",
@@ -98,10 +99,10 @@
     "build:strict": "npm run lint:check && vite build",
     "preview": "vite preview",
     "electron": "electron-vite dev && wait-on https://local.worshipsync.net:3000 && electron .",
-    "electron:build": "electron-vite build && electron-builder",
-    "electron:build:win": "electron-vite build && electron-builder --win",
-    "electron:build:mac": "electron-vite build && electron-builder --mac",
-    "electron:build:linux": "electron-vite build && electron-builder --linux",
+    "electron:build": "electron-vite build && electron-builder --config electron-builder.config.js",
+    "electron:build:win": "node scripts/prepare-video-tools.mjs && electron-vite build && electron-builder --config electron-builder.config.js --win",
+    "electron:build:mac": "electron-vite build && electron-builder --config electron-builder.config.js --mac",
+    "electron:build:linux": "electron-vite build && electron-builder --config electron-builder.config.js --linux",
     "test": "jest --watchAll=false",
     "test:coverage": "jest --watchAll=false --coverage",
     "test:watch": "jest",

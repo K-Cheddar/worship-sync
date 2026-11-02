@@ -199,6 +199,24 @@ contextBridge.exposeInMainWorld("electronAPI", {
   deleteLocalAsset: (assetId: string) =>
     ipcRenderer.invoke("delete-local-asset", assetId),
 
+  // Video jobs and temporary paths stay in the main process. The renderer gets
+  // only inspection data, progress and managed local-asset metadata.
+  isVideoDownloaderAvailable: () => ipcRenderer.invoke("is-video-downloader-available"),
+  inspectVideoUrl: (url: string) => ipcRenderer.invoke("inspect-video-url", url),
+  startVideoDownload: (input: { jobId: string; inspectionId: string; quality: number | "best" }) =>
+    ipcRenderer.invoke("start-video-download", input),
+  cancelVideoDownload: (jobId: string) => ipcRenderer.invoke("cancel-video-download", jobId),
+  importDownloadedVideo: (input: { jobId: string; workspaceId: string; width: number; height: number }) =>
+    ipcRenderer.invoke("import-downloaded-video", input),
+  uploadDownloadedVideoToMux: (jobId: string, url: string) =>
+    ipcRenderer.invoke("upload-downloaded-video-to-mux", { jobId, url }),
+  cleanupVideoDownload: (jobId: string) => ipcRenderer.invoke("cleanup-video-download", jobId),
+  onVideoDownloadProgress: (callback: (event: unknown) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: unknown) => callback(value);
+    ipcRenderer.on("video-download-progress", listener);
+    return () => ipcRenderer.removeListener("video-download-progress", listener);
+  },
+
   // Route persistence
   saveLastRoute: (route: string) =>
     ipcRenderer.invoke("save-last-route", route),

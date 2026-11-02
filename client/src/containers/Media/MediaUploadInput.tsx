@@ -41,8 +41,8 @@ import { convertCloudinaryImageToLocalWebp } from "./utils/cloudinaryUpload";
 import { FileList } from "./components/FileList";
 import { useNativeFileDrop } from "./useNativeFileDrop";
 import { normalizeMediaLibraryDisplayName } from "./mediaLibraryMeta";
-import { useOptionalTransferActions, useOptionalTransfers } from "../../context/transferContext";
-import { getMediaTransferOverview, type Transfer } from "../../context/transferModel";
+import { useOptionalTransferActions } from "../../context/transferContext";
+import type { Transfer } from "../../context/transferModel";
 import { getMediaBatchProgress, getMediaCloudFileProgress } from "./mediaUploadProgress";
 
 const isLocalMediaPlaybackError = (error: unknown) =>
@@ -99,26 +99,6 @@ const registerLocalAssetCleanupRetry = (
   });
   publish(initialError);
   return true;
-};
-
-const MediaUploadTaskbarProgress = () => {
-  const transferContext = useOptionalTransfers();
-  const overview = getMediaTransferOverview(transferContext?.transfers ?? []);
-  useEffect(() => {
-    const api = window.electronAPI;
-    if (!api) return;
-    const active = overview.activeCount > 0;
-    api.setUploadInProgress(active);
-    if (api.setTaskbarUploadProgress) {
-      void api.setTaskbarUploadProgress(active && overview.progress !== null ? overview.progress / 100 : null);
-    }
-  }, [overview.activeCount, overview.progress]);
-  useEffect(() => () => {
-    const api = window.electronAPI;
-    api?.setUploadInProgress(false);
-    if (api?.setTaskbarUploadProgress) void api.setTaskbarUploadProgress(null);
-  }, []);
-  return null;
 };
 
 type UploadTimeout = {
@@ -1108,7 +1088,6 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
 
     return (
       <>
-        <MediaUploadTaskbarProgress />
         {showButton && (
           <Button
             variant="tertiary"

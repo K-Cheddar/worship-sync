@@ -51,7 +51,7 @@ export const FLUSH_MEDIA_STALE_DB_MESSAGE =
 export type FlushMediaLibraryDocOptions = {
   /** Allows a workflow already authorized under this concrete DB to finish its write after a scope switch. */
   allowOriginalOwnerPersistenceAfterScopeChange?: boolean;
-  /** Keeps that original-owner write within its authenticated church session. */
+  /** Prevents stale queued writes after the originating workspace or church session changes. */
   canPersist?: () => boolean;
   /** Controls current-scope side effects such as broadcasts, Electron cache, and Redux cache publication. */
   publishIfCurrent?: () => boolean;
@@ -111,8 +111,8 @@ export async function flushMediaLibraryDocToPouch(
   }
   const databaseIsActive = () => activeDb === db;
   const canPersist = () =>
-    (options.canPersist?.() ?? true) &&
-    (options.allowOriginalOwnerPersistenceAfterScopeChange || databaseIsActive());
+    (options.allowOriginalOwnerPersistenceAfterScopeChange || databaseIsActive()) &&
+    (options.canPersist?.() ?? true);
   const canPublish = () => databaseIsActive() && (options.publishIfCurrent?.() ?? true);
   if (!canPersist()) {
     return { ok: false, error: new Error(FLUSH_MEDIA_STALE_DB_MESSAGE) };

@@ -619,6 +619,24 @@ describe("findReusablePeriodSchedule", () => {
     )).toEqual({ occurrences: stored, ambiguous: false });
   });
 
+  it("keeps the persisted occurrence snapshot until an explicit refresh reconciles it", () => {
+    const saved = {
+      ...occurrence,
+      occurrenceId: "service@2026-10-03",
+      logicalOccurrenceId: "service@2026-10-03",
+      serviceDate: "2026-10-03",
+    };
+    const resolved = {
+      ...saved,
+      startsAt: "2026-10-03T11:00:00.000Z",
+    };
+
+    const merged = mergeCurrentScheduleOccurrences([saved], [resolved]);
+
+    expect(merged).toEqual({ occurrences: [saved], ambiguous: false });
+    expect(saved.startsAt).toBe("2026-10-03T10:00:00.000Z");
+  });
+
   it("does not use one saved row to cover two identically named services", () => {
     const saved = schedule();
     const added = { ...occurrence, serviceId: "second", occurrenceId: "second@date" };

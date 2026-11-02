@@ -55,6 +55,7 @@ import TeamMemberProfileEditor, {
   type TeamMemberProfileEditorStatus,
 } from "./TeamMemberProfileEditor";
 import MemberTeamProfileFields from "./MemberTeamProfileFields";
+import MemberServiceAvailabilityEditor from "./MemberServiceAvailabilityEditor";
 import EntityMultiSelect from "../EntityMultiSelect";
 import EntityRow from "../components/EntityRow";
 import {
@@ -180,6 +181,8 @@ type MemberManagerProps = {
   canManageMemberLifecycle?: boolean;
   canEditMember?: (member: TeamRosterMember) => boolean;
   teamProfileReadyMemberIds?: ReadonlySet<string>;
+  serviceTimeZone?: string;
+  serviceTimeZoneStatus?: "loading" | "ready" | "error";
   onSaved: (member: TeamRosterMember, replaceId?: string) => void;
   onIdentityChanged?: () => void;
   /** Applies rosters the server changed by joining this member to a team. */
@@ -202,6 +205,8 @@ const MemberManager = ({
   canManageMemberLifecycle = true,
   canEditMember: canEditMemberProp,
   teamProfileReadyMemberIds,
+  serviceTimeZone = "",
+  serviceTimeZoneStatus = "loading",
   onSaved,
   onIdentityChanged,
   onTeamSaved,
@@ -337,6 +342,8 @@ const MemberManager = ({
   // spinner on the member actually saving and lets editing continue back-to-back
   // in the background.
   const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set());
+  const [availabilityHasPendingChanges, setAvailabilityHasPendingChanges] = useState(false);
+  const [availabilitySavingMemberId, setAvailabilitySavingMemberId] = useState("");
   const [listQuery, setListQuery] = useState("");
   const [listFilters, setListFilters] = useState(emptyMemberListFilters);
   const [draftListFilters, setDraftListFilters] = useState(emptyMemberListFilters);
@@ -385,6 +392,8 @@ const MemberManager = ({
         ? requestedTeamId || routeTeamId
         : selectedTeamId;
       setScopedTeamId(selectedTeamId);
+      setAvailabilityHasPendingChanges(false);
+      setAvailabilitySavingMemberId("");
       setScopedProfileStatus(null);
       setEditRouteError("");
       lastAppliedEditIdentityRef.current = {
@@ -683,6 +692,8 @@ const MemberManager = ({
     setEditing(null);
     setShowCreate(false);
     setScopedTeamId("");
+    setAvailabilityHasPendingChanges(false);
+    setAvailabilitySavingMemberId("");
     setScopedProfileStatus(null);
     setEditRouteError("");
     lastAppliedEditIdentityRef.current = null;
@@ -971,7 +982,10 @@ const MemberManager = ({
     const savingKey = wasEditing?.memberId ?? CREATE_SAVING_KEY;
     // Ignore a repeat submit for the same editor while its save is pending —
     // this prevents a fast double-click on "Create" from making duplicates.
-    if (savingIds.has(savingKey)) return;
+    if (
+      savingIds.has(savingKey) ||
+      (wasEditing && availabilitySavingMemberId === wasEditing.memberId)
+    ) return;
     const editorSession = activeEditorSessionRef.current;
     const submittedDraftRevision = draftRevisionRef.current;
     const submittedImageRevision = profileImageSelectionRevisionRef.current;
@@ -1192,7 +1206,8 @@ const MemberManager = ({
   // member currently open, so a background save elsewhere never spins or
   // disables it.
   const currentEditorKey = editing ? editing.memberId : CREATE_SAVING_KEY;
-  const isSavingCurrent = savingIds.has(currentEditorKey);
+  const isSavingCurrent = savingIds.has(currentEditorKey) ||
+    availabilitySavingMemberId === currentEditorKey;
   const draftDiffersFromSaved =
     JSON.stringify({ ...draft, teamIds: [...(draft.teamIds || [])].sort() }) !==
       JSON.stringify(buildMemberDraft(editing, joinedTeamIds)) ||
@@ -1208,8 +1223,10 @@ const MemberManager = ({
   useTeamsUnsavedChanges(
     isScopedMemberEditing
       ? Boolean(currentScopedProfileStatus?.hasPendingChanges)
-      : hasPendingChanges,
-    isScopedMemberEditing && Boolean(currentScopedProfileStatus?.saving),
+      : hasPendingChanges || availabilityHasPendingChanges,
+    isScopedMemberEditing
+      ? Boolean(currentScopedProfileStatus?.saving)
+      : availabilitySavingMemberId === currentEditorKey,
   );
 
   useEffect(() => {
@@ -1387,6 +1404,15 @@ const MemberManager = ({
   const handleScopedProfileSaved = useCallback((memberId: string) => {
     void onScopedProfileSaved?.(memberId);
   }, [onScopedProfileSaved]);
+  const handleAvailabilitySavingChange = useCallback((saving: boolean) => {
+    setAvailabilitySavingMemberId(saving ? editing?.memberId || "" : "");
+  }, [editing?.memberId]);
+  const handleAvailabilitySaved = useCallback((savedMember: TeamRosterMember) => {
+    onSaved(savedMember, savedMember.memberId);
+    setEditing((current) =>
+      current?.memberId === savedMember.memberId ? savedMember : current,
+    );
+  }, [onSaved]);
   let memberEditorTitle = "Create member";
   if (editing) {
     memberEditorTitle = isScopedMemberEditing ? memberName(editing) : "Edit member";
@@ -1668,7 +1694,8 @@ const MemberManager = ({
               isSaving={isSavingCurrent}
               onSave={() => void submit()}
               onCancel={cancelEditing}
-              hasPendingChanges={hasPendingChanges}
+              hasPendingChanges={hasPendingChanges || availabilityHasPendingChanges}
+              hasPendingSaveChanges={hasPendingChanges}
               disabled={
                 !canEditActiveMember ||
                 !draft.firstName.trim() ||
@@ -2071,6 +2098,21 @@ const MemberManager = ({
             </div>
           </fieldset>
         </fieldset>
+        {editing && canEditAllTeams ? (
+          <MemberServiceAvailabilityEditor
+            key={`service-availability:${churchId}:${editing.memberId}`}
+            churchId={churchId}
+            member={editing}
+            services={data.services}
+            schedules={data.schedules}
+            timeZone={serviceTimeZone}
+            timeZoneStatus={serviceTimeZoneStatus}
+            disabled={!canEditActiveMember}
+            onDirtyChange={setAvailabilityHasPendingChanges}
+            onSavingChange={handleAvailabilitySavingChange}
+            onSaved={handleAvailabilitySaved}
+          />
+        ) : null}
         <EntityMultiSelect
           label="Teams"
           description="Rosters this member belongs to. Choosing a position below adds its team automatically."

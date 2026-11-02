@@ -1534,6 +1534,14 @@ app.post(
   "/api/churches/:churchId/team-roster-members/:memberId",
   authHandlers.updateTeamRosterMember,
 );
+app.get(
+  "/api/churches/:churchId/team-roster-members/:memberId/service-availability",
+  authHandlers.getTeamRosterMemberServiceAvailability,
+);
+app.patch(
+  "/api/churches/:churchId/team-roster-members/:memberId/service-availability",
+  authHandlers.updateTeamRosterMemberServiceAvailability,
+);
 app.post(
   "/api/churches/:churchId/team-roster-members/:memberId/archive",
   authHandlers.archiveTeamRosterMember,
