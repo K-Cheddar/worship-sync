@@ -19,9 +19,12 @@ import {
 import { serializeAuthError } from "./authErrorResponse.js";
 import { isDeepStrictEqual } from "node:util";
 import {
+  addServicePlanSseClient,
   addChurchServiceTimeZoneSseClient,
   emitChurchServiceTimeZoneInvalidation,
+  emitServicePlanEvent,
   emitTeamsEvent,
+  removeServicePlanSseClient,
   removeChurchServiceTimeZoneSseClient,
 } from "./teamsSse.js";
 import {
@@ -20283,6 +20286,51 @@ export const createTeamsAuthHandlers = ({
       }
     },
 
+    async streamServicePlanUpdates(req, res) {
+      const churchId = req.params.churchId;
+      let subscriber = null;
+      let heartbeat = null;
+      let streamStarted = false;
+      let closed = false;
+      const cleanup = () => {
+        if (closed) return;
+        closed = true;
+        if (heartbeat) clearInterval(heartbeat);
+        if (subscriber) removeServicePlanSseClient(churchId, subscriber);
+      };
+
+      try {
+        await requireServicesView(req, churchId);
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+        res.flushHeaders?.();
+        streamStarted = true;
+
+        subscriber = { write: (chunk) => res.write(chunk) };
+        addServicePlanSseClient(churchId, subscriber);
+        heartbeat = setInterval(() => {
+          res.write(": keep-alive\n\n");
+        }, 25000);
+        req.on("close", () => {
+          cleanup();
+          res.end();
+        });
+        res.write(`data: ${JSON.stringify({ type: "connected", churchId })}\n\n`);
+      } catch (error) {
+        cleanup();
+        if (streamStarted) {
+          res.end();
+          return;
+        }
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not open the service plan update stream.",
+        );
+      }
+    },
+
     async updateChurchServiceTimeZone(req, res) {
       try {
         await assertCsrf(req);
@@ -20611,7 +20659,7 @@ export const createTeamsAuthHandlers = ({
           });
           servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
         }
-        emitTeamsEvent(churchId, "service-plan-updated", {
+        emitServicePlanEvent(churchId, "service-plan-updated", {
           planKey: servicePlan.planKey,
           saveOperationId: payload.saveOperationId,
         });
@@ -20881,7 +20929,7 @@ export const createTeamsAuthHandlers = ({
             buildServicePlanDocId(churchId, planKey),
           );
           if (plan)
-            emitTeamsEvent(churchId, "service-plan-updated", {
+            emitServicePlanEvent(churchId, "service-plan-updated", {
               planKey: plan.planKey,
             });
         }
@@ -21297,7 +21345,7 @@ export const createTeamsAuthHandlers = ({
           merge: true,
         });
         const servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
-        emitTeamsEvent(churchId, "service-plan-updated", {
+        emitServicePlanEvent(churchId, "service-plan-updated", {
           planKey: servicePlan.planKey,
         });
         await emitPublicServicePlanUpdated(
@@ -21494,7 +21542,7 @@ export const createTeamsAuthHandlers = ({
           { merge: true },
         );
         const servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
-        emitTeamsEvent(churchId, "service-plan-updated", {
+        emitServicePlanEvent(churchId, "service-plan-updated", {
           planKey: servicePlan.planKey,
         });
         await emitPublicServicePlanUpdated(
@@ -21541,7 +21589,7 @@ export const createTeamsAuthHandlers = ({
           { merge: true },
         );
         const servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
-        emitTeamsEvent(churchId, "service-plan-updated", {
+        emitServicePlanEvent(churchId, "service-plan-updated", {
           planKey: servicePlan.planKey,
         });
         await emitPublicServicePlanUpdated(
@@ -21624,7 +21672,7 @@ export const createTeamsAuthHandlers = ({
         const docId = buildServicePlanDocId(churchId, planKey);
         const existing = await getDoc(COLLECTIONS.servicePlans, docId);
         await deleteDoc(COLLECTIONS.servicePlans, docId);
-        emitTeamsEvent(churchId, "service-plan-removed", { planKey });
+        emitServicePlanEvent(churchId, "service-plan-removed", { planKey });
         // Deleting revokes public access just as unpublishing does, so already
         // open viewers must be told to re-fetch (and get a 404) instead of
         // sitting on a snapshot of now-deleted serving notes. `published` is

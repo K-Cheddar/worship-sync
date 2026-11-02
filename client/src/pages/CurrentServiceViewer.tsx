@@ -29,10 +29,11 @@ import type { ServicePlan } from "../types/servicePlan";
 import type { ChurchBranding } from "../api/authTypes";
 import { useSyncOnReconnect } from "../hooks/useSyncOnReconnect";
 import {
-  isServicePlanUpdatedEvent,
-  useTeamsLiveSync,
-  type TeamsStreamEvent,
-} from "./Teams/hooks/useTeamsLiveSync";
+  isServicePlanInvalidationEvent,
+  useServicePlanLiveSync,
+  type ServicePlanLiveConnectionState,
+  type ServicePlanStreamEvent,
+} from "./Services/useServicePlanLiveSync";
 import {
   getCurrentServiceResolutionRecheckAtMs,
   listCurrentServiceOccurrences,
@@ -54,6 +55,8 @@ import type { PublicServiceFlowSnapshot } from "../services/serviceFlowTypes";
 import { resolveChurchToolbarLogoUrl } from "../utils/churchBranding";
 
 const VIEWER_STALE_AFTER_MS = 10 * 60 * 1000;
+const VIEWER_FALLBACK_REFRESH_MS = 45_000;
+const VIEWER_POLL_CHECK_MS = 15_000;
 const VIEWER_OCCURRENCE_LOOKAHEAD_DAYS = 366;
 const VIEWER_MANUAL_LOOKAHEAD_DAYS = 42;
 
@@ -244,6 +247,7 @@ type ViewerData = {
   publicSnapshot: PublicServiceFlowSnapshot | null;
   isLoadingPlan: boolean;
   planError: string | null;
+  liveConnectionState: ServicePlanLiveConnectionState;
   refresh: () => Promise<void>;
 };
 
@@ -275,7 +279,6 @@ const useCurrentServiceViewerData = (
   churchId: string,
   canViewServices: boolean,
   canViewTeams: boolean,
-  canUseTeamsLiveSync: boolean,
   requiresDetailedSnapshot: boolean,
   occurrence: TeamScheduleOccurrence | null,
 ): ViewerData => {
@@ -286,7 +289,6 @@ const useCurrentServiceViewerData = (
     requiresDetailedSnapshot,
   ]);
   const [planState, setPlanState] = useState<ViewerPlanState>({ kind: "idle" });
-  const [refreshVersion, setRefreshVersion] = useState(0);
   const planStateRef = useRef(planState);
   planStateRef.current = planState;
   const planCacheRef = useRef(new Map<string, ViewerPlanCacheEntry>());
@@ -300,7 +302,6 @@ const useCurrentServiceViewerData = (
     promise: Promise<void>;
   } | null>(null);
   const lastRefreshAtRef = useRef(0);
-  const hasConnectedRef = useRef(false);
   const lastScopeKeyRef = useRef(scopeKey);
 
   const activePlanKey = occurrence ? getServicePlanKey(occurrence) : null;
@@ -311,7 +312,6 @@ const useCurrentServiceViewerData = (
     detailRequestIdRef.current += 1;
     planCacheRef.current.clear();
     setPlanState({ kind: "idle" });
-    hasConnectedRef.current = false;
     lastRefreshAtRef.current = 0;
     refreshInFlightRef.current = null;
   }, [scopeKey]);
@@ -332,7 +332,6 @@ const useCurrentServiceViewerData = (
 
     const requestId = ++detailRequestIdRef.current;
     lastRefreshAtRef.current = Date.now();
-    setRefreshVersion((version) => version + 1);
     if (!options?.preserveLoadedPlan) {
       const currentState = planStateRef.current;
       const currentStateMatchesPlan =
@@ -447,68 +446,40 @@ const useCurrentServiceViewerData = (
 
   useSyncOnReconnect(refreshOnReconnect);
 
-  useEffect(() => {
-    const refreshIfStale = () => {
-      if (Date.now() - lastRefreshAtRef.current >= VIEWER_STALE_AFTER_MS) {
-        void refresh();
-      }
-    };
-    window.addEventListener("focus", refreshIfStale);
-    return () => window.removeEventListener("focus", refreshIfStale);
-  }, [refresh]);
-
-  useEffect(() => {
-    if (!refreshVersion || !activePlanKey) return;
-    const delay = Math.max(
-      1_000,
-      VIEWER_STALE_AFTER_MS - (Date.now() - lastRefreshAtRef.current),
-    );
-    const timeoutId = window.setTimeout(() => {
-      void refresh();
-    }, delay);
-    return () => window.clearTimeout(timeoutId);
-  }, [activePlanKey, refresh, refreshVersion]);
-
   const handleStreamEvent = useCallback(
-    (event: TeamsStreamEvent) => {
+    (event: ServicePlanStreamEvent) => {
       if (event.type === "connected") {
-        if (hasConnectedRef.current) void refresh();
-        hasConnectedRef.current = true;
+        void refresh({ force: true, preserveLoadedPlan: true });
         return;
       }
-      if (isServicePlanUpdatedEvent(event)) {
+      if (isServicePlanInvalidationEvent(event)) {
         if (event.planKey === activePlanKeyRef.current) {
-          detailRequestIdRef.current += 1;
           void refresh({ force: true, preserveLoadedPlan: true });
-        }
-        return;
-      }
-      if (
-        event.type === "service-plan-removed" &&
-        typeof event.planKey === "string"
-      ) {
-        planCacheRef.current.delete(event.planKey);
-        if (event.planKey === activePlanKeyRef.current) {
-          detailRequestIdRef.current += 1;
-          refreshInFlightRef.current = null;
-          setPlanState({
-            kind: "loaded",
-            scopeKey,
-            planKey: event.planKey,
-            plan: null,
-            publicSnapshot: null,
-          });
         }
       }
     },
-    [refresh, scopeKey],
+    [refresh],
   );
 
-  useTeamsLiveSync(
-    canViewTeams ? churchId : null,
+  const { connectionState: liveConnectionState } = useServicePlanLiveSync(
+    churchId,
     handleStreamEvent,
-    canUseTeamsLiveSync,
+    canViewServices,
   );
+
+  useEffect(() => {
+    if (!canViewServices || !activePlanKey) return undefined;
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      const refreshInterval = liveConnectionState === "connected"
+        ? VIEWER_STALE_AFTER_MS
+        : VIEWER_FALLBACK_REFRESH_MS;
+      if (Date.now() - lastRefreshAtRef.current >= refreshInterval) {
+        void refresh();
+      }
+    }, VIEWER_POLL_CHECK_MS);
+    return () => window.clearInterval(intervalId);
+  }, [activePlanKey, canViewServices, liveConnectionState, refresh]);
 
   const currentPlanState: ViewerPlanState = !activePlanKey
     ? { kind: "idle" }
@@ -528,6 +499,7 @@ const useCurrentServiceViewerData = (
         ? currentPlanState.publicSnapshot
         : null,
     isLoadingPlan: currentPlanState.kind === "loading",
+    liveConnectionState,
     planError:
       currentPlanState.kind === "error" ? currentPlanState.message : null,
     refresh: () => refresh({ force: true }),
@@ -572,12 +544,14 @@ const CurrentServiceViewerToolbar = ({
   options,
   selectedOccurrenceId,
   selectedValue,
+  liveUpdatesDelayed,
   onSelect,
   onReturnToCurrent,
 }: {
   options: Option[];
   selectedOccurrenceId: string | null;
   selectedValue: string;
+  liveUpdatesDelayed: boolean;
   onSelect: (value: string) => void;
   onReturnToCurrent: () => void;
 }) => (
@@ -623,7 +597,16 @@ const CurrentServiceViewerToolbar = ({
         </Button>
       ) : null}
     </div>
-    <div className="order-2 ml-auto shrink-0 lg:order-3 lg:col-start-3 lg:ml-0 lg:justify-self-end">
+    <div className="order-2 ml-auto flex min-w-0 items-center justify-end gap-2 lg:order-3 lg:col-start-3 lg:ml-0 lg:justify-self-end">
+      {liveUpdatesDelayed ? (
+        <span
+          role="status"
+          aria-live="polite"
+          className="max-w-40 text-right text-xs text-amber-200/80"
+        >
+          Live updates are delayed. Checking periodically.
+        </span>
+      ) : null}
       <CurrentServiceViewerTeamChatAction />
     </div>
   </div>
@@ -672,7 +655,6 @@ const CurrentServiceViewer = () => {
   const {
     canViewServices = false,
     canViewTeams = false,
-    canUseTeamsLiveSync = false,
     sessionKind,
     churchId = "",
     churchName = "",
@@ -691,7 +673,6 @@ const CurrentServiceViewer = () => {
     churchId,
     canViewServices,
     canViewTeams,
-    canUseTeamsLiveSync,
     requiresDetailedSnapshot,
     selection.occurrence,
   );
@@ -717,6 +698,12 @@ const CurrentServiceViewer = () => {
       options={options}
       selectedOccurrenceId={selection.selectedOccurrenceId}
       selectedValue={selection.occurrence?.occurrenceId ?? ""}
+      liveUpdatesDelayed={
+        canViewServices && (
+          data.liveConnectionState === "disconnected" ||
+          data.liveConnectionState === "unavailable"
+        )
+      }
       onSelect={selection.selectOccurrence}
       onReturnToCurrent={selection.returnToCurrent}
     />

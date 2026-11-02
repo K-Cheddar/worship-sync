@@ -1749,6 +1749,10 @@ app.post(
   authHandlers.getTeamSchedulePublicLink,
 );
 app.get("/api/team-schedule/public", authHandlers.getPublicTeamSchedule);
+app.get(
+  "/api/churches/:churchId/services/stream",
+  authHandlers.streamServicePlanUpdates,
+);
 app.get("/api/churches/:churchId/service-plans", authHandlers.listServicePlans);
 app.get(
   "/api/churches/:churchId/service-plans/:planKey/assignments",

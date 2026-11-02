@@ -24,10 +24,13 @@ import { buildTeamSchedulePeriod } from "../client/src/pages/Teams/schedule/team
 import { generateScheduleOccurrences } from "../client/src/utils/teamScheduleOccurrences.ts";
 
 import {
+  addServicePlanSseClient,
   addChurchServiceTimeZoneSseClient,
   addTeamsSseClient,
   emitChurchServiceTimeZoneInvalidation,
+  emitServicePlanEvent,
   removeChurchServiceTimeZoneSseClient,
+  removeServicePlanSseClient,
   removeTeamsSseClient,
 } from "../server/teamsSse.js";
 import {
@@ -38,6 +41,7 @@ import {
 const {
   authHandlers,
   requireBroadTeamsViewSession,
+  requireServicesViewSession,
   requireTeamsEditForTeamSession,
   requireTeamsViewSession,
   COLLECTIONS,
@@ -2526,6 +2530,111 @@ test("church service timezone stream rejects cross-church and revoked displays",
   });
   assert.equal(revoked.res.statusCode, 401);
   assert.equal(revoked.writes.length, 0);
+});
+
+test("Services plan stream authorizes Services viewers without granting Teams SSE access", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const owner = await createAdminContext("service_plan_stream_owner");
+  const servicesReader = await createHumanContext("service_plan_stream_reader", {
+    churchId: owner.churchId,
+    role: "member",
+    permissions: { services: "view", teams: "none" },
+  });
+  const teamsOnlyReader = await createHumanContext("service_plan_stream_teams_only", {
+    churchId: owner.churchId,
+    role: "member",
+    permissions: { services: "none", teams: "view" },
+  });
+
+  const authorizedContexts = [servicesReader];
+  for (const serviceWorkspaceAccess of [false, true]) {
+    const pairing = await callHandler(authHandlers.createWorkstationPairing, {
+      context: owner,
+      body: {
+        label: serviceWorkspaceAccess ? "Service Workspace" : "Plan viewer",
+        platformType: "web",
+        appAccess: "full",
+        serviceWorkspaceAccess,
+      },
+    });
+    assert.equal(pairing.statusCode, 200);
+    const pairedSession = createSession();
+    const redeemed = createRes();
+    await authHandlers.redeemWorkstationPairing(
+      createReq({
+        session: pairedSession,
+        body: { token: pairing.payload.pairing.token, platformType: "web" },
+      }),
+      redeemed,
+    );
+    assert.equal(redeemed.statusCode, 200);
+    authorizedContexts.push({
+      churchId: owner.churchId,
+      headers: { "x-workstation-token": redeemed.payload.credential },
+      session: pairedSession,
+    });
+  }
+
+  for (const context of authorizedContexts) {
+    const stream = await callStreamHandler(authHandlers.streamServicePlanUpdates, {
+      context,
+    });
+    assert.equal(stream.res.statusCode, 200);
+    assert.equal(stream.headers["Content-Type"], "text/event-stream");
+    assert.deepEqual(
+      stream.writes
+        .filter((write) => write.startsWith("data: "))
+        .map((write) => JSON.parse(write.slice("data: ".length).trim())),
+      [{ type: "connected", churchId: owner.churchId }],
+    );
+
+    const request = createReq({
+      headers: context.headers,
+      session: context.session,
+    });
+    assert.equal(
+      (await requireServicesViewSession(request, owner.churchId)).churchId,
+      owner.churchId,
+    );
+    await assert.rejects(
+      requireBroadTeamsViewSession(request, owner.churchId),
+      { statusCode: 403 },
+    );
+
+    emitServicePlanEvent(owner.churchId, "service-plan-updated", {
+      planKey: "sunday@2026-11-01",
+      servicePlan: { name: "private plan content" },
+      member: { name: "private roster data" },
+    });
+    const events = stream.writes
+      .filter((write) => write.startsWith("data: "))
+      .map((write) => JSON.parse(write.slice("data: ".length).trim()));
+    assert.deepEqual(events.at(-1), {
+      type: "service-plan-updated",
+      planKey: "sunday@2026-11-01",
+    });
+    assert.equal(JSON.stringify(events).includes("private"), false);
+    stream.close();
+  }
+
+  const unauthorized = await callStreamHandler(authHandlers.streamServicePlanUpdates, {
+    context: teamsOnlyReader,
+  });
+  assert.equal(unauthorized.res.statusCode, 403);
+  assert.equal(unauthorized.writes.length, 0);
+
+  const crossChurch = await callStreamHandler(authHandlers.streamServicePlanUpdates, {
+    context: servicesReader,
+    churchId: "another-church",
+  });
+  assert.equal(crossChurch.res.statusCode, 403);
+  assert.equal(crossChurch.writes.length, 0);
+
+  const unauthenticated = await callStreamHandler(authHandlers.streamServicePlanUpdates, {
+    context: { churchId: owner.churchId, headers: {}, session: createSession() },
+  });
+  assert.equal(unauthenticated.res.statusCode, 401);
+  assert.equal(unauthenticated.writes.length, 0);
 });
 
 test("Services edit can change service plans without receiving Teams data", async (t) => {
@@ -8324,7 +8433,9 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   assert.equal(invalid.statusCode, 400);
 
   const sseClient = createSseClient();
+  const servicePlanSseClient = createSseClient();
   addTeamsSseClient(context.churchId, sseClient);
+  addServicePlanSseClient(context.churchId, servicePlanSseClient);
 
   // Relative to now: the church "current service" link only resolves to a
   // service happening now or shortly ahead, so a hard-coded past date would
@@ -8530,6 +8641,10 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   assert.ok(createEvent, "expected a service-plan-updated SSE event");
   assert.equal(createEvent.planKey, planKey);
   assert.equal(createEvent.servicePlan, undefined);
+  assert.deepEqual(servicePlanSseClient.events().at(-1), {
+    type: "service-plan-updated",
+    planKey,
+  });
 
   const fetched = await callHandler(authHandlers.getServicePlan, {
     context,
@@ -8623,6 +8738,10 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   assert.equal(updateEvent.saveOperationId, "autosave-operation-0001");
   assert.equal(updateEvent.planKey, planKey);
   assert.equal(updateEvent.servicePlan, undefined);
+  assert.deepEqual(servicePlanSseClient.events().at(-1), {
+    type: "service-plan-updated",
+    planKey,
+  });
   const recovered = await callHandler(authHandlers.getServicePlan, {
     context,
     params: { planKey },
@@ -8910,6 +9029,35 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   });
   assert.deepEqual(droppedElementSave.payload.servicePlan.publicLive, {
     mode: "schedule",
+  });
+
+  const pausedLive = await callHandler(authHandlers.updateServicePlanPublicLive, {
+    context,
+    params: { planKey },
+    body: { mode: "manual", currentElementId: "el-1" },
+  });
+  assert.equal(pausedLive.statusCode, 200);
+  assert.equal(pausedLive.payload.servicePlan.publicLive.mode, "manual");
+  assert.deepEqual(servicePlanSseClient.events().at(-1), {
+    type: "service-plan-updated",
+    planKey,
+  });
+
+  const resumedSchedule = await callHandler(authHandlers.updateServicePlanPublicLive, {
+    context,
+    params: { planKey },
+    body: { mode: "schedule" },
+  });
+  assert.equal(resumedSchedule.statusCode, 200);
+  assert.equal(resumedSchedule.payload.servicePlan.publicLive.mode, "schedule");
+  const servicePlanAfterResume = await callHandler(authHandlers.getServicePlan, {
+    context,
+    params: { planKey },
+  });
+  assert.equal(servicePlanAfterResume.payload.servicePlan.publicLive.mode, "schedule");
+  assert.deepEqual(servicePlanSseClient.events().at(-1), {
+    type: "service-plan-updated",
+    planKey,
   });
 
   const unknownPublicSnapshotRes = createRes();
@@ -9495,6 +9643,10 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     .find((event) => event.type === "service-plan-removed");
   assert.ok(removeEvent, "expected a service-plan-removed SSE event");
   assert.equal(removeEvent.planKey, planKey);
+  assert.deepEqual(servicePlanSseClient.events().at(-1), {
+    type: "service-plan-removed",
+    planKey,
+  });
 
   const afterDelete = await callHandler(authHandlers.getServicePlan, {
     context,
@@ -9503,6 +9655,7 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   assert.equal(afterDelete.payload.servicePlan, null);
 
   removeTeamsSseClient(context.churchId, sseClient);
+  removeServicePlanSseClient(context.churchId, servicePlanSseClient);
 });
 
 test("listServicePlans returns a lightweight, church-scoped summary for the Plans list view", async (t) => {
