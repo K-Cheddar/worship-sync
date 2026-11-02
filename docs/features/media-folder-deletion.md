@@ -29,6 +29,11 @@ Queue and Cancellation,”** confirms these behaviors:
   direct media and child folders to the selected folder's parent.
 - Failed work does not stop later queued jobs. Existing retry and cleanup
   recovery remains available in Activity.
+- Failures before the folder/library mutation is complete, including an
+  unavailable authoritative read or a saved-route repair failure, remain
+  retryable from Activity. Retry re-reads the originating database and relies
+  on the persisted state to avoid repeating completed writes. Retry actions do
+  not resume after logout or a church-session change.
 - Accepting a deletion closes its confirmation dialog, but does not navigate
   away immediately. After deletion and folder persistence succeed, Media returns
   to the parent only if the operator is still viewing the deleted folder.
