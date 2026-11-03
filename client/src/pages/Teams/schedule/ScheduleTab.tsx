@@ -82,7 +82,7 @@ import {
   type SchedulePeriodPreset,
 } from "./schedulePeriodUtils";
 import { useScheduleWorkspacePeriod } from "./useScheduleWorkspacePeriod";
-import ScheduleServiceAdditionNotice, { scheduleServiceAdditionDismissalKey } from "./ScheduleServiceAdditionNotice";
+import ScheduleStaffingSummary from "./ScheduleStaffingSummary";
 import ScheduleSendScopeNotice from "./ScheduleSendScopeNotice";
 import { getScheduleSendScope, resolveScheduleWorkspace } from "./scheduleWorkspaceModel";
 import { isPersistedScheduleId } from "./scheduleNotificationHistory";
@@ -493,15 +493,6 @@ const ScheduleTab = ({
   const activeTeams = useMemo(() => data.teams.filter(isActive), [data.teams]);
   const schedules = data.schedules;
   const [viewingSavedSchedule, setViewingSavedSchedule] = useState(false);
-  const [serviceAdditionNotice, setServiceAdditionNotice] = useState<{
-    churchId: string;
-    teamId: string;
-    scheduleId: string;
-    periodScope: string;
-    periodName: string;
-    occurrenceIds: string[];
-    occurrences: TeamScheduleOccurrence[];
-  } | null>(null);
   // Archived schedules stay out of the quick-switcher; the browse dialog's
   // status filter is the one place to go through everything.
   const [isBrowsingSchedules, setIsBrowsingSchedules] = useState(false);
@@ -673,28 +664,6 @@ const ScheduleTab = ({
   const selectedScheduleRecord = viewingSavedSchedule
     ? schedules.find((schedule) => schedule.scheduleId === selectedScheduleId) || null
     : explicitlySelectedPeriodSchedule || preferredPeriodSchedule || virtualPeriodSchedule;
-  const activeServiceAdditionNotice = serviceAdditionNotice &&
-    serviceAdditionNotice.churchId === churchId &&
-    serviceAdditionNotice.teamId === workspaceTeamId &&
-    serviceAdditionNotice.scheduleId === selectedScheduleRecord?.scheduleId &&
-    serviceAdditionNotice.periodScope === periodSelectionScope
-    ? serviceAdditionNotice
-    : null;
-  const dismissServiceAdditionNotice = useCallback(() => {
-    if (!activeServiceAdditionNotice) return;
-    const key = scheduleServiceAdditionDismissalKey({
-      churchId: activeServiceAdditionNotice.churchId,
-      teamId: activeServiceAdditionNotice.teamId,
-      scheduleId: activeServiceAdditionNotice.scheduleId,
-      occurrenceIds: activeServiceAdditionNotice.occurrenceIds,
-    });
-    try {
-      window.localStorage.setItem(key, "1");
-    } catch {
-      // Dismissal still applies for the current view when browser storage is unavailable.
-    }
-    setServiceAdditionNotice(null);
-  }, [activeServiceAdditionNotice]);
   const displayedPeriodRange = useMemo(() => resolveDisplayedPeriodRange({
     preset: periodPreset,
     selectedRange: periodRange,
@@ -848,8 +817,6 @@ const ScheduleTab = ({
   useLayoutEffect(() => {
     activeScheduleIdRef.current = selectedScheduleRecord?.scheduleId || "";
   }, [selectedScheduleRecord?.scheduleId]);
-  const activePeriodScopeRef = useRef(periodSelectionScope);
-  useLayoutEffect(() => { activePeriodScopeRef.current = periodSelectionScope; }, [periodSelectionScope]);
   const confirmedPeriodReconciliationRef = useRef<string | null>(null);
   const pendingScheduleEnsuresRef = useRef(new Map<string, Promise<TeamSchedule | null>>());
   const periodOccurrenceSignature = generatedPeriodOccurrences.map((occurrence) =>
@@ -1041,15 +1008,6 @@ const ScheduleTab = ({
             visibleOccurrenceIds: reconciliationOccurrences.map((occurrence) => occurrence.occurrenceId),
             timeZone: serviceTimeZone,
           }));
-          const wasPersisted = isPersistedScheduleId(active.scheduleId);
-          const addedOccurrenceCount = result.addedOccurrenceCount ?? 0;
-          const addedOccurrenceIds = wasPersisted && result.updated && addedOccurrenceCount > 0
-            ? [...new Set(result.addedOccurrenceIds || [])]
-            : [];
-          const addedOccurrences = addedOccurrenceIds.length === addedOccurrenceCount
-            ? (result.schedule.occurrences || []).filter((occurrence) => addedOccurrenceIds.includes(occurrence.occurrenceId))
-            : [];
-          const completeAdditionResult = addedOccurrences.length === addedOccurrenceIds.length && addedOccurrences.length > 0;
           let schedule = result.schedule;
           if (active.scheduleId.startsWith("virtual:")) {
             const previewKey = virtualSchedulePreviewKey(churchId, active.scheduleId);
@@ -1096,31 +1054,6 @@ const ScheduleTab = ({
               schedule,
             );
           }
-          if (scheduleTabMountedRef.current && result.updated && completeAdditionResult && activeChurchIdRef.current === churchId &&
-              activeScheduleIdRef.current === active.scheduleId &&
-              activePeriodScopeRef.current === periodSelectionScope) {
-            const dismissalKey = scheduleServiceAdditionDismissalKey({
-              churchId,
-              teamId: active.teamId,
-              scheduleId: schedule.scheduleId,
-              occurrenceIds: addedOccurrenceIds,
-            });
-            let dismissed = false;
-            try {
-              dismissed = window.localStorage.getItem(dismissalKey) === "1";
-            } catch {
-              // The in-memory notice still works when browser storage is unavailable.
-            }
-            if (!dismissed) setServiceAdditionNotice({
-              churchId,
-              teamId: active.teamId,
-              scheduleId: schedule.scheduleId,
-              periodScope: periodSelectionScope,
-              periodName: formatSchedulePeriodName(periodRange.start, periodRange.end),
-              occurrenceIds: addedOccurrenceIds,
-              occurrences: addedOccurrences,
-            });
-          }
           return schedule;
         } finally {
           if (pendingScheduleEnsuresRef.current.get(requestKey) === request) {
@@ -1138,7 +1071,6 @@ const ScheduleTab = ({
     persistedPeriodRange.start,
     periodRange.end,
     periodRange.start,
-    periodSelectionScope,
     operatorSelectedPeriodScheduleId,
     publishScheduleSnapshot,
     setSelectedScheduleId,
@@ -1150,8 +1082,6 @@ const ScheduleTab = ({
     schedules,
     periodScheduleMatch.ambiguous,
     periodScheduleMatch.ownershipConflict,
-    setServiceAdditionNotice,
-    activePeriodScopeRef,
   ]);
   const selectedScheduleCanBeReconciled = Boolean(
     selectedSchedule && (
@@ -6605,13 +6535,6 @@ const ScheduleTab = ({
       />
     </div>
   );
-  const scheduleRangeSummary = selectedSchedule && scheduleOccurrences.length > 0
-    ? `${scheduleOccurrences.length} ${scheduleOccurrences.length === 1 ? "service" : "services"} · ${selectedSchedule.scheduleId.startsWith("virtual:")
-      ? "Staffing not started"
-      : `${staffingProgress.filled} of ${staffingProgress.required} positions filled`
-    }`
-    : undefined;
-
   return (
     <div className={scheduleTabRootClassName}>
       {consentMember?.scope === quickMemberContextScope && isChurchAdmin ? (
@@ -6707,14 +6630,6 @@ const ScheduleTab = ({
                 <Button variant="tertiary" onClick={() => setViewingSavedSchedule(false)}>Return to current schedule</Button>
               </div>
             ) : null}
-            {activeServiceAdditionNotice ? (
-              <ScheduleServiceAdditionNotice
-                addedOccurrences={activeServiceAdditionNotice.occurrences}
-                periodName={activeServiceAdditionNotice.periodName}
-                timeZone={serviceTimeZone}
-                onDismiss={dismissServiceAdditionNotice}
-              />
-            ) : null}
             {periodScheduleMatch.ownershipConflict && !viewingSavedSchedule ? (
               <div role="alert" className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100">
                 <span>
@@ -6734,10 +6649,13 @@ const ScheduleTab = ({
             >
               <div className="shrink-0">
                 <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
-                  {scheduleRangeSummary ? (
-                    <p role="status" className="min-w-0 px-0.5 text-xs text-gray-400">
-                      {scheduleRangeSummary}
-                    </p>
+                  {selectedSchedule ? (
+                    <ScheduleStaffingSummary
+                      serviceCount={scheduleOccurrences.length}
+                      filled={staffingProgress.filled}
+                      required={staffingProgress.required}
+                      staffingStarted={!selectedSchedule.scheduleId.startsWith("virtual:")}
+                    />
                   ) : null}
                   <div
                     role="group"

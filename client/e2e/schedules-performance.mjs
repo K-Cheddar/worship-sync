@@ -183,6 +183,58 @@ try {
   assert(firstVisit.url.endsWith("/teams-and-services/schedules"));
   assert.equal(await schedulesLink.getAttribute("aria-current"), "page");
 
+  const staffingSummary = page.getByRole("status", { name: "Schedule staffing summary" });
+  await staffingSummary.waitFor({ state: "visible" });
+  for (const viewport of [
+    { width: 390, height: 844 },
+    { width: 1440, height: 900 },
+  ]) {
+    await page.setViewportSize(viewport);
+    const layout = await staffingSummary.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      return {
+        left: bounds.left,
+        right: bounds.right,
+        bottom: bounds.bottom,
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+        documentScrollWidth: document.documentElement.scrollWidth,
+        viewportWidth: window.innerWidth,
+        metricTops: Array.from(element.children).map((child) => child.getBoundingClientRect().top),
+        controls: (() => {
+          const controls = element.parentElement?.querySelector('[aria-label="Team schedule controls"]');
+          if (!controls) return null;
+          const controlBounds = controls.getBoundingClientRect();
+          return { left: controlBounds.left, top: controlBounds.top };
+        })(),
+      };
+    });
+    assert(layout.left >= 0 && layout.right <= viewport.width,
+      `staffing summary should fit the schedule header at ${viewport.width}px: ${JSON.stringify(layout)}`);
+    assert(layout.scrollWidth <= layout.clientWidth,
+      `staffing summary content should not overflow at ${viewport.width}px: ${JSON.stringify(layout)}`);
+    assert(layout.documentScrollWidth <= layout.viewportWidth,
+      `schedule should not overflow horizontally at ${viewport.width}px: ${JSON.stringify(layout)}`);
+    assert(layout.controls, `schedule controls should remain visible at ${viewport.width}px`);
+    if (viewport.width >= 1024) {
+      assert(Math.max(...layout.metricTops) - Math.min(...layout.metricTops) <= 2,
+        `desktop metrics should remain on one row at ${viewport.width}px: ${JSON.stringify(layout.metricTops)}`);
+      assert(layout.right <= layout.controls.left,
+        `desktop summary should leave room for schedule controls at ${viewport.width}px: ${JSON.stringify(layout)}`);
+    } else {
+      assert(Math.abs(layout.metricTops[0] - layout.metricTops[1]) <= 2 && layout.metricTops[2] > layout.metricTops[0],
+        `mobile metrics should wrap into readable rows at ${viewport.width}px: ${JSON.stringify(layout.metricTops)}`);
+      assert(layout.bottom <= layout.controls.top,
+        `mobile controls should follow the summary without overlap at ${viewport.width}px: ${JSON.stringify(layout)}`);
+    }
+  }
+  console.log("PASS schedule staffing summary fits at 390px mobile and 1440px desktop widths");
+  if (process.argv.includes("--responsive-only")) {
+    await browser.close();
+    await server.close();
+    process.exit(0);
+  }
+
   await membersLink.click();
   await page.getByRole("heading", { name: "Fixture section" }).waitFor();
   await page.evaluate(() => { window.__profileVisitStart = performance.now(); });

@@ -1,6 +1,6 @@
 # Service changes in Team Scheduling
 
-> **Current workflow update (2026-11-03):** The comparison panel documented as the interim implementation below was removed by the follow-up simplification request. Current behavior reconciles safe, uniquely owned occurrences into the populated schedule and shows one dismissible, timezone-aware banner from committed occurrence IDs. Ambiguous saved rows and operational data remain unchanged. See [the current Team Scheduling contract](features/team-scheduling.md#reconciliation-and-communication).
+> **Current workflow update (2026-11-03):** The comparison panel and the later new-service banner have both been removed. Safe, uniquely owned occurrences reconcile into the populated schedule and appear as ordinary schedule rows. The staffing summary derives visible occurrence, filled-position, and open-position totals from the existing workspace calculation. Ambiguous saved rows and operational data remain unchanged. See [the current Team Scheduling contract](features/team-scheduling.md#reconciliation-and-communication).
 
 ## Goal
 Open an existing period after saving a service, retain its populated schedule, and include safe additions without manual review.
@@ -19,22 +19,22 @@ This reproduces the reported condition with repository fixtures, not a read of t
 The initial service-change implementation kept a populated owner visible during review, showed saved and proposed affected rows, retained unrelated additions as previews, and allowed unchanged uniquely owned persisted rows to remain editable. Its comparison and saved-version review UI were later removed in favor of the current workflow below.
 
 ## Current approved behavior
-The November 3 follow-up removes the comparison panel from normal scheduling. The client submits only current occurrences with a unique identity and no owner outside the selected schedule; the existing server ensure transaction still validates and claims them. This lets safe independent additions persist while ambiguous historical group rows, assignments, equipment, responses, publication and notification history remain untouched. Conflicting rows stay read-only until their identity is safe. A successful persisted addition displays one small dismissible notice, grouped by logical service and formatted in the church timezone, using only the server's committed added occurrence IDs. No banner appears after a failure or no-op.
+The November 3 follow-up removes the comparison panel from normal scheduling. The client submits only current occurrences with a unique identity and no owner outside the selected schedule; the existing server ensure transaction still validates and claims them. This lets safe independent additions persist while ambiguous historical group rows, assignments, equipment, responses, publication and notification history remain untouched. Conflicting rows stay read-only until their identity is safe. A later November 3 simplification removed the new-service banner and its response metadata. Reconciled rows update the staffing summary through the same visible occurrence list and fill calculation used by the workspace.
 
 A second failure-derived reproduction found calendar presets using the device date: at `2026-11-01T01:30Z`, This month selected November on a UTC host although New York was still October 31. The schedule hook now converts the reference instant to the configured church calendar date before using the existing calendar preset resolver. Generation and server recurrence rules remain shared and unchanged.
 
 ## Product Decision Check
-The original November 3 request authorized safe inclusion and preservation; the follow-up request on November 3 simplified the operator experience. The comparison UI is not part of the current workflow. No schema, publication, messaging, or destructive resolution is introduced. Ambiguous mappings are left unchanged; assignment writes to an unsafe row remain blocked until its identity is validated.
+The November 3 requests authorize safe inclusion and preservation, remove the comparison panel and new-service banner, and replace those notices with a derived staffing summary. No schema, publication, messaging, or destructive resolution is introduced. Ambiguous mappings are left unchanged; assignment writes to an unsafe row remain blocked until its identity is validated.
 
 ## Behavior intentionally unchanged
 Identity heuristics, saved occurrence keys, server validation, transactions, claims, pending edits, historical/archived data, publication and notification history. Safe one-to-one time refresh continues through the existing Refresh schedule action.
 
 ## Current acceptance criteria
-Independent and same-date additions preserve the saved ID, staffing and equipment; safe rows reconcile even beside historical group mismatches. Grouping and duplicate-ownership conflicts never rewrite staffing or create duplicate schedules. New rows cannot persist before authoritative validation. One dismissible banner summarizes each committed logical service addition in the church timezone; no-op, routine refresh and failed reconciliation do not announce success.
+Independent and same-date additions preserve the saved ID, staffing and equipment; safe rows reconcile even beside historical group mismatches. Grouping and duplicate-ownership conflicts never rewrite staffing or create duplicate schedules. New rows cannot persist before authoritative validation. Reconciled rows appear in the schedule and update the staffing summary without a notification, dismissal action, or review workflow.
 
 ## Follow-up verification (November 3, 2026)
 
-- Client regression files `TeamsAndServices.test.tsx`, `ScheduleServiceAdditionNotice.test.tsx`, and `schedulePeriodUtils.test.ts`: **187 passed**.
+- Historical client verification before the summary simplification: `TeamsAndServices.test.tsx` and `schedulePeriodUtils.test.ts`: **187 passed**. This record predates removal of the banner-only assertions.
 - Server selection for independent additions across the DST boundary, safe additions beside historical grouping differences, and standalone services colliding with saved combined schedules: **3 passed**.
 - Client `lint:check`, `type-check`, and `build:strict`: **passed**. The strict build emits an existing CSS-parser warning from the `javascript:alert(1)` sanitizer fixture and the existing large-chunk advisory.
 - `git diff --check` and release-note JSON parsing: **passed**.
@@ -61,11 +61,10 @@ Required: failure-derived populated-grid/compare/return and scoped-edit integrat
 - `ScheduleServiceChanges.tsx`: inline comparison using the existing `resolveScheduleWorkspace` read model, native details, shared Button and existing navigation. ServiceTimes records receive their current RTDB church scope at this adapter because `toTeamService` omits `churchId`.
 - `schedulePeriodUtils.ts`: preserve saved rows and append only safe unrelated preview rows during conflict; reject duplicate generated identities/map keys; share the existing populated-schedule predicate.
 - `useScheduleWorkspacePeriod.ts`: church-calendar preset resolution.
-- `server/teamsAuthHandlers.js` and `client/src/api/auth.ts`: expose the transaction's `addedOccurrenceCount` in the ensure response. It is response metadata only, never a persisted schedule field. Optional client typing and snapshot-count fallback retain older-server compatibility; `updated: false` never announces additions.
 - Regression tests: `TeamsAndServices.test.tsx`, `ScheduleServiceChanges.test.tsx`, `schedulePeriodUtils.test.ts`, `useScheduleWorkspacePeriod.test.tsx`, `server/teamsApi.test.js`.
 - Documentation: this investigation, `features/team-scheduling.md`, and the service-change release fragment.
 
-The production change exceeds the repository's 50–100-line reassessment threshold because the request requires a useful comparison and scoped mutation checks in addition to fixing selection. The existing workspace model, matcher, ownership transactions, schedule browser, preset resolver and shared controls are reused. Two vague warnings and their saved-only review actions are removed. No new persistence subsystem, resolution schema, migration, background job, queue, or modal is introduced. Comparison derives state; the only new mutable value is a period ref for stale-notification suppression.
+The original production change exceeded the repository's 50–100-line reassessment threshold because the request required a useful comparison and scoped mutation checks in addition to fixing selection. The existing workspace model, matcher, ownership transactions, schedule browser, preset resolver and shared controls were reused. Two vague warnings and their saved-only review actions were removed. No new persistence subsystem, resolution schema, migration, background job, queue, or modal was introduced. Comparison derived state; no notification-specific state remains in the current implementation.
 
 ## Initial implementation regression coverage (historical)
 
@@ -79,7 +78,6 @@ The production change exceeds the repository's 50–100-line reassessment thresh
 | Time change with stable identity | New Refresh schedule UI test checks the outgoing legacy key, assignment/equipment/additional-slot maps; existing server legacy-time test and shared preservation tests |
 | Overlapping ownership | New duplicate-ownership comparison UI test; complete ownership transaction file, including concurrent creation/import and claim release/replacement |
 | Pending or failed service save | November server test rejects the unsaved definition without changing the document; real picker/RTDB integration pauses the commit, then reads committed data on independent clients; ServiceManager tests cover save recovery |
-| Refresh without repeated notice | Stale-client UI cases for both no-op and unrelated updates with zero server additions; repeated server ensure returns count zero and leaves the document exactly unchanged |
 | Current versus saved version | Grouping UI test switches November → saved Q4 → November with the populated group and new preview retained |
 | Existing-row editing during unrelated failure | Existing parameterized ensure-failure UI test plus new grouping/duplicate cases: unchanged Power Up persists through the targeted endpoint without ensure |
 | Church timezone and DST | New preset tests fail before the fix and pass under UTC/Los Angeles; shared gap/fold tests; New York authoritative server test ignores a conflicting request timezone; actual service-creation boundary spawns both host timezones |

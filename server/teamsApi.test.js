@@ -18349,15 +18349,11 @@ test("November independent additions preserve populated combined schedules acros
   for (const [key, value] of Object.entries(operational)) assert.deepEqual(after[key], value, key);
   assert.deepEqual(after.occurrences.filter((o) => o.groupId), occurrences);
   const added = after.occurrences.find((o) => o.serviceId === "book-launch");
-  assert.equal(result.payload.addedOccurrenceCount, 1);
-  assert.deepEqual(result.payload.addedOccurrenceIds, [added.occurrenceId]);
   assert.equal(added.startsAt, "2026-11-01T05:30:00.000Z");
   assert.equal(after.assignments[added.occurrenceId], undefined);
   const retry = await callHandler(authHandlers.ensureTeamScheduleForPeriod, { context, body });
   assert.equal(retry.statusCode, 200);
   assert.equal(retry.payload.updated, false);
-  assert.equal(retry.payload.addedOccurrenceCount, 0);
-  assert.deepEqual(retry.payload.addedOccurrenceIds, []);
   assert.deepEqual(await getDoc(COLLECTIONS.teamSchedules, scheduleId), after);
   assert.equal((await queryDocs(COLLECTIONS.teamSchedules, [{ field: "churchId", value: context.churchId }])).filter((s) => s.teamId === teamId).length, 1);
 });
@@ -18567,8 +18563,6 @@ test("November safe additions preserve historical grouping differences in a popu
   });
   assert.equal(response.statusCode, 200, JSON.stringify(response.payload));
   assert.equal(response.payload.schedule.scheduleId, scheduleId);
-  assert.equal(response.payload.addedOccurrenceCount, 1);
-  assert.deepEqual(response.payload.addedOccurrenceIds, [bookLaunch[0].occurrenceId]);
   const after = await getDoc("teamSchedules", scheduleId);
   assert.deepEqual(after.occurrences.filter((occurrence) => occurrence.groupId), groupRows);
   for (const [key, value] of Object.entries(preservedMaps)) assert.deepEqual(after[key], value, key);

@@ -61,8 +61,27 @@ import { buildTeamsRestoreNavigationState } from "./teamsReturnNavigation";
 import { calendarMonthRange, shiftRange } from "./rangeSelection";
 import { setServerTimeOffset } from "../../utils/serverTime";
 import { serviceDateTimeInTimeZone } from "../../utils/teamScheduleOccurrences";
+import type { AuthenticatedSseHandlers } from "../../utils/authenticatedSse";
 import { PAGE_APPEARANCES } from "../pageAppearances";
 import { getLucideIconInnerMarkup } from "../../test/lucideIconTestUtils";
+
+const mockTeamsSseConnections: Array<{
+  path: string;
+  handlers: AuthenticatedSseHandlers;
+  close: jest.Mock;
+}> = [];
+const mockConnectAuthenticatedSse = jest.fn(
+  (path: string, handlers: AuthenticatedSseHandlers) => {
+    const close = jest.fn();
+    mockTeamsSseConnections.push({ path, handlers, close });
+    return close;
+  },
+);
+
+jest.mock("../../utils/authenticatedSse", () => ({
+  connectAuthenticatedSse: (...args: unknown[]) =>
+    mockConnectAuthenticatedSse(...(args as [string, AuthenticatedSseHandlers])),
+}));
 
 jest.mock("../../utils/lazyRoute", () => {
   const react = jest.requireActual("react") as typeof import("react");
@@ -709,6 +728,8 @@ describe("Teams", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockTeamsSseConnections.length = 0;
+    mockConnectAuthenticatedSse.mockClear();
     mockChurchServiceTimeZone.status = "ready";
     mockChurchServiceTimeZone.timeZone = "America/New_York";
     mockChurchServiceTimeZone.isConfigured = true;
@@ -1206,6 +1227,7 @@ describe("Teams", () => {
     expect(
       await screen.findByText(/No service occurrences are configured for this period/i),
     ).toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "Schedule staffing summary" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Service Setup" })).toHaveAttribute(
       "href",
       "/teams-and-services/service-setup",
@@ -1953,10 +1975,9 @@ describe("Teams", () => {
     await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(persisted ? 1 : 0));
     await screen.findByText(persisted ? message : "Couldn't save this assignment. Your choice is still here. Retry the save when ready.");
     expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalled();
-    expect(screen.queryByRole("status", { name: "New service addition" })).not.toBeInTheDocument();
   });
 
-  it("reconciles an unrelated service beside historical Sabbath grouping and shows one dismissible notice", async () => {
+  it("reconciles an unrelated service beside historical Sabbath grouping and updates the staffing summary", async () => {
     jest.useFakeTimers({ advanceTimers: true });
     jest.setSystemTime(new Date("2026-11-03T12:00:00.000Z"));
     const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
@@ -1993,12 +2014,19 @@ describe("Teams", () => {
         success: true,
         created: false,
         updated: true,
-        addedOccurrenceCount: additions.length,
-        addedOccurrenceIds: additions.map((occurrence) => occurrence.occurrenceId),
         schedule: reconciledSchedule,
       };
     });
-    mockUpdateTeamScheduleAssignment.mockResolvedValue({ success: true, schedule: saved });
+    mockUpdateTeamScheduleAssignment.mockImplementation(async (_churchId, scheduleId, body) => {
+      const assignments = { ...(reconciledSchedule.assignments || {}) };
+      const row = { ...(assignments[body.serviceId] || {}) };
+      if (body.memberId) row[body.positionSlotKey] = { primaryMemberId: body.memberId };
+      else delete row[body.positionSlotKey];
+      if (Object.keys(row).length) assignments[body.serviceId] = row;
+      else delete assignments[body.serviceId];
+      reconciledSchedule = { ...reconciledSchedule, scheduleId, assignments };
+      return { success: true, schedule: reconciledSchedule };
+    });
     mockSendTeamSchedule.mockResolvedValue({ success: true, sentAt: "2026-11-03T18:00:00.000Z", notified: 1, alreadyNotified: 0, unreachableMemberIds: [] });
     const view = renderTeams("/teams-and-services/schedules");
     expect(await screen.findByRole("button", { name: /Worship & Study Vocal, Avery/i })).toBeInTheDocument();
@@ -2006,13 +2034,18 @@ describe("Teams", () => {
     await waitFor(() => expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1));
     expect(mockEnsureTeamScheduleForPeriod.mock.calls[0]?.[1]?.operatorSelectedScheduleId).toBe(saved.scheduleId);
     expect(screen.getByText("Nov 1, 2026 – Nov 30, 2026")).toBeInTheDocument();
-    const additionNotice = screen.getByRole("status", { name: "New service addition" });
-    expect(screen.getAllByRole("status", { name: "New service addition" })).toHaveLength(1);
-    expect(additionNotice).toHaveTextContent("New service added");
-    expect(additionNotice).toHaveTextContent("Book Launch — Sat, Nov 7, 2026, 4:30 PM EST");
-    expect(additionNotice).toHaveTextContent("Added to your November 2026 schedule.");
+    expect(screen.queryByRole("status", { name: "New service addition" })).not.toBeInTheDocument();
+    const staffingSummary = screen.getByRole("status", { name: "Schedule staffing summary" });
+    expect(staffingSummary).toHaveTextContent(/3\s*Services/);
+    expect(staffingSummary).toHaveTextContent("1 / 3");
+    expect(staffingSummary).toHaveTextContent("2Positions open");
     expect(screen.queryByText("Compare service changes")).not.toBeInTheDocument();
     expect(screen.queryByText("Grouping changed")).not.toBeInTheDocument();
+    expect(reconciledSchedule.occurrences).toEqual(expect.arrayContaining([
+      expect.objectContaining({ serviceId: "book-launch" }),
+    ]));
+    expect(reconciledSchedule.assignments).toEqual(saved.assignments);
+    expect(reconciledSchedule.microphoneAssignments).toEqual(saved.microphoneAssignments);
     expect(saved.assignments[combined.occurrenceId]).toEqual({ "position-vocal::0": { primaryMemberId: "member-avery" } });
     expect(saved.microphoneAssignments?.[combined.occurrenceId]).toEqual({ "position-vocal::0": ["mic-saved"] });
     await user.click(screen.getByRole("button", { name: /Send schedule/i }));
@@ -2025,11 +2058,11 @@ describe("Teams", () => {
     expect(excludedDates).toHaveTextContent("Worship");
     expect(excludedDates).toHaveTextContent("Study");
     await user.click(screen.getByRole("button", { name: "Cancel" }));
-    await user.click(screen.getByRole("button", { name: "Dismiss service addition notice" }));
-    expect(screen.queryByRole("status", { name: "New service addition" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Power Up Vocal, Empty/i }));
     await user.click(await screen.findByRole("button", { name: /Assign Morgan/i }));
     await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(1));
+    expect(staffingSummary).toHaveTextContent("2 / 3");
+    expect(staffingSummary).toHaveTextContent("1Position open");
     expect(mockUpdateTeamScheduleAssignment.mock.calls[0][1]).toBe(saved.scheduleId);
     expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1);
     view.unmount();
@@ -2038,7 +2071,7 @@ describe("Teams", () => {
     await screen.findByRole("button", { name: /Book Launch Vocal, Empty/i });
     await waitFor(() => expect(mockGetTeamsBootstrap).toHaveBeenCalled());
     expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole("status", { name: "New service addition" })).not.toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Schedule staffing summary" })).toHaveTextContent("2 / 3");
   });
 
   it("compares duplicate ownership and permits editing an unrelated uniquely owned row", async () => {
@@ -2156,8 +2189,6 @@ describe("Teams", () => {
         success: true,
         created: false,
         updated: true,
-        addedOccurrenceCount: additional.length,
-        addedOccurrenceIds: additional.map((occurrence) => occurrence.occurrenceId),
         schedule: reconciledSchedule,
       };
     });
@@ -2190,11 +2221,11 @@ describe("Teams", () => {
     });
     expect(mockEnsureTeamScheduleForPeriod.mock.calls[0][1].operatorSelectedScheduleId).toBe(savedSchedule.scheduleId);
     expect(await screen.findByRole("button", { name: /Sabbath Service Camera, Morgan/i })).toBeInTheDocument();
-    const additionNotice = screen.getByRole("status", { name: "New service addition" });
-    expect(additionNotice).toHaveTextContent("2 new services added");
-    expect(screen.getAllByRole("status", { name: "New service addition" })).toHaveLength(1);
-    expect(additionNotice).toHaveTextContent("Media Special 1");
-    expect(additionNotice).toHaveTextContent("Media Special 2");
+    expect(screen.queryByRole("status", { name: "New service addition" })).not.toBeInTheDocument();
+    const staffingSummary = screen.getByRole("status", { name: "Schedule staffing summary" });
+    expect(staffingSummary).toHaveTextContent(/7\s*Services/);
+    expect(staffingSummary).toHaveTextContent("1 / 7");
+    expect(staffingSummary).toHaveTextContent("6Positions open");
     expect(screen.getAllByRole("button", { name: /Camera, (?:Morgan|Empty)/i })).toHaveLength(7);
     expect(screen.getByRole("button", { name: /Media Special 1 Camera, Empty/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Media Special 2 Camera, Empty/i })).toBeInTheDocument();
@@ -2203,14 +2234,17 @@ describe("Teams", () => {
     await user.click(openCameraSlots[0]);
     await user.click(await screen.findByRole("button", { name: /Assign Morgan/i }));
     await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(1));
+    expect(staffingSummary).toHaveTextContent("2 / 7");
+    expect(staffingSummary).toHaveTextContent("5Positions open");
     const anotherOpenCameraSlot = (await screen.findAllByRole("button", { name: /Sabbath Service Camera, Empty/i }))[0];
     await user.click(anotherOpenCameraSlot);
     await user.click(await screen.findByRole("button", { name: "Assign Morgan" }));
     await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(2));
+    expect(staffingSummary).toHaveTextContent("3 / 7");
     expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1);
   });
 
-  it("reports recurring additions as occurrences instead of service definitions", async () => {
+  it("counts recurring occurrences in the staffing summary after reconciliation", async () => {
     jest.useFakeTimers({ advanceTimers: true });
     jest.setSystemTime(new Date("2026-10-02T12:00:00.000Z"));
     setServerTimeOffset(36 * 60 * 60 * 1000);
@@ -2247,8 +2281,6 @@ describe("Teams", () => {
         success: true,
         created: false,
         updated: true,
-        addedOccurrenceCount: 4,
-        addedOccurrenceIds: additions.map((occurrence) => occurrence.occurrenceId),
         schedule: {
           ...savedSchedule,
           serviceIds: body.serviceIds,
@@ -2261,67 +2293,10 @@ describe("Teams", () => {
     await waitFor(() => expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1));
     const generated = mockEnsureTeamScheduleForPeriod.mock.calls[0]?.[1]?.occurrences || [];
     expect(generated.filter((occurrence) => occurrence.serviceId === newServiceId)).toHaveLength(4);
-    const additionNotice = screen.getByRole("status", { name: "New service addition" });
-    expect(additionNotice).toHaveTextContent("New service added");
-    expect(additionNotice.querySelectorAll("li")).toHaveLength(1);
-    expect(additionNotice).toHaveTextContent("Midweek Gathering — 4 occurrences");
-  });
-
-  it.each([
-    { updated: false, addedOccurrenceCount: 0, scenario: "no-op retry" },
-    { updated: true, addedOccurrenceCount: 0, scenario: "unrelated metadata update" },
-    { updated: true, addedOccurrenceCount: undefined, scenario: "missing server count" },
-  ])("does not repeat an addition announcement for already-added rows on a stale client ($scenario)", async ({ updated, addedOccurrenceCount }) => {
-    jest.useFakeTimers({ advanceTimers: true });
-    jest.setSystemTime(new Date("2026-10-02T12:00:00.000Z"));
-    setServerTimeOffset(36 * 60 * 60 * 1000);
-    const serviceId = "sabbath-service-noop";
-    const positionId = "position-camera-noop";
-    const savedOccurrences = octoberServiceOccurrences(serviceId, "Sabbath Service", positionId, [3, 10, 17, 24, 31]);
-    const alreadyAdded = { occurrenceId: "already-added@2026-10-07", serviceId: "already-added", name: "Already added", startsAt: "2026-10-07T18:00:00.000Z", positionRequirements: [{ positionId, count: 1 }] };
-    mockState = {
-      undoable: { present: { serviceTimes: { list: [
-        {
-          ...mockSharedServices[0], id: serviceId, serviceId, name: "Sabbath Service",
-          reccurence: "weekly", dayOfWeek: 6, time: "10:00",
-          positionRequirements: [{ positionId, count: 1 }],
-        },
-        { ...mockSharedServices[0], id: alreadyAdded.serviceId, name: alreadyAdded.name, dateTimeISO: alreadyAdded.startsAt, positionRequirements: alreadyAdded.positionRequirements },
-      ] } } },
-    };
-    const savedSchedule: TeamSchedule = {
-      scheduleId: "custom-saved-noop-october",
-      churchId: "church-1",
-      name: "October 2026",
-      teamId: "team-main",
-      startDate: "2026-10-01",
-      endDate: "2026-10-31",
-      serviceIds: [serviceId],
-      occurrences: savedOccurrences,
-      assignments: {},
-    };
-    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
-      ...baseBootstrap,
-      teams: [{ ...baseBootstrap.teams[0], memberIds: [] }],
-      positions: [{ positionId, churchId: "church-1", teamId: "team-main", name: "Camera" }],
-      members: [],
-      schedules: [savedSchedule],
-    }));
-    mockEnsureTeamScheduleForPeriod.mockImplementation(async () => ({
-      success: true,
-      created: false,
-      updated,
-      ...(addedOccurrenceCount !== undefined ? { addedOccurrenceCount } : {}),
-      schedule: { ...savedSchedule, occurrences: [...savedOccurrences, alreadyAdded], serviceIds: [serviceId, alreadyAdded.serviceId] },
-    }));
-
-    renderTeams();
-    await screen.findByRole("button", { name: /Sabbath Service on Oct 10/i });
-    await waitFor(() => expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1));
-    expect(await screen.findByRole("button", { name: /Sabbath Service on Oct 10/i })).toBeInTheDocument();
-    expect(screen.queryByRole("status", { name: "New service addition" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Already added Camera, Empty/i })).toBeInTheDocument();
-    expect(screen.queryByText(/Updating this schedule with newly available services/i)).not.toBeInTheDocument();
+    const staffingSummary = screen.getByRole("status", { name: "Schedule staffing summary" });
+    expect(staffingSummary).toHaveTextContent(/9\s*Services/);
+    expect(staffingSummary).toHaveTextContent("0 / 9");
+    expect(staffingSummary).toHaveTextContent("9Positions open");
   });
 
   it("keeps the newly selected period active when saved-period reconciliation finishes late", async () => {
@@ -2388,10 +2363,14 @@ describe("Teams", () => {
     await user.click(screen.getByRole("button", { name: "Next period" }));
     expect(screen.getByText("Nov 7, 2026")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Power Up Camera/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Schedule staffing summary" })).toHaveTextContent(/4\s*Services/);
+    expect(screen.getByRole("status", { name: "Schedule staffing summary" })).toHaveTextContent("Staffing not started");
 
     await act(async () => { resolveEnsure?.(); });
     expect(screen.getByText("Nov 7, 2026")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Power Up Camera/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Schedule staffing summary" })).toHaveTextContent(/4\s*Services/);
+    expect(screen.getByRole("status", { name: "Schedule staffing summary" })).toHaveTextContent("Staffing not started");
     jest.useRealTimers();
   });
 
@@ -2418,6 +2397,9 @@ describe("Teams", () => {
     mockUpdateTeamSchedule.mockImplementation(async (_churchId, _id, payload) => ({ success: true, schedule: { ...saved, ...payload } as TeamSchedule }));
     renderTeams("/teams-and-services/schedules");
     await screen.findByRole("button", { name: /Worship Vocal 1, Avery/i });
+    const staffingSummary = screen.getByRole("status", { name: "Schedule staffing summary" });
+    expect(staffingSummary).toHaveTextContent("1 / 2");
+    expect(staffingSummary).toHaveTextContent("1Position open");
     expect(screen.queryByText("Compare service changes")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Refresh schedule" }));
     await waitFor(() => expect(mockUpdateTeamSchedule).toHaveBeenCalledTimes(1));
@@ -2429,6 +2411,7 @@ describe("Teams", () => {
     });
     expect(await screen.findByText("Schedule updated to match its services.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Worship Vocal 1, Avery/i })).toBeInTheDocument();
+    expect(staffingSummary).toHaveTextContent("1 / 2");
     expect(saved.occurrences?.[0]).toEqual(row);
   });
 
@@ -3465,11 +3448,10 @@ describe("Teams", () => {
       ...scheduleBootstrap,
       schedules: [summary],
     } as TeamsBootstrapResponse);
-    mockGetTeamScheduleDetail.mockResolvedValue({
-      success: true,
-      schedule: hydrated,
-      relatedSchedules: [],
-    });
+    let resolveDetail!: (value: Awaited<ReturnType<typeof getTeamScheduleDetail>>) => void;
+    mockGetTeamScheduleDetail.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveDetail = resolve;
+    }));
 
     const user = userEvent.setup();
     renderTeams();
@@ -3483,9 +3465,15 @@ describe("Teams", () => {
     await waitFor(() => {
       expect(mockGetTeamScheduleDetail).toHaveBeenCalledWith("church-1", scheduleId);
     });
+    expect(await screen.findByText("Loading this schedule's assignments…")).toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "Schedule staffing summary" })).not.toBeInTheDocument();
+    await act(async () => {
+      resolveDetail({ success: true, schedule: hydrated, relatedSchedules: [] });
+    });
     expect(
       await screen.findByRole("button", { name: /Sunday Vocal/i }, { timeout: 8_000 }),
     ).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Schedule staffing summary" })).toHaveTextContent("1 / 2");
   });
 
   it("saves custom-schedule auto-fill as one targeted assignment batch", async () => {
@@ -5522,7 +5510,7 @@ describe("Teams", () => {
     expect(panelArrow).toHaveAttribute("aria-expanded", "true");
   });
 
-  it("keeps schedule staffing status separate from the navigable date range", async () => {
+  it("shows visible services, filled positions, open positions, and retains layout controls", async () => {
     mockGetTeamsBootstrap.mockResolvedValue(
       asTeamsBootstrapResponse(scheduleBootstrap),
     );
@@ -5533,7 +5521,132 @@ describe("Teams", () => {
     expect(screen.getByRole("textbox", { name: "Custom date range" })).toHaveValue(
       "07/01/2026 – 07/31/2026",
     );
-    expect(screen.getByText(/1 service · .*positions filled/)).toHaveAttribute("role", "status");
+    const staffingSummary = screen.getByRole("status", { name: "Schedule staffing summary" });
+    expect(staffingSummary).toHaveTextContent(/1\s*Service/);
+    expect(staffingSummary).toHaveTextContent("1 / 2");
+    expect(staffingSummary).toHaveTextContent("1Position open");
+    expect(screen.getByRole("progressbar", { name: "Staffing completion" })).toHaveAttribute("aria-valuemax", "2");
+    expect(screen.getByRole("group", { name: "Team schedule controls" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Schedule layout" })).toBeInTheDocument();
+  });
+
+  it("updates filled and open totals immediately when a volunteer is assigned or removed", async () => {
+    const user = userEvent.setup();
+    const schedule: TeamSchedule = {
+      ...scheduleBootstrap.schedules[0],
+      assignments: {},
+      occurrences: [{
+        occurrenceId: sundayOccurrenceId,
+        serviceId: "service-sunday",
+        name: "Sunday",
+        startsAt: "2026-07-05T10:00:00.000Z",
+        positionRequirements: [
+          { positionId: "position-vocal", count: 1 },
+          { positionId: "position-keys", count: 1 },
+        ],
+      }],
+    };
+    mockState = { undoable: { present: { serviceTimes: { list: [{
+      ...mockSharedServices[0],
+      positionRequirements: [
+        { positionId: "position-vocal", count: 1 },
+        { positionId: "position-keys", count: 1 },
+      ],
+    }] } } } };
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...scheduleBootstrap,
+      members: scheduleBootstrap.members.map((member) => ({ ...member, blockoutDates: [] })),
+      schedules: [schedule],
+    }));
+    mockEnsureTeamScheduleForPeriod.mockResolvedValue({
+      success: true,
+      created: false,
+      updated: false,
+      schedule,
+    });
+
+    let resolveAssignment: ((value: UpdateTeamScheduleAssignmentResponse) => void) | null = null;
+    let responseSchedule = schedule;
+    mockUpdateTeamScheduleAssignment.mockImplementation((_churchId, scheduleId, body) => new Promise((resolve) => {
+      const assignments = { ...(responseSchedule.assignments || {}) };
+      const row = { ...(assignments[body.serviceId] || {}) };
+      if (body.memberId) row[body.positionSlotKey] = { primaryMemberId: body.memberId };
+      else delete row[body.positionSlotKey];
+      if (Object.keys(row).length) assignments[body.serviceId] = row;
+      else delete assignments[body.serviceId];
+      responseSchedule = { ...responseSchedule, scheduleId, assignments };
+      resolveAssignment = resolve;
+    }));
+
+    renderTeams();
+    await openVocalSlot(user, /Sunday Vocal, Empty/i);
+    const staffingSummary = screen.getByRole("status", { name: "Schedule staffing summary" });
+    expect(staffingSummary).toHaveTextContent("0 / 2");
+    expect(staffingSummary).toHaveTextContent("2Positions open");
+
+    await user.click(await screen.findByRole("button", { name: /Assign Morgan/i }));
+    await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(1));
+    expect(staffingSummary).toHaveTextContent("1 / 2");
+    expect(staffingSummary).toHaveTextContent("1Position open");
+    await act(async () => {
+      resolveAssignment?.({ success: true, schedule: responseSchedule });
+    });
+
+    await openVocalSlot(user, /Sunday Vocal, Morgan/i, "More options");
+    await user.click(screen.getByRole("button", { name: "Clear assignment" }));
+    await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(2));
+    expect(staffingSummary).toHaveTextContent("0 / 2");
+    expect(staffingSummary).toHaveTextContent("2Positions open");
+    await act(async () => {
+      resolveAssignment?.({ success: true, schedule: responseSchedule });
+    });
+  });
+
+  it("updates staffing totals from an incoming schedule SSE event", async () => {
+    const occurrence = {
+      occurrenceId: sundayOccurrenceId,
+      serviceId: "service-sunday",
+      name: "Sunday",
+      startsAt: "2026-07-05T10:00:00.000Z",
+      positionRequirements: [
+        { positionId: "position-vocal", count: 1 },
+        { positionId: "position-keys", count: 1 },
+      ],
+    };
+    const schedule: TeamSchedule = {
+      ...scheduleBootstrap.schedules[0],
+      assignments: {},
+      occurrences: [occurrence],
+    };
+    mockState = { undoable: { present: { serviceTimes: { list: [{
+      ...mockSharedServices[0],
+      positionRequirements: occurrence.positionRequirements,
+    }] } } } };
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...scheduleBootstrap,
+      schedules: [schedule],
+    }));
+
+    renderTeams();
+    await waitForScheduleGrid();
+    const staffingSummary = screen.getByRole("status", { name: "Schedule staffing summary" });
+    expect(staffingSummary).toHaveTextContent("0 / 2");
+    let scheduleStream: (typeof mockTeamsSseConnections)[number] | undefined;
+    await waitFor(() => {
+      scheduleStream = mockTeamsSseConnections.find(({ path }) => path.endsWith("/teams/stream"));
+      expect(scheduleStream).toBeDefined();
+    });
+
+    const incomingSchedule: TeamSchedule = {
+      ...schedule,
+      assignments: { [sundayOccurrenceId]: { "position-vocal::0": { primaryMemberId: "member-morgan" } } },
+    };
+    act(() => {
+      scheduleStream?.handlers.onMessage(JSON.stringify({ type: "schedule-updated", schedule: incomingSchedule }));
+    });
+
+    expect(staffingSummary).toHaveTextContent("1 / 2");
+    expect(staffingSummary).toHaveTextContent("1Position open");
   });
 
   it("keeps New schedule and Send schedule actions available with send confirmation", async () => {

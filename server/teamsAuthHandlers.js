@@ -19546,7 +19546,7 @@ export const createTeamsAuthHandlers = ({
               !isDeepStrictEqual(stored, nextOccurrences) ||
               !isDeepStrictEqual(existing.microphoneAssignments || {}, microphoneAssignments) ||
               !isDeepStrictEqual(existing.iemAssignments || {}, iemAssignments);
-            if (!changed) return { schedule: existing, updated: false, addedOccurrenceCount: 0, addedOccurrenceIds: [] };
+            if (!changed) return { schedule: existing, updated: false };
             const now = nowIso();
             return {
               schedule: {
@@ -19559,8 +19559,6 @@ export const createTeamsAuthHandlers = ({
                 updatedByUid: admin.user.uid,
               },
               updated: true,
-              addedOccurrenceCount: missing.length,
-              addedOccurrenceIds: missing.map((occurrence) => occurrence.occurrenceId),
             };
           };
           const scheduleId = generatedPeriodScheduleId(generatedPeriodKey);
@@ -19622,7 +19620,7 @@ export const createTeamsAuthHandlers = ({
                 db,
               });
               transaction.create(ref, document);
-              return { schedule: document, created: true, updated: false, addedOccurrenceCount: 0, addedOccurrenceIds: [] };
+              return { schedule: document, created: true, updated: false };
             });
           }
 
@@ -19678,7 +19676,7 @@ export const createTeamsAuthHandlers = ({
                 timeZone,
               });
               await setDoc(COLLECTIONS.teamSchedules, scheduleId, document, { merge: false });
-              return { schedule: document, created: true, updated: false, addedOccurrenceCount: 0, addedOccurrenceIds: [] };
+              return { schedule: document, created: true, updated: false };
             }),
           );
         };

@@ -3,5 +3,5 @@
   "date": "2026-11-03",
   "type": "improved",
   "title": "Simpler service additions in schedules",
-  "description": "New services are reconciled into existing schedules with a dismissible date-and-time notice. Safe additions appear beside saved assignments while unresolved service conflicts remain protected."
+  "description": "New services appear automatically in the applicable schedule, and the staffing summary updates to show filled and open positions while existing assignments and service-identity safeguards remain intact."
 }
