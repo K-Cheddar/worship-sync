@@ -46,7 +46,7 @@ export const getPlanningCenterServiceTimesForDate = (
 
 export const resolvePlanningCenterPlanCandidates = (
   plans: PlanningCenterPlanSummary[],
-  occurrence: { serviceDate: string; startsAt: string },
+  occurrence: { serviceDate: string; startsAt: string; combined?: boolean },
   timeZone: string,
 ): { candidates: PlanningCenterPlanSummary[]; uniqueCandidate: PlanningCenterPlanSummary | null } => {
   const occurrenceLocalTime = localServiceTime(occurrence.startsAt, timeZone);
@@ -74,7 +74,9 @@ export const resolvePlanningCenterPlanCandidates = (
   // An exact service-time match is stronger evidence than the plan date. A
   // single plan on that date is still a valid fallback when its listed time
   // differs or is absent; multiple date matches remain explicit choices.
-  const candidates = exactTimeMatches.length === 1 ? exactTimeMatches : dateMatches;
+  const candidates = !occurrence.combined && exactTimeMatches.length === 1
+    ? exactTimeMatches
+    : dateMatches;
   return {
     candidates,
     uniqueCandidate: candidates.length === 1 ? candidates[0] : null,

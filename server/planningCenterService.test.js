@@ -57,6 +57,7 @@ const createConnectedService = async ({ getHandler } = {}) => {
           data: {
             name: "Jordan Admin",
             organization_name: "Example Church",
+            organization_id: "org-123",
           },
         };
       }
@@ -291,6 +292,7 @@ test("Planning Center connect uses PKCE and records a church-scoped connection",
   const status = await service.getStatusForChurch({ churchId: "church-1" });
   assert.equal(status.connected, true);
   assert.equal(status.accountLabel, "Example Church");
+  assert.equal(status.accountId, "org-123");
   assert.equal(status.oauthConfigured, true);
 
   const connectStatus = await service.getConnectStatus({
@@ -299,6 +301,7 @@ test("Planning Center connect uses PKCE and records a church-scoped connection",
     connectRequestSecret: pending.connectRequestSecret,
   });
   assert.equal(connectStatus.status, "completed");
+  assert.equal(connectStatus.accountId, "org-123");
 });
 
 test("Planning Center disconnect revokes the refresh token and clears status", async () => {

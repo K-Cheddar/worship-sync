@@ -173,6 +173,7 @@ export const normalizeChurchIntegrations = (
       enabled: Boolean(planningCenter.enabled),
       connected: Boolean(planningCenter.connected),
       accountLabel: String(planningCenter.accountLabel ?? "").trim(),
+      accountId: String(planningCenter.accountId ?? "").trim(),
       lastError: String(planningCenter.lastError ?? "").trim(),
     },
   };

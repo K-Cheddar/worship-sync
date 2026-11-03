@@ -5589,6 +5589,7 @@ SMC Worship Experience
       items: [planningCenterCandidate(
         serviceTypeId === "pco-type-1" ? "pco-plan-1" : "pco-plan-2",
         serviceTypeId,
+        serviceTypeId === "pco-type-1" ? "2026-07-26T14:00:00.000Z" : "2026-07-26T18:00:00.000Z",
       )],
     }));
     mockGetPlanningCenterPlanImport.mockImplementation(async (_churchId, serviceTypeId, planId) =>

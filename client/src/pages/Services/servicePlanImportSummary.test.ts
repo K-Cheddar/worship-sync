@@ -137,6 +137,44 @@ describe("summarizeServicePlanImport", () => {
     ]);
   });
 
+  it("applies selected source reorders together with add, remove, and cross-section move operations", () => {
+    const current = [
+      namedSection("worship", "Worship", [
+        element("a", "A", { sourcePlanningManaged: true }),
+        element("manual", "Manual operator row"),
+        element("b", "B", { sourcePlanningManaged: true }),
+        element("c", "C", { sourcePlanningManaged: true }),
+        element("d", "D", { sourcePlanningManaged: true }),
+      ]),
+      namedSection("response", "Response", [
+        element("e", "E", { sourcePlanningManaged: true }),
+      ]),
+    ];
+    const proposed = [
+      namedSection("worship", "Worship", [
+        element("c", "C", { sourcePlanningManaged: true }),
+        element("manual", "Manual operator row"),
+        element("a", "A", { sourcePlanningManaged: true }),
+        element("new", "New item", { sourcePlanningManaged: true }),
+      ]),
+      namedSection("response", "Response", [
+        element("d", "D", { sourcePlanningManaged: true }),
+        element("e", "E", { sourcePlanningManaged: true }),
+      ]),
+    ];
+    const summary = summarizeServicePlanImport(current, proposed, {}, { trackSameSectionMoves: true });
+    const selected = new Set(summary.changes.map(servicePlanImportChangeKey));
+    expect(summary.changes.map(({ kind, id }) => `${kind}:${id}`).sort()).toEqual([
+      "added:new", "moved:c", "moved:d", "removed:b",
+    ]);
+
+    const applied = applySelectedServicePlanImportChanges(current, proposed, summary, selected);
+    expect(applied.map(({ elements }) => elements.map(({ id }) => id))).toEqual([
+      ["c", "manual", "a", "new"],
+      ["d", "e"],
+    ]);
+  });
+
   it("applies only selected duration updates and cascades from the preserved anchor", () => {
     const current = [section([
       element("first", "First", { sourcePlanningManaged: true, startTime: "09:00", durationSeconds: 300 }),

@@ -78,6 +78,23 @@ describe("Planning Center plan discovery", () => {
     ).toEqual({ candidates: [first, second], uniqueCandidate: null });
   });
 
+  it("keeps same-date plans explicit for a combined occurrence even with one exact-time match", () => {
+    const exact = plan("exact", [
+      { startsAt: "2026-11-08T14:00:00Z", timeType: "service" },
+    ]);
+    const other = plan("other", [
+      { startsAt: "2026-11-08T23:00:00Z", timeType: "service" },
+    ]);
+
+    expect(
+      resolvePlanningCenterPlanCandidates(
+        [exact, other],
+        { serviceDate: "2026-11-08", startsAt: "2026-11-08T14:00:00Z", combined: true },
+        "America/New_York",
+      ),
+    ).toEqual({ candidates: [exact, other], uniqueCandidate: null });
+  });
+
   it("matches any service time in a plan and supports dates in the past or future", () => {
     const planWithTwoServices = plan("multi-service", [
       { startsAt: "2024-02-11T14:00:00Z", timeType: "service" },

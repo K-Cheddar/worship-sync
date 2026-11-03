@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { render, screen, fireEvent, within, waitFor } from "@testing-library/react";
 import type { ContextType } from "react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
@@ -97,6 +97,7 @@ const managerElement = (
   teams: TeamRecord[] = [],
   planTemplates: ServicePlanTemplate[] = [],
   planningCenterConnected = false,
+  planningCenterAccountId = "org-a",
 ) => (
     <MemoryRouter>
       <ToastProvider>
@@ -109,6 +110,7 @@ const managerElement = (
                   enabled: true,
                   connected: true,
                   accountLabel: "Example Church",
+                  accountId: planningCenterAccountId,
                 },
               },
             } : {}),
@@ -170,6 +172,17 @@ describe("ServiceManager combined services", () => {
     expect(findActions(mockDispatch.mock.calls, "serviceTimes/updateService")).toEqual([
       expect.objectContaining({ payload: expect.objectContaining({ id: "book-launch", changes: expect.objectContaining({ dateTimeISO: "2026-11-07T21:30:00.000Z" }) }) }),
     ]);
+  });
+
+  it("reloads Planning Center service types when the connected account ID changes under the same label", async () => {
+    mockListPlanningCenterServiceTypes.mockClear();
+    const view = render(managerElement([sundayMorning], [], [], [], true, "org-a"));
+    await waitFor(() => expect(mockListPlanningCenterServiceTypes).toHaveBeenCalledTimes(1));
+
+    view.rerender(managerElement([sundayMorning], [], [], [], true, "org-b"));
+    await waitFor(() => expect(mockListPlanningCenterServiceTypes).toHaveBeenCalledTimes(2));
+    expect(mockListPlanningCenterServiceTypes).toHaveBeenNthCalledWith(1, "church-1");
+    expect(mockListPlanningCenterServiceTypes).toHaveBeenNthCalledWith(2, "church-1");
   });
 
   it("confirms before discarding unsaved service changes", async () => {

@@ -587,6 +587,7 @@ const ServicePlanEditor = ({
     churchId: churchId || "",
     enabled: Boolean(churchIntegrations?.planningCenter?.enabled),
     connected: Boolean(churchIntegrations?.planningCenter?.connected),
+    accountId: churchIntegrations?.planningCenter?.accountId || "",
     accountLabel: churchIntegrations?.planningCenter?.accountLabel || "",
     lastError: churchIntegrations?.planningCenter?.lastError || "",
   });
@@ -3405,7 +3406,11 @@ const ServicePlanEditor = ({
         }
         const resolved = resolvePlanningCenterPlanCandidates(
           plans,
-          { serviceDate, startsAt: occurrence.startsAt },
+          {
+            serviceDate,
+            startsAt: occurrence.startsAt,
+            combined: isCombinedOccurrence,
+          },
           timeZoneAtStart,
         );
         if (!resolved.candidates.length) {

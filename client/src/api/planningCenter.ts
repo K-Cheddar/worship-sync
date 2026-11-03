@@ -4,6 +4,7 @@ export type PlanningCenterStatus = {
   oauthConfigured: boolean;
   connected: boolean;
   accountLabel: string;
+  accountId?: string;
 };
 
 export type PlanningCenterConnectResponse = {
@@ -18,6 +19,7 @@ export type PlanningCenterConnectStatus = {
   status: "pending" | "completed" | "failed" | "expired";
   errorMessage: string;
   accountLabel?: string;
+  accountId?: string;
 };
 
 type JsonInit = Omit<RequestInit, "body"> & {

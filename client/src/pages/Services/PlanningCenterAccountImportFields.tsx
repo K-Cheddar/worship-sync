@@ -41,18 +41,38 @@ const PlanningCenterAccountImportFields = ({
   const [loadingTypes, setLoadingTypes] = useState(false);
   const [loadingPlans, setLoadingPlans] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const scopeKey = JSON.stringify([churchId, connectionKey]);
+  const previousScopeKeyRef = useRef(scopeKey);
+  const [serviceTypesScopeKey, setServiceTypesScopeKey] = useState("");
+  const [accountSwitchTypeTarget, setAccountSwitchTypeTarget] = useState<string | null>(null);
   const currentPlanIdRef = useRef(planId);
   currentPlanIdRef.current = planId;
 
   useEffect(() => {
     let cancelled = false;
+    const accountChanged = previousScopeKeyRef.current !== scopeKey;
+    previousScopeKeyRef.current = scopeKey;
+    setServiceTypesScopeKey("");
+    setPlans([]);
+    if (accountChanged) {
+      setPlanRange("future");
+      setAccountSwitchTypeTarget("");
+      currentPlanIdRef.current = "";
+      onServiceTypeIdChange("");
+      onPlanIdChange("");
+    }
     setLoadingTypes(true);
     setErrorMessage("");
     listPlanningCenterServiceTypes(churchId)
       .then((response) => {
         if (cancelled) return;
         setServiceTypes(response.items);
-        if (!serviceTypeId && response.items.length > 0) {
+        setServiceTypesScopeKey(scopeKey);
+        if (accountChanged) {
+          const nextTypeId = response.items[0]?.id || "";
+          setAccountSwitchTypeTarget(nextTypeId);
+          onServiceTypeIdChange(nextTypeId);
+        } else if (!serviceTypeId && response.items.length > 0) {
           onServiceTypeIdChange(response.items[0].id);
         }
       })
@@ -74,13 +94,18 @@ const PlanningCenterAccountImportFields = ({
     // Keep a resolved service type even when it is not currently listed. The
     // operator can still choose another type explicitly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [churchId, connectionKey]);
+  }, [churchId, connectionKey, scopeKey]);
 
   useEffect(() => {
-    if (!serviceTypeId) {
+    if (
+      !serviceTypeId ||
+      serviceTypesScopeKey !== scopeKey ||
+      (accountSwitchTypeTarget !== null && serviceTypeId !== accountSwitchTypeTarget)
+    ) {
       setPlans([]);
       return;
     }
+    if (accountSwitchTypeTarget !== null) setAccountSwitchTypeTarget(null);
     let cancelled = false;
     setLoadingPlans(true);
     setErrorMessage("");
@@ -111,7 +136,7 @@ const PlanningCenterAccountImportFields = ({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [churchId, connectionKey, serviceTypeId, planRange]);
+  }, [churchId, connectionKey, scopeKey, serviceTypesScopeKey, accountSwitchTypeTarget, serviceTypeId, planRange]);
 
   const emptyLabel =
     planRange === "past"

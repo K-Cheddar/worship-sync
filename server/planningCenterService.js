@@ -211,13 +211,14 @@ export const createPlanningCenterService = ({
     }
   };
 
-  const saveToken = async (churchId, data, accountLabel = "") => {
+  const saveToken = async (churchId, data, accountLabel = "", accountId = "") => {
     await setDoc(TOKEN_COLLECTION, churchId, {
       accessToken: encrypt(data.access_token),
       refreshToken: encrypt(data.refresh_token),
       expiresAt: now() + Number(data.expires_in || 7200) * 1000,
       scope: data.scope || SCOPES,
       accountLabel,
+      accountId,
       updatedAt: now(),
     });
   };
@@ -229,7 +230,7 @@ export const createPlanningCenterService = ({
         grant_type: "refresh_token",
         refresh_token: decrypt(tokenDoc.refreshToken),
       });
-      await saveToken(churchId, data, tokenDoc.accountLabel);
+      await saveToken(churchId, data, tokenDoc.accountLabel, tokenDoc.accountId);
       return data.access_token;
     })().finally(() => refreshes.delete(churchId));
     refreshes.set(churchId, pending);
@@ -261,6 +262,7 @@ export const createPlanningCenterService = ({
         await updateStatus(churchId, {
           enabled: false,
           connected: false,
+          accountId: "",
           lastError:
             "The Planning Center connection expired. Connect it again.",
         });
@@ -357,6 +359,7 @@ export const createPlanningCenterService = ({
         redirect_uri: callbackUrl,
       });
       let accountLabel = "Connected Planning Center account";
+      let accountId = "";
       try {
         const profileResponse = await httpClient.get(USERINFO_URL, {
           headers: {
@@ -367,6 +370,9 @@ export const createPlanningCenterService = ({
           timeout: 20000,
         });
         const profile = profileResponse.data || {};
+        accountId = typeof profile.organization_id === "string"
+          ? profile.organization_id.trim()
+          : String(profile.organization_id || "").trim();
         accountLabel = safeName(
           profile.organization_name || profile.name,
           accountLabel,
@@ -377,16 +383,18 @@ export const createPlanningCenterService = ({
           profileError?.message,
         );
       }
-      await saveToken(stateDoc.churchId, token, accountLabel);
+      await saveToken(stateDoc.churchId, token, accountLabel, accountId);
       await updateStatus(stateDoc.churchId, {
         enabled: true,
         connected: true,
         accountLabel,
+        accountId,
         lastError: "",
       });
-      await finish({ status: "completed", accountLabel, completedAt: now() });
+      await finish({ status: "completed", accountLabel, accountId, completedAt: now() });
       return {
         accountLabel,
+        accountId,
         returnTo: stateDoc.returnTo,
         desktop: stateDoc.desktop,
       };
@@ -427,6 +435,7 @@ export const createPlanningCenterService = ({
       status: doc.status,
       errorMessage: doc.errorMessage || "",
       accountLabel: doc.accountLabel || "",
+      accountId: doc.accountId || "",
       expiresAt: doc.expiresAt,
       completedAt: doc.completedAt,
     };
@@ -438,6 +447,7 @@ export const createPlanningCenterService = ({
       oauthConfigured: configured,
       connected: Boolean(doc),
       accountLabel: doc?.accountLabel || "",
+      accountId: doc?.accountId || "",
     };
   };
 
@@ -474,6 +484,7 @@ export const createPlanningCenterService = ({
       enabled: false,
       connected: false,
       accountLabel: "",
+      accountId: "",
       lastError: "",
     });
   };

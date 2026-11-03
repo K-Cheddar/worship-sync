@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import PlanningCenterAccountImportFields from "./PlanningCenterAccountImportFields";
 import {
   listPlanningCenterPlans,
@@ -96,5 +97,52 @@ describe("PlanningCenterAccountImportFields", () => {
 
     expect(onServiceTypeIdChange).toHaveBeenCalledWith("type-second");
     expect(onPlanIdChange).toHaveBeenCalledWith("");
+  });
+
+  it("drops account A selections and ignores its delayed response after switching to account B", async () => {
+    let resolveAccountA!: (value: { items: { id: string; name: string }[] }) => void;
+    let resolveAccountB!: (value: { items: { id: string; name: string }[] }) => void;
+    mockListServiceTypes
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveAccountA = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveAccountB = resolve; }));
+    mockListPlans.mockImplementation(async (_churchId, serviceTypeId) => ({
+      items: serviceTypeId === "type-b" ? [{
+        id: "plan-b",
+        serviceTypeId,
+        dates: "Nov 8",
+        title: "B plan",
+        label: "Nov 8 · B plan",
+        itemsCount: 1,
+        sortDate: "2026-11-08",
+        sourceUrl: "",
+      }] : [],
+    }));
+
+    const Harness = ({ accountId }: { accountId: string }) => {
+      const [serviceTypeId, setServiceTypeId] = useState("type-a");
+      const [planId, setPlanId] = useState("plan-a");
+      return (
+        <PlanningCenterAccountImportFields
+          churchId="church-1"
+          connectionKey={accountId}
+          serviceTypeId={serviceTypeId}
+          planId={planId}
+          onServiceTypeIdChange={setServiceTypeId}
+          onPlanIdChange={setPlanId}
+        />
+      );
+    };
+    const view = render(<Harness accountId="org-a" />);
+    await waitFor(() => expect(mockListServiceTypes).toHaveBeenCalledTimes(1));
+    view.rerender(<Harness accountId="org-b" />);
+    await waitFor(() => expect(mockListServiceTypes).toHaveBeenCalledTimes(2));
+
+    resolveAccountA({ items: [{ id: "type-a", name: "A type" }] });
+    resolveAccountB({ items: [{ id: "type-b", name: "B type" }] });
+
+    await waitFor(() => expect(screen.getByRole("combobox", { name: /^Service type:/ })).toHaveTextContent("B type"));
+    await waitFor(() => expect(mockListPlans).toHaveBeenCalledWith("church-1", "type-b", "future"));
+    expect(mockListPlans).not.toHaveBeenCalledWith("church-1", "type-a", "future");
+    expect(screen.queryByRole("option", { name: "Previously selected plan" })).not.toBeInTheDocument();
   });
 });

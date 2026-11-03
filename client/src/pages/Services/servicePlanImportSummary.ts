@@ -689,6 +689,14 @@ export const applySelectedServicePlanImportChanges = (
 
   const selectedChangeFor = (kind: ServicePlanImportChangeKind, id: string) =>
     selectedChanges.get(`${kind}:${id}`);
+  const hasNonAddStructuralChangeInSection = (sectionId: string) =>
+    [...selectedChanges.values()].some((change) => (
+      (change.kind === "removed" && change.sectionId === sectionId) ||
+      (change.kind === "legacy_match" &&
+        (change.sectionId === sectionId || change.fromSectionId === sectionId)) ||
+      (change.kind === "moved" && change.fromSectionId !== change.sectionId &&
+        (change.sectionId === sectionId || change.fromSectionId === sectionId))
+    ));
   const currentItemsById = new Map(currentSections.flatMap((section) =>
     section.elements.map((element) => [element.id, element] as const),
   ));
@@ -746,7 +754,8 @@ export const applySelectedServicePlanImportChanges = (
     }
     if (selectedChangeFor("added", element.id)) return [element];
     const move = selectedChangeFor("moved", element.id);
-    if (!move || move.sectionId !== sectionId) return [];
+    if (!move || move.sectionId !== sectionId ||
+      (move.fromSectionId === sectionId && hasNonAddStructuralChangeInSection(sectionId))) return [];
     const current = currentItemsById.get(element.id) || element;
     return [withSourceAssociation(selectedChangeFor("updated", element.id) ? element : current, current, element, true)];
   };
@@ -777,7 +786,8 @@ export const applySelectedServicePlanImportChanges = (
         return incoming ? placementFor(incoming, currentSection.id) : [currentElement];
       }
       const move = selectedChangeFor("moved", currentElement.id);
-      if (move) return [];
+      if (move && (move.fromSectionId !== move.sectionId ||
+        !hasNonAddStructuralChangeInSection(move.sectionId))) return [];
       const linked = Boolean(selectedChangeFor("linked", currentElement.id));
       if (selectedChangeFor("updated", currentElement.id)) {
         return [withSourceAssociation(
@@ -804,24 +814,24 @@ export const applySelectedServicePlanImportChanges = (
       change.kind === "moved" && change.sectionId === currentSection.id &&
       change.fromSectionId === currentSection.id,
     );
-    const hasOtherStructuralChangeInSection = [...selectedChanges.values()].some((change) =>
-      (change.sectionId === currentSection.id || change.fromSectionId === currentSection.id) &&
-      (change.kind === "added" || change.kind === "removed" || change.kind === "legacy_match" ||
-        (change.kind === "moved" && (change.sectionId !== currentSection.id ||
-          change.fromSectionId !== currentSection.id))),
+    const hasNonAddStructuralChange = hasNonAddStructuralChangeInSection(currentSection.id);
+    const selectedAddition = [...selectedChanges.values()].some((change) =>
+      change.kind === "added" && change.sectionId === currentSection.id,
     );
-    if (nextSection && selectedSameSectionMoves.length && !hasOtherStructuralChangeInSection) {
-      const nextIds = new Set(nextSection.elements.map(({ id }) => id));
+    if (nextSection && selectedSameSectionMoves.length && (!selectedAddition || hasNonAddStructuralChange)) {
+      const updatedElementsById = new Map(orderedElements.map((element) => [element.id, element]));
+      const reorderBaseElements = hasNonAddStructuralChange
+        ? orderedElements
+        : currentSection.elements.map((element) => updatedElementsById.get(element.id) || element);
       const canReorder = (element: ServicePlanElement) => element.sourcePlanningManaged &&
         !reservedIds.has(element.id) &&
         (!element.planningCenterPdfMatchReviewRequired || Boolean(element.sourceOccurrenceId));
-      const trackedSlots = currentSection.elements.flatMap((element, index) =>
-        canReorder(element) && nextIds.has(element.id) ? [index] : [],
+      const trackedSlots = reorderBaseElements.flatMap((element, index) =>
+        canReorder(element) && nextSection.elements.some(({ id }) => id === element.id) ? [index] : [],
       );
-      const trackedIds = new Set(trackedSlots.map((index) => currentSection.elements[index].id));
-      const updatedElementsById = new Map(orderedElements.map((element) => [element.id, element]));
+      const trackedIds = new Set(trackedSlots.map((index) => reorderBaseElements[index].id));
       const currentTracked = trackedSlots.map((index) => {
-        const element = currentSection.elements[index];
+        const element = reorderBaseElements[index];
         return updatedElementsById.get(element.id) || element;
       });
       const sourceTrackedOrder = sourceOrderFor(nextSection).filter((element) =>
@@ -837,9 +847,7 @@ export const applySelectedServicePlanImportChanges = (
         selectedMoveElements,
       );
       if (reorderedTracked.length === trackedSlots.length) {
-        const anchored = currentSection.elements.map((element) =>
-          updatedElementsById.get(element.id) || element,
-        );
+        const anchored = reorderBaseElements.map((element) => updatedElementsById.get(element.id) || element);
         trackedSlots.forEach((slot, index) => { anchored[slot] = reorderedTracked[index]; });
         orderedElements = anchored;
       }
