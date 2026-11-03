@@ -3,5 +3,5 @@
   "date": "2026-11-03",
   "type": "fixed",
   "title": "One-time service scheduling",
-  "description": "Adding a one-time service now keeps scheduling available and uses your church's timezone consistently across devices."
+  "description": "One-time services now use your church's timezone consistently for scheduling and live countdowns across devices."
 }

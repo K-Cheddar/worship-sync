@@ -76,6 +76,11 @@ describe("getServiceOccurrencesInRange", () => {
 });
 
 describe("getOneTimeServiceOccurrence", () => {
+  it("looks up a legacy midnight service on its church-local date", () => {
+    const oneTime = service({ serviceId: "midnight", reccurence: "one_time", dateTimeISO: "2026-11-07T00:30", overrideDateTimeISO: "2026-11-08T05:30:00.000Z" });
+    expect(getOneTimeServiceOccurrence([oneTime], oneTime, "America/New_York")).toMatchObject({ occurrenceId: "midnight@2026-11-07", serviceDate: "2026-11-07", startsAt: "2026-11-07T05:30:00.000Z" });
+  });
+
   it("resolves the single occurrence for a one-time service", () => {
     const oneTime = service({
       serviceId: "easter",

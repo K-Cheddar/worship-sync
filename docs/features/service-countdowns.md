@@ -9,6 +9,8 @@ Authorization: production correctness request, October 14, 2026.
 - Missing or failed configuration must not silently become UTC or show a misleading countdown. The existing `--:--` placeholder represents an unavailable target.
 - Reconnects and configuration changes must recover without re-pairing.
 
+The November 3, 2026 one-time service review follow-up confirms the same church-timezone interpretation for legacy offset-less one-time definitions: upcoming/recent countdown targets and non-representative combined-service starts use the shared occurrence resolver. Explicit countdown overrides and the representative occurrence's persisted timestamp retain their existing precedence. The exported one-time service-plan lookup uses the same resolver to select its church-local date; it currently has no production caller. See the [regression investigation](../book-launch-scheduling-investigation.md#remaining-reader-review-follow-up).
+
 The October 23, 2026 access correction uses the existing authenticated human session and active church membership validation for both the timezone GET and revision stream. Members without broader workspace access receive only the restricted timezone response; configured church settings remain authoritative, and an unconfigured timezone has no fallback value.
 
 ## Implementation and verification

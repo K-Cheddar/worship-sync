@@ -164,3 +164,75 @@ Ready for the requested local fix scope.
 
 ## Remaining risks
 The test harness does not establish real Firebase network timing or deployed data contents. The production diagnostic identifies the actual rejected service if its stored shape differs from the reproduced picker output. Existing cross-store service-definition-change conflicts still return 409 and require retry. Clients should reload after rollout; historical schedules do not need to be deleted, regenerated, or migrated.
+
+## Remaining-reader review follow-up
+
+### Goal
+Close the three follow-up findings for legacy local one-time countdowns, combined-service controller timing, and service-plan date lookup.
+
+### Existing architecture
+All three consumers already receive a church timezone, but four parsing sites still use host-local Date parsing. Reuse `oneTimeServiceInstant`; no new resolver or state is needed. `getOneTimeServiceOccurrence` has no current production caller (only its declaration and tests were found).
+
+### Before behavior
+Legacy local definitions can finish early or late, combined group members disagree on their starts, and a midnight plan lookup can scan the previous day.
+
+### After behavior
+These readers resolve the same church-local instant as schedule generation and server validation.
+
+### Product Decision Check
+Authorized by the current review-fix request, the prior one-time scheduling request, and the Service countdowns contract. Preserve explicit countdown overrides, authoritative representative occurrence timestamps, occurrence pinning, and all persisted shapes. No unresolved product decision.
+
+### Behavior intentionally unchanged
+Absolute timestamps, recurring services, synchronized clock usage, grace periods, override precedence, plan identity, stream transparency, UI composition, and persistence remain unchanged.
+
+### Acceptance criteria
+Demonstrate failing UTC regressions before the fix; pass those tests under UTC and Los Angeles; verify upcoming/recent boundaries, combined members, authoritative representative timestamps, midnight lookup, and rendered paired-display countdowns.
+
+### Proposed implementation
+Replace the four remaining time/date parsing sites in the three reported files with the existing shared resolver and retain their current null behavior.
+
+### Affected surfaces
+`useDisplayedUpcomingService` and `TimerDisplay` on controller/workstation/projector/monitor/stream; CurrentServiceWorkspace timing; an exported currently unused service-plan lookup. App's timezone provider remains authoritative. No persistence, network, IPC, or presentation-layer edits.
+
+### Risks / edge cases
+Host timezone differs from church; midnight crossing; exact service start; invalid/missing date; explicit override; combined representative metadata differs from its saved occurrence. Existing memoization, bounded formatter caches, subscriptions, and timer scheduling remain.
+
+### Questions requiring user input
+None.
+
+### Verification
+Required: new failure-derived unit regressions and real provider/TimerDisplay coverage, relevant hook/controller and DisplayWindow core/timer suites, lint, types, and strict build. Live browser/Electron devices are optional additional confidence checks.
+
+### Follow-up implementation and review result
+
+All three findings are fixed on `in-progress`, based on `0f3b11de`:
+
+- `client/src/utils/serviceTimes.ts`: both upcoming and most-recent one-time targets use `oneTimeServiceInstant(value, timeZone)`. Exact-start classification and override precedence are unchanged.
+- `client/src/pages/Controller/currentServiceTiming.ts`: non-representative combined members use the same resolver. The representative still uses the persisted occurrence instant, even when its current definition differs.
+- `client/src/pages/Services/servicePlanOccurrences.ts`: resolve the instant before choosing the church-local lookup date. The existing export is retained; the caller scan found no production usage.
+
+The production patch changes four parsing sites across three files. No new helper, state, subscription, timer interval, cache, write, or API was introduced. Existing shared resolver caches bound repeated wall-time conversion; recurrence resolution remains behind the existing memo/boundary scheduling in `useDisplayedUpcomingService`. The separate host-parsed administrative sort key was inspected and excluded: it computes list order, not a countdown target or plan lookup date, and its API has no timezone parameter.
+
+All three new raw-local regressions failed before the fix under `TZ=UTC`; the absolute-timestamp cases passed. After the fix:
+
+| Check executed | Result |
+| --- | --- |
+| `TZ=UTC npm.cmd test --prefix client -- --runInBand --runTestsByPath src/utils/serviceTimes.test.ts src/pages/Controller/currentServiceTiming.test.ts src/pages/Services/servicePlanOccurrences.test.ts --testNamePattern='church timezone for one-time\|legacy group members\|legacy midnight'` before implementation | Three expected regression failures; two absolute cases passed |
+| Complete `serviceTimes.test.ts`, `currentServiceTiming.test.ts`, `servicePlanOccurrences.test.ts`, and `pairedDisplayCountdown.integration.test.tsx`, under both `TZ=UTC` and `TZ=America/Los_Angeles` | 63 passed in each timezone |
+| Those four files plus `src/pages/Teams/servicePeriodRange.test.ts`, under UTC | 67 passed |
+| `npm.cmd test --prefix client -- --runInBand --runTestsByPath src/hooks/useDisplayedUpcomingService.test.ts src/hooks/useNextServiceCountdownText.test.ts src/pages/Controller/useCurrentServiceOccurrence.test.tsx src/components/DisplayWindow/__tests__/DisplayWindow.corePaths.test.tsx src/components/DisplayWindow/__tests__/DisplayWindowTimersAndText.test.tsx src/containers/ServiceTimes/ServiceTimesList.test.tsx src/containers/ServiceTimes/TimeAdjuster.test.tsx` | 124 passed |
+| `npm.cmd run type-check --prefix client` | Passed |
+| `npm.cmd run build:strict --prefix client` with Sentry upload disabled | Passed, including full client lint, production bundle, and PWA build |
+| `git diff --check` | Passed |
+
+Review findings: Critical/High/Medium/Low — none remaining within these reported reader paths. Product authorization: current review-fix request and updated Service countdowns contract. Entire follow-up diff inspected; scope is workflow/fix verification, not a release-wide production-readiness review.
+
+| Invariant | Production context and adversarial case | Executed evidence | Result |
+| --- | --- | --- | --- |
+| Legacy data means the same countdown instant across hosts | `App` timezone provider → `useAvailableServiceTimes` → `useDisplayedUpcomingService` → `TimerDisplay`; human/workstation Redux versus paired-display RTDB read; synchronized clock offset | New real-provider integration cases render one hour on controller, workstation, monitor, projector, and stream for local and absolute representations, in both host timezones | Pass |
+| Explicit timing authority is retained | Representative metadata differs from its saved start; another grouped member has a local definition; a future override supersedes a local scheduled target | New grouped-member and override regressions plus existing controller timing tests | Pass |
+| Midnight lookup stays on the church day | `2026-11-07T00:30` in New York, host UTC; temporary override points to a different day | New service-plan regression resolves `midnight@2026-11-07` at `05:30Z` | Pass |
+
+Identity, lifetime, persistence, retry ownership, and authorization were reviewed: this follow-up introduces no mutations or asynchronous owners, and the existing provider credentials, ownership checks, subscriptions, memoization, and lifecycle tests remain intact. Presentation/overlay/media/IPC code is unchanged; core display and timer consumers were exercised. This closes the earlier reader-coverage gap without changing schedule storage or assignments.
+
+Required verification gaps: none for this local fix. Optional confidence gaps: no manual browser/Electron device run or production datastore read; integration transport remains mocked. Final readiness: **Ready** for the reported reader fixes. Known follow-ups: none within this scope.

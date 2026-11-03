@@ -4,6 +4,7 @@ import { parsePlainDate } from "../../utils/plainDate";
 import {
   calendarDateInTimeZone,
   serviceDateTimeInTimeZone,
+  oneTimeServiceInstant,
 } from "../../utils/teamScheduleOccurrences";
 import { serverDate } from "../../utils/serverTime";
 import {
@@ -100,9 +101,7 @@ const resolveScheduledServiceStartMs = (
   if (!isWithinServiceBounds(occurrenceDate, service)) return null;
 
   if (service.reccurence === "one_time") {
-    const scheduledMs = service.dateTimeISO
-      ? Date.parse(service.dateTimeISO)
-      : Number.NaN;
+    const scheduledMs = oneTimeServiceInstant(service.dateTimeISO, timeZone)?.getTime() ?? Number.NaN;
     return Number.isFinite(scheduledMs) && isSameCalendarDate(scheduledMs, occurrenceDate, timeZone)
       ? scheduledMs
       : null;
