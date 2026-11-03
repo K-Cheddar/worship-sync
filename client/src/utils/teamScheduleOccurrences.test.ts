@@ -34,6 +34,11 @@ describe("one-time service persistence", () => {
     expect(oneTimeServiceLocalValue(value, "America/New_York")).toBe("2026-11-07T16:30");
   });
 
+  it("resolves offset-less wall times that include seconds and milliseconds", () => {
+    expect(oneTimeServiceInstant("2026-11-07T16:30:15.250", "America/New_York")?.toISOString())
+      .toBe("2026-11-07T21:30:15.250Z");
+  });
+
   it("uses church dates near midnight and keeps the existing DST rules", () => {
     expect(oneTimeServiceInstant("2026-11-07T00:30", "America/New_York")?.toISOString()).toBe("2026-11-07T05:30:00.000Z");
     expect(oneTimeServiceInstant("2026-03-08T02:30", "America/New_York")).toBeNull();

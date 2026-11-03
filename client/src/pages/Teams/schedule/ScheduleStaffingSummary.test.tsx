@@ -29,6 +29,8 @@ describe("ScheduleStaffingSummary", () => {
     expect(summary).toHaveTextContent("Staffing not started");
     expect(summary).toHaveTextContent("—Staffing not started");
     expect(summary).toHaveTextContent("—Positions open");
+    expect(screen.queryByTestId("open-position-icon")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("completed-staffing-icon")).not.toBeInTheDocument();
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
   });
 

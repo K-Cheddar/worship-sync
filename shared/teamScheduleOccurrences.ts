@@ -69,17 +69,21 @@ const getServiceDateOffsets = (date: string, timeZone: string, naive: number): n
 
 /** Resolve an exact wall-clock time. Gaps return null; folds choose the earlier instant. */
 export const serviceDateTimeInTimeZone = (date: string, time: string, timeZone: string): Date | null => {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
+  const timeMatch = /^([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d)(?:\.(\d{1,3}))?)?$/.exec(time);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !timeMatch) {
     return null;
   }
-  const cacheKey = `${timeZone}|${date}|${time}`;
+  const seconds = timeMatch[3] || "00";
+  const milliseconds = (timeMatch[4] || "").padEnd(3, "0");
+  const requested = `${date}T${timeMatch[1]}:${timeMatch[2]}:${seconds}`;
+  const requestedWithMilliseconds = `${requested}${milliseconds ? `.${milliseconds}` : ""}`;
+  const cacheKey = `${timeZone}|${date}|${requestedWithMilliseconds}`;
   const cached = serviceDateTimeCache.get(cacheKey);
   if (cached !== undefined) return cached === null ? null : new Date(cached);
-  const requested = `${date}T${time}:00`;
   const naive = Date.parse(`${requested}Z`);
   try {
     const exact = getServiceDateOffsets(date, timeZone, naive)
-      .map((offset) => naive - offset)
+      .map((offset) => naive - offset + Number(milliseconds || "0"))
       .filter((instant: number) => {
         const parts = wallClockPartsAt(instant, timeZone);
         return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}` === requested;
@@ -106,6 +110,9 @@ export const calendarDateInTimeZone = (date: Date | string | number, timeZone: s
 export const oneTimeServiceInstant = (value: string | undefined, timeZone: string): Date | null => {
   if (!value) return null;
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) {
+    return serviceDateTimeInTimeZone(value.slice(0, 10), value.slice(11), timeZone);
+  }
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?$/.test(value)) {
     return serviceDateTimeInTimeZone(value.slice(0, 10), value.slice(11), timeZone);
   }
   if (!/(Z|[+-]\d{2}:\d{2})$/i.test(value)) return null;

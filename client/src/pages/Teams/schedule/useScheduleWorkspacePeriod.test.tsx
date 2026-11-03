@@ -70,3 +70,22 @@ test.each([
   act(() => result.current.selectRangePreset("nextMonth"));
   expect(result.current.periodRange).toEqual(next);
 });
+
+test("recalculates explicit calendar presets after a timezone change but preserves custom ranges", () => {
+  mockServerNow = "2026-11-01T01:30:00Z";
+  const { result, rerender } = renderHook(
+    ({ timeZone }: { timeZone: string }) => useScheduleWorkspacePeriod({ ...props, timeZone, services: [] }),
+    { initialProps: { timeZone: "America/New_York" } },
+  );
+  act(() => {
+    result.current.markExplicitPeriodSelection();
+    result.current.selectRangePreset("thisMonth");
+  });
+  expect(result.current.periodRange).toEqual({ start: "2026-10-01", end: "2026-10-31" });
+  rerender({ timeZone: "UTC" });
+  expect(result.current.periodRange).toEqual({ start: "2026-11-01", end: "2026-11-30" });
+
+  act(() => result.current.selectCustomRange({ startDate: "2027-02-03", endDate: "2027-02-07" }));
+  rerender({ timeZone: "America/Los_Angeles" });
+  expect(result.current.periodRange).toEqual({ start: "2027-02-03", end: "2027-02-07" });
+});

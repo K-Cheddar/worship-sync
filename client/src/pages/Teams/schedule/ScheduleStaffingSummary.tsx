@@ -53,11 +53,11 @@ const ScheduleStaffingSummary = ({
           </div>
 
           <div className="flex min-w-0 items-center gap-2">
-            {positionsOpen > 0 ? (
-              <CircleAlert className="size-4 shrink-0 text-amber-300" aria-hidden="true" />
+            {staffingStarted ? (positionsOpen > 0 ? (
+              <CircleAlert data-testid="open-position-icon" className="size-4 shrink-0 text-amber-300" aria-hidden="true" />
             ) : (
-              <CheckCircle2 className="size-4 shrink-0 text-emerald-300" aria-hidden="true" />
-            )}
+              <CheckCircle2 data-testid="completed-staffing-icon" className="size-4 shrink-0 text-emerald-300" aria-hidden="true" />
+            )) : null}
             <div className="min-w-0">
               <div className={`text-lg font-semibold leading-tight tabular-nums ${positionsOpen > 0 ? "text-amber-300" : "text-emerald-300"}`}>
                 {staffingStarted ? positionsOpen : "—"}
