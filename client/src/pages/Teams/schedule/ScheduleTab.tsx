@@ -7265,7 +7265,8 @@ const ScheduleTab = ({
                                               occurrence.occurrenceId,
                                             )}
                                           </div>
-                                        </th>                                        {scheduleColumns.map((column) => (
+                                        </th>
+                                        {scheduleColumns.map((column) => (
                                           <ScheduleGridCell
                                             key={scheduleGridCellKey(
                                               occurrence.occurrenceId,
@@ -7388,7 +7389,8 @@ const ScheduleTab = ({
                                                         occurrence.occurrenceId,
                                                       )}
                                                     </div>
-                                                  </th>                                                  {scheduleColumns.map((column) => (
+                                                  </th>
+                                                  {scheduleColumns.map((column) => (
                                                     <ScheduleGridCell
                                                       key={scheduleGridCellKey(
                                                         occurrence.occurrenceId,
