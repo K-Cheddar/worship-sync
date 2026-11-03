@@ -1,6 +1,6 @@
 import type { TeamPosition, TeamSchedule, TeamScheduleOccurrence, TeamScheduleSummary, TeamService } from "../../../api/authTypes";
 import { buildTeamSchedulePeriod } from "./teamSchedulePeriod";
-import { resolveScheduleWorkspace } from "./scheduleWorkspaceModel";
+import { getScheduleSendScope, resolveScheduleWorkspace } from "./scheduleWorkspaceModel";
 
 const positions: TeamPosition[] = [{ positionId: "camera", churchId: "church", teamId: "media", name: "Camera" }];
 const service = (serviceId: string, changes: Partial<TeamService> = {}): TeamService => ({
@@ -54,6 +54,28 @@ describe("resolveScheduleWorkspace", () => {
     expect(rows.find((row) => row.status === "saved")?.owner?.schedule).toBe(saved);
     expect(rows.find((row) => row.status === "virtual")).toMatchObject({ owner: null, reviewScheduleIds: [] });
     expect(JSON.stringify(saved)).toBe(before);
+  });
+
+  it("excludes only unsaved previews and current conflict rows from send scope", () => {
+    const savedService = service("saved");
+    const newService = service("new-service", { dateTimeISO: "2026-10-10T14:00:00.000Z" });
+    const savedOccurrence = occurrence(savedService);
+    const result = resolve([savedService, newService], [schedule("owner", [savedOccurrence])]);
+    const scope = getScheduleSendScope(result.rows, "owner");
+
+    expect(scope.servicePreviews.map((row) => row.serviceId)).toEqual(["new-service"]);
+    expect(scope.conflictPreviews).toEqual([]);
+    // A persisted occurrence stays in scope even when no volunteer is assigned.
+    expect(result.rows.find((row) => row.occurrence.serviceId === "saved")?.status).toBe("saved");
+
+    const duplicated = { ...savedOccurrence, occurrenceId: "legacy-saved-key" };
+    const conflictRows = resolve([savedService], [
+      schedule("owner", [savedOccurrence]),
+      schedule("second-owner", [duplicated]),
+    ]).rows;
+    expect(getScheduleSendScope(conflictRows, "owner").conflictPreviews.map((row) => row.serviceId)).toEqual(["saved"]);
+    expect(getScheduleSendScope(conflictRows, "second-owner").conflictPreviews.map((row) => row.serviceId)).toEqual(["saved"]);
+    expect(getScheduleSendScope(conflictRows, "unrelated").conflictPreviews).toEqual([]);
   });
 
   it("preserves combined membership, legacy assignment keys and saved staffing overrides", () => {

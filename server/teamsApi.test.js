@@ -18350,12 +18350,14 @@ test("November independent additions preserve populated combined schedules acros
   assert.deepEqual(after.occurrences.filter((o) => o.groupId), occurrences);
   const added = after.occurrences.find((o) => o.serviceId === "book-launch");
   assert.equal(result.payload.addedOccurrenceCount, 1);
+  assert.deepEqual(result.payload.addedOccurrenceIds, [added.occurrenceId]);
   assert.equal(added.startsAt, "2026-11-01T05:30:00.000Z");
   assert.equal(after.assignments[added.occurrenceId], undefined);
   const retry = await callHandler(authHandlers.ensureTeamScheduleForPeriod, { context, body });
   assert.equal(retry.statusCode, 200);
   assert.equal(retry.payload.updated, false);
   assert.equal(retry.payload.addedOccurrenceCount, 0);
+  assert.deepEqual(retry.payload.addedOccurrenceIds, []);
   assert.deepEqual(await getDoc(COLLECTIONS.teamSchedules, scheduleId), after);
   assert.equal((await queryDocs(COLLECTIONS.teamSchedules, [{ field: "churchId", value: context.churchId }])).filter((s) => s.teamId === teamId).length, 1);
 });
@@ -18483,6 +18485,97 @@ test("November standalone services cannot replace a saved combined schedule or i
     { field: "churchId", value: context.churchId },
   ])).filter((schedule) => schedule.teamId === teamId && !schedule.archivedAt);
   assert.deepEqual(activeSchedules.map(({ scheduleId: id }) => id), [scheduleId]);
+});
+
+test("November safe additions preserve historical grouping differences in a populated schedule", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("november_safe_addition_with_historical_group");
+  const { teamId } = await seedTeam(context, { teamName: "Media" });
+  await setDoc(COLLECTIONS.churches, context.churchId, { serviceTimeZone: "America/New_York" }, { merge: true });
+  const services = [
+    { serviceId: "worship", name: "Worship", reccurence: "weekly", dayOfWeek: 6, time: "10:00" },
+    { serviceId: "study", name: "Study", reccurence: "weekly", dayOfWeek: 6, time: "10:00" },
+    { serviceId: "power-up", name: "Power Up", reccurence: "one_time", dateTimeISO: "2026-11-11T13:00:00.000Z" },
+    { serviceId: "book-launch", name: "Book Launch", reccurence: "one_time", dateTimeISO: "2026-11-07T16:30" },
+  ];
+  seedChurchServiceTimesForServerTests({ churchId: context.churchId, services });
+  const groupRows = [7, 14, 21, 28].map((day) => {
+    const serviceDate = `2026-11-${String(day).padStart(2, "0")}`;
+    return {
+      occurrenceId: `group:sabbath@${serviceDate}`,
+      logicalOccurrenceId: `group:sabbath@${serviceDate}`,
+      groupId: "sabbath",
+      serviceId: "worship",
+      serviceIds: ["worship", "study"],
+      serviceDate,
+      name: "Worship & Study",
+      startsAt: `${serviceDate}T10:00:00.000Z`,
+    };
+  });
+  const savedPowerUp = {
+    occurrenceId: "power-up@2026-11-11T13:00:00.000Z",
+    serviceId: "power-up",
+    name: "Power Up",
+    startsAt: "2026-11-11T13:00:00.000Z",
+  };
+  const firstGroup = groupRows[0];
+  const preservedMaps = {
+    assignments: { [firstGroup.occurrenceId]: { "camera::0": { primaryMemberId: "member-avery" } } },
+    microphoneAssignments: { [firstGroup.occurrenceId]: { "camera::0": ["mic-saved"] } },
+    iemAssignments: { [firstGroup.occurrenceId]: { "camera::0": ["iem-saved"] } },
+    responses: { [firstGroup.occurrenceId]: { "camera::0": { memberId: "member-avery", response: "accepted" } } },
+    guests: [{ guestId: "saved-guest", name: "Saved guest" }],
+    additionalPositionSlots: { [firstGroup.occurrenceId]: ["camera::1"] },
+    optionalPositionSlots: { [firstGroup.occurrenceId]: ["camera::2"] },
+    published: true,
+    publishedAt: "2026-10-20T12:00:00.000Z",
+    sentAt: "2026-10-21T12:00:00.000Z",
+    notificationHistory: [{ id: "saved-notification" }],
+  };
+  const scheduleId = "historical-group-november";
+  await setDoc("teamSchedules", scheduleId, {
+    scheduleId,
+    churchId: context.churchId,
+    teamId,
+    name: "November 2026",
+    startDate: "2026-11-01",
+    endDate: "2026-11-30",
+    serviceIds: ["worship", "study", "power-up"],
+    occurrences: [...groupRows, savedPowerUp],
+    ...preservedMaps,
+  });
+  const bookLaunch = generateScheduleOccurrences({
+    services,
+    serviceIds: ["book-launch"],
+    startDate: "2026-11-01",
+    endDate: "2026-11-30",
+    timeZone: "America/New_York",
+  });
+  const response = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body: {
+      name: "November 2026",
+      teamId,
+      startDate: "2026-11-01",
+      endDate: "2026-11-30",
+      timeZone: "America/New_York",
+      operatorSelectedScheduleId: scheduleId,
+      serviceIds: ["power-up", "book-launch"],
+      occurrences: [savedPowerUp, ...bookLaunch],
+      visibleOccurrenceIds: [savedPowerUp.occurrenceId, ...bookLaunch.map(({ occurrenceId }) => occurrenceId)],
+    },
+  });
+  assert.equal(response.statusCode, 200, JSON.stringify(response.payload));
+  assert.equal(response.payload.schedule.scheduleId, scheduleId);
+  assert.equal(response.payload.addedOccurrenceCount, 1);
+  assert.deepEqual(response.payload.addedOccurrenceIds, [bookLaunch[0].occurrenceId]);
+  const after = await getDoc("teamSchedules", scheduleId);
+  assert.deepEqual(after.occurrences.filter((occurrence) => occurrence.groupId), groupRows);
+  for (const [key, value] of Object.entries(preservedMaps)) assert.deepEqual(after[key], value, key);
+  assert.equal(after.occurrences.some((occurrence) => occurrence.serviceId === "book-launch"), true);
+  assert.equal((await queryDocs(COLLECTIONS.teamSchedules, [
+    { field: "churchId", value: context.churchId },
+  ])).filter((schedule) => schedule.teamId === teamId).length, 1);
 });
 
 test("legacy timestamp occurrence IDs remain readable when a recurring service time changes", async (t) => {

@@ -19480,8 +19480,14 @@ export const createTeamsAuthHandlers = ({
             );
             const candidates = exact.length ? exact : periodCandidates;
             const operatorSelectedScheduleId = normalizeShortText(req.body?.operatorSelectedScheduleId, { max: 160 });
+            const operatorSelectedInRange = activeTeamSchedules.find((schedule) =>
+              schedule.scheduleId === operatorSelectedScheduleId &&
+              schedule.startDate && schedule.endDate &&
+              schedule.startDate <= payload.startDate && schedule.endDate >= payload.endDate,
+            );
             const canonicalCandidates = candidates.filter(isCanonicalPeriodSchedule);
             const selected = candidates.find((schedule) => schedule.scheduleId === operatorSelectedScheduleId) ||
+              operatorSelectedInRange ||
               [...candidates].sort((left, right) =>
                 Number(hasScheduleOperationalData(right)) - Number(hasScheduleOperationalData(left)) ||
                 Number(canonicalCandidates.includes(right)) - Number(canonicalCandidates.includes(left)) ||
@@ -19540,7 +19546,7 @@ export const createTeamsAuthHandlers = ({
               !isDeepStrictEqual(stored, nextOccurrences) ||
               !isDeepStrictEqual(existing.microphoneAssignments || {}, microphoneAssignments) ||
               !isDeepStrictEqual(existing.iemAssignments || {}, iemAssignments);
-            if (!changed) return { schedule: existing, updated: false, addedOccurrenceCount: 0 };
+            if (!changed) return { schedule: existing, updated: false, addedOccurrenceCount: 0, addedOccurrenceIds: [] };
             const now = nowIso();
             return {
               schedule: {
@@ -19554,6 +19560,7 @@ export const createTeamsAuthHandlers = ({
               },
               updated: true,
               addedOccurrenceCount: missing.length,
+              addedOccurrenceIds: missing.map((occurrence) => occurrence.occurrenceId),
             };
           };
           const scheduleId = generatedPeriodScheduleId(generatedPeriodKey);
@@ -19615,7 +19622,7 @@ export const createTeamsAuthHandlers = ({
                 db,
               });
               transaction.create(ref, document);
-              return { schedule: document, created: true, updated: false };
+              return { schedule: document, created: true, updated: false, addedOccurrenceCount: 0, addedOccurrenceIds: [] };
             });
           }
 
@@ -19671,7 +19678,7 @@ export const createTeamsAuthHandlers = ({
                 timeZone,
               });
               await setDoc(COLLECTIONS.teamSchedules, scheduleId, document, { merge: false });
-              return { schedule: document, created: true, updated: false };
+              return { schedule: document, created: true, updated: false, addedOccurrenceCount: 0, addedOccurrenceIds: [] };
             }),
           );
         };

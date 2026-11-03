@@ -2,6 +2,6 @@
   "id": "schedule-service-change-review-2026-11-03",
   "date": "2026-11-03",
   "type": "improved",
-  "title": "Clearer service changes in schedules",
-  "description": "New services appear alongside existing assignments. When service grouping or ownership needs review, compare the saved and current services while keeping your schedule visible."
+  "title": "Simpler service additions in schedules",
+  "description": "New services are reconciled into existing schedules with a dismissible date-and-time notice. Safe additions appear beside saved assignments while unresolved service conflicts remain protected."
 }

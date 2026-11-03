@@ -262,6 +262,44 @@ export const mergeCurrentScheduleOccurrences = (
   return { occurrences, ambiguous };
 };
 
+/**
+ * Keep period reconciliation scoped to rows with a unique current identity and
+ * no owner outside the target schedule. This lets the server add safe rows
+ * while preserving unrelated historical rows that need separate review.
+ */
+export const filterSafeScheduleReconciliationOccurrences = ({
+  storedOccurrences,
+  currentOccurrences,
+  schedules,
+  churchId,
+  teamId,
+  scheduleId,
+  timeZone = "UTC",
+}: {
+  storedOccurrences: TeamScheduleOccurrence[];
+  currentOccurrences: TeamScheduleOccurrence[];
+  schedules: TeamScheduleSummary[];
+  churchId: string;
+  teamId: string;
+  scheduleId?: string;
+  timeZone?: string;
+}) => currentOccurrences.filter((occurrence) => {
+  const occurrenceId = String(occurrence.occurrenceId || "");
+  if (!occurrenceId) return false;
+  if (matchOccurrencesByIdentity(currentOccurrences, [occurrence], timeZone)
+    .ambiguousCurrentIds.has(occurrenceId)) return false;
+  if (matchOccurrencesByIdentity(storedOccurrences, [occurrence], timeZone)
+    .ambiguousCurrentIds.has(occurrenceId)) return false;
+  return findScheduleOccurrenceOwnershipConflicts({
+    schedules,
+    churchId,
+    teamId,
+    occurrences: [occurrence],
+    excludeScheduleId: scheduleId,
+    timeZone,
+  }).length === 0;
+});
+
 const isCanonicalGeneratedSchedule = (schedule: TeamScheduleSummary) =>
   schedule.source === "generated-period" &&
   Boolean(schedule.generatedPeriodKey) &&

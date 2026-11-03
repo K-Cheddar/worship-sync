@@ -4,6 +4,7 @@ import {
   findOverlappingPeriodSchedules,
   findReusablePeriodSchedule,
   findScheduleOccurrenceOwnershipConflicts,
+  filterSafeScheduleReconciliationOccurrences,
   mergeCurrentScheduleOccurrences,
   rangeFromPreset,
   resolveDisplayedPeriodRange,
@@ -52,6 +53,41 @@ it("previews unrelated additions while preserving saved grouping conflicts and m
   expect(result.occurrences).toEqual(expect.arrayContaining([combined, added]));
   expect(result.occurrences).toHaveLength(2);
   expect(result.occurrences).not.toContainEqual(occurrence);
+});
+
+it("keeps unrelated additions eligible while omitting historical grouping mismatches from reconciliation", () => {
+  const worship = { ...occurrence, occurrenceId: "worship@2026-10-03", serviceId: "worship", name: "Worship" };
+  const study = { ...occurrence, occurrenceId: "study@2026-10-03", serviceId: "study", name: "Study" };
+  const savedCombined = {
+    ...occurrence,
+    occurrenceId: "group:sabbath@2026-10-03",
+    groupId: "sabbath",
+    serviceId: "worship",
+    serviceIds: ["worship", "study"],
+    name: "Worship & Study",
+  };
+  const bookLaunch = { ...occurrence, occurrenceId: "book-launch@2026-10-03", serviceId: "book-launch", name: "Book Launch" };
+  expect(filterSafeScheduleReconciliationOccurrences({
+    storedOccurrences: [savedCombined],
+    currentOccurrences: [worship, study, bookLaunch],
+    schedules: [schedule({ occurrences: [savedCombined] })],
+    churchId: target.churchId,
+    teamId: target.teamId,
+    scheduleId: "schedule-1",
+  })).toEqual([bookLaunch]);
+});
+
+it("does not reconcile a safe preview already owned by another schedule", () => {
+  const added = { ...occurrence, occurrenceId: "book-launch@2026-10-03", serviceId: "book-launch", name: "Book Launch" };
+  const currentOwner = schedule({ scheduleId: "owner-b", occurrences: [added] });
+  expect(filterSafeScheduleReconciliationOccurrences({
+    storedOccurrences: target.occurrences,
+    currentOccurrences: [occurrence, added],
+    schedules: [schedule(), currentOwner],
+    churchId: target.churchId,
+    teamId: target.teamId,
+    scheduleId: "schedule-1",
+  })).toEqual([occurrence]);
 });
 
 it("does not preview duplicate generated identities beside unrelated additions", () => {

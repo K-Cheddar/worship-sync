@@ -165,6 +165,23 @@ jest.mock("../../api/auth", () => ({
   getTeamAvailabilityManagementData: jest.fn().mockResolvedValue({ success: true, members: [] }),
   ensureTeamScheduleForPeriod: jest.fn(),
   sendTeamSchedule: jest.fn(),
+  getScheduleInitialSmsRecipients: jest.fn().mockResolvedValue({
+    success: true,
+    historyComplete: true,
+    dispatchEnabled: false,
+    dispatchReadinessMessage: "Schedule text messages aren't available yet. Check back later.",
+    privacySafe: true,
+    hasPreparedSelection: false,
+    scheduleId: "schedule-test",
+    published: true,
+    batchId: "",
+    selectedMemberIds: [],
+    recipients: [],
+    summary: { assigned: 0, total: 0, eligible: 0, alreadySent: 0, failed: 0, uncertain: 0, missingConsent: 0, optedOut: 0, missingPhone: 0, ineligible: 0 },
+  }),
+  getAvailabilityNotificationBatch: jest.fn(),
+  prepareScheduleInitialSmsBatch: jest.fn(),
+  dispatchAvailabilityNotificationBatch: jest.fn(),
   getNotificationIntents: jest.fn().mockResolvedValue({ success: true, intents: [], nextCursor: "", limit: 20 }),
   listServicePlans: jest.fn(),
   getServicePlanMicrophones: jest.fn(),
@@ -1936,9 +1953,10 @@ describe("Teams", () => {
     await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(persisted ? 1 : 0));
     await screen.findByText(persisted ? message : "Couldn't save this assignment. Your choice is still here. Retry the save when ready.");
     expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalled();
+    expect(screen.queryByRole("status", { name: "New service addition" })).not.toBeInTheDocument();
   });
 
-  it("keeps populated saved rows and unrelated additions visible during grouping review", async () => {
+  it("reconciles an unrelated service beside historical Sabbath grouping and shows one dismissible notice", async () => {
     jest.useFakeTimers({ advanceTimers: true });
     jest.setSystemTime(new Date("2026-11-03T12:00:00.000Z"));
     const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
@@ -1958,36 +1976,69 @@ describe("Teams", () => {
       { ...mockSharedServices[0], id: existing.serviceId, name: existing.name, dateTimeISO: existing.startsAt, positionRequirements: requirements },
       { ...mockSharedServices[0], id: "book-launch", name: "Book Launch", dateTimeISO: "2026-11-07T21:30:00.000Z", positionRequirements: requirements },
     ] } } } };
-    const emptyAlternative: TeamSchedule = {
-      ...saved, scheduleId: "generated_empty-november", source: "generated-period", generatedPeriodKey: "empty-november",
-      startDate: "2026-11-01", endDate: "2026-11-30",
-      occurrences: [], assignments: {}, serviceIds: [], microphoneAssignments: {},
-    };
-    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({ ...scheduleBootstrap, schedules: [saved, emptyAlternative] }));
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({ ...scheduleBootstrap, schedules: [saved] }));
+    let reconciledSchedule = saved;
+    mockEnsureTeamScheduleForPeriod.mockImplementation(async (_churchId, body) => {
+      const occurrences = body.occurrences || [];
+      expect(occurrences.map((occurrence) => occurrence.serviceId)).not.toContain("worship");
+      expect(occurrences.map((occurrence) => occurrence.serviceId)).not.toContain("study");
+      const additions = occurrences.filter((occurrence) => occurrence.serviceId === "book-launch");
+      expect(additions).toHaveLength(1);
+      reconciledSchedule = {
+        ...saved,
+        serviceIds: [...saved.serviceIds, "book-launch"],
+        occurrences: [...(saved.occurrences || []), ...additions],
+      };
+      return {
+        success: true,
+        created: false,
+        updated: true,
+        addedOccurrenceCount: additions.length,
+        addedOccurrenceIds: additions.map((occurrence) => occurrence.occurrenceId),
+        schedule: reconciledSchedule,
+      };
+    });
     mockUpdateTeamScheduleAssignment.mockResolvedValue({ success: true, schedule: saved });
-    renderTeams("/teams-and-services/schedules");
+    mockSendTeamSchedule.mockResolvedValue({ success: true, sentAt: "2026-11-03T18:00:00.000Z", notified: 1, alreadyNotified: 0, unreachableMemberIds: [] });
+    const view = renderTeams("/teams-and-services/schedules");
     expect(await screen.findByRole("button", { name: /Worship & Study Vocal, Avery/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Book Launch Vocal, Empty/i })).toBeInTheDocument();
-    expect(mockEnsureTeamScheduleForPeriod).not.toHaveBeenCalled();
+    await waitFor(() => expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1));
+    expect(mockEnsureTeamScheduleForPeriod.mock.calls[0]?.[1]?.operatorSelectedScheduleId).toBe(saved.scheduleId);
     expect(screen.getByText("Nov 1, 2026 – Nov 30, 2026")).toBeInTheDocument();
-    await user.click(screen.getByText("Compare service changes"));
-    const comparison = screen.getByRole("region", { name: "Service changes" });
-    expect(within(comparison).getAllByText("Grouping changed").length).toBeGreaterThan(0);
-    expect(within(comparison).getAllByText(/Worship & Study/).length).toBeGreaterThan(0);
-    expect(within(comparison).getAllByText(/Worship/).length).toBeGreaterThan(0);
+    const additionNotice = screen.getByRole("status", { name: "New service addition" });
+    expect(screen.getAllByRole("status", { name: "New service addition" })).toHaveLength(1);
+    expect(additionNotice).toHaveTextContent("New service added");
+    expect(additionNotice).toHaveTextContent("Book Launch — Sat, Nov 7, 2026, 4:30 PM EST");
+    expect(additionNotice).toHaveTextContent("Added to your November 2026 schedule.");
+    expect(screen.queryByText("Compare service changes")).not.toBeInTheDocument();
+    expect(screen.queryByText("Grouping changed")).not.toBeInTheDocument();
+    expect(saved.assignments[combined.occurrenceId]).toEqual({ "position-vocal::0": { primaryMemberId: "member-avery" } });
+    expect(saved.microphoneAssignments?.[combined.occurrenceId]).toEqual({ "position-vocal::0": ["mic-saved"] });
+    await user.click(screen.getByRole("button", { name: /Send schedule/i }));
+    const initialEmailScope = screen.getByRole("status", { name: "Schedule message scope" });
+    expect(initialEmailScope).toHaveTextContent(/Only assignments saved in this schedule are included/);
+    expect(initialEmailScope).toHaveTextContent(/Sending won’t reconcile services, create assignments, or resolve conflicts/);
+    expect(initialEmailScope).toHaveTextContent("Saved assignments remain eligible to send.");
+    const excludedDates = screen.getByRole("list", { name: "Service dates not included" });
+    expect(excludedDates).not.toHaveTextContent("Book Launch");
+    expect(excludedDates).toHaveTextContent("Worship");
+    expect(excludedDates).toHaveTextContent("Study");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("button", { name: "Dismiss service addition notice" }));
+    expect(screen.queryByRole("status", { name: "New service addition" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Power Up Vocal, Empty/i }));
     await user.click(await screen.findByRole("button", { name: /Assign Morgan/i }));
     await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(1));
     expect(mockUpdateTeamScheduleAssignment.mock.calls[0][1]).toBe(saved.scheduleId);
-    expect(mockEnsureTeamScheduleForPeriod).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "View saved version" }));
-    expect(screen.queryByRole("button", { name: /Book Launch Vocal, Empty/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Worship & Study Vocal, Avery/i })).toBeInTheDocument();
-    expect(screen.getByText("Oct 1, 2026 – Dec 31, 2026")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Return to current schedule" }));
-    expect(await screen.findByRole("button", { name: /Book Launch Vocal, Empty/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Worship & Study Vocal, Avery/i })).toBeInTheDocument();
-    expect(screen.getByText("Nov 1, 2026 – Nov 30, 2026")).toBeInTheDocument();
+    expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1);
+    view.unmount();
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({ ...scheduleBootstrap, schedules: [reconciledSchedule] }));
+    renderTeams("/teams-and-services/schedules");
+    await screen.findByRole("button", { name: /Book Launch Vocal, Empty/i });
+    await waitFor(() => expect(mockGetTeamsBootstrap).toHaveBeenCalled());
+    expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("status", { name: "New service addition" })).not.toBeInTheDocument();
   });
 
   it("compares duplicate ownership and permits editing an unrelated uniquely owned row", async () => {
@@ -2009,18 +2060,24 @@ describe("Teams", () => {
     })) } } } };
     mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({ ...scheduleBootstrap, schedules: [saved, other] }));
     mockUpdateTeamScheduleAssignment.mockResolvedValue({ success: true, schedule: saved });
+    mockSendTeamSchedule.mockResolvedValue({ success: true, sentAt: "2026-11-03T18:00:00.000Z", notified: 1, alreadyNotified: 0, unreachableMemberIds: [] });
     mockEnsureTeamScheduleForPeriod.mockRejectedValue(new Error("Resolve duplicate ownership before adding services."));
     renderTeams("/teams-and-services/schedules");
     expect(await screen.findByRole("button", { name: /Worship Vocal, Avery/i })).toBeInTheDocument();
-    await user.click(screen.getByText("Compare service changes"));
-    const comparison = screen.getByRole("region", { name: "Service changes" });
-    expect(within(comparison).getByText("Duplicate ownership")).toBeInTheDocument();
-    expect(within(comparison).getByRole("button", { name: "View saved version: November A (owner-a)" })).toBeInTheDocument();
-    expect(within(comparison).getByRole("button", { name: "View saved version: November B (owner-b)" })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(/Worship are owned by multiple schedules/i);
+    expect(screen.getByRole("button", { name: "Manage schedules" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Power Up Vocal, Empty/i }));
     await user.click(await screen.findByRole("button", { name: /Assign Morgan/i }));
     await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(1));
     expect(mockUpdateTeamScheduleAssignment.mock.calls[0][1]).toBe(saved.scheduleId);
+    expect(mockEnsureTeamScheduleForPeriod).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: /Send schedule/i }));
+    const sendScope = screen.getByRole("status", { name: "Schedule message scope" });
+    expect(sendScope).toHaveTextContent(/current service preview/i);
+    expect(sendScope).toHaveTextContent("Saved assignments remain eligible to send.");
+    expect(screen.getByRole("list", { name: "Service dates not included" })).toHaveTextContent("Worship");
+    await user.click(screen.getByRole("button", { name: "Yes, send email" }));
+    await waitFor(() => expect(mockSendTeamSchedule).toHaveBeenCalledWith("church-1", saved.scheduleId));
     expect(mockEnsureTeamScheduleForPeriod).not.toHaveBeenCalled();
   });
 
@@ -2095,7 +2152,14 @@ describe("Teams", () => {
         serviceIds: body.serviceIds,
         occurrences: [...savedOccurrences, ...additional].sort((left, right) => left.startsAt.localeCompare(right.startsAt)),
       };
-      return { success: true, created: false, updated: true, schedule: reconciledSchedule };
+      return {
+        success: true,
+        created: false,
+        updated: true,
+        addedOccurrenceCount: additional.length,
+        addedOccurrenceIds: additional.map((occurrence) => occurrence.occurrenceId),
+        schedule: reconciledSchedule,
+      };
     });
     mockUpdateTeamScheduleAssignment.mockImplementation(async (_churchId, scheduleId, body) => {
       const assignments = { ...(reconciledSchedule?.assignments || {}) };
@@ -2124,9 +2188,13 @@ describe("Teams", () => {
         expect.objectContaining({ serviceId: "media-special-b" }),
       ]),
     });
-    expect(mockEnsureTeamScheduleForPeriod.mock.calls[0][1]).not.toHaveProperty("operatorSelectedScheduleId");
+    expect(mockEnsureTeamScheduleForPeriod.mock.calls[0][1].operatorSelectedScheduleId).toBe(savedSchedule.scheduleId);
     expect(await screen.findByRole("button", { name: /Sabbath Service Camera, Morgan/i })).toBeInTheDocument();
-    expect(await screen.findByText("2 new services added to October 2026. Existing assignments were preserved.")).toBeInTheDocument();
+    const additionNotice = screen.getByRole("status", { name: "New service addition" });
+    expect(additionNotice).toHaveTextContent("2 new services added");
+    expect(screen.getAllByRole("status", { name: "New service addition" })).toHaveLength(1);
+    expect(additionNotice).toHaveTextContent("Media Special 1");
+    expect(additionNotice).toHaveTextContent("Media Special 2");
     expect(screen.getAllByRole("button", { name: /Camera, (?:Morgan|Empty)/i })).toHaveLength(7);
     expect(screen.getByRole("button", { name: /Media Special 1 Camera, Empty/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Media Special 2 Camera, Empty/i })).toBeInTheDocument();
@@ -2142,7 +2210,68 @@ describe("Teams", () => {
     expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1);
   });
 
-  it.each([false, true])("does not repeat an addition announcement for already-added rows on a stale client (other changes: %s)", async (updated) => {
+  it("reports recurring additions as occurrences instead of service definitions", async () => {
+    jest.useFakeTimers({ advanceTimers: true });
+    jest.setSystemTime(new Date("2026-10-02T12:00:00.000Z"));
+    setServerTimeOffset(36 * 60 * 60 * 1000);
+    const existingServiceId = "sabbath-service-count";
+    const newServiceId = "midweek-gathering";
+    const positionId = "position-camera-count";
+    const savedOccurrences = octoberServiceOccurrences(existingServiceId, "Sabbath Service", positionId, [3, 10, 17, 24, 31]);
+    const savedSchedule: TeamSchedule = {
+      ...scheduleBootstrap.schedules[0],
+      scheduleId: "saved-october-count",
+      name: "October 2026",
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      serviceIds: [existingServiceId],
+      occurrences: savedOccurrences,
+      assignments: {},
+    };
+    mockState = { undoable: { present: { serviceTimes: { list: [
+      octoberSaturdayService(existingServiceId, positionId),
+      {
+        ...octoberSaturdayService(newServiceId, positionId),
+        name: "Midweek Gathering",
+        dayOfWeek: 2,
+      },
+    ] } } } };
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...scheduleBootstrap,
+      positions: [{ positionId, churchId: "church-1", teamId: "team-main", name: "Camera" }],
+      schedules: [savedSchedule],
+    }));
+    mockEnsureTeamScheduleForPeriod.mockImplementation(async (_churchId, body) => {
+      const additions = (body.occurrences || []).filter((occurrence) => occurrence.serviceId === newServiceId);
+      return {
+        success: true,
+        created: false,
+        updated: true,
+        addedOccurrenceCount: 4,
+        addedOccurrenceIds: additions.map((occurrence) => occurrence.occurrenceId),
+        schedule: {
+          ...savedSchedule,
+          serviceIds: body.serviceIds,
+          occurrences: [...savedOccurrences, ...additions],
+        },
+      };
+    });
+
+    renderTeams();
+    await waitFor(() => expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1));
+    const generated = mockEnsureTeamScheduleForPeriod.mock.calls[0]?.[1]?.occurrences || [];
+    expect(generated.filter((occurrence) => occurrence.serviceId === newServiceId)).toHaveLength(4);
+    const additionNotice = screen.getByRole("status", { name: "New service addition" });
+    expect(additionNotice).toHaveTextContent("New service added");
+    expect(additionNotice.querySelectorAll("li")).toHaveLength(1);
+    expect(additionNotice).toHaveTextContent("Midweek Gathering — 4 occurrences");
+  });
+
+  it.each([
+    { updated: false, addedOccurrenceCount: 0, scenario: "no-op retry" },
+    { updated: true, addedOccurrenceCount: 0, scenario: "unrelated metadata update" },
+    { updated: true, addedOccurrenceCount: undefined, scenario: "missing server count" },
+  ])("does not repeat an addition announcement for already-added rows on a stale client ($scenario)", async ({ updated, addedOccurrenceCount }) => {
     jest.useFakeTimers({ advanceTimers: true });
     jest.setSystemTime(new Date("2026-10-02T12:00:00.000Z"));
     setServerTimeOffset(36 * 60 * 60 * 1000);
@@ -2182,7 +2311,7 @@ describe("Teams", () => {
       success: true,
       created: false,
       updated,
-      addedOccurrenceCount: 0,
+      ...(addedOccurrenceCount !== undefined ? { addedOccurrenceCount } : {}),
       schedule: { ...savedSchedule, occurrences: [...savedOccurrences, alreadyAdded], serviceIds: [serviceId, alreadyAdded.serviceId] },
     }));
 
@@ -2190,7 +2319,7 @@ describe("Teams", () => {
     await screen.findByRole("button", { name: /Sabbath Service on Oct 10/i });
     await waitFor(() => expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole("button", { name: /Sabbath Service on Oct 10/i })).toBeInTheDocument();
-    expect(screen.queryByText(/services? added to October/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "New service addition" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Already added Camera, Empty/i })).toBeInTheDocument();
     expect(screen.queryByText(/Updating this schedule with newly available services/i)).not.toBeInTheDocument();
   });
@@ -5431,6 +5560,7 @@ describe("Teams", () => {
     await waitForScheduleGrid();
     await user.click(screen.getByRole("button", { name: /Send schedule/i }));
     expect(await screen.findByText(/Email 1 person on this schedule\?/i)).toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "Schedule message scope" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(mockSendTeamSchedule).not.toHaveBeenCalled();
 
