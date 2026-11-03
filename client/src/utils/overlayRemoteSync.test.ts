@@ -37,6 +37,7 @@ function makeState(overlay: {
           isOverlayLoading: false,
           hasPendingUpdate: overlay.hasPendingUpdate,
           pendingDraftOverlayId: overlay.pendingDraftOverlayId ?? null,
+          pendingDraftId: null,
           baseOverlay: overlay.baseOverlay,
           pendingRemoteOverlay: overlay.pendingRemoteOverlay,
           hasRemoteUpdate: overlay.hasRemoteUpdate,

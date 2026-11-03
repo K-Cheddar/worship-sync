@@ -1032,6 +1032,115 @@ describe("CurrentServiceViewer", () => {
     expect(getServicePlanViewer).toHaveBeenCalledTimes(3);
   });
 
+  it("clears an obsolete public snapshot when a refreshed plan has no replacement snapshot", async () => {
+    jest.spyOn(Date, "now").mockReturnValue(Date.parse("2026-09-13T12:00:00.000Z"));
+    const obsoleteSnapshot = {
+      ...buildServicePlanFlowSnapshot({
+        plan,
+        startsAt: "2026-09-13T13:00:00.000Z",
+        churchName: "Obsolete Published Church",
+      }),
+    };
+    const updatedPlan = { ...plan, name: "Updated live service" };
+    jest.mocked(getServicePlanViewer)
+      .mockResolvedValueOnce({ success: true, plan, snapshot: obsoleteSnapshot })
+      .mockResolvedValueOnce({ success: true, plan: updatedPlan, snapshot: null });
+
+    renderViewer([morningService]);
+    expect(await screen.findByText("Obsolete Published Church")).toBeInTheDocument();
+    const onMessage = jest.mocked(useServicePlanLiveSync).mock.calls[0]?.[1];
+    act(() => onMessage?.({ type: "service-plan-updated", planKey: plan.planKey }));
+
+    expect(await screen.findByRole("heading", { name: "Updated live service" })).toBeInTheDocument();
+    expect(screen.queryByText("Obsolete Published Church")).not.toBeInTheDocument();
+  });
+
+  it("does not invalidate the initial request when the stream first connects", async () => {
+    jest.spyOn(Date, "now").mockReturnValue(Date.parse("2026-09-13T12:00:00.000Z"));
+    let resolveInitial: ((value: { success: true; plan: ServicePlan; snapshot: null }) => void) | undefined;
+    jest.mocked(getServicePlanViewer).mockReturnValueOnce(new Promise((resolve) => {
+      resolveInitial = resolve;
+    }));
+
+    renderViewer([morningService]);
+    expect(getServicePlanViewer).toHaveBeenCalledTimes(1);
+    const onMessage = jest.mocked(useServicePlanLiveSync).mock.calls[0]?.[1];
+    act(() => onMessage?.({ type: "connected", churchId: "church-1" }));
+    expect(getServicePlanViewer).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveInitial?.({ success: true, plan, snapshot: null });
+      await Promise.resolve();
+    });
+    expect(await screen.findByRole("heading", { name: "Sunday Service" })).toBeInTheDocument();
+    expect(getServicePlanViewer).toHaveBeenCalledTimes(1);
+  });
+
+  it("evicts a removed non-active plan from the viewer cache", async () => {
+    jest.spyOn(Date, "now").mockReturnValue(Date.parse("2026-09-13T12:00:00.000Z"));
+    let resolveRemovedPlan: ((value: { success: true; plan: null; snapshot: null }) => void) | undefined;
+    const secondPlan = { ...plan, planKey: "svc-2@2026-09-14", serviceId: "svc-2", name: "Tomorrow Service" };
+    jest.mocked(getServicePlanViewer).mockImplementation((_churchId, planKey) => {
+      if (planKey === secondPlan.planKey) return Promise.resolve({ success: true, plan: secondPlan, snapshot: null });
+      if (jest.mocked(getServicePlanViewer).mock.calls.length >= 3) return new Promise((resolve) => { resolveRemovedPlan = resolve; });
+      return Promise.resolve({ success: true, plan, snapshot: null });
+    });
+    const user = userEvent.setup();
+    renderViewer([morningService, tomorrowService]);
+    expect(await screen.findByRole("heading", { name: "Sunday Service" })).toBeInTheDocument();
+    await user.click(screen.getByRole("combobox", { name: /Choose a service/ }));
+    await user.click(await screen.findByRole("option", { name: /svc-2/ }));
+    expect(await screen.findByRole("heading", { name: "Tomorrow Service" })).toBeInTheDocument();
+
+    const onMessage = jest.mocked(useServicePlanLiveSync).mock.calls[0]?.[1];
+    act(() => onMessage?.({ type: "service-plan-removed", planKey: plan.planKey }));
+    await user.click(screen.getByRole("button", { name: /return to current service/i }));
+    await waitFor(() => expect(getServicePlanViewer).toHaveBeenCalledTimes(3));
+    expect(screen.queryByRole("heading", { name: "Sunday Service" })).not.toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Loading service" })).toBeInTheDocument();
+
+    await act(async () => {
+      resolveRemovedPlan?.({ success: true, plan: null, snapshot: null });
+      await Promise.resolve();
+    });
+    expect(await screen.findByText("No Service Plan yet")).toBeInTheDocument();
+  });
+
+  it("isolates loaded viewer plans and team details when the authenticated user changes", async () => {
+    jest.spyOn(Date, "now").mockReturnValue(Date.parse("2026-09-13T12:00:00.000Z"));
+    let resolveSecondUser: ((value: { success: true; plan: ServicePlan; snapshot: PublicServiceFlowSnapshot }) => void) | undefined;
+    jest.mocked(getServicePlanViewer)
+      .mockResolvedValueOnce({ success: true, plan, snapshot: buildDetailedSnapshot(plan, "Avery User One") })
+      .mockReturnValueOnce(new Promise((resolve) => { resolveSecondUser = resolve; }));
+    store.dispatch(initiateServices([morningService]));
+    const renderForUser = (userId: string) => {
+      const context = createMockGlobalContext({
+        churchId: "church-1",
+        churchName: "Test Church",
+        canViewServices: true,
+        canViewTeams: true,
+        sessionKind: "human",
+        userId,
+      });
+      return <Provider store={store}>
+        <GlobalInfoContext.Provider value={context as ContextType<typeof GlobalInfoContext>}>
+          <MemoryRouter><CurrentServiceViewer /></MemoryRouter>
+        </GlobalInfoContext.Provider>
+      </Provider>;
+    };
+    const { rerender } = render(renderForUser("user-one"));
+    expect(await screen.findByText("Avery User One")).toBeInTheDocument();
+
+    rerender(renderForUser("user-two"));
+    expect(screen.queryByText("Avery User One")).not.toBeInTheDocument();
+    expect(getServicePlanViewer).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      resolveSecondUser?.({ success: true, plan, snapshot: buildDetailedSnapshot(plan, "Bryn User Two") });
+      await Promise.resolve();
+    });
+    expect(await screen.findByText("Bryn User Two")).toBeInTheDocument();
+  });
+
   it("reconciles the active plan after the Services stream connects or reconnects", async () => {
     const refreshedPlan = { ...plan, name: "Reconnected service" };
     jest

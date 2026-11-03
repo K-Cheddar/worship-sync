@@ -4238,6 +4238,7 @@ const rootReducer: Reducer = (state: RootState, action: OutlineDatabaseAction) =
     itemLists: { ...present.itemLists, contentDatabaseKey: databaseKey },
     itemList: adoptingUnselectedDatabase ? { ...present.itemList, outlineOwnerKey: ownerKey } : itemListSlice.reducer(present.itemList, activate),
     overlays: adoptingUnselectedDatabase ? { ...present.overlays, outlineOwnerKey: ownerKey } : overlaysSlice.reducer(present.overlays, activate),
+    overlay: overlaySlice.reducer(present.overlay, activate),
   };
   return {
     ...next,

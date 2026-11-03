@@ -1104,6 +1104,8 @@ export type VideoBackgroundPlaybackCue = {
   loop?: boolean;
   /** Policy update for cue-less playback; do not apply a transport clock. */
   loopOnly?: boolean;
+  /** True when a loop-only cue was sampled from a transmitting output's live playhead. */
+  hasLiveClock?: boolean;
   atServerMs: number;
   /** Bumped on every send so live players can re-apply the same position. */
   generation: number;

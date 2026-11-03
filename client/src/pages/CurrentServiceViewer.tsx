@@ -277,6 +277,8 @@ type ViewerPlanCacheEntry = {
 
 const useCurrentServiceViewerData = (
   churchId: string,
+  userId: string,
+  sessionKind: string,
   canViewServices: boolean,
   canViewTeams: boolean,
   requiresDetailedSnapshot: boolean,
@@ -284,6 +286,8 @@ const useCurrentServiceViewerData = (
 ): ViewerData => {
   const scopeKey = JSON.stringify([
     churchId,
+    userId,
+    sessionKind,
     canViewServices,
     canViewTeams,
     requiresDetailedSnapshot,
@@ -381,7 +385,7 @@ const useCurrentServiceViewerData = (
           });
           return;
         }
-        const publicSnapshot = response.snapshot ?? previousSnapshot;
+        const publicSnapshot = response.snapshot ?? null;
         planCacheRef.current.set(activePlanKey, {
           plan: response.plan,
           publicSnapshot,
@@ -449,16 +453,21 @@ const useCurrentServiceViewerData = (
   const handleStreamEvent = useCallback(
     (event: ServicePlanStreamEvent) => {
       if (event.type === "connected") {
+        const inFlight = refreshInFlightRef.current;
+        if (inFlight?.churchId === churchId && inFlight.planKey === activePlanKey) return;
         void refresh({ force: true, preserveLoadedPlan: true });
         return;
       }
       if (isServicePlanInvalidationEvent(event)) {
+        if (event.type === "service-plan-removed") {
+          planCacheRef.current.delete(event.planKey);
+        }
         if (event.planKey === activePlanKeyRef.current) {
           void refresh({ force: true, preserveLoadedPlan: true });
         }
       }
     },
-    [refresh],
+    [activePlanKey, churchId, refresh],
   );
 
   const { connectionState: liveConnectionState } = useServicePlanLiveSync(
@@ -656,6 +665,7 @@ const CurrentServiceViewer = () => {
     canViewServices = false,
     canViewTeams = false,
     sessionKind,
+    userId = "",
     churchId = "",
     churchName = "",
     churchBranding,
@@ -671,6 +681,8 @@ const CurrentServiceViewer = () => {
     canViewTeams || sessionKind === "workstation";
   const data = useCurrentServiceViewerData(
     churchId,
+    userId,
+    sessionKind || "",
     canViewServices,
     canViewTeams,
     requiresDetailedSnapshot,

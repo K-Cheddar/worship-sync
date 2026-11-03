@@ -93,7 +93,12 @@ const VideoBackgroundControls = ({
   // Live cues carry a timestamp rather than a ticking playhead, so the clock
   // has to advance itself. Off-air the preview element reports its own
   // playhead and this timer would only cost redundant renders.
-  const liveCue = syncLive && !syncedCue?.loopOnly ? syncedCue : undefined;
+  // A loop-only cue still carries the live clock sampled before the policy
+  // change. Keep advancing that timestamped position so a later Pause does not
+  // fall back to the controller preview's potentially stale playhead.
+  const liveCue = syncLive && (!syncedCue?.loopOnly || syncedCue.hasLiveClock)
+    ? syncedCue
+    : undefined;
 
   useEffect(() => {
     if (!liveCue || liveCue.paused || isScrubbing) return;
@@ -278,6 +283,7 @@ const VideoBackgroundControls = ({
                 // Without duration we cannot wrap the live clock. Let each
                 // output keep its actual playhead, just as for cue-less sends.
                 loopOnly: liveCue && duration > 0 ? undefined : true,
+                hasLiveClock: Boolean(liveCue),
               }),
               outputIds: syncOutputIds,
             }));

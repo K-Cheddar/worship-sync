@@ -4,6 +4,8 @@ import { OverlayInfo } from "../types";
 import { normalizeOverlayForSync } from "../utils/overlayUtils";
 
 export const OVERLAY_DRAFT_DEBOUNCE_MS = 300;
+let nextOverlayDraftId = 0;
+const createOverlayDraftId = () => `overlay-draft-${++nextOverlayDraftId}`;
 
 /** Merge draft over latest Redux overlay so commits never drop fields (fixes stream / quick-link gaps). */
 function buildCommitPayload(
@@ -29,7 +31,7 @@ function buildCommitPayload(
 export function useOverlayDraft(
   selectedOverlay: OverlayInfo,
   onCommit: (overlay: OverlayInfo) => void,
-  onDraftPendingChange?: (overlayId: string, isPending: boolean) => void,
+  onDraftPendingChange?: (overlayId: string, isPending: boolean, draftId: string) => void,
   owner?: unknown,
 ) {
   const [draft, setDraft] = useState<OverlayInfo>(selectedOverlay);
@@ -43,6 +45,7 @@ export function useOverlayDraft(
   const onCommitRef = useRef(onCommit);
   const onDraftPendingChangeRef = useRef(onDraftPendingChange);
   const draftOwnerRef = useRef(owner);
+  const draftIdRef = useRef(createOverlayDraftId());
   const draftSourceRef = useRef(selectedOverlay);
   const incomingRef = useRef({ onCommit, onDraftPendingChange, owner });
   incomingRef.current = { onCommit, onDraftPendingChange, owner };
@@ -62,9 +65,10 @@ export function useOverlayDraft(
     }
     const normalized = normalizeOverlayForSync(nextOverlay);
     if (isDirtyRef.current && draftRef.current.id) {
-      onDraftPendingChangeRef.current?.(draftRef.current.id, false);
+      onDraftPendingChangeRef.current?.(draftRef.current.id, false, draftIdRef.current);
     }
     draftOwnerRef.current = incomingRef.current.owner;
+    draftIdRef.current = createOverlayDraftId();
     draftSourceRef.current = nextOverlay;
     onCommitRef.current = incomingRef.current.onCommit;
     onDraftPendingChangeRef.current = incomingRef.current.onDraftPendingChange;
@@ -83,7 +87,7 @@ export function useOverlayDraft(
       const draft = draftRef.current;
       if (!draft.id || draft.id !== fromRedux.id) return;
       const next = buildCommitPayload(fromRedux, draft);
-      onDraftPendingChangeRef.current?.(draft.id, false);
+      onDraftPendingChangeRef.current?.(draft.id, false, draftIdRef.current);
       draftRef.current = next;
       setDraft(next);
       lastCommittedRef.current = next;
@@ -96,7 +100,7 @@ export function useOverlayDraft(
     (partial: Partial<OverlayInfo>) => {
       const next = { ...draftRef.current, ...partial };
       if (!isDirtyRef.current && next.id) {
-        onDraftPendingChangeRef.current?.(next.id, true);
+        onDraftPendingChangeRef.current?.(next.id, true, draftIdRef.current);
       }
       draftRef.current = next;
       isDirtyRef.current = true;
@@ -116,11 +120,11 @@ export function useOverlayDraft(
     if (!isDirtyRef.current || draft.id !== fromRedux.id) return;
     const next = buildCommitPayload(fromRedux, draft);
     if (_.isEqual(next, lastCommittedRef.current)) {
-      onDraftPendingChangeRef.current?.(draft.id, false);
+      onDraftPendingChangeRef.current?.(draft.id, false, draftIdRef.current);
       isDirtyRef.current = false;
       return;
     }
-    onDraftPendingChangeRef.current?.(draft.id, false);
+    onDraftPendingChangeRef.current?.(draft.id, false, draftIdRef.current);
     draftRef.current = next;
     setDraft(next);
     lastCommittedRef.current = next;
@@ -192,7 +196,7 @@ export function useOverlayDraft(
       const fromRedux = draftSourceRef.current;
       const draft = draftRef.current;
       if (isDirtyRef.current && draft.id) {
-        onDraftPendingChangeRef.current?.(draft.id, false);
+        onDraftPendingChangeRef.current?.(draft.id, false, draftIdRef.current);
         if (
           draft.id === fromRedux.id &&
           !_.isEqual(

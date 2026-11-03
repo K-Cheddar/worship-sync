@@ -3945,7 +3945,7 @@ describe("presentationSlice", () => {
   });
 
   it("round trips loop-only transport changes across Projector, Monitor, Stream, and editor resolution", () => {
-    const cue = { mediaKey: "remote:clip", positionSeconds: 12, paused: false, atServerMs: Date.now(), generation: 1, applySeek: false, loop: true };
+    const cue = { mediaKey: "remote:clip", positionSeconds: 12, paused: false, atServerMs: Date.now(), generation: 1, applySeek: false, loop: true, loopOnly: true, hasLiveClock: true };
     const slide: ItemSlideType = { id: "clip-slide", type: "Section", name: "Clip", boxes: [{ width: 100, height: 100, mediaInfo: { type: "video", id: "clip", background: "https://cdn.example/clip.mp4" } as NonNullable<ItemSlideType["boxes"][number]["mediaInfo"]> }] };
     const presentation = { type: "free", name: "Clip", slide, videoPlayback: cue };
     const store = createStore({ presentation: { isProjectorTransmitting: true, isMonitorTransmitting: true, isStreamTransmitting: true, projectorInfo: presentation, monitorInfo: presentation, streamInfo: presentation } });

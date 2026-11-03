@@ -30,6 +30,7 @@ describe("overlaySlice", () => {
       expect(state.hasRemoteUpdate).toBe(false);
       expect(state.pendingRemoteOverlay).toBeNull();
       expect(state.pendingDraftOverlayId).toBeNull();
+      expect(state.pendingDraftId).toBeNull();
     });
   });
 
@@ -102,6 +103,32 @@ describe("overlaySlice", () => {
 
       store.dispatch(clearOverlayDraftPending("overlay-1"));
       expect(store.getState().overlay.pendingDraftOverlayId).toBeNull();
+    });
+
+    it("ignores a delayed clear from a replaced draft with the same overlay ID", () => {
+      const store = createStore();
+      store.dispatch(selectOverlay(createOverlay({ id: "overlay-1", name: "Local" })));
+      store.dispatch(markOverlayDraftPending({ overlayId: "overlay-1", draftId: "draft-a" }));
+      store.dispatch(markOverlayDraftPending({ overlayId: "overlay-1", draftId: "draft-b" }));
+
+      store.dispatch(clearOverlayDraftPending({ overlayId: "overlay-1", draftId: "draft-a" }));
+      expect(store.getState().overlay.pendingDraftOverlayId).toBe("overlay-1");
+      expect(store.getState().overlay.pendingDraftId).toBe("draft-b");
+
+      store.dispatch(clearOverlayDraftPending({ overlayId: "overlay-1", draftId: "draft-b" }));
+      expect(store.getState().overlay.pendingDraftOverlayId).toBeNull();
+      expect(store.getState().overlay.pendingDraftId).toBeNull();
+    });
+
+    it("clears pending draft ownership when the outline owner retires", () => {
+      const store = createStore();
+      store.dispatch(selectOverlay(createOverlay({ id: "overlay-1", name: "Local" })));
+      store.dispatch(markOverlayDraftPending({ overlayId: "overlay-1", draftId: "draft-a" }));
+      store.dispatch({ type: "outlineContent/activate", payload: { ownerKey: "new-outline", hasSelection: true } });
+
+      expect(store.getState().overlay.outlineOwnerKey).toBe("new-outline");
+      expect(store.getState().overlay.pendingDraftOverlayId).toBeNull();
+      expect(store.getState().overlay.pendingDraftId).toBeNull();
     });
   });
 
