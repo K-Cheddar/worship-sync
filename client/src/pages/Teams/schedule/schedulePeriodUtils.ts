@@ -64,6 +64,15 @@ export const findOverlappingPeriodSchedules = ({
   );
 };
 
+/** A schedule can be displayed on overlap alone; ownership requires full coverage. */
+export const scheduleCoversPeriodRange = (
+  schedule: Pick<TeamScheduleSummary, "startDate" | "endDate"> | null | undefined,
+  range: { start: string; end: string },
+) => Boolean(
+  schedule?.startDate && schedule.endDate &&
+  schedule.startDate <= range.start && schedule.endDate >= range.end,
+);
+
 export const formatSchedulePeriodName = (startDate: string, endDate: string) => {
   const start = parsePlainDate(startDate);
   const end = parsePlainDate(endDate);

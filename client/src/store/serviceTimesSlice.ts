@@ -9,6 +9,11 @@ type ServiceTimesState = {
   isInitialized: boolean;
 };
 
+export type ServiceGroupMutation = {
+  primary: { mode: "add" | "update"; service: ServiceTime };
+  partnerUpdates: Array<{ id: string; serviceGroupId?: string }>;
+};
+
 const initialState: ServiceTimesState = {
   list: [],
   isInitialized: false,
@@ -30,6 +35,24 @@ export const serviceTimesSlice = createSlice({
           s.id === action.payload.id ? { ...s, ...action.payload.changes } : s,
         ),
       );
+    },
+    applyServiceGroupMutation: (state, action: PayloadAction<ServiceGroupMutation>) => {
+      const { primary, partnerUpdates } = action.payload;
+      if (primary.mode === "add") {
+        if (state.list.some((service) => service.id === primary.service.id)) return;
+        state.list.push(primary.service);
+      } else {
+        if (!state.list.some((service) => service.id === primary.service.id)) return;
+        state.list = state.list.map((service) => service.id === primary.service.id
+          ? { ...service, ...primary.service }
+          : service,
+        );
+      }
+      const groupById = new Map(partnerUpdates.map(({ id, serviceGroupId }) => [id, serviceGroupId]));
+      state.list = sortServiceList(state.list.map((service) => groupById.has(service.id)
+        ? { ...service, serviceGroupId: groupById.get(service.id) }
+        : service,
+      ));
     },
     removeService: (state, action: PayloadAction<string>) => {
       state.list = state.list.filter((s) => s.id !== action.payload);
@@ -61,6 +84,7 @@ export const serviceTimesSlice = createSlice({
 export const {
   addService,
   updateService,
+  applyServiceGroupMutation,
   removeService,
   initiateServices,
   syncServicesFromRemote,

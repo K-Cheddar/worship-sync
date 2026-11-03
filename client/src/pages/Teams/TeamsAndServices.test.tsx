@@ -2058,6 +2058,17 @@ describe("Teams", () => {
     expect(excludedDates).toHaveTextContent("Worship");
     expect(excludedDates).toHaveTextContent("Study");
     await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("button", { name: /More schedule options/i }));
+    await user.click(screen.getByRole("menuitem", { name: "Schedule history" }));
+    const scheduleBrowser = await screen.findByRole("dialog", { name: "All schedules" });
+    await user.click(within(scheduleBrowser).getByRole("button", { name: /Q4 2026/ }));
+    await waitForScheduleGrid();
+    await user.click(screen.getByRole("button", { name: /Send schedule/i }));
+    const historySendScope = screen.getByRole("status", { name: "Schedule message scope" });
+    expect(historySendScope).toHaveTextContent(/current service preview/i);
+    expect(screen.getByRole("list", { name: "Service dates not included" })).toHaveTextContent("Worship");
+    expect(screen.getByRole("list", { name: "Service dates not included" })).toHaveTextContent("Study");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
     await user.click(screen.getByRole("button", { name: /Power Up Vocal, Empty/i }));
     await user.click(await screen.findByRole("button", { name: /Assign Morgan/i }));
     await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(1));

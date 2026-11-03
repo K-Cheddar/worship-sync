@@ -13838,9 +13838,11 @@ test("one emailed link shows every service and can answer them all", async (t) =
   const context = await createAdminContext("respond_all");
   const { memberId, scheduleId, occurrenceId, cellKey, media } =
     await seedAssignedSchedule(context, "all");
+  const firstDate = calendarDaysFromToday(14);
+  const secondDate = calendarDaysFromToday(21);
 
   // A second service on the same schedule, same person.
-  const secondOccurrence = "svc-all-2@2026-09-13";
+  const secondOccurrence = `svc-all-2@${secondDate}`;
   await callHandler(authHandlers.updateTeamSchedule, {
     context,
     params: { scheduleId },
@@ -13848,22 +13850,22 @@ test("one emailed link shows every service and can answer them all", async (t) =
       name: "Respond schedule",
       teamId: media.teamId,
       serviceIds: ["svc-all", "svc-all-2"],
-      startDate: "2026-09-06",
-      endDate: "2026-09-13",
+      startDate: firstDate,
+      endDate: secondDate,
       occurrences: [
         {
           occurrenceId,
           serviceId: "svc-all",
           serviceIds: ["svc-all"],
           name: "Sunday Gathering",
-          startsAt: "2026-09-06T14:00:00.000Z",
+          startsAt: `${firstDate}T14:00:00.000Z`,
         },
         {
           occurrenceId: secondOccurrence,
           serviceId: "svc-all-2",
           serviceIds: ["svc-all-2"],
           name: "Evening Service",
-          startsAt: "2026-09-13T14:00:00.000Z",
+          startsAt: `${secondDate}T14:00:00.000Z`,
         },
       ],
     },
@@ -14331,7 +14333,7 @@ test("a past service is not reported as a new blockout conflict", async (t) => {
 test("reshaping a schedule's occurrences does not leave answers behind", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("prune_bulk");
-  const { memberId, scheduleId, occurrenceId, cellKey, media } =
+  const { memberId, scheduleId, occurrenceId, cellKey, media, serviceDate } =
     await seedAssignedSchedule(context, "prunebulk");
 
   await callHandler(authHandlers.respondToMyAssignment, {
@@ -14348,15 +14350,15 @@ test("reshaping a schedule's occurrences does not leave answers behind", async (
       name: "Respond schedule",
       teamId: media.teamId,
       serviceIds: ["svc-prunebulk"],
-      startDate: "2026-09-06",
-      endDate: "2026-09-06",
+      startDate: serviceDate,
+      endDate: serviceDate,
       occurrences: [
         {
           occurrenceId,
           serviceId: "svc-prunebulk",
           serviceIds: ["svc-prunebulk"],
           name: "Sunday Gathering",
-          startsAt: "2026-09-06T14:00:00.000Z",
+          startsAt: `${serviceDate}T14:00:00.000Z`,
         },
       ],
     },
@@ -18392,6 +18394,121 @@ test("generated ensure does not substitute another service with the same name an
   assert.equal(result.statusCode, 409);
   assert.match(result.payload.errorMessage, /cannot be matched safely/i);
   assert.deepEqual(await getDoc("teamSchedules", schedule.scheduleId), before);
+});
+
+test("generated ensure rejects a raw occurrence ID that belongs to another logical service", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("raw_occurrence_id_identity_collision");
+  const { teamId, positionIds } = await seedTeam(context, {
+    teamName: "Media", positions: [{ name: "Camera" }],
+  });
+  const current = {
+    occurrenceId: "new-service@2026-10-03T10:00:00.000Z",
+    serviceId: "new-service",
+    name: "New service",
+    startsAt: "2026-10-03T10:00:00.000Z",
+    serviceDate: "2026-10-03",
+    positionRequirements: [{ positionId: positionIds.Camera, count: 1 }],
+  };
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [{
+      id: "new-service", name: current.name, reccurence: "one_time",
+      dateTimeISO: current.startsAt,
+      positionRequirements: [{ positionId: positionIds.Camera, count: 1 }],
+    }],
+  });
+  const saved = {
+    ...current,
+    serviceId: "old-service",
+    name: "Old service",
+    startsAt: "2026-10-03T09:00:00.000Z",
+    positionRequirements: [{ positionId: positionIds.Camera, count: 1 }],
+  };
+  const schedule = {
+    scheduleId: "raw-id-collision",
+    churchId: context.churchId,
+    teamId,
+    name: "October",
+    source: "custom",
+    startDate: "2026-10-01",
+    endDate: "2026-10-31",
+    serviceIds: ["old-service"],
+    occurrences: [saved],
+    assignments: { [saved.occurrenceId]: { "camera::0": { primaryMemberId: "assigned-member" } } },
+    microphoneAssignments: { [saved.occurrenceId]: { "camera::0": ["saved-mic"] } },
+  };
+  await setDoc(COLLECTIONS.teamSchedules, schedule.scheduleId, schedule);
+  const before = await getDoc(COLLECTIONS.teamSchedules, schedule.scheduleId);
+  const result = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body: {
+      name: "October", teamId, startDate: schedule.startDate, endDate: schedule.endDate,
+      timeZone: "UTC", serviceIds: ["new-service"], occurrences: [current],
+    },
+  });
+
+  assert.equal(result.statusCode, 409);
+  assert.match(result.payload.errorMessage, /cannot be matched safely|identity/i);
+  assert.deepEqual(await getDoc(COLLECTIONS.teamSchedules, schedule.scheduleId), before);
+});
+
+test("unrelated duplicate saved occurrences do not block safe additions", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("unrelated_duplicate_occurrence_addition");
+  const { teamId, positionIds } = await seedTeam(context, {
+    teamName: "Media", positions: [{ name: "Camera" }],
+  });
+  const requirements = [{ positionId: positionIds.Camera, count: 1 }];
+  const services = [
+    { id: "primary-service", name: "Primary", reccurence: "weekly", dayOfWeek: 6, time: "10:00", positionRequirements: requirements },
+    { id: "new-service", name: "New service", reccurence: "one_time", dateTimeISO: "2026-10-15T10:00:00.000Z", positionRequirements: requirements },
+  ];
+  seedChurchServiceTimesForServerTests({ churchId: context.churchId, services });
+  const period = buildTeamSchedulePeriod({
+    services: services.map((service) => ({ ...service, serviceId: service.id, churchId: context.churchId })),
+    positions: [{ positionId: positionIds.Camera, teamId, name: "Camera" }],
+    teamId, startDate: "2026-10-01", endDate: "2026-10-31", timeZone: "UTC",
+  });
+  const primary = period.occurrences.find((row) => row.serviceId === "primary-service");
+  const addition = period.occurrences.find((row) => row.serviceId === "new-service");
+  assert.ok(primary);
+  assert.ok(addition);
+  const unrelated = {
+    occurrenceId: "retired-service@2026-10-17",
+    serviceId: "retired-service",
+    name: "Retired service",
+    startsAt: "2026-10-17T10:00:00.000Z",
+    serviceDate: "2026-10-17",
+    positionRequirements: requirements,
+  };
+  const scheduleId = "schedule-with-unrelated-duplicate";
+  const assignments = { [primary.occurrenceId]: { "camera::0": { primaryMemberId: "kept" } } };
+  const microphoneAssignments = { [primary.occurrenceId]: { "camera::0": ["kept-mic"] } };
+  await setDoc(COLLECTIONS.teamSchedules, scheduleId, {
+    scheduleId, churchId: context.churchId, teamId, name: "October",
+    source: "custom", startDate: "2026-10-01", endDate: "2026-10-31",
+    serviceIds: ["primary-service", "retired-service"],
+    occurrences: [primary, unrelated, { ...unrelated }],
+    assignments, microphoneAssignments,
+  });
+
+  const result = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body: {
+      name: "October", teamId, startDate: "2026-10-01", endDate: "2026-10-31",
+      timeZone: "UTC", serviceIds: period.serviceIds,
+      occurrences: [primary, addition],
+    },
+  });
+
+  assert.equal(result.statusCode, 200, JSON.stringify(result.payload));
+  assert.equal(result.payload.schedule.scheduleId, scheduleId);
+  const after = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+  assert.equal(after.occurrences.filter((row) => row.serviceId === "new-service").length, 1);
+  assert.deepEqual(after.occurrences.filter((row) => row.serviceId === "retired-service"), [unrelated, unrelated]);
+  assert.deepEqual(after.assignments, assignments);
+  assert.deepEqual(after.microphoneAssignments, microphoneAssignments);
 });
 
 test("November standalone services cannot replace a saved combined schedule or its operational data", async (t) => {

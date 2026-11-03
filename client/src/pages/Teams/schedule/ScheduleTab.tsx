@@ -79,6 +79,7 @@ import {
   resolveDisplayedPeriodRange,
   filterOccurrencesToRange,
   formatSchedulePeriodName,
+  scheduleCoversPeriodRange,
   type SchedulePeriodPreset,
 } from "./schedulePeriodUtils";
 import { useScheduleWorkspacePeriod } from "./useScheduleWorkspacePeriod";
@@ -980,6 +981,9 @@ const ScheduleTab = ({
               excludeScheduleId: saved.scheduleId, timeZone: serviceTimeZone,
             }).length === 0;
         })) return active;
+    // An overlapping schedule may be selected for display, but reconciling the
+    // full visible period could select a different saved owner on the server.
+    if (saved && !scheduleCoversPeriodRange(saved, persistedPeriodRange)) return active;
     const requestKey = makePeriodReconciliationKey(active.scheduleId, active.occurrences || [], active);
     if (
       !active.scheduleId.startsWith("virtual:") &&
@@ -1067,8 +1071,7 @@ const ScheduleTab = ({
     churchId,
     generatedPeriodOccurrences,
     makePeriodReconciliationKey,
-    persistedPeriodRange.end,
-    persistedPeriodRange.start,
+    persistedPeriodRange,
     periodRange.end,
     periodRange.start,
     operatorSelectedPeriodScheduleId,
@@ -2866,7 +2869,7 @@ const ScheduleTab = ({
   const scheduleSendScope = useMemo(() => {
     const emptyScope = { servicePreviews: [], conflictPreviews: [] };
     if (
-      !sendScopeScheduleId || !sendScopeTeamId || viewingSavedSchedule || !churchId || !serviceTimeZone ||
+      !sendScopeScheduleId || !sendScopeTeamId || !churchId || !serviceTimeZone ||
       !isPersistedScheduleId(sendScopeScheduleId) || !sendScopeStartDate || !sendScopeEndDate
     ) return emptyScope;
     const range = {
@@ -2897,7 +2900,6 @@ const ScheduleTab = ({
     sendScopeStartDate,
     sendScopeTeamId,
     serviceTimeZone,
-    viewingSavedSchedule,
   ]);
 
   /**

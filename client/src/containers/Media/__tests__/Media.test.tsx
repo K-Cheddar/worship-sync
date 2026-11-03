@@ -1446,6 +1446,10 @@ describe("Media", () => {
     mockDeleteCloudinaryMediaAsset
       .mockReturnValueOnce(new Promise<void>((_resolve, reject) => { rejectProviderCleanup = reject; }))
       .mockResolvedValueOnce(undefined);
+    mockDeleteMediaItemAtRevisionFromPouch.mockImplementationOnce(async (_db, doc: { id: string }) => {
+      mockState.media.list = mockState.media.list.filter((row: { id: string }) => row.id !== doc.id);
+      return "deleted";
+    });
     const { view } = await renderMedia();
 
     await userEvent.click(screen.getByRole("button", { name: "Delete" }));
@@ -1491,6 +1495,10 @@ describe("Media", () => {
     mockDeleteCloudinaryMediaAsset
       .mockReturnValueOnce(new Promise<void>((_resolve, reject) => { rejectProviderCleanup = reject; }))
       .mockResolvedValueOnce(undefined);
+    mockDeleteMediaItemAtRevisionFromPouch.mockImplementationOnce(async (_db, doc: { id: string }) => {
+      mockState.media.list = mockState.media.list.filter((row: { id: string }) => row.id !== doc.id);
+      return "deleted";
+    });
     const { view } = await renderMedia();
 
     await userEvent.click(screen.getByRole("button", { name: "Delete" }));
@@ -1547,6 +1555,10 @@ describe("Media", () => {
     mockDeleteCloudinaryMediaAsset
       .mockReturnValueOnce(new Promise<void>((_resolve, reject) => { rejectProviderCleanup = reject; }))
       .mockResolvedValueOnce(undefined);
+    mockDeleteMediaItemAtRevisionFromPouch.mockImplementationOnce(async (_db, doc: { id: string }) => {
+      mockState.media.list = mockState.media.list.filter((row: { id: string }) => row.id !== doc.id);
+      return "deleted";
+    });
     const { view } = await renderMedia();
 
     await userEvent.click(screen.getByRole("button", { name: "Delete folder" }));
@@ -1639,6 +1651,10 @@ describe("Media", () => {
     mockState.undoable.present.preferences.mediaRouteFoldersControllerProfileId = "presentation";
     const cleanup = deferred<void>();
     mockDeleteCloudinaryMediaAsset.mockReturnValueOnce(cleanup.promise);
+    mockDeleteMediaItemAtRevisionFromPouch.mockImplementationOnce(async (_db, doc: { id: string }) => {
+      mockState.media.list = mockState.media.list.filter((row: { id: string }) => row.id !== doc.id);
+      return "deleted";
+    });
     await renderMedia();
 
     await userEvent.click(screen.getByRole("button", { name: "Delete folder" }));
@@ -1853,7 +1869,7 @@ describe("Media", () => {
     );
   });
 
-  it("preserves concurrent edits, removals, additions, and child folders during subtree finalization", async () => {
+  it("keeps newly added subtree media recoverable and retries it before finalizing", async () => {
     const baseMedia = makeBaseState().media.list[0];
     const target = { ...baseMedia, id: "subtree-target", name: "Target", folderId: "parent", publicId: "target-asset" };
     const editedOutside = { ...baseMedia, id: "outside-edited", name: "Before", folderId: "outside-folder" };
@@ -1878,10 +1894,7 @@ describe("Media", () => {
     const renamedOutside = { ...editedOutside, name: "Changed while cleaning" };
     const addedOutside = { ...baseMedia, id: "added-outside", name: "New outside item", folderId: "outside-folder" };
     const addedInside = { ...baseMedia, id: "added-inside", name: "New item in deleted folder", folderId: "child" };
-    const concurrentChild = { id: "concurrent-child", name: "Added child folder", parentId: "child" };
-    const concurrentNested = { id: "concurrent-nested", name: "Nested concurrent folder", parentId: "concurrent-child" };
-    const latestFolders = [...folders, concurrentChild, concurrentNested];
-    const concurrentState = makeBaseState({ media: { list: [renamedOutside, addedOutside, addedInside], folders: latestFolders } });
+    const concurrentState = makeBaseState({ media: { list: [renamedOutside, addedOutside, addedInside], folders } });
     mockState = {
       ...concurrentState,
       allDocs: { ...concurrentState.allDocs, session: mockState.allDocs.session },
@@ -1892,22 +1905,48 @@ describe("Media", () => {
       await cleanup.promise;
     });
 
+    const activityId = mockUpdateTransfer.mock.calls.at(-1)![0].id;
+    expect(mockGetTransfer(activityId)).toEqual(expect.objectContaining({
+      status: "partial",
+      phase: expect.objectContaining({ label: "Some media could not be removed" }),
+      actions: expect.arrayContaining([{ key: "retry-delete", label: "Retry deletion" }]),
+      files: expect.arrayContaining([
+        expect.objectContaining({ id: "added-inside", status: "failed" }),
+      ]),
+    }));
+    expect(mockDispatch.mock.calls.map(([action]) => action)
+      .some((action) => action.type === "media/setMediaListAndFolders")).toBe(false);
+    expect(mockState.media.list).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "added-inside", folderId: "child" }),
+      expect.objectContaining({ id: "outside-edited", name: "Changed while cleaning", folderId: "outside-folder" }),
+      expect.objectContaining({ id: "added-outside", folderId: "outside-folder" }),
+    ]));
+
+    mockDeleteMediaItemAtRevisionFromPouch.mockImplementationOnce(async (_db, doc: { id: string }) => {
+      mockState.media.list = mockState.media.list.filter((row: { id: string }) => row.id !== doc.id);
+      return "deleted";
+    });
+    await act(async () => {
+      await mockTransferActionHandlers.get(`${activityId}:retry-delete`)?.();
+    });
+
+    expect(mockDeleteMediaItemAtRevisionFromPouch).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ id: "added-inside" }),
+    );
     const finalAction = mockDispatch.mock.calls.map(([action]) => action)
       .filter((action) => action.type === "media/setMediaListAndFolders").at(-1);
     expect(finalAction.payload.list).toEqual([
       expect.objectContaining({ id: "outside-edited", name: "Changed while cleaning", folderId: "outside-folder" }),
       expect.objectContaining({ id: "added-outside", name: "New outside item", folderId: "outside-folder" }),
-      expect.objectContaining({ id: "added-inside", name: "New item in deleted folder", folderId: null }),
     ]);
     expect(finalAction.payload.folders).toEqual([
       expect.objectContaining({ id: "outside-folder", parentId: null }),
-      expect.objectContaining({ id: "concurrent-child", parentId: null }),
-      expect.objectContaining({ id: "concurrent-nested", parentId: "concurrent-child" }),
     ]);
-    expect(finalAction.payload.list).not.toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "subtree-target" }),
-      expect.objectContaining({ id: "outside-removed" }),
-    ]));
+    expect(mockGetTransfer(activityId)).toEqual(expect.objectContaining({
+      status: "complete",
+      phase: expect.objectContaining({ label: "Folder deletion complete" }),
+    }));
   });
 
   it("stops subtree finalization in A after the church session changes", async () => {
@@ -2123,6 +2162,10 @@ describe("Media", () => {
       "controller-item-song": "folder-1",
     };
     mockState.undoable.present.preferences.mediaRouteFoldersControllerProfileId = "presentation";
+    mockDeleteMediaItemAtRevisionFromPouch.mockImplementationOnce(async (_db, doc: { id: string }) => {
+      mockState.media.list = mockState.media.list.filter((row: { id: string }) => row.id !== doc.id);
+      return "deleted";
+    });
     const { view } = await renderMedia();
 
     await userEvent.click(screen.getByRole("button", { name: "Delete folder" }));
@@ -2194,7 +2237,11 @@ describe("Media", () => {
     ]);
     const dispatchCount = mockDispatch.mock.calls.length;
     const retryTombstone = deferred<"deleted">();
-    mockDeleteMediaItemAtRevisionFromPouch.mockReturnValueOnce(retryTombstone.promise);
+    mockDeleteMediaItemAtRevisionFromPouch.mockImplementationOnce(async (_db, doc: { id: string }) => {
+      await retryTombstone.promise;
+      mockState.media.list = mockState.media.list.filter((row: { id: string }) => row.id !== doc.id);
+      return "deleted";
+    });
     const retry = mockTransferActionHandlers.get(`${folderTransferId}:retry-delete`);
     await act(async () => { await retry?.(); await retry?.(); });
     await waitFor(() => expect(mockDeleteMediaItemAtRevisionFromPouch).toHaveBeenCalledTimes(2));

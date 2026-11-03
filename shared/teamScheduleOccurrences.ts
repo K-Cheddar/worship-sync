@@ -230,6 +230,18 @@ export const matchOccurrencesByIdentity = <T extends OccurrenceIdentityShape>(
       ambiguousCurrentIds.add(String(occurrence?.occurrenceId || ""));
       return;
     }
+    const rawOccurrenceId = String(occurrence?.occurrenceId || "");
+    const sameRawId = rawOccurrenceId
+      ? storedRows.filter((row) => String(row.occurrence?.occurrenceId || "") === rawOccurrenceId)
+      : [];
+    if (sameRawId.some((row) =>
+      !row.identity ||
+      row.identity.logicalOccurrenceId !== currentIdentity.logicalOccurrenceId ||
+      !sameMembership(row.identity, currentIdentity),
+    )) {
+      ambiguousCurrentIds.add(rawOccurrenceId);
+      return;
+    }
     const sameKey = storedRows.filter((row) =>
       row.identity?.logicalOccurrenceId === currentIdentity.logicalOccurrenceId,
     );
@@ -303,6 +315,15 @@ export const hasOccurrenceIdentityAmbiguity = (
 
   return currentRows.some(({ occurrence, identity }) => {
     if (!identity) return true;
+    const rawOccurrenceId = String(occurrence?.occurrenceId || "");
+    const sameRawId = rawOccurrenceId
+      ? storedRows.filter((row) => String(row.occurrence?.occurrenceId || "") === rawOccurrenceId)
+      : [];
+    if (sameRawId.some((row) =>
+      !row.identity ||
+      row.identity.logicalOccurrenceId !== identity.logicalOccurrenceId ||
+      !sameMembership(row.identity, identity),
+    )) return true;
     const sameKey = storedRows.filter((row) =>
       identityKey(row.identity) === identity.logicalOccurrenceId,
     );

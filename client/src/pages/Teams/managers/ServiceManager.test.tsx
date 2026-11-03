@@ -445,21 +445,19 @@ describe("ServiceManager combined services", () => {
     await user.click(screen.getByRole("checkbox", { name: /First Service/ }));
     await user.click(serviceFormSaveButton());
 
-    const created = findActions(mockDispatch.mock.calls, "serviceTimes/addService");
-    expect(created).toHaveLength(1);
-    const groupId = (created[0].payload as TeamService).serviceGroupId;
+    const mutations = findActions(mockDispatch.mock.calls, "serviceTimes/applyServiceGroupMutation");
+    expect(mutations).toHaveLength(1);
+    const firstMutation = mutations[0].payload as {
+      primary: { mode: string; service: TeamService };
+      partnerUpdates: Array<{ id: string; serviceGroupId: string | null }>;
+    };
+    expect(firstMutation.primary.mode).toBe("add");
+    const groupId = firstMutation.primary.service.serviceGroupId;
     expect(groupId).toBeTruthy();
 
-    // The selected partner is stamped with the same id so they merge on schedules.
-    const updates = findActions(
-      mockDispatch.mock.calls,
-      "serviceTimes/updateService",
-    );
-    expect(updates).toContainEqual(
-      expect.objectContaining({
-        payload: { id: "first", changes: { serviceGroupId: groupId } },
-      }),
-    );
+    expect(firstMutation.partnerUpdates).toEqual([
+      { id: "first", serviceGroupId: groupId },
+    ]);
 
     expect(screen.getByRole("heading", { name: "Edit service" })).toBeInTheDocument();
     const nameInput = screen.getByLabelText(/^Name:?$/);
@@ -467,10 +465,12 @@ describe("ServiceManager combined services", () => {
       target: { value: "Combined Sunday Updated" },
     });
     await user.click(serviceFormSaveButton());
-    expect(findActions(mockDispatch.mock.calls, "serviceTimes/addService")).toHaveLength(1);
-    expect(findActions(mockDispatch.mock.calls, "serviceTimes/updateService")).toContainEqual(
-      expect.objectContaining({ payload: expect.objectContaining({ id: (created[0].payload as TeamService).id }) }),
-    );
+    const groupEdits = findActions(mockDispatch.mock.calls, "serviceTimes/applyServiceGroupMutation");
+    expect(groupEdits).toHaveLength(2);
+    expect((groupEdits[1].payload as { primary: { mode: string; service: TeamService } }).primary).toMatchObject({
+      mode: "update",
+      service: expect.objectContaining({ id: firstMutation.primary.service.id, name: "Combined Sunday Updated" }),
+    });
   });
 });
 

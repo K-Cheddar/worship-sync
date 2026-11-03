@@ -1437,12 +1437,19 @@ export const createTeamsAuthHandlers = ({
     schedule.source === "generated-period" &&
     Boolean(schedule.generatedPeriodKey) &&
     schedule.scheduleId === generatedPeriodScheduleId(schedule.generatedPeriodKey);
-  const occurrenceOwnershipEntries = (occurrences, timeZone) => {
+  const occurrenceOwnershipEntries = (occurrences, timeZone, { skipDuplicateLogicalOccurrences = false } = {}) => {
     const entries = new Map();
+    const duplicates = new Set();
     for (const occurrence of Array.isArray(occurrences) ? occurrences : []) {
       const identity = resolveOccurrenceIdentity(occurrence, timeZone);
       if (!identity) throw httpError(409, "A schedule occurrence has no safe logical identity. Review the saved schedule before continuing.");
-      if (entries.has(identity.logicalOccurrenceId)) throw httpError(409, "A schedule contains duplicate logical occurrences. Review it before continuing.");
+      if (entries.has(identity.logicalOccurrenceId)) {
+        if (!skipDuplicateLogicalOccurrences) throw httpError(409, "A schedule contains duplicate logical occurrences. Review it before continuing.");
+        duplicates.add(identity.logicalOccurrenceId);
+        entries.delete(identity.logicalOccurrenceId);
+        continue;
+      }
+      if (duplicates.has(identity.logicalOccurrenceId)) continue;
       entries.set(identity.logicalOccurrenceId, { occurrence, identity });
     }
     return entries;
@@ -1481,11 +1488,14 @@ export const createTeamsAuthHandlers = ({
     previousSchedule = null,
     activeSchedules,
     timeZone,
+    allowUnrelatedDuplicateOccurrences = false,
     transaction,
     db,
   }) => {
     const makeEntries = (sourceChurchId, sourceTeamId, sourceOccurrences) => {
-      const occurrences = occurrenceOwnershipEntries(sourceOccurrences, timeZone);
+      const occurrences = occurrenceOwnershipEntries(sourceOccurrences, timeZone, {
+        skipDuplicateLogicalOccurrences: allowUnrelatedDuplicateOccurrences,
+      });
       return new Map([...occurrences].map(([logicalOccurrenceId, value]) => {
         const key = `${sourceChurchId}\u0000${sourceTeamId}\u0000${logicalOccurrenceId}`;
         return [key, { ...value, churchId: sourceChurchId, teamId: sourceTeamId, logicalOccurrenceId }];
@@ -19435,19 +19445,6 @@ export const createTeamsAuthHandlers = ({
               schedule.churchId === churchId && !schedule.archivedAt &&
               schedule.teamId === payload.teamId,
             );
-            const ambiguousSavedSchedule = activeTeamSchedules.find((schedule) =>
-              schedule.startDate && schedule.endDate &&
-              schedule.startDate <= payload.endDate && schedule.endDate >= payload.startDate &&
-              hasOccurrenceIdentityAmbiguity(
-                schedule.occurrences || [],
-                payload.occurrences,
-                timeZone,
-              ),
-            );
-            if (ambiguousSavedSchedule) {
-              throw ownershipError("A saved schedule has occurrence rows that cannot be matched safely. Its data was preserved; review it before adding services.");
-            }
-
             const ownersByOccurrenceId = new Map();
             for (const occurrence of payload.occurrences) {
               const owners = activeTeamSchedules.filter((schedule) => {
@@ -19456,7 +19453,7 @@ export const createTeamsAuthHandlers = ({
                   [occurrence],
                   timeZone,
                 );
-                if (match.ambiguousCurrentIds.size) throw ownershipError("A saved schedule has an ambiguous service identity. Its data was preserved; review it before adding services.");
+                if (match.ambiguousCurrentIds.size) throw ownershipError("A saved schedule has an ambiguous service identity that cannot be matched safely. Its data was preserved; review it before adding services.");
                 return match.matches.has(occurrence.occurrenceId);
               });
               if (owners.length > 1) throw ownershipError();
@@ -19590,6 +19587,7 @@ export const createTeamsAuthHandlers = ({
                   schedule: result.schedule,
                   activeSchedules: allSchedules.filter((item) => item.teamId === payload.teamId && !item.archivedAt),
                   timeZone,
+                  allowUnrelatedDuplicateOccurrences: true,
                   transaction,
                   db,
                 });
@@ -19650,6 +19648,7 @@ export const createTeamsAuthHandlers = ({
                   schedule: result.schedule,
                   activeSchedules: allSchedules.filter((item) => item.teamId === payload.teamId && !item.archivedAt),
                   timeZone,
+                  allowUnrelatedDuplicateOccurrences: true,
                 });
                 if (result.updated) await setDoc(COLLECTIONS.teamSchedules, targetId, result.schedule, { merge: false });
                 return { ...result, created: false };

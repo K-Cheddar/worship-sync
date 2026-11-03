@@ -8,6 +8,7 @@ import {
   mergeCurrentScheduleOccurrences,
   rangeFromPreset,
   resolveDisplayedPeriodRange,
+  scheduleCoversPeriodRange,
 } from "./schedulePeriodUtils";
 
 const occurrence: TeamScheduleOccurrence = {
@@ -23,7 +24,7 @@ const target = {
   endDate: "2026-10-31",
   occurrences: [occurrence],
 };
-type TestSchedule = TeamScheduleSummary & Pick<Partial<TeamSchedule>, "assignments">;
+type TestSchedule = TeamScheduleSummary & Pick<Partial<TeamSchedule>, "assignments" | "microphoneAssignments">;
 const schedule = (changes: Partial<TestSchedule> = {}): TestSchedule => ({
   scheduleId: "schedule-1",
   churchId: target.churchId,
@@ -97,6 +98,59 @@ it("does not preview duplicate generated identities beside unrelated additions",
   expect(mergeCurrentScheduleOccurrences([occurrence], [occurrence, added, duplicate, unrelated])).toEqual({
     occurrences: [unrelated, occurrence].sort((a, b) => a.occurrenceId.localeCompare(b.occurrenceId)), ambiguous: true,
   });
+});
+
+it("rejects a reused raw occurrence ID when its logical service identity changes", () => {
+  const saved = {
+    ...occurrence,
+    occurrenceId: "legacy-shared-id",
+    serviceId: "old-service",
+    name: "Old service",
+    startsAt: "2026-10-03T09:00:00.000Z",
+    serviceDate: "2026-10-03",
+  };
+  const current = {
+    ...occurrence,
+    occurrenceId: "legacy-shared-id",
+    serviceId: "new-service",
+    name: "New service",
+    startsAt: "2026-10-03T10:00:00.000Z",
+    serviceDate: "2026-10-03",
+  };
+  const savedSchedule = schedule({ occurrences: [saved], assignments: { [saved.occurrenceId]: { "position::0": { primaryMemberId: "member" } } } });
+
+  expect(findReusablePeriodSchedule({ schedules: [savedSchedule], ...target, occurrences: [current] })).toMatchObject({
+    schedule: null,
+    ambiguous: true,
+  });
+  expect(filterSafeScheduleReconciliationOccurrences({
+    storedOccurrences: [saved],
+    currentOccurrences: [current],
+    schedules: [savedSchedule],
+    churchId: target.churchId,
+    teamId: target.teamId,
+  })).toEqual([]);
+  expect(mergeCurrentScheduleOccurrences([saved], [current])).toMatchObject({
+    occurrences: [saved],
+    ambiguous: true,
+  });
+  expect(savedSchedule.assignments).toEqual({ [saved.occurrenceId]: { "position::0": { primaryMemberId: "member" } } });
+});
+
+it("accepts the same raw ID when the service identity is unchanged and keeps its saved map key", () => {
+  const saved = { ...occurrence, occurrenceId: "legacy-id", serviceDate: "2026-10-03" };
+  const current = { ...saved, startsAt: "2026-10-03T11:00:00.000Z" };
+  const assignments = { [saved.occurrenceId]: { "position::0": { primaryMemberId: "member" } } };
+  const microphones = { [saved.occurrenceId]: { "position::0": ["mic-1"] } };
+  const savedSchedule = schedule({ occurrences: [saved], assignments, microphoneAssignments: microphones });
+
+  expect(findReusablePeriodSchedule({ schedules: [savedSchedule], ...target, occurrences: [current] })).toMatchObject({
+    schedule: savedSchedule,
+    ambiguous: false,
+  });
+  expect(mergeCurrentScheduleOccurrences([saved], [current])).toEqual({ occurrences: [saved], ambiguous: false });
+  expect(savedSchedule.assignments).toBe(assignments);
+  expect(savedSchedule.microphoneAssignments).toBe(microphones);
 });
 
 it("filters past occurrences from the visible Upcoming range", () => {
@@ -780,6 +834,20 @@ describe("findReusablePeriodSchedule", () => {
     expect(findReusablePeriodSchedule({ schedules, ...target }))
       .toMatchObject({ schedule: schedules[0], ambiguous: false, ownershipConflict: true });
   });
+});
+
+it("allows partial schedules to display on overlap without treating them as period owners", () => {
+  const partial = schedule({ startDate: "2026-10-03", endDate: "2026-10-15" });
+  const overlapping = findOverlappingPeriodSchedules({
+    schedules: [partial],
+    churchId: target.churchId,
+    teamId: target.teamId,
+    range: { start: target.startDate, end: target.endDate },
+  });
+
+  expect(overlapping).toContain(partial);
+  expect(scheduleCoversPeriodRange(partial, { start: target.startDate, end: target.endDate })).toBe(false);
+  expect(scheduleCoversPeriodRange(schedule(), { start: target.startDate, end: target.endDate })).toBe(true);
 });
 
 describe("findOverlappingPeriodSchedules", () => {

@@ -3150,6 +3150,26 @@ const applyServiceTimesAction = (
   localServices: ServiceTime[],
 ): ServiceTime[] => {
   const timestamp = serverDate().toISOString();
+  if (serviceTimesSlice.actions.applyServiceGroupMutation.match(action)) {
+    const { primary, partnerUpdates } = action.payload;
+    if (primary.mode === "add") {
+      if (services.some((service) => service.id === primary.service.id)) return services;
+    } else if (!services.some((service) => service.id === primary.service.id)) {
+      return services;
+    }
+    const next = primary.mode === "add"
+      ? [...services, { ...primary.service, updatedAt: timestamp }]
+      : services.map((service) => service.id === primary.service.id
+        ? { ...service, ...primary.service, updatedAt: timestamp }
+        : service,
+      );
+    const updatesById = new Map(partnerUpdates.map((update) => [update.id, update.serviceGroupId]));
+    return sortServicesByScheduleOrder(next.map((service) =>
+      updatesById.has(service.id)
+        ? { ...service, serviceGroupId: updatesById.get(service.id), updatedAt: timestamp }
+        : service,
+    ));
+  }
   if (serviceTimesSlice.actions.addService.match(action)) {
     if (services.some((service) => service.id === action.payload.id)) {
       return services;

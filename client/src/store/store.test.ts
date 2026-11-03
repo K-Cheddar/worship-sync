@@ -4196,6 +4196,69 @@ describe("store module", () => {
     );
   });
 
+  it("commits combined service membership in one transaction against current services", async () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-04-05T11:58:00.000Z"));
+    const { store, serviceTimesSlice, runTransactionMock } = loadStoreWithPresentationSync();
+    const primary = { id: "primary", name: "Primary", serviceGroupId: null };
+    const partner = { id: "partner", name: "Partner", serviceGroupId: null };
+    const remoteOnly = { id: "remote-only", name: "Added by another client" };
+    let committed: any[] = [];
+    runTransactionMock.mockImplementationOnce(async (_path: unknown, update: (current: unknown) => unknown) => {
+      // The partner was removed remotely while the local editor was open.
+      committed = update([primary, remoteOnly]) as any[];
+      return { committed: true, snapshot: { val: () => committed } };
+    });
+
+    store.dispatch(serviceTimesSlice.actions.initiateServices([primary, partner] as any));
+    store.dispatch(serviceTimesSlice.actions.applyServiceGroupMutation({
+      primary: { mode: "update", service: { ...primary, serviceGroupId: "combined-sunday" } as any },
+      partnerUpdates: [{ id: "partner", serviceGroupId: "combined-sunday" }],
+    }));
+    await flushListenerEffects();
+
+    expect(runTransactionMock).toHaveBeenCalledTimes(1);
+    expect(committed).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "primary", serviceGroupId: "combined-sunday" }),
+      remoteOnly,
+    ]));
+    expect(committed).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: "partner" })]));
+    expect(store.getState().undoable.present.serviceTimes.list).toEqual(committed);
+  });
+
+  it("rolls back a failed group transaction and retries every membership change together", async () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-04-05T11:58:00.000Z"));
+    jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const { store, serviceTimesSlice, runTransactionMock } = loadStoreWithPresentationSync();
+    const primary = { id: "primary", name: "Primary", serviceGroupId: null };
+    const partner = { id: "partner", name: "Partner", serviceGroupId: null };
+    const mutation = {
+      primary: { mode: "update", service: { ...primary, serviceGroupId: "combined-sunday" } as any },
+      partnerUpdates: [{ id: "partner", serviceGroupId: "combined-sunday" }],
+    };
+    const remoteServices = [primary, partner];
+    let committed: any[] = [];
+    runTransactionMock.mockRejectedValueOnce({ code: "PERMISSION_DENIED" });
+    store.dispatch(serviceTimesSlice.actions.initiateServices(remoteServices as any));
+    store.dispatch(serviceTimesSlice.actions.applyServiceGroupMutation(mutation));
+    await flushListenerEffects();
+    expect(store.getState().undoable.present.serviceTimes.list).toHaveLength(remoteServices.length);
+    expect(store.getState().undoable.present.serviceTimes.list).toEqual(expect.arrayContaining(remoteServices));
+
+    runTransactionMock.mockImplementationOnce(async (_path: unknown, update: (current: unknown) => unknown) => {
+      committed = update(remoteServices) as any[];
+      return { committed: true, snapshot: { val: () => committed } };
+    });
+    store.dispatch(serviceTimesSlice.actions.applyServiceGroupMutation(mutation));
+    await flushListenerEffects();
+
+    expect(runTransactionMock).toHaveBeenCalledTimes(2);
+    expect(committed).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "primary", serviceGroupId: "combined-sunday" }),
+      expect.objectContaining({ id: "partner", serviceGroupId: "combined-sunday" }),
+    ]));
+    expect(store.getState().undoable.present.serviceTimes.list).toEqual(committed);
+  });
+
   it("attempts a service-time update when the connection monitor is disconnected", async () => {
     jest.useFakeTimers();
     const {

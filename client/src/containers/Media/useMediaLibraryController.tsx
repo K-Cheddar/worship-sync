@@ -2267,6 +2267,10 @@ export function useMediaLibraryController({
       let queueControl: MediaFolderDeletionQueueControl | null = null;
       let fileStates: TransferFileActivity[] = [];
       let folderReadFailed = false;
+      let providerFailedRows: MediaType[] = [];
+      let deleteFailedRows: MediaType[] = [];
+      let uploadCleanupRetry: (() => Promise<void>) | undefined;
+      let uploadCleanupRows: MediaType[] = [];
       const retainCurrentMembers = (rows: MediaType[]) => {
         const currentIds = new Set(removedRows.map((row) => row.id));
         const skippedIds = new Set(rows.filter((row) => !currentIds.has(row.id)).map((row) => row.id));
@@ -2288,12 +2292,36 @@ export function useMediaLibraryController({
             : { ...existing, name: row.name || "Untitled media" };
         });
       };
-      let providerFailedRows: MediaType[] = [];
-      let deleteFailedRows: MediaType[] = [];
-      let uploadCleanupRetry: (() => Promise<void>) | undefined;
-      let uploadCleanupRows: MediaType[] = [];
       let folderFinalized = false;
       let folderFinalizationError: string | undefined;
+      const recordUnresolvedFolderMembers = (rows: MediaType[], message: string) => {
+        const unresolvedById = new Map(deleteFailedRows.map((row) => [row.id, row]));
+        const filesById = new Map(fileStates.map((file) => [file.id, file]));
+        rows.forEach((row) => {
+          unresolvedById.set(row.id, row);
+          const file = filesById.get(row.id);
+          if (file) {
+            if (file.status !== "failed") {
+              file.status = "failed";
+              file.progress = null;
+              file.phase = "Media remains in the folder";
+              file.error = message;
+            }
+          } else {
+            const added: TransferFileActivity = {
+              id: row.id,
+              name: row.name || "Untitled media",
+              status: "failed",
+              progress: null,
+              phase: "Media remains in the folder",
+              error: message,
+            };
+            fileStates.push(added);
+            filesById.set(row.id, added);
+          }
+        });
+        deleteFailedRows = [...unresolvedById.values()];
+      };
       let ownerActive = true;
       const activityHandoff = createMediaDeletionActivityHandoff(activityId, activityActions, { continueAfterOwnerRetires: true });
       const retireOwner = () => {
@@ -2360,6 +2388,49 @@ export function useMediaLibraryController({
         }
         const canUpdateRoute = () => ownerActive && isOperationUiScopeCurrent();
         if (folderFinalized) return true;
+        let authoritativeLatest: { list: MediaType[]; folders: MediaFolder[] };
+        try {
+          if (!operationScope.db) throw new Error("Media database is unavailable");
+          authoritativeLatest = await loadMediaLibrary(operationScope.db);
+        } catch (error) {
+          if (!isOriginalSession()) {
+            retireInvalidSession(control);
+            return false;
+          }
+          folderReadFailed = true;
+          recordUnresolvedFolderMembers(
+            removedRows,
+            "Could not verify folder contents. Retry deletion after the Media library is available.",
+          );
+          return false;
+        }
+        if (!isOriginalSession()) {
+          retireInvalidSession(control);
+          return false;
+        }
+        changeBase = authoritativeLatest;
+        target = authoritativeLatest.folders.find((folder) => folder.id === folderId);
+        if (!target) {
+          subtree = new Set<string>();
+          removedRows = [];
+          folderFinalized = true;
+          folderFinalizationError = undefined;
+          return true;
+        }
+        persistedFallbackParentId = target.parentId ?? null;
+        fallback = persistedFallbackParentId ?? MEDIA_LIBRARY_ROOT_VIEW;
+        removedRows = authoritativeLatest.list.filter((row) =>
+          row.folderId != null && subtree.has(row.folderId),
+        );
+        if (removedRows.length) {
+          folderReadFailed = false;
+          recordUnresolvedFolderMembers(
+            removedRows,
+            "Media still belongs to this folder. Retry deletion to include the remaining items.",
+          );
+          return false;
+        }
+        folderReadFailed = false;
         let routeRepairError: unknown;
         let routeRepairDocs: Awaited<
           ReturnType<typeof repairPersistedMediaRouteFolders>
@@ -2541,9 +2612,17 @@ export function useMediaLibraryController({
             );
             return true;
           }
+          refreshFileStates(removedRows, false);
           attemptedRows = retainCurrentMembers(targetRows);
-          deleteFailedRows = deleteFailedRows.filter((row) => removedRows.some((member) => member.id === row.id));
-          refreshFileStates(attemptedRows, false);
+          const attemptedIdsBeforeCleanup = new Set(attemptedRows.map((row) => row.id));
+          const unattemptedRows = removedRows.filter((row) => !attemptedIdsBeforeCleanup.has(row.id));
+          deleteFailedRows = deleteFailedRows.filter((row) =>
+            removedRows.some((member) => member.id === row.id) && !attemptedIdsBeforeCleanup.has(row.id),
+          );
+          recordUnresolvedFolderMembers(
+            unattemptedRows,
+            "This media item joined the folder while deletion was in progress. Retry deletion to include it.",
+          );
           if (cancellationControl?.isCancellationRequested()) {
             for (const row of attemptedRows) {
               const file = fileStates.find((candidate) => candidate.id === row.id);
@@ -2614,19 +2693,23 @@ export function useMediaLibraryController({
             return false;
           }
           const completeCount = fileStates.filter((file) => file.status === "complete").length;
-          const status: Transfer["status"] = providerFailedRows.length || deleteFailedRows.length
+          const status: Transfer["status"] = providerFailedRows.length || deleteFailedRows.length || folderReadFailed
             ? (completeCount ? "partial" : "failed")
             : folderFinalizationError
               ? (completeCount ? "partial" : "failed")
               : "complete";
-          const phase = folderFinalizationError
+          const phase = folderReadFailed
+            ? "Could not verify folder contents"
+            : folderFinalizationError
             ? "Folder finalization needs attention"
             : providerFailedRows.length
             ? "Folder removed; cloud cleanup needs attention"
             : deleteFailedRows.length
               ? result.phase === "sweep_failed" ? "Media kept because references could not be cleaned" : "Some media could not be removed"
               : "Folder deletion complete";
-          const error = folderFinalizationError
+          const error = folderReadFailed
+            ? "Could not verify whether any media remains in the folder. Retry deletion to check again."
+            : folderFinalizationError
             ? `Folder metadata or saved route folders could not be finalized: ${folderFinalizationError}`
             : providerFailedRows.length
             ? `${providerFailedRows.length} cloud ${providerFailedRows.length === 1 ? "asset needs" : "assets need"} cleanup.`
@@ -2634,7 +2717,7 @@ export function useMediaLibraryController({
               ? `${deleteFailedRows.length} ${deleteFailedRows.length === 1 ? "item could" : "items could"} not be removed.`
               : undefined;
           publish(status, phase, error);
-          return deleteFailedRows.length === 0 && !folderFinalizationError;
+          return deleteFailedRows.length === 0 && !folderFinalizationError && !folderReadFailed;
         } catch (error) {
           if (!isOriginalSession()) {
             retireInvalidSession(cancellationControl);
@@ -2886,7 +2969,7 @@ export function useMediaLibraryController({
                 retireInvalidSession(control);
                 return;
               }
-              retryRows = retainCurrentMembers(retryRows);
+              retryRows = removedRows;
               deleteFailedRows = retryRows;
               const retryClaim = claimMediaDeletion(
                 retryRows.map((row) => row.id),
@@ -2957,7 +3040,6 @@ export function useMediaLibraryController({
       });
       const retryFolderDeletion = async () => {
         enqueueFolderRetry(async (control) => {
-          const retryingInitialRead = folderReadFailed;
           try {
             if (!await refreshDeletionTarget()) {
               retireInvalidSession(control);
@@ -2973,9 +3055,7 @@ export function useMediaLibraryController({
             publish("failed", "Could not read the Media library", error instanceof Error ? error.message : "Check your connection and try again.");
             return;
           }
-          const retryRows = retryingInitialRead
-            ? removedRows
-            : retainCurrentMembers(deleteFailedRows);
+          const retryRows = removedRows;
           deleteFailedRows = retryRows;
           refreshFileStates(retryRows, true);
           if (!retryRows.length) {
@@ -2985,9 +3065,9 @@ export function useMediaLibraryController({
               retireInvalidSession(control);
               return;
             }
-            publish(providerFailedRows.length || folderFinalizationError ? "partial" : "complete",
-              folderFinalizationError ? "Folder finalization needs attention" : providerFailedRows.length ? "Folder removed; cloud cleanup needs attention" : target ? "Folder deletion complete" : "Folder already removed",
-              folderFinalizationError);
+            publish(folderReadFailed || providerFailedRows.length || folderFinalizationError ? "partial" : "complete",
+              folderReadFailed ? "Could not verify folder contents" : folderFinalizationError ? "Folder finalization needs attention" : providerFailedRows.length ? "Folder removed; cloud cleanup needs attention" : target ? "Folder deletion complete" : "Folder already removed",
+              folderReadFailed ? "Could not verify whether any media remains in the folder. Retry deletion to check again." : folderFinalizationError);
             if (folderFinalized) finishFolderNavigation();
             return;
           }

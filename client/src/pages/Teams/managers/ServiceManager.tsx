@@ -17,6 +17,7 @@ import { useDispatch, useSelector } from "../../../hooks";
 import { AUTOSAVE_DEBOUNCE_KEYS } from "../../../store/autosaveIndicatorSlice";
 import {
   addService,
+  applyServiceGroupMutation,
   removeService,
   updateService,
 } from "../../../store/serviceTimesSlice";
@@ -278,15 +279,18 @@ const ServiceManager = ({
       next.delete(editorKey);
       return next;
     });
-    if (editing && !retryingFailedCreate) {
+    const primaryMode = editing && !retryingFailedCreate ? "update" : "add";
+    if (partnerUpdates.length || (editing && editing.serviceGroupId !== groupId)) {
+      dispatch(applyServiceGroupMutation({
+        primary: { mode: primaryMode, service: saved },
+        // The store listener sends membership changes through one Firebase transaction.
+        partnerUpdates,
+      }));
+    } else if (editing && !retryingFailedCreate) {
       dispatch(updateService({ id: editing.id, changes: saved }));
     } else {
       dispatch(addService(saved));
     }
-    // Stamp the shared group id on partners (and clear it on services that left).
-    partnerUpdates.forEach(({ id, serviceGroupId }) => {
-      dispatch(updateService({ id, changes: { serviceGroupId } }));
-    });
     // Redux dispatch is optimistic; the store listener commits to Firebase and
     // can roll this change back. Without a per-action acknowledgment, a success
     // toast here would claim persistence before it is confirmed.
