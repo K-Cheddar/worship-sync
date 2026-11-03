@@ -1915,6 +1915,28 @@ describe("Teams", () => {
     );
   });
 
+  it.each([true, false])("reconciliation failure permits only already persisted assignment rows (persisted: %s)", async (persisted) => {
+    jest.useFakeTimers({ advanceTimers: true });
+    jest.setSystemTime(new Date("2026-11-03T12:00:00.000Z"));
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    const row = { occurrenceId: "existing-one-time@2026-11-07", serviceId: "existing-one-time", name: "Existing one-time", startsAt: "2026-11-07T15:00:00.000Z", serviceDate: "2026-11-07", positionRequirements: [{ positionId: "position-vocal", count: 1 }] };
+    const schedule = { ...scheduleBootstrap.schedules[0], name: "November", startDate: "2026-11-01", endDate: "2026-11-30", serviceIds: [row.serviceId], occurrences: [row], assignments: {} };
+    mockState = { undoable: { present: { serviceTimes: { list: [
+      { ...mockSharedServices[0], id: row.serviceId, name: row.name, dateTimeISO: row.startsAt, positionRequirements: row.positionRequirements },
+      { ...mockSharedServices[0], id: "new-one-time", name: "Book Launch 2026", dateTimeISO: "2026-11-07T21:30:00.000Z", positionRequirements: row.positionRequirements },
+    ] } } } };
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({ ...scheduleBootstrap, schedules: persisted ? [schedule] : [] }));
+    const message = 'Service "Book Launch 2026" (new-one-time) does not match its current service recurrence. Check Service setup, then try again.';
+    mockEnsureTeamScheduleForPeriod.mockRejectedValue(new Error(message));
+    mockUpdateTeamScheduleAssignment.mockResolvedValue({ success: true, schedule });
+    renderTeams("/teams-and-services/schedules");
+    await user.click(await screen.findByRole("button", { name: /Existing one-time Vocal, Empty/i }));
+    await user.click(await screen.findByRole("button", { name: /Assign Morgan/i }));
+    await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(persisted ? 1 : 0));
+    await screen.findByText(persisted ? message : "Couldn't save this assignment. Your choice is still here. Retry the save when ready.");
+    expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalled();
+  });
+
   it("auto-reuses the populated five-row schedule and persists its two new relevant occurrences", async () => {
     jest.useFakeTimers({ advanceTimers: true });
     jest.setSystemTime(new Date("2026-10-02T12:00:00.000Z"));

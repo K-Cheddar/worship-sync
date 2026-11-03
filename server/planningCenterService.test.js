@@ -140,8 +140,10 @@ test("Planning Center date discovery returns actual related service times", asyn
     { startsAt: "2026-11-01T13:00:00Z", timeType: "rehearsal" },
   ]);
   const listCalls = calls.filter((call) => call.url.endsWith("/service_types/7/plans"));
-  assert.equal(listCalls.length, 2);
-  assert.deepEqual(listCalls.map(({ params }) => params.filter).sort(), ["after", "before"]);
+  assert.equal(listCalls.length, 1);
+  assert.deepEqual(listCalls.map(({ params }) => params.filter), ["after"]);
+  assert.equal(listCalls[0].params.after, "2026-10-31T00:00:00.000Z");
+  assert.equal(listCalls[0].params.order, "sort_date");
   assert.ok(listCalls.every(({ params }) => params.include === "plan_times"));
 });
 
@@ -162,17 +164,18 @@ test("Planning Center date discovery rejects malformed dates", async () => {
   );
 });
 
-test("Planning Center date discovery intersects its date window for historical occurrences", async () => {
-  const plan = (id) => ({
+test("Planning Center date discovery bounds an ascending query to the target date window", async () => {
+  const plan = (id, sortDate) => ({
     type: "Plan",
     id,
-    attributes: { dates: "Old Sunday", title: id, sort_date: "2020-01-01T12:00:00Z" },
+    attributes: { dates: "Old Sunday", title: id, sort_date: sortDate },
     relationships: { plan_times: { data: [] } },
   });
   const { service, calls } = await createConnectedService({
-    getHandler: async (_url, config) => config?.params?.filter === "after"
-      ? { data: { data: [plan("shared"), plan("after-only")] } }
-      : { data: { data: [plan("shared"), plan("before-only")] } },
+    getHandler: async (_url, config) => ({ data: { data: [
+      plan("target-day", "2020-01-01T12:00:00Z"),
+      plan("outside-window", "2020-01-04T12:00:00Z"),
+    ] } }),
   });
 
   const result = await service.listPlans({
@@ -182,13 +185,95 @@ test("Planning Center date discovery intersects its date window for historical o
     date: "2020-01-01",
   });
 
-  assert.deepEqual(result.items.map(({ id }) => id), ["shared"]);
+  assert.deepEqual(result.items.map(({ id }) => id), ["target-day"]);
   const requests = calls
     .filter((call) => call.url.endsWith("/service_types/7/plans"))
     .map(({ params }) => params);
-  assert.deepEqual(requests.map(({ filter }) => filter), ["after", "before"]);
+  assert.deepEqual(requests.map(({ filter }) => filter), ["after"]);
   assert.equal(requests[0].after, "2019-12-31T00:00:00.000Z");
-  assert.equal(requests[1].before, "2020-01-03T00:00:00.000Z");
+  assert.equal(requests[0].order, "sort_date");
+});
+
+test("Planning Center date discovery stops paging after the ascending results pass the window", async () => {
+  const { service, calls } = await createConnectedService({
+    getHandler: async () => ({
+      data: {
+        data: Array.from({ length: 100 }, (_, index) => ({
+          type: "Plan",
+          id: `window-plan-${index}`,
+          attributes: {
+            sort_date: index === 99
+              ? "2020-01-04T00:00:00Z"
+              : "2020-01-02T00:00:00Z",
+          },
+        })),
+      },
+    }),
+  });
+
+  const result = await service.listPlans({
+    churchId: "church-1",
+    serviceTypeId: "7",
+    filter: "date",
+    date: "2020-01-01",
+  });
+
+  assert.equal(result.items.length, 99);
+  const planCalls = calls.filter((call) => call.url.endsWith("/service_types/7/plans"));
+  assert.equal(planCalls.length, 1);
+  assert.equal(planCalls[0].params.offset, 0);
+});
+
+test("Planning Center date discovery rejects a full truncated window instead of returning no match", async () => {
+  const { service, calls } = await createConnectedService({
+    getHandler: async (_url, config) => ({
+      data: {
+        data: Array.from({ length: 100 }, (_, index) => ({
+          type: "Plan",
+          id: `window-plan-${config.params.offset}-${index}`,
+          attributes: { sort_date: "2020-01-01T12:00:00Z" },
+        })),
+      },
+    }),
+  });
+
+  await assert.rejects(
+    () => service.listPlans({
+      churchId: "church-1",
+      serviceTypeId: "7",
+      filter: "date",
+      date: "2020-01-01",
+    }),
+    (error) => error.statusCode === 502 && /too many plans to check this date safely/i.test(error.message),
+  );
+  assert.equal(
+    calls.filter((call) => call.url.endsWith("/service_types/7/plans")).length,
+    20,
+  );
+});
+
+test("Planning Center date discovery rejects undated API rows instead of silently dropping them", async () => {
+  const { service } = await createConnectedService({
+    getHandler: async () => ({
+      data: {
+        data: [{
+          type: "Plan",
+          id: "undated-plan",
+          attributes: { sort_date: "unknown" },
+        }],
+      },
+    }),
+  });
+
+  await assert.rejects(
+    () => service.listPlans({
+      churchId: "church-1",
+      serviceTypeId: "7",
+      filter: "date",
+      date: "2020-01-01",
+    }),
+    (error) => error.statusCode === 502 && /without a valid service date/i.test(error.message),
+  );
 });
 
 test("Planning Center connect uses PKCE and records a church-scoped connection", async () => {

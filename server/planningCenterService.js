@@ -521,10 +521,11 @@ export const createPlanningCenterService = ({
     }
   };
 
-  const pcoGetCollection = async (churchId, path, params = {}) => {
+  const pcoGetCollection = async (churchId, path, params = {}, options = {}) => {
     const data = [];
     const includedByKey = new Map();
     let offset = 0;
+    let complete = false;
     const perPage = Math.min(100, Number(params.per_page) || 100);
     for (let page = 0; page < MAX_COLLECTION_PAGES; page += 1) {
       const response = await pcoGet(churchId, path, {
@@ -540,10 +541,17 @@ export const createPlanningCenterService = ({
         if (!entry?.type || entry.id == null) continue;
         includedByKey.set(`${entry.type}:${entry.id}`, entry);
       }
-      if (pageData.length < perPage) break;
+      if (pageData.length < perPage || options.stopAfterPage?.(pageData)) {
+        complete = true;
+        break;
+      }
       offset += perPage;
     }
-    return { data, included: [...includedByKey.values()] };
+    return { data, included: [...includedByKey.values()], truncated: !complete };
+  };
+
+  const throwIfCollectionTruncated = (collection, message) => {
+    if (collection.truncated) throw createClientError(message, 502);
   };
 
   const safeId = (value, label) => {
@@ -555,13 +563,17 @@ export const createPlanningCenterService = ({
   };
 
   const listServiceTypes = async ({ churchId }) => {
-    const { data } = await pcoGetCollection(
+    const collection = await pcoGetCollection(
       churchId,
       "/services/v2/service_types",
       { order: "name", per_page: 100 },
     );
+    throwIfCollectionTruncated(
+      collection,
+      "Planning Center returned too many service types to check safely. Set the service's Planning Center type in Service setup and try again.",
+    );
     return {
-      items: data.map((entry) => ({
+      items: collection.data.map((entry) => ({
         id: String(entry.id),
         name:
           String(entry.attributes?.name || "Service type").trim() ||
@@ -590,29 +602,37 @@ export const createPlanningCenterService = ({
       // timezone, so this window only narrows the API response.
       const after = new Date(timestamp - 24 * 60 * 60 * 1000).toISOString();
       const before = new Date(timestamp + 48 * 60 * 60 * 1000).toISOString();
-      const [afterPlans, beforePlans] = await Promise.all([
-        pcoGetCollection(churchId, path, {
-          filter: "after",
-          after,
-          order: "sort_date",
-          include: "plan_times",
-          per_page: 100,
-        }),
-        pcoGetCollection(churchId, path, {
-          filter: "before",
-          before,
-          order: "sort_date",
-          include: "plan_times",
-          per_page: 100,
-        }),
-      ]);
-      const beforePlanIds = new Set(beforePlans.data.map((entry) => String(entry.id)));
-      data = afterPlans.data.filter((entry) => beforePlanIds.has(String(entry.id)));
-      const includedByKey = new Map();
-      [...afterPlans.included, ...beforePlans.included].forEach((entry) => {
-        includedByKey.set(`${entry.type}:${entry.id}`, entry);
+      const dateWindowPlans = await pcoGetCollection(churchId, path, {
+        filter: "after",
+        after,
+        order: "sort_date",
+        include: "plan_times",
+        per_page: 100,
+      }, {
+        // Ascending sort_date means every later page is beyond the requested
+        // window once the final row on a page passes the upper bound.
+        stopAfterPage: (pageData) => {
+          const lastSortDate = Date.parse(pageData.at(-1)?.attributes?.sort_date || "");
+          return Number.isFinite(lastSortDate) && lastSortDate > Date.parse(before);
+        },
       });
-      included = [...includedByKey.values()];
+      throwIfCollectionTruncated(
+        dateWindowPlans,
+        "Planning Center returned too many plans to check this date safely. Try again later or set the service's Planning Center type in Service setup.",
+      );
+      if (dateWindowPlans.data.some((entry) =>
+        !Number.isFinite(Date.parse(entry.attributes?.sort_date || "")),
+      )) {
+        throw createClientError(
+          "Planning Center returned a plan without a valid service date, so this date check could not be completed safely.",
+          502,
+        );
+      }
+      data = dateWindowPlans.data.filter((entry) => {
+        const sortDate = Date.parse(entry.attributes?.sort_date || "");
+        return Number.isFinite(sortDate) && sortDate <= Date.parse(before);
+      });
+      included = dateWindowPlans.included;
     } else {
       const planFilter =
         filter === "past" || filter === "no_dates" ? filter : "future";

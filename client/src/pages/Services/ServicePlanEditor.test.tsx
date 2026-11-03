@@ -5185,6 +5185,27 @@ SMC Worship Experience
     expect(mockListPlanningCenterPlansForDate).not.toHaveBeenCalled();
   });
 
+  it("keeps Planning Center discovery in the background until a result is ready", async () => {
+    let resolvePlans!: (result: { items: PlanningCenterPlanSummary[] }) => void;
+    mockListPlanningCenterPlansForDate.mockImplementation(() =>
+      new Promise((resolve) => { resolvePlans = resolve; }),
+    );
+
+    renderEditor({
+      planningCenterConnected: true,
+      service: { ...oneTimeService, planningCenterServiceTypeId: "pco-type-1" },
+    });
+
+    await waitFor(() => expect(mockListPlanningCenterPlansForDate).toHaveBeenCalled());
+    expect(screen.queryByRole("region", { name: "Planning Center plan discovery" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Checking Planning Center")).not.toBeInTheDocument();
+
+    await act(async () => resolvePlans({ items: [planningCenterCandidate()] }));
+    expect(await screen.findByRole("region", { name: "Planning Center plan discovery" })).toHaveTextContent(
+      "Planning Center plan found",
+    );
+  });
+
   it("discovers a unique plan for an empty occurrence and imports only after the user asks", async () => {
     mockListPlanningCenterPlansForDate.mockResolvedValue({
       items: [planningCenterCandidate()],
@@ -5381,6 +5402,53 @@ SMC Worship Experience
     expect(mockSaveServicePlan).not.toHaveBeenCalled();
   });
 
+  it("keeps stale discovery quiet after autosave and rechecks only from an explicit action", async () => {
+    const unchangedImport = planningCenterImport();
+    unchangedImport.sections[0].rows[0].durationMinutes = 5;
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        revision: 2,
+        sourceImport: {
+          source: "planningCenter",
+          sourceUrl: "https://services.planningcenteronline.com/plans/pco-plan-1",
+          loadedAt: "2026-07-20T12:00:00Z",
+          planLabel: "Sunday Worship",
+          planningCenterServiceTypeId: "pco-type-1",
+          planningCenterPlanId: "pco-plan-1",
+        },
+        sections: buildServicePlanSectionsFromImport(unchangedImport, []),
+      } as ServicePlan,
+    });
+    mockGetPlanningCenterPlanImport.mockResolvedValue(unchangedImport);
+
+    const user = userEvent.setup();
+    renderEditor({ planningCenterConnected: true });
+    await waitFor(() => expect(mockGetPlanningCenterPlanImport).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("region", { name: "Planning Center plan discovery" })).toHaveTextContent(
+      "Planning Center plan is up to date",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const duration = await screen.findByLabelText(/^Duration/i);
+    fireEvent.change(duration, { target: { value: "10" } });
+    await waitFor(() => expect(duration).toHaveValue("10"));
+    fireEvent.blur(duration);
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), { timeout: 2_500 });
+    expect(screen.queryByRole("region", { name: "Planning Center plan discovery" })).not.toBeInTheDocument();
+    expect(mockGetPlanningCenterPlanImport).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Plan actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Check Planning Center" }));
+    await waitFor(() => expect(mockGetPlanningCenterPlanImport).toHaveBeenCalledTimes(2));
+  });
+
   it("rejects a Planning Center preview when the source changes before apply", async () => {
     const linkedPlan: ServicePlan = {
       planId: "church-1::service-1@2026-07-26",
@@ -5429,7 +5497,13 @@ SMC Worship Experience
     expect(await screen.findByText("Review Planning Center updates")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
 
-    expect(await screen.findByText(/Planning Center changed while you were reviewing/i)).toBeInTheDocument();
+    const retryPrompt = await screen.findByRole("region", {
+      name: "Planning Center plan discovery",
+    });
+    expect(retryPrompt).toHaveTextContent(
+      "Planning Center changed while you were reviewing. Check again to review the latest updates.",
+    );
+    expect(screen.getByText("Planning Center changed while you were reviewing. Review the latest updates.")).toBeInTheDocument();
     await waitFor(() => expect(
       screen.queryByText("Review Planning Center updates"),
     ).not.toBeInTheDocument());

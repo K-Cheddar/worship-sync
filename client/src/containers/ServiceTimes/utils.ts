@@ -1,4 +1,5 @@
 import { MonthWeekOrdinal, MultiWeeklyDay, Weekday } from "../../types";
+import { oneTimeServiceInstant } from "../../../../shared/teamScheduleOccurrences";
 
 const DAY_ABBRS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
@@ -22,7 +23,8 @@ export const ordinals: { label: string; value: MonthWeekOrdinal }[] = [
 
 export const formatOneTime = (iso?: string, timeZone = "UTC") => {
   if (!iso) return "";
-  const d = new Date(iso);
+  const d = oneTimeServiceInstant(iso, timeZone);
+  if (!d) return "";
   const dateStr = d.toLocaleDateString(undefined, {
     timeZone,
     year: "numeric",

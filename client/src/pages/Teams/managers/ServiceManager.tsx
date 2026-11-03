@@ -59,6 +59,7 @@ import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
 import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 import { useChurchServiceTimeZone } from "../../../context/churchServiceTimeZone";
 import ChurchServiceTimeZoneSettings from "../ChurchServiceTimeZoneSettings";
+import { oneTimeServiceInstant, oneTimeServiceLocalValue } from "../../../utils/teamScheduleOccurrences";
 import {
   listPlanningCenterServiceTypes,
   type PlanningCenterServiceType,
@@ -568,7 +569,7 @@ const ServiceManager = ({
     Boolean(String(draft.name || "").trim()) &&
     !hasIncompletePositionCountDraft &&
     (recurrence === "one_time"
-      ? Boolean(draft.dateTimeISO)
+      ? Boolean(churchTimeZone.timeZone && oneTimeServiceInstant(draft.dateTimeISO, churchTimeZone.timeZone))
       : recurrence === "multi_weekly"
         ? Boolean(draft.daysOfWeek?.length) &&
         (draft.daysOfWeek || []).every((day) => Boolean(day.time))
@@ -730,8 +731,14 @@ const ServiceManager = ({
       {recurrence === "one_time" ? (
         <DateTimePicker
           label="Date & Time"
-          value={draft.dateTimeISO || ""}
-          onChange={(dateTimeISO) => setDraft((d) => ({ ...d, dateTimeISO }))}
+          value={churchTimeZone.timeZone ? oneTimeServiceLocalValue(draft.dateTimeISO, churchTimeZone.timeZone) : draft.dateTimeISO || ""}
+          disabled={!churchTimeZone.timeZone}
+          onChange={(value) => setDraft((d) => ({
+            ...d,
+            dateTimeISO: churchTimeZone.timeZone
+              ? oneTimeServiceInstant(value, churchTimeZone.timeZone)?.toISOString() || value
+              : "",
+          }))}
         />
       ) : null}
 

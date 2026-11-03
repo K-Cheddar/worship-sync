@@ -879,10 +879,23 @@ const ScheduleTab = ({
   );
   const ensureActiveSchedule = useCallback(async (
     requestedSchedule?: TeamSchedule | null,
+    assignmentOccurrenceIds?: string[],
   ): Promise<TeamSchedule | null> => {
     const active = requestedSchedule || latestScheduleRef.current;
     if (!active) throw new Error("Choose a service period before scheduling.");
     if (!active.scheduleId.startsWith("virtual:") && viewingSavedSchedule) return active;
+    const saved = schedules.find((schedule) =>
+      schedule.scheduleId === active.scheduleId && schedule.churchId === churchId &&
+      schedule.teamId === workspaceTeamId && !schedule.archivedAt,
+    );
+    // A targeted assignment to an already persisted row does not depend on
+    // adding unrelated services. New rows still require strict reconciliation.
+    if (saved && !periodScheduleMatch.ambiguous && !periodScheduleMatch.ownershipConflict &&
+        assignmentOccurrenceIds?.length && assignmentOccurrenceIds.every((id) => {
+          const stored = saved.occurrences?.find((occurrence) => occurrence.occurrenceId === id);
+          const target = active.occurrences?.find((occurrence) => occurrence.occurrenceId === id);
+          return stored && target && occurrenceScheduleDetailsMatch([stored], [target], serviceTimeZone);
+        })) return active;
     const requestKey = makePeriodReconciliationKey(active.scheduleId, active.occurrences || [], active);
     if (
       !active.scheduleId.startsWith("virtual:") &&
@@ -994,6 +1007,9 @@ const ScheduleTab = ({
     updateVirtualSchedulePreview,
     viewingSavedSchedule,
     workspaceTeamId,
+    schedules,
+    periodScheduleMatch.ambiguous,
+    periodScheduleMatch.ownershipConflict,
   ]);
   useEffect(() => {
     if (
@@ -1008,11 +1024,13 @@ const ScheduleTab = ({
       confirmedPeriodReconciliationRef.current === periodReconciliationKey
     ) return;
     let active = true;
-    const offerRetry = () => {
+    const offerRetry = (error: unknown) => {
       if (!active) return;
       let toastId = "";
       toastId = showToast({
-        message: "Couldn't check this schedule for newly added services. Retry to refresh the schedule.",
+        message: error instanceof Error
+          ? error.message
+          : "Couldn't check this schedule for newly added services. Retry to refresh the schedule.",
         variant: "error",
         persist: true,
         children: (
@@ -3022,7 +3040,7 @@ const ScheduleTab = ({
     };
     const saveAssignment = async (fingerprint?: string): Promise<void> => {
       try {
-        const ensuredSchedule = await ensureActiveSchedule(mutationSchedule);
+        const ensuredSchedule = await ensureActiveSchedule(mutationSchedule, stagedEdits.map((edit) => edit.occurrenceId));
         if (!ensuredSchedule) return;
         mutationSchedule = ensuredSchedule;
         stagedEdits.forEach((edit, index) => {
@@ -3548,7 +3566,7 @@ const ScheduleTab = ({
       // save's Retry button was still visible.
       if (!scheduleTabMountedRef.current || !isShadowEditPending(mutationSchedule.scheduleId)) return;
       try {
-        const ensuredSchedule = await ensureActiveSchedule(mutationSchedule);
+        const ensuredSchedule = await ensureActiveSchedule(mutationSchedule, [staged.edit.occurrenceId]);
         if (!ensuredSchedule) return;
         mutationSchedule = ensuredSchedule;
         if (!isShadowEditPending(ensuredSchedule.scheduleId)) return;
@@ -5166,7 +5184,7 @@ const ScheduleTab = ({
     };
     const saveSwap = async (fingerprint?: string): Promise<void> => {
       try {
-        const ensuredSchedule = await ensureActiveSchedule(mutationSchedule);
+        const ensuredSchedule = await ensureActiveSchedule(mutationSchedule, stagedEdits.map((edit) => edit.occurrenceId));
         if (!ensuredSchedule) return;
         mutationSchedule = ensuredSchedule;
         const persistedEdits = stagedEdits.map((edit) =>

@@ -102,6 +102,25 @@ export const calendarDateInTimeZone = (date: Date | string | number, timeZone: s
   return `${values.year}-${values.month}-${values.day}`;
 };
 
+/** Legacy picker values are church-local wall times, never host-local dates. */
+export const oneTimeServiceInstant = (value: string | undefined, timeZone: string): Date | null => {
+  if (!value) return null;
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) {
+    return serviceDateTimeInTimeZone(value.slice(0, 10), value.slice(11), timeZone);
+  }
+  if (!/(Z|[+-]\d{2}:\d{2})$/i.test(value)) return null;
+  const instant = new Date(value);
+  return Number.isNaN(instant.getTime()) ? null : instant;
+};
+
+/** DateTimePicker accepts a wall time without an offset. Preserve old local input. */
+export const oneTimeServiceLocalValue = (value: string | undefined, timeZone: string): string => {
+  const instant = oneTimeServiceInstant(value, timeZone);
+  if (!instant) return value || "";
+  const parts = wallClockPartsAt(instant.getTime(), timeZone);
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+};
+
 export const logicalOccurrenceIdForService = (serviceId: string, serviceDate: string): string =>
   `${String(serviceId || "").trim()}@${serviceDate}`;
 

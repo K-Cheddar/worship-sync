@@ -160,6 +160,18 @@ afterEach(() => {
 });
 
 describe("ServiceManager combined services", () => {
+  it("reloads an absolute one-time service in church local time without shifting it on save", async () => {
+    const user = userEvent.setup();
+    renderManager([service({ serviceId: "book-launch", name: "Book Launch 2026", reccurence: "one_time", dateTimeISO: "2026-11-07T21:30:00.000Z" })]);
+    await user.click(screen.getByRole("button", { name: /Edit Book Launch 2026/i }));
+    expect(screen.getByLabelText("Date & Time")).toHaveValue("11/07/2026 04:30 PM");
+    fireEvent.change(screen.getByLabelText(/^Name:?$/), { target: { value: "Book Launch updated" } });
+    await user.click(serviceFormSaveButton());
+    expect(findActions(mockDispatch.mock.calls, "serviceTimes/updateService")).toEqual([
+      expect.objectContaining({ payload: expect.objectContaining({ id: "book-launch", changes: expect.objectContaining({ dateTimeISO: "2026-11-07T21:30:00.000Z" }) }) }),
+    ]);
+  });
+
   it("confirms before discarding unsaved service changes", async () => {
     const user = userEvent.setup();
     renderManager([sundayMorning, sundayLate, midweek]);

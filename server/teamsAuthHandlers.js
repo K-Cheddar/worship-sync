@@ -114,6 +114,7 @@ import {
   matchOccurrencesByIdentity,
   resolveOccurrenceIdentity,
   serviceDateTimeInTimeZone,
+  oneTimeServiceInstant,
 } from "../shared/teamScheduleOccurrences.ts";
 
 const APP_BASE_URL =
@@ -1868,8 +1869,8 @@ export const createTeamsAuthHandlers = ({
     const weekday = date.getUTCDay();
     if (service.reccurence === "one_time") {
       if (!service.dateTimeISO) return null;
-      const serviceInstant = new Date(service.dateTimeISO);
-      if (Number.isNaN(serviceInstant.getTime())) return null;
+      const serviceInstant = oneTimeServiceInstant(service.dateTimeISO, timeZone);
+      if (!serviceInstant) return null;
       if (
         getOccurrenceCalendarParts(serviceInstant.toISOString(), timeZone)
           .date !== localDate
@@ -1913,18 +1914,23 @@ export const createTeamsAuthHandlers = ({
     return null;
   };
 
-  const assertServiceOccurrence = ({ service, localParts, timeZone }) => {
+  const assertServiceOccurrence = ({ service, localParts, timeZone, occurrenceId, serviceDate }) => {
     const scheduledTime = getServiceOccurrenceTime(
       service,
       localParts.date,
       timeZone,
     );
-    if (!scheduledTime || scheduledTime !== localParts.time) {
-      throw httpError(
-        400,
-        "A target does not match its current service recurrence.",
-      );
-    }
+    const recurrenceMismatch = () => {
+      const serviceId = service?.serviceId || service?.id || "unknown";
+      logAuthEvent?.("warn", "schedule.occurrence.recurrence_mismatch", {
+        serviceId, occurrenceId, recurrence: service?.reccurence,
+        storedDateTimeISO: service?.dateTimeISO || null,
+        expectedLocalTime: scheduledTime, submittedLocalTime: localParts.time,
+        startsAt: localParts.startsAt, serviceDate, computedServiceDate: localParts.date, timeZone,
+      });
+      return httpError(400, `Service "${service?.name || serviceId}" (${serviceId}) does not match its current service recurrence on ${localParts.date}. Check its date and time in Service setup, wait for saving to finish, then refresh Scheduling and try again.`);
+    };
+    if (!scheduledTime || scheduledTime !== localParts.time) throw recurrenceMismatch();
     if (service.reccurence !== "one_time") {
       const expectedInstant = serviceDateTimeInTimeZone(
         localParts.date,
@@ -1937,12 +1943,9 @@ export const createTeamsAuthHandlers = ({
     }
     if (
       service.reccurence === "one_time" &&
-      new Date(service.dateTimeISO).toISOString() !== localParts.startsAt
+      oneTimeServiceInstant(service.dateTimeISO, timeZone)?.toISOString() !== localParts.startsAt
     ) {
-      throw httpError(
-        400,
-        "A target does not match its one-time service occurrence.",
-      );
+      throw recurrenceMismatch();
     }
     return scheduledTime;
   };
@@ -1960,7 +1963,7 @@ export const createTeamsAuthHandlers = ({
     servicesById,
   }) => {
     const primaryService = servicesById.get(serviceId);
-    assertServiceOccurrence({ service: primaryService, localParts, timeZone });
+    assertServiceOccurrence({ service: primaryService, localParts, timeZone, occurrenceId, serviceDate });
     if (serviceDate && serviceDate !== localParts.date) {
       throw httpError(400, "A service occurrence has an invalid calendar date.");
     }
@@ -19323,14 +19326,11 @@ export const createTeamsAuthHandlers = ({
             throw httpError(409, "Team positions changed while this schedule was opening. Refresh and try again.");
           }
         };
-        if (
-          payload.serviceIds.some(
-            (serviceId) => !activeServicesById.has(serviceId),
-          )
-        ) {
+        const missingServiceId = payload.serviceIds.find((serviceId) => !activeServicesById.has(serviceId));
+        if (missingServiceId) {
           throw httpError(
             400,
-            "Choose active services for this schedule period.",
+            `Service (${missingServiceId}) is not saved or is no longer active. Wait for Service setup to finish saving, then refresh Scheduling and try again.`,
           );
         }
         for (const occurrence of payload.occurrences) {

@@ -623,6 +623,7 @@ const ServicePlanEditor = ({
     serviceIds: [...(occurrence.serviceIds || [occurrence.serviceId])].sort(),
     groupId: occurrence.groupId || "",
     serviceDate: occurrence.serviceDate || "",
+    planDate: plan?.date || "",
     startsAt: occurrence.startsAt,
     timeZone: churchTimeZone,
     serviceTypeId: service.planningCenterServiceTypeId || "",
@@ -694,6 +695,7 @@ const ServicePlanEditor = ({
     useState("");
   const [planningCenterRetryVersion, setPlanningCenterRetryVersion] = useState(0);
   const planningCenterDiscoveryOperationRef = useRef<symbol | null>(null);
+  const planningCenterDiscoveryRequestKeyRef = useRef("");
   const dismissedPlanningCenterSuggestionKeyRef = useRef("");
   const liveImportSafeRef = useRef(true);
   const planningCenterPdfInputRef = useRef<HTMLInputElement>(null);
@@ -1842,6 +1844,7 @@ const ServicePlanEditor = ({
               ...refreshOptions,
               suggestLegacyMatches: true,
               planningCenterPdfMatch: source === "planningCenterPdf",
+              trackSameSectionSourceOrder: source === "planningCenter",
               // Only plans imported before item-level provenance existed can have
               // their unmarked items regarded as source-owned, and then only when
               // removal was chosen. PDF refreshes cannot distinguish legacy source
@@ -1887,7 +1890,7 @@ const ServicePlanEditor = ({
         { microphones, iemEquipment },
         {
           dependentTimingShifts: recalculateTimeline,
-          trackSameSectionMoves: source === "planningCenterPdf",
+          trackSameSectionMoves: source === "planningCenterPdf" || source === "planningCenter",
         },
       ),
       recalculateTimeline,
@@ -2302,6 +2305,19 @@ const ServicePlanEditor = ({
     setImportPreview(null);
   };
 
+  const requestPlanningCenterRetry = useCallback((message: string) => {
+    setPlanningCenterSuggestion({
+      key: `${planningCenterScopeKey}:retry`,
+      dismissalKey: `${planningCenterScopeKey}:retry`,
+      scopeKey: planningCenterScopeKey,
+      editorIdentity: editorIdentityKey,
+      draftVersion: draftChangeVersionRef.current,
+      baseRevision: getPlanningCenterBaseRevision(),
+      kind: "unavailable",
+      message,
+    });
+  }, [editorIdentityKey, getPlanningCenterBaseRevision, planningCenterScopeKey]);
+
   const getSelectedImportSections = (selectedChangeKeys: string[]) => {
     if (!importPreview) return undefined;
     const selected = applySelectedServicePlanImportChanges(
@@ -2339,9 +2355,9 @@ const ServicePlanEditor = ({
         importPreviewRef.current !== preview
       ) return;
       closeImportPreview();
-      if (preview.sourceImport.source === "planningCenter") {
-        setPlanningCenterRetryVersion((version) => version + 1);
-      }
+      if (preview.sourceImport.source === "planningCenter") requestPlanningCenterRetry(
+        "The plan changed. Check Planning Center again before applying updates.",
+      );
       showToast(!liveImportSafeRef.current && preview.suggestionKey
         ? "Plan updates are paused while this service is live. Review them after the service."
         : preview.sourceImport.source === "planningCenter"
@@ -2352,9 +2368,9 @@ const ServicePlanEditor = ({
     try {
       if (!isCurrentPreview() || JSON.stringify(sections) !== JSON.stringify(preview.currentSections)) {
         closeImportPreview();
-        if (preview.sourceImport.source === "planningCenter") {
-          setPlanningCenterRetryVersion((version) => version + 1);
-        }
+        if (preview.sourceImport.source === "planningCenter") requestPlanningCenterRetry(
+          "The plan changed. Check Planning Center again before applying updates.",
+        );
         showToast(!liveImportSafeRef.current && preview.suggestionKey
           ? "Plan updates are paused while this service is live. Review them after the service."
           : preview.sourceImport.source === "planningCenter"
@@ -2372,7 +2388,7 @@ const ServicePlanEditor = ({
           !preview.sourceFingerprint
         ) {
           closeImportPreview();
-          setPlanningCenterRetryVersion((version) => version + 1);
+          requestPlanningCenterRetry("This Planning Center preview is no longer available. Check for updates again.");
           showToast("This Planning Center preview is no longer available. Check for updates again.");
           return;
         }
@@ -2383,7 +2399,7 @@ const ServicePlanEditor = ({
         }
         if (JSON.stringify(latest.data) !== preview.sourceFingerprint) {
           closeImportPreview();
-          setPlanningCenterRetryVersion((version) => version + 1);
+          requestPlanningCenterRetry("Planning Center changed while you were reviewing. Check again to review the latest updates.");
           showToast("Planning Center changed while you were reviewing. Review the latest updates.");
           return;
         }
@@ -3080,6 +3096,14 @@ const ServicePlanEditor = ({
       return undefined;
     }
     const discoveryChurchId = churchId;
+    const discoveryRequestKey = JSON.stringify({
+      scope: planningCenterScopeKey,
+      retryVersion: planningCenterRetryVersion,
+      connected: planningCenterConnected,
+      canEdit,
+    });
+    const hasCheckedThisScope =
+      planningCenterDiscoveryRequestKeyRef.current === discoveryRequestKey;
 
     const linkedToPlanningCenter = sourceImport?.source === "planningCenter";
     const linkedServiceTypeId = sourceImport?.planningCenterServiceTypeId || "";
@@ -3092,6 +3116,7 @@ const ServicePlanEditor = ({
 
     if (!planningCenterConnected) {
       planningCenterDiscoveryOperationRef.current = null;
+      planningCenterDiscoveryRequestKeyRef.current = "";
       setPlanningCenterSuggestion(
         canShowConnectionState
           ? {
@@ -3117,7 +3142,11 @@ const ServicePlanEditor = ({
     }
 
     if (showImport || importPreview || pendingNativeImport) {
+      const discoveryWasInFlight = planningCenterDiscoveryOperationRef.current !== null;
       planningCenterDiscoveryOperationRef.current = null;
+      if (hasCheckedThisScope && discoveryWasInFlight) {
+        requestPlanningCenterRetry("Planning Center check was paused while another import was open. Try again to compare the latest plan.");
+      }
       return undefined;
     }
 
@@ -3131,6 +3160,9 @@ const ServicePlanEditor = ({
       return undefined;
     }
 
+    if (hasCheckedThisScope) return undefined;
+
+    planningCenterDiscoveryRequestKeyRef.current = discoveryRequestKey;
     const operation = Symbol("planning-center-discovery");
     planningCenterDiscoveryOperationRef.current = operation;
     const scopeKeyAtStart = planningCenterScopeKey;
@@ -3171,16 +3203,7 @@ const ServicePlanEditor = ({
         !isScopeCurrent() ||
         loadedEditorIdentityRef.current !== editorIdentityAtStart
       ) return;
-      setPlanningCenterSuggestion({
-        key: `${scopeKeyAtStart}:stale`,
-        dismissalKey: `${scopeKeyAtStart}:stale`,
-        scopeKey: scopeKeyAtStart,
-        editorIdentity: editorIdentityAtStart,
-        draftVersion: draftChangeVersionRef.current,
-        baseRevision: getPlanningCenterBaseRevision(),
-        kind: "unavailable",
-        message: "This service plan changed while Planning Center was being checked. Check again to compare the latest plan.",
-      });
+      setPlanningCenterSuggestion(null);
     };
     const setCurrentSuggestion = (
       kind: PlanningCenterSuggestion["kind"],
@@ -3467,20 +3490,26 @@ const ServicePlanEditor = ({
         const staleDraft =
           draftChangeVersionRef.current !== draftVersionAtStart ||
           getPlanningCenterBaseRevision() !== baseRevisionAtStart;
-        setPlanningCenterSuggestion({
-          key: `${scopeKeyAtStart}:unavailable`,
-          dismissalKey: `${scopeKeyAtStart}:unavailable`,
-          scopeKey: scopeKeyAtStart,
-          editorIdentity: editorIdentityAtStart,
-          draftVersion: draftChangeVersionRef.current,
-          baseRevision: getPlanningCenterBaseRevision(),
-          kind: "unavailable",
-          message: staleDraft
-            ? "This service plan changed while Planning Center was being checked. Check again to compare the latest plan."
-            : error instanceof Error
+        if (staleDraft) {
+          setPlanningCenterSuggestion(null);
+        } else {
+          setPlanningCenterSuggestion({
+            key: `${scopeKeyAtStart}:unavailable`,
+            dismissalKey: `${scopeKeyAtStart}:unavailable`,
+            scopeKey: scopeKeyAtStart,
+            editorIdentity: editorIdentityAtStart,
+            draftVersion: draftChangeVersionRef.current,
+            baseRevision: getPlanningCenterBaseRevision(),
+            kind: "unavailable",
+            message: error instanceof Error
               ? error.message
               : "Could not check Planning Center. Try again.",
-        });
+          });
+        }
+      } finally {
+        if (planningCenterDiscoveryOperationRef.current === operation) {
+          planningCenterDiscoveryOperationRef.current = null;
+        }
       }
     };
 
@@ -3512,6 +3541,7 @@ const ServicePlanEditor = ({
     planningCenterConnected,
     planningCenterConnectionKey,
     planningCenterRetryVersion,
+    requestPlanningCenterRetry,
     planningCenterScopeKey,
     isLiveImportUnsafe,
     service.planningCenterServiceTypeId,
@@ -3948,6 +3978,15 @@ const ServicePlanEditor = ({
                   Import updates
                 </DropdownMenuItem>
               ) : null}
+              {canEdit && planningCenterConnected ? (
+                <DropdownMenuItem
+                  disabled={importing || isLiveImportUnsafe}
+                  onSelect={() => setPlanningCenterRetryVersion((version) => version + 1)}
+                >
+                  <RefreshCw aria-hidden />
+                  Check Planning Center
+                </DropdownMenuItem>
+              ) : null}
               {isServiceDay && liveElementId ? (
                 <>
                   <DropdownMenuSeparator
@@ -4053,7 +4092,8 @@ const ServicePlanEditor = ({
       </Sheet>
       {loadingInitialContent ? <ServicePlanSkeleton /> : null}
 
-      {!loadingInitialContent && canEdit && planningCenterSuggestion ? (
+      {!loadingInitialContent && canEdit && planningCenterSuggestion &&
+      planningCenterSuggestion.kind !== "checking" ? (
         <section
           aria-live="polite"
           className={cn(
@@ -4066,21 +4106,16 @@ const ServicePlanEditor = ({
         >
           <div className="min-w-0">
             <p className="text-sm font-medium text-gray-100">
-              {planningCenterSuggestion.kind === "checking"
-                ? "Checking Planning Center"
-                : planningCenterSuggestion.kind === "upToDate"
-                  ? "Planning Center plan is up to date"
-                  : planningCenterSuggestion.kind === "ambiguous"
-                    ? "More than one Planning Center plan matches this service"
-                    : planningCenterSuggestion.kind === "updates"
-                      ? "Planning Center updates available"
-                      : planningCenterSuggestion.kind === "unavailable"
-                        ? "Planning Center check unavailable"
-                        : "Planning Center plan found"}
+              {planningCenterSuggestion.kind === "upToDate"
+                ? "Planning Center plan is up to date"
+                : planningCenterSuggestion.kind === "ambiguous"
+                  ? "More than one Planning Center plan matches this service"
+                  : planningCenterSuggestion.kind === "updates"
+                    ? "Planning Center updates available"
+                    : planningCenterSuggestion.kind === "unavailable"
+                      ? "Planning Center check unavailable"
+                      : "Planning Center plan found"}
             </p>
-            {planningCenterSuggestion.kind === "checking" ? (
-              <p className="mt-0.5 text-xs text-gray-400">Matching the service date and start time.</p>
-            ) : null}
             {planningCenterSuggestion.kind === "upToDate" ? (
               <p className="mt-0.5 text-xs text-gray-400">{planningCenterSuggestion.message}</p>
             ) : null}

@@ -22,6 +22,7 @@ import { smsConsentIdForChurchPhone } from "./smsConsent.js";
 import { isPublicSharePathname } from "../client/src/utils/publicSharePathRedirect.ts";
 import { buildTeamSchedulePeriod } from "../client/src/pages/Teams/schedule/teamSchedulePeriod.ts";
 import { generateScheduleOccurrences } from "../client/src/utils/teamScheduleOccurrences.ts";
+import { oneTimeServiceInstant } from "../shared/teamScheduleOccurrences.ts";
 
 import {
   addServicePlanSseClient,
@@ -18291,6 +18292,26 @@ test("October period reuses the populated legacy schedule and safely adds newly 
   const repeated = await callHandler(authHandlers.ensureTeamScheduleForPeriod, { context, body });
   assert.equal(repeated.statusCode, 200);
   assert.deepEqual(await getDoc("teamSchedules", scheduleId), after);
+});
+
+test("Book Launch datetime-local persistence agrees with browser generation in the church timezone", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("book_launch_local_persistence");
+  await setDoc(COLLECTIONS.churches, context.churchId, { serviceTimeZone: "America/New_York" }, { merge: true });
+  const { teamId } = await seedTeam(context, { teamName: "Media" });
+  // Before the fix ServiceManager passed this timezone-less picker value to
+  // buildServiceTimeUpdate, and the RTDB transaction preserved it byte for byte.
+  const services = [
+    { id: "existing-one-time", serviceId: "existing-one-time", name: "Existing one-time", reccurence: "one_time", dateTimeISO: "2026-11-07T15:00:00.000Z" },
+    { id: "1k6gq4vjthg7r1g7qg4g", serviceId: "1k6gq4vjthg7r1g7qg4g", name: "Book Launch 2026", reccurence: "one_time", dateTimeISO: "2026-11-07T16:30" },
+  ];
+  seedChurchServiceTimesForServerTests({ churchId: context.churchId, services });
+  const occurrences = generateScheduleOccurrences({ services, serviceIds: services.map(s => s.id), startDate: "2026-11-01", endDate: "2026-11-30", timeZone: "America/New_York" });
+  // Model the supplied New York browser result independently of this UTC server.
+  const submitted = occurrences.map(o => o.serviceId === services[1].id ? { ...o, startsAt: "2026-11-07T21:30:00.000Z", serviceDate: "2026-11-07" } : o);
+  t.diagnostic(JSON.stringify(services.map(service => ({ serviceId: service.id, recurrence: service.reccurence, storedDateTimeISO: service.dateTimeISO, hostParsedLocalTime: new Date(service.dateTimeISO).toLocaleTimeString("en-GB", { timeZone: "America/New_York" }), serverComputedLocalTime: oneTimeServiceInstant(service.dateTimeISO, "America/New_York")?.toLocaleTimeString("en-GB", { timeZone: "America/New_York" }), submittedStartsAt: submitted.find(o => o.serviceId === service.id)?.startsAt, serviceDate: submitted.find(o => o.serviceId === service.id)?.serviceDate }))));
+  const response = await callHandler(authHandlers.ensureTeamScheduleForPeriod, { context, body: { name: "November 2026", teamId, startDate: "2026-11-01", endDate: "2026-11-30", timeZone: "America/New_York", serviceIds: services.map(s => s.id), occurrences: submitted } });
+  assert.equal(response.statusCode, 200, JSON.stringify(response.payload));
 });
 
 test("generated ensure does not substitute another service with the same name and timestamp", async (t) => {
