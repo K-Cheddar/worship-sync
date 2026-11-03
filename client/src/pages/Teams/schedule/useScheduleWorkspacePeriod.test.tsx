@@ -3,7 +3,9 @@ import type { TeamPosition, TeamScheduleSummary, TeamService } from "../../../ap
 import { shiftRange } from "../rangeSelection";
 import { useScheduleWorkspacePeriod } from "./useScheduleWorkspacePeriod";
 
-jest.mock("@/utils/serverTime", () => ({ serverDate: () => new Date("2026-10-01T12:00:00Z") }));
+let mockServerNow = "2026-10-01T12:00:00Z";
+jest.mock("@/utils/serverTime", () => ({ serverDate: () => new Date(mockServerNow) }));
+beforeEach(() => { mockServerNow = "2026-10-01T12:00:00Z"; });
 const positions: TeamPosition[] = [
   { positionId: "camera", churchId: "church", teamId: "media", name: "Camera" },
   { positionId: "vocal", churchId: "church", teamId: "music", name: "Vocal" },
@@ -52,4 +54,19 @@ test("keeps the current Upcoming target responsive to loaded service data", () =
   const { result, rerender } = renderHook(useScheduleWorkspacePeriod, { initialProps: { ...props, services: [] as TeamService[] } });
   rerender({ ...props, services: [services[1]], teamId: "music" });
   expect(result.current.periodRange.start).toBe("2026-12-01");
+});
+
+test.each([
+  { instant: "2026-11-01T01:30:00Z", month: { start: "2026-10-01", end: "2026-10-31" }, next: { start: "2026-11-01", end: "2026-11-30" } },
+  { instant: "2026-11-01T06:30:00Z", month: { start: "2026-11-01", end: "2026-11-30" }, next: { start: "2026-12-01", end: "2026-12-31" } },
+])("resolves calendar presets from the church date near DST: $instant", ({ instant, month, next }) => {
+  mockServerNow = instant;
+  const { result } = renderHook(() => useScheduleWorkspacePeriod({ ...props, services: [] }));
+  act(() => {
+    result.current.markExplicitPeriodSelection();
+    result.current.selectRangePreset("thisMonth");
+  });
+  expect(result.current.periodRange).toEqual(month);
+  act(() => result.current.selectRangePreset("nextMonth"));
+  expect(result.current.periodRange).toEqual(next);
 });

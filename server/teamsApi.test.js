@@ -18294,6 +18294,72 @@ test("October period reuses the populated legacy schedule and safely adds newly 
   assert.deepEqual(await getDoc("teamSchedules", scheduleId), after);
 });
 
+test("November independent additions preserve populated combined schedules across the church DST boundary", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("november_additive_dst");
+  await setDoc(COLLECTIONS.churches, context.churchId, { serviceTimeZone: "America/New_York" }, { merge: true });
+  const { teamId, positionIds, memberIds } = await seedTeam(context, {
+    teamName: "Media", positions: [{ name: "Camera" }], members: [{ firstName: "Morgan", lastName: "Lee", positions: ["Camera"] }],
+  });
+  const positionId = positionIds.Camera;
+  const requirements = [{ positionId, count: 1 }];
+  const services = [
+    { serviceId: "worship", name: "Worship", reccurence: "weekly", dayOfWeek: 0, time: "01:30", serviceGroupId: "sunday", positionRequirements: requirements },
+    { serviceId: "study", name: "Study", reccurence: "weekly", dayOfWeek: 0, time: "01:30", serviceGroupId: "sunday" },
+  ];
+  const build = () => buildTeamSchedulePeriod({ services, positions: [{ positionId, teamId, name: "Camera" }], teamId, startDate: "2026-11-01", endDate: "2026-11-30", timeZone: "America/New_York" });
+  seedChurchServiceTimesForServerTests({ churchId: context.churchId, services: services.map((s) => ({ id: s.serviceId, ...s })) });
+  const original = build();
+  const occurrences = original.occurrences.map((o) => ({ ...o, occurrenceId: `${o.serviceId}@${o.startsAt}` }));
+  assert.equal(occurrences[0].startsAt, "2026-11-01T05:30:00.000Z");
+  assert.equal(occurrences[1].startsAt, "2026-11-08T06:30:00.000Z");
+  const firstId = occurrences[0].occurrenceId;
+  const slot = `${positionId}::0`;
+  const scheduleId = "november-populated-dst";
+  const operational = {
+    assignments: { [firstId]: { [slot]: { primaryMemberId: memberIds.Morgan } } },
+    microphoneAssignments: { [firstId]: { [slot]: ["saved-mic"] } },
+    iemAssignments: { [firstId]: { [slot]: ["saved-iem"] } },
+    responses: { [firstId]: { [slot]: { memberId: memberIds.Morgan, response: "accepted" } } },
+    guests: [{ guestId: "saved-guest", name: "Guest" }], additionalPositionSlots: { [firstId]: [`${positionId}::1`] },
+    optionalPositionSlots: { [firstId]: [`${positionId}::2`] },
+    published: true, publishedAt: "2026-10-20T12:00:00.000Z", sentAt: "2026-10-21T12:00:00.000Z",
+    publicLinkToken: "saved-token", notificationHistory: [{ id: "saved-notification" }], createdAt: "2026-10-01T12:00:00.000Z",
+  };
+  await setDoc(COLLECTIONS.teamSchedules, scheduleId, {
+    scheduleId, churchId: context.churchId, teamId, name: "November 2026", startDate: "2026-11-01", endDate: "2026-11-30",
+    source: "custom", serviceIds: original.serviceIds, occurrences, ...operational,
+  });
+  // Create a separate service at precisely the combined occurrence's fold instant.
+  services.push({ serviceId: "book-launch", name: "Book Launch", reccurence: "one_time", dateTimeISO: "2026-11-01T01:30", positionRequirements: requirements });
+  const period = build();
+  const body = { name: "November 2026", teamId, startDate: "2026-11-01", endDate: "2026-11-30", serviceIds: period.serviceIds, occurrences: period.occurrences, timeZone: "America/Los_Angeles" };
+  const before = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+  // Optimistic or failed service saves cannot be included in persisted schedules.
+  const pending = await callHandler(authHandlers.ensureTeamScheduleForPeriod, { context, body });
+  assert.equal(pending.statusCode, 400);
+  assert.deepEqual(await getDoc(COLLECTIONS.teamSchedules, scheduleId), before);
+  seedChurchServiceTimesForServerTests({ churchId: context.churchId, services: services.map((s) => ({ id: s.serviceId, ...s })) });
+  const result = await callHandler(authHandlers.ensureTeamScheduleForPeriod, { context, body });
+  assert.equal(result.statusCode, 200, JSON.stringify(result.payload));
+  assert.equal(result.payload.created, false);
+  assert.equal(result.payload.updated, true);
+  assert.equal(result.payload.schedule.scheduleId, scheduleId);
+  const after = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+  for (const [key, value] of Object.entries(operational)) assert.deepEqual(after[key], value, key);
+  assert.deepEqual(after.occurrences.filter((o) => o.groupId), occurrences);
+  const added = after.occurrences.find((o) => o.serviceId === "book-launch");
+  assert.equal(result.payload.addedOccurrenceCount, 1);
+  assert.equal(added.startsAt, "2026-11-01T05:30:00.000Z");
+  assert.equal(after.assignments[added.occurrenceId], undefined);
+  const retry = await callHandler(authHandlers.ensureTeamScheduleForPeriod, { context, body });
+  assert.equal(retry.statusCode, 200);
+  assert.equal(retry.payload.updated, false);
+  assert.equal(retry.payload.addedOccurrenceCount, 0);
+  assert.deepEqual(await getDoc(COLLECTIONS.teamSchedules, scheduleId), after);
+  assert.equal((await queryDocs(COLLECTIONS.teamSchedules, [{ field: "churchId", value: context.churchId }])).filter((s) => s.teamId === teamId).length, 1);
+});
+
 test("Book Launch datetime-local persistence agrees with browser generation in the church timezone", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("book_launch_local_persistence");

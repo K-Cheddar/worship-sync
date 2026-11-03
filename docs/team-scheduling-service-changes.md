@@ -1,0 +1,139 @@
+# Service changes in Team Scheduling
+
+## Goal
+Open an existing period after saving a service, retain its populated schedule, and include safe additions without manual review.
+
+## Existing architecture
+ServiceManager saves through the serviceTimes Redux/RTDB boundary. The workspace generates complete combined groups before projecting Team requirements. `findReusablePeriodSchedule` selects a saved owner; `ensureTeamScheduleForPeriod` validates authoritative service definitions and reconciles inside the existing transaction/serialization and occurrence-claim boundaries. ScheduleTab overlays pending cell edits on hydrated saved documents.
+
+## Before behavior
+An unmatched independent service does **not** set `ambiguous`. The shared matcher marks changed combined membership, overlapping date/service identities, invalid identities, duplicate logical keys, or a name/instant collision without a logical match as unsafe. Legacy timestamp keys match by service and church-local date; changing only time remains a match.
+
+The existing November regression fixture reproduces saved `group:sabbath@date` rows containing worship and study, versus generated standalone worship rows after grouping changes. This sets `ambiguous`, excludes that populated schedule from reusable candidates, disables automatic ensure, and falls back to a virtual schedule. The review button then sets `viewingSavedSchedule`, which suppresses all generated additions. `mergeCurrentScheduleOccurrences` also suppresses every addition when any row is ambiguous. The targeted-assignment fast path blocks the entire period on any ambiguity.
+
+This reproduces the reported condition with repository fixtures, not a read of the user's production records. An actual deployed definition/schedule snapshot was not provided, so its particular conflicting rows cannot be asserted.
+
+## After behavior
+Keep a populated owner visible during review, including beside an empty generated alternative. Show saved and proposed affected rows together, including grouping/identity and ownership reasons; retain unrelated additions as previews. Unchanged, uniquely owned persisted rows remain editable. New or conflicting rows still require authoritative ensure. A successful additive mutation announces the server's committed added count; a no-op or unrelated metadata refresh does not. Saved-version review returns to the original month even when the saved document spans a quarter.
+
+A second failure-derived reproduction found calendar presets using the device date: at `2026-11-01T01:30Z`, This month selected November on a UTC host although New York was still October 31. The schedule hook now converts the reference instant to the configured church calendar date before using the existing calendar preset resolver. Generation and server recurrence rules remain shared and unchanged.
+
+## Product Decision Check
+Authorized by the November 3, 2026 request and `features/team-scheduling.md`: automatic safe inclusion, preservation of operational data, comparison instead of misleading review navigation, scoped editing and unchanged ownership validation. No schema, publication, messaging, or destructive resolution is introduced. Ambiguous mappings require correcting definitions in Service setup or explicitly managing duplicate saved schedules; comparison never copies assignments between identities.
+
+## Behavior intentionally unchanged
+Identity heuristics, saved occurrence keys, server validation, transactions, claims, pending edits, historical/archived data, publication and notification history. Safe one-to-one time refresh continues through the existing Refresh schedule action.
+
+## Acceptance criteria
+Independent and same-date additions preserve the saved ID, staffing and equipment; unchanged combined groups remain reusable. Genuine grouping and duplicate ownership retain the populated grid and explain affected rows. New rows cannot persist before their definitions. No-op reconciliation never announces additions. Saved-version navigation has a clear return action.
+
+## Proposed implementation
+Use the existing review candidate as the display fallback, while keeping mutation eligibility strict. Merge only safe preview additions even when other rows conflict. Derive per-row editing eligibility and comparison from the shared matcher; reuse native details, shared buttons and existing navigation. Gate success copy on an actual server update.
+
+## Affected surfaces
+TeamsAndServices schedule route, GlobalInfo/Toast/timezone providers, shared-service Redux data, hydrated Teams bootstrap/detail and API handlers. Browser and Electron share this route. No presentation, IPC, or public reader changes. Existing real-creation integration executes the RTDB updater and real server handlers with simulated transport/storage.
+
+## Risks / edge cases
+Summary-only schedules must hydrate; overlapping owners, legacy keys, pending assignment responses, service saves in progress, stale ensure results after period/church changes, no-op retries, midnight and DST must retain existing protection. Preview additions are not persisted ownership.
+
+## Questions requiring user input
+None.
+
+## Verification
+Required: failure-derived populated-grid/compare/return and scoped-edit integration tests; focused period/matcher tests; service-save boundary integration; server period/ownership and concurrency tests; client lint, types and strict build; complete diff and mutation-boundary review. Optional: manual browser/Electron and real Firebase/emulator checks; no production mutations.
+
+## Changed files and complexity
+
+- `ScheduleTab.tsx`: retain a populated owner for display independently of reconciliation eligibility; scope persisted-row editing to its own identity and ownership; return from saved-version review without changing the current period; scope addition notifications to the active mounted period.
+- `ScheduleServiceChanges.tsx`: inline comparison using the existing `resolveScheduleWorkspace` read model, native details, shared Button and existing navigation. ServiceTimes records receive their current RTDB church scope at this adapter because `toTeamService` omits `churchId`.
+- `schedulePeriodUtils.ts`: preserve saved rows and append only safe unrelated preview rows during conflict; reject duplicate generated identities/map keys; share the existing populated-schedule predicate.
+- `useScheduleWorkspacePeriod.ts`: church-calendar preset resolution.
+- `server/teamsAuthHandlers.js` and `client/src/api/auth.ts`: expose the transaction's `addedOccurrenceCount` in the ensure response. It is response metadata only, never a persisted schedule field. Optional client typing and snapshot-count fallback retain older-server compatibility; `updated: false` never announces additions.
+- Regression tests: `TeamsAndServices.test.tsx`, `ScheduleServiceChanges.test.tsx`, `schedulePeriodUtils.test.ts`, `useScheduleWorkspacePeriod.test.tsx`, `server/teamsApi.test.js`.
+- Documentation: this investigation, `features/team-scheduling.md`, and the service-change release fragment.
+
+The production change exceeds the repository's 50–100-line reassessment threshold because the request requires a useful comparison and scoped mutation checks in addition to fixing selection. The existing workspace model, matcher, ownership transactions, schedule browser, preset resolver and shared controls are reused. Two vague warnings and their saved-only review actions are removed. No new persistence subsystem, resolution schema, migration, background job, queue, or modal is introduced. Comparison derives state; the only new mutable value is a period ref for stale-notification suppression.
+
+## Regression coverage
+
+| Requested scenario | Executed evidence |
+| --- | --- |
+| Independent one-time addition after a populated month exists | Parameterized Teams UI reuse test; November server test; actual ServiceManager/RTDB/server boundary integration |
+| Same date and same instant | Separate UI placements; November server test adds an independent service at the combined service's fall-back instant |
+| Assignments and equipment retained | Populated UI fixtures; server asserts every operational map, publication/link/send metadata and creation time; boundary integration also asserts notification delivery history |
+| Unrelated additions leave existing combined rows unchanged | November server test compares all persisted combined rows and legacy keys exactly |
+| Genuine combined membership change | New grouping comparison UI regression; existing November server rejection and shared matcher tests remain unchanged |
+| Time change with stable identity | New Refresh schedule UI test checks the outgoing legacy key, assignment/equipment/additional-slot maps; existing server legacy-time test and shared preservation tests |
+| Overlapping ownership | New duplicate-ownership comparison UI test; complete ownership transaction file, including concurrent creation/import and claim release/replacement |
+| Pending or failed service save | November server test rejects the unsaved definition without changing the document; real picker/RTDB integration pauses the commit, then reads committed data on independent clients; ServiceManager tests cover save recovery |
+| Refresh without repeated notice | Stale-client UI cases for both no-op and unrelated updates with zero server additions; repeated server ensure returns count zero and leaves the document exactly unchanged |
+| Current versus saved version | Grouping UI test switches November → saved Q4 → November with the populated group and new preview retained |
+| Existing-row editing during unrelated failure | Existing parameterized ensure-failure UI test plus new grouping/duplicate cases: unchanged Power Up persists through the targeted endpoint without ensure |
+| Church timezone and DST | New preset tests fail before the fix and pass under UTC/Los Angeles; shared gap/fold tests; New York authoritative server test ignores a conflicting request timezone; actual service-creation boundary spawns both host timezones |
+
+## Executed verification
+
+Commands use `npm.cmd` from the repository root. Logs are in the parent workspace directory, outside the change set.
+
+- Before implementation, the new populated-grouping UI regression failed because the saved assigned row was absent. Before the preset fix, the new UTC month-boundary case failed (November instead of October).
+- Complete `TeamsAndServices.test.tsx`: **130 passed** at the full-run checkpoint. Later additions/refinements were checked by the final focused selection, including both stale-client outcomes and the time-refresh test; the full client suite was not run.
+- Final focused UI/preview selection: **16 passed**, using `keeps populated saved rows|compares duplicate ownership|uses the exact October|already-added rows|reconciliation failure permits|auto-reuses the populated|refreshes a changed service time|previews unrelated|duplicate generated|keeps schedule staffing|keeps the newly selected period|reconciles again when service timing` against `TeamsAndServices.test.tsx` and `schedulePeriodUtils.test.ts`. Standalone `ScheduleServiceChanges.test.tsx`: **1 passed**, including distinguishable service IDs for an identically named/time identity collision and immutable populated staffing.
+- Complete `useScheduleWorkspacePeriod.test.tsx`, `teamSchedulePeriod.test.ts`, `scheduleWorkspaceModel.test.ts`, `schedulePeriodUtils.test.ts`, `scheduleDraftUtils.test.ts`, `teamScheduleOccurrences.test.ts`, `ServiceManager.schedule.integration.test.tsx` under UTC: **173 passed**.
+- Timezone selection across creation integration, matcher/generation and Teams UI under Los Angeles: **14 passed**. The complete period hook file also passed all **5** cases under Los Angeles. The creation integration executes independent server processes in UTC and Los Angeles.
+- Server focused pattern `period|occurrence|schedule.*ownership|recurr|time zone|November|Book Launch|generated ensure|Firestore ensures` against `teamsApi.test.js` and `teamScheduleOccurrenceOwnershipTransaction.test.js`: **51 passed**. Complete ownership transaction file separately: **18 passed**.
+- Los Angeles server selection `November independent additions|Book Launch|legacy timestamp occurrence`: **3 passed**.
+- Complete adjacent `rangeSelection.test.ts` and `ServiceManager.test.tsx`: **24 passed**.
+- Client `lint:check`, `type-check`, and `build:strict` passed. The sandbox initially denied esbuild ancestor-directory traversal; the approved filesystem-access rerun passed with Sentry uploads disabled.
+- An adjacent-test command initially used the nonexistent `rangeSelection.test.tsx` path; corrected to the actual `.test.ts` file. Two broad UI queries were scoped to their intended controls after the new comparison/status elements exposed their assumptions; the original behavior assertions are retained.
+
+## Final workflow review
+
+### Findings
+
+Critical: None. High: None. Medium: None. Low: existing grid whitespace/`tr` React warnings are emitted in UI tests; they predate these comparison controls and do not fail the checks.
+
+### Product authorization status
+
+Authorized by the current November 3 request and updated Team Scheduling contract: preserving the populated view, safe automatic additions, explicit conflict comparison, scoped editing, truthful notification counts, return navigation and configured church timezone. No authorization or public-data projection is expanded. Genuine ambiguous mappings are corrected explicitly in Service setup or existing saved-schedule management; this comparison does not copy assignments between identities.
+
+### Open questions / assumptions
+
+No unresolved product choice. Production records were not supplied/read; the exact user's stored membership is not asserted. The reproduced saved-group/standalone mismatch is an existing realistic repository fixture and the new regression reproduces its populated-view failure. Name/instant collisions without a logical match remain conservative review cases rather than implicit substitutions.
+
+### Verification gaps
+
+Production-context verification: **Pass for faithful composition**. The real Teams route consumes church-scoped shared-service Redux data, GlobalInfo and Toast, the configured timezone provider, hydrated bootstrap/detail data and edit capabilities. UI tests use that route with mocked transport/auth/timezone; the service adapter explicitly handles the production omission of `churchId`. The actual picker/Redux/RTDB-updater boundary test executes real server auth/ensure/assignment handlers against simulated storage. Server ensure rechecks service/position signatures and ownership inside the existing transaction/queue; targeted assignments retain server validation.
+
+| Invariant | Production owner and adversarial sequence | Executed evidence | Result |
+| --- | --- | --- | --- |
+| Existing operational data survives additions | Persisted teamSchedules document; paused service save → ensure rejected → commit → ensure and retry | November populated/DST server test and real service-create boundary integration | Pass |
+| Unsafe rows never imply safe mutation | Shared identities and occurrence claims; saved combined rows → standalone definitions; two schedules own the same row | Grouping and duplicate UI tests; unchanged server rejections; 18 ownership transaction tests | Pass |
+| Safe local work remains visible and editable | ScheduleTab pending-cell overlays and targeted assignment endpoint; unrelated grouping/ownership failure → edit Power Up | New comparison UI tests and existing parameterized ensure-failure tests | Pass |
+| Late results cannot navigate/announce into another active period | Church/schedule/period/mount guards; hold ensure → navigate to November → settle October | Existing late-ensure and pending-assignment UI cases; final focused run | Pass |
+| A stale snapshot does not invent additions | Transaction owns missing-row count; stale client receives expanded schedule but count zero, with or without other updates | Both new stale-client UI outcomes and repeated server ensure | Pass |
+| Church calendar is authoritative | Preset reference straddles local midnight/DST while host differs; server receives a conflicting request timezone | Failure-derived preset tests and populated DST server test under both hosts | Pass |
+
+Required local verification gaps: none after the checks recorded above. Optional confidence gaps: no live browser/Electron, real Firebase emulator/network, CI-wide test run or deployed-data investigation. No production data was modified.
+
+Comparison coverage: **Entire change set inspected**. Review scope: **workflow review**, not release-wide production-readiness certification. Tests listed above were actually executed; existing mutation/ownership tests were inspected as well as run. The only persistence-handler change adds response count metadata, leaving validation, immutable keys, transaction reads, claims and writes intact. Sibling paths examined: legacy timestamp matching, combined generation before Team projection, workspace indexing/name collisions, ServiceManager versus shared-service adapter, service-save boundary, manual time refresh, history navigation, pending cell publishing, and server Firestore/local-store ensure paths.
+
+### Pattern / learning opportunities
+
+The new route-level comparison test protects the production church-scope adapter, a composition mismatch pure read-model tests could not detect. The server count makes notification claims reflect a committed mutation rather than a stale client diff. Both belong in focused enforcement, not new repository policy.
+
+### Final readiness
+
+Ready for this scheduling workflow change, subject to normal CI/merge review.
+
+- Cross-boundary review performed: Yes.
+- Sibling-pattern search performed: Yes.
+- Legacy/persisted-state compatibility reviewed: Yes; legacy IDs, missing publication metadata and older ensure responses retained.
+- Identity-switch test reviewed: Yes; executed late-period/quick-member/pending-cell cases in the complete Teams file.
+- Unmount/lifetime test reviewed: Yes; existing virtual-assignment/shadow cases retained, and notification publication now checks mount ownership.
+- Contract round trip traced: Yes; real picker → RTDB updater → independent read → ensure → targeted assignment.
+- Validate/use security boundary reviewed: Yes; authoritative service signatures and exclusive claims unchanged.
+- Retry-state authority reviewed: Yes; repeated ensure remains idempotent and count zero.
+- Owner-retirement handoff reviewed: Not applicable; no new retained global action/runtime.
+- External side-effect adoption/compensation reviewed: Not applicable; no messaging, upload, or external resource creation.
+- Authorization/data-projection reviewed: Yes; no permission or public payload expansion beyond non-sensitive ensure response count.
+- Production entry point, runtime context, and test composition compared: Yes.

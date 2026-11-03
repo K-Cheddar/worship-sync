@@ -1610,9 +1610,10 @@ describe("Teams", () => {
     expect(screen.getAllByRole("button", { name: /Saturday service Vocal/i })).toHaveLength(5);
 
     await user.click(screen.getByRole("button", { name: "Schedule: October 2026" }));
-    expect(screen.getByRole("button", { name: /Youth Sabbath/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Q4/ })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Q4/ }));
+    const overlapping = within(screen.getByRole("group", { name: "Overlapping schedules" }));
+    expect(overlapping.getByRole("button", { name: /Youth Sabbath/ })).toBeInTheDocument();
+    expect(overlapping.getByRole("button", { name: /Q4/ })).toBeInTheDocument();
+    await user.click(overlapping.getByRole("button", { name: /Q4/ }));
 
     expect(screen.getByText("Oct 1, 2026 – Oct 31, 2026")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Schedule: Q4" })).toHaveTextContent("Q4");
@@ -1937,7 +1938,93 @@ describe("Teams", () => {
     expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalled();
   });
 
-  it("auto-reuses the populated five-row schedule and persists its two new relevant occurrences", async () => {
+  it("keeps populated saved rows and unrelated additions visible during grouping review", async () => {
+    jest.useFakeTimers({ advanceTimers: true });
+    jest.setSystemTime(new Date("2026-11-03T12:00:00.000Z"));
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    const requirements = [{ positionId: "position-vocal", count: 1 }];
+    const existing = { occurrenceId: "power-up@2026-11-11", serviceId: "power-up", name: "Power Up", startsAt: "2026-11-11T18:00:00.000Z", positionRequirements: requirements };
+    const combined = { occurrenceId: "group:sabbath@2026-11-07", groupId: "sabbath", serviceId: "worship", serviceIds: ["worship", "study"], serviceDate: "2026-11-07", name: "Worship & Study", startsAt: "2026-11-07T10:00:00.000Z", positionRequirements: requirements };
+    const saved: TeamSchedule = {
+      ...scheduleBootstrap.schedules[0], name: "Q4 2026", startDate: "2026-10-01", endDate: "2026-12-31",
+      serviceIds: ["worship", "study", "power-up"], occurrences: [combined, existing],
+      assignments: { [combined.occurrenceId]: { "position-vocal::0": { primaryMemberId: "member-avery" } } },
+      microphoneAssignments: { [combined.occurrenceId]: { "position-vocal::0": ["mic-saved"] } },
+      published: true, sentAt: "2026-10-30T12:00:00.000Z",
+    };
+    mockState = { undoable: { present: { serviceTimes: { list: [
+      { ...mockSharedServices[0], id: "worship", name: "Worship", dateTimeISO: combined.startsAt, positionRequirements: requirements },
+      { ...mockSharedServices[0], id: "study", name: "Study", dateTimeISO: combined.startsAt, positionRequirements: requirements },
+      { ...mockSharedServices[0], id: existing.serviceId, name: existing.name, dateTimeISO: existing.startsAt, positionRequirements: requirements },
+      { ...mockSharedServices[0], id: "book-launch", name: "Book Launch", dateTimeISO: "2026-11-07T21:30:00.000Z", positionRequirements: requirements },
+    ] } } } };
+    const emptyAlternative: TeamSchedule = {
+      ...saved, scheduleId: "generated_empty-november", source: "generated-period", generatedPeriodKey: "empty-november",
+      startDate: "2026-11-01", endDate: "2026-11-30",
+      occurrences: [], assignments: {}, serviceIds: [], microphoneAssignments: {},
+    };
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({ ...scheduleBootstrap, schedules: [saved, emptyAlternative] }));
+    mockUpdateTeamScheduleAssignment.mockResolvedValue({ success: true, schedule: saved });
+    renderTeams("/teams-and-services/schedules");
+    expect(await screen.findByRole("button", { name: /Worship & Study Vocal, Avery/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Book Launch Vocal, Empty/i })).toBeInTheDocument();
+    expect(mockEnsureTeamScheduleForPeriod).not.toHaveBeenCalled();
+    expect(screen.getByText("Nov 1, 2026 – Nov 30, 2026")).toBeInTheDocument();
+    await user.click(screen.getByText("Compare service changes"));
+    const comparison = screen.getByRole("region", { name: "Service changes" });
+    expect(within(comparison).getAllByText("Grouping changed").length).toBeGreaterThan(0);
+    expect(within(comparison).getAllByText(/Worship & Study/).length).toBeGreaterThan(0);
+    expect(within(comparison).getAllByText(/Worship/).length).toBeGreaterThan(0);
+    await user.click(screen.getByRole("button", { name: /Power Up Vocal, Empty/i }));
+    await user.click(await screen.findByRole("button", { name: /Assign Morgan/i }));
+    await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(1));
+    expect(mockUpdateTeamScheduleAssignment.mock.calls[0][1]).toBe(saved.scheduleId);
+    expect(mockEnsureTeamScheduleForPeriod).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "View saved version" }));
+    expect(screen.queryByRole("button", { name: /Book Launch Vocal, Empty/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Worship & Study Vocal, Avery/i })).toBeInTheDocument();
+    expect(screen.getByText("Oct 1, 2026 – Dec 31, 2026")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Return to current schedule" }));
+    expect(await screen.findByRole("button", { name: /Book Launch Vocal, Empty/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Worship & Study Vocal, Avery/i })).toBeInTheDocument();
+    expect(screen.getByText("Nov 1, 2026 – Nov 30, 2026")).toBeInTheDocument();
+  });
+
+  it("compares duplicate ownership and permits editing an unrelated uniquely owned row", async () => {
+    jest.useFakeTimers({ advanceTimers: true });
+    jest.setSystemTime(new Date("2026-11-03T12:00:00.000Z"));
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    const requirements = [{ positionId: "position-vocal", count: 1 }];
+    const duplicated = { occurrenceId: "worship@2026-11-07", serviceId: "worship", name: "Worship", startsAt: "2026-11-07T10:00:00.000Z", positionRequirements: requirements };
+    const unrelated = { ...duplicated, occurrenceId: "power-up@2026-11-11", serviceId: "power-up", name: "Power Up", startsAt: "2026-11-11T18:00:00.000Z" };
+    const saved: TeamSchedule = {
+      ...scheduleBootstrap.schedules[0], scheduleId: "owner-a", name: "November A", startDate: "2026-11-01", endDate: "2026-11-30",
+      serviceIds: [duplicated.serviceId, unrelated.serviceId], occurrences: [duplicated, unrelated],
+      assignments: { [duplicated.occurrenceId]: { "position-vocal::0": { primaryMemberId: "member-avery" } } },
+      microphoneAssignments: { [duplicated.occurrenceId]: { "position-vocal::0": ["saved-mic"] } },
+    };
+    const other = { ...saved, scheduleId: "owner-b", name: "November B", occurrences: [duplicated] };
+    mockState = { undoable: { present: { serviceTimes: { list: [duplicated, unrelated].map((row) => ({
+      ...mockSharedServices[0], id: row.serviceId, name: row.name, dateTimeISO: row.startsAt, positionRequirements: requirements,
+    })) } } } };
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({ ...scheduleBootstrap, schedules: [saved, other] }));
+    mockUpdateTeamScheduleAssignment.mockResolvedValue({ success: true, schedule: saved });
+    mockEnsureTeamScheduleForPeriod.mockRejectedValue(new Error("Resolve duplicate ownership before adding services."));
+    renderTeams("/teams-and-services/schedules");
+    expect(await screen.findByRole("button", { name: /Worship Vocal, Avery/i })).toBeInTheDocument();
+    await user.click(screen.getByText("Compare service changes"));
+    const comparison = screen.getByRole("region", { name: "Service changes" });
+    expect(within(comparison).getByText("Duplicate ownership")).toBeInTheDocument();
+    expect(within(comparison).getByRole("button", { name: "View saved version: November A (owner-a)" })).toBeInTheDocument();
+    expect(within(comparison).getByRole("button", { name: "View saved version: November B (owner-b)" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Power Up Vocal, Empty/i }));
+    await user.click(await screen.findByRole("button", { name: /Assign Morgan/i }));
+    await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(1));
+    expect(mockUpdateTeamScheduleAssignment.mock.calls[0][1]).toBe(saved.scheduleId);
+    expect(mockEnsureTeamScheduleForPeriod).not.toHaveBeenCalled();
+  });
+
+  it.each(["another date", "same date", "same instant"])("auto-reuses the populated five-row schedule and persists independent services on %s", async (placement) => {
     jest.useFakeTimers({ advanceTimers: true });
     jest.setSystemTime(new Date("2026-10-02T12:00:00.000Z"));
     const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
@@ -1964,7 +2051,9 @@ describe("Teams", () => {
         },
         ...["media-special-a", "media-special-b"].map((id, index) => ({
           id, serviceId: id, name: `Media Special ${index + 1}`,
-          reccurence: "one_time", dateTimeISO: `2026-10-${index ? "18" : "04"}T10:00:00.000Z`,
+          reccurence: "one_time", dateTimeISO: placement === "another date"
+            ? `2026-10-${index ? "18" : "04"}T10:00:00.000Z`
+            : new Date(Date.parse(savedOccurrences[index + 1].startsAt) + (placement === "same date" ? 2 * 60 * 60 * 1000 : 0)).toISOString(),
           positionRequirements: [{ positionId: cameraId, count: 1 }],
         })),
       ] } } },
@@ -1984,6 +2073,10 @@ describe("Teams", () => {
           [`${cameraId}::0`]: { primaryMemberId: memberId, shadows: [] },
         },
       },
+      microphoneAssignments: { [savedOccurrences[0].occurrenceId]: { [`${cameraId}::0`]: ["saved-mic"] } },
+      iemAssignments: { [savedOccurrences[0].occurrenceId]: { [`${cameraId}::0`]: ["saved-iem"] } },
+      published: true,
+      sentAt: "2026-09-25T12:00:00.000Z",
     };
     mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
       ...baseBootstrap,
@@ -2033,6 +2126,7 @@ describe("Teams", () => {
     });
     expect(mockEnsureTeamScheduleForPeriod.mock.calls[0][1]).not.toHaveProperty("operatorSelectedScheduleId");
     expect(await screen.findByRole("button", { name: /Sabbath Service Camera, Morgan/i })).toBeInTheDocument();
+    expect(await screen.findByText("2 new services added to October 2026. Existing assignments were preserved.")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /Camera, (?:Morgan|Empty)/i })).toHaveLength(7);
     expect(screen.getByRole("button", { name: /Media Special 1 Camera, Empty/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Media Special 2 Camera, Empty/i })).toBeInTheDocument();
@@ -2048,13 +2142,14 @@ describe("Teams", () => {
     expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1);
   });
 
-  it("does not announce a no-op schedule reconciliation", async () => {
+  it.each([false, true])("does not repeat an addition announcement for already-added rows on a stale client (other changes: %s)", async (updated) => {
     jest.useFakeTimers({ advanceTimers: true });
     jest.setSystemTime(new Date("2026-10-02T12:00:00.000Z"));
     setServerTimeOffset(36 * 60 * 60 * 1000);
     const serviceId = "sabbath-service-noop";
     const positionId = "position-camera-noop";
     const savedOccurrences = octoberServiceOccurrences(serviceId, "Sabbath Service", positionId, [3, 10, 17, 24, 31]);
+    const alreadyAdded = { occurrenceId: "already-added@2026-10-07", serviceId: "already-added", name: "Already added", startsAt: "2026-10-07T18:00:00.000Z", positionRequirements: [{ positionId, count: 1 }] };
     mockState = {
       undoable: { present: { serviceTimes: { list: [
         {
@@ -2062,6 +2157,7 @@ describe("Teams", () => {
           reccurence: "weekly", dayOfWeek: 6, time: "10:00",
           positionRequirements: [{ positionId, count: 1 }],
         },
+        { ...mockSharedServices[0], id: alreadyAdded.serviceId, name: alreadyAdded.name, dateTimeISO: alreadyAdded.startsAt, positionRequirements: alreadyAdded.positionRequirements },
       ] } } },
     };
     const savedSchedule: TeamSchedule = {
@@ -2085,8 +2181,9 @@ describe("Teams", () => {
     mockEnsureTeamScheduleForPeriod.mockImplementation(async () => ({
       success: true,
       created: false,
-      updated: false,
-      schedule: savedSchedule,
+      updated,
+      addedOccurrenceCount: 0,
+      schedule: { ...savedSchedule, occurrences: [...savedOccurrences, alreadyAdded], serviceIds: [serviceId, alreadyAdded.serviceId] },
     }));
 
     renderTeams();
@@ -2094,6 +2191,7 @@ describe("Teams", () => {
     await waitFor(() => expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole("button", { name: /Sabbath Service on Oct 10/i })).toBeInTheDocument();
     expect(screen.queryByText(/services? added to October/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Already added Camera, Empty/i })).toBeInTheDocument();
     expect(screen.queryByText(/Updating this schedule with newly available services/i)).not.toBeInTheDocument();
   });
 
@@ -2166,6 +2264,43 @@ describe("Teams", () => {
     expect(screen.getByText("Nov 7, 2026")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Power Up Camera/i })).not.toBeInTheDocument();
     jest.useRealTimers();
+  });
+
+  it("refreshes a changed service time while retaining its legacy key, assignments and equipment", async () => {
+    jest.useFakeTimers({ advanceTimers: true });
+    jest.setSystemTime(new Date("2026-11-03T12:00:00.000Z"));
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    const row = { occurrenceId: "worship@2026-11-07T10:00:00.000Z", serviceId: "worship", name: "Worship", startsAt: "2026-11-07T10:00:00.000Z", positionRequirements: [{ positionId: "position-vocal", count: 1 }] };
+    const saved: TeamSchedule = {
+      ...scheduleBootstrap.schedules[0], name: "November 2026", startDate: "2026-11-01", endDate: "2026-11-30",
+      serviceIds: [row.serviceId], occurrences: [row],
+      assignments: { [row.occurrenceId]: { "position-vocal::0": { primaryMemberId: "member-avery" } } },
+      microphoneAssignments: { [row.occurrenceId]: { "position-vocal::0": ["saved-mic"] } },
+      iemAssignments: { [row.occurrenceId]: { "position-vocal::0": ["saved-iem"] } },
+      additionalPositionSlots: { [row.occurrenceId]: ["position-vocal::1"] },
+      published: true, sentAt: "2026-10-30T12:00:00.000Z",
+    };
+    const newStartsAt = "2026-11-07T11:00:00.000Z";
+    mockState = { undoable: { present: { serviceTimes: { list: [
+      { ...mockSharedServices[0], id: row.serviceId, name: row.name, dateTimeISO: newStartsAt, positionRequirements: row.positionRequirements },
+    ] } } } };
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({ ...scheduleBootstrap, schedules: [saved] }));
+    mockEnsureTeamScheduleForPeriod.mockResolvedValue({ success: true, created: false, updated: false, schedule: saved });
+    mockUpdateTeamSchedule.mockImplementation(async (_churchId, _id, payload) => ({ success: true, schedule: { ...saved, ...payload } as TeamSchedule }));
+    renderTeams("/teams-and-services/schedules");
+    await screen.findByRole("button", { name: /Worship Vocal 1, Avery/i });
+    expect(screen.queryByText("Compare service changes")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Refresh schedule" }));
+    await waitFor(() => expect(mockUpdateTeamSchedule).toHaveBeenCalledTimes(1));
+    expect(mockUpdateTeamSchedule.mock.calls[0][1]).toBe(saved.scheduleId);
+    expect(mockUpdateTeamSchedule.mock.calls[0][2]).toMatchObject({
+      occurrences: [expect.objectContaining({ occurrenceId: row.occurrenceId, startsAt: newStartsAt })],
+      assignments: saved.assignments, microphoneAssignments: saved.microphoneAssignments,
+      iemAssignments: saved.iemAssignments, additionalPositionSlots: saved.additionalPositionSlots,
+    });
+    expect(await screen.findByText("Schedule updated to match its services.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Worship Vocal 1, Avery/i })).toBeInTheDocument();
+    expect(saved.occurrences?.[0]).toEqual(row);
   });
 
   it("blocks refreshing unresolved service IDs while keeping all saved rows and maps", async () => {
@@ -5269,7 +5404,7 @@ describe("Teams", () => {
     expect(screen.getByRole("textbox", { name: "Custom date range" })).toHaveValue(
       "07/01/2026 – 07/31/2026",
     );
-    expect(screen.getByRole("status")).toHaveTextContent(/1 service · .*positions filled/);
+    expect(screen.getByText(/1 service · .*positions filled/)).toHaveAttribute("role", "status");
   });
 
   it("keeps New schedule and Send schedule actions available with send confirmation", async () => {

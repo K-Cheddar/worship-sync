@@ -19540,7 +19540,7 @@ export const createTeamsAuthHandlers = ({
               !isDeepStrictEqual(stored, nextOccurrences) ||
               !isDeepStrictEqual(existing.microphoneAssignments || {}, microphoneAssignments) ||
               !isDeepStrictEqual(existing.iemAssignments || {}, iemAssignments);
-            if (!changed) return { schedule: existing, updated: false };
+            if (!changed) return { schedule: existing, updated: false, addedOccurrenceCount: 0 };
             const now = nowIso();
             return {
               schedule: {
@@ -19553,6 +19553,7 @@ export const createTeamsAuthHandlers = ({
                 updatedByUid: admin.user.uid,
               },
               updated: true,
+              addedOccurrenceCount: missing.length,
             };
           };
           const scheduleId = generatedPeriodScheduleId(generatedPeriodKey);

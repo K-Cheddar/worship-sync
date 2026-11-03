@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { TeamPosition, TeamScheduleSummary, TeamService } from "../../../api/authTypes";
 import { serverDate } from "@/utils/serverTime";
+import { calendarDateInTimeZone } from "@/utils/teamScheduleOccurrences";
 import { buildTeamSchedulePeriod, findInitialTeamSchedulePeriod } from "./teamSchedulePeriod";
 import { filterOccurrencesToRange, type SchedulePeriodPreset } from "./schedulePeriodUtils";
 import { resolveRangePreset, useRangeSelection } from "../rangeSelection";
@@ -39,8 +40,8 @@ export const useScheduleWorkspacePeriod = ({
     (
       preset: Exclude<SchedulePeriodPreset, "upcoming" | "custom">,
       referenceTime: Date,
-    ) => resolveRangePreset(preset, referenceTime),
-    [],
+    ) => resolveRangePreset(preset, new Date(`${calendarDateInTimeZone(referenceTime, serviceTimeZone)}T12:00:00`)),
+    [serviceTimeZone],
   );
   const {
     preset: periodPreset,

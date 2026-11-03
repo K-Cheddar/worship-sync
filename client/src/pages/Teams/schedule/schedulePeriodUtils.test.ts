@@ -44,6 +44,25 @@ describe("rangeFromPreset", () => {
   });
 });
 
+it("previews unrelated additions while preserving saved grouping conflicts and map keys", () => {
+  const combined = { ...occurrence, occurrenceId: "group:sabbath@2026-10-03", groupId: "sabbath", serviceIds: ["service", "study"] };
+  const added = { ...occurrence, occurrenceId: "new@2026-10-03", serviceId: "new", name: "Book Launch" };
+  const result = mergeCurrentScheduleOccurrences([combined], [occurrence, added], "UTC");
+  expect(result.ambiguous).toBe(true);
+  expect(result.occurrences).toEqual(expect.arrayContaining([combined, added]));
+  expect(result.occurrences).toHaveLength(2);
+  expect(result.occurrences).not.toContainEqual(occurrence);
+});
+
+it("does not preview duplicate generated identities beside unrelated additions", () => {
+  const added = { ...occurrence, occurrenceId: "new@2026-10-03", serviceId: "new", name: "New service" };
+  const duplicate = { ...added, occurrenceId: "new@legacy" };
+  const unrelated = { ...added, occurrenceId: "other@2026-10-03", serviceId: "other", name: "Other" };
+  expect(mergeCurrentScheduleOccurrences([occurrence], [occurrence, added, duplicate, unrelated])).toEqual({
+    occurrences: [unrelated, occurrence].sort((a, b) => a.occurrenceId.localeCompare(b.occurrenceId)), ambiguous: true,
+  });
+});
+
 it("filters past occurrences from the visible Upcoming range", () => {
   const septemberOccurrence = { ...occurrence, occurrenceId: "service@2026-09-29T10:00:00.000Z", startsAt: "2026-09-29T10:00:00.000Z" };
   expect(filterOccurrencesToRange([septemberOccurrence, occurrence], {
