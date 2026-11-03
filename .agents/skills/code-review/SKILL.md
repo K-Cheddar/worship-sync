@@ -13,13 +13,13 @@ Review as if you did not write the code. Do not assume passing tests prove corre
 2. Compare the implementation with its declared Before / After Behavior and unchanged adjacent behavior.
 3. Inspect the complete diff.
    For a merge, also compare critical behavior in **each parent and the merge result** (not only merge-base-to-HEAD). Identify known fixes in either parent and demonstrate that the result retains their invariant. Record parent/result SHAs, relevant symbols, and failure-derived regression evidence in Verification gaps; an unexplained behavior loss blocks readiness. Repeat this comparison after conflict resolution or subsequent integration edits.
-4. Inspect surrounding architecture, callers, consumers, state ownership, data contracts, analogous features, and tests. For substantial workflows, trace the actual behavior from input through normalization, validation, preview and user decisions (when present), commit, persistence, publication, errors, and retry/recovery. Name the authoritative source at each boundary and verify that values and approved decisions survive the whole path; correctness of each changed function alone is not sufficient.
+4. Inspect surrounding architecture, callers, consumers, state ownership, data contracts, analogous features, and tests. For substantial workflows, trace the actual behavior from input through normalization, validation, preview and user decisions (when present), commit, persistence, publication, errors, and retry/recovery. Name the authoritative source at each boundary and verify that values and approved decisions survive the whole path; correctness of each changed function alone is not sufficient. Record inspected production paths, downstream consumers, and tests in the coverage ledger below; name skipped areas and why.
 5. Search for duplicated solutions and existing abstractions that should have been reused.
 6. Review lifecycle and failure behavior as applicable: initial load, retries, failures, partial failures, unmount, rapid repeated actions, switching entities during async work, offline/reconnect, stale remote updates, and duplicate events.
    When reviewing a panel, modal, drawer, or editor, verify that closing/dismissing it does not unexpectedly navigate to another route. Return-navigation metadata must only be consumed by an explicit navigation action unless a documented workflow requires otherwise.
 7. Review contracts: persisted formats, API shapes, Firebase/Pouch/localStorage, Electron preload/IPC, and backward compatibility.
 8. Treat tests as evidence, not proof. Re-check completeness against every acceptance criterion and distinguish required verification from optional additional confidence checks.
-9. Independently trace the production entry point/runtime and compare its providers, authentication/permissions, data sources, mocks, fixtures, and wrapper with the tests. Follow interactive actions that mount deferred content. Require representative integration-level coverage when a composition gap creates meaningful risk, and check that regression tests retain the original failure condition when practical.
+9. Independently trace the production entry point/runtime and compare its providers, authentication/permissions, data sources, working directory, module loader, dependencies, initialization sequence, mocks, fixtures, and wrapper with the tests. Follow interactive actions that mount deferred content. Require representative integration-level coverage when a composition gap creates meaningful risk, and check that regression tests retain the original failure condition when practical.
    For shared providers, enumerate controller, paired display (monitor/projector/stream), human, and workstation consumers as applicable. Trace credential transport and server authorization as well as provider inclusion; an authorized hook mock does not establish that the production session can obtain its data.
 
 ## Product approval check
@@ -165,6 +165,7 @@ Group findings as `Critical`, `High`, `Medium`, and `Low`. For each finding incl
 
 - affected file or area
 - concrete failure or risk
+- production path, failure sequence, and authoritative source for expected behavior; if any is uncertain, label it as a risk or open question
 - why it matters
 - suggested direction
 
@@ -191,6 +192,11 @@ For relevant high-risk workflows, use this concise evidence gate in this section
 Trace at least one concrete adversarial sequence per relevant failure mechanism. Inspect what the test actually controls and asserts; related unit tests or matching titles cannot make a high-risk review complete. Distinguish a confirmed defect from a risk or coverage gap. A relevant high-risk path left unexamined or required verification left incomplete means `Not ready`; reserve `Ready with minor follow-up` for non-blocking, low-risk follow-up. The [process-validation counterexamples](references/adversarial-review-validation.md) calibrate this gate.
 
 Declare comparison coverage explicitly: **Entire change set inspected**, **Risk-scoped review only** (name excluded areas), or **Tool-limited / truncated comparison** (name missing coverage). Check pagination, caps, and truncation in GitHub/API results; retrieve the remaining relevant files or record incomplete coverage. A capped response is never evidence of the complete diff. Separately list tests **inspected** and tests **actually executed**, with results.
+
+For substantial reviews, include this concise coverage ledger; group tightly coupled files by workflow. A sampled review must say `Risk-scoped review only` and list exclusions.
+
+| Workflow / changed path | Production path and downstream consumer | Tests inspected / executed | Skipped area and reason |
+| --- | --- | --- | --- |
 
 State the review scope: **fix verification** checks the reported defect; **workflow review** checks affected end-to-end paths and related failure scenarios; **production-readiness review** checks release-critical branch scope, required checks, unresolved findings, and regression risk. A passing focused review supports only its stated scope. Do not call a branch production-ready unless that broader review and its verification were actually performed; say explicitly when tests, CI, builds, or runtime reproduction were not performed.
 
