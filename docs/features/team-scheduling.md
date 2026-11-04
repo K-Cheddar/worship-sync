@@ -177,6 +177,8 @@ These references locate current code, not additional product requirements.
 
 The current schedule document is persisted in the teamSchedules collection. Its occurrence list is referenced by assignments, responses, guests, microphone and IEM allocations, and additional position slots. Availability forms and service plans keep their own occurrence references/keys. The Phase 1 report maps those relationships and the compatibility risks of changing them.
 
+Schedule Undo and Redo retries use a request ID and a private per-schedule receipt ledger. The server replays the original accepted and skipped cells for the same editor and request payload, so a lost acknowledgment can recover without treating a coincidentally matching cell value as proof of success. The ledger retains the 100 most recent batch outcomes per schedule, matching the local history limit. If a receipt is no longer retained, the request uses the ordinary guarded mutation path; the client never infers acceptance from the cell's final value.
+
 
 
 ### Quick member creation from schedule cells

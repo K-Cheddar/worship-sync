@@ -2373,7 +2373,7 @@ const ScheduleTab = ({
       if (changes.length === 0) {
         if (skippedChanges.length) {
           showToast(
-            `${direction === "undo" ? "Undo" : "Redo"} couldn't be completed because some slots no longer match this step. Review the schedule before trying again.`,
+            `${direction === "undo" ? "Undo" : "Redo"} was skipped because some slots no longer match this step. This history entry was removed.`,
             "neutral",
           );
         }
@@ -2390,6 +2390,7 @@ const ScheduleTab = ({
       clearActiveSlot();
       let mutationSchedule = previousSchedule;
       let historyRecorded = false;
+      const operationId = globalThis.crypto.randomUUID();
       const restore = () => {
         let current = schedulesByOwnerRef.current.get(virtualSchedulePreviewKey(
           mutationSchedule.churchId,
@@ -2421,6 +2422,7 @@ const ScheduleTab = ({
             {
               changes,
               skipChangedCells: true,
+              operationId,
               ...assignmentConflictPayload(fingerprint),
             },
           ));
@@ -2430,11 +2432,8 @@ const ScheduleTab = ({
           publishScheduleCellResponses(response.schedule, "assignments", stagedEdits);
           const result = resolveScheduleUndoBatchResult(
             entry,
-            direction,
             changes,
             response.accepted,
-            response.skipped,
-            response.schedule.assignments || {},
           );
           if (!historyRecorded) {
             historyRecorded = true;
@@ -2449,7 +2448,7 @@ const ScheduleTab = ({
             showToast(
               appliedCount > 0
                 ? `${direction === "undo" ? "Undo" : "Redo"} applied to ${appliedCount} of ${entry.changes.length} changes. The other slots no longer matched this step and were left as they are.`
-                : `${direction === "undo" ? "Undo" : "Redo"} couldn't be completed because the schedule changed before saving. Review the affected slots.`,
+                : `${direction === "undo" ? "Undo" : "Redo"} was skipped because the schedule no longer matched this step. This history entry was removed.`,
               "neutral",
             );
           }

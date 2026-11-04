@@ -305,28 +305,36 @@ describe("resolveScheduleUndoBatchResult", () => {
     }).changes;
     const result = resolveScheduleUndoBatchResult(
       entry,
-      "undo",
       attempted,
       [{ serviceId: "svc-1", positionSlotKey: "vocal#0" }],
-      [{ serviceId: "svc-1", positionSlotKey: "keys#0" }],
-      { "svc-1": { "keys#0": { primaryMemberId: "m3" } } },
     );
     expect(result.appliedEntry?.changes).toEqual([first]);
     expect(result.skippedCount).toBe(1);
   });
 
-  it("recovers a retry after a failed request whose server commit lost its acknowledgment", () => {
+  it("does not attribute a skipped cell to Undo when it happens to match the target", () => {
     const entry = makeEntry([first]);
     const attempted = prepareScheduleUndoChanges(entry, "undo", {
       "svc-1": { "vocal#0": first.after },
     }).changes;
     const result = resolveScheduleUndoBatchResult(
       entry,
-      "undo",
       attempted,
       [],
+    );
+    expect(result.appliedEntry).toBeNull();
+    expect(result.skippedCount).toBe(1);
+  });
+
+  it("recovers a lost acknowledgment from the server's idempotent accepted receipt", () => {
+    const entry = makeEntry([first]);
+    const attempted = prepareScheduleUndoChanges(entry, "undo", {
+      "svc-1": { "vocal#0": first.after },
+    }).changes;
+    const result = resolveScheduleUndoBatchResult(
+      entry,
+      attempted,
       [{ serviceId: "svc-1", positionSlotKey: "vocal#0" }],
-      { "svc-1": { "vocal#0": "" } },
     );
     expect(result.appliedEntry?.changes).toEqual([first]);
     expect(result.skippedCount).toBe(0);

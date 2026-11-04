@@ -10966,8 +10966,61 @@ export const createTeamsAuthHandlers = ({
     confirmedFingerprint,
     skipChangedCells,
     adminUserId,
+    operationId,
+    operationFingerprint,
   }) => {
+    const MAX_SCHEDULE_ASSIGNMENT_BATCH_RECEIPTS = 100;
     const db = requireFirestore();
+    const receiptFor = (schedule, ledger) => {
+      if (!operationId) return null;
+      const receipt = (Array.isArray(ledger?.operations) ? ledger.operations : [])
+        .find((item) => item?.operationId === operationId);
+      if (!receipt) return null;
+      if (
+        ledger.churchId !== churchId ||
+        ledger.scheduleId !== scheduleId ||
+        receipt.adminUserId !== adminUserId ||
+        receipt.fingerprint !== operationFingerprint
+      ) {
+        throw httpError(409, "This assignment operation ID was already used for a different request.");
+      }
+      const toCells = (indexes) => (Array.isArray(indexes) ? indexes : [])
+        .map((index) => changes[index])
+        .filter(Boolean)
+        .map(({ serviceId, positionSlotKey }) => ({ serviceId, positionSlotKey }));
+      return {
+        schedule,
+        accepted: toCells(receipt.acceptedIndexes),
+        skipped: toCells(receipt.skippedIndexes),
+        replayed: true,
+      };
+    };
+    const nextReceiptLedger = (ledger, result) => {
+      if (!operationId) return null;
+      const indexesByCell = new Map(changes.map((change, index) => [
+        `${change.serviceId}\u0000${change.positionSlotKey}`,
+        index,
+      ]));
+      const indexesFor = (cells) => cells
+        .map(({ serviceId, positionSlotKey }) => indexesByCell.get(`${serviceId}\u0000${positionSlotKey}`))
+        .filter((index) => Number.isInteger(index));
+      const receipt = {
+        operationId,
+        adminUserId,
+        fingerprint: operationFingerprint,
+        acceptedIndexes: indexesFor(result.accepted),
+        skippedIndexes: indexesFor(result.skipped),
+      };
+      return {
+        churchId,
+        scheduleId,
+        operations: [
+          ...(Array.isArray(ledger?.operations) ? ledger.operations : [])
+            .filter((item) => item?.operationId !== operationId),
+          receipt,
+        ].slice(-MAX_SCHEDULE_ASSIGNMENT_BATCH_RECEIPTS),
+      };
+    };
     const applyBatch = async (schedule, team, candidateSchedules) => {
       const assignments = JSON.parse(JSON.stringify(schedule.assignments || {}));
       const accepted = [];
@@ -11077,6 +11130,11 @@ export const createTeamsAuthHandlers = ({
     if (!db) {
       return enqueueInMemoryScheduleSave(scheduleId, async () => {
         const schedule = await assertTeamEntityInChurch("schedule", scheduleId, churchId, { label: "Schedule", active: false });
+        const receiptLedger = operationId
+          ? await getDoc(COLLECTIONS.teamScheduleAssignmentBatchReceipts, scheduleId)
+          : null;
+        const replay = receiptFor(schedule, receiptLedger);
+        if (replay) return replay;
         const team = await assertTeamEntityInChurch("team", schedule.teamId, churchId, { label: "Team" });
         const candidateSchedules = await listScheduleConflictCandidates({ churchId, schedule, occurrenceIds: [...new Set(changes.map((change) => change.serviceId))] });
         const result = await applyBatch(schedule, team, candidateSchedules);
@@ -11088,6 +11146,14 @@ export const createTeamsAuthHandlers = ({
         };
         const nextSchedule = { ...schedule, ...update };
         await setDoc(COLLECTIONS.teamSchedules, scheduleId, nextSchedule, { merge: false });
+        if (operationId) {
+          await setDoc(
+            COLLECTIONS.teamScheduleAssignmentBatchReceipts,
+            scheduleId,
+            nextReceiptLedger(receiptLedger, result),
+            { merge: false },
+          );
+        }
         return { schedule: nextSchedule, accepted: result.accepted, skipped: result.skipped };
       });
     }
@@ -11097,6 +11163,15 @@ export const createTeamsAuthHandlers = ({
       const scheduleSnap = await transaction.get(scheduleRef);
       const schedule = readTransactionTeamEntity(scheduleSnap, "scheduleId", "Schedule", { active: false });
       if (schedule.churchId !== churchId) throw httpError(404, "Schedule not found.");
+      const receiptRef = operationId
+        ? db.collection(COLLECTIONS.teamScheduleAssignmentBatchReceipts).doc(scheduleId)
+        : null;
+      const receiptSnap = receiptRef ? await transaction.get(receiptRef) : null;
+      const receiptLedger = receiptSnap?.exists
+        ? { id: receiptSnap.id, ...receiptSnap.data() }
+        : null;
+      const replay = receiptFor(schedule, receiptLedger);
+      if (replay) return replay;
       const teamSnap = await transaction.get(db.collection(COLLECTIONS.teams).doc(schedule.teamId));
       const team = readTransactionTeamEntity(teamSnap, "teamId", "Team");
       if (team.churchId !== churchId) throw httpError(404, "Team not found.");
@@ -11115,6 +11190,13 @@ export const createTeamsAuthHandlers = ({
         updatedByUid: adminUserId,
       };
       transaction.update(scheduleRef, update);
+      if (operationId) {
+        transaction.set(
+          receiptRef,
+          nextReceiptLedger(receiptLedger, result),
+          { merge: false },
+        );
+      }
       return { schedule: { ...schedule, ...update }, accepted: result.accepted, skipped: result.skipped };
     });
   };
@@ -22766,15 +22848,55 @@ export const createTeamsAuthHandlers = ({
             assignment: raw?.assignment || "",
           };
         });
+        const rawOperationId = req.body?.operationId;
+        const operationId = rawOperationId == null
+          ? ""
+          : normalizeShortText(rawOperationId, { max: 100 });
+        if (
+          rawOperationId != null &&
+          (typeof rawOperationId !== "string" || !/^[A-Za-z0-9_-]{1,100}$/.test(operationId))
+        ) {
+          throw httpError(400, "An assignment operation ID is invalid.");
+        }
+        const confirmedFingerprint = normalizeAllowOccurrenceConflict(req.body);
+        const skipChangedCells = req.body?.skipChangedCells === true;
+        const canonicalCell = (cell) => {
+          const normalized = normalizeScheduleAssignmentCell(cell);
+          return {
+            primaryMemberId: normalized.primaryMemberId,
+            shadows: [...normalized.shadows].sort(
+              (a, b) => a.memberId.localeCompare(b.memberId) || a.kind.localeCompare(b.kind),
+            ),
+          };
+        };
+        const operationFingerprint = operationId
+          ? hashValue(JSON.stringify({
+              churchId: req.params.churchId,
+              scheduleId: req.params.scheduleId,
+              skipChangedCells,
+              confirmedFingerprint,
+              changes: changes.map((change) => ({
+                serviceId: change.serviceId,
+                positionSlotKey: change.positionSlotKey,
+                serviceDate: change.serviceDate,
+                expectedCell: canonicalCell(change.expectedCell),
+                assignment: canonicalCell(change.assignment),
+              })),
+            }))
+          : "";
         const result = await updateTeamScheduleAssignmentsBatchInStore({
           churchId: req.params.churchId,
           scheduleId: req.params.scheduleId,
           changes,
-          confirmedFingerprint: normalizeAllowOccurrenceConflict(req.body),
-          skipChangedCells: req.body?.skipChangedCells === true,
+          confirmedFingerprint,
+          skipChangedCells,
           adminUserId: admin.user.uid,
+          operationId,
+          operationFingerprint,
         });
-        emitTeamsEvent(req.params.churchId, "schedule-updated", { schedule: result.schedule });
+        if (!result.replayed) {
+          emitTeamsEvent(req.params.churchId, "schedule-updated", { schedule: result.schedule });
+        }
         return res.json({ success: true, ...result });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not update these assignments.");

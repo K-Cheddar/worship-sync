@@ -147,18 +147,11 @@ export const hasPendingScheduleUndoEdit = (
   );
 };
 
-/**
- * Keep only the part of an entry that reached its requested state. A skipped
- * cell can still count as applied after a retry if the server already has the
- * desired value (for example, the first response was lost after commit).
- */
+/** Keep only changes the server accepted, including a replayed receipt on retry. */
 export const resolveScheduleUndoBatchResult = (
   entry: ScheduleUndoEntry,
-  direction: "undo" | "redo",
   attemptedChanges: ScheduleUndoBatchChange[],
   accepted: Array<{ serviceId: string; positionSlotKey: string }>,
-  skipped: Array<{ serviceId: string; positionSlotKey: string }>,
-  assignments: ScheduleAssignmentMap,
 ): { appliedEntry: ScheduleUndoEntry | null; skippedCount: number } => {
   const attemptedByKey = new Map(attemptedChanges.map((change) => [
     cellKey(change.serviceId, change.positionSlotKey),
@@ -167,14 +160,6 @@ export const resolveScheduleUndoBatchResult = (
   const appliedKeys = new Set(accepted.map(({ serviceId, positionSlotKey }) =>
     cellKey(serviceId, positionSlotKey),
   ));
-
-  skipped.forEach(({ serviceId, positionSlotKey }) => {
-    const key = cellKey(serviceId, positionSlotKey);
-    const attempted = attemptedByKey.get(key);
-    if (!attempted) return;
-    const persisted = assignments[serviceId]?.[positionSlotKey] ?? "";
-    if (cellsMatch(persisted, attempted.assignment)) appliedKeys.add(key);
-  });
 
   const attemptedKeys = new Set(attemptedByKey.keys());
   const appliedChanges = entry.changes.filter((change) => {

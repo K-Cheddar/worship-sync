@@ -2673,6 +2673,7 @@ export const updateTeamScheduleAssignmentsBatch = async (
     }>;
     skipChangedCells?: boolean;
     confirmedOccurrenceConflictFingerprint?: string;
+    operationId?: string;
   },
 ) =>
   apiFetch<{
@@ -2680,6 +2681,7 @@ export const updateTeamScheduleAssignmentsBatch = async (
     schedule: TeamSchedule;
     accepted: Array<{ serviceId: string; positionSlotKey: string }>;
     skipped: Array<{ serviceId: string; positionSlotKey: string }>;
+    replayed?: boolean;
   }>(
     `api/churches/${churchId}/team-schedules/${scheduleId}/assignments/batch`,
     { method: "POST", body: JSON.stringify(body) },

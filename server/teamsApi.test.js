@@ -4539,28 +4539,30 @@ test("assignment batch skips a genuine concurrent cell and applies only matching
     },
   }, { merge: false });
 
+  const requestBody = {
+    operationId: "undo-race-receipt-1",
+    skipChangedCells: true,
+    changes: [
+      {
+        serviceId: occurrenceId,
+        positionSlotKey: vocalKey,
+        serviceDate: "2026-10-11",
+        expectedCell: { primaryMemberId: team.memberIds.Avery },
+        assignment: "",
+      },
+      {
+        serviceId: occurrenceId,
+        positionSlotKey: keysKey,
+        serviceDate: "2026-10-11",
+        expectedCell: { primaryMemberId: team.memberIds.Avery },
+        assignment: "",
+      },
+    ],
+  };
   const result = await callHandler(authHandlers.updateTeamScheduleAssignmentsBatch, {
     context,
     params: { scheduleId },
-    body: {
-      skipChangedCells: true,
-      changes: [
-        {
-          serviceId: occurrenceId,
-          positionSlotKey: vocalKey,
-          serviceDate: "2026-10-11",
-          expectedCell: { primaryMemberId: team.memberIds.Avery },
-          assignment: "",
-        },
-        {
-          serviceId: occurrenceId,
-          positionSlotKey: keysKey,
-          serviceDate: "2026-10-11",
-          expectedCell: { primaryMemberId: team.memberIds.Avery },
-          assignment: "",
-        },
-      ],
-    },
+    body: requestBody,
   });
 
   assert.equal(result.statusCode, 200);
@@ -4568,6 +4570,45 @@ test("assignment batch skips a genuine concurrent cell and applies only matching
   assert.deepEqual(result.payload.skipped, [{ serviceId: occurrenceId, positionSlotKey: keysKey }]);
   assert.equal(result.payload.schedule.assignments[occurrenceId][vocalKey], undefined);
   assert.deepEqual(result.payload.schedule.assignments[occurrenceId][keysKey], concurrentCell);
+
+  // Another editor can independently set a skipped cell to the Undo target.
+  // A retry must replay the original decision rather than treating that value
+  // coincidence as proof that this Undo committed.
+  const afterConcurrentEdit = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+  await setDoc(COLLECTIONS.teamSchedules, scheduleId, {
+    ...afterConcurrentEdit,
+    assignments: {
+      ...afterConcurrentEdit.assignments,
+      [occurrenceId]: {
+        ...afterConcurrentEdit.assignments[occurrenceId],
+        [keysKey]: "",
+      },
+    },
+  }, { merge: false });
+
+  const retry = await callHandler(authHandlers.updateTeamScheduleAssignmentsBatch, {
+    context,
+    params: { scheduleId },
+    body: requestBody,
+  });
+  assert.equal(retry.statusCode, 200);
+  assert.equal(retry.payload.replayed, true);
+  assert.deepEqual(retry.payload.accepted, [{ serviceId: occurrenceId, positionSlotKey: vocalKey }]);
+  assert.deepEqual(retry.payload.skipped, [{ serviceId: occurrenceId, positionSlotKey: keysKey }]);
+  assert.equal(getMemberId(retry.payload.schedule.assignments[occurrenceId][keysKey]), "");
+
+  const reusedId = await callHandler(authHandlers.updateTeamScheduleAssignmentsBatch, {
+    context,
+    params: { scheduleId },
+    body: {
+      ...requestBody,
+      changes: requestBody.changes.map((change) => ({
+        ...change,
+        assignment: { primaryMemberId: team.memberIds.Blair },
+      })),
+    },
+  });
+  assert.equal(reusedId.statusCode, 409);
 });
 
 test("schedule assignment mutations still require edit access to the owning team", async (t) => {
