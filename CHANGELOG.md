@@ -1,3 +1,13 @@
+## [2.49.1](https://github.com/K-Cheddar/worship-sync/compare/v2.49.0...v2.49.1) (2026-11-04)
+
+
+### Bug Fixes
+
+* guard schedule publishing and send saves ([a656514](https://github.com/K-Cheddar/worship-sync/commit/a656514d626ec178898f2cf1871d666ba06fb4de))
+* **schedule:** make undo redo assignment-aware ([fab415e](https://github.com/K-Cheddar/worship-sync/commit/fab415e324aeec69442847b0dc5dab646ac48500))
+* **schedule:** replay undo batches idempotently ([3cf0d69](https://github.com/K-Cheddar/worship-sync/commit/3cf0d693e5a91123c50d412d70ad8ff06360686e))
+* **team-schedules:** guard publication and send workflows ([bac6aa8](https://github.com/K-Cheddar/worship-sync/commit/bac6aa8c1a3700d3c5497a214df205ab2680c19b))
+
 # [2.49.0](https://github.com/K-Cheddar/worship-sync/compare/v2.48.1...v2.49.0) (2026-11-04)
 
 
