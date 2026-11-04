@@ -122,11 +122,14 @@ describe("overlaySlice", () => {
 
     it("clears pending draft ownership when the outline owner retires", () => {
       const store = createStore();
-      store.dispatch(selectOverlay(createOverlay({ id: "overlay-1", name: "Local" })));
+      store.dispatch({
+        ...selectOverlay(createOverlay({ id: "overlay-1", name: "Local" })),
+        meta: { outlineOwnerKey: "old-outline" },
+      });
       store.dispatch(markOverlayDraftPending({ overlayId: "overlay-1", draftId: "draft-a" }));
       store.dispatch({ type: "outlineContent/activate", payload: { ownerKey: "new-outline", hasSelection: true } });
 
-      expect(store.getState().overlay.outlineOwnerKey).toBe("new-outline");
+      expect(store.getState().overlay.outlineOwnerKey).toBe("old-outline");
       expect(store.getState().overlay.pendingDraftOverlayId).toBeNull();
       expect(store.getState().overlay.pendingDraftId).toBeNull();
     });
