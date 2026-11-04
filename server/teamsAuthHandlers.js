@@ -12929,6 +12929,104 @@ export const createTeamsAuthHandlers = ({
     }
   };
 
+  const updateTeamSchedulePublication = async (req, published) => {
+    const { churchId, scheduleId } = req.params;
+    const existing = await assertTeamEntityInChurch(
+      "schedule",
+      scheduleId,
+      churchId,
+      { label: "Schedule" },
+    );
+    await assertTeamEntityInChurch("team", existing.teamId, churchId, {
+      label: "Team",
+    });
+    const admin = await requireTeamsEditForTeam(req, churchId, existing.teamId);
+    const actorUid = sessionActorUid(admin);
+    const updatedAt = nowIso();
+    const update = { published, updatedAt, updatedByUid: actorUid };
+    const validateCurrent = async (current, readTeam) => {
+      if (!current || current.churchId !== churchId) {
+        throw httpError(404, "Schedule not found.");
+      }
+      if (current.archivedAt) {
+        throw httpError(400, "Schedule is archived.");
+      }
+      if (current.teamId !== existing.teamId) {
+        throw httpError(409, "This schedule's Team changed. Refresh before continuing.");
+      }
+      const team = await readTeam(current.teamId);
+      if (!team || team.churchId !== churchId) {
+        throw httpError(404, "Team not found.");
+      }
+      if (team.archivedAt) {
+        throw httpError(400, "Team is archived.");
+      }
+      return current;
+    };
+
+    const db = requireFirestore();
+    let result;
+    if (db?.runTransaction) {
+      result = await db.runTransaction(async (transaction) => {
+        const scheduleRef = db.collection(COLLECTIONS.teamSchedules).doc(scheduleId);
+        const scheduleSnapshot = await transaction.get(scheduleRef);
+        if (!scheduleSnapshot.exists) {
+          throw httpError(404, "Schedule not found.");
+        }
+        const current = await validateCurrent(
+          { scheduleId: scheduleSnapshot.id, ...scheduleSnapshot.data() },
+          async (teamId) => {
+            const teamSnapshot = await transaction.get(
+              db.collection(COLLECTIONS.teams).doc(teamId),
+            );
+            return teamSnapshot.exists
+              ? { teamId: teamSnapshot.id, ...teamSnapshot.data() }
+              : null;
+          },
+        );
+        if ((current.published !== false) === published) {
+          return { schedule: current, changed: false };
+        }
+        transaction.update(scheduleRef, update);
+        return { schedule: { ...current, ...update }, changed: true };
+      });
+    } else {
+      result = await enqueueInMemoryScheduleSave(scheduleId, () =>
+        withScheduleOccurrenceLocks(
+          [`schedule:${churchId}:${scheduleId}`],
+          async () => {
+            const rawCurrent = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+            const current = await validateCurrent(
+              rawCurrent ? { scheduleId, ...rawCurrent } : null,
+              (teamId) => getDoc(COLLECTIONS.teams, teamId),
+            );
+            if ((current.published !== false) === published) {
+              return { schedule: current, changed: false };
+            }
+            await updateDocFields(COLLECTIONS.teamSchedules, scheduleId, update);
+            return { schedule: { ...current, ...update }, changed: true };
+          },
+        ),
+      );
+    }
+
+    if (result.changed) {
+      await addSecurityEvent({
+        type: published ? "team_schedule_published" : "team_schedule_unpublished",
+        churchId,
+        userId: actorUid,
+        scheduleId,
+      });
+      emitTeamsEvent(churchId, "schedule-updated", { schedule: result.schedule });
+      await emitPublicPlansForScheduleOccurrences({
+        churchId,
+        occurrences: result.schedule.occurrences,
+        revision: result.schedule.updatedAt || updatedAt,
+      });
+    }
+    return result.schedule;
+  };
+
   return {
     ...createVolunteerPortalHandlers({
       getAccessStore: getVolunteerAccessStore, appBaseUrl: APP_BASE_URL,
@@ -17125,6 +17223,26 @@ export const createTeamsAuthHandlers = ({
       }
     },
 
+    async publishTeamSchedule(req, res) {
+      try {
+        await assertCsrf(req);
+        const schedule = await updateTeamSchedulePublication(req, true);
+        return res.json({ success: true, schedule });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not publish this schedule.");
+      }
+    },
+
+    async unpublishTeamSchedule(req, res) {
+      try {
+        await assertCsrf(req);
+        const schedule = await updateTeamSchedulePublication(req, false);
+        return res.json({ success: true, schedule });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not unpublish this schedule.");
+      }
+    },
+
     /**
      * What an emailed link is asking about.
      *
@@ -19786,7 +19904,7 @@ export const createTeamsAuthHandlers = ({
             payload,
           });
         }
-        payload = { ...payload, source: "custom" };
+        payload = { ...payload, source: "custom", published: false };
         const admin = await requireTeamsEditForTeam(
           req,
           req.params.churchId,

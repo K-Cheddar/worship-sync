@@ -1,5 +1,5 @@
 /* eslint-disable testing-library/no-node-access -- Compare the decorative icon SVG directly to verify its identity. */
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Fragment, useMemo, type ContextType, type PropsWithChildren, type ReactElement, type SVGProps } from "react";
 import {
@@ -29,11 +29,14 @@ import {
   getServicePlanMicrophones,
   getServiceEquipment,
   getTeamScheduleDetail,
+  getTeamSchedulePublicLink,
   ensureTeamScheduleForPeriod,
   getNotificationIntents,
   getTeamsBootstrap,
   listServicePlans,
   sendTeamSchedule,
+  publishTeamSchedule,
+  unpublishTeamSchedule,
   updateTeam,
   updateTeamPosition,
   updateTeamSchedule,
@@ -181,9 +184,12 @@ jest.mock("../../api/auth", () => ({
   searchTeamRosterCandidates: jest.fn().mockResolvedValue({ candidates: [] }),
   getTeamsBootstrap: jest.fn(),
   getTeamScheduleDetail: jest.fn(),
+  getTeamSchedulePublicLink: jest.fn(),
   getTeamAvailabilityManagementData: jest.fn().mockResolvedValue({ success: true, members: [] }),
   ensureTeamScheduleForPeriod: jest.fn(),
   sendTeamSchedule: jest.fn(),
+  publishTeamSchedule: jest.fn(),
+  unpublishTeamSchedule: jest.fn(),
   getScheduleInitialSmsRecipients: jest.fn().mockResolvedValue({
     success: true,
     historyComplete: true,
@@ -247,9 +253,12 @@ jest.mock("../../context/churchServiceTimeZone", () => ({
 
 const mockGetTeamsBootstrap = jest.mocked(getTeamsBootstrap);
 const mockGetTeamScheduleDetail = jest.mocked(getTeamScheduleDetail);
+const mockGetTeamSchedulePublicLink = jest.mocked(getTeamSchedulePublicLink);
 const mockEnsureTeamScheduleForPeriod = jest.mocked(ensureTeamScheduleForPeriod);
 const mockGetNotificationIntents = jest.mocked(getNotificationIntents);
 const mockSendTeamSchedule = jest.mocked(sendTeamSchedule);
+const mockPublishTeamSchedule = jest.mocked(publishTeamSchedule);
+const mockUnpublishTeamSchedule = jest.mocked(unpublishTeamSchedule);
 const mockListServicePlans = jest.mocked(listServicePlans);
 const mockGetServicePlanMicrophones = jest.mocked(getServicePlanMicrophones);
 const mockGetServiceEquipment = jest.mocked(getServiceEquipment);
@@ -710,6 +719,7 @@ describe("Teams", () => {
   // default 5s Jest budget; keep headroom without masking real hangs.
   jest.setTimeout(30_000);
   let originalLocationHref = "";
+  let originalClipboard: PropertyDescriptor | undefined;
 
   // Warm the lazy route chunks used by these tests so the first visit does not
   // sit in Suspense while findBy polls — under CI load that race can hang until
@@ -728,6 +738,7 @@ describe("Teams", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
     mockTeamsSseConnections.length = 0;
     mockConnectAuthenticatedSse.mockClear();
     mockChurchServiceTimeZone.status = "ready";
@@ -783,6 +794,11 @@ describe("Teams", () => {
     window.matchMedia = originalMatchMedia;
     window.localStorage.clear();
     window.history.replaceState({}, "", originalLocationHref);
+    if (originalClipboard) {
+      Object.defineProperty(navigator, "clipboard", originalClipboard);
+    } else {
+      Reflect.deleteProperty(navigator, "clipboard");
+    }
   });
 
   it("uses the shared page identity and preserves its compact toolbar", async () => {
@@ -5654,6 +5670,114 @@ describe("Teams", () => {
 
     expect(staffingSummary).toHaveTextContent("1 / 2");
     expect(staffingSummary).toHaveTextContent("1Position open");
+  });
+
+  it("publishes a Draft before opening send choices and keeps sending explicit", async () => {
+    const user = userEvent.setup();
+    const draft = { ...scheduleBootstrap.schedules[0], published: false };
+    const published = { ...draft, published: true };
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...scheduleBootstrap,
+      schedules: [draft],
+    }));
+    mockPublishTeamSchedule.mockResolvedValue({ success: true, schedule: published });
+    mockUnpublishTeamSchedule.mockResolvedValue({ success: true, schedule: draft });
+    mockSendTeamSchedule.mockResolvedValue({
+      success: true,
+      sentAt: "2026-11-04T12:00:00.000Z",
+      notified: 1,
+      alreadyNotified: 0,
+      unreachableMemberIds: [],
+    });
+
+    renderTeams();
+    await waitForScheduleGrid();
+
+    expect(screen.getByRole("status", { name: "Schedule publication status" })).toHaveTextContent("Draft");
+    await user.click(screen.getByRole("button", { name: /Send schedule/i }));
+    expect(screen.getByText(/Publish this Draft to make it visible to teammates/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Publish & Continue" })).toBeInTheDocument();
+    expect(mockSendTeamSchedule).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Publish & Continue" }));
+    await waitFor(() => expect(mockPublishTeamSchedule).toHaveBeenCalledWith("church-1", draft.scheduleId));
+    expect(await screen.findByRole("status", { name: "Schedule publication status" })).toHaveTextContent("Published");
+    expect(await screen.findByText(/Email 1 person on this schedule\?/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Review volunteers for text messages/i })).toBeInTheDocument();
+    expect(mockSendTeamSchedule).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(mockSendTeamSchedule).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Send schedule" }));
+    await user.click(screen.getByRole("button", { name: "Yes, send email" }));
+    await waitFor(() => expect(mockSendTeamSchedule).toHaveBeenCalledWith("church-1", draft.scheduleId));
+
+    await user.click(screen.getByRole("button", { name: "Unpublish" }));
+    await waitFor(() => expect(mockUnpublishTeamSchedule).toHaveBeenCalledWith("church-1", draft.scheduleId));
+    expect(screen.getByRole("status", { name: "Schedule publication status" })).toHaveTextContent("Draft");
+  });
+
+  it("offers Publish & Copy Link for a Draft and mints the link only after publishing", async () => {
+    const user = userEvent.setup();
+    const draft = { ...scheduleBootstrap.schedules[0], published: false };
+    const published = { ...draft, published: true };
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...scheduleBootstrap,
+      schedules: [draft],
+    }));
+    mockPublishTeamSchedule.mockResolvedValue({ success: true, schedule: published });
+    mockGetTeamSchedulePublicLink.mockResolvedValue({
+      success: true,
+      publicToken: "published-schedule-token",
+    });
+
+    renderTeams();
+    await waitForScheduleGrid();
+    await user.click(screen.getByRole("button", { name: "More schedule actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Copy view-only link" }));
+
+    expect(await screen.findByRole("dialog", { name: "Publish schedule?" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Publish & Copy Link" })).toBeInTheDocument();
+    expect(mockGetTeamSchedulePublicLink).not.toHaveBeenCalled();
+    const publishAndCopyButton = screen.getByRole("button", { name: "Publish & Copy Link" });
+    await waitFor(() => expect(publishAndCopyButton).toBeEnabled());
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    fireEvent.click(publishAndCopyButton);
+
+    await waitFor(() => expect(mockPublishTeamSchedule).toHaveBeenCalledWith("church-1", draft.scheduleId));
+    await waitFor(() => expect(mockGetTeamSchedulePublicLink).toHaveBeenCalledWith("church-1", draft.scheduleId));
+    await expect(mockGetTeamSchedulePublicLink.mock.results[0]?.value).resolves.toMatchObject({
+      publicToken: "published-schedule-token",
+    });
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining("published-schedule-token")));
+    expect(mockPublishTeamSchedule.mock.invocationCallOrder[0]).toBeLessThan(
+      mockGetTeamSchedulePublicLink.mock.invocationCallOrder[0],
+    );
+    expect(await screen.findByRole("status", { name: "Schedule publication status" })).toHaveTextContent("Published");
+    expect(screen.queryByRole("dialog", { name: "Schedule published" })).not.toBeInTheDocument();
+  });
+
+  it("keeps a failed publish actionable and leaves the schedule Draft", async () => {
+    const user = userEvent.setup();
+    const draft = { ...scheduleBootstrap.schedules[0], published: false };
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...scheduleBootstrap,
+      schedules: [draft],
+    }));
+    mockPublishTeamSchedule.mockRejectedValue(new Error("The Team is archived."));
+
+    renderTeams();
+    await waitForScheduleGrid();
+    await user.click(screen.getByRole("button", { name: "Publish" }));
+
+    await screen.findByRole("status", { name: "Schedule publication status" });
+    expect(screen.getByRole("status", { name: "Schedule publication status" })).toHaveTextContent("Draft");
+    expect(screen.getByRole("button", { name: "Publish" })).toBeEnabled();
+    expect(await screen.findByText("The Team is archived.")).toBeInTheDocument();
   });
 
   it("keeps New schedule and Send schedule actions available with send confirmation", async () => {

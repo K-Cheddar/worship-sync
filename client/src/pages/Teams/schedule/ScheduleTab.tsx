@@ -102,6 +102,8 @@ import {
   updateTeamRosterMemberProfile,
   getTeamsBootstrap,
   updateTeamSchedule,
+  publishTeamSchedule,
+  unpublishTeamSchedule,
   updateTeamScheduleAssignment,
   updateTeamScheduleAssignmentsBatch,
   updateTeamScheduleAssignmentMicrophones,
@@ -1749,6 +1751,11 @@ const ScheduleTab = ({
     });
   }, []);
   const [copyingLink, setCopyingLink] = useState(false);
+  const copyingLinkRef = useRef(false);
+  const [publishAndCopyLink, setPublishAndCopyLink] = useState<{
+    schedule: TeamSchedule;
+    published: boolean;
+  } | null>(null);
   const [pasteRowOpen, setPasteRowOpen] = useState(false);
   const [scheduleLayout, setScheduleLayout] = useState<TeamScheduleAdminLayout>(
     resolveInitialTeamScheduleAdminLayout,
@@ -2864,6 +2871,8 @@ const ScheduleTab = ({
 
   const [isSendingSchedule, setIsSendingSchedule] = useState(false);
   const [isConfirmingSend, setIsConfirmingSend] = useState(false);
+  const [isPublicationPending, setIsPublicationPending] = useState(false);
+  const publicationPendingRef = useRef(false);
   const sendScopeScheduleId = selectedSchedule?.scheduleId;
   const sendScopeTeamId = selectedSchedule?.teamId;
   const sendScopeStartDate = selectedSchedule?.startDate;
@@ -2919,6 +2928,61 @@ const ScheduleTab = ({
     });
     return holders.size;
   }, [selectedSchedule?.assignments]);
+
+  const updateSchedulePublication = useCallback(async (
+    schedule: TeamSchedule,
+    published: boolean,
+  ): Promise<TeamSchedule | null> => {
+    if (
+      !canEdit || !churchId || !isPersistedScheduleId(schedule.scheduleId) ||
+      publicationPendingRef.current
+    ) return null;
+    publicationPendingRef.current = true;
+    setIsPublicationPending(true);
+    try {
+      const update = published ? publishTeamSchedule : unpublishTeamSchedule;
+      const result = await trackTeamsSave(update(churchId, schedule.scheduleId));
+      publishScheduleSnapshot(result.schedule, ["published"]);
+      return result.schedule;
+    } catch (error) {
+      showApiErrorToast(
+        showToast,
+        error,
+        published
+          ? "Could not publish this schedule. Refresh and try again."
+          : "Could not unpublish this schedule. Refresh and try again.",
+      );
+      return null;
+    } finally {
+      publicationPendingRef.current = false;
+      setIsPublicationPending(false);
+    }
+  }, [canEdit, churchId, publishScheduleSnapshot, showToast, trackTeamsSave]);
+
+  const handleSchedulePublication = useCallback(async () => {
+    if (!selectedSchedule) return;
+    const published = selectedSchedule.published === false;
+    const result = await updateSchedulePublication(selectedSchedule, published);
+    if (!result) return;
+    showToast(
+      published
+        ? "Schedule published. Volunteers can now see it."
+        : "Schedule unpublished. It is hidden from volunteers and view-only links.",
+      "success",
+    );
+  }, [selectedSchedule, showToast, updateSchedulePublication]);
+
+  const handlePublishAndContinue = useCallback(async () => {
+    if (!selectedSchedule) return;
+    const scheduleId = selectedSchedule.scheduleId;
+    const result = await updateSchedulePublication(selectedSchedule, true);
+    if (
+      result && activeChurchIdRef.current === churchId &&
+      activeScheduleIdRef.current === scheduleId
+    ) {
+      setIsConfirmingSend(true);
+    }
+  }, [churchId, selectedSchedule, updateSchedulePublication]);
 
   /**
    * Tell everyone on this schedule. Deliberately a button rather than a
@@ -4577,26 +4641,61 @@ const ScheduleTab = ({
     selectedSchedule,
   ]);
 
+  const copyScheduleLinkToClipboard = useCallback(async (scheduleId: string) => {
+    const { publicToken } = await getTeamSchedulePublicLink(churchId, scheduleId);
+    await window.navigator.clipboard.writeText(buildTeamSchedulePublicUrl(publicToken));
+  }, [churchId]);
+
   const copyPublicLink = useCallback(async () => {
-    if (!canEdit) return;
-    if (!selectedSchedule) return;
+    if (!canEdit || !selectedSchedule || copyingLinkRef.current) return;
+    copyingLinkRef.current = true;
     setCopyingLink(true);
     try {
       const schedule = await ensureActiveSchedule();
       if (!schedule) return;
-      const { publicToken } = await getTeamSchedulePublicLink(
-        churchId,
-        schedule.scheduleId,
-      );
-      const url = buildTeamSchedulePublicUrl(publicToken);
-      await navigator.clipboard.writeText(url);
+      if (schedule.published === false) {
+        setPublishAndCopyLink({ schedule, published: false });
+        return;
+      }
+      await copyScheduleLinkToClipboard(schedule.scheduleId);
       showToast("View-only link copied to clipboard.", "success");
     } catch (error) {
-      showApiErrorToast(showToast, error, "Could not create a view-only link.");
+      showApiErrorToast(showToast, error, "Could not create a view-only link. Refresh and try again.");
     } finally {
+      copyingLinkRef.current = false;
       setCopyingLink(false);
     }
-  }, [canEdit, churchId, ensureActiveSchedule, selectedSchedule, showToast]);
+  }, [canEdit, copyScheduleLinkToClipboard, ensureActiveSchedule, selectedSchedule, showToast]);
+
+  const confirmPublishAndCopyLink = useCallback(async () => {
+    const pending = publishAndCopyLink;
+    if (!pending || copyingLinkRef.current) return;
+    copyingLinkRef.current = true;
+    setCopyingLink(true);
+    let schedule = pending.schedule;
+    try {
+      if (!pending.published) {
+        const published = await updateSchedulePublication(schedule, true);
+        if (!published) return;
+        schedule = published;
+        setPublishAndCopyLink({ schedule, published: true });
+      }
+      try {
+        await copyScheduleLinkToClipboard(schedule.scheduleId);
+        setPublishAndCopyLink(null);
+        showToast("Schedule published and view-only link copied.", "success");
+      } catch (error) {
+        showApiErrorToast(
+          showToast,
+          error,
+          "Schedule is published, but the link was not copied. Try copying the view-only link again.",
+        );
+      }
+    } finally {
+      copyingLinkRef.current = false;
+      setCopyingLink(false);
+    }
+  }, [copyScheduleLinkToClipboard, publishAndCopyLink, showToast, updateSchedulePublication]);
 
 
   // Seed a copy-specific draft and open an explicit create flow. The operator
@@ -6446,6 +6545,17 @@ const ScheduleTab = ({
       : []),
   ];
 
+  const selectedScheduleIsDraft = selectedSchedule?.published === false;
+  let publicationButtonLabel = selectedScheduleIsDraft ? "Publish" : "Unpublish";
+  if (isPublicationPending) {
+    publicationButtonLabel = selectedScheduleIsDraft ? "Publishing…" : "Unpublishing…";
+  }
+  let publishAndCopyButtonLabel = publishAndCopyLink?.published
+    ? "Copy view-only link"
+    : "Publish & Copy Link";
+  if (copyingLink) publishAndCopyButtonLabel = "Copying…";
+  if (isPublicationPending) publishAndCopyButtonLabel = "Publishing…";
+
   const scheduleWorkflowActions = (
     <div
       className="flex flex-wrap items-center justify-end gap-2"
@@ -6465,7 +6575,7 @@ const ScheduleTab = ({
               variant="cta"
               svg={Send}
               iconSize="sm"
-              disabled={isSendingSchedule || sendRecipientCount === 0 || !isPersistedScheduleId(selectedSchedule.scheduleId)}
+              disabled={isSendingSchedule || isPublicationPending || sendRecipientCount === 0 || !isPersistedScheduleId(selectedSchedule.scheduleId)}
             >
               Send schedule
             </Button>
@@ -6476,8 +6586,26 @@ const ScheduleTab = ({
           >
             {selectedSchedule.published === false ? (
               <>
-                <p className="text-sm text-amber-200">Publish this schedule before sending email or text messages.</p>
-                <Button variant="tertiary" disabled={isSendingSchedule} onClick={() => setIsConfirmingSend(false)}>Close</Button>
+                <p className="text-sm text-gray-300">
+                  Publish this Draft to make it visible to teammates. You can review email or text messages next.
+                </p>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="cta"
+                    disabled={isSendingSchedule || isPublicationPending}
+                    isLoading={isPublicationPending}
+                    onClick={() => void handlePublishAndContinue()}
+                  >
+                    {isPublicationPending ? "Publishing…" : "Publish & Continue"}
+                  </Button>
+                  <Button
+                    variant="tertiary"
+                    disabled={isSendingSchedule || isPublicationPending}
+                    onClick={() => setIsConfirmingSend(false)}
+                  >
+                    Cancel
+                  </Button>
+                </div>
               </>
             ) : (
               <>
@@ -6490,14 +6618,14 @@ const ScheduleTab = ({
                     variant="cta"
                     svg={Send}
                     iconSize="sm"
-                    disabled={isSendingSchedule}
+                    disabled={isSendingSchedule || isPublicationPending}
                     onClick={handleSendSchedule}
                   >
                     {isSendingSchedule ? "Sending…" : "Yes, send email"}
                   </Button>
                   <Button
                     variant="secondary"
-                    disabled={isSendingSchedule || !isPersistedScheduleId(selectedSchedule.scheduleId)}
+                    disabled={isSendingSchedule || isPublicationPending || !isPersistedScheduleId(selectedSchedule.scheduleId)}
                     onClick={() => {
                       setIsConfirmingSend(false);
                       setScheduleInitialSmsOpen(true);
@@ -6507,7 +6635,7 @@ const ScheduleTab = ({
                   </Button>
                   <Button
                     variant="tertiary"
-                    disabled={isSendingSchedule}
+                    disabled={isSendingSchedule || isPublicationPending}
                     onClick={() => setIsConfirmingSend(false)}
                   >
                     Cancel
@@ -6654,6 +6782,36 @@ const ScheduleTab = ({
                       required={staffingProgress.required}
                       staffingStarted={!selectedSchedule.scheduleId.startsWith("virtual:")}
                     />
+                  ) : null}
+                  {selectedSchedule && isPersistedScheduleId(selectedSchedule.scheduleId) ? (
+                    <div
+                      role="group"
+                      aria-label="Schedule publication"
+                      className="flex flex-wrap items-center gap-2"
+                    >
+                      <span
+                        role="status"
+                        aria-label="Schedule publication status"
+                        className={cn(
+                          "inline-flex min-h-8 items-center rounded-full border px-3 text-sm font-medium",
+                          selectedSchedule.published === false
+                            ? "border-amber-700 bg-amber-950/40 text-amber-100"
+                            : "border-emerald-800 bg-emerald-950/35 text-emerald-100",
+                        )}
+                      >
+                        {selectedSchedule.published === false ? "Draft" : "Published"}
+                      </span>
+                      {canEdit ? (
+                        <Button
+                          variant={selectedSchedule.published === false ? "secondary" : "tertiary"}
+                          disabled={isPublicationPending}
+                          isLoading={isPublicationPending}
+                          onClick={() => void handleSchedulePublication()}
+                        >
+                          {publicationButtonLabel}
+                        </Button>
+                      ) : null}
+                    </div>
                   ) : null}
                   <div
                     role="group"
@@ -7583,6 +7741,34 @@ const ScheduleTab = ({
                 onCancel={cancelScheduleSms}
                 onSend={() => void confirmScheduleSms()}
               /> : null}
+              <Modal
+                isOpen={Boolean(publishAndCopyLink)}
+                onClose={() => setPublishAndCopyLink(null)}
+                title={publishAndCopyLink?.published ? "Schedule published" : "Publish schedule?"}
+                description={publishAndCopyLink?.published
+                  ? "Copy the view-only link to share this published schedule."
+                  : "Publishing makes this schedule visible to teammates. It won't send email or text messages."}
+                size="sm"
+                busy={isPublicationPending || copyingLink}
+              >
+                <div className="flex justify-end gap-2 text-sm">
+                  <Button
+                    variant="secondary"
+                    disabled={isPublicationPending || copyingLink}
+                    onClick={() => setPublishAndCopyLink(null)}
+                  >
+                    {publishAndCopyLink?.published ? "Done" : "Cancel"}
+                  </Button>
+                  <Button
+                    variant="cta"
+                    disabled={isPublicationPending || copyingLink}
+                    isLoading={isPublicationPending || copyingLink}
+                    onClick={() => void confirmPublishAndCopyLink()}
+                  >
+                    {publishAndCopyButtonLabel}
+                  </Button>
+                </div>
+              </Modal>
               <Modal
                 isOpen={Boolean(replacementIntentToClose)}
                 onClose={() => { if (!closingReplacement) setReplacementIntentToClose(null); }}

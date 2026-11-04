@@ -11865,6 +11865,226 @@ test("an archived linked member exposes no My Schedule assignments or self-servi
   );
 });
 
+test("team schedule publishing toggles visibility and preserves concurrent and saved data", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("schedule_publication_lifecycle");
+  const assigned = await seedAssignedSchedule(context, "publication_lifecycle", {
+    cameraSlots: 2,
+  });
+  let saved = await getDoc(COLLECTIONS.teamSchedules, assigned.scheduleId);
+  assert.equal(saved.published, false);
+
+  const link = await callHandler(authHandlers.getTeamSchedulePublicLink, {
+    context,
+    params: { scheduleId: assigned.scheduleId },
+  });
+  assert.equal(link.statusCode, 200);
+  const token = link.payload.publicToken;
+  const publicRead = () => callHandler(authHandlers.getPublicTeamSchedule, {
+    context: publicContext(context.churchId),
+    query: { token },
+  });
+  assert.equal((await publicRead()).statusCode, 404, "a Draft token is not publicly readable");
+  const draftVolunteerView = await callHandler(authHandlers.getMyTeamAssignments, { context });
+  assert.deepEqual(draftVolunteerView.payload.occurrences, []);
+  const draftSend = await callHandler(authHandlers.sendTeamSchedule, {
+    context,
+    params: { scheduleId: assigned.scheduleId },
+  });
+  assert.equal(draftSend.statusCode, 409);
+
+  const secondMember = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: {
+      firstName: "Concurrent",
+      lastName: "Editor",
+      positionIds: [assigned.media.positionIds.Camera],
+    },
+  });
+  await setDoc(COLLECTIONS.teamSchedules, assigned.scheduleId, {
+    responses: {
+      [assigned.occurrenceId]: {
+        [assigned.cellKey]: {
+          memberId: assigned.memberId,
+          response: "accepted",
+          respondedAt: "2026-11-01T12:00:00.000Z",
+        },
+      },
+    },
+    microphoneAssignments: { [assigned.occurrenceId]: { [assigned.cellKey]: ["mic-kept"] } },
+    iemAssignments: { [assigned.occurrenceId]: { [assigned.cellKey]: ["iem-kept"] } },
+    additionalPositionSlots: { [assigned.occurrenceId]: [`${assigned.media.positionIds.Camera}::2`] },
+    sentAt: "2026-10-31T12:00:00.000Z",
+    notificationHistory: [{ id: "existing-notification" }],
+    publicationHistory: [{ status: "legacy-entry" }],
+  }, { merge: true });
+  saved = await getDoc(COLLECTIONS.teamSchedules, assigned.scheduleId);
+  const ownersBefore = await queryDocs(COLLECTIONS.teamScheduleOccurrenceOwners, [
+    { field: "churchId", value: context.churchId },
+  ]);
+
+  const assignmentWrite = callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId: assigned.scheduleId },
+    body: {
+      serviceId: assigned.occurrenceId,
+      positionSlotKey: `${assigned.media.positionIds.Camera}::1`,
+      memberId: secondMember.payload.member.memberId,
+      serviceDate: assigned.serviceDate,
+    },
+  });
+  const publishWrite = callHandler(authHandlers.publishTeamSchedule, {
+    context,
+    params: { scheduleId: assigned.scheduleId },
+    body: {},
+  });
+  const [assignmentResult, published] = await Promise.all([assignmentWrite, publishWrite]);
+  assert.equal(assignmentResult.statusCode, 200, JSON.stringify(assignmentResult.payload));
+  assert.equal(published.statusCode, 200, JSON.stringify(published.payload));
+  assert.equal(published.payload.schedule.published, true);
+
+  saved = await getDoc(COLLECTIONS.teamSchedules, assigned.scheduleId);
+  assert.equal(getMemberId(saved.assignments[assigned.occurrenceId][`${assigned.media.positionIds.Camera}::1`]), secondMember.payload.member.memberId);
+  assert.equal(saved.responses[assigned.occurrenceId][assigned.cellKey].response, "accepted");
+  assert.deepEqual(saved.microphoneAssignments, { [assigned.occurrenceId]: { [assigned.cellKey]: ["mic-kept"] } });
+  assert.deepEqual(saved.iemAssignments, { [assigned.occurrenceId]: { [assigned.cellKey]: ["iem-kept"] } });
+  assert.deepEqual(saved.additionalPositionSlots, { [assigned.occurrenceId]: [`${assigned.media.positionIds.Camera}::2`] });
+  assert.equal(saved.sentAt, "2026-10-31T12:00:00.000Z");
+  assert.deepEqual(saved.notificationHistory, [{ id: "existing-notification" }]);
+  assert.deepEqual(saved.publicationHistory, [{ status: "legacy-entry" }]);
+  assert.equal(saved.publicLinkToken, token);
+  assert.deepEqual(
+    await queryDocs(COLLECTIONS.teamScheduleOccurrenceOwners, [
+      { field: "churchId", value: context.churchId },
+    ]),
+    ownersBefore,
+  );
+  assert.equal((await publicRead()).statusCode, 200);
+  const visibleVolunteerView = await callHandler(authHandlers.getMyTeamAssignments, { context });
+  assert.ok(
+    visibleVolunteerView.payload.occurrences.some((row) =>
+      row.serving.some((entry) => entry.scheduleId === assigned.scheduleId),
+    ),
+    JSON.stringify(visibleVolunteerView.payload),
+  );
+
+  const update = await callHandler(authHandlers.updateTeamSchedule, {
+    context,
+    params: { scheduleId: assigned.scheduleId },
+    body: {
+      name: saved.name,
+      description: saved.description || "",
+      teamId: saved.teamId,
+      startDate: saved.startDate,
+      endDate: saved.endDate,
+      serviceIds: saved.serviceIds,
+      occurrences: saved.occurrences,
+      assignments: saved.assignments,
+      microphoneAssignments: saved.microphoneAssignments,
+      iemAssignments: saved.iemAssignments,
+      additionalPositionSlots: saved.additionalPositionSlots,
+    },
+  });
+  assert.equal(update.statusCode, 200, JSON.stringify(update.payload));
+  assert.equal(update.payload.schedule.published, true, "schedule edits keep publication status");
+
+  const unpublished = await callHandler(authHandlers.unpublishTeamSchedule, {
+    context,
+    params: { scheduleId: assigned.scheduleId },
+    body: {},
+  });
+  assert.equal(unpublished.statusCode, 200);
+  assert.equal(unpublished.payload.schedule.published, false);
+  assert.equal((await publicRead()).statusCode, 404);
+  assert.deepEqual((await callHandler(authHandlers.getMyTeamAssignments, { context })).payload.occurrences, []);
+  saved = await getDoc(COLLECTIONS.teamSchedules, assigned.scheduleId);
+  assert.equal(getMemberId(saved.assignments[assigned.occurrenceId][assigned.cellKey]), assigned.memberId);
+  assert.equal(saved.responses[assigned.occurrenceId][assigned.cellKey].response, "accepted");
+  assert.equal(saved.sentAt, "2026-10-31T12:00:00.000Z");
+  assert.equal(saved.publicLinkToken, token);
+  assert.deepEqual(saved.notificationHistory, [{ id: "existing-notification" }]);
+
+  const { published: _published, id: _id, ...legacySchedule } = saved;
+  await setDoc(COLLECTIONS.teamSchedules, assigned.scheduleId, legacySchedule);
+  assert.equal((await publicRead()).statusCode, 200, "legacy schedules without status remain Published");
+  assert.ok((await callHandler(authHandlers.getMyTeamAssignments, { context })).payload.occurrences.some(
+    (row) => row.serving.some((entry) => entry.scheduleId === assigned.scheduleId),
+  ));
+});
+
+test("team schedule publication enforces CSRF, current Team edit access, and active schedules", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const admin = await createAdminContext("schedule_publication_permissions");
+  const assigned = await seedAssignedSchedule(admin, "publication_permissions");
+  const params = { scheduleId: assigned.scheduleId };
+
+  const missingCsrf = await callHandler(authHandlers.publishTeamSchedule, {
+    context: {
+      ...admin,
+      headers: { authorization: admin.headers.authorization },
+    },
+    params,
+    body: {},
+  });
+  assert.equal(missingCsrf.statusCode, 403);
+  assert.equal((await getDoc(COLLECTIONS.teamSchedules, assigned.scheduleId)).published, false);
+
+  const viewer = await createHumanContext("schedule_publication_viewer", {
+    churchId: admin.churchId,
+    role: "member",
+    appAccess: "view",
+    permissions: { teams: "view" },
+  });
+  const deniedViewer = await callHandler(authHandlers.publishTeamSchedule, {
+    context: viewer,
+    params,
+    body: {},
+  });
+  assert.equal(deniedViewer.statusCode, 403);
+
+  const foreignTeam = await callHandler(authHandlers.createTeam, {
+    context: admin,
+    body: { name: "Other Team", memberIds: [] },
+  });
+  const unrelatedEditor = await createHumanContext("schedule_publication_unrelated_editor", {
+    churchId: admin.churchId,
+    role: "member",
+    appAccess: "view",
+    permissions: { teams: "none", teamScopes: { [foreignTeam.payload.team.teamId]: "edit" } },
+  });
+  const deniedUnrelated = await callHandler(authHandlers.publishTeamSchedule, {
+    context: unrelatedEditor,
+    params,
+    body: {},
+  });
+  assert.equal(deniedUnrelated.statusCode, 403);
+
+  const teamEditor = await createHumanContext("schedule_publication_team_editor", {
+    churchId: admin.churchId,
+    role: "member",
+    appAccess: "view",
+    permissions: { teams: "none", teamScopes: { [assigned.media.teamId]: "edit" } },
+  });
+  const published = await callHandler(authHandlers.publishTeamSchedule, {
+    context: teamEditor,
+    params,
+    body: {},
+  });
+  assert.equal(published.statusCode, 200, JSON.stringify(published.payload));
+
+  const archived = await callHandler(authHandlers.archiveTeamSchedule, {
+    context: admin,
+    params,
+  });
+  assert.equal(archived.statusCode, 200);
+  const blockedArchivedPublish = await callHandler(authHandlers.publishTeamSchedule, {
+    context: admin,
+    params,
+    body: {},
+  });
+  assert.equal(blockedArchivedPublish.statusCode, 400);
+});
+
 test("My Schedule filters Draft schedules in both occurrence passes and hides them after unpublishing", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("my_assignments_draft_visibility");

@@ -2575,6 +2575,18 @@ export const updateTeamSchedule = async (
     },
   );
 
+export const publishTeamSchedule = async (churchId: string, scheduleId: string) =>
+  apiFetch<{ success: boolean; schedule: TeamSchedule }>(
+    `api/churches/${churchId}/team-schedules/${encodeURIComponent(scheduleId)}/publish`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+
+export const unpublishTeamSchedule = async (churchId: string, scheduleId: string) =>
+  apiFetch<{ success: boolean; schedule: TeamSchedule }>(
+    `api/churches/${churchId}/team-schedules/${encodeURIComponent(scheduleId)}/unpublish`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+
 export const archiveTeamSchedule = async (
   churchId: string,
   scheduleId: string,

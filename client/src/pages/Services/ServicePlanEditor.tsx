@@ -1981,15 +1981,17 @@ const ServicePlanEditor = ({
     const operation = Symbol("plan-import");
     importOperationRef.current = operation;
     setImporting(true);
+    const ownsImportOperation = () => isMountedRef.current
+      && currentEditorIdentityRef.current === importEditorIdentityKey
+      && importOperationRef.current === operation;
     return {
       importEditorIdentityKey, draftVersionAtStart, operation,
-      isCurrentImport: () => isMountedRef.current
-        && currentEditorIdentityRef.current === importEditorIdentityKey
+      ownsImportOperation,
+      isCurrentImport: () => ownsImportOperation()
         && (!options.planningCenter || (
           currentPlanningCenterScopeKeyRef.current === planningCenterScopeAtStart &&
           currentPlanningCenterConnectionKeyRef.current === planningCenterConnectionAtStart
         ))
-        && importOperationRef.current === operation,
     };
   };
 
@@ -2049,7 +2051,7 @@ const ServicePlanEditor = ({
       return;
     }
 
-    const { isCurrentImport } = beginPlanImport({ planningCenter: true });
+    const { isCurrentImport, ownsImportOperation } = beginPlanImport({ planningCenter: true });
     setPlanningCenterSuggestion({
       ...suggestion,
       kind: "checking",
@@ -2137,7 +2139,7 @@ const ServicePlanEditor = ({
           : "Could not load this Planning Center plan. Try again.",
       });
     } finally {
-      if (isCurrentImport()) setImporting(false);
+      if (ownsImportOperation()) setImporting(false);
     }
   };
 
@@ -2147,7 +2149,7 @@ const ServicePlanEditor = ({
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
-    const { draftVersionAtStart, isCurrentImport } = beginPlanImport();
+    const { draftVersionAtStart, isCurrentImport, ownsImportOperation } = beginPlanImport();
     try {
       const text = await extractTextFromPdfFile(file);
       if (!isCurrentImport()) return;
@@ -2165,7 +2167,7 @@ const ServicePlanEditor = ({
         "Could not import from Planning Center PDF.",
       );
     } finally {
-      if (isCurrentImport()) setImporting(false);
+      if (ownsImportOperation()) setImporting(false);
     }
   };
 
@@ -2179,7 +2181,7 @@ const ServicePlanEditor = ({
     if (usingPcoAccount && (!churchId || !importPcoServiceTypeId || !importPcoPlanId))
       return;
     if (!usingPcoAccount && !trimmedUrl) return;
-    const { importEditorIdentityKey, draftVersionAtStart, operation, isCurrentImport } =
+    const { importEditorIdentityKey, draftVersionAtStart, operation, isCurrentImport, ownsImportOperation } =
       beginPlanImport({ planningCenter: usingPcoAccount });
     const sourceLabel = servicePlanImportSourceLabel(importSource);
     try {
@@ -2228,7 +2230,7 @@ const ServicePlanEditor = ({
       if (!isCurrentImport()) return;
       showApiErrorToast(showToast, error, `Could not import from ${sourceLabel}.`);
     } finally {
-      if (isCurrentImport()) setImporting(false);
+      if (ownsImportOperation()) setImporting(false);
     }
   };
 
@@ -2258,7 +2260,7 @@ const ServicePlanEditor = ({
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
-    const { importEditorIdentityKey, draftVersionAtStart, operation, isCurrentImport } = beginPlanImport();
+    const { importEditorIdentityKey, draftVersionAtStart, operation, isCurrentImport, ownsImportOperation } = beginPlanImport();
     try {
       const text = await file.text();
       if (!isCurrentImport()) return;
@@ -2275,7 +2277,7 @@ const ServicePlanEditor = ({
       if (!isCurrentImport()) return;
       showApiErrorToast(showToast, error, "Could not import this WorshipSync plan file.");
     } finally {
-      if (isCurrentImport()) setImporting(false);
+      if (ownsImportOperation()) setImporting(false);
     }
   };
 
