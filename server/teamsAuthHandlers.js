@@ -5717,6 +5717,8 @@ export const createTeamsAuthHandlers = ({
   const resolveScheduleOccurrenceRequirements = async ({
     churchId,
     occurrence,
+    services,
+    fallbackPositionIds = [],
   }) => {
     const stored = sanitizePositionRequirements(
       occurrence?.positionRequirements,
@@ -5728,16 +5730,25 @@ export const createTeamsAuthHandlers = ({
         .map((serviceId) => normalizeShortText(serviceId, { max: 160 }))
         .filter(Boolean),
     );
-    if (serviceIds.size === 0) return stored;
+    if (serviceIds.size === 0) {
+      return fallbackPositionIds.map((positionId) => ({
+        positionId,
+        count: 1,
+      }));
+    }
 
-    const services = await readChurchServiceTimes(churchId);
-    return mergeServicePositionRequirements(
-      services.filter((service) =>
-        serviceIds.has(
-          normalizeShortText(service?.serviceId || service?.id, { max: 160 }),
-        ),
+    const serviceCatalog = services ?? (await readChurchServiceTimes(churchId));
+    const serviceRequirements = mergeServicePositionRequirements(
+      serviceCatalog.filter((service) =>
+        serviceIds.has(normalizeShortText(service?.serviceId || service?.id, { max: 160 })),
       ),
     );
+    return serviceRequirements.length > 0
+      ? serviceRequirements
+      : fallbackPositionIds.map((positionId) => ({
+          positionId,
+          count: 1,
+        }));
   };
 
   const normalizeTeamMemberships = async (value, churchId) => {
@@ -8383,10 +8394,14 @@ export const createTeamsAuthHandlers = ({
             { limit: TEAM_COLLECTION_QUERY_LIMIT },
           )
         : [];
-    const teamPositionIds = new Set(
-      positions
-        .filter((position) => !position.archivedAt)
-        .map((position) => position.positionId),
+    const referencedPositions = positions.filter(
+      (position) =>
+        position &&
+        position.churchId === churchId &&
+        position.teamId === schedule.teamId,
+    );
+    const publicPositionIds = new Set(
+      referencedPositions.map((position) => position.positionId),
     );
     const microphoneAssignments = normalizeTeamScheduleMicrophoneAssignments(
       schedule.microphoneAssignments,
@@ -8394,42 +8409,90 @@ export const createTeamsAuthHandlers = ({
     const iemAssignments = normalizeTeamScheduleIemAssignments(
       schedule.iemAssignments,
     );
-    let publicOccurrences = schedule.occurrences || [];
-    if (schedule.source === "generated-period" && teamPositionIds.size > 0) {
-      const services = await readChurchServiceTimes(churchId);
-      const additionalSlots = normalizeTeamScheduleAdditionalPositionSlots(
+    const rawOccurrences = Array.isArray(schedule.occurrences)
+      ? schedule.occurrences
+      : [];
+    const needsServiceFallback = rawOccurrences.some((occurrence) => {
+      if (sanitizePositionRequirements(occurrence?.positionRequirements).length) {
+        return false;
+      }
+      return [occurrence?.serviceId, ...(occurrence?.serviceIds || [])]
+        .some((serviceId) => normalizeShortText(serviceId, { max: 160 }));
+    });
+    const serviceCatalog = needsServiceFallback
+      ? await readChurchServiceTimes(churchId)
+      : [];
+    const fallbackPositionIds =
+      schedule.source === "generated-period" ? [] : [...publicPositionIds];
+    const requirementsByOccurrence = new Map();
+    const resolvedOccurrences = (
+      await Promise.all(
+        rawOccurrences.map(async (occurrence) => {
+          const occurrenceId = normalizeShortText(occurrence?.occurrenceId, {
+            max: 260,
+          });
+          const serviceId = normalizeShortText(occurrence?.serviceId, {
+            max: 160,
+          });
+          if (!occurrenceId || !serviceId) return null;
+          const requirements = await resolveScheduleOccurrenceRequirements({
+            churchId,
+            occurrence,
+            services: serviceCatalog,
+            fallbackPositionIds,
+          });
+          const publicRequirements = requirements.filter((requirement) =>
+            publicPositionIds.has(requirement.positionId),
+          );
+          requirementsByOccurrence.set(occurrenceId, publicRequirements);
+          const serviceDate = normalizeShortText(occurrence?.serviceDate, {
+            max: 10,
+          });
+          return {
+            occurrenceId,
+            serviceId,
+            name: normalizeShortText(occurrence?.name) || "Service",
+            startsAt: normalizeShortText(occurrence?.startsAt, { max: 80 }),
+            ...( /^\d{4}-\d{2}-\d{2}$/.test(serviceDate)
+              ? { serviceDate }
+              : {}),
+            positionRequirements: publicRequirements,
+          };
+        }),
+      )
+    ).filter(Boolean);
+    const sourceOccurrenceIds = new Set(
+      resolvedOccurrences.map((occurrence) => occurrence.occurrenceId),
+    );
+    const normalizedAdditionalPositionSlots =
+      normalizeTeamScheduleAdditionalPositionSlots(
         schedule.additionalPositionSlots ?? schedule.optionalPositionSlots,
       );
+    const scopedAdditionalPositionSlots = Object.fromEntries(
+      Object.entries(normalizedAdditionalPositionSlots)
+        .filter(([occurrenceId]) => sourceOccurrenceIds.has(occurrenceId))
+        .flatMap(([occurrenceId, slotKeys]) => {
+          const scopedSlotKeys = slotKeys.filter((key) => {
+            const slot = parseScheduleSlotKey(key);
+            return Boolean(slot && publicPositionIds.has(slot.positionId));
+          });
+          return scopedSlotKeys.length ? [[occurrenceId, scopedSlotKeys]] : [];
+        }),
+    );
+    let publicOccurrences = resolvedOccurrences;
+    if (schedule.source === "generated-period" && publicPositionIds.size > 0) {
       publicOccurrences = publicOccurrences.filter((occurrence) => {
-        const storedRequirements = sanitizePositionRequirements(
-          occurrence.positionRequirements,
-        );
-        const occurrenceServiceIds = new Set(
-          [occurrence.serviceId, ...(occurrence.serviceIds || [])].filter(
-            Boolean,
-          ),
-        );
-        const requirements = storedRequirements.length
-          ? storedRequirements
-          : mergeServicePositionRequirements(
-              services.filter((service) =>
-                occurrenceServiceIds.has(service.serviceId || service.id),
-              ),
-            );
-        const hasTeamRequirement = requirements.some((item) =>
-          teamPositionIds.has(item.positionId),
-        );
+        const hasTeamRequirement = (
+          requirementsByOccurrence.get(occurrence.occurrenceId) || []
+        ).length > 0;
         const hasTeamSlot = (
-          additionalSlots[occurrence.occurrenceId] || []
-        ).some((key) => {
-          const slot = parseScheduleSlotKey(key);
-          return Boolean(slot && teamPositionIds.has(slot.positionId));
-        });
+          scopedAdditionalPositionSlots[occurrence.occurrenceId] || []
+        ).length > 0;
         const hasTeamAssignment = Object.keys(
           schedule.assignments?.[occurrence.occurrenceId] || {},
         ).some((key) => {
           const slot = parseScheduleSlotKey(key);
-          return Boolean(slot && teamPositionIds.has(slot.positionId));
+          return Boolean(slot && publicPositionIds.has(slot.positionId));
         });
         const hasTeamEquipmentAssignment = [
           microphoneAssignments[occurrence.occurrenceId],
@@ -8437,7 +8500,7 @@ export const createTeamsAuthHandlers = ({
         ].some((row) =>
           Object.keys(row || {}).some((key) => {
             const slot = parseScheduleSlotKey(key);
-            return Boolean(slot && teamPositionIds.has(slot.positionId));
+            return Boolean(slot && publicPositionIds.has(slot.positionId));
           }),
         );
         return (
@@ -8451,24 +8514,59 @@ export const createTeamsAuthHandlers = ({
     const publicOccurrenceIds = new Set(
       publicOccurrences.map((occurrence) => occurrence.occurrenceId),
     );
-    const filterOccurrenceRows = (rows) =>
-      Object.fromEntries(
-        Object.entries(rows || {}).filter(([occurrenceId]) =>
-          publicOccurrenceIds.has(occurrenceId),
-        ),
-      );
-    const publicAssignments =
-      schedule.source === "generated-period"
-        ? filterOccurrenceRows(schedule.assignments)
-        : schedule.assignments || {};
-    const publicMicrophoneAssignments =
-      schedule.source === "generated-period"
-        ? filterOccurrenceRows(microphoneAssignments)
-        : microphoneAssignments;
-    const publicIemAssignments =
-      schedule.source === "generated-period"
-        ? filterOccurrenceRows(iemAssignments)
-        : iemAssignments;
+    const publicAdditionalPositionSlots = Object.fromEntries(
+      Object.entries(scopedAdditionalPositionSlots).filter(([occurrenceId]) =>
+        publicOccurrenceIds.has(occurrenceId),
+      ),
+    );
+    const filterPublicSlotRows = (rows, projectCell) => {
+      const result = {};
+      Object.entries(rows || {}).forEach(([occurrenceId, row]) => {
+        if (!publicOccurrenceIds.has(occurrenceId)) return;
+        const publicRow = {};
+        Object.entries(row || {}).forEach(([slotKey, value]) => {
+          const slot = parseScheduleSlotKey(slotKey);
+          if (!slot || !publicPositionIds.has(slot.positionId)) return;
+          const projected = projectCell(value);
+          if (projected !== undefined) publicRow[slotKey] = projected;
+        });
+        if (Object.keys(publicRow).length) result[occurrenceId] = publicRow;
+      });
+      return result;
+    };
+    const publicAssignments = filterPublicSlotRows(
+      schedule.assignments,
+      (cell) => {
+        const normalizedCell = normalizeScheduleAssignmentCell(cell);
+        const primaryMemberId = normalizedCell.primaryMemberId;
+        const shadows = normalizedCell.shadows
+          .slice(0, 12)
+          .flatMap((shadow) => {
+            const memberId = normalizeShortText(shadow?.memberId, {
+              max: 160,
+            });
+            const kind = shadow?.kind === "reverse_shadow"
+              ? "reverse_shadow"
+              : shadow?.kind === "shadow"
+                ? "shadow"
+                : "";
+            return memberId && kind ? [{ memberId, kind }] : [];
+          });
+        if (!primaryMemberId && shadows.length === 0) return undefined;
+        return {
+          ...(primaryMemberId ? { primaryMemberId } : {}),
+          shadows,
+        };
+      },
+    );
+    const publicMicrophoneAssignments = filterPublicSlotRows(
+      microphoneAssignments,
+      (microphoneIds) => microphoneIds.length ? microphoneIds : undefined,
+    );
+    const publicIemAssignments = filterPublicSlotRows(
+      iemAssignments,
+      (iemIds) => iemIds.length ? iemIds : undefined,
+    );
     const referencedMicrophoneIds = new Set(
       Object.values(publicMicrophoneAssignments).flatMap((row) =>
         Object.values(row).flat(),
@@ -8517,13 +8615,6 @@ export const createTeamsAuthHandlers = ({
     const serviceEquipment = normalizeServiceEquipmentCatalog(
       church?.serviceEquipment,
     ).filter((equipment) => referencedIemIds.has(equipment.id));
-    const referencedPositions = positions.filter(
-      (position) =>
-        position &&
-        position.churchId === churchId &&
-        position.teamId === schedule.teamId,
-    );
-
     const firstNameCounts = new Map();
     const assignedGuests = [...assignedMemberIds]
       .map((guestId) => scheduleGuestById.get(guestId))
@@ -8563,6 +8654,7 @@ export const createTeamsAuthHandlers = ({
         endDate: schedule.endDate || "",
         occurrences: publicOccurrences,
         assignments: publicAssignments,
+        additionalPositionSlots: publicAdditionalPositionSlots,
         microphoneAssignments: publicMicrophoneAssignments,
         iemAssignments: publicIemAssignments,
       },
