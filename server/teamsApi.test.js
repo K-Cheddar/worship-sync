@@ -15286,6 +15286,8 @@ test("custom SMS batch dispatch keeps the authenticated HTTP request and rejects
 test("individual intake SMS records one shared notification attempt and blocks duplicate accepted sends", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("individual_intake_sms");
+  const formStartDate = new Date().toISOString().slice(0, 10);
+  const formEndDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const { teamId, memberIds } = await seedTeam(context, {
     teamName: "Worship",
     members: [{ firstName: "Sms", lastName: "Recipient" }],
@@ -15314,9 +15316,9 @@ test("individual intake SMS records one shared notification attempt and blocks d
   const form = await callHandler(authHandlers.createTeamIntakeForm, {
     context,
     body: {
-      name: "October availability",
-      startDate: "2026-10-01",
-      endDate: "2026-10-31",
+      name: "Current availability",
+      startDate: formStartDate,
+      endDate: formEndDate,
       teamIds: [teamId],
       active: true,
     },
@@ -15538,6 +15540,8 @@ test("admin-recorded SMS consent preserves the church-scoped consent contract an
 test("individual intake SMS records provider failure and blocks missing consent, disabled messaging, revoked requests, and closed forms", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("individual_intake_sms_guards");
+  const formStartDate = new Date().toISOString().slice(0, 10);
+  const formEndDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const { teamId, memberIds } = await seedTeam(context, {
     teamName: "Worship",
     members: [{ firstName: "Sms", lastName: "Guarded" }],
@@ -15548,9 +15552,9 @@ test("individual intake SMS records provider failure and blocks missing consent,
   const form = await callHandler(authHandlers.createTeamIntakeForm, {
     context,
     body: {
-      name: "Guarded availability",
-      startDate: "2026-10-01",
-      endDate: "2026-10-31",
+      name: "Guarded current availability",
+      startDate: formStartDate,
+      endDate: formEndDate,
       teamIds: [teamId],
       active: true,
     },

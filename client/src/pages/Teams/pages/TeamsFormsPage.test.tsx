@@ -68,7 +68,8 @@ afterEach(() => {
 
 describe("TeamsFormsPage period selection", () => {
   it("filters forms by team independently from Range and resets an invalid selection on church change", async () => {
-    const user = userEvent.setup();
+    jest.useFakeTimers().setSystemTime(new Date("2026-10-15T12:00:00-04:00"));
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
     const forms = [
       { formId: "media-form", churchId: "church-1", name: "Media form", active: true, teamIds: ["media"], startDate: "2026-10-01", endDate: "2026-10-31" },
       { formId: "worship-form", churchId: "church-1", name: "Worship form", active: true, teamIds: ["worship"], startDate: "2026-10-01", endDate: "2026-10-31" },
@@ -252,6 +253,7 @@ describe("TeamsFormsPage period selection", () => {
   });
 
   it("uses the last confirmed time zone after a temporary refresh failure", () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-10-15T12:00:00-04:00"));
     mockChurchServiceTimeZone.status = "ready";
     mockChurchServiceTimeZone.timeZone = "America/New_York";
     mockChurchServiceTimeZone.isConfigured = true;

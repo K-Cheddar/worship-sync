@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Provider } from "react-redux";
@@ -80,7 +81,7 @@ it("creates Book Launch through the real picker and RTDB updater, then ensures a
   expect(screen.getByLabelText("Date & Time")).toHaveValue("11/07/2026 04:30 PM");
   view.unmount();
   for (const timeZone of ["UTC", "America/Los_Angeles"]) {
-    const result = spawnSync(process.execPath, ["--import", "tsx", "server/fixtures/serviceCreateScheduleBoundary.js"], {
+    const result = spawnSync(process.execPath, ["--import", pathToFileURL(require.resolve("tsx")).href, "server/fixtures/serviceCreateScheduleBoundary.js"], {
       cwd: path.resolve(process.cwd(), ".."), env: { ...process.env, TZ: timeZone }, encoding: "utf8", timeout: 30_000,
       input: JSON.stringify({ before, committed, optimisticOccurrences, createdId: "1k6gq4vjthg7r1g7qg4g" }),
     });
