@@ -338,7 +338,8 @@ describe("VideoBackgroundControls", () => {
 
   it("keeps the live clock for Pause and resume after a loop-only cue with unknown duration", async () => {
     const user = userEvent.setup();
-    mockLiveCue = { ...mockLiveCue, positionSeconds: 12, atServerMs: 1_000_000 };
+    mockServerTime = 1_126_000;
+    mockLiveCue = { ...mockLiveCue, positionSeconds: 0, atServerMs: 1_000_000 };
     reportVideoPreviewState({ mediaKey: "remote:video-1", currentTime: 4, duration: 0, paused: false });
     const tree = (loop: boolean) => <VideoBackgroundControls
       media={{ ...media, duration: undefined }}
@@ -357,28 +358,33 @@ describe("VideoBackgroundControls", () => {
       loop: false,
       loopOnly: true,
       hasLiveClock: true,
-      positionSeconds: 18,
+      preserveOutputPosition: true,
+      positionSeconds: 126,
       paused: false,
     });
     expect(mockDispatch.mock.calls.at(-1)?.[0].payload.outputIds).toEqual(["projector"]);
 
     mockLiveCue = loopOnlyCue;
-    mockServerTime = 1_011_000;
     rerender(tree(false));
     await user.click(screen.getByRole("button", { name: "Pause video" }));
     const pausedCue = mockDispatch.mock.calls.at(-1)?.[0].payload.videoPlayback;
-    expect(pausedCue).toMatchObject({ loop: false, paused: true, applySeek: false, positionSeconds: 23 });
+    expect(pausedCue).toMatchObject({
+      loop: false, loopOnly: true, hasLiveClock: true, preserveOutputPosition: true,
+      paused: true, applySeek: false, positionSeconds: 126,
+    });
     expect(mockDispatch.mock.calls.at(-1)?.[0].payload.outputIds).toEqual(["projector"]);
 
     mockLiveCue = pausedCue;
-    mockServerTime = 1_015_000;
     rerender(tree(false));
     await user.click(screen.getByRole("button", { name: "Play video" }));
     expect(mockDispatch.mock.calls.at(-1)?.[0].payload.videoPlayback).toMatchObject({
       loop: false,
+      loopOnly: true,
+      hasLiveClock: true,
+      preserveOutputPosition: true,
       paused: false,
       applySeek: false,
-      positionSeconds: 23,
+      positionSeconds: 126,
     });
     expect(mockDispatch.mock.calls.at(-1)?.[0].payload.outputIds).toEqual(["projector"]);
   });

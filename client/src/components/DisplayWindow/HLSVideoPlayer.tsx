@@ -178,7 +178,7 @@ const applyCueToVideo = (
   options: { seek: boolean },
   expectedSrc?: string,
 ) => {
-  const shouldSeek = options.seek || cue.paused;
+  const shouldSeek = !cue.preserveOutputPosition && (options.seek || cue.paused);
   if (shouldSeek) {
     video.playbackRate = 1;
   }
@@ -224,7 +224,9 @@ const HLSPlayer = ({
   outputId,
   windowRole,
 }: HLSPlayerProps) => {
-  const playback = incomingPlayback?.loopOnly ? undefined : incomingPlayback;
+  const playback = incomingPlayback?.loopOnly && !incomingPlayback.preserveOutputPosition
+    ? undefined
+    : incomingPlayback;
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
   const resolvedSrc = useResolvedLocalVideoSource(src);
@@ -458,10 +460,11 @@ const HLSPlayer = ({
     );
     const awayFromCue =
       Math.abs(video.currentTime - targetPosition) > SEEK_EPSILON_SECONDS;
-    const seek =
+    const seek = !cue.preserveOutputPosition && (
       cue.paused ||
       canFixWrap ||
-      ((cue.applySeek || isFreshSrc) && awayFromCue);
+      ((cue.applySeek || isFreshSrc) && awayFromCue)
+    );
     logVideoCue("player.apply", {
       role: playbackRoleRef.current,
       mediaKey: mediaKeyRef.current,
@@ -823,14 +826,14 @@ const HLSPlayer = ({
    * disagree, and two outputs disagree with each other.
    */
   useEffect(() => {
-    if (!playback || playback.paused || suspendPlayback) return;
+    if (!playback || playback.paused || playback.preserveOutputPosition || suspendPlayback) return;
     const video = videoRef.current;
     if (!video) return;
 
     let resumeRetries = 0;
     const id = window.setInterval(() => {
       const cue = playbackRef.current;
-      if (!cue || cue.paused || suspendPlaybackRef.current) {
+      if (!cue || cue.paused || cue.preserveOutputPosition || suspendPlaybackRef.current) {
         video.playbackRate = 1;
         rateCorrectionStartedAtRef.current = null;
         return;

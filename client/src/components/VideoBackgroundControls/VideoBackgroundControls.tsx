@@ -150,6 +150,9 @@ const VideoBackgroundControls = ({
     paused: boolean,
     applySeek: boolean,
   ) => {
+    const preserveOutputPosition = Boolean(
+      syncLive && !applySeek && (liveCue?.preserveOutputPosition || syncedCue?.loopOnly),
+    );
     if (applySeek) {
       previousTimelineSample.current = undefined;
       setSmoothProgress(false);
@@ -161,6 +164,9 @@ const VideoBackgroundControls = ({
         paused,
         applySeek,
         loop,
+        loopOnly: preserveOutputPosition,
+        hasLiveClock: Boolean(liveCue?.hasLiveClock || liveCue?.preserveOutputPosition),
+        preserveOutputPosition,
       },
       { emitPreviewCommands: !syncLive },
     );
@@ -284,6 +290,7 @@ const VideoBackgroundControls = ({
                 // output keep its actual playhead, just as for cue-less sends.
                 loopOnly: liveCue && duration > 0 ? undefined : true,
                 hasLiveClock: Boolean(liveCue),
+                preserveOutputPosition: Boolean(syncLive && liveCue && duration <= 0),
               }),
               outputIds: syncOutputIds,
             }));

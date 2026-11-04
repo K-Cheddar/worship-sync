@@ -398,7 +398,9 @@ export type VideoTransportUpdate = {
   paused: boolean;
   applySeek: boolean;
   loop?: boolean;
+  loopOnly?: boolean;
   hasLiveClock?: boolean;
+  preserveOutputPosition?: boolean;
 };
 
 export const buildVideoPlaybackCue = (
@@ -413,6 +415,7 @@ export const buildVideoPlaybackCue = (
   ...(update.loop !== undefined ? { loop: update.loop } : {}),
   ...(update.loopOnly ? { loopOnly: true } : {}),
   ...(update.hasLiveClock ? { hasLiveClock: true } : {}),
+  ...(update.preserveOutputPosition ? { preserveOutputPosition: true } : {}),
 });
 
 /** Applies operator transport and updates the local preview snapshot. */

@@ -442,7 +442,7 @@ const PreparedSurface = ({
   retrySignal?: number;
   stageRect?: SurfaceRect;
 }) => {
-  const view = useMemo(() => incomingView?.playback?.loopOnly
+  const view = useMemo(() => incomingView?.playback?.loopOnly && !incomingView.playback.preserveOutputPosition
     ? { ...incomingView, loop: incomingView.playback.loop, playback: undefined }
     : incomingView, [incomingView]);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -967,7 +967,7 @@ const PreparedSurface = ({
       return;
     }
     const cue = viewRef.current?.playback;
-    const holdsFinalFrame = cue?.mediaKey === candidate.mediaKey &&
+    const holdsFinalFrame = !cue?.preserveOutputPosition && cue?.mediaKey === candidate.mediaKey &&
       isVideoPlaybackComplete(false, resolveVideoPlaybackPosition(cue, video.duration), video.duration);
     if (cue?.mediaKey === candidate.mediaKey && cue.paused && !holdsFinalFrame) return;
     if (
@@ -1000,7 +1000,7 @@ const PreparedSurface = ({
       // cue has moved far ahead while this surface was activating, reconcile
       // the playhead while the surface is still hidden. The advancing-frame
       // check below then proves the sought frame can paint before adoption.
-      if (cue?.mediaKey === candidate.mediaKey) {
+      if (cue?.mediaKey === candidate.mediaKey && !cue.preserveOutputPosition) {
         const duration = Number.isFinite(video.duration)
           ? video.duration
           : undefined;
@@ -1408,6 +1408,7 @@ const PreparedSurface = ({
     if (stateRef.current.phase === "ready") {
       const cue = view?.playback;
       if (cue?.mediaKey === candidate.mediaKey && cue.paused &&
+        !cue.preserveOutputPosition &&
         !isVideoPlaybackComplete(false, resolveVideoPlaybackPosition(cue, videoRef.current?.duration), videoRef.current?.duration)) return;
       if (cue?.mediaKey === candidate.mediaKey) {
         lastCueGenerationRef.current = cue.generation;
@@ -1441,7 +1442,7 @@ const PreparedSurface = ({
     }
     // READY retains its prepared frame until activation. Active transport must
     // apply explicit seeks immediately, including replay after completion.
-    if ((cue.applySeek || cue.paused) &&
+    if (!cue.preserveOutputPosition && (cue.applySeek || cue.paused) &&
       (stateRef.current.phase === "idle" || stateRef.current.phase === "playing")) {
       const target = resolveVideoPlaybackPosition(
         cue,
@@ -1491,6 +1492,7 @@ const PreparedSurface = ({
       if (
         !cue ||
         cue.mediaKey !== candidate.mediaKey ||
+        cue.preserveOutputPosition ||
         cue.paused ||
         (!video.loop && (video.ended || isVideoPlaybackComplete(false, video.currentTime, video.duration))) ||
         video.paused

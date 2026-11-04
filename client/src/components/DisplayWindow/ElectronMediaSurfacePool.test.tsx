@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { Box } from "../../types";
+import type { Box, VideoBackgroundPlaybackCue } from "../../types";
 import {
   getVideoPreviewSnapshot,
   restartVideoPreview,
@@ -1944,6 +1944,50 @@ describe("ElectronMediaSurfacePool", () => {
     expect(video.paused).toBe(true);
     expect(screen.getByTestId("electron-media-surface-video-remote:clip")).toBe(video);
     expect(HTMLMediaElement.prototype.load).toHaveBeenCalledTimes(loadCount);
+  });
+
+  it("pauses and resumes after a 126-second unknown-duration clock at the output's current frame", async () => {
+    const cue: VideoBackgroundPlaybackCue = {
+      mediaKey: candidate.mediaKey,
+      positionSeconds: 0,
+      paused: false,
+      atServerMs: Date.now(),
+      generation: 1,
+      applySeek: true,
+      loop: true,
+    };
+    const tree = (playback: VideoBackgroundPlaybackCue) => (
+      <ElectronMediaSurfacePool enabled candidates={[candidate]} views={[
+        makeView(candidate.mediaKey, candidate.source, true, playback),
+      ]} />
+    );
+    const { rerender } = render(tree(cue));
+    const video = screen.getByTestId("electron-media-surface-video-remote:clip") as HTMLVideoElement;
+    Object.defineProperty(video, "duration", { configurable: true, value: 40 });
+    await waitFor(() => expect(screen.getByTestId("electron-media-surface-remote:clip"))
+      .toHaveAttribute("data-media-lifecycle", "active-playing"));
+    video.currentTime = 6; // 126 seconds on the controller wraps to 6 seconds on this output.
+    const loadCount = (HTMLMediaElement.prototype.load as jest.Mock).mock.calls.length;
+
+    const loopOff: VideoBackgroundPlaybackCue = {
+      ...cue, positionSeconds: 126, loop: false, loopOnly: true, hasLiveClock: true,
+      preserveOutputPosition: true, applySeek: false, generation: 2,
+    };
+    rerender(tree(loopOff));
+    expect(video.currentTime).toBe(6);
+    expect(video.loop).toBe(false);
+    expect(video.paused).toBe(false);
+
+    const pausedCue = { ...loopOff, paused: true, generation: 3 };
+    rerender(tree(pausedCue));
+    await waitFor(() => expect(video.paused).toBe(true));
+    expect(video.currentTime).toBe(6);
+
+    rerender(tree({ ...pausedCue, paused: false, generation: 4 }));
+    await waitFor(() => expect(video.paused).toBe(false));
+    expect(video.currentTime).toBe(6);
+    expect(HTMLMediaElement.prototype.load).toHaveBeenCalledTimes(loadCount);
+    expect(screen.getByTestId("electron-media-surface-video-remote:clip")).toBe(video);
   });
 
   it.each([false, true])("updates a cue-less prepared surface's loop without transport (paused=%s)", async (paused) => {
