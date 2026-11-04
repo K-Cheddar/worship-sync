@@ -72,7 +72,21 @@ export const createVolunteerPersonalAccess = ({
     // revocation even if the encryption secret changes. Never choose a duplicate.
     const query = db.collection(collections.access).where("churchId", "==", identity.churchId)
       .where("memberId", "==", identity.memberId).limit(2);
-    const rows = transaction ? await transaction.get(query) : await query.get();
+    let rows;
+    try {
+      rows = transaction ? await transaction.get(query) : await query.get();
+    } catch (error) {
+      // Firestore retries INVALID_ARGUMENT transaction failures only when the
+      // message says "transaction has expired". The emulator can report this
+      // stale query read as "Transaction is invalid or closed" instead.
+      const message = `${error?.details || ""} ${error?.message || ""}`;
+      if (!transaction || error?.code !== 3 || !/transaction is invalid or closed/i.test(message)) throw error;
+      const retryableError = new Error("transaction has expired");
+      retryableError.code = error.code;
+      retryableError.details = error.details;
+      retryableError.cause = error;
+      throw retryableError;
+    }
     if (rows.size > 1) throw accessError(503);
     if (rows.empty) return { document, state: null };
     const legacy = rows.docs[0].data();
