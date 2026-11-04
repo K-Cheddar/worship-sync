@@ -160,7 +160,9 @@ export const overlaySlice = createSlice({
     },
   },
   extraReducers: (builder) => builder.addCase(activateOutlineContent, (state, action) => {
-    state.outlineOwnerKey = action.payload.ownerKey;
+    // A retained selection belongs to the database where it was chosen. Keep
+    // that origin while the active outline changes so same-ID overlays from a
+    // new database cannot make the old selection look current.
     state.pendingDraftOverlayId = null;
     state.pendingDraftId = null;
   }),

@@ -35,7 +35,12 @@ jobs:
         with:
           node-version: "24"
           cache: npm
-          cache-dependency-path: client/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            client/package-lock.json
+
+      - name: Install server dependencies for cross-boundary client tests
+        run: npm ci --omit=dev
 
       - name: Install client dependencies
         run: npm ci --prefix client

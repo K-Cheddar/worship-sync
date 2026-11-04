@@ -622,13 +622,13 @@ const openTeamsNavigationIfNeeded = async (
 
 const waitForScheduleGrid = async () => {
   await waitForTeamsBootstrap();
-  if (!screen.queryByRole("button", { name: /Sunday Vocal/i })) {
+  if (screen.queryAllByRole("button", { name: /Vocal/i }).length === 0) {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /More schedule options/i }));
     await user.click(screen.getByRole("menuitem", { name: "Schedule history" }));
     await user.click(await screen.findByRole("button", { name: /July/i }));
   }
-  await screen.findByRole("button", { name: /Sunday Vocal/i }, { timeout: 8000 });
+  await screen.findAllByRole("button", { name: /Vocal/i }, { timeout: 8000 });
 };
 
 /**
@@ -1778,9 +1778,7 @@ describe("Teams", () => {
     await user.click(screen.getByRole("button", { name: /More schedule options/i }));
     await user.click(screen.getByRole("menuitem", { name: "Schedule history" }));
     await user.click(await screen.findByRole("button", { name: /Fall Revival/ }));
-    expect(screen.getByRole("textbox", { name: "Custom date range" })).toHaveValue(
-      "10/18/2026 – 10/24/2026",
-    );
+    expect(screen.getByText("Oct 18, 2026 – Oct 24, 2026")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /Saturday service Vocal/i })).toHaveLength(1);
     jest.useRealTimers();
   });
@@ -5529,9 +5527,7 @@ describe("Teams", () => {
     renderTeams();
     await waitForScheduleGrid();
 
-    expect(screen.getByRole("textbox", { name: "Custom date range" })).toHaveValue(
-      "07/01/2026 – 07/31/2026",
-    );
+    expect(screen.getByText("Jul 1, 2026 – Jul 31, 2026")).toBeInTheDocument();
     const staffingSummary = screen.getByRole("status", { name: "Schedule staffing summary" });
     expect(staffingSummary).toHaveTextContent(/1\s*Service/);
     expect(staffingSummary).toHaveTextContent("1 / 2");

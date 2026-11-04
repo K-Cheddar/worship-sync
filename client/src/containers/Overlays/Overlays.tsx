@@ -443,7 +443,7 @@ const Overlays = ({
   const overlayEditor = (
     <div hidden={isRetiredOverlaySelection}>
       <OverlayEditor
-        selectedOverlay={_selectedOverlay ?? defaultSelectedOverlay}
+        selectedOverlay={selectedOverlay}
         isOverlayLoading={isOverlayLoading}
         setShowPreview={setShowPreview}
         showPreview={showPreview}
