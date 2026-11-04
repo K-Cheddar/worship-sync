@@ -5047,6 +5047,161 @@ test("schedule assignments support schedule-only guests without exposing contact
   );
 });
 
+test("public schedule snapshots scope occurrence requirements and sanitize schedule data", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("public_schedule_requirements");
+  const { teamId, positionIds, memberIds } = await seedTeam(context, {
+    teamName: "Production",
+    positions: [{ name: "Camera" }, { name: "Slides" }],
+    members: [
+      { firstName: "Taylor", lastName: "Morgan", positions: ["Camera"] },
+      { firstName: "Jordan", lastName: "Reed", positions: ["Camera"] },
+    ],
+  });
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [
+      {
+        id: "public-schedule-service",
+        name: "Sabbath",
+        reccurence: "weekly",
+        dayOfWeek: 6,
+        time: "10:00",
+        positionRequirements: [
+          { positionId: positionIds.Camera, count: 2, minLevelId: "lead" },
+          { positionId: positionIds.Slides, count: 1 },
+        ],
+      },
+    ],
+  });
+  const occurrenceIds = [
+    "public-schedule-service@2026-06-06T10:00:00.000Z",
+    "public-schedule-service@2026-06-13T10:00:00.000Z",
+    "public-schedule-service@2026-06-20T10:00:00.000Z",
+  ];
+  const created = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "June Production",
+      teamId,
+      startDate: "2026-06-01",
+      endDate: "2026-06-30",
+      serviceIds: ["public-schedule-service"],
+      occurrences: occurrenceIds.map((occurrenceId, index) => ({
+        occurrenceId,
+        serviceId: "public-schedule-service",
+        name: "Sabbath",
+        startsAt: occurrenceId.slice(occurrenceId.indexOf("@") + 1),
+        positionRequirements: index === 2
+          ? []
+          : [
+              { positionId: positionIds.Camera, count: 1 },
+              ...(index === 1
+                ? [{ positionId: "deleted-position", count: 9 }]
+                : []),
+            ],
+      })),
+    },
+  });
+  assert.equal(created.statusCode, 200);
+  const scheduleId = created.payload.schedule.scheduleId;
+  await setDoc("teamSchedules", scheduleId, {
+    ...created.payload.schedule,
+    source: "generated-period",
+    occurrences: created.payload.schedule.occurrences.map((occurrence, index) => ({
+      ...occurrence,
+      ...(index === 2 ? { positionRequirements: [] } : {}),
+      privateNote: "private-occurrence-note",
+    })),
+    additionalPositionSlots: {
+      [occurrenceIds[1]]: [
+        `${positionIds.Camera}::1`,
+        `${positionIds.Slides}::0`,
+        "deleted-position::0",
+        `${positionIds.Camera}::1`,
+      ],
+      "missing-occurrence": [`${positionIds.Camera}::2`],
+    },
+    assignments: {
+      [occurrenceIds[0]]: {
+        [`${positionIds.Camera}::0`]: {
+          primaryMemberId: memberIds.Taylor,
+          shadows: [{ memberId: memberIds.Jordan, kind: "shadow" }],
+          privateNote: "private-assignment-note",
+        },
+        "deleted-position::0": {
+          primaryMemberId: "private-member-id",
+          shadows: [],
+        },
+      },
+      "missing-occurrence": {
+        [`${positionIds.Camera}::0`]: {
+          primaryMemberId: "private-member-id",
+          shadows: [],
+        },
+      },
+    },
+    microphoneAssignments: {
+      [occurrenceIds[0]]: {
+        [`${positionIds.Camera}::0`]: ["public-mic"],
+        "deleted-position::0": ["private-mic"],
+      },
+      "missing-occurrence": { [`${positionIds.Camera}::0`]: ["private-mic"] },
+    },
+    privateMetadata: "private-schedule-metadata",
+    guests: [{ guestId: "guest-private", name: "Private Guest", email: "private@example.test" }],
+    responses: { [occurrenceIds[0]]: { [`${positionIds.Camera}::0`]: "accepted" } },
+  });
+
+  await publishTestSchedule(context, scheduleId);
+  const link = await callHandler(authHandlers.getTeamSchedulePublicLink, {
+    context,
+    params: { scheduleId },
+  });
+  const result = await callHandler(authHandlers.getPublicTeamSchedule, {
+    context,
+    query: { token: link.payload.publicToken },
+  });
+
+  assert.equal(result.statusCode, 200);
+  assert.deepEqual(
+    result.payload.schedule.occurrences.map((occurrence) => occurrence.positionRequirements),
+    [
+      [{ positionId: positionIds.Camera, count: 1 }],
+      [{ positionId: positionIds.Camera, count: 1 }],
+      [
+        { positionId: positionIds.Camera, count: 2, minLevelId: "lead" },
+        { positionId: positionIds.Slides, count: 1 },
+      ],
+    ],
+  );
+  assert.deepEqual(result.payload.schedule.additionalPositionSlots, {
+    [occurrenceIds[1]]: [`${positionIds.Camera}::1`, `${positionIds.Slides}::0`],
+  });
+  assert.deepEqual(
+    Object.keys(result.payload.schedule.occurrences[0]).sort(),
+    ["occurrenceId", "serviceId", "name", "startsAt", "positionRequirements"].sort(),
+  );
+  assert.deepEqual(
+    result.payload.schedule.assignments[occurrenceIds[0]],
+    {
+      [`${positionIds.Camera}::0`]: {
+        primaryMemberId: memberIds.Taylor,
+        shadows: [{ memberId: memberIds.Jordan, kind: "shadow" }],
+      },
+    },
+  );
+  assert.deepEqual(result.payload.schedule.microphoneAssignments, {
+    [occurrenceIds[0]]: { [`${positionIds.Camera}::0`]: ["public-mic"] },
+  });
+  assert.equal("guests" in result.payload.schedule, false);
+  assert.equal("responses" in result.payload.schedule, false);
+  assert.doesNotMatch(
+    JSON.stringify(result.payload),
+    /private-schedule-metadata|private-occurrence-note|private-assignment-note|private@example\.test|private-member-id|Private Guest|private-mic/,
+  );
+});
+
 test("targeted guest edits and removals preserve schedule state and clear only guest assignments", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("guest_targeted_mutations");

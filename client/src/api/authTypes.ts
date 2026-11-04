@@ -492,6 +492,8 @@ export type TeamSchedulePublicSnapshot = {
     endDate: string;
     occurrences: TeamScheduleOccurrence[];
     assignments: TeamScheduleAssignments;
+    /** Additional staffing slots limited to the public occurrences and positions. */
+    additionalPositionSlots?: TeamScheduleAdditionalPositionSlots;
     microphoneAssignments?: TeamScheduleMicrophoneAssignments;
     iemAssignments?: TeamScheduleIemAssignments;
   };

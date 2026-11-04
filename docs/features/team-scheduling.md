@@ -42,6 +42,14 @@ A schedule follows **Virtual → Draft ↔ Published**.
 - A saved schedule with no publication status is treated as Published so existing member visibility is preserved.
 - Publication applies to the whole schedule document. There is no church-level mode, per-occurrence publication state, or approval workflow.
 
+### Public view-only schedule links
+
+**Approval source:** Current product-owner request, 2026-11-04.
+
+- Each occurrence shows its saved position requirements and only the additional slots saved for that occurrence. Required but unassigned slots stay visible; assignments and equipment do not create staffing requirements by themselves.
+- When a legacy occurrence has no requirement snapshot, resolve its service defaults. If neither the occurrence nor its service defines requirements, keep the schedule editor's legacy fallback of one slot per team position.
+- The public snapshot contains only the schedule fields needed to render the published view, and limits requirement and additional-slot data to the included occurrences and team positions. It excludes responses, guest contact details, and other private schedule data.
+
 ### Ownership and service inclusion
 
 - At most one active schedule owns a given team and logical occurrence. Different teams may schedule the same occurrence.
@@ -171,6 +179,7 @@ These references locate current code, not additional product requirements.
 - Availability suggestion: client/src/pages/Teams/intakeAvailabilitySuggestion.ts
 - Service-plan occurrence lookup: client/src/pages/Services/servicePlanOccurrences.ts and client/src/utils/servicePlanKeys.ts
 - Server validation, persistence, member/public reads, and explicit sending: server/teamsAuthHandlers.js
+- Public schedule occurrence staffing and export rendering: client/src/pages/Teams/TeamSchedulePublic.tsx and client/src/pages/Teams/schedule/scheduleRequirements.ts
 - Focused current tests: client/src/pages/Teams/schedule/, client/src/utils/teamScheduleOccurrences.test.ts, client/src/pages/Services/servicePlanOccurrences.test.ts, and server/teamsApi.test.js
 
 ## Technical design notes

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import TeamSchedulePublic from "./TeamSchedulePublic";
@@ -23,7 +23,19 @@ jest.mock("../../api/auth", () => ({
 // jsPDF pulls in browser-only globals; the export button isn't under test here.
 jest.mock("./schedule/SchedulePdfExportButton", () => ({
   __esModule: true,
-  default: () => <button type="button">Export PDF</button>,
+  default: ({ model }: {
+    model: import("./schedule/scheduleExport").ScheduleExportModel | null;
+  }) => (
+    <button
+      type="button"
+      data-testid="pdf-export-model"
+      data-cell-states={model?.groups
+        .flatMap((group) => group.rows.map((row) => row.cells.map((cell) => cell.state).join(",")))
+        .join("|") || ""}
+    >
+      Export PDF
+    </button>
+  ),
 }));
 
 const mockGet = jest.mocked(getPublicTeamSchedule);
@@ -45,6 +57,7 @@ const snapshot = {
         serviceId: "svc",
         name: "Sabbath",
         startsAt: "2026-06-13T10:00:00.000Z",
+        positionRequirements: [{ positionId: "pos_1", count: 1 }],
       },
     ],
     assignments: {
@@ -73,12 +86,14 @@ const multiServiceSnapshot = {
         serviceId: "svcA",
         name: "Sabbath",
         startsAt: "2026-06-13T10:00:00.000Z",
+        positionRequirements: [{ positionId: "pos_dir", count: 1 }],
       },
       {
         occurrenceId: "svcB@2026-06-18T19:00:00.000Z",
         serviceId: "svcB",
         name: "Wednesday",
         startsAt: "2026-06-18T19:00:00.000Z",
+        positionRequirements: [{ positionId: "pos_cam", count: 1 }],
       },
     ],
     assignments: {
@@ -155,6 +170,7 @@ test("renders compact equipment in all layouts, including an unstaffed slot", as
     ...snapshot,
     schedule: {
       ...snapshot.schedule,
+      additionalPositionSlots: { [occurrenceId]: ["pos_1::1"] },
       microphoneAssignments: {
         [occurrenceId]: {
           "pos_1::0": ["mic-1"],
@@ -259,6 +275,119 @@ test("scopes by date cards to each service's positions", async () => {
   expect(screen.getAllByText("Camera")).toHaveLength(1);
   expect(screen.getByText("Jordan")).toBeInTheDocument();
   expect(screen.getByText("Alex")).toBeInTheDocument();
+});
+
+test("keeps staffing slots occurrence-specific in every layout and the PDF model", async () => {
+  const user = userEvent.setup();
+  const occurrenceIds = [
+    "svc@2026-06-06T10:00:00.000Z",
+    "svc@2026-06-13T10:00:00.000Z",
+    "svc@2026-06-20T10:00:00.000Z",
+  ];
+  const recurringSnapshot = {
+    ...snapshot,
+    serviceTimeZone: "UTC",
+    schedule: {
+      ...snapshot.schedule,
+      occurrences: occurrenceIds.map((id) => ({
+        occurrenceId: id,
+        serviceId: "svc",
+        name: "Sabbath",
+        startsAt: id.slice(id.indexOf("@") + 1),
+        positionRequirements: [
+          { positionId: "pos_vocal", count: 1 },
+          { positionId: "pos_foh", count: 1 },
+        ],
+      })),
+      assignments: {
+        [occurrenceIds[0]]: {
+          "pos_vocal::0": {
+            primaryMemberId: "",
+            shadows: [{ memberId: "m_shadow", kind: "shadow" }],
+          },
+        },
+        [occurrenceIds[1]]: {
+          "pos_vocal::0": { primaryMemberId: "m_primary", shadows: [] },
+        },
+        [occurrenceIds[2]]: {
+          "pos_vocal::0": { primaryMemberId: "m_last", shadows: [] },
+        },
+      },
+      additionalPositionSlots: {
+        [occurrenceIds[1]]: ["pos_vocal::1", "pos_camera::0", "pos_stream::0"],
+      },
+      microphoneAssignments: {
+        [occurrenceIds[1]]: { "pos_camera::0": ["mic-1"] },
+      },
+      iemAssignments: {
+        [occurrenceIds[1]]: { "pos_camera::0": ["iem-1"] },
+      },
+    },
+    positions: [
+      { positionId: "pos_vocal", name: "Vocalist", groupId: "", archivedAt: null },
+      { positionId: "pos_foh", name: "Front of House", groupId: "", archivedAt: null },
+      { positionId: "pos_camera", name: "Camera", groupId: "", archivedAt: null },
+      { positionId: "pos_stream", name: "Stream", groupId: "", archivedAt: null },
+    ],
+    members: [
+      { memberId: "m_shadow", name: "Morgan" },
+      { memberId: "m_primary", name: "Riley" },
+      { memberId: "m_last", name: "Alex" },
+    ],
+    microphones: [
+      { id: "mic-1", name: "Black", type: "Handheld", color: "#123456" },
+    ],
+    serviceEquipment: [
+      { id: "iem-1", category: "iem", name: "IEM 1", subtype: "wireless-beltpack", color: "#654321" },
+    ],
+  };
+  mockGet.mockResolvedValue(recurringSnapshot as never);
+  writeTeamSchedulePublicLayout("byDate");
+  writeTeamSchedulePublicTheme("light");
+  renderPage();
+
+  await screen.findByText("June Schedule");
+  expect(screen.getAllByText("Sabbath")).toHaveLength(3);
+  expect(screen.getAllByText("Camera")).toHaveLength(1);
+  expect(screen.getAllByText("Vocalist 2")).toHaveLength(1);
+  expect(screen.getAllByText("Stream")).toHaveLength(1);
+  expect(screen.getByText("Morgan")).toBeInTheDocument();
+  expect(screen.getByLabelText("microphone: Black")).toBeInTheDocument();
+  expect(screen.getByLabelText("iem: IEM 1")).toBeInTheDocument();
+  expect(screen.getByTestId("pdf-export-model")).toHaveAttribute(
+    "data-cell-states",
+    "filled,inactive,empty,inactive,inactive|filled,empty,empty,filled,empty|filled,inactive,empty,inactive,inactive",
+  );
+
+  await user.click(screen.getByRole("button", { name: "By position" }));
+  const positionTable = screen.getByRole("table");
+  const cameraRow = within(positionTable).getByRole("row", { name: /^Camera\b/ });
+  const cameraCells = within(cameraRow).getAllByRole("cell");
+  expect(cameraCells[0]).toHaveTextContent("·");
+  expect(within(cameraCells[1]).getByLabelText("microphone: Black")).toBeInTheDocument();
+  expect(within(cameraCells[1]).getByLabelText("iem: IEM 1")).toBeInTheDocument();
+  expect(cameraCells[2]).toHaveTextContent("·");
+  const streamRow = within(positionTable).getByRole("row", { name: /^Stream\b/ });
+  const streamCells = within(streamRow).getAllByRole("cell");
+  expect(within(streamCells[0]).getByText("·")).toBeInTheDocument();
+  expect(within(streamCells[1]).getByText("—")).toBeInTheDocument();
+  expect(within(streamCells[2]).getByText("·")).toBeInTheDocument();
+  expect(within(positionTable).getByText("Morgan")).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "Grid" }));
+  const grid = screen.getByRole("table");
+  const firstDateRow = within(grid).getByRole("row", { name: /Jun 6/ });
+  const middleDateRow = within(grid).getByRole("row", { name: /Jun 13/ });
+  const lastDateRow = within(grid).getByRole("row", { name: /Jun 20/ });
+  expect(within(firstDateRow).getAllByText("·")).toHaveLength(3);
+  expect(within(middleDateRow).getAllByText("—")).toHaveLength(3);
+  expect(within(middleDateRow).getByLabelText("microphone: Black")).toBeInTheDocument();
+  expect(within(middleDateRow).getByLabelText("iem: IEM 1")).toBeInTheDocument();
+  expect(within(lastDateRow).getAllByText("·")).toHaveLength(3);
+  expect(screen.getByTestId("pdf-export-model")).toHaveAttribute(
+    "data-cell-states",
+    "filled,inactive,empty,inactive,inactive|filled,empty,empty,filled,empty|filled,inactive,empty,inactive,inactive",
+  );
 });
 
 test("debounces tab-focus refetches and respects a minimum interval", async () => {
