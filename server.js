@@ -30,6 +30,7 @@ import {
   assertServerCsrf,
   startIntakeSubmissionDigestRecovery,
   startScheduleResponseDigestRecovery,
+  startTeamSchedulePublicationEventRecovery,
   startScheduleInitialSmsBatchDispatcher,
   stopScheduleInitialSmsBatchDispatcher,
   setDoc,
@@ -1569,6 +1570,14 @@ app.post("/api/churches/:churchId/my-assignments/accept-pending", authHandlers.a
 app.post(
   "/api/churches/:churchId/team-schedules/:scheduleId/send",
   authHandlers.sendTeamSchedule,
+);
+app.post(
+  "/api/churches/:churchId/team-schedules/:scheduleId/publish",
+  authHandlers.publishTeamSchedule,
+);
+app.post(
+  "/api/churches/:churchId/team-schedules/:scheduleId/unpublish",
+  authHandlers.unpublishTeamSchedule,
 );
 app.get(
   "/api/team-schedule-response",
@@ -4183,6 +4192,7 @@ let shutdownStarted = false;
 const startServerBackgroundWork = () => {
   startIntakeSubmissionDigestRecovery();
   startScheduleResponseDigestRecovery();
+  startTeamSchedulePublicationEventRecovery();
   startScheduleInitialSmsBatchDispatcher();
 };
 

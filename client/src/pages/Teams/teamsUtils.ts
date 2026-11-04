@@ -514,14 +514,20 @@ export const assignmentFailureKey = (serviceId: string, positionId: string) =>
   `${serviceId}|${positionId}`;
 
 export const normalizeAssignmentCell = (
-  cell?: TeamScheduleCellAssignment | null,
+  cell?: TeamScheduleCellAssignment | string | null,
 ) => {
+  if (typeof cell === "string") {
+    return {
+      primaryMemberId: cell.trim(),
+      shadows: [] as TeamScheduleShadowAssignment[],
+    };
+  }
   return {
-    primaryMemberId: String(cell?.primaryMemberId || ""),
+    primaryMemberId: String(cell?.primaryMemberId || "").trim(),
     shadows: (Array.isArray(cell?.shadows) ? cell.shadows : [])
       .map(
         (shadow): TeamScheduleShadowAssignment => ({
-          memberId: String(shadow.memberId || ""),
+          memberId: String(shadow.memberId || "").trim(),
           kind: shadow.kind === "reverse_shadow" ? "reverse_shadow" : "shadow",
         }),
       )

@@ -22,10 +22,12 @@ const ScheduleOverlapPicker = ({
   schedules,
   selectedScheduleId,
   onSelect,
+  disabled = false,
 }: {
   schedules: TeamScheduleSummary[];
   selectedScheduleId: string;
   onSelect: (scheduleId: string) => void;
+  disabled?: boolean;
 }) => {
   const selected = schedules.find((schedule) => schedule.scheduleId === selectedScheduleId);
   const [open, setOpen] = useState(false);
@@ -34,13 +36,17 @@ const ScheduleOverlapPicker = ({
   return (
     <div className="flex min-w-0 max-w-56 items-center gap-2">
       <span className="shrink-0 px-0.5 text-sm font-semibold">Schedule:</span>
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover
+        open={!disabled && open}
+        onOpenChange={(nextOpen) => { if (!disabled) setOpen(nextOpen); }}
+      >
         <PopoverTrigger asChild>
           <Button
             type="button"
             variant="tertiary"
             aria-label={`Schedule: ${selected.name}`}
             aria-haspopup="dialog"
+            disabled={disabled}
             className="min-w-0 max-w-44 justify-between gap-2 bg-gray-800/80 text-left text-xs"
           >
             <span className="truncate">{selected.name}</span>
@@ -62,6 +68,7 @@ const ScheduleOverlapPicker = ({
                   key={schedule.scheduleId}
                   type="button"
                   aria-pressed={isSelected}
+                  disabled={disabled}
                   className={cn(
                     "flex w-full cursor-pointer flex-col gap-0.5 rounded px-2 py-1.5 text-left hover:bg-gray-800",
                     isSelected && "bg-cyan-950/50",

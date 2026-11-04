@@ -79,4 +79,26 @@ describe("ScheduleOverlapPicker", () => {
 
     expect(onSelect).toHaveBeenCalledWith("generated_old-period");
   });
+
+  it("disables schedule switching during a pending schedule action", async () => {
+    const user = userEvent.setup();
+    const onSelect = jest.fn();
+    render(
+      <ScheduleOverlapPicker
+        schedules={[
+          schedule("october", "October 2026", "2026-10-01", "2026-10-31"),
+          schedule("quarter", "Quarter 4 2026", "2026-10-01", "2026-12-31"),
+        ]}
+        selectedScheduleId="october"
+        disabled
+        onSelect={onSelect}
+      />,
+    );
+
+    const trigger = screen.getByRole("button", { name: "Schedule: October 2026" });
+    expect(trigger).toBeDisabled();
+    await user.click(trigger);
+    expect(screen.queryByRole("group", { name: "Overlapping schedules" })).not.toBeInTheDocument();
+    expect(onSelect).not.toHaveBeenCalled();
+  });
 });

@@ -59,8 +59,10 @@ describe("teamScheduleAdminLayout", () => {
   });
 
   describe("resolveInitialTeamScheduleAdminLayout", () => {
-    it("honours an explicit stored preference over the responsive default", () => {
+    it("honours an explicit stored preference across viewport changes and page reopening", () => {
       writeTeamScheduleAdminLayout("grid");
+      setNarrowScreen(false);
+      expect(resolveInitialTeamScheduleAdminLayout()).toBe("grid");
       setNarrowScreen(true);
       expect(resolveInitialTeamScheduleAdminLayout()).toBe("grid");
     });

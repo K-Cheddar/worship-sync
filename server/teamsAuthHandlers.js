@@ -188,6 +188,51 @@ const BLOCKOUT_HISTORY_RETENTION_DAYS = 365;
 // remaining far above the number of one-time helpers a service plan can need.
 const MAX_TEAM_SCHEDULE_GUESTS = 200;
 
+export const runPostCommitSideEffect = async (
+  description,
+  operation,
+  {
+    retryDelaysMs = [250, 1000],
+    onError = (message, error) => console.error(message, error),
+  } = {},
+) => {
+  const attempts = retryDelaysMs.length + 1;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await operation();
+      return true;
+    } catch (error) {
+      try {
+        onError(`Post-commit ${description} failed (attempt ${attempt}/${attempts}).`, error);
+      } catch { /* Logging failures must not change a committed response. */ }
+      if (attempt < attempts) {
+        await new Promise((resolve) => setTimeout(resolve, retryDelaysMs[attempt - 1]));
+      }
+    }
+  }
+  return false;
+};
+
+const TEAM_SCHEDULE_PUBLICATION_EVENT_RECOVERY_INTERVAL_MS = 30_000;
+const TEAM_SCHEDULE_PUBLICATION_EVENT_RECOVERY_LIMIT = 100;
+const TEAM_SCHEDULE_PUBLICATION_EVENT_LEASE_MS = 60_000;
+const TEAM_SCHEDULE_PUBLICATION_EVENT_TTL_MS = 30 * 24 * 60 * 60_000;
+const TEAM_SCHEDULE_PUBLICATION_EVENT_STALE_WARNING_MS = 24 * 60 * 60_000;
+const TEAM_SCHEDULE_PUBLICATION_EVENT_ATTEMPT_WARNING_THRESHOLD = 10;
+let publicationEventDeliveryForServerTests = null;
+
+export const setTeamSchedulePublicationEventDeliveryForServerTests = (handler = null) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "setTeamSchedulePublicationEventDeliveryForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  if (handler !== null && typeof handler !== "function") {
+    throw new TypeError("The publication event test handler must be a function or null.");
+  }
+  publicationEventDeliveryForServerTests = handler;
+};
+
 export const createTeamsAuthHandlers = ({
   COLLECTIONS,
   scheduleIntakeSubmissionDigest,
@@ -7644,6 +7689,14 @@ export const createTeamsAuthHandlers = ({
   };
 
   const normalizeScheduleAssignmentCell = (cell) => {
+    // Older schedules stored the primary member ID directly in the cell.
+    // Keep those values comparable to the current object-shaped format.
+    if (typeof cell === "string") {
+      return {
+        primaryMemberId: normalizeShortText(cell, { max: 160 }),
+        shadows: [],
+      };
+    }
     if (!cell || typeof cell !== "object") {
       return { primaryMemberId: "", shadows: [] };
     }
@@ -7656,6 +7709,19 @@ export const createTeamsAuthHandlers = ({
         }))
         .filter((shadow) => shadow.memberId),
     };
+  };
+
+  const scheduleAssignmentCellsEqual = (first, second) => {
+    const normalizedFirst = normalizeScheduleAssignmentCell(first);
+    const normalizedSecond = normalizeScheduleAssignmentCell(second);
+    if (normalizedFirst.primaryMemberId !== normalizedSecond.primaryMemberId) {
+      return false;
+    }
+    const sortShadows = (shadows) => [...shadows].sort(
+      (a, b) => a.memberId.localeCompare(b.memberId) || a.kind.localeCompare(b.kind),
+    );
+    return JSON.stringify(sortShadows(normalizedFirst.shadows)) ===
+      JSON.stringify(sortShadows(normalizedSecond.shadows));
   };
 
   const serializeScheduleAssignmentCell = ({ primaryMemberId, shadows }) => {
@@ -10945,8 +11011,61 @@ export const createTeamsAuthHandlers = ({
     confirmedFingerprint,
     skipChangedCells,
     adminUserId,
+    operationId,
+    operationFingerprint,
   }) => {
+    const MAX_SCHEDULE_ASSIGNMENT_BATCH_RECEIPTS = 100;
     const db = requireFirestore();
+    const receiptFor = (schedule, ledger) => {
+      if (!operationId) return null;
+      const receipt = (Array.isArray(ledger?.operations) ? ledger.operations : [])
+        .find((item) => item?.operationId === operationId);
+      if (!receipt) return null;
+      if (
+        ledger.churchId !== churchId ||
+        ledger.scheduleId !== scheduleId ||
+        receipt.adminUserId !== adminUserId ||
+        receipt.fingerprint !== operationFingerprint
+      ) {
+        throw httpError(409, "This assignment operation ID was already used for a different request.");
+      }
+      const toCells = (indexes) => (Array.isArray(indexes) ? indexes : [])
+        .map((index) => changes[index])
+        .filter(Boolean)
+        .map(({ serviceId, positionSlotKey }) => ({ serviceId, positionSlotKey }));
+      return {
+        schedule,
+        accepted: toCells(receipt.acceptedIndexes),
+        skipped: toCells(receipt.skippedIndexes),
+        replayed: true,
+      };
+    };
+    const nextReceiptLedger = (ledger, result) => {
+      if (!operationId) return null;
+      const indexesByCell = new Map(changes.map((change, index) => [
+        `${change.serviceId}\u0000${change.positionSlotKey}`,
+        index,
+      ]));
+      const indexesFor = (cells) => cells
+        .map(({ serviceId, positionSlotKey }) => indexesByCell.get(`${serviceId}\u0000${positionSlotKey}`))
+        .filter((index) => Number.isInteger(index));
+      const receipt = {
+        operationId,
+        adminUserId,
+        fingerprint: operationFingerprint,
+        acceptedIndexes: indexesFor(result.accepted),
+        skippedIndexes: indexesFor(result.skipped),
+      };
+      return {
+        churchId,
+        scheduleId,
+        operations: [
+          ...(Array.isArray(ledger?.operations) ? ledger.operations : [])
+            .filter((item) => item?.operationId !== operationId),
+          receipt,
+        ].slice(-MAX_SCHEDULE_ASSIGNMENT_BATCH_RECEIPTS),
+      };
+    };
     const applyBatch = async (schedule, team, candidateSchedules) => {
       const assignments = JSON.parse(JSON.stringify(schedule.assignments || {}));
       const accepted = [];
@@ -10977,7 +11096,7 @@ export const createTeamsAuthHandlers = ({
         const expectedCell = serializeScheduleAssignmentCell(
           normalizeScheduleAssignmentCell(change.expectedCell),
         ) || "";
-        if (currentCell !== expectedCell) {
+        if (!scheduleAssignmentCellsEqual(currentCell, expectedCell)) {
           if (skipChangedCells) {
             skipped.push({ serviceId: change.serviceId, positionSlotKey: change.positionSlotKey });
             continue;
@@ -11056,6 +11175,11 @@ export const createTeamsAuthHandlers = ({
     if (!db) {
       return enqueueInMemoryScheduleSave(scheduleId, async () => {
         const schedule = await assertTeamEntityInChurch("schedule", scheduleId, churchId, { label: "Schedule", active: false });
+        const receiptLedger = operationId
+          ? await getDoc(COLLECTIONS.teamScheduleAssignmentBatchReceipts, scheduleId)
+          : null;
+        const replay = receiptFor(schedule, receiptLedger);
+        if (replay) return replay;
         const team = await assertTeamEntityInChurch("team", schedule.teamId, churchId, { label: "Team" });
         const candidateSchedules = await listScheduleConflictCandidates({ churchId, schedule, occurrenceIds: [...new Set(changes.map((change) => change.serviceId))] });
         const result = await applyBatch(schedule, team, candidateSchedules);
@@ -11067,6 +11191,14 @@ export const createTeamsAuthHandlers = ({
         };
         const nextSchedule = { ...schedule, ...update };
         await setDoc(COLLECTIONS.teamSchedules, scheduleId, nextSchedule, { merge: false });
+        if (operationId) {
+          await setDoc(
+            COLLECTIONS.teamScheduleAssignmentBatchReceipts,
+            scheduleId,
+            nextReceiptLedger(receiptLedger, result),
+            { merge: false },
+          );
+        }
         return { schedule: nextSchedule, accepted: result.accepted, skipped: result.skipped };
       });
     }
@@ -11076,6 +11208,15 @@ export const createTeamsAuthHandlers = ({
       const scheduleSnap = await transaction.get(scheduleRef);
       const schedule = readTransactionTeamEntity(scheduleSnap, "scheduleId", "Schedule", { active: false });
       if (schedule.churchId !== churchId) throw httpError(404, "Schedule not found.");
+      const receiptRef = operationId
+        ? db.collection(COLLECTIONS.teamScheduleAssignmentBatchReceipts).doc(scheduleId)
+        : null;
+      const receiptSnap = receiptRef ? await transaction.get(receiptRef) : null;
+      const receiptLedger = receiptSnap?.exists
+        ? { id: receiptSnap.id, ...receiptSnap.data() }
+        : null;
+      const replay = receiptFor(schedule, receiptLedger);
+      if (replay) return replay;
       const teamSnap = await transaction.get(db.collection(COLLECTIONS.teams).doc(schedule.teamId));
       const team = readTransactionTeamEntity(teamSnap, "teamId", "Team");
       if (team.churchId !== churchId) throw httpError(404, "Team not found.");
@@ -11094,6 +11235,13 @@ export const createTeamsAuthHandlers = ({
         updatedByUid: adminUserId,
       };
       transaction.update(scheduleRef, update);
+      if (operationId) {
+        transaction.set(
+          receiptRef,
+          nextReceiptLedger(receiptLedger, result),
+          { merge: false },
+        );
+      }
       return { schedule: { ...schedule, ...update }, accepted: result.accepted, skipped: result.skipped };
     });
   };
@@ -12908,6 +13056,443 @@ export const createTeamsAuthHandlers = ({
     }
   };
 
+  const publicationEventInFlight = new Set();
+  const publicationEventRetryTimers = new Map();
+  let publicationEventRecoveryTimer = null;
+  let publicationEventRecoveryInFlight = false;
+  let publicationEventRecoveryCursor = "";
+
+  const publicationEventRetryDelay = (attemptCount) =>
+    Math.min(15 * 60_000, 5_000 * (2 ** Math.min(Math.max(0, attemptCount - 1), 8)));
+
+  const deliverTeamSchedulePublicationEvent = async (event) => {
+    if (publicationEventDeliveryForServerTests) {
+      await publicationEventDeliveryForServerTests(event);
+      return;
+    }
+    if (event.kind === "security_audit") {
+      await addSecurityEvent(event.securityEvent);
+      return;
+    }
+    const current = await getDoc(COLLECTIONS.teamSchedules, event.scheduleId);
+    if (event.kind === "teams_schedule_update") {
+      if (!current || current.churchId !== event.churchId || current.archivedAt) {
+        emitTeamsEvent(event.churchId, "schedule-removed", {
+          scheduleId: event.scheduleId,
+        });
+      } else {
+        emitTeamsEvent(event.churchId, "schedule-updated", { schedule: current });
+      }
+      return;
+    }
+    if (event.kind === "public_plan_invalidation") {
+      await emitPublicPlansForScheduleOccurrences({
+        churchId: event.churchId,
+        occurrences: current?.occurrences || event.occurrences || [],
+        revision: current?.updatedAt || event.revision || event.createdAt,
+      });
+      return;
+    }
+    throw new Error(`Unknown team schedule publication event kind: ${event.kind}`);
+  };
+
+  const claimTeamSchedulePublicationEvent = async (eventId) => {
+    const db = requireFirestore();
+    const leaseToken = createId("schedulePublicationLease");
+    const now = Date.now();
+    const claimedAt = new Date(now).toISOString();
+    const leaseExpiresAt = new Date(now + TEAM_SCHEDULE_PUBLICATION_EVENT_LEASE_MS).toISOString();
+    const isFuture = (value) => {
+      const timestamp = new Date(value || "").getTime();
+      return Number.isFinite(timestamp) && timestamp > now;
+    };
+    if (db?.runTransaction) {
+      return db.runTransaction(async (transaction) => {
+        const ref = db.collection(COLLECTIONS.teamSchedulePublicationEvents).doc(eventId);
+        const snapshot = await transaction.get(ref);
+        if (!snapshot.exists) return null;
+        const current = { id: snapshot.id, ...snapshot.data() };
+        if (
+          current.status !== "pending" || isFuture(current.nextAttemptAt) ||
+          isFuture(current.leaseExpiresAt)
+        ) return null;
+        const attemptCount = Number(current.attemptCount || 0) + 1;
+        const ageMs = Math.max(0, now - new Date(current.createdAt || "").getTime());
+        const warningCodes = [
+          ...(Number.isFinite(ageMs) && ageMs > TEAM_SCHEDULE_PUBLICATION_EVENT_STALE_WARNING_MS
+            ? ["pending_over_24h"] : []),
+          ...(attemptCount > TEAM_SCHEDULE_PUBLICATION_EVENT_ATTEMPT_WARNING_THRESHOLD
+            ? ["over_10_attempts"] : []),
+        ];
+        const warningCodesLogged = Array.isArray(current.warningCodesLogged)
+          ? current.warningCodesLogged
+          : [];
+        const warningsToLog = warningCodes.filter((code) => !warningCodesLogged.includes(code));
+        const nextWarningCodesLogged = [...new Set([...warningCodesLogged, ...warningsToLog])];
+        await updateDocFields(
+          COLLECTIONS.teamSchedulePublicationEvents,
+          eventId,
+          {
+            attemptCount,
+            lastAttemptAt: claimedAt,
+            leaseToken,
+            leaseExpiresAt,
+            ...(warningsToLog.length ? { warningCodesLogged: nextWarningCodesLogged } : {}),
+          },
+          { transaction, deleteFields: Object.hasOwn(current, "expiresAt") ? ["expiresAt"] : [] },
+        );
+        return {
+          ...current,
+          attemptCount,
+          lastAttemptAt: claimedAt,
+          leaseToken,
+          leaseExpiresAt,
+          warningCodesLogged: nextWarningCodesLogged,
+          warningsToLog,
+        };
+      });
+    }
+    const current = await getDoc(COLLECTIONS.teamSchedulePublicationEvents, eventId);
+    if (
+      !current || current.status !== "pending" || isFuture(current.nextAttemptAt) ||
+      isFuture(current.leaseExpiresAt)
+    ) return null;
+    const attemptCount = Number(current.attemptCount || 0) + 1;
+    const ageMs = Math.max(0, now - new Date(current.createdAt || "").getTime());
+    const warningCodes = [
+      ...(Number.isFinite(ageMs) && ageMs > TEAM_SCHEDULE_PUBLICATION_EVENT_STALE_WARNING_MS
+        ? ["pending_over_24h"] : []),
+      ...(attemptCount > TEAM_SCHEDULE_PUBLICATION_EVENT_ATTEMPT_WARNING_THRESHOLD
+        ? ["over_10_attempts"] : []),
+    ];
+    const warningCodesLogged = Array.isArray(current.warningCodesLogged)
+      ? current.warningCodesLogged
+      : [];
+    const warningsToLog = warningCodes.filter((code) => !warningCodesLogged.includes(code));
+    const nextWarningCodesLogged = [...new Set([...warningCodesLogged, ...warningsToLog])];
+    await updateDocFields(
+      COLLECTIONS.teamSchedulePublicationEvents,
+      eventId,
+      {
+        attemptCount,
+        lastAttemptAt: claimedAt,
+        leaseToken,
+        leaseExpiresAt,
+        ...(warningsToLog.length ? { warningCodesLogged: nextWarningCodesLogged } : {}),
+      },
+      { deleteFields: Object.hasOwn(current, "expiresAt") ? ["expiresAt"] : [] },
+    );
+    return {
+      ...current,
+      attemptCount,
+      lastAttemptAt: claimedAt,
+      leaseToken,
+      leaseExpiresAt,
+      warningCodesLogged: nextWarningCodesLogged,
+      warningsToLog,
+    };
+  };
+
+  const finishTeamSchedulePublicationEvent = async (event, fields, deleteFields = []) => {
+    const db = requireFirestore();
+    if (db?.runTransaction) {
+      await db.runTransaction(async (transaction) => {
+        const ref = db.collection(COLLECTIONS.teamSchedulePublicationEvents).doc(event.id);
+        const snapshot = await transaction.get(ref);
+        if (!snapshot.exists || snapshot.data()?.leaseToken !== event.leaseToken) return;
+        await updateDocFields(
+          COLLECTIONS.teamSchedulePublicationEvents,
+          event.id,
+          fields,
+          { transaction, deleteFields },
+        );
+      });
+      return;
+    }
+    const current = await getDoc(COLLECTIONS.teamSchedulePublicationEvents, event.id);
+    if (!current || current.leaseToken !== event.leaseToken) return;
+    await updateDocFields(
+      COLLECTIONS.teamSchedulePublicationEvents,
+      event.id,
+      fields,
+      { deleteFields },
+    );
+  };
+
+  const scheduleTeamSchedulePublicationEventRetry = (eventId, delayMs) => {
+    const previous = publicationEventRetryTimers.get(eventId);
+    if (previous) clearTimeout(previous);
+    const timer = setTimeout(() => {
+      publicationEventRetryTimers.delete(eventId);
+      void processTeamSchedulePublicationEvent(eventId);
+    }, delayMs);
+    timer.unref?.();
+    publicationEventRetryTimers.set(eventId, timer);
+  };
+
+  const processTeamSchedulePublicationEvent = async (eventId) => {
+    if (publicationEventInFlight.has(eventId)) return;
+    publicationEventInFlight.add(eventId);
+    let claimed = null;
+    try {
+      claimed = await claimTeamSchedulePublicationEvent(eventId);
+      if (!claimed) return;
+      for (const warningCode of claimed.warningsToLog || []) {
+        console.error("Team schedule publication event needs attention; automatic retries continue.", {
+          eventId: claimed.id,
+          scheduleId: claimed.scheduleId,
+          kind: claimed.kind,
+          warningCode,
+          attemptCount: claimed.attemptCount,
+          ageHours: Math.floor((Date.now() - new Date(claimed.createdAt).getTime()) / 3_600_000),
+          lastErrorName: claimed.lastErrorName || "",
+          action: "Check the event downstream delivery target and Firestore record; the recovery worker will keep retrying.",
+        });
+      }
+      const delivered = await runPostCommitSideEffect(
+        `schedule publication ${claimed.kind}`,
+        () => deliverTeamSchedulePublicationEvent(claimed),
+      );
+      if (delivered) {
+        const completedAt = nowIso();
+        await finishTeamSchedulePublicationEvent(claimed, {
+          status: "completed",
+          completedAt,
+          expiresAt: new Date(new Date(completedAt).getTime() + TEAM_SCHEDULE_PUBLICATION_EVENT_TTL_MS),
+          leaseToken: "",
+          leaseExpiresAt: "",
+          nextAttemptAt: "",
+          lastErrorName: "",
+        });
+        const timer = publicationEventRetryTimers.get(eventId);
+        if (timer) clearTimeout(timer);
+        publicationEventRetryTimers.delete(eventId);
+      } else {
+        const delayMs = publicationEventRetryDelay(claimed.attemptCount);
+        const nextAttemptAt = new Date(Date.now() + delayMs).toISOString();
+        await finishTeamSchedulePublicationEvent(claimed, {
+          status: "pending",
+          nextAttemptAt,
+          lastErrorName: "PostCommitDeliveryFailed",
+          leaseToken: "",
+          leaseExpiresAt: "",
+        }, ["expiresAt"]);
+        scheduleTeamSchedulePublicationEventRetry(eventId, delayMs);
+      }
+    } catch (error) {
+      console.error("Could not process a durable team schedule publication event.", error);
+      if (claimed) {
+        const delayMs = publicationEventRetryDelay(claimed.attemptCount);
+        try {
+          await finishTeamSchedulePublicationEvent(claimed, {
+            status: "pending",
+            nextAttemptAt: new Date(Date.now() + delayMs).toISOString(),
+            lastErrorName: error?.name || "Error",
+            leaseToken: "",
+            leaseExpiresAt: "",
+          }, ["expiresAt"]);
+        } catch (releaseError) {
+          console.error("Could not release a durable team schedule publication event lease.", releaseError);
+        }
+        scheduleTeamSchedulePublicationEventRetry(eventId, delayMs);
+      }
+    } finally {
+      publicationEventInFlight.delete(eventId);
+    }
+  };
+
+  const recoverPendingTeamSchedulePublicationEvents = async () => {
+    if (publicationEventRecoveryInFlight) return;
+    publicationEventRecoveryInFlight = true;
+    try {
+      const events = await queryDocs(
+        COLLECTIONS.teamSchedulePublicationEvents,
+        [{ field: "status", value: "pending" }],
+        {
+          limit: TEAM_SCHEDULE_PUBLICATION_EVENT_RECOVERY_LIMIT,
+          orderById: true,
+          startAfterId: publicationEventRecoveryCursor,
+        },
+      );
+      publicationEventRecoveryCursor = events.length === TEAM_SCHEDULE_PUBLICATION_EVENT_RECOVERY_LIMIT
+        ? events.at(-1)?.id || ""
+        : "";
+      await Promise.all(events.map((event) => processTeamSchedulePublicationEvent(event.id)));
+    } catch (error) {
+      console.error("Could not scan durable team schedule publication events.", error);
+    } finally {
+      publicationEventRecoveryInFlight = false;
+    }
+  };
+
+  const startTeamSchedulePublicationEventRecovery = () => {
+    if (publicationEventRecoveryTimer) return;
+    void recoverPendingTeamSchedulePublicationEvents();
+    publicationEventRecoveryTimer = setInterval(
+      () => void recoverPendingTeamSchedulePublicationEvents(),
+      TEAM_SCHEDULE_PUBLICATION_EVENT_RECOVERY_INTERVAL_MS,
+    );
+    publicationEventRecoveryTimer.unref?.();
+  };
+
+  const updateTeamSchedulePublication = async (req, published) => {
+    const { churchId, scheduleId } = req.params;
+    const existing = await assertTeamEntityInChurch(
+      "schedule",
+      scheduleId,
+      churchId,
+      { label: "Schedule" },
+    );
+    await assertTeamEntityInChurch("team", existing.teamId, churchId, {
+      label: "Team",
+    });
+    const admin = await requireTeamsEditForTeam(req, churchId, existing.teamId);
+    const actorUid = sessionActorUid(admin);
+    const updatedAt = nowIso();
+    const update = { published, updatedAt, updatedByUid: actorUid };
+    const publicationId = createId("teamSchedulePublication");
+    const securityEvent = {
+      eventId: createId("event"),
+      createdAt: updatedAt,
+      type: published ? "team_schedule_published" : "team_schedule_unpublished",
+      churchId,
+      userId: actorUid,
+      scheduleId,
+    };
+    const buildPublicationEvents = (schedule) => {
+      const base = {
+        churchId,
+        scheduleId,
+        createdAt: updatedAt,
+        status: "pending",
+        attemptCount: 0,
+        nextAttemptAt: updatedAt,
+        leaseToken: "",
+        leaseExpiresAt: "",
+      };
+      const minimalOccurrences = (Array.isArray(schedule.occurrences) ? schedule.occurrences : [])
+        .map((occurrence) => ({
+          startsAt: occurrence?.startsAt || "",
+          serviceId: occurrence?.serviceId || "",
+          ...(Array.isArray(occurrence?.serviceIds) ? { serviceIds: occurrence.serviceIds } : {}),
+        }));
+      return [
+        {
+          ...base,
+          id: `${publicationId}_audit`,
+          kind: "security_audit",
+          securityEvent,
+        },
+        {
+          ...base,
+          id: `${publicationId}_teams`,
+          kind: "teams_schedule_update",
+        },
+        {
+          ...base,
+          id: `${publicationId}_public_plans`,
+          kind: "public_plan_invalidation",
+          revision: updatedAt,
+          occurrences: minimalOccurrences,
+        },
+      ];
+    };
+    const validateCurrent = async (current, readTeam) => {
+      if (!current || current.churchId !== churchId) {
+        throw httpError(404, "Schedule not found.");
+      }
+      if (current.archivedAt) {
+        throw httpError(400, "Schedule is archived.");
+      }
+      if (current.teamId !== existing.teamId) {
+        throw httpError(409, "This schedule's Team changed. Refresh before continuing.");
+      }
+      const team = await readTeam(current.teamId);
+      if (!team || team.churchId !== churchId) {
+        throw httpError(404, "Team not found.");
+      }
+      if (team.archivedAt) {
+        throw httpError(400, "Team is archived.");
+      }
+      return current;
+    };
+
+    const db = requireFirestore();
+    let result;
+    if (db?.runTransaction) {
+      result = await db.runTransaction(async (transaction) => {
+        const scheduleRef = db.collection(COLLECTIONS.teamSchedules).doc(scheduleId);
+        const scheduleSnapshot = await transaction.get(scheduleRef);
+        if (!scheduleSnapshot.exists) {
+          throw httpError(404, "Schedule not found.");
+        }
+        const current = await validateCurrent(
+          { scheduleId: scheduleSnapshot.id, ...scheduleSnapshot.data() },
+          async (teamId) => {
+            const teamSnapshot = await transaction.get(
+              db.collection(COLLECTIONS.teams).doc(teamId),
+            );
+            return teamSnapshot.exists
+              ? { teamId: teamSnapshot.id, ...teamSnapshot.data() }
+              : null;
+          },
+        );
+        if ((current.published !== false) === published) {
+          return { schedule: current, changed: false };
+        }
+        const events = buildPublicationEvents(current);
+        transaction.update(scheduleRef, update);
+        events.forEach((event) => transaction.set(
+          db.collection(COLLECTIONS.teamSchedulePublicationEvents).doc(event.id),
+          event,
+          { merge: false },
+        ));
+        return {
+          schedule: { ...current, ...update },
+          changed: true,
+          operationIds: events.map((event) => event.id),
+        };
+      });
+    } else {
+      result = await enqueueInMemoryScheduleSave(scheduleId, () =>
+        withScheduleOccurrenceLocks(
+          [`schedule:${churchId}:${scheduleId}`],
+          async () => {
+            const rawCurrent = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+            const current = await validateCurrent(
+              rawCurrent ? { scheduleId, ...rawCurrent } : null,
+              (teamId) => getDoc(COLLECTIONS.teams, teamId),
+            );
+            if ((current.published !== false) === published) {
+              return { schedule: current, changed: false };
+            }
+            await updateDocFields(COLLECTIONS.teamSchedules, scheduleId, update);
+            const events = buildPublicationEvents(current);
+            try {
+              await Promise.all(events.map((event) =>
+                setDoc(COLLECTIONS.teamSchedulePublicationEvents, event.id, event),
+              ));
+            } catch (error) {
+              console.error("Could not persist in-memory schedule publication events.", error);
+            }
+            return {
+              schedule: { ...current, ...update },
+              changed: true,
+              operationIds: events.map((event) => event.id),
+            };
+          },
+        ),
+      );
+    }
+
+    if (result.changed) {
+      await Promise.all((result.operationIds || []).map((eventId) =>
+        processTeamSchedulePublicationEvent(eventId),
+      ));
+    }
+    return result.schedule;
+  };
+
   return {
     ...createVolunteerPortalHandlers({
       getAccessStore: getVolunteerAccessStore, appBaseUrl: APP_BASE_URL,
@@ -12919,6 +13504,8 @@ export const createTeamsAuthHandlers = ({
       saveBlockouts: saveVolunteerBlockouts, getAvailability: getVolunteerAvailability,
       submitAvailability: submitVolunteerAvailability,
     }),
+    recoverPendingTeamSchedulePublicationEvents,
+    startTeamSchedulePublicationEventRecovery,
     prepareAvailabilityNotificationRecipients,
     prepareScheduleInitialSmsRecipients,
     resolveAvailabilityNotificationContext,
@@ -17104,6 +17691,26 @@ export const createTeamsAuthHandlers = ({
       }
     },
 
+    async publishTeamSchedule(req, res) {
+      try {
+        await assertCsrf(req);
+        const schedule = await updateTeamSchedulePublication(req, true);
+        return res.json({ success: true, schedule });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not publish this schedule.");
+      }
+    },
+
+    async unpublishTeamSchedule(req, res) {
+      try {
+        await assertCsrf(req);
+        const schedule = await updateTeamSchedulePublication(req, false);
+        return res.json({ success: true, schedule });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not unpublish this schedule.");
+      }
+    },
+
     /**
      * What an emailed link is asking about.
      *
@@ -19765,7 +20372,7 @@ export const createTeamsAuthHandlers = ({
             payload,
           });
         }
-        payload = { ...payload, source: "custom" };
+        payload = { ...payload, source: "custom", published: false };
         const admin = await requireTeamsEditForTeam(
           req,
           req.params.churchId,
@@ -22627,15 +23234,55 @@ export const createTeamsAuthHandlers = ({
             assignment: raw?.assignment || "",
           };
         });
+        const rawOperationId = req.body?.operationId;
+        const operationId = rawOperationId == null
+          ? ""
+          : normalizeShortText(rawOperationId, { max: 100 });
+        if (
+          rawOperationId != null &&
+          (typeof rawOperationId !== "string" || !/^[A-Za-z0-9_-]{1,100}$/.test(operationId))
+        ) {
+          throw httpError(400, "An assignment operation ID is invalid.");
+        }
+        const confirmedFingerprint = normalizeAllowOccurrenceConflict(req.body);
+        const skipChangedCells = req.body?.skipChangedCells === true;
+        const canonicalCell = (cell) => {
+          const normalized = normalizeScheduleAssignmentCell(cell);
+          return {
+            primaryMemberId: normalized.primaryMemberId,
+            shadows: [...normalized.shadows].sort(
+              (a, b) => a.memberId.localeCompare(b.memberId) || a.kind.localeCompare(b.kind),
+            ),
+          };
+        };
+        const operationFingerprint = operationId
+          ? hashValue(JSON.stringify({
+              churchId: req.params.churchId,
+              scheduleId: req.params.scheduleId,
+              skipChangedCells,
+              confirmedFingerprint,
+              changes: changes.map((change) => ({
+                serviceId: change.serviceId,
+                positionSlotKey: change.positionSlotKey,
+                serviceDate: change.serviceDate,
+                expectedCell: canonicalCell(change.expectedCell),
+                assignment: canonicalCell(change.assignment),
+              })),
+            }))
+          : "";
         const result = await updateTeamScheduleAssignmentsBatchInStore({
           churchId: req.params.churchId,
           scheduleId: req.params.scheduleId,
           changes,
-          confirmedFingerprint: normalizeAllowOccurrenceConflict(req.body),
-          skipChangedCells: req.body?.skipChangedCells === true,
+          confirmedFingerprint,
+          skipChangedCells,
           adminUserId: admin.user.uid,
+          operationId,
+          operationFingerprint,
         });
-        emitTeamsEvent(req.params.churchId, "schedule-updated", { schedule: result.schedule });
+        if (!result.replayed) {
+          emitTeamsEvent(req.params.churchId, "schedule-updated", { schedule: result.schedule });
+        }
         return res.json({ success: true, ...result });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not update these assignments.");

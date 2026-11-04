@@ -5729,6 +5729,89 @@ SMC Worship Experience
     expect(mockGetPlanningCenterPlanImport).not.toHaveBeenCalled();
   });
 
+  it("releases import controls when a Planning Center connection change invalidates the result", async () => {
+    localStorage.setItem("worshipsyncServicePlanImportSource", "planningCenter");
+    mockListPlanningCenterServiceTypes.mockResolvedValue({
+      items: [{ id: "pco-type-1", name: "Sunday Worship" }],
+    });
+    mockListPlanningCenterPlans.mockResolvedValue({
+      items: [planningCenterCandidate()],
+    });
+    let resolveStaleImport!: (value: PlanningCenterPlanImport) => void;
+    mockGetPlanningCenterPlanImport.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveStaleImport = resolve;
+    }));
+
+    const user = userEvent.setup();
+    const view = renderEditor({ planningCenterConnected: true });
+    await user.click(await screen.findByRole("button", { name: /Import from Planning Center/i }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Import plan" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Import plan" }));
+    await waitFor(() => expect(mockGetPlanningCenterPlanImport).toHaveBeenCalledTimes(1));
+
+    view.rerender(editorTree({
+      planningCenterConnected: true,
+      planningCenterAccountLabel: "Another Church",
+    }));
+    await act(async () => {
+      resolveStaleImport(planningCenterImport("pco-plan-1", "pco-type-1", "Stale account item"));
+    });
+
+    expect(screen.queryByText("Stale account item")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Import plan" })).toBeEnabled());
+
+    mockGetPlanningCenterPlanImport.mockResolvedValueOnce(
+      planningCenterImport("pco-plan-1", "pco-type-1", "Fresh account item"),
+    );
+    await user.click(screen.getByRole("button", { name: "Import plan" }));
+    expect(await screen.findByText("Fresh account item")).toBeInTheDocument();
+  });
+
+  it("does not let an older import clear a newer import's loading state", async () => {
+    localStorage.setItem("worshipsyncServicePlanImportSource", "planningCenter");
+    mockListPlanningCenterServiceTypes.mockResolvedValue({
+      items: [{ id: "pco-type-1", name: "Sunday Worship" }],
+    });
+    mockListPlanningCenterPlans.mockResolvedValue({
+      items: [planningCenterCandidate()],
+    });
+    let resolveStaleImport!: (value: PlanningCenterPlanImport) => void;
+    mockGetPlanningCenterPlanImport.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveStaleImport = resolve;
+    }));
+    let rejectPdfImport!: (reason?: unknown) => void;
+    mockExtractTextFromPdfFile.mockReturnValueOnce(new Promise((_, reject) => {
+      rejectPdfImport = reject;
+    }));
+
+    const user = userEvent.setup();
+    const view = renderEditor({ planningCenterConnected: true });
+    await user.click(await screen.findByRole("button", { name: /Import from Planning Center/i }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Import plan" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Import plan" }));
+    await waitFor(() => expect(mockGetPlanningCenterPlanImport).toHaveBeenCalledTimes(1));
+
+    view.rerender(editorTree({
+      planningCenterConnected: true,
+      planningCenterAccountLabel: "Another Church",
+    }));
+    fireEvent.change(screen.getByLabelText("Planning Center PDF"), {
+      target: { files: [new File(["pdf"], "order.pdf", { type: "application/pdf" })] },
+    });
+    await waitFor(() => expect(mockExtractTextFromPdfFile).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      resolveStaleImport(planningCenterImport("pco-plan-1", "pco-type-1", "Stale account item"));
+    });
+    expect(screen.getByRole("button", { name: "Importing…" })).toBeDisabled();
+
+    await act(async () => {
+      rejectPdfImport(new Error("PDF import stopped"));
+    });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Import plan" })).toBeEnabled());
+    expect(screen.queryByText("Stale account item")).not.toBeInTheDocument();
+  });
+
   it("ignores date-search results from the previous connected account", async () => {
     let resolveFirstSearch: ((value: { items: PlanningCenterPlanSummary[] }) => void) | undefined;
     mockListPlanningCenterPlansForDate
