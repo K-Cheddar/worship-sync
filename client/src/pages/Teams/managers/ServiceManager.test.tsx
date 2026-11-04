@@ -463,6 +463,7 @@ describe("ServiceManager combined services", () => {
     const firstMutation = mutations[0].payload as {
       primary: { mode: string; service: TeamService };
       partnerUpdates: Array<{ id: string; serviceGroupId: string | null }>;
+      requiredPartnerIds: string[];
     };
     expect(firstMutation.primary.mode).toBe("add");
     const groupId = firstMutation.primary.service.serviceGroupId;
@@ -471,6 +472,7 @@ describe("ServiceManager combined services", () => {
     expect(firstMutation.partnerUpdates).toEqual([
       { id: "first", serviceGroupId: groupId },
     ]);
+    expect(firstMutation.requiredPartnerIds).toEqual(["first"]);
 
     expect(screen.getByRole("heading", { name: "Edit service" })).toBeInTheDocument();
     const nameInput = screen.getByLabelText(/^Name:?$/);
@@ -484,6 +486,27 @@ describe("ServiceManager combined services", () => {
       mode: "update",
       service: expect.objectContaining({ id: firstMutation.primary.service.id, name: "Combined Sunday Updated" }),
     });
+  });
+
+  it("deletes a combined service and its partner cleanup with one mutation", async () => {
+    const user = userEvent.setup();
+    renderManager([
+      service({ ...sundayMorning, serviceGroupId: "combined-sunday" }),
+      service({ ...sundayLate, serviceGroupId: "combined-sunday" }),
+    ]);
+
+    await user.click(screen.getByRole("button", { name: /Edit First Service/i }));
+    await user.click(screen.getByRole("button", { name: "Service actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Remove service" }));
+
+    const mutations = findActions(mockDispatch.mock.calls, "serviceTimes/applyServiceGroupMutation");
+    expect(mutations).toHaveLength(1);
+    expect(mutations[0].payload).toEqual({
+      primary: { mode: "delete", id: "first" },
+      partnerUpdates: [{ id: "second", serviceGroupId: undefined }],
+    });
+    expect(findActions(mockDispatch.mock.calls, "serviceTimes/removeService")).toHaveLength(0);
+    expect(findActions(mockDispatch.mock.calls, "serviceTimes/updateService")).toHaveLength(0);
   });
 });
 

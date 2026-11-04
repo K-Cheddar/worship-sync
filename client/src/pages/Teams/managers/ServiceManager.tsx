@@ -18,7 +18,6 @@ import { AUTOSAVE_DEBOUNCE_KEYS } from "../../../store/autosaveIndicatorSlice";
 import {
   addService,
   applyServiceGroupMutation,
-  removeService,
   updateService,
 } from "../../../store/serviceTimesSlice";
 import type {
@@ -281,11 +280,12 @@ const ServiceManager = ({
       return next;
     });
     const primaryMode = editing && !retryingFailedCreate ? "update" : "add";
-    if (partnerUpdates.length || (editing && editing.serviceGroupId !== groupId)) {
+    if (partnerUpdates.length || saved.serviceGroupId || (editing && editing.serviceGroupId !== groupId)) {
       dispatch(applyServiceGroupMutation({
         primary: { mode: primaryMode, service: saved },
         // The store listener sends membership changes through one Firebase transaction.
         partnerUpdates,
+        requiredPartnerIds: combineWith,
       }));
     } else if (editing && !retryingFailedCreate) {
       dispatch(updateService({ id: editing.id, changes: saved }));
@@ -694,12 +694,10 @@ const ServiceManager = ({
                 services,
                 serviceId: editing.serviceId,
               });
-              dispatch(removeService(editing.id));
-              // Dissolve a now-orphaned combined group so no service is left
-              // pointing at a one-member group.
-              partnerUpdates.forEach(({ id, serviceGroupId }) => {
-                dispatch(updateService({ id, changes: { serviceGroupId } }));
-              });
+              dispatch(applyServiceGroupMutation({
+                primary: { mode: "delete", id: editing.id },
+                partnerUpdates,
+              }));
               reset();
             }}
           />

@@ -4196,33 +4196,37 @@ describe("store module", () => {
     );
   });
 
-  it("commits combined service membership in one transaction against current services", async () => {
+  it("aborts a combined group edit when a selected partner disappeared before the transaction", async () => {
     jest.useFakeTimers().setSystemTime(new Date("2026-04-05T11:58:00.000Z"));
-    const { store, serviceTimesSlice, runTransactionMock } = loadStoreWithPresentationSync();
+    const { store, serviceTimesSlice, runTransactionMock, registerPresentationSyncErrorHandler } = loadStoreWithPresentationSync();
+    const syncErrorHandler = jest.fn();
+    registerPresentationSyncErrorHandler(syncErrorHandler);
     const primary = { id: "primary", name: "Primary", serviceGroupId: null };
     const partner = { id: "partner", name: "Partner", serviceGroupId: null };
     const remoteOnly = { id: "remote-only", name: "Added by another client" };
-    let committed: any[] = [];
+    const current = [primary, remoteOnly];
+    let transactionValue: unknown;
     runTransactionMock.mockImplementationOnce(async (_path: unknown, update: (current: unknown) => unknown) => {
       // The partner was removed remotely while the local editor was open.
-      committed = update([primary, remoteOnly]) as any[];
-      return { committed: true, snapshot: { val: () => committed } };
+      transactionValue = update(current);
+      return { committed: false, snapshot: { val: () => current } };
     });
 
     store.dispatch(serviceTimesSlice.actions.initiateServices([primary, partner] as any));
     store.dispatch(serviceTimesSlice.actions.applyServiceGroupMutation({
       primary: { mode: "update", service: { ...primary, serviceGroupId: "combined-sunday" } as any },
       partnerUpdates: [{ id: "partner", serviceGroupId: "combined-sunday" }],
+      requiredPartnerIds: ["partner"],
     }));
     await flushListenerEffects();
 
     expect(runTransactionMock).toHaveBeenCalledTimes(1);
-    expect(committed).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "primary", serviceGroupId: "combined-sunday" }),
-      remoteOnly,
-    ]));
-    expect(committed).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: "partner" })]));
-    expect(store.getState().undoable.present.serviceTimes.list).toEqual(committed);
+    expect(transactionValue).toBeUndefined();
+    expect(store.getState().undoable.present.serviceTimes.list).toEqual(expect.arrayContaining(current));
+    expect(store.getState().undoable.present.serviceTimes.list).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ serviceGroupId: "combined-sunday" })]),
+    );
+    expect(syncErrorHandler).toHaveBeenCalledWith(expect.stringContaining("selected combined-service partner changed"));
   });
 
   it("rolls back a failed group transaction and retries every membership change together", async () => {
@@ -4234,6 +4238,7 @@ describe("store module", () => {
     const mutation = {
       primary: { mode: "update", service: { ...primary, serviceGroupId: "combined-sunday" } as any },
       partnerUpdates: [{ id: "partner", serviceGroupId: "combined-sunday" }],
+      requiredPartnerIds: ["partner"],
     };
     const remoteServices = [primary, partner];
     let committed: any[] = [];
@@ -4257,6 +4262,87 @@ describe("store module", () => {
       expect.objectContaining({ id: "partner", serviceGroupId: "combined-sunday" }),
     ]));
     expect(store.getState().undoable.present.serviceTimes.list).toEqual(committed);
+  });
+
+  it("deletes a grouped service and dissolves its last partner in one retryable transaction", async () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-04-05T11:58:00.000Z"));
+    jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const { store, serviceTimesSlice, runTransactionMock } = loadStoreWithPresentationSync();
+    const primary = { id: "primary", name: "Primary", serviceGroupId: "combined-sunday" };
+    const partner = { id: "partner", name: "Partner", serviceGroupId: "combined-sunday" };
+    const services = [primary, partner];
+    const deletion = {
+      primary: { mode: "delete" as const, id: "primary" },
+      partnerUpdates: [{ id: "partner", serviceGroupId: undefined }],
+    };
+    let committed: any[] = [];
+    runTransactionMock.mockImplementationOnce(async (path: unknown, update: (current: unknown) => unknown) => {
+      expect(path).toBe("churches/church-main/data/services");
+      committed = update(services) as any[];
+      return { committed: true, snapshot: { val: () => committed } };
+    });
+    store.dispatch(serviceTimesSlice.actions.initiateServices(services as any));
+    store.dispatch(serviceTimesSlice.actions.applyServiceGroupMutation(deletion));
+    await flushListenerEffects();
+
+    expect(runTransactionMock).toHaveBeenCalledTimes(1);
+    expect(committed).toHaveLength(1);
+    expect(committed[0]).toMatchObject({
+      id: "partner", serviceGroupId: null, updatedAt: "2026-04-05T11:58:00.000Z",
+    });
+    expect(store.getState().undoable.present.serviceTimes.list).toEqual(expect.arrayContaining(committed));
+    expect(store.getState().undoable.present.serviceTimes.list).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "primary" })]),
+    );
+  });
+
+  it("rolls back a grouped service deletion when its atomic transaction fails", async () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-04-05T11:58:00.000Z"));
+    jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const { store, serviceTimesSlice, runTransactionMock } = loadStoreWithPresentationSync();
+    const primary = { id: "primary", name: "Primary", serviceGroupId: "combined-sunday" };
+    const partner = { id: "partner", name: "Partner", serviceGroupId: "combined-sunday" };
+    const services = [primary, partner];
+    runTransactionMock.mockRejectedValueOnce({ code: "PERMISSION_DENIED" });
+
+    store.dispatch(serviceTimesSlice.actions.initiateServices(services as any));
+    store.dispatch(serviceTimesSlice.actions.applyServiceGroupMutation({
+      primary: { mode: "delete", id: "primary" },
+      partnerUpdates: [{ id: "partner", serviceGroupId: undefined }],
+    }));
+    expect(store.getState().undoable.present.serviceTimes.list).toHaveLength(1);
+    await flushListenerEffects();
+
+    expect(runTransactionMock).toHaveBeenCalledTimes(1);
+    expect(store.getState().undoable.present.serviceTimes.list).toEqual(expect.arrayContaining(services));
+  });
+
+  it("recomputes service deletion cleanup against concurrent group members", async () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-04-05T11:58:00.000Z"));
+    const { store, serviceTimesSlice, runTransactionMock } = loadStoreWithPresentationSync();
+    const primary = { id: "primary", name: "Primary", serviceGroupId: "combined-sunday" };
+    const partner = { id: "partner", name: "Partner", serviceGroupId: "combined-sunday" };
+    const concurrentPartner = { id: "remote-partner", name: "Concurrent partner", serviceGroupId: "combined-sunday" };
+    const authoritative = [primary, partner, concurrentPartner];
+    let committed: any[] = [];
+    runTransactionMock.mockImplementationOnce(async (_path: unknown, update: (current: unknown) => unknown) => {
+      // A second client adds a group member after the delete editor made its cleanup plan.
+      committed = update(authoritative) as any[];
+      return { committed: true, snapshot: { val: () => committed } };
+    });
+
+    store.dispatch(serviceTimesSlice.actions.initiateServices([primary, partner] as any));
+    store.dispatch(serviceTimesSlice.actions.applyServiceGroupMutation({
+      primary: { mode: "delete", id: "primary" },
+      // This stale hint would incorrectly dissolve the group if trusted.
+      partnerUpdates: [{ id: "partner", serviceGroupId: undefined }],
+    }));
+    await flushListenerEffects();
+
+    expect(committed).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "partner", serviceGroupId: "combined-sunday" }),
+      expect.objectContaining({ id: "remote-partner", serviceGroupId: "combined-sunday" }),
+    ]));
   });
 
   it("attempts a service-time update when the connection monitor is disconnected", async () => {
