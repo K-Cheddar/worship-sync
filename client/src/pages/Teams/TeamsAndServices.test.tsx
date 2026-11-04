@@ -5761,6 +5761,129 @@ describe("Teams", () => {
     expect(screen.queryByRole("dialog", { name: "Schedule published" })).not.toBeInTheDocument();
   });
 
+  it("keeps the generated link available when automatic clipboard access expires", async () => {
+    const user = userEvent.setup();
+    const draft = { ...scheduleBootstrap.schedules[0], published: false };
+    const published = { ...draft, published: true };
+    const writeText = jest.fn()
+      .mockRejectedValueOnce(new Error("Clipboard permission expired."))
+      .mockResolvedValueOnce(undefined);
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...scheduleBootstrap,
+      schedules: [draft],
+    }));
+    mockPublishTeamSchedule.mockResolvedValue({ success: true, schedule: published });
+    mockGetTeamSchedulePublicLink.mockResolvedValue({
+      success: true,
+      publicToken: "published-schedule-token",
+    });
+
+    renderTeams();
+    await waitForScheduleGrid();
+    await user.click(screen.getByRole("button", { name: "More schedule actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Copy view-only link" }));
+    const publishAndCopyButton = await screen.findByRole("button", { name: "Publish & Copy Link" });
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    fireEvent.click(publishAndCopyButton);
+
+    const linkField = await screen.findByRole("textbox", { name: "View-only schedule link" });
+    expect((linkField as HTMLInputElement).value).toContain("published-schedule-token");
+    expect(screen.getByRole("button", { name: "Copy link" })).toBeInTheDocument();
+    expect(mockGetTeamSchedulePublicLink).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy link" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
+    expect(mockGetTeamSchedulePublicLink).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Schedule published" })).not.toBeInTheDocument());
+  });
+
+  it.each([
+    ["publish", false],
+    ["send", true],
+  ] as const)("waits for an outstanding assignment save before %s", async (action, isPublished) => {
+    const user = userEvent.setup();
+    const schedule = {
+      ...scheduleBootstrap.schedules[0],
+      published: isPublished,
+      assignments: {},
+    };
+    const savedSchedule = {
+      ...schedule,
+      assignments: {
+        [sundayOccurrenceId]: {
+          "position-vocal::0": { primaryMemberId: "member-avery" },
+        },
+      },
+    };
+    let finishAssignment!: (value: UpdateTeamScheduleAssignmentResponse) => void;
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...scheduleBootstrap,
+      schedules: [schedule],
+    }));
+    mockUpdateTeamScheduleAssignment.mockImplementationOnce(() => new Promise((resolve) => {
+      finishAssignment = resolve;
+    }));
+    mockPublishTeamSchedule.mockResolvedValue({ success: true, schedule: { ...savedSchedule, published: true } });
+    mockSendTeamSchedule.mockResolvedValue({
+      success: true,
+      sentAt: "2026-11-04T12:00:00.000Z",
+      notified: 1,
+      alreadyNotified: 0,
+      unreachableMemberIds: [],
+    });
+
+    renderTeams();
+    await openVocalSlot(user, /Sunday Vocal, Empty/i);
+    await user.click(await screen.findByRole("button", { name: /Assign Avery/i }));
+    await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(1));
+
+    const actionRequest = action === "publish" ? mockPublishTeamSchedule : mockSendTeamSchedule;
+    if (action === "publish") {
+      await user.click(screen.getByRole("button", { name: "Publish" }));
+      await screen.findByRole("button", { name: "Publishing…" });
+    } else {
+      await user.click(screen.getByRole("button", { name: "Send schedule" }));
+      await user.click(screen.getByRole("button", { name: "Yes, send email" }));
+      await waitFor(() => {
+        if (!(screen.getByRole("button", { name: "Yes, send email" }) as HTMLButtonElement).disabled) {
+          throw new Error("The email action has not entered its pending state.");
+        }
+      });
+    }
+    expect(actionRequest).not.toHaveBeenCalled();
+
+    await act(async () => {
+      finishAssignment({ success: true, schedule: savedSchedule });
+    });
+    await waitFor(() => expect(actionRequest).toHaveBeenCalledWith("church-1", schedule.scheduleId));
+  });
+
+  it("blocks publication when an assignment save failed and explains what to resolve", async () => {
+    const user = userEvent.setup();
+    const draft = {
+      ...scheduleBootstrap.schedules[0],
+      published: false,
+      assignments: {},
+    };
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...scheduleBootstrap,
+      schedules: [draft],
+    }));
+    mockUpdateTeamScheduleAssignment.mockRejectedValueOnce(new Error("Network unavailable."));
+
+    renderTeams();
+    await openVocalSlot(user, /Sunday Vocal, Empty/i);
+    await user.click(await screen.findByRole("button", { name: /Assign Avery/i }));
+    await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Publish" }));
+
+    expect(mockPublishTeamSchedule).not.toHaveBeenCalled();
+    expect(await screen.findByText(/schedule changes haven't saved/i)).toBeInTheDocument();
+  });
+
   it("keeps a failed publish actionable and leaves the schedule Draft", async () => {
     const user = userEvent.setup();
     const draft = { ...scheduleBootstrap.schedules[0], published: false };

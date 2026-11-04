@@ -1655,16 +1655,31 @@ const ScheduleTab = ({
 
   const confirmScheduleSms = async () => {
     const preview = scheduleSmsPreview;
-    if (!preview || scheduleSmsSendLockRef.current) return;
+    if (!preview || scheduleSmsSendLockRef.current || scheduleActionPendingRef.current) return;
     if (preview.intent.churchId !== churchId) {
       setScheduleSmsPreview(null);
       setSendingNotificationIntentId("");
       return;
     }
     scheduleSmsSendLockRef.current = true;
-    setScheduleSmsPreview(null);
-    setSendingScheduleSms(true);
+    scheduleActionPendingRef.current = true;
+    setIsPreparingScheduleSend(true);
+    let sendStarted = false;
     try {
+      const schedule = latestScheduleRef.current?.scheduleId === preview.intent.sourceId &&
+        latestScheduleRef.current.churchId === churchId
+        ? latestScheduleRef.current
+        : schedulesByOwnerRef.current.get(virtualSchedulePreviewKey(churchId, preview.intent.sourceId));
+      if (!schedule) {
+        showToast("This schedule changed while the message was open. Refresh it before sending the text.", "error");
+        return;
+      }
+      if (!(await flushPendingScheduleSaves(schedule, "send"))) return;
+      setScheduleSmsPreview(null);
+      setIsPreparingScheduleSend(false);
+      setSendingScheduleSms(true);
+      setSendingNotificationIntentId("");
+      sendStarted = true;
       const result = await sendNotificationIntent(churchId, preview.intent.intentId, preview.approvalVersion);
       await refreshScheduleNotificationHistory(preview.intent.sourceId);
       showToast(
@@ -1682,8 +1697,10 @@ const ScheduleTab = ({
       } catch { /* Keep the last known queue visible. */ }
     } finally {
       scheduleSmsSendLockRef.current = false;
+      scheduleActionPendingRef.current = false;
+      setIsPreparingScheduleSend(false);
       setSendingScheduleSms(false);
-      setSendingNotificationIntentId("");
+      if (sendStarted) setSendingNotificationIntentId("");
     }
   };
 
@@ -1752,9 +1769,11 @@ const ScheduleTab = ({
   }, []);
   const [copyingLink, setCopyingLink] = useState(false);
   const copyingLinkRef = useRef(false);
+  const publicLinkInputRef = useRef<HTMLInputElement>(null);
   const [publishAndCopyLink, setPublishAndCopyLink] = useState<{
     schedule: TeamSchedule;
     published: boolean;
+    publicUrl?: string;
   } | null>(null);
   const [pasteRowOpen, setPasteRowOpen] = useState(false);
   const [scheduleLayout, setScheduleLayout] = useState<TeamScheduleAdminLayout>(
@@ -2869,9 +2888,12 @@ const ScheduleTab = ({
   );
 
   const [isSendingSchedule, setIsSendingSchedule] = useState(false);
+  const [isPreparingScheduleSend, setIsPreparingScheduleSend] = useState(false);
   const [isConfirmingSend, setIsConfirmingSend] = useState(false);
   const [isPublicationPending, setIsPublicationPending] = useState(false);
-  const publicationPendingRef = useRef(false);
+  const scheduleActionPendingRef = useRef(false);
+  const isScheduleActionPending = isPublicationPending ||
+    isPreparingScheduleSend || isSendingSchedule || sendingScheduleSms;
   const sendScopeScheduleId = selectedSchedule?.scheduleId;
   const sendScopeTeamId = selectedSchedule?.teamId;
   const sendScopeStartDate = selectedSchedule?.startDate;
@@ -2928,17 +2950,114 @@ const ScheduleTab = ({
     return holders.size;
   }, [selectedSchedule?.assignments]);
 
+  const flushPendingScheduleSaves = useCallback(async (
+    schedule: TeamSchedule,
+    action: "publish" | "send",
+  ): Promise<boolean> => {
+    const matchesSchedule = (churchId: string, scheduleId: string) =>
+      churchId === schedule.churchId && scheduleId === schedule.scheduleId;
+    const collectPendingWork = () => {
+      const work = new Set<Promise<unknown>>();
+      const assignmentQueue = assignmentSaveQueuesRef.current.get(schedule.scheduleId);
+      if (assignmentQueue) work.add(assignmentQueue);
+      pendingScheduleEnsuresRef.current.forEach((promise, key) => {
+        try {
+          const parts = JSON.parse(key) as unknown[];
+          if (parts[0] === schedule.churchId && parts[4] === schedule.scheduleId) {
+            work.add(promise);
+          }
+        } catch { /* Ignore unrelated legacy reconciliation keys. */ }
+      });
+      pendingPositionSlotSavesRef.current.forEach((save, key) => {
+        try {
+          const [churchId, scheduleId] = JSON.parse(key) as string[];
+          if (matchesSchedule(churchId, scheduleId) && save.outcome === "saving") {
+            work.add(save.promise);
+          }
+        } catch { /* Ignore unrelated legacy save keys. */ }
+      });
+      pendingScheduleCellEditsRef.current.forEach((edit) => {
+        if (!matchesSchedule(edit.churchId, edit.scheduleId)) return;
+        const key = scheduleCellEditKey(
+          edit.churchId,
+          edit.scheduleId,
+          edit.field,
+          edit.occurrenceId,
+          edit.cellKey,
+        );
+        const worker = scheduleCellSaveWorkersRef.current.get(key);
+        if (worker) work.add(worker);
+      });
+      return [...work];
+    };
+    const hasUnresolvedScheduleEdits = () =>
+      [...pendingScheduleCellEditsRef.current.values()].some((edit) =>
+        matchesSchedule(edit.churchId, edit.scheduleId),
+      ) ||
+      [...pendingPositionSlotSavesRef.current.keys()].some((key) => {
+        try {
+          const [churchId, scheduleId] = JSON.parse(key) as string[];
+          return matchesSchedule(churchId, scheduleId);
+        } catch {
+          return false;
+        }
+      });
+
+    const deadline = performance.now() + 20_000;
+    for (let pass = 0; pass < 10; pass += 1) {
+      const work = collectPendingWork();
+      if (work.length) {
+        const remaining = deadline - performance.now();
+        if (remaining <= 0) break;
+        let timeoutId: number | undefined;
+        const settled = await Promise.race([
+          Promise.allSettled(work).then(() => true),
+          new Promise<boolean>((resolve) => {
+            timeoutId = window.setTimeout(() => resolve(false), remaining);
+          }),
+        ]);
+        if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+        if (!settled) {
+          showToast(
+            `Some schedule changes are still saving. Wait for them to finish before you ${action}.`,
+            "error",
+          );
+          return false;
+        }
+      }
+      // Let any in-flight ensure continuation enqueue its assignment write
+      // before deciding that a staged edit has no active save to wait for.
+      await Promise.resolve();
+      if (!hasUnresolvedScheduleEdits()) return true;
+      if (!collectPendingWork().length) {
+        showToast(
+          `Some schedule changes haven't saved. Retry them or resolve the open conflict before you ${action}.`,
+          "error",
+        );
+        return false;
+      }
+    }
+    showToast(
+      `Some schedule changes are still unresolved. Finish their saves before you ${action}.`,
+      "error",
+    );
+    return false;
+  }, [showToast]);
+
   const updateSchedulePublication = useCallback(async (
     schedule: TeamSchedule,
     published: boolean,
   ): Promise<TeamSchedule | null> => {
     if (
       !canEdit || !churchId || !isPersistedScheduleId(schedule.scheduleId) ||
-      publicationPendingRef.current
+      scheduleActionPendingRef.current
     ) return null;
-    publicationPendingRef.current = true;
+    scheduleActionPendingRef.current = true;
     setIsPublicationPending(true);
     try {
+      if (published && !(await flushPendingScheduleSaves(schedule, "publish"))) {
+        return null;
+      }
       const update = published ? publishTeamSchedule : unpublishTeamSchedule;
       const result = await trackTeamsSave(update(churchId, schedule.scheduleId));
       publishScheduleSnapshot(result.schedule, ["published"]);
@@ -2953,10 +3072,10 @@ const ScheduleTab = ({
       );
       return null;
     } finally {
-      publicationPendingRef.current = false;
+      scheduleActionPendingRef.current = false;
       setIsPublicationPending(false);
     }
-  }, [canEdit, churchId, publishScheduleSnapshot, showToast, trackTeamsSave]);
+  }, [canEdit, churchId, flushPendingScheduleSaves, publishScheduleSnapshot, showToast, trackTeamsSave]);
 
   const handleSchedulePublication = useCallback(async () => {
     if (!selectedSchedule) return;
@@ -2994,9 +3113,16 @@ const ScheduleTab = ({
    */
   const handleSendSchedule = useCallback(async () => {
     if (!selectedSchedule || !churchId || !isPersistedScheduleId(selectedSchedule.scheduleId)) return;
+    if (scheduleActionPendingRef.current) return;
     const scheduleId = selectedSchedule.scheduleId;
-    setIsSendingSchedule(true);
+    scheduleActionPendingRef.current = true;
+    setIsPreparingScheduleSend(true);
+    let sendStarted = false;
     try {
+      if (!(await flushPendingScheduleSaves(selectedSchedule, "send"))) return;
+      setIsPreparingScheduleSend(false);
+      setIsSendingSchedule(true);
+      sendStarted = true;
       const result = await sendTeamSchedule(churchId, scheduleId);
       await refreshScheduleNotificationHistory(scheduleId);
       const unreachable = result.unreachableMemberIds?.length || 0;
@@ -3020,10 +3146,26 @@ const ScheduleTab = ({
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not send this schedule.");
     } finally {
+      scheduleActionPendingRef.current = false;
+      setIsPreparingScheduleSend(false);
       setIsSendingSchedule(false);
-      setIsConfirmingSend(false);
+      if (sendStarted) setIsConfirmingSend(false);
     }
-  }, [churchId, onScheduleSaved, refreshScheduleNotificationHistory, selectedSchedule, showToast]);
+  }, [churchId, flushPendingScheduleSaves, onScheduleSaved, refreshScheduleNotificationHistory, selectedSchedule, showToast]);
+
+  const handleOpenScheduleSms = useCallback(async () => {
+    if (!selectedSchedule || scheduleActionPendingRef.current) return;
+    scheduleActionPendingRef.current = true;
+    setIsPreparingScheduleSend(true);
+    try {
+      if (!(await flushPendingScheduleSaves(selectedSchedule, "send"))) return;
+      setIsConfirmingSend(false);
+      setScheduleInitialSmsOpen(true);
+    } finally {
+      scheduleActionPendingRef.current = false;
+      setIsPreparingScheduleSend(false);
+    }
+  }, [flushPendingScheduleSaves, selectedSchedule]);
 
   const commitAssignment = async ({
     serviceId,
@@ -4640,10 +4782,13 @@ const ScheduleTab = ({
     selectedSchedule,
   ]);
 
-  const copyScheduleLinkToClipboard = useCallback(async (scheduleId: string) => {
+  const getSchedulePublicUrl = useCallback(async (scheduleId: string) => {
     const { publicToken } = await getTeamSchedulePublicLink(churchId, scheduleId);
-    await window.navigator.clipboard.writeText(buildTeamSchedulePublicUrl(publicToken));
+    return buildTeamSchedulePublicUrl(publicToken);
   }, [churchId]);
+  const copySchedulePublicUrl = useCallback(async (publicUrl: string) => {
+    await window.navigator.clipboard.writeText(publicUrl);
+  }, []);
 
   const copyPublicLink = useCallback(async () => {
     if (!canEdit || !selectedSchedule || copyingLinkRef.current) return;
@@ -4656,7 +4801,8 @@ const ScheduleTab = ({
         setPublishAndCopyLink({ schedule, published: false });
         return;
       }
-      await copyScheduleLinkToClipboard(schedule.scheduleId);
+      const publicUrl = await getSchedulePublicUrl(schedule.scheduleId);
+      await copySchedulePublicUrl(publicUrl);
       showToast("View-only link copied to clipboard.", "success");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not create a view-only link. Refresh and try again.");
@@ -4664,7 +4810,7 @@ const ScheduleTab = ({
       copyingLinkRef.current = false;
       setCopyingLink(false);
     }
-  }, [canEdit, copyScheduleLinkToClipboard, ensureActiveSchedule, selectedSchedule, showToast]);
+  }, [canEdit, copySchedulePublicUrl, ensureActiveSchedule, getSchedulePublicUrl, selectedSchedule, showToast]);
 
   const confirmPublishAndCopyLink = useCallback(async () => {
     const pending = publishAndCopyLink;
@@ -4679,22 +4825,27 @@ const ScheduleTab = ({
         schedule = published;
         setPublishAndCopyLink({ schedule, published: true });
       }
+      let publicUrl = pending.publicUrl;
+      if (!publicUrl) {
+        publicUrl = await getSchedulePublicUrl(schedule.scheduleId);
+        setPublishAndCopyLink({ schedule, published: true, publicUrl });
+      }
       try {
-        await copyScheduleLinkToClipboard(schedule.scheduleId);
+        await copySchedulePublicUrl(publicUrl);
         setPublishAndCopyLink(null);
         showToast("Schedule published and view-only link copied.", "success");
       } catch (error) {
-        showApiErrorToast(
-          showToast,
-          error,
-          "Schedule is published, but the link was not copied. Try copying the view-only link again.",
-        );
+        publicLinkInputRef.current?.focus();
+        publicLinkInputRef.current?.select();
+        showApiErrorToast(showToast, error, "Schedule is published. Use the Copy link button or select the link and copy it manually.");
       }
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Schedule is published, but the view-only link could not be prepared. Retry to get the link.");
     } finally {
       copyingLinkRef.current = false;
       setCopyingLink(false);
     }
-  }, [copyScheduleLinkToClipboard, publishAndCopyLink, showToast, updateSchedulePublication]);
+  }, [copySchedulePublicUrl, getSchedulePublicUrl, publishAndCopyLink, showToast, updateSchedulePublication]);
 
 
   // Seed a copy-specific draft and open an explicit create flow. The operator
@@ -6550,7 +6701,7 @@ const ScheduleTab = ({
     publicationButtonLabel = selectedScheduleIsDraft ? "Publishing…" : "Unpublishing…";
   }
   let publishAndCopyButtonLabel = publishAndCopyLink?.published
-    ? "Copy view-only link"
+    ? publishAndCopyLink.publicUrl ? "Copy link" : "Copy view-only link"
     : "Publish & Copy Link";
   if (copyingLink) publishAndCopyButtonLabel = "Copying…";
   if (isPublicationPending) publishAndCopyButtonLabel = "Publishing…";
@@ -6574,9 +6725,9 @@ const ScheduleTab = ({
               variant="cta"
               svg={Send}
               iconSize="sm"
-              disabled={isSendingSchedule || isPublicationPending || sendRecipientCount === 0 || !isPersistedScheduleId(selectedSchedule.scheduleId)}
+              disabled={isScheduleActionPending || sendRecipientCount === 0 || !isPersistedScheduleId(selectedSchedule.scheduleId)}
             >
-              Send schedule
+              {isPreparingScheduleSend ? "Preparing…" : "Send schedule"}
             </Button>
           </PopoverTrigger>
           <PopoverContent
@@ -6591,7 +6742,7 @@ const ScheduleTab = ({
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <Button
                     variant="cta"
-                    disabled={isSendingSchedule || isPublicationPending}
+                    disabled={isScheduleActionPending}
                     isLoading={isPublicationPending}
                     onClick={() => void handlePublishAndContinue()}
                   >
@@ -6599,7 +6750,7 @@ const ScheduleTab = ({
                   </Button>
                   <Button
                     variant="tertiary"
-                    disabled={isSendingSchedule || isPublicationPending}
+                    disabled={isScheduleActionPending}
                     onClick={() => setIsConfirmingSend(false)}
                   >
                     Cancel
@@ -6617,24 +6768,22 @@ const ScheduleTab = ({
                     variant="cta"
                     svg={Send}
                     iconSize="sm"
-                    disabled={isSendingSchedule || isPublicationPending}
+                    disabled={isScheduleActionPending}
                     onClick={handleSendSchedule}
                   >
                     {isSendingSchedule ? "Sending…" : "Yes, send email"}
                   </Button>
                   <Button
                     variant="secondary"
-                    disabled={isSendingSchedule || isPublicationPending || !isPersistedScheduleId(selectedSchedule.scheduleId)}
-                    onClick={() => {
-                      setIsConfirmingSend(false);
-                      setScheduleInitialSmsOpen(true);
-                    }}
+                    disabled={isScheduleActionPending || !isPersistedScheduleId(selectedSchedule.scheduleId)}
+                    isLoading={isPreparingScheduleSend}
+                    onClick={() => void handleOpenScheduleSms()}
                   >
                     Review volunteers for text messages
                   </Button>
                   <Button
                     variant="tertiary"
-                    disabled={isSendingSchedule || isPublicationPending}
+                    disabled={isScheduleActionPending}
                     onClick={() => setIsConfirmingSend(false)}
                   >
                     Cancel
@@ -6770,6 +6919,8 @@ const ScheduleTab = ({
           {canShowScheduleWorkspace ? (
             <section
               ref={scheduleWorkspaceRef}
+              inert={isScheduleActionPending}
+              aria-busy={isScheduleActionPending}
               className={cn(panelClassName, scheduleWorkspacePanelClassName)}
             >
               <div className="shrink-0">
@@ -6803,7 +6954,7 @@ const ScheduleTab = ({
                       {canEdit ? (
                         <Button
                           variant={selectedSchedule.published === false ? "secondary" : "tertiary"}
-                          disabled={isPublicationPending}
+                          disabled={isScheduleActionPending}
                           isLoading={isPublicationPending}
                           onClick={() => void handleSchedulePublication()}
                         >
@@ -7750,6 +7901,27 @@ const ScheduleTab = ({
                 size="sm"
                 busy={isPublicationPending || copyingLink}
               >
+                {publishAndCopyLink?.publicUrl ? (
+                  <div className="mb-4 space-y-1">
+                    <label htmlFor="published-team-schedule-link" className="text-sm font-medium text-gray-200">
+                      View-only schedule link
+                    </label>
+                    <input
+                      id="published-team-schedule-link"
+                      ref={publicLinkInputRef}
+                      type="text"
+                      readOnly
+                      value={publishAndCopyLink.publicUrl}
+                      onFocus={(event) => event.currentTarget.select()}
+                      onClick={(event) => event.currentTarget.select()}
+                      className="w-full rounded border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-gray-100"
+                      aria-describedby="published-team-schedule-link-help"
+                    />
+                    <p id="published-team-schedule-link-help" className="text-xs text-gray-400">
+                      If copying doesn't work, select this link and copy it manually.
+                    </p>
+                  </div>
+                ) : null}
                 <div className="flex justify-end gap-2 text-sm">
                   <Button
                     variant="secondary"

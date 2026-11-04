@@ -65,6 +65,7 @@ const {
   setServerFirestoreForTests,
 } = await import("../authService.js");
 import { createAppSessionGuards } from "./appSessionGuards.js";
+import { runPostCommitSideEffect } from "./teamsAuthHandlers.js";
 import {
   createFakeSmsProvider,
   setSmsProviderForServerTests,
@@ -90,6 +91,35 @@ const createSseClient = () => {
     },
   };
 };
+
+test("post-commit schedule deliveries retry and never surface failure after commit", async () => {
+  let attempts = 0;
+  const errors = [];
+  const recovered = await runPostCommitSideEffect(
+    "publication test",
+    async () => {
+      attempts += 1;
+      if (attempts < 2) throw new Error("temporary outage");
+    },
+    { retryDelaysMs: [0], onError: (message, error) => errors.push({ message, error }) },
+  );
+  assert.equal(recovered, true);
+  assert.equal(attempts, 2);
+  assert.match(errors[0].message, /attempt 1\/2/);
+
+  attempts = 0;
+  const exhausted = await runPostCommitSideEffect(
+    "publication test",
+    async () => {
+      attempts += 1;
+      throw new Error("persistent outage");
+    },
+    { retryDelaysMs: [0, 0], onError: (message, error) => errors.push({ message, error }) },
+  );
+  assert.equal(exhausted, false);
+  assert.equal(attempts, 3);
+  assert.match(errors.at(-1).message, /attempt 3\/3/);
+});
 
 const callStreamHandler = async (
   handler,

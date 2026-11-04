@@ -188,6 +188,31 @@ const BLOCKOUT_HISTORY_RETENTION_DAYS = 365;
 // remaining far above the number of one-time helpers a service plan can need.
 const MAX_TEAM_SCHEDULE_GUESTS = 200;
 
+export const runPostCommitSideEffect = async (
+  description,
+  operation,
+  {
+    retryDelaysMs = [250, 1000],
+    onError = (message, error) => console.error(message, error),
+  } = {},
+) => {
+  const attempts = retryDelaysMs.length + 1;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await operation();
+      return true;
+    } catch (error) {
+      try {
+        onError(`Post-commit ${description} failed (attempt ${attempt}/${attempts}).`, error);
+      } catch { /* Logging failures must not change a committed response. */ }
+      if (attempt < attempts) {
+        await new Promise((resolve) => setTimeout(resolve, retryDelaysMs[attempt - 1]));
+      }
+    }
+  }
+  return false;
+};
+
 export const createTeamsAuthHandlers = ({
   COLLECTIONS,
   scheduleIntakeSubmissionDigest,
@@ -13093,18 +13118,29 @@ export const createTeamsAuthHandlers = ({
     }
 
     if (result.changed) {
-      await addSecurityEvent({
+      const securityEvent = {
+        eventId: createId("event"),
+        createdAt: updatedAt,
         type: published ? "team_schedule_published" : "team_schedule_unpublished",
         churchId,
         userId: actorUid,
         scheduleId,
-      });
-      emitTeamsEvent(churchId, "schedule-updated", { schedule: result.schedule });
-      await emitPublicPlansForScheduleOccurrences({
-        churchId,
-        occurrences: result.schedule.occurrences,
-        revision: result.schedule.updatedAt || updatedAt,
-      });
+      };
+      await Promise.all([
+        runPostCommitSideEffect("schedule publication security event", () =>
+          addSecurityEvent(securityEvent),
+        ),
+        runPostCommitSideEffect("schedule publication Teams event", () =>
+          emitTeamsEvent(churchId, "schedule-updated", { schedule: result.schedule }),
+        ),
+        runPostCommitSideEffect("public service-plan invalidation", () =>
+          emitPublicPlansForScheduleOccurrences({
+            churchId,
+            occurrences: result.schedule.occurrences,
+            revision: result.schedule.updatedAt || updatedAt,
+          }),
+        ),
+      ]);
     }
     return result.schedule;
   };
