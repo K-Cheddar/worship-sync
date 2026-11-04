@@ -213,6 +213,23 @@ export const runPostCommitSideEffect = async (
   return false;
 };
 
+const TEAM_SCHEDULE_PUBLICATION_EVENT_RECOVERY_INTERVAL_MS = 30_000;
+const TEAM_SCHEDULE_PUBLICATION_EVENT_RECOVERY_LIMIT = 100;
+const TEAM_SCHEDULE_PUBLICATION_EVENT_LEASE_MS = 60_000;
+let publicationEventDeliveryForServerTests = null;
+
+export const setTeamSchedulePublicationEventDeliveryForServerTests = (handler = null) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "setTeamSchedulePublicationEventDeliveryForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  if (handler !== null && typeof handler !== "function") {
+    throw new TypeError("The publication event test handler must be a function or null.");
+  }
+  publicationEventDeliveryForServerTests = handler;
+};
+
 export const createTeamsAuthHandlers = ({
   COLLECTIONS,
   scheduleIntakeSubmissionDigest,
@@ -13036,6 +13053,209 @@ export const createTeamsAuthHandlers = ({
     }
   };
 
+  const publicationEventInFlight = new Set();
+  const publicationEventRetryTimers = new Map();
+  let publicationEventRecoveryTimer = null;
+  let publicationEventRecoveryInFlight = false;
+  let publicationEventRecoveryCursor = "";
+
+  const publicationEventRetryDelay = (attemptCount) =>
+    Math.min(15 * 60_000, 5_000 * (2 ** Math.min(Math.max(0, attemptCount - 1), 8)));
+
+  const deliverTeamSchedulePublicationEvent = async (event) => {
+    if (publicationEventDeliveryForServerTests) {
+      await publicationEventDeliveryForServerTests(event);
+      return;
+    }
+    if (event.kind === "security_audit") {
+      await addSecurityEvent(event.securityEvent);
+      return;
+    }
+    const current = await getDoc(COLLECTIONS.teamSchedules, event.scheduleId);
+    if (event.kind === "teams_schedule_update") {
+      if (!current || current.churchId !== event.churchId || current.archivedAt) {
+        emitTeamsEvent(event.churchId, "schedule-removed", {
+          scheduleId: event.scheduleId,
+        });
+      } else {
+        emitTeamsEvent(event.churchId, "schedule-updated", { schedule: current });
+      }
+      return;
+    }
+    if (event.kind === "public_plan_invalidation") {
+      await emitPublicPlansForScheduleOccurrences({
+        churchId: event.churchId,
+        occurrences: current?.occurrences || event.occurrences || [],
+        revision: current?.updatedAt || event.revision || event.createdAt,
+      });
+      return;
+    }
+    throw new Error(`Unknown team schedule publication event kind: ${event.kind}`);
+  };
+
+  const claimTeamSchedulePublicationEvent = async (eventId) => {
+    const db = requireFirestore();
+    const leaseToken = createId("schedulePublicationLease");
+    const now = Date.now();
+    const claimedAt = new Date(now).toISOString();
+    const leaseExpiresAt = new Date(now + TEAM_SCHEDULE_PUBLICATION_EVENT_LEASE_MS).toISOString();
+    const isFuture = (value) => {
+      const timestamp = new Date(value || "").getTime();
+      return Number.isFinite(timestamp) && timestamp > now;
+    };
+    if (db?.runTransaction) {
+      return db.runTransaction(async (transaction) => {
+        const ref = db.collection(COLLECTIONS.teamSchedulePublicationEvents).doc(eventId);
+        const snapshot = await transaction.get(ref);
+        if (!snapshot.exists) return null;
+        const current = { id: snapshot.id, ...snapshot.data() };
+        if (
+          current.status !== "pending" || isFuture(current.nextAttemptAt) ||
+          isFuture(current.leaseExpiresAt)
+        ) return null;
+        const attemptCount = Number(current.attemptCount || 0) + 1;
+        transaction.update(ref, {
+          attemptCount,
+          lastAttemptAt: claimedAt,
+          leaseToken,
+          leaseExpiresAt,
+        });
+        return { ...current, attemptCount, lastAttemptAt: claimedAt, leaseToken, leaseExpiresAt };
+      });
+    }
+    const current = await getDoc(COLLECTIONS.teamSchedulePublicationEvents, eventId);
+    if (
+      !current || current.status !== "pending" || isFuture(current.nextAttemptAt) ||
+      isFuture(current.leaseExpiresAt)
+    ) return null;
+    const attemptCount = Number(current.attemptCount || 0) + 1;
+    await updateDocFields(COLLECTIONS.teamSchedulePublicationEvents, eventId, {
+      attemptCount,
+      lastAttemptAt: claimedAt,
+      leaseToken,
+      leaseExpiresAt,
+    });
+    return { ...current, attemptCount, lastAttemptAt: claimedAt, leaseToken, leaseExpiresAt };
+  };
+
+  const finishTeamSchedulePublicationEvent = async (event, fields) => {
+    const db = requireFirestore();
+    if (db?.runTransaction) {
+      await db.runTransaction(async (transaction) => {
+        const ref = db.collection(COLLECTIONS.teamSchedulePublicationEvents).doc(event.id);
+        const snapshot = await transaction.get(ref);
+        if (!snapshot.exists || snapshot.data()?.leaseToken !== event.leaseToken) return;
+        transaction.update(ref, fields);
+      });
+      return;
+    }
+    const current = await getDoc(COLLECTIONS.teamSchedulePublicationEvents, event.id);
+    if (!current || current.leaseToken !== event.leaseToken) return;
+    await updateDocFields(COLLECTIONS.teamSchedulePublicationEvents, event.id, fields);
+  };
+
+  const scheduleTeamSchedulePublicationEventRetry = (eventId, delayMs) => {
+    const previous = publicationEventRetryTimers.get(eventId);
+    if (previous) clearTimeout(previous);
+    const timer = setTimeout(() => {
+      publicationEventRetryTimers.delete(eventId);
+      void processTeamSchedulePublicationEvent(eventId);
+    }, delayMs);
+    timer.unref?.();
+    publicationEventRetryTimers.set(eventId, timer);
+  };
+
+  const processTeamSchedulePublicationEvent = async (eventId) => {
+    if (publicationEventInFlight.has(eventId)) return;
+    publicationEventInFlight.add(eventId);
+    let claimed = null;
+    try {
+      claimed = await claimTeamSchedulePublicationEvent(eventId);
+      if (!claimed) return;
+      const delivered = await runPostCommitSideEffect(
+        `schedule publication ${claimed.kind}`,
+        () => deliverTeamSchedulePublicationEvent(claimed),
+      );
+      if (delivered) {
+        await finishTeamSchedulePublicationEvent(claimed, {
+          status: "completed",
+          completedAt: nowIso(),
+          leaseToken: "",
+          leaseExpiresAt: "",
+          nextAttemptAt: "",
+          lastErrorName: "",
+        });
+        const timer = publicationEventRetryTimers.get(eventId);
+        if (timer) clearTimeout(timer);
+        publicationEventRetryTimers.delete(eventId);
+      } else {
+        const delayMs = publicationEventRetryDelay(claimed.attemptCount);
+        const nextAttemptAt = new Date(Date.now() + delayMs).toISOString();
+        await finishTeamSchedulePublicationEvent(claimed, {
+          status: "pending",
+          nextAttemptAt,
+          lastErrorName: "PostCommitDeliveryFailed",
+          leaseToken: "",
+          leaseExpiresAt: "",
+        });
+        scheduleTeamSchedulePublicationEventRetry(eventId, delayMs);
+      }
+    } catch (error) {
+      console.error("Could not process a durable team schedule publication event.", error);
+      if (claimed) {
+        const delayMs = publicationEventRetryDelay(claimed.attemptCount);
+        try {
+          await finishTeamSchedulePublicationEvent(claimed, {
+            status: "pending",
+            nextAttemptAt: new Date(Date.now() + delayMs).toISOString(),
+            lastErrorName: error?.name || "Error",
+            leaseToken: "",
+            leaseExpiresAt: "",
+          });
+        } catch (releaseError) {
+          console.error("Could not release a durable team schedule publication event lease.", releaseError);
+        }
+        scheduleTeamSchedulePublicationEventRetry(eventId, delayMs);
+      }
+    } finally {
+      publicationEventInFlight.delete(eventId);
+    }
+  };
+
+  const recoverPendingTeamSchedulePublicationEvents = async () => {
+    if (publicationEventRecoveryInFlight) return;
+    publicationEventRecoveryInFlight = true;
+    try {
+      const events = await queryDocs(
+        COLLECTIONS.teamSchedulePublicationEvents,
+        [{ field: "status", value: "pending" }],
+        {
+          limit: TEAM_SCHEDULE_PUBLICATION_EVENT_RECOVERY_LIMIT,
+          orderById: true,
+          startAfterId: publicationEventRecoveryCursor,
+        },
+      );
+      publicationEventRecoveryCursor = events.length === TEAM_SCHEDULE_PUBLICATION_EVENT_RECOVERY_LIMIT
+        ? events.at(-1)?.id || ""
+        : "";
+      await Promise.all(events.map((event) => processTeamSchedulePublicationEvent(event.id)));
+    } catch (error) {
+      console.error("Could not scan durable team schedule publication events.", error);
+    } finally {
+      publicationEventRecoveryInFlight = false;
+    }
+  };
+
+  const startTeamSchedulePublicationEventRecovery = () => {
+    if (publicationEventRecoveryTimer) return;
+    void recoverPendingTeamSchedulePublicationEvents();
+    publicationEventRecoveryTimer = setInterval(
+      () => void recoverPendingTeamSchedulePublicationEvents(),
+      TEAM_SCHEDULE_PUBLICATION_EVENT_RECOVERY_INTERVAL_MS,
+    );
+    publicationEventRecoveryTimer.unref?.();
+  };
+
   const updateTeamSchedulePublication = async (req, published) => {
     const { churchId, scheduleId } = req.params;
     const existing = await assertTeamEntityInChurch(
@@ -13051,6 +13271,53 @@ export const createTeamsAuthHandlers = ({
     const actorUid = sessionActorUid(admin);
     const updatedAt = nowIso();
     const update = { published, updatedAt, updatedByUid: actorUid };
+    const publicationId = createId("teamSchedulePublication");
+    const securityEvent = {
+      eventId: createId("event"),
+      createdAt: updatedAt,
+      type: published ? "team_schedule_published" : "team_schedule_unpublished",
+      churchId,
+      userId: actorUid,
+      scheduleId,
+    };
+    const buildPublicationEvents = (schedule) => {
+      const base = {
+        churchId,
+        scheduleId,
+        createdAt: updatedAt,
+        status: "pending",
+        attemptCount: 0,
+        nextAttemptAt: updatedAt,
+        leaseToken: "",
+        leaseExpiresAt: "",
+      };
+      const minimalOccurrences = (Array.isArray(schedule.occurrences) ? schedule.occurrences : [])
+        .map((occurrence) => ({
+          startsAt: occurrence?.startsAt || "",
+          serviceId: occurrence?.serviceId || "",
+          ...(Array.isArray(occurrence?.serviceIds) ? { serviceIds: occurrence.serviceIds } : {}),
+        }));
+      return [
+        {
+          ...base,
+          id: `${publicationId}_audit`,
+          kind: "security_audit",
+          securityEvent,
+        },
+        {
+          ...base,
+          id: `${publicationId}_teams`,
+          kind: "teams_schedule_update",
+        },
+        {
+          ...base,
+          id: `${publicationId}_public_plans`,
+          kind: "public_plan_invalidation",
+          revision: updatedAt,
+          occurrences: minimalOccurrences,
+        },
+      ];
+    };
     const validateCurrent = async (current, readTeam) => {
       if (!current || current.churchId !== churchId) {
         throw httpError(404, "Schedule not found.");
@@ -13094,8 +13361,18 @@ export const createTeamsAuthHandlers = ({
         if ((current.published !== false) === published) {
           return { schedule: current, changed: false };
         }
+        const events = buildPublicationEvents(current);
         transaction.update(scheduleRef, update);
-        return { schedule: { ...current, ...update }, changed: true };
+        events.forEach((event) => transaction.set(
+          db.collection(COLLECTIONS.teamSchedulePublicationEvents).doc(event.id),
+          event,
+          { merge: false },
+        ));
+        return {
+          schedule: { ...current, ...update },
+          changed: true,
+          operationIds: events.map((event) => event.id),
+        };
       });
     } else {
       result = await enqueueInMemoryScheduleSave(scheduleId, () =>
@@ -13111,36 +13388,28 @@ export const createTeamsAuthHandlers = ({
               return { schedule: current, changed: false };
             }
             await updateDocFields(COLLECTIONS.teamSchedules, scheduleId, update);
-            return { schedule: { ...current, ...update }, changed: true };
+            const events = buildPublicationEvents(current);
+            try {
+              await Promise.all(events.map((event) =>
+                setDoc(COLLECTIONS.teamSchedulePublicationEvents, event.id, event),
+              ));
+            } catch (error) {
+              console.error("Could not persist in-memory schedule publication events.", error);
+            }
+            return {
+              schedule: { ...current, ...update },
+              changed: true,
+              operationIds: events.map((event) => event.id),
+            };
           },
         ),
       );
     }
 
     if (result.changed) {
-      const securityEvent = {
-        eventId: createId("event"),
-        createdAt: updatedAt,
-        type: published ? "team_schedule_published" : "team_schedule_unpublished",
-        churchId,
-        userId: actorUid,
-        scheduleId,
-      };
-      await Promise.all([
-        runPostCommitSideEffect("schedule publication security event", () =>
-          addSecurityEvent(securityEvent),
-        ),
-        runPostCommitSideEffect("schedule publication Teams event", () =>
-          emitTeamsEvent(churchId, "schedule-updated", { schedule: result.schedule }),
-        ),
-        runPostCommitSideEffect("public service-plan invalidation", () =>
-          emitPublicPlansForScheduleOccurrences({
-            churchId,
-            occurrences: result.schedule.occurrences,
-            revision: result.schedule.updatedAt || updatedAt,
-          }),
-        ),
-      ]);
+      await Promise.all((result.operationIds || []).map((eventId) =>
+        processTeamSchedulePublicationEvent(eventId),
+      ));
     }
     return result.schedule;
   };
@@ -13156,6 +13425,8 @@ export const createTeamsAuthHandlers = ({
       saveBlockouts: saveVolunteerBlockouts, getAvailability: getVolunteerAvailability,
       submitAvailability: submitVolunteerAvailability,
     }),
+    recoverPendingTeamSchedulePublicationEvents,
+    startTeamSchedulePublicationEventRecovery,
     prepareAvailabilityNotificationRecipients,
     prepareScheduleInitialSmsRecipients,
     resolveAvailabilityNotificationContext,

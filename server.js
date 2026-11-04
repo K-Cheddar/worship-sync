@@ -30,6 +30,7 @@ import {
   assertServerCsrf,
   startIntakeSubmissionDigestRecovery,
   startScheduleResponseDigestRecovery,
+  startTeamSchedulePublicationEventRecovery,
   startScheduleInitialSmsBatchDispatcher,
   stopScheduleInitialSmsBatchDispatcher,
   setDoc,
@@ -4191,6 +4192,7 @@ let shutdownStarted = false;
 const startServerBackgroundWork = () => {
   startIntakeSubmissionDigestRecovery();
   startScheduleResponseDigestRecovery();
+  startTeamSchedulePublicationEventRecovery();
   startScheduleInitialSmsBatchDispatcher();
 };
 

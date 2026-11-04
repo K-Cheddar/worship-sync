@@ -65,7 +65,10 @@ const {
   setServerFirestoreForTests,
 } = await import("../authService.js");
 import { createAppSessionGuards } from "./appSessionGuards.js";
-import { runPostCommitSideEffect } from "./teamsAuthHandlers.js";
+import {
+  runPostCommitSideEffect,
+  setTeamSchedulePublicationEventDeliveryForServerTests,
+} from "./teamsAuthHandlers.js";
 import {
   createFakeSmsProvider,
   setSmsProviderForServerTests,
@@ -425,6 +428,15 @@ const callHandler = async (
   return res;
 };
 
+const publishTestSchedule = async (context, scheduleId) => {
+  const result = await callHandler(authHandlers.publishTeamSchedule, {
+    context,
+    params: { scheduleId },
+  });
+  assert.equal(result.statusCode, 200, JSON.stringify(result.payload));
+  return result.payload.schedule;
+};
+
 const previewMemberCsv = async (context, csv, settings = {}) => {
   const inspected = await callHandler(authHandlers.inspectPortableImport, {
     context, body: { type: "members", csv },
@@ -571,6 +583,7 @@ test("schedule creation, changes, and generation require a configured church tim
   };
   const created = await callHandler(authHandlers.createTeamSchedule, { context, body });
   assert.equal(created.statusCode, 200);
+  await publishTestSchedule(context, created.payload.schedule.scheduleId);
 
   await setDoc(COLLECTIONS.churches, context.churchId, { serviceTimeZone: "" }, { merge: true });
   const changed = await callHandler(authHandlers.updateTeamSchedule, {
@@ -4885,6 +4898,8 @@ test("schedule assignments support schedule-only guests without exposing contact
   assert.equal(duplicate.statusCode, 400);
   assert.match(duplicate.payload.errorMessage, /one position per service/i);
 
+  await publishTestSchedule(context, scheduleId);
+
   const link = await callHandler(authHandlers.getTeamSchedulePublicLink, {
     context,
     params: { scheduleId },
@@ -6180,6 +6195,8 @@ test("service plan assignments expose only the selected plan's serving roster", 
     },
   });
 
+  await publishTestSchedule(context, scheduleId);
+
   const result = await callHandler(authHandlers.getServicePlanAssignments, {
     context,
     params: { planKey },
@@ -7040,6 +7057,8 @@ test("public schedule link returns a sanitized, name-resolved snapshot", async (
     { merge: true },
   );
 
+  await publishTestSchedule(context, scheduleId);
+
   // Admin mints the public link (idempotent: same token on repeat).
   const link = await callHandler(authHandlers.getTeamSchedulePublicLink, {
     context,
@@ -7223,6 +7242,8 @@ test("public schedule disambiguates duplicate first names with a last initial", 
       shadowKind: "shadow",
     },
   });
+
+  await publishTestSchedule(context, scheduleId);
 
   const link = await callHandler(authHandlers.getTeamSchedulePublicLink, {
     context,
@@ -12083,6 +12104,48 @@ test("team schedule publishing toggles visibility and preserves concurrent and s
   ));
 });
 
+test("failed publication follow-ups stay durable and recover after the HTTP request", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("schedule_publication_outbox");
+  const assigned = await seedAssignedSchedule(context, "publication_outbox");
+  t.mock.method(console, "error", () => {});
+  setTeamSchedulePublicationEventDeliveryForServerTests(async () => {
+    throw new Error("temporary delivery outage");
+  });
+  t.after(() => setTeamSchedulePublicationEventDeliveryForServerTests(null));
+
+  const response = await callHandler(authHandlers.publishTeamSchedule, {
+    context,
+    params: { scheduleId: assigned.scheduleId },
+    body: {},
+  });
+  assert.equal(response.statusCode, 200, JSON.stringify(response.payload));
+  assert.equal(response.payload.schedule.published, true);
+
+  const pending = await queryDocs(COLLECTIONS.teamSchedulePublicationEvents, [
+    { field: "scheduleId", value: assigned.scheduleId },
+  ]);
+  assert.equal(pending.length, 3);
+  assert.ok(pending.every((event) => event.status === "pending"));
+  const retryNow = new Date(Date.now() - 1_000).toISOString();
+  await Promise.all(pending.map((event) => setDoc(
+    COLLECTIONS.teamSchedulePublicationEvents,
+    event.id,
+    { ...event, nextAttemptAt: retryNow },
+  )));
+
+  setTeamSchedulePublicationEventDeliveryForServerTests(null);
+  await authHandlers.recoverPendingTeamSchedulePublicationEvents();
+
+  const recovered = await queryDocs(COLLECTIONS.teamSchedulePublicationEvents, [
+    { field: "scheduleId", value: assigned.scheduleId },
+  ]);
+  assert.ok(recovered.every((event) => event.status === "completed"));
+  const audit = recovered.find((event) => event.kind === "security_audit");
+  assert.ok(audit);
+  assert.equal((await getDoc(COLLECTIONS.securityEvents, audit.securityEvent.eventId))?.type, "team_schedule_published");
+});
+
 test("team schedule publication enforces CSRF, current Team edit access, and active schedules", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const admin = await createAdminContext("schedule_publication_permissions");
@@ -12310,6 +12373,8 @@ test("my assignments attaches the plan for a combined occurrence", async (t) => 
   );
   assert.equal(assigned.statusCode, 200);
 
+  await publishTestSchedule(context, schedule.payload.schedule.scheduleId);
+
   const res = await callHandler(authHandlers.getMyTeamAssignments, { context });
   assert.equal(res.statusCode, 200);
   const entry = (res.payload.occurrences || [])[0];
@@ -12377,6 +12442,8 @@ test("my assignments includes occurrence name and published plan share urls", as
     },
   );
   assert.equal(assigned.statusCode, 200);
+
+  await publishTestSchedule(context, schedule.payload.schedule.scheduleId);
 
   const planKey = "svc-morning@2026-08-10";
   const saved = await callHandler(authHandlers.saveServicePlan, {
@@ -12590,6 +12657,8 @@ test("my blockout dates accepts a date the member is already scheduled for", asy
       memberId,
     },
   });
+
+  await publishTestSchedule(context, schedule.payload.schedule.scheduleId);
 
   const res = await callHandler(authHandlers.updateMyBlockoutDates, {
     context,
@@ -13030,11 +13099,17 @@ const seedAssignedSchedule = async (
   };
 };
 
+const seedPublishedAssignedSchedule = async (context, suffix, options) => {
+  const assigned = await seedAssignedSchedule(context, suffix, options);
+  await publishTestSchedule(context, assigned.scheduleId);
+  return assigned;
+};
+
 test("responding records the answer and leaves the assignment in place", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("respond_ok");
   const { memberId, scheduleId, occurrenceId, cellKey } =
-    await seedAssignedSchedule(context, "ok");
+    await seedPublishedAssignedSchedule(context, "ok");
 
   const res = await callHandler(authHandlers.respondToMyAssignment, {
     context,
@@ -13070,7 +13145,7 @@ test("responding records the answer and leaves the assignment in place", async (
 test("accept pending applies only upcoming primary slots across published schedules", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("accept_pending_scope");
-  const { memberId, scheduleId } = await seedAssignedSchedule(context, "accept_pending_scope");
+  const { memberId, scheduleId } = await seedPublishedAssignedSchedule(context, "accept_pending_scope");
   const futureDate = calendarDaysFromToday(14);
   const pastDate = calendarDaysFromToday(-14);
   const futureOccurrence = `bulk-future@${futureDate}`;
@@ -13248,7 +13323,7 @@ test("accept pending rejects missing, archived, and ambiguous volunteer identiti
 test("accept pending reports success when post-commit digest queuing fails", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("accept_pending_digest_failure");
-  const { scheduleId, occurrenceId, cellKey, memberId } = await seedAssignedSchedule(
+  const { scheduleId, occurrenceId, cellKey, memberId } = await seedPublishedAssignedSchedule(
     context,
     "accept_pending_digest_failure",
   );
@@ -13274,7 +13349,7 @@ test("responding refuses a slot the caller does not hold", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("respond_other");
   const { scheduleId, occurrenceId, cellKey, media } =
-    await seedAssignedSchedule(context, "other");
+    await seedPublishedAssignedSchedule(context, "other");
 
   // An owner moves the slot to someone else after the page was loaded.
   const other = await callHandler(authHandlers.createTeamRosterMember, {
@@ -13330,7 +13405,7 @@ test("an emailed token answers one assignment without any session", async (t) =>
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("respond_token");
   const { memberId, scheduleId, occurrenceId, cellKey } =
-    await seedAssignedSchedule(context, "token");
+    await seedPublishedAssignedSchedule(context, "token");
 
   const url = authHandlers.buildAssignmentResponseUrl({
     churchId: context.churchId,
@@ -13374,7 +13449,7 @@ test("an emailed token answers one assignment without any session", async (t) =>
 test("a published schedule guest can still answer from the schedule-specific link", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("respond_guest_token");
-  const { scheduleId, occurrenceId, cellKey } = await seedAssignedSchedule(
+  const { scheduleId, occurrenceId, cellKey } = await seedPublishedAssignedSchedule(
     context,
     "guesttoken",
   );
@@ -13646,7 +13721,7 @@ test("an emailed token stops working once the slot moves on", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("respond_token_moved");
   const { memberId, scheduleId, occurrenceId, cellKey, media } =
-    await seedAssignedSchedule(context, "tokenmoved");
+    await seedPublishedAssignedSchedule(context, "tokenmoved");
 
   const url = authHandlers.buildAssignmentResponseUrl({
     churchId: context.churchId,
@@ -13685,7 +13760,7 @@ test("an emailed token stops working once the slot moves on", async (t) => {
 test("declining an assignment records a vacancy without messaging the volunteer who declined", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("decline_vacancy_no_invite");
-  const { memberId, scheduleId } = await seedAssignedSchedule(
+  const { memberId, scheduleId } = await seedPublishedAssignedSchedule(
     context,
     "declinevacancy",
   );
@@ -13720,8 +13795,8 @@ test("declining an assignment records a vacancy without messaging the volunteer 
 test("Phase 3B schedule messaging uses current Team ownership through production composition", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const admin = await createAdminContext("phase3b");
-  const worship = await seedAssignedSchedule(admin, "phase3b_worship", { link: false });
-  const av = await seedAssignedSchedule(admin, "phase3b_av", { link: false });
+  const worship = await seedPublishedAssignedSchedule(admin, "phase3b_worship", { link: false });
+  const av = await seedPublishedAssignedSchedule(admin, "phase3b_av", { link: false });
   const manager = async (suffix, teamScopes, teams = "none") => createHumanContext(`phase3b_${suffix}`, {
     churchId: admin.churchId, role: "member", appAccess: "view", permissions: { teams, teamScopes },
   });
@@ -14052,7 +14127,7 @@ test("Phase 3C schedule SMS review uses current Team access and never sends", as
 test("sending a schedule notifies once and is idempotent", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("send_sched");
-  const { memberId, scheduleId, occurrenceId } = await seedAssignedSchedule(
+  const { memberId, scheduleId, occurrenceId } = await seedPublishedAssignedSchedule(
     context,
     "send",
   );
@@ -14105,8 +14180,8 @@ test("sending a schedule notifies once and is idempotent", async (t) => {
 test("schedule email sending checks assignment position ownership before side effects", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const admin = await createAdminContext("send_position_ownership");
-  const valid = await seedAssignedSchedule(admin, "send_position_valid", { link: false });
-  const otherTeam = await seedAssignedSchedule(admin, "send_position_other", { link: false });
+  const valid = await seedPublishedAssignedSchedule(admin, "send_position_valid", { link: false });
+  const otherTeam = await seedPublishedAssignedSchedule(admin, "send_position_other", { link: false });
   const scopedManager = await createHumanContext("send_position_scoped", {
     churchId: admin.churchId,
     role: "member",
@@ -14154,7 +14229,7 @@ test("schedule email sending checks assignment position ownership before side ef
     assert.equal(authorizedSend.payload.notified, 1, "combined occurrences remain sendable");
     assert.equal(emails.length, 2);
 
-    const mixedSchedule = await seedAssignedSchedule(admin, "send_position_mixed", { link: false });
+    const mixedSchedule = await seedPublishedAssignedSchedule(admin, "send_position_mixed", { link: false });
     await setDoc("teamRosterMembers", mixedSchedule.memberId, { email: "mixed@church.test" }, { merge: true });
     const mixed = await getDoc("teamSchedules", mixedSchedule.scheduleId);
     await setDoc("teamSchedules", mixedSchedule.scheduleId, {
@@ -14179,7 +14254,7 @@ test("schedule email sending checks assignment position ownership before side ef
       { field: "sourceId", value: mixedSchedule.scheduleId },
     ])).length, 0, "failed authorization creates no send-related intent");
 
-    const unknownSchedule = await seedAssignedSchedule(admin, "send_position_unknown", { link: false });
+    const unknownSchedule = await seedPublishedAssignedSchedule(admin, "send_position_unknown", { link: false });
     await setDoc("teamRosterMembers", unknownSchedule.memberId, { email: "unknown@church.test" }, { merge: true });
     const unknown = await getDoc("teamSchedules", unknownSchedule.scheduleId);
     await setDoc("teamSchedules", unknownSchedule.scheduleId, {
@@ -14211,7 +14286,7 @@ test("schedule email sending checks assignment position ownership before side ef
 test("assignment email uses the church timezone across UTC midnight", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("send_timezone_midnight");
-  const { scheduleId } = await seedAssignedSchedule(
+  const { scheduleId } = await seedPublishedAssignedSchedule(
     context,
     "timezone_midnight",
     { serviceDate: "2026-10-10" },
@@ -14248,7 +14323,7 @@ test("sending reports who could not be reached instead of skipping quietly", asy
   const context = await createAdminContext("send_unreachable");
   // No email and no linked account — the common shape for a volunteer added
   // straight to the roster.
-  const { memberId: strandedId, scheduleId } = await seedAssignedSchedule(
+  const { memberId: strandedId, scheduleId } = await seedPublishedAssignedSchedule(
     context,
     "unreach",
     { link: false },
@@ -14268,7 +14343,7 @@ test("sending reports who could not be reached instead of skipping quietly", asy
 test("sending skips someone who muted schedule assignments", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("send_muted");
-  const { memberId, scheduleId } = await seedAssignedSchedule(context, "muted");
+  const { memberId, scheduleId } = await seedPublishedAssignedSchedule(context, "muted");
   // Link the roster member to the calling account, then mute the category.
   await callHandler(authHandlers.linkTeamRosterMember, {
     context,
@@ -14298,7 +14373,7 @@ test("one emailed link shows every service and can answer them all", async (t) =
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("respond_all");
   const { memberId, scheduleId, occurrenceId, cellKey, media } =
-    await seedAssignedSchedule(context, "all");
+    await seedPublishedAssignedSchedule(context, "all");
   const firstDate = calendarDaysFromToday(14);
   const secondDate = calendarDaysFromToday(21);
 
@@ -14394,7 +14469,7 @@ test("clearing a slot drops the answer that was about it", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("prune_stale");
   const { memberId, scheduleId, occurrenceId, cellKey } =
-    await seedAssignedSchedule(context, "prune");
+    await seedPublishedAssignedSchedule(context, "prune");
 
   await callHandler(authHandlers.respondToMyAssignment, {
     context,
@@ -14433,7 +14508,7 @@ test("clearing a slot drops the answer that was about it", async (t) => {
 test("sending notifies a schedule guest and counts one with no email", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("send_guests");
-  const { scheduleId, occurrenceId, media } = await seedAssignedSchedule(
+  const { scheduleId, occurrenceId, media } = await seedPublishedAssignedSchedule(
     context,
     "guests",
     { link: false, cameraSlots: 2 },
@@ -14471,7 +14546,7 @@ test("answers open one coalescing digest window per schedule", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("response_digest");
   const { memberId, scheduleId, occurrenceId, cellKey, media } =
-    await seedAssignedSchedule(context, "digest", { cameraSlots: 2 });
+    await seedPublishedAssignedSchedule(context, "digest", { cameraSlots: 2 });
 
   const second = await callHandler(authHandlers.createTeamRosterMember, {
     context,
@@ -23200,7 +23275,7 @@ test("concurrent member imports cannot create same-named positions by separate s
 test("my schedule excludes Draft assignments, teammate joins and legacy response links", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("volunteer_draft_boundary");
-  const assigned = await seedAssignedSchedule(context, "volunteer_draft_boundary");
+  const assigned = await seedPublishedAssignedSchedule(context, "volunteer_draft_boundary");
   const { scheduleId, occurrenceId, cellKey, memberId } = assigned;
   const draftId = `${scheduleId}_draft`;
   const base = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
@@ -23232,7 +23307,7 @@ test("my schedule matches plans by church date across UTC midnight and combined 
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("volunteer_church_date_plans");
   await setDoc(COLLECTIONS.churches, context.churchId, { serviceTimeZone: "America/New_York" }, { merge: true });
-  const assigned = await seedAssignedSchedule(context, "volunteer_church_date_plans", { serviceDate: "2026-10-31" });
+  const assigned = await seedPublishedAssignedSchedule(context, "volunteer_church_date_plans", { serviceDate: "2026-10-31" });
   const cases = [
     {
       occurrenceId: "fall-service@2026-10-31",
@@ -23309,7 +23384,7 @@ test("my schedule matches plans by church date across UTC midnight and combined 
 test("accept all unanswered preserves answers, ignores forged identity and safely retries partial success", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("volunteer_pending_bulk");
-  const first = await seedAssignedSchedule(context, "volunteer_pending_bulk");
+  const first = await seedPublishedAssignedSchedule(context, "volunteer_pending_bulk");
   const base = await getDoc(COLLECTIONS.teamSchedules, first.scheduleId);
   base.occurrences = base.occurrences.map((row) => ({ ...row, startsAt: "2099-12-01T15:00:00Z" }));
   await setDoc(COLLECTIONS.teamSchedules, first.scheduleId, { occurrences: base.occurrences }, { merge: true });

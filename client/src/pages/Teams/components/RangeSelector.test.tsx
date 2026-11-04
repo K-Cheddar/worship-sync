@@ -185,6 +185,24 @@ describe("RangeSelector", () => {
     expect(screen.getByRole("button", { name: "Next period" })).toBeInTheDocument();
   });
 
+  it("disables preset and paging navigation during a pending schedule action", () => {
+    setDesktop(true);
+    render(
+      <RangeSelector
+        preset="thisMonth"
+        range={{ start: "2026-09-01", end: "2026-09-30" }}
+        onPresetChange={jest.fn()}
+        onCustomRangeChange={jest.fn()}
+        onNavigate={jest.fn()}
+        disabled
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Upcoming" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Previous period" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next period" })).toBeDisabled();
+  });
+
   it("keeps the resolved date and status in one summary", () => {
     setDesktop(true);
     render(

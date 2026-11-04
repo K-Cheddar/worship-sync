@@ -190,6 +190,7 @@ export const COLLECTIONS = {
   teamQualificationLevels: "teamQualificationLevels",
   teamSchedules: "teamSchedules",
   teamScheduleAssignmentBatchReceipts: "teamScheduleAssignmentBatchReceipts",
+  teamSchedulePublicationEvents: "teamSchedulePublicationEvents",
   teamScheduleOccurrenceOwners: "teamScheduleOccurrenceOwners",
   portableImportCreates: "portableImportCreates",
   teamIntakeForms: "teamIntakeForms",
@@ -607,6 +608,7 @@ const memoryState = {
   teamQualificationLevels: new Map(),
   teamSchedules: new Map(),
   teamScheduleAssignmentBatchReceipts: new Map(),
+  teamSchedulePublicationEvents: new Map(),
   teamScheduleOccurrenceOwners: new Map(),
   portableImportCreates: new Map(),
   teamIntakeForms: new Map(),
@@ -712,6 +714,7 @@ const collectionMap = {
   [COLLECTIONS.teamQualificationLevels]: memoryState.teamQualificationLevels,
   [COLLECTIONS.teamSchedules]: memoryState.teamSchedules,
   [COLLECTIONS.teamScheduleAssignmentBatchReceipts]: memoryState.teamScheduleAssignmentBatchReceipts,
+  [COLLECTIONS.teamSchedulePublicationEvents]: memoryState.teamSchedulePublicationEvents,
   [COLLECTIONS.teamScheduleOccurrenceOwners]: memoryState.teamScheduleOccurrenceOwners,
   [COLLECTIONS.portableImportCreates]: memoryState.portableImportCreates,
   [COLLECTIONS.teamIntakeForms]: memoryState.teamIntakeForms,
@@ -7288,6 +7291,11 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
   sendRosterMemberInvite,
   logAuthEvent,
 });
+
+export const recoverPendingTeamSchedulePublicationEvents = () =>
+  teamsAuthHandlers.recoverPendingTeamSchedulePublicationEvents();
+export const startTeamSchedulePublicationEventRecovery = () =>
+  teamsAuthHandlers.startTeamSchedulePublicationEventRecovery();
 
 const smsStatusWebhookHandler = createSmsStatusWebhookHandler({
   COLLECTIONS, getDoc, requireFirestore,

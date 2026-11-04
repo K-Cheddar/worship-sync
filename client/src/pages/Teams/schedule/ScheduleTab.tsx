@@ -824,6 +824,27 @@ const ScheduleTab = ({
   useLayoutEffect(() => {
     activeScheduleIdRef.current = selectedScheduleRecord?.scheduleId || "";
   }, [selectedScheduleRecord?.scheduleId]);
+  const scheduleWorkspaceActionIdentity = JSON.stringify([
+    churchId,
+    workspaceTeamId,
+    periodRange.start,
+    periodRange.end,
+    displayedPeriodRange.start,
+    displayedPeriodRange.end,
+    viewingSavedSchedule,
+    selectedScheduleRecord?.scheduleId || "",
+  ]);
+  const scheduleWorkspaceActionIdentityRef = useRef(scheduleWorkspaceActionIdentity);
+  useLayoutEffect(() => {
+    scheduleWorkspaceActionIdentityRef.current = scheduleWorkspaceActionIdentity;
+  }, [scheduleWorkspaceActionIdentity]);
+  const isCurrentScheduleAction = (
+    schedule: Pick<TeamSchedule, "churchId" | "scheduleId">,
+    workspaceIdentity: string,
+  ) => scheduleTabMountedRef.current &&
+    activeChurchIdRef.current === schedule.churchId &&
+    activeScheduleIdRef.current === schedule.scheduleId &&
+    scheduleWorkspaceActionIdentityRef.current === workspaceIdentity;
   const confirmedPeriodReconciliationRef = useRef<string | null>(null);
   const pendingScheduleEnsuresRef = useRef(new Map<string, Promise<TeamSchedule | null>>());
   const periodOccurrenceSignature = generatedPeriodOccurrences.map((occurrence) =>
@@ -1588,6 +1609,11 @@ const ScheduleTab = ({
   const [closingReplacement, setClosingReplacement] = useState(false);
   const [scheduleMessagesOpen, setScheduleMessagesOpen] = useState(false);
   const [scheduleInitialSmsOpen, setScheduleInitialSmsOpen] = useState(false);
+  const [scheduleInitialSmsOrigin, setScheduleInitialSmsOrigin] = useState<{
+    churchId: string;
+    scheduleId: string;
+    workspaceIdentity: string;
+  } | null>(null);
   const scheduleActionsTriggerRef = useRef<HTMLButtonElement | null>(null);
   const membersDrawerTriggerRef = useRef<HTMLButtonElement | null>(null);
   const wasScheduleMessagesOpenRef = useRef(false);
@@ -1656,9 +1682,14 @@ const ScheduleTab = ({
   const confirmScheduleSms = async () => {
     const preview = scheduleSmsPreview;
     if (!preview || scheduleSmsSendLockRef.current || scheduleActionPendingRef.current) return;
+    const workspaceIdentity = scheduleWorkspaceActionIdentityRef.current;
     if (preview.intent.churchId !== churchId) {
       setScheduleSmsPreview(null);
       setSendingNotificationIntentId("");
+      return;
+    }
+    if (!isCurrentScheduleAction({ churchId, scheduleId: preview.intent.sourceId }, workspaceIdentity)) {
+      showToast("The active schedule changed while the message was open. Reopen it from the selected schedule before sending.", "error");
       return;
     }
     scheduleSmsSendLockRef.current = true;
@@ -1675,6 +1706,10 @@ const ScheduleTab = ({
         return;
       }
       if (!(await flushPendingScheduleSaves(schedule, "send"))) return;
+      if (!isCurrentScheduleAction(schedule, workspaceIdentity)) {
+        showToast("The active schedule changed while its assignments were saving. Reopen this message before sending.", "error");
+        return;
+      }
       setScheduleSmsPreview(null);
       setIsPreparingScheduleSend(false);
       setSendingScheduleSms(true);
@@ -3052,10 +3087,19 @@ const ScheduleTab = ({
       !canEdit || !churchId || !isPersistedScheduleId(schedule.scheduleId) ||
       scheduleActionPendingRef.current
     ) return null;
+    const workspaceIdentity = scheduleWorkspaceActionIdentityRef.current;
+    if (!isCurrentScheduleAction(schedule, workspaceIdentity)) {
+      showToast("The active schedule changed. Select it again before changing its publication status.", "error");
+      return null;
+    }
     scheduleActionPendingRef.current = true;
     setIsPublicationPending(true);
     try {
       if (published && !(await flushPendingScheduleSaves(schedule, "publish"))) {
+        return null;
+      }
+      if (!isCurrentScheduleAction(schedule, workspaceIdentity)) {
+        showToast("The active schedule changed while its assignments were saving. Review the selected schedule before continuing.", "error");
         return null;
       }
       const update = published ? publishTeamSchedule : unpublishTeamSchedule;
@@ -3092,11 +3136,13 @@ const ScheduleTab = ({
 
   const handlePublishAndContinue = useCallback(async () => {
     if (!selectedSchedule) return;
+    const workspaceIdentity = scheduleWorkspaceActionIdentityRef.current;
     const scheduleId = selectedSchedule.scheduleId;
     const result = await updateSchedulePublication(selectedSchedule, true);
     if (
       result && activeChurchIdRef.current === churchId &&
-      activeScheduleIdRef.current === scheduleId
+      activeScheduleIdRef.current === scheduleId &&
+      isCurrentScheduleAction(result, workspaceIdentity)
     ) {
       setIsConfirmingSend(true);
     }
@@ -3114,12 +3160,21 @@ const ScheduleTab = ({
   const handleSendSchedule = useCallback(async () => {
     if (!selectedSchedule || !churchId || !isPersistedScheduleId(selectedSchedule.scheduleId)) return;
     if (scheduleActionPendingRef.current) return;
+    const workspaceIdentity = scheduleWorkspaceActionIdentityRef.current;
     const scheduleId = selectedSchedule.scheduleId;
+    if (!isCurrentScheduleAction(selectedSchedule, workspaceIdentity)) {
+      showToast("The active schedule changed. Reopen Send schedule for the selected schedule before sending.", "error");
+      return;
+    }
     scheduleActionPendingRef.current = true;
     setIsPreparingScheduleSend(true);
     let sendStarted = false;
     try {
       if (!(await flushPendingScheduleSaves(selectedSchedule, "send"))) return;
+      if (!isCurrentScheduleAction(selectedSchedule, workspaceIdentity)) {
+        showToast("The active schedule changed while assignments were saving. Reopen Send schedule before sending.", "error");
+        return;
+      }
       setIsPreparingScheduleSend(false);
       setIsSendingSchedule(true);
       sendStarted = true;
@@ -3155,17 +3210,31 @@ const ScheduleTab = ({
 
   const handleOpenScheduleSms = useCallback(async () => {
     if (!selectedSchedule || scheduleActionPendingRef.current) return;
+    const workspaceIdentity = scheduleWorkspaceActionIdentityRef.current;
+    if (!isCurrentScheduleAction(selectedSchedule, workspaceIdentity)) {
+      showToast("The active schedule changed. Reopen the text-message review for the selected schedule.", "error");
+      return;
+    }
     scheduleActionPendingRef.current = true;
     setIsPreparingScheduleSend(true);
     try {
       if (!(await flushPendingScheduleSaves(selectedSchedule, "send"))) return;
+      if (!isCurrentScheduleAction(selectedSchedule, workspaceIdentity)) {
+        showToast("The active schedule changed while assignments were saving. Reopen the text-message review before continuing.", "error");
+        return;
+      }
+      setScheduleInitialSmsOrigin({
+        churchId,
+        scheduleId: selectedSchedule.scheduleId,
+        workspaceIdentity,
+      });
       setIsConfirmingSend(false);
       setScheduleInitialSmsOpen(true);
     } finally {
       scheduleActionPendingRef.current = false;
       setIsPreparingScheduleSend(false);
     }
-  }, [flushPendingScheduleSaves, selectedSchedule]);
+  }, [churchId, flushPendingScheduleSaves, selectedSchedule, showToast]);
 
   const commitAssignment = async ({
     serviceId,
@@ -4794,18 +4863,37 @@ const ScheduleTab = ({
     if (!canEdit || !selectedSchedule || copyingLinkRef.current) return;
     copyingLinkRef.current = true;
     setCopyingLink(true);
+    let activeSchedule: TeamSchedule | null = null;
+    let publicUrl: string | undefined;
     try {
-      const schedule = await ensureActiveSchedule();
-      if (!schedule) return;
-      if (schedule.published === false) {
-        setPublishAndCopyLink({ schedule, published: false });
+      activeSchedule = selectedSchedule.published === false
+        ? await ensureActiveSchedule(selectedSchedule)
+        : selectedSchedule;
+      if (!activeSchedule) return;
+      if (activeSchedule.published === false) {
+        setPublishAndCopyLink({ schedule: activeSchedule, published: false });
         return;
       }
-      const publicUrl = await getSchedulePublicUrl(schedule.scheduleId);
+      publicUrl = await getSchedulePublicUrl(activeSchedule.scheduleId);
       await copySchedulePublicUrl(publicUrl);
       showToast("View-only link copied to clipboard.", "success");
     } catch (error) {
-      showApiErrorToast(showToast, error, "Could not create a view-only link. Refresh and try again.");
+      if (activeSchedule && activeSchedule.published !== false) {
+        setPublishAndCopyLink({
+          schedule: activeSchedule,
+          published: true,
+          ...(publicUrl ? { publicUrl } : {}),
+        });
+        showApiErrorToast(
+          showToast,
+          error,
+          publicUrl
+            ? "The schedule is published. Use Copy link or select the view-only URL and copy it manually."
+            : "The schedule is published, but its view-only link could not be prepared. Retry from the dialog.",
+        );
+      } else {
+        showApiErrorToast(showToast, error, "Could not create a view-only link. Refresh and try again.");
+      }
     } finally {
       copyingLinkRef.current = false;
       setCopyingLink(false);
@@ -6804,6 +6892,7 @@ const ScheduleTab = ({
             iconSize="sm"
             ref={scheduleActionsTriggerRef}
             aria-label="More schedule options"
+            disabled={isScheduleActionPending}
           />
         }
       />
@@ -6850,6 +6939,7 @@ const ScheduleTab = ({
                 <TeamsReturnBackButton
                   returnTo={scheduleReturnTo}
                   onClick={() => returnFromSchedule()}
+                  disabled={isScheduleActionPending}
                 />
               ) : null}
               <h1 className="sr-only flex min-w-0 items-center gap-2 text-xl font-semibold text-gray-100 sm:not-sr-only">
@@ -6869,12 +6959,13 @@ const ScheduleTab = ({
                 value={workspaceTeamId}
                 onChange={updateScheduleTeamFilter}
                 options={activeTeams.map((team) => ({ label: team.name, value: team.teamId }))}
-                disabled={!activeTeams.length}
+                disabled={!activeTeams.length || isScheduleActionPending}
               />
               {periodScheduleChoices.length > 1 && selectedScheduleRecord ? (
                 <ScheduleOverlapPicker
                   schedules={periodScheduleChoices}
                   selectedScheduleId={selectedScheduleRecord.scheduleId}
+                  disabled={isScheduleActionPending}
                   onSelect={(scheduleId) => {
                     markExplicitPeriodSelection();
                     setPeriodScheduleSelection({ scope: periodSelectionScope, scheduleId });
@@ -6894,6 +6985,7 @@ const ScheduleTab = ({
                   setViewingSavedSchedule(false);
                 }}
                 onNavigate={shiftPeriod}
+                disabled={isScheduleActionPending}
                 className="min-w-0 flex-1 sm:min-w-0"
                 labelLayout="inline"
               />
@@ -6901,7 +6993,7 @@ const ScheduleTab = ({
             {viewingSavedSchedule ? (
               <div role="status" className="mt-3 flex flex-wrap items-center gap-2 text-sm text-gray-300">
                 Viewing the saved version. Current service additions are hidden.
-                <Button variant="tertiary" onClick={() => setViewingSavedSchedule(false)}>Return to current schedule</Button>
+                <Button variant="tertiary" disabled={isScheduleActionPending} onClick={() => setViewingSavedSchedule(false)}>Return to current schedule</Button>
               </div>
             ) : null}
             {periodScheduleMatch.ownershipConflict && !viewingSavedSchedule ? (
@@ -7859,7 +7951,10 @@ const ScheduleTab = ({
                 <Drawer
                   key={`${churchId}:${selectedSchedule.scheduleId}:initial-sms`}
                   isOpen={scheduleInitialSmsOpen}
-                  onClose={() => setScheduleInitialSmsOpen(false)}
+                  onClose={() => {
+                    setScheduleInitialSmsOpen(false);
+                    setScheduleInitialSmsOrigin(null);
+                  }}
                   title="Send schedule text messages"
                   position="right"
                   size="xl"
@@ -7876,7 +7971,22 @@ const ScheduleTab = ({
                     teamName={data.teams.find((team) => team.teamId === selectedSchedule.teamId)?.name || "Team"}
                     timeZone={serviceTimeZone}
                     sendScope={scheduleSendScope}
-                    onClose={() => setScheduleInitialSmsOpen(false)}
+                    canDispatch={() => Boolean(
+                      scheduleInitialSmsOrigin &&
+                      scheduleInitialSmsOrigin.churchId === churchId &&
+                      scheduleInitialSmsOrigin.scheduleId === selectedSchedule.scheduleId &&
+                      isCurrentScheduleAction(
+                        {
+                          churchId: scheduleInitialSmsOrigin.churchId,
+                          scheduleId: scheduleInitialSmsOrigin.scheduleId,
+                        },
+                        scheduleInitialSmsOrigin.workspaceIdentity,
+                      )
+                    )}
+                    onClose={() => {
+                      setScheduleInitialSmsOpen(false);
+                      setScheduleInitialSmsOrigin(null);
+                    }}
                   />
                 </Drawer>
               ) : null}

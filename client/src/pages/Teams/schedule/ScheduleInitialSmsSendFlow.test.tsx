@@ -93,6 +93,7 @@ const renderFlow = (
   currentSchedule = schedule({}),
   selfMemberId: string | null = null,
   sendScope?: ScheduleSendScope,
+  canDispatch?: () => boolean,
 ) => render(
   <CurrentMemberIdentityProvider memberId={selfMemberId}>
     <ScheduleInitialSmsSendFlow
@@ -102,6 +103,7 @@ const renderFlow = (
       teamName="Worship Team"
       timeZone="America/New_York"
       sendScope={sendScope}
+      canDispatch={canDispatch}
       onClose={jest.fn()}
     />
   </CurrentMemberIdentityProvider>,
@@ -159,6 +161,26 @@ describe("ScheduleInitialSmsSendFlow", () => {
     await user.click(await screen.findByRole("button", { name: "Review 1 message" }));
     expect(await screen.findAllByText(/Messages are ready to review/)).toHaveLength(2);
     expect(screen.getByRole("status", { name: "Schedule message scope" })).toHaveTextContent("Book Launch");
+  });
+
+  it("does not dispatch a reviewed batch after the active schedule changes", async () => {
+    const user = userEvent.setup();
+    mockedGetRecipients.mockResolvedValueOnce({
+      ...recipientsResponse([
+        makeRecipient("alice", "Alice Able"),
+        makeRecipient("bob", "Bob Baker"),
+      ]),
+      dispatchEnabled: true,
+      dispatchReadinessMessage: "",
+    });
+    renderFlow(schedule({}), null, undefined, () => false);
+
+    await user.click(await screen.findByRole("button", { name: "Review 2 messages" }));
+    expect(await screen.findAllByText(/Messages are ready to review/)).toHaveLength(2);
+    await user.click(screen.getByRole("button", { name: "Send 2 messages" }));
+
+    expect(await screen.findByText(/active schedule changed while these messages were being reviewed/i)).toBeInTheDocument();
+    expect(mockedDispatchBatch).not.toHaveBeenCalled();
   });
 
   it("recovers an approved batch from the server and polls progress while the panel is open", async () => {

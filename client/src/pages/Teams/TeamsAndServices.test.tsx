@@ -5800,6 +5800,43 @@ describe("Teams", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Schedule published" })).not.toBeInTheDocument());
   });
 
+  it("shows the same manual-copy fallback for an already Published schedule", async () => {
+    const user = userEvent.setup();
+    const published = { ...scheduleBootstrap.schedules[0], published: true };
+    const writeText = jest.fn()
+      .mockRejectedValueOnce(new Error("Clipboard permission expired."))
+      .mockResolvedValueOnce(undefined);
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...scheduleBootstrap,
+      schedules: [published],
+    }));
+    mockGetTeamSchedulePublicLink.mockResolvedValue({
+      success: true,
+      publicToken: "already-published-token",
+    });
+    renderTeams();
+    await waitForScheduleGrid();
+    expect(screen.getByRole("status", { name: "Schedule publication status" })).toHaveTextContent("Published");
+    await user.click(screen.getByRole("button", { name: "More schedule actions" }));
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    await user.click(screen.getByRole("menuitem", { name: "Copy view-only link" }));
+
+    await waitFor(() => expect(mockGetTeamSchedulePublicLink).toHaveBeenCalledWith("church-1", published.scheduleId));
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    const linkField = await screen.findByRole("textbox", { name: "View-only schedule link" });
+    expect((linkField as HTMLInputElement).value).toContain("already-published-token");
+    expect(screen.getByRole("button", { name: "Copy link" })).toBeInTheDocument();
+    expect(mockPublishTeamSchedule).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy link" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
+    expect(mockGetTeamSchedulePublicLink).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Schedule published" })).not.toBeInTheDocument());
+  });
+
   it.each([
     ["publish", false],
     ["send", true],
@@ -5854,6 +5891,9 @@ describe("Teams", () => {
       });
     }
     expect(actionRequest).not.toHaveBeenCalled();
+    expect(screen.getAllByRole("combobox")[0]).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Range preset:/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "More schedule options" })).toBeDisabled();
 
     await act(async () => {
       finishAssignment({ success: true, schedule: savedSchedule });
