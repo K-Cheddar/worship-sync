@@ -8,6 +8,7 @@ import type { TeamService } from "../api/authTypes";
 import {
   calendarDateInTimeZone,
   generateScheduleOccurrences,
+  oneTimeServiceInstant,
 } from "./teamScheduleOccurrences";
 
 type ServiceScheduleSortShape = Pick<
@@ -213,8 +214,8 @@ export function getNextOccurrenceForService(
 ): Date | null {
   if (service.reccurence === "one_time") {
     if (!service.dateTimeISO) return null;
-    const dt = new Date(service.dateTimeISO);
-    return dt > now ? dt : null;
+    const dt = oneTimeServiceInstant(service.dateTimeISO, timeZone);
+    return dt && dt > now ? dt : null;
   }
   const occurrence = generateServiceOccurrencesAround(service, now, timeZone, "future")
     .filter((item) => Date.parse(item.startsAt) > now.getTime())
@@ -278,8 +279,8 @@ export function getMostRecentTargetTime(
   let recentScheduled: Date | null = null;
   if (service.reccurence === "one_time") {
     if (service.dateTimeISO) {
-      const dt = new Date(service.dateTimeISO);
-      recentScheduled = dt <= now ? dt : null;
+      const dt = oneTimeServiceInstant(service.dateTimeISO, timeZone);
+      recentScheduled = dt && dt <= now ? dt : null;
     }
   } else if (service.reccurence) {
     const occurrence = generateServiceOccurrencesAround(service, now, timeZone, "past")

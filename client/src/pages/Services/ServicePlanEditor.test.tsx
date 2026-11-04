@@ -8,6 +8,7 @@ import {
   collectServicePlanTeamNoteLabels,
 } from "./servicePlanNoteOptions";
 import { roleNoteMatchesServicePlanTeam } from "./servicePlanRoleNoteTeam";
+import { buildServicePlanSectionsFromImport } from "./servicePlanFromImport";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { ToastProvider } from "../../context/toastContext";
 import { RehearsalPlaybackProvider } from "../../components/RehearsalPlayer/RehearsalPlaybackContext";
@@ -29,6 +30,13 @@ import {
   AuthApiError,
 } from "../../api/auth";
 import { getServicePlanningImportDataFromUrl } from "../../containers/Overlays/eventParser";
+import {
+  getPlanningCenterPlanImport,
+  listPlanningCenterPlans,
+  listPlanningCenterPlansForDate,
+  listPlanningCenterServiceTypes,
+} from "../../api/planningCenter";
+import type { PlanningCenterPlanImport, PlanningCenterPlanSummary } from "../../api/planningCenter";
 import { getPublicServiceFlow } from "../../services/serviceFlowApi";
 import { extractTextFromPdfFile } from "./extractPdfText";
 import type {
@@ -81,6 +89,13 @@ jest.mock("../../api/auth", () => ({
   unpublishServicePlan: jest.fn(),
   updateServicePlanPublicLive: jest.fn(),
   getSongAudioUrl: jest.fn(),
+}));
+
+jest.mock("../../api/planningCenter", () => ({
+  getPlanningCenterPlanImport: jest.fn(),
+  listPlanningCenterPlansForDate: jest.fn(),
+  listPlanningCenterServiceTypes: jest.fn(),
+  listPlanningCenterPlans: jest.fn(),
 }));
 
 // Song attach/create modal — row contract is covered in ElementRow tests; keep
@@ -161,6 +176,10 @@ jest.mock("../../hooks", () => ({
 const mockListServicePlanTemplates = jest.mocked(listServicePlanTemplates);
 const mockSaveServicePlanTemplate = jest.mocked(saveServicePlanTemplate);
 const mockGetServicePlan = jest.mocked(getServicePlan);
+const mockGetPlanningCenterPlanImport = jest.mocked(getPlanningCenterPlanImport);
+const mockListPlanningCenterPlans = jest.mocked(listPlanningCenterPlans);
+const mockListPlanningCenterPlansForDate = jest.mocked(listPlanningCenterPlansForDate);
+const mockListPlanningCenterServiceTypes = jest.mocked(listPlanningCenterServiceTypes);
 const mockGetServicePlanAssignmentHistory = jest.mocked(getServicePlanAssignmentHistory);
 const mockGetServicePlanMicrophones = jest.mocked(getServicePlanMicrophones);
 const mockGetServiceEquipment = jest.mocked(getServiceEquipment);
@@ -203,6 +222,46 @@ const nextOccurrence: TeamScheduleOccurrence = {
   startsAt: "2026-08-02T14:00:00.000Z",
 };
 
+const planningCenterCandidate = (
+  id = "pco-plan-1",
+  serviceTypeId = "pco-type-1",
+  startsAt = "2026-07-26T14:00:00.000Z",
+): PlanningCenterPlanSummary => ({
+  id,
+  serviceTypeId,
+  serviceTypeName: serviceTypeId === "pco-type-1" ? "Sunday Worship" : "Evening Worship",
+  dates: "Jul 26",
+  title: "Sunday Worship",
+  label: "Jul 26 · Sunday Worship",
+  itemsCount: 1,
+  sortDate: startsAt,
+  updatedAt: "2026-07-20T12:00:00Z",
+  serviceTimes: [{ startsAt, timeType: "service" }],
+  sourceUrl: `https://services.planningcenteronline.com/plans/${id}`,
+});
+
+const planningCenterImport = (
+  planId = "pco-plan-1",
+  serviceTypeId = "pco-type-1",
+  title = "Opening Song",
+): PlanningCenterPlanImport => ({
+  planLabel: "Sunday Worship",
+  sourceUrl: `https://services.planningcenteronline.com/plans/${planId}`,
+  serviceTypeId,
+  planId,
+  sections: [{
+    sectionName: "Worship",
+    rows: [{
+      sourceOccurrenceId: "pco-item-1",
+      elementType: "song",
+      title,
+      ledBy: "",
+      startTime: "10:00",
+    }],
+  }],
+  teamAssignments: [],
+});
+
 type RenderEditorProps = {
   userId?: string;
   service?: TeamService;
@@ -235,6 +294,8 @@ type RenderEditorProps = {
   mobileServingContent?: ReactNode;
   onPlanTimingChange?: (source: ServicePlanTimingSource | null) => void;
   templateResource?: ServicePlanTemplateResource;
+  planningCenterConnected?: boolean;
+  planningCenterAccountLabel?: string;
 };
 
 const editorTree = ({
@@ -254,13 +315,24 @@ const editorTree = ({
   mobileServingContent,
   onPlanTimingChange,
   templateResource,
-}: RenderEditorProps = {}) => (
+  planningCenterConnected = false,
+  planningCenterAccountLabel = "Example Church",
+}: RenderEditorProps = {}) => {
+  const globalInfo = createMockGlobalContext({ churchId: "church-1", userId });
+  if (planningCenterConnected) {
+    globalInfo.churchIntegrations = {
+      ...globalInfo.churchIntegrations,
+      planningCenter: {
+        ...globalInfo.churchIntegrations.planningCenter,
+        enabled: true,
+        connected: true,
+        accountLabel: planningCenterAccountLabel,
+      },
+    };
+  }
+  return (
   <GlobalInfoContext.Provider
-    value={
-      createMockGlobalContext({ churchId: "church-1", userId }) as ContextType<
-        typeof GlobalInfoContext
-      >
-    }
+    value={globalInfo as ContextType<typeof GlobalInfoContext>}
   >
     <RehearsalPlaybackProvider>
       <ToastProvider>
@@ -284,7 +356,8 @@ const editorTree = ({
       </ToastProvider>
     </RehearsalPlaybackProvider>
   </GlobalInfoContext.Provider>
-);
+  );
+};
 
 const renderEditor = (props: RenderEditorProps = {}) => render(editorTree(props));
 
@@ -426,6 +499,12 @@ describe("ServicePlanEditor", () => {
     mockAllSongDocs = [];
     mockExtractTextFromPdfFile.mockReset();
     mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: null });
+    mockGetPlanningCenterPlanImport.mockResolvedValue(
+      planningCenterImport() as PlanningCenterPlanImport,
+    );
+    mockListPlanningCenterServiceTypes.mockResolvedValue({ items: [] });
+    mockListPlanningCenterPlans.mockResolvedValue({ items: [] });
+    mockListPlanningCenterPlansForDate.mockResolvedValue({ items: [] });
     mockGetPublicServiceFlow.mockReset();
     mockListServicePlanTemplates.mockResolvedValue({ success: true, templates: [] });
     mockSaveServicePlanTemplate.mockResolvedValue({
@@ -5091,5 +5170,612 @@ SMC Worship Experience
     expect(
       screen.getByText(/This song is not in the library right now/i),
     ).toBeInTheDocument();
+  });
+
+  it("does not query Planning Center when disconnected or when the editor is read only", async () => {
+    const view = renderEditor();
+    expect(await screen.findAllByRole("button", { name: /Choose a template/i })).not.toHaveLength(0);
+    expect(mockListPlanningCenterServiceTypes).not.toHaveBeenCalled();
+    expect(mockListPlanningCenterPlansForDate).not.toHaveBeenCalled();
+    view.unmount();
+
+    renderEditor({ planningCenterConnected: true, canEdit: false });
+    expect(await screen.findByRole("tab", { name: "Plan / Order of service" })).toBeInTheDocument();
+    expect(mockListPlanningCenterServiceTypes).not.toHaveBeenCalled();
+    expect(mockListPlanningCenterPlansForDate).not.toHaveBeenCalled();
+  });
+
+  it("keeps Planning Center discovery in the background until a result is ready", async () => {
+    let resolvePlans!: (result: { items: PlanningCenterPlanSummary[] }) => void;
+    mockListPlanningCenterPlansForDate.mockImplementation(() =>
+      new Promise((resolve) => { resolvePlans = resolve; }),
+    );
+
+    renderEditor({
+      planningCenterConnected: true,
+      service: { ...oneTimeService, planningCenterServiceTypeId: "pco-type-1" },
+    });
+
+    await waitFor(() => expect(mockListPlanningCenterPlansForDate).toHaveBeenCalled());
+    expect(screen.queryByRole("region", { name: "Planning Center plan discovery" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Checking Planning Center")).not.toBeInTheDocument();
+
+    await act(async () => resolvePlans({ items: [planningCenterCandidate()] }));
+    expect(await screen.findByRole("region", { name: "Planning Center plan discovery" })).toHaveTextContent(
+      "Planning Center plan found",
+    );
+  });
+
+  it("discovers a unique plan for an empty occurrence and imports only after the user asks", async () => {
+    mockListPlanningCenterPlansForDate.mockResolvedValue({
+      items: [planningCenterCandidate()],
+    });
+    mockGetPlanningCenterPlanImport.mockResolvedValue(
+      planningCenterImport() as PlanningCenterPlanImport,
+    );
+
+    const user = userEvent.setup();
+    renderEditor({
+      planningCenterConnected: true,
+      service: { ...oneTimeService, planningCenterServiceTypeId: "pco-type-1" },
+    });
+
+    const suggestion = await screen.findByRole("region", {
+      name: "Planning Center plan discovery",
+    });
+    expect(within(suggestion).getByText("Planning Center plan found")).toBeInTheDocument();
+    expect(mockListPlanningCenterPlansForDate).toHaveBeenCalledWith(
+      "church-1",
+      "pco-type-1",
+      "2026-07-26",
+    );
+    expect(mockGetPlanningCenterPlanImport).not.toHaveBeenCalled();
+    expect(mockSaveServicePlan).not.toHaveBeenCalled();
+
+    await user.click(within(suggestion).getByRole("button", { name: "Import plan" }));
+    expect(await screen.findByText("Opening Song")).toBeInTheDocument();
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), { timeout: 2_500 });
+    expect(mockGetPlanningCenterPlanImport).toHaveBeenCalledWith(
+      "church-1",
+      "pco-type-1",
+      "pco-plan-1",
+    );
+    expect(mockSaveServicePlan.mock.calls.at(-1)?.[2]).toMatchObject({
+      sourceImport: {
+        source: "planningCenter",
+        planningCenterServiceTypeId: "pco-type-1",
+        planningCenterPlanId: "pco-plan-1",
+      },
+    });
+  });
+
+  it("dismisses an available plan suggestion until the editor is reopened", async () => {
+    mockListPlanningCenterPlansForDate.mockResolvedValue({
+      items: [planningCenterCandidate()],
+    });
+    const user = userEvent.setup();
+    const props = {
+      planningCenterConnected: true,
+      service: { ...oneTimeService, planningCenterServiceTypeId: "pco-type-1" },
+    };
+    const view = renderEditor(props);
+    await user.click(await screen.findByRole("button", { name: "Not now" }));
+    await waitFor(() => expect(
+      screen.queryByRole("region", { name: "Planning Center plan discovery" }),
+    ).not.toBeInTheDocument());
+    expect(mockGetPlanningCenterPlanImport).not.toHaveBeenCalled();
+
+    view.unmount();
+    renderEditor(props);
+    const reopenedSuggestion = await screen.findByRole("region", {
+      name: "Planning Center plan discovery",
+    });
+    expect(await within(reopenedSuggestion).findByRole("button", { name: "Import plan" })).toBeInTheDocument();
+    expect(mockListPlanningCenterPlansForDate).toHaveBeenCalledTimes(2);
+    expect(mockGetPlanningCenterPlanImport).not.toHaveBeenCalled();
+  });
+
+  it("offers a dismissed suggestion again after the Planning Center plan changes", async () => {
+    let updatedAt = "2026-07-20T12:00:00Z";
+    mockListPlanningCenterPlansForDate.mockImplementation(async (_churchId, serviceTypeId, date) => ({
+      items: date === "2026-07-26"
+        ? [{ ...planningCenterCandidate("pco-plan-1", serviceTypeId), updatedAt }]
+        : [],
+    }));
+    const user = userEvent.setup();
+    const props = {
+      planningCenterConnected: true,
+      service: { ...oneTimeService, planningCenterServiceTypeId: "pco-type-1" },
+    };
+    const view = renderEditor(props);
+    await user.click(await screen.findByRole("button", { name: "Not now" }));
+    await waitFor(() => expect(
+      screen.queryByRole("region", { name: "Planning Center plan discovery" }),
+    ).not.toBeInTheDocument());
+
+    updatedAt = "2026-07-21T12:00:00Z";
+    view.rerender(editorTree({ ...props, occurrence: nextOccurrence }));
+    await waitFor(() => expect(mockListPlanningCenterPlansForDate).toHaveBeenCalledTimes(2));
+    view.rerender(editorTree(props));
+    const changedSuggestion = await screen.findByRole("region", {
+      name: "Planning Center plan discovery",
+    });
+    expect(await within(changedSuggestion).findByRole("button", { name: "Import plan" })).toBeInTheDocument();
+    expect(mockListPlanningCenterPlansForDate).toHaveBeenCalledTimes(3);
+  });
+
+  it("checks the exact linked plan and shows updates without changing the saved draft", async () => {
+    const linkedPlan: ServicePlan = {
+      planId: "church-1::service-1@2026-07-26",
+      churchId: "church-1",
+      planKey: "service-1@2026-07-26",
+      serviceId: "service-1",
+      date: "2026-07-26",
+      name: "Easter Sunday",
+      revision: 5,
+      sourceImport: {
+        source: "planningCenter",
+        sourceUrl: "https://services.planningcenteronline.com/plans/pco-plan-1",
+        loadedAt: "2026-07-20T12:00:00Z",
+        planLabel: "Sunday Worship",
+        planningCenterServiceTypeId: "pco-type-1",
+        planningCenterPlanId: "pco-plan-1",
+      },
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        sourcePlanningManaged: true,
+        elements: [{
+          id: "item-1",
+          sourcePlanningManaged: true,
+          sourceOccurrenceId: "pco-item-1",
+          type: "song",
+          title: plainTextToRichText("Opening Song"),
+          startTime: "10:00",
+        }],
+      }],
+    };
+    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: linkedPlan });
+    mockGetPlanningCenterPlanImport.mockResolvedValue(
+      planningCenterImport("pco-plan-1", "pco-type-1", "Updated Opening Song"),
+    );
+
+    const user = userEvent.setup();
+    renderEditor({ planningCenterConnected: true });
+
+    const suggestion = await screen.findByRole("region", {
+      name: "Planning Center plan discovery",
+    });
+    expect(within(suggestion).getByText("Planning Center updates available")).toBeInTheDocument();
+    expect(within(suggestion).getByText(/1 updated/)).toBeInTheDocument();
+    expect(mockGetPlanningCenterPlanImport).toHaveBeenCalledWith(
+      "church-1",
+      "pco-type-1",
+      "pco-plan-1",
+    );
+    expect(mockListPlanningCenterPlansForDate).not.toHaveBeenCalled();
+    expect(mockSaveServicePlan).not.toHaveBeenCalled();
+
+    await user.click(within(suggestion).getByRole("button", { name: "Review updates" }));
+    expect(await screen.findByText("Review Planning Center updates")).toBeInTheDocument();
+    expect(screen.getAllByText("Updated Opening Song").length).toBeGreaterThan(0);
+    expect(mockSaveServicePlan).not.toHaveBeenCalled();
+  });
+
+  it("does not prompt for an unchanged linked plan", async () => {
+    const unchangedImport = planningCenterImport("pco-plan-1", "pco-type-1", "Opening Song");
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        revision: 2,
+        sourceImport: {
+          source: "planningCenter",
+          sourceUrl: "https://services.planningcenteronline.com/plans/pco-plan-1",
+          loadedAt: "2026-07-20T12:00:00Z",
+          planLabel: "Sunday Worship",
+          planningCenterServiceTypeId: "pco-type-1",
+          planningCenterPlanId: "pco-plan-1",
+        },
+        sections: buildServicePlanSectionsFromImport(unchangedImport, []),
+      } as ServicePlan,
+    });
+    mockGetPlanningCenterPlanImport.mockResolvedValue(unchangedImport);
+
+    renderEditor({ planningCenterConnected: true });
+
+    await waitFor(() => expect(mockGetPlanningCenterPlanImport).toHaveBeenCalledWith(
+      "church-1",
+      "pco-type-1",
+      "pco-plan-1",
+    ));
+    expect(screen.getByRole("region", { name: "Planning Center plan discovery" })).toHaveTextContent(
+      "Planning Center plan is up to date",
+    );
+    expect(screen.queryByText("Planning Center updates available")).not.toBeInTheDocument();
+    expect(screen.queryByText("Review Planning Center updates")).not.toBeInTheDocument();
+    expect(mockSaveServicePlan).not.toHaveBeenCalled();
+  });
+
+  it("keeps stale discovery quiet after autosave and rechecks only from an explicit action", async () => {
+    const unchangedImport = planningCenterImport();
+    unchangedImport.sections[0].rows[0].durationMinutes = 5;
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        revision: 2,
+        sourceImport: {
+          source: "planningCenter",
+          sourceUrl: "https://services.planningcenteronline.com/plans/pco-plan-1",
+          loadedAt: "2026-07-20T12:00:00Z",
+          planLabel: "Sunday Worship",
+          planningCenterServiceTypeId: "pco-type-1",
+          planningCenterPlanId: "pco-plan-1",
+        },
+        sections: buildServicePlanSectionsFromImport(unchangedImport, []),
+      } as ServicePlan,
+    });
+    mockGetPlanningCenterPlanImport.mockResolvedValue(unchangedImport);
+
+    const user = userEvent.setup();
+    renderEditor({ planningCenterConnected: true });
+    await waitFor(() => expect(mockGetPlanningCenterPlanImport).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("region", { name: "Planning Center plan discovery" })).toHaveTextContent(
+      "Planning Center plan is up to date",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const duration = await screen.findByLabelText(/^Duration/i);
+    fireEvent.change(duration, { target: { value: "10" } });
+    await waitFor(() => expect(duration).toHaveValue("10"));
+    fireEvent.blur(duration);
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), { timeout: 2_500 });
+    expect(screen.queryByRole("region", { name: "Planning Center plan discovery" })).not.toBeInTheDocument();
+    expect(mockGetPlanningCenterPlanImport).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Plan actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Check Planning Center" }));
+    await waitFor(() => expect(mockGetPlanningCenterPlanImport).toHaveBeenCalledTimes(2));
+  });
+
+  it("rejects a Planning Center preview when the source changes before apply", async () => {
+    const linkedPlan: ServicePlan = {
+      planId: "church-1::service-1@2026-07-26",
+      churchId: "church-1",
+      planKey: "service-1@2026-07-26",
+      serviceId: "service-1",
+      date: "2026-07-26",
+      name: "Easter Sunday",
+      revision: 5,
+      sourceImport: {
+        source: "planningCenter",
+        sourceUrl: "https://services.planningcenteronline.com/plans/pco-plan-1",
+        loadedAt: "2026-07-20T12:00:00Z",
+        planLabel: "Sunday Worship",
+        planningCenterServiceTypeId: "pco-type-1",
+        planningCenterPlanId: "pco-plan-1",
+      },
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        sourcePlanningManaged: true,
+        elements: [{
+          id: "item-1",
+          sourcePlanningManaged: true,
+          sourceOccurrenceId: "pco-item-1",
+          type: "song",
+          title: plainTextToRichText("Opening Song"),
+          startTime: "10:00",
+        }],
+      }],
+    };
+    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: linkedPlan });
+    mockGetPlanningCenterPlanImport.mockResolvedValueOnce(
+      planningCenterImport("pco-plan-1", "pco-type-1", "Updated Opening Song"),
+    );
+    mockGetPlanningCenterPlanImport.mockResolvedValueOnce(
+      planningCenterImport("pco-plan-1", "pco-type-1", "Changed Again"),
+    );
+
+    const user = userEvent.setup();
+    renderEditor({ planningCenterConnected: true });
+    const suggestion = await screen.findByRole("region", {
+      name: "Planning Center plan discovery",
+    });
+    await user.click(within(suggestion).getByRole("button", { name: "Review updates" }));
+    expect(await screen.findByText("Review Planning Center updates")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
+
+    const retryPrompt = await screen.findByRole("region", {
+      name: "Planning Center plan discovery",
+    });
+    expect(retryPrompt).toHaveTextContent(
+      "Planning Center changed while you were reviewing. Check again to review the latest updates.",
+    );
+    expect(screen.getByText("Planning Center changed while you were reviewing. Review the latest updates.")).toBeInTheDocument();
+    await waitFor(() => expect(
+      screen.queryByText("Review Planning Center updates"),
+    ).not.toBeInTheDocument());
+    expect(mockSaveServicePlan).not.toHaveBeenCalled();
+  });
+
+  it("closes a Planning Center review if the local draft changes during source verification", async () => {
+    const linkedPlan: ServicePlan = {
+      planId: "church-1::service-1@2026-07-26",
+      churchId: "church-1",
+      planKey: "service-1@2026-07-26",
+      serviceId: "service-1",
+      date: "2026-07-26",
+      name: "Easter Sunday",
+      revision: 5,
+      sourceImport: {
+        source: "planningCenter",
+        sourceUrl: "https://services.planningcenteronline.com/plans/pco-plan-1",
+        loadedAt: "2026-07-20T12:00:00Z",
+        planLabel: "Sunday Worship",
+        planningCenterServiceTypeId: "pco-type-1",
+        planningCenterPlanId: "pco-plan-1",
+      },
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        sourcePlanningManaged: true,
+        elements: [{
+          id: "item-1",
+          sourcePlanningManaged: true,
+          sourceOccurrenceId: "pco-item-1",
+          type: "song",
+          title: plainTextToRichText("Opening Song"),
+          durationSeconds: 300,
+          startTime: "10:00",
+        }],
+      }],
+    };
+    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: linkedPlan });
+    let resolveLatest!: (value: PlanningCenterPlanImport) => void;
+    mockGetPlanningCenterPlanImport
+      .mockResolvedValueOnce(
+        planningCenterImport("pco-plan-1", "pco-type-1", "Updated Opening Song"),
+      )
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveLatest = resolve; }));
+
+    const user = userEvent.setup();
+    renderEditor({ planningCenterConnected: true });
+    const suggestion = await screen.findByRole("region", {
+      name: "Planning Center plan discovery",
+    });
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    await screen.findByLabelText(/^Duration/i);
+    await user.click(within(suggestion).getByRole("button", { name: "Review updates" }));
+    await screen.findByText("Review Planning Center updates");
+    await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
+    await waitFor(() => expect(mockGetPlanningCenterPlanImport).toHaveBeenCalledTimes(2));
+
+    const duration = screen.getByLabelText(/^Duration/i);
+    fireEvent.change(duration, { target: { value: "20" } });
+    await waitFor(() => expect(duration).toHaveValue("20"));
+    fireEvent.blur(duration);
+    await act(async () => {
+      resolveLatest(planningCenterImport("pco-plan-1", "pco-type-1", "Updated Opening Song"));
+    });
+
+    expect(await screen.findByText(/The plan changed\. Check Planning Center again/i)).toBeInTheDocument();
+    expect(screen.queryByText("Review Planning Center updates")).not.toBeInTheDocument();
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), { timeout: 2_500 });
+    const savedElements = mockSaveServicePlan.mock.calls.at(-1)?.[2].sections?.[0].elements || [];
+    expect(savedElements.map((element) => richTextToPlainText(element.title))).toEqual(["Opening Song"]);
+    expect(savedElements[0].durationSeconds).toBe(1200);
+  });
+
+  it("searches all service types for a combined occurrence and requires an explicit ambiguous choice", async () => {
+    mockListPlanningCenterServiceTypes.mockResolvedValue({
+      items: [
+        { id: "pco-type-1", name: "Sunday Worship" },
+        { id: "pco-type-2", name: "Evening Worship" },
+      ],
+    });
+    mockListPlanningCenterPlansForDate.mockImplementation(async (_churchId, serviceTypeId) => ({
+      items: [planningCenterCandidate(
+        serviceTypeId === "pco-type-1" ? "pco-plan-1" : "pco-plan-2",
+        serviceTypeId,
+        serviceTypeId === "pco-type-1" ? "2026-07-26T14:00:00.000Z" : "2026-07-26T18:00:00.000Z",
+      )],
+    }));
+    mockGetPlanningCenterPlanImport.mockImplementation(async (_churchId, serviceTypeId, planId) =>
+      planningCenterImport(planId, serviceTypeId),
+    );
+
+    const user = userEvent.setup();
+    renderEditor({
+      planningCenterConnected: true,
+      service: { ...oneTimeService, planningCenterServiceTypeId: "pco-type-1" },
+      occurrence: {
+        ...occurrence,
+        serviceIds: ["service-1", "service-2"],
+      },
+    });
+
+    const suggestion = await screen.findByRole("region", {
+      name: "Planning Center plan discovery",
+    });
+    expect(within(suggestion).getByText("More than one Planning Center plan matches this service")).toBeInTheDocument();
+    expect(mockListPlanningCenterPlansForDate).toHaveBeenCalledTimes(2);
+    expect(mockListPlanningCenterPlansForDate).toHaveBeenCalledWith("church-1", "pco-type-1", "2026-07-26");
+    expect(mockListPlanningCenterPlansForDate).toHaveBeenCalledWith("church-1", "pco-type-2", "2026-07-26");
+    expect(mockGetPlanningCenterPlanImport).not.toHaveBeenCalled();
+    expect(within(suggestion).getByRole("button", { name: "Import plan" })).toBeDisabled();
+
+    const candidateSelect = within(suggestion).getByRole("combobox", {
+      name: "Choose a Planning Center plan",
+    });
+    candidateSelect.focus();
+    await user.keyboard("{ArrowDown}Evening Worship{Enter}");
+    expect(candidateSelect).toHaveTextContent(/Evening Worship/);
+    await user.click(within(suggestion).getByRole("button", { name: "Import plan" }));
+    await waitFor(() => expect(mockGetPlanningCenterPlanImport).toHaveBeenCalledWith(
+      "church-1",
+      "pco-type-2",
+      "pco-plan-2",
+    ));
+    await screen.findByText("Opening Song");
+  });
+
+  it("does not fall back to a date match when an exact linked plan is incomplete", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        revision: 2,
+        sourceImport: {
+          source: "planningCenter",
+          sourceUrl: "",
+          loadedAt: "2026-07-20T12:00:00Z",
+          planLabel: "Sunday Worship",
+          planningCenterPlanId: "pco-plan-1",
+        },
+        sections: [{ id: "section-1", name: "Worship", elements: [] }],
+      } as ServicePlan,
+    });
+
+    renderEditor({
+      planningCenterConnected: true,
+      service: { ...oneTimeService, planningCenterServiceTypeId: "pco-type-1" },
+    });
+
+    expect(await screen.findByText(/saved Planning Center link is incomplete/i)).toBeInTheDocument();
+    expect(mockGetPlanningCenterPlanImport).not.toHaveBeenCalled();
+    expect(mockListPlanningCenterPlansForDate).not.toHaveBeenCalled();
+  });
+
+  it("does not replace a linked Planning Center plan when the source is unavailable", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        revision: 2,
+        sourceImport: {
+          source: "planningCenter",
+          sourceUrl: "https://services.planningcenteronline.com/plans/pco-plan-1",
+          loadedAt: "2026-07-20T12:00:00Z",
+          planLabel: "Sunday Worship",
+          planningCenterServiceTypeId: "pco-type-1",
+          planningCenterPlanId: "pco-plan-1",
+        },
+        sections: [],
+      } as ServicePlan,
+    });
+    mockGetPlanningCenterPlanImport.mockRejectedValue(new Error("Planning Center plan was deleted."));
+    mockListPlanningCenterPlansForDate.mockResolvedValue({
+      items: [planningCenterCandidate("replacement-plan", "pco-type-1")],
+    });
+
+    renderEditor({
+      planningCenterConnected: true,
+      service: { ...oneTimeService, planningCenterServiceTypeId: "pco-type-1" },
+    });
+
+    const suggestion = await screen.findByRole("region", {
+      name: "Planning Center plan discovery",
+    });
+    expect(await within(suggestion).findByText(/plan was deleted/i)).toBeInTheDocument();
+    expect(mockListPlanningCenterPlansForDate).not.toHaveBeenCalled();
+    expect(mockGetPlanningCenterPlanImport).toHaveBeenCalledWith(
+      "church-1",
+      "pco-type-1",
+      "pco-plan-1",
+    );
+  });
+
+  it("keeps the editor usable and retries after a temporary Planning Center error", async () => {
+    mockListPlanningCenterServiceTypes
+      .mockRejectedValueOnce(new Error("Planning Center is temporarily unavailable."))
+      .mockResolvedValue({ items: [{ id: "pco-type-1", name: "Sunday Worship" }] });
+    mockListPlanningCenterPlansForDate.mockResolvedValue({
+      items: [planningCenterCandidate()],
+    });
+    const user = userEvent.setup();
+    renderEditor({ planningCenterConnected: true });
+
+    const suggestion = await screen.findByRole("region", {
+      name: "Planning Center plan discovery",
+    });
+    expect(await within(suggestion).findByText(/temporarily unavailable/i)).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Plan / Order of service" })).toBeInTheDocument();
+    await user.click(await within(suggestion).findByRole("button", { name: "Try again" }));
+
+    expect(await screen.findByRole("button", { name: "Import plan" })).toBeInTheDocument();
+    expect(mockListPlanningCenterServiceTypes).toHaveBeenCalledTimes(2);
+    expect(mockGetPlanningCenterPlanImport).not.toHaveBeenCalled();
+  });
+
+  it("ignores date-search results from the previous connected account", async () => {
+    let resolveFirstSearch: ((value: { items: PlanningCenterPlanSummary[] }) => void) | undefined;
+    mockListPlanningCenterPlansForDate
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveFirstSearch = resolve; }))
+      .mockResolvedValue({ items: [] });
+    mockListPlanningCenterServiceTypes.mockResolvedValue({
+      items: [{ id: "pco-type-1", name: "Sunday Worship" }],
+    });
+
+    const view = render(editorTree({ planningCenterConnected: true }));
+    await waitFor(() => expect(mockListPlanningCenterPlansForDate).toHaveBeenCalledTimes(1));
+    view.rerender(editorTree({
+      planningCenterConnected: true,
+      planningCenterAccountLabel: "Another Church",
+    }));
+    await waitFor(() => expect(mockListPlanningCenterPlansForDate).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      resolveFirstSearch?.({ items: [planningCenterCandidate()] });
+    });
+    expect(screen.queryByText("Planning Center plan found")).not.toBeInTheDocument();
+    expect(mockGetPlanningCenterPlanImport).not.toHaveBeenCalled();
+  });
+
+  it("does not run automatic discovery while a plan is live", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        revision: 2,
+        publicLive: { mode: "manual", currentElementId: "live-item" },
+        sections: [{
+          id: "section-1",
+          name: "Worship",
+          elements: [{ id: "live-item", type: "free", title: plainTextToRichText("Live item") }],
+        }],
+      } as ServicePlan,
+    });
+
+    renderEditor({ planningCenterConnected: true });
+    await screen.findByText("Live item");
+    expect(mockGetPlanningCenterPlanImport).not.toHaveBeenCalled();
+    expect(mockListPlanningCenterPlansForDate).not.toHaveBeenCalled();
+    expect(screen.queryByRole("region", { name: "Planning Center plan discovery" })).not.toBeInTheDocument();
   });
 });

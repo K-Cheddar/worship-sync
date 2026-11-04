@@ -49,8 +49,8 @@ jest.mock("../LaneFullFrameMedia", () => ({
     onPaintReadyChange: (ready: boolean) => void;
     onLivePaintReadyChange?: (ready: boolean) => void;
     onPosterPaintReadyChange?: (ready: boolean) => void;
-    media: { kind: string; mediaKey?: string; input?: { sourceId: string } };
-    playback?: { mediaKey?: string; generation?: number; positionSeconds?: number };
+    media: { kind: string; mediaKey?: string; loop?: boolean; input?: { sourceId: string } };
+    playback?: { mediaKey?: string; generation?: number; positionSeconds?: number; loop?: boolean };
   }) {
     if (media.kind === "fileVideo") {
       const cues = playbackCuesByMedia.get(media.mediaKey ?? "") ?? [];
@@ -89,6 +89,7 @@ jest.mock("../LaneFullFrameMedia", () => ({
         data-playback-media-key={playback?.mediaKey}
         data-playback-generation={playback?.generation}
         data-playback-position={playback?.positionSeconds}
+        data-loop={String(playback?.loop ?? media.loop ?? true)}
       />
     );
   },
@@ -2291,4 +2292,20 @@ describe("DisplayBoxTransitionStage", () => {
     advance(3, 4);
     advance(4, 5);
   });
+
+  it("keeps the same media node while consecutive slides change loop preferences", () => {
+    const media = { kind: "fileVideo" as const, mediaKey: "remote:clip", originalSrc: "https://cdn.example/clip.mp4", videoBox: { id: "bg", width: 100, height: 100 } };
+    const first: DisplayBoxTransitionSnapshot = { key: "first", boxes: [{ id: "words", words: "First", width: 100, height: 100 }], backgroundMedia: { ...media, loop: true } };
+    const second: DisplayBoxTransitionSnapshot = { ...first, key: "second", boxes: [{ ...first.boxes[0], words: "Second" }], backgroundMedia: { ...media, loop: false } };
+    const cue = { mediaKey: media.mediaKey, positionSeconds: 12, paused: false, atServerMs: Date.now(), generation: 1, applySeek: false, loop: true };
+    const { rerender } = render(<DisplayBoxTransitionStage snapshot={first} shouldAnimate mediaPlayback={{ activeFileVideoPlayback: cue }} renderLane={readyRenderLane()} />);
+    const video = screen.getByTestId("lane-full-frame-media-mock");
+    expect(video).toHaveAttribute("data-loop", "true");
+    rerender(<DisplayBoxTransitionStage snapshot={second} shouldAnimate mediaPlayback={{ activeFileVideoPlayback: { ...cue, loop: false, generation: 2 } }} renderLane={readyRenderLane()} />);
+    act(() => mockTimelineComplete?.());
+    expect(screen.getByTestId("lane-full-frame-media-mock")).toBe(video);
+    expect(video).toHaveAttribute("data-loop", "false");
+    expect(video).toHaveAttribute("data-playback-position", "12");
+  });
+
 });

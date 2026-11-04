@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { render, screen, fireEvent, within, waitFor } from "@testing-library/react";
 import type { ContextType } from "react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
@@ -10,6 +10,13 @@ import type { TeamPosition, TeamRecord, TeamService } from "../../../api/authTyp
 import type { ServiceTime } from "../../../types";
 import type { ServicePlanTemplate } from "../../../types/servicePlan";
 import { toTeamService } from "../teamsUtils";
+import { listPlanningCenterServiceTypes } from "../../../api/planningCenter";
+
+jest.mock("../../../api/planningCenter", () => ({
+  listPlanningCenterServiceTypes: jest.fn(),
+}));
+
+const mockListPlanningCenterServiceTypes = jest.mocked(listPlanningCenterServiceTypes);
 
 const mockDispatch = jest.fn();
 let mockSelectorState: unknown = {};
@@ -89,11 +96,25 @@ const managerElement = (
   positions: TeamPosition[] = [],
   teams: TeamRecord[] = [],
   planTemplates: ServicePlanTemplate[] = [],
+  planningCenterConnected = false,
+  planningCenterAccountId = "org-a",
 ) => (
     <MemoryRouter>
       <ToastProvider>
         <GlobalInfoContext.Provider
-          value={{ churchId: "church-1" } as NonNullable<ContextType<typeof GlobalInfoContext>>}
+          value={{
+            churchId: "church-1",
+            ...(planningCenterConnected ? {
+              churchIntegrations: {
+                planningCenter: {
+                  enabled: true,
+                  connected: true,
+                  accountLabel: "Example Church",
+                  accountId: planningCenterAccountId,
+                },
+              },
+            } : {}),
+          } as NonNullable<ContextType<typeof GlobalInfoContext>>}
         >
           <TeamsNavigationGuardProvider>
             <ServiceManager
@@ -114,7 +135,8 @@ const renderManager = (
   positions: TeamPosition[] = [],
   teams: TeamRecord[] = [],
   planTemplates: ServicePlanTemplate[] = [],
-) => render(managerElement(services, positions, teams, planTemplates));
+  planningCenterConnected = false,
+) => render(managerElement(services, positions, teams, planTemplates, planningCenterConnected));
 
 const serviceFormSaveButton = () =>
   screen.getAllByRole("button", { name: /^(Create service|Save service|Saved|Created)$/ }).at(-1)!;
@@ -127,6 +149,9 @@ const findActions = (calls: unknown[][], type: string) =>
 beforeEach(() => {
   mockDispatch.mockClear();
   mockSelectorState = {};
+  mockListPlanningCenterServiceTypes.mockResolvedValue({
+    items: [{ id: "pco-type-new", name: "Sunday Worship" }],
+  });
   originalMatchMedia = window.matchMedia;
   // Desktop default: max-width queries do not match, so the edit panel stays open.
   window.matchMedia = makeMatchMedia(false);
@@ -137,6 +162,29 @@ afterEach(() => {
 });
 
 describe("ServiceManager combined services", () => {
+  it("reloads an absolute one-time service in church local time without shifting it on save", async () => {
+    const user = userEvent.setup();
+    renderManager([service({ serviceId: "book-launch", name: "Book Launch 2026", reccurence: "one_time", dateTimeISO: "2026-11-07T21:30:00.000Z" })]);
+    await user.click(screen.getByRole("button", { name: /Edit Book Launch 2026/i }));
+    expect(screen.getByLabelText("Date & Time")).toHaveValue("11/07/2026 04:30 PM");
+    fireEvent.change(screen.getByLabelText(/^Name:?$/), { target: { value: "Book Launch updated" } });
+    await user.click(serviceFormSaveButton());
+    expect(findActions(mockDispatch.mock.calls, "serviceTimes/updateService")).toEqual([
+      expect.objectContaining({ payload: expect.objectContaining({ id: "book-launch", changes: expect.objectContaining({ dateTimeISO: "2026-11-07T21:30:00.000Z" }) }) }),
+    ]);
+  });
+
+  it("reloads Planning Center service types when the connected account ID changes under the same label", async () => {
+    mockListPlanningCenterServiceTypes.mockClear();
+    const view = render(managerElement([sundayMorning], [], [], [], true, "org-a"));
+    await waitFor(() => expect(mockListPlanningCenterServiceTypes).toHaveBeenCalledTimes(1));
+
+    view.rerender(managerElement([sundayMorning], [], [], [], true, "org-b"));
+    await waitFor(() => expect(mockListPlanningCenterServiceTypes).toHaveBeenCalledTimes(2));
+    expect(mockListPlanningCenterServiceTypes).toHaveBeenNthCalledWith(1, "church-1");
+    expect(mockListPlanningCenterServiceTypes).toHaveBeenNthCalledWith(2, "church-1");
+  });
+
   it("confirms before discarding unsaved service changes", async () => {
     const user = userEvent.setup();
     renderManager([sundayMorning, sundayLate, midweek]);
@@ -410,21 +458,21 @@ describe("ServiceManager combined services", () => {
     await user.click(screen.getByRole("checkbox", { name: /First Service/ }));
     await user.click(serviceFormSaveButton());
 
-    const created = findActions(mockDispatch.mock.calls, "serviceTimes/addService");
-    expect(created).toHaveLength(1);
-    const groupId = (created[0].payload as TeamService).serviceGroupId;
+    const mutations = findActions(mockDispatch.mock.calls, "serviceTimes/applyServiceGroupMutation");
+    expect(mutations).toHaveLength(1);
+    const firstMutation = mutations[0].payload as {
+      primary: { mode: string; service: TeamService };
+      partnerUpdates: Array<{ id: string; serviceGroupId: string | null }>;
+      requiredPartnerIds: string[];
+    };
+    expect(firstMutation.primary.mode).toBe("add");
+    const groupId = firstMutation.primary.service.serviceGroupId;
     expect(groupId).toBeTruthy();
 
-    // The selected partner is stamped with the same id so they merge on schedules.
-    const updates = findActions(
-      mockDispatch.mock.calls,
-      "serviceTimes/updateService",
-    );
-    expect(updates).toContainEqual(
-      expect.objectContaining({
-        payload: { id: "first", changes: { serviceGroupId: groupId } },
-      }),
-    );
+    expect(firstMutation.partnerUpdates).toEqual([
+      { id: "first", serviceGroupId: groupId },
+    ]);
+    expect(firstMutation.requiredPartnerIds).toEqual(["first"]);
 
     expect(screen.getByRole("heading", { name: "Edit service" })).toBeInTheDocument();
     const nameInput = screen.getByLabelText(/^Name:?$/);
@@ -432,10 +480,33 @@ describe("ServiceManager combined services", () => {
       target: { value: "Combined Sunday Updated" },
     });
     await user.click(serviceFormSaveButton());
-    expect(findActions(mockDispatch.mock.calls, "serviceTimes/addService")).toHaveLength(1);
-    expect(findActions(mockDispatch.mock.calls, "serviceTimes/updateService")).toContainEqual(
-      expect.objectContaining({ payload: expect.objectContaining({ id: (created[0].payload as TeamService).id }) }),
-    );
+    const groupEdits = findActions(mockDispatch.mock.calls, "serviceTimes/applyServiceGroupMutation");
+    expect(groupEdits).toHaveLength(2);
+    expect((groupEdits[1].payload as { primary: { mode: string; service: TeamService } }).primary).toMatchObject({
+      mode: "update",
+      service: expect.objectContaining({ id: firstMutation.primary.service.id, name: "Combined Sunday Updated" }),
+    });
+  });
+
+  it("deletes a combined service and its partner cleanup with one mutation", async () => {
+    const user = userEvent.setup();
+    renderManager([
+      service({ ...sundayMorning, serviceGroupId: "combined-sunday" }),
+      service({ ...sundayLate, serviceGroupId: "combined-sunday" }),
+    ]);
+
+    await user.click(screen.getByRole("button", { name: /Edit First Service/i }));
+    await user.click(screen.getByRole("button", { name: "Service actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Remove service" }));
+
+    const mutations = findActions(mockDispatch.mock.calls, "serviceTimes/applyServiceGroupMutation");
+    expect(mutations).toHaveLength(1);
+    expect(mutations[0].payload).toEqual({
+      primary: { mode: "delete", id: "first" },
+      partnerUpdates: [{ id: "second", serviceGroupId: undefined }],
+    });
+    expect(findActions(mockDispatch.mock.calls, "serviceTimes/removeService")).toHaveLength(0);
+    expect(findActions(mockDispatch.mock.calls, "serviceTimes/updateService")).toHaveLength(0);
   });
 });
 
@@ -546,5 +617,39 @@ describe("ServiceManager default plan template", () => {
         }),
       }),
     );
+  });
+});
+
+describe("ServiceManager Planning Center service association", () => {
+  it.each([
+    [undefined, "Sunday Worship", "pco-type-new"],
+    ["pco-type-old", "No association", undefined],
+  ])("saves the explicitly selected Planning Center association", async (
+    existingTypeId,
+    selectedLabel,
+    expectedTypeId,
+  ) => {
+    const user = userEvent.setup();
+    const currentService = service({
+      serviceId: "first",
+      name: "First Service",
+      planningCenterServiceTypeId: existingTypeId,
+    });
+    renderManager([currentService], [], [], [], true);
+
+    await user.click(screen.getByRole("button", { name: /Edit First Service/i }));
+    const serviceTypeSelect = await screen.findByRole("combobox", {
+      name: /^Planning Center service type:/,
+    });
+    await user.click(serviceTypeSelect);
+    await user.click(await screen.findByRole("option", { name: selectedLabel }));
+    await user.click(serviceFormSaveButton());
+
+    const update = findActions(mockDispatch.mock.calls, "serviceTimes/updateService")[0];
+    expect(update).toBeDefined();
+    expect(update.payload).toMatchObject({
+      changes: { planningCenterServiceTypeId: expectedTypeId },
+    });
+    expect(mockListPlanningCenterServiceTypes).toHaveBeenCalledWith("church-1");
   });
 });

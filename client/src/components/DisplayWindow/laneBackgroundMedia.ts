@@ -11,6 +11,7 @@ export type LaneBackgroundMedia =
       originalSrc: string;
       videoBox: Box;
       fallbackSrc?: string;
+      loop?: boolean;
     }
   | {
       kind: "localVideo";
@@ -90,6 +91,7 @@ export const resolveLaneBackgroundMedia = ({
   shouldPlayVideo,
   localVideoInput,
   resolvedFileVideoUrl,
+  loop,
 }: {
   boxes: Box[];
   showBackground: boolean;
@@ -97,6 +99,7 @@ export const resolveLaneBackgroundMedia = ({
   localVideoInput?: LocalVideoInputPresentation;
   /** Already-resolved local/cloud playback URL for the current file-video box. */
   resolvedFileVideoUrl?: string;
+  loop?: boolean;
 }): LaneBackgroundMedia => {
   if (localVideoInput) {
     return { kind: "localVideo", input: localVideoInput };
@@ -118,6 +121,7 @@ export const resolveLaneBackgroundMedia = ({
   return {
     kind: "fileVideo",
     mediaKey,
+    loop,
     originalSrc,
     videoBox,
     fallbackSrc:

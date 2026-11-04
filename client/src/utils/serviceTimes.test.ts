@@ -92,6 +92,23 @@ describe("serviceTimes", () => {
   });
 
   describe("getNextOccurrenceForService", () => {
+    it.each(["2026-11-07T16:30", "2026-11-07T21:30:00.000Z", "2026-11-07T16:30:00-05:00"])("uses the church timezone for one-time countdown boundaries: %s", (dateTimeISO) => {
+      const oneTime = createService({ dateTimeISO });
+      const before = new Date("2026-11-07T20:30:00.000Z");
+      const start = new Date("2026-11-07T21:30:00.000Z");
+      expect(getNextOccurrenceForServiceInZone(oneTime, before, "America/New_York")?.toISOString()).toBe(start.toISOString());
+      expect(getMostRecentTargetTimeInZone(oneTime, before, "America/New_York")).toBeNull();
+      expect(getNextOccurrenceForServiceInZone(oneTime, start, "America/New_York")).toBeNull();
+      expect(getMostRecentTargetTimeInZone(oneTime, start, "America/New_York")?.toISOString()).toBe(start.toISOString());
+      expect(getUpcomingServiceRefreshDelayInZone([oneTime], before, 0, {}, "America/New_York")).toBe(3_600_001);
+    });
+
+    it("retains an explicit countdown override over the legacy church-local scheduled start", () => {
+      const oneTime = createService({ dateTimeISO: "2026-11-07T16:30", overrideDateTimeISO: "2026-11-07T22:00:00.000Z" });
+      expect(getEffectiveTargetTimeInZone(oneTime, new Date("2026-11-07T20:30:00.000Z"), "America/New_York")?.toISOString()).toBe("2026-11-07T22:00:00.000Z");
+      expect(getMostRecentTargetTimeInZone(oneTime, new Date("2026-11-07T22:01:00.000Z"), "America/New_York")?.toISOString()).toBe("2026-11-07T22:00:00.000Z");
+    });
+
     it("returns future one-time service date and null for past", () => {
       const now = new Date(2026, 0, 10, 9, 0, 0);
       const future = createService({

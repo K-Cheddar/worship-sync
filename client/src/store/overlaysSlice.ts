@@ -1,4 +1,5 @@
-import { createSlice, PayloadAction } from "@reduxjs/toolkit";
+import { createSlice, original, PayloadAction } from "@reduxjs/toolkit";
+import { activateOutlineContent } from "./outlineContent";
 import { OverlayHistoryKey, OverlayInfo } from "../types";
 import generateRandomId from "../utils/generateRandomId";
 import { getDefaultFormatting } from "../utils/overlayUtils";
@@ -53,6 +54,8 @@ export function mergeOverlaysIntoHistory(
 }
 
 type OverlaysState = {
+  outlineOwnerKey?: string;
+  pendingByOutline?: Record<string, OverlayInfo[]>;
   list: OverlayInfo[];
   hasPendingUpdate: boolean;
   initialList: string[];
@@ -100,12 +103,7 @@ export const overlaysSlice = createSlice({
       state.isInitialized = action.payload;
     },
     initiateOverlayList: (state, action: PayloadAction<OverlayInfo[]>) => {
-      // reset state when loading an item list
-
-      if (action.payload.length === 0) {
-        state.list = [];
-        return;
-      }
+      if (state.outlineOwnerKey) delete state.pendingByOutline?.[state.outlineOwnerKey];
       state.list = action.payload.map((overlay) => {
         return {
           ...overlay,
@@ -118,6 +116,7 @@ export const overlaysSlice = createSlice({
       });
       state.initialList = state.list.map((overlay) => overlay.id);
       state.isInitialized = true;
+      state.hasPendingUpdate = false;
     },
     updateOverlayListFromRemote: (
       state,
@@ -164,6 +163,16 @@ export const overlaysSlice = createSlice({
     },
     setHasPendingUpdate: (state, action: PayloadAction<boolean>) => {
       state.hasPendingUpdate = action.payload;
+      if (!action.payload && state.outlineOwnerKey) delete state.pendingByOutline?.[state.outlineOwnerKey];
+    },
+    acknowledgeOutlineSave: (state, action: PayloadAction<{ ownerKey: string; list: OverlayInfo[] }>) => {
+      const before = original(state)!;
+      const { ownerKey, list } = action.payload;
+      if (before.pendingByOutline?.[ownerKey] === list) delete state.pendingByOutline![ownerKey];
+      if (state.outlineOwnerKey === ownerKey && before.list === list) {
+        state.hasPendingUpdate = false;
+        delete state.pendingByOutline?.[ownerKey];
+      }
     },
     forceUpdate: (state) => {
       state.hasPendingUpdate = true;
@@ -239,6 +248,20 @@ export const overlaysSlice = createSlice({
       );
     },
   },
+  extraReducers: (builder) => builder.addCase(activateOutlineContent, (state, action) => {
+    if (state.outlineOwnerKey && state.hasPendingUpdate) {
+      state.pendingByOutline ??= {};
+      state.pendingByOutline[state.outlineOwnerKey] = state.list;
+    } else if (state.outlineOwnerKey) {
+      delete state.pendingByOutline?.[state.outlineOwnerKey];
+    }
+    const draft = state.pendingByOutline?.[action.payload.ownerKey];
+    state.outlineOwnerKey = action.payload.ownerKey;
+    state.list = draft ?? [];
+    state.hasPendingUpdate = !!draft;
+    state.isInitialized = !!draft || !action.payload.hasSelection;
+    state.initialList = state.list.map((overlay) => overlay.id);
+  }),
 });
 
 export const {

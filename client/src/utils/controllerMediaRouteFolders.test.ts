@@ -152,4 +152,21 @@ describe("controller media route folder documents", () => {
     await repairPersistedMediaRouteFolders(db, new Set(["deleted"]), "parent");
     expect(docs.get(id)?.mediaRouteFolders).toEqual({ "controller-item-image": "parent", "controller-item-song": "songs" });
   });
+  it("retries a partially completed repair without rewriting already repaired documents", async () => {
+    const first = getControllerMediaRouteFoldersDocId("first");
+    const second = getControllerMediaRouteFoldersDocId("second");
+    const { db, docs, put } = makeDb({
+      [first]: { _id: first, _rev: "1-a", controllerProfileId: "first", mediaRouteFolders: { "controller-default": "deleted" }, docType: "mediaRouteFolders" },
+      [second]: { _id: second, _rev: "1-b", controllerProfileId: "second", mediaRouteFolders: { "controller-default": "deleted" }, docType: "mediaRouteFolders" },
+    });
+    const originalPut = put.getMockImplementation()!;
+    put.mockImplementationOnce(originalPut).mockRejectedValueOnce(new Error("disk unavailable"));
+    await expect(repairPersistedMediaRouteFolders(db, new Set(["deleted"]), "parent")).rejects.toThrow("disk unavailable");
+    expect(docs.get(first)?.mediaRouteFolders).toEqual({ "controller-default": "parent" });
+    expect(docs.get(second)?.mediaRouteFolders).toEqual({ "controller-default": "deleted" });
+    await repairPersistedMediaRouteFolders(db, new Set(["deleted"]), "parent");
+    expect(docs.get(second)?.mediaRouteFolders).toEqual({ "controller-default": "parent" });
+    expect(put.mock.calls.filter(([doc]) => doc._id === first)).toHaveLength(1);
+  });
+
 });

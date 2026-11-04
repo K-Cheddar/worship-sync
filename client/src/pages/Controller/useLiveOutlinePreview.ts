@@ -22,7 +22,8 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
   items: ServiceItemType[];
   isLoading: boolean;
 } => {
-  const { db, cloud, updater } = useContext(ControllerInfoContext) || {};
+  const { db, cloud, updater, bootstrapReady } =
+    useContext(ControllerInfoContext) || {};
   const [items, setItems] = useState<ServiceItemType[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const activeListIdRef = useRef<string | undefined>(undefined);
@@ -89,13 +90,23 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
       ) {
         return;
       }
+      const outlines = response?.itemLists ?? [];
+      let preferredId = response?.selectedIdByScope?.[requestScope];
+      if (requestScope === DEFAULT_OUTLINE_SCOPE) {
+        const churchActiveId = response?.activeList?._id;
+        const churchActiveOutline = resolveOutlineForScope(
+          outlines,
+          requestScope,
+          churchActiveId,
+        );
+        if (churchActiveOutline?._id === churchActiveId) {
+          preferredId = churchActiveId;
+        }
+      }
       const activeId = resolveOutlineForScope(
-        response?.itemLists ?? [],
+        outlines,
         requestScope,
-        response?.selectedIdByScope?.[requestScope] ??
-          (requestScope === DEFAULT_OUTLINE_SCOPE
-            ? response?.activeList?._id
-            : undefined),
+        preferredId,
       )?._id;
       if (activeListIdRef.current !== activeId) setItems([]);
       activeListIdRef.current = activeId;
@@ -119,7 +130,7 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
     return () => {
       requestIdRef.current += 1;
     };
-  }, [loadActiveList]);
+  }, [bootstrapReady, loadActiveList]);
 
   const handleExternalUpdate = useCallback(
     (event: CustomEventInit) => {

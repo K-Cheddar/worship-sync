@@ -37,6 +37,7 @@ type ElectronEditorPreparedMediaPreviewProps = {
   >;
   videoBox?: Box;
   playback?: VideoBackgroundPlaybackCue;
+  loop?: boolean;
   volume?: number;
   onCurrentFrameReady: (ready: boolean) => void;
 };
@@ -49,6 +50,7 @@ const ElectronEditorPreparedMediaPreview = ({
   preparedMediaContext,
   videoBox,
   playback,
+  loop,
   volume = 1,
   onCurrentFrameReady,
 }: ElectronEditorPreparedMediaPreviewProps) => {
@@ -167,6 +169,7 @@ const ElectronEditorPreparedMediaPreview = ({
         muted: true,
         volume,
         playback,
+        loop,
         reportsEditorTransport:
           reportsEditorTransport &&
           isMediaSurfaceVisible(statusByKey[currentMedia.mediaKey]),
@@ -175,6 +178,7 @@ const ElectronEditorPreparedMediaPreview = ({
   }, [
     currentMedia,
     playback,
+    loop,
     reportsEditorTransport,
     previewPaused,
     statusByKey,

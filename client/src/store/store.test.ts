@@ -253,6 +253,8 @@ const loadStoreWithItemPersistence = () => {
     selectControllerItem: selectionModule!.selectControllerItem,
     deferredMutations: mutationsModule!,
     updateSlides: itemSliceModule.updateSlides,
+    updateSlideVideoBackgroundLoop: itemSliceModule.updateSlideVideoBackgroundLoop,
+    updateSlideVideoBackgroundSendMode: itemSliceModule.updateSlideVideoBackgroundSendMode,
     db,
     postMessage,
     setGlobalDb: (next: unknown) => { mockActiveItemDb = next; },
@@ -339,6 +341,26 @@ describe("item content integrity investigation", () => {
   };
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => jest.useRealTimers());
+
+  it("persists slide loop overrides to the original item after navigation and restores both settings", async () => {
+    const { docs, select, tick, store, updateSlideVideoBackgroundLoop, updateSlideVideoBackgroundSendMode } = setup();
+    const beforeB = clone(docs.get("song-B"));
+    select("song-A");
+    await store.dispatch(updateSlideVideoBackgroundLoop({ loop: false }));
+    await store.dispatch(updateSlideVideoBackgroundSendMode({ mode: "restart" }));
+    select("song-B");
+    await tick();
+    expect(docs.get("song-A")).toMatchObject({
+      slides: [expect.objectContaining({ videoBackgroundLoop: false, videoBackgroundSendMode: "restart" })],
+      arrangements: [expect.objectContaining({ slides: [expect.objectContaining({ videoBackgroundLoop: false, videoBackgroundSendMode: "restart" })] })],
+    });
+    expect(docs.get("song-B")).toEqual(beforeB);
+    select("song-A");
+    expect(store.getState().undoable.present.item.slides[0]).toMatchObject({ videoBackgroundLoop: false, videoBackgroundSendMode: "restart" });
+    await store.dispatch(updateSlideVideoBackgroundLoop({ loop: true }));
+    await tick();
+    expect(docs.get("song-A")).toMatchObject({ slides: [expect.objectContaining({ videoBackgroundLoop: true, videoBackgroundSendMode: "restart" })] });
+  });
 
   it("preserves newer unsaved input through an earlier local Pouch change and save acknowledgment", async () => {
     const { select, edit, tick, db, commit, store, docs } = setup();
@@ -4174,6 +4196,188 @@ describe("store module", () => {
     );
   });
 
+  it("aborts a combined group edit when a selected partner disappeared before the transaction", async () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-04-05T11:58:00.000Z"));
+    const { store, serviceTimesSlice, runTransactionMock, registerPresentationSyncErrorHandler } = loadStoreWithPresentationSync();
+    const syncErrorHandler = jest.fn();
+    registerPresentationSyncErrorHandler(syncErrorHandler);
+    const primary = { id: "primary", name: "Primary", serviceGroupId: null };
+    const partner = { id: "partner", name: "Partner", serviceGroupId: null };
+    const remoteOnly = { id: "remote-only", name: "Added by another client" };
+    const current = [primary, remoteOnly];
+    let transactionValue: unknown;
+    runTransactionMock.mockImplementationOnce(async (_path: unknown, update: (current: unknown) => unknown) => {
+      // The partner was removed remotely while the local editor was open.
+      transactionValue = update(current);
+      return { committed: false, snapshot: { val: () => current } };
+    });
+
+    store.dispatch(serviceTimesSlice.actions.initiateServices([primary, partner] as any));
+    store.dispatch(serviceTimesSlice.actions.applyServiceGroupMutation({
+      primary: { mode: "update", service: { ...primary, serviceGroupId: "combined-sunday" } as any },
+      partnerUpdates: [{ id: "partner", serviceGroupId: "combined-sunday" }],
+      requiredPartnerIds: ["partner"],
+    }));
+    await flushListenerEffects();
+
+    expect(runTransactionMock).toHaveBeenCalledTimes(1);
+    expect(transactionValue).toBeUndefined();
+    expect(store.getState().undoable.present.serviceTimes.list).toEqual(expect.arrayContaining(current));
+    expect(store.getState().undoable.present.serviceTimes.list).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ serviceGroupId: "combined-sunday" })]),
+    );
+    expect(syncErrorHandler).toHaveBeenCalledWith(expect.stringContaining("selected combined-service partner changed"));
+  });
+
+  it("leaves an unrelated singleton group unchanged during a combined-service edit", async () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-04-05T11:58:00.000Z"));
+    const { store, serviceTimesSlice, runTransactionMock } = loadStoreWithPresentationSync();
+    const primary = { id: "primary", name: "Primary", serviceGroupId: null };
+    const partner = { id: "partner", name: "Partner", serviceGroupId: null };
+    const unrelatedSingleton = {
+      id: "historical-singleton",
+      name: "Historical service",
+      serviceGroupId: "historical-group",
+      updatedAt: "2025-01-01T00:00:00.000Z",
+    };
+    const authoritative = [primary, partner, unrelatedSingleton];
+    let committed: any[] = [];
+    runTransactionMock.mockImplementationOnce(async (_path: unknown, update: (current: unknown) => unknown) => {
+      committed = update(authoritative) as any[];
+      return { committed: true, snapshot: { val: () => committed } };
+    });
+
+    store.dispatch(serviceTimesSlice.actions.initiateServices(authoritative as any));
+    store.dispatch(serviceTimesSlice.actions.applyServiceGroupMutation({
+      primary: { mode: "update", service: { ...primary, serviceGroupId: "combined-sunday" } as any },
+      partnerUpdates: [{ id: "partner", serviceGroupId: "combined-sunday" }],
+      requiredPartnerIds: ["partner"],
+    }));
+    await flushListenerEffects();
+
+    expect(committed).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "primary", serviceGroupId: "combined-sunday" }),
+      expect.objectContaining({ id: "partner", serviceGroupId: "combined-sunday" }),
+    ]));
+    expect(committed.find((service) => service.id === unrelatedSingleton.id)).toEqual(unrelatedSingleton);
+  });
+
+  it("rolls back a failed group transaction and retries every membership change together", async () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-04-05T11:58:00.000Z"));
+    jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const { store, serviceTimesSlice, runTransactionMock } = loadStoreWithPresentationSync();
+    const primary = { id: "primary", name: "Primary", serviceGroupId: null };
+    const partner = { id: "partner", name: "Partner", serviceGroupId: null };
+    const mutation = {
+      primary: { mode: "update", service: { ...primary, serviceGroupId: "combined-sunday" } as any },
+      partnerUpdates: [{ id: "partner", serviceGroupId: "combined-sunday" }],
+      requiredPartnerIds: ["partner"],
+    };
+    const remoteServices = [primary, partner];
+    let committed: any[] = [];
+    runTransactionMock.mockRejectedValueOnce({ code: "PERMISSION_DENIED" });
+    store.dispatch(serviceTimesSlice.actions.initiateServices(remoteServices as any));
+    store.dispatch(serviceTimesSlice.actions.applyServiceGroupMutation(mutation));
+    await flushListenerEffects();
+    expect(store.getState().undoable.present.serviceTimes.list).toHaveLength(remoteServices.length);
+    expect(store.getState().undoable.present.serviceTimes.list).toEqual(expect.arrayContaining(remoteServices));
+
+    runTransactionMock.mockImplementationOnce(async (_path: unknown, update: (current: unknown) => unknown) => {
+      committed = update(remoteServices) as any[];
+      return { committed: true, snapshot: { val: () => committed } };
+    });
+    store.dispatch(serviceTimesSlice.actions.applyServiceGroupMutation(mutation));
+    await flushListenerEffects();
+
+    expect(runTransactionMock).toHaveBeenCalledTimes(2);
+    expect(committed).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "primary", serviceGroupId: "combined-sunday" }),
+      expect.objectContaining({ id: "partner", serviceGroupId: "combined-sunday" }),
+    ]));
+    expect(store.getState().undoable.present.serviceTimes.list).toEqual(committed);
+  });
+
+  it("deletes a grouped service and dissolves its last partner in one retryable transaction", async () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-04-05T11:58:00.000Z"));
+    jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const { store, serviceTimesSlice, runTransactionMock } = loadStoreWithPresentationSync();
+    const primary = { id: "primary", name: "Primary", serviceGroupId: "combined-sunday" };
+    const partner = { id: "partner", name: "Partner", serviceGroupId: "combined-sunday" };
+    const services = [primary, partner];
+    const deletion = {
+      primary: { mode: "delete" as const, id: "primary" },
+      partnerUpdates: [{ id: "partner", serviceGroupId: undefined }],
+    };
+    let committed: any[] = [];
+    runTransactionMock.mockImplementationOnce(async (path: unknown, update: (current: unknown) => unknown) => {
+      expect(path).toBe("churches/church-main/data/services");
+      committed = update(services) as any[];
+      return { committed: true, snapshot: { val: () => committed } };
+    });
+    store.dispatch(serviceTimesSlice.actions.initiateServices(services as any));
+    store.dispatch(serviceTimesSlice.actions.applyServiceGroupMutation(deletion));
+    await flushListenerEffects();
+
+    expect(runTransactionMock).toHaveBeenCalledTimes(1);
+    expect(committed).toHaveLength(1);
+    expect(committed[0]).toMatchObject({
+      id: "partner", serviceGroupId: null, updatedAt: "2026-04-05T11:58:00.000Z",
+    });
+    expect(store.getState().undoable.present.serviceTimes.list).toEqual(expect.arrayContaining(committed));
+    expect(store.getState().undoable.present.serviceTimes.list).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "primary" })]),
+    );
+  });
+
+  it("rolls back a grouped service deletion when its atomic transaction fails", async () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-04-05T11:58:00.000Z"));
+    jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const { store, serviceTimesSlice, runTransactionMock } = loadStoreWithPresentationSync();
+    const primary = { id: "primary", name: "Primary", serviceGroupId: "combined-sunday" };
+    const partner = { id: "partner", name: "Partner", serviceGroupId: "combined-sunday" };
+    const services = [primary, partner];
+    runTransactionMock.mockRejectedValueOnce({ code: "PERMISSION_DENIED" });
+
+    store.dispatch(serviceTimesSlice.actions.initiateServices(services as any));
+    store.dispatch(serviceTimesSlice.actions.applyServiceGroupMutation({
+      primary: { mode: "delete", id: "primary" },
+      partnerUpdates: [{ id: "partner", serviceGroupId: undefined }],
+    }));
+    expect(store.getState().undoable.present.serviceTimes.list).toHaveLength(1);
+    await flushListenerEffects();
+
+    expect(runTransactionMock).toHaveBeenCalledTimes(1);
+    expect(store.getState().undoable.present.serviceTimes.list).toEqual(expect.arrayContaining(services));
+  });
+
+  it("recomputes service deletion cleanup against concurrent group members", async () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-04-05T11:58:00.000Z"));
+    const { store, serviceTimesSlice, runTransactionMock } = loadStoreWithPresentationSync();
+    const primary = { id: "primary", name: "Primary", serviceGroupId: "combined-sunday" };
+    const partner = { id: "partner", name: "Partner", serviceGroupId: "combined-sunday" };
+    const concurrentPartner = { id: "remote-partner", name: "Concurrent partner", serviceGroupId: "combined-sunday" };
+    const authoritative = [primary, partner, concurrentPartner];
+    let committed: any[] = [];
+    runTransactionMock.mockImplementationOnce(async (_path: unknown, update: (current: unknown) => unknown) => {
+      // A second client adds a group member after the delete editor made its cleanup plan.
+      committed = update(authoritative) as any[];
+      return { committed: true, snapshot: { val: () => committed } };
+    });
+
+    store.dispatch(serviceTimesSlice.actions.initiateServices([primary, partner] as any));
+    store.dispatch(serviceTimesSlice.actions.applyServiceGroupMutation({
+      primary: { mode: "delete", id: "primary" },
+      // This stale hint would incorrectly dissolve the group if trusted.
+      partnerUpdates: [{ id: "partner", serviceGroupId: undefined }],
+    }));
+    await flushListenerEffects();
+
+    expect(committed).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "partner", serviceGroupId: "combined-sunday" }),
+      expect.objectContaining({ id: "remote-partner", serviceGroupId: "combined-sunday" }),
+    ]));
+  });
+
   it("attempts a service-time update when the connection monitor is disconnected", async () => {
     jest.useFakeTimers();
     const {
@@ -4627,6 +4831,46 @@ describe("store module", () => {
       toLegacyPresentationShape(store.getState().presentation).projectorInfo
         .name,
     ).toBe("New Projector");
+  });
+
+  it.each(["projector", "monitor", "stream"] as const)("syncs live %s loop changes without advancing slide time and ignores a stale cue", async (outputType) => {
+    const { store, presentationSlice } = loadStoreWithPresentationSync();
+    const sliceNames = {
+      projector: { remote: "updateProjectorFromRemote", debounced: "debouncedUpdateProjector", info: "projectorInfo" },
+      monitor: { remote: "updateMonitorFromRemote", debounced: "debouncedUpdateMonitor", info: "monitorInfo" },
+      stream: { remote: "updateStreamFromRemote", debounced: "debouncedUpdateStream", info: "streamInfo" },
+    };
+    const names = sliceNames[outputType];
+    const cue = { mediaKey: "remote:clip", positionSeconds: 12, paused: false, atServerMs: 1_000_000, generation: 5, applySeek: false, loop: true };
+    const presentation = createScreenPresentation(outputType, 500, { videoPlayback: cue });
+    store.dispatch(presentationSlice.actions[names.remote](presentation));
+    store.dispatch({ type: names.debounced, payload: { ...presentation, videoPlayback: { ...cue, loop: false, generation: 6 } } });
+    await waitForListenerDelay();
+    expect(toLegacyPresentationShape(store.getState().presentation)[names.info]).toMatchObject({ time: 500, videoPlayback: { positionSeconds: 12, loop: false, generation: 6, applySeek: false } });
+    store.dispatch({ type: names.debounced, payload: presentation });
+    await waitForListenerDelay();
+    expect(toLegacyPresentationShape(store.getState().presentation)[names.info].videoPlayback.loop).toBe(false);
+  });
+
+  it.each(["projector", "monitor", "stream"] as const)("delivers a cue-less %s Loop update and later explicit transport at the same slide time", async (outputType) => {
+    const { store, presentationSlice } = loadStoreWithPresentationSync();
+    const names = {
+      projector: { remote: "updateProjectorFromRemote", debounced: "debouncedUpdateProjector", info: "projectorInfo" },
+      monitor: { remote: "updateMonitorFromRemote", debounced: "debouncedUpdateMonitor", info: "monitorInfo" },
+      stream: { remote: "updateStreamFromRemote", debounced: "debouncedUpdateStream", info: "streamInfo" },
+    }[outputType];
+    const presentation = createScreenPresentation(outputType, 500);
+    store.dispatch(presentationSlice.actions[names.remote](presentation));
+    const policy = { mediaKey: "remote:clip", positionSeconds: 0, paused: false, atServerMs: 1_000_000, generation: 5, applySeek: false, loop: false, loopOnly: true };
+    store.dispatch({ type: names.debounced, payload: { ...presentation, videoPlayback: policy } });
+    await waitForListenerDelay();
+    expect(toLegacyPresentationShape(store.getState().presentation)[names.info]).toMatchObject({ time: 500, videoPlayback: { loop: false, loopOnly: true, generation: 5 } });
+    const { loopOnly: _policyOnly, ...transport } = policy;
+    store.dispatch({ type: names.debounced, payload: { ...presentation, videoPlayback: { ...transport, positionSeconds: 12, applySeek: true, generation: 6 } } });
+    await waitForListenerDelay();
+    const applied = toLegacyPresentationShape(store.getState().presentation)[names.info];
+    expect(applied).toMatchObject({ time: 500, videoPlayback: { positionSeconds: 12, applySeek: true, generation: 6 } });
+    expect(applied.videoPlayback.loopOnly).toBeUndefined();
   });
 
   it("applies newer remote videoPlayback cues without a newer slide time", async () => {
@@ -5985,8 +6229,9 @@ describe("item list outline persistence", () => {
     );
   });
 
-  it("defers Bible cleanup until an outgoing outline save settles and checks its reference", async () => {
+  it.each([false, true])("protects outgoing Bible references until saved, including retained failed drafts (save fails: %s)", async (saveFails) => {
     jest.useFakeTimers();
+    const log = jest.spyOn(console, "error").mockImplementation(() => {});
     const {
       store,
       itemListSlice,
@@ -6061,6 +6306,7 @@ describe("item list outline persistence", () => {
       if (document._id === "outline-a") {
         signalOutgoingSaveStarted();
         await outgoingSaveGate;
+        if (saveFails) throw new Error("outline save failed");
         sequence += 1;
         outlineA = { ...document, _rev: `${sequence}-outline-a` };
         return { ok: true, rev: outlineA._rev };
@@ -6104,11 +6350,12 @@ describe("item list outline persistence", () => {
 
     finishOutgoingSave();
     await flushBibleCleanup();
-    expect(outlineA.items).toEqual([expect.objectContaining({ _id: bibleDoc._id })]);
-    expect(db.allDocs).toHaveBeenCalledTimes(1);
+    expect(outlineA.items).toEqual(saveFails ? [] : [expect.objectContaining({ _id: bibleDoc._id })]);
+    expect(db.allDocs).toHaveBeenCalledTimes(saveFails ? 0 : 1);
     expect(db.bulkDocs).not.toHaveBeenCalled();
 
     presence.release();
+    log.mockRestore();
     jest.useRealTimers();
   });
 

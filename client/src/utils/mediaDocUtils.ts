@@ -364,6 +364,7 @@ async function saveMediaFolderChanges(
   after: MediaFolder[],
   canCommit: () => boolean,
   folderParentReconciliation?: FolderParentReconciliation,
+  validateFolderDeletionMembership?: () => Promise<void>,
 ) {
   if (!canCommit()) return undefined;
   await requireMediaLibraryV2(db);
@@ -437,6 +438,10 @@ async function saveMediaFolderChanges(
         return clean;
       });
     }
+    if (validateFolderDeletionMembership) {
+      await validateFolderDeletionMembership();
+      if (!canCommit()) return undefined;
+    }
     if (JSON.stringify(existing.folders || []) === JSON.stringify(folders)) {
       return requestedChangesArePersisted(persistedFolders) ? { folders: persistedFolders } : undefined;
     }
@@ -478,6 +483,7 @@ export async function persistMediaStateChanges(
     canCommitFolders?: () => boolean;
   } = {},
   folderParentReconciliation?: FolderParentReconciliation,
+  validateFolderDeletionMembership?: () => Promise<void>,
 ) {
   if (!canCommit()) return [];
   await requireMediaLibraryV2(db);
@@ -553,6 +559,7 @@ export async function persistMediaStateChanges(
           after.folders,
           canCommitFolders,
           folderParentReconciliation,
+          validateFolderDeletionMembership,
         )
       : undefined;
     if (result) changedDocs.push({ _id: MEDIA_FOLDERS_ID, docType: "mediaFolders", folders: result.folders });
@@ -599,6 +606,12 @@ export async function persistMediaLibraryChanges(
   const beforeFolders = new Map(before.folders.map((folder) => [folder.id, folder]));
   const afterFolders = new Map(after.folders.map((folder) => [folder.id, folder]));
   const deletedFolderIds = new Set([...beforeFolders.keys()].filter((id) => !afterFolders.has(id)));
+  const hasUnseenFolderMember = latest.list.some((item) => {
+    if (!item.folderId || !deletedFolderIds.has(item.folderId)) return false;
+    const previous = beforeItems.get(item.id);
+    return !previous?.folderId || !deletedFolderIds.has(previous.folderId);
+  });
+  if (hasUnseenFolderMember) throw new MediaFolderMembershipChangedError();
   const ownedAutomaticMediaRehomeIds = new Set<string>();
   for (const id of automaticMediaRehomeIds) {
     const previous = beforeItems.get(id);
@@ -749,6 +762,14 @@ export async function persistMediaLibraryChanges(
     originalFolders,
     automaticFolderRehomeIds: ownedAutomaticFolderRehomeIds,
   };
+  const validateFolderDeletionMembership = deletedFolderIds.size
+    ? async () => {
+        const persistedItems = await loadAllMediaItems(db);
+        if (persistedItems.some((item) =>
+          item.folderId != null && deletedFolderIds.has(item.folderId),
+        )) throw new MediaFolderMembershipChangedError();
+      }
+    : undefined;
   const merged = normalizeMediaDoc({
     list: [...list.values()],
     folders: [...folders.values()],
@@ -760,6 +781,7 @@ export async function persistMediaLibraryChanges(
     canCommit,
     {},
     folderParentReconciliation,
+    validateFolderDeletionMembership,
   );
 }
 
@@ -769,6 +791,13 @@ type PouchDocumentError = {
   status?: number;
   name?: string;
 };
+
+export class MediaFolderMembershipChangedError extends Error {
+  constructor() {
+    super("Media joined a folder being deleted. Retry folder finalization to process it first.");
+    this.name = "MediaFolderMembershipChangedError";
+  }
+}
 
 const isPouchNotFound = (error: unknown) => {
   const pouchError = error as { status?: number | string; name?: string };

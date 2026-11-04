@@ -11,6 +11,8 @@ import {
 } from "../../../api/auth";
 import AvailabilityBatchReview from "../components/AvailabilityBatchReview";
 import { MemberNameWithIndicator } from "../components/CurrentUserMemberIndicator";
+import ScheduleSendScopeNotice from "./ScheduleSendScopeNotice";
+import type { ScheduleSendScope } from "./scheduleWorkspaceModel";
 
 const DISPATCH_READINESS_MESSAGE = "Schedule text messages aren't available yet. Check back later.";
 
@@ -36,6 +38,7 @@ const ScheduleInitialSmsSendFlow = ({
   scheduleName,
   teamName,
   timeZone,
+  sendScope,
   onClose,
 }: {
   churchId: string;
@@ -43,6 +46,7 @@ const ScheduleInitialSmsSendFlow = ({
   scheduleName: string;
   teamName: string;
   timeZone: string;
+  sendScope?: ScheduleSendScope;
   onClose: () => void;
 }) => {
   const ownerIdentity = `${churchId}:${schedule.scheduleId}`;
@@ -161,6 +165,7 @@ const ScheduleInitialSmsSendFlow = ({
     ? reviewedBatchState.batch
     : null;
   const visibleBatch = serverBatch || reviewedBatch;
+  const scopeNotice = sendScope ? <ScheduleSendScopeNotice scope={sendScope} timeZone={timeZone} /> : null;
   const batchIsActive = Boolean(serverBatch && ["approved", "dispatching"].includes(serverBatch.status));
   const serverBatchId = serverBatch?.batchId;
   const serverBatchStatus = serverBatch?.status;
@@ -288,6 +293,7 @@ const ScheduleInitialSmsSendFlow = ({
       {schedule.published === false ? (
         <p role="alert" className="rounded border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100">Publish this schedule before reviewing or sending messages.</p>
       ) : null}
+      {!visibleBatch ? scopeNotice : null}
       <dl className="grid grid-cols-2 gap-2 rounded border border-gray-700 bg-gray-950/40 p-3 text-sm sm:grid-cols-4">
         <div><dt className="text-gray-400">Assigned volunteers</dt><dd className="text-white">{summary.assigned}</dd></div>
         <div><dt className="text-gray-400">Eligible</dt><dd className="text-white">{summary.eligible}</dd></div>
@@ -361,7 +367,10 @@ const ScheduleInitialSmsSendFlow = ({
       {loadError ? <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100"><span>{loadError}</span><Button variant="secondary" disabled={loading || busy} isLoading={loading} onClick={() => void loadRecipients()}>Retry status check</Button></div> : null}
       {error ? <p role="alert" className="text-sm text-red-200">{error}</p> : null}
       {notice ? <p role="status" className="text-sm text-sky-200">{notice}</p> : null}
-      {visibleBatch ? <AvailabilityBatchReview batch={visibleBatch} formName={scheduleName} busy={busy || loading} privacySafe={privacySafe} readinessMessage={batchIsActive ? "Approved messages are being processed. You can close this panel and return to the schedule later." : dispatchEnabled ? "" : dispatchReadinessMessage} onConfirm={reviewedBatch ? () => void confirmBatch() : undefined} /> : null}
+      {visibleBatch ? <>
+        {scopeNotice}
+        <AvailabilityBatchReview batch={visibleBatch} formName={scheduleName} busy={busy || loading} privacySafe={privacySafe} readinessMessage={batchIsActive ? "Approved messages are being processed. You can close this panel and return to the schedule later." : dispatchEnabled ? "" : dispatchReadinessMessage} onConfirm={reviewedBatch ? () => void confirmBatch() : undefined} />
+      </> : null}
     </section>
   );
 };

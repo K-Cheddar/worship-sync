@@ -9,6 +9,7 @@ import {
 } from "../../../api/auth";
 import ScheduleInitialSmsSendFlow from "./ScheduleInitialSmsSendFlow";
 import { CurrentMemberIdentityProvider } from "../components/CurrentUserMemberIndicator";
+import type { ScheduleSendScope } from "./scheduleWorkspaceModel";
 
 jest.mock("../../../api/auth", () => ({
   getScheduleInitialSmsRecipients: jest.fn(),
@@ -91,6 +92,7 @@ const preparedBatch: NotificationBatch = {
 const renderFlow = (
   currentSchedule = schedule({}),
   selfMemberId: string | null = null,
+  sendScope?: ScheduleSendScope,
 ) => render(
   <CurrentMemberIdentityProvider memberId={selfMemberId}>
     <ScheduleInitialSmsSendFlow
@@ -99,6 +101,7 @@ const renderFlow = (
       scheduleName="October schedule"
       teamName="Worship Team"
       timeZone="America/New_York"
+      sendScope={sendScope}
       onClose={jest.fn()}
     />
   </CurrentMemberIdentityProvider>,
@@ -132,6 +135,30 @@ describe("ScheduleInitialSmsSendFlow", () => {
     await user.click(screen.getAllByText("View message")[0]);
     expect(screen.getByText("Alice, you are assigned for Sunday Service. Reply here: [private response link] STOP to opt out.")).toBeInTheDocument();
     expect(screen.queryByText("Alice, You are assigned for Sunday Service.")).not.toBeInTheDocument();
+  });
+
+  it("keeps excluded service previews clear in the SMS confirmation", async () => {
+    const user = userEvent.setup();
+    const sendScope: ScheduleSendScope = {
+      servicePreviews: [{
+        occurrenceId: "book-launch@2026-11-07",
+        serviceId: "book-launch",
+        name: "Book Launch",
+        startsAt: "2026-11-07T21:30:00.000Z",
+      }],
+      conflictPreviews: [],
+    };
+    renderFlow(schedule({}), "alice", sendScope);
+
+    expect(await screen.findByRole("status", { name: "Schedule message scope" })).toHaveTextContent(
+      "Only assignments saved in this schedule are included. 1 current service preview will be left out.",
+    );
+    expect(screen.getByRole("list", { name: "Service dates not included" })).toHaveTextContent("Book Launch");
+    expect(screen.getByText(/won’t reconcile services, create assignments, or resolve conflicts/)).toBeInTheDocument();
+
+    await user.click(await screen.findByRole("button", { name: "Review 1 message" }));
+    expect(await screen.findAllByText(/Messages are ready to review/)).toHaveLength(2);
+    expect(screen.getByRole("status", { name: "Schedule message scope" })).toHaveTextContent("Book Launch");
   });
 
   it("recovers an approved batch from the server and polls progress while the panel is open", async () => {

@@ -4,7 +4,7 @@
 
 **Approval source:** Product-owner request, “WorshipSync Scheduling Foundation, Phase 1,” supplied for this audit on 2026-10-12.
 
-**Last reviewed:** 2026-10-15
+**Last reviewed:** 2026-11-03
 
 **Phase 1 audit:** [Scheduling foundation audit](../team-scheduling-foundation-phase-1.md)
 
@@ -61,6 +61,14 @@ A schedule follows **Virtual → Draft ↔ Published**.
 - Archiving or removing a service does not destroy historical schedule records.
 - Publishing controls visibility; sending controls notifications. Both are deliberate and separate.
 - Assignment edits and publishing do not automatically send messages. Support sending relevant updates or selected services without needless resending.
+- An unmatched independent service is an addition, not an identity conflict. Include it automatically in an applicable saved schedule only after authoritative service validation and exclusive ownership checks. Retain the schedule ID, occurrence keys, assignments, equipment, responses, extra/optional slots, publication and notification history.
+- Reconciled services appear in the applicable schedule without a separate new-service banner, dismissal action, or review workflow. The workspace staffing summary uses the visible schedule occurrences and existing staffing calculation; it updates with optimistic assignment edits and incoming schedule changes. A virtual preview or loading schedule must not present an unpersisted assignment map as zero saved staffing. Show a completed state when all required positions are filled, and omit progress when there are no staffing requirements.
+- Genuine grouping and identity conflicts keep populated saved rows visible and their data unchanged. Reconcile only uniquely identifiable rows with no other active owner; leave conflicted rows untouched and block writes to them until their identity is validated. Do not show a comparison panel for routine additions. When duplicate ownership blocks an action, show a concise warning naming the affected service and link to schedule management.
+- Unchanged persisted rows with a unique owner remain editable during an unrelated reconciliation failure or conflict. New, changed or multiply owned rows still require strict validation; a preview is never evidence of persisted ownership.
+- Email and SMS send confirmations use only assignments saved in the selected schedule. They identify visible service previews that are excluded and show affected dates where practical. Sending does not reconcile services, create assignments or resolve conflicts; persisted but unassigned occurrences remain part of the saved schedule, and permitted sends remain available.
+- Historical schedules remain available through Schedule history. Routine reconciliation keeps the current period open and does not require switching to a saved-version comparison view.
+
+**Approval source:** Current product-owner request, 2026-11-03, service-addition scheduling workflow and staffing summary. The existing conservative protection for a name/instant collision with unresolved logical identity remains in force; it does not substitute one service ID for another.
 
 ### Forms and upcoming availability
 
@@ -118,6 +126,12 @@ Shared identity parity and preservation clarified by the October 21, 2026 Shared
 | Send an assignment update | Send only after an explicit send action, with deduplication/relevant-update behavior. |
 
 ## Product decisions
+
+Service additions and historical differences (product-owner request, 2026-11-03): preserve populated schedules while reconciling only unambiguous, exclusively owned rows. Historical Sabbath grouping differences in the regression fixture come from saved `group:sabbath` occurrences containing Worship + Study while the current test definitions omit `serviceGroupId` and generate two standalone rows. The read model correctly marks those mappings ambiguous; it cannot determine when a service grouping changed because no definition history is stored. The repository does not include a production schedule snapshot, so the live church data must not be inferred from this fixture. Unrelated additions are reconciled through the existing ensure transaction, while mismatched rows and all operational maps remain unchanged. See [root cause and historical verification](../team-scheduling-service-changes.md).
+
+Send scope (product-owner request, 2026-11-03): Email and SMS confirmations state that only saved assignments are included, identify unreconciled current previews and affected dates, and clarify that sending does not reconcile services, create assignments or resolve conflicts. A permitted send continues against the saved schedule when previews or conflicts remain; the email action does not invoke period reconciliation before sending. Delivery, publication, recipient, authorization, consent and deduplication rules are unchanged.
+
+One-time creation regression (product-owner request, 2026-11-03): service setup interprets picker wall times in the configured church timezone and persists an explicit instant. Legacy timezone-less picker values use that same church timezone when generating and validating occurrences. An unrelated reconciliation failure does not block a targeted assignment to an unchanged persisted row; new/unreconciled rows still require strict ensure validation. Existing ownership, operational data, publication, and notification safeguards remain. See [investigation and verification](../book-launch-scheduling-investigation.md).
 
 Review-correction guarantees (product-owner request, 2026-10-15): schedule metadata edits preserve persisted fields outside the validated editable payload, including responses, public links, publication and sending history. Superseded shadow retries cannot restore removed assignments or overwrite newer choices. Imported occurrences acquire the same exclusive ownership protection as schedule creation; absent standalone group IDs compare as null while genuine group conflicts remain blocked. These corrections do not enable messaging or change publication behavior.
 

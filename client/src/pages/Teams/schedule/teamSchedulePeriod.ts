@@ -13,6 +13,7 @@ import {
   getOccurrenceDate,
   matchOccurrencesByIdentity,
   resolveOccurrenceIdentity,
+  oneTimeServiceInstant,
 } from "../../../utils/teamScheduleOccurrences";
 import {
   parseSlotKey,
@@ -447,12 +448,12 @@ export const findInitialTeamSchedulePeriod = ({
     sanitizePositionRequirements(service.positionRequirements).some((requirement) =>
       teamPositionIds.has(requirement.positionId),
     ));
-  const searchDates = relevantServices.flatMap((service) => [
-    service.startDateISO,
-    ...(service.reccurence === "one_time" && service.dateTimeISO
-      ? [calendarDateInTimeZone(new Date(service.dateTimeISO), timeZone)]
-      : []),
-  ]).filter((value): value is string => Boolean(value)).sort();
+  const searchDates = relevantServices.flatMap((service) => {
+    const instant = service.reccurence === "one_time"
+      ? oneTimeServiceInstant(service.dateTimeISO, timeZone)
+      : null;
+    return [service.startDateISO, ...(instant ? [calendarDateInTimeZone(instant, timeZone)] : [])];
+  }).filter((value): value is string => Boolean(value)).sort();
   const searchHorizon = new Date(today);
   searchHorizon.setFullYear(searchHorizon.getFullYear() + 1);
   const searchEnd = [formatPlainDate(searchHorizon), searchDates[searchDates.length - 1] || ""]

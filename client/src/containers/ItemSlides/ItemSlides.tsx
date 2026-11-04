@@ -18,6 +18,7 @@ import {
   toggleBackgroundTargetSlideId,
   updateSlides,
   updateSlideVideoBackgroundSendMode,
+  updateSlideVideoBackgroundLoop,
 } from "../../store/itemSlice";
 import {
   MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS,
@@ -132,6 +133,7 @@ import { getTrustedDeviceLabel } from "../../utils/deviceInfo";
 import { ToastContext } from "../../context/toastContext";
 import {
   buildVideoPlaybackCueForSend,
+  getSlideVideoBackgroundLoop,
   getSlideVideoBackgroundSendMode,
   getSlideVideoBackgroundMedia,
   getVideoBackgroundMediaKey,
@@ -245,12 +247,13 @@ type SizeConfig = {
  * joined — or one whose editor preview has not mounted — would send position
  * zero and restart a video that is already on screen.
  */
-const withVideoPlayback = <T extends { slide?: PresentationType["slide"] }>(
+const withVideoPlayback = <T extends { slide?: PresentationType["slide"]; type: string }>(
   payload: T,
   outputs: Parameters<typeof resolveSyncedVideoPlayback>[0],
 ) => ({
   ...payload,
   videoPlayback: buildVideoPlaybackCueForSend(payload.slide, {
+    itemType: payload.type,
     liveCue: resolveSyncedVideoPlayback(
       outputs,
       getVideoBackgroundMediaKey(getSlideVideoBackgroundMedia(payload.slide)),
@@ -357,6 +360,7 @@ const ItemSlidesContent = () => {
   const videoBackgroundSendMode = getSlideVideoBackgroundSendMode(
     slides[selectedSlide],
   );
+  const videoBackgroundLoop = getSlideVideoBackgroundLoop(slides[selectedSlide], type);
 
   const {
     slidesPerRow,
@@ -1977,6 +1981,8 @@ const ItemSlidesContent = () => {
               mediaKey={videoBackgroundMediaKey}
               syncOutputIds={liveVideoSyncOutputIds}
               sendMode={videoBackgroundSendMode}
+              loop={videoBackgroundLoop}
+              onLoopChange={(loop) => dispatch(updateSlideVideoBackgroundLoop({ loop }))}
               onSendModeChange={(mode) =>
                 dispatch(updateSlideVideoBackgroundSendMode({ mode }))
               }
@@ -2058,10 +2064,12 @@ const ItemSlidesContent = () => {
               mediaKey={videoBackgroundMediaKey}
               syncOutputIds={liveVideoSyncOutputIds}
               sendMode={videoBackgroundSendMode}
+              loop={videoBackgroundLoop}
+              onLoopChange={(loop) => dispatch(updateSlideVideoBackgroundLoop({ loop }))}
               onSendModeChange={(mode) =>
                 dispatch(updateSlideVideoBackgroundSendMode({ mode }))
               }
-              showSendMode={false}
+              showSendMode
               className="min-w-0 flex-1 max-md:order-3 max-md:basis-full md:rounded-none md:border-0 md:bg-transparent md:p-0"
             />
           ) : null}

@@ -375,6 +375,26 @@ describe("ambiguity reassignment and assignee equipment", () => {
 });
 
 describe("stable external row identity", () => {
+  it("does not reorder account-source rows that lack occurrence identities", () => {
+    const manual = element("manual", "Manual operator row");
+    const current = [section("worship", "Worship", [
+      element("first", "First song", { sourcePlanningManaged: true }),
+      manual,
+      element("second", "Second song", { sourcePlanningManaged: true }),
+    ])];
+    const incoming = [section("incoming", "Worship", [
+      element("incoming-second", "Second song", { sourcePlanningManaged: true }),
+      element("incoming-first", "First song", { sourcePlanningManaged: true }),
+    ])];
+
+    const refreshed = refreshServicePlanFromImport(current, incoming, {
+      ...DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+      trackSameSectionSourceOrder: true,
+    });
+
+    expect(refreshed[0].elements.map(({ id }) => id)).toEqual(["first", "manual", "second"]);
+  });
+
   it("keeps local notes, equipment, and review state with duplicate rows through insertion and reorder", () => {
     const build = (rows: Array<{ sourceOccurrenceId: string; title: string }>) => buildServicePlanSectionsFromImport({
       planLabel: "Sunday worship",
@@ -733,6 +753,53 @@ describe("stable external row identity", () => {
     expect(refreshed.flatMap((candidate) => candidate.elements).find(({ id }) => id === "local-prayer")).toBeDefined();
   });
 
+  it("reviews same-section Planning Center account reorders while preserving operator-created slots", () => {
+    const manual = element("manual-prayer", "Operator-created prayer", {
+      notes: plainTextToRichText("Keep this local note"),
+    });
+    const current = [section("worship", "Worship", [
+      element("first-song", "Song", { sourceOccurrenceId: "pco-first", sourcePlanningManaged: true }),
+      manual,
+      element("second-song", "Song", { sourceOccurrenceId: "pco-second", sourcePlanningManaged: true }),
+    ])];
+    const incoming = [section("source-worship", "Worship", [
+      element("incoming-second", "Song", { sourceOccurrenceId: "pco-second", sourcePlanningManaged: true }),
+      element("incoming-first", "Song", { sourceOccurrenceId: "pco-first", sourcePlanningManaged: true }),
+    ])];
+
+    const withoutSourceOrder = refreshServicePlanFromImport(
+      current,
+      incoming,
+      DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+    );
+    expect(withoutSourceOrder[0].elements.map(({ id }) => id)).toEqual([
+      "first-song", "manual-prayer", "second-song",
+    ]);
+
+    const proposed = refreshServicePlanFromImport(current, incoming, {
+      ...DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+      trackSameSectionSourceOrder: true,
+    });
+    const summary = summarizeServicePlanImport(current, proposed, {}, {
+      trackSameSectionMoves: true,
+    });
+
+    expect(summary.moved).toBe(1);
+    expect(summary.changes.some(({ kind }) => kind === "moved")).toBe(true);
+    expect(applySelectedServicePlanImportChanges(current, proposed, summary, new Set())).toBe(current);
+    const approved = applySelectedServicePlanImportChanges(
+      current,
+      proposed,
+      summary,
+      new Set(summary.changes.filter(({ kind }) => kind === "moved").map(servicePlanImportChangeKey)),
+    );
+    expect(approved[0].elements.map(({ id }) => id)).toEqual([
+      "second-song", "manual-prayer", "first-song",
+    ]);
+    expect(approved[0].elements[1]).toBe(manual);
+    expect(richTextToPlainText(approved[0].elements[1].notes)).toBe("Keep this local note");
+  });
+
   it("fails safe when Planning Center returns duplicate occurrence IDs", () => {
     const current = [section("a", "Section A", [
       element("original", "Prayer", { sourceOccurrenceId: "duplicate-id", sourcePlanningManaged: true, notes: plainTextToRichText("Keep local state") }),
@@ -985,6 +1052,31 @@ describe("Planning Center PDF refresh matching", () => {
     planningCenterPdfMatch: true,
   };
   const pdfReviewOptions = { ...pdfRefreshOptions, suggestLegacyMatches: true };
+
+  it("keeps PDF-specific same-section matching when account occurrence IDs are absent", () => {
+    const keyA = JSON.stringify(["planningCenterPdf", "first song", "single"]);
+    const keyB = JSON.stringify(["planningCenterPdf", "second song", "single"]);
+    const manual = element("manual", "Manual operator row");
+    const current = [section("saved", "Worship", [
+      element("first", "First song", { sourcePlanningManaged: true, planningCenterPdfMatchKey: keyA }),
+      manual,
+      element("second", "Second song", { sourcePlanningManaged: true, planningCenterPdfMatchKey: keyB }),
+    ])];
+    const incoming = [section("pdf", "Worship", [
+      element("incoming-second", "Second song", { sourcePlanningManaged: true, planningCenterPdfMatchKey: keyB }),
+      element("incoming-first", "First song", { sourcePlanningManaged: true, planningCenterPdfMatchKey: keyA }),
+    ])];
+    const prepared = preparePlanningCenterPdfImport(current, incoming);
+
+    const refreshed = refreshServicePlanFromImport(
+      prepared.currentSections,
+      prepared.importedSections,
+      pdfRefreshOptions,
+    );
+
+    expect(refreshed[0].elements.map(({ id }) => id)).toEqual(["second", "manual", "first"]);
+    expect(refreshed[0].elements.filter(({ sourceOccurrenceId }) => sourceOccurrenceId)).toHaveLength(0);
+  });
 
   it("restores legacy PDF prefixes and applies one insertion without losing song or local equipment data", () => {
     const songs = [

@@ -96,6 +96,18 @@ const stateAt = ({
 describe("resolveOccurrenceServiceStarts", () => {
   const selectedDate = localAt(2026, 7, 26, 9);
 
+  it("resolves legacy group members in church time while retaining the representative's saved instant", () => {
+    const representative = service({ id: "first", reccurence: "one_time", dateTimeISO: "2026-11-07T14:00" });
+    const second = service({ id: "second", reccurence: "one_time", dateTimeISO: "2026-11-07T16:30" });
+    const selected = occurrence(Date.parse("2026-11-07T21:00:00.000Z"), { occurrenceId: "group:book-launch@2026-11-07", groupId: "book-launch", serviceId: "first", serviceIds: ["first", "second"], serviceDate: "2026-11-07" });
+    const nowMs = Date.parse("2026-11-07T21:10:00.000Z");
+    expect(resolveOccurrenceServiceStarts(selected, [representative, second], nowMs, "America/New_York")).toEqual([
+      { service: representative, targetMs: Date.parse("2026-11-07T21:00:00.000Z") },
+      { service: second, targetMs: Date.parse("2026-11-07T21:30:00.000Z") },
+    ]);
+    expect(resolveCurrentServiceTimingState({ occurrence: selected, occurrenceServices: [representative, second], plan: null, nowMs, timeZone: "America/New_York" })).toEqual({ type: "upcoming-service", service: second, targetMs: Date.parse("2026-11-07T21:30:00.000Z") });
+  });
+
   it("resolves weekly, multi-weekly, monthly, and one-time starts on the selected date", () => {
     const services = [
       service({ id: "weekly", time: "09:00" }),

@@ -1,0 +1,7 @@
+{
+  "id": "schedule-service-change-review-2026-11-03",
+  "date": "2026-11-03",
+  "type": "improved",
+  "title": "Simpler service additions in schedules",
+  "description": "New services appear automatically in the applicable schedule, and the staffing summary updates to show filled and open positions while existing assignments and service-identity safeguards remain intact."
+}

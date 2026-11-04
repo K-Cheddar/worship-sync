@@ -1009,24 +1009,18 @@ export const updateSlideBackground = createAsyncThunk(
 );
 
 /**
- * Sets whether the next send of this slide's video background restarts from
- * the beginning or lets it keep playing, so a song can restart on its opener and
- * continue across the lyric advances after it.
+ * Both video preferences follow the same selected-slide persistence path in
+ * the flat deck and selected arrangement. Neither changes the other setting.
  */
-export const updateSlideVideoBackgroundSendMode = createAsyncThunk(
-  "item/updateSlideVideoBackgroundSendMode",
-  async (args: { mode: VideoBackgroundSendMode }, { dispatch, getState }) => {
+const updateSelectedSlideVideoBackground = createAsyncThunk(
+  "item/updateSelectedSlideVideoBackground",
+  async (settings: Pick<ItemSlideType, "videoBackgroundSendMode" | "videoBackgroundLoop">, { dispatch, getState }) => {
     const state = getState();
     const item = state.undoable.present.item;
 
-    const applyMode = (slide: ItemSlideType): ItemSlideType =>
-      slide.videoBackgroundSendMode === args.mode
-        ? slide
-        : { ...slide, videoBackgroundSendMode: args.mode };
-
     const mapSelected = (slides: ItemSlideType[]) =>
       slides.map((slide, index) =>
-        index === item.selectedSlide ? applyMode(slide) : slide,
+        index === item.selectedSlide ? { ...slide, ...settings } : slide,
       );
 
     const arrangementSlides =
@@ -1046,6 +1040,12 @@ export const updateSlideVideoBackgroundSendMode = createAsyncThunk(
     dispatch(_updateSlides(mapSelected(item.slides)));
   },
 );
+
+export const updateSlideVideoBackgroundSendMode = (args: { mode: VideoBackgroundSendMode }) =>
+  updateSelectedSlideVideoBackground({ videoBackgroundSendMode: args.mode });
+
+export const updateSlideVideoBackgroundLoop = (args: { loop: boolean }) =>
+  updateSelectedSlideVideoBackground({ videoBackgroundLoop: args.loop });
 
 export const updateSlideBackgroundsOnSubset = createAsyncThunk(
   "item/updateSlideBackgroundsOnSubset",

@@ -1263,7 +1263,6 @@ const MediaModal = ({
 
           <MediaLibraryFolderModals
             selectedLibraryFilter={selectedLibraryFilter}
-            onSelectLibraryFilter={navigateToFolder}
             folders={folders}
             list={fullList}
             onUpdateFoldersAndList={onUpdateFoldersAndList}

@@ -1,4 +1,4 @@
-import type { Box } from "../types";
+import type { Box, VideoBackgroundPlaybackCue } from "../types";
 import type { ElectronMediaCandidateSourceKind } from "./electronMediaSurfaceDiagnostics";
 import type { ResourceAggressiveness } from "../../electron/resourceGovernor";
 
@@ -57,14 +57,8 @@ export type ElectronMediaSurfaceView = {
   shouldPlay: boolean;
   muted: boolean;
   volume: number;
-  playback?: {
-    mediaKey: string;
-    positionSeconds: number;
-    paused: boolean;
-    atServerMs: number;
-    generation: number;
-    applySeek: boolean;
-  };
+  playback?: VideoBackgroundPlaybackCue;
+  loop?: boolean;
   /** Only an active selected editor surface may publish editor transport. */
   reportsEditorTransport?: boolean;
 };

@@ -1717,4 +1717,25 @@ describe("ItemSlides", () => {
     expect(screen.getByRole("list")).toHaveClass("grid-cols-3");
     expect(screen.getByRole("slider")).toHaveAttribute("aria-valuemax", "3");
   });
+
+  it.each(["edit", "present"])("exposes independent Loop and send-mode controls in mobile %s mode", (mode) => {
+    window.localStorage.setItem("worshipsync_presentation_controller_mode", mode);
+    mockControllerInfoValue.isMobile = true;
+    mockState.presentation.outputs = {};
+    mockState.undoable.present.item.slides = [{ ...baseSlides[0], boxes: [{ ...baseSlides[0].boxes[0], mediaInfo: { type: "video", id: "clip", background: "https://cdn.example/clip.mp4" } }] }];
+    render(
+      <GlobalInfoContext.Provider value={mockGlobalInfoValue}>
+        <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+          <PresentationControllerModeProvider><ItemSlides /></PresentationControllerModeProvider>
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+    expect(screen.getByRole("switch", { name: "Loop:" })).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByRole("button", { name: "Continue" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start over" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("switch", { name: "Loop:" }));
+    expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({ type: "item/_updateSlides", payload: [expect.objectContaining({ videoBackgroundLoop: true })] }));
+    window.localStorage.removeItem("worshipsync_presentation_controller_mode");
+  });
+
 });

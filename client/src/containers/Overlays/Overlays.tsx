@@ -3,7 +3,8 @@ import { selectOverlayTargetIds } from "../../store/selectLiveOutputs";
 import { Plus, Check, FolderOpen, History } from "lucide-react";
 
 import { useDispatch, useSelector } from "../../hooks";
-import { shallowEqual } from "react-redux";
+import { shallowEqual, useStore } from "react-redux";
+import { getActiveContentDatabaseOwner } from "../../store/deferredItemMutations";
 import {
   addOverlayToList,
   deleteOverlayFromList,
@@ -14,7 +15,7 @@ import {
   updateList,
   updateOverlayInList,
 } from "../../store/overlaysSlice";
-import { useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import Overlay from "./Overlay";
 import { DndContext, useDroppable, DragEndEvent } from "@dnd-kit/core";
 
@@ -77,11 +78,11 @@ const Overlays = ({
   isDetailActive = true,
   onDetailRequested,
 }: OverlaysProps) => {
-  const { list, initialList, overlayHistory } = useSelector(
+  const { list, initialList, overlayHistory, outlineOwnerKey } = useSelector(
     (state: RootState) => state.undoable.present.overlays,
   );
 
-  const { selectedOverlay: _selectedOverlay, isOverlayLoading } = useSelector(
+  const { selectedOverlay: _selectedOverlay, isOverlayLoading, outlineOwnerKey: editorOwnerKey } = useSelector(
     (state: RootState) => state.undoable.present.overlay,
   );
 
@@ -120,12 +121,45 @@ const Overlays = ({
     }),
     [defaultParticipantFormatting],
   );
-  const selectedOverlay = _selectedOverlay ?? defaultSelectedOverlay;
+  const selectedOverlay = _selectedOverlay && editorOwnerKey === outlineOwnerKey && list.some((overlay) => overlay.id === _selectedOverlay.id)
+    ? _selectedOverlay
+    : defaultSelectedOverlay;
+  const isRetiredOverlaySelection = !!_selectedOverlay && selectedOverlay !== _selectedOverlay;
 
   const dispatch = useDispatch();
+  const store = useStore<RootState>();
+  const session = useSelector((state: RootState) => state.allDocs.session);
   const { isMobile, db } = useContext(ControllerInfoContext) || {
     isMobile: false,
   };
+  const currentDatabaseRef = useRef(db);
+  currentDatabaseRef.current = db;
+  const contentOwner = getActiveContentDatabaseOwner();
+  // A retired selection retains its original destination until replaced.
+  const editorDatabaseRef = useRef({ ownerKey: editorOwnerKey, database: db, session, contentOwner });
+  if (editorOwnerKey === outlineOwnerKey && (
+    editorOwnerKey !== editorDatabaseRef.current.ownerKey ||
+    db !== editorDatabaseRef.current.database ||
+    session !== editorDatabaseRef.current.session ||
+    contentOwner !== editorDatabaseRef.current.contentOwner
+  )) {
+    editorDatabaseRef.current = { ownerKey: editorOwnerKey, database: db, session, contentOwner };
+  }
+  const editorOrigin = editorDatabaseRef.current;
+  const draftOwner = useMemo(() => {
+    const isSessionCurrent = () => store.getState().allDocs.session === editorOrigin.session &&
+      getActiveContentDatabaseOwner() === editorOrigin.contentOwner;
+    return {
+      database: editorOrigin.database,
+      isSessionCurrent,
+      isCurrent: () => {
+        const present = store.getState().undoable.present;
+        return isSessionCurrent() && currentDatabaseRef.current === editorOrigin.database &&
+          present.overlay.outlineOwnerKey === editorOrigin.ownerKey &&
+          present.overlays.outlineOwnerKey === editorOrigin.ownerKey;
+      },
+    };
+  }, [editorOrigin, store]);
   const { access } = useContext(GlobalInfoContext) || {};
   const canMutateOverlays = !isViewOnlyAccess(access);
   const { mode } = usePresentationControllerMode();
@@ -249,17 +283,15 @@ const Overlays = ({
 
   const handleOverlayUpdate = useCallback(
     async (overlay: OverlayInfo) => {
-      if (!overlay.id) return;
-
-      // Draft flushes can arrive after selection swaps; persist by payload id so edits are not dropped.
-      if (selectedOverlay.id && overlay.id !== selectedOverlay.id) {
-        dispatch(updateOverlayInList(overlay));
-        const dbAtStart = db;
-        if (!dbAtStart) return;
+      if (!overlay.id || !draftOwner.isSessionCurrent()) return;
+      const currentSelection = store.getState().undoable.present.overlay.selectedOverlay;
+      if (!draftOwner.isCurrent() || overlay.id !== currentSelection?.id) {
+        if (draftOwner.isCurrent()) dispatch(updateOverlayInList(overlay));
+        if (!draftOwner.database) return;
         try {
-          await persistExistingOverlayDoc(dbAtStart, overlay);
+          await persistExistingOverlayDoc(draftOwner.database, overlay, draftOwner.isSessionCurrent);
         } catch (error) {
-          console.error("Error persisting non-selected overlay", error);
+          if (draftOwner.isSessionCurrent()) console.error("Error persisting outgoing overlay", error);
         }
         return;
       }
@@ -267,7 +299,7 @@ const Overlays = ({
       dispatch(updateOverlay(overlay));
       dispatch(updateOverlayInList(overlay));
     },
-    [db, dispatch, selectedOverlay.id],
+    [dispatch, draftOwner, store],
   );
 
   const handleApplyFormattingToAll = async (formatting: OverlayFormatting) => {
@@ -409,18 +441,21 @@ const Overlays = ({
     selectedOverlay.name || selectedOverlay.url ? "Copied." : "Added.";
 
   const overlayEditor = (
-    <OverlayEditor
-      selectedOverlay={selectedOverlay}
-      isOverlayLoading={isOverlayLoading}
-      setShowPreview={setShowPreview}
-      showPreview={showPreview}
-      setIsStyleDrawerOpen={setIsStyleDrawerOpen}
-      setIsTemplateDrawerOpen={setIsTemplateDrawerOpen}
-      isMobile={isMobile}
-      handleOverlayUpdate={handleOverlayUpdate}
-      handleFormattingChange={handleFormattingChange}
-      readOnly={!canMutateOverlays}
-    />
+    <div hidden={isRetiredOverlaySelection}>
+      <OverlayEditor
+        selectedOverlay={selectedOverlay}
+        isOverlayLoading={isOverlayLoading}
+        setShowPreview={setShowPreview}
+        showPreview={showPreview}
+        setIsStyleDrawerOpen={setIsStyleDrawerOpen}
+        setIsTemplateDrawerOpen={setIsTemplateDrawerOpen}
+        isMobile={isMobile}
+        handleOverlayUpdate={handleOverlayUpdate}
+        draftOwner={draftOwner}
+        handleFormattingChange={handleFormattingChange}
+        readOnly={!canMutateOverlays || isRetiredOverlaySelection}
+      />
+    </div>
   );
 
   return (

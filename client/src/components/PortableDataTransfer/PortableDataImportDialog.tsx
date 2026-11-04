@@ -1,5 +1,7 @@
 import Spinner from "@/components/Spinner/Spinner";
 import Select from "../Select/Select";
+import Checkbox from "@/components/Checkbox/Checkbox";
+import RadioButton, { RadioGroup } from "@/components/RadioButton/RadioButton";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, Check, CircleAlert, FileUp, Link2, Minus, Plus } from "lucide-react";
 import Modal from "../Modal/Modal";
@@ -322,6 +324,11 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
     setCreatedTeamCount(0);
     setMemberReviewFilter("all");
     setChangingMemberAction(null);
+  };
+  const handlePositionUpdateModeChange = (value: string) => {
+    if (busy || (value !== "merge" && value !== "replace")) return;
+    setUpdateMode(value);
+    invalidatePreview();
   };
   useEffect(() => {
     if (!open) {
@@ -910,15 +917,55 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
           </div> : hasCsvTeamAssignments ? <p className="text-sm text-gray-300">Team assignments found in your CSV. We'll use those assignments.</p> : null}
 
           <fieldset className="space-y-2">
-            <legend className="text-sm font-semibold text-gray-100">How should positions be updated?</legend>
-            <label className={`flex cursor-pointer items-start gap-3 rounded-md p-3 transition-colors focus-within:ring-2 focus-within:ring-cyan-400/70 ${updateMode === "merge" ? "bg-cyan-400/10 ring-1 ring-cyan-400/40" : "bg-gray-900/50 hover:bg-gray-900"}`}>
-              <input className="mt-1" type="radio" name="position-update-mode" value="merge" checked={updateMode === "merge"} onChange={() => { setUpdateMode("merge"); invalidatePreview(); }} disabled={Boolean(busy)} />
-              <span><span className="block text-sm font-medium">Add positions from the CSV</span><span className="block text-xs text-gray-300">Keep existing positions and add any new ones.</span></span>
-            </label>
-            <label className={`flex cursor-pointer items-start gap-3 rounded-md p-3 transition-colors focus-within:ring-2 focus-within:ring-cyan-400/70 ${updateMode === "replace" ? "bg-cyan-400/10 ring-1 ring-cyan-400/40" : "bg-gray-900/50 hover:bg-gray-900"}`}>
-              <input className="mt-1" type="radio" name="position-update-mode" value="replace" checked={updateMode === "replace"} onChange={() => { setUpdateMode("replace"); invalidatePreview(); }} disabled={Boolean(busy)} />
-              <span><span className="block text-sm font-medium">{hasCsvTeamAssignments ? "Replace positions in the imported teams" : "Replace positions in the selected team"}</span><span className="block text-xs text-gray-300">{!mappings.positions ? "This CSV has no Positions or Categories column, so existing positions won't change." : `${hasCsvTeamAssignments ? "Replace positions only for teams included in this import." : "Remove positions in this team that aren't in the CSV."} Positions in other teams won't change. A blank Positions or Categories cell clears positions in the relevant team${hasCsvTeamAssignments ? "s" : ""}.`}</span></span>
-            </label>
+            <legend id="position-update-mode-legend" className="text-sm font-semibold text-gray-100">How should positions be updated?</legend>
+            <RadioGroup
+              aria-labelledby="position-update-mode-legend"
+              value={updateMode}
+              onValueChange={handlePositionUpdateModeChange}
+              disabled={Boolean(busy)}
+              className="space-y-2"
+            >
+              <div
+                className={`cursor-pointer rounded-md p-3 transition-colors focus-within:ring-2 focus-within:ring-cyan-400/70 ${updateMode === "merge" ? "bg-cyan-400/10 ring-1 ring-cyan-400/40" : "bg-gray-900/50 hover:bg-gray-900"}`}
+                onClick={(event) => {
+                  const target = event.target;
+                  if (target instanceof HTMLElement && !target.closest("label, [role='radio']")) {
+                    event.currentTarget.querySelector<HTMLElement>("[role='radio']")?.click();
+                  }
+                }}
+              >
+                <RadioButton
+                  optionValue="merge"
+                  label="Add positions from the CSV"
+                  helperText="Keep existing positions and add any new ones."
+                  hideLabelColon
+                  disabled={Boolean(busy)}
+                  labelClassName="text-sm font-medium text-gray-100"
+                  helperTextClassName="text-xs text-gray-300"
+                  className="w-full flex-row-reverse items-start"
+                />
+              </div>
+              <div
+                className={`cursor-pointer rounded-md p-3 transition-colors focus-within:ring-2 focus-within:ring-cyan-400/70 ${updateMode === "replace" ? "bg-cyan-400/10 ring-1 ring-cyan-400/40" : "bg-gray-900/50 hover:bg-gray-900"}`}
+                onClick={(event) => {
+                  const target = event.target;
+                  if (target instanceof HTMLElement && !target.closest("label, [role='radio']")) {
+                    event.currentTarget.querySelector<HTMLElement>("[role='radio']")?.click();
+                  }
+                }}
+              >
+                <RadioButton
+                  optionValue="replace"
+                  label={hasCsvTeamAssignments ? "Replace positions in the imported teams" : "Replace positions in the selected team"}
+                  helperText={!mappings.positions ? "This CSV has no Positions or Categories column, so existing positions won't change." : `${hasCsvTeamAssignments ? "Replace positions only for teams included in this import." : "Remove positions in this team that aren't in the CSV."} Positions in other teams won't change. A blank Positions or Categories cell clears positions in the relevant team${hasCsvTeamAssignments ? "s" : ""}.`}
+                  hideLabelColon
+                  disabled={Boolean(busy)}
+                  labelClassName="text-sm font-medium text-gray-100"
+                  helperTextClassName="text-xs text-gray-300"
+                  className="w-full flex-row-reverse items-start"
+                />
+              </div>
+            </RadioGroup>
           </fieldset>
 
           <div className="rounded-md bg-gray-900/55 p-3">
@@ -927,10 +974,16 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
           </div>
           <details className="rounded-md bg-gray-900/55 p-3">
             <summary className="cursor-pointer text-sm font-medium text-gray-200">Advanced options</summary>
-            <label className="mt-3 flex items-start gap-2 text-sm text-gray-200">
-              <input className="mt-1" type="checkbox" checked={clearBlankScalars} onChange={(event) => { setClearBlankScalars(event.currentTarget.checked); invalidatePreview(); }} disabled={Boolean(busy)} />
-              <span><span className="block font-medium">Clear existing information when CSV cells are blank</span><span className="mt-1 block text-xs text-gray-300">Normally, blank cells leave existing information unchanged. Turn this on only if you want blank cells to clear applicable saved details such as contact information. This doesn't change positions or team memberships.</span></span>
-            </label>
+            <Checkbox
+              className="mt-3 items-start gap-2 text-sm text-gray-200"
+              checked={clearBlankScalars}
+              onCheckedChange={(checked) => { setClearBlankScalars(checked); invalidatePreview(); }}
+              disabled={Boolean(busy)}
+              label={<span>
+                <span className="block font-medium">Clear existing information when CSV cells are blank</span>
+                <span className="mt-1 block text-xs text-gray-300">Normally, blank cells leave existing information unchanged. Turn this on only if you want blank cells to clear applicable saved details such as contact information. This doesn't change positions or team memberships.</span>
+              </span>}
+            />
           </details>
         </div>}
 

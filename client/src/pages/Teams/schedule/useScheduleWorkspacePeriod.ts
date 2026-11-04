@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { TeamPosition, TeamScheduleSummary, TeamService } from "../../../api/authTypes";
 import { serverDate } from "@/utils/serverTime";
+import { calendarDateInTimeZone } from "@/utils/teamScheduleOccurrences";
 import { buildTeamSchedulePeriod, findInitialTeamSchedulePeriod } from "./teamSchedulePeriod";
 import { filterOccurrencesToRange, type SchedulePeriodPreset } from "./schedulePeriodUtils";
 import { resolveRangePreset, useRangeSelection } from "../rangeSelection";
@@ -39,8 +40,8 @@ export const useScheduleWorkspacePeriod = ({
     (
       preset: Exclude<SchedulePeriodPreset, "upcoming" | "custom">,
       referenceTime: Date,
-    ) => resolveRangePreset(preset, referenceTime),
-    [],
+    ) => resolveRangePreset(preset, new Date(`${calendarDateInTimeZone(referenceTime, serviceTimeZone)}T12:00:00`)),
+    [serviceTimeZone],
   );
   const {
     preset: periodPreset,
@@ -57,14 +58,29 @@ export const useScheduleWorkspacePeriod = ({
   });
   const hasExplicitPeriodSelectionRef = useRef(false);
   const periodTeamIdRef = useRef(workspaceTeamId);
+  const periodTimeZoneRef = useRef(serviceTimeZone);
   useEffect(() => {
+    const timeZoneChanged = periodTimeZoneRef.current !== serviceTimeZone;
+    periodTimeZoneRef.current = serviceTimeZone;
     if (periodTeamIdRef.current !== workspaceTeamId) {
       periodTeamIdRef.current = workspaceTeamId;
       hasExplicitPeriodSelectionRef.current = false;
     }
-    if (hasExplicitPeriodSelectionRef.current) return;
+    if (hasExplicitPeriodSelectionRef.current) {
+      if (
+        timeZoneChanged &&
+        periodPreset !== "upcoming" &&
+        periodPreset !== "custom"
+      ) {
+        setPeriodSelection(
+          periodPreset,
+          resolveSchedulePresetRange(periodPreset, serverDate()),
+        );
+      }
+      return;
+    }
     setPeriodSelection(initialTeamPeriodResult.preset, initialPeriodRange);
-  }, [initialPeriodRange, initialTeamPeriodResult.preset, setPeriodSelection, workspaceTeamId]);
+  }, [initialPeriodRange, initialTeamPeriodResult.preset, periodPreset, resolveSchedulePresetRange, serviceTimeZone, setPeriodSelection, workspaceTeamId]);
   const teamPeriod = useMemo(
     () => buildTeamSchedulePeriod({
       services: activeServices,
