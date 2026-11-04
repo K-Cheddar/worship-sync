@@ -4229,6 +4229,39 @@ describe("store module", () => {
     expect(syncErrorHandler).toHaveBeenCalledWith(expect.stringContaining("selected combined-service partner changed"));
   });
 
+  it("leaves an unrelated singleton group unchanged during a combined-service edit", async () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-04-05T11:58:00.000Z"));
+    const { store, serviceTimesSlice, runTransactionMock } = loadStoreWithPresentationSync();
+    const primary = { id: "primary", name: "Primary", serviceGroupId: null };
+    const partner = { id: "partner", name: "Partner", serviceGroupId: null };
+    const unrelatedSingleton = {
+      id: "historical-singleton",
+      name: "Historical service",
+      serviceGroupId: "historical-group",
+      updatedAt: "2025-01-01T00:00:00.000Z",
+    };
+    const authoritative = [primary, partner, unrelatedSingleton];
+    let committed: any[] = [];
+    runTransactionMock.mockImplementationOnce(async (_path: unknown, update: (current: unknown) => unknown) => {
+      committed = update(authoritative) as any[];
+      return { committed: true, snapshot: { val: () => committed } };
+    });
+
+    store.dispatch(serviceTimesSlice.actions.initiateServices(authoritative as any));
+    store.dispatch(serviceTimesSlice.actions.applyServiceGroupMutation({
+      primary: { mode: "update", service: { ...primary, serviceGroupId: "combined-sunday" } as any },
+      partnerUpdates: [{ id: "partner", serviceGroupId: "combined-sunday" }],
+      requiredPartnerIds: ["partner"],
+    }));
+    await flushListenerEffects();
+
+    expect(committed).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "primary", serviceGroupId: "combined-sunday" }),
+      expect.objectContaining({ id: "partner", serviceGroupId: "combined-sunday" }),
+    ]));
+    expect(committed.find((service) => service.id === unrelatedSingleton.id)).toEqual(unrelatedSingleton);
+  });
+
   it("rolls back a failed group transaction and retries every membership change together", async () => {
     jest.useFakeTimers().setSystemTime(new Date("2026-04-05T11:58:00.000Z"));
     jest.spyOn(console, "error").mockImplementation(() => undefined);

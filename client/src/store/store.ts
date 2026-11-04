@@ -3186,6 +3186,18 @@ const applyServiceTimesAction = (
         ? { ...service, ...primary.service, updatedAt: timestamp }
         : service,
       );
+    const affectedGroupIds = new Set<string>();
+    const addAffectedGroupId = (groupId: string | null | undefined) => {
+      if (groupId) affectedGroupIds.add(groupId);
+    };
+    const originalPrimary = services.find((service) => service.id === primary.service.id);
+    addAffectedGroupId(originalPrimary?.serviceGroupId);
+    addAffectedGroupId(primary.service.serviceGroupId);
+    const originalServicesById = new Map(services.map((service) => [service.id, service]));
+    partnerUpdates.forEach((update) => {
+      addAffectedGroupId(originalServicesById.get(update.id)?.serviceGroupId);
+      addAffectedGroupId(update.serviceGroupId);
+    });
     const updatesById = new Map(partnerUpdates.map((update) => [update.id, update.serviceGroupId]));
     const updated = next.map((service) =>
       updatesById.has(service.id)
@@ -3199,7 +3211,9 @@ const applyServiceTimesAction = (
       }
     });
     return sortServicesByScheduleOrder(updated.map((service) =>
-      service.serviceGroupId && memberCounts.get(service.serviceGroupId) === 1
+      service.serviceGroupId &&
+      affectedGroupIds.has(service.serviceGroupId) &&
+      memberCounts.get(service.serviceGroupId) === 1
         ? { ...service, serviceGroupId: undefined, updatedAt: timestamp }
         : service,
     ));
