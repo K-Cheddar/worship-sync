@@ -7644,6 +7644,14 @@ export const createTeamsAuthHandlers = ({
   };
 
   const normalizeScheduleAssignmentCell = (cell) => {
+    // Older schedules stored the primary member ID directly in the cell.
+    // Keep those values comparable to the current object-shaped format.
+    if (typeof cell === "string") {
+      return {
+        primaryMemberId: normalizeShortText(cell, { max: 160 }),
+        shadows: [],
+      };
+    }
     if (!cell || typeof cell !== "object") {
       return { primaryMemberId: "", shadows: [] };
     }
@@ -7656,6 +7664,19 @@ export const createTeamsAuthHandlers = ({
         }))
         .filter((shadow) => shadow.memberId),
     };
+  };
+
+  const scheduleAssignmentCellsEqual = (first, second) => {
+    const normalizedFirst = normalizeScheduleAssignmentCell(first);
+    const normalizedSecond = normalizeScheduleAssignmentCell(second);
+    if (normalizedFirst.primaryMemberId !== normalizedSecond.primaryMemberId) {
+      return false;
+    }
+    const sortShadows = (shadows) => [...shadows].sort(
+      (a, b) => a.memberId.localeCompare(b.memberId) || a.kind.localeCompare(b.kind),
+    );
+    return JSON.stringify(sortShadows(normalizedFirst.shadows)) ===
+      JSON.stringify(sortShadows(normalizedSecond.shadows));
   };
 
   const serializeScheduleAssignmentCell = ({ primaryMemberId, shadows }) => {
@@ -10977,7 +10998,7 @@ export const createTeamsAuthHandlers = ({
         const expectedCell = serializeScheduleAssignmentCell(
           normalizeScheduleAssignmentCell(change.expectedCell),
         ) || "";
-        if (currentCell !== expectedCell) {
+        if (!scheduleAssignmentCellsEqual(currentCell, expectedCell)) {
           if (skipChangedCells) {
             skipped.push({ serviceId: change.serviceId, positionSlotKey: change.positionSlotKey });
             continue;

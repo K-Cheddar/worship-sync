@@ -44,6 +44,20 @@ describe("useScheduleUndoStack", () => {
     expect(result.current.redoLabel).toBe("assign Jane");
   });
 
+  it("returns an Undo to its source stack when conflict confirmation is cancelled", () => {
+    const { result } = renderHook(() => useScheduleUndoStack());
+    const original = entry("assign Jane");
+    act(() => result.current.record(original));
+
+    act(() => {
+      const taken = result.current.takeUndo();
+      if (taken) result.current.pushUndo(taken);
+    });
+
+    expect(result.current.undoLabel).toBe("assign Jane");
+    expect(result.current.canRedo).toBe(false);
+  });
+
   it("clears the redo stack when a new action is recorded", () => {
     const { result } = renderHook(() => useScheduleUndoStack());
     act(() => result.current.record(entry("assign Jane")));

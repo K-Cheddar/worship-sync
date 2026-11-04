@@ -4400,6 +4400,176 @@ test("atomic assignment batches reject a row as a whole and require the current 
   );
 });
 
+test("assignment batches compare equivalent cells, shadow order, empty, and legacy values semantically", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("assignment_batch_semantic_cells");
+  const team = await seedTeam(context, {
+    teamName: "Worship",
+    positions: [{ name: "Vocal" }, { name: "Keys" }, { name: "Drums" }],
+    members: [
+      { firstName: "Avery", lastName: "Stone", positions: ["Vocal", "Keys", "Drums"] },
+      { firstName: "Blair", lastName: "Reed", positions: ["Vocal", "Keys", "Drums"] },
+      { firstName: "Casey", lastName: "Lee", positions: ["Vocal", "Keys", "Drums"] },
+    ],
+  });
+  const occurrenceId = "sunday@2026-10-04T10:00:00.000Z";
+  const created = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "October",
+      teamId: team.teamId,
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      serviceIds: ["sunday"],
+      occurrences: [{
+        occurrenceId,
+        serviceId: "sunday",
+        name: "Sunday",
+        startsAt: "2026-10-04T10:00:00.000Z",
+        positionRequirements: Object.values(team.positionIds).map((positionId) => ({ positionId, count: 1 })),
+      }],
+    },
+  });
+  const scheduleId = created.payload.schedule.scheduleId;
+  const vocalKey = `${team.positionIds.Vocal}::0`;
+  const keysKey = `${team.positionIds.Keys}::0`;
+  const drumsKey = `${team.positionIds.Drums}::0`;
+  const schedule = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+  await setDoc(COLLECTIONS.teamSchedules, scheduleId, {
+    ...schedule,
+    assignments: {
+      [occurrenceId]: {
+        [vocalKey]: {
+          primaryMemberId: team.memberIds.Avery,
+          shadows: [
+            { memberId: team.memberIds.Blair, kind: "shadow" },
+            { memberId: team.memberIds.Casey, kind: "reverse_shadow" },
+          ],
+        },
+        [keysKey]: team.memberIds.Blair,
+        [drumsKey]: "",
+      },
+    },
+  }, { merge: false });
+
+  const result = await callHandler(authHandlers.updateTeamScheduleAssignmentsBatch, {
+    context,
+    params: { scheduleId },
+    body: {
+      skipChangedCells: true,
+      changes: [
+        {
+          serviceId: occurrenceId,
+          positionSlotKey: vocalKey,
+          serviceDate: "2026-10-04",
+          expectedCell: {
+            primaryMemberId: team.memberIds.Avery,
+            shadows: [
+              { memberId: team.memberIds.Casey, kind: "reverse_shadow" },
+              { memberId: team.memberIds.Blair, kind: "shadow" },
+            ],
+          },
+          assignment: "",
+        },
+        {
+          serviceId: occurrenceId,
+          positionSlotKey: keysKey,
+          serviceDate: "2026-10-04",
+          expectedCell: { primaryMemberId: team.memberIds.Blair },
+          assignment: "",
+        },
+        {
+          serviceId: occurrenceId,
+          positionSlotKey: drumsKey,
+          serviceDate: "2026-10-04",
+          expectedCell: {},
+          assignment: "",
+        },
+      ],
+    },
+  });
+
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.payload.accepted.length, 3);
+  assert.deepEqual(result.payload.skipped, []);
+  assert.deepEqual(result.payload.schedule.assignments, {});
+});
+
+test("assignment batch skips a genuine concurrent cell and applies only matching cells", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("assignment_batch_partial_skip");
+  const team = await seedTeam(context, {
+    teamName: "Worship",
+    positions: [{ name: "Vocal" }, { name: "Keys" }],
+    members: [
+      { firstName: "Avery", lastName: "Stone", positions: ["Vocal", "Keys"] },
+      { firstName: "Blair", lastName: "Reed", positions: ["Vocal", "Keys"] },
+    ],
+  });
+  const occurrenceId = "sunday@2026-10-11T10:00:00.000Z";
+  const created = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "October",
+      teamId: team.teamId,
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      serviceIds: ["sunday"],
+      occurrences: [{
+        occurrenceId,
+        serviceId: "sunday",
+        name: "Sunday",
+        startsAt: "2026-10-11T10:00:00.000Z",
+        positionRequirements: Object.values(team.positionIds).map((positionId) => ({ positionId, count: 1 })),
+      }],
+    },
+  });
+  const scheduleId = created.payload.schedule.scheduleId;
+  const vocalKey = `${team.positionIds.Vocal}::0`;
+  const keysKey = `${team.positionIds.Keys}::0`;
+  const concurrentCell = { primaryMemberId: team.memberIds.Blair };
+  const schedule = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+  await setDoc(COLLECTIONS.teamSchedules, scheduleId, {
+    ...schedule,
+    assignments: {
+      [occurrenceId]: {
+        [vocalKey]: { primaryMemberId: team.memberIds.Avery },
+        [keysKey]: concurrentCell,
+      },
+    },
+  }, { merge: false });
+
+  const result = await callHandler(authHandlers.updateTeamScheduleAssignmentsBatch, {
+    context,
+    params: { scheduleId },
+    body: {
+      skipChangedCells: true,
+      changes: [
+        {
+          serviceId: occurrenceId,
+          positionSlotKey: vocalKey,
+          serviceDate: "2026-10-11",
+          expectedCell: { primaryMemberId: team.memberIds.Avery },
+          assignment: "",
+        },
+        {
+          serviceId: occurrenceId,
+          positionSlotKey: keysKey,
+          serviceDate: "2026-10-11",
+          expectedCell: { primaryMemberId: team.memberIds.Avery },
+          assignment: "",
+        },
+      ],
+    },
+  });
+
+  assert.equal(result.statusCode, 200);
+  assert.deepEqual(result.payload.accepted, [{ serviceId: occurrenceId, positionSlotKey: vocalKey }]);
+  assert.deepEqual(result.payload.skipped, [{ serviceId: occurrenceId, positionSlotKey: keysKey }]);
+  assert.equal(result.payload.schedule.assignments[occurrenceId][vocalKey], undefined);
+  assert.deepEqual(result.payload.schedule.assignments[occurrenceId][keysKey], concurrentCell);
+});
+
 test("schedule assignment mutations still require edit access to the owning team", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const admin = await createAdminContext("schedule_assignment_permission_owner");

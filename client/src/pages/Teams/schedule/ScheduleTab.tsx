@@ -270,8 +270,11 @@ import {
 } from "./scheduleDraftUtils";
 import {
   cellsMatch,
+  hasPendingScheduleUndoEdit,
+  prepareScheduleUndoChanges,
+  resolveScheduleUndoBatchResult,
   type ScheduleCellChange,
-  type ScheduleCellState,
+  type ScheduleUndoBatchChange,
   type ScheduleUndoEntry,
 } from "./scheduleUndo";
 import { useScheduleUndoStack } from "./useScheduleUndoStack";
@@ -684,6 +687,7 @@ const ScheduleTab = ({
   const virtualSchedulePreviewsRef = useRef(virtualSchedulePreviews);
   useLayoutEffect(() => { virtualSchedulePreviewsRef.current = virtualSchedulePreviews; }, [virtualSchedulePreviews]);
   const pendingScheduleCellEditsRef = useRef(new Map<string, PendingScheduleCellEdit>());
+  const [, refreshPendingAssignmentEdits] = useState(0);
   const scheduleCellEditSequenceRef = useRef(0);
   const selectedSchedulePreview = selectedScheduleRecord
     ? virtualSchedulePreviews.get(virtualSchedulePreviewKey(churchId, selectedScheduleRecord.scheduleId))
@@ -1030,6 +1034,7 @@ const ScheduleTab = ({
               ), remappedEdit);
             }
             pendingScheduleCellEditsRef.current = remappedPending;
+            refreshPendingAssignmentEdits((revision) => revision + 1);
             schedule = applyPendingScheduleCellEdits(schedule, remappedPending.values());
             updateVirtualSchedulePreview(null, active.scheduleId);
             if (preview.guests?.length && !schedule.guests?.length) {
@@ -1301,6 +1306,8 @@ const ScheduleTab = ({
   const {
     canUndo,
     canRedo,
+    undoEntry,
+    redoEntry,
     undoLabel,
     redoLabel,
     record: recordUndoEntry,
@@ -1310,6 +1317,17 @@ const ScheduleTab = ({
     pushRedo,
     reset: resetUndoHistory,
   } = useScheduleUndoStack();
+  const pendingScheduleAssignmentEdits = [...pendingScheduleCellEditsRef.current.values()];
+  const undoBlockedByPendingSave = hasPendingScheduleUndoEdit(
+    undoEntry,
+    churchId,
+    pendingScheduleAssignmentEdits,
+  );
+  const redoBlockedByPendingSave = hasPendingScheduleUndoEdit(
+    redoEntry,
+    churchId,
+    pendingScheduleAssignmentEdits,
+  );
   // Export/share actions live in a toolbar overflow menu; the PDF preview modal is
   // rendered headless and opened from that menu item.
   const [pdfPreviewOpen, setPdfPreviewOpen] = useState(false);
@@ -1906,6 +1924,9 @@ const ScheduleTab = ({
     };
     pending.set(key, edit);
     pendingScheduleCellEditsRef.current = pending;
+    if (field === "assignments") {
+      refreshPendingAssignmentEdits((revision) => revision + 1);
+    }
     scheduleCellSaveFailuresRef.current.delete(key);
     const toastId = scheduleCellSaveToastIdsRef.current.get(key);
     if (toastId) {
@@ -1928,6 +1949,9 @@ const ScheduleTab = ({
     if (pending.get(key)?.sequence !== edit.sequence) return false;
     pending.delete(key);
     pendingScheduleCellEditsRef.current = pending;
+    if (edit.field === "assignments") {
+      refreshPendingAssignmentEdits((revision) => revision + 1);
+    }
     return true;
   }, []);
   const saveLatestScheduleCellEdit = useCallback((
@@ -2084,6 +2108,7 @@ const ScheduleTab = ({
       scheduleCellSaveToastIdsRef.current.delete(key);
     });
     pendingScheduleCellEditsRef.current = nextEdits;
+    refreshPendingAssignmentEdits((revision) => revision + 1);
   }, [removeToast]);
   const showPositionSlotDependencyRetry = useCallback((edit: PendingScheduleCellEdit) => {
     const cellKey = scheduleCellEditKey(
@@ -2327,64 +2352,24 @@ const ScheduleTab = ({
         else pushRedo(entry);
         return;
       }
-      const previousSchedule = selectedSchedule;
-      let nextAssignments: TeamScheduleAssignments = {
-        ...(selectedSchedule.assignments || {}),
-      };
-      const changes: Array<{
-        serviceId: string;
-        positionSlotKey: string;
-        serviceDate: string;
-        expectedCell: ScheduleCellState;
-        assignment: ScheduleCellState;
-      }> = [];
-      let skipped = 0;
-      // Undo restores each cell's "before"; redo re-applies its "after". Process
-      // undo in reverse so a member is cleared from a slot before being restored
-      // to another (mirrors how the forward edit was ordered).
-      const ordered =
-        direction === "undo" ? [...entry.changes].reverse() : entry.changes;
-      for (const change of ordered) {
-        const expected = direction === "undo" ? change.after : change.before;
-        const desired = direction === "undo" ? change.before : change.after;
-        const liveCell = nextAssignments[change.occurrenceId]?.[change.cellKey] ?? "";
-        if (!cellsMatch(liveCell, expected)) {
-          skipped += 1;
-          continue;
-        }
-        const row = { ...(nextAssignments[change.occurrenceId] || {}) };
-        const serialized = serializeAssignmentCell(
-          normalizeAssignmentCell(desired || undefined),
-        );
-        if (serialized) {
-          row[change.cellKey] = serialized;
-        } else {
-          delete row[change.cellKey];
-        }
-        if (Object.keys(row).length > 0) {
-          nextAssignments[change.occurrenceId] = row;
-        } else {
-          const trimmed = { ...nextAssignments };
-          delete trimmed[change.occurrenceId];
-          nextAssignments = trimmed;
-        }
-        changes.push({
-          serviceId: change.occurrenceId,
-          positionSlotKey: change.cellKey,
-          serviceDate: change.serviceDate,
-          expectedCell: liveCell,
-          assignment: serialized || "",
-        });
-      }
-      if (skipped > 0) {
-        showToast(
-          "Some changes were edited by someone else and were left as they are.",
-          "neutral",
-        );
-      }
-      if (changes.length === 0) {
+      if (hasPendingScheduleUndoEdit(entry, churchId, pendingScheduleCellEditsRef.current.values())) {
         if (direction === "undo") pushUndo(entry);
         else pushRedo(entry);
+        return;
+      }
+      const previousSchedule = selectedSchedule;
+      const { changes, skippedChanges } = prepareScheduleUndoChanges(
+        entry,
+        direction,
+        previousSchedule.assignments || {},
+      );
+      if (changes.length === 0) {
+        if (skippedChanges.length) {
+          showToast(
+            `${direction === "undo" ? "Undo" : "Redo"} couldn't be completed because some slots no longer match this step. Review the schedule before trying again.`,
+            "neutral",
+          );
+        }
         return;
       }
 
@@ -2436,13 +2421,30 @@ const ScheduleTab = ({
           publishScheduleCellResponses(response.schedule, "assignments", stagedEdits);
           stagedEdits.forEach(clearScheduleCellEdit);
           publishScheduleCellResponses(response.schedule, "assignments", stagedEdits);
-          if (response.skipped.length) {
-            showToast("Some changes were edited by someone else and were left as they are.", "neutral");
-          }
+          const result = resolveScheduleUndoBatchResult(
+            entry,
+            direction,
+            changes,
+            response.accepted,
+            response.skipped,
+            response.schedule.assignments || {},
+          );
           if (!historyRecorded) {
             historyRecorded = true;
-            if (direction === "undo") pushRedo(entry);
-            else pushUndo(entry);
+            if (result.appliedEntry) {
+              if (direction === "undo") pushRedo(result.appliedEntry);
+              else pushUndo(result.appliedEntry);
+            }
+          }
+          const unresolvedCount = skippedChanges.length + result.skippedCount;
+          if (unresolvedCount > 0) {
+            const appliedCount = result.appliedEntry?.changes.length || 0;
+            showToast(
+              appliedCount > 0
+                ? `${direction === "undo" ? "Undo" : "Redo"} applied to ${appliedCount} of ${entry.changes.length} changes. The other slots no longer matched this step and were left as they are.`
+                : `${direction === "undo" ? "Undo" : "Redo"} couldn't be completed because the schedule changed before saving. Review the affected slots.`,
+              "neutral",
+            );
           }
         } catch (error) {
           const conflictDetails = getOccurrenceConflictDetails(error);
@@ -2459,7 +2461,7 @@ const ScheduleTab = ({
             return;
           }
           const toastId = showToast({
-            message: `Couldn't ${direction} that change. Your schedule is still here. Retry the save when ready.`,
+            message: `Couldn't confirm ${direction} was saved. Retry to check the schedule and finish the operation.`,
             variant: "error",
             persist: true,
             children: (
@@ -2497,18 +2499,18 @@ const ScheduleTab = ({
     // Auto-fill records its undo entry for the fully-filled end state before
     // the reveal animation finishes applying it — undoing mid-reveal would
     // diff against a grid that doesn't match either state yet.
-    if (autoFilling) return;
+    if (autoFilling || undoBlockedByPendingSave) return;
     const entry = takeUndo();
     if (!entry) return;
     applyUndoEntry(entry, "undo");
-  }, [applyUndoEntry, autoFilling, takeUndo]);
+  }, [applyUndoEntry, autoFilling, takeUndo, undoBlockedByPendingSave]);
 
   const handleRedo = useCallback(() => {
-    if (autoFilling) return;
+    if (autoFilling || redoBlockedByPendingSave) return;
     const entry = takeRedo();
     if (!entry) return;
     applyUndoEntry(entry, "redo");
-  }, [applyUndoEntry, autoFilling, takeRedo]);
+  }, [applyUndoEntry, autoFilling, redoBlockedByPendingSave, takeRedo]);
 
   // Ctrl/Cmd+Z to undo, Ctrl/Cmd+Shift+Z or Ctrl+Y to redo — only on the schedule
   // grid, and never while typing in a field (so native field undo still works).
@@ -3971,13 +3973,7 @@ const ScheduleTab = ({
     // whole batch as one step, independent of how the reveal below is paced.
     const finalAssignments = { ...(previousSchedule.assignments || {}) };
     const undoChanges: ScheduleCellChange[] = [];
-    const batchChanges: Array<{
-      serviceId: string;
-      positionSlotKey: string;
-      serviceDate: string;
-      expectedCell: ScheduleCellState;
-      assignment: ScheduleCellState;
-    }> = [];
+    const batchChanges: ScheduleUndoBatchChange[] = [];
     entries.forEach((entry) => {
       const targetRow = { ...(finalAssignments[entry.occurrenceId] || {}) };
       const before = serializeAssignmentCell(
@@ -6755,12 +6751,14 @@ const ScheduleTab = ({
                             variant="tertiary"
                             svg={Undo2}
                             iconSize="sm"
-                            disabled={!canUndo || autoFilling}
+                            disabled={!canUndo || autoFilling || undoBlockedByPendingSave}
                             onClick={handleUndo}
                             aria-label={undoLabel ? `Undo ${undoLabel}` : "Undo"}
                             title={
-                              undoLabel
-                                ? `Undo ${undoLabel} (${undoShortcut.undo})`
+                              undoBlockedByPendingSave
+                                ? "Finish saving this assignment before undoing."
+                                : undoLabel
+                                  ? `Undo ${undoLabel} (${undoShortcut.undo})`
                                 : `Nothing to undo (${undoShortcut.undo})`
                             }
                           />
@@ -6768,12 +6766,14 @@ const ScheduleTab = ({
                             variant="tertiary"
                             svg={Redo2}
                             iconSize="sm"
-                            disabled={!canRedo || autoFilling}
+                            disabled={!canRedo || autoFilling || redoBlockedByPendingSave}
                             onClick={handleRedo}
                             aria-label={redoLabel ? `Redo ${redoLabel}` : "Redo"}
                             title={
-                              redoLabel
-                                ? `Redo ${redoLabel} (${undoShortcut.redo})`
+                              redoBlockedByPendingSave
+                                ? "Finish saving this assignment before redoing."
+                                : redoLabel
+                                  ? `Redo ${redoLabel} (${undoShortcut.redo})`
                                 : `Nothing to redo (${undoShortcut.redo})`
                             }
                           />
