@@ -1,3 +1,10 @@
+## [2.49.2](https://github.com/K-Cheddar/worship-sync/compare/v2.49.1...v2.49.2) (2026-11-04)
+
+
+### Bug Fixes
+
+* Updating public schedule logic ([3e762b9](https://github.com/K-Cheddar/worship-sync/commit/3e762b901339425594827762546397b744832fc9))
+
 ## [2.49.1](https://github.com/K-Cheddar/worship-sync/compare/v2.49.0...v2.49.1) (2026-11-04)
 
 
