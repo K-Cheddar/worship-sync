@@ -39,6 +39,7 @@ const ScheduleInitialSmsSendFlow = ({
   teamName,
   timeZone,
   sendScope,
+  canDispatch,
   onClose,
 }: {
   churchId: string;
@@ -47,6 +48,7 @@ const ScheduleInitialSmsSendFlow = ({
   teamName: string;
   timeZone: string;
   sendScope?: ScheduleSendScope;
+  canDispatch?: () => boolean;
   onClose: () => void;
 }) => {
   const ownerIdentity = `${churchId}:${schedule.scheduleId}`;
@@ -259,6 +261,10 @@ const ScheduleInitialSmsSendFlow = ({
     setError("");
     setNotice("");
     try {
+      if (canDispatch && !canDispatch()) {
+        setError("The active schedule changed while these messages were being reviewed. Close this panel and reopen it before sending.");
+        return;
+      }
       const response = await dispatchAvailabilityNotificationBatch(churchId, reviewedBatch.batchId, reviewedBatch.approvalVersion);
       setServerBatch(response.batch);
       setReviewedBatchState(null);

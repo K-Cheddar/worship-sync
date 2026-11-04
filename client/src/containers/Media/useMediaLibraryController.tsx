@@ -2294,6 +2294,7 @@ export function useMediaLibraryController({
       };
       let folderFinalized = false;
       let folderFinalizationError: string | undefined;
+      let pendingRouteRepair: { folderIds: Set<string>; fallback: string } | undefined;
       const recordUnresolvedFolderMembers = (rows: MediaType[], message: string) => {
         const unresolvedById = new Map(deleteFailedRows.map((row) => [row.id, row]));
         const filesById = new Map(fileStates.map((file) => [file.id, file]));
@@ -2387,6 +2388,16 @@ export function useMediaLibraryController({
           return false;
         }
         const canUpdateRoute = () => ownerActive && isOperationUiScopeCurrent();
+        const recordFinalizationError = (error: unknown) => {
+          console.error("Could not finalize deleted Media folder", error);
+          folderFinalizationError = error instanceof Error
+            ? error.message
+            : "The original church folder data could not be finalized.";
+          activityHandoff.setDetachedCleanupRetry(retryDetachedCleanup, "Retry folder finalization");
+          if (canUpdateRoute()) {
+            showToast("Folder deletion still needs attention. Retry folder finalization from Activity.", "error");
+          }
+        };
         if (folderFinalized) return true;
         let authoritativeLatest: { list: MediaType[]; folders: MediaFolder[] };
         try {
@@ -2411,6 +2422,40 @@ export function useMediaLibraryController({
         changeBase = authoritativeLatest;
         target = authoritativeLatest.folders.find((folder) => folder.id === folderId);
         if (!target) {
+          const routeRepair = pendingRouteRepair;
+          if (routeRepair) {
+            try {
+              if (!operationScope.db)
+                throw new Error("Media database is unavailable");
+              const routeRepairDocs = await repairPersistedMediaRouteFolders(
+                operationScope.db,
+                routeRepair.folderIds,
+                routeRepair.fallback,
+                isOriginalSession,
+              );
+              if (!isOriginalSession()) {
+                retireInvalidSession(control);
+                return false;
+              }
+              broadcastControllerMediaRouteFoldersUpdate(
+                routeRepairDocs,
+                isOperationUiScopeCurrent,
+              );
+              repairActiveMediaRoutesAfterFolderDeletion(
+                routeRepair.folderIds,
+                routeRepair.fallback,
+                operationScope,
+              );
+              pendingRouteRepair = undefined;
+            } catch (error) {
+              if (!isOriginalSession()) {
+                retireInvalidSession(control);
+                return false;
+              }
+              recordFinalizationError(error);
+              return false;
+            }
+          }
           subtree = new Set<string>();
           removedRows = [];
           folderFinalized = true;
@@ -2431,6 +2476,11 @@ export function useMediaLibraryController({
           return false;
         }
         folderReadFailed = false;
+        const routeRepair = pendingRouteRepair ?? {
+          folderIds: new Set(subtree),
+          fallback,
+        };
+        pendingRouteRepair = routeRepair;
         let routeRepairError: unknown;
         let routeRepairDocs: Awaited<
           ReturnType<typeof repairPersistedMediaRouteFolders>
@@ -2440,8 +2490,8 @@ export function useMediaLibraryController({
             throw new Error("Media database is unavailable");
           routeRepairDocs = await repairPersistedMediaRouteFolders(
             operationScope.db,
-            subtree,
-            fallback,
+            routeRepair.folderIds,
+            routeRepair.fallback,
             isOriginalSession,
           );
         } catch (error) {
@@ -2502,10 +2552,11 @@ export function useMediaLibraryController({
             isOperationUiScopeCurrent,
           );
           repairActiveMediaRoutesAfterFolderDeletion(
-            subtree,
-            fallback,
+            routeRepair.folderIds,
+            routeRepair.fallback,
             operationScope,
           );
+          pendingRouteRepair = undefined;
           folderFinalized = true;
           folderFinalizationError = undefined;
           if (canUpdateRoute()) {
@@ -2518,14 +2569,7 @@ export function useMediaLibraryController({
             retireInvalidSession(control);
             return false;
           }
-          console.error("Could not finalize deleted Media folder", error);
-          folderFinalizationError = error instanceof Error
-            ? error.message
-            : "The original church folder data could not be finalized.";
-          activityHandoff.setDetachedCleanupRetry(retryDetachedCleanup, "Retry folder finalization");
-          if (canUpdateRoute()) {
-            showToast("Folder deletion still needs attention. Retry folder finalization from Activity.", "error");
-          }
+          recordFinalizationError(error);
           return false;
         }
       };

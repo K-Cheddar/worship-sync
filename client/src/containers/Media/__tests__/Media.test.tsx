@@ -1725,36 +1725,58 @@ describe("Media", () => {
     expect(dbB.put).not.toHaveBeenCalled();
   });
 
-  it("retries Keep Contents from Activity after saved route repair partially fails", async () => {
-    const media = { ...makeBaseState().media.list[0], id: "kept-media", folderId: "folder-1" };
-    const folders = [{ id: "folder-1", name: "Sermon slides", parentId: null }];
+  it("retries saved route repair from Activity after the folder deletion is already persisted", async () => {
+    const media = { ...makeBaseState().media.list[0], id: "deleted-media", folderId: "folder-1" };
+    const folders = [
+      { id: "parent-folder", name: "Programs", parentId: null },
+      { id: "folder-1", name: "Sermon slides", parentId: "parent-folder" },
+    ];
     mockState = makeBaseState({ media: { list: [media], folders } });
     mockState.undoable.present.preferences.mediaRouteFolders = { "controller-item-song": "folder-1" };
     mockState.undoable.present.preferences.mediaRouteFoldersControllerProfileId = "presentation";
     mockRepairPersistedMediaRouteFolders.mockRejectedValueOnce(new Error("route write failed"));
+    mockDeleteMediaItemAtRevisionFromPouch.mockImplementationOnce(async (_db, doc: { id: string }) => {
+      mockState.media.list = mockState.media.list.filter((row: { id: string }) => row.id !== doc.id);
+      return "deleted";
+    });
+    mockFlushMediaLibraryDocToPouch.mockImplementationOnce(async (_db, list, persistedFolders) => {
+      mockState.media.list = list;
+      mockState.media.folders = persistedFolders;
+      return { ok: true };
+    });
     const { view } = await renderMedia();
     const deleteFolder = async () => {
       await userEvent.click(screen.getByRole("button", { name: "Delete folder" }));
-      await userEvent.click(screen.getByRole("radio", { name: "Delete folder but keep contents" }));
+      await userEvent.click(screen.getByRole("radio", { name: "Delete folder and contents" }));
       await userEvent.click(screen.getByRole("button", { name: /^Delete$/ }));
     };
     await deleteFolder();
     await waitFor(() => expect(mockUpdateTransfer).toHaveBeenCalledWith(expect.objectContaining({
-      status: "failed",
-      phase: expect.objectContaining({ label: "Folder changes need attention" }),
-      actions: expect.arrayContaining([{ key: "retry-delete", label: "Retry deletion" }]),
+      status: "partial",
+      phase: expect.objectContaining({ label: "Folder finalization needs attention" }),
+      actions: expect.arrayContaining([{ key: "retry-cleanup", label: "Retry folder finalization" }]),
     })));
     const activityId = mockUpdateTransfer.mock.calls.at(-1)![0].id;
-    expect(mockFlushMediaLibraryDocToPouch).not.toHaveBeenCalled();
-    expect(mockDispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: "media/setMediaListAndFolders" }));
+    expect(mockFlushMediaLibraryDocToPouch).toHaveBeenCalledTimes(1);
+    expect(mockState.media.folders).toEqual([folders[0]]);
+    expect(mockState.media.list).toEqual([]);
     await waitFor(() => expect(mockActiveFolderDeletion).toBeNull());
     view.unmount();
-    const retry = mockTransferActionHandlers.get(`${activityId}:retry-delete`);
+    const retry = mockTransferActionHandlers.get(`${activityId}:retry-cleanup`);
     expect(retry).toBeDefined();
     await act(async () => { await retry?.(); });
     await waitFor(() => expect(mockGetTransfer(activityId)).toEqual(expect.objectContaining({ status: "complete", phase: expect.objectContaining({ label: "Folder deletion complete" }) })));
     expect(mockRepairPersistedMediaRouteFolders).toHaveBeenCalledTimes(2);
+    expect(mockRepairPersistedMediaRouteFolders).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      new Set(["folder-1"]),
+      "parent-folder",
+      expect.any(Function),
+    );
     expect(mockFlushMediaLibraryDocToPouch).toHaveBeenCalledTimes(1);
+    expect(mockState.media.folders).toEqual([folders[0]]);
+    expect(mockState.media.list).toEqual([]);
   });
 
   it("does not retry a detached folder deletion after the session changes", async () => {

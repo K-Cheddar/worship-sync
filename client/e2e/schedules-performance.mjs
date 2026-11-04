@@ -185,50 +185,106 @@ try {
 
   const staffingSummary = page.getByRole("status", { name: "Schedule staffing summary" });
   await staffingSummary.waitFor({ state: "visible" });
+  const scheduleControls = page.getByRole("group", { name: "Team schedule controls" });
+  await scheduleControls.waitFor({ state: "visible" });
   for (const viewport of [
     { width: 390, height: 844 },
+    { width: 768, height: 1024 },
     { width: 1440, height: 900 },
   ]) {
     await page.setViewportSize(viewport);
-    const layout = await staffingSummary.evaluate((element) => {
-      const bounds = element.getBoundingClientRect();
+    const layout = await page.evaluate(() => {
+      const summary = document.querySelector('[aria-label="Schedule staffing summary"]');
+      const controls = document.querySelector('[aria-label="Team schedule controls"]');
+      const moreButton = controls?.querySelector('[aria-label="More schedule actions"]');
+      if (!summary || !controls || !moreButton) return null;
+      const summaryBounds = summary.getBoundingClientRect();
+      const controlBounds = controls.getBoundingClientRect();
+      const moreBounds = moreButton.getBoundingClientRect();
       return {
-        left: bounds.left,
-        right: bounds.right,
-        bottom: bounds.bottom,
-        clientWidth: element.clientWidth,
-        scrollWidth: element.scrollWidth,
+        summary: {
+          left: summaryBounds.left,
+          right: summaryBounds.right,
+          bottom: summaryBounds.bottom,
+          clientWidth: summary.clientWidth,
+          scrollWidth: summary.scrollWidth,
+          metricTops: Array.from(summary.children).map((child) => child.getBoundingClientRect().top),
+        },
+        controls: {
+          left: controlBounds.left,
+          right: controlBounds.right,
+          top: controlBounds.top,
+          clientWidth: controls.clientWidth,
+          scrollWidth: controls.scrollWidth,
+        },
+        moreButton: { left: moreBounds.left, right: moreBounds.right },
         documentScrollWidth: document.documentElement.scrollWidth,
         viewportWidth: window.innerWidth,
-        metricTops: Array.from(element.children).map((child) => child.getBoundingClientRect().top),
-        controls: (() => {
-          const controls = element.parentElement?.querySelector('[aria-label="Team schedule controls"]');
-          if (!controls) return null;
-          const controlBounds = controls.getBoundingClientRect();
-          return { left: controlBounds.left, top: controlBounds.top };
-        })(),
       };
     });
-    assert(layout.left >= 0 && layout.right <= viewport.width,
+    assert(layout, `schedule staffing summary, controls, and More menu should render at ${viewport.width}px`);
+    assert(layout.summary.left >= 0 && layout.summary.right <= viewport.width,
       `staffing summary should fit the schedule header at ${viewport.width}px: ${JSON.stringify(layout)}`);
-    assert(layout.scrollWidth <= layout.clientWidth,
+    assert(layout.summary.scrollWidth <= layout.summary.clientWidth,
       `staffing summary content should not overflow at ${viewport.width}px: ${JSON.stringify(layout)}`);
+    assert(layout.controls.left >= 0 && layout.controls.right <= viewport.width,
+      `schedule controls should fit the workspace at ${viewport.width}px: ${JSON.stringify(layout)}`);
+    assert(layout.controls.scrollWidth <= layout.controls.clientWidth,
+      `schedule controls should wrap without horizontal overflow at ${viewport.width}px: ${JSON.stringify(layout)}`);
     assert(layout.documentScrollWidth <= layout.viewportWidth,
       `schedule should not overflow horizontally at ${viewport.width}px: ${JSON.stringify(layout)}`);
-    assert(layout.controls, `schedule controls should remain visible at ${viewport.width}px`);
+    assert(layout.moreButton.left >= 0 && layout.moreButton.right <= viewport.width,
+      `More schedule actions should remain visible at ${viewport.width}px: ${JSON.stringify(layout.moreButton)}`);
     if (viewport.width >= 1024) {
-      assert(Math.max(...layout.metricTops) - Math.min(...layout.metricTops) <= 2,
-        `desktop metrics should remain on one row at ${viewport.width}px: ${JSON.stringify(layout.metricTops)}`);
-      assert(layout.right <= layout.controls.left,
+      assert(Math.max(...layout.summary.metricTops.slice(0, 3)) - Math.min(...layout.summary.metricTops.slice(0, 3)) <= 2,
+        `desktop metrics should remain on one row at ${viewport.width}px: ${JSON.stringify(layout.summary.metricTops)}`);
+      assert(layout.summary.right <= layout.controls.left,
         `desktop summary should leave room for schedule controls at ${viewport.width}px: ${JSON.stringify(layout)}`);
+    } else if (viewport.width >= 640) {
+      assert(Math.max(...layout.summary.metricTops.slice(0, 3)) - Math.min(...layout.summary.metricTops.slice(0, 3)) <= 2,
+        `tablet metrics should remain readable at ${viewport.width}px: ${JSON.stringify(layout.summary.metricTops)}`);
+      assert(layout.summary.bottom <= layout.controls.top,
+        `tablet controls should follow the summary without overlap at ${viewport.width}px: ${JSON.stringify(layout)}`);
     } else {
-      assert(Math.abs(layout.metricTops[0] - layout.metricTops[1]) <= 2 && layout.metricTops[2] > layout.metricTops[0],
-        `mobile metrics should wrap into readable rows at ${viewport.width}px: ${JSON.stringify(layout.metricTops)}`);
-      assert(layout.bottom <= layout.controls.top,
+      assert(Math.abs(layout.summary.metricTops[0] - layout.summary.metricTops[1]) <= 2 && layout.summary.metricTops[2] > layout.summary.metricTops[0],
+        `mobile metrics should wrap into readable rows at ${viewport.width}px: ${JSON.stringify(layout.summary.metricTops)}`);
+      assert(layout.summary.bottom <= layout.controls.top,
         `mobile controls should follow the summary without overlap at ${viewport.width}px: ${JSON.stringify(layout)}`);
     }
   }
-  console.log("PASS schedule staffing summary fits at 390px mobile and 1440px desktop widths");
+  console.log("PASS schedule staffing summary and controls fit at mobile, tablet, and desktop widths");
+  const openLayoutSubmenu = async () => {
+    await page.getByRole("button", { name: "More schedule actions" }).click();
+    await page.getByRole("menuitem", { name: "Layout" }).hover();
+  };
+  assert.equal(
+    await page.evaluate(() => localStorage.getItem("worshipsyncTeamScheduleAdminLayout")),
+    null,
+    "the fixture should begin without a stored layout choice",
+  );
+  await openLayoutSubmenu();
+  const selectedCardsOption = page.getByRole("menuitem", { name: /Cards/ });
+  assert((await selectedCardsOption.innerText()).includes("\u2713"), "the default Cards layout should be selected");
+  assert.equal(
+    await page.evaluate(() => localStorage.getItem("worshipsyncTeamScheduleAdminLayout")),
+    null,
+    "opening the layout submenu should not write a preference",
+  );
+  await page.getByRole("menuitem", { name: "Grid", exact: true }).click();
+  assert.equal(
+    await page.evaluate(() => localStorage.getItem("worshipsyncTeamScheduleAdminLayout")),
+    "grid",
+    "an explicit layout selection should be saved",
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openLayoutSubmenu();
+  const selectedGridAfterResize = page.getByRole("menuitem", { name: /Grid/ });
+  assert((await selectedGridAfterResize.innerText()).includes("\u2713"), "the selected layout should survive resizing");
+  assert.equal(
+    await page.evaluate(() => localStorage.getItem("worshipsyncTeamScheduleAdminLayout")),
+    "grid",
+  );
+  console.log("PASS opening does not persist; explicit Grid choice survives resize");
   if (process.argv.includes("--responsive-only")) {
     await browser.close();
     await server.close();

@@ -19,6 +19,7 @@ type RangeSelectorProps = {
   onPresetChange: (preset: RangePreset) => void;
   onCustomRangeChange: (range: { startDate: string; endDate: string }) => void;
   onNavigate?: (direction: -1 | 1) => void;
+  disabled?: boolean;
   className?: string;
   labelLayout?: "stacked" | "inline";
 };
@@ -31,6 +32,7 @@ const RangeSelector = ({
   onPresetChange,
   onCustomRangeChange,
   onNavigate,
+  disabled = false,
   className,
   labelLayout = "stacked",
 }: RangeSelectorProps) => {
@@ -59,6 +61,7 @@ const RangeSelector = ({
             isSelected={selected}
             aria-pressed={selected}
             aria-label={option.label}
+            disabled={disabled}
             className={cn(
               mobile ? "w-full text-left text-sm max-md:min-h-0 max-md:px-2 max-md:py-1.5" : "text-xs",
               selected && "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100",
@@ -90,13 +93,17 @@ const RangeSelector = ({
         {isDesktop ? (
           renderPresetButtons()
         ) : (
-          <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+          <Popover
+            open={!disabled && popoverOpen}
+            onOpenChange={(open) => { if (!disabled) setPopoverOpen(open); }}
+          >
             <PopoverTrigger asChild>
               <Button
                 type="button"
                 variant="tertiary"
                 aria-label={`Range preset: ${selectedLabel}`}
                 aria-haspopup="dialog"
+                disabled={disabled}
                 className="w-full justify-between bg-gray-800/80 text-left text-xs max-md:min-h-0 max-md:px-2 max-md:py-1"
               >
                 <span>{selectedLabel}</span>
@@ -115,6 +122,7 @@ const RangeSelector = ({
               variant="tertiary"
               svg={ChevronLeft}
               aria-label="Previous period"
+              disabled={disabled}
               onClick={() => onNavigate?.(-1)}
               className="shrink-0 max-md:min-h-0"
             />
@@ -128,6 +136,7 @@ const RangeSelector = ({
               inputClassName="h-8 min-h-8 w-full max-w-full min-w-0 border-gray-700 bg-gray-800/70 px-2 pr-8 text-xs shadow-none"
               value={{ startDate: range.start, endDate: range.end }}
               onChange={onCustomRangeChange}
+              disabled={disabled}
             />
           ) : (
             <p className="min-w-0 px-0.5 text-xs text-gray-400" aria-live="polite">
@@ -141,6 +150,7 @@ const RangeSelector = ({
               variant="tertiary"
               svg={ChevronRight}
               aria-label="Next period"
+              disabled={disabled}
               onClick={() => onNavigate?.(1)}
               className="shrink-0 max-md:min-h-0"
             />
