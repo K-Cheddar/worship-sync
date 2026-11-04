@@ -375,6 +375,26 @@ describe("ambiguity reassignment and assignee equipment", () => {
 });
 
 describe("stable external row identity", () => {
+  it("does not reorder account-source rows that lack occurrence identities", () => {
+    const manual = element("manual", "Manual operator row");
+    const current = [section("worship", "Worship", [
+      element("first", "First song", { sourcePlanningManaged: true }),
+      manual,
+      element("second", "Second song", { sourcePlanningManaged: true }),
+    ])];
+    const incoming = [section("incoming", "Worship", [
+      element("incoming-second", "Second song", { sourcePlanningManaged: true }),
+      element("incoming-first", "First song", { sourcePlanningManaged: true }),
+    ])];
+
+    const refreshed = refreshServicePlanFromImport(current, incoming, {
+      ...DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+      trackSameSectionSourceOrder: true,
+    });
+
+    expect(refreshed[0].elements.map(({ id }) => id)).toEqual(["first", "manual", "second"]);
+  });
+
   it("keeps local notes, equipment, and review state with duplicate rows through insertion and reorder", () => {
     const build = (rows: Array<{ sourceOccurrenceId: string; title: string }>) => buildServicePlanSectionsFromImport({
       planLabel: "Sunday worship",
@@ -1032,6 +1052,31 @@ describe("Planning Center PDF refresh matching", () => {
     planningCenterPdfMatch: true,
   };
   const pdfReviewOptions = { ...pdfRefreshOptions, suggestLegacyMatches: true };
+
+  it("keeps PDF-specific same-section matching when account occurrence IDs are absent", () => {
+    const keyA = JSON.stringify(["planningCenterPdf", "first song", "single"]);
+    const keyB = JSON.stringify(["planningCenterPdf", "second song", "single"]);
+    const manual = element("manual", "Manual operator row");
+    const current = [section("saved", "Worship", [
+      element("first", "First song", { sourcePlanningManaged: true, planningCenterPdfMatchKey: keyA }),
+      manual,
+      element("second", "Second song", { sourcePlanningManaged: true, planningCenterPdfMatchKey: keyB }),
+    ])];
+    const incoming = [section("pdf", "Worship", [
+      element("incoming-second", "Second song", { sourcePlanningManaged: true, planningCenterPdfMatchKey: keyB }),
+      element("incoming-first", "First song", { sourcePlanningManaged: true, planningCenterPdfMatchKey: keyA }),
+    ])];
+    const prepared = preparePlanningCenterPdfImport(current, incoming);
+
+    const refreshed = refreshServicePlanFromImport(
+      prepared.currentSections,
+      prepared.importedSections,
+      pdfRefreshOptions,
+    );
+
+    expect(refreshed[0].elements.map(({ id }) => id)).toEqual(["second", "manual", "first"]);
+    expect(refreshed[0].elements.filter(({ sourceOccurrenceId }) => sourceOccurrenceId)).toHaveLength(0);
+  });
 
   it("restores legacy PDF prefixes and applies one insertion without losing song or local equipment data", () => {
     const songs = [

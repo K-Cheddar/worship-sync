@@ -1683,7 +1683,10 @@ export const refreshServicePlanFromImport = (
     if (options.planningCenterPdfMatch || options.trackSameSectionSourceOrder) {
       // The resolved IDs, rather than a second title/position match, define the
       // desired source sequence. Reserved and operator rows are never sorted.
-      const eligible = new Set(sourceOrder.filter((element) => !element.legacyImportMatchCandidateForId).map(({ id }) => id));
+      const eligible = new Set(sourceOrder.filter((element) =>
+        !element.legacyImportMatchCandidateForId &&
+        (options.planningCenterPdfMatch || Boolean(element.sourceOccurrenceId?.trim())),
+      ).map(({ id }) => id));
       const ordered = sourceOrder.filter((element) => elements.some(({ id }) => id === element.id) && eligible.has(element.id));
       let index = 0;
       elements.forEach((element, slot) => { if (eligible.has(element.id)) elements[slot] = ordered[index++]; });

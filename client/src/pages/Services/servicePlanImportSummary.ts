@@ -815,10 +815,7 @@ export const applySelectedServicePlanImportChanges = (
       change.fromSectionId === currentSection.id,
     );
     const hasNonAddStructuralChange = hasNonAddStructuralChangeInSection(currentSection.id);
-    const selectedAddition = [...selectedChanges.values()].some((change) =>
-      change.kind === "added" && change.sectionId === currentSection.id,
-    );
-    if (nextSection && selectedSameSectionMoves.length && (!selectedAddition || hasNonAddStructuralChange)) {
+    if (nextSection && selectedSameSectionMoves.length) {
       const updatedElementsById = new Map(orderedElements.map((element) => [element.id, element]));
       const reorderBaseElements = hasNonAddStructuralChange
         ? orderedElements
@@ -849,7 +846,22 @@ export const applySelectedServicePlanImportChanges = (
       if (reorderedTracked.length === trackedSlots.length) {
         const anchored = reorderBaseElements.map((element) => updatedElementsById.get(element.id) || element);
         trackedSlots.forEach((slot, index) => { anchored[slot] = reorderedTracked[index]; });
-        orderedElements = anchored;
+        if (hasNonAddStructuralChange) {
+          orderedElements = anchored;
+        } else {
+          const currentIds = new Set(currentSection.elements.map(({ id }) => id));
+          const selectedAdditionIds = new Set([...selectedChanges.values()].flatMap((change) =>
+            change.kind === "added" && change.sectionId === currentSection.id ? [change.id] : [],
+          ));
+          const selectedAdditions = orderedElements.filter((element) =>
+            !currentIds.has(element.id) && selectedAdditionIds.has(element.id),
+          );
+          orderedElements = placeServicePlanImportElements(
+            anchored,
+            sourceOrderFor(nextSection),
+            selectedAdditions,
+          );
+        }
       }
     }
 
