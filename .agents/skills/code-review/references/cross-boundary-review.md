@@ -10,6 +10,30 @@ Use these recurring shapes to identify where a review must follow work beyond th
 
 **Regression test:** Use a deferred promise to start under Church A, switch to Church B with the same entity ID, then settle A. Assert B is untouched and any allowed A write or cleanup remains with A.
 
+## Mutation path -> actual guard
+
+For a stateful operation, identify the relevant ways it can start, continue, or change state: controls and dialogs, keyboard or document listeners, programmatic/background callbacks, undo/redo, retries, and async continuations. Trace each path to the service, store, or API boundary that performs the mutation. Verify that the pending-action lock and full owner/target identity are checked there; a disabled or `inert` control does not guard a shortcut, retained callback, or direct invocation.
+
+**Regression evidence:** For the paths that can race with the changed operation, hold it pending and trigger the competing path or switch its owner. Assert that no unauthorized or duplicate mutation reaches persistence. Do not inventory unrelated controls.
+
+## Persisted data -> sibling mutation contract
+
+When a change writes persisted data, find the other relevant endpoints or operations that write the same document, field, or entity. Compare authorization, validation, notifications and message previews, realtime events and public-view invalidation, audit events, replacement/invitation cleanup, and retry/replay behavior where those effects are part of the operation's contract. Equivalent operations should preserve required effects. Treat a difference as a finding only when a confirmed contract or established equivalent-operation behavior requires it; intentional differences need an evidence-based reason.
+
+**Regression evidence:** Exercise the changed mutation and its downstream observable effects, not only the database helper. Check the relevant consumers or emitted messages after success and after a retry/partial failure when applicable.
+
+## Event producer -> least-privileged payload
+
+For a new or changed SSE, websocket, or other realtime producer, inspect the exact serialized payload and who can receive it. Check whether full documents, sensitive fields, public-link tokens, or token hashes escape through the event, and compare the event shape with REST projections. A sanitized REST response does not establish that a separate event is safe. Search sibling producers that publish the same data so a shared exposure is not missed.
+
+**Regression evidence:** Assert the recipient-visible event shape for the least-privileged applicable recipient, including negative assertions for fields that must remain private. Trace the producer and serializer; a helper-only or REST-only test is insufficient.
+
+## Durable commit -> recovery
+
+For a meaningful multi-step mutation, write one concrete failure sequence that begins in a valid state, crosses its durable commit point, and then interrupts a later side effect or loses its response. Identify the durable checkpoint and who owns recovery. Determine which boundaries recovery must survive from the contract and outstanding durable work; verify retry state across navigation, unmount, or process restart as applicable. If the workflow does not recover automatically, check that it reports unfinished effects accurately. Confirm referenced fallback entities still exist and retry will not duplicate completed work. Check whether a request can remain pending indefinitely after its primary mutation committed. For event-driven invalidation, determine whether the contract is based on event-time or delivery-time data and trace delayed delivery to ensure it uses that state rather than a mutable current value.
+
+**Regression evidence:** Drive the committed-write/later-failure ordering deterministically, then verify the recovered persisted state and required downstream effects across the relevant lifecycle boundary. Keep uncertainty about an unbounded wait or recovery guarantee as a risk unless the code path and contract establish a concrete failure.
+
 ## Local owner -> global lifetime
 
 **Failure mechanism:** A route/component creates callbacks or state that a longer-lived provider/store retains after the route unmounts.
