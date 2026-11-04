@@ -47,7 +47,7 @@ A schedule follows **Virtual → Draft ↔ Published**.
 **Approval source:** Current product-owner request, 2026-11-04.
 
 - Each occurrence shows its saved position requirements and only the additional slots saved for that occurrence. Required but unassigned slots stay visible; assignments and equipment do not create staffing requirements by themselves.
-- When a legacy occurrence has no requirement snapshot, resolve its service defaults. If neither the occurrence nor its service defines requirements, keep the schedule editor's legacy fallback of one slot per team position.
+- When an occurrence has no requirement snapshot, resolve its service defaults. If neither the occurrence nor its service defines requirements, use the schedule editor's one-slot-per-team-position fallback only for legacy saved schedules; generated-period schedules do not use this fallback.
 - The public snapshot contains only the schedule fields needed to render the published view, and limits requirement and additional-slot data to the included occurrences and team positions. It excludes responses, guest contact details, and other private schedule data.
 
 ### Ownership and service inclusion

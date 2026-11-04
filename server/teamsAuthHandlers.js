@@ -8422,6 +8422,8 @@ export const createTeamsAuthHandlers = ({
     const serviceCatalog = needsServiceFallback
       ? await readChurchServiceTimes(churchId)
       : [];
+    const fallbackPositionIds =
+      schedule.source === "generated-period" ? [] : [...publicPositionIds];
     const requirementsByOccurrence = new Map();
     const resolvedOccurrences = (
       await Promise.all(
@@ -8437,7 +8439,7 @@ export const createTeamsAuthHandlers = ({
             churchId,
             occurrence,
             services: serviceCatalog,
-            fallbackPositionIds: [...publicPositionIds],
+            fallbackPositionIds,
           });
           const publicRequirements = requirements.filter((requirement) =>
             publicPositionIds.has(requirement.positionId),
@@ -8535,10 +8537,9 @@ export const createTeamsAuthHandlers = ({
     const publicAssignments = filterPublicSlotRows(
       schedule.assignments,
       (cell) => {
-        const primaryMemberId = normalizeShortText(cell?.primaryMemberId, {
-          max: 160,
-        });
-        const shadows = (Array.isArray(cell?.shadows) ? cell.shadows : [])
+        const normalizedCell = normalizeScheduleAssignmentCell(cell);
+        const primaryMemberId = normalizedCell.primaryMemberId;
+        const shadows = normalizedCell.shadows
           .slice(0, 12)
           .flatMap((shadow) => {
             const memberId = normalizeShortText(shadow?.memberId, {

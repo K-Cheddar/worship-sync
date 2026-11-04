@@ -5134,6 +5134,10 @@ test("public schedule snapshots scope occurrence requirements and sanitize sched
           shadows: [],
         },
       },
+      [occurrenceIds[1]]: {
+        // Older schedules persisted the assigned member ID as a string cell.
+        [`${positionIds.Camera}::0`]: memberIds.Jordan,
+      },
       "missing-occurrence": {
         [`${positionIds.Camera}::0`]: {
           primaryMemberId: "private-member-id",
@@ -5191,6 +5195,12 @@ test("public schedule snapshots scope occurrence requirements and sanitize sched
       },
     },
   );
+  assert.deepEqual(result.payload.schedule.assignments[occurrenceIds[1]], {
+    [`${positionIds.Camera}::0`]: {
+      primaryMemberId: memberIds.Jordan,
+      shadows: [],
+    },
+  });
   assert.deepEqual(result.payload.schedule.microphoneAssignments, {
     [occurrenceIds[0]]: { [`${positionIds.Camera}::0`]: ["public-mic"] },
   });
@@ -5199,6 +5209,82 @@ test("public schedule snapshots scope occurrence requirements and sanitize sched
   assert.doesNotMatch(
     JSON.stringify(result.payload),
     /private-schedule-metadata|private-occurrence-note|private-assignment-note|private@example\.test|private-member-id|Private Guest|private-mic/,
+  );
+});
+
+test("public generated schedules do not infer team positions for services without requirements", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("public_generated_schedule_no_requirements");
+  const { teamId, positionIds } = await seedTeam(context, {
+    teamName: "Production",
+    positions: [{ name: "Camera" }],
+  });
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [{
+      id: "public-no-team-requirements",
+      name: "Community Gathering",
+      reccurence: "weekly",
+      dayOfWeek: 0,
+      time: "09:00",
+      positionRequirements: [],
+    }],
+  });
+  const occurrenceId = "public-no-team-requirements@2026-06-07T09:00:00.000Z";
+  const created = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "Generated June Schedule",
+      teamId,
+      startDate: "2026-06-01",
+      endDate: "2026-06-30",
+      serviceIds: ["public-no-team-requirements"],
+      occurrences: [{
+        occurrenceId,
+        serviceId: "public-no-team-requirements",
+        name: "Community Gathering",
+        startsAt: "2026-06-07T09:00:00.000Z",
+        positionRequirements: [],
+      }],
+    },
+  });
+  assert.equal(created.statusCode, 200);
+  const scheduleId = created.payload.schedule.scheduleId;
+  await setDoc("teamSchedules", scheduleId, {
+    ...created.payload.schedule,
+    source: "generated-period",
+    occurrences: created.payload.schedule.occurrences.map((occurrence) => ({
+      ...occurrence,
+      positionRequirements: [],
+    })),
+  });
+
+  await publishTestSchedule(context, scheduleId);
+  const link = await callHandler(authHandlers.getTeamSchedulePublicLink, {
+    context,
+    params: { scheduleId },
+  });
+  const result = await callHandler(authHandlers.getPublicTeamSchedule, {
+    context,
+    query: { token: link.payload.publicToken },
+  });
+
+  assert.equal(result.statusCode, 200);
+  assert.deepEqual(result.payload.schedule.occurrences, []);
+  assert.deepEqual(result.payload.schedule.assignments, {});
+  assert.deepEqual(result.payload.positions.map((position) => position.positionId), [
+    positionIds.Camera,
+  ]);
+
+  await setDoc("teamSchedules", scheduleId, { source: null }, { merge: true });
+  const legacyResult = await callHandler(authHandlers.getPublicTeamSchedule, {
+    context,
+    query: { token: link.payload.publicToken },
+  });
+  assert.equal(legacyResult.statusCode, 200);
+  assert.deepEqual(
+    legacyResult.payload.schedule.occurrences.map((occurrence) => occurrence.positionRequirements),
+    [[{ positionId: positionIds.Camera, count: 1 }]],
   );
 });
 
