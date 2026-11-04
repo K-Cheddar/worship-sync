@@ -19,9 +19,12 @@ import {
 import { serializeAuthError } from "./authErrorResponse.js";
 import { isDeepStrictEqual } from "node:util";
 import {
+  addServicePlanSseClient,
   addChurchServiceTimeZoneSseClient,
   emitChurchServiceTimeZoneInvalidation,
+  emitServicePlanEvent,
   emitTeamsEvent,
+  removeServicePlanSseClient,
   removeChurchServiceTimeZoneSseClient,
 } from "./teamsSse.js";
 import {
@@ -111,6 +114,7 @@ import {
   matchOccurrencesByIdentity,
   resolveOccurrenceIdentity,
   serviceDateTimeInTimeZone,
+  oneTimeServiceInstant,
 } from "../shared/teamScheduleOccurrences.ts";
 
 const APP_BASE_URL =
@@ -1433,12 +1437,19 @@ export const createTeamsAuthHandlers = ({
     schedule.source === "generated-period" &&
     Boolean(schedule.generatedPeriodKey) &&
     schedule.scheduleId === generatedPeriodScheduleId(schedule.generatedPeriodKey);
-  const occurrenceOwnershipEntries = (occurrences, timeZone) => {
+  const occurrenceOwnershipEntries = (occurrences, timeZone, { skipDuplicateLogicalOccurrences = false } = {}) => {
     const entries = new Map();
+    const duplicates = new Set();
     for (const occurrence of Array.isArray(occurrences) ? occurrences : []) {
       const identity = resolveOccurrenceIdentity(occurrence, timeZone);
       if (!identity) throw httpError(409, "A schedule occurrence has no safe logical identity. Review the saved schedule before continuing.");
-      if (entries.has(identity.logicalOccurrenceId)) throw httpError(409, "A schedule contains duplicate logical occurrences. Review it before continuing.");
+      if (entries.has(identity.logicalOccurrenceId)) {
+        if (!skipDuplicateLogicalOccurrences) throw httpError(409, "A schedule contains duplicate logical occurrences. Review it before continuing.");
+        duplicates.add(identity.logicalOccurrenceId);
+        entries.delete(identity.logicalOccurrenceId);
+        continue;
+      }
+      if (duplicates.has(identity.logicalOccurrenceId)) continue;
       entries.set(identity.logicalOccurrenceId, { occurrence, identity });
     }
     return entries;
@@ -1477,11 +1488,14 @@ export const createTeamsAuthHandlers = ({
     previousSchedule = null,
     activeSchedules,
     timeZone,
+    allowUnrelatedDuplicateOccurrences = false,
     transaction,
     db,
   }) => {
     const makeEntries = (sourceChurchId, sourceTeamId, sourceOccurrences) => {
-      const occurrences = occurrenceOwnershipEntries(sourceOccurrences, timeZone);
+      const occurrences = occurrenceOwnershipEntries(sourceOccurrences, timeZone, {
+        skipDuplicateLogicalOccurrences: allowUnrelatedDuplicateOccurrences,
+      });
       return new Map([...occurrences].map(([logicalOccurrenceId, value]) => {
         const key = `${sourceChurchId}\u0000${sourceTeamId}\u0000${logicalOccurrenceId}`;
         return [key, { ...value, churchId: sourceChurchId, teamId: sourceTeamId, logicalOccurrenceId }];
@@ -1865,8 +1879,8 @@ export const createTeamsAuthHandlers = ({
     const weekday = date.getUTCDay();
     if (service.reccurence === "one_time") {
       if (!service.dateTimeISO) return null;
-      const serviceInstant = new Date(service.dateTimeISO);
-      if (Number.isNaN(serviceInstant.getTime())) return null;
+      const serviceInstant = oneTimeServiceInstant(service.dateTimeISO, timeZone);
+      if (!serviceInstant) return null;
       if (
         getOccurrenceCalendarParts(serviceInstant.toISOString(), timeZone)
           .date !== localDate
@@ -1910,18 +1924,23 @@ export const createTeamsAuthHandlers = ({
     return null;
   };
 
-  const assertServiceOccurrence = ({ service, localParts, timeZone }) => {
+  const assertServiceOccurrence = ({ service, localParts, timeZone, occurrenceId, serviceDate }) => {
     const scheduledTime = getServiceOccurrenceTime(
       service,
       localParts.date,
       timeZone,
     );
-    if (!scheduledTime || scheduledTime !== localParts.time) {
-      throw httpError(
-        400,
-        "A target does not match its current service recurrence.",
-      );
-    }
+    const recurrenceMismatch = () => {
+      const serviceId = service?.serviceId || service?.id || "unknown";
+      logAuthEvent?.("warn", "schedule.occurrence.recurrence_mismatch", {
+        serviceId, occurrenceId, recurrence: service?.reccurence,
+        storedDateTimeISO: service?.dateTimeISO || null,
+        expectedLocalTime: scheduledTime, submittedLocalTime: localParts.time,
+        startsAt: localParts.startsAt, serviceDate, computedServiceDate: localParts.date, timeZone,
+      });
+      return httpError(400, `Service "${service?.name || serviceId}" (${serviceId}) does not match its current service recurrence on ${localParts.date}. Check its date and time in Service setup, wait for saving to finish, then refresh Scheduling and try again.`);
+    };
+    if (!scheduledTime || scheduledTime !== localParts.time) throw recurrenceMismatch();
     if (service.reccurence !== "one_time") {
       const expectedInstant = serviceDateTimeInTimeZone(
         localParts.date,
@@ -1934,12 +1953,9 @@ export const createTeamsAuthHandlers = ({
     }
     if (
       service.reccurence === "one_time" &&
-      new Date(service.dateTimeISO).toISOString() !== localParts.startsAt
+      oneTimeServiceInstant(service.dateTimeISO, timeZone)?.toISOString() !== localParts.startsAt
     ) {
-      throw httpError(
-        400,
-        "A target does not match its one-time service occurrence.",
-      );
+      throw recurrenceMismatch();
     }
     return scheduledTime;
   };
@@ -1957,7 +1973,7 @@ export const createTeamsAuthHandlers = ({
     servicesById,
   }) => {
     const primaryService = servicesById.get(serviceId);
-    assertServiceOccurrence({ service: primaryService, localParts, timeZone });
+    assertServiceOccurrence({ service: primaryService, localParts, timeZone, occurrenceId, serviceDate });
     if (serviceDate && serviceDate !== localParts.date) {
       throw httpError(400, "A service occurrence has an invalid calendar date.");
     }
@@ -19320,14 +19336,11 @@ export const createTeamsAuthHandlers = ({
             throw httpError(409, "Team positions changed while this schedule was opening. Refresh and try again.");
           }
         };
-        if (
-          payload.serviceIds.some(
-            (serviceId) => !activeServicesById.has(serviceId),
-          )
-        ) {
+        const missingServiceId = payload.serviceIds.find((serviceId) => !activeServicesById.has(serviceId));
+        if (missingServiceId) {
           throw httpError(
             400,
-            "Choose active services for this schedule period.",
+            `Service (${missingServiceId}) is not saved or is no longer active. Wait for Service setup to finish saving, then refresh Scheduling and try again.`,
           );
         }
         for (const occurrence of payload.occurrences) {
@@ -19432,19 +19445,6 @@ export const createTeamsAuthHandlers = ({
               schedule.churchId === churchId && !schedule.archivedAt &&
               schedule.teamId === payload.teamId,
             );
-            const ambiguousSavedSchedule = activeTeamSchedules.find((schedule) =>
-              schedule.startDate && schedule.endDate &&
-              schedule.startDate <= payload.endDate && schedule.endDate >= payload.startDate &&
-              hasOccurrenceIdentityAmbiguity(
-                schedule.occurrences || [],
-                payload.occurrences,
-                timeZone,
-              ),
-            );
-            if (ambiguousSavedSchedule) {
-              throw ownershipError("A saved schedule has occurrence rows that cannot be matched safely. Its data was preserved; review it before adding services.");
-            }
-
             const ownersByOccurrenceId = new Map();
             for (const occurrence of payload.occurrences) {
               const owners = activeTeamSchedules.filter((schedule) => {
@@ -19453,7 +19453,7 @@ export const createTeamsAuthHandlers = ({
                   [occurrence],
                   timeZone,
                 );
-                if (match.ambiguousCurrentIds.size) throw ownershipError("A saved schedule has an ambiguous service identity. Its data was preserved; review it before adding services.");
+                if (match.ambiguousCurrentIds.size) throw ownershipError("A saved schedule has an ambiguous service identity that cannot be matched safely. Its data was preserved; review it before adding services.");
                 return match.matches.has(occurrence.occurrenceId);
               });
               if (owners.length > 1) throw ownershipError();
@@ -19477,8 +19477,14 @@ export const createTeamsAuthHandlers = ({
             );
             const candidates = exact.length ? exact : periodCandidates;
             const operatorSelectedScheduleId = normalizeShortText(req.body?.operatorSelectedScheduleId, { max: 160 });
+            const operatorSelectedInRange = activeTeamSchedules.find((schedule) =>
+              schedule.scheduleId === operatorSelectedScheduleId &&
+              schedule.startDate && schedule.endDate &&
+              schedule.startDate <= payload.startDate && schedule.endDate >= payload.endDate,
+            );
             const canonicalCandidates = candidates.filter(isCanonicalPeriodSchedule);
             const selected = candidates.find((schedule) => schedule.scheduleId === operatorSelectedScheduleId) ||
+              operatorSelectedInRange ||
               [...candidates].sort((left, right) =>
                 Number(hasScheduleOperationalData(right)) - Number(hasScheduleOperationalData(left)) ||
                 Number(canonicalCandidates.includes(right)) - Number(canonicalCandidates.includes(left)) ||
@@ -19581,6 +19587,7 @@ export const createTeamsAuthHandlers = ({
                   schedule: result.schedule,
                   activeSchedules: allSchedules.filter((item) => item.teamId === payload.teamId && !item.archivedAt),
                   timeZone,
+                  allowUnrelatedDuplicateOccurrences: true,
                   transaction,
                   db,
                 });
@@ -19641,6 +19648,7 @@ export const createTeamsAuthHandlers = ({
                   schedule: result.schedule,
                   activeSchedules: allSchedules.filter((item) => item.teamId === payload.teamId && !item.archivedAt),
                   timeZone,
+                  allowUnrelatedDuplicateOccurrences: true,
                 });
                 if (result.updated) await setDoc(COLLECTIONS.teamSchedules, targetId, result.schedule, { merge: false });
                 return { ...result, created: false };
@@ -20283,6 +20291,51 @@ export const createTeamsAuthHandlers = ({
       }
     },
 
+    async streamServicePlanUpdates(req, res) {
+      const churchId = req.params.churchId;
+      let subscriber = null;
+      let heartbeat = null;
+      let streamStarted = false;
+      let closed = false;
+      const cleanup = () => {
+        if (closed) return;
+        closed = true;
+        if (heartbeat) clearInterval(heartbeat);
+        if (subscriber) removeServicePlanSseClient(churchId, subscriber);
+      };
+
+      try {
+        await requireServicesView(req, churchId);
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+        res.flushHeaders?.();
+        streamStarted = true;
+
+        subscriber = { write: (chunk) => res.write(chunk) };
+        addServicePlanSseClient(churchId, subscriber);
+        heartbeat = setInterval(() => {
+          res.write(": keep-alive\n\n");
+        }, 25000);
+        req.on("close", () => {
+          cleanup();
+          res.end();
+        });
+        res.write(`data: ${JSON.stringify({ type: "connected", churchId })}\n\n`);
+      } catch (error) {
+        cleanup();
+        if (streamStarted) {
+          res.end();
+          return;
+        }
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not open the service plan update stream.",
+        );
+      }
+    },
+
     async updateChurchServiceTimeZone(req, res) {
       try {
         await assertCsrf(req);
@@ -20611,7 +20664,7 @@ export const createTeamsAuthHandlers = ({
           });
           servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
         }
-        emitTeamsEvent(churchId, "service-plan-updated", {
+        emitServicePlanEvent(churchId, "service-plan-updated", {
           planKey: servicePlan.planKey,
           saveOperationId: payload.saveOperationId,
         });
@@ -20881,7 +20934,7 @@ export const createTeamsAuthHandlers = ({
             buildServicePlanDocId(churchId, planKey),
           );
           if (plan)
-            emitTeamsEvent(churchId, "service-plan-updated", {
+            emitServicePlanEvent(churchId, "service-plan-updated", {
               planKey: plan.planKey,
             });
         }
@@ -21297,7 +21350,7 @@ export const createTeamsAuthHandlers = ({
           merge: true,
         });
         const servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
-        emitTeamsEvent(churchId, "service-plan-updated", {
+        emitServicePlanEvent(churchId, "service-plan-updated", {
           planKey: servicePlan.planKey,
         });
         await emitPublicServicePlanUpdated(
@@ -21494,7 +21547,7 @@ export const createTeamsAuthHandlers = ({
           { merge: true },
         );
         const servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
-        emitTeamsEvent(churchId, "service-plan-updated", {
+        emitServicePlanEvent(churchId, "service-plan-updated", {
           planKey: servicePlan.planKey,
         });
         await emitPublicServicePlanUpdated(
@@ -21541,7 +21594,7 @@ export const createTeamsAuthHandlers = ({
           { merge: true },
         );
         const servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
-        emitTeamsEvent(churchId, "service-plan-updated", {
+        emitServicePlanEvent(churchId, "service-plan-updated", {
           planKey: servicePlan.planKey,
         });
         await emitPublicServicePlanUpdated(
@@ -21624,7 +21677,7 @@ export const createTeamsAuthHandlers = ({
         const docId = buildServicePlanDocId(churchId, planKey);
         const existing = await getDoc(COLLECTIONS.servicePlans, docId);
         await deleteDoc(COLLECTIONS.servicePlans, docId);
-        emitTeamsEvent(churchId, "service-plan-removed", { planKey });
+        emitServicePlanEvent(churchId, "service-plan-removed", { planKey });
         // Deleting revokes public access just as unpublishing does, so already
         // open viewers must be told to re-fetch (and get a 404) instead of
         // sitting on a snapshot of now-deleted serving notes. `published` is

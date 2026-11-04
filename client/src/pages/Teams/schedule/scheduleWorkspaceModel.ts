@@ -24,6 +24,26 @@ export type ScheduleWorkspaceRow = {
   reviewScheduleIds: string[];
 };
 
+export type ScheduleSendScope = {
+  /** Safe current occurrences that are visible but have no saved owner yet. */
+  servicePreviews: TeamScheduleOccurrence[];
+  /** Current occurrences blocked by an identity or ownership conflict for this schedule. */
+  conflictPreviews: TeamScheduleOccurrence[];
+};
+
+/** Return only visible current rows that this saved schedule cannot send. */
+export const getScheduleSendScope = (
+  rows: ScheduleWorkspaceRow[],
+  scheduleId: string,
+): ScheduleSendScope => ({
+  servicePreviews: rows
+    .filter((row) => row.status === "virtual" && !row.owner)
+    .map((row) => row.occurrence),
+  conflictPreviews: rows
+    .filter((row) => row.status === "ambiguous" && !row.owner && row.reviewScheduleIds.includes(scheduleId))
+    .map((row) => row.occurrence),
+});
+
 /**
  * Read-only projection, never a schedule document or merged assignment map.
  * Consumers must gate cells on owner.hydrated; null schedule means unknown staffing,

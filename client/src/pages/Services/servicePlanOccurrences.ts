@@ -2,6 +2,7 @@ import type { TeamScheduleOccurrence, TeamService } from "../../api/authTypes";
 import {
   calendarDateInTimeZone,
   generateScheduleOccurrences,
+  oneTimeServiceInstant,
 } from "../../utils/teamScheduleOccurrences";
 
 /**
@@ -51,7 +52,9 @@ export const getOneTimeServiceOccurrence = (
   const isoDate = service.dateTimeISO;
   if (!isoDate) return null;
   const resolvedTimeZone = timeZone || "UTC";
-  const date = calendarDateInTimeZone(new Date(isoDate), resolvedTimeZone);
+  const instant = oneTimeServiceInstant(isoDate, resolvedTimeZone);
+  if (!instant) return null;
+  const date = calendarDateInTimeZone(instant, resolvedTimeZone);
   const [occurrence] = getServiceOccurrencesInRange({
     services,
     serviceId: service.serviceId,

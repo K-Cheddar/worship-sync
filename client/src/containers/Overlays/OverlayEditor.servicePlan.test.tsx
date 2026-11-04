@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import OverlayEditor from "./OverlayEditor";
 import { ControllerInfoContext } from "../../context/controllerInfo";
@@ -23,15 +23,6 @@ jest.mock("react-redux", () => ({
   ...jest.requireActual("react-redux"),
   useStore: () => ({ getState: () => mockState }),
 }));
-jest.mock("../../hooks/useOverlayDraft", () => ({
-  useOverlayDraft: (selectedOverlay: OverlayInfo) => ({
-    draft: selectedOverlay,
-    patchDraft: jest.fn(),
-    flushDraft: jest.fn(),
-    mergeDraftLocal: jest.fn(),
-    replaceDraft: jest.fn(),
-  }),
-}));
 jest.mock("../../context/toastContext", () => ({
   useToast: () => ({ showToast: mockShowToast, removeToast: jest.fn() }),
 }));
@@ -42,7 +33,7 @@ jest.mock("../../components/StyleEditor", () => ({
   default: () => null,
   ParticipantPositionControl: () => null,
 }));
-jest.mock("../../components/Drawer", () => ({ children }: { children: ReactNode }) => <div>{children}</div>);
+jest.mock("../../components/Drawer", () => ({ children, isOpen }: { children: ReactNode; isOpen: boolean }) => isOpen ? <div>{children}</div> : null);
 jest.mock("../../components/Select/Select", () => () => null);
 
 describe("OverlayEditor Service Plan review removal", () => {
@@ -85,5 +76,32 @@ describe("OverlayEditor Service Plan review removal", () => {
     await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith(expect.objectContaining({
       message: "Someone else updated this overlay.",
     })));
+  });
+
+  it("forwards owner identity to the real draft hook for same-ID replacement and unmount", () => {
+    jest.useFakeTimers();
+    const ownerA = { isCurrent: jest.fn(() => true) };
+    const ownerB = { isCurrent: jest.fn(() => true) };
+    const saveA = jest.fn();
+    const saveB = jest.fn();
+    const tree = (draftOwner: typeof ownerA, imageUrl: string, save: typeof saveA) => <OverlayEditor
+      selectedOverlay={{ id: "X", type: "image", imageUrl }}
+      isOverlayLoading={false} isMobile={false} showPreview={false}
+      setShowPreview={jest.fn()} setIsStyleDrawerOpen={jest.fn()} setIsTemplateDrawerOpen={jest.fn()}
+      handleOverlayUpdate={save} handleFormattingChange={jest.fn()} draftOwner={draftOwner}
+    />;
+    const { rerender, unmount } = render(tree(ownerA, "A original", saveA));
+    fireEvent.change(screen.getByLabelText(/Image URL/), { target: { value: "A pending" } });
+    ownerA.isCurrent.mockReturnValue(false);
+    rerender(tree(ownerB, "B original", saveB));
+    act(() => { jest.advanceTimersByTime(300); });
+    expect(saveA).toHaveBeenCalledWith(expect.objectContaining({ id: "X", imageUrl: "A pending" }));
+    expect(saveB).not.toHaveBeenCalled();
+    expect(screen.getByLabelText(/Image URL/)).toHaveValue("B original");
+    fireEvent.change(screen.getByLabelText(/Image URL/), { target: { value: "B pending" } });
+    unmount();
+    expect(saveB).toHaveBeenCalledWith(expect.objectContaining({ id: "X", imageUrl: "B pending" }));
+    expect(saveA).toHaveBeenCalledTimes(1);
+    jest.useRealTimers();
   });
 });

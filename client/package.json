@@ -118,6 +118,7 @@
     "test:e2e:teams-responsive-navigation": "node e2e/responsive-navigation.mjs",
     "test:e2e:responsive-navigation:smoke": "node e2e/responsive-navigation.mjs --smoke",
     "test:e2e:schedules-performance": "node e2e/schedules-performance.mjs",
+    "test:e2e:schedule-staffing-responsive": "node e2e/schedules-performance.mjs --responsive-only",
     "test:e2e:browser": "npm run test:e2e:responsive-navigation && npm run test:e2e:board-controller-mobile",
     "eject": "vite eject",
     "lint": "eslint src --ext .ts,.tsx,.js,.jsx",

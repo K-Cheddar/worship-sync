@@ -52,6 +52,12 @@ For a partial-field mutation that feeds an editor/autosave, trace the original c
 
 **Regression test:** Give two teams same-named positions and choose one owning team; compare the preview with the actual Replace mutation. Then let team/position creation succeed before a later step fails, re-preview, and assert prior approvals, signature/settings, and newly created IDs remain valid.
 
+## Identity across preview and commit
+
+Carry each candidate's durable identity and owner from preview through commit. A label, displayed row, or reused raw ID does not establish mutation identity. For bulk ledgers and mixed-operation scenarios, use the single procedure in [adversarial-stateful-review.md](./adversarial-stateful-review.md#bulk-and-mixed-operation-evidence).
+
+Before confirming a finding, name the actual production path, a concrete failure sequence, and the contract or authoritative state that decides expected behavior. If product intent or identity evidence is unresolved, report the uncertainty instead of promoting an implementation preference or a review comment into a defect.
+
 ## Async outcome -> operator recovery
 
 **Failure mechanism:** A valid server outcome is ignored, or a terminal/uncertain async state leaves the operator without a safe action or with misleading status text.

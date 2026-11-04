@@ -314,6 +314,79 @@ describe("VideoBackgroundControls", () => {
     render(<VideoBackgroundControls media={media} mediaKey="remote:video-1" syncOutputIds={["projector"]} sendMode="continue" onSendModeChange={mockSendModeChange} loop onLoopChange={mockLoopChange} />);
     await user.click(screen.getByRole("switch", { name: "Loop:" }));
     expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({ videoPlayback: expect.objectContaining({ positionSeconds: 4, loop: false, paused: false, applySeek: false }) }) }));
+    expect(mockDispatch.mock.calls.at(-1)?.[0].payload.videoPlayback.loopOnly).toBeUndefined();
+  });
+
+  it.each([undefined, 0, NaN, Infinity])("updates only loop policy when controller duration is %s after several wraps", async (duration) => {
+    mockServerTime = 1_126_000; // Actual output duration is 40s; controller has no duration.
+    reportVideoPreviewState({ mediaKey: "remote:video-1", currentTime: 18, duration: 0, paused: false });
+    const user = userEvent.setup();
+    const tree = (loop: boolean) => <VideoBackgroundControls media={{ ...media, duration }} mediaKey="remote:video-1" syncOutputIds={["projector"]} sendMode="continue" onSendModeChange={mockSendModeChange} loop={loop} onLoopChange={mockLoopChange} />;
+    const { rerender } = render(tree(true));
+    await user.click(screen.getByRole("switch", { name: "Loop:" }));
+    const cue = mockDispatch.mock.calls.at(-1)?.[0].payload.videoPlayback;
+    expect(cue).toMatchObject({ loop: false, loopOnly: true, applySeek: false });
+    expect(cue.positionSeconds).toBeGreaterThan(40);
+    mockLiveCue = cue;
+    rerender(tree(false));
+    await user.click(screen.getByRole("switch", { name: "Loop:" }));
+    expect(mockDispatch.mock.calls.at(-1)?.[0].payload.videoPlayback).toMatchObject({ loop: true, loopOnly: true, applySeek: false });
+    await user.click(screen.getByRole("button", { name: "Restart video from the beginning" }));
+    expect(mockDispatch.mock.calls.at(-1)?.[0].payload.videoPlayback).toMatchObject({ positionSeconds: 0, paused: false, applySeek: true });
+    expect(mockDispatch.mock.calls.at(-1)?.[0].payload.videoPlayback.loopOnly).toBeUndefined();
+  });
+
+  it("keeps the live clock for Pause and resume after a loop-only cue with unknown duration", async () => {
+    const user = userEvent.setup();
+    mockServerTime = 1_126_000;
+    mockLiveCue = { ...mockLiveCue, positionSeconds: 0, atServerMs: 1_000_000 };
+    reportVideoPreviewState({ mediaKey: "remote:video-1", currentTime: 4, duration: 0, paused: false });
+    const tree = (loop: boolean) => <VideoBackgroundControls
+      media={{ ...media, duration: undefined }}
+      mediaKey="remote:video-1"
+      syncOutputIds={["projector"]}
+      sendMode="continue"
+      onSendModeChange={mockSendModeChange}
+      loop={loop}
+      onLoopChange={mockLoopChange}
+    />;
+    const { rerender } = render(tree(true));
+
+    await user.click(screen.getByRole("switch", { name: "Loop:" }));
+    const loopOnlyCue = mockDispatch.mock.calls.at(-1)?.[0].payload.videoPlayback;
+    expect(loopOnlyCue).toMatchObject({
+      loop: false,
+      loopOnly: true,
+      hasLiveClock: true,
+      preserveOutputPosition: true,
+      positionSeconds: 126,
+      paused: false,
+    });
+    expect(mockDispatch.mock.calls.at(-1)?.[0].payload.outputIds).toEqual(["projector"]);
+
+    mockLiveCue = loopOnlyCue;
+    rerender(tree(false));
+    await user.click(screen.getByRole("button", { name: "Pause video" }));
+    const pausedCue = mockDispatch.mock.calls.at(-1)?.[0].payload.videoPlayback;
+    expect(pausedCue).toMatchObject({
+      loop: false, loopOnly: true, hasLiveClock: true, preserveOutputPosition: true,
+      paused: true, applySeek: false, positionSeconds: 126,
+    });
+    expect(mockDispatch.mock.calls.at(-1)?.[0].payload.outputIds).toEqual(["projector"]);
+
+    mockLiveCue = pausedCue;
+    rerender(tree(false));
+    await user.click(screen.getByRole("button", { name: "Play video" }));
+    expect(mockDispatch.mock.calls.at(-1)?.[0].payload.videoPlayback).toMatchObject({
+      loop: false,
+      loopOnly: true,
+      hasLiveClock: true,
+      preserveOutputPosition: true,
+      paused: false,
+      applySeek: false,
+      positionSeconds: 126,
+    });
+    expect(mockDispatch.mock.calls.at(-1)?.[0].payload.outputIds).toEqual(["projector"]);
   });
 
   it("keeps a finished live video held when enabling Loop and allows explicit replay", async () => {

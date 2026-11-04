@@ -50,6 +50,19 @@ describe("CurrentServiceItemList", () => {
     );
   });
 
+  it("moves live highlighting when the active item changes", () => {
+    const view = render(<CurrentServiceItemList activeListId="item-1" />);
+    let rows = screen.getAllByRole("listitem");
+    expect(within(rows[0]).getByText("Live")).toBeInTheDocument();
+    expect(within(rows[1]).queryByText("Live")).not.toBeInTheDocument();
+
+    view.rerender(<CurrentServiceItemList activeListId="item-2" />);
+    rows = screen.getAllByRole("listitem");
+
+    expect(within(rows[0]).queryByText("Live")).not.toBeInTheDocument();
+    expect(within(rows[1]).getByText("Live")).toBeInTheDocument();
+  });
+
   it("hides a slide thumbnail when its image cannot load", () => {
     mockedUseLiveOutlinePreview.mockReturnValue({
       items: [

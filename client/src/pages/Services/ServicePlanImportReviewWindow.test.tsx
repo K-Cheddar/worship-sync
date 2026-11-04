@@ -9,7 +9,8 @@ import { applySelectedServicePlanImportChanges, summarizeServicePlanImport } fro
 import { applyPlanAnchorStartTime } from "./servicePlanTimingUtils";
 
 describe("ServicePlanImportReviewWindow", () => {
-  it("shows reorder positions from the executed selection when manual rows separate source items", () => {
+  it("shows reorder positions from the executed selection when manual rows separate source items", async () => {
+    const user = userEvent.setup();
     const items: ServicePlanElement[] = ["A", "Manual", "B", "C"].map((id) => ({
       id, type: "free", title: plainTextToRichText(id), sourcePlanningManaged: id !== "Manual",
     }));
@@ -21,7 +22,8 @@ describe("ServicePlanImportReviewWindow", () => {
       getSelectedSections={(keys) => applySelectedServicePlanImportChanges(current, proposed, summary, new Set(keys))}
       onApply={jest.fn()} onClose={jest.fn()}
     /></FloatingWindowZIndexProvider>);
-    expect(screen.getByText(/^Position 3.*2$/)).toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: "Reorder C" }));
+    expect(screen.getByText(/^Position 3.*1$/)).toBeInTheDocument();
     expect(screen.getByText(/^Position 4.*1$/)).toBeInTheDocument();
   });
   it("selects all changes by default and can omit an individual element", async () => {

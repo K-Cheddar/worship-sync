@@ -59,6 +59,7 @@ import {
   getSharedOccurrenceTiming,
   occurrenceScheduleDetailsMatch,
   preserveStoredOccurrenceIds,
+  matchOccurrencesByIdentity,
 } from "@/utils/teamScheduleOccurrences";
 import {
   getCreateScheduleDefaultRange,
@@ -71,13 +72,21 @@ import {
 import {
   findReusablePeriodSchedule,
   findOverlappingPeriodSchedules,
+  findScheduleOccurrenceOwnershipConflicts,
+  hasScheduleData,
+  filterSafeScheduleReconciliationOccurrences,
   mergeCurrentScheduleOccurrences,
   resolveDisplayedPeriodRange,
   filterOccurrencesToRange,
   formatSchedulePeriodName,
+  scheduleCoversPeriodRange,
   type SchedulePeriodPreset,
 } from "./schedulePeriodUtils";
 import { useScheduleWorkspacePeriod } from "./useScheduleWorkspacePeriod";
+import ScheduleStaffingSummary from "./ScheduleStaffingSummary";
+import ScheduleSendScopeNotice from "./ScheduleSendScopeNotice";
+import { getScheduleSendScope, resolveScheduleWorkspace } from "./scheduleWorkspaceModel";
+import { isPersistedScheduleId } from "./scheduleNotificationHistory";
 import { useScheduleNotificationHistory } from "./useScheduleNotificationHistory";
 import RangeSelector from "../components/RangeSelector";
 import { shiftRange } from "../rangeSelection";
@@ -545,7 +554,7 @@ const ScheduleTab = ({
   const activeServices = useMemo(() => data.services.filter(isActive), [data.services]);
   const {
     periodPreset, periodRange, selectRangePreset, selectCustomRange, setPeriodSelection,
-    markExplicitPeriodSelection, teamPeriod, periodServiceIds, generatedPeriodOccurrences,
+    markExplicitPeriodSelection, periodServiceIds, generatedPeriodOccurrences,
   } = useScheduleWorkspacePeriod({
     services: activeServices,
     positions: data.positions,
@@ -587,6 +596,21 @@ const ScheduleTab = ({
     serviceTimeZone,
     workspaceTeamId,
   ]);
+  const ownershipConflictServiceNames = useMemo(() => [...new Set(generatedPeriodOccurrences.flatMap((occurrence) =>
+    findScheduleOccurrenceOwnershipConflicts({
+      schedules,
+      churchId,
+      teamId: workspaceTeamId,
+      occurrences: [occurrence],
+      timeZone: serviceTimeZone,
+    }).length > 1 ? [occurrence.name] : [],
+  ))].sort((left, right) => left.localeCompare(right)), [
+    churchId,
+    generatedPeriodOccurrences,
+    schedules,
+    serviceTimeZone,
+    workspaceTeamId,
+  ]);
   const matchedPeriodSchedule = periodScheduleMatch.schedule;
   const overlappingPeriodSchedules = useMemo(() => viewingSavedSchedule
     ? []
@@ -599,7 +623,11 @@ const ScheduleTab = ({
   const explicitlySelectedPeriodSchedule = periodScheduleSelection?.scope === periodSelectionScope
     ? overlappingPeriodSchedules.find((schedule) => schedule.scheduleId === periodScheduleSelection.scheduleId) || null
     : null;
-  const preferredPeriodSchedule = matchedPeriodSchedule;
+  // Displaying a preserved owner is independent of permission to reconcile it.
+  const preferredPeriodSchedule = periodScheduleMatch.ambiguous &&
+    (!matchedPeriodSchedule || !hasScheduleData(matchedPeriodSchedule))
+    ? periodScheduleMatch.reviewSchedule || matchedPeriodSchedule
+    : matchedPeriodSchedule || periodScheduleMatch.reviewSchedule;
   const virtualPeriodSchedule = useMemo(() => {
     if (
       !workspaceTeamId ||
@@ -667,6 +695,34 @@ const ScheduleTab = ({
       pendingScheduleCellEditsRef.current.values(),
     )
     : null;
+  const safeReconciliationOccurrences = useMemo(() => filterSafeScheduleReconciliationOccurrences({
+    storedOccurrences: selectedSchedule?.occurrences || [],
+    currentOccurrences: generatedPeriodOccurrences,
+    schedules,
+    churchId,
+    teamId: workspaceTeamId,
+    scheduleId: selectedSchedule && isPersistedScheduleId(selectedSchedule.scheduleId)
+      ? selectedSchedule.scheduleId
+      : undefined,
+    timeZone: serviceTimeZone,
+  }), [
+    churchId,
+    generatedPeriodOccurrences,
+    schedules,
+    selectedSchedule,
+    serviceTimeZone,
+    workspaceTeamId,
+  ]);
+  const safeCurrentMatches = useMemo(() => matchOccurrencesByIdentity(
+    selectedSchedule?.occurrences || [],
+    safeReconciliationOccurrences,
+    serviceTimeZone,
+  ), [safeReconciliationOccurrences, selectedSchedule?.occurrences, serviceTimeZone]);
+  const safePendingAdditionOccurrences = safeReconciliationOccurrences.filter((occurrence) =>
+    !safeCurrentMatches.matches.has(occurrence.occurrenceId) &&
+    !safeCurrentMatches.ambiguousCurrentIds.has(occurrence.occurrenceId) &&
+    !(selectedSchedule?.occurrences || []).some((saved) => saved.occurrenceId === occurrence.occurrenceId),
+  );
   const latestScheduleRef = useRef(selectedSchedule);
   const schedulesByOwnerRef = useRef(new Map<string, TeamSchedule>());
   useEffect(() => {
@@ -879,13 +935,59 @@ const ScheduleTab = ({
   );
   const ensureActiveSchedule = useCallback(async (
     requestedSchedule?: TeamSchedule | null,
+    assignmentOccurrenceIds?: string[],
   ): Promise<TeamSchedule | null> => {
     const active = requestedSchedule || latestScheduleRef.current;
     if (!active) throw new Error("Choose a service period before scheduling.");
     if (!active.scheduleId.startsWith("virtual:") && viewingSavedSchedule) return active;
+    const saved = schedules.find((schedule) =>
+      schedule.scheduleId === active.scheduleId && schedule.churchId === churchId &&
+      schedule.teamId === workspaceTeamId && !schedule.archivedAt,
+    );
+    const reconciliationOccurrences = filterSafeScheduleReconciliationOccurrences({
+      storedOccurrences: active.occurrences || [],
+      currentOccurrences: generatedPeriodOccurrences,
+      schedules,
+      churchId,
+      teamId: active.teamId,
+      scheduleId: isPersistedScheduleId(active.scheduleId) ? active.scheduleId : undefined,
+      timeZone: serviceTimeZone,
+    });
+    if (assignmentOccurrenceIds?.length) {
+      const unsafeTargetNames = assignmentOccurrenceIds.flatMap((id) => {
+        const target = active.occurrences?.find((occurrence) => occurrence.occurrenceId === id);
+        if (!target) return [id];
+        const match = matchOccurrencesByIdentity(reconciliationOccurrences, [target], serviceTimeZone);
+        return match.matches.has(id) && !match.ambiguousCurrentIds.has(id) ? [] : [target.name];
+      });
+      if (unsafeTargetNames.length) {
+        throw new Error(`${[...new Set(unsafeTargetNames)].join(", ")} needs service identity or ownership review before it can be changed. Its saved assignments are preserved.`);
+      }
+    }
+    // A targeted assignment to an already persisted row does not depend on
+    // adding unrelated services. New rows still require strict reconciliation.
+    if (saved &&
+        assignmentOccurrenceIds?.length && assignmentOccurrenceIds.every((id) => {
+          const stored = saved.occurrences?.find((occurrence) => occurrence.occurrenceId === id);
+          const target = active.occurrences?.find((occurrence) => occurrence.occurrenceId === id);
+          if (!stored || !target || !occurrenceScheduleDetailsMatch([stored], [target], serviceTimeZone)) return false;
+          const ownMatch = matchOccurrencesByIdentity(saved.occurrences || [], [stored], serviceTimeZone);
+          const currentMatch = matchOccurrencesByIdentity(generatedPeriodOccurrences, [stored], serviceTimeZone);
+          const current = currentMatch.matches.get(id);
+          return ownMatch.matches.has(id) && current &&
+            occurrenceScheduleDetailsMatch([stored], [current], serviceTimeZone) &&
+            findScheduleOccurrenceOwnershipConflicts({
+              schedules, churchId, teamId: saved.teamId, occurrences: [stored],
+              excludeScheduleId: saved.scheduleId, timeZone: serviceTimeZone,
+            }).length === 0;
+        })) return active;
+    // An overlapping schedule may be selected for display, but reconciling the
+    // full visible period could select a different saved owner on the server.
+    if (saved && !scheduleCoversPeriodRange(saved, persistedPeriodRange)) return active;
     const requestKey = makePeriodReconciliationKey(active.scheduleId, active.occurrences || [], active);
     if (
       !active.scheduleId.startsWith("virtual:") &&
+      !periodScheduleMatch.ambiguous && !periodScheduleMatch.ownershipConflict &&
       confirmedPeriodReconciliationRef.current === requestKey
     ) return active;
     if (!churchId) throw new Error("Church information is unavailable.");
@@ -898,22 +1000,18 @@ const ScheduleTab = ({
             teamId: workspaceTeamId,
             startDate: persistedPeriodRange.start,
             endDate: persistedPeriodRange.end,
-            serviceIds: periodServiceIds,
-            occurrences: teamPeriod.occurrences,
+            serviceIds: [...new Set(reconciliationOccurrences.flatMap((occurrence) =>
+              occurrence.serviceIds?.length ? occurrence.serviceIds : [occurrence.serviceId],
+            ))],
+            occurrences: reconciliationOccurrences,
             visibleStartDate: periodRange.start,
             visibleEndDate: periodRange.end,
-            ...(operatorSelectedPeriodScheduleId
-              ? { operatorSelectedScheduleId: operatorSelectedPeriodScheduleId }
+            ...(operatorSelectedPeriodScheduleId || (isPersistedScheduleId(active.scheduleId) ? active.scheduleId : "")
+              ? { operatorSelectedScheduleId: operatorSelectedPeriodScheduleId || active.scheduleId }
               : {}),
-            visibleOccurrenceIds: generatedPeriodOccurrences.map((occurrence) => occurrence.occurrenceId),
+            visibleOccurrenceIds: reconciliationOccurrences.map((occurrence) => occurrence.occurrenceId),
             timeZone: serviceTimeZone,
           }));
-          const wasPersisted = !active.scheduleId.startsWith("virtual:");
-          const addedOccurrences = wasPersisted
-            ? (result.schedule.occurrences || []).filter((occurrence) =>
-              !(active.occurrences || []).some((saved) => saved.occurrenceId === occurrence.occurrenceId),
-            ).length
-            : 0;
           let schedule = result.schedule;
           if (active.scheduleId.startsWith("virtual:")) {
             const previewKey = virtualSchedulePreviewKey(churchId, active.scheduleId);
@@ -960,12 +1058,6 @@ const ScheduleTab = ({
               schedule,
             );
           }
-          if (addedOccurrences > 0 && activeChurchIdRef.current === churchId) {
-            showToast(
-              `${addedOccurrences} ${addedOccurrences === 1 ? "service" : "services"} added to ${schedule.name}.`,
-              "success",
-            );
-          }
           return schedule;
         } finally {
           if (pendingScheduleEnsuresRef.current.get(requestKey) === request) {
@@ -979,40 +1071,48 @@ const ScheduleTab = ({
     churchId,
     generatedPeriodOccurrences,
     makePeriodReconciliationKey,
-    teamPeriod.occurrences,
-    publishScheduleSnapshot,
-    persistedPeriodRange.end,
-    persistedPeriodRange.start,
+    persistedPeriodRange,
     periodRange.end,
     periodRange.start,
-    periodServiceIds,
     operatorSelectedPeriodScheduleId,
+    publishScheduleSnapshot,
     setSelectedScheduleId,
     serviceTimeZone,
-    showToast,
     trackTeamsSave,
     updateVirtualSchedulePreview,
     viewingSavedSchedule,
     workspaceTeamId,
+    schedules,
+    periodScheduleMatch.ambiguous,
+    periodScheduleMatch.ownershipConflict,
   ]);
+  const selectedScheduleCanBeReconciled = Boolean(
+    selectedSchedule && (
+      periodScheduleMatch.schedule?.scheduleId === selectedSchedule.scheduleId ||
+      (periodScheduleMatch.ambiguous && !periodScheduleMatch.ownershipConflict &&
+        safePendingAdditionOccurrences.length > 0 &&
+        periodScheduleMatch.reviewSchedule?.scheduleId === selectedSchedule.scheduleId)
+    ),
+  );
   useEffect(() => {
     if (
       !canEdit ||
       viewingSavedSchedule ||
       !selectedSchedule ||
       selectedSchedule.scheduleId.startsWith("virtual:") ||
-      periodScheduleMatch.schedule?.scheduleId !== selectedSchedule.scheduleId ||
-      periodScheduleMatch.ambiguous ||
+      !selectedScheduleCanBeReconciled ||
       periodScheduleMatch.ownershipConflict ||
       generatedPeriodOccurrences.length === 0 ||
       confirmedPeriodReconciliationRef.current === periodReconciliationKey
     ) return;
     let active = true;
-    const offerRetry = () => {
+    const offerRetry = (error: unknown) => {
       if (!active) return;
       let toastId = "";
       toastId = showToast({
-        message: "Couldn't check this schedule for newly added services. Retry to refresh the schedule.",
+        message: error instanceof Error
+          ? error.message
+          : "Couldn't check this schedule for newly added services. Retry to refresh the schedule.",
         variant: "error",
         persist: true,
         children: (
@@ -1032,9 +1132,9 @@ const ScheduleTab = ({
     ensureActiveSchedule,
     generatedPeriodOccurrences.length,
     periodReconciliationKey,
-    periodScheduleMatch.schedule?.scheduleId,
-    periodScheduleMatch.ambiguous,
     periodScheduleMatch.ownershipConflict,
+    selectedScheduleCanBeReconciled,
+    safePendingAdditionOccurrences.length,
     selectedSchedule,
     removeToast,
     showToast,
@@ -2762,6 +2862,45 @@ const ScheduleTab = ({
 
   const [isSendingSchedule, setIsSendingSchedule] = useState(false);
   const [isConfirmingSend, setIsConfirmingSend] = useState(false);
+  const sendScopeScheduleId = selectedSchedule?.scheduleId;
+  const sendScopeTeamId = selectedSchedule?.teamId;
+  const sendScopeStartDate = selectedSchedule?.startDate;
+  const sendScopeEndDate = selectedSchedule?.endDate;
+  const scheduleSendScope = useMemo(() => {
+    const emptyScope = { servicePreviews: [], conflictPreviews: [] };
+    if (
+      !sendScopeScheduleId || !sendScopeTeamId || !churchId || !serviceTimeZone ||
+      !isPersistedScheduleId(sendScopeScheduleId) || !sendScopeStartDate || !sendScopeEndDate
+    ) return emptyScope;
+    const range = {
+      start: displayedPeriodRange.start > sendScopeStartDate
+        ? displayedPeriodRange.start : sendScopeStartDate,
+      end: displayedPeriodRange.end < sendScopeEndDate
+        ? displayedPeriodRange.end : sendScopeEndDate,
+    };
+    if (range.start > range.end) return emptyScope;
+    const { rows } = resolveScheduleWorkspace({
+      churchId,
+      teamId: sendScopeTeamId,
+      range,
+      timeZone: serviceTimeZone,
+      services: data.services.map((service) => ({ ...service, churchId })),
+      positions: data.positions,
+      schedules,
+    });
+    return getScheduleSendScope(rows, sendScopeScheduleId);
+  }, [
+    churchId,
+    data.positions,
+    data.services,
+    displayedPeriodRange,
+    schedules,
+    sendScopeEndDate,
+    sendScopeScheduleId,
+    sendScopeStartDate,
+    sendScopeTeamId,
+    serviceTimeZone,
+  ]);
 
   /**
    * How many distinct people a send would email. Shown before the click,
@@ -2789,16 +2928,12 @@ const ScheduleTab = ({
    * added slots.
    */
   const handleSendSchedule = useCallback(async () => {
-    if (!selectedSchedule || !churchId) return;
+    if (!selectedSchedule || !churchId || !isPersistedScheduleId(selectedSchedule.scheduleId)) return;
+    const scheduleId = selectedSchedule.scheduleId;
     setIsSendingSchedule(true);
     try {
-      const schedule = await ensureActiveSchedule();
-      if (!schedule) return;
-      const result = await sendTeamSchedule(
-        churchId,
-        schedule.scheduleId,
-      );
-      await refreshScheduleNotificationHistory(schedule.scheduleId);
+      const result = await sendTeamSchedule(churchId, scheduleId);
+      await refreshScheduleNotificationHistory(scheduleId);
       const unreachable = result.unreachableMemberIds?.length || 0;
       const sentLabel =
         result.notified === 0
@@ -2812,14 +2947,18 @@ const ScheduleTab = ({
           : sentLabel,
         unreachable > 0 ? "warning" : "success",
       );
-      onScheduleSaved({ ...schedule, sentAt: result.sentAt });
+      const currentSchedule = latestScheduleRef.current?.scheduleId === scheduleId &&
+        latestScheduleRef.current.churchId === churchId
+        ? latestScheduleRef.current
+        : schedulesByOwnerRef.current.get(virtualSchedulePreviewKey(churchId, scheduleId)) || selectedSchedule;
+      onScheduleSaved({ ...currentSchedule, sentAt: result.sentAt });
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not send this schedule.");
     } finally {
       setIsSendingSchedule(false);
       setIsConfirmingSend(false);
     }
-  }, [churchId, ensureActiveSchedule, onScheduleSaved, refreshScheduleNotificationHistory, selectedSchedule, showToast]);
+  }, [churchId, onScheduleSaved, refreshScheduleNotificationHistory, selectedSchedule, showToast]);
 
   const commitAssignment = async ({
     serviceId,
@@ -3022,7 +3161,7 @@ const ScheduleTab = ({
     };
     const saveAssignment = async (fingerprint?: string): Promise<void> => {
       try {
-        const ensuredSchedule = await ensureActiveSchedule(mutationSchedule);
+        const ensuredSchedule = await ensureActiveSchedule(mutationSchedule, stagedEdits.map((edit) => edit.occurrenceId));
         if (!ensuredSchedule) return;
         mutationSchedule = ensuredSchedule;
         stagedEdits.forEach((edit, index) => {
@@ -3548,7 +3687,7 @@ const ScheduleTab = ({
       // save's Retry button was still visible.
       if (!scheduleTabMountedRef.current || !isShadowEditPending(mutationSchedule.scheduleId)) return;
       try {
-        const ensuredSchedule = await ensureActiveSchedule(mutationSchedule);
+        const ensuredSchedule = await ensureActiveSchedule(mutationSchedule, [staged.edit.occurrenceId]);
         if (!ensuredSchedule) return;
         mutationSchedule = ensuredSchedule;
         if (!isShadowEditPending(ensuredSchedule.scheduleId)) return;
@@ -5166,7 +5305,7 @@ const ScheduleTab = ({
     };
     const saveSwap = async (fingerprint?: string): Promise<void> => {
       try {
-        const ensuredSchedule = await ensureActiveSchedule(mutationSchedule);
+        const ensuredSchedule = await ensureActiveSchedule(mutationSchedule, stagedEdits.map((edit) => edit.occurrenceId));
         if (!ensuredSchedule) return;
         mutationSchedule = ensuredSchedule;
         const persistedEdits = stagedEdits.map((edit) =>
@@ -6330,7 +6469,7 @@ const ScheduleTab = ({
               variant="cta"
               svg={Send}
               iconSize="sm"
-              disabled={isSendingSchedule || sendRecipientCount === 0}
+              disabled={isSendingSchedule || sendRecipientCount === 0 || !isPersistedScheduleId(selectedSchedule.scheduleId)}
             >
               Send schedule
             </Button>
@@ -6346,6 +6485,7 @@ const ScheduleTab = ({
               </>
             ) : (
               <>
+                <ScheduleSendScopeNotice scope={scheduleSendScope} timeZone={serviceTimeZone} />
                 <p className="text-sm text-gray-300">
                   Email {sendRecipientCount} {sendRecipientCount === 1 ? "person" : "people"} on this schedule?
                 </p>
@@ -6361,7 +6501,7 @@ const ScheduleTab = ({
                   </Button>
                   <Button
                     variant="secondary"
-                    disabled={isSendingSchedule || selectedSchedule.scheduleId.startsWith("virtual:")}
+                    disabled={isSendingSchedule || !isPersistedScheduleId(selectedSchedule.scheduleId)}
                     onClick={() => {
                       setIsConfirmingSend(false);
                       setScheduleInitialSmsOpen(true);
@@ -6397,13 +6537,6 @@ const ScheduleTab = ({
       />
     </div>
   );
-  const scheduleRangeSummary = selectedSchedule && scheduleOccurrences.length > 0
-    ? `${scheduleOccurrences.length} ${scheduleOccurrences.length === 1 ? "service" : "services"} · ${selectedSchedule.scheduleId.startsWith("virtual:")
-      ? "Staffing not started"
-      : `${staffingProgress.filled} of ${staffingProgress.required} positions filled`
-    }`
-    : undefined;
-
   return (
     <div className={scheduleTabRootClassName}>
       {consentMember?.scope === quickMemberContextScope && isChurchAdmin ? (
@@ -6493,40 +6626,20 @@ const ScheduleTab = ({
                 labelLayout="inline"
               />
             </div>
-            {periodScheduleMatch.ambiguous && !viewingSavedSchedule ? (
-              <div role="status" className="mt-3 rounded border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100">
-                This schedule contains services that have changed since it was saved. Review it before making changes.
-                {periodScheduleMatch.reviewSchedule ? (
-                  <Button
-                    type="button"
-                    variant="tertiary"
-                    className="mt-2"
-                    onClick={() => {
-                      const scheduleId = periodScheduleMatch.reviewSchedule?.scheduleId;
-                      if (scheduleId) openSavedScheduleForReview(scheduleId);
-                    }}
-                  >
-                    Review existing schedule
-                  </Button>
-                ) : null}
+            {viewingSavedSchedule ? (
+              <div role="status" className="mt-3 flex flex-wrap items-center gap-2 text-sm text-gray-300">
+                Viewing the saved version. Current service additions are hidden.
+                <Button variant="tertiary" onClick={() => setViewingSavedSchedule(false)}>Return to current schedule</Button>
               </div>
             ) : null}
             {periodScheduleMatch.ownershipConflict && !viewingSavedSchedule ? (
-              <div role="alert" className="mt-3 rounded border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100">
-                More than one saved schedule contains the same service occurrence. Review ownership before making changes.
-                {periodScheduleMatch.reviewSchedule ? (
-                  <Button
-                    type="button"
-                    variant="tertiary"
-                    className="mt-2"
-                    onClick={() => {
-                      const scheduleId = periodScheduleMatch.reviewSchedule?.scheduleId;
-                      if (scheduleId) openSavedScheduleForReview(scheduleId);
-                    }}
-                  >
-                    Review existing schedule
-                  </Button>
-                ) : null}
+              <div role="alert" className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100">
+                <span>
+                  {ownershipConflictServiceNames.length
+                    ? `${ownershipConflictServiceNames.slice(0, 3).join(", ")}${ownershipConflictServiceNames.length > 3 ? `, and ${ownershipConflictServiceNames.length - 3} more` : ""} are owned by multiple schedules. Their saved assignments are preserved; manage schedule ownership before changing them.`
+                    : "Some service occurrences are owned by multiple schedules. Their saved assignments are preserved; manage schedule ownership before changing them."}
+                </span>
+                <Button variant="tertiary" onClick={() => setIsBrowsingSchedules(true)}>Manage schedules</Button>
               </div>
             ) : null}
           </section>
@@ -6538,10 +6651,13 @@ const ScheduleTab = ({
             >
               <div className="shrink-0">
                 <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
-                  {scheduleRangeSummary ? (
-                    <p role="status" className="min-w-0 px-0.5 text-xs text-gray-400">
-                      {scheduleRangeSummary}
-                    </p>
+                  {selectedSchedule ? (
+                    <ScheduleStaffingSummary
+                      serviceCount={scheduleOccurrences.length}
+                      filled={staffingProgress.filled}
+                      required={staffingProgress.required}
+                      staffingStarted={!selectedSchedule.scheduleId.startsWith("virtual:")}
+                    />
                   ) : null}
                   <div
                     role="group"
@@ -7149,7 +7265,8 @@ const ScheduleTab = ({
                                               occurrence.occurrenceId,
                                             )}
                                           </div>
-                                        </th>                                        {scheduleColumns.map((column) => (
+                                        </th>
+                                        {scheduleColumns.map((column) => (
                                           <ScheduleGridCell
                                             key={scheduleGridCellKey(
                                               occurrence.occurrenceId,
@@ -7272,7 +7389,8 @@ const ScheduleTab = ({
                                                         occurrence.occurrenceId,
                                                       )}
                                                     </div>
-                                                  </th>                                                  {scheduleColumns.map((column) => (
+                                                  </th>
+                                                  {scheduleColumns.map((column) => (
                                                     <ScheduleGridCell
                                                       key={scheduleGridCellKey(
                                                         occurrence.occurrenceId,
@@ -7429,7 +7547,7 @@ const ScheduleTab = ({
                   }}
                 />
               ) : null}
-              {canEdit && selectedSchedule && !selectedSchedule.scheduleId.startsWith("virtual:") ? (
+              {canEdit && selectedSchedule && isPersistedScheduleId(selectedSchedule.scheduleId) ? (
                 <Drawer
                   key={`${churchId}:${selectedSchedule.scheduleId}:initial-sms`}
                   isOpen={scheduleInitialSmsOpen}
@@ -7449,6 +7567,7 @@ const ScheduleTab = ({
                     scheduleName={selectedSchedule.name || "Schedule"}
                     teamName={data.teams.find((team) => team.teamId === selectedSchedule.teamId)?.name || "Team"}
                     timeZone={serviceTimeZone}
+                    sendScope={scheduleSendScope}
                     onClose={() => setScheduleInitialSmsOpen(false)}
                   />
                 </Drawer>

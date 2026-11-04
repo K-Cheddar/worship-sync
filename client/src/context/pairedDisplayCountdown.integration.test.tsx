@@ -9,6 +9,7 @@ import { createMockGlobalContext } from "../test/mocks";
 import { setDisplayToken, setWorkstationToken } from "../utils/authStorage";
 import { setServerTimeOffset } from "../utils/serverTime";
 import { createServiceTime } from "../test/fixtures";
+import type { ServiceTime } from "../types";
 
 const mockConnectAuthenticatedSse = jest.fn();
 jest.mock("../utils/authenticatedSse", () => ({
@@ -72,8 +73,8 @@ describe("paired output countdown production composition", () => {
   afterEach(() => {
     cleanup(); setServerTimeOffset(0); localStorage.clear(); global.fetch = originalFetch; jest.restoreAllMocks();
   });
-  const mount = (sessionKind: "human" | "workstation" | "display", surface: string) => {
-    const initialState = { undoable: { present: { serviceTimes: { list: sessionKind === "display" ? [] : [service], isInitialized: sessionKind !== "display" } } } };
+  const mount = (sessionKind: "human" | "workstation" | "display", surface: string, services: ServiceTime[] = [service]) => {
+    const initialState = { undoable: { present: { serviceTimes: { list: sessionKind === "display" ? [] : services, isInitialized: sessionKind !== "display" } } } };
     const store = configureStore({ reducer: (state = initialState) => state });
     const value = createMockGlobalContext({ churchId: "church-a", sessionKind, loginState: "success" });
     return render(<Provider store={store}>
@@ -84,6 +85,22 @@ describe("paired output countdown production composition", () => {
       </GlobalInfoContext.Provider>
     </Provider>);
   };
+  it.each(["2026-11-07T16:30", "2026-11-07T21:30:00.000Z"])("renders the same one-time countdown on every surface for %s", async (dateTimeISO) => {
+    const oneTime = createServiceTime({ id: "book-launch", name: "Book Launch 2026", reccurence: "one_time", dateTimeISO });
+    jest.spyOn(Date, "now").mockReturnValue(Date.parse("2026-11-07T20:30:00.000Z") - 30_000);
+    setServerTimeOffset(30_000);
+    jest.mocked(onValue).mockImplementation((refPath, callback) => {
+      if (typeof callback === "function") callback({ val: () => [oneTime] } as never);
+      return jest.fn();
+    });
+    for (const [kind, surface] of [["human", "controller"], ["workstation", "workstation"], ["display", "monitor"], ["display", "projector"], ["display", "stream"]] as const) {
+      setDisplayToken(kind === "display" ? "paired-display-credential" : "");
+      setWorkstationToken(kind === "workstation" ? "workstation-credential" : "");
+      const view = mount(kind, surface, [oneTime]);
+      await waitFor(() => expect(screen.getByRole("status", { name: surface })).toHaveTextContent("1:00:00"));
+      view.unmount();
+    }
+  });
   it.each([
     ["2026-07-12T13:00:00Z", "2026-07-12T14:00:00Z"],
     ["2026-01-11T14:00:00Z", "2026-01-11T15:00:00Z"],

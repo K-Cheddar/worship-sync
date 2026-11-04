@@ -2,6 +2,13 @@ import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import _ from "lodash";
 import { OverlayInfo } from "../types";
 import { normalizeOverlayForSync } from "../utils/overlayUtils";
+import { activateOutlineContent } from "./outlineContent";
+
+type OverlayDraftIdentity = { overlayId: string; draftId: string };
+const getOverlayDraftIdentity = (payload: string | OverlayDraftIdentity): OverlayDraftIdentity =>
+  typeof payload === "string"
+    ? { overlayId: payload, draftId: `legacy:${payload}` }
+    : payload;
 
 export type OverlayState = {
   /** Runtime editor selection owner; retained drafts may outlive the outline. */
@@ -15,6 +22,8 @@ export type OverlayState = {
   hasRemoteUpdate: boolean;
   /** Selected overlay whose editor draft has not reached Redux yet. */
   pendingDraftOverlayId: string | null;
+  /** Exact draft owning the pending marker, so stale callbacks cannot clear a replacement. */
+  pendingDraftId: string | null;
 };
 
 const initialState: OverlayState = {
@@ -25,6 +34,7 @@ const initialState: OverlayState = {
   pendingRemoteOverlay: null,
   hasRemoteUpdate: false,
   pendingDraftOverlayId: null,
+  pendingDraftId: null,
 };
 
 export const overlaySlice = createSlice({
@@ -39,6 +49,7 @@ export const overlaySlice = createSlice({
         state.pendingRemoteOverlay = null;
         state.hasRemoteUpdate = false;
         state.pendingDraftOverlayId = null;
+        state.pendingDraftId = null;
         return;
       }
       const normalized = normalizeOverlayForSync(action.payload);
@@ -47,6 +58,7 @@ export const overlaySlice = createSlice({
       state.pendingRemoteOverlay = null;
       state.hasRemoteUpdate = false;
       state.pendingDraftOverlayId = null;
+      state.pendingDraftId = null;
     },
     setIsOverlayLoading: (state, action: PayloadAction<boolean>) => {
       state.isOverlayLoading = action.payload;
@@ -54,14 +66,18 @@ export const overlaySlice = createSlice({
     setHasPendingUpdate: (state, action: PayloadAction<boolean>) => {
       state.hasPendingUpdate = action.payload;
     },
-    markOverlayDraftPending: (state, action: PayloadAction<string>) => {
-      if (state.selectedOverlay?.id === action.payload) {
-        state.pendingDraftOverlayId = action.payload;
+    markOverlayDraftPending: (state, action: PayloadAction<string | OverlayDraftIdentity>) => {
+      const { overlayId, draftId } = getOverlayDraftIdentity(action.payload);
+      if (state.selectedOverlay?.id === overlayId) {
+        state.pendingDraftOverlayId = overlayId;
+        state.pendingDraftId = draftId;
       }
     },
-    clearOverlayDraftPending: (state, action: PayloadAction<string>) => {
-      if (state.pendingDraftOverlayId === action.payload) {
+    clearOverlayDraftPending: (state, action: PayloadAction<string | OverlayDraftIdentity>) => {
+      const { overlayId, draftId } = getOverlayDraftIdentity(action.payload);
+      if (state.pendingDraftOverlayId === overlayId && state.pendingDraftId === draftId) {
         state.pendingDraftOverlayId = null;
+        state.pendingDraftId = null;
       }
     },
     forceUpdate: (state) => {
@@ -74,6 +90,7 @@ export const overlaySlice = createSlice({
         state.pendingRemoteOverlay = null;
         state.hasRemoteUpdate = false;
         state.pendingDraftOverlayId = null;
+        state.pendingDraftId = null;
         // No selected overlay remains to persist; list deletion is handled by overlays slice.
         state.hasPendingUpdate = false;
         return;
@@ -137,10 +154,18 @@ export const overlaySlice = createSlice({
       state.pendingRemoteOverlay = null;
       state.hasRemoteUpdate = false;
       state.pendingDraftOverlayId = null;
+      state.pendingDraftId = null;
       /** Must persist their version to local DB + replication; overlay listener keys off this. */
       state.hasPendingUpdate = true;
     },
   },
+  extraReducers: (builder) => builder.addCase(activateOutlineContent, (state, action) => {
+    // A retained selection belongs to the database where it was chosen. Keep
+    // that origin while the active outline changes so same-ID overlays from a
+    // new database cannot make the old selection look current.
+    state.pendingDraftOverlayId = null;
+    state.pendingDraftId = null;
+  }),
 });
 
 export const {

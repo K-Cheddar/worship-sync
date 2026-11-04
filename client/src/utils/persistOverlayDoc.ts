@@ -18,10 +18,12 @@ export const isPouchConflict = (e: unknown): boolean =>
 export const persistExistingOverlayDoc = async (
   db: OverlayDocDb,
   overlay: OverlayInfo,
+  canCommit: () => boolean = () => true,
 ): Promise<DBOverlay> => {
   let lastError: unknown;
 
   for (let attempt = 0; attempt < OVERLAY_PUT_MAX_ATTEMPTS; attempt++) {
+    if (!canCommit()) throw new Error("Overlay save is no longer active.");
     const dbOverlay = (await db.get(`overlay-${overlay.id}`)) as DBOverlay;
     const {
       _id: _ignoredId,
@@ -43,6 +45,7 @@ export const persistExistingOverlayDoc = async (
     ) as DBOverlay;
 
     try {
+      if (!canCommit()) throw new Error("Overlay save is no longer active.");
       const result = await db.put(merged);
       const rev =
         typeof result === "object" && result !== null && "rev" in result

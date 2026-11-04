@@ -54,6 +54,7 @@ type OverlayEditorProps = {
   handleOverlayUpdate: (overlay: OverlayInfo) => void;
   handleFormattingChange: (formatting: any) => void;
   readOnly?: boolean;
+  draftOwner?: { isCurrent: () => boolean };
 };
 const OverlayEditor = ({
   selectedOverlay,
@@ -66,6 +67,7 @@ const OverlayEditor = ({
   handleOverlayUpdate,
   handleFormattingChange,
   readOnly = false,
+  draftOwner,
 }: OverlayEditorProps) => {
   const dispatch = useDispatch();
   const store = useStore();
@@ -84,14 +86,15 @@ const OverlayEditor = ({
   const remoteUpdateToastIdRef = useRef<string | null>(null);
 
   const handleDraftPendingChange = useCallback(
-    (overlayId: string, isPending: boolean) => {
+    (overlayId: string, isPending: boolean, draftId: string) => {
+      if (draftOwner && !draftOwner.isCurrent()) return;
       dispatch(
         isPending
-          ? markOverlayDraftPending(overlayId)
-          : clearOverlayDraftPending(overlayId),
+          ? markOverlayDraftPending({ overlayId, draftId })
+          : clearOverlayDraftPending({ overlayId, draftId }),
       );
     },
-    [dispatch],
+    [dispatch, draftOwner],
   );
 
   const handleKeepLocalEdits = useCallback(() => {
@@ -103,6 +106,7 @@ const OverlayEditor = ({
       selectedOverlay,
       handleOverlayUpdate,
       handleDraftPendingChange,
+      draftOwner,
     );
 
   const handleQrUrlChange = useCallback((value: string) => {

@@ -9,7 +9,7 @@ Do this before using existing tests as a completeness checklist:
 1. Name the affected user workflows and trace their entry points through state, persistence, APIs, publication, and recovery.
 2. State the important invariants. For each relevant value, identify whether it is authoritative, cached, pending, or acknowledged, and which component, store, database, server, or device owns it.
 3. Identify competing actors and operations, including another tab/device, background sync, server requests, and repeated user actions.
-4. Derive realistic failure sequences from the workflow and invariants, independently of the patch's test names and comments. Select the highest-risk sequences; do not enumerate every combination. Consult a domain matrix only when the changed workflow intersects it.
+4. Before using existing test names or patch-authored scenarios, derive realistic failure sequences from the workflow and invariants. Follow the full operator sequence through its next meaningful action (for example: toggle Loop -> keep playing -> Pause -> resume), and combine relevant operations (for example: reorder + add + remove + move). Select the highest-risk sequences; do not enumerate every combination. Consult a domain matrix only when the changed workflow intersects it.
 
 ## Pass B — challenge the implementation
 
@@ -51,6 +51,10 @@ Put a compact table in the skill's existing **Verification gaps** section for th
 | Newer edits survive | Save B overlaps edit/save C | Writer, persistence read/write, and acknowledgment path inspected | Exact controlled ordering test, or missing/not run | Pass / Finding / Unverified |
 
 Use specific paths and symbols (and lines when useful), not general claims. Explain the controlled ordering only when it affects the conclusion. Do not pad the table with low-risk scenarios or mark a row `Pass` because a test with a matching title exists.
+
+## Bulk and mixed-operation evidence
+
+For destructive or bulk reconciliation, keep a compact set ledger: initial entities, freshly observed, attempted, completed, failed, skipped, and remaining. Name the authoritative read and verify that terminal UI/status agrees with it. For previews and imports, distinguish candidates shown to the operator from rows authorized to mutate; test chosen targets after mixed approved and declined operations. Compare the scenario's environment against the production runtime using the fidelity dimensions in the main skill's step 9.
 
 ## Domain matrix routing
 

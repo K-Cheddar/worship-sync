@@ -108,6 +108,7 @@ export type PlanningCenterIntegrationConfig = {
   enabled: boolean;
   connected: boolean;
   accountLabel: string;
+  accountId?: string;
   lastError: string;
 };
 
@@ -157,6 +158,7 @@ export const createDefaultChurchIntegrations = (): ChurchIntegrations => ({
     enabled: false,
     connected: false,
     accountLabel: "",
+    accountId: "",
     lastError: "",
   },
 });

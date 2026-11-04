@@ -2557,7 +2557,7 @@ export const ensureTeamScheduleForPeriod = async (
   churchId: string,
   body: EnsureTeamScheduleForPeriodPayload,
 ) =>
-  apiFetch<{ success: boolean; schedule: TeamSchedule; created: boolean }>(
+  apiFetch<{ success: boolean; schedule: TeamSchedule; created: boolean; updated?: boolean }>(
     `api/churches/${churchId}/team-schedules/ensure`,
     { method: "POST", body: JSON.stringify(body) },
   );

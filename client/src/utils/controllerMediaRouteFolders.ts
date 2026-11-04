@@ -120,10 +120,13 @@ export async function repairPersistedMediaRouteFolders(
   db: PouchDB.Database,
   deletedFolderIds: Set<string>,
   fallbackFolderId: string,
+  canCommit: () => boolean = () => true,
 ): Promise<DBControllerMediaRouteFoldersDoc[]> {
   const result = await db.allDocs({ include_docs: true });
+  if (!canCommit()) return [];
   const changed: DBControllerMediaRouteFoldersDoc[] = [];
   for (const row of result.rows) {
+    if (!canCommit()) break;
     const raw = row.doc as unknown as Record<string, unknown> | undefined;
     if (!raw || typeof raw._id !== "string") continue;
     if (raw._id !== MEDIA_ROUTE_FOLDERS_POUCH_ID && !isControllerMediaRouteFoldersDocId(raw._id)) continue;
@@ -139,6 +142,7 @@ export async function repairPersistedMediaRouteFolders(
       docType: "mediaRouteFolders",
     };
     for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (!canCommit()) break;
       try {
         const put = await db.put(next);
         if (isControllerMediaRouteFoldersDocId(raw._id)) {
@@ -147,7 +151,9 @@ export async function repairPersistedMediaRouteFolders(
         break;
       } catch (error) {
         if (!conflict(error) || attempt === 4) throw error;
+        if (!canCommit()) break;
         const latest = await getOptional(db, raw._id);
+        if (!canCommit()) break;
         if (!latest) break;
         const latestRoutes = migrateLegacyMediaRouteFolders(
           (latest.mediaRouteFolders ?? {}) as Partial<Record<string, string | null>>,
