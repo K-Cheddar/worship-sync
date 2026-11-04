@@ -14,20 +14,15 @@ import {
 import { Link } from "react-router-dom";
 import {
   CalendarDays,
-  ChevronsDownUp,
-  ChevronsUpDown,
   Clipboard,
   ClipboardPaste,
   Copy,
-  LayoutGrid,
   Link2,
   MoreHorizontal,
   MessageSquareText,
   Send,
   Plus,
   Printer,
-  Redo2,
-  Undo2,
   Users,
   Wand2,
   Pencil,
@@ -37,7 +32,6 @@ import Menu from "../../../components/Menu/Menu";
 import Modal from "../../../components/Modal/Modal";
 import ConfirmDialog from "../../../components/Modal/ConfirmDialog";
 import Drawer from "../../../components/Drawer/Drawer";
-import SegmentedControl from "../../../components/SegmentedControl/SegmentedControl";
 import type { MenuItemType } from "../../../types";
 import Icon from "../../../components/Icon/Icon";
 import Select from "../../../components/Select/Select";
@@ -84,6 +78,9 @@ import {
 } from "./schedulePeriodUtils";
 import { useScheduleWorkspacePeriod } from "./useScheduleWorkspacePeriod";
 import ScheduleStaffingSummary from "./ScheduleStaffingSummary";
+import ScheduleWorkspaceToolbar, {
+  resolveSchedulePublicationStatus,
+} from "./ScheduleWorkspaceToolbar";
 import ScheduleSendScopeNotice from "./ScheduleSendScopeNotice";
 import { getScheduleSendScope, resolveScheduleWorkspace } from "./scheduleWorkspaceModel";
 import { isPersistedScheduleId } from "./scheduleNotificationHistory";
@@ -149,7 +146,6 @@ import {
   type TeamScheduleAdminLayout,
 } from "../teamScheduleAdminLayout";
 import {
-  OCCURRENCE_ORGANIZE_OPTIONS,
   readScheduleOrganizeMode,
   writeScheduleOrganizeMode,
   type OccurrenceOrganizeMode,
@@ -4860,7 +4856,10 @@ const ScheduleTab = ({
   }, []);
 
   const copyPublicLink = useCallback(async () => {
-    if (!canEdit || !selectedSchedule || copyingLinkRef.current) return;
+    if (
+      !canEdit || !selectedSchedule ||
+      !isPersistedScheduleId(selectedSchedule.scheduleId) || copyingLinkRef.current
+    ) return;
     copyingLinkRef.current = true;
     setCopyingLink(true);
     let activeSchedule: TeamSchedule | null = null;
@@ -6075,9 +6074,8 @@ const ScheduleTab = ({
       isToday: isOccurrenceToday(occurrence, serviceTimeZone),
     });
 
-  // Board accordion state lives here so the header's expand-all/collapse-all
-  // controls and the per-card chevrons stay in sync. Default expanded on desktop
-  // and collapsed on phones; `overrides` only records explicit toggles.
+  // Each service card keeps an explicit expansion override. Cards default to
+  // expanded on desktop and collapsed on phones until toggled individually.
   const boardCardsExpandedByDefault = useMediaQuery("(min-width: 768px)");
   const [boardExpandOverrides, setBoardExpandOverrides] = useState<
     Map<string, boolean>
@@ -6093,22 +6091,6 @@ const ScheduleTab = ({
       );
       return next;
     });
-  const setAllBoardCardsExpanded = (expanded: boolean) =>
-    setBoardExpandOverrides(
-      new Map(
-        scheduleOccurrences.map((occurrence) => [
-          occurrence.occurrenceId,
-          expanded,
-        ]),
-      ),
-    );
-  const allBoardCardsExpanded = scheduleOccurrences.every((occurrence) =>
-    isBoardCardExpanded(occurrence.occurrenceId),
-  );
-  const allBoardCardsCollapsed = scheduleOccurrences.every(
-    (occurrence) => !isBoardCardExpanded(occurrence.occurrenceId),
-  );
-
   const scheduleOccurrenceColumnCh = useMemo(() => {
     const chByOccurrence = new Map<string, number>();
     flatOccurrences.forEach(({ occurrence, group }) => {
@@ -6783,11 +6765,45 @@ const ScheduleTab = ({
       : []),
   ];
 
-  const selectedScheduleIsDraft = selectedSchedule?.published === false;
-  let publicationButtonLabel = selectedScheduleIsDraft ? "Publish" : "Unpublish";
-  if (isPublicationPending) {
-    publicationButtonLabel = selectedScheduleIsDraft ? "Publishing…" : "Unpublishing…";
-  }
+  const scheduleAutoFillMenuItem: MenuItemType | undefined = canEdit
+    ? {
+      element: (
+        <span className="flex items-center gap-2">
+          <Wand2 className="h-4 w-4" aria-hidden />
+          {autoFilling ? "Auto-filling…" : "Auto-fill"}
+        </span>
+      ),
+      onClick: () => setAutoFillConfirmOpen(true),
+      disabled: autoFilling,
+    }
+    : undefined;
+  const scheduleWorkspaceMoreMenuItems: MenuItemType[] = [
+    {
+      element: (
+        <span className="flex items-center gap-2">
+          <Printer className="h-4 w-4" aria-hidden />
+          Save as PDF
+        </span>
+      ),
+      onClick: () => setPdfPreviewOpen(true),
+      disabled: !scheduleExportModel,
+    },
+    ...(canEdit && selectedSchedule && isPersistedScheduleId(selectedSchedule.scheduleId)
+      ? [{
+        element: (
+          <span className="flex items-center gap-2">
+            <Link2 className="h-4 w-4" aria-hidden />
+            {copyingLink ? "Copying…" : "Copy view-only link"}
+          </span>
+        ),
+        onClick: () => void copyPublicLink(),
+        disabled: copyingLink,
+        preventClose: copyingLink,
+      }]
+      : []),
+  ];
+
+  const schedulePublicationStatus = resolveSchedulePublicationStatus(selectedSchedule);
   let publishAndCopyButtonLabel = publishAndCopyLink?.published
     ? publishAndCopyLink.publicUrl ? "Copy link" : "Copy view-only link"
     : "Publish & Copy Link";
@@ -6800,7 +6816,7 @@ const ScheduleTab = ({
       role="group"
       aria-label="Schedule actions"
     >
-      {canEdit && selectedSchedule ? (
+      {canEdit && selectedSchedule && isPersistedScheduleId(selectedSchedule.scheduleId) ? (
         <Popover
           open={isConfirmingSend}
           onOpenChange={(open) => {
@@ -6813,7 +6829,7 @@ const ScheduleTab = ({
               variant="cta"
               svg={Send}
               iconSize="sm"
-              disabled={isScheduleActionPending || sendRecipientCount === 0 || !isPersistedScheduleId(selectedSchedule.scheduleId)}
+              disabled={isScheduleActionPending || sendRecipientCount === 0}
             >
               {isPreparingScheduleSend ? "Preparing…" : "Send schedule"}
             </Button>
@@ -7016,8 +7032,8 @@ const ScheduleTab = ({
               className={cn(panelClassName, scheduleWorkspacePanelClassName)}
             >
               <div className="shrink-0">
-                <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
-                  {selectedSchedule ? (
+                <ScheduleWorkspaceToolbar
+                  staffingSummary={selectedSchedule ? (
                     <ScheduleStaffingSummary
                       serviceCount={scheduleOccurrences.length}
                       filled={staffingProgress.filled}
@@ -7025,266 +7041,67 @@ const ScheduleTab = ({
                       staffingStarted={!selectedSchedule.scheduleId.startsWith("virtual:")}
                     />
                   ) : null}
-                  {selectedSchedule && isPersistedScheduleId(selectedSchedule.scheduleId) ? (
-                    <div
-                      role="group"
-                      aria-label="Schedule publication"
-                      className="flex flex-wrap items-center gap-2"
+                  membersControl={selectedSchedule && shouldOverlayMembers ? (
+                    <Button
+                      type="button"
+                      variant="tertiary"
+                      svg={Users}
+                      iconSize="sm"
+                      ref={membersDrawerTriggerRef}
+                      data-schedule-members-trigger
+                      aria-controls="schedule-members-panel"
+                      aria-expanded={membersPanelOpen}
+                      aria-pressed={membersPanelOpen}
+                      aria-label="Members"
+                      title={membersPanelOpen ? "Hide Members panel" : "Show Members panel"}
+                      className={cn(
+                        "gap-1.5",
+                        membersPanelOpen ? "bg-gray-700 text-white" : "text-gray-300",
+                      )}
+                      onClick={() => {
+                        setMembersDrawerAnimationsEnabled(true);
+                        if (!membersPanelOpen) setScheduleMessagesOpen(false);
+                        setMembersPanelOpen((open) => !open);
+                      }}
                     >
-                      <span
-                        role="status"
-                        aria-label="Schedule publication status"
-                        className={cn(
-                          "inline-flex min-h-8 items-center rounded-full border px-3 text-sm font-medium",
-                          selectedSchedule.published === false
-                            ? "border-amber-700 bg-amber-950/40 text-amber-100"
-                            : "border-emerald-800 bg-emerald-950/35 text-emerald-100",
-                        )}
-                      >
-                        {selectedSchedule.published === false ? "Draft" : "Published"}
-                      </span>
-                      {canEdit ? (
-                        <Button
-                          variant={selectedSchedule.published === false ? "secondary" : "tertiary"}
-                          disabled={isScheduleActionPending}
-                          isLoading={isPublicationPending}
-                          onClick={() => void handleSchedulePublication()}
-                        >
-                          {publicationButtonLabel}
-                        </Button>
-                      ) : null}
-                    </div>
+                      <span className="hidden sm:inline">Members</span>
+                    </Button>
                   ) : null}
-                  <div
-                    role="group"
-                    aria-label="Team schedule controls"
-                    className="flex min-w-0 shrink-0 flex-nowrap items-center justify-end gap-2 lg:ml-auto"
-                  >
-                    {selectedSchedule && shouldOverlayMembers ? (
-                      <Button
-                        type="button"
-                        variant="tertiary"
-                        svg={Users}
-                        iconSize="sm"
-                        ref={membersDrawerTriggerRef}
-                        data-schedule-members-trigger
-                        aria-controls="schedule-members-panel"
-                        aria-expanded={membersPanelOpen}
-                        aria-pressed={membersPanelOpen}
-                        aria-label="Members"
-                        title={membersPanelOpen ? "Hide Members panel" : "Show Members panel"}
-                        className={cn(
-                          "gap-1.5",
-                          membersPanelOpen
-                            ? "bg-gray-700 text-white"
-                            : "text-gray-300",
-                        )}
-                        onClick={() => {
-                          setMembersDrawerAnimationsEnabled(true);
-                          if (!membersPanelOpen) setScheduleMessagesOpen(false);
-                          setMembersPanelOpen((open) => !open);
-                        }}
-                      >
-                        <span className="hidden sm:inline">Members</span>
-                      </Button>
-                    ) : null}
-                    {/* Desktop: Organize + Layout sit labeled in the toolbar.
-                        Narrow: both move into the overflow menu to save space. */}
-                    {!isNarrowViewport ? (
-                      <>
-                        {scheduleHasMultipleServices ? (
-                          <div className="flex flex-col gap-1">
-                            <span className="px-0.5 text-xs font-semibold text-gray-400">
-                              Organize
-                            </span>
-                            <SegmentedControl
-                              ariaLabel="Organize schedule"
-                              variant="compact"
-                              value={organizeMode}
-                              onChange={changeOrganizeMode}
-                              options={OCCURRENCE_ORGANIZE_OPTIONS}
-                            />
-                          </div>
-                        ) : null}
-                        <div className="flex flex-col gap-1">
-                          <span className="px-0.5 text-xs font-semibold text-gray-400">
-                            Layout
-                          </span>
-                          <SegmentedControl
-                            ariaLabel="Schedule layout"
-                            variant="compact"
-                            value={scheduleLayout}
-                            onChange={changeScheduleLayout}
-                            options={scheduleLayoutOptions}
-                          />
-                        </div>
-                      </>
-                    ) : null}
-                    {/* Board accordion: expand/collapse every service at once. */}
-                    {scheduleLayout === "board" && scheduleOccurrences.length > 1 ? (
-                      <div className="flex items-center gap-1">
-                        <Button
-                          variant="tertiary"
-                          svg={ChevronsUpDown}
-                          iconSize="sm"
-                          disabled={allBoardCardsExpanded}
-                          onClick={() => setAllBoardCardsExpanded(true)}
-                          aria-label="Expand all services"
-                          title="Expand all services"
-                        />
-                        <Button
-                          variant="tertiary"
-                          svg={ChevronsDownUp}
-                          iconSize="sm"
-                          disabled={allBoardCardsCollapsed}
-                          onClick={() => setAllBoardCardsExpanded(false)}
-                          aria-label="Collapse all services"
-                          title="Collapse all services"
-                        />
-                      </div>
-                    ) : null}
-                    {/* Edit history: the frequent, in-flow controls stay visible. */}
-                    {canEdit ? (
-                      <>
-                        <div className="flex items-center gap-1">
-                          <Button
-                            variant="tertiary"
-                            svg={Undo2}
-                            iconSize="sm"
-                            disabled={!canUndo || autoFilling || undoBlockedByPendingSave}
-                            onClick={handleUndo}
-                            aria-label={undoLabel ? `Undo ${undoLabel}` : "Undo"}
-                            title={
-                              undoBlockedByPendingSave
-                                ? "Finish saving this assignment before undoing."
-                                : undoLabel
-                                  ? `Undo ${undoLabel} (${undoShortcut.undo})`
-                                : `Nothing to undo (${undoShortcut.undo})`
-                            }
-                          />
-                          <Button
-                            variant="tertiary"
-                            svg={Redo2}
-                            iconSize="sm"
-                            disabled={!canRedo || autoFilling || redoBlockedByPendingSave}
-                            onClick={handleRedo}
-                            aria-label={redoLabel ? `Redo ${redoLabel}` : "Redo"}
-                            title={
-                              redoBlockedByPendingSave
-                                ? "Finish saving this assignment before redoing."
-                                : redoLabel
-                                  ? `Redo ${redoLabel} (${undoShortcut.redo})`
-                                : `Nothing to redo (${undoShortcut.redo})`
-                            }
-                          />
-                        </div>
-                        {SHOW_PASTE_FROM_EXCEL ? (
-                          <Button
-                            variant="tertiary"
-                            svg={ClipboardPaste}
-                            iconSize="sm"
-                            onClick={() => setPasteRowOpen(true)}
-                          >
-                            Paste from Excel
-                          </Button>
-                        ) : null}
-                        <span
-                          aria-hidden
-                          className="mx-0.5 h-5 w-px self-center bg-gray-700"
-                        />
-                      </>
-                    ) : null}
-                    {/* Infrequent schedule actions, including auto-fill.
-                        On narrow viewports, Organize and Layout live here too. */}
-                    <Menu
-                      align="end"
-                      menuItems={[
-                        ...(canEdit
-                          ? [
-                            {
-                              element: (
-                                <span className="flex items-center gap-2">
-                                  <Wand2 className="h-4 w-4" aria-hidden />
-                                  {autoFilling ? "Auto-filling…" : "Auto-fill"}
-                                </span>
-                              ),
-                              onClick: () => setAutoFillConfirmOpen(true),
-                              disabled: autoFilling,
-                            },
-                          ]
-                          : []),
-                        ...(isNarrowViewport && scheduleHasMultipleServices
-                          ? [
-                            {
-                              element: (
-                                <span className="flex items-center gap-2">
-                                  <CalendarDays className="h-4 w-4" aria-hidden />
-                                  Organize
-                                </span>
-                              ),
-                              subItems: OCCURRENCE_ORGANIZE_OPTIONS.map(
-                                (option) => ({
-                                  text: `${organizeMode === option.value ? "✓ " : ""}${option.label}`,
-                                  onClick: () => changeOrganizeMode(option.value),
-                                }),
-                              ),
-                            },
-                          ]
-                          : []),
-                        ...(isNarrowViewport
-                          ? [
-                            {
-                              element: (
-                                <span className="flex items-center gap-2">
-                                  <LayoutGrid className="h-4 w-4" aria-hidden />
-                                  Layout
-                                </span>
-                              ),
-                              subItems: scheduleLayoutOptions.map((option) => ({
-                                text: `${scheduleLayout === option.value ? "✓ " : ""}${option.label}`,
-                                onClick: () => changeScheduleLayout(option.value),
-                              })),
-                            },
-                          ]
-                          : []),
-                        {
-                          element: (
-                            <span className="flex items-center gap-2">
-                              <Printer className="h-4 w-4" aria-hidden />
-                              Save as PDF
-                            </span>
-                          ),
-                          onClick: () => setPdfPreviewOpen(true),
-                          disabled: !scheduleExportModel,
-                        },
-                        ...(canEdit
-                          ? [
-                            {
-                              element: (
-                                <span className="flex items-center gap-2">
-                                  <Link2 className="h-4 w-4" aria-hidden />
-                                  {copyingLink
-                                    ? "Copying…"
-                                    : "Copy view-only link"}
-                                </span>
-                              ),
-                              onClick: () => void copyPublicLink(),
-                              disabled: copyingLink,
-                              preventClose: copyingLink,
-                            },
-                          ]
-                          : []),
-                      ] as MenuItemType[]}
-                      TriggeringButton={
-                        <Button
-                          variant="tertiary"
-                          svg={MoreHorizontal}
-                          iconSize="sm"
-                          aria-label="More schedule actions"
-                        />
-                      }
-                    />
-                    {/* A modal, not a popover: this opens from a menu item, and
+                  canEdit={canEdit}
+                  canUndo={canUndo}
+                  canRedo={canRedo}
+                  undoBlockedByPendingSave={undoBlockedByPendingSave}
+                  redoBlockedByPendingSave={redoBlockedByPendingSave}
+                  autoFilling={autoFilling}
+                  undoLabel={undoLabel}
+                  redoLabel={redoLabel}
+                  undoShortcut={undoShortcut}
+                  onUndo={handleUndo}
+                  onRedo={handleRedo}
+                  pasteFromExcelControl={SHOW_PASTE_FROM_EXCEL ? (
+                    <Button
+                      variant="tertiary"
+                      svg={ClipboardPaste}
+                      iconSize="sm"
+                      onClick={() => setPasteRowOpen(true)}
+                    >
+                      Paste from Excel
+                    </Button>
+                  ) : null}
+                  autoFillMenuItem={scheduleAutoFillMenuItem}
+                  publicationStatus={schedulePublicationStatus}
+                  isScheduleActionPending={isScheduleActionPending}
+                  isPublicationPending={isPublicationPending}
+                  onPublicationChange={() => void handleSchedulePublication()}
+                  showOrganizeOptions={scheduleHasMultipleServices}
+                  organizeMode={organizeMode}
+                  onOrganizeModeChange={changeOrganizeMode}
+                  scheduleLayout={scheduleLayout}
+                  scheduleLayoutOptions={scheduleLayoutOptions}
+                  onScheduleLayoutChange={changeScheduleLayout}
+                  moreMenuItems={scheduleWorkspaceMoreMenuItems}
+                />
+                {/* A modal, not a popover: this opens from a menu item, and
                      * the menu's own focus handling as it closes dismisses a
                      * non-modal popover before anyone can reach Continue. Same
                      * pattern as the PDF preview below. */}
@@ -7363,8 +7180,6 @@ const ScheduleTab = ({
                       onOpenChange={setPdfPreviewOpen}
                     />
                   </div>
-                </div>
-              </div>
 
               {(occurrencesStale || (canEdit && refreshBlocked)) && !showForm ? (
                 <div className="mt-4 flex shrink-0 flex-col gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 sm:flex-row sm:items-center sm:justify-between">

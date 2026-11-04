@@ -216,6 +216,9 @@ export const runPostCommitSideEffect = async (
 const TEAM_SCHEDULE_PUBLICATION_EVENT_RECOVERY_INTERVAL_MS = 30_000;
 const TEAM_SCHEDULE_PUBLICATION_EVENT_RECOVERY_LIMIT = 100;
 const TEAM_SCHEDULE_PUBLICATION_EVENT_LEASE_MS = 60_000;
+const TEAM_SCHEDULE_PUBLICATION_EVENT_TTL_MS = 30 * 24 * 60 * 60_000;
+const TEAM_SCHEDULE_PUBLICATION_EVENT_STALE_WARNING_MS = 24 * 60 * 60_000;
+const TEAM_SCHEDULE_PUBLICATION_EVENT_ATTEMPT_WARNING_THRESHOLD = 10;
 let publicationEventDeliveryForServerTests = null;
 
 export const setTeamSchedulePublicationEventDeliveryForServerTests = (handler = null) => {
@@ -13114,13 +13117,39 @@ export const createTeamsAuthHandlers = ({
           isFuture(current.leaseExpiresAt)
         ) return null;
         const attemptCount = Number(current.attemptCount || 0) + 1;
-        transaction.update(ref, {
+        const ageMs = Math.max(0, now - new Date(current.createdAt || "").getTime());
+        const warningCodes = [
+          ...(Number.isFinite(ageMs) && ageMs > TEAM_SCHEDULE_PUBLICATION_EVENT_STALE_WARNING_MS
+            ? ["pending_over_24h"] : []),
+          ...(attemptCount > TEAM_SCHEDULE_PUBLICATION_EVENT_ATTEMPT_WARNING_THRESHOLD
+            ? ["over_10_attempts"] : []),
+        ];
+        const warningCodesLogged = Array.isArray(current.warningCodesLogged)
+          ? current.warningCodesLogged
+          : [];
+        const warningsToLog = warningCodes.filter((code) => !warningCodesLogged.includes(code));
+        const nextWarningCodesLogged = [...new Set([...warningCodesLogged, ...warningsToLog])];
+        await updateDocFields(
+          COLLECTIONS.teamSchedulePublicationEvents,
+          eventId,
+          {
+            attemptCount,
+            lastAttemptAt: claimedAt,
+            leaseToken,
+            leaseExpiresAt,
+            ...(warningsToLog.length ? { warningCodesLogged: nextWarningCodesLogged } : {}),
+          },
+          { transaction, deleteFields: Object.hasOwn(current, "expiresAt") ? ["expiresAt"] : [] },
+        );
+        return {
+          ...current,
           attemptCount,
           lastAttemptAt: claimedAt,
           leaseToken,
           leaseExpiresAt,
-        });
-        return { ...current, attemptCount, lastAttemptAt: claimedAt, leaseToken, leaseExpiresAt };
+          warningCodesLogged: nextWarningCodesLogged,
+          warningsToLog,
+        };
       });
     }
     const current = await getDoc(COLLECTIONS.teamSchedulePublicationEvents, eventId);
@@ -13129,29 +13158,65 @@ export const createTeamsAuthHandlers = ({
       isFuture(current.leaseExpiresAt)
     ) return null;
     const attemptCount = Number(current.attemptCount || 0) + 1;
-    await updateDocFields(COLLECTIONS.teamSchedulePublicationEvents, eventId, {
+    const ageMs = Math.max(0, now - new Date(current.createdAt || "").getTime());
+    const warningCodes = [
+      ...(Number.isFinite(ageMs) && ageMs > TEAM_SCHEDULE_PUBLICATION_EVENT_STALE_WARNING_MS
+        ? ["pending_over_24h"] : []),
+      ...(attemptCount > TEAM_SCHEDULE_PUBLICATION_EVENT_ATTEMPT_WARNING_THRESHOLD
+        ? ["over_10_attempts"] : []),
+    ];
+    const warningCodesLogged = Array.isArray(current.warningCodesLogged)
+      ? current.warningCodesLogged
+      : [];
+    const warningsToLog = warningCodes.filter((code) => !warningCodesLogged.includes(code));
+    const nextWarningCodesLogged = [...new Set([...warningCodesLogged, ...warningsToLog])];
+    await updateDocFields(
+      COLLECTIONS.teamSchedulePublicationEvents,
+      eventId,
+      {
+        attemptCount,
+        lastAttemptAt: claimedAt,
+        leaseToken,
+        leaseExpiresAt,
+        ...(warningsToLog.length ? { warningCodesLogged: nextWarningCodesLogged } : {}),
+      },
+      { deleteFields: Object.hasOwn(current, "expiresAt") ? ["expiresAt"] : [] },
+    );
+    return {
+      ...current,
       attemptCount,
       lastAttemptAt: claimedAt,
       leaseToken,
       leaseExpiresAt,
-    });
-    return { ...current, attemptCount, lastAttemptAt: claimedAt, leaseToken, leaseExpiresAt };
+      warningCodesLogged: nextWarningCodesLogged,
+      warningsToLog,
+    };
   };
 
-  const finishTeamSchedulePublicationEvent = async (event, fields) => {
+  const finishTeamSchedulePublicationEvent = async (event, fields, deleteFields = []) => {
     const db = requireFirestore();
     if (db?.runTransaction) {
       await db.runTransaction(async (transaction) => {
         const ref = db.collection(COLLECTIONS.teamSchedulePublicationEvents).doc(event.id);
         const snapshot = await transaction.get(ref);
         if (!snapshot.exists || snapshot.data()?.leaseToken !== event.leaseToken) return;
-        transaction.update(ref, fields);
+        await updateDocFields(
+          COLLECTIONS.teamSchedulePublicationEvents,
+          event.id,
+          fields,
+          { transaction, deleteFields },
+        );
       });
       return;
     }
     const current = await getDoc(COLLECTIONS.teamSchedulePublicationEvents, event.id);
     if (!current || current.leaseToken !== event.leaseToken) return;
-    await updateDocFields(COLLECTIONS.teamSchedulePublicationEvents, event.id, fields);
+    await updateDocFields(
+      COLLECTIONS.teamSchedulePublicationEvents,
+      event.id,
+      fields,
+      { deleteFields },
+    );
   };
 
   const scheduleTeamSchedulePublicationEventRetry = (eventId, delayMs) => {
@@ -13172,14 +13237,28 @@ export const createTeamsAuthHandlers = ({
     try {
       claimed = await claimTeamSchedulePublicationEvent(eventId);
       if (!claimed) return;
+      for (const warningCode of claimed.warningsToLog || []) {
+        console.error("Team schedule publication event needs attention; automatic retries continue.", {
+          eventId: claimed.id,
+          scheduleId: claimed.scheduleId,
+          kind: claimed.kind,
+          warningCode,
+          attemptCount: claimed.attemptCount,
+          ageHours: Math.floor((Date.now() - new Date(claimed.createdAt).getTime()) / 3_600_000),
+          lastErrorName: claimed.lastErrorName || "",
+          action: "Check the event downstream delivery target and Firestore record; the recovery worker will keep retrying.",
+        });
+      }
       const delivered = await runPostCommitSideEffect(
         `schedule publication ${claimed.kind}`,
         () => deliverTeamSchedulePublicationEvent(claimed),
       );
       if (delivered) {
+        const completedAt = nowIso();
         await finishTeamSchedulePublicationEvent(claimed, {
           status: "completed",
-          completedAt: nowIso(),
+          completedAt,
+          expiresAt: new Date(new Date(completedAt).getTime() + TEAM_SCHEDULE_PUBLICATION_EVENT_TTL_MS),
           leaseToken: "",
           leaseExpiresAt: "",
           nextAttemptAt: "",
@@ -13197,7 +13276,7 @@ export const createTeamsAuthHandlers = ({
           lastErrorName: "PostCommitDeliveryFailed",
           leaseToken: "",
           leaseExpiresAt: "",
-        });
+        }, ["expiresAt"]);
         scheduleTeamSchedulePublicationEventRetry(eventId, delayMs);
       }
     } catch (error) {
@@ -13211,7 +13290,7 @@ export const createTeamsAuthHandlers = ({
             lastErrorName: error?.name || "Error",
             leaseToken: "",
             leaseExpiresAt: "",
-          });
+          }, ["expiresAt"]);
         } catch (releaseError) {
           console.error("Could not release a durable team schedule publication event lease.", releaseError);
         }

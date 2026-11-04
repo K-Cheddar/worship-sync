@@ -1412,6 +1412,12 @@ describe("Teams", () => {
     await user.click(screen.getByRole("button", { name: "Next period" }));
     expect(await screen.findByRole("group", { name: "Team schedule identity" })).toBeInTheDocument();
     expect(mockEnsureTeamScheduleForPeriod).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Send schedule" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "More schedule actions" }));
+    expect(screen.queryByRole("menuitem", { name: "Copy view-only link" })).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(mockEnsureTeamScheduleForPeriod).not.toHaveBeenCalled();
+    expect(mockGetTeamSchedulePublicLink).not.toHaveBeenCalled();
     const cell = (await screen.findAllByRole("button", { name: /Vocal, Empty/i }))[0];
     expect(cell).toBeDefined();
     await user.click(cell);
@@ -5536,6 +5542,7 @@ describe("Teams", () => {
   });
 
   it("shows visible services, filled positions, open positions, and retains layout controls", async () => {
+    const user = userEvent.setup();
     mockGetTeamsBootstrap.mockResolvedValue(
       asTeamsBootstrapResponse(scheduleBootstrap),
     );
@@ -5550,7 +5557,8 @@ describe("Teams", () => {
     expect(staffingSummary).toHaveTextContent("1Position open");
     expect(screen.getByRole("progressbar", { name: "Staffing completion" })).toHaveAttribute("aria-valuemax", "2");
     expect(screen.getByRole("group", { name: "Team schedule controls" })).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "Schedule layout" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "More schedule actions" }));
+    expect(screen.getByRole("menuitem", { name: "Layout" })).toBeInTheDocument();
   });
 
   it("updates filled and open totals immediately when a volunteer is assigned or removed", async () => {
@@ -5952,7 +5960,11 @@ describe("Teams", () => {
     renderTeams();
     await waitForScheduleGrid();
 
+    expect(screen.getByRole("status", { name: "Schedule publication status" })).toHaveTextContent("Published");
     expect(screen.getByRole("button", { name: /Send schedule/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "More schedule actions" }));
+    expect(screen.getByRole("menuitem", { name: "Copy view-only link" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: /More schedule options/i }));
     const scheduleActionItems = screen.getAllByRole("menuitem").map((item) => item.textContent);
     expect(scheduleActionItems.slice(0, 2)).toEqual([

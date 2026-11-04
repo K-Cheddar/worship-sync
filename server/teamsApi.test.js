@@ -12108,7 +12108,10 @@ test("failed publication follow-ups stay durable and recover after the HTTP requ
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("schedule_publication_outbox");
   const assigned = await seedAssignedSchedule(context, "publication_outbox");
-  t.mock.method(console, "error", () => {});
+  let healthWarningCount = 0;
+  t.mock.method(console, "error", (message) => {
+    if (String(message).includes("publication event needs attention")) healthWarningCount += 1;
+  });
   setTeamSchedulePublicationEventDeliveryForServerTests(async () => {
     throw new Error("temporary delivery outage");
   });
@@ -12127,23 +12130,142 @@ test("failed publication follow-ups stay durable and recover after the HTTP requ
   ]);
   assert.equal(pending.length, 3);
   assert.ok(pending.every((event) => event.status === "pending"));
+  assert.ok(pending.every((event) => !Object.hasOwn(event, "expiresAt")));
+  const overdueAudit = pending.find((event) => event.kind === "security_audit");
+  assert.ok(overdueAudit);
   const retryNow = new Date(Date.now() - 1_000).toISOString();
-  await Promise.all(pending.map((event) => setDoc(
+  await setDoc(
+    COLLECTIONS.teamSchedulePublicationEvents,
+    overdueAudit.id,
+    {
+      ...overdueAudit,
+      createdAt: new Date(Date.now() - 25 * 60 * 60_000).toISOString(),
+      attemptCount: 10,
+      nextAttemptAt: retryNow,
+      expiresAt: new Date(Date.now() + 10 * 24 * 60 * 60_000),
+    },
+  );
+
+  await authHandlers.recoverPendingTeamSchedulePublicationEvents();
+  const warned = await getDoc(COLLECTIONS.teamSchedulePublicationEvents, overdueAudit.id);
+  assert.equal(Object.hasOwn(warned, "expiresAt"), false, "failed delivery clears stale TTL metadata before retrying");
+  assert.deepEqual(warned.warningCodesLogged, ["pending_over_24h", "over_10_attempts"]);
+  assert.equal(healthWarningCount, 2);
+  await setDoc(COLLECTIONS.teamSchedulePublicationEvents, overdueAudit.id, {
+    ...warned,
+    nextAttemptAt: retryNow,
+  });
+  await authHandlers.recoverPendingTeamSchedulePublicationEvents();
+  assert.equal(healthWarningCount, 2, "the persisted warning markers suppress repeated health logs");
+
+  setTeamSchedulePublicationEventDeliveryForServerTests(null);
+  await Promise.all(pending.filter((event) => event.id !== overdueAudit.id).map((event) => setDoc(
     COLLECTIONS.teamSchedulePublicationEvents,
     event.id,
     { ...event, nextAttemptAt: retryNow },
   )));
-
-  setTeamSchedulePublicationEventDeliveryForServerTests(null);
+  await setDoc(COLLECTIONS.teamSchedulePublicationEvents, overdueAudit.id, {
+    ...warned,
+    nextAttemptAt: retryNow,
+  });
   await authHandlers.recoverPendingTeamSchedulePublicationEvents();
 
   const recovered = await queryDocs(COLLECTIONS.teamSchedulePublicationEvents, [
     { field: "scheduleId", value: assigned.scheduleId },
   ]);
   assert.ok(recovered.every((event) => event.status === "completed"));
+  assert.ok(recovered.every((event) => event.expiresAt instanceof Date));
+  assert.ok(recovered.every((event) =>
+    event.expiresAt.getTime() === Date.parse(event.completedAt) + 30 * 24 * 60 * 60_000,
+  ));
   const audit = recovered.find((event) => event.kind === "security_audit");
   assert.ok(audit);
   assert.equal((await getDoc(COLLECTIONS.securityEvents, audit.securityEvent.eventId))?.type, "team_schedule_published");
+
+  const pendingAudit = { ...audit };
+  delete pendingAudit.expiresAt;
+  await setDoc(COLLECTIONS.teamSchedulePublicationEvents, audit.id, {
+    ...pendingAudit,
+    status: "pending",
+    nextAttemptAt: retryNow,
+  });
+  await authHandlers.recoverPendingTeamSchedulePublicationEvents();
+  assert.equal((await queryDocs(COLLECTIONS.securityEvents, [
+    { field: "eventId", value: audit.securityEvent.eventId },
+  ])).length, 1, "replaying a completed audit delivery upserts its stable event ID");
+  const replayedAudit = await getDoc(COLLECTIONS.teamSchedulePublicationEvents, audit.id);
+  assert.equal(replayedAudit.status, "completed");
+  assert.ok(replayedAudit.expiresAt instanceof Date);
+});
+
+test("publication event completion writes native TTL dates through Firestore transactions", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const eventId = "publication_event_firestore_ttl";
+  const eventStore = new Map([[eventId, {
+    id: eventId,
+    kind: "transaction_test",
+    churchId: "church-ttl-test",
+    scheduleId: "schedule-ttl-test",
+    status: "pending",
+    createdAt: new Date().toISOString(),
+    nextAttemptAt: new Date(Date.now() - 1_000).toISOString(),
+    attemptCount: 0,
+    leaseToken: "",
+    leaseExpiresAt: "",
+  }]]);
+  const makeQuery = (queryOptions = {}) => ({
+    where(field, operator, value) {
+      return makeQuery({ ...queryOptions, filters: [...(queryOptions.filters || []), { field, operator, value }] });
+    },
+    orderBy() { return makeQuery({ ...queryOptions, ordered: true }); },
+    startAfter(id) { return makeQuery({ ...queryOptions, startAfterId: id }); },
+    limit(value) { return makeQuery({ ...queryOptions, limit: value }); },
+    async get() {
+      const rows = [...eventStore.entries()]
+        .map(([id, data]) => ({ id, data }))
+        .filter(({ id, data }) => (queryOptions.filters || []).every(({ field, operator, value }) =>
+          operator === "==" && data[field] === value,
+        ))
+        .filter(({ id }) => !queryOptions.startAfterId || id > queryOptions.startAfterId)
+        .slice(0, queryOptions.limit || undefined)
+        .map(({ id, data }) => ({ id, data: () => ({ ...data }) }));
+      return { docs: rows, size: rows.length };
+    },
+  });
+  const fakeFirestore = {
+    collection: (collectionName) => ({
+      doc: (id) => ({ collectionName, id }),
+      ...makeQuery(),
+    }),
+    runTransaction: async (operation) => operation({
+      get: async (ref) => {
+        const data = ref.collectionName === COLLECTIONS.teamSchedulePublicationEvents
+          ? eventStore.get(ref.id)
+          : undefined;
+        return { exists: Boolean(data), id: ref.id, data: () => data && { ...data } };
+      },
+      update: (ref, fields) => {
+        const current = eventStore.get(ref.id);
+        eventStore.set(ref.id, { ...current, ...fields });
+      },
+    }),
+  };
+  setServerFirestoreForTests(fakeFirestore);
+  setTeamSchedulePublicationEventDeliveryForServerTests(async () => {});
+  t.after(() => {
+    setTeamSchedulePublicationEventDeliveryForServerTests(null);
+    setServerFirestoreForTests(null);
+  });
+
+  await authHandlers.recoverPendingTeamSchedulePublicationEvents();
+
+  const completed = eventStore.get(eventId);
+  assert.equal(completed.status, "completed");
+  assert.ok(completed.expiresAt instanceof Date);
+  assert.equal(
+    completed.expiresAt.getTime(),
+    Date.parse(completed.completedAt) + 30 * 24 * 60 * 60_000,
+  );
 });
 
 test("team schedule publication enforces CSRF, current Team edit access, and active schedules", async (t) => {

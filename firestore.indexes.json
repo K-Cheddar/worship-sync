@@ -255,6 +255,12 @@
       "indexes": []
     },
     {
+      "collectionGroup": "teamSchedulePublicationEvents",
+      "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
       "collectionGroup": "chatMessages",
       "fieldPath": "text",
       "indexes": []

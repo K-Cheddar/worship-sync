@@ -89,8 +89,7 @@ type ScheduleBoardViewProps = {
   canEdit: boolean;
   nextUpcomingOccurrenceId: string | null;
   fillByOccurrence: Map<string, OccurrenceFill>;
-  /** Whether a card's positions are shown. Owned by ScheduleTab so the header's
-   *  expand-all/collapse-all controls and the per-card chevrons stay in sync. */
+  /** Whether this card's positions are shown, including its individual toggle. */
   isExpanded: (occurrenceId: string) => boolean;
   onToggleExpanded: (occurrenceId: string) => void;
   serviceArchivedById: (serviceId: string) => boolean;
