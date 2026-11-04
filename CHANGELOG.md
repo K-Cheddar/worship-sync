@@ -1,3 +1,36 @@
+# [2.49.0](https://github.com/K-Cheddar/worship-sync/compare/v2.48.1...v2.49.0) (2026-11-04)
+
+
+### Bug Fixes
+
+* **controller:** follow active outline in workspace ([18cc383](https://github.com/K-Cheddar/worship-sync/commit/18cc3831491f318b756f9c5a8270482e50ac0b59))
+* **controller:** restore outline title wrapping ([35c9f98](https://github.com/K-Cheddar/worship-sync/commit/35c9f983210d1f620a83e12671464f02b2a47394))
+* Correct time zone service creation ([0f3b11d](https://github.com/K-Cheddar/worship-sync/commit/0f3b11ded6a81c4ee7cf7a105c39f86b346913e1))
+* guard grouped service and media folder mutations ([6a54672](https://github.com/K-Cheddar/worship-sync/commit/6a546722dda1939d4cae7ee55c355282030f57dc))
+* honor schedule periods and wall-clock seconds ([70dd3a5](https://github.com/K-Cheddar/worship-sync/commit/70dd3a50d962b53d314d053d2f66d39535ea45a3))
+* Improve media deletion ([bbe2ebd](https://github.com/K-Cheddar/worship-sync/commit/bbe2ebd4083638cfda40af1e0fc6ae4294ad50ce))
+* keep outline content and saves with their owners ([a32b5e8](https://github.com/K-Cheddar/worship-sync/commit/a32b5e89089bf5be39c9b9890f80bbc59a89e858))
+* keep Planning Center imports account-scoped ([935d850](https://github.com/K-Cheddar/worship-sync/commit/935d8502ba8b98eb13af6319257db1f4b1d8dfd5))
+* **media:** make folder operation failures retryable ([b7e5b3c](https://github.com/K-Cheddar/worship-sync/commit/b7e5b3cac5d5f85b08079f64fbea8d5fcd2fdb22))
+* **media:** preserve folder deletion completion state ([9a6298e](https://github.com/K-Cheddar/worship-sync/commit/9a6298e4cc2f51f78b7228864b265251fd41deb1))
+* preserve media and schedule ownership ([1e1f0b1](https://github.com/K-Cheddar/worship-sync/commit/1e1f0b1965afa499872c6a698f906c02717b596a))
+* preserve output playhead for untimed live video ([b216678](https://github.com/K-Cheddar/worship-sync/commit/b2166783fe8b88efbed5b49cfb5692a5c703bf33))
+* preserve reviewed service plan import ordering ([c773a32](https://github.com/K-Cheddar/worship-sync/commit/c773a3252833d683b6550ac9d85c2d8d9fde5694))
+* remove invalid schedule table whitespace ([9fee40c](https://github.com/K-Cheddar/worship-sync/commit/9fee40cb0e7583f30f2f211546f8a6ebaa12968a))
+* resolve client Jest shard failures ([cd7c298](https://github.com/K-Cheddar/worship-sync/commit/cd7c2984fd4fe30e2b33ba87d9a53f013688950c))
+* scope live viewer and playback updates ([33d2069](https://github.com/K-Cheddar/worship-sync/commit/33d20698e11b6e815be3d7283bf17f74a566fc6f))
+* scope service group cleanup ([5daf5c9](https://github.com/K-Cheddar/worship-sync/commit/5daf5c9250e8b4c87f3611cea8f70bfa1b8f4f88))
+* sync Current Service Viewer over Services SSE ([ac0e3f1](https://github.com/K-Cheddar/worship-sync/commit/ac0e3f1dd40de59c0d7987929364466918f9f74c))
+* **timer:** enable time editing in Present mode ([9576df4](https://github.com/K-Cheddar/worship-sync/commit/9576df42b9b3a6362647358ae57daba046cd945b))
+* **toolbar:** hide video diagnostics in overlay present mode ([1a6ed93](https://github.com/K-Cheddar/worship-sync/commit/1a6ed93cb8541cddbcef821538a25cc769ac5c3e))
+
+
+### Features
+
+* **media:** queue folder deletions with safe cancellation ([be3dd61](https://github.com/K-Cheddar/worship-sync/commit/be3dd611c494da3810234295cfa8cad54fb7342d))
+* **planning-center:** discover matching service plans ([e278eca](https://github.com/K-Cheddar/worship-sync/commit/e278eca877ceeb3bcf8edb903068a4ed10815e55))
+* Support looping and non looping videos on items ([df54e3d](https://github.com/K-Cheddar/worship-sync/commit/df54e3d32ec5e986c6f3b48d7a86275de31eadc8))
+
 ## [2.48.1](https://github.com/K-Cheddar/worship-sync/compare/v2.48.0...v2.48.1) (2026-10-30)
 
 
