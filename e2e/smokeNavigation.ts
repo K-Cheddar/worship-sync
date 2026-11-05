@@ -72,6 +72,17 @@ export async function homeNavigationDiagnostics(
     .locator("main [aria-busy='true'], main [role='status']")
     .allTextContents()
     .catch(() => [] as string[]);
+  const runtime = await page.evaluate(async () => {
+    const safeStatus = (window as any).__controllerE2EFirebaseStatus?.();
+    if (safeStatus) delete safeStatus.churchId;
+    return {
+      firebase: safeStatus ?? null,
+      startup: (window as any).__controllerE2EStartupSnapshot?.() ?? null,
+      isolation: (window as any).__controllerE2EIsolation ?? null,
+      isolationMetrics: await (window as any).__controllerE2EIsolationMetrics?.() ?? null,
+      events: ((window as any).__controllerE2ESafeDiagnostics ?? []).slice(-20),
+    };
+  }).catch(() => ({ firebase: null, startup: null, isolation: null, isolationMetrics: null, events: [] as any[] }));
   const sanitize = (value: string) =>
     value
       .replace(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi, "[redacted-email]")
@@ -79,10 +90,57 @@ export async function homeNavigationDiagnostics(
       .replace(
         /((?:one[- ]time|verification|authentication|auth|login|sign[- ]?in|email|sms|2fa|mfa)\s+(?:verification\s+)?(?:code|passcode|otp)\s*(?:is|:|=|#)?\s*)\d{4,8}\b/gi,
         "$1[redacted-code]",
-      );
+      )
+      .replace(/\bBearer\s+[^\s,;]+/gi, "Bearer [redacted-token]")
+      .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}(?:\.[A-Za-z0-9_-]{5,})?\b/g, "[redacted-token]")
+      .replace(/((?:id[_-]?token|access[_-]?token|refresh[_-]?token|auth[_-]?token|firebase[_-]?token|token|cookie|password|credential|private[_-]?key|api[_-]?key|firebaseUid|churchId|userId)\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^,\s;}]+)/gi, "$1[redacted]")
+      .replace(/churches\/[^/\s,"'}]+/gi, "churches/[redacted]");
+  const safeEvents = runtime.events.map((event: any) => ({
+    kind: event.kind,
+    ...(typeof event.category === "string" ? { category: event.category } : {}),
+    ...(typeof event.method === "string" ? { method: event.method } : {}),
+    ...(typeof event.status === "number" ? { status: event.status } : {}),
+    ...(typeof event.message === "string" ? { message: sanitize(event.message) } : {}),
+  }));
+  const tokenEvents = safeEvents.filter((event: any) => event.category === "shared_data_token");
+  const firebaseErrors = safeEvents
+    .filter((event: any) => ["console_error", "page_error", "request_failed"].includes(event.kind))
+    .map((event: any) => String(event.message ?? "").toLowerCase());
+  const hasPermissionDenied = firebaseErrors.some((message: string) =>
+    message.includes("permission_denied") || message.includes("permission denied") || message.includes("permission to access"),
+  );
+  const startup = runtime.startup;
+  const firebase = runtime.firebase;
+  let startupDiagnosis: string;
+  if (tokenEvents.some((event: any) => event.kind === "request_failed" || (typeof event.status === "number" && event.status >= 400))) {
+    const failedToken = tokenEvents.find((event: any) => event.status >= 400);
+    startupDiagnosis = `Shared-data token request failed${failedToken?.status ? ` (HTTP ${failedToken.status})` : ""}.`;
+  } else if (!firebase?.sharedDataAuthenticated) {
+    startupDiagnosis = tokenEvents.some((event: any) => typeof event.status === "number" && event.status < 400)
+      ? "The shared-data token request succeeded, but Firebase authentication did not complete."
+      : "The shared-data token request did not complete, so Firebase authentication could not start.";
+  } else if (!firebase?.databaseAvailable || !firebase?.connected) {
+    startupDiagnosis = "Firebase Realtime Database did not reach its connected state.";
+  } else if (hasPermissionDenied) {
+    startupDiagnosis = "Firebase denied one or more startup subscriptions (permission_denied).";
+  } else if (!startup?.controllerProfiles?.loaded || !startup?.controllerProfiles?.syncedToCurrentChurch) {
+    startupDiagnosis = "The controller profile registry did not load for the authenticated church.";
+  } else if (!startup?.displayOutputs?.loaded || !startup?.displayOutputs?.syncedToCurrentChurch) {
+    startupDiagnosis = "The display output registry did not load for the authenticated church.";
+  } else if (!startup?.controllerProfiles?.presentationFound || !startup?.controllerProfiles?.presentationEnabled) {
+    startupDiagnosis = startup?.controllerProfiles?.presentationFound
+      ? "The Presentation Controller profile is disabled."
+      : "The Presentation Controller profile is missing.";
+  } else {
+    startupDiagnosis = "Firebase configuration loaded; Home failed to render the Controllers section or its Presentation Controller link.";
+  }
+  const safeAuth = { ...auth, churchId: auth.churchId ? "[present]" : null };
   return [
     reason,
-    `Application auth flags: ${JSON.stringify(auth)}`,
+    `Startup diagnosis: ${startupDiagnosis}`,
+    `Application auth flags: ${JSON.stringify(safeAuth)}`,
+    `Safe controller startup state: ${JSON.stringify({ isolation: runtime.isolation, isolationMetrics: runtime.isolationMetrics, firebase, startup })}`,
+    `Sanitized browser diagnostics: ${JSON.stringify(safeEvents)}`,
     `Pending Home UI: ${JSON.stringify(pendingStates.map(sanitize))}`,
     "Sanitized Home accessibility snapshot:",
     sanitize(snapshot),

@@ -27,7 +27,20 @@ const redact = (value: string) => {
   }
   safe = safe
     .replace(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi, "[redacted-email]")
-    .replace(/\b\d{6}\b/g, "[redacted-code]");
+    .replace(/\b\d{6}\b/g, "[redacted-code]")
+    .replace(/\bBearer\s+[^\s,;]+/gi, "Bearer [redacted-token]")
+    .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}(?:\.[A-Za-z0-9_-]{5,})?\b/g, "[redacted-token]")
+    .replace(/((?:id[_-]?token|access[_-]?token|refresh[_-]?token|auth[_-]?token|firebase[_-]?token|token|cookie|password|credential|private[_-]?key|api[_-]?key|firebaseUid|churchId|userId)\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^,\s;}]+)/gi, "$1[redacted]")
+    .replace(/((?:one[- ]?time|verification|authentication|auth|login|sign[- ]?in|email|sms|2fa|mfa)?\s*(?:verification\s+)?(?:code|passcode|otp)\s*[=:]\s*)(?:"?\d{4,8}"?)/gi, "$1[redacted-code]")
+    .replace(/churches\/[^/\s,"'}]+/gi, "churches/[redacted]")
+    .replace(/https?:\/\/[^\s"']+/gi, (rawUrl) => {
+      try {
+        const url = new URL(rawUrl);
+        return `${url.origin}${url.pathname}`;
+      } catch {
+        return "[redacted-url]";
+      }
+    });
   return safe.slice(0, 1_000);
 };
 
