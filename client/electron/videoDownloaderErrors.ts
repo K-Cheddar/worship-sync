@@ -13,17 +13,37 @@ export type VideoFailureCategory =
   | "inspection-data"
   | "storage"
   | "playlist"
+  | "inspection-output-limit"
+  | "stdout-output-limit"
+  | "stderr-output-limit"
+  | "command-timeout"
+  | "yt-dlp-extraction-failure"
+  | "native-process-failure"
   | "unexpected";
+
+export class VideoDownloaderCommandError extends Error {
+  constructor(
+    readonly category: VideoFailureCategory,
+    message: string,
+    readonly diagnostic = "",
+  ) {
+    super(message);
+    this.name = "VideoDownloaderCommandError";
+  }
+}
 
 const errorText = (error: unknown) => {
   if (error instanceof Error) {
     const code = "code" in error && typeof error.code === "string" ? ` ${error.code}` : "";
-    return `${error.message}${code}`;
+    const diagnostic = "diagnostic" in error && typeof error.diagnostic === "string"
+      ? ` ${error.diagnostic}` : "";
+    return `${error.message}${code}${diagnostic}`;
   }
   return typeof error === "string" ? error : "";
 };
 
 export const classifyVideoFailure = (error: unknown): VideoFailureCategory => {
+  if (error instanceof VideoDownloaderCommandError) return error.category;
   const detail = errorText(error);
   if (/invalid.*(?:youtube|video).*url|enter a valid.*(?:video )?(?:link|url)|use a public youtube video link|unsupported url|no suitable extractor/i.test(detail)) {
     return "invalid-url";
@@ -85,6 +105,20 @@ export const friendlyVideoFailure = (
       return "Live videos and videos longer than 6 hours are not supported.";
     case "inspection-data":
       return "Video details could not be read from this link. Check the link and retry.";
+    case "inspection-output-limit":
+      return "Video details exceed the supported size. Retry later; contact support if it continues.";
+    case "stdout-output-limit":
+      return "The video tool produced too much output to continue. Retry the operation; contact support if it continues.";
+    case "stderr-output-limit":
+      return "The video tool produced too many diagnostics to continue. Retry the operation; contact support if it continues.";
+    case "command-timeout":
+      return stage === "inspection"
+        ? "Video details could not be checked before inspection timed out. Retry later; contact support if it continues."
+        : "The video tool timed out while checking the download. Retry; contact support if it continues.";
+    case "yt-dlp-extraction-failure":
+      return "yt-dlp could not read video details. Check the link and retry; contact support if it continues.";
+    case "native-process-failure":
+      return "A desktop video tool could not complete the operation. Restart or reinstall WorshipSync, then try again.";
     case "storage":
       return "This computer does not have enough free storage for the video.";
     case "playlist":
@@ -100,8 +134,10 @@ export const friendlyVideoFailure = (
   }
 };
 
+const ANSI_SGR_SEQUENCE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
+
 const sanitizeDiagnostic = (value: string) => value
-  .replace(/\u001b\[[0-9;]*m/g, "")
+  .replace(ANSI_SGR_SEQUENCE, "")
   .replace(/https?:\/\/[^\s"'<>]+/gi, "[URL]")
   .replace(/\b[A-Za-z]:\\Users\\[^\\\s]+/gi, "[user-profile]")
   .replace(/\/(?:home|Users)\/[^/\s]+/g, "/[user-profile]")

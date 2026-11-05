@@ -13,7 +13,13 @@ import {
   validateSupportedVideoUrl,
   type YtDlpFormat,
 } from "./videoDownloaderSecurity";
-import { friendlyVideoFailure, logVideoFailure } from "./videoDownloaderErrors";
+import {
+  classifyVideoFailure,
+  friendlyVideoFailure,
+  logVideoFailure,
+  VideoDownloaderCommandError,
+  type VideoFailureCategory,
+} from "./videoDownloaderErrors";
 
 export type VideoDownloadEvent = {
   jobId: string;
@@ -61,9 +67,47 @@ type DownloadRecord = {
 
 const MAX_DOWNLOAD_BYTES = 12 * 1024 * 1024 * 1024;
 const MINIMUM_FREE_BYTES = 128 * 1024 * 1024;
-const MAX_COMMAND_OUTPUT_BYTES = 8 * 1024 * 1024;
+const MAX_INSPECTION_METADATA_BYTES = 4 * 1024 * 1024;
+const MAX_FFPROBE_OUTPUT_BYTES = 1024 * 1024;
+const MAX_NATIVE_STDERR_BYTES = 256 * 1024;
+const MAX_NATIVE_DIAGNOSTIC_BYTES = 16 * 1024;
+const COMMAND_TERMINATION_GRACE_MS = 5000;
+const MAX_DOWNLOAD_STDOUT_BYTES = 8 * 1024 * 1024;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f-]{27}$/i;
 const MUX_UPLOAD_HOSTS = ["storage.googleapis.com", "upload.mux.com", "uploads.mux.com"];
+
+type NativeCommandPolicy = {
+  command: "yt-dlp" | "ffprobe";
+  stdoutLimitBytes: number;
+  stderrLimitBytes: number;
+  stdoutOverflowCategory: "inspection-output-limit" | "stdout-output-limit";
+};
+
+const INSPECTION_COMMAND_POLICY: NativeCommandPolicy = {
+  command: "yt-dlp",
+  stdoutLimitBytes: MAX_INSPECTION_METADATA_BYTES,
+  stderrLimitBytes: MAX_NATIVE_STDERR_BYTES,
+  stdoutOverflowCategory: "inspection-output-limit",
+};
+
+const FFPROBE_COMMAND_POLICY: NativeCommandPolicy = {
+  command: "ffprobe",
+  stdoutLimitBytes: MAX_FFPROBE_OUTPUT_BYTES,
+  stderrLimitBytes: MAX_NATIVE_STDERR_BYTES,
+  stdoutOverflowCategory: "stdout-output-limit",
+};
+
+const commandFailureCategory = (error: unknown): VideoFailureCategory => {
+  const category = classifyVideoFailure(error);
+  return category === "unexpected" ? "native-process-failure" : category;
+};
+
+const commandDiagnostic = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = error && typeof error === "object" && "code" in error && typeof error.code === "string"
+    ? `; code=${error.code}` : "";
+  return `${message}${code}`;
+};
 
 const isWithin = (base: string, candidate: string) => {
   const rel = relative(base, candidate);
@@ -165,27 +209,43 @@ export class VideoDownloader extends EventEmitter {
       const args = [
         "--ignore-config", "--no-plugin-dirs", "--no-playlist", "--ies", "youtube",
         "--js-runtimes", `deno:${this.options.denoPath}`,
-        "--no-warnings", "--no-cache-dir", "--no-progress", "--dump-single-json",
-        "--skip-download", "--write-thumbnail", "--convert-thumbnails", "jpg",
+        "--no-warnings", "--no-cache-dir", "--no-progress",
+        "--print", "%(.{title,duration})j",
+        "--print", "%(formats.:.{ext,vcodec,acodec,height})j",
+        "--skip-download", "--no-simulate", "--write-thumbnail", "--convert-thumbnails", "jpg",
         "--max-filesize", "2M",
         "--ffmpeg-location", this.options.ffmpegPath,
         "--proxy", proxy.url,
         "--output", join(directory, "preview"),
         url,
       ];
-      let stdout: string;
-      stdout = await this.runCommand(this.options.ytDlpPath, args, 60_000);
-      let info: {
-        title?: unknown; duration?: unknown; formats?: YtDlpFormat[];
-        _type?: string; entries?: unknown[];
-      };
+      const stdout = await this.runCommand(this.options.ytDlpPath, args, 60_000, INSPECTION_COMMAND_POLICY);
+      const projectionLines = stdout.trimEnd().split(/\r?\n/);
+      let info: { title?: unknown; duration?: unknown };
+      let formats: YtDlpFormat[];
       try {
-        info = JSON.parse(stdout) as typeof info;
+        if (projectionLines.length !== 2 || projectionLines.some((line) => !line.trim())) {
+          throw new Error("Unexpected projection line count.");
+        }
+        const parsedInfo = JSON.parse(projectionLines[0]) as unknown;
+        if (!parsedInfo || typeof parsedInfo !== "object" || Array.isArray(parsedInfo)) {
+          throw new Error("Unexpected video metadata projection.");
+        }
+        info = parsedInfo as typeof info;
+        const parsedFormats = JSON.parse(projectionLines[1]) as unknown;
+        if (
+          !parsedFormats || !Array.isArray(parsedFormats) ||
+          parsedFormats.some((format) => !format || typeof format !== "object" || Array.isArray(format))
+        ) {
+          throw new Error("Unexpected format projection.");
+        }
+        formats = parsedFormats as YtDlpFormat[];
       } catch {
-        throw new Error("Could not read video details from this link. Check the link and retry.");
-      }
-      if (info._type === "playlist" || Array.isArray(info.entries)) {
-        throw new Error("Choose a single YouTube video. Playlists are not supported.");
+        throw new VideoDownloaderCommandError(
+          "inspection-data",
+          "Could not read video details from this link.",
+          `projectionLines=${projectionLines.length}`,
+        );
       }
       if (typeof info.title !== "string" || !info.title.trim()) {
         throw new Error("Could not read the video title from this link.");
@@ -194,7 +254,7 @@ export class VideoDownloader extends EventEmitter {
       if (!Number.isFinite(duration) || duration <= 0 || duration > 6 * 60 * 60) {
         throw new Error("Live videos and videos longer than 6 hours are not supported.");
       }
-      const heights = getCompatibleVideoQualities(Array.isArray(info.formats) ? info.formats : []);
+      const heights = getCompatibleVideoQualities(formats);
       const thumbnailName = (await readdir(directory)).find((name) => /\.(jpg|jpeg|png|webp)$/i.test(name));
       let thumbnail = "";
       if (thumbnailName) {
@@ -230,40 +290,175 @@ export class VideoDownloader extends EventEmitter {
     }
   }
 
-  private runCommand(binary: string, args: string[], timeoutMs: number) {
+  private runCommand(binary: string, args: string[], timeoutMs: number, policy: NativeCommandPolicy) {
     const spawnProcess = this.options.spawnProcess ?? spawn;
     return new Promise<string>((resolveOutput, reject) => {
-      const child = spawnProcess(binary, args, { windowsHide: true, shell: false, stdio: ["ignore", "pipe", "pipe"] });
-      let stdout = "";
-      let stderr = "";
-      let outputSize = 0;
-      let timedOut = false;
-      const timer = setTimeout(() => {
-        timedOut = true;
-        this.terminate(child);
-      }, timeoutMs);
-      const collect = (target: "stdout" | "stderr") => (chunk: Buffer) => {
-        outputSize += chunk.length;
-        if (outputSize > MAX_COMMAND_OUTPUT_BYTES) {
+      let child: ChildProcess;
+      try {
+        child = spawnProcess(binary, args, { windowsHide: true, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+      } catch (error) {
+        const category = commandFailureCategory(error);
+        reject(new VideoDownloaderCommandError(
+          category,
+          "The native video tool could not be started.",
+          `command=${policy.command}; ${commandDiagnostic(error)}`,
+        ));
+        return;
+      }
+
+      let stdoutBytes = 0;
+      let stderrBytes = 0;
+      let stdout: Buffer[] = [];
+      let stderrTail = Buffer.alloc(0);
+      let failure: VideoDownloaderCommandError | undefined;
+      let terminationStarted = false;
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let terminationTimer: ReturnType<typeof setTimeout> | undefined;
+
+      const cleanup = () => {
+        if (timer) clearTimeout(timer);
+        if (terminationTimer) clearTimeout(terminationTimer);
+        child.stdout?.removeListener("data", collectStdout);
+        child.stderr?.removeListener("data", collectStderr);
+        child.removeListener("error", handleError);
+        child.removeListener("close", handleClose);
+      };
+      const settle = (action: () => void) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        action();
+        stdout = [];
+      };
+      const diagnostic = (extra: string) => [
+        `command=${policy.command}`,
+        `stdoutBytes=${stdoutBytes}`,
+        `stdoutLimitBytes=${policy.stdoutLimitBytes}`,
+        `stderrBytes=${stderrBytes}`,
+        `stderrLimitBytes=${policy.stderrLimitBytes}`,
+        extra,
+      ].filter(Boolean).join("; ");
+      const stopWithFailure = (error: VideoDownloaderCommandError) => {
+        if (!failure) failure = error;
+        if (terminationStarted) return;
+        terminationStarted = true;
+        try {
           this.terminate(child);
+        } catch (terminationError) {
+          failure = new VideoDownloaderCommandError(
+            failure.category,
+            failure.message,
+            `${failure.diagnostic}; termination=${commandDiagnostic(terminationError)}`,
+          );
+        }
+        if (settled) return;
+        terminationTimer = setTimeout(() => {
+          const priorFailure = failure;
+          if (!priorFailure) return;
+          child.stdout?.destroy();
+          child.stderr?.destroy();
+          settle(() => reject(new VideoDownloaderCommandError(
+            priorFailure.category,
+            priorFailure.message,
+            `${priorFailure.diagnostic}; terminationGraceMs=${COMMAND_TERMINATION_GRACE_MS}`,
+          )));
+        }, COMMAND_TERMINATION_GRACE_MS);
+      };
+      const addByteCount = (current: number, chunk: Buffer) => Math.min(Number.MAX_SAFE_INTEGER, current + chunk.length);
+      const keepDiagnosticTail = (chunk: Buffer) => {
+        if (chunk.length >= MAX_NATIVE_DIAGNOSTIC_BYTES) {
+          stderrTail = Buffer.from(chunk.subarray(chunk.length - MAX_NATIVE_DIAGNOSTIC_BYTES));
           return;
         }
-        if (target === "stdout") stdout += chunk.toString("utf8");
-        else stderr += chunk.toString("utf8");
+        const discardBytes = Math.max(0, stderrTail.length + chunk.length - MAX_NATIVE_DIAGNOSTIC_BYTES);
+        stderrTail = Buffer.concat([stderrTail.subarray(discardBytes), chunk]);
       };
-      child.stdout?.on("data", collect("stdout"));
-      child.stderr?.on("data", collect("stderr"));
-      child.once("error", (error) => {
-        clearTimeout(timer);
-        reject(error);
-      });
-      child.once("close", (code) => {
-        clearTimeout(timer);
-        if (timedOut) reject(new Error("The native video tool timed out."));
-        else if (outputSize > MAX_COMMAND_OUTPUT_BYTES) reject(new Error("Native video tool output exceeded its limit."));
-        else if (code === 0) resolveOutput(stdout);
-        else reject(new Error(stderr || "The native video tool failed without diagnostic output."));
-      });
+      const collectStdout = (rawChunk: Buffer) => {
+        const chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk);
+        stdoutBytes = addByteCount(stdoutBytes, chunk);
+        if (failure) return;
+        if (stdoutBytes > policy.stdoutLimitBytes) {
+          stopWithFailure(new VideoDownloaderCommandError(
+            policy.stdoutOverflowCategory,
+            policy.stdoutOverflowCategory === "inspection-output-limit"
+              ? "Video inspection metadata exceeded its supported size."
+              : "Native video tool output exceeded its supported size.",
+            diagnostic("stdout limit exceeded"),
+          ));
+          return;
+        }
+        stdout.push(chunk);
+      };
+      const collectStderr = (rawChunk: Buffer) => {
+        const chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk);
+        stderrBytes = addByteCount(stderrBytes, chunk);
+        keepDiagnosticTail(chunk);
+        if (!failure && stderrBytes > policy.stderrLimitBytes) {
+          stopWithFailure(new VideoDownloaderCommandError(
+            "stderr-output-limit",
+            "Native video tool diagnostics exceeded their supported size.",
+            diagnostic(`stderrTail=${stderrTail.toString("utf8")}`),
+          ));
+        }
+      };
+      const handleError = (error: Error & { code?: string }) => {
+        if (failure) {
+          const priorFailure = failure;
+          settle(() => reject(priorFailure));
+          return;
+        }
+        const category = commandFailureCategory(error);
+        settle(() => reject(new VideoDownloaderCommandError(
+          category,
+          "The native video tool could not be started.",
+          diagnostic(commandDiagnostic(error)),
+        )));
+      };
+      const handleClose = (code: number | null) => {
+        if (failure) {
+          const priorFailure = failure;
+          const finalFailure = new VideoDownloaderCommandError(
+            priorFailure.category,
+            priorFailure.message,
+            [priorFailure.diagnostic, stderrTail.length ? `finalStderrTail=${stderrTail.toString("utf8")}` : ""]
+              .filter(Boolean).join("; "),
+          );
+          settle(() => reject(finalFailure));
+          return;
+        }
+        if (code === 0) {
+          settle(() => resolveOutput(Buffer.concat(stdout).toString("utf8")));
+          return;
+        }
+        const stderrText = stderrTail.toString("utf8").trim();
+        const stderrCategory = stderrText ? classifyVideoFailure(stderrText) : "unexpected";
+        const category = stderrCategory !== "unexpected"
+          ? stderrCategory
+          : policy.command === "yt-dlp" ? "yt-dlp-extraction-failure" : "native-process-failure";
+        const message = category === "yt-dlp-extraction-failure"
+          ? "yt-dlp could not extract video details."
+          : category === "native-process-failure"
+            ? "The native video tool failed."
+            : "The video operation failed.";
+        settle(() => reject(new VideoDownloaderCommandError(
+          category,
+          message,
+          diagnostic(`exitCode=${code}; stderrTail=${stderrText}`),
+        )));
+      };
+
+      child.stdout?.on("data", collectStdout);
+      child.stderr?.on("data", collectStderr);
+      child.once("error", handleError);
+      child.once("close", handleClose);
+      timer = setTimeout(() => {
+        stopWithFailure(new VideoDownloaderCommandError(
+          "command-timeout",
+          "The native video tool timed out.",
+          diagnostic(`timeoutMs=${timeoutMs}`),
+        ));
+      }, timeoutMs);
     });
   }
 
@@ -371,7 +566,7 @@ export class VideoDownloader extends EventEmitter {
       const probe = await this.runCommand(this.options.ffprobePath, [
         "-v", "error", "-select_streams", "v:0", "-show_entries",
         "format=format_name,duration:stream=codec_name,width,height", "-of", "json", filePath,
-      ], 30_000);
+      ], 30_000, FFPROBE_COMMAND_POLICY);
       const probeData = JSON.parse(probe) as {
         streams?: Array<{ codec_name?: string; width?: number; height?: number }>;
         format?: { format_name?: string; duration?: string };
@@ -380,7 +575,7 @@ export class VideoDownloader extends EventEmitter {
       const duration = Number(probeData.format?.duration);
       const audioCodec = await this.runCommand(this.options.ffprobePath, [
         "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_name", "-of", "default=nw=1:nk=1", filePath,
-      ], 30_000).then((value) => value.trim()).catch(() => "");
+      ], 30_000, FFPROBE_COMMAND_POLICY).then((value) => value.trim());
       if (
         !video || video.codec_name !== "h264" || audioCodec !== "aac" ||
         !probeData.format?.format_name?.includes("mp4") ||
@@ -445,7 +640,7 @@ export class VideoDownloader extends EventEmitter {
         const text = chunk.toString("utf8");
         if (target === "stdout") {
           outputSize += chunk.length;
-          if (outputSize <= MAX_COMMAND_OUTPUT_BYTES) stdout += text;
+          if (outputSize <= MAX_DOWNLOAD_STDOUT_BYTES) stdout += text;
           else if (!outputExceeded) {
             outputExceeded = true;
             this.terminate(child);
@@ -470,7 +665,7 @@ export class VideoDownloader extends EventEmitter {
         if (running.cancelled) reject(new Error("Download cancelled."));
         else if (sizeExceeded) reject(new Error("The downloaded video exceeds the 12 GB limit."));
         else if (outputExceeded) reject(new Error("Video download output exceeded its limit."));
-        else if (code === 0 && outputSize <= MAX_COMMAND_OUTPUT_BYTES) resolveOutput(stdout);
+        else if (code === 0 && outputSize <= MAX_DOWNLOAD_STDOUT_BYTES) resolveOutput(stdout);
         else reject(new Error(stderrTail || "Video download failed."));
       });
     });
@@ -479,6 +674,9 @@ export class VideoDownloader extends EventEmitter {
   private terminate(child: ChildProcess) {
     if (process.platform === "win32" && child.pid) {
       const killer = spawn("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, shell: false, stdio: "ignore" });
+      killer.once("error", () => {
+        try { child.kill("SIGKILL"); } catch { /* The command promise reports the original failure. */ }
+      });
       killer.unref();
     } else if (child.pid) {
       try { process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); }

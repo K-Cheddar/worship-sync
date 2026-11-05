@@ -2,6 +2,7 @@ import {
   classifyVideoFailure,
   friendlyVideoFailure,
   logVideoFailure,
+  VideoDownloaderCommandError,
 } from "./videoDownloaderErrors";
 
 describe("video downloader error diagnostics", () => {
@@ -24,6 +25,19 @@ describe("video downloader error diagnostics", () => {
     expect(classifyVideoFailure("Use a public YouTube video link. Playlists are not supported.")).toBe("invalid-url");
   });
 
+  it.each([
+    ["inspection-output-limit", "Video details exceed the supported size"],
+    ["stderr-output-limit", "too many diagnostics"],
+    ["command-timeout", "timed out"],
+    ["yt-dlp-extraction-failure", "yt-dlp could not read video details"],
+    ["native-process-failure", "desktop video tool could not complete"],
+  ] as const)("keeps %s distinct and operator-facing", (category, message) => {
+    const error = new VideoDownloaderCommandError(category, "raw native output should stay hidden", "sensitive native diagnostic");
+    expect(classifyVideoFailure(error)).toBe(category);
+    expect(friendlyVideoFailure(error, "inspection")).toMatch(new RegExp(message, "i"));
+    expect(friendlyVideoFailure(error, "inspection")).not.toContain("sensitive native diagnostic");
+  });
+
   it("distinguishes inspection and download failures without exposing native output", () => {
     const error = new Error("Unable to download API page: https://youtube.com/watch?v=S9EUEdnJQDA?token=secret RemoteDisconnected");
     expect(friendlyVideoFailure(error, "inspection")).toMatch(/video details could not be checked/i);
@@ -35,7 +49,11 @@ describe("video downloader error diagnostics", () => {
   it("redacts URLs, credentials, and video IDs in operator diagnostics", () => {
     const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
-      logVideoFailure(new Error("HTTP Error 403 https://youtube.com/watch?v=S9EUEdnJQDA?token=secret C:\\Users\\alice\\AppData\\Local\\WorshipSync\\yt-dlp.exe"), "inspection");
+      logVideoFailure(new VideoDownloaderCommandError(
+        "provider-blocked",
+        "yt-dlp extraction failed",
+        "HTTP Error 403 https://youtube.com/watch?v=S9EUEdnJQDA?token=secret C:\\Users\\alice\\AppData\\Local\\WorshipSync\\yt-dlp.exe",
+      ), "inspection");
       const payload = warn.mock.calls[0][1] as { diagnostics: string; category: string };
       expect(payload.category).toBe("provider-blocked");
       expect(payload.diagnostics).not.toContain("youtube.com");
