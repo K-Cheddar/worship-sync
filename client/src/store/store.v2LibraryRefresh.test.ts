@@ -12,9 +12,10 @@ const setup = () => {
   let storeModule!: typeof import("./store");
   let itemModule!: typeof import("./itemSlice");
   let docsModule!: typeof import("./allDocsSlice");
+  let activeDb: any = {};
   const load = jest.fn().mockResolvedValue(song("Remote"));
   jest.isolateModules(() => {
-    jest.doMock("../context/controllerInfo", () => ({ globalDb: {}, globalBroadcastRef: undefined }));
+    jest.doMock("../context/controllerInfo", () => ({ get globalDb() { return activeDb; }, globalBroadcastRef: undefined }));
     jest.doMock("../context/globalInfo", () => ({ globalFireDbInfo: undefined, globalHostId: "host" }));
     jest.doMock("../utils/songPersistence", () => ({ ...jest.requireActual("../utils/songPersistence"), loadItemWithSongHydration: load }));
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -24,7 +25,14 @@ const setup = () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     docsModule = require("./allDocsSlice");
   });
-  return { store: storeModule.default, item: itemModule.itemSlice.actions, docs: docsModule.allDocsSlice.actions, load };
+  return {
+    store: storeModule.default,
+    item: itemModule.itemSlice.actions,
+    docs: docsModule.allDocsSlice.actions,
+    load,
+    songV2DocumentsChanged: storeModule.songV2DocumentsChanged,
+    setDatabase: (next: unknown) => { activeDb = next; },
+  };
 };
 
 describe("active v2 song library refresh", () => {
@@ -46,6 +54,23 @@ describe("active v2 song library refresh", () => {
     expect(load).toHaveBeenCalledTimes(2);
     expect(store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words).toBe("Slide-only update");
     expect(store.getState().allDocs.allSongDocs[0].arrangements[0].slides).toEqual([]);
+  });
+  it("invalidates only a nonactive song's hydrated content for a slide-only replication event", async () => {
+    const env = setup();
+    const projection = { ...song(), arrangements: song().arrangements.map((arrangement) => ({ ...arrangement, slides: [] })) };
+    const otherSong = { ...song("Other song"), _id: "other-song" };
+    env.store.dispatch(env.docs.hydrateItemCache([projection, otherSong]));
+    const cachedProjection = env.store.getState().allDocs.allSongDocs[0];
+    env.store.dispatch(env.item.setActiveItem({ ...otherSong, listId: "outline-entry" }));
+
+    env.store.dispatch(env.songV2DocumentsChanged([{ songId: "song-1", libraryChanged: false }]));
+    await new Promise((resolve) => setTimeout(resolve, 75));
+    await flush();
+
+    expect(env.store.getState().allDocs.songContentVersions["song-1"]).toBe(1);
+    expect(env.store.getState().allDocs.allSongDocs[0]).toBe(cachedProjection);
+    expect(env.store.getState().undoable.present.item._id).toBe("other-song");
+    expect(env.load).not.toHaveBeenCalled();
   });
   it("adopts an identical-content v2 representation as the idle v1 editor baseline", async () => {
     const { store, item, docs, load } = setup();

@@ -26,7 +26,11 @@ Authorization: the Song v2 concurrent slide editing request.
   structural/layout changes retain the draft and use existing conflict choices.
 - Child-document replication refreshes the affected active song. Library
   projections refresh for root/arrangement changes; slide-only notifications
-  must not scan the library. Revision-checked writes remain mandatory.
+  must not scan the library. A slide-only notification also invalidates the
+  hydrated outline-content cache for that song, including when another song is
+  active, so reopening the outline item loads the replicated slides and their
+  unchanged neighbors. Active-song refreshes continue through existing draft
+  and conflict guards. Revision-checked writes remain mandatory.
 - Song migrations, schema changes and v2 deletion remain outside this change.
 
 ### Song v2 saved conflict recovery (October 27, 2026)
@@ -37,6 +41,9 @@ Authorization: the “WorshipSync Song v2 — Fix Blocking Conflict Screen and R
 - Normal editing and autosave stay paused until the resolution is persisted. Conflict leaves are retired only after the intended content is durable and the reviewed winner and complete leaf set still match. A newly arrived or previously unseen revision is preserved.
 - Automatic reconciliation is limited to provably disjoint lyric text changes with revision-safe writes. Unresolved conflict fingerprints are not retried on every render or replication notification.
 - A later browser can recover the song after the original editors close. Unconflicted songs keep their normal opening and editing flow; migrations and unrelated songs are unchanged.
+- A conflict-review completion may write to its captured original database, but it only updates the editor or conflict state while the original database session, church, item, and outline occurrence still own the view. An item/database switch or unmount suppresses stale UI publication.
+
+Targeted nonactive slide-cache invalidation and stale conflict-review completion guards are confirmed by the November 5, 2026 code-review remediation request.
 
 ### Song v2 semantic conflict review (October 27, 2026)
 

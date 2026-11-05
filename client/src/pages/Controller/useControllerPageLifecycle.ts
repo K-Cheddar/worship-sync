@@ -103,6 +103,9 @@ import { ActionCreators } from "redux-undo";
 import { loadOrCreateControllerMediaRouteFolders } from "../../utils/controllerMediaRouteFolders";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
 import { beginOutlineContentLifecycle, getOutlineDatabaseKey, getOutlineOwnerKey, setOutlineContentDatabase } from "../../store/outlineContent";
+import type { ItemContentOwner } from "../../types";
+import { getActiveContentDatabaseOwner, getContentDatabaseForOwner } from "../../store/deferredItemMutations";
+import { getContentDatabaseSessionToken } from "../../utils/contentReplicationActivity";
 
 /**
  * Shared DB sync, preferences, overlays, media cache, and teardown for controller-like pages.
@@ -428,7 +431,18 @@ export const useControllerPageLifecycle = () => {
           }
         }
         if (songs.size) {
-          dispatch(songV2DocumentsChanged([...songs].map(([songId, libraryChanged]) => ({ songId, libraryChanged }))));
+          const databaseAtChange = db;
+          const ownerAtChange = getActiveContentDatabaseOwner();
+          if (databaseAtChange && (!ownerAtChange || getContentDatabaseForOwner(ownerAtChange) === databaseAtChange)) {
+            const sessionToken = getContentDatabaseSessionToken(databaseAtChange.name);
+            dispatch(songV2DocumentsChanged([...songs].map(([songId, libraryChanged]) => ({
+              songId,
+              libraryChanged,
+              database: databaseAtChange,
+              owner: ownerAtChange as ItemContentOwner | null,
+              sessionToken,
+            }))));
+          }
         }
         const dbForHistory = databaseRef.current;
         if (refetchOverlayHistory && dbForHistory) {

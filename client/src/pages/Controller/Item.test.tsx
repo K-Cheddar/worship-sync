@@ -8,6 +8,7 @@ import Item from "./Item";
 import allDocs, { hydrateItemCache } from "../../store/allDocsSlice";
 import { itemSlice } from "../../store/itemSlice";
 import { itemListSlice } from "../../store/itemListSlice";
+import { itemListsSlice } from "../../store/itemListsSlice";
 import { selectControllerItem } from "../../store/controllerItemSelection";
 import type { AppDispatch, RootState } from "../../store/store";
 import type { DBItem } from "../../types";
@@ -18,12 +19,23 @@ import { buildServiceTimeItem } from "../../utils/itemUtil";
 
 jest.mock("../../containers/ItemEditor/SlideEditor", () => () => <div data-testid="slide-editor" />);
 jest.mock("../../containers/ItemSlides/ItemSlides", () => () => <div data-testid="item-slides" />);
+let mockConflictReviewProps: any;
+jest.mock("../../containers/ItemEditor/SongV2ConflictReviewDialog", () => {
+  const React = jest.requireActual("react");
+  return {
+    __esModule: true,
+    default: (props: any) => {
+      mockConflictReviewProps = props;
+      return React.createElement("div", { "data-testid": "song-conflict-review" });
+    },
+  };
+});
 
 const doc = (id: string, overrides: Partial<DBItem> = {}): DBItem => ({
   ...itemSlice.getInitialState(), _id: id, name: id, type: "free", ...overrides,
 });
 const row = (_id: string, listId = _id) => ({ _id, listId, name: _id, type: "free" });
-const present = combineReducers({ item: itemSlice.reducer, itemList: itemListSlice.reducer });
+const present = combineReducers({ item: itemSlice.reducer, itemList: itemListSlice.reducer, itemLists: itemListsSlice.reducer });
 const makeStore = () => {
   const reducer = combineReducers({
     allDocs,
@@ -176,6 +188,62 @@ describe("Redux presentation workspace", () => {
     aux.store.dispatch(itemSlice.actions._setName("Aux draft"));
     expect(main.store.getState().undoable.present.item).toMatchObject({ _id: "A", name: "Main draft" });
     expect(aux.store.getState().undoable.present.item).toMatchObject({ _id: "B", name: "Aux draft" });
+  });
+
+  it("suppresses stale conflict completion after the editor item or church database owner changes", () => {
+    const { store, db, mount } = setup();
+    const ownerA = { scopeId: "controller:church-a", databaseKey: "church-a", churchId: "church-a" };
+    const ownerB = { scopeId: "controller:church-b", databaseKey: "church-b", churchId: "church-b" };
+    const songA = { ...doc("song-A", { type: "song" }), contentOwner: ownerA };
+    const conflict = { documentId: "song-v2:arrangement:song-A:main", winningRevision: "1-a", revisions: ["2-a"] };
+    try {
+      setActiveContentDatabase(ownerA, db);
+      store.dispatch(itemSlice.actions.setActiveItem(songA));
+      store.dispatch(itemSlice.actions.bufferSongV2RevisionConflict({ item: songA, conflicts: [conflict] }));
+      mount();
+      const staleProps = mockConflictReviewProps;
+      const staleOwner = staleProps.resolutionOwner;
+
+      act(() => {
+        store.dispatch(itemSlice.actions.setActiveItem({ ...doc("song-B", { type: "song" }), contentOwner: ownerA }));
+      });
+      act(() => staleProps.onResolved(doc("song-A", { type: "song", name: "Resolved A" }), staleOwner));
+      expect(store.getState().undoable.present.item._id).toBe("song-B");
+      expect(store.getState().undoable.present.item.name).toBe("song-B");
+
+      setActiveContentDatabase(ownerB, createMockPouchDB());
+      act(() => {
+        store.dispatch(itemSlice.actions.setActiveItem(songA));
+        staleProps.onResolved(doc("song-A", { type: "song", name: "Resolved A" }), staleOwner);
+        staleProps.onConflictChanged({ hydrated: doc("song-A", { type: "song", name: "Stale A" }), conflicts: [] }, staleOwner);
+      });
+      expect(store.getState().undoable.present.item).toMatchObject({ _id: "song-A", name: "song-A" });
+      expect(store.getState().undoable.present.item.pendingSongV2Conflicts).toEqual(undefined);
+    } finally {
+      setActiveContentDatabase(null);
+    }
+  });
+
+  it("applies a conflict resolution while its original song occurrence and database still own the editor", () => {
+    const { store, db, mount } = setup();
+    const owner = { scopeId: "controller:church-a", databaseKey: "church-a", churchId: "church-a" };
+    const currentSong = { ...doc("song-A", { type: "song" }), contentOwner: owner, listId: "outline-a" };
+    try {
+      setActiveContentDatabase(owner, db);
+      store.dispatch(itemSlice.actions.setActiveItem(currentSong));
+      store.dispatch(itemSlice.actions.bufferSongV2RevisionConflict({
+        item: currentSong,
+        conflicts: [{ documentId: "song-v2:arrangement:song-A:main", winningRevision: "1-a", revisions: ["2-a"] }],
+      }));
+      mount();
+      const currentProps = mockConflictReviewProps;
+      act(() => currentProps.onResolved(doc("song-A", { type: "song", name: "Resolved A" }), currentProps.resolutionOwner));
+
+      expect(store.getState().undoable.present.item).toMatchObject({ _id: "song-A", name: "Resolved A", listId: "outline-a" });
+      expect(store.getState().undoable.present.item.pendingSongV2Conflicts).toBeUndefined();
+    } finally {
+      setActiveContentDatabase(null);
+    }
   });
 
   it("rejects an old database response even when cache session and occurrence IDs have not reset yet", async () => {

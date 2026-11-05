@@ -14,9 +14,11 @@ export const useOutlineItemDocs = (prefetchIds: string[]) => {
   const store = useStore<RootState>();
   const { db } = useContext(ControllerInfoContext) || {};
   const allDocs = useSelector((state) => state.allDocs);
+  const songContentVersions = useSelector((state) => state.allDocs.songContentVersions);
   const [extraDocs, setExtraDocs] = useState<Map<string, DBItem>>(() => new Map());
   const cacheDbRef = useRef(db);
   const loadedProjectionRefs = useRef(new Map<string, DBItem>());
+  const loadedProjectionVersionsRef = useRef(new Map<string, number>());
   const extraDocsRef = useRef(extraDocs);
   extraDocsRef.current = extraDocs;
 
@@ -38,11 +40,15 @@ export const useOutlineItemDocs = (prefetchIds: string[]) => {
     if (cacheDbRef.current === db) return;
     cacheDbRef.current = db;
     loadedProjectionRefs.current.clear();
+    loadedProjectionVersionsRef.current.clear();
     extraDocsRef.current = new Map();
     setExtraDocs(new Map());
   }, [db]);
 
   const prefetchKey = prefetchIds.join("\0");
+  const songContentKey = prefetchIds
+    .map((id) => `${id}:${songContentVersions[id] ?? 0}`)
+    .join("\0");
   const { isInitialized, session } = allDocs;
 
   useEffect(() => {
@@ -55,9 +61,13 @@ export const useOutlineItemDocs = (prefetchIds: string[]) => {
         .filter((doc) => doc.docType === "song-v2-root")
         .map((doc) => [doc._id, doc]),
     );
+    const contentVersionsAtRead = new Map(
+      prefetchKey.split("\0").map((id) => [id, currentCache.songContentVersions[id] ?? 0]),
+    );
     const missing = prefetchKey.split("\0").filter((id) => {
       const projection = projections.get(id);
-      if (projection) return loadedProjectionRefs.current.get(id) !== projection;
+      if (projection) return loadedProjectionRefs.current.get(id) !== projection ||
+        loadedProjectionVersionsRef.current.get(id) !== (currentCache.songContentVersions[id] ?? 0);
       if (cachedDocsById.has(id)) return false;
       return !extraDocsRef.current.has(id);
     });
@@ -95,8 +105,10 @@ export const useOutlineItemDocs = (prefetchIds: string[]) => {
             const projection = projections.get(id);
             const currentProjection = latestCache.allSongDocs.find((candidate) => candidate._id === id);
             if (!projection || currentProjection !== projection) return;
+            if ((latestCache.songContentVersions[id] ?? 0) !== contentVersionsAtRead.get(id)) return;
             nextExtras.set(id, doc);
             loadedProjectionRefs.current.set(id, projection);
+            loadedProjectionVersionsRef.current.set(id, contentVersionsAtRead.get(id) ?? 0);
             extrasChanged = true;
             return;
           }
@@ -114,7 +126,7 @@ export const useOutlineItemDocs = (prefetchIds: string[]) => {
     };
     void fetchMisses();
     return () => { cancelled = true; };
-  }, [allDocs.allSongDocs, db, dispatch, isInitialized, prefetchKey, session, store]);
+  }, [allDocs.allSongDocs, db, dispatch, isInitialized, prefetchKey, session, songContentKey, store]);
 
   return docsById;
 };

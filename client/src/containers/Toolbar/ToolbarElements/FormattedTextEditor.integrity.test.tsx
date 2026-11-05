@@ -563,7 +563,7 @@ describe("delayed formatted text content integrity", () => {
       churchId: "other-church",
     };
     await act(async () => {
-      await flushContentDatabaseBeforeTeardown(mockActiveOwner.scopeId);
+      await flushContentDatabaseBeforeTeardown(mockActiveOwner, mockDb as never);
     });
     setActiveContentDatabase(ownerB, mockDatabaseB as never);
     mockCurrentDb = mockDatabaseB;

@@ -1013,6 +1013,10 @@ const ControllerInfoProvider = ({ children }: any) => {
   const tearDownLocalDatabases = useCallback(async () => {
     const mainDb = db;
     const bibleDbInstance = bibleDb;
+    const contentOwnerAtTeardown = getActiveContentDatabaseOwner();
+    const contentDatabaseAtTeardown = contentOwnerAtTeardown
+      ? getContentDatabaseForOwner(contentOwnerAtTeardown)
+      : mainDb;
     cancelSongV2CleanupMaintenance(mainDb);
     if (contentDbRef.current === mainDb) contentDbRef.current = undefined;
     // Invalidate auth-recovery continuations before cancelling handles or
@@ -1035,9 +1039,11 @@ const ControllerInfoProvider = ({ children }: any) => {
     manualContentPullActivityRef.current = null;
     manualContentPullRef.current = null;
     remoteDbRef.current = null;
-    const previousContentOwner = getActiveContentDatabaseOwner();
-    if (previousContentOwner) {
-      await flushContentDatabaseBeforeTeardown(previousContentOwner.scopeId);
+    if (contentOwnerAtTeardown && contentDatabaseAtTeardown) {
+      await flushContentDatabaseBeforeTeardown(
+        contentOwnerAtTeardown,
+        contentDatabaseAtTeardown,
+      );
     }
     setGlobalContentDatabase(undefined);
     globalBibleDb = undefined;

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import SongV2ConflictReviewDialog from "./SongV2ConflictReviewDialog";
 import {
@@ -91,6 +91,14 @@ const mockedLoadOptions = jest.mocked(loadSongV2ConflictRevisionOptions);
 const mockedResolve = jest.mocked(resolveSongV2ConflictReview);
 const mockedLoadSnapshot = jest.mocked(loadSongV2Snapshot);
 
+const deferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+};
+
 describe("SongV2ConflictReviewDialog", () => {
   let snapshot: SongV2Snapshot;
   let onClose: jest.Mock;
@@ -115,19 +123,27 @@ describe("SongV2ConflictReviewDialog", () => {
     mockedResolve.mockResolvedValue({ song: makeSong("resolved"), conflictsRetired: true });
   });
 
-  const renderDialog = (width = 1280) => {
+  const dialogProps = (overrides: Partial<{
+    db: PouchDB.Database;
+    songId: string;
+    snapshot: SongV2Snapshot | null;
+    resolutionOwner: object;
+    isOpen: boolean;
+  }> = {}) => ({
+    db: {} as PouchDB.Database,
+    songId: "song-1",
+    snapshot,
+    resolutionOwner: {},
+    isOpen: true,
+    onClose,
+    onResolved,
+    onConflictChanged,
+    ...overrides,
+  });
+
+  const renderDialog = (width = 1280, overrides: Parameters<typeof dialogProps>[0] = {}) => {
     window.innerWidth = width;
-    return render(
-      <SongV2ConflictReviewDialog
-        db={{} as PouchDB.Database}
-        songId="song-1"
-        snapshot={snapshot}
-        isOpen
-        onClose={onClose}
-        onResolved={onResolved}
-        onConflictChanged={onConflictChanged}
-      />,
-    );
+    return render(<SongV2ConflictReviewDialog {...dialogProps(overrides)} />);
   };
 
   it.each([[375, "mobile"], [1280, "desktop"]] as const)(
@@ -199,7 +215,7 @@ describe("SongV2ConflictReviewDialog", () => {
     expect(approved).toEqual(snapshot.conflicts);
     expect(sourceRevisions).toEqual({ [DOC_ID]: ALTERNATIVE_A });
     expect(adopted.arrangements[0].formattedLyrics[0].words).toBe("Manual final line");
-    expect(onResolved).toHaveBeenCalledWith(expect.objectContaining({ name: "Better" }));
+    expect(onResolved).toHaveBeenCalledWith(expect.objectContaining({ name: "Better" }), expect.any(Object));
     expect(onClose).toHaveBeenCalled();
   });
 
@@ -243,10 +259,86 @@ describe("SongV2ConflictReviewDialog", () => {
     await user.click(screen.getByRole("button", { name: "Save resolution" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("The song changed while you were reviewing. Compare the latest saved versions before saving again.");
-    expect(onConflictChanged).toHaveBeenCalledWith(latest);
+    expect(onConflictChanged).toHaveBeenCalledWith(latest, expect.any(Object));
     expect(onResolved).not.toHaveBeenCalled();
     expect(mockedResolve).toHaveBeenCalledTimes(1);
     expect(mockedLoadComparisonDocuments).toHaveBeenCalledTimes(2);
+  });
+
+  it("finishes the original save but suppresses its result after switching items", async () => {
+    const user = userEvent.setup();
+    const ownerA = {};
+    const ownerB = {};
+    const dbA = { name: "church-a" } as PouchDB.Database;
+    const pending = deferred<Awaited<ReturnType<typeof resolveSongV2ConflictReview>>>();
+    mockedResolve.mockReturnValueOnce(pending.promise);
+    const view = renderDialog(1280, { db: dbA, resolutionOwner: ownerA });
+
+    await screen.findByRole("radio", { name: "Keep currently saved version for Arrangement: Full Band" });
+    await user.click(screen.getByRole("button", { name: "Save resolution" }));
+    await waitFor(() => expect(mockedResolve).toHaveBeenCalledTimes(1));
+    expect(mockedResolve.mock.calls[0][0]).toBe(dbA);
+
+    view.rerender(<SongV2ConflictReviewDialog {...dialogProps({
+      db: dbA, songId: "song-2", resolutionOwner: ownerB,
+    })} />);
+    await act(async () => {
+      pending.resolve({ song: makeSong("Resolved A"), conflictsRetired: true });
+      await pending.promise;
+    });
+
+    expect(onResolved).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("finishes the original database write but suppresses UI publication after a database switch", async () => {
+    const user = userEvent.setup();
+    const ownerA = {};
+    const ownerB = {};
+    const dbA = { name: "church-a" } as PouchDB.Database;
+    const dbB = { name: "church-b" } as PouchDB.Database;
+    const pending = deferred<Awaited<ReturnType<typeof resolveSongV2ConflictReview>>>();
+    mockedResolve.mockReturnValueOnce(pending.promise);
+    const view = renderDialog(1280, { db: dbA, resolutionOwner: ownerA });
+
+    await screen.findByRole("radio", { name: "Keep currently saved version for Arrangement: Full Band" });
+    await user.click(screen.getByRole("button", { name: "Save resolution" }));
+    await waitFor(() => expect(mockedResolve).toHaveBeenCalledTimes(1));
+    expect(mockedResolve.mock.calls[0][0]).toBe(dbA);
+
+    view.rerender(<SongV2ConflictReviewDialog {...dialogProps({
+      db: dbB, resolutionOwner: ownerB,
+    })} />);
+    await act(async () => {
+      pending.resolve({ song: makeSong("Resolved A"), conflictsRetired: true });
+      await pending.promise;
+    });
+
+    expect(onResolved).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("allows a durable original save to settle after unmount without calling retired callbacks", async () => {
+    const user = userEvent.setup();
+    const ownerA = {};
+    const dbA = { name: "church-a" } as PouchDB.Database;
+    const pending = deferred<Awaited<ReturnType<typeof resolveSongV2ConflictReview>>>();
+    mockedResolve.mockReturnValueOnce(pending.promise);
+    const view = renderDialog(1280, { db: dbA, resolutionOwner: ownerA });
+
+    await screen.findByRole("radio", { name: "Keep currently saved version for Arrangement: Full Band" });
+    await user.click(screen.getByRole("button", { name: "Save resolution" }));
+    await waitFor(() => expect(mockedResolve).toHaveBeenCalledTimes(1));
+    expect(mockedResolve.mock.calls[0][0]).toBe(dbA);
+    view.unmount();
+
+    await act(async () => {
+      pending.resolve({ song: makeSong("Resolved A"), conflictsRetired: true });
+      await pending.promise;
+    });
+
+    expect(onResolved).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("offers diagnostic identifiers only in the support section", async () => {

@@ -1,4 +1,4 @@
-import type { SongV2Documents } from "../types";
+import type { ItemContentOwner, SongV2Documents } from "../types";
 
 const flushListenerEffects = async () => {
   for (let attempt = 0; attempt < 12; attempt += 1) await Promise.resolve();
@@ -5826,7 +5826,14 @@ const loadStoreWithItemListPersistence = (
   let servicePlanningImportSliceModule: any;
   let activeControllerPresenceModule: any;
   let contentReplicationActivityModule: any;
+  let deferredMutationsModule: any;
   const postMessage = jest.fn();
+  const globalFireDbInfo = {
+    db: undefined,
+    database: "outline-persistence-test-db",
+    churchId: "church-test",
+    isConnected: true,
+  };
   const db = {
     name: "outline-persistence-test-db",
     get: jest.fn(),
@@ -5846,12 +5853,7 @@ const loadStoreWithItemListPersistence = (
       get globalBroadcastRef() { return { postMessage: activePostMessage }; },
     }));
     jest.doMock("../context/globalInfo", () => ({
-      globalFireDbInfo: {
-        db: undefined,
-        database: "outline-persistence-test-db",
-        churchId: "church-test",
-        isConnected: true,
-      },
+      globalFireDbInfo,
       globalHostId: "host-123",
     }));
     jest.doMock("firebase/database", () => ({
@@ -5879,6 +5881,8 @@ const loadStoreWithItemListPersistence = (
     activeControllerPresenceModule = require("../utils/activeControllerPresence");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     contentReplicationActivityModule = require("../utils/contentReplicationActivity");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    deferredMutationsModule = require("./deferredItemMutations");
   });
 
   const contentDatabaseSession =
@@ -5899,7 +5903,9 @@ const loadStoreWithItemListPersistence = (
     servicePlanningImportSlice: servicePlanningImportSliceModule.servicePlanningImportSlice,
     activeControllerPresence: activeControllerPresenceModule,
     contentReplicationActivity: contentReplicationActivityModule,
+    deferredMutations: deferredMutationsModule,
     contentDatabaseSession,
+    globalFireDbInfo,
     db,
     setGlobalDb: (next: unknown) => { activeDb = next; },
     postMessage,
@@ -6222,6 +6228,152 @@ describe("item list outline persistence", () => {
     await flushListenerEffects();
     expect(otherDb.get).not.toHaveBeenCalled();
     expect(otherDb.put).not.toHaveBeenCalled();
+    expect(env.store.getState().undoable.present.itemLists.currentLists[0].name).toBe("Church B");
+    expect(env.postMessage).not.toHaveBeenCalled();
+    jest.useRealTimers();
+  });
+
+  const registryOwner = (scopeId: string, churchId: string): ItemContentOwner => ({
+    scopeId,
+    databaseKey: `db-${churchId}`,
+    churchId,
+  });
+  const bindRegistryOwner = (
+    env: ReturnType<typeof loadStoreWithItemListPersistence>,
+    owner: ItemContentOwner,
+    database: any,
+  ) => {
+    env.deferredMutations.setActiveContentDatabase(owner, database);
+    return database === env.db
+      ? env.contentDatabaseSession
+      : env.contentReplicationActivity.beginContentDatabaseSession(database.name);
+  };
+  const registryDocument = (name: string) => ({
+    _id: "ItemLists", _rev: "1-base",
+    itemLists: [{ _id: "outline-a", name }],
+    activeList: { _id: "outline-a", name },
+  });
+
+  it("drains a debounced registry edit before teardown and cancels the old debounce wakeup", async () => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    const owner = registryOwner("presentation:church-test", "church-test");
+    bindRegistryOwner(env, owner, env.db);
+    let current = registryDocument("A");
+    env.db.get.mockImplementation(async () => ({ ...current }));
+    env.db.put.mockImplementation(async (doc: typeof current) => {
+      current = { ...doc, _rev: "2-saved" };
+      return { rev: current._rev };
+    });
+    env.store.dispatch(env.itemListsSlice.actions.initiateItemLists(current.itemLists));
+    env.store.dispatch(env.itemListsSlice.actions.updateItemLists([{ _id: "outline-a", name: "Unsaved rename" }]));
+    await flushListenerEffects();
+
+    await env.deferredMutations.flushContentDatabaseBeforeTeardown(owner, env.db);
+    expect(current.itemLists[0].name).toBe("Unsaved rename");
+    expect(env.db.put).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(env.db.put).toHaveBeenCalledTimes(1);
+    jest.useRealTimers();
+  });
+
+  it("waits for an in-flight registry write during database teardown", async () => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    const owner = registryOwner("presentation:church-test", "church-test");
+    bindRegistryOwner(env, owner, env.db);
+    env.db.get.mockResolvedValue(registryDocument("A"));
+    let release!: (value: { rev: string }) => void;
+    const gate = new Promise<{ rev: string }>((resolve) => { release = resolve; });
+    env.db.put.mockReturnValue(gate);
+    env.store.dispatch(env.itemListsSlice.actions.initiateItemLists([{ _id: "outline-a", name: "A" }]));
+    env.store.dispatch(env.itemListsSlice.actions.updateItemLists([{ _id: "outline-a", name: "In flight" }]));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(env.db.put).toHaveBeenCalledTimes(1);
+
+    let drained = false;
+    const teardown = env.deferredMutations.flushContentDatabaseBeforeTeardown(owner, env.db)
+      .then(() => { drained = true; });
+    await flushListenerEffects();
+    expect(drained).toBe(false);
+    release({ rev: "2-saved" });
+    await teardown;
+    expect(drained).toBe(true);
+    expect(env.db.put).toHaveBeenCalledTimes(1);
+    jest.useRealTimers();
+  });
+
+  it("retains a failed teardown write and retries it after the same owner gets a new DB handle", async () => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    const owner = registryOwner("presentation:church-test", "church-test");
+    bindRegistryOwner(env, owner, env.db);
+    env.db.get.mockResolvedValue(registryDocument("A"));
+    env.db.put.mockRejectedValue(new Error("offline"));
+    env.store.dispatch(env.itemListsSlice.actions.initiateItemLists([{ _id: "outline-a", name: "A" }]));
+    env.store.dispatch(env.itemListsSlice.actions.updateItemLists([{ _id: "outline-a", name: "Retained edit" }]));
+    await flushListenerEffects();
+    await env.deferredMutations.flushContentDatabaseBeforeTeardown(owner, env.db);
+    expect(env.store.getState().undoable.present.itemLists.registrySave.status).toBe("error");
+
+    const replacement = {
+      name: env.db.name,
+      get: jest.fn().mockResolvedValue(registryDocument("A")),
+      put: jest.fn().mockResolvedValue({ rev: "2-retried" }),
+    };
+    const newSession = bindRegistryOwner(env, owner, replacement);
+    newSession.markInitialReplicationComplete();
+    env.setGlobalDb(replacement);
+    env.store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+    env.store.dispatch(env.itemListsSlice.actions.initiateItemLists([{ _id: "outline-a", name: "A" }]));
+    await flushListenerEffects();
+    expect(env.store.getState().undoable.present.itemLists.currentLists[0].name).toBe("Retained edit");
+    env.store.dispatch(env.itemListsSlice.actions.retryRegistrySave());
+    await flushListenerEffects();
+
+    expect(replacement.put).toHaveBeenCalledWith(expect.objectContaining({
+      _id: "ItemLists",
+      itemLists: [{ _id: "outline-a", name: "Retained edit" }],
+    }));
+    expect(env.store.getState().undoable.present.itemLists.registrySave.status).toBe("idle");
+    jest.useRealTimers();
+  });
+
+  it("finishes an old owner's in-flight teardown write without publishing into the switched church", async () => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    const ownerA = registryOwner("presentation:church-a", "church-test");
+    bindRegistryOwner(env, ownerA, env.db);
+    env.db.get.mockResolvedValue(registryDocument("Church A"));
+    let finish!: (value: { rev: string }) => void;
+    env.db.put.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    env.store.dispatch(env.itemListsSlice.actions.initiateItemLists([{ _id: "outline-a", name: "Church A" }]));
+    env.store.dispatch(env.itemListsSlice.actions.updateItemLists([{ _id: "outline-a", name: "Local A" }]));
+    await flushListenerEffects();
+
+    const teardown = env.deferredMutations.flushContentDatabaseBeforeTeardown(ownerA, env.db);
+    await flushListenerEffects();
+    expect(env.db.put).toHaveBeenCalledTimes(1);
+    const ownerB = registryOwner("presentation:church-b", "church-b");
+    const churchBDb = {
+      name: "church-b-db",
+      get: jest.fn().mockResolvedValue(registryDocument("Church B")),
+      put: jest.fn().mockResolvedValue({ rev: "2-b" }),
+    };
+    const sessionB = bindRegistryOwner(env, ownerB, churchBDb);
+    sessionB.markInitialReplicationComplete();
+    env.setGlobalDb(churchBDb);
+    env.globalFireDbInfo.churchId = "church-b";
+    env.store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+    env.store.dispatch(env.itemListsSlice.actions.initiateItemLists([{ _id: "outline-a", name: "Church B" }]));
+    finish({ rev: "2-a" });
+    await teardown;
+    await flushListenerEffects();
+
+    expect(churchBDb.get).not.toHaveBeenCalled();
+    expect(churchBDb.put).not.toHaveBeenCalled();
     expect(env.store.getState().undoable.present.itemLists.currentLists[0].name).toBe("Church B");
     expect(env.postMessage).not.toHaveBeenCalled();
     jest.useRealTimers();

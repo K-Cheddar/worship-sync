@@ -38,6 +38,8 @@ let nextCacheSession = 0;
 type AllDocsState = {
   session: number;
   changeVersion: number;
+  /** Targeted v2 child-content invalidation, separate from library projection changes. */
+  songContentVersions: Record<string, number>;
   songLibraryDiagnostics: SongLibraryDiagnostic[];
   allSongDocs: DBItem[];
   allFreeFormDocs: DBItem[];
@@ -52,6 +54,7 @@ type AllDocsState = {
 const initialState: AllDocsState = {
   session: 0,
   changeVersion: 0,
+  songContentVersions: {},
   songLibraryDiagnostics: [],
   allSongDocs: [],
   allFreeFormDocs: [],
@@ -72,6 +75,10 @@ export const allDocsSlice = createSlice({
   reducers: {
     updateSongLibraryDiagnostics: (state, action: PayloadAction<SongLibraryDiagnostic[]>) => {
       state.songLibraryDiagnostics = action.payload;
+    },
+    invalidateSongContent: (state, action: PayloadAction<string>) => {
+      const songId = action.payload;
+      state.songContentVersions[songId] = (state.songContentVersions[songId] ?? 0) + 1;
     },
     updateAllSongDocs: (state, action: PayloadAction<DBItem[]>) => {
       state.allSongDocs = action.payload.map(normalizeLibrarySong);
@@ -113,6 +120,7 @@ export const allDocsSlice = createSlice({
       const key = getDocsKey(action.payload.type);
       if (!key) return;
       state[key] = state[key].filter((doc) => doc._id !== action.payload._id);
+      delete state.songContentVersions[action.payload._id];
     },
     attachCloudCopyToLocalImageInAllDocs: (state, action: PayloadAction<{
       itemId: string;
@@ -205,6 +213,7 @@ export const allDocsSlice = createSlice({
 
 export const {
   updateSongLibraryDiagnostics,
+  invalidateSongContent,
   updateAllSongDocs,
   updateAllFreeFormDocs,
   updateAllTimerDocs,

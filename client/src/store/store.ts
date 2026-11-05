@@ -74,6 +74,7 @@ import {
   DBCredit,
   DBCredits,
   DBItem,
+  DBItemLists,
   DBOverlay,
   DBOverlayTemplates,
   DBPreferences,
@@ -169,6 +170,7 @@ import {
 import { notifyPresentationSyncError } from "../utils/presentationSyncErrorBus";
 import { serverDate } from "../utils/serverTime";
 import { sortServicesByScheduleOrder } from "../utils/serviceTimes";
+import type { ItemContentOwner } from "../types";
 import {
   flushPendingItemMutations,
   getActiveContentDatabaseOwner,
@@ -1421,41 +1423,85 @@ listenerMiddleware.startListening({
   },
 });
 
-export const songV2DocumentsChanged = createAction<{ songId: string; libraryChanged: boolean }[]>("songV2/documentsChanged");
-const songRefreshes = new Map<string, { libraryChanged: boolean }>();
+export type SongV2DocumentChange = {
+  songId: string;
+  libraryChanged: boolean;
+  /** Captured at the replication boundary so a delayed event cannot target a new DB. */
+  database?: PouchDB.Database;
+  owner?: ItemContentOwner | null;
+  sessionToken?: symbol | null;
+};
+export const songV2DocumentsChanged = createAction<SongV2DocumentChange[]>("songV2/documentsChanged");
+type SongRefreshRequest = SongV2DocumentChange & { database: PouchDB.Database; owner: ItemContentOwner | null };
+const songRefreshes = new Map<string, SongRefreshRequest>();
 listenerMiddleware.startListening({
   actionCreator: songV2DocumentsChanged,
   effect: async (action, api) => {
-    const database = db;
-    if (!database) return;
-    const databaseOwner = getActiveContentDatabaseOwner();
-    await Promise.all(action.payload.map(async ({ songId, libraryChanged }) => {
-      const key = JSON.stringify([databaseOwner?.scopeId ?? "unscoped", songId]);
-      const request = { libraryChanged: libraryChanged || !!songRefreshes.get(key)?.libraryChanged };
+    await Promise.all(action.payload.map(async (change) => {
+      const database = change.database ?? db;
+      if (!database || db !== database) return;
+      const ownerWasCaptured = change.owner !== undefined;
+      const databaseOwner = ownerWasCaptured ? change.owner ?? null : getActiveContentDatabaseOwner();
+      if (databaseOwner && getContentDatabaseForOwner(databaseOwner) !== database) return;
+      const sessionWasCaptured = change.sessionToken !== undefined;
+      const sessionToken = sessionWasCaptured
+        ? change.sessionToken ?? null
+        : getContentDatabaseSessionToken(database.name);
+      const key = JSON.stringify([databaseOwner?.scopeId ?? "unscoped", change.songId]);
+      const request: SongRefreshRequest = {
+        ...change,
+        libraryChanged: change.libraryChanged || !!songRefreshes.get(key)?.libraryChanged,
+        database,
+        owner: databaseOwner,
+        ...(sessionWasCaptured ? { sessionToken } : {}),
+      };
       songRefreshes.set(key, request);
       await api.delay(50);
-      const stillCurrent = () => db === database &&
-        getActiveContentDatabaseOwner() === databaseOwner && songRefreshes.get(key) === request;
+      const ownerIsCurrent = () => {
+        if (db !== database) return false;
+        const currentOwner = getActiveContentDatabaseOwner();
+        if (databaseOwner) {
+          if (!currentOwner || currentOwner.scopeId !== databaseOwner.scopeId ||
+            currentOwner.databaseKey !== databaseOwner.databaseKey ||
+            currentOwner.churchId !== databaseOwner.churchId ||
+            getContentDatabaseForOwner(currentOwner) !== database ||
+            (databaseOwner.churchId && globalFireDbInfo?.churchId !== databaseOwner.churchId)) return false;
+        } else if (currentOwner) return false;
+        return !sessionWasCaptured ||
+          getContentDatabaseSessionToken(database.name) === sessionToken;
+      };
+      const stillCurrent = () => ownerIsCurrent() && songRefreshes.get(key) === request;
       if (!stillCurrent()) return;
       const itemAtStart = (api.getState() as RootState).undoable.present.item;
-      const owner = getItemMutationOwner(itemAtStart);
+      const itemOwner = getItemMutationOwner(itemAtStart);
       try {
-        const active = itemAtStart._id === songId && itemAtStart.type === "song";
-        const snapshot = active ? await loadReconciledSongV2Snapshot(database, songId) : undefined;
+        const active = itemAtStart._id === change.songId && itemAtStart.type === "song";
+        const snapshot = active ? await loadReconciledSongV2Snapshot(database, change.songId) : undefined;
         if (!stillCurrent()) return;
-        if (active && (api.getState() as RootState).undoable.present.item.baseItem !== itemAtStart.baseItem) {
-          api.dispatch(songV2DocumentsChanged([{ songId, libraryChanged: request.libraryChanged }]));
-          return;
+        if (active) {
+          const current = (api.getState() as RootState).undoable.present.item;
+          if (current.baseItem !== itemAtStart.baseItem) {
+            api.dispatch(songV2DocumentsChanged([{ ...change, libraryChanged: request.libraryChanged }]));
+            return;
+          }
+          if (current._id !== change.songId || !sameItemMutationOwner(itemOwner, getItemMutationOwner(current))) {
+            api.dispatch(allDocsSlice.actions.invalidateSongContent(change.songId));
+            return;
+          }
         }
         if (request.libraryChanged) {
           const projection = snapshot ? songToLibraryProjection(snapshot.hydrated)
-            : await loadSongV2LibraryProjection(database, await database.get(getSongV2RootDocId(songId)));
+            : await loadSongV2LibraryProjection(database, await database.get(getSongV2RootDocId(change.songId)));
           if (!stillCurrent()) return;
           api.dispatch(allDocsSlice.actions.applyItemDocumentChange({ id: projection._id, doc: projection }));
         }
+        if (!active) {
+          if (!request.libraryChanged) api.dispatch(allDocsSlice.actions.invalidateSongContent(change.songId));
+          return;
+        }
         if (!snapshot || !stillCurrent()) return;
         const current = (api.getState() as RootState).undoable.present.item;
-        if (!sameItemMutationOwner(owner, getItemMutationOwner(current)) ||
+        if (!sameItemMutationOwner(itemOwner, getItemMutationOwner(current)) ||
           current.baseItem !== itemAtStart.baseItem) return;
         if (itemDocMatchesEditorState(snapshot.hydrated, current) ||
           (current.baseItem && itemDocMatchesEditorState(current.baseItem, snapshot.hydrated as ItemState))) return;
@@ -1465,14 +1511,19 @@ listenerMiddleware.startListening({
       } catch (error) {
         if (error instanceof SongV2ReplicationConflictError && stillCurrent()) {
           const current = (api.getState() as RootState).undoable.present.item;
-          if (sameItemMutationOwner(owner, getItemMutationOwner(current)) && current.baseItem === itemAtStart.baseItem) {
+          if (sameItemMutationOwner(itemOwner, getItemMutationOwner(current)) && current.baseItem === itemAtStart.baseItem) {
             api.dispatch(itemSlice.actions.bufferSongV2RevisionConflict({
               item: error.snapshot.hydrated, conflicts: error.snapshot.conflicts ?? [],
             }));
+          } else if (ownerIsCurrent()) {
+            api.dispatch(allDocsSlice.actions.invalidateSongContent(change.songId));
           }
           return;
         }
-        console.error("Could not refresh changed v2 song", songId, error);
+        if (ownerIsCurrent() && (api.getState() as RootState).undoable.present.item._id !== change.songId) {
+          api.dispatch(allDocsSlice.actions.invalidateSongContent(change.songId));
+        }
+        console.error("Could not refresh changed v2 song", change.songId, error);
       } finally {
         if (songRefreshes.get(key) === request) songRefreshes.delete(key);
       }
@@ -2171,8 +2222,30 @@ listenerMiddleware.startListening({
   },
 });
 
-// Registry runtimes outlive picker/controller mounts and are bound to one DB.
-const pendingRegistryIntentsByDb = new WeakMap<object, ItemListsRegistryQueue>();
+// Registry runtimes outlive controller mounts. Failed intents remain bound to
+// their church/database owner and can be rebound to a fresh Pouch handle for
+// that same owner after teardown.
+type RegistryQueueBinding = {
+  database: object;
+  sessionToken: symbol | null;
+  queue: ItemListsRegistryQueue;
+};
+const pendingRegistryQueuesByOwner = new Map<string, RegistryQueueBinding>();
+const pendingRegistryQueuesByDb = new WeakMap<object, ItemListsRegistryQueue>();
+const releaseIdleRegistryQueue = (
+  ownerKey: string | undefined,
+  database: object,
+  queue: ItemListsRegistryQueue,
+) => {
+  if (queue.hasPendingChanges) return;
+  if (ownerKey) {
+    if (pendingRegistryQueuesByOwner.get(ownerKey)?.queue === queue) {
+      pendingRegistryQueuesByOwner.delete(ownerKey);
+    }
+  } else {
+    pendingRegistryQueuesByDb.delete(database);
+  }
+};
 
 const snapshotItemListsRegistry = (
   state: RootState["undoable"]["present"]["itemLists"],
@@ -2185,7 +2258,7 @@ listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     if (isAnyOf(itemListsSlice.actions.retryRegistrySave, itemListsSlice.actions.keepRegistryChanges)(action)) return true;
     if (itemListsSlice.actions.initiateItemLists.match(action)) {
-      return Boolean(db && pendingRegistryIntentsByDb.has(db));
+      return Boolean(db);
     }
     const state = (currentState as RootState).undoable.present.itemLists;
     if (!state.isInitialized || isStoreResetAction(action)) return false;
@@ -2203,19 +2276,52 @@ listenerMiddleware.startListening({
   effect: async (action, listenerApi) => {
     const dbAtStart = db;
     if (!dbAtStart) return;
-    let queue = pendingRegistryIntentsByDb.get(dbAtStart);
+    const ownerAtStart = getActiveContentDatabaseOwner();
+    if (ownerAtStart && getContentDatabaseForOwner(ownerAtStart) !== dbAtStart) return;
+    const sessionTokenAtStart = getContentDatabaseSessionToken(dbAtStart.name);
+    const ownerKey = ownerAtStart?.scopeId;
+    const isOwnerCurrent = () => {
+      if (db !== dbAtStart) return false;
+      if (ownerAtStart) {
+        const currentOwner = getActiveContentDatabaseOwner();
+        if (!currentOwner || currentOwner.scopeId !== ownerAtStart.scopeId ||
+          currentOwner.databaseKey !== ownerAtStart.databaseKey ||
+          currentOwner.churchId !== ownerAtStart.churchId ||
+          getContentDatabaseForOwner(currentOwner) !== dbAtStart ||
+          (ownerAtStart.churchId && globalFireDbInfo?.churchId !== ownerAtStart.churchId)) return false;
+      } else if (getActiveContentDatabaseOwner()) {
+        return false;
+      }
+      return !sessionTokenAtStart ||
+        getContentDatabaseSessionToken(dbAtStart.name) === sessionTokenAtStart;
+    };
+    const saved = (document: DBItemLists) => {
+      if (!isOwnerCurrent()) return;
+      listenerApi.dispatch(itemListsSlice.actions.updateItemListsFromRemote({
+        itemLists: document.itemLists ?? [],
+        activeListId: document.activeList?._id,
+      }));
+      safePostMessage({ type: "update", data: { docs: document, hostId: globalHostId } });
+    };
+    const publishStatus = (status: Parameters<typeof itemListsSlice.actions.setRegistrySaveState>[0]) => {
+      if (isOwnerCurrent()) listenerApi.dispatch(itemListsSlice.actions.setRegistrySaveState(status));
+    };
+    const binding = ownerKey ? pendingRegistryQueuesByOwner.get(ownerKey) : undefined;
+    let queue = ownerKey ? binding?.queue : pendingRegistryQueuesByDb.get(dbAtStart);
     if (!queue) {
-      queue = new ItemListsRegistryQueue(dbAtStart, (document) => {
-        if (db !== dbAtStart) return;
-        listenerApi.dispatch(itemListsSlice.actions.updateItemListsFromRemote({
-          itemLists: document.itemLists ?? [],
-          activeListId: document.activeList?._id,
-        }));
-        safePostMessage({ type: "update", data: { docs: document, hostId: globalHostId } });
-      }, (status) => {
-        if (db === dbAtStart) listenerApi.dispatch(itemListsSlice.actions.setRegistrySaveState(status));
+      queue = new ItemListsRegistryQueue(dbAtStart, saved, publishStatus);
+    } else if (ownerKey && binding &&
+      (binding.database !== dbAtStart || binding.sessionToken !== sessionTokenAtStart)) {
+      queue.rebind(dbAtStart, saved, publishStatus);
+    }
+    if (ownerKey) {
+      pendingRegistryQueuesByOwner.set(ownerKey, {
+        database: dbAtStart,
+        sessionToken: sessionTokenAtStart,
+        queue,
       });
-      pendingRegistryIntentsByDb.set(dbAtStart, queue);
+    } else {
+      pendingRegistryQueuesByDb.set(dbAtStart, queue);
     }
     if (itemListsSlice.actions.initiateItemLists.match(action)) {
       const pending = queue.pendingIntents;
@@ -2223,20 +2329,26 @@ listenerMiddleware.startListening({
         listenerApi.dispatch(itemListsSlice.actions.restorePendingRegistryChanges(pending));
       }
       if (db === dbAtStart) listenerApi.dispatch(itemListsSlice.actions.setRegistrySaveState(queue.state));
-      if (pending.length && queue.state.status !== "error") void queue.flush();
+      if (pending.length && queue.state.status !== "error") {
+        void queue.flush().finally(() => releaseIdleRegistryQueue(ownerKey, dbAtStart, queue));
+      } else if (!pending.length) {
+        releaseIdleRegistryQueue(ownerKey, dbAtStart, queue);
+      }
       return;
     }
     if (itemListsSlice.actions.retryRegistrySave.match(action)) {
       await queue.flush(true);
+      releaseIdleRegistryQueue(ownerKey, dbAtStart, queue);
       return;
     }
     if (itemListsSlice.actions.keepRegistryChanges.match(action)) {
       await queue.flush(true, true);
+      releaseIdleRegistryQueue(ownerKey, dbAtStart, queue);
       return;
     }
     const rootBefore = listenerApi.getOriginalState() as RootState;
     const rootAfter = listenerApi.getState() as RootState;
-    queue.enqueue({
+    const debounceGeneration = queue.enqueue({
       before: snapshotItemListsRegistry(rootBefore.undoable.present.itemLists),
       after: snapshotItemListsRegistry(rootAfter.undoable.present.itemLists),
     });
@@ -2246,11 +2358,12 @@ listenerMiddleware.startListening({
       // completion independently and never submits the same entry twice.
       listenerApi.cancelActiveListeners();
       await listenerApi.delay(1500);
-      await queue.flush();
+      if (queue.currentGeneration === debounceGeneration) await queue.flush();
     } catch (error) {
       if (!isListenerCancelledTaskError(error)) console.error("Outline list save failed:", error);
     } finally {
       listenerApi.dispatch(autosaveIndicatorSlice.actions.endKeyedDebouncedSave(AUTOSAVE_DEBOUNCE_KEYS.itemLists));
+      releaseIdleRegistryQueue(ownerKey, dbAtStart, queue);
     }
   },
 });
@@ -4795,7 +4908,18 @@ subscribeToActiveControllerPresence(() => {
   store.dispatch(bibleCleanupOpportunity({}));
 });
 
-registerContentDatabaseFlushHandler(flushItemAutosavesForContentDatabase);
+registerContentDatabaseFlushHandler((owner) =>
+  flushItemAutosavesForContentDatabase(owner.scopeId),
+);
+registerContentDatabaseFlushHandler(async (owner, database) => {
+  const binding = pendingRegistryQueuesByOwner.get(owner.scopeId);
+  if (!binding || binding.database !== database) return;
+  // flush() waits for an existing write or drains the current debounce queue.
+  // Failed/conflicting entries remain in the owner-bound queue and publish the
+  // existing Retry save / Keep my changes state instead of blocking teardown.
+  await binding.queue.flush();
+  releaseIdleRegistryQueue(owner.scopeId, database, binding.queue);
+});
 
 const refreshServicePlanningPreviewSongMatches = (listenerApi: {
   getState: () => unknown;

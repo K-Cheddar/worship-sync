@@ -22,6 +22,7 @@ import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import { upsertMediaItemFromRemote } from "../../store/mediaSlice";
 import { getOverlaysByIds } from "../../utils/dbUtils";
 import { getOutlineDatabaseKey, setOutlineContentDatabase } from "../../store/outlineContent";
+import { setActiveContentDatabase } from "../../store/deferredItemMutations";
 import Overlays from "../../containers/Overlays/Overlays";
 import type { OverlayInfo } from "../../types";
 
@@ -573,6 +574,36 @@ describe("useControllerPageLifecycle selected outline loading", () => {
     await act(async () => { retry.resolve(details("Obsolete")); });
     expect(store.getState().undoable.present.itemList.list[0].name).toBe("New outline");
     expect(store.getState().undoable.present.itemList.loadError).toBeNull();
+  });
+
+  it("routes replicated slide-only v2 changes to targeted content refresh", async () => {
+    setActiveContentDatabase(null);
+    const db = createDb({});
+    const updater = new EventTarget();
+    const dispatch = jest.spyOn(store, "dispatch");
+    renderHook(() => useControllerPageLifecycle(), {
+      wrapper: ({ children }) => (
+        <Provider store={store}>
+          <ControllerInfoContext.Provider value={{ db, cloud: {}, updater } as any}>
+            {children}
+          </ControllerInfoContext.Provider>
+        </Provider>
+      ),
+    });
+
+    await act(async () => {
+      updater.dispatchEvent(new CustomEvent("update", {
+        detail: [{ _id: "song-v2:slide:song-42:main:verse-2" }],
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
+      type: "songV2/documentsChanged",
+      payload: [expect.objectContaining({ songId: "song-42", libraryChanged: false, database: db })],
+    }));
+    dispatch.mockRestore();
   });
 
   it("refreshes overlay content on /controller before navigating to the Overlays page", async () => {

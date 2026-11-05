@@ -23,6 +23,7 @@ import { loadSongV2Snapshot, type SongV2Snapshot } from "../../utils/songPersist
 import type { Arrangment, DBItem, ItemState } from "../../types";
 
 type ManualLyrics = Record<string, Record<string, string>>;
+export type SongV2ConflictReviewOwner = object;
 type ConflictReviewState = {
   snapshot: SongV2Snapshot;
   versions: SongV2ConflictRevisionOptions[];
@@ -36,10 +37,11 @@ type SongV2ConflictReviewDialogProps = {
   db: PouchDB.Database;
   songId: string;
   snapshot?: SongV2Snapshot | null;
+  resolutionOwner: SongV2ConflictReviewOwner;
   isOpen: boolean;
   onClose: () => void;
-  onResolved: (song: DBItem) => void;
-  onConflictChanged: (snapshot: SongV2Snapshot) => void;
+  onResolved: (song: DBItem, owner: SongV2ConflictReviewOwner) => void;
+  onConflictChanged: (snapshot: SongV2Snapshot, owner: SongV2ConflictReviewOwner) => void;
 };
 
 const versionLabel = (doc: SongV2RevisionDocument) => {
@@ -265,6 +267,7 @@ const SongV2ConflictReviewDialog = ({
   db,
   songId,
   snapshot,
+  resolutionOwner,
   isOpen,
   onClose,
   onResolved,
@@ -285,6 +288,17 @@ const SongV2ConflictReviewDialog = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [diagnosticMessage, setDiagnosticMessage] = useState<string | null>(null);
   const requestSequence = useRef(0);
+  const mountedRef = useRef(true);
+  const resolutionOwnerRef = useRef(resolutionOwner);
+  resolutionOwnerRef.current = resolutionOwner;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      requestSequence.current += 1;
+    };
+  }, []);
 
   const setReview = (review: ConflictReviewState) => {
     setReviewedSnapshot(review.snapshot);
@@ -302,7 +316,7 @@ const SongV2ConflictReviewDialog = ({
   useEffect(() => {
     setManualLyrics({});
     setIsManualEditing(false);
-  }, [db, songId]);
+  }, [db, resolutionOwner, songId]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -311,6 +325,7 @@ const SongV2ConflictReviewDialog = ({
     const isCurrent = () => !cancelled && requestSequence.current === sequence;
     const load = async () => {
       setIsLoading(true);
+      setIsSaving(false);
       setErrorMessage(null);
       setDiagnosticMessage(null);
       setRevisionOptions([]);
@@ -336,7 +351,7 @@ const SongV2ConflictReviewDialog = ({
       cancelled = true;
       requestSequence.current += 1;
     };
-  }, [db, isOpen, snapshot, songId]);
+  }, [db, isOpen, resolutionOwner, snapshot, songId]);
 
   const comparisons = useMemo(() => {
     if (!reviewedSnapshot || !comparisonDocuments) return new Map<string, Map<string, SongV2ConflictDiffModel>>();
@@ -413,45 +428,55 @@ const SongV2ConflictReviewDialog = ({
 
   const saveResolution = async () => {
     if (!reviewedSnapshot || !draftSong || isSaving || isLoading || isChoosing || missingManual.length) return;
+    const databaseAtStart = db;
+    const songIdAtStart = songId;
+    const ownerAtStart = resolutionOwner;
+    const isCurrentOperation = () => mountedRef.current && resolutionOwnerRef.current === ownerAtStart;
     setIsSaving(true);
     setErrorMessage(null);
     try {
       const manualSong = applyManualLyrics(draftSong, manualLyrics);
       const result = await resolveSongV2ConflictReview(
-        db,
+        databaseAtStart,
         reviewedSnapshot,
         manualSong,
         reviewedSnapshot.conflicts ?? [],
         sourceRevisions,
       );
+      if (!isCurrentOperation()) return;
       if (result.conflictsRetired) {
-        onResolved(result.song);
+        onResolved(result.song, ownerAtStart);
         onClose();
         return;
       }
-      const latest = await loadSongV2Snapshot(db, songId, true);
+      const latest = await loadSongV2Snapshot(databaseAtStart, songIdAtStart, true);
+      if (!isCurrentOperation()) return;
       if (!latest.conflicts?.length) {
-        onResolved(latest.hydrated);
+        onResolved(latest.hydrated, ownerAtStart);
         onClose();
         return;
       }
-      const review = await readConflictReview(db, songId, latest);
+      const review = await readConflictReview(databaseAtStart, songIdAtStart, latest);
+      if (!isCurrentOperation()) return;
       setReview(review);
-      onConflictChanged(review.snapshot);
+      onConflictChanged(review.snapshot, ownerAtStart);
       setErrorMessage("A newer saved version arrived during review. Compare the latest versions before saving again.");
     } catch (error) {
+      if (!isCurrentOperation()) return;
       if (error instanceof SongV2ConflictReviewStaleError) {
-        const latest = await loadSongV2Snapshot(db, songId, true).catch(() => null);
+        const latest = await loadSongV2Snapshot(databaseAtStart, songIdAtStart, true).catch(() => null);
+        if (!isCurrentOperation()) return;
         if (latest) {
           if (!latest.conflicts?.length) {
-            onResolved(latest.hydrated);
+            onResolved(latest.hydrated, ownerAtStart);
             onClose();
             return;
           }
-          const review = await readConflictReview(db, songId, latest).catch(() => null);
+          const review = await readConflictReview(databaseAtStart, songIdAtStart, latest).catch(() => null);
+          if (!isCurrentOperation()) return;
           if (review) {
             setReview(review);
-            onConflictChanged(review.snapshot);
+            onConflictChanged(review.snapshot, ownerAtStart);
           }
         }
         setErrorMessage("The song changed while you were reviewing. Compare the latest saved versions before saving again.");
@@ -459,7 +484,7 @@ const SongV2ConflictReviewDialog = ({
         setErrorMessage("Could not save the resolution. Your saved versions are still available; try again.");
       }
     } finally {
-      setIsSaving(false);
+      if (isCurrentOperation()) setIsSaving(false);
     }
   };
 

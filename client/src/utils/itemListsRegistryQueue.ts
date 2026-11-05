@@ -72,6 +72,10 @@ const splitIntent = (intent: ItemListsRegistryIntent): Entry[] => {
 export class ItemListsRegistryQueue {
   private entries: Entry[] = [];
   private running?: Promise<void>;
+  private generation = 0;
+  private db: ItemListsRegistryDb;
+  private saved: (doc: DBItemLists) => void;
+  private status: (state: RegistrySaveState) => void;
   state: RegistrySaveState = { status: "idle" };
 
   get pendingIntents(): ItemListsRegistryIntent[] {
@@ -88,10 +92,36 @@ export class ItemListsRegistryQueue {
   }
 
   constructor(
-    private readonly db: ItemListsRegistryDb,
-    private readonly saved: (doc: DBItemLists) => void,
-    private readonly status: (state: RegistrySaveState) => void,
-  ) {}
+    db: ItemListsRegistryDb,
+    saved: (doc: DBItemLists) => void,
+    status: (state: RegistrySaveState) => void,
+  ) {
+    this.db = db;
+    this.saved = saved;
+    this.status = status;
+  }
+
+  rebind(
+    db: ItemListsRegistryDb,
+    saved: (doc: DBItemLists) => void,
+    status: (state: RegistrySaveState) => void,
+  ) {
+    if (this.running) {
+      throw new Error("Cannot rebind a registry queue while a save is running");
+    }
+    this.db = db;
+    this.saved = saved;
+    this.status = status;
+    this.generation += 1;
+  }
+
+  get currentGeneration() {
+    return this.generation;
+  }
+
+  get hasPendingChanges() {
+    return this.entries.length > 0;
+  }
 
   private publish(state: RegistrySaveState) {
     this.state = state;
@@ -125,10 +155,13 @@ export class ItemListsRegistryQueue {
       }
       this.entries.push(entry);
     }
+    this.generation += 1;
+    return this.generation;
   }
 
   /** Retry transient failures, or explicitly keep current edits after a field conflict. */
   flush(retry = false, keepCurrentConflicts = false): Promise<void> {
+    this.generation += 1;
     if (this.running) return this.running;
     if (retry) this.entries.forEach((entry) => { entry.failed = false; });
 
