@@ -90,7 +90,7 @@ export let globalBroadcastRef: BroadcastChannel | undefined = undefined;
 
 export const setGlobalContentDatabase = (
   databaseInstance: PouchDB.Database | undefined,
-  scope?: { databaseKey: string; churchId: string },
+  scope?: { databaseKey: string; churchId: string; accountId?: string },
 ) => {
   if (!databaseInstance || !scope) {
     const previousOwner = getActiveContentDatabaseOwner();
@@ -104,12 +104,14 @@ export const setGlobalContentDatabase = (
 
   const databaseKey = scope.databaseKey.toLowerCase();
   const churchId = scope.churchId || "";
+  const accountId = scope.accountId || "anonymous";
   const scopeId = JSON.stringify([
     churchId,
+    accountId,
     databaseKey,
     databaseInstance.name,
   ]);
-  const owner = { scopeId, databaseKey, churchId };
+  const owner = { scopeId, databaseKey, churchId, accountId };
   const previousOwner = getActiveContentDatabaseOwner();
   if (
     previousOwner &&
@@ -287,6 +289,7 @@ const ControllerInfoProvider = ({ children }: any) => {
     ? `${DEMO_DATABASE_KEY}-guest`
     : activeDatabaseKey;
   const databaseSessionKey = JSON.stringify([churchId || "", userId || "", broadcastDatabaseKey]);
+  const contentAccountId = userId || (isGuestSession ? "guest" : "anonymous");
   const databaseSessionRef = useRef(databaseSessionKey);
   databaseSessionRef.current = databaseSessionKey;
   const dbSessionRef = useRef<string | null>(null);
@@ -696,6 +699,7 @@ const ControllerInfoProvider = ({ children }: any) => {
           setGlobalContentDatabase(localDb, {
             databaseKey: broadcastDatabaseKey,
             churchId: globalFireDbInfo.churchId || "",
+            accountId: contentAccountId,
           });
           scheduleSongV2CleanupMaintenance(localDb, true);
           if (broadcastDatabaseKey) {
@@ -735,6 +739,7 @@ const ControllerInfoProvider = ({ children }: any) => {
         setGlobalContentDatabase(localDb, {
           databaseKey: activeDatabaseKey,
           churchId: churchId || "",
+          accountId: contentAccountId,
         });
         setDb(localDb);
         setIsDbSetup(true);
@@ -747,7 +752,7 @@ const ControllerInfoProvider = ({ children }: any) => {
     };
     if (shouldInitializeControllerData && !isDbSetup) void setupDb();
     return () => { cancelled = true; };
-  }, [shouldInitializeControllerData, databaseSessionKey, churchId, activeDatabaseKey, broadcastDatabaseKey, isGuestSession, isDbSetup]);
+  }, [shouldInitializeControllerData, databaseSessionKey, churchId, activeDatabaseKey, broadcastDatabaseKey, contentAccountId, isGuestSession, isDbSetup]);
 
   const initialRemoteDatabaseRef = useRef<PouchDB.Database | null>(null);
   const contentDatabaseSessionRef = useRef<

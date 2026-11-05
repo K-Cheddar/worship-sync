@@ -130,7 +130,11 @@ const Item = () => {
               const initiatingOwner = owner as ConflictReviewOwner;
               if (!isCurrentConflictReviewOwner(initiatingOwner)) return;
               closeConflictReview();
-              dispatch(setActiveItem({ ...song, listId: initiatingOwner.listId }));
+              dispatch(setActiveItem({
+                ...song,
+                listId: initiatingOwner.listId,
+                contentOwner: initiatingOwner.contentOwner,
+              }));
             }}
             onConflictChanged={(snapshot, owner) => {
               const initiatingOwner = owner as ConflictReviewOwner;

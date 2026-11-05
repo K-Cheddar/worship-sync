@@ -84,6 +84,75 @@ it("reloads all neighboring slides for a replicated nonactive v2 outline song", 
   }
 });
 
+it("refreshes repeated continuous-outline occurrences while preserving the active song draft", async () => {
+  const databaseA = new PouchDB(`outline-repeat-source-${Date.now()}`);
+  const databaseB = new PouchDB(`outline-repeat-controller-${Date.now()}`);
+  const slides = ["First stays", "Middle before", "Last stays"].map((words, index) => ({
+    id: `repeat-slide-${index + 1}`,
+    name: `Verse ${index + 1}`,
+    type: "Verse",
+    boxes: [{ id: `repeat-box-${index + 1}`, words, width: 1920, height: 1080 }],
+  }));
+  const source = {
+    _id: "repeated-outline-song",
+    name: "Repeated outline song",
+    type: "song",
+    selectedArrangement: 0,
+    slides: [],
+    arrangements: [{ id: "main", name: "Master", formattedLyrics: [], songOrder: [], slides }],
+  } as unknown as DBItem;
+  let unmount: (() => void) | undefined;
+  try {
+    const physical = serializeSongToV2Documents(source);
+    await databaseA.bulkDocs([physical.root, ...physical.arrangements, ...physical.slides]);
+    await databaseA.replicate.to(databaseB);
+    const baseline = await loadSong(databaseA, source._id);
+    const projection = songToLibraryProjection(baseline);
+    const localDraft = structuredClone(baseline);
+    localDraft.arrangements[0].slides[1].boxes[0].words = "Local active draft";
+    const store = configureStore({ reducer: { allDocs, activeItem: itemSlice.reducer } });
+    store.dispatch(hydrateItemCache([projection]));
+    store.dispatch(itemSlice.actions.setActiveItem({ ...localDraft, listId: "active-occurrence" }));
+    const context = createMockControllerContext({ db: databaseB });
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <Provider store={store}>
+        <ControllerInfoContext.Provider value={context as never}>{children}</ControllerInfoContext.Provider>
+      </Provider>
+    );
+    const view = renderHook(() => useOutlineItemDocs([source._id, source._id]), { wrapper });
+    unmount = view.unmount;
+
+    await waitFor(() => expect(
+      view.result.current.get(source._id)?.arrangements?.[0].slides?.map((slide) => slide.boxes[0].words),
+    ).toEqual(["First stays", "Middle before", "Last stays"]));
+    const cachedProjection = store.getState().allDocs.allSongDocs.find((doc) => doc._id === source._id);
+
+    const edited = structuredClone(baseline);
+    edited.arrangements[0].slides[1].boxes[0].words = "Middle updated by controller A";
+    await saveSong(databaseA, edited, baseline);
+    await databaseA.replicate.to(databaseB);
+    act(() => store.dispatch(invalidateSongContent(source._id)));
+
+    const expectedSlides = ["First stays", "Middle updated by controller A", "Last stays"];
+    await waitFor(() => expect(
+      view.result.current.get(source._id)?.arrangements?.[0].slides?.map((slide) => slide.boxes[0].words),
+    ).toEqual(expectedSlides));
+    const repeatedOccurrenceDocs = [
+      view.result.current.get(source._id),
+      view.result.current.get(source._id),
+    ];
+    expect(repeatedOccurrenceDocs.map((doc) => doc?.arrangements?.[0].slides?.map((slide) => slide.boxes[0].words)))
+      .toEqual([expectedSlides, expectedSlides]);
+    expect(store.getState().activeItem.listId).toBe("active-occurrence");
+    expect(store.getState().activeItem.arrangements[0].slides[1].boxes[0].words).toBe("Local active draft");
+    expect(store.getState().allDocs.allSongDocs.find((doc) => doc._id === source._id)).toBe(cachedProjection);
+  } finally {
+    unmount?.();
+    await databaseA.destroy();
+    await databaseB.destroy();
+  }
+});
+
 it("uses loaded documents for navigation and scrolling without database reads", () => {
   const read = jest.fn();
   const changes = jest.fn();

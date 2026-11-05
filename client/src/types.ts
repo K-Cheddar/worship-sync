@@ -379,6 +379,8 @@ export type ItemContentOwner = {
   scopeId: string;
   databaseKey: string;
   churchId: string;
+  /** Stable account identity prevents retained local mutations crossing users. */
+  accountId?: string;
 };
 
 export type BibleInfo = {

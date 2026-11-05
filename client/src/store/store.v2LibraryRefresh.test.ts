@@ -12,18 +12,39 @@ const setup = () => {
   let storeModule!: typeof import("./store");
   let itemModule!: typeof import("./itemSlice");
   let docsModule!: typeof import("./allDocsSlice");
-  let activeDb: any = {};
+  let deferredModule!: typeof import("./deferredItemMutations");
+  const database: any = { name: "active-v2-refresh-test-db", get: jest.fn(), allDocs: jest.fn() };
+  let activeDb: any = database;
   const load = jest.fn().mockResolvedValue(song("Remote"));
+  const globalFireDbInfo = {
+    db: undefined,
+    churchId: "",
+    database: "",
+    isConnected: false,
+    writeCapabilities: { presentation: false, timers: false, serviceRuntime: false, serviceManagement: false },
+  };
   jest.isolateModules(() => {
     jest.doMock("../context/controllerInfo", () => ({ get globalDb() { return activeDb; }, globalBroadcastRef: undefined }));
-    jest.doMock("../context/globalInfo", () => ({ globalFireDbInfo: undefined, globalHostId: "host" }));
+    jest.doMock("../context/globalInfo", () => ({ globalFireDbInfo, globalHostId: "host" }));
     jest.doMock("../utils/songPersistence", () => ({ ...jest.requireActual("../utils/songPersistence"), loadItemWithSongHydration: load }));
+    jest.doMock("../utils/songV2ReplicationConflicts", () => {
+      const actual = jest.requireActual("../utils/songV2ReplicationConflicts");
+      return {
+        ...actual,
+        loadReconciledSongV2Snapshot: async (_database: unknown, songId: string) => ({
+          hydrated: await load(_database, songId),
+          conflicts: [],
+        }),
+      };
+    });
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     storeModule = require("./store");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     itemModule = require("./itemSlice");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     docsModule = require("./allDocsSlice");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    deferredModule = require("./deferredItemMutations");
   });
   return {
     store: storeModule.default,
@@ -31,6 +52,7 @@ const setup = () => {
     docs: docsModule.allDocsSlice.actions,
     load,
     songV2DocumentsChanged: storeModule.songV2DocumentsChanged,
+    setActiveOwner: (owner: import("../types").ItemContentOwner) => deferredModule.setActiveContentDatabase(owner, database),
     setDatabase: (next: unknown) => { activeDb = next; },
   };
 };
@@ -40,6 +62,7 @@ describe("active v2 song library refresh", () => {
     jest.dontMock("../context/controllerInfo");
     jest.dontMock("../context/globalInfo");
     jest.dontMock("../utils/songPersistence");
+    jest.dontMock("../utils/songV2ReplicationConflicts");
   });
   it("exact-loads active slides and refreshes slide-only changes even when the projection is unchanged", async () => {
     const { store, item, docs, load } = setup();
@@ -71,6 +94,22 @@ describe("active v2 song library refresh", () => {
     expect(env.store.getState().allDocs.allSongDocs[0]).toBe(cachedProjection);
     expect(env.store.getState().undoable.present.item._id).toBe("other-song");
     expect(env.load).not.toHaveBeenCalled();
+  });
+  it("invalidates active outline content for slide-only replication without replacing the editor draft", async () => {
+    const env = setup();
+    const owner = { scopeId: "user-a-owner", databaseKey: "db-a", churchId: "", accountId: "user-a" };
+    env.setActiveOwner(owner);
+    const activeSong = { ...song("Local editor draft"), listId: "active-occurrence", contentOwner: owner };
+    env.store.dispatch(env.item.setActiveItem(activeSong));
+    env.load.mockResolvedValue(song("Remote slide-only update"));
+
+    env.store.dispatch(env.songV2DocumentsChanged([{ songId: "song-1", libraryChanged: false }]));
+    await new Promise((resolve) => setTimeout(resolve, 75));
+    await flush();
+
+    expect(env.store.getState().allDocs.songContentVersions["song-1"]).toBe(1);
+    expect(env.store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words).toBe("Local editor draft");
+    expect(env.store.getState().undoable.present.item.pendingRemoteItem?.arrangements[0].slides[0].boxes[0].words).toBe("Remote slide-only update");
   });
   it("adopts an identical-content v2 representation as the idle v1 editor baseline", async () => {
     const { store, item, docs, load } = setup();

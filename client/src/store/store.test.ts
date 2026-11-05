@@ -312,6 +312,33 @@ describe("v2 remote refresh and pending-input boundaries", () => {
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => jest.useRealTimers());
 
+  it("autosaves resumed edits through the restored account owner after conflict resolution", async () => {
+    const env = setup();
+    const owner: ItemContentOwner = {
+      scopeId: "user-a:church-a:db-a",
+      databaseKey: "db-a",
+      churchId: "",
+      accountId: "user-a",
+    };
+    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...env.baseline, contentOwner: owner }));
+    const unrelatedDb = {
+      name: "unrelated-account-db",
+      get: jest.fn((...args: any[]) => env.db.get(...args)),
+      put: jest.fn(),
+      allDocs: jest.fn((...args: any[]) => env.db.allDocs(...args)),
+    };
+    env.setGlobalDb(unrelatedDb);
+
+    env.edit("Resumed edit after resolution");
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("Resumed edit after resolution");
+    expect(unrelatedDb.put).not.toHaveBeenCalled();
+    expect(env.store.getState().undoable.present.item.contentOwner).toEqual(owner);
+  });
+
   it("ignores unrelated slides, coalesces active notifications, and uses only scoped reads", async () => {
     const env = setup();
     env.store.dispatch(env.songV2DocumentsChanged([{ songId: "unrelated", libraryChanged: false }]));
@@ -6233,10 +6260,11 @@ describe("item list outline persistence", () => {
     jest.useRealTimers();
   });
 
-  const registryOwner = (scopeId: string, churchId: string): ItemContentOwner => ({
-    scopeId,
+  const registryOwner = (churchId: string, accountId = "account-test"): ItemContentOwner => ({
+    scopeId: JSON.stringify([churchId, accountId, `db-${churchId}`, "outline-persistence-test-db"]),
     databaseKey: `db-${churchId}`,
     churchId,
+    accountId,
   });
   const bindRegistryOwner = (
     env: ReturnType<typeof loadStoreWithItemListPersistence>,
@@ -6257,7 +6285,7 @@ describe("item list outline persistence", () => {
   it("drains a debounced registry edit before teardown and cancels the old debounce wakeup", async () => {
     jest.useFakeTimers();
     const env = loadStoreWithItemListPersistence();
-    const owner = registryOwner("presentation:church-test", "church-test");
+    const owner = registryOwner("church-test");
     bindRegistryOwner(env, owner, env.db);
     let current = registryDocument("A");
     env.db.get.mockImplementation(async () => ({ ...current }));
@@ -6281,7 +6309,7 @@ describe("item list outline persistence", () => {
   it("waits for an in-flight registry write during database teardown", async () => {
     jest.useFakeTimers();
     const env = loadStoreWithItemListPersistence();
-    const owner = registryOwner("presentation:church-test", "church-test");
+    const owner = registryOwner("church-test");
     bindRegistryOwner(env, owner, env.db);
     env.db.get.mockResolvedValue(registryDocument("A"));
     let release!: (value: { rev: string }) => void;
@@ -6308,7 +6336,7 @@ describe("item list outline persistence", () => {
   it("retains a failed teardown write and retries it after the same owner gets a new DB handle", async () => {
     jest.useFakeTimers();
     const env = loadStoreWithItemListPersistence();
-    const owner = registryOwner("presentation:church-test", "church-test");
+    const owner = registryOwner("church-test");
     bindRegistryOwner(env, owner, env.db);
     env.db.get.mockResolvedValue(registryDocument("A"));
     env.db.put.mockRejectedValue(new Error("offline"));
@@ -6341,10 +6369,42 @@ describe("item list outline persistence", () => {
     jest.useRealTimers();
   });
 
+  it("retires failed registry edits on logout before another account opens the same church database", async () => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    const ownerA = registryOwner("church-test", "account-a");
+    bindRegistryOwner(env, ownerA, env.db);
+    env.db.get.mockResolvedValue(registryDocument("Sunday"));
+    env.db.put.mockRejectedValue(new Error("offline"));
+    env.store.dispatch(env.itemListsSlice.actions.initiateItemLists([{ _id: "outline-a", name: "Sunday" }]));
+    env.store.dispatch(env.itemListsSlice.actions.updateItemLists([{ _id: "outline-a", name: "Account A private edit" }]));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(env.store.getState().undoable.present.itemLists.registrySave.status).toBe("error");
+    await env.deferredMutations.flushContentDatabaseBeforeTeardown(ownerA, env.db);
+
+    env.store.dispatch({ type: "RESET" });
+    await flushListenerEffects();
+    const ownerB = registryOwner("church-test", "account-b");
+    bindRegistryOwner(env, ownerB, env.db);
+    env.store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+    env.store.dispatch(env.itemListsSlice.actions.initiateItemLists([{ _id: "outline-a", name: "Sunday" }]));
+    await flushListenerEffects();
+
+    expect(env.store.getState().undoable.present.itemLists.currentLists).toEqual([
+      { _id: "outline-a", name: "Sunday" },
+    ]);
+    expect(env.store.getState().undoable.present.itemLists.registrySave.status).toBe("idle");
+    env.store.dispatch(env.itemListsSlice.actions.retryRegistrySave());
+    await flushListenerEffects();
+    expect(env.db.put).toHaveBeenCalledTimes(1);
+    jest.useRealTimers();
+  });
+
   it("finishes an old owner's in-flight teardown write without publishing into the switched church", async () => {
     jest.useFakeTimers();
     const env = loadStoreWithItemListPersistence();
-    const ownerA = registryOwner("presentation:church-a", "church-test");
+    const ownerA = registryOwner("church-test", "account-a");
     bindRegistryOwner(env, ownerA, env.db);
     env.db.get.mockResolvedValue(registryDocument("Church A"));
     let finish!: (value: { rev: string }) => void;
@@ -6356,7 +6416,7 @@ describe("item list outline persistence", () => {
     const teardown = env.deferredMutations.flushContentDatabaseBeforeTeardown(ownerA, env.db);
     await flushListenerEffects();
     expect(env.db.put).toHaveBeenCalledTimes(1);
-    const ownerB = registryOwner("presentation:church-b", "church-b");
+    const ownerB = registryOwner("church-b", "account-b");
     const churchBDb = {
       name: "church-b-db",
       get: jest.fn().mockResolvedValue(registryDocument("Church B")),

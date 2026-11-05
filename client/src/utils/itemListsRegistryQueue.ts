@@ -73,6 +73,7 @@ export class ItemListsRegistryQueue {
   private entries: Entry[] = [];
   private running?: Promise<void>;
   private generation = 0;
+  private retired = false;
   private db: ItemListsRegistryDb;
   private saved: (doc: DBItemLists) => void;
   private status: (state: RegistrySaveState) => void;
@@ -112,7 +113,16 @@ export class ItemListsRegistryQueue {
     this.db = db;
     this.saved = saved;
     this.status = status;
+    this.retired = false;
     this.generation += 1;
+  }
+
+  /** Drop local edits when their owning account session ends. */
+  retire() {
+    this.entries = [];
+    this.retired = true;
+    this.generation += 1;
+    this.state = { status: "idle" };
   }
 
   get currentGeneration() {
@@ -125,7 +135,7 @@ export class ItemListsRegistryQueue {
 
   private publish(state: RegistrySaveState) {
     this.state = state;
-    this.status(state);
+    if (!this.retired) this.status(state);
   }
 
   private trackRun(operation: Promise<void>): Promise<void> {
@@ -137,6 +147,7 @@ export class ItemListsRegistryQueue {
   }
 
   enqueue(intent: ItemListsRegistryIntent) {
+    if (this.retired) return this.generation;
     for (const entry of splitIntent(intent)) {
       const changesMembership = entry.outlineId && entry.key === `outline:${entry.outlineId}`;
       const previous = this.entries.find((candidate) => candidate.key === entry.key ||
@@ -161,6 +172,7 @@ export class ItemListsRegistryQueue {
 
   /** Retry transient failures, or explicitly keep current edits after a field conflict. */
   flush(retry = false, keepCurrentConflicts = false): Promise<void> {
+    if (this.retired) return Promise.resolve();
     this.generation += 1;
     if (this.running) return this.running;
     if (retry) this.entries.forEach((entry) => { entry.failed = false; });
@@ -183,6 +195,7 @@ export class ItemListsRegistryQueue {
             [entry.intent],
             keepCurrentConflicts && entry.conflict === true,
           );
+          if (this.retired) return;
           this.entries = this.entries.filter((candidate) => candidate !== currentEntry);
           this.entries.forEach((candidate) => {
             if (candidate.key !== currentEntry.key) return;
@@ -194,12 +207,14 @@ export class ItemListsRegistryQueue {
           });
           this.saved(doc);
         } catch (error) {
+          if (this.retired) return;
           entry.failed = true;
           entry.conflict = error instanceof ItemListsRegistryConflictError;
         }
         entry = nextEntry();
       }
 
+      if (this.retired) return;
       const hasCurrentConflicts = this.entries.some((entry) => entry.failed && entry.conflict);
       this.publish(this.entries.some((entry) => entry.failed)
         ? { status: "error", hasCurrentConflicts }

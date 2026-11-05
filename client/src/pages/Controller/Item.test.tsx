@@ -226,7 +226,7 @@ describe("Redux presentation workspace", () => {
 
   it("applies a conflict resolution while its original song occurrence and database still own the editor", () => {
     const { store, db, mount } = setup();
-    const owner = { scopeId: "controller:church-a", databaseKey: "church-a", churchId: "church-a" };
+    const owner = { scopeId: "controller:church-a", databaseKey: "church-a", churchId: "church-a", accountId: "user-a" };
     const currentSong = { ...doc("song-A", { type: "song" }), contentOwner: owner, listId: "outline-a" };
     try {
       setActiveContentDatabase(owner, db);
@@ -239,7 +239,9 @@ describe("Redux presentation workspace", () => {
       const currentProps = mockConflictReviewProps;
       act(() => currentProps.onResolved(doc("song-A", { type: "song", name: "Resolved A" }), currentProps.resolutionOwner));
 
-      expect(store.getState().undoable.present.item).toMatchObject({ _id: "song-A", name: "Resolved A", listId: "outline-a" });
+      expect(store.getState().undoable.present.item).toMatchObject({
+        _id: "song-A", name: "Resolved A", listId: "outline-a", contentOwner: owner,
+      });
       expect(store.getState().undoable.present.item.pendingSongV2Conflicts).toBeUndefined();
     } finally {
       setActiveContentDatabase(null);

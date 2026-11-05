@@ -1495,10 +1495,8 @@ listenerMiddleware.startListening({
           if (!stillCurrent()) return;
           api.dispatch(allDocsSlice.actions.applyItemDocumentChange({ id: projection._id, doc: projection }));
         }
-        if (!active) {
-          if (!request.libraryChanged) api.dispatch(allDocsSlice.actions.invalidateSongContent(change.songId));
-          return;
-        }
+        if (!request.libraryChanged) api.dispatch(allDocsSlice.actions.invalidateSongContent(change.songId));
+        if (!active) return;
         if (!snapshot || !stillCurrent()) return;
         const current = (api.getState() as RootState).undoable.present.item;
         if (!sameItemMutationOwner(itemOwner, getItemMutationOwner(current)) ||
@@ -2223,15 +2221,17 @@ listenerMiddleware.startListening({
 });
 
 // Registry runtimes outlive controller mounts. Failed intents remain bound to
-// their church/database owner and can be rebound to a fresh Pouch handle for
-// that same owner after teardown.
+// their account/church/database owner and can be rebound to a fresh Pouch
+// handle for that same account after teardown.
 type RegistryQueueBinding = {
   database: object;
   sessionToken: symbol | null;
+  accountId?: string;
   queue: ItemListsRegistryQueue;
 };
 const pendingRegistryQueuesByOwner = new Map<string, RegistryQueueBinding>();
-const pendingRegistryQueuesByDb = new WeakMap<object, ItemListsRegistryQueue>();
+let pendingRegistryQueuesByDb = new WeakMap<object, ItemListsRegistryQueue>();
+const pendingRegistryQueues = new Set<ItemListsRegistryQueue>();
 const releaseIdleRegistryQueue = (
   ownerKey: string | undefined,
   database: object,
@@ -2245,7 +2245,29 @@ const releaseIdleRegistryQueue = (
   } else {
     pendingRegistryQueuesByDb.delete(database);
   }
+  pendingRegistryQueues.delete(queue);
 };
+
+const retirePendingRegistryQueuesForOtherAccounts = (accountId: string) => {
+  for (const [ownerKey, binding] of pendingRegistryQueuesByOwner) {
+    if (binding.accountId === accountId) continue;
+    binding.queue.retire();
+    pendingRegistryQueues.delete(binding.queue);
+    pendingRegistryQueuesByOwner.delete(ownerKey);
+  }
+};
+
+const retireAllPendingRegistryQueues = () => {
+  pendingRegistryQueues.forEach((queue) => queue.retire());
+  pendingRegistryQueues.clear();
+  pendingRegistryQueuesByOwner.clear();
+  pendingRegistryQueuesByDb = new WeakMap<object, ItemListsRegistryQueue>();
+};
+
+listenerMiddleware.startListening({
+  predicate: (action) => action.type === "RESET",
+  effect: () => retireAllPendingRegistryQueues(),
+});
 
 const snapshotItemListsRegistry = (
   state: RootState["undoable"]["present"]["itemLists"],
@@ -2280,6 +2302,9 @@ listenerMiddleware.startListening({
     if (ownerAtStart && getContentDatabaseForOwner(ownerAtStart) !== dbAtStart) return;
     const sessionTokenAtStart = getContentDatabaseSessionToken(dbAtStart.name);
     const ownerKey = ownerAtStart?.scopeId;
+    if (ownerAtStart?.accountId) {
+      retirePendingRegistryQueuesForOtherAccounts(ownerAtStart.accountId);
+    }
     const isOwnerCurrent = () => {
       if (db !== dbAtStart) return false;
       if (ownerAtStart) {
@@ -2310,6 +2335,7 @@ listenerMiddleware.startListening({
     let queue = ownerKey ? binding?.queue : pendingRegistryQueuesByDb.get(dbAtStart);
     if (!queue) {
       queue = new ItemListsRegistryQueue(dbAtStart, saved, publishStatus);
+      pendingRegistryQueues.add(queue);
     } else if (ownerKey && binding &&
       (binding.database !== dbAtStart || binding.sessionToken !== sessionTokenAtStart)) {
       queue.rebind(dbAtStart, saved, publishStatus);
@@ -2318,6 +2344,7 @@ listenerMiddleware.startListening({
       pendingRegistryQueuesByOwner.set(ownerKey, {
         database: dbAtStart,
         sessionToken: sessionTokenAtStart,
+        accountId: ownerAtStart?.accountId,
         queue,
       });
     } else {
