@@ -1,3 +1,4 @@
+import { getActiveItemSlides } from "../../utils/activeItemSlides";
 import { getActiveContentDatabaseOwner } from "../../store/deferredItemMutations";
 import { flushSync } from "react-dom";
 import { isControllerWorkspacePath } from "../../utils/controllerWorkspace";
@@ -373,10 +374,12 @@ export function useMediaLibraryController({
 
   const itemSlideContext = useMemo(() => {
     if (!isControllerWorkspacePath(location.pathname)) return undefined;
-    const arrangement = item.arrangements[item.selectedArrangement];
-    const slides = arrangement?.slides?.length
-      ? arrangement.slides
-      : item.slides;
+    const slides = getActiveItemSlides({
+      type: item.type,
+      arrangements: item.arrangements,
+      selectedArrangement: item.selectedArrangement,
+      slides: item.slides,
+    });
     return {
       itemType: item.type,
       slides,
@@ -1249,13 +1252,20 @@ export function useMediaLibraryController({
       for (const row of rows) {
         if (!canContinue()) break;
         const provider = row.providerStorage?.provider ||
-          (row.localImage?.cloudUrl ? "cloudinary" : "") ||
+          (row.localImage?.cloudUrl || row.localImage?.cloudPublicId
+            ? "cloudinary"
+            : "") ||
           (row.localVideoFile?.cloudMediaId ? "mux" : "") ||
           row.source;
         const cloudinaryPublicId =
+          row.localImage?.cloudPublicId ||
           row.providerStorage?.publicId ||
-          (provider === "cloudinary" ? row.publicId : "") ||
-          (row.localImage?.cloudUrl ? row.publicId : "");
+          (provider === "cloudinary" && !row.localVideoInput
+            ? row.publicId
+            : "") ||
+          (row.localImage?.cloudUrl && !row.localVideoInput
+            ? row.publicId
+            : "");
         const muxAssetId =
           (provider === "mux" ? row.providerStorage?.assetId : "") ||
           row.muxAssetId ||

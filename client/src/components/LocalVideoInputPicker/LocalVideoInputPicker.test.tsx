@@ -5,6 +5,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { isElectron } from "../../utils/environment";
 import * as localVideoCapturePool from "../../utils/localVideoCapturePool";
@@ -186,6 +187,208 @@ describe("LocalVideoInputPicker", () => {
     expect(
       screen.queryByRole("button", { name: "Refresh" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("captures, previews, saves, retakes, and removes a frame without another capture", async () => {
+    enumerateDevices.mockResolvedValue([
+      createDevice("videoinput", "camera-1", "USB Capture"),
+    ]);
+    bindLocalVideoInput("live-source", "camera-1", "USB Capture");
+    const onSaveThumbnail = jest.fn().mockResolvedValue("Thumbnail saved.");
+    const onRemoveThumbnail = jest.fn().mockResolvedValue(undefined);
+    const source = {
+      kind: "local-video-input" as const,
+      sourceId: "live-source",
+      label: "USB Capture",
+    };
+    const originalGetContext = Object.getOwnPropertyDescriptor(
+      HTMLCanvasElement.prototype,
+      "getContext",
+    );
+    const originalToBlob = Object.getOwnPropertyDescriptor(
+      HTMLCanvasElement.prototype,
+      "toBlob",
+    );
+    const originalCreateObjectURL = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
+    const originalRevokeObjectURL = Object.getOwnPropertyDescriptor(URL, "revokeObjectURL");
+    const encoded = new Blob(["still"], { type: "image/webp" });
+    Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
+      configurable: true,
+      value: () => ({ drawImage: jest.fn() }),
+    });
+    Object.defineProperty(HTMLCanvasElement.prototype, "toBlob", {
+      configurable: true,
+      value: (callback: BlobCallback) => callback(encoded),
+    });
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: () => "blob:captured-thumbnail",
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: jest.fn(),
+    });
+
+    try {
+      render(
+        <LocalVideoInputPicker
+          open
+          hideTrigger
+          source={source}
+          onLinked={jest.fn()}
+          hasThumbnail
+          onSaveThumbnail={onSaveThumbnail}
+          onRemoveThumbnail={onRemoveThumbnail}
+        />,
+      );
+      const video = (await screen.findByLabelText(
+        "Input preview",
+      )) as HTMLVideoElement;
+      await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(1));
+      markPreviewFrame(video);
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Capture thumbnail" })).toBeEnabled(),
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Capture thumbnail" }));
+      expect(await screen.findByAltText("Captured video input thumbnail")).toBeInTheDocument();
+      expect(getUserMedia).toHaveBeenCalledTimes(1);
+
+      fireEvent.click(screen.getByRole("button", { name: "Save thumbnail" }));
+      await waitFor(() =>
+        expect(onSaveThumbnail).toHaveBeenCalledWith(
+          expect.objectContaining({ blob: encoded, width: 640, height: 360 }),
+        ),
+      );
+      expect(await screen.findByText("Thumbnail saved.")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Retake" }));
+      expect(screen.getByRole("button", { name: "Capture thumbnail" })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Remove thumbnail" }));
+      await waitFor(() => expect(onRemoveThumbnail).toHaveBeenCalledTimes(1));
+      expect(screen.getByText("Thumbnail removed.")).toBeInTheDocument();
+      expect(getUserMedia).toHaveBeenCalledTimes(1);
+    } finally {
+      if (originalGetContext) {
+        Object.defineProperty(
+          HTMLCanvasElement.prototype,
+          "getContext",
+          originalGetContext,
+        );
+      }
+      if (originalToBlob) {
+        Object.defineProperty(HTMLCanvasElement.prototype, "toBlob", originalToBlob);
+      }
+      if (originalCreateObjectURL) {
+        Object.defineProperty(URL, "createObjectURL", originalCreateObjectURL);
+      } else {
+        delete (URL as Partial<typeof URL>).createObjectURL;
+      }
+      if (originalRevokeObjectURL) {
+        Object.defineProperty(URL, "revokeObjectURL", originalRevokeObjectURL);
+      } else {
+        delete (URL as Partial<typeof URL>).revokeObjectURL;
+      }
+    }
+  });
+
+  it("ignores a frame that finishes encoding after the selected input changes", async () => {
+    const user = userEvent.setup();
+    enumerateDevices.mockResolvedValue([
+      createDevice("videoinput", "camera-1", "First Camera"),
+      createDevice("videoinput", "camera-2", "Second Camera"),
+    ]);
+    bindLocalVideoInput("live-source", "camera-1", "First Camera");
+    const firstStop = jest.fn();
+    const secondStop = jest.fn();
+    getUserMedia
+      .mockResolvedValueOnce({
+        getTracks: () => [{ stop: firstStop }],
+      } as unknown as MediaStream)
+      .mockResolvedValueOnce({
+        getTracks: () => [{ stop: secondStop }],
+      } as unknown as MediaStream);
+    const originalGetContext = Object.getOwnPropertyDescriptor(
+      HTMLCanvasElement.prototype,
+      "getContext",
+    );
+    const originalToBlob = Object.getOwnPropertyDescriptor(
+      HTMLCanvasElement.prototype,
+      "toBlob",
+    );
+    let finishEncoding: BlobCallback | undefined;
+    Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
+      configurable: true,
+      value: () => ({ drawImage: jest.fn() }),
+    });
+    Object.defineProperty(HTMLCanvasElement.prototype, "toBlob", {
+      configurable: true,
+      value: (callback: BlobCallback) => {
+        finishEncoding = callback;
+      },
+    });
+
+    try {
+      const view = render(
+        <LocalVideoInputPicker
+          open
+          hideTrigger
+          source={{
+            kind: "local-video-input",
+            sourceId: "live-source",
+            label: "First Camera",
+          }}
+          onLinked={jest.fn()}
+        />,
+      );
+      const video = (await screen.findByLabelText(
+        "Input preview",
+      )) as HTMLVideoElement;
+      await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(1));
+      markPreviewFrame(video);
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Capture thumbnail" }),
+        ).toBeEnabled(),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Capture thumbnail" }));
+      await waitFor(() => expect(finishEncoding).toBeDefined());
+
+      await user.click(screen.getByRole("combobox", { name: "Video input:" }));
+      await user.click(await screen.findByRole("option", { name: "Second Camera" }));
+      await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(firstStop).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        finishEncoding?.(new Blob(["old frame"], { type: "image/webp" }));
+      });
+      expect(
+        screen.queryByAltText("Captured video input thumbnail"),
+      ).not.toBeInTheDocument();
+      expect(screen.getByLabelText("Input preview")).toBe(video);
+      expect(getUserMedia).toHaveBeenCalledTimes(2);
+      await waitFor(() => expect(video.srcObject).not.toBeNull());
+      markPreviewFrame(video);
+      await waitFor(() =>
+        expect(screen.queryByText(/Starting preview/)).not.toBeInTheDocument(),
+      );
+      view.unmount();
+      await waitFor(() => expect(secondStop).toHaveBeenCalledTimes(1));
+    } finally {
+      if (originalGetContext) {
+        Object.defineProperty(
+          HTMLCanvasElement.prototype,
+          "getContext",
+          originalGetContext,
+        );
+      }
+      if (originalToBlob) {
+        Object.defineProperty(
+          HTMLCanvasElement.prototype,
+          "toBlob",
+          originalToBlob,
+        );
+      }
+    }
   });
 
   it("hides input access after the browser exposes labeled devices", async () => {

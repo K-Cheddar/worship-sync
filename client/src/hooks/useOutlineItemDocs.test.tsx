@@ -6,20 +6,83 @@ import { configureStore } from "@reduxjs/toolkit";
 import { Provider } from "react-redux";
 import { useOutlineItemDocs } from "./useOutlineItemDocs";
 import { ControllerInfoContext } from "../context/controllerInfo";
-import allDocs, { applyItemDocumentChange, hydrateItemCache } from "../store/allDocsSlice";
+import allDocs, { applyItemDocumentChange, hydrateItemCache, invalidateSongContent } from "../store/allDocsSlice";
+import { itemSlice } from "../store/itemSlice";
 import type { DBItem } from "../types";
 import { createMockControllerContext, createMockPouchDB } from "../test/mocks";
+import { loadSong, saveSong, serializeSongToV2Documents, songToLibraryProjection } from "../utils/songPersistence";
 
-const song = (id: string, name = id) => ({ _id: id, name, type: "song", arrangements: [], slides: [] }) as unknown as DBItem;
-const setup = (read: jest.Mock, changes = jest.fn().mockResolvedValue({ results: [] })) => {
+const song = (id: string, name = id) => ({ _id: id, name, type: "song", arrangements: [], selectedArrangement: 0 }) as unknown as DBItem;
+const setup = (read: jest.Mock, changes = jest.fn().mockResolvedValue({ results: [] }), database?: PouchDB.Database) => {
   const store = configureStore({ reducer: { allDocs } });
   store.dispatch(hydrateItemCache([song("cached")]));
-  const context = createMockControllerContext({ db: createMockPouchDB({ allDocs: read, changes }) });
+  const context = createMockControllerContext({ db: database ?? createMockPouchDB({ allDocs: read, changes }) });
   const wrapper = ({ children }: { children: React.ReactNode }) => (
     <Provider store={store}><ControllerInfoContext.Provider value={context as never}>{children}</ControllerInfoContext.Provider></Provider>
   );
   return { store, wrapper };
 };
+
+it("reloads all neighboring slides for a replicated nonactive v2 outline song", async () => {
+  const databaseA = new PouchDB(`outline-song-source-${Date.now()}`);
+  const databaseB = new PouchDB(`outline-song-controller-${Date.now()}`);
+  const slides = ["First stays", "Middle before", "Last stays"].map((words, index) => ({
+    id: `slide-${index + 1}`,
+    name: `Verse ${index + 1}`,
+    type: "Verse",
+    boxes: [{ id: `box-${index + 1}`, words, width: 1920, height: 1080 }],
+  }));
+  const source = {
+    _id: "replicated-song",
+    name: "Replicated song",
+    type: "song",
+    selectedArrangement: 0,
+    slides: [],
+    arrangements: [{ id: "main", name: "Master", formattedLyrics: [], songOrder: [], slides }],
+  } as unknown as DBItem;
+  let unmount: (() => void) | undefined;
+  try {
+    const physical = serializeSongToV2Documents(source);
+    await databaseA.bulkDocs([physical.root, ...physical.arrangements, ...physical.slides]);
+    await databaseA.replicate.to(databaseB);
+    const baseline = await loadSong(databaseA, source._id);
+    const projection = songToLibraryProjection(baseline);
+    const otherSong = song("Currently active song");
+    const store = configureStore({ reducer: { allDocs, activeItem: itemSlice.reducer } });
+    store.dispatch(hydrateItemCache([projection, otherSong]));
+    store.dispatch(itemSlice.actions.setActiveItem(otherSong));
+    const context = createMockControllerContext({ db: databaseB });
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <Provider store={store}>
+        <ControllerInfoContext.Provider value={context as never}>{children}</ControllerInfoContext.Provider>
+      </Provider>
+    );
+    const view = renderHook(() => useOutlineItemDocs([source._id]), { wrapper });
+    unmount = view.unmount;
+
+    await waitFor(() => expect(
+      view.result.current.get(source._id)?.arrangements?.[0].slides?.map((slide) => slide.boxes[0].words),
+    ).toEqual(["First stays", "Middle before", "Last stays"]));
+    const cachedProjection = store.getState().allDocs.allSongDocs.find((doc) => doc._id === source._id);
+
+    const edited = structuredClone(baseline);
+    edited.arrangements[0].slides[1].boxes[0].words = "Middle updated by controller A";
+    await saveSong(databaseA, edited, baseline);
+    await databaseA.replicate.to(databaseB);
+    act(() => store.dispatch(invalidateSongContent(source._id)));
+
+    await waitFor(() => expect(
+      view.result.current.get(source._id)?.arrangements?.[0].slides?.map((slide) => slide.boxes[0].words),
+    ).toEqual(["First stays", "Middle updated by controller A", "Last stays"]));
+    expect(store.getState().activeItem._id).toBe(otherSong._id);
+    expect(store.getState().allDocs.allSongDocs.find((doc) => doc._id === source._id)).toBe(cachedProjection);
+    expect(cachedProjection?.arrangements?.[0].slides).toEqual([]);
+  } finally {
+    unmount?.();
+    await databaseA.destroy();
+    await databaseB.destroy();
+  }
+});
 
 it("uses loaded documents for navigation and scrolling without database reads", () => {
   const read = jest.fn();

@@ -1,6 +1,7 @@
 import type { Dispatch } from "@reduxjs/toolkit";
 import type { DBItem, DBHeading } from "../types";
-import { applyItemDocumentChange, hydrateItemCache, isItemDocument, resetItemCache, setItemCacheError } from "./allDocsSlice";
+import { applyItemDocumentChange, hydrateItemCache, isItemDocument, resetItemCache, setItemCacheError, updateSongLibraryDiagnostics } from "./allDocsSlice";
+import { discoverSongLibrary } from "../utils/songLibraryDiscovery";
 export { isItemDocument } from "./allDocsSlice";
 
 /** One owner per database session. Cleanup invalidates every pending continuation. */
@@ -30,7 +31,13 @@ export const startItemCacheSync = (db: PouchDB.Database, dispatch: Dispatch) => 
         // Replay writes made during loading or before .changes is installed.
         if (snapshot.update_seq === undefined) throw new Error("Missing PouchDB snapshot sequence");
         sequence = snapshot.update_seq;
-        dispatch(hydrateItemCache(snapshot.rows.map((row): unknown => row.doc).filter(isItemDocument)));
+        const snapshotDocs = snapshot.rows.map((row): unknown => row.doc);
+        const songLibrary = discoverSongLibrary(snapshotDocs);
+        const otherItems = snapshotDocs.filter((doc): doc is DBItem | DBHeading =>
+          isItemDocument(doc) && (doc as DBItem).type !== "song",
+        );
+        dispatch(hydrateItemCache([...otherItems, ...songLibrary.songs]));
+        dispatch(updateSongLibraryDiagnostics(songLibrary.diagnostics));
       }
       if (!active) return;
       dispatch(setItemCacheError(null));
@@ -39,6 +46,7 @@ export const startItemCacheSync = (db: PouchDB.Database, dispatch: Dispatch) => 
       nextFeed.on("change", (change) => {
         if (!active || feed !== nextFeed) return;
         sequence = change.seq;
+        if ((change.doc as { docType?: string } | undefined)?.docType?.startsWith("song-v2-")) return;
         const doc = isItemDocument(change.doc) ? change.doc : undefined;
         if (!doc && !change.deleted) return;
         dispatch(applyItemDocumentChange({

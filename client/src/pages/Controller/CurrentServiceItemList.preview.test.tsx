@@ -1,6 +1,8 @@
 import React from "react";
 import { render, screen, waitFor, within } from "@testing-library/react";
+import { Provider } from "react-redux";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import store from "../../store/store";
 import CurrentServiceItemList from "./CurrentServiceItemList";
 
 jest.mock("../../utils/formatItemList", () => ({
@@ -51,16 +53,18 @@ it("renders the active 20-item Presentation outline in the Workspace preview", a
   };
 
   render(
-    <ControllerInfoContext.Provider
-      value={{
-        db,
-        cloud: {} as never,
-        updater: new EventTarget(),
-        bootstrapReady: true,
-      } as never}
-    >
-      <CurrentServiceItemList activeListId="active-row-20" />
-    </ControllerInfoContext.Provider>,
+    <Provider store={store}>
+      <ControllerInfoContext.Provider
+        value={{
+          db,
+          cloud: {} as never,
+          updater: new EventTarget(),
+          bootstrapReady: true,
+        } as never}
+      >
+        <CurrentServiceItemList activeListId="active-row-20" />
+      </ControllerInfoContext.Provider>
+    </Provider>,
   );
 
   await waitFor(() =>

@@ -13,9 +13,11 @@ import {
   getSongAudioUrl,
   uploadSongAudio,
 } from "../../api/auth";
-import { applyPouchAudit } from "../../utils/pouchAudit";
+import { useDispatch } from "../../hooks";
+import { applyItemDocumentChange } from "../../store/allDocsSlice";
 import { broadcastItemUpdate } from "../../store/store";
 import { deleteSongAudioBeforeClearingMetadata } from "../../utils/persistSongAudioAttachment";
+import { loadSong, saveSong, songToLibraryProjection } from "../../utils/songPersistence";
 import {
   ItemDetailsEditorFields,
   type ItemDetailsSavePayload,
@@ -55,6 +57,7 @@ const ViewSongSectionsDrawer = ({
   onRemoveSongAudio: onRemoveSongAudioOverride,
   onClose,
 }: ViewSongSectionsDrawerProps) => {
+  const dispatch = useDispatch();
   const { db } = useContext(ControllerInfoContext) || {};
   const { churchId, access } = useContext(GlobalInfoContext) || {};
   const persistenceScopeRef = useRef({ db, churchId });
@@ -96,18 +99,18 @@ const ViewSongSectionsDrawer = ({
   }, [isOpen]);
 
   const persistSongPatch = useCallback(
-    async (patch: PersistSongPatch) => {
+    async (patch: PersistSongPatch, baselineSong?: DBItem) => {
       if (!db || !song) {
         throw new Error("The song library is not available. Try again.");
       }
 
-      const existing = (await db.get(song._id)) as DBItem;
+      const existing = baselineSong ?? await loadSong(db, song._id);
       const next: DBItem = { ...existing };
       if (patch.name !== undefined) next.name = patch.name;
 
       if (patch.songMetadataPatch !== undefined) {
         if (patch.songMetadataPatch === null) {
-          delete next.songMetadata;
+          next.songMetadata = undefined;
         } else {
           next.songMetadata = patch.songMetadataPatch;
         }
@@ -117,28 +120,29 @@ const ViewSongSectionsDrawer = ({
       }
       if (patch.songAudioPatch !== undefined) {
         if (patch.songAudioPatch === null) {
-          delete next.songAudio;
+          next.songAudio = undefined;
         } else {
           next.songAudio = patch.songAudioPatch;
         }
       }
 
-      const audited = applyPouchAudit(existing, next, { isNew: false });
-      const result = await db.put(audited);
-      const saved = { ...audited, _rev: result.rev };
+      const saved = await saveSong(db, next, existing);
       if (!mountedRef.current || persistenceScopeRef.current.db !== db ||
         persistenceScopeRef.current.churchId !== churchId) return;
+      dispatch(applyItemDocumentChange({ id: saved._id, doc: songToLibraryProjection(saved) }));
       broadcastItemUpdate(saved);
     },
-    [db, song, churchId],
+    [db, dispatch, song, churchId],
   );
 
   const persistSongLyrics = useCallback(
     async ({
+      baselineSong,
       arrangements,
       selectedArrangement,
       songMetadata,
     }: {
+      baselineSong: DBItem;
       arrangements: Arrangment[];
       selectedArrangement: number;
       songMetadata?: SongMetadata;
@@ -147,24 +151,24 @@ const ViewSongSectionsDrawer = ({
         throw new Error("The song library is not available. Try again.");
       }
 
-      const existing = (await db.get(song._id)) as DBItem;
       const next: DBItem = {
-        ...existing,
+        ...baselineSong,
         arrangements,
         selectedArrangement,
       };
       if (songMetadata === undefined) {
-        delete next.songMetadata;
+        next.songMetadata = undefined;
       } else {
         next.songMetadata = songMetadata;
       }
 
-      const audited = applyPouchAudit(existing, next, { isNew: false });
-      const result = await db.put(audited);
-      const saved = { ...audited, _rev: result.rev };
+      const saved = await saveSong(db, next, baselineSong);
+      if (!mountedRef.current || persistenceScopeRef.current.db !== db ||
+        persistenceScopeRef.current.churchId !== churchId) return;
+      dispatch(applyItemDocumentChange({ id: saved._id, doc: songToLibraryProjection(saved) }));
       broadcastItemUpdate(saved);
     },
-    [db, song],
+    [db, dispatch, song, churchId],
   );
 
   const resolveSongAudioUrl = useCallback(
@@ -185,10 +189,12 @@ const ViewSongSectionsDrawer = ({
 
   const attachSongAudio = useCallback(
     async (file: File) => {
-      if (!churchId || !song) {
+      if (!churchId || !db || !song) {
         throw new Error("Sign in to attach an MP3.");
       }
-      const previousAudio = song.songAudio;
+      const loadedSong = await loadSong(db, song._id);
+      const baselineSong = loadedSong.docType === "song-v2-root" ? loadedSong : undefined;
+      const previousAudio = baselineSong?.songAudio ?? song.songAudio;
       const audio = await uploadSongAudio({
         churchId,
         songId: song._id,
@@ -198,7 +204,7 @@ const ViewSongSectionsDrawer = ({
       try {
         await persistSongPatch({
           songAudioPatch: audio,
-        });
+        }, baselineSong);
       } catch (error) {
         // Replacement uploads reuse the current final key. Keep that object if
         // metadata persistence fails so the existing document stays playable.
@@ -228,12 +234,24 @@ const ViewSongSectionsDrawer = ({
         }
       }
     },
-    [churchId, persistSongPatch, song],
+    [churchId, db, persistSongPatch, song],
   );
 
   const removeSongAudio = useCallback(async () => {
-    if (!churchId || !song?.songAudio) return;
-    const audio = song.songAudio;
+    if (!churchId || !db || !song?.songAudio) return;
+    const baselineSong = await loadSong(db, song._id);
+    const audio = baselineSong.docType === "song-v2-root"
+      ? baselineSong.songAudio ?? song.songAudio
+      : song.songAudio;
+    if (baselineSong.docType === "song-v2-root") {
+      await persistSongPatch({ songAudioPatch: null }, baselineSong);
+      try {
+        await deleteSongAudioWithRetry({ churchId, songId: song._id, audio });
+      } catch (error) {
+        console.error("Error cleaning removed song audio:", error);
+      }
+      return;
+    }
     await deleteSongAudioBeforeClearingMetadata({
       deleteAudio: () =>
         deleteSongAudioWithRetry({
@@ -246,7 +264,7 @@ const ViewSongSectionsDrawer = ({
           songAudioPatch: null,
         }),
     });
-  }, [churchId, persistSongPatch, song]);
+  }, [churchId, db, persistSongPatch, song]);
 
   if (!song) {
     return null;
