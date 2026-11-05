@@ -1,10 +1,10 @@
 # Feature Contract: Desktop video downloader
 
-**Contract status:** Phase 1 implemented; Windows x64 package and live native download verified.
+**Contract status:** Phase 1 implemented and previously verified; the Deno-enabled reliability update is awaiting Windows packaging and live YouTube verification.
 
 **Approval source:** Phase 1 Desktop Video Downloader request, October 29, 2026.
 
-**Last reviewed:** October 29, 2026.
+**Last reviewed:** November 4, 2026.
 
 ## Purpose and operator workflow
 
@@ -82,11 +82,13 @@ existing Mux upload-intent, quota, permission and registration workflow while
 streaming the managed download file from disk. Jobs use the existing media
 transfer activity and taskbar aggregation.
 
-Windows x64 development and packaging prepare yt-dlp 2026.10.26 and FFmpeg
-8.1.2 Essentials from pinned URLs and SHA-256 values in
+Windows x64 development and packaging prepare yt-dlp 2026.10.26, Deno 2.9.8,
+and FFmpeg 8.1.2 Essentials from pinned URLs and SHA-256 values in
 `client/scripts/prepare-video-tools.mjs`. Preparation occurs at Electron dev
 startup and before packaging, never when an operator starts a download. The
-downloaded archives are verified before extraction. License files and notices
+downloaded archives are verified before extraction. yt-dlp is explicitly
+configured to use the packaged Deno runtime for YouTube JavaScript challenge
+solving; its standalone package includes yt-dlp-ejs. License files and notices
 are included beside the binaries. yt-dlp's Windows standalone build carries
 GPLv3+ bundled code; the selected static FFmpeg build is GPLv3. Release owners
 must keep the matching source/build materials available as required by those
@@ -97,7 +99,27 @@ The browser and unsupported desktop platforms hide the option. Phase 1 is
 currently limited to public YouTube URLs and Windows x64; macOS and Linux
 packaging remain unchanged and do not expose the downloader.
 
-## Validation recorded October 29, 2026
+Inspection accepts YouTube watch, short, Shorts, live, and embed links that
+identify one valid video ID. It replaces them with the canonical
+`https://www.youtube.com/watch?v=...` URL, dropping playlist and tracking
+parameters before storing the inspection and starting or retrying the job.
+Playlist-only URLs are rejected. Inspection failures are categorized by stage
+and type; native diagnostics are bounded and redact URLs, video IDs, secret
+fields, and common user-profile paths before application logging.
+
+The inspected source thumbnail is validated and passed through the existing
+local video import path. It is resized and encoded by the shared thumbnail
+helper and saved in the existing `imageThumbnails` IndexedDB store using the
+permanent video asset ID. Downloaded-video thumbnail work runs in the existing
+serialized video-thumbnail queue after the video record is saved, so it cannot
+hold up import. If the source thumbnail is absent or invalid, the queue uses
+the existing representative video-frame capture. A thumbnail failure leaves
+the imported video usable. The queued thumbnail write shares an IndexedDB
+transaction with a check for the owning video record, so a delete that wins
+the race cannot leave a late same-ID thumbnail behind. Deleting the video
+continues to delete its same-ID thumbnail record.
+
+## Previous baseline validation recorded October 29, 2026
 
 - `npm run type-check`, a strict standalone Electron TypeScript check, ESLint,
   and 10 focused Jest suites (82 tests) passed.
@@ -111,3 +133,22 @@ packaging remain unchanged and do not expose the downloader.
   source and license are documented at [Sintel's official sharing page](https://durian.blender.org/sharing/).
 - The packaged app was built and its resource layout checked; its first-run
   UI and the optional cloud upload were not exercised.
+
+## Reliability update validation recorded November 4, 2026
+
+- Focused downloader, URL-security, native dependency, error, import,
+  thumbnail, dialog, manager, IPC, proxy, and cloud-share tests passed (13
+  suites, 98 tests).
+- Client TypeScript, ESLint, and `electron-vite build` passed after the final
+  reliability changes. The renderer build reports the existing CSS parser
+  warning for the test-only `bg-[url(javascript:alert(1))]` utility class.
+- Native diagnostics for the clean `S9EUEdnJQDA` URL and `hujbT5BXyrl` both
+  stopped at the initial YouTube API-page request with `RemoteDisconnected`
+  after retries. Neither reached metadata extraction or the JavaScript
+  challenge step. The diagnostic environment reported no JavaScript runtime,
+  confirming a compatibility gap but not proving that it caused either
+  video's observed failure or explaining a difference between them.
+- Windows packaging was attempted through `electron:build:win`, but pinned
+  tool preparation stopped with `fetch failed` before Electron Builder ran.
+  The Deno-enabled Windows resource layout and live YouTube downloads remain
+  unverified in this environment.

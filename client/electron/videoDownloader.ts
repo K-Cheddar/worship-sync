@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createReadStream, type ReadStream } from "node:fs";
-import { mkdir, readdir, readFile, rm, stat, statfs } from "node:fs/promises";
+import { access, mkdir, readdir, readFile, rm, stat, statfs } from "node:fs/promises";
 import { type ClientRequest } from "node:http";
 import { request as requestHttps } from "node:https";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -13,6 +13,7 @@ import {
   validateSupportedVideoUrl,
   type YtDlpFormat,
 } from "./videoDownloaderSecurity";
+import { friendlyVideoFailure, logVideoFailure } from "./videoDownloaderErrors";
 
 export type VideoDownloadEvent = {
   jobId: string;
@@ -26,6 +27,7 @@ export type VideoDownloadEvent = {
 
 export type VideoInspection = {
   inspectionId: string;
+  videoUrl: string;
   title: string;
   thumbnail: string;
   duration: number;
@@ -84,20 +86,11 @@ const bytesFromLine = (line: string) => {
   return { downloadedBytes, totalBytes };
 };
 
-const friendlyDownloadError = (stderr: string) => {
-  if (/unsupported url|unsupported url scheme|no suitable extractor/i.test(stderr)) {
-    return "This video source is not supported.";
-  }
-  if (/private video|video unavailable|not available|has been removed|http error 404/i.test(stderr)) {
-    return "This video is unavailable or cannot be accessed without an account.";
-  }
-  if (/timed out|temporary failure|connection|network|unable to download/i.test(stderr)) {
-    return "The video could not be downloaded because of a network problem. Check your connection and retry.";
-  }
-  if (/no space left|disk full|not enough space|winerror\s*112|enospc/i.test(stderr)) {
-    return "This computer does not have enough free storage for the video.";
-  }
-  return "The video could not be downloaded. Check the link and try again.";
+const readThumbnailMime = (bytes: Buffer) => {
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return "image/png";
+  if (bytes.length >= 12 && bytes.toString("ascii", 0, 4) === "RIFF" && bytes.toString("ascii", 8, 12) === "WEBP") return "image/webp";
+  return "";
 };
 
 export class VideoDownloader extends EventEmitter {
@@ -111,6 +104,7 @@ export class VideoDownloader extends EventEmitter {
     private readonly options: {
       rootDirectory: string;
       ytDlpPath: string;
+      denoPath: string;
       ffmpegPath: string;
       ffprobePath: string;
       spawnProcess?: typeof spawn;
@@ -161,10 +155,16 @@ export class VideoDownloader extends EventEmitter {
     const directory = join(this.options.rootDirectory, `inspect-${inspectionId}`);
     const proxy = this.createProxy();
     try {
+      await this.ensureNativeDependencies([
+        ["yt-dlp", this.options.ytDlpPath],
+        ["Deno JavaScript runtime", this.options.denoPath],
+        ["FFmpeg", this.options.ffmpegPath],
+      ]);
       await mkdir(directory, { recursive: true });
       await proxy.start();
       const args = [
         "--ignore-config", "--no-plugin-dirs", "--no-playlist", "--ies", "youtube",
+        "--js-runtimes", `deno:${this.options.denoPath}`,
         "--no-warnings", "--no-cache-dir", "--no-progress", "--dump-single-json",
         "--skip-download", "--write-thumbnail", "--convert-thumbnails", "jpg",
         "--max-filesize", "2M",
@@ -174,11 +174,7 @@ export class VideoDownloader extends EventEmitter {
         url,
       ];
       let stdout: string;
-      try {
-        stdout = await this.runCommand(this.options.ytDlpPath, args, 60_000);
-      } catch (error) {
-        throw new Error(friendlyDownloadError(error instanceof Error ? error.message : ""));
-      }
+      stdout = await this.runCommand(this.options.ytDlpPath, args, 60_000);
       let info: {
         title?: unknown; duration?: unknown; formats?: YtDlpFormat[];
         _type?: string; entries?: unknown[];
@@ -206,20 +202,24 @@ export class VideoDownloader extends EventEmitter {
         const thumbnailStat = await stat(thumbnailPath);
         if (thumbnailStat.size > 0 && thumbnailStat.size <= 2 * 1024 * 1024) {
           const bytes = await readFile(thumbnailPath);
-          const mime = thumbnailName.endsWith(".png") ? "image/png" : "image/jpeg";
-          thumbnail = `data:${mime};base64,${bytes.toString("base64")}`;
+          const mime = readThumbnailMime(bytes);
+          if (mime) thumbnail = `data:${mime};base64,${bytes.toString("base64")}`;
         }
       }
       const title = info.title.trim().slice(0, 300);
       this.inspections.set(inspectionId, { url, title, duration, heights, createdAt: Date.now() });
       return {
         inspectionId,
+        videoUrl: url,
         title,
         thumbnail,
         duration,
         heights,
         defaultQuality: heights.includes(1080) ? 1080 : heights[0],
       };
+    } catch (error) {
+      logVideoFailure(error, "inspection");
+      throw new Error(friendlyVideoFailure(error, "inspection"));
     } finally {
       try {
         await proxy.stop().catch(() => undefined);
@@ -237,7 +237,11 @@ export class VideoDownloader extends EventEmitter {
       let stdout = "";
       let stderr = "";
       let outputSize = 0;
-      const timer = setTimeout(() => this.terminate(child), timeoutMs);
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        this.terminate(child);
+      }, timeoutMs);
       const collect = (target: "stdout" | "stderr") => (chunk: Buffer) => {
         outputSize += chunk.length;
         if (outputSize > MAX_COMMAND_OUTPUT_BYTES) {
@@ -251,18 +255,41 @@ export class VideoDownloader extends EventEmitter {
       child.stderr?.on("data", collect("stderr"));
       child.once("error", (error) => {
         clearTimeout(timer);
-        reject(new Error(error.message));
+        reject(error);
       });
       child.once("close", (code) => {
         clearTimeout(timer);
-        if (code === 0 && outputSize <= MAX_COMMAND_OUTPUT_BYTES) resolveOutput(stdout);
-        else reject(new Error(stderr || "Video tool failed."));
+        if (timedOut) reject(new Error("The native video tool timed out."));
+        else if (outputSize > MAX_COMMAND_OUTPUT_BYTES) reject(new Error("Native video tool output exceeded its limit."));
+        else if (code === 0) resolveOutput(stdout);
+        else reject(new Error(stderr || "The native video tool failed without diagnostic output."));
       });
     });
   }
 
+  private async ensureNativeDependencies(dependencies: Array<[string, string]>) {
+    for (const [name, path] of dependencies) {
+      try {
+        await access(path);
+      } catch {
+        throw new Error(`Missing native video dependency: ${name}.`);
+      }
+    }
+  }
+
   async startDownload(input: { inspectionId: unknown; quality: unknown; jobId?: unknown }) {
     await this.ready;
+    try {
+      await this.ensureNativeDependencies([
+        ["yt-dlp", this.options.ytDlpPath],
+        ["Deno JavaScript runtime", this.options.denoPath],
+        ["FFmpeg", this.options.ffmpegPath],
+        ["ffprobe", this.options.ffprobePath],
+      ]);
+    } catch (error) {
+      logVideoFailure(error, "download");
+      throw new Error(friendlyVideoFailure(error, "download"));
+    }
     const inspectionId = typeof input.inspectionId === "string" ? input.inspectionId : "";
     const inspection = this.inspections.get(inspectionId);
     if (!inspection) throw new Error("Inspect the video link again before downloading.");
@@ -317,6 +344,7 @@ export class VideoDownloader extends EventEmitter {
       ].join("/");
       const args = [
         "--ignore-config", "--no-plugin-dirs", "--no-playlist", "--ies", "youtube",
+        "--js-runtimes", `deno:${this.options.denoPath}`,
         "--no-warnings", "--no-cache-dir", "--newline", "--downloader", "native",
         "--socket-timeout", "30", "--retries", "3", "--fragment-retries", "3",
         "--file-access-retries", "2", "--extractor-retries", "2",
@@ -372,9 +400,8 @@ export class VideoDownloader extends EventEmitter {
       const cancelled = record.child?.cancelled || record.status === "cancelled";
       record.status = cancelled ? "cancelled" : "failed";
       await rm(record.directory, { recursive: true, force: true });
-      const message = cancelled ? "Download cancelled." : error instanceof Error && /not enough free storage|without conversion|12 GB|Playlists are not supported|unavailable|compatible/i.test(error.message)
-        ? error.message
-        : friendlyDownloadError(error instanceof Error ? error.message : "");
+      if (!cancelled) logVideoFailure(error, "download");
+      const message = cancelled ? "Download cancelled." : friendlyVideoFailure(error, "download");
       this.emitProgress({ jobId, stage: cancelled ? "cancelled" : "failed", progress: null, error: message });
     } finally {
       await proxy.stop();
@@ -435,7 +462,7 @@ export class VideoDownloader extends EventEmitter {
       };
       child.stdout?.on("data", collect("stdout"));
       child.stderr?.on("data", collect("stderr"));
-      child.once("error", (error) => reject(new Error(error.message)));
+      child.once("error", reject);
       child.once("close", (code) => {
         if (stdoutPending) handleProgressLine(stdoutPending);
         if (stderrPending) handleProgressLine(stderrPending);

@@ -40,6 +40,25 @@ export class LocalVideoPlaybackError extends Error {
   }
 }
 
+const MAX_DOWNLOADED_THUMBNAIL_BYTES = 2 * 1024 * 1024;
+
+const decodeDownloadedVideoThumbnail = (dataUrl: string | undefined) => {
+  if (!dataUrl || dataUrl.length > MAX_DOWNLOADED_THUMBNAIL_BYTES * 1.4) return undefined;
+  const match = dataUrl.match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/i);
+  if (!match || Math.floor(match[2].length * 3 / 4) > MAX_DOWNLOADED_THUMBNAIL_BYTES) return undefined;
+  try {
+    const mime = `image/${match[1].toLowerCase() === "jpg" ? "jpeg" : match[1].toLowerCase()}`;
+    const bytes = Uint8Array.from(atob(match[2]), (character) => character.charCodeAt(0));
+    const isJpeg = mime === "image/jpeg" && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+    const isPng = mime === "image/png" && [137, 80, 78, 71, 13, 10, 26, 10].every((byte, index) => bytes[index] === byte);
+    const isWebp = mime === "image/webp" && String.fromCharCode(...bytes.slice(0, 4)) === "RIFF" && String.fromCharCode(...bytes.slice(8, 12)) === "WEBP";
+    if (!isJpeg && !isPng && !isWebp) return undefined;
+    return new Blob([bytes], { type: mime });
+  } catch {
+    return undefined;
+  }
+};
+
 export const createLocalMediaFromFile = async (
   file: File,
   workspaceId: string,
@@ -67,6 +86,7 @@ export const createLocalMediaFromDownloadedVideo = async ({
   workspaceId,
   displayName,
   duration,
+  thumbnail,
   storagePolicy,
   folderId,
 }: {
@@ -74,6 +94,7 @@ export const createLocalMediaFromDownloadedVideo = async ({
   workspaceId: string;
   displayName: string;
   duration: number;
+  thumbnail?: string;
   storagePolicy: LocalAssetStoragePolicy;
   folderId?: string | null;
 }): Promise<MediaType> => {
@@ -92,7 +113,7 @@ export const createLocalMediaFromDownloadedVideo = async ({
   }
   const now = asset.createdAt || new Date().toISOString();
   const fileName = `${normalizeMediaLibraryDisplayName(displayName) || "Downloaded video"}.mp4`;
-  await saveLocalVideoFile({
+  const localVideo = {
     id: asset.assetId,
     workspaceId,
     fileName,
@@ -102,6 +123,11 @@ export const createLocalMediaFromDownloadedVideo = async ({
     height: asset.height,
     duration,
     createdAt: now,
+  };
+  const thumbnailBlob = decodeDownloadedVideoThumbnail(thumbnail);
+  await saveLocalVideoFile(localVideo, {
+    thumbnailBlob,
+    deferThumbnail: true,
   });
   const contentRevision = asset.updatedAt || now;
   return {

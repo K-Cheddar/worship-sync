@@ -25,8 +25,8 @@ const StartPage = () => {
   const navigate = useNavigate();
   return <>
     <button type="button" onClick={() => start({
-      inspection: { inspectionId: "inspection-1", title: "Test Video", thumbnail: "", duration: 30, heights: [1080], defaultQuality: 1080 },
-      inspectedUrl: "https://youtu.be/test",
+      inspection: { inspectionId: "inspection-1", videoUrl: "https://www.youtube.com/watch?v=S9EUEdnJQDA", title: "Test Video", thumbnail: "", duration: 30, heights: [1080], defaultQuality: 1080 },
+      inspectedUrl: "https://www.youtube.com/watch?v=S9EUEdnJQDA",
       displayName: "Test Video",
       quality: 1080,
       destination: "computer",

@@ -44,9 +44,19 @@ describe("VideoDownloader job lifecycle", () => {
   let processOptions: Array<{ shell?: boolean }>;
   let processArguments: string[][];
   let uploadLookup: SafeHttpLookupAll;
+  let nativeTools: { ytDlpPath: string; denoPath: string; ffmpegPath: string; ffprobePath: string };
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "worshipsync-downloader-test-"));
+    const toolsDirectory = join(root, "tools");
+    mkdirSync(toolsDirectory, { recursive: true });
+    nativeTools = {
+      ytDlpPath: join(toolsDirectory, "yt-dlp.exe"),
+      denoPath: join(toolsDirectory, "deno.exe"),
+      ffmpegPath: join(toolsDirectory, "ffmpeg.exe"),
+      ffprobePath: join(toolsDirectory, "ffprobe.exe"),
+    };
+    Object.values(nativeTools).forEach((path) => writeFileSync(path, "test tool"));
     downloadCount = 0;
     currentDownload = undefined;
     stallDownload = false;
@@ -91,9 +101,7 @@ describe("VideoDownloader job lifecycle", () => {
     }) as unknown as typeof import("node:child_process").spawn;
     downloader = new VideoDownloader({
       rootDirectory: join(root, "downloads"),
-      ytDlpPath: "yt-dlp.exe",
-      ffmpegPath: "ffmpeg.exe",
-      ffprobePath: "ffprobe.exe",
+      ...nativeTools,
       spawnProcess,
       lookupAll: (...args) => uploadLookup(...args),
       proxyFactory: () => ({ url: "http://127.0.0.1:12345", start: async () => undefined, stop: async () => undefined }),
@@ -105,7 +113,7 @@ describe("VideoDownloader job lifecycle", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  const inspect = async () => downloader.inspect("https://youtu.be/video123");
+  const inspect = async () => downloader.inspect("https://youtu.be/S9EUEdnJQDA");
   const waitForStage = (events: VideoDownloadEvent[], stage: VideoDownloadEvent["stage"]) =>
     new Promise<VideoDownloadEvent>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error(`Missing ${stage} event`)), 3000);
@@ -122,7 +130,7 @@ describe("VideoDownloader job lifecycle", () => {
 
   it("inspects compatible qualities, reports progress, and completes only after MP4 validation", async () => {
     const metadata = await inspect();
-    expect(metadata).toMatchObject({ title: "Test Sermon", duration: 30, heights: [1080], defaultQuality: 1080 });
+    expect(metadata).toMatchObject({ title: "Test Sermon", videoUrl: "https://www.youtube.com/watch?v=S9EUEdnJQDA", duration: 30, heights: [1080], defaultQuality: 1080 });
     const events: VideoDownloadEvent[] = [];
     downloader.on("progress", (event) => events.push(event));
     const completed = waitForStage(events, "complete");
@@ -135,6 +143,8 @@ describe("VideoDownloader job lifecycle", () => {
     expect(existsSync(downloader.getCompletedFile(jobId).path)).toBe(true);
     expect(processOptions.every((options) => options.shell === false)).toBe(true);
     const downloadArgs = processArguments.find((args) => args.includes("--format"))!;
+    expect(downloadArgs).toContain("--js-runtimes");
+    expect(downloadArgs).toContain(`deno:${nativeTools.denoPath}`);
     const selector = downloadArgs[downloadArgs.indexOf("--format") + 1];
     expect(selector.indexOf("b[height=1080]")).toBeLessThan(selector.indexOf("bv[height<=1080]"));
     expect(selector.indexOf("bv[height<=1080]")).toBeLessThan(selector.lastIndexOf("b[height<=1080]"));
@@ -157,6 +167,28 @@ describe("VideoDownloader job lifecycle", () => {
     await cancelled;
     expect(() => downloader.getCompletedFile(jobId)).toThrow(/no longer available/);
     expect(existsSync(join(root, "downloads", jobId))).toBe(false);
+  });
+
+  it("reports a missing packaged JavaScript runtime as a native dependency failure", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const unavailable = new VideoDownloader({
+      rootDirectory: join(root, "missing-dependency-downloads"),
+      ...nativeTools,
+      denoPath: join(root, "tools", "missing-deno.exe"),
+      spawnProcess: jest.fn() as unknown as typeof import("node:child_process").spawn,
+      proxyFactory: () => ({ url: "http://127.0.0.1:12345", start: async () => undefined, stop: async () => undefined }),
+    });
+    try {
+      await expect(unavailable.inspect("https://youtu.be/S9EUEdnJQDA"))
+        .rejects.toThrow(/required desktop video tool is missing/i);
+      expect(warn).toHaveBeenCalledWith("[VideoDownloader] operation failed", expect.objectContaining({
+        stage: "inspection",
+        category: "native-dependency",
+      }));
+    } finally {
+      await unavailable.shutdown();
+      warn.mockRestore();
+    }
   });
 
   it("allows a failed job to retry with the same id and then complete", async () => {

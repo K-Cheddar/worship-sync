@@ -2,9 +2,11 @@ import { useContext, useEffect, useState } from "react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import Modal from "../../components/Modal/Modal";
+import Select from "../../components/Select/Select";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { useDesktopVideoDownload } from "../../components/DesktopVideoDownloadManager/DesktopVideoDownloadManager";
 import type { DesktopVideoInspection } from "../../types/electron";
+import { videoDownloadErrorMessage } from "../../utils/videoDownloadError";
 
 type DownloadVideoDialogProps = {
   open: boolean;
@@ -39,21 +41,31 @@ const DownloadVideoDialog = ({
   const { start } = useDesktopVideoDownload();
   const [url, setUrl] = useState("");
   const [inspection, setInspection] = useState<DesktopVideoInspection | null>(null);
-  const [inspectedUrl, setInspectedUrl] = useState("");
+  const [inspectedInputUrl, setInspectedInputUrl] = useState("");
   const [mediaName, setMediaName] = useState("");
   const [quality, setQuality] = useState<number | "best">("best");
   const [destination, setDestination] = useState<"computer" | "cloud">("computer");
   const [isInspecting, setIsInspecting] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [error, setError] = useState("");
+  const [inspectionAttempt, setInspectionAttempt] = useState(0);
 
   useEffect(() => {
-    if (!open || !url.trim()) {
-      if (!url.trim()) {
-        setInspection(null);
-        setInspectedUrl("");
-        setIsInspecting(false);
-      }
+    if (!open) {
+      setUrl("");
+      setInspection(null);
+      setInspectedInputUrl("");
+      setMediaName("");
+      setQuality("best");
+      setIsInspecting(false);
+      setError("");
+      return;
+    }
+    if (!url.trim()) {
+      setInspection(null);
+      setInspectedInputUrl("");
+      setMediaName("");
+      setIsInspecting(false);
       return;
     }
     let active = true;
@@ -62,23 +74,26 @@ const DownloadVideoDialog = ({
       const api = window.electronAPI;
       if (!api?.inspectVideoUrl) {
         setError("Video downloads are available in the Windows desktop app.");
+        setIsInspecting(false);
         return;
       }
       setIsInspecting(true);
       setError("");
       setInspection(null);
-      setInspectedUrl("");
+      setInspectedInputUrl("");
       void api.inspectVideoUrl(targetUrl).then((result) => {
         if (!active) return;
         setInspection(result);
-        setInspectedUrl(targetUrl);
+        setInspectedInputUrl(targetUrl);
         setMediaName(result.title);
         setQuality(result.defaultQuality);
       }).catch((inspectionError: unknown) => {
         if (!active) return;
         setInspection(null);
-        setInspectedUrl("");
-        setError(inspectionError instanceof Error ? inspectionError.message : "Could not inspect this video link.");
+        setInspectedInputUrl("");
+        setMediaName("");
+        setQuality("best");
+        setError(videoDownloadErrorMessage(inspectionError, "Could not inspect this video link."));
       }).finally(() => {
         if (active) setIsInspecting(false);
       });
@@ -87,10 +102,10 @@ const DownloadVideoDialog = ({
       active = false;
       window.clearTimeout(timer);
     };
-  }, [open, url]);
+  }, [open, url, inspectionAttempt]);
 
   const handleDownload = async () => {
-    if (!inspection || inspectedUrl !== url.trim() || disabled || isStarting) return;
+    if (!inspection || inspectedInputUrl !== url.trim() || disabled || isStarting) return;
     const displayName = mediaName.trim();
     if (!displayName) {
       setError("Enter a name for this video.");
@@ -105,7 +120,7 @@ const DownloadVideoDialog = ({
     try {
       start({
         inspection,
-        inspectedUrl,
+        inspectedUrl: inspection.videoUrl,
         displayName,
         quality,
         destination,
@@ -119,7 +134,7 @@ const DownloadVideoDialog = ({
       });
       onOpenChange(false);
     } catch (startError) {
-      setError(startError instanceof Error ? startError.message : "The download could not be started.");
+      setError(videoDownloadErrorMessage(startError, "The download could not be started."));
     } finally {
       setIsStarting(false);
     }
@@ -127,7 +142,7 @@ const DownloadVideoDialog = ({
 
   const selectedQualityExists = inspection?.heights.includes(Number(quality)) ?? false;
   const canDownload = Boolean(
-    inspection && inspectedUrl === url.trim() && !isInspecting && !isStarting &&
+    inspection && inspectedInputUrl === url.trim() && !isInspecting && !isStarting &&
     mediaName.trim() && (quality === "best" || selectedQualityExists) && !disabled,
   );
 
@@ -147,13 +162,18 @@ const DownloadVideoDialog = ({
           value={url}
           onChange={(value) => {
             setUrl(String(value));
+            setInspection(null);
+            setInspectedInputUrl("");
+            setMediaName("");
+            setQuality("best");
+            setIsInspecting(false);
             setError("");
           }}
           placeholder="Paste a YouTube video link"
           disabled={disabled || isStarting}
         />
         {isInspecting ? <p role="status" className="text-sm text-gray-300">Checking video details…</p> : null}
-        {inspection && inspectedUrl === url.trim() ? (
+        {inspection && inspectedInputUrl === url.trim() ? (
           <div className="flex min-w-0 gap-3 rounded-md border border-gray-600 bg-gray-900 p-3">
             {inspection.thumbnail ? <img src={inspection.thumbnail} alt="" className="h-20 w-36 shrink-0 rounded object-cover" /> : null}
             <div className="min-w-0">
@@ -170,17 +190,23 @@ const DownloadVideoDialog = ({
           disabled={!inspection || disabled || isStarting}
         />
         <div>
-          <label htmlFor="video-download-quality" className="mb-1 block text-sm font-medium">Video quality</label>
-          <select
+          <label id="video-download-quality-label" htmlFor="video-download-quality" className="mb-1 block text-sm font-medium">Video quality</label>
+          <Select
             id="video-download-quality"
-            value={quality}
-            onChange={(event) => setQuality(event.target.value === "best" ? "best" : Number(event.target.value))}
+            aria-labelledby="video-download-quality-label"
+            value={String(quality)}
+            onChange={(value) => setQuality(value === "best" ? "best" : Number(value))}
+            options={[
+              { label: "Best available", value: "best" },
+              ...(inspection?.heights ?? []).map((height) => ({ label: `${height}p`, value: String(height) })),
+            ]}
             disabled={!inspection || disabled || isStarting}
-            className="w-full rounded-md border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white disabled:opacity-50"
-          >
-            <option value="best">Best available</option>
-            {(inspection?.heights ?? []).map((height) => <option key={height} value={height}>{height}p</option>)}
-          </select>
+            className="w-full"
+            selectClassName="w-full border-gray-600 bg-gray-900 text-white"
+            contentClassName="border-gray-600"
+            contentBackgroundColor="bg-gray-900"
+            contentTextColor="text-white"
+          />
           <p className="mt-1 text-xs text-gray-400">Resolution · H.264 video and AAC audio in MP4</p>
         </div>
         <fieldset>
@@ -196,7 +222,24 @@ const DownloadVideoDialog = ({
             </label>
           ) : null}
         </fieldset>
-        {error ? <p role="alert" className="text-sm text-red-200">{error}</p> : null}
+        {error ? (
+          <div className="space-y-2">
+            <p role="alert" className="text-sm text-red-200">{error}</p>
+            {url.trim() && !inspection ? (
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setError("");
+                  setIsInspecting(true);
+                  setInspectionAttempt((attempt) => attempt + 1);
+                }}
+                disabled={isInspecting || disabled || isStarting}
+              >
+                Retry inspection
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
         <div className="flex justify-end gap-2 border-t border-gray-700 pt-3">
           <Button variant="secondary" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button onClick={() => void handleDownload()} disabled={!canDownload}>Download</Button>

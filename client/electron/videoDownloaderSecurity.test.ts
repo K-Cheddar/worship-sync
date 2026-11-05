@@ -14,13 +14,22 @@ describe("native video download URL and format policy", () => {
     "https://youtube.com.evil.example/watch?v=abc123",
     "https://user:pass@youtube.com/watch?v=abc123",
     "https://www.youtube.com/playlist?list=PL123",
+    "https://www.youtube.com/watch?list=RDS9EUEdnJQDA",
+    "https://www.youtube.com/playlist?list=RDS9EUEdnJQDA",
+    "https://youtu.be/not-a-video-id",
   ])("rejects unsupported or unsafe video URL %s", (url) => {
     expect(() => validateSupportedVideoUrl(url)).toThrow();
   });
 
-  it("accepts a single public YouTube video and removes no URL parameters", () => {
-    expect(validateSupportedVideoUrl("https://youtu.be/video123?t=15"))
-      .toBe("https://youtu.be/video123?t=15");
+  it.each([
+    ["https://www.youtube.com/watch?v=S9EUEdnJQDA", "https://www.youtube.com/watch?v=S9EUEdnJQDA"],
+    ["https://youtu.be/S9EUEdnJQDA?t=15&si=tracking", "https://www.youtube.com/watch?v=S9EUEdnJQDA"],
+    ["https://www.youtube.com/watch?v=S9EUEdnJQDA&list=RDS9EUEdnJQDA&start_radio=1", "https://www.youtube.com/watch?v=S9EUEdnJQDA"],
+    ["https://m.youtube.com/watch?v=S9EUEdnJQDA&list=PLanything", "https://www.youtube.com/watch?v=S9EUEdnJQDA"],
+    ["https://www.youtube.com/shorts/S9EUEdnJQDA?feature=share", "https://www.youtube.com/watch?v=S9EUEdnJQDA"],
+    ["https://www.youtube.com/live/S9EUEdnJQDA?feature=share", "https://www.youtube.com/watch?v=S9EUEdnJQDA"],
+  ])("normalizes a single video URL %s", (input, expected) => {
+    expect(validateSupportedVideoUrl(input)).toBe(expected);
   });
 
   it("pins an allowed extractor host to a validated public address", async () => {

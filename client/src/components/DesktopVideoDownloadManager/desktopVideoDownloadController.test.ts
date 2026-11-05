@@ -6,8 +6,9 @@ import { DesktopVideoDownloadManager, type DesktopVideoDownloadDependencies, typ
 
 const inspection: DesktopVideoInspection = {
   inspectionId: "inspection-one",
+  videoUrl: "https://www.youtube.com/watch?v=S9EUEdnJQDA",
   title: "Sunday Service",
-  thumbnail: "",
+  thumbnail: "data:image/png;base64,iVBORw0KGgo=",
   duration: 90,
   heights: [1080, 720],
   defaultQuality: 1080,
@@ -116,7 +117,7 @@ const makeHarness = (overrides: Partial<DesktopVideoDownloadDependencies> = {}) 
   const manager = new DesktopVideoDownloadManager(deps);
   const start = (destination: "computer" | "cloud" = "computer") => manager.start({
     inspection,
-    inspectedUrl: "https://youtu.be/video123",
+    inspectedUrl: "https://www.youtube.com/watch?v=S9EUEdnJQDA",
     displayName: "Sunday Service",
     quality: 1080,
     destination,
@@ -146,6 +147,49 @@ describe("desktop video download lifecycle manager", () => {
     expect(harness.deps.createLocalMedia).toHaveBeenCalledTimes(1);
     expect(harness.deps.registerLocalMedia).toHaveBeenCalledTimes(1);
     expect(harness.transfers.get(`video-download-${jobId}`)).toMatchObject({ status: "complete", result: { actionKey: "view" } });
+  });
+
+  it("refreshes the same canonical video identity on retry and imports its refreshed thumbnail", async () => {
+    const refreshedInspection: DesktopVideoInspection = {
+      ...inspection,
+      inspectionId: "inspection-refreshed",
+      thumbnail: "data:image/jpeg;base64,/9j/4AAQ",
+    };
+    const harness = makeHarness();
+    harness.native.inspectVideoUrl.mockResolvedValue(refreshedInspection);
+    const jobId = harness.start();
+    await harness.manager.handleProgress({ jobId, stage: "failed", progress: null, error: "Retry requested" });
+
+    await harness.action(jobId, "retry");
+    expect(harness.native.inspectVideoUrl).toHaveBeenCalledWith(inspection.videoUrl);
+    expect(harness.native.startVideoDownload).toHaveBeenLastCalledWith({
+      jobId,
+      inspectionId: "inspection-refreshed",
+      quality: 1080,
+    });
+
+    await harness.manager.handleProgress(completion(jobId));
+    expect(harness.deps.createLocalMedia).toHaveBeenCalledWith(expect.objectContaining({
+      thumbnail: refreshedInspection.thumbnail,
+    }));
+  });
+
+  it("keeps the local video thumbnail reference when cloud upload registers the same media", async () => {
+    const registerCloudMedia = jest.fn(async () => undefined);
+    const harness = makeHarness({ registerCloudMedia });
+    const jobId = harness.start("cloud");
+
+    await harness.manager.handleProgress(completion(jobId));
+
+    expect(harness.deps.createLocalMedia).toHaveBeenCalledWith(expect.objectContaining({
+      thumbnail: inspection.thumbnail,
+      destination: "cloud",
+    }));
+    expect(registerCloudMedia).toHaveBeenCalledWith(
+      expect.objectContaining({ localVideoFile: expect.objectContaining({ id: asset.assetId }) }),
+      expect.objectContaining({ muxPlaybackId: muxResult.playbackId }),
+      expect.objectContaining({ churchId: "church-a" }),
+    );
   });
 
   it("registers Activity actions when a job is created and waits for cancellation cleanup", async () => {

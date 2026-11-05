@@ -114,6 +114,7 @@ export interface ElectronLocalAsset {
 
 export type DesktopVideoInspection = {
   inspectionId: string;
+  videoUrl: string;
   title: string;
   thumbnail: string;
   duration: number;

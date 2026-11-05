@@ -15,6 +15,22 @@ const isHostnameWithin = (hostname: string, suffixes: string[]) => {
   );
 };
 
+const YOUTUBE_VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
+
+const readYouTubeVideoId = (url: URL) => {
+  const hostname = url.hostname.toLowerCase().replace(/\.$/, "");
+  if (hostname === "youtu.be" || hostname.endsWith(".youtu.be")) {
+    const match = url.pathname.match(/^\/([A-Za-z0-9_-]{11})\/?$/);
+    return match?.[1];
+  }
+  if (url.pathname === "/watch") {
+    const videoId = url.searchParams.get("v") ?? "";
+    return YOUTUBE_VIDEO_ID.test(videoId) ? videoId : undefined;
+  }
+  const shortPath = url.pathname.match(/^\/(?:shorts|live|embed)\/([A-Za-z0-9_-]{11})\/?$/);
+  return shortPath?.[1];
+};
+
 export const validateSupportedVideoUrl = (rawUrl: unknown): string => {
   if (typeof rawUrl !== "string" || rawUrl.length > 4096) {
     throw new Error("Enter a valid YouTube video URL.");
@@ -30,12 +46,18 @@ export const validateSupportedVideoUrl = (rawUrl: unknown): string => {
     !isHostnameWithin(url.hostname, SUPPORTED_HOSTS) ||
     url.username ||
     url.password ||
-    (url.port && url.port !== "443") ||
-    (url.pathname === "/playlist" && !url.searchParams.has("v"))
+    (url.port && url.port !== "443")
   ) {
     throw new Error("Use a public YouTube video link. Playlists are not supported.");
   }
-  return url.toString();
+  const videoId = readYouTubeVideoId(url);
+  if (!videoId) {
+    if (url.pathname === "/playlist" || url.searchParams.has("list")) {
+      throw new Error("Choose a single YouTube video. Playlists are not supported.");
+    }
+    throw new Error("Enter a valid individual YouTube video link. Playlists are not supported.");
+  }
+  return `https://www.youtube.com/watch?v=${videoId}`;
 };
 
 export const validateExtractorRequestUrl = async (

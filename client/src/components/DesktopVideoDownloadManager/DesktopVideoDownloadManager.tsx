@@ -58,12 +58,13 @@ const DesktopVideoDownloadManager = ({ children }: { children: ReactNode }) => {
       native,
       getDatabase: () => globalDb,
       isOwnerCurrent,
-      createLocalMedia: ({ asset, owner, displayName, duration, destination }) =>
+      createLocalMedia: ({ asset, owner, displayName, duration, thumbnail, destination }) =>
         createLocalMediaFromDownloadedVideo({
           asset,
           workspaceId: owner.workspaceId,
           displayName,
           duration,
+          thumbnail,
           storagePolicy: destination === "cloud" ? "local-and-cloud" : "local-only",
           folderId: owner.folderId,
         }),

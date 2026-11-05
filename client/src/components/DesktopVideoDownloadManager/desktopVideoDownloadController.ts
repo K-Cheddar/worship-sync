@@ -3,6 +3,7 @@ import type { MediaType } from "../../types";
 import type { Transfer } from "../../context/transferModel";
 import type { MuxUploadResult } from "../../containers/Media/MediaUploadInput.types";
 import type { MuxUploadCallbacks } from "../../containers/Media/utils/muxUpload";
+import { videoDownloadErrorMessage } from "../../utils/videoDownloadError";
 
 export type DesktopVideoDownloadOwner = {
   churchId: string;
@@ -41,6 +42,7 @@ export type DesktopVideoDownloadDependencies = {
     owner: DesktopVideoDownloadOwner;
     displayName: string;
     duration: number;
+    thumbnail: string;
     destination: "computer" | "cloud";
   }) => Promise<MediaType>;
   registerLocalMedia: (media: MediaType, owner: DesktopVideoDownloadOwner) => Promise<void>;
@@ -80,6 +82,7 @@ type Runtime = {
   transferId: string;
   inspectionId: string;
   inspectedUrl: string;
+  thumbnail: string;
   displayName: string;
   quality: number | "best";
   destination: "computer" | "cloud";
@@ -112,7 +115,7 @@ type Runtime = {
 };
 
 const randomJobId = () => globalThis.crypto.randomUUID();
-const messageOf = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback;
+const messageOf = (error: unknown, fallback: string) => videoDownloadErrorMessage(error, fallback);
 const friendlyBytes = (bytes?: number) => {
   if (bytes === undefined || !Number.isFinite(bytes)) return "";
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
@@ -136,7 +139,8 @@ export class DesktopVideoDownloadManager {
       jobId,
       transferId: `video-download-${jobId}`,
       inspectionId: input.inspection.inspectionId,
-      inspectedUrl: input.inspectedUrl,
+      inspectedUrl: input.inspection.videoUrl || input.inspectedUrl,
+      thumbnail: input.inspection.thumbnail,
       displayName: input.displayName,
       quality: input.quality,
       destination: input.destination,
@@ -292,6 +296,8 @@ export class DesktopVideoDownloadManager {
           throw new Error("The selected video quality is no longer available. Choose a new quality in the downloader.");
         }
         runtime.inspectionId = inspection.inspectionId;
+        runtime.inspectedUrl = inspection.videoUrl || runtime.inspectedUrl;
+        runtime.thumbnail = inspection.thumbnail;
       }
       if (runtime.cancelRequested) return;
       runtime.nativeCleaned = false;
@@ -345,6 +351,7 @@ export class DesktopVideoDownloadManager {
           owner: runtime.owner,
           displayName: runtime.displayName,
           duration: info.duration,
+          thumbnail: runtime.thumbnail,
           destination: runtime.destination,
         });
       }

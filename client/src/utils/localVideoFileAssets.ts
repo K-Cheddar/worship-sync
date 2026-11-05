@@ -5,6 +5,7 @@ import {
   LOCAL_VIDEO_STORE_NAME,
   openLocalAssetDb,
   saveLocalImageThumbnail,
+  saveLocalVideoThumbnail,
   THUMBNAIL_STORE_NAME,
   type StoredLocalImageThumbnail,
 } from "./localImageAssets";
@@ -19,6 +20,8 @@ const MAX_BROWSER_LOCAL_VIDEO_BYTES = 500 * 1024 * 1024;
 const LOCAL_VIDEO_FILE_CHANGE_EVENT = "worshipsync-local-video-file-change";
 const VIDEO_METADATA_TIMEOUT_MS = 10_000;
 const VIDEO_THUMBNAIL_TIMEOUT_MS = 8_000;
+const MAX_SOURCE_THUMBNAIL_BYTES = 2 * 1024 * 1024;
+const MAX_SOURCE_THUMBNAIL_PIXELS = 40_000_000;
 
 export type StoredLocalVideoFile = {
   id: string;
@@ -239,7 +242,36 @@ const captureVideoThumbnailFromSource = async ({
 
 export const createLocalVideoFileThumbnail = async (
   video: StoredLocalVideoFile,
+  preferredThumbnail?: Blob,
 ): Promise<StoredLocalImageThumbnail | undefined> => {
+  if (
+    preferredThumbnail &&
+    preferredThumbnail.size > 0 &&
+    preferredThumbnail.size <= MAX_SOURCE_THUMBNAIL_BYTES &&
+    /^image\/(?:jpeg|png|webp)$/i.test(preferredThumbnail.type) &&
+    typeof createImageBitmap === "function"
+  ) {
+    try {
+      const bitmap = await createImageBitmap(preferredThumbnail);
+      try {
+        if (
+          bitmap.width > 0 && bitmap.height > 0 &&
+          bitmap.width * bitmap.height <= MAX_SOURCE_THUMBNAIL_PIXELS
+        ) {
+          const encoded = await encodeLocalAssetThumbnailBlob(
+            bitmap,
+            bitmap.width,
+            bitmap.height,
+          );
+          if (encoded) return { id: video.id, createdAt: video.createdAt, ...encoded };
+        }
+      } finally {
+        bitmap.close();
+      }
+    } catch {
+      // A malformed or unsupported source image falls back to a video frame.
+    }
+  }
   if (video.blob) {
     return captureVideoThumbnailFromSource({
       id: video.id,
@@ -284,11 +316,13 @@ export const subscribeLocalVideoFileChanges = (
 
 export const saveLocalVideoFile = async (
   video: StoredLocalVideoFile,
-  options: { importBytes?: boolean } = {},
+  options: { importBytes?: boolean; thumbnailBlob?: Blob; deferThumbnail?: boolean } = {},
 ) => {
-  const thumbnail = await createLocalVideoFileThumbnail(video).catch(
-    () => undefined,
-  );
+  const thumbnail = options.deferThumbnail
+    ? undefined
+    : await createLocalVideoFileThumbnail(video, options.thumbnailBlob).catch(
+        () => undefined,
+      );
   const file = video.blob;
   const shouldImportBytes =
     options.importBytes && Boolean(window.electronAPI?.importLocalAssetBytes);
@@ -320,14 +354,8 @@ export const saveLocalVideoFile = async (
   const db = await openLocalAssetDb();
   try {
     await new Promise<void>((resolve, reject) => {
-      const stores = thumbnail
-        ? [LOCAL_VIDEO_STORE_NAME, THUMBNAIL_STORE_NAME]
-        : [LOCAL_VIDEO_STORE_NAME];
-      const transaction = db.transaction(stores, "readwrite");
+      const transaction = db.transaction(LOCAL_VIDEO_STORE_NAME, "readwrite");
       transaction.objectStore(LOCAL_VIDEO_STORE_NAME).put(storedVideo);
-      if (thumbnail) {
-        transaction.objectStore(THUMBNAIL_STORE_NAME).put(thumbnail);
-      }
       transaction.oncomplete = () => resolve();
       transaction.onerror = () =>
         reject(
@@ -343,6 +371,13 @@ export const saveLocalVideoFile = async (
     }
   } finally {
     db.close();
+  }
+  if (options.deferThumbnail) {
+    void queueLocalVideoThumbnail(video.id, () =>
+      createLocalVideoFileThumbnail(video, options.thumbnailBlob),
+    );
+  } else if (thumbnail) {
+    await saveLocalImageThumbnail(thumbnail).catch(() => undefined);
   }
   notifyLocalVideoFileChange(video.id);
 };
@@ -434,13 +469,10 @@ const pendingVideoThumbnailBackfills = new Map<
 >();
 let videoThumbnailBackfillQueue: Promise<void> = Promise.resolve();
 
-/**
- * Legacy local videos do not have a still. Generate at most one at a time so a
- * media grid cannot decode every original in parallel.
- */
-export const getOrCreateLocalVideoFileThumbnail = async (assetId: string) => {
-  const existing = await getLocalImageThumbnail(assetId);
-  if (existing) return existing;
+const queueLocalVideoThumbnail = (
+  assetId: string,
+  createThumbnail: () => Promise<StoredLocalImageThumbnail | undefined>,
+) => {
   const pending = pendingVideoThumbnailBackfills.get(assetId);
   if (pending) return pending;
 
@@ -462,20 +494,34 @@ export const getOrCreateLocalVideoFileThumbnail = async (assetId: string) => {
           resolveBackfill?.(current);
           return;
         }
-        const video = await getLocalVideoFile(assetId);
-        const thumbnail = video
-          ? await createLocalVideoFileThumbnail(video).catch(() => undefined)
-          : undefined;
-        if (thumbnail) await saveLocalImageThumbnail(thumbnail);
-        resolveBackfill?.(thumbnail);
-        if (thumbnail) notifyLocalVideoFileChange(assetId);
+        const thumbnail = await createThumbnail().catch(() => undefined);
+        const saved = thumbnail
+          ? await saveLocalVideoThumbnail(thumbnail)
+          : false;
+        resolveBackfill?.(saved ? thumbnail : undefined);
+        if (saved) notifyLocalVideoFileChange(assetId);
       } catch {
         resolveBackfill?.(undefined);
       } finally {
-        pendingVideoThumbnailBackfills.delete(assetId);
+        if (pendingVideoThumbnailBackfills.get(assetId) === backfill) {
+          pendingVideoThumbnailBackfills.delete(assetId);
+        }
       }
     });
   return backfill;
+};
+
+/**
+ * Legacy local videos do not have a still. Generate at most one at a time so a
+ * media grid cannot decode every original in parallel.
+ */
+export const getOrCreateLocalVideoFileThumbnail = async (assetId: string) => {
+  const existing = await getLocalImageThumbnail(assetId);
+  if (existing) return existing;
+  return queueLocalVideoThumbnail(assetId, async () => {
+    const video = await getLocalVideoFile(assetId);
+    return video ? createLocalVideoFileThumbnail(video) : undefined;
+  });
 };
 
 export const normalizeLocalVideoFileReference = (
