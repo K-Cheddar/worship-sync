@@ -99,6 +99,187 @@ describe("useLiveOutlinePreview", () => {
     expect(db.get).not.toHaveBeenCalledWith("ItemLists");
   });
 
+  it("loads the active Presentation outline ahead of a different persisted selection", async () => {
+    const itemListsDoc = makeItemListsDoc();
+    itemListsDoc.itemLists.push({
+      _id: "saved-list",
+      name: "Previously selected",
+      controllerScope: "presentation",
+    });
+    itemListsDoc.selectedIdByScope.presentation = "saved-list";
+    const activeItems = Array.from({ length: 20 }, (_, index) =>
+      makeItem(`Active item ${index + 1}`),
+    );
+    const db = {
+      get: jest.fn(async (id: string) =>
+        id === "ItemLists"
+          ? itemListsDoc
+          : {
+              _id: id,
+              items:
+                id === "main-list"
+                  ? activeItems
+                  : [makeItem("Previously selected item 1"), makeItem("Previously selected item 2")],
+            },
+      ),
+      put: jest.fn(),
+    };
+    const updater = new EventTarget();
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <Provider store={store}>
+        <ControllerInfoContext.Provider
+          value={{ db, cloud: {} as never, updater, bootstrapReady: true } as never}
+        >
+          {children}
+        </ControllerInfoContext.Provider>
+      </Provider>
+    );
+
+    const { result } = renderHook(() => useLiveOutlinePreview(), { wrapper });
+
+    await waitFor(() => expect(result.current.items).toHaveLength(20));
+    expect(result.current.items[0]?.name).toBe("Active item 1");
+    expect(db.get).toHaveBeenCalledWith("main-list");
+    expect(db.get).not.toHaveBeenCalledWith("saved-list");
+    expect(db.put).not.toHaveBeenCalled();
+  });
+
+  it("follows active Presentation outline changes while leaving the saved selection alone", async () => {
+    const itemListsDoc = makeItemListsDoc();
+    itemListsDoc.itemLists.push({
+      _id: "next-main-list",
+      name: "Next Main",
+      controllerScope: "presentation",
+    });
+    itemListsDoc.selectedIdByScope.presentation = "aux-list";
+    const db = {
+      get: jest.fn(async (id: string) =>
+        id === "ItemLists"
+          ? itemListsDoc
+          : { _id: id, items: [makeItem(id === "next-main-list" ? "New active item" : "Old item")] },
+      ),
+    };
+    const updater = new EventTarget();
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <Provider store={store}>
+        <ControllerInfoContext.Provider
+          value={{ db, cloud: {} as never, updater, bootstrapReady: true } as never}
+        >
+          {children}
+        </ControllerInfoContext.Provider>
+      </Provider>
+    );
+    const { result } = renderHook(() => useLiveOutlinePreview(), { wrapper });
+    await waitFor(() => expect(result.current.items[0]?.name).toBe("Old item"));
+
+    itemListsDoc.activeList = { _id: "next-main-list", name: "Next Main" } as never;
+    act(() => {
+      updater.dispatchEvent(
+        new CustomEvent("update", { detail: [{ _id: "ItemLists" }] }),
+      );
+    });
+
+    await waitFor(() => expect(result.current.items[0]?.name).toBe("New active item"));
+    expect(db.get).toHaveBeenCalledWith("next-main-list");
+    expect(itemListsDoc.selectedIdByScope.presentation).toBe("aux-list");
+  });
+
+  it("uses the saved Presentation selection when the church active outline is invalid", async () => {
+    const itemListsDoc = makeItemListsDoc();
+    itemListsDoc.itemLists.push({
+      _id: "saved-list",
+      name: "Saved Presentation",
+      controllerScope: "presentation",
+    });
+    itemListsDoc.activeList = { _id: "aux-list", name: "Aux" } as never;
+    itemListsDoc.selectedIdByScope.presentation = "saved-list";
+    const db = {
+      get: jest.fn(async (id: string) =>
+        id === "ItemLists"
+          ? itemListsDoc
+          : { _id: id, items: [makeItem(id === "saved-list" ? "Saved item" : "Wrong scope item")] },
+      ),
+    };
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <Provider store={store}>
+        <ControllerInfoContext.Provider
+          value={{ db, cloud: {} as never, updater: new EventTarget() } as never}
+        >
+          {children}
+        </ControllerInfoContext.Provider>
+      </Provider>
+    );
+
+    const { result } = renderHook(() => useLiveOutlinePreview(), { wrapper });
+
+    await waitFor(() => expect(result.current.items[0]?.name).toBe("Saved item"));
+    expect(db.get).toHaveBeenCalledWith("saved-list");
+    expect(db.get).not.toHaveBeenCalledWith("aux-list");
+  });
+
+  it("refreshes cached items when initial replication becomes ready", async () => {
+    let bootstrapReady = false;
+    let remoteReplicationComplete = false;
+    const db = {
+      get: jest.fn(async (id: string) =>
+        id === "ItemLists"
+          ? makeItemListsDoc()
+          : {
+              _id: id,
+              items: Array.from(
+                { length: remoteReplicationComplete ? 20 : 2 },
+                (_, index) => makeItem(`Replicated item ${index + 1}`),
+              ),
+            },
+      ),
+    };
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <Provider store={store}>
+        <ControllerInfoContext.Provider
+          value={{ db, cloud: {} as never, updater: new EventTarget(), bootstrapReady } as never}
+        >
+          {children}
+        </ControllerInfoContext.Provider>
+      </Provider>
+    );
+    const { result, rerender } = renderHook(() => useLiveOutlinePreview(), { wrapper });
+
+    await waitFor(() => expect(result.current.items).toHaveLength(2));
+    remoteReplicationComplete = true;
+    bootstrapReady = true;
+    rerender();
+
+    await waitFor(() => expect(result.current.items).toHaveLength(20));
+    expect(db.get.mock.calls.filter(([id]) => id === "main-list")).toHaveLength(2);
+  });
+
+  it("loads a controller's persisted selected outline without its controller page", async () => {
+    store.dispatch({ type: "RESET" });
+    const itemListsDoc = makeItemListsDoc();
+    const db = {
+      get: jest.fn(async (id: string) =>
+        id === "ItemLists"
+          ? itemListsDoc
+          : { _id: id, items: [makeItem(id === "aux-list" ? "Aux item" : "Main item")] },
+      ),
+    };
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <Provider store={store}>
+        <ControllerInfoContext.Provider
+          value={{ db, cloud: {} as never, updater: new EventTarget() } as never}
+        >
+          {children}
+        </ControllerInfoContext.Provider>
+      </Provider>
+    );
+
+    const { result } = renderHook(() => useLiveOutlinePreview("aux-a"), { wrapper });
+    await waitFor(() => expect(result.current.items[0]?.name).toBe("Aux item"));
+    expect(db.get).toHaveBeenCalledTimes(2);
+    expect(db.get).toHaveBeenCalledWith("aux-list");
+    expect(db.get).toHaveBeenCalledWith("ItemLists");
+  });
+
   it("follows remote live-outline switches from the winning fallback registry before Redux initializes", async () => {
     store.dispatch({ type: "RESET" });
     const original = makeItemListsDoc();
@@ -216,6 +397,58 @@ describe("useLiveOutlinePreview", () => {
       resolveMain({ _id: "main-list", items: [makeItem("Stale main")] });
     });
     expect(result.current.items[0]?.name).toBe("Aux current");
+  });
+
+  it("ignores an older outline response after a newer active outline update", async () => {
+    const itemListsDoc = makeItemListsDoc();
+    itemListsDoc.itemLists.push({
+      _id: "next-main-list",
+      name: "Next Main",
+      controllerScope: "presentation",
+    });
+    let resolveOldOutline!: (value: {
+      _id: string;
+      items: ReturnType<typeof makeItem>[];
+    }) => void;
+    const db = {
+      get: jest.fn((id: string) => {
+        if (id === "ItemLists") return Promise.resolve(itemListsDoc);
+        if (id === "main-list") {
+          return new Promise((resolve) => {
+            resolveOldOutline = resolve;
+          });
+        }
+        return Promise.resolve({ _id: id, items: [makeItem("New active item")] });
+      }),
+    };
+    const updater = new EventTarget();
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <Provider store={store}>
+        <ControllerInfoContext.Provider
+          value={{ db, cloud: {} as never, updater } as never}
+        >
+          {children}
+        </ControllerInfoContext.Provider>
+      </Provider>
+    );
+    const { result } = renderHook(() => useLiveOutlinePreview(), { wrapper });
+
+    await waitFor(() => expect(db.get).toHaveBeenCalledWith("main-list"));
+    itemListsDoc.activeList = { _id: "next-main-list", name: "Next Main" };
+    act(() => {
+      updater.dispatchEvent(
+        new CustomEvent("update", { detail: [{ _id: "ItemLists" }] }),
+      );
+    });
+    await waitFor(() =>
+      expect(result.current.items[0]?.name).toBe("New active item"),
+    );
+
+    await act(async () => {
+      resolveOldOutline({ _id: "main-list", items: [makeItem("Stale item")] });
+    });
+
+    expect(result.current.items[0]?.name).toBe("New active item");
   });
 
   it("refreshes only the selected outline and removes its listener on unmount", async () => {

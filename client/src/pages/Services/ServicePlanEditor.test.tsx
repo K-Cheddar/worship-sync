@@ -16,6 +16,7 @@ import {
   collectServicePlanTeamNoteLabels,
 } from "./servicePlanNoteOptions";
 import { roleNoteMatchesServicePlanTeam } from "./servicePlanRoleNoteTeam";
+import { buildServicePlanSectionsFromImport } from "./servicePlanFromImport";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { ToastProvider } from "../../context/toastContext";
 import { RehearsalPlaybackProvider } from "../../components/RehearsalPlayer/RehearsalPlaybackContext";
@@ -42,6 +43,16 @@ import {
 } from "../../api/auth";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { getServicePlanningImportDataFromUrl } from "../../containers/Overlays/eventParser";
+import {
+  getPlanningCenterPlanImport,
+  listPlanningCenterPlans,
+  listPlanningCenterPlansForDate,
+  listPlanningCenterServiceTypes,
+} from "../../api/planningCenter";
+import type {
+  PlanningCenterPlanImport,
+  PlanningCenterPlanSummary,
+} from "../../api/planningCenter";
 import { getPublicServiceFlow } from "../../services/serviceFlowApi";
 import { extractTextFromPdfFile } from "./extractPdfText";
 import type {
@@ -96,6 +107,13 @@ jest.mock("../../api/auth", () => ({
   updateServicePlanPublicLive: jest.fn(),
   searchYouTubeVideos: jest.fn(),
   getSongAudioUrl: jest.fn(),
+}));
+
+jest.mock("../../api/planningCenter", () => ({
+  getPlanningCenterPlanImport: jest.fn(),
+  listPlanningCenterPlansForDate: jest.fn(),
+  listPlanningCenterServiceTypes: jest.fn(),
+  listPlanningCenterPlans: jest.fn(),
 }));
 
 // Song attach/create modal — row contract is covered in ElementRow tests; keep
@@ -180,6 +198,16 @@ jest.mock("../../hooks", () => ({
 const mockListServicePlanTemplates = jest.mocked(listServicePlanTemplates);
 const mockSaveServicePlanTemplate = jest.mocked(saveServicePlanTemplate);
 const mockGetServicePlan = jest.mocked(getServicePlan);
+const mockGetPlanningCenterPlanImport = jest.mocked(
+  getPlanningCenterPlanImport,
+);
+const mockListPlanningCenterPlans = jest.mocked(listPlanningCenterPlans);
+const mockListPlanningCenterPlansForDate = jest.mocked(
+  listPlanningCenterPlansForDate,
+);
+const mockListPlanningCenterServiceTypes = jest.mocked(
+  listPlanningCenterServiceTypes,
+);
 const mockGetServicePlanAssignmentHistory = jest.mocked(
   getServicePlanAssignmentHistory,
 );
@@ -228,6 +256,51 @@ const nextOccurrence: TeamScheduleOccurrence = {
   startsAt: "2026-08-02T14:00:00.000Z",
 };
 
+const planningCenterCandidate = (
+  id = "pco-plan-1",
+  serviceTypeId = "pco-type-1",
+  startsAt = "2026-07-26T14:00:00.000Z",
+): PlanningCenterPlanSummary => ({
+  id,
+  serviceTypeId,
+  serviceTypeName:
+    serviceTypeId === "pco-type-1" ? "Sunday Worship" : "Evening Worship",
+  dates: "Jul 26",
+  title: "Sunday Worship",
+  label: "Jul 26 · Sunday Worship",
+  itemsCount: 1,
+  sortDate: startsAt,
+  updatedAt: "2026-07-20T12:00:00Z",
+  serviceTimes: [{ startsAt, timeType: "service" }],
+  sourceUrl: `https://services.planningcenteronline.com/plans/${id}`,
+});
+
+const planningCenterImport = (
+  planId = "pco-plan-1",
+  serviceTypeId = "pco-type-1",
+  title = "Opening Song",
+): PlanningCenterPlanImport => ({
+  planLabel: "Sunday Worship",
+  sourceUrl: `https://services.planningcenteronline.com/plans/${planId}`,
+  serviceTypeId,
+  planId,
+  sections: [
+    {
+      sectionName: "Worship",
+      rows: [
+        {
+          sourceOccurrenceId: "pco-item-1",
+          elementType: "song",
+          title,
+          ledBy: "",
+          startTime: "10:00",
+        },
+      ],
+    },
+  ],
+  teamAssignments: [],
+});
+
 type RenderEditorProps = {
   userId?: string;
   service?: TeamService;
@@ -260,6 +333,8 @@ type RenderEditorProps = {
   mobileServingContent?: ReactNode;
   onPlanTimingChange?: (source: ServicePlanTimingSource | null) => void;
   templateResource?: ServicePlanTemplateResource;
+  planningCenterConnected?: boolean;
+  planningCenterAccountLabel?: string;
 };
 
 const editorTree = ({
@@ -279,37 +354,49 @@ const editorTree = ({
   mobileServingContent,
   onPlanTimingChange,
   templateResource,
-}: RenderEditorProps = {}) => (
-  <GlobalInfoContext.Provider
-    value={
-      createMockGlobalContext({ churchId: "church-1", userId }) as ContextType<
-        typeof GlobalInfoContext
-      >
-    }
-  >
-    <RehearsalPlaybackProvider>
-      <ToastProvider>
-        <ServicePlanEditor
-          service={service}
-          occurrence={occurrenceProp}
-          members={members}
-          positions={positions}
-          teams={teams}
-          canEdit={canEdit}
-          initialEditing={initialEditing}
-          onBack={onBack}
-          planNavigation={planNavigation}
-          occurrenceSwitcher={occurrenceSwitcher}
-          teamEquipment={teamEquipment}
-          scheduledAssignmentRows={scheduledAssignmentRows}
-          mobileServingContent={mobileServingContent}
-          onPlanTimingChange={onPlanTimingChange}
-          templateResource={templateResource}
-        />
-      </ToastProvider>
-    </RehearsalPlaybackProvider>
-  </GlobalInfoContext.Provider>
-);
+  planningCenterConnected = false,
+  planningCenterAccountLabel = "Example Church",
+}: RenderEditorProps = {}) => {
+  const globalInfo = createMockGlobalContext({ churchId: "church-1", userId });
+  if (planningCenterConnected) {
+    globalInfo.churchIntegrations = {
+      ...globalInfo.churchIntegrations,
+      planningCenter: {
+        ...globalInfo.churchIntegrations.planningCenter,
+        enabled: true,
+        connected: true,
+        accountLabel: planningCenterAccountLabel,
+      },
+    };
+  }
+  return (
+    <GlobalInfoContext.Provider
+      value={globalInfo as ContextType<typeof GlobalInfoContext>}
+    >
+      <RehearsalPlaybackProvider>
+        <ToastProvider>
+          <ServicePlanEditor
+            service={service}
+            occurrence={occurrenceProp}
+            members={members}
+            positions={positions}
+            teams={teams}
+            canEdit={canEdit}
+            initialEditing={initialEditing}
+            onBack={onBack}
+            planNavigation={planNavigation}
+            occurrenceSwitcher={occurrenceSwitcher}
+            teamEquipment={teamEquipment}
+            scheduledAssignmentRows={scheduledAssignmentRows}
+            mobileServingContent={mobileServingContent}
+            onPlanTimingChange={onPlanTimingChange}
+            templateResource={templateResource}
+          />
+        </ToastProvider>
+      </RehearsalPlaybackProvider>
+    </GlobalInfoContext.Provider>
+  );
+};
 
 const renderEditor = (props: RenderEditorProps = {}) =>
   render(editorTree(props));
@@ -477,6 +564,12 @@ describe("ServicePlanEditor", () => {
     mockAllSongDocs = [];
     mockExtractTextFromPdfFile.mockReset();
     mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: null });
+    mockGetPlanningCenterPlanImport.mockResolvedValue(
+      planningCenterImport() as PlanningCenterPlanImport,
+    );
+    mockListPlanningCenterServiceTypes.mockResolvedValue({ items: [] });
+    mockListPlanningCenterPlans.mockResolvedValue({ items: [] });
+    mockListPlanningCenterPlansForDate.mockResolvedValue({ items: [] });
     mockGetPublicServiceFlow.mockReset();
     mockListServicePlanTemplates.mockResolvedValue({
       success: true,
@@ -537,134 +630,256 @@ describe("ServicePlanEditor", () => {
     });
   });
 
-  it.each(["link", "file"])("requires confirmation before a native %s plan replaces existing content", async (source) => {
-    mockGetServicePlan.mockResolvedValue({
-      success: true,
-      servicePlan: {
-        planId: "plan-1",
-        churchId: "church-1",
-        planKey: "service-1@2026-07-26",
-        serviceId: "service-1",
-        date: "2026-07-26",
-        name: "Easter Sunday",
-        published: true,
-        revision: 3,
-        sections: [
-          {
-            id: "old-section",
-            name: "Current",
-            elements: [
-              {
-                id: "old-item",
-                type: "free",
-                title: plainTextToRichText("Keep this until confirmed"),
-              },
-            ],
-          },
-        ],
-      } as ServicePlan,
-    });
-    mockGetPublicServiceFlow.mockResolvedValue({
-      service: {
-        shareId: "source-share",
-        title: "Source",
-        startsAt: "2026-07-26T14:00:00Z",
-        timezone: "UTC",
-        revision: 7,
-        sections: [
-          {
-            id: "public-section",
-            title: "Imported",
-            items: [
-              {
-                id: "public-item",
-                title: "Public item",
-                durationSeconds: 45,
-                notes: { blocks: [] },
-              },
-            ],
-          },
-        ],
-        live: { mode: "schedule" },
-      },
-    } as never);
-    localStorage.setItem("worshipsyncServicePlanImportSource", "worshipSync");
+  it.each(["link", "file"])(
+    "requires confirmation before a native %s plan replaces existing content",
+    async (source) => {
+      mockGetServicePlan.mockResolvedValue({
+        success: true,
+        servicePlan: {
+          planId: "plan-1",
+          churchId: "church-1",
+          planKey: "service-1@2026-07-26",
+          serviceId: "service-1",
+          date: "2026-07-26",
+          name: "Easter Sunday",
+          published: true,
+          revision: 3,
+          sections: [
+            {
+              id: "old-section",
+              name: "Current",
+              elements: [
+                {
+                  id: "old-item",
+                  type: "free",
+                  title: plainTextToRichText("Keep this until confirmed"),
+                },
+              ],
+            },
+          ],
+        } as ServicePlan,
+      });
+      mockGetPublicServiceFlow.mockResolvedValue({
+        service: {
+          shareId: "source-share",
+          title: "Source",
+          startsAt: "2026-07-26T14:00:00Z",
+          timezone: "UTC",
+          revision: 7,
+          sections: [
+            {
+              id: "public-section",
+              title: "Imported",
+              items: [
+                {
+                  id: "public-item",
+                  title: "Public item",
+                  durationSeconds: 45,
+                  notes: { blocks: [] },
+                },
+              ],
+            },
+          ],
+          live: { mode: "schedule" },
+        },
+      } as never);
+      localStorage.setItem("worshipsyncServicePlanImportSource", "worshipSync");
 
-    const user = userEvent.setup();
-    renderEditor();
-    await screen.findByText("Keep this until confirmed");
-    if (source === "link") {
-      await user.click(screen.getByRole("button", { name: /Plan actions/i }));
-      await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
-      fireEvent.change(screen.getByLabelText(/Public service-plan link/i), { target: { value: "https://www.worshipsync.net/services/source-share" } });
-      await user.click(screen.getByRole("button", { name: /Import plan/i }));
-    } else {
-      const file = new File(["{}"], "plan.json", { type: "application/json" });
-      Object.defineProperty(file, "text", { value: async () => JSON.stringify({
-        format: "worshipsync-service-plan", version: 1, sections: [{ id: "source", name: "Imported", elements: [{ id: "source-item", type: "free", title: plainTextToRichText("Public item") }] }],
-      }) });
-      fireEvent.change(screen.getByLabelText("WorshipSync JSON plan"), { target: { files: [file] } });
-    }
+      const user = userEvent.setup();
+      renderEditor();
+      await screen.findByText("Keep this until confirmed");
+      if (source === "link") {
+        await user.click(screen.getByRole("button", { name: /Plan actions/i }));
+        await user.click(
+          await screen.findByRole("menuitem", { name: /Import updates/i }),
+        );
+        fireEvent.change(screen.getByLabelText(/Public service-plan link/i), {
+          target: {
+            value: "https://www.worshipsync.net/services/source-share",
+          },
+        });
+        await user.click(screen.getByRole("button", { name: /Import plan/i }));
+      } else {
+        const file = new File(["{}"], "plan.json", {
+          type: "application/json",
+        });
+        Object.defineProperty(file, "text", {
+          value: async () =>
+            JSON.stringify({
+              format: "worshipsync-service-plan",
+              version: 1,
+              sections: [
+                {
+                  id: "source",
+                  name: "Imported",
+                  elements: [
+                    {
+                      id: "source-item",
+                      type: "free",
+                      title: plainTextToRichText("Public item"),
+                    },
+                  ],
+                },
+              ],
+            }),
+        });
+        fireEvent.change(screen.getByLabelText("WorshipSync JSON plan"), {
+          target: { files: [file] },
+        });
+      }
 
-    expect(
-      await screen.findByRole("heading", {
-        name: "Replace this plan's content?",
-      }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Keep this until confirmed")).toBeInTheDocument();
-    expect(mockGetPublicServiceFlow.mock.calls).toEqual(source === "link" ? [["source-share"]] : []);
-    await user.click(screen.getByRole("button", { name: /Replace content/i }));
-    expect(await screen.findByDisplayValue("Imported")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("heading", { name: "Replace this plan's content?" }),
-    ).not.toBeInTheDocument();
-  });
+      expect(
+        await screen.findByRole("heading", {
+          name: "Replace this plan's content?",
+        }),
+      ).toBeInTheDocument();
+      expect(screen.getByText("Keep this until confirmed")).toBeInTheDocument();
+      expect(mockGetPublicServiceFlow.mock.calls).toEqual(
+        source === "link" ? [["source-share"]] : [],
+      );
+      await user.click(
+        screen.getByRole("button", { name: /Replace content/i }),
+      );
+      expect(await screen.findByDisplayValue("Imported")).toBeInTheDocument();
+      expect(
+        screen.queryByRole("heading", { name: "Replace this plan's content?" }),
+      ).not.toBeInTheDocument();
+    },
+  );
 
   it.each([
-    ["link", "loading edit"], ["file", "loading edit"],
-    ["link", "confirmation edit"], ["file", "confirmation edit"],
-    ["link", "loading switch"], ["file", "loading switch"],
-    ["link", "confirmation switch"], ["file", "confirmation switch"],
+    ["link", "loading edit"],
+    ["file", "loading edit"],
+    ["link", "confirmation edit"],
+    ["file", "confirmation edit"],
+    ["link", "loading switch"],
+    ["file", "loading switch"],
+    ["link", "confirmation switch"],
+    ["file", "confirmation switch"],
   ])("protects native %s imports across a %s", async (source, boundary) => {
     const currentPlan: ServicePlan = {
-      planId: "plan-1", churchId: "church-1", planKey: "service-1@2026-07-26",
-      serviceId: "service-1", date: "2026-07-26", name: "Sunday",
-      sections: [{ id: "section", name: "Worship", elements: [{
-        id: "item", type: "free", title: plainTextToRichText("Current item"), durationSeconds: 300,
-      }] }],
+      planId: "plan-1",
+      churchId: "church-1",
+      planKey: "service-1@2026-07-26",
+      serviceId: "service-1",
+      date: "2026-07-26",
+      name: "Sunday",
+      sections: [
+        {
+          id: "section",
+          name: "Worship",
+          elements: [
+            {
+              id: "item",
+              type: "free",
+              title: plainTextToRichText("Current item"),
+              durationSeconds: 300,
+            },
+          ],
+        },
+      ],
     };
-    mockGetServicePlan.mockResolvedValueOnce({ success: true, servicePlan: currentPlan })
-      .mockResolvedValue({ success: true, servicePlan: {
-        ...currentPlan, planId: "plan-2", planKey: "service-1@2026-08-02", date: "2026-08-02",
-        sections: [{ ...currentPlan.sections[0], elements: [{ ...currentPlan.sections[0].elements[0], title: plainTextToRichText("Upcoming item") }] }],
-      } });
+    mockGetServicePlan
+      .mockResolvedValueOnce({ success: true, servicePlan: currentPlan })
+      .mockResolvedValue({
+        success: true,
+        servicePlan: {
+          ...currentPlan,
+          planId: "plan-2",
+          planKey: "service-1@2026-08-02",
+          date: "2026-08-02",
+          sections: [
+            {
+              ...currentPlan.sections[0],
+              elements: [
+                {
+                  ...currentPlan.sections[0].elements[0],
+                  title: plainTextToRichText("Upcoming item"),
+                },
+              ],
+            },
+          ],
+        },
+      });
     let finish!: () => void;
-    const gate = new Promise<void>((resolve) => { finish = resolve; });
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
     const importedTitle = "Stale imported item";
-    mockGetPublicServiceFlow.mockReturnValue(gate.then(() => ({ service: {
-      shareId: "source", title: "Source", startsAt: occurrence.startsAt, timezone: "UTC", revision: 1,
-      sections: [{ id: "source", title: "Imported", items: [{ id: "source-item", title: importedTitle, durationSeconds: 45, notes: { blocks: [] } }] }],
-      live: { mode: "schedule" },
-    } })) as never);
+    mockGetPublicServiceFlow.mockReturnValue(
+      gate.then(() => ({
+        service: {
+          shareId: "source",
+          title: "Source",
+          startsAt: occurrence.startsAt,
+          timezone: "UTC",
+          revision: 1,
+          sections: [
+            {
+              id: "source",
+              title: "Imported",
+              items: [
+                {
+                  id: "source-item",
+                  title: importedTitle,
+                  durationSeconds: 45,
+                  notes: { blocks: [] },
+                },
+              ],
+            },
+          ],
+          live: { mode: "schedule" },
+        },
+      })) as never,
+    );
     const file = new File(["{}"], "plan.json", { type: "application/json" });
-    Object.defineProperty(file, "text", { value: () => gate.then(() => JSON.stringify({
-      format: "worshipsync-service-plan", version: 1, sections: [{ id: "source", name: "Imported", elements: [{ id: "source-item", type: "free", title: plainTextToRichText(importedTitle) }] }],
-    })) });
+    Object.defineProperty(file, "text", {
+      value: () =>
+        gate.then(() =>
+          JSON.stringify({
+            format: "worshipsync-service-plan",
+            version: 1,
+            sections: [
+              {
+                id: "source",
+                name: "Imported",
+                elements: [
+                  {
+                    id: "source-item",
+                    type: "free",
+                    title: plainTextToRichText(importedTitle),
+                  },
+                ],
+              },
+            ],
+          }),
+        ),
+    });
     localStorage.setItem("worshipsyncServicePlanImportSource", "worshipSync");
     const user = userEvent.setup();
     const view = renderEditor({ initialEditing: true });
     await screen.findByLabelText(/^Duration/i);
     if (source === "link") {
       await user.click(screen.getByRole("button", { name: /Plan actions/i }));
-      await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
-      fireEvent.change(screen.getByLabelText(/Public service-plan link/i), { target: { value: "https://www.worshipsync.net/services/source" } });
+      await user.click(
+        await screen.findByRole("menuitem", { name: /Import updates/i }),
+      );
+      fireEvent.change(screen.getByLabelText(/Public service-plan link/i), {
+        target: { value: "https://www.worshipsync.net/services/source" },
+      });
       await user.click(screen.getByRole("button", { name: /Import plan/i }));
     } else {
-      fireEvent.change(screen.getByLabelText("WorshipSync JSON plan"), { target: { files: [file] } });
+      fireEvent.change(screen.getByLabelText("WorshipSync JSON plan"), {
+        target: { files: [file] },
+      });
     }
     if (boundary.startsWith("confirmation")) {
-      await act(async () => { finish(); });
-      await screen.findByRole("heading", { name: "Replace this plan's content?" });
+      await act(async () => {
+        finish();
+      });
+      await screen.findByRole("heading", {
+        name: "Replace this plan's content?",
+      });
     }
     if (boundary.endsWith("switch")) {
       view.rerender(editorTree({ occurrence: nextOccurrence }));
@@ -674,88 +889,232 @@ describe("ServicePlanEditor", () => {
       fireEvent.change(duration, { target: { value: "20" } });
       fireEvent.blur(duration);
     }
-    if (boundary.startsWith("loading")) await act(async () => { finish(); });
-    if (boundary === "confirmation edit") await user.click(screen.getByRole("button", { name: /Replace content/i }));
-    expect(screen.queryByRole("heading", { name: "Replace this plan's content?" })).not.toBeInTheDocument();
+    if (boundary.startsWith("loading"))
+      await act(async () => {
+        finish();
+      });
+    if (boundary === "confirmation edit")
+      await user.click(
+        screen.getByRole("button", { name: /Replace content/i }),
+      );
+    expect(
+      screen.queryByRole("heading", { name: "Replace this plan's content?" }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText(importedTitle)).not.toBeInTheDocument();
     const switched = boundary.endsWith("switch");
-    if (!switched) await screen.findByText("The plan changed. Import it again to review the latest draft.");
+    if (!switched)
+      await screen.findByText(
+        "The plan changed. Import it again to review the latest draft.",
+      );
     expect(Boolean(screen.queryByText("Upcoming item"))).toBe(switched);
     expect(Boolean(screen.queryByDisplayValue("20 min"))).toBe(!switched);
-    const savedElements = mockSaveServicePlan.mock.calls.flatMap(([, , body]) => body.sections ?? []).flatMap((section) => section.elements);
-    expect(savedElements.some((element) => richTextToPlainText(element.title) === importedTitle)).toBe(false);
+    const savedElements = mockSaveServicePlan.mock.calls
+      .flatMap(([, , body]) => body.sections ?? [])
+      .flatMap((section) => section.elements);
+    expect(
+      savedElements.some(
+        (element) => richTextToPlainText(element.title) === importedTitle,
+      ),
+    ).toBe(false);
   });
 
-  it.each(["link", "file"])("keeps the current plan's import pending after a stale %s completion", async (source) => {
-    const plan: ServicePlan = {
-      planId: "a", churchId: "church-1", planKey: "service-1@2026-07-26", serviceId: "service-1", date: "2026-07-26", name: "Sunday",
-      sections: [{ id: "section", name: "Worship", elements: [{ id: "item", type: "free", title: plainTextToRichText("Current item") }] }],
-    };
-    mockGetServicePlan.mockResolvedValueOnce({ success: true, servicePlan: plan }).mockResolvedValue({ success: true, servicePlan: { ...plan, planId: "b", planKey: "service-1@2026-08-02", date: "2026-08-02" } });
-    let rejectOld!: (error: Error) => void;
-    const oldRead = new Promise<string>((_resolve, reject) => { rejectOld = reject; });
-    const pendingCurrentRead = new Promise<never>(() => undefined);
-    mockGetPublicServiceFlow.mockReturnValueOnce(oldRead as never).mockReturnValue(pendingCurrentRead);
-    localStorage.setItem("worshipsyncServicePlanImportSource", "worshipSync");
-    const user = userEvent.setup();
-    const view = renderEditor();
-    await screen.findByText("Current item");
-    const startLink = async () => {
-      await user.click(screen.getByRole("button", { name: /Plan actions/i }));
-      await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
-      fireEvent.change(screen.getByLabelText(/Public service-plan link/i), { target: { value: "https://www.worshipsync.net/services/source" } });
-      await user.click(screen.getByRole("button", { name: /Import plan/i }));
-    };
-    if (source === "link") await startLink();
-    else {
-      const file = new File(["{}"], "slow.json", { type: "application/json" });
-      Object.defineProperty(file, "text", { value: () => oldRead });
-      fireEvent.change(screen.getByLabelText("WorshipSync JSON plan"), { target: { files: [file] } });
-      mockGetPublicServiceFlow.mockReset().mockReturnValue(pendingCurrentRead);
-    }
-    view.rerender(editorTree({ occurrence: nextOccurrence }));
-    await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(2));
-    await screen.findByText("Current item");
-    await startLink();
-    expect(screen.getByRole("button", { name: /Importing/ })).toBeDisabled();
-    await act(async () => { rejectOld(new Error("Previous plan download failed")); });
-    expect(screen.getByRole("button", { name: /Importing/ })).toBeDisabled();
-    expect(screen.queryByText(/Previous plan download failed/)).not.toBeInTheDocument();
-    expect(screen.queryByText("Imported WorshipSync plan. Review the content.")).not.toBeInTheDocument();
-  });
+  it.each(["link", "file"])(
+    "keeps the current plan's import pending after a stale %s completion",
+    async (source) => {
+      const plan: ServicePlan = {
+        planId: "a",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Sunday",
+        sections: [
+          {
+            id: "section",
+            name: "Worship",
+            elements: [
+              {
+                id: "item",
+                type: "free",
+                title: plainTextToRichText("Current item"),
+              },
+            ],
+          },
+        ],
+      };
+      mockGetServicePlan
+        .mockResolvedValueOnce({ success: true, servicePlan: plan })
+        .mockResolvedValue({
+          success: true,
+          servicePlan: {
+            ...plan,
+            planId: "b",
+            planKey: "service-1@2026-08-02",
+            date: "2026-08-02",
+          },
+        });
+      let rejectOld!: (error: Error) => void;
+      const oldRead = new Promise<string>((_resolve, reject) => {
+        rejectOld = reject;
+      });
+      const pendingCurrentRead = new Promise<never>(() => undefined);
+      mockGetPublicServiceFlow
+        .mockReturnValueOnce(oldRead as never)
+        .mockReturnValue(pendingCurrentRead);
+      localStorage.setItem("worshipsyncServicePlanImportSource", "worshipSync");
+      const user = userEvent.setup();
+      const view = renderEditor();
+      await screen.findByText("Current item");
+      const startLink = async () => {
+        await user.click(screen.getByRole("button", { name: /Plan actions/i }));
+        await user.click(
+          await screen.findByRole("menuitem", { name: /Import updates/i }),
+        );
+        fireEvent.change(screen.getByLabelText(/Public service-plan link/i), {
+          target: { value: "https://www.worshipsync.net/services/source" },
+        });
+        await user.click(screen.getByRole("button", { name: /Import plan/i }));
+      };
+      if (source === "link") await startLink();
+      else {
+        const file = new File(["{}"], "slow.json", {
+          type: "application/json",
+        });
+        Object.defineProperty(file, "text", { value: () => oldRead });
+        fireEvent.change(screen.getByLabelText("WorshipSync JSON plan"), {
+          target: { files: [file] },
+        });
+        mockGetPublicServiceFlow
+          .mockReset()
+          .mockReturnValue(pendingCurrentRead);
+      }
+      view.rerender(editorTree({ occurrence: nextOccurrence }));
+      await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(2));
+      await screen.findByText("Current item");
+      await startLink();
+      expect(screen.getByRole("button", { name: /Importing/ })).toBeDisabled();
+      await act(async () => {
+        rejectOld(new Error("Previous plan download failed"));
+      });
+      expect(screen.getByRole("button", { name: /Importing/ })).toBeDisabled();
+      expect(
+        screen.queryByText(/Previous plan download failed/),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("Imported WorshipSync plan. Review the content."),
+      ).not.toBeInTheDocument();
+    },
+  );
 
-  it.each([["link", false], ["file", false], ["link", true], ["file", true]] as const)("protects direct native %s imports into an empty draft (edited: %s)", async (source, editDuringLoad) => {
-    const importedSections = [{ id: "source", name: "Imported", elements: [{ id: "source-item", type: "free", title: plainTextToRichText("New imported item") }] }];
-    let finish!: () => void;
-    const gate = new Promise<void>((resolve) => { finish = resolve; });
-    mockGetPublicServiceFlow.mockReturnValue(gate.then(() => ({ service: {
-      shareId: "source", title: "Source", startsAt: occurrence.startsAt, timezone: "UTC", revision: 1,
-      sections: [{ id: "source", title: "Imported", items: [{ id: "source-item", title: "New imported item", durationSeconds: 45, notes: { blocks: [] } }] }], live: { mode: "schedule" },
-    } })) as never);
-    localStorage.setItem("worshipsyncServicePlanImportSource", "worshipSync");
-    const user = userEvent.setup();
-    renderEditor();
-    await user.click(await screen.findByRole("button", { name: /Start from scratch/i }));
-    if (source === "file") {
-      const file = new File(["{}"], "plan.json", { type: "application/json" });
-      Object.defineProperty(file, "text", { value: () => gate.then(() => JSON.stringify({ format: "worshipsync-service-plan", version: 1, sections: importedSections })) });
-      fireEvent.change(screen.getByLabelText("WorshipSync JSON plan"), { target: { files: [file] } });
-    } else {
-      await user.click(screen.getByRole("button", { name: /Plan actions/i }));
-      await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
-      fireEvent.change(screen.getByLabelText(/Public service-plan link/i), { target: { value: "https://www.worshipsync.net/services/source" } });
-      await user.click(screen.getByRole("button", { name: /Import plan/i }));
-    }
-    if (editDuringLoad) {
-      const name = screen.getByDisplayValue("Service");
-      fireEvent.change(name, { target: { value: "Edited empty draft" } });
-      fireEvent.blur(name);
-    }
-    await act(async () => { finish(); });
-    expect(await screen.findByDisplayValue(editDuringLoad ? "Edited empty draft" : "Imported")).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Replace this plan's content?" })).not.toBeInTheDocument();
-    expect(await screen.findByText(editDuringLoad ? "The plan changed. Import it again to review the latest draft." : "Imported WorshipSync plan. Review the content.")).toBeInTheDocument();
-  });
+  it.each([
+    ["link", false],
+    ["file", false],
+    ["link", true],
+    ["file", true],
+  ] as const)(
+    "protects direct native %s imports into an empty draft (edited: %s)",
+    async (source, editDuringLoad) => {
+      const importedSections = [
+        {
+          id: "source",
+          name: "Imported",
+          elements: [
+            {
+              id: "source-item",
+              type: "free",
+              title: plainTextToRichText("New imported item"),
+            },
+          ],
+        },
+      ];
+      let finish!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      mockGetPublicServiceFlow.mockReturnValue(
+        gate.then(() => ({
+          service: {
+            shareId: "source",
+            title: "Source",
+            startsAt: occurrence.startsAt,
+            timezone: "UTC",
+            revision: 1,
+            sections: [
+              {
+                id: "source",
+                title: "Imported",
+                items: [
+                  {
+                    id: "source-item",
+                    title: "New imported item",
+                    durationSeconds: 45,
+                    notes: { blocks: [] },
+                  },
+                ],
+              },
+            ],
+            live: { mode: "schedule" },
+          },
+        })) as never,
+      );
+      localStorage.setItem("worshipsyncServicePlanImportSource", "worshipSync");
+      const user = userEvent.setup();
+      renderEditor();
+      await user.click(
+        await screen.findByRole("button", { name: /Start from scratch/i }),
+      );
+      if (source === "file") {
+        const file = new File(["{}"], "plan.json", {
+          type: "application/json",
+        });
+        Object.defineProperty(file, "text", {
+          value: () =>
+            gate.then(() =>
+              JSON.stringify({
+                format: "worshipsync-service-plan",
+                version: 1,
+                sections: importedSections,
+              }),
+            ),
+        });
+        fireEvent.change(screen.getByLabelText("WorshipSync JSON plan"), {
+          target: { files: [file] },
+        });
+      } else {
+        await user.click(screen.getByRole("button", { name: /Plan actions/i }));
+        await user.click(
+          await screen.findByRole("menuitem", { name: /Import updates/i }),
+        );
+        fireEvent.change(screen.getByLabelText(/Public service-plan link/i), {
+          target: { value: "https://www.worshipsync.net/services/source" },
+        });
+        await user.click(screen.getByRole("button", { name: /Import plan/i }));
+      }
+      if (editDuringLoad) {
+        const name = screen.getByDisplayValue("Service");
+        fireEvent.change(name, { target: { value: "Edited empty draft" } });
+        fireEvent.blur(name);
+      }
+      await act(async () => {
+        finish();
+      });
+      expect(
+        await screen.findByDisplayValue(
+          editDuringLoad ? "Edited empty draft" : "Imported",
+        ),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("heading", { name: "Replace this plan's content?" }),
+      ).not.toBeInTheDocument();
+      expect(
+        await screen.findByText(
+          editDuringLoad
+            ? "The plan changed. Import it again to review the latest draft."
+            : "Imported WorshipSync plan. Review the content.",
+        ),
+      ).toBeInTheDocument();
+    },
+  );
 
   it("autosaves the canonical church-local plan date across a UTC date boundary", async () => {
     const localSaturdayOccurrence: TeamScheduleOccurrence = {
@@ -1222,14 +1581,16 @@ describe("ServicePlanEditor", () => {
     mockSearchYouTubeVideos.mockResolvedValue({
       query: "Living Hope",
       cached: false,
-      results: [{
-        videoId: "abcdefghijk",
-        title: "Living Hope (Official Video)",
-        channelName: "Phil Wickham",
-        thumbnail: "https://img.youtube.com/vi/abcdefghijk/default.jpg",
-        description: "Official music video",
-        watchUrl: "https://www.youtube.com/watch?v=abcdefghijk",
-      }],
+      results: [
+        {
+          videoId: "abcdefghijk",
+          title: "Living Hope (Official Video)",
+          channelName: "Phil Wickham",
+          thumbnail: "https://img.youtube.com/vi/abcdefghijk/default.jpg",
+          description: "Official music video",
+          watchUrl: "https://www.youtube.com/watch?v=abcdefghijk",
+        },
+      ],
     });
     const legacySong = {
       _id: "song-legacy",
@@ -2687,21 +3048,39 @@ describe("ServicePlanEditor", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("Added")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("checkbox", { name: "Confirm match for Sermon" }));
+    await user.click(
+      screen.getByRole("checkbox", { name: "Confirm match for Sermon" }),
+    );
     await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
 
-    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), { timeout: 2_500 });
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), {
+      timeout: 2_500,
+    });
     const savedSections = mockSaveServicePlan.mock.calls.at(-1)![2].sections!;
-    const destination = savedSections.find(({ name }) => name === "Response & Celebration");
+    const destination = savedSections.find(
+      ({ name }) => name === "Response & Celebration",
+    );
     expect(destination?.elements).toEqual([
-      expect.objectContaining({ id: "legacy-sermon", notes: plainTextToRichText("Operator notes") }),
+      expect.objectContaining({
+        id: "legacy-sermon",
+        notes: plainTextToRichText("Operator notes"),
+      }),
     ]);
     expect(richTextToPlainText(destination!.elements[0].title)).toBe("Sermon");
-    expect(savedSections.find(({ id }) => id === "message")?.elements ?? []).toEqual([]);
+    expect(
+      savedSections.find(({ id }) => id === "message")?.elements ?? [],
+    ).toEqual([]);
     expect(savedSections.find(({ id }) => id === "worship")?.elements).toEqual([
-      expect.objectContaining({ id: "tracked-song", sourceOccurrenceId: "pco-song" }),
+      expect.objectContaining({
+        id: "tracked-song",
+        sourceOccurrenceId: "pco-song",
+      }),
     ]);
-    expect(savedSections.flatMap(({ elements }) => elements).filter(({ id }) => id === "legacy-sermon")).toHaveLength(1);
+    expect(
+      savedSections
+        .flatMap(({ elements }) => elements)
+        .filter(({ id }) => id === "legacy-sermon"),
+    ).toHaveLength(1);
   });
 
   it("offers one optional review prompt after an external import adds ambiguous items", async () => {
@@ -2785,9 +3164,15 @@ Host: Charmers Malcolm
       await screen.findByDisplayValue("SMC Worship Experience"),
     ).toBeInTheDocument();
     expect(screen.getByDisplayValue("SML")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("Opening Song: How Great Thou Art")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("Song: Great Is Thy Faithfulness")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("Appeal Song: I Surrender All")).toBeInTheDocument();
+    expect(
+      screen.getByDisplayValue("Opening Song: How Great Thou Art"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByDisplayValue("Song: Great Is Thy Faithfulness"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByDisplayValue("Appeal Song: I Surrender All"),
+    ).toBeInTheDocument();
 
     await waitFor(() => {
       expect(mockExtractTextFromPdfFile).toHaveBeenCalledWith(file);
@@ -2808,18 +3193,19 @@ Host: Charmers Malcolm
     expect(body.sections?.[0]?.elements?.[0]?.assignees?.[0]?.name).toBe(
       "Host: Charmers Malcolm",
     );
-    expect(body.sections?.[0]?.elements?.map((item) => item.startTime)).toEqual([
-      "10:00",
-      "10:15",
-      "10:19",
-      "10:23",
-    ]);
+    expect(body.sections?.[0]?.elements?.map((item) => item.startTime)).toEqual(
+      ["10:00", "10:15", "10:19", "10:23"],
+    );
     expect(body.sections?.[0]?.elements?.[2]?.songRef).toEqual({
       kind: "pending",
       title: "Great Is Thy Faithfulness",
       lyricsText: "",
     });
-    expect(body.sections?.[0]?.elements?.slice(1, 4).map(({ title }) => richTextToPlainText(title))).toEqual([
+    expect(
+      body.sections?.[0]?.elements
+        ?.slice(1, 4)
+        .map(({ title }) => richTextToPlainText(title)),
+    ).toEqual([
       "Opening Song: How Great Thou Art",
       "Song: Great Is Thy Faithfulness",
       "Appeal Song: I Surrender All",
@@ -2857,25 +3243,46 @@ Host: Charmers Malcolm
           loadedAt: "2026-07-20T12:00:00.000Z",
           planLabel: "Sunday worship",
         },
-        sections: [{
-          id: "section-1",
-          sourcePlanningManaged: true,
-          name: "SMC Worship Experience",
-          elements: [{
-            id: "local-prayer",
+        sections: [
+          {
+            id: "section-1",
             sourcePlanningManaged: true,
-            type: "free",
-            title: plainTextToRichText("Prayer"),
-            notes: plainTextToRichText(oldNote),
-            sourceNoteRaw: oldNote,
-            assignees: [{ id: "local-assignee", name: "Elder Naomi Brooks", microphoneIds: ["mic-1", "mic-2", "mic-3"], iemIds: ["iem-1"] }],
-            servicePlanningImport: {
-              observed: { elementType: "Prayer", title: "Prayer", ledBy: "Elder Naomi Brooks", note: oldNote },
-              applied: { elementType: "Prayer", title: "Prayer", ledBy: "Elder Naomi Brooks", note: oldNote },
-              pendingFields: [],
-            },
-          }],
-        }],
+            name: "SMC Worship Experience",
+            elements: [
+              {
+                id: "local-prayer",
+                sourcePlanningManaged: true,
+                type: "free",
+                title: plainTextToRichText("Prayer"),
+                notes: plainTextToRichText(oldNote),
+                sourceNoteRaw: oldNote,
+                assignees: [
+                  {
+                    id: "local-assignee",
+                    name: "Elder Naomi Brooks",
+                    microphoneIds: ["mic-1", "mic-2", "mic-3"],
+                    iemIds: ["iem-1"],
+                  },
+                ],
+                servicePlanningImport: {
+                  observed: {
+                    elementType: "Prayer",
+                    title: "Prayer",
+                    ledBy: "Elder Naomi Brooks",
+                    note: oldNote,
+                  },
+                  applied: {
+                    elementType: "Prayer",
+                    title: "Prayer",
+                    ledBy: "Elder Naomi Brooks",
+                    note: oldNote,
+                  },
+                  pendingFields: [],
+                },
+              },
+            ],
+          },
+        ],
       } as ServicePlan,
     });
     mockExtractTextFromPdfFile.mockResolvedValue(`Main Worship Service
@@ -2888,32 +3295,66 @@ ${updatedNote}
 
     const user = userEvent.setup();
     renderEditor();
-    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
-    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Plan actions/i }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: /Import updates/i }),
+    );
     fireEvent.change(screen.getByLabelText(/Planning Center PDF/i), {
-      target: { files: [new File(["%PDF-fake"], "updated-note.pdf", { type: "application/pdf" })] },
+      target: {
+        files: [
+          new File(["%PDF-fake"], "updated-note.pdf", {
+            type: "application/pdf",
+          }),
+        ],
+      },
     });
 
     await screen.findByText(/change selected/i);
-    expect(await screen.findByRole("checkbox", { name: "Update Prayer" })).toBeChecked();
+    expect(
+      await screen.findByRole("checkbox", { name: "Update Prayer" }),
+    ).toBeChecked();
     await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
-    expect(await screen.findByText(/1 imported item needs a quick interpretation review/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        /1 imported item needs a quick interpretation review/,
+      ),
+    ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Review items" }));
 
     const noteConflict = screen.getByRole("region", { name: "Note conflict" });
-    expect(within(noteConflict).getByText("Existing notes")).toBeInTheDocument();
+    expect(
+      within(noteConflict).getByText("Existing notes"),
+    ).toBeInTheDocument();
     expect(within(noteConflict).getByText(oldNote)).toBeInTheDocument();
-    expect(within(noteConflict).getByText("Updated PDF note")).toBeInTheDocument();
+    expect(
+      within(noteConflict).getByText("Updated PDF note"),
+    ).toBeInTheDocument();
     expect(within(noteConflict).getByText(updatedNote)).toBeInTheDocument();
-    expect(screen.queryByText("No mapping is needed for this item.")).not.toBeInTheDocument();
-    expect(within(noteConflict).getByText(/Using the updated note replaces all existing notes shown here/)).toBeInTheDocument();
+    expect(
+      screen.queryByText("No mapping is needed for this item."),
+    ).not.toBeInTheDocument();
+    expect(
+      within(noteConflict).getByText(
+        /Using the updated note replaces all existing notes shown here/,
+      ),
+    ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("radio", { name: /Use updated PDF note/ }));
-    await user.click(screen.getByRole("button", { name: "Resolve note conflict & finish" }));
-    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), { timeout: 2_500 });
+    await user.click(
+      screen.getByRole("radio", { name: /Use updated PDF note/ }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Resolve note conflict & finish" }),
+    );
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), {
+      timeout: 2_500,
+    });
 
     const [, , saved] = mockSaveServicePlan.mock.calls.at(-1)!;
-    const savedPrayer = saved.sections?.flatMap(({ elements }) => elements).find(({ id }) => id === "local-prayer");
+    const savedPrayer = saved.sections
+      ?.flatMap(({ elements }) => elements)
+      .find(({ id }) => id === "local-prayer");
     expect(savedPrayer).toMatchObject({
       notes: plainTextToRichText(updatedNote),
       sourceNoteRaw: updatedNote,
@@ -2921,134 +3362,229 @@ ${updatedNote}
         observed: { note: updatedNote },
         applied: { note: updatedNote },
         pendingFields: [],
-        managedNotes: [expect.objectContaining({ id: expect.any(String), fingerprint: expect.any(String) })],
+        managedNotes: [
+          expect.objectContaining({
+            id: expect.any(String),
+            fingerprint: expect.any(String),
+          }),
+        ],
       },
       importAmbiguity: {
         status: "confirmed",
         sourceNoteConflict: { resolution: "useUpdated" },
       },
     });
-    expect(savedPrayer?.assignees).toEqual([expect.objectContaining({
-      id: "local-assignee",
-      microphoneIds: ["mic-1", "mic-2", "mic-3"],
-      iemIds: ["iem-1"],
-    })]);
+    expect(savedPrayer?.assignees).toEqual([
+      expect.objectContaining({
+        id: "local-assignee",
+        microphoneIds: ["mic-1", "mic-2", "mic-3"],
+        iemIds: ["iem-1"],
+      }),
+    ]);
   });
 
   it.each([
     ["two rows", "review"],
     ["three rows", "review"],
     ["three rows", "addition"],
-  ] as const)("keeps a collided Prayer review-only and saves only the selected %s / %s change", async (scenario, selection) => {
-    const prayerKey = (occurrenceIndex: number) => JSON.stringify([
-      "planningCenterPdf", "prayer", "duplicate", 300, occurrenceIndex,
-    ]);
-    const localPrayerA = {
-      id: "local-prayer-a",
-      sourcePlanningManaged: true,
-      planningCenterPdfMatchKey: prayerKey(0),
-      planningCenterPdfSourcePosition: 1,
-      type: "free" as const,
-      title: plainTextToRichText("Prayer"),
-      startTime: "09:05",
-      durationSeconds: 300,
-      notes: plainTextToRichText("Keep note A"),
-      assignees: [{ id: "slot-a", name: "Avery", microphoneIds: ["mic-a"], iemIds: ["iem-a"] }],
-      resources: [{ id: "attachment-a", type: "text", title: "Local attachment A" }],
-    };
-    const localPrayerB = {
-      id: "local-prayer-b",
-      sourcePlanningManaged: true,
-      planningCenterPdfMatchKey: prayerKey(1),
-      planningCenterPdfSourcePosition: 3,
-      type: "free" as const,
-      title: plainTextToRichText("Prayer"),
-      startTime: "09:15",
-      durationSeconds: 300,
-      notes: plainTextToRichText("Keep note B"),
-      assignees: [{ id: "slot-b", name: "Jordan", microphoneIds: ["mic-b"], iemIds: ["iem-b"] }],
-      resources: [{ id: "attachment-b", type: "text", title: "Local attachment B" }],
-    };
-    mockGetServicePlan.mockResolvedValue({
-      success: true,
-      servicePlan: {
-        planId: "church-1::service-1@2026-07-26",
-        churchId: "church-1",
-        planKey: "service-1@2026-07-26",
-        serviceId: "service-1",
-        date: "2026-07-26",
-        name: "Easter Sunday",
-        sourceImport: {
-          source: "planningCenterPdf",
-          sourceUrl: "",
-          loadedAt: "2026-07-20T12:00:00.000Z",
-          planLabel: "Sunday worship",
-        },
-        sections: [{
-          id: "section-1",
-          sourcePlanningManaged: true,
-          name: "Worship",
-          elements: [
-            { id: "local-opening", sourcePlanningManaged: true, type: "free", title: plainTextToRichText("Opening"), startTime: "09:00", durationSeconds: 300 },
-            localPrayerA,
-            { id: "local-response", sourcePlanningManaged: true, type: "free", title: plainTextToRichText("Response"), startTime: "09:10", durationSeconds: 300 },
-            localPrayerB,
-            { id: "local-closing", sourcePlanningManaged: true, type: "free", title: plainTextToRichText("Closing"), startTime: "09:20", durationSeconds: 300 },
+  ] as const)(
+    "keeps a collided Prayer review-only and saves only the selected %s / %s change",
+    async (scenario, selection) => {
+      const prayerKey = (occurrenceIndex: number) =>
+        JSON.stringify([
+          "planningCenterPdf",
+          "prayer",
+          "duplicate",
+          300,
+          occurrenceIndex,
+        ]);
+      const localPrayerA = {
+        id: "local-prayer-a",
+        sourcePlanningManaged: true,
+        planningCenterPdfMatchKey: prayerKey(0),
+        planningCenterPdfSourcePosition: 1,
+        type: "free" as const,
+        title: plainTextToRichText("Prayer"),
+        startTime: "09:05",
+        durationSeconds: 300,
+        notes: plainTextToRichText("Keep note A"),
+        assignees: [
+          {
+            id: "slot-a",
+            name: "Avery",
+            microphoneIds: ["mic-a"],
+            iemIds: ["iem-a"],
+          },
+        ],
+        resources: [
+          { id: "attachment-a", type: "text", title: "Local attachment A" },
+        ],
+      };
+      const localPrayerB = {
+        id: "local-prayer-b",
+        sourcePlanningManaged: true,
+        planningCenterPdfMatchKey: prayerKey(1),
+        planningCenterPdfSourcePosition: 3,
+        type: "free" as const,
+        title: plainTextToRichText("Prayer"),
+        startTime: "09:15",
+        durationSeconds: 300,
+        notes: plainTextToRichText("Keep note B"),
+        assignees: [
+          {
+            id: "slot-b",
+            name: "Jordan",
+            microphoneIds: ["mic-b"],
+            iemIds: ["iem-b"],
+          },
+        ],
+        resources: [
+          { id: "attachment-b", type: "text", title: "Local attachment B" },
+        ],
+      };
+      mockGetServicePlan.mockResolvedValue({
+        success: true,
+        servicePlan: {
+          planId: "church-1::service-1@2026-07-26",
+          churchId: "church-1",
+          planKey: "service-1@2026-07-26",
+          serviceId: "service-1",
+          date: "2026-07-26",
+          name: "Easter Sunday",
+          sourceImport: {
+            source: "planningCenterPdf",
+            sourceUrl: "",
+            loadedAt: "2026-07-20T12:00:00.000Z",
+            planLabel: "Sunday worship",
+          },
+          sections: [
+            {
+              id: "section-1",
+              sourcePlanningManaged: true,
+              name: "Worship",
+              elements: [
+                {
+                  id: "local-opening",
+                  sourcePlanningManaged: true,
+                  type: "free",
+                  title: plainTextToRichText("Opening"),
+                  startTime: "09:00",
+                  durationSeconds: 300,
+                },
+                localPrayerA,
+                {
+                  id: "local-response",
+                  sourcePlanningManaged: true,
+                  type: "free",
+                  title: plainTextToRichText("Response"),
+                  startTime: "09:10",
+                  durationSeconds: 300,
+                },
+                localPrayerB,
+                {
+                  id: "local-closing",
+                  sourcePlanningManaged: true,
+                  type: "free",
+                  title: plainTextToRichText("Closing"),
+                  startTime: "09:20",
+                  durationSeconds: 300,
+                },
+              ],
+            },
           ],
-        }],
-      } as ServicePlan,
-    });
-    const pdfRows = scenario === "two rows"
-      ? "5:00 Response\n5:00 Prayer\n5:00 Closing\n5:00 Opening\n5:00 Prayer"
-      : "5:00 Opening\n5:00 Prayer\n5:00 Prayer\nNew occurrence note\n5:00 Response\n5:00 Prayer\n5:00 Closing";
-    mockExtractTextFromPdfFile.mockResolvedValue(`Main Worship Service
+        } as ServicePlan,
+      });
+      const pdfRows =
+        scenario === "two rows"
+          ? "5:00 Response\n5:00 Prayer\n5:00 Closing\n5:00 Opening\n5:00 Prayer"
+          : "5:00 Opening\n5:00 Prayer\n5:00 Prayer\nNew occurrence note\n5:00 Response\n5:00 Prayer\n5:00 Closing";
+      mockExtractTextFromPdfFile.mockResolvedValue(`Main Worship Service
 Length
 in mins
 Worship
 ${pdfRows}
 108:00`);
 
-    const user = userEvent.setup();
-    renderEditor();
-    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
-    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
-    fireEvent.change(screen.getByLabelText(/Planning Center PDF/i), {
-      target: { files: [new File(["%PDF-fake"], "duplicate-prayers.pdf", { type: "application/pdf" })] },
-    });
+      const user = userEvent.setup();
+      renderEditor();
+      await user.click(
+        await screen.findByRole("button", { name: /Plan actions/i }),
+      );
+      await user.click(
+        await screen.findByRole("menuitem", { name: /Import updates/i }),
+      );
+      fireEvent.change(screen.getByLabelText(/Planning Center PDF/i), {
+        target: {
+          files: [
+            new File(["%PDF-fake"], "duplicate-prayers.pdf", {
+              type: "application/pdf",
+            }),
+          ],
+        },
+      });
 
-    const reviewMatch = await screen.findByRole("checkbox", { name: "Confirm match for Prayer" });
-    expect(reviewMatch).not.toBeChecked();
-    await user.click(screen.getByRole("checkbox", { name: "Select all updates" }));
-    const selectedChange = selection === "review"
-      ? reviewMatch
-      : screen.getByRole("checkbox", { name: "Add Prayer" });
-    await user.click(selectedChange);
-    await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
+      const reviewMatch = await screen.findByRole("checkbox", {
+        name: "Confirm match for Prayer",
+      });
+      expect(reviewMatch).not.toBeChecked();
+      await user.click(
+        screen.getByRole("checkbox", { name: "Select all updates" }),
+      );
+      const selectedChange =
+        selection === "review"
+          ? reviewMatch
+          : screen.getByRole("checkbox", { name: "Add Prayer" });
+      await user.click(selectedChange);
+      await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
 
-    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), { timeout: 2_500 });
-    const [, , body] = mockSaveServicePlan.mock.calls.at(-1)!;
-    const savedItems = body.sections?.flatMap(({ elements }) => elements) || [];
-    const savedPrayers = savedItems.filter(({ title }) => richTextToPlainText(title) === "Prayer");
-    expect(savedItems.map(({ id }) => id)).toHaveLength(new Set(savedItems.map(({ id }) => id)).size);
-    expect(savedPrayers).toHaveLength(selection === "addition" ? 3 : 2);
-    expect(savedPrayers.map(({ id }) => id)).toEqual(expect.arrayContaining(["local-prayer-a", "local-prayer-b"]));
-    expect(savedPrayers.find(({ id }) => id === "local-prayer-a")).toMatchObject({
-      planningCenterPdfSourcePosition: scenario === "two rows" ? 4 : 1,
-      notes: plainTextToRichText("Keep note A"),
-      assignees: [{ id: "slot-a", microphoneIds: ["mic-a"], iemIds: ["iem-a"] }],
-      resources: [{ id: "attachment-a" }],
-    });
-    expect(savedPrayers.find(({ id }) => id === "local-prayer-b")).toMatchObject({
-      planningCenterPdfSourcePosition: 3,
-      notes: plainTextToRichText("Keep note B"),
-      assignees: [{ id: "slot-b", microphoneIds: ["mic-b"], iemIds: ["iem-b"] }],
-      resources: [{ id: "attachment-b" }],
-    });
-    const addedPrayers = savedPrayers.filter(({ id }) => id !== "local-prayer-a" && id !== "local-prayer-b");
-    expect(addedPrayers.map(({ notes }) => richTextToPlainText(notes))).toEqual(selection === "addition" ? ["New occurrence note"] : []);
-    expect(savedPrayers.find(({ id }) => id === "local-prayer-a")?.planningCenterPdfMatchReviewRequired)
-      .toBe(selection === "addition" ? true : undefined);
-  });
+      await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), {
+        timeout: 2_500,
+      });
+      const [, , body] = mockSaveServicePlan.mock.calls.at(-1)!;
+      const savedItems =
+        body.sections?.flatMap(({ elements }) => elements) || [];
+      const savedPrayers = savedItems.filter(
+        ({ title }) => richTextToPlainText(title) === "Prayer",
+      );
+      expect(savedItems.map(({ id }) => id)).toHaveLength(
+        new Set(savedItems.map(({ id }) => id)).size,
+      );
+      expect(savedPrayers).toHaveLength(selection === "addition" ? 3 : 2);
+      expect(savedPrayers.map(({ id }) => id)).toEqual(
+        expect.arrayContaining(["local-prayer-a", "local-prayer-b"]),
+      );
+      expect(
+        savedPrayers.find(({ id }) => id === "local-prayer-a"),
+      ).toMatchObject({
+        planningCenterPdfSourcePosition: scenario === "two rows" ? 4 : 1,
+        notes: plainTextToRichText("Keep note A"),
+        assignees: [
+          { id: "slot-a", microphoneIds: ["mic-a"], iemIds: ["iem-a"] },
+        ],
+        resources: [{ id: "attachment-a" }],
+      });
+      expect(
+        savedPrayers.find(({ id }) => id === "local-prayer-b"),
+      ).toMatchObject({
+        planningCenterPdfSourcePosition: 3,
+        notes: plainTextToRichText("Keep note B"),
+        assignees: [
+          { id: "slot-b", microphoneIds: ["mic-b"], iemIds: ["iem-b"] },
+        ],
+        resources: [{ id: "attachment-b" }],
+      });
+      const addedPrayers = savedPrayers.filter(
+        ({ id }) => id !== "local-prayer-a" && id !== "local-prayer-b",
+      );
+      expect(
+        addedPrayers.map(({ notes }) => richTextToPlainText(notes)),
+      ).toEqual(selection === "addition" ? ["New occurrence note"] : []);
+      expect(
+        savedPrayers.find(({ id }) => id === "local-prayer-a")
+          ?.planningCenterPdfMatchReviewRequired,
+      ).toBe(selection === "addition" ? true : undefined);
+    },
+  );
 
   it("refreshes a duration-only Planning Center PDF from the existing anchor and cascades reviewed times", async () => {
     mockGetServicePlan.mockResolvedValue({
@@ -3066,31 +3602,33 @@ ${pdfRows}
           loadedAt: "2026-07-20T12:00:00.000Z",
           planLabel: "Sunday worship",
         },
-        sections: [{
-          id: "section-1",
-          sourcePlanningManaged: true,
-          name: "SMC Worship Experience",
-          elements: [
-            {
-              id: "welcome",
-              sourcePlanningManaged: true,
-              type: "free",
-              title: plainTextToRichText("Welcome"),
-              startTime: "09:00",
-              durationSeconds: 300,
-              durationMinutes: 5,
-            },
-            {
-              id: "prayer",
-              sourcePlanningManaged: true,
-              type: "free",
-              title: plainTextToRichText("Prayer"),
-              startTime: "09:05",
-              durationSeconds: 300,
-              durationMinutes: 5,
-            },
-          ],
-        }],
+        sections: [
+          {
+            id: "section-1",
+            sourcePlanningManaged: true,
+            name: "SMC Worship Experience",
+            elements: [
+              {
+                id: "welcome",
+                sourcePlanningManaged: true,
+                type: "free",
+                title: plainTextToRichText("Welcome"),
+                startTime: "09:00",
+                durationSeconds: 300,
+                durationMinutes: 5,
+              },
+              {
+                id: "prayer",
+                sourcePlanningManaged: true,
+                type: "free",
+                title: plainTextToRichText("Prayer"),
+                startTime: "09:05",
+                durationSeconds: 300,
+                durationMinutes: 5,
+              },
+            ],
+          },
+        ],
       },
     });
     mockExtractTextFromPdfFile.mockResolvedValue(`Main Worship Service
@@ -3103,28 +3641,49 @@ SMC Worship Experience
 
     const user = userEvent.setup();
     renderEditor();
-    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
-    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
-    expect(screen.getByRole("checkbox", { name: "Remove source items no longer listed" }))
-      .not.toBeChecked();
-    const file = new File(["%PDF-fake"], "updated-order.pdf", { type: "application/pdf" });
-    fireEvent.change(screen.getByLabelText(/Planning Center PDF/i), { target: { files: [file] } });
+    await user.click(
+      await screen.findByRole("button", { name: /Plan actions/i }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: /Import updates/i }),
+    );
+    expect(
+      screen.getByRole("checkbox", {
+        name: "Remove source items no longer listed",
+      }),
+    ).not.toBeChecked();
+    const file = new File(["%PDF-fake"], "updated-order.pdf", {
+      type: "application/pdf",
+    });
+    fireEvent.change(screen.getByLabelText(/Planning Center PDF/i), {
+      target: { files: [file] },
+    });
 
     expect(await screen.findByText(/1 change selected/i)).toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: "Update Welcome" })).toBeChecked();
-    expect(screen.queryByRole("checkbox", { name: "Update Prayer" })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("checkbox", { name: "Update Welcome" }),
+    ).toBeChecked();
+    expect(
+      screen.queryByRole("checkbox", { name: "Update Prayer" }),
+    ).not.toBeInTheDocument();
     await user.click(screen.getByText("Schedule impact (1)"));
     expect(screen.getByText(/Prayer.*09:05.*09:08/)).toBeInTheDocument();
-    expect(screen.getByText(/Timing reflects the selected changes/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Timing reflects the selected changes/i),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
-    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), { timeout: 2_500 });
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), {
+      timeout: 2_500,
+    });
     const [, , body] = mockSaveServicePlan.mock.calls.at(-1)!;
-    expect(body.sections?.[0]?.elements?.map((item) => ({
-      id: item.id,
-      startTime: item.startTime,
-      durationSeconds: item.durationSeconds,
-    }))).toEqual([
+    expect(
+      body.sections?.[0]?.elements?.map((item) => ({
+        id: item.id,
+        startTime: item.startTime,
+        durationSeconds: item.durationSeconds,
+      })),
+    ).toEqual([
       { id: "welcome", startTime: "09:00", durationSeconds: 480 },
       { id: "prayer", startTime: "09:08", durationSeconds: 300 },
     ]);
@@ -3199,74 +3758,149 @@ SMC Worship Experience
 
     const user = userEvent.setup();
     renderEditor();
-    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
-    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Plan actions/i }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: /Import updates/i }),
+    );
     const removeMissing = screen.getByRole("checkbox", {
       name: "Remove source items no longer listed",
     });
     expect(removeMissing).not.toBeChecked();
     await user.click(removeMissing);
 
-    const file = new File(["%PDF-fake"], "updated-order.pdf", { type: "application/pdf" });
-    fireEvent.change(screen.getByLabelText(/Planning Center PDF/i), { target: { files: [file] } });
+    const file = new File(["%PDF-fake"], "updated-order.pdf", {
+      type: "application/pdf",
+    });
+    fireEvent.change(screen.getByLabelText(/Planning Center PDF/i), {
+      target: { files: [file] },
+    });
 
-    expect(await screen.findByRole("checkbox", { name: "Remove Opening" })).toBeChecked();
-    await user.click(screen.getByRole("checkbox", { name: "Select all updates" }));
+    expect(
+      await screen.findByRole("checkbox", { name: "Remove Opening" }),
+    ).toBeChecked();
+    await user.click(
+      screen.getByRole("checkbox", { name: "Select all updates" }),
+    );
     await user.click(screen.getByRole("checkbox", { name: "Remove Opening" }));
-    expect(screen.getByRole("button", { name: "Apply 1 change" })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Apply 1 change" }),
+    ).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
 
-    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), { timeout: 2_500 });
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), {
+      timeout: 2_500,
+    });
     const [, , body] = mockSaveServicePlan.mock.calls.at(-1)!;
-    expect(body.sections?.[0]).toMatchObject({ id: "empty-first", elements: [] });
+    expect(body.sections?.[0]).toMatchObject({
+      id: "empty-first",
+      elements: [],
+    });
     const refreshedItems = body.sections?.[1]?.elements || [];
-    expect(refreshedItems.map((item) => richTextToPlainText(item.title))).toEqual([
-      "Manual item",
-      "Prayer",
-      "Song",
-    ]);
-    expect(refreshedItems.map(({ id, startTime }) => ({ id, startTime }))).toEqual([
+    expect(
+      refreshedItems.map((item) => richTextToPlainText(item.title)),
+    ).toEqual(["Manual item", "Prayer", "Song"]);
+    expect(
+      refreshedItems.map(({ id, startTime }) => ({ id, startTime })),
+    ).toEqual([
       { id: "manual", startTime: "09:00" },
       { id: "prayer", startTime: "09:02" },
       { id: "song", startTime: "09:07" },
     ]);
   });
 
-  it.each(["reading", "reviewing"])("preserves edits made while %s a PDF import", async (phase) => {
-    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: {
-      planId: "church-1::service-1@2026-07-26", churchId: "church-1", planKey: "service-1@2026-07-26",
-      serviceId: "service-1", date: "2026-07-26", name: "Sunday Worship",
-      sourceImport: { source: "planningCenterPdf", sourceUrl: "", loadedAt: "2026-07-20T12:00:00Z", planLabel: "Sunday" },
-      sections: [{ id: "worship", name: "Worship", sourcePlanningManaged: true, elements: [
-        { id: "welcome", type: "free", title: plainTextToRichText("Welcome"), sourcePlanningManaged: true, durationSeconds: 300 },
-      ] }],
-    } });
-    let resolvePdf!: (value: string) => void;
-    mockExtractTextFromPdfFile.mockReturnValue(new Promise((resolve) => { resolvePdf = resolve; }));
-    const user = userEvent.setup();
-    renderEditor({ initialEditing: true });
-    await screen.findByLabelText(/^Duration/i);
-    await user.click(screen.getByRole("button", { name: /Plan actions/i }));
-    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
-    fireEvent.change(screen.getByLabelText(/Planning Center PDF/i), { target: { files: [new File(["pdf"], "updated.pdf", { type: "application/pdf" })] } });
-    const finishReading = async () => {
-      await act(async () => { resolvePdf("Sunday Worship\nWorship\n8:00 Welcome"); });
-    };
-    if (phase === "reviewing") {
-      await finishReading();
-      await screen.findByRole("button", { name: "Apply 1 change" });
-    }
-    const duration = screen.getByLabelText(/^Duration/i);
-    fireEvent.change(duration, { target: { value: "20" } });
-    await waitFor(() => expect(duration).toHaveValue("20"));
-    fireEvent.blur(duration);
-    if (phase === "reading") await finishReading();
-    else await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
-    expect(await screen.findByText("The plan changed. Import it again to review the latest draft.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Apply 1 change" })).not.toBeInTheDocument();
-    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), { timeout: 2500 });
-    expect(mockSaveServicePlan.mock.calls.at(-1)![2].sections?.[0].elements[0].durationSeconds).toBe(1200);
-  });
+  it.each(["reading", "reviewing"])(
+    "preserves edits made while %s a PDF import",
+    async (phase) => {
+      mockGetServicePlan.mockResolvedValue({
+        success: true,
+        servicePlan: {
+          planId: "church-1::service-1@2026-07-26",
+          churchId: "church-1",
+          planKey: "service-1@2026-07-26",
+          serviceId: "service-1",
+          date: "2026-07-26",
+          name: "Sunday Worship",
+          sourceImport: {
+            source: "planningCenterPdf",
+            sourceUrl: "",
+            loadedAt: "2026-07-20T12:00:00Z",
+            planLabel: "Sunday",
+          },
+          sections: [
+            {
+              id: "worship",
+              name: "Worship",
+              sourcePlanningManaged: true,
+              elements: [
+                {
+                  id: "welcome",
+                  type: "free",
+                  title: plainTextToRichText("Welcome"),
+                  sourcePlanningManaged: true,
+                  durationSeconds: 300,
+                },
+              ],
+            },
+          ],
+        },
+      });
+      let resolvePdf!: (value: string) => void;
+      mockExtractTextFromPdfFile.mockReturnValue(
+        new Promise((resolve) => {
+          resolvePdf = resolve;
+        }),
+      );
+      const user = userEvent.setup();
+      renderEditor({ initialEditing: true });
+      await screen.findByLabelText(/^Duration/i);
+      await user.click(screen.getByRole("button", { name: /Plan actions/i }));
+      await user.click(
+        await screen.findByRole("menuitem", { name: /Import updates/i }),
+      );
+      fireEvent.change(screen.getByLabelText(/Planning Center PDF/i), {
+        target: {
+          files: [
+            new File(["pdf"], "updated.pdf", { type: "application/pdf" }),
+          ],
+        },
+      });
+      const finishReading = async () => {
+        await act(async () => {
+          resolvePdf("Sunday Worship\nWorship\n8:00 Welcome");
+        });
+      };
+      if (phase === "reviewing") {
+        await finishReading();
+        await screen.findByRole("button", { name: "Apply 1 change" });
+      }
+      const duration = screen.getByLabelText(/^Duration/i);
+      fireEvent.change(duration, { target: { value: "20" } });
+      await waitFor(() => expect(duration).toHaveValue("20"));
+      fireEvent.blur(duration);
+      if (phase === "reading") await finishReading();
+      else
+        await user.click(
+          screen.getByRole("button", { name: "Apply 1 change" }),
+        );
+      expect(
+        await screen.findByText(
+          "The plan changed. Import it again to review the latest draft.",
+        ),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Apply 1 change" }),
+      ).not.toBeInTheDocument();
+      await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), {
+        timeout: 2500,
+      });
+      expect(
+        mockSaveServicePlan.mock.calls.at(-1)![2].sections?.[0].elements[0]
+          .durationSeconds,
+      ).toBe(1200);
+    },
+  );
 
   it("ignores a PDF import that finishes after switching to another plan", async () => {
     const currentPlan: ServicePlan = {
@@ -3282,48 +3916,68 @@ SMC Worship Experience
         loadedAt: "2026-07-20T12:00:00.000Z",
         planLabel: "Sunday worship",
       },
-      sections: [{
-        id: "current-section",
-        sourcePlanningManaged: true,
-        name: "Worship",
-        elements: [{
-          id: "current-item",
+      sections: [
+        {
+          id: "current-section",
           sourcePlanningManaged: true,
-          type: "free",
-          title: plainTextToRichText("Current item"),
-        }],
-      }],
+          name: "Worship",
+          elements: [
+            {
+              id: "current-item",
+              sourcePlanningManaged: true,
+              type: "free",
+              title: plainTextToRichText("Current item"),
+            },
+          ],
+        },
+      ],
     };
     const nextPlan: ServicePlan = {
       ...currentPlan,
       planId: "church-1::service-1@2026-08-02",
       planKey: "service-1@2026-08-02",
       date: "2026-08-02",
-      sections: [{
-        id: "next-section",
-        name: "Worship",
-        elements: [{
-          id: "next-item",
-          type: "free",
-          title: plainTextToRichText("Upcoming item"),
-        }],
-      }],
+      sections: [
+        {
+          id: "next-section",
+          name: "Worship",
+          elements: [
+            {
+              id: "next-item",
+              type: "free",
+              title: plainTextToRichText("Upcoming item"),
+            },
+          ],
+        },
+      ],
     };
     mockGetServicePlan
       .mockResolvedValueOnce({ success: true, servicePlan: currentPlan })
       .mockResolvedValueOnce({ success: true, servicePlan: nextPlan });
     let resolvePdfText: ((text: string) => void) | undefined;
-    mockExtractTextFromPdfFile.mockReturnValue(new Promise((resolve) => {
-      resolvePdfText = resolve;
-    }));
+    mockExtractTextFromPdfFile.mockReturnValue(
+      new Promise((resolve) => {
+        resolvePdfText = resolve;
+      }),
+    );
 
     const user = userEvent.setup();
     const view = renderEditor();
-    await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
-    await user.click(await screen.findByRole("menuitem", { name: /Import updates/i }));
-    const file = new File(["%PDF-fake"], "slow-order.pdf", { type: "application/pdf" });
-    fireEvent.change(screen.getByLabelText(/Planning Center PDF/i), { target: { files: [file] } });
-    await waitFor(() => expect(mockExtractTextFromPdfFile).toHaveBeenCalledWith(file));
+    await user.click(
+      await screen.findByRole("button", { name: /Plan actions/i }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: /Import updates/i }),
+    );
+    const file = new File(["%PDF-fake"], "slow-order.pdf", {
+      type: "application/pdf",
+    });
+    fireEvent.change(screen.getByLabelText(/Planning Center PDF/i), {
+      target: { files: [file] },
+    });
+    await waitFor(() =>
+      expect(mockExtractTextFromPdfFile).toHaveBeenCalledWith(file),
+    );
 
     view.rerender(editorTree({ occurrence: nextOccurrence }));
     await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(2));
@@ -3416,9 +4070,7 @@ SMC Worship Experience
       screen.getByRole("checkbox", { name: /Start times and durations/i }),
     );
     await user.click(screen.getByRole("button", { name: /Apply updates/i }));
-    expect(
-      await screen.findByText(/1 change selected/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/1 change selected/i)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Apply 1 change/i }));
 
     await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), {
@@ -4471,26 +5123,28 @@ SMC Worship Experience
       startsAt: "2026-07-26T14:00:00.000Z",
       timezone: "UTC",
       revision: 4,
-      sections: [{
-        id: "section-1",
-        name: "Worship",
-        elements: [
-          {
-            id: "welcome",
-            type: "free",
-            title: plainTextToRichText("Welcome"),
-            startTime: "14:00",
-            durationSeconds: 300,
-          },
-          {
-            id: "message",
-            type: "free",
-            title: plainTextToRichText("Message"),
-            startTime: "14:05",
-            durationSeconds: 1_800,
-          },
-        ],
-      }],
+      sections: [
+        {
+          id: "section-1",
+          name: "Worship",
+          elements: [
+            {
+              id: "welcome",
+              type: "free",
+              title: plainTextToRichText("Welcome"),
+              startTime: "14:00",
+              durationSeconds: 300,
+            },
+            {
+              id: "message",
+              type: "free",
+              title: plainTextToRichText("Message"),
+              startTime: "14:05",
+              durationSeconds: 1_800,
+            },
+          ],
+        },
+      ],
       publicLive: { mode: "schedule" },
     };
     const remoteLivePlan: ServicePlan = {
@@ -4504,18 +5158,14 @@ SMC Worship Experience
     let getServicePlanCallCount = 0;
     mockGetServicePlan.mockImplementation(async () => ({
       success: true,
-      servicePlan:
-        getServicePlanCallCount++ < 2 ? initialPlan : remoteLivePlan,
+      servicePlan: getServicePlanCallCount++ < 2 ? initialPlan : remoteLivePlan,
     }));
 
     try {
-      render(
-        <StrictMode>
-          {editorTree({})}
-        </StrictMode>,
-      );
-      expect(await screen.findByLabelText("Live on schedule: Welcome"))
-        .toBeInTheDocument();
+      render(<StrictMode>{editorTree({})}</StrictMode>);
+      expect(
+        await screen.findByLabelText("Live on schedule: Welcome"),
+      ).toBeInTheDocument();
       await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(2));
 
       act(() => {
@@ -4533,13 +5183,16 @@ SMC Worship Experience
       });
 
       await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(3));
-      expect(screen.getByLabelText("Live-adjusted time 01:57 PM; planned 02:05 PM"))
-        .toHaveClass("text-blue-300");
-      expect(screen.getByText("02:00 PM", { selector: "time" }))
-        .toHaveClass("text-gray-400");
+      expect(
+        screen.getByLabelText("Live-adjusted time 01:57 PM; planned 02:05 PM"),
+      ).toHaveClass("text-blue-300");
+      expect(screen.getByText("02:00 PM", { selector: "time" })).toHaveClass(
+        "text-gray-400",
+      );
       expect(mockSaveServicePlan).not.toHaveBeenCalled();
-      expect(remoteLivePlan.sections[0].elements.map((element) => element.startTime))
-        .toEqual(["14:00", "14:05"]);
+      expect(
+        remoteLivePlan.sections[0].elements.map((element) => element.startTime),
+      ).toEqual(["14:00", "14:05"]);
     } finally {
       nowSpy.mockRestore();
     }
@@ -4890,7 +5543,11 @@ SMC Worship Experience
       );
     });
     await user.click(screen.getByRole("button", { name: /Plan actions/i }));
-    await user.click(await screen.findByRole("menuitem", { name: /Return to planned schedule/i }));
+    await user.click(
+      await screen.findByRole("menuitem", {
+        name: /Return to planned schedule/i,
+      }),
+    );
     await waitFor(() => {
       expect(mockUpdateServicePlanPublicLive).toHaveBeenLastCalledWith(
         "church-1",
@@ -5103,50 +5760,66 @@ SMC Worship Experience
         currentElementId: "song",
         startedAt: "2026-07-26T14:02:00.000Z",
       },
-      sections: [{
-        id: "section-1",
-        name: "Worship",
-        elements: [
-          {
-            id: "welcome",
-            type: "free",
-            title: plainTextToRichText("Welcome"),
-            startTime: "14:00",
-            durationSeconds: 300,
-          },
-          {
-            id: "song",
-            type: "free",
-            title: plainTextToRichText("Song"),
-            startTime: "14:05",
-            durationSeconds: 60,
-          },
-          {
-            id: "closing",
-            type: "free",
-            title: plainTextToRichText("Closing"),
-            startTime: "14:06",
-            durationSeconds: 600,
-          },
-        ],
-      }],
+      sections: [
+        {
+          id: "section-1",
+          name: "Worship",
+          elements: [
+            {
+              id: "welcome",
+              type: "free",
+              title: plainTextToRichText("Welcome"),
+              startTime: "14:00",
+              durationSeconds: 300,
+            },
+            {
+              id: "song",
+              type: "free",
+              title: plainTextToRichText("Song"),
+              startTime: "14:05",
+              durationSeconds: 60,
+            },
+            {
+              id: "closing",
+              type: "free",
+              title: plainTextToRichText("Closing"),
+              startTime: "14:06",
+              durationSeconds: 600,
+            },
+          ],
+        },
+      ],
     };
-    mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: livePlan });
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: livePlan,
+    });
 
     try {
       const user = userEvent.setup();
       renderEditor();
 
-      expect(await screen.findByLabelText("Live-adjusted time 02:02 PM; planned 02:05 PM"))
-        .toHaveClass("text-blue-300");
-      expect(screen.getByLabelText("Live-adjusted time 02:03 PM; planned 02:06 PM"))
-        .toHaveClass("text-blue-300");
-      expect(screen.getByText("02:00 PM", { selector: "time" })).toHaveClass("text-gray-400");
-      expect(screen.getByLabelText("Live, started 2:02 PM: Closing")).toBeInTheDocument();
+      expect(
+        await screen.findByLabelText(
+          "Live-adjusted time 02:02 PM; planned 02:05 PM",
+        ),
+      ).toHaveClass("text-blue-300");
+      expect(
+        screen.getByLabelText("Live-adjusted time 02:03 PM; planned 02:06 PM"),
+      ).toHaveClass("text-blue-300");
+      expect(screen.getByText("02:00 PM", { selector: "time" })).toHaveClass(
+        "text-gray-400",
+      );
+      expect(
+        screen.getByLabelText("Live, started 2:02 PM: Closing"),
+      ).toBeInTheDocument();
 
       await user.click(screen.getByRole("button", { name: /^Edit$/i }));
-      expect(screen.getAllByLabelText("Time").map((input) => (input as HTMLInputElement).value))
-        .toEqual(["02:00 PM", "02:05 PM", "02:06 PM"]);
+      expect(
+        screen
+          .getAllByLabelText("Time")
+          .map((input) => (input as HTMLInputElement).value),
+      ).toEqual(["02:00 PM", "02:05 PM", "02:06 PM"]);
       expect(mockSaveServicePlan).not.toHaveBeenCalled();
     } finally {
       nowSpy.mockRestore();
@@ -6156,5 +6829,948 @@ SMC Worship Experience
     expect(
       screen.getByText(/This song is not in the library right now/i),
     ).toBeInTheDocument();
+  });
+
+  it("does not query Planning Center when disconnected or when the editor is read only", async () => {
+    const view = renderEditor();
+    expect(
+      await screen.findAllByRole("button", { name: /Choose a template/i }),
+    ).not.toHaveLength(0);
+    expect(mockListPlanningCenterServiceTypes).not.toHaveBeenCalled();
+    expect(mockListPlanningCenterPlansForDate).not.toHaveBeenCalled();
+    view.unmount();
+
+    renderEditor({ planningCenterConnected: true, canEdit: false });
+    expect(
+      await screen.findByRole("tab", { name: "Plan / Order of service" }),
+    ).toBeInTheDocument();
+    expect(mockListPlanningCenterServiceTypes).not.toHaveBeenCalled();
+    expect(mockListPlanningCenterPlansForDate).not.toHaveBeenCalled();
+  });
+
+  it("keeps Planning Center discovery in the background until a result is ready", async () => {
+    let resolvePlans!: (result: { items: PlanningCenterPlanSummary[] }) => void;
+    mockListPlanningCenterPlansForDate.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePlans = resolve;
+        }),
+    );
+
+    renderEditor({
+      planningCenterConnected: true,
+      service: { ...oneTimeService, planningCenterServiceTypeId: "pco-type-1" },
+    });
+
+    await waitFor(() =>
+      expect(mockListPlanningCenterPlansForDate).toHaveBeenCalled(),
+    );
+    expect(
+      screen.queryByRole("region", { name: "Planning Center plan discovery" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Checking Planning Center"),
+    ).not.toBeInTheDocument();
+
+    await act(async () => resolvePlans({ items: [planningCenterCandidate()] }));
+    expect(
+      await screen.findByRole("region", {
+        name: "Planning Center plan discovery",
+      }),
+    ).toHaveTextContent("Planning Center plan found");
+  });
+
+  it("discovers a unique plan for an empty occurrence and imports only after the user asks", async () => {
+    mockListPlanningCenterPlansForDate.mockResolvedValue({
+      items: [planningCenterCandidate()],
+    });
+    mockGetPlanningCenterPlanImport.mockResolvedValue(
+      planningCenterImport() as PlanningCenterPlanImport,
+    );
+
+    const user = userEvent.setup();
+    renderEditor({
+      planningCenterConnected: true,
+      service: { ...oneTimeService, planningCenterServiceTypeId: "pco-type-1" },
+    });
+
+    const suggestion = await screen.findByRole("region", {
+      name: "Planning Center plan discovery",
+    });
+    expect(
+      within(suggestion).getByText("Planning Center plan found"),
+    ).toBeInTheDocument();
+    expect(mockListPlanningCenterPlansForDate).toHaveBeenCalledWith(
+      "church-1",
+      "pco-type-1",
+      "2026-07-26",
+    );
+    expect(mockGetPlanningCenterPlanImport).not.toHaveBeenCalled();
+    expect(mockSaveServicePlan).not.toHaveBeenCalled();
+
+    await user.click(
+      within(suggestion).getByRole("button", { name: "Import plan" }),
+    );
+    expect(await screen.findByText("Opening Song")).toBeInTheDocument();
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), {
+      timeout: 2_500,
+    });
+    expect(mockGetPlanningCenterPlanImport).toHaveBeenCalledWith(
+      "church-1",
+      "pco-type-1",
+      "pco-plan-1",
+    );
+    expect(mockSaveServicePlan.mock.calls.at(-1)?.[2]).toMatchObject({
+      sourceImport: {
+        source: "planningCenter",
+        planningCenterServiceTypeId: "pco-type-1",
+        planningCenterPlanId: "pco-plan-1",
+      },
+    });
+  });
+
+  it("dismisses an available plan suggestion until the editor is reopened", async () => {
+    mockListPlanningCenterPlansForDate.mockResolvedValue({
+      items: [planningCenterCandidate()],
+    });
+    const user = userEvent.setup();
+    const props = {
+      planningCenterConnected: true,
+      service: { ...oneTimeService, planningCenterServiceTypeId: "pco-type-1" },
+    };
+    const view = renderEditor(props);
+    await user.click(await screen.findByRole("button", { name: "Not now" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", {
+          name: "Planning Center plan discovery",
+        }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(mockGetPlanningCenterPlanImport).not.toHaveBeenCalled();
+
+    view.unmount();
+    renderEditor(props);
+    const reopenedSuggestion = await screen.findByRole("region", {
+      name: "Planning Center plan discovery",
+    });
+    expect(
+      await within(reopenedSuggestion).findByRole("button", {
+        name: "Import plan",
+      }),
+    ).toBeInTheDocument();
+    expect(mockListPlanningCenterPlansForDate).toHaveBeenCalledTimes(2);
+    expect(mockGetPlanningCenterPlanImport).not.toHaveBeenCalled();
+  });
+
+  it("offers a dismissed suggestion again after the Planning Center plan changes", async () => {
+    let updatedAt = "2026-07-20T12:00:00Z";
+    mockListPlanningCenterPlansForDate.mockImplementation(
+      async (_churchId, serviceTypeId, date) => ({
+        items:
+          date === "2026-07-26"
+            ? [
+                {
+                  ...planningCenterCandidate("pco-plan-1", serviceTypeId),
+                  updatedAt,
+                },
+              ]
+            : [],
+      }),
+    );
+    const user = userEvent.setup();
+    const props = {
+      planningCenterConnected: true,
+      service: { ...oneTimeService, planningCenterServiceTypeId: "pco-type-1" },
+    };
+    const view = renderEditor(props);
+    await user.click(await screen.findByRole("button", { name: "Not now" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", {
+          name: "Planning Center plan discovery",
+        }),
+      ).not.toBeInTheDocument(),
+    );
+
+    updatedAt = "2026-07-21T12:00:00Z";
+    view.rerender(editorTree({ ...props, occurrence: nextOccurrence }));
+    await waitFor(() =>
+      expect(mockListPlanningCenterPlansForDate).toHaveBeenCalledTimes(2),
+    );
+    view.rerender(editorTree(props));
+    const changedSuggestion = await screen.findByRole("region", {
+      name: "Planning Center plan discovery",
+    });
+    expect(
+      await within(changedSuggestion).findByRole("button", {
+        name: "Import plan",
+      }),
+    ).toBeInTheDocument();
+    expect(mockListPlanningCenterPlansForDate).toHaveBeenCalledTimes(3);
+  });
+
+  it("checks the exact linked plan and shows updates without changing the saved draft", async () => {
+    const linkedPlan: ServicePlan = {
+      planId: "church-1::service-1@2026-07-26",
+      churchId: "church-1",
+      planKey: "service-1@2026-07-26",
+      serviceId: "service-1",
+      date: "2026-07-26",
+      name: "Easter Sunday",
+      revision: 5,
+      sourceImport: {
+        source: "planningCenter",
+        sourceUrl: "https://services.planningcenteronline.com/plans/pco-plan-1",
+        loadedAt: "2026-07-20T12:00:00Z",
+        planLabel: "Sunday Worship",
+        planningCenterServiceTypeId: "pco-type-1",
+        planningCenterPlanId: "pco-plan-1",
+      },
+      sections: [
+        {
+          id: "section-1",
+          name: "Worship",
+          sourcePlanningManaged: true,
+          elements: [
+            {
+              id: "item-1",
+              sourcePlanningManaged: true,
+              sourceOccurrenceId: "pco-item-1",
+              type: "song",
+              title: plainTextToRichText("Opening Song"),
+              startTime: "10:00",
+            },
+          ],
+        },
+      ],
+    };
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: linkedPlan,
+    });
+    mockGetPlanningCenterPlanImport.mockResolvedValue(
+      planningCenterImport("pco-plan-1", "pco-type-1", "Updated Opening Song"),
+    );
+
+    const user = userEvent.setup();
+    renderEditor({ planningCenterConnected: true });
+
+    const suggestion = await screen.findByRole("region", {
+      name: "Planning Center plan discovery",
+    });
+    expect(
+      within(suggestion).getByText("Planning Center updates available"),
+    ).toBeInTheDocument();
+    expect(within(suggestion).getByText(/1 updated/)).toBeInTheDocument();
+    expect(mockGetPlanningCenterPlanImport).toHaveBeenCalledWith(
+      "church-1",
+      "pco-type-1",
+      "pco-plan-1",
+    );
+    expect(mockListPlanningCenterPlansForDate).not.toHaveBeenCalled();
+    expect(mockSaveServicePlan).not.toHaveBeenCalled();
+
+    await user.click(
+      within(suggestion).getByRole("button", { name: "Review updates" }),
+    );
+    expect(
+      await screen.findByText("Review Planning Center updates"),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("Updated Opening Song").length).toBeGreaterThan(
+      0,
+    );
+    expect(mockSaveServicePlan).not.toHaveBeenCalled();
+  });
+
+  it("does not prompt for an unchanged linked plan", async () => {
+    const unchangedImport = planningCenterImport(
+      "pco-plan-1",
+      "pco-type-1",
+      "Opening Song",
+    );
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        revision: 2,
+        sourceImport: {
+          source: "planningCenter",
+          sourceUrl:
+            "https://services.planningcenteronline.com/plans/pco-plan-1",
+          loadedAt: "2026-07-20T12:00:00Z",
+          planLabel: "Sunday Worship",
+          planningCenterServiceTypeId: "pco-type-1",
+          planningCenterPlanId: "pco-plan-1",
+        },
+        sections: buildServicePlanSectionsFromImport(unchangedImport, []),
+      } as ServicePlan,
+    });
+    mockGetPlanningCenterPlanImport.mockResolvedValue(unchangedImport);
+
+    renderEditor({ planningCenterConnected: true });
+
+    await waitFor(() =>
+      expect(mockGetPlanningCenterPlanImport).toHaveBeenCalledWith(
+        "church-1",
+        "pco-type-1",
+        "pco-plan-1",
+      ),
+    );
+    expect(
+      screen.getByRole("region", { name: "Planning Center plan discovery" }),
+    ).toHaveTextContent("Planning Center plan is up to date");
+    expect(
+      screen.queryByText("Planning Center updates available"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Review Planning Center updates"),
+    ).not.toBeInTheDocument();
+    expect(mockSaveServicePlan).not.toHaveBeenCalled();
+  });
+
+  it("keeps stale discovery quiet after autosave and rechecks only from an explicit action", async () => {
+    const unchangedImport = planningCenterImport();
+    unchangedImport.sections[0].rows[0].durationMinutes = 5;
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        revision: 2,
+        sourceImport: {
+          source: "planningCenter",
+          sourceUrl:
+            "https://services.planningcenteronline.com/plans/pco-plan-1",
+          loadedAt: "2026-07-20T12:00:00Z",
+          planLabel: "Sunday Worship",
+          planningCenterServiceTypeId: "pco-type-1",
+          planningCenterPlanId: "pco-plan-1",
+        },
+        sections: buildServicePlanSectionsFromImport(unchangedImport, []),
+      } as ServicePlan,
+    });
+    mockGetPlanningCenterPlanImport.mockResolvedValue(unchangedImport);
+
+    const user = userEvent.setup();
+    renderEditor({ planningCenterConnected: true });
+    await waitFor(() =>
+      expect(mockGetPlanningCenterPlanImport).toHaveBeenCalledTimes(1),
+    );
+    expect(
+      screen.getByRole("region", { name: "Planning Center plan discovery" }),
+    ).toHaveTextContent("Planning Center plan is up to date");
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const duration = await screen.findByLabelText(/^Duration/i);
+    fireEvent.change(duration, { target: { value: "10" } });
+    await waitFor(() => expect(duration).toHaveValue("10"));
+    fireEvent.blur(duration);
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), {
+      timeout: 2_500,
+    });
+    expect(
+      screen.queryByRole("region", { name: "Planning Center plan discovery" }),
+    ).not.toBeInTheDocument();
+    expect(mockGetPlanningCenterPlanImport).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Plan actions" }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Check Planning Center" }),
+    );
+    await waitFor(() =>
+      expect(mockGetPlanningCenterPlanImport).toHaveBeenCalledTimes(2),
+    );
+  });
+
+  it("rejects a Planning Center preview when the source changes before apply", async () => {
+    const linkedPlan: ServicePlan = {
+      planId: "church-1::service-1@2026-07-26",
+      churchId: "church-1",
+      planKey: "service-1@2026-07-26",
+      serviceId: "service-1",
+      date: "2026-07-26",
+      name: "Easter Sunday",
+      revision: 5,
+      sourceImport: {
+        source: "planningCenter",
+        sourceUrl: "https://services.planningcenteronline.com/plans/pco-plan-1",
+        loadedAt: "2026-07-20T12:00:00Z",
+        planLabel: "Sunday Worship",
+        planningCenterServiceTypeId: "pco-type-1",
+        planningCenterPlanId: "pco-plan-1",
+      },
+      sections: [
+        {
+          id: "section-1",
+          name: "Worship",
+          sourcePlanningManaged: true,
+          elements: [
+            {
+              id: "item-1",
+              sourcePlanningManaged: true,
+              sourceOccurrenceId: "pco-item-1",
+              type: "song",
+              title: plainTextToRichText("Opening Song"),
+              startTime: "10:00",
+            },
+          ],
+        },
+      ],
+    };
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: linkedPlan,
+    });
+    mockGetPlanningCenterPlanImport.mockResolvedValueOnce(
+      planningCenterImport("pco-plan-1", "pco-type-1", "Updated Opening Song"),
+    );
+    mockGetPlanningCenterPlanImport.mockResolvedValueOnce(
+      planningCenterImport("pco-plan-1", "pco-type-1", "Changed Again"),
+    );
+
+    const user = userEvent.setup();
+    renderEditor({ planningCenterConnected: true });
+    const suggestion = await screen.findByRole("region", {
+      name: "Planning Center plan discovery",
+    });
+    await user.click(
+      within(suggestion).getByRole("button", { name: "Review updates" }),
+    );
+    expect(
+      await screen.findByText("Review Planning Center updates"),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
+
+    const retryPrompt = await screen.findByRole("region", {
+      name: "Planning Center plan discovery",
+    });
+    expect(retryPrompt).toHaveTextContent(
+      "Planning Center changed while you were reviewing. Check again to review the latest updates.",
+    );
+    expect(
+      screen.getByText(
+        "Planning Center changed while you were reviewing. Review the latest updates.",
+      ),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.queryByText("Review Planning Center updates"),
+      ).not.toBeInTheDocument(),
+    );
+    expect(mockSaveServicePlan).not.toHaveBeenCalled();
+  });
+
+  it("closes a Planning Center review if the local draft changes during source verification", async () => {
+    const linkedPlan: ServicePlan = {
+      planId: "church-1::service-1@2026-07-26",
+      churchId: "church-1",
+      planKey: "service-1@2026-07-26",
+      serviceId: "service-1",
+      date: "2026-07-26",
+      name: "Easter Sunday",
+      revision: 5,
+      sourceImport: {
+        source: "planningCenter",
+        sourceUrl: "https://services.planningcenteronline.com/plans/pco-plan-1",
+        loadedAt: "2026-07-20T12:00:00Z",
+        planLabel: "Sunday Worship",
+        planningCenterServiceTypeId: "pco-type-1",
+        planningCenterPlanId: "pco-plan-1",
+      },
+      sections: [
+        {
+          id: "section-1",
+          name: "Worship",
+          sourcePlanningManaged: true,
+          elements: [
+            {
+              id: "item-1",
+              sourcePlanningManaged: true,
+              sourceOccurrenceId: "pco-item-1",
+              type: "song",
+              title: plainTextToRichText("Opening Song"),
+              durationSeconds: 300,
+              startTime: "10:00",
+            },
+          ],
+        },
+      ],
+    };
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: linkedPlan,
+    });
+    let resolveLatest!: (value: PlanningCenterPlanImport) => void;
+    mockGetPlanningCenterPlanImport
+      .mockResolvedValueOnce(
+        planningCenterImport(
+          "pco-plan-1",
+          "pco-type-1",
+          "Updated Opening Song",
+        ),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveLatest = resolve;
+          }),
+      );
+
+    const user = userEvent.setup();
+    renderEditor({ planningCenterConnected: true });
+    const suggestion = await screen.findByRole("region", {
+      name: "Planning Center plan discovery",
+    });
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    await screen.findByLabelText(/^Duration/i);
+    await user.click(
+      within(suggestion).getByRole("button", { name: "Review updates" }),
+    );
+    await screen.findByText("Review Planning Center updates");
+    await user.click(screen.getByRole("button", { name: "Apply 1 change" }));
+    await waitFor(() =>
+      expect(mockGetPlanningCenterPlanImport).toHaveBeenCalledTimes(2),
+    );
+
+    const duration = screen.getByLabelText(/^Duration/i);
+    fireEvent.change(duration, { target: { value: "20" } });
+    await waitFor(() => expect(duration).toHaveValue("20"));
+    fireEvent.blur(duration);
+    await act(async () => {
+      resolveLatest(
+        planningCenterImport(
+          "pco-plan-1",
+          "pco-type-1",
+          "Updated Opening Song",
+        ),
+      );
+    });
+
+    expect(
+      await screen.findByText(
+        /The plan changed\. Check Planning Center again/i,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Review Planning Center updates"),
+    ).not.toBeInTheDocument();
+    await waitFor(() => expect(mockSaveServicePlan).toHaveBeenCalled(), {
+      timeout: 2_500,
+    });
+    const savedElements =
+      mockSaveServicePlan.mock.calls.at(-1)?.[2].sections?.[0].elements || [];
+    expect(
+      savedElements.map((element) => richTextToPlainText(element.title)),
+    ).toEqual(["Opening Song"]);
+    expect(savedElements[0].durationSeconds).toBe(1200);
+  });
+
+  it("searches all service types for a combined occurrence and requires an explicit ambiguous choice", async () => {
+    mockListPlanningCenterServiceTypes.mockResolvedValue({
+      items: [
+        { id: "pco-type-1", name: "Sunday Worship" },
+        { id: "pco-type-2", name: "Evening Worship" },
+      ],
+    });
+    mockListPlanningCenterPlansForDate.mockImplementation(
+      async (_churchId, serviceTypeId) => ({
+        items: [
+          planningCenterCandidate(
+            serviceTypeId === "pco-type-1" ? "pco-plan-1" : "pco-plan-2",
+            serviceTypeId,
+            serviceTypeId === "pco-type-1"
+              ? "2026-07-26T14:00:00.000Z"
+              : "2026-07-26T18:00:00.000Z",
+          ),
+        ],
+      }),
+    );
+    mockGetPlanningCenterPlanImport.mockImplementation(
+      async (_churchId, serviceTypeId, planId) =>
+        planningCenterImport(planId, serviceTypeId),
+    );
+
+    const user = userEvent.setup();
+    renderEditor({
+      planningCenterConnected: true,
+      service: { ...oneTimeService, planningCenterServiceTypeId: "pco-type-1" },
+      occurrence: {
+        ...occurrence,
+        serviceIds: ["service-1", "service-2"],
+      },
+    });
+
+    const suggestion = await screen.findByRole("region", {
+      name: "Planning Center plan discovery",
+    });
+    expect(
+      within(suggestion).getByText(
+        "More than one Planning Center plan matches this service",
+      ),
+    ).toBeInTheDocument();
+    expect(mockListPlanningCenterPlansForDate).toHaveBeenCalledTimes(2);
+    expect(mockListPlanningCenterPlansForDate).toHaveBeenCalledWith(
+      "church-1",
+      "pco-type-1",
+      "2026-07-26",
+    );
+    expect(mockListPlanningCenterPlansForDate).toHaveBeenCalledWith(
+      "church-1",
+      "pco-type-2",
+      "2026-07-26",
+    );
+    expect(mockGetPlanningCenterPlanImport).not.toHaveBeenCalled();
+    expect(
+      within(suggestion).getByRole("button", { name: "Import plan" }),
+    ).toBeDisabled();
+
+    const candidateSelect = within(suggestion).getByRole("combobox", {
+      name: "Choose a Planning Center plan",
+    });
+    candidateSelect.focus();
+    await user.keyboard("{ArrowDown}Evening Worship{Enter}");
+    expect(candidateSelect).toHaveTextContent(/Evening Worship/);
+    await user.click(
+      within(suggestion).getByRole("button", { name: "Import plan" }),
+    );
+    await waitFor(() =>
+      expect(mockGetPlanningCenterPlanImport).toHaveBeenCalledWith(
+        "church-1",
+        "pco-type-2",
+        "pco-plan-2",
+      ),
+    );
+    await screen.findByText("Opening Song");
+  });
+
+  it("does not fall back to a date match when an exact linked plan is incomplete", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        revision: 2,
+        sourceImport: {
+          source: "planningCenter",
+          sourceUrl: "",
+          loadedAt: "2026-07-20T12:00:00Z",
+          planLabel: "Sunday Worship",
+          planningCenterPlanId: "pco-plan-1",
+        },
+        sections: [{ id: "section-1", name: "Worship", elements: [] }],
+      } as ServicePlan,
+    });
+
+    renderEditor({
+      planningCenterConnected: true,
+      service: { ...oneTimeService, planningCenterServiceTypeId: "pco-type-1" },
+    });
+
+    expect(
+      await screen.findByText(/saved Planning Center link is incomplete/i),
+    ).toBeInTheDocument();
+    expect(mockGetPlanningCenterPlanImport).not.toHaveBeenCalled();
+    expect(mockListPlanningCenterPlansForDate).not.toHaveBeenCalled();
+  });
+
+  it("does not replace a linked Planning Center plan when the source is unavailable", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        revision: 2,
+        sourceImport: {
+          source: "planningCenter",
+          sourceUrl:
+            "https://services.planningcenteronline.com/plans/pco-plan-1",
+          loadedAt: "2026-07-20T12:00:00Z",
+          planLabel: "Sunday Worship",
+          planningCenterServiceTypeId: "pco-type-1",
+          planningCenterPlanId: "pco-plan-1",
+        },
+        sections: [],
+      } as ServicePlan,
+    });
+    mockGetPlanningCenterPlanImport.mockRejectedValue(
+      new Error("Planning Center plan was deleted."),
+    );
+    mockListPlanningCenterPlansForDate.mockResolvedValue({
+      items: [planningCenterCandidate("replacement-plan", "pco-type-1")],
+    });
+
+    renderEditor({
+      planningCenterConnected: true,
+      service: { ...oneTimeService, planningCenterServiceTypeId: "pco-type-1" },
+    });
+
+    const suggestion = await screen.findByRole("region", {
+      name: "Planning Center plan discovery",
+    });
+    expect(
+      await within(suggestion).findByText(/plan was deleted/i),
+    ).toBeInTheDocument();
+    expect(mockListPlanningCenterPlansForDate).not.toHaveBeenCalled();
+    expect(mockGetPlanningCenterPlanImport).toHaveBeenCalledWith(
+      "church-1",
+      "pco-type-1",
+      "pco-plan-1",
+    );
+  });
+
+  it("keeps the editor usable and retries after a temporary Planning Center error", async () => {
+    mockListPlanningCenterServiceTypes
+      .mockRejectedValueOnce(
+        new Error("Planning Center is temporarily unavailable."),
+      )
+      .mockResolvedValue({
+        items: [{ id: "pco-type-1", name: "Sunday Worship" }],
+      });
+    mockListPlanningCenterPlansForDate.mockResolvedValue({
+      items: [planningCenterCandidate()],
+    });
+    const user = userEvent.setup();
+    renderEditor({ planningCenterConnected: true });
+
+    const suggestion = await screen.findByRole("region", {
+      name: "Planning Center plan discovery",
+    });
+    expect(
+      await within(suggestion).findByText(/temporarily unavailable/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: "Plan / Order of service" }),
+    ).toBeInTheDocument();
+    await user.click(
+      await within(suggestion).findByRole("button", { name: "Try again" }),
+    );
+
+    expect(
+      await screen.findByRole("button", { name: "Import plan" }),
+    ).toBeInTheDocument();
+    expect(mockListPlanningCenterServiceTypes).toHaveBeenCalledTimes(2);
+    expect(mockGetPlanningCenterPlanImport).not.toHaveBeenCalled();
+  });
+
+  it("releases import controls when a Planning Center connection change invalidates the result", async () => {
+    localStorage.setItem(
+      "worshipsyncServicePlanImportSource",
+      "planningCenter",
+    );
+    mockListPlanningCenterServiceTypes.mockResolvedValue({
+      items: [{ id: "pco-type-1", name: "Sunday Worship" }],
+    });
+    mockListPlanningCenterPlans.mockResolvedValue({
+      items: [planningCenterCandidate()],
+    });
+    let resolveStaleImport!: (value: PlanningCenterPlanImport) => void;
+    mockGetPlanningCenterPlanImport.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveStaleImport = resolve;
+        }),
+    );
+
+    const user = userEvent.setup();
+    const view = renderEditor({ planningCenterConnected: true });
+    await user.click(
+      await screen.findByRole("button", {
+        name: /Import from Planning Center/i,
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Import plan" })).toBeEnabled(),
+    );
+    await user.click(screen.getByRole("button", { name: "Import plan" }));
+    await waitFor(() =>
+      expect(mockGetPlanningCenterPlanImport).toHaveBeenCalledTimes(1),
+    );
+
+    view.rerender(
+      editorTree({
+        planningCenterConnected: true,
+        planningCenterAccountLabel: "Another Church",
+      }),
+    );
+    await act(async () => {
+      resolveStaleImport(
+        planningCenterImport("pco-plan-1", "pco-type-1", "Stale account item"),
+      );
+    });
+
+    expect(screen.queryByText("Stale account item")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Import plan" })).toBeEnabled(),
+    );
+
+    mockGetPlanningCenterPlanImport.mockResolvedValueOnce(
+      planningCenterImport("pco-plan-1", "pco-type-1", "Fresh account item"),
+    );
+    await user.click(screen.getByRole("button", { name: "Import plan" }));
+    expect(await screen.findByText("Fresh account item")).toBeInTheDocument();
+  });
+
+  it("does not let an older import clear a newer import's loading state", async () => {
+    localStorage.setItem(
+      "worshipsyncServicePlanImportSource",
+      "planningCenter",
+    );
+    mockListPlanningCenterServiceTypes.mockResolvedValue({
+      items: [{ id: "pco-type-1", name: "Sunday Worship" }],
+    });
+    mockListPlanningCenterPlans.mockResolvedValue({
+      items: [planningCenterCandidate()],
+    });
+    let resolveStaleImport!: (value: PlanningCenterPlanImport) => void;
+    mockGetPlanningCenterPlanImport.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveStaleImport = resolve;
+        }),
+    );
+    let rejectPdfImport!: (reason?: unknown) => void;
+    mockExtractTextFromPdfFile.mockReturnValueOnce(
+      new Promise((_, reject) => {
+        rejectPdfImport = reject;
+      }),
+    );
+
+    const user = userEvent.setup();
+    const view = renderEditor({ planningCenterConnected: true });
+    await user.click(
+      await screen.findByRole("button", {
+        name: /Import from Planning Center/i,
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Import plan" })).toBeEnabled(),
+    );
+    await user.click(screen.getByRole("button", { name: "Import plan" }));
+    await waitFor(() =>
+      expect(mockGetPlanningCenterPlanImport).toHaveBeenCalledTimes(1),
+    );
+
+    view.rerender(
+      editorTree({
+        planningCenterConnected: true,
+        planningCenterAccountLabel: "Another Church",
+      }),
+    );
+    fireEvent.change(screen.getByLabelText("Planning Center PDF"), {
+      target: {
+        files: [new File(["pdf"], "order.pdf", { type: "application/pdf" })],
+      },
+    });
+    await waitFor(() =>
+      expect(mockExtractTextFromPdfFile).toHaveBeenCalledTimes(1),
+    );
+
+    await act(async () => {
+      resolveStaleImport(
+        planningCenterImport("pco-plan-1", "pco-type-1", "Stale account item"),
+      );
+    });
+    expect(screen.getByRole("button", { name: "Importing…" })).toBeDisabled();
+
+    await act(async () => {
+      rejectPdfImport(new Error("PDF import stopped"));
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Import plan" })).toBeEnabled(),
+    );
+    expect(screen.queryByText("Stale account item")).not.toBeInTheDocument();
+  });
+
+  it("ignores date-search results from the previous connected account", async () => {
+    let resolveFirstSearch:
+      | ((value: { items: PlanningCenterPlanSummary[] }) => void)
+      | undefined;
+    mockListPlanningCenterPlansForDate
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirstSearch = resolve;
+          }),
+      )
+      .mockResolvedValue({ items: [] });
+    mockListPlanningCenterServiceTypes.mockResolvedValue({
+      items: [{ id: "pco-type-1", name: "Sunday Worship" }],
+    });
+
+    const view = render(editorTree({ planningCenterConnected: true }));
+    await waitFor(() =>
+      expect(mockListPlanningCenterPlansForDate).toHaveBeenCalledTimes(1),
+    );
+    view.rerender(
+      editorTree({
+        planningCenterConnected: true,
+        planningCenterAccountLabel: "Another Church",
+      }),
+    );
+    await waitFor(() =>
+      expect(mockListPlanningCenterPlansForDate).toHaveBeenCalledTimes(2),
+    );
+
+    await act(async () => {
+      resolveFirstSearch?.({ items: [planningCenterCandidate()] });
+    });
+    expect(
+      screen.queryByText("Planning Center plan found"),
+    ).not.toBeInTheDocument();
+    expect(mockGetPlanningCenterPlanImport).not.toHaveBeenCalled();
+  });
+
+  it("does not run automatic discovery while a plan is live", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::service-1@2026-07-26",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        revision: 2,
+        publicLive: { mode: "manual", currentElementId: "live-item" },
+        sections: [
+          {
+            id: "section-1",
+            name: "Worship",
+            elements: [
+              {
+                id: "live-item",
+                type: "free",
+                title: plainTextToRichText("Live item"),
+              },
+            ],
+          },
+        ],
+      } as ServicePlan,
+    });
+
+    renderEditor({ planningCenterConnected: true });
+    await screen.findByText("Live item");
+    expect(mockGetPlanningCenterPlanImport).not.toHaveBeenCalled();
+    expect(mockListPlanningCenterPlansForDate).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("region", { name: "Planning Center plan discovery" }),
+    ).not.toBeInTheDocument();
   });
 });

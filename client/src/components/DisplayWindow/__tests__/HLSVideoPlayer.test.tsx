@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import HLSPlayer from "../HLSVideoPlayer";
+import type { VideoBackgroundPlaybackCue } from "../../../types";
 import { serverNow } from "../../../utils/serverTime";
 import {
   acquireLocalVideoFileUrl,
@@ -1570,6 +1571,65 @@ describe("HLSVideoPlayer", () => {
     expect(HTMLMediaElement.prototype.load).toHaveBeenCalledTimes(loadCount);
     expect(screen.getByTestId("hls-video-player")).toBe(video);
     pause.mockRestore(); restorePaused(); jest.useRealTimers();
+  });
+
+  it("pauses and resumes after a 126-second unknown-duration clock at the output's current frame", () => {
+    let outputPaused = true;
+    Object.defineProperty(HTMLMediaElement.prototype, "paused", {
+      configurable: true,
+      get: () => outputPaused,
+    });
+    const play = jest.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(() => {
+      outputPaused = false;
+      return Promise.resolve();
+    });
+    const pause = jest.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {
+      outputPaused = true;
+    });
+    const cue: VideoBackgroundPlaybackCue = {
+      mediaKey: "wrapped-unknown-duration",
+      positionSeconds: 0,
+      paused: false,
+      atServerMs: 1_000_000,
+      generation: 1,
+      applySeek: true,
+      loop: true,
+    };
+    const tree = (playback: VideoBackgroundPlaybackCue) =>
+      <HLSPlayer src="media-cache://wrapped-unknown.mp4" mediaKey={cue.mediaKey} playback={playback} />;
+    const { rerender } = render(tree(cue));
+    const video = screen.getByTestId("hls-video-player") as HTMLVideoElement;
+    Object.defineProperty(video, "duration", { configurable: true, value: 40 });
+    fireEvent.loadedMetadata(video);
+    video.currentTime = 6; // 126 seconds on the controller wraps to 6 seconds on this output.
+    const loadCount = (HTMLMediaElement.prototype.load as jest.Mock).mock.calls.length;
+
+    const loopOff: VideoBackgroundPlaybackCue = {
+      ...cue, positionSeconds: 126, loop: false, loopOnly: true, hasLiveClock: true,
+      preserveOutputPosition: true, applySeek: false, generation: 2,
+    };
+    rerender(tree(loopOff));
+    expect(video.currentTime).toBe(6);
+    expect(video.loop).toBe(false);
+    expect(outputPaused).toBe(false);
+
+    const pausedCue = { ...loopOff, paused: true, generation: 3 };
+    rerender(tree(pausedCue));
+    expect(video.currentTime).toBe(6);
+    expect(outputPaused).toBe(true);
+    expect(pause).toHaveBeenCalled();
+
+    rerender(tree({ ...pausedCue, paused: false, generation: 4 }));
+    expect(video.currentTime).toBe(6);
+    expect(outputPaused).toBe(false);
+    expect(play).toHaveBeenCalled();
+    expect(HTMLMediaElement.prototype.load).toHaveBeenCalledTimes(loadCount);
+    expect(screen.getByTestId("hls-video-player")).toBe(video);
+    play.mockRestore();
+    pause.mockRestore();
+    if (originalPausedDescriptor) {
+      Object.defineProperty(HTMLMediaElement.prototype, "paused", originalPausedDescriptor);
+    }
   });
 
   it.each([false, true])("changes looping without disturbing cue-less playback (paused=%s)", (paused) => {

@@ -36,6 +36,8 @@ export type ServicePlanningRefreshOptions = {
   suggestLegacyMatches?: boolean;
   /** Enable synthetic duplicate-title identity used only by PDF imports. */
   planningCenterPdfMatch?: boolean;
+  /** Reconcile same-section order for imports with durable source occurrence IDs. */
+  trackSameSectionSourceOrder?: boolean;
 };
 
 const normalizedSourceValue = (value: string | undefined): string =>
@@ -1526,9 +1528,9 @@ const managedImportedElement = (
 /**
  * Reconciles a fresh Service Planning parse into an editable plan without
  * replacing locally-created IDs, notes, roster links, or outline-push state.
- * It resolves associations before merging fields. PDFs express their desired
- * source sequence here; summary turns relative differences into operations.
- * Other imports retain order and place only additions and section moves.
+ * It resolves associations before merging fields. Source sequences are
+ * reconciled only for imports with a deliberate source-order option; summary
+ * turns relative differences into approval-gated operations.
  */
 export const refreshServicePlanFromImport = (
   currentSections: ServicePlanSection[],
@@ -1678,10 +1680,13 @@ export const refreshServicePlanFromImport = (
       }
       return [result];
     });
-    if (options.planningCenterPdfMatch) {
+    if (options.planningCenterPdfMatch || options.trackSameSectionSourceOrder) {
       // The resolved IDs, rather than a second title/position match, define the
       // desired source sequence. Reserved and operator rows are never sorted.
-      const eligible = new Set(sourceOrder.filter((element) => !element.legacyImportMatchCandidateForId).map(({ id }) => id));
+      const eligible = new Set(sourceOrder.filter((element) =>
+        !element.legacyImportMatchCandidateForId &&
+        (options.planningCenterPdfMatch || Boolean(element.sourceOccurrenceId?.trim())),
+      ).map(({ id }) => id));
       const ordered = sourceOrder.filter((element) => elements.some(({ id }) => id === element.id) && eligible.has(element.id));
       let index = 0;
       elements.forEach((element, slot) => { if (eligible.has(element.id)) elements[slot] = ordered[index++]; });

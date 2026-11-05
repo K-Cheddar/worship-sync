@@ -22,12 +22,16 @@ import { smsConsentIdForChurchPhone } from "./smsConsent.js";
 import { isPublicSharePathname } from "../client/src/utils/publicSharePathRedirect.ts";
 import { buildTeamSchedulePeriod } from "../client/src/pages/Teams/schedule/teamSchedulePeriod.ts";
 import { generateScheduleOccurrences } from "../client/src/utils/teamScheduleOccurrences.ts";
+import { oneTimeServiceInstant } from "../shared/teamScheduleOccurrences.ts";
 
 import {
+  addServicePlanSseClient,
   addChurchServiceTimeZoneSseClient,
   addTeamsSseClient,
   emitChurchServiceTimeZoneInvalidation,
+  emitServicePlanEvent,
   removeChurchServiceTimeZoneSseClient,
+  removeServicePlanSseClient,
   removeTeamsSseClient,
 } from "../server/teamsSse.js";
 import {
@@ -38,6 +42,7 @@ import {
 const {
   authHandlers,
   requireBroadTeamsViewSession,
+  requireServicesViewSession,
   requireTeamsEditForTeamSession,
   requireTeamsViewSession,
   COLLECTIONS,
@@ -60,6 +65,10 @@ const {
   setServerFirestoreForTests,
 } = await import("../authService.js");
 import { createAppSessionGuards } from "./appSessionGuards.js";
+import {
+  runPostCommitSideEffect,
+  setTeamSchedulePublicationEventDeliveryForServerTests,
+} from "./teamsAuthHandlers.js";
 import {
   createFakeSmsProvider,
   setSmsProviderForServerTests,
@@ -85,6 +94,35 @@ const createSseClient = () => {
     },
   };
 };
+
+test("post-commit schedule deliveries retry and never surface failure after commit", async () => {
+  let attempts = 0;
+  const errors = [];
+  const recovered = await runPostCommitSideEffect(
+    "publication test",
+    async () => {
+      attempts += 1;
+      if (attempts < 2) throw new Error("temporary outage");
+    },
+    { retryDelaysMs: [0], onError: (message, error) => errors.push({ message, error }) },
+  );
+  assert.equal(recovered, true);
+  assert.equal(attempts, 2);
+  assert.match(errors[0].message, /attempt 1\/2/);
+
+  attempts = 0;
+  const exhausted = await runPostCommitSideEffect(
+    "publication test",
+    async () => {
+      attempts += 1;
+      throw new Error("persistent outage");
+    },
+    { retryDelaysMs: [0, 0], onError: (message, error) => errors.push({ message, error }) },
+  );
+  assert.equal(exhausted, false);
+  assert.equal(attempts, 3);
+  assert.match(errors.at(-1).message, /attempt 3\/3/);
+});
 
 const callStreamHandler = async (
   handler,
@@ -390,6 +428,15 @@ const callHandler = async (
   return res;
 };
 
+const publishTestSchedule = async (context, scheduleId) => {
+  const result = await callHandler(authHandlers.publishTeamSchedule, {
+    context,
+    params: { scheduleId },
+  });
+  assert.equal(result.statusCode, 200, JSON.stringify(result.payload));
+  return result.payload.schedule;
+};
+
 const previewMemberCsv = async (context, csv, settings = {}) => {
   const inspected = await callHandler(authHandlers.inspectPortableImport, {
     context, body: { type: "members", csv },
@@ -536,6 +583,7 @@ test("schedule creation, changes, and generation require a configured church tim
   };
   const created = await callHandler(authHandlers.createTeamSchedule, { context, body });
   assert.equal(created.statusCode, 200);
+  await publishTestSchedule(context, created.payload.schedule.scheduleId);
 
   await setDoc(COLLECTIONS.churches, context.churchId, { serviceTimeZone: "" }, { merge: true });
   const changed = await callHandler(authHandlers.updateTeamSchedule, {
@@ -2528,6 +2576,111 @@ test("church service timezone stream rejects cross-church and revoked displays",
   assert.equal(revoked.writes.length, 0);
 });
 
+test("Services plan stream authorizes Services viewers without granting Teams SSE access", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const owner = await createAdminContext("service_plan_stream_owner");
+  const servicesReader = await createHumanContext("service_plan_stream_reader", {
+    churchId: owner.churchId,
+    role: "member",
+    permissions: { services: "view", teams: "none" },
+  });
+  const teamsOnlyReader = await createHumanContext("service_plan_stream_teams_only", {
+    churchId: owner.churchId,
+    role: "member",
+    permissions: { services: "none", teams: "view" },
+  });
+
+  const authorizedContexts = [servicesReader];
+  for (const serviceWorkspaceAccess of [false, true]) {
+    const pairing = await callHandler(authHandlers.createWorkstationPairing, {
+      context: owner,
+      body: {
+        label: serviceWorkspaceAccess ? "Service Workspace" : "Plan viewer",
+        platformType: "web",
+        appAccess: "full",
+        serviceWorkspaceAccess,
+      },
+    });
+    assert.equal(pairing.statusCode, 200);
+    const pairedSession = createSession();
+    const redeemed = createRes();
+    await authHandlers.redeemWorkstationPairing(
+      createReq({
+        session: pairedSession,
+        body: { token: pairing.payload.pairing.token, platformType: "web" },
+      }),
+      redeemed,
+    );
+    assert.equal(redeemed.statusCode, 200);
+    authorizedContexts.push({
+      churchId: owner.churchId,
+      headers: { "x-workstation-token": redeemed.payload.credential },
+      session: pairedSession,
+    });
+  }
+
+  for (const context of authorizedContexts) {
+    const stream = await callStreamHandler(authHandlers.streamServicePlanUpdates, {
+      context,
+    });
+    assert.equal(stream.res.statusCode, 200);
+    assert.equal(stream.headers["Content-Type"], "text/event-stream");
+    assert.deepEqual(
+      stream.writes
+        .filter((write) => write.startsWith("data: "))
+        .map((write) => JSON.parse(write.slice("data: ".length).trim())),
+      [{ type: "connected", churchId: owner.churchId }],
+    );
+
+    const request = createReq({
+      headers: context.headers,
+      session: context.session,
+    });
+    assert.equal(
+      (await requireServicesViewSession(request, owner.churchId)).churchId,
+      owner.churchId,
+    );
+    await assert.rejects(
+      requireBroadTeamsViewSession(request, owner.churchId),
+      { statusCode: 403 },
+    );
+
+    emitServicePlanEvent(owner.churchId, "service-plan-updated", {
+      planKey: "sunday@2026-11-01",
+      servicePlan: { name: "private plan content" },
+      member: { name: "private roster data" },
+    });
+    const events = stream.writes
+      .filter((write) => write.startsWith("data: "))
+      .map((write) => JSON.parse(write.slice("data: ".length).trim()));
+    assert.deepEqual(events.at(-1), {
+      type: "service-plan-updated",
+      planKey: "sunday@2026-11-01",
+    });
+    assert.equal(JSON.stringify(events).includes("private"), false);
+    stream.close();
+  }
+
+  const unauthorized = await callStreamHandler(authHandlers.streamServicePlanUpdates, {
+    context: teamsOnlyReader,
+  });
+  assert.equal(unauthorized.res.statusCode, 403);
+  assert.equal(unauthorized.writes.length, 0);
+
+  const crossChurch = await callStreamHandler(authHandlers.streamServicePlanUpdates, {
+    context: servicesReader,
+    churchId: "another-church",
+  });
+  assert.equal(crossChurch.res.statusCode, 403);
+  assert.equal(crossChurch.writes.length, 0);
+
+  const unauthenticated = await callStreamHandler(authHandlers.streamServicePlanUpdates, {
+    context: { churchId: owner.churchId, headers: {}, session: createSession() },
+  });
+  assert.equal(unauthenticated.res.statusCode, 401);
+  assert.equal(unauthenticated.writes.length, 0);
+});
+
 test("Services edit can change service plans without receiving Teams data", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const adminContext = await createAdminContext("services_edit_permission");
@@ -4290,6 +4443,217 @@ test("atomic assignment batches reject a row as a whole and require the current 
   );
 });
 
+test("assignment batches compare equivalent cells, shadow order, empty, and legacy values semantically", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("assignment_batch_semantic_cells");
+  const team = await seedTeam(context, {
+    teamName: "Worship",
+    positions: [{ name: "Vocal" }, { name: "Keys" }, { name: "Drums" }],
+    members: [
+      { firstName: "Avery", lastName: "Stone", positions: ["Vocal", "Keys", "Drums"] },
+      { firstName: "Blair", lastName: "Reed", positions: ["Vocal", "Keys", "Drums"] },
+      { firstName: "Casey", lastName: "Lee", positions: ["Vocal", "Keys", "Drums"] },
+    ],
+  });
+  const occurrenceId = "sunday@2026-10-04T10:00:00.000Z";
+  const created = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "October",
+      teamId: team.teamId,
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      serviceIds: ["sunday"],
+      occurrences: [{
+        occurrenceId,
+        serviceId: "sunday",
+        name: "Sunday",
+        startsAt: "2026-10-04T10:00:00.000Z",
+        positionRequirements: Object.values(team.positionIds).map((positionId) => ({ positionId, count: 1 })),
+      }],
+    },
+  });
+  const scheduleId = created.payload.schedule.scheduleId;
+  const vocalKey = `${team.positionIds.Vocal}::0`;
+  const keysKey = `${team.positionIds.Keys}::0`;
+  const drumsKey = `${team.positionIds.Drums}::0`;
+  const schedule = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+  await setDoc(COLLECTIONS.teamSchedules, scheduleId, {
+    ...schedule,
+    assignments: {
+      [occurrenceId]: {
+        [vocalKey]: {
+          primaryMemberId: team.memberIds.Avery,
+          shadows: [
+            { memberId: team.memberIds.Blair, kind: "shadow" },
+            { memberId: team.memberIds.Casey, kind: "reverse_shadow" },
+          ],
+        },
+        [keysKey]: team.memberIds.Blair,
+        [drumsKey]: "",
+      },
+    },
+  }, { merge: false });
+
+  const result = await callHandler(authHandlers.updateTeamScheduleAssignmentsBatch, {
+    context,
+    params: { scheduleId },
+    body: {
+      skipChangedCells: true,
+      changes: [
+        {
+          serviceId: occurrenceId,
+          positionSlotKey: vocalKey,
+          serviceDate: "2026-10-04",
+          expectedCell: {
+            primaryMemberId: team.memberIds.Avery,
+            shadows: [
+              { memberId: team.memberIds.Casey, kind: "reverse_shadow" },
+              { memberId: team.memberIds.Blair, kind: "shadow" },
+            ],
+          },
+          assignment: "",
+        },
+        {
+          serviceId: occurrenceId,
+          positionSlotKey: keysKey,
+          serviceDate: "2026-10-04",
+          expectedCell: { primaryMemberId: team.memberIds.Blair },
+          assignment: "",
+        },
+        {
+          serviceId: occurrenceId,
+          positionSlotKey: drumsKey,
+          serviceDate: "2026-10-04",
+          expectedCell: {},
+          assignment: "",
+        },
+      ],
+    },
+  });
+
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.payload.accepted.length, 3);
+  assert.deepEqual(result.payload.skipped, []);
+  assert.deepEqual(result.payload.schedule.assignments, {});
+});
+
+test("assignment batch skips a genuine concurrent cell and applies only matching cells", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("assignment_batch_partial_skip");
+  const team = await seedTeam(context, {
+    teamName: "Worship",
+    positions: [{ name: "Vocal" }, { name: "Keys" }],
+    members: [
+      { firstName: "Avery", lastName: "Stone", positions: ["Vocal", "Keys"] },
+      { firstName: "Blair", lastName: "Reed", positions: ["Vocal", "Keys"] },
+    ],
+  });
+  const occurrenceId = "sunday@2026-10-11T10:00:00.000Z";
+  const created = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "October",
+      teamId: team.teamId,
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      serviceIds: ["sunday"],
+      occurrences: [{
+        occurrenceId,
+        serviceId: "sunday",
+        name: "Sunday",
+        startsAt: "2026-10-11T10:00:00.000Z",
+        positionRequirements: Object.values(team.positionIds).map((positionId) => ({ positionId, count: 1 })),
+      }],
+    },
+  });
+  const scheduleId = created.payload.schedule.scheduleId;
+  const vocalKey = `${team.positionIds.Vocal}::0`;
+  const keysKey = `${team.positionIds.Keys}::0`;
+  const concurrentCell = { primaryMemberId: team.memberIds.Blair };
+  const schedule = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+  await setDoc(COLLECTIONS.teamSchedules, scheduleId, {
+    ...schedule,
+    assignments: {
+      [occurrenceId]: {
+        [vocalKey]: { primaryMemberId: team.memberIds.Avery },
+        [keysKey]: concurrentCell,
+      },
+    },
+  }, { merge: false });
+
+  const requestBody = {
+    operationId: "undo-race-receipt-1",
+    skipChangedCells: true,
+    changes: [
+      {
+        serviceId: occurrenceId,
+        positionSlotKey: vocalKey,
+        serviceDate: "2026-10-11",
+        expectedCell: { primaryMemberId: team.memberIds.Avery },
+        assignment: "",
+      },
+      {
+        serviceId: occurrenceId,
+        positionSlotKey: keysKey,
+        serviceDate: "2026-10-11",
+        expectedCell: { primaryMemberId: team.memberIds.Avery },
+        assignment: "",
+      },
+    ],
+  };
+  const result = await callHandler(authHandlers.updateTeamScheduleAssignmentsBatch, {
+    context,
+    params: { scheduleId },
+    body: requestBody,
+  });
+
+  assert.equal(result.statusCode, 200);
+  assert.deepEqual(result.payload.accepted, [{ serviceId: occurrenceId, positionSlotKey: vocalKey }]);
+  assert.deepEqual(result.payload.skipped, [{ serviceId: occurrenceId, positionSlotKey: keysKey }]);
+  assert.equal(result.payload.schedule.assignments[occurrenceId][vocalKey], undefined);
+  assert.deepEqual(result.payload.schedule.assignments[occurrenceId][keysKey], concurrentCell);
+
+  // Another editor can independently set a skipped cell to the Undo target.
+  // A retry must replay the original decision rather than treating that value
+  // coincidence as proof that this Undo committed.
+  const afterConcurrentEdit = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+  await setDoc(COLLECTIONS.teamSchedules, scheduleId, {
+    ...afterConcurrentEdit,
+    assignments: {
+      ...afterConcurrentEdit.assignments,
+      [occurrenceId]: {
+        ...afterConcurrentEdit.assignments[occurrenceId],
+        [keysKey]: "",
+      },
+    },
+  }, { merge: false });
+
+  const retry = await callHandler(authHandlers.updateTeamScheduleAssignmentsBatch, {
+    context,
+    params: { scheduleId },
+    body: requestBody,
+  });
+  assert.equal(retry.statusCode, 200);
+  assert.equal(retry.payload.replayed, true);
+  assert.deepEqual(retry.payload.accepted, [{ serviceId: occurrenceId, positionSlotKey: vocalKey }]);
+  assert.deepEqual(retry.payload.skipped, [{ serviceId: occurrenceId, positionSlotKey: keysKey }]);
+  assert.equal(getMemberId(retry.payload.schedule.assignments[occurrenceId][keysKey]), "");
+
+  const reusedId = await callHandler(authHandlers.updateTeamScheduleAssignmentsBatch, {
+    context,
+    params: { scheduleId },
+    body: {
+      ...requestBody,
+      changes: requestBody.changes.map((change) => ({
+        ...change,
+        assignment: { primaryMemberId: team.memberIds.Blair },
+      })),
+    },
+  });
+  assert.equal(reusedId.statusCode, 409);
+});
+
 test("schedule assignment mutations still require edit access to the owning team", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const admin = await createAdminContext("schedule_assignment_permission_owner");
@@ -4534,6 +4898,8 @@ test("schedule assignments support schedule-only guests without exposing contact
   assert.equal(duplicate.statusCode, 400);
   assert.match(duplicate.payload.errorMessage, /one position per service/i);
 
+  await publishTestSchedule(context, scheduleId);
+
   const link = await callHandler(authHandlers.getTeamSchedulePublicLink, {
     context,
     params: { scheduleId },
@@ -4678,6 +5044,247 @@ test("schedule assignments support schedule-only guests without exposing contact
   assert.equal(
     getMemberId(movedMember.payload.schedule.assignments[occurrenceId][`${positionIds.Slides}::0`]),
     memberIds.Taylor,
+  );
+});
+
+test("public schedule snapshots scope occurrence requirements and sanitize schedule data", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("public_schedule_requirements");
+  const { teamId, positionIds, memberIds } = await seedTeam(context, {
+    teamName: "Production",
+    positions: [{ name: "Camera" }, { name: "Slides" }],
+    members: [
+      { firstName: "Taylor", lastName: "Morgan", positions: ["Camera"] },
+      { firstName: "Jordan", lastName: "Reed", positions: ["Camera"] },
+    ],
+  });
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [
+      {
+        id: "public-schedule-service",
+        name: "Sabbath",
+        reccurence: "weekly",
+        dayOfWeek: 6,
+        time: "10:00",
+        positionRequirements: [
+          { positionId: positionIds.Camera, count: 2, minLevelId: "lead" },
+          { positionId: positionIds.Slides, count: 1 },
+        ],
+      },
+    ],
+  });
+  const occurrenceIds = [
+    "public-schedule-service@2026-06-06T10:00:00.000Z",
+    "public-schedule-service@2026-06-13T10:00:00.000Z",
+    "public-schedule-service@2026-06-20T10:00:00.000Z",
+  ];
+  const created = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "June Production",
+      teamId,
+      startDate: "2026-06-01",
+      endDate: "2026-06-30",
+      serviceIds: ["public-schedule-service"],
+      occurrences: occurrenceIds.map((occurrenceId, index) => ({
+        occurrenceId,
+        serviceId: "public-schedule-service",
+        name: "Sabbath",
+        startsAt: occurrenceId.slice(occurrenceId.indexOf("@") + 1),
+        positionRequirements: index === 2
+          ? []
+          : [
+              { positionId: positionIds.Camera, count: 1 },
+              ...(index === 1
+                ? [{ positionId: "deleted-position", count: 9 }]
+                : []),
+            ],
+      })),
+    },
+  });
+  assert.equal(created.statusCode, 200);
+  const scheduleId = created.payload.schedule.scheduleId;
+  await setDoc("teamSchedules", scheduleId, {
+    ...created.payload.schedule,
+    source: "generated-period",
+    occurrences: created.payload.schedule.occurrences.map((occurrence, index) => ({
+      ...occurrence,
+      ...(index === 2 ? { positionRequirements: [] } : {}),
+      privateNote: "private-occurrence-note",
+    })),
+    additionalPositionSlots: {
+      [occurrenceIds[1]]: [
+        `${positionIds.Camera}::1`,
+        `${positionIds.Slides}::0`,
+        "deleted-position::0",
+        `${positionIds.Camera}::1`,
+      ],
+      "missing-occurrence": [`${positionIds.Camera}::2`],
+    },
+    assignments: {
+      [occurrenceIds[0]]: {
+        [`${positionIds.Camera}::0`]: {
+          primaryMemberId: memberIds.Taylor,
+          shadows: [{ memberId: memberIds.Jordan, kind: "shadow" }],
+          privateNote: "private-assignment-note",
+        },
+        "deleted-position::0": {
+          primaryMemberId: "private-member-id",
+          shadows: [],
+        },
+      },
+      [occurrenceIds[1]]: {
+        // Older schedules persisted the assigned member ID as a string cell.
+        [`${positionIds.Camera}::0`]: memberIds.Jordan,
+      },
+      "missing-occurrence": {
+        [`${positionIds.Camera}::0`]: {
+          primaryMemberId: "private-member-id",
+          shadows: [],
+        },
+      },
+    },
+    microphoneAssignments: {
+      [occurrenceIds[0]]: {
+        [`${positionIds.Camera}::0`]: ["public-mic"],
+        "deleted-position::0": ["private-mic"],
+      },
+      "missing-occurrence": { [`${positionIds.Camera}::0`]: ["private-mic"] },
+    },
+    privateMetadata: "private-schedule-metadata",
+    guests: [{ guestId: "guest-private", name: "Private Guest", email: "private@example.test" }],
+    responses: { [occurrenceIds[0]]: { [`${positionIds.Camera}::0`]: "accepted" } },
+  });
+
+  await publishTestSchedule(context, scheduleId);
+  const link = await callHandler(authHandlers.getTeamSchedulePublicLink, {
+    context,
+    params: { scheduleId },
+  });
+  const result = await callHandler(authHandlers.getPublicTeamSchedule, {
+    context,
+    query: { token: link.payload.publicToken },
+  });
+
+  assert.equal(result.statusCode, 200);
+  assert.deepEqual(
+    result.payload.schedule.occurrences.map((occurrence) => occurrence.positionRequirements),
+    [
+      [{ positionId: positionIds.Camera, count: 1 }],
+      [{ positionId: positionIds.Camera, count: 1 }],
+      [
+        { positionId: positionIds.Camera, count: 2, minLevelId: "lead" },
+        { positionId: positionIds.Slides, count: 1 },
+      ],
+    ],
+  );
+  assert.deepEqual(result.payload.schedule.additionalPositionSlots, {
+    [occurrenceIds[1]]: [`${positionIds.Camera}::1`, `${positionIds.Slides}::0`],
+  });
+  assert.deepEqual(
+    Object.keys(result.payload.schedule.occurrences[0]).sort(),
+    ["occurrenceId", "serviceId", "name", "startsAt", "positionRequirements"].sort(),
+  );
+  assert.deepEqual(
+    result.payload.schedule.assignments[occurrenceIds[0]],
+    {
+      [`${positionIds.Camera}::0`]: {
+        primaryMemberId: memberIds.Taylor,
+        shadows: [{ memberId: memberIds.Jordan, kind: "shadow" }],
+      },
+    },
+  );
+  assert.deepEqual(result.payload.schedule.assignments[occurrenceIds[1]], {
+    [`${positionIds.Camera}::0`]: {
+      primaryMemberId: memberIds.Jordan,
+      shadows: [],
+    },
+  });
+  assert.deepEqual(result.payload.schedule.microphoneAssignments, {
+    [occurrenceIds[0]]: { [`${positionIds.Camera}::0`]: ["public-mic"] },
+  });
+  assert.equal("guests" in result.payload.schedule, false);
+  assert.equal("responses" in result.payload.schedule, false);
+  assert.doesNotMatch(
+    JSON.stringify(result.payload),
+    /private-schedule-metadata|private-occurrence-note|private-assignment-note|private@example\.test|private-member-id|Private Guest|private-mic/,
+  );
+});
+
+test("public generated schedules do not infer team positions for services without requirements", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("public_generated_schedule_no_requirements");
+  const { teamId, positionIds } = await seedTeam(context, {
+    teamName: "Production",
+    positions: [{ name: "Camera" }],
+  });
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [{
+      id: "public-no-team-requirements",
+      name: "Community Gathering",
+      reccurence: "weekly",
+      dayOfWeek: 0,
+      time: "09:00",
+      positionRequirements: [],
+    }],
+  });
+  const occurrenceId = "public-no-team-requirements@2026-06-07T09:00:00.000Z";
+  const created = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "Generated June Schedule",
+      teamId,
+      startDate: "2026-06-01",
+      endDate: "2026-06-30",
+      serviceIds: ["public-no-team-requirements"],
+      occurrences: [{
+        occurrenceId,
+        serviceId: "public-no-team-requirements",
+        name: "Community Gathering",
+        startsAt: "2026-06-07T09:00:00.000Z",
+        positionRequirements: [],
+      }],
+    },
+  });
+  assert.equal(created.statusCode, 200);
+  const scheduleId = created.payload.schedule.scheduleId;
+  await setDoc("teamSchedules", scheduleId, {
+    ...created.payload.schedule,
+    source: "generated-period",
+    occurrences: created.payload.schedule.occurrences.map((occurrence) => ({
+      ...occurrence,
+      positionRequirements: [],
+    })),
+  });
+
+  await publishTestSchedule(context, scheduleId);
+  const link = await callHandler(authHandlers.getTeamSchedulePublicLink, {
+    context,
+    params: { scheduleId },
+  });
+  const result = await callHandler(authHandlers.getPublicTeamSchedule, {
+    context,
+    query: { token: link.payload.publicToken },
+  });
+
+  assert.equal(result.statusCode, 200);
+  assert.deepEqual(result.payload.schedule.occurrences, []);
+  assert.deepEqual(result.payload.schedule.assignments, {});
+  assert.deepEqual(result.payload.positions.map((position) => position.positionId), [
+    positionIds.Camera,
+  ]);
+
+  await setDoc("teamSchedules", scheduleId, { source: null }, { merge: true });
+  const legacyResult = await callHandler(authHandlers.getPublicTeamSchedule, {
+    context,
+    query: { token: link.payload.publicToken },
+  });
+  assert.equal(legacyResult.statusCode, 200);
+  assert.deepEqual(
+    legacyResult.payload.schedule.occurrences.map((occurrence) => occurrence.positionRequirements),
+    [[{ positionId: positionIds.Camera, count: 1 }]],
   );
 });
 
@@ -5829,6 +6436,8 @@ test("service plan assignments expose only the selected plan's serving roster", 
     },
   });
 
+  await publishTestSchedule(context, scheduleId);
+
   const result = await callHandler(authHandlers.getServicePlanAssignments, {
     context,
     params: { planKey },
@@ -6689,6 +7298,8 @@ test("public schedule link returns a sanitized, name-resolved snapshot", async (
     { merge: true },
   );
 
+  await publishTestSchedule(context, scheduleId);
+
   // Admin mints the public link (idempotent: same token on repeat).
   const link = await callHandler(authHandlers.getTeamSchedulePublicLink, {
     context,
@@ -6872,6 +7483,8 @@ test("public schedule disambiguates duplicate first names with a last initial", 
       shadowKind: "shadow",
     },
   });
+
+  await publishTestSchedule(context, scheduleId);
 
   const link = await callHandler(authHandlers.getTeamSchedulePublicLink, {
     context,
@@ -8324,7 +8937,9 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   assert.equal(invalid.statusCode, 400);
 
   const sseClient = createSseClient();
+  const servicePlanSseClient = createSseClient();
   addTeamsSseClient(context.churchId, sseClient);
+  addServicePlanSseClient(context.churchId, servicePlanSseClient);
 
   // Relative to now: the church "current service" link only resolves to a
   // service happening now or shortly ahead, so a hard-coded past date would
@@ -8530,6 +9145,10 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   assert.ok(createEvent, "expected a service-plan-updated SSE event");
   assert.equal(createEvent.planKey, planKey);
   assert.equal(createEvent.servicePlan, undefined);
+  assert.deepEqual(servicePlanSseClient.events().at(-1), {
+    type: "service-plan-updated",
+    planKey,
+  });
 
   const fetched = await callHandler(authHandlers.getServicePlan, {
     context,
@@ -8623,6 +9242,10 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   assert.equal(updateEvent.saveOperationId, "autosave-operation-0001");
   assert.equal(updateEvent.planKey, planKey);
   assert.equal(updateEvent.servicePlan, undefined);
+  assert.deepEqual(servicePlanSseClient.events().at(-1), {
+    type: "service-plan-updated",
+    planKey,
+  });
   const recovered = await callHandler(authHandlers.getServicePlan, {
     context,
     params: { planKey },
@@ -8910,6 +9533,35 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   });
   assert.deepEqual(droppedElementSave.payload.servicePlan.publicLive, {
     mode: "schedule",
+  });
+
+  const pausedLive = await callHandler(authHandlers.updateServicePlanPublicLive, {
+    context,
+    params: { planKey },
+    body: { mode: "manual", currentElementId: "el-1" },
+  });
+  assert.equal(pausedLive.statusCode, 200);
+  assert.equal(pausedLive.payload.servicePlan.publicLive.mode, "manual");
+  assert.deepEqual(servicePlanSseClient.events().at(-1), {
+    type: "service-plan-updated",
+    planKey,
+  });
+
+  const resumedSchedule = await callHandler(authHandlers.updateServicePlanPublicLive, {
+    context,
+    params: { planKey },
+    body: { mode: "schedule" },
+  });
+  assert.equal(resumedSchedule.statusCode, 200);
+  assert.equal(resumedSchedule.payload.servicePlan.publicLive.mode, "schedule");
+  const servicePlanAfterResume = await callHandler(authHandlers.getServicePlan, {
+    context,
+    params: { planKey },
+  });
+  assert.equal(servicePlanAfterResume.payload.servicePlan.publicLive.mode, "schedule");
+  assert.deepEqual(servicePlanSseClient.events().at(-1), {
+    type: "service-plan-updated",
+    planKey,
   });
 
   const unknownPublicSnapshotRes = createRes();
@@ -9495,6 +10147,10 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     .find((event) => event.type === "service-plan-removed");
   assert.ok(removeEvent, "expected a service-plan-removed SSE event");
   assert.equal(removeEvent.planKey, planKey);
+  assert.deepEqual(servicePlanSseClient.events().at(-1), {
+    type: "service-plan-removed",
+    planKey,
+  });
 
   const afterDelete = await callHandler(authHandlers.getServicePlan, {
     context,
@@ -9503,6 +10159,7 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   assert.equal(afterDelete.payload.servicePlan, null);
 
   removeTeamsSseClient(context.churchId, sseClient);
+  removeServicePlanSseClient(context.churchId, servicePlanSseClient);
 });
 
 test("listServicePlans returns a lightweight, church-scoped summary for the Plans list view", async (t) => {
@@ -11541,6 +12198,390 @@ test("an archived linked member exposes no My Schedule assignments or self-servi
   );
 });
 
+test("team schedule publishing toggles visibility and preserves concurrent and saved data", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("schedule_publication_lifecycle");
+  const assigned = await seedAssignedSchedule(context, "publication_lifecycle", {
+    cameraSlots: 2,
+  });
+  let saved = await getDoc(COLLECTIONS.teamSchedules, assigned.scheduleId);
+  assert.equal(saved.published, false);
+
+  const link = await callHandler(authHandlers.getTeamSchedulePublicLink, {
+    context,
+    params: { scheduleId: assigned.scheduleId },
+  });
+  assert.equal(link.statusCode, 200);
+  const token = link.payload.publicToken;
+  const publicRead = () => callHandler(authHandlers.getPublicTeamSchedule, {
+    context: publicContext(context.churchId),
+    query: { token },
+  });
+  assert.equal((await publicRead()).statusCode, 404, "a Draft token is not publicly readable");
+  const draftVolunteerView = await callHandler(authHandlers.getMyTeamAssignments, { context });
+  assert.deepEqual(draftVolunteerView.payload.occurrences, []);
+  const draftSend = await callHandler(authHandlers.sendTeamSchedule, {
+    context,
+    params: { scheduleId: assigned.scheduleId },
+  });
+  assert.equal(draftSend.statusCode, 409);
+
+  const secondMember = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: {
+      firstName: "Concurrent",
+      lastName: "Editor",
+      positionIds: [assigned.media.positionIds.Camera],
+    },
+  });
+  await setDoc(COLLECTIONS.teamSchedules, assigned.scheduleId, {
+    responses: {
+      [assigned.occurrenceId]: {
+        [assigned.cellKey]: {
+          memberId: assigned.memberId,
+          response: "accepted",
+          respondedAt: "2026-11-01T12:00:00.000Z",
+        },
+      },
+    },
+    microphoneAssignments: { [assigned.occurrenceId]: { [assigned.cellKey]: ["mic-kept"] } },
+    iemAssignments: { [assigned.occurrenceId]: { [assigned.cellKey]: ["iem-kept"] } },
+    additionalPositionSlots: { [assigned.occurrenceId]: [`${assigned.media.positionIds.Camera}::2`] },
+    sentAt: "2026-10-31T12:00:00.000Z",
+    notificationHistory: [{ id: "existing-notification" }],
+    publicationHistory: [{ status: "legacy-entry" }],
+  }, { merge: true });
+  saved = await getDoc(COLLECTIONS.teamSchedules, assigned.scheduleId);
+  const ownersBefore = await queryDocs(COLLECTIONS.teamScheduleOccurrenceOwners, [
+    { field: "churchId", value: context.churchId },
+  ]);
+
+  const assignmentWrite = callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId: assigned.scheduleId },
+    body: {
+      serviceId: assigned.occurrenceId,
+      positionSlotKey: `${assigned.media.positionIds.Camera}::1`,
+      memberId: secondMember.payload.member.memberId,
+      serviceDate: assigned.serviceDate,
+    },
+  });
+  const publishWrite = callHandler(authHandlers.publishTeamSchedule, {
+    context,
+    params: { scheduleId: assigned.scheduleId },
+    body: {},
+  });
+  const [assignmentResult, published] = await Promise.all([assignmentWrite, publishWrite]);
+  assert.equal(assignmentResult.statusCode, 200, JSON.stringify(assignmentResult.payload));
+  assert.equal(published.statusCode, 200, JSON.stringify(published.payload));
+  assert.equal(published.payload.schedule.published, true);
+
+  saved = await getDoc(COLLECTIONS.teamSchedules, assigned.scheduleId);
+  assert.equal(getMemberId(saved.assignments[assigned.occurrenceId][`${assigned.media.positionIds.Camera}::1`]), secondMember.payload.member.memberId);
+  assert.equal(saved.responses[assigned.occurrenceId][assigned.cellKey].response, "accepted");
+  assert.deepEqual(saved.microphoneAssignments, { [assigned.occurrenceId]: { [assigned.cellKey]: ["mic-kept"] } });
+  assert.deepEqual(saved.iemAssignments, { [assigned.occurrenceId]: { [assigned.cellKey]: ["iem-kept"] } });
+  assert.deepEqual(saved.additionalPositionSlots, { [assigned.occurrenceId]: [`${assigned.media.positionIds.Camera}::2`] });
+  assert.equal(saved.sentAt, "2026-10-31T12:00:00.000Z");
+  assert.deepEqual(saved.notificationHistory, [{ id: "existing-notification" }]);
+  assert.deepEqual(saved.publicationHistory, [{ status: "legacy-entry" }]);
+  assert.equal(saved.publicLinkToken, token);
+  assert.deepEqual(
+    await queryDocs(COLLECTIONS.teamScheduleOccurrenceOwners, [
+      { field: "churchId", value: context.churchId },
+    ]),
+    ownersBefore,
+  );
+  assert.equal((await publicRead()).statusCode, 200);
+  const visibleVolunteerView = await callHandler(authHandlers.getMyTeamAssignments, { context });
+  assert.ok(
+    visibleVolunteerView.payload.occurrences.some((row) =>
+      row.serving.some((entry) => entry.scheduleId === assigned.scheduleId),
+    ),
+    JSON.stringify(visibleVolunteerView.payload),
+  );
+
+  const update = await callHandler(authHandlers.updateTeamSchedule, {
+    context,
+    params: { scheduleId: assigned.scheduleId },
+    body: {
+      name: saved.name,
+      description: saved.description || "",
+      teamId: saved.teamId,
+      startDate: saved.startDate,
+      endDate: saved.endDate,
+      serviceIds: saved.serviceIds,
+      occurrences: saved.occurrences,
+      assignments: saved.assignments,
+      microphoneAssignments: saved.microphoneAssignments,
+      iemAssignments: saved.iemAssignments,
+      additionalPositionSlots: saved.additionalPositionSlots,
+    },
+  });
+  assert.equal(update.statusCode, 200, JSON.stringify(update.payload));
+  assert.equal(update.payload.schedule.published, true, "schedule edits keep publication status");
+
+  const unpublished = await callHandler(authHandlers.unpublishTeamSchedule, {
+    context,
+    params: { scheduleId: assigned.scheduleId },
+    body: {},
+  });
+  assert.equal(unpublished.statusCode, 200);
+  assert.equal(unpublished.payload.schedule.published, false);
+  assert.equal((await publicRead()).statusCode, 404);
+  assert.deepEqual((await callHandler(authHandlers.getMyTeamAssignments, { context })).payload.occurrences, []);
+  saved = await getDoc(COLLECTIONS.teamSchedules, assigned.scheduleId);
+  assert.equal(getMemberId(saved.assignments[assigned.occurrenceId][assigned.cellKey]), assigned.memberId);
+  assert.equal(saved.responses[assigned.occurrenceId][assigned.cellKey].response, "accepted");
+  assert.equal(saved.sentAt, "2026-10-31T12:00:00.000Z");
+  assert.equal(saved.publicLinkToken, token);
+  assert.deepEqual(saved.notificationHistory, [{ id: "existing-notification" }]);
+
+  const { published: _published, id: _id, ...legacySchedule } = saved;
+  await setDoc(COLLECTIONS.teamSchedules, assigned.scheduleId, legacySchedule);
+  assert.equal((await publicRead()).statusCode, 200, "legacy schedules without status remain Published");
+  assert.ok((await callHandler(authHandlers.getMyTeamAssignments, { context })).payload.occurrences.some(
+    (row) => row.serving.some((entry) => entry.scheduleId === assigned.scheduleId),
+  ));
+});
+
+test("failed publication follow-ups stay durable and recover after the HTTP request", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("schedule_publication_outbox");
+  const assigned = await seedAssignedSchedule(context, "publication_outbox");
+  let healthWarningCount = 0;
+  t.mock.method(console, "error", (message) => {
+    if (String(message).includes("publication event needs attention")) healthWarningCount += 1;
+  });
+  setTeamSchedulePublicationEventDeliveryForServerTests(async () => {
+    throw new Error("temporary delivery outage");
+  });
+  t.after(() => setTeamSchedulePublicationEventDeliveryForServerTests(null));
+
+  const response = await callHandler(authHandlers.publishTeamSchedule, {
+    context,
+    params: { scheduleId: assigned.scheduleId },
+    body: {},
+  });
+  assert.equal(response.statusCode, 200, JSON.stringify(response.payload));
+  assert.equal(response.payload.schedule.published, true);
+
+  const pending = await queryDocs(COLLECTIONS.teamSchedulePublicationEvents, [
+    { field: "scheduleId", value: assigned.scheduleId },
+  ]);
+  assert.equal(pending.length, 3);
+  assert.ok(pending.every((event) => event.status === "pending"));
+  assert.ok(pending.every((event) => !Object.hasOwn(event, "expiresAt")));
+  const overdueAudit = pending.find((event) => event.kind === "security_audit");
+  assert.ok(overdueAudit);
+  const retryNow = new Date(Date.now() - 1_000).toISOString();
+  await setDoc(
+    COLLECTIONS.teamSchedulePublicationEvents,
+    overdueAudit.id,
+    {
+      ...overdueAudit,
+      createdAt: new Date(Date.now() - 25 * 60 * 60_000).toISOString(),
+      attemptCount: 10,
+      nextAttemptAt: retryNow,
+      expiresAt: new Date(Date.now() + 10 * 24 * 60 * 60_000),
+    },
+  );
+
+  await authHandlers.recoverPendingTeamSchedulePublicationEvents();
+  const warned = await getDoc(COLLECTIONS.teamSchedulePublicationEvents, overdueAudit.id);
+  assert.equal(Object.hasOwn(warned, "expiresAt"), false, "failed delivery clears stale TTL metadata before retrying");
+  assert.deepEqual(warned.warningCodesLogged, ["pending_over_24h", "over_10_attempts"]);
+  assert.equal(healthWarningCount, 2);
+  await setDoc(COLLECTIONS.teamSchedulePublicationEvents, overdueAudit.id, {
+    ...warned,
+    nextAttemptAt: retryNow,
+  });
+  await authHandlers.recoverPendingTeamSchedulePublicationEvents();
+  assert.equal(healthWarningCount, 2, "the persisted warning markers suppress repeated health logs");
+
+  setTeamSchedulePublicationEventDeliveryForServerTests(null);
+  await Promise.all(pending.filter((event) => event.id !== overdueAudit.id).map((event) => setDoc(
+    COLLECTIONS.teamSchedulePublicationEvents,
+    event.id,
+    { ...event, nextAttemptAt: retryNow },
+  )));
+  await setDoc(COLLECTIONS.teamSchedulePublicationEvents, overdueAudit.id, {
+    ...warned,
+    nextAttemptAt: retryNow,
+  });
+  await authHandlers.recoverPendingTeamSchedulePublicationEvents();
+
+  const recovered = await queryDocs(COLLECTIONS.teamSchedulePublicationEvents, [
+    { field: "scheduleId", value: assigned.scheduleId },
+  ]);
+  assert.ok(recovered.every((event) => event.status === "completed"));
+  assert.ok(recovered.every((event) => event.expiresAt instanceof Date));
+  assert.ok(recovered.every((event) =>
+    event.expiresAt.getTime() === Date.parse(event.completedAt) + 30 * 24 * 60 * 60_000,
+  ));
+  const audit = recovered.find((event) => event.kind === "security_audit");
+  assert.ok(audit);
+  assert.equal((await getDoc(COLLECTIONS.securityEvents, audit.securityEvent.eventId))?.type, "team_schedule_published");
+
+  const pendingAudit = { ...audit };
+  delete pendingAudit.expiresAt;
+  await setDoc(COLLECTIONS.teamSchedulePublicationEvents, audit.id, {
+    ...pendingAudit,
+    status: "pending",
+    nextAttemptAt: retryNow,
+  });
+  await authHandlers.recoverPendingTeamSchedulePublicationEvents();
+  assert.equal((await queryDocs(COLLECTIONS.securityEvents, [
+    { field: "eventId", value: audit.securityEvent.eventId },
+  ])).length, 1, "replaying a completed audit delivery upserts its stable event ID");
+  const replayedAudit = await getDoc(COLLECTIONS.teamSchedulePublicationEvents, audit.id);
+  assert.equal(replayedAudit.status, "completed");
+  assert.ok(replayedAudit.expiresAt instanceof Date);
+});
+
+test("publication event completion writes native TTL dates through Firestore transactions", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const eventId = "publication_event_firestore_ttl";
+  const eventStore = new Map([[eventId, {
+    id: eventId,
+    kind: "transaction_test",
+    churchId: "church-ttl-test",
+    scheduleId: "schedule-ttl-test",
+    status: "pending",
+    createdAt: new Date().toISOString(),
+    nextAttemptAt: new Date(Date.now() - 1_000).toISOString(),
+    attemptCount: 0,
+    leaseToken: "",
+    leaseExpiresAt: "",
+  }]]);
+  const makeQuery = (queryOptions = {}) => ({
+    where(field, operator, value) {
+      return makeQuery({ ...queryOptions, filters: [...(queryOptions.filters || []), { field, operator, value }] });
+    },
+    orderBy() { return makeQuery({ ...queryOptions, ordered: true }); },
+    startAfter(id) { return makeQuery({ ...queryOptions, startAfterId: id }); },
+    limit(value) { return makeQuery({ ...queryOptions, limit: value }); },
+    async get() {
+      const rows = [...eventStore.entries()]
+        .map(([id, data]) => ({ id, data }))
+        .filter(({ id, data }) => (queryOptions.filters || []).every(({ field, operator, value }) =>
+          operator === "==" && data[field] === value,
+        ))
+        .filter(({ id }) => !queryOptions.startAfterId || id > queryOptions.startAfterId)
+        .slice(0, queryOptions.limit || undefined)
+        .map(({ id, data }) => ({ id, data: () => ({ ...data }) }));
+      return { docs: rows, size: rows.length };
+    },
+  });
+  const fakeFirestore = {
+    collection: (collectionName) => ({
+      doc: (id) => ({ collectionName, id }),
+      ...makeQuery(),
+    }),
+    runTransaction: async (operation) => operation({
+      get: async (ref) => {
+        const data = ref.collectionName === COLLECTIONS.teamSchedulePublicationEvents
+          ? eventStore.get(ref.id)
+          : undefined;
+        return { exists: Boolean(data), id: ref.id, data: () => data && { ...data } };
+      },
+      update: (ref, fields) => {
+        const current = eventStore.get(ref.id);
+        eventStore.set(ref.id, { ...current, ...fields });
+      },
+    }),
+  };
+  setServerFirestoreForTests(fakeFirestore);
+  setTeamSchedulePublicationEventDeliveryForServerTests(async () => {});
+  t.after(() => {
+    setTeamSchedulePublicationEventDeliveryForServerTests(null);
+    setServerFirestoreForTests(null);
+  });
+
+  await authHandlers.recoverPendingTeamSchedulePublicationEvents();
+
+  const completed = eventStore.get(eventId);
+  assert.equal(completed.status, "completed");
+  assert.ok(completed.expiresAt instanceof Date);
+  assert.equal(
+    completed.expiresAt.getTime(),
+    Date.parse(completed.completedAt) + 30 * 24 * 60 * 60_000,
+  );
+});
+
+test("team schedule publication enforces CSRF, current Team edit access, and active schedules", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const admin = await createAdminContext("schedule_publication_permissions");
+  const assigned = await seedAssignedSchedule(admin, "publication_permissions");
+  const params = { scheduleId: assigned.scheduleId };
+
+  const missingCsrf = await callHandler(authHandlers.publishTeamSchedule, {
+    context: {
+      ...admin,
+      headers: { authorization: admin.headers.authorization },
+    },
+    params,
+    body: {},
+  });
+  assert.equal(missingCsrf.statusCode, 403);
+  assert.equal((await getDoc(COLLECTIONS.teamSchedules, assigned.scheduleId)).published, false);
+
+  const viewer = await createHumanContext("schedule_publication_viewer", {
+    churchId: admin.churchId,
+    role: "member",
+    appAccess: "view",
+    permissions: { teams: "view" },
+  });
+  const deniedViewer = await callHandler(authHandlers.publishTeamSchedule, {
+    context: viewer,
+    params,
+    body: {},
+  });
+  assert.equal(deniedViewer.statusCode, 403);
+
+  const foreignTeam = await callHandler(authHandlers.createTeam, {
+    context: admin,
+    body: { name: "Other Team", memberIds: [] },
+  });
+  const unrelatedEditor = await createHumanContext("schedule_publication_unrelated_editor", {
+    churchId: admin.churchId,
+    role: "member",
+    appAccess: "view",
+    permissions: { teams: "none", teamScopes: { [foreignTeam.payload.team.teamId]: "edit" } },
+  });
+  const deniedUnrelated = await callHandler(authHandlers.publishTeamSchedule, {
+    context: unrelatedEditor,
+    params,
+    body: {},
+  });
+  assert.equal(deniedUnrelated.statusCode, 403);
+
+  const teamEditor = await createHumanContext("schedule_publication_team_editor", {
+    churchId: admin.churchId,
+    role: "member",
+    appAccess: "view",
+    permissions: { teams: "none", teamScopes: { [assigned.media.teamId]: "edit" } },
+  });
+  const published = await callHandler(authHandlers.publishTeamSchedule, {
+    context: teamEditor,
+    params,
+    body: {},
+  });
+  assert.equal(published.statusCode, 200, JSON.stringify(published.payload));
+
+  const archived = await callHandler(authHandlers.archiveTeamSchedule, {
+    context: admin,
+    params,
+  });
+  assert.equal(archived.statusCode, 200);
+  const blockedArchivedPublish = await callHandler(authHandlers.publishTeamSchedule, {
+    context: admin,
+    params,
+    body: {},
+  });
+  assert.equal(blockedArchivedPublish.statusCode, 400);
+});
+
 test("My Schedule filters Draft schedules in both occurrence passes and hides them after unpublishing", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("my_assignments_draft_visibility");
@@ -11695,6 +12736,8 @@ test("my assignments attaches the plan for a combined occurrence", async (t) => 
   );
   assert.equal(assigned.statusCode, 200);
 
+  await publishTestSchedule(context, schedule.payload.schedule.scheduleId);
+
   const res = await callHandler(authHandlers.getMyTeamAssignments, { context });
   assert.equal(res.statusCode, 200);
   const entry = (res.payload.occurrences || [])[0];
@@ -11762,6 +12805,8 @@ test("my assignments includes occurrence name and published plan share urls", as
     },
   );
   assert.equal(assigned.statusCode, 200);
+
+  await publishTestSchedule(context, schedule.payload.schedule.scheduleId);
 
   const planKey = "svc-morning@2026-08-10";
   const saved = await callHandler(authHandlers.saveServicePlan, {
@@ -11975,6 +13020,8 @@ test("my blockout dates accepts a date the member is already scheduled for", asy
       memberId,
     },
   });
+
+  await publishTestSchedule(context, schedule.payload.schedule.scheduleId);
 
   const res = await callHandler(authHandlers.updateMyBlockoutDates, {
     context,
@@ -12415,11 +13462,17 @@ const seedAssignedSchedule = async (
   };
 };
 
+const seedPublishedAssignedSchedule = async (context, suffix, options) => {
+  const assigned = await seedAssignedSchedule(context, suffix, options);
+  await publishTestSchedule(context, assigned.scheduleId);
+  return assigned;
+};
+
 test("responding records the answer and leaves the assignment in place", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("respond_ok");
   const { memberId, scheduleId, occurrenceId, cellKey } =
-    await seedAssignedSchedule(context, "ok");
+    await seedPublishedAssignedSchedule(context, "ok");
 
   const res = await callHandler(authHandlers.respondToMyAssignment, {
     context,
@@ -12455,7 +13508,7 @@ test("responding records the answer and leaves the assignment in place", async (
 test("accept pending applies only upcoming primary slots across published schedules", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("accept_pending_scope");
-  const { memberId, scheduleId } = await seedAssignedSchedule(context, "accept_pending_scope");
+  const { memberId, scheduleId } = await seedPublishedAssignedSchedule(context, "accept_pending_scope");
   const futureDate = calendarDaysFromToday(14);
   const pastDate = calendarDaysFromToday(-14);
   const futureOccurrence = `bulk-future@${futureDate}`;
@@ -12633,7 +13686,7 @@ test("accept pending rejects missing, archived, and ambiguous volunteer identiti
 test("accept pending reports success when post-commit digest queuing fails", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("accept_pending_digest_failure");
-  const { scheduleId, occurrenceId, cellKey, memberId } = await seedAssignedSchedule(
+  const { scheduleId, occurrenceId, cellKey, memberId } = await seedPublishedAssignedSchedule(
     context,
     "accept_pending_digest_failure",
   );
@@ -12659,7 +13712,7 @@ test("responding refuses a slot the caller does not hold", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("respond_other");
   const { scheduleId, occurrenceId, cellKey, media } =
-    await seedAssignedSchedule(context, "other");
+    await seedPublishedAssignedSchedule(context, "other");
 
   // An owner moves the slot to someone else after the page was loaded.
   const other = await callHandler(authHandlers.createTeamRosterMember, {
@@ -12715,7 +13768,7 @@ test("an emailed token answers one assignment without any session", async (t) =>
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("respond_token");
   const { memberId, scheduleId, occurrenceId, cellKey } =
-    await seedAssignedSchedule(context, "token");
+    await seedPublishedAssignedSchedule(context, "token");
 
   const url = authHandlers.buildAssignmentResponseUrl({
     churchId: context.churchId,
@@ -12759,7 +13812,7 @@ test("an emailed token answers one assignment without any session", async (t) =>
 test("a published schedule guest can still answer from the schedule-specific link", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("respond_guest_token");
-  const { scheduleId, occurrenceId, cellKey } = await seedAssignedSchedule(
+  const { scheduleId, occurrenceId, cellKey } = await seedPublishedAssignedSchedule(
     context,
     "guesttoken",
   );
@@ -13031,7 +14084,7 @@ test("an emailed token stops working once the slot moves on", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("respond_token_moved");
   const { memberId, scheduleId, occurrenceId, cellKey, media } =
-    await seedAssignedSchedule(context, "tokenmoved");
+    await seedPublishedAssignedSchedule(context, "tokenmoved");
 
   const url = authHandlers.buildAssignmentResponseUrl({
     churchId: context.churchId,
@@ -13070,7 +14123,7 @@ test("an emailed token stops working once the slot moves on", async (t) => {
 test("declining an assignment records a vacancy without messaging the volunteer who declined", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("decline_vacancy_no_invite");
-  const { memberId, scheduleId } = await seedAssignedSchedule(
+  const { memberId, scheduleId } = await seedPublishedAssignedSchedule(
     context,
     "declinevacancy",
   );
@@ -13105,8 +14158,8 @@ test("declining an assignment records a vacancy without messaging the volunteer 
 test("Phase 3B schedule messaging uses current Team ownership through production composition", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const admin = await createAdminContext("phase3b");
-  const worship = await seedAssignedSchedule(admin, "phase3b_worship", { link: false });
-  const av = await seedAssignedSchedule(admin, "phase3b_av", { link: false });
+  const worship = await seedPublishedAssignedSchedule(admin, "phase3b_worship", { link: false });
+  const av = await seedPublishedAssignedSchedule(admin, "phase3b_av", { link: false });
   const manager = async (suffix, teamScopes, teams = "none") => createHumanContext(`phase3b_${suffix}`, {
     churchId: admin.churchId, role: "member", appAccess: "view", permissions: { teams, teamScopes },
   });
@@ -13437,7 +14490,7 @@ test("Phase 3C schedule SMS review uses current Team access and never sends", as
 test("sending a schedule notifies once and is idempotent", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("send_sched");
-  const { memberId, scheduleId, occurrenceId } = await seedAssignedSchedule(
+  const { memberId, scheduleId, occurrenceId } = await seedPublishedAssignedSchedule(
     context,
     "send",
   );
@@ -13490,8 +14543,8 @@ test("sending a schedule notifies once and is idempotent", async (t) => {
 test("schedule email sending checks assignment position ownership before side effects", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const admin = await createAdminContext("send_position_ownership");
-  const valid = await seedAssignedSchedule(admin, "send_position_valid", { link: false });
-  const otherTeam = await seedAssignedSchedule(admin, "send_position_other", { link: false });
+  const valid = await seedPublishedAssignedSchedule(admin, "send_position_valid", { link: false });
+  const otherTeam = await seedPublishedAssignedSchedule(admin, "send_position_other", { link: false });
   const scopedManager = await createHumanContext("send_position_scoped", {
     churchId: admin.churchId,
     role: "member",
@@ -13539,7 +14592,7 @@ test("schedule email sending checks assignment position ownership before side ef
     assert.equal(authorizedSend.payload.notified, 1, "combined occurrences remain sendable");
     assert.equal(emails.length, 2);
 
-    const mixedSchedule = await seedAssignedSchedule(admin, "send_position_mixed", { link: false });
+    const mixedSchedule = await seedPublishedAssignedSchedule(admin, "send_position_mixed", { link: false });
     await setDoc("teamRosterMembers", mixedSchedule.memberId, { email: "mixed@church.test" }, { merge: true });
     const mixed = await getDoc("teamSchedules", mixedSchedule.scheduleId);
     await setDoc("teamSchedules", mixedSchedule.scheduleId, {
@@ -13564,7 +14617,7 @@ test("schedule email sending checks assignment position ownership before side ef
       { field: "sourceId", value: mixedSchedule.scheduleId },
     ])).length, 0, "failed authorization creates no send-related intent");
 
-    const unknownSchedule = await seedAssignedSchedule(admin, "send_position_unknown", { link: false });
+    const unknownSchedule = await seedPublishedAssignedSchedule(admin, "send_position_unknown", { link: false });
     await setDoc("teamRosterMembers", unknownSchedule.memberId, { email: "unknown@church.test" }, { merge: true });
     const unknown = await getDoc("teamSchedules", unknownSchedule.scheduleId);
     await setDoc("teamSchedules", unknownSchedule.scheduleId, {
@@ -13596,7 +14649,7 @@ test("schedule email sending checks assignment position ownership before side ef
 test("assignment email uses the church timezone across UTC midnight", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("send_timezone_midnight");
-  const { scheduleId } = await seedAssignedSchedule(
+  const { scheduleId } = await seedPublishedAssignedSchedule(
     context,
     "timezone_midnight",
     { serviceDate: "2026-10-10" },
@@ -13633,7 +14686,7 @@ test("sending reports who could not be reached instead of skipping quietly", asy
   const context = await createAdminContext("send_unreachable");
   // No email and no linked account — the common shape for a volunteer added
   // straight to the roster.
-  const { memberId: strandedId, scheduleId } = await seedAssignedSchedule(
+  const { memberId: strandedId, scheduleId } = await seedPublishedAssignedSchedule(
     context,
     "unreach",
     { link: false },
@@ -13653,7 +14706,7 @@ test("sending reports who could not be reached instead of skipping quietly", asy
 test("sending skips someone who muted schedule assignments", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("send_muted");
-  const { memberId, scheduleId } = await seedAssignedSchedule(context, "muted");
+  const { memberId, scheduleId } = await seedPublishedAssignedSchedule(context, "muted");
   // Link the roster member to the calling account, then mute the category.
   await callHandler(authHandlers.linkTeamRosterMember, {
     context,
@@ -13683,10 +14736,12 @@ test("one emailed link shows every service and can answer them all", async (t) =
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("respond_all");
   const { memberId, scheduleId, occurrenceId, cellKey, media } =
-    await seedAssignedSchedule(context, "all");
+    await seedPublishedAssignedSchedule(context, "all");
+  const firstDate = calendarDaysFromToday(14);
+  const secondDate = calendarDaysFromToday(21);
 
   // A second service on the same schedule, same person.
-  const secondOccurrence = "svc-all-2@2026-09-13";
+  const secondOccurrence = `svc-all-2@${secondDate}`;
   await callHandler(authHandlers.updateTeamSchedule, {
     context,
     params: { scheduleId },
@@ -13694,22 +14749,22 @@ test("one emailed link shows every service and can answer them all", async (t) =
       name: "Respond schedule",
       teamId: media.teamId,
       serviceIds: ["svc-all", "svc-all-2"],
-      startDate: "2026-09-06",
-      endDate: "2026-09-13",
+      startDate: firstDate,
+      endDate: secondDate,
       occurrences: [
         {
           occurrenceId,
           serviceId: "svc-all",
           serviceIds: ["svc-all"],
           name: "Sunday Gathering",
-          startsAt: "2026-09-06T14:00:00.000Z",
+          startsAt: `${firstDate}T14:00:00.000Z`,
         },
         {
           occurrenceId: secondOccurrence,
           serviceId: "svc-all-2",
           serviceIds: ["svc-all-2"],
           name: "Evening Service",
-          startsAt: "2026-09-13T14:00:00.000Z",
+          startsAt: `${secondDate}T14:00:00.000Z`,
         },
       ],
     },
@@ -13777,7 +14832,7 @@ test("clearing a slot drops the answer that was about it", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("prune_stale");
   const { memberId, scheduleId, occurrenceId, cellKey } =
-    await seedAssignedSchedule(context, "prune");
+    await seedPublishedAssignedSchedule(context, "prune");
 
   await callHandler(authHandlers.respondToMyAssignment, {
     context,
@@ -13816,7 +14871,7 @@ test("clearing a slot drops the answer that was about it", async (t) => {
 test("sending notifies a schedule guest and counts one with no email", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("send_guests");
-  const { scheduleId, occurrenceId, media } = await seedAssignedSchedule(
+  const { scheduleId, occurrenceId, media } = await seedPublishedAssignedSchedule(
     context,
     "guests",
     { link: false, cameraSlots: 2 },
@@ -13854,7 +14909,7 @@ test("answers open one coalescing digest window per schedule", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("response_digest");
   const { memberId, scheduleId, occurrenceId, cellKey, media } =
-    await seedAssignedSchedule(context, "digest", { cameraSlots: 2 });
+    await seedPublishedAssignedSchedule(context, "digest", { cameraSlots: 2 });
 
   const second = await callHandler(authHandlers.createTeamRosterMember, {
     context,
@@ -14177,7 +15232,7 @@ test("a past service is not reported as a new blockout conflict", async (t) => {
 test("reshaping a schedule's occurrences does not leave answers behind", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("prune_bulk");
-  const { memberId, scheduleId, occurrenceId, cellKey, media } =
+  const { memberId, scheduleId, occurrenceId, cellKey, media, serviceDate } =
     await seedAssignedSchedule(context, "prunebulk");
 
   await callHandler(authHandlers.respondToMyAssignment, {
@@ -14194,15 +15249,15 @@ test("reshaping a schedule's occurrences does not leave answers behind", async (
       name: "Respond schedule",
       teamId: media.teamId,
       serviceIds: ["svc-prunebulk"],
-      startDate: "2026-09-06",
-      endDate: "2026-09-06",
+      startDate: serviceDate,
+      endDate: serviceDate,
       occurrences: [
         {
           occurrenceId,
           serviceId: "svc-prunebulk",
           serviceIds: ["svc-prunebulk"],
           name: "Sunday Gathering",
-          startsAt: "2026-09-06T14:00:00.000Z",
+          startsAt: `${serviceDate}T14:00:00.000Z`,
         },
       ],
     },
@@ -15130,6 +16185,8 @@ test("custom SMS batch dispatch keeps the authenticated HTTP request and rejects
 test("individual intake SMS records one shared notification attempt and blocks duplicate accepted sends", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("individual_intake_sms");
+  const formStartDate = new Date().toISOString().slice(0, 10);
+  const formEndDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const { teamId, memberIds } = await seedTeam(context, {
     teamName: "Worship",
     members: [{ firstName: "Sms", lastName: "Recipient" }],
@@ -15158,9 +16215,9 @@ test("individual intake SMS records one shared notification attempt and blocks d
   const form = await callHandler(authHandlers.createTeamIntakeForm, {
     context,
     body: {
-      name: "October availability",
-      startDate: "2026-10-01",
-      endDate: "2026-10-31",
+      name: "Current availability",
+      startDate: formStartDate,
+      endDate: formEndDate,
       teamIds: [teamId],
       active: true,
     },
@@ -15382,6 +16439,8 @@ test("admin-recorded SMS consent preserves the church-scoped consent contract an
 test("individual intake SMS records provider failure and blocks missing consent, disabled messaging, revoked requests, and closed forms", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("individual_intake_sms_guards");
+  const formStartDate = new Date().toISOString().slice(0, 10);
+  const formEndDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const { teamId, memberIds } = await seedTeam(context, {
     teamName: "Worship",
     members: [{ firstName: "Sms", lastName: "Guarded" }],
@@ -15392,9 +16451,9 @@ test("individual intake SMS records provider failure and blocks missing consent,
   const form = await callHandler(authHandlers.createTeamIntakeForm, {
     context,
     body: {
-      name: "Guarded availability",
-      startDate: "2026-10-01",
-      endDate: "2026-10-31",
+      name: "Guarded current availability",
+      startDate: formStartDate,
+      endDate: formEndDate,
       teamIds: [teamId],
       active: true,
     },
@@ -18140,6 +19199,90 @@ test("October period reuses the populated legacy schedule and safely adds newly 
   assert.deepEqual(await getDoc("teamSchedules", scheduleId), after);
 });
 
+test("November independent additions preserve populated combined schedules across the church DST boundary", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("november_additive_dst");
+  await setDoc(COLLECTIONS.churches, context.churchId, { serviceTimeZone: "America/New_York" }, { merge: true });
+  const { teamId, positionIds, memberIds } = await seedTeam(context, {
+    teamName: "Media", positions: [{ name: "Camera" }], members: [{ firstName: "Morgan", lastName: "Lee", positions: ["Camera"] }],
+  });
+  const positionId = positionIds.Camera;
+  const requirements = [{ positionId, count: 1 }];
+  const services = [
+    { serviceId: "worship", name: "Worship", reccurence: "weekly", dayOfWeek: 0, time: "01:30", serviceGroupId: "sunday", positionRequirements: requirements },
+    { serviceId: "study", name: "Study", reccurence: "weekly", dayOfWeek: 0, time: "01:30", serviceGroupId: "sunday" },
+  ];
+  const build = () => buildTeamSchedulePeriod({ services, positions: [{ positionId, teamId, name: "Camera" }], teamId, startDate: "2026-11-01", endDate: "2026-11-30", timeZone: "America/New_York" });
+  seedChurchServiceTimesForServerTests({ churchId: context.churchId, services: services.map((s) => ({ id: s.serviceId, ...s })) });
+  const original = build();
+  const occurrences = original.occurrences.map((o) => ({ ...o, occurrenceId: `${o.serviceId}@${o.startsAt}` }));
+  assert.equal(occurrences[0].startsAt, "2026-11-01T05:30:00.000Z");
+  assert.equal(occurrences[1].startsAt, "2026-11-08T06:30:00.000Z");
+  const firstId = occurrences[0].occurrenceId;
+  const slot = `${positionId}::0`;
+  const scheduleId = "november-populated-dst";
+  const operational = {
+    assignments: { [firstId]: { [slot]: { primaryMemberId: memberIds.Morgan } } },
+    microphoneAssignments: { [firstId]: { [slot]: ["saved-mic"] } },
+    iemAssignments: { [firstId]: { [slot]: ["saved-iem"] } },
+    responses: { [firstId]: { [slot]: { memberId: memberIds.Morgan, response: "accepted" } } },
+    guests: [{ guestId: "saved-guest", name: "Guest" }], additionalPositionSlots: { [firstId]: [`${positionId}::1`] },
+    optionalPositionSlots: { [firstId]: [`${positionId}::2`] },
+    published: true, publishedAt: "2026-10-20T12:00:00.000Z", sentAt: "2026-10-21T12:00:00.000Z",
+    publicLinkToken: "saved-token", notificationHistory: [{ id: "saved-notification" }], createdAt: "2026-10-01T12:00:00.000Z",
+  };
+  await setDoc(COLLECTIONS.teamSchedules, scheduleId, {
+    scheduleId, churchId: context.churchId, teamId, name: "November 2026", startDate: "2026-11-01", endDate: "2026-11-30",
+    source: "custom", serviceIds: original.serviceIds, occurrences, ...operational,
+  });
+  // Create a separate service at precisely the combined occurrence's fold instant.
+  services.push({ serviceId: "book-launch", name: "Book Launch", reccurence: "one_time", dateTimeISO: "2026-11-01T01:30", positionRequirements: requirements });
+  const period = build();
+  const body = { name: "November 2026", teamId, startDate: "2026-11-01", endDate: "2026-11-30", serviceIds: period.serviceIds, occurrences: period.occurrences, timeZone: "America/Los_Angeles" };
+  const before = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+  // Optimistic or failed service saves cannot be included in persisted schedules.
+  const pending = await callHandler(authHandlers.ensureTeamScheduleForPeriod, { context, body });
+  assert.equal(pending.statusCode, 400);
+  assert.deepEqual(await getDoc(COLLECTIONS.teamSchedules, scheduleId), before);
+  seedChurchServiceTimesForServerTests({ churchId: context.churchId, services: services.map((s) => ({ id: s.serviceId, ...s })) });
+  const result = await callHandler(authHandlers.ensureTeamScheduleForPeriod, { context, body });
+  assert.equal(result.statusCode, 200, JSON.stringify(result.payload));
+  assert.equal(result.payload.created, false);
+  assert.equal(result.payload.updated, true);
+  assert.equal(result.payload.schedule.scheduleId, scheduleId);
+  const after = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+  for (const [key, value] of Object.entries(operational)) assert.deepEqual(after[key], value, key);
+  assert.deepEqual(after.occurrences.filter((o) => o.groupId), occurrences);
+  const added = after.occurrences.find((o) => o.serviceId === "book-launch");
+  assert.equal(added.startsAt, "2026-11-01T05:30:00.000Z");
+  assert.equal(after.assignments[added.occurrenceId], undefined);
+  const retry = await callHandler(authHandlers.ensureTeamScheduleForPeriod, { context, body });
+  assert.equal(retry.statusCode, 200);
+  assert.equal(retry.payload.updated, false);
+  assert.deepEqual(await getDoc(COLLECTIONS.teamSchedules, scheduleId), after);
+  assert.equal((await queryDocs(COLLECTIONS.teamSchedules, [{ field: "churchId", value: context.churchId }])).filter((s) => s.teamId === teamId).length, 1);
+});
+
+test("Book Launch datetime-local persistence agrees with browser generation in the church timezone", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("book_launch_local_persistence");
+  await setDoc(COLLECTIONS.churches, context.churchId, { serviceTimeZone: "America/New_York" }, { merge: true });
+  const { teamId } = await seedTeam(context, { teamName: "Media" });
+  // Before the fix ServiceManager passed this timezone-less picker value to
+  // buildServiceTimeUpdate, and the RTDB transaction preserved it byte for byte.
+  const services = [
+    { id: "existing-one-time", serviceId: "existing-one-time", name: "Existing one-time", reccurence: "one_time", dateTimeISO: "2026-11-07T15:00:00.000Z" },
+    { id: "1k6gq4vjthg7r1g7qg4g", serviceId: "1k6gq4vjthg7r1g7qg4g", name: "Book Launch 2026", reccurence: "one_time", dateTimeISO: "2026-11-07T16:30" },
+  ];
+  seedChurchServiceTimesForServerTests({ churchId: context.churchId, services });
+  const occurrences = generateScheduleOccurrences({ services, serviceIds: services.map(s => s.id), startDate: "2026-11-01", endDate: "2026-11-30", timeZone: "America/New_York" });
+  // Model the supplied New York browser result independently of this UTC server.
+  const submitted = occurrences.map(o => o.serviceId === services[1].id ? { ...o, startsAt: "2026-11-07T21:30:00.000Z", serviceDate: "2026-11-07" } : o);
+  t.diagnostic(JSON.stringify(services.map(service => ({ serviceId: service.id, recurrence: service.reccurence, storedDateTimeISO: service.dateTimeISO, hostParsedLocalTime: new Date(service.dateTimeISO).toLocaleTimeString("en-GB", { timeZone: "America/New_York" }), serverComputedLocalTime: oneTimeServiceInstant(service.dateTimeISO, "America/New_York")?.toLocaleTimeString("en-GB", { timeZone: "America/New_York" }), submittedStartsAt: submitted.find(o => o.serviceId === service.id)?.startsAt, serviceDate: submitted.find(o => o.serviceId === service.id)?.serviceDate }))));
+  const response = await callHandler(authHandlers.ensureTeamScheduleForPeriod, { context, body: { name: "November 2026", teamId, startDate: "2026-11-01", endDate: "2026-11-30", timeZone: "America/New_York", serviceIds: services.map(s => s.id), occurrences: submitted } });
+  assert.equal(response.statusCode, 200, JSON.stringify(response.payload));
+});
+
 test("generated ensure does not substitute another service with the same name and timestamp", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("semantic_id_drift");
@@ -18154,6 +19297,121 @@ test("generated ensure does not substitute another service with the same name an
   assert.equal(result.statusCode, 409);
   assert.match(result.payload.errorMessage, /cannot be matched safely/i);
   assert.deepEqual(await getDoc("teamSchedules", schedule.scheduleId), before);
+});
+
+test("generated ensure rejects a raw occurrence ID that belongs to another logical service", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("raw_occurrence_id_identity_collision");
+  const { teamId, positionIds } = await seedTeam(context, {
+    teamName: "Media", positions: [{ name: "Camera" }],
+  });
+  const current = {
+    occurrenceId: "new-service@2026-10-03T10:00:00.000Z",
+    serviceId: "new-service",
+    name: "New service",
+    startsAt: "2026-10-03T10:00:00.000Z",
+    serviceDate: "2026-10-03",
+    positionRequirements: [{ positionId: positionIds.Camera, count: 1 }],
+  };
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [{
+      id: "new-service", name: current.name, reccurence: "one_time",
+      dateTimeISO: current.startsAt,
+      positionRequirements: [{ positionId: positionIds.Camera, count: 1 }],
+    }],
+  });
+  const saved = {
+    ...current,
+    serviceId: "old-service",
+    name: "Old service",
+    startsAt: "2026-10-03T09:00:00.000Z",
+    positionRequirements: [{ positionId: positionIds.Camera, count: 1 }],
+  };
+  const schedule = {
+    scheduleId: "raw-id-collision",
+    churchId: context.churchId,
+    teamId,
+    name: "October",
+    source: "custom",
+    startDate: "2026-10-01",
+    endDate: "2026-10-31",
+    serviceIds: ["old-service"],
+    occurrences: [saved],
+    assignments: { [saved.occurrenceId]: { "camera::0": { primaryMemberId: "assigned-member" } } },
+    microphoneAssignments: { [saved.occurrenceId]: { "camera::0": ["saved-mic"] } },
+  };
+  await setDoc(COLLECTIONS.teamSchedules, schedule.scheduleId, schedule);
+  const before = await getDoc(COLLECTIONS.teamSchedules, schedule.scheduleId);
+  const result = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body: {
+      name: "October", teamId, startDate: schedule.startDate, endDate: schedule.endDate,
+      timeZone: "UTC", serviceIds: ["new-service"], occurrences: [current],
+    },
+  });
+
+  assert.equal(result.statusCode, 409);
+  assert.match(result.payload.errorMessage, /cannot be matched safely|identity/i);
+  assert.deepEqual(await getDoc(COLLECTIONS.teamSchedules, schedule.scheduleId), before);
+});
+
+test("unrelated duplicate saved occurrences do not block safe additions", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("unrelated_duplicate_occurrence_addition");
+  const { teamId, positionIds } = await seedTeam(context, {
+    teamName: "Media", positions: [{ name: "Camera" }],
+  });
+  const requirements = [{ positionId: positionIds.Camera, count: 1 }];
+  const services = [
+    { id: "primary-service", name: "Primary", reccurence: "weekly", dayOfWeek: 6, time: "10:00", positionRequirements: requirements },
+    { id: "new-service", name: "New service", reccurence: "one_time", dateTimeISO: "2026-10-15T10:00:00.000Z", positionRequirements: requirements },
+  ];
+  seedChurchServiceTimesForServerTests({ churchId: context.churchId, services });
+  const period = buildTeamSchedulePeriod({
+    services: services.map((service) => ({ ...service, serviceId: service.id, churchId: context.churchId })),
+    positions: [{ positionId: positionIds.Camera, teamId, name: "Camera" }],
+    teamId, startDate: "2026-10-01", endDate: "2026-10-31", timeZone: "UTC",
+  });
+  const primary = period.occurrences.find((row) => row.serviceId === "primary-service");
+  const addition = period.occurrences.find((row) => row.serviceId === "new-service");
+  assert.ok(primary);
+  assert.ok(addition);
+  const unrelated = {
+    occurrenceId: "retired-service@2026-10-17",
+    serviceId: "retired-service",
+    name: "Retired service",
+    startsAt: "2026-10-17T10:00:00.000Z",
+    serviceDate: "2026-10-17",
+    positionRequirements: requirements,
+  };
+  const scheduleId = "schedule-with-unrelated-duplicate";
+  const assignments = { [primary.occurrenceId]: { "camera::0": { primaryMemberId: "kept" } } };
+  const microphoneAssignments = { [primary.occurrenceId]: { "camera::0": ["kept-mic"] } };
+  await setDoc(COLLECTIONS.teamSchedules, scheduleId, {
+    scheduleId, churchId: context.churchId, teamId, name: "October",
+    source: "custom", startDate: "2026-10-01", endDate: "2026-10-31",
+    serviceIds: ["primary-service", "retired-service"],
+    occurrences: [primary, unrelated, { ...unrelated }],
+    assignments, microphoneAssignments,
+  });
+
+  const result = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body: {
+      name: "October", teamId, startDate: "2026-10-01", endDate: "2026-10-31",
+      timeZone: "UTC", serviceIds: period.serviceIds,
+      occurrences: [primary, addition],
+    },
+  });
+
+  assert.equal(result.statusCode, 200, JSON.stringify(result.payload));
+  assert.equal(result.payload.schedule.scheduleId, scheduleId);
+  const after = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+  assert.equal(after.occurrences.filter((row) => row.serviceId === "new-service").length, 1);
+  assert.deepEqual(after.occurrences.filter((row) => row.serviceId === "retired-service"), [unrelated, unrelated]);
+  assert.deepEqual(after.assignments, assignments);
+  assert.deepEqual(after.microphoneAssignments, microphoneAssignments);
 });
 
 test("November standalone services cannot replace a saved combined schedule or its operational data", async (t) => {
@@ -18243,6 +19501,95 @@ test("November standalone services cannot replace a saved combined schedule or i
     { field: "churchId", value: context.churchId },
   ])).filter((schedule) => schedule.teamId === teamId && !schedule.archivedAt);
   assert.deepEqual(activeSchedules.map(({ scheduleId: id }) => id), [scheduleId]);
+});
+
+test("November safe additions preserve historical grouping differences in a populated schedule", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("november_safe_addition_with_historical_group");
+  const { teamId } = await seedTeam(context, { teamName: "Media" });
+  await setDoc(COLLECTIONS.churches, context.churchId, { serviceTimeZone: "America/New_York" }, { merge: true });
+  const services = [
+    { serviceId: "worship", name: "Worship", reccurence: "weekly", dayOfWeek: 6, time: "10:00" },
+    { serviceId: "study", name: "Study", reccurence: "weekly", dayOfWeek: 6, time: "10:00" },
+    { serviceId: "power-up", name: "Power Up", reccurence: "one_time", dateTimeISO: "2026-11-11T13:00:00.000Z" },
+    { serviceId: "book-launch", name: "Book Launch", reccurence: "one_time", dateTimeISO: "2026-11-07T16:30" },
+  ];
+  seedChurchServiceTimesForServerTests({ churchId: context.churchId, services });
+  const groupRows = [7, 14, 21, 28].map((day) => {
+    const serviceDate = `2026-11-${String(day).padStart(2, "0")}`;
+    return {
+      occurrenceId: `group:sabbath@${serviceDate}`,
+      logicalOccurrenceId: `group:sabbath@${serviceDate}`,
+      groupId: "sabbath",
+      serviceId: "worship",
+      serviceIds: ["worship", "study"],
+      serviceDate,
+      name: "Worship & Study",
+      startsAt: `${serviceDate}T10:00:00.000Z`,
+    };
+  });
+  const savedPowerUp = {
+    occurrenceId: "power-up@2026-11-11T13:00:00.000Z",
+    serviceId: "power-up",
+    name: "Power Up",
+    startsAt: "2026-11-11T13:00:00.000Z",
+  };
+  const firstGroup = groupRows[0];
+  const preservedMaps = {
+    assignments: { [firstGroup.occurrenceId]: { "camera::0": { primaryMemberId: "member-avery" } } },
+    microphoneAssignments: { [firstGroup.occurrenceId]: { "camera::0": ["mic-saved"] } },
+    iemAssignments: { [firstGroup.occurrenceId]: { "camera::0": ["iem-saved"] } },
+    responses: { [firstGroup.occurrenceId]: { "camera::0": { memberId: "member-avery", response: "accepted" } } },
+    guests: [{ guestId: "saved-guest", name: "Saved guest" }],
+    additionalPositionSlots: { [firstGroup.occurrenceId]: ["camera::1"] },
+    optionalPositionSlots: { [firstGroup.occurrenceId]: ["camera::2"] },
+    published: true,
+    publishedAt: "2026-10-20T12:00:00.000Z",
+    sentAt: "2026-10-21T12:00:00.000Z",
+    notificationHistory: [{ id: "saved-notification" }],
+  };
+  const scheduleId = "historical-group-november";
+  await setDoc("teamSchedules", scheduleId, {
+    scheduleId,
+    churchId: context.churchId,
+    teamId,
+    name: "November 2026",
+    startDate: "2026-11-01",
+    endDate: "2026-11-30",
+    serviceIds: ["worship", "study", "power-up"],
+    occurrences: [...groupRows, savedPowerUp],
+    ...preservedMaps,
+  });
+  const bookLaunch = generateScheduleOccurrences({
+    services,
+    serviceIds: ["book-launch"],
+    startDate: "2026-11-01",
+    endDate: "2026-11-30",
+    timeZone: "America/New_York",
+  });
+  const response = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body: {
+      name: "November 2026",
+      teamId,
+      startDate: "2026-11-01",
+      endDate: "2026-11-30",
+      timeZone: "America/New_York",
+      operatorSelectedScheduleId: scheduleId,
+      serviceIds: ["power-up", "book-launch"],
+      occurrences: [savedPowerUp, ...bookLaunch],
+      visibleOccurrenceIds: [savedPowerUp.occurrenceId, ...bookLaunch.map(({ occurrenceId }) => occurrenceId)],
+    },
+  });
+  assert.equal(response.statusCode, 200, JSON.stringify(response.payload));
+  assert.equal(response.payload.schedule.scheduleId, scheduleId);
+  const after = await getDoc("teamSchedules", scheduleId);
+  assert.deepEqual(after.occurrences.filter((occurrence) => occurrence.groupId), groupRows);
+  for (const [key, value] of Object.entries(preservedMaps)) assert.deepEqual(after[key], value, key);
+  assert.equal(after.occurrences.some((occurrence) => occurrence.serviceId === "book-launch"), true);
+  assert.equal((await queryDocs(COLLECTIONS.teamSchedules, [
+    { field: "churchId", value: context.churchId },
+  ])).filter((schedule) => schedule.teamId === teamId).length, 1);
 });
 
 test("legacy timestamp occurrence IDs remain readable when a recurring service time changes", async (t) => {
@@ -22291,7 +23638,7 @@ test("concurrent member imports cannot create same-named positions by separate s
 test("my schedule excludes Draft assignments, teammate joins and legacy response links", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("volunteer_draft_boundary");
-  const assigned = await seedAssignedSchedule(context, "volunteer_draft_boundary");
+  const assigned = await seedPublishedAssignedSchedule(context, "volunteer_draft_boundary");
   const { scheduleId, occurrenceId, cellKey, memberId } = assigned;
   const draftId = `${scheduleId}_draft`;
   const base = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
@@ -22323,7 +23670,7 @@ test("my schedule matches plans by church date across UTC midnight and combined 
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("volunteer_church_date_plans");
   await setDoc(COLLECTIONS.churches, context.churchId, { serviceTimeZone: "America/New_York" }, { merge: true });
-  const assigned = await seedAssignedSchedule(context, "volunteer_church_date_plans", { serviceDate: "2026-10-31" });
+  const assigned = await seedPublishedAssignedSchedule(context, "volunteer_church_date_plans", { serviceDate: "2026-10-31" });
   const cases = [
     {
       occurrenceId: "fall-service@2026-10-31",
@@ -22400,7 +23747,7 @@ test("my schedule matches plans by church date across UTC midnight and combined 
 test("accept all unanswered preserves answers, ignores forged identity and safely retries partial success", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("volunteer_pending_bulk");
-  const first = await seedAssignedSchedule(context, "volunteer_pending_bulk");
+  const first = await seedPublishedAssignedSchedule(context, "volunteer_pending_bulk");
   const base = await getDoc(COLLECTIONS.teamSchedules, first.scheduleId);
   base.occurrences = base.occurrences.map((row) => ({ ...row, startsAt: "2099-12-01T15:00:00Z" }));
   await setDoc(COLLECTIONS.teamSchedules, first.scheduleId, { occurrences: base.occurrences }, { merge: true });

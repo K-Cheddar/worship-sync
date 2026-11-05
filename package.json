@@ -36,6 +36,7 @@
     "backfill:restream-message-expiration:dry-run": "node scripts/backfill-restream-message-expiration.js --dry-run",
     "backfill:provider-storage": "node scripts/backfill-provider-storage.js",
     "backfill:provider-storage:dry-run": "node scripts/backfill-provider-storage.js --dry-run",
+    "backfill:team-schedule-publication-event-ttl": "node scripts/backfill-team-schedule-publication-event-ttl.js",
     "cleanup:discussion-boards": "node scripts/cleanup-discussion-boards.js",
     "cleanup:discussion-boards:dry-run": "node scripts/cleanup-discussion-boards.js --dry-run",
     "cleanup:chat-images": "node --import tsx scripts/cleanup-expired-chat-images.js",

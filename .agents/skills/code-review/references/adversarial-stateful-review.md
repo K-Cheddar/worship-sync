@@ -9,7 +9,7 @@ Do this before using existing tests as a completeness checklist:
 1. Name the affected user workflows and trace their entry points through state, persistence, APIs, publication, and recovery.
 2. State the important invariants. For each relevant value, identify whether it is authoritative, cached, pending, or acknowledged, and which component, store, database, server, or device owns it.
 3. Identify competing actors and operations, including another tab/device, background sync, server requests, and repeated user actions.
-4. Derive realistic failure sequences from the workflow and invariants, independently of the patch's test names and comments. Select the highest-risk sequences; do not enumerate every combination. Consult a domain matrix only when the changed workflow intersects it.
+4. Before using existing test names or patch-authored scenarios, derive realistic failure sequences from the workflow and invariants. Follow the full operator sequence through its next meaningful action (for example: toggle Loop -> keep playing -> Pause -> resume), and combine relevant operations (for example: reorder + add + remove + move). Select the highest-risk sequences; do not enumerate every combination. Consult a domain matrix only when the changed workflow intersects it.
 
 ## Pass B — challenge the implementation
 
@@ -38,7 +38,7 @@ Apply the lenses that fit the invariant; a structurally valid record alone does 
 
 ## Regression-test evidence
 
-For a confirmed defect, recommend a regression test that reproduces the failure conditions, exercises the competing operation or lifecycle transition, asserts the actual final behavior (including persisted state when relevant), and would fail against the defective implementation. Prefer deferred promises, controlled revisions, and deterministic event order over arbitrary delays. A helper-call assertion alone is insufficient. A review may recommend a test without writing or running it; label tests as existing, proposed, or actually executed, and identify when existing coverage is narrower than the invariant.
+For a confirmed defect, recommend a regression test that starts from a valid initial state, reproduces the failure conditions, exercises the competing operation or lifecycle transition, and asserts the final user-visible and persisted behavior plus consequential downstream effects. Vary identity fields independently when they can change independently, and verify recovery across refresh, remount, or process restart when the workflow requires it. Prefer deferred promises, controlled revisions, and deterministic event order over arbitrary delays. A helper-call assertion alone is insufficient. A review may recommend a test without writing or running it; label tests as existing, proposed, or actually executed, and identify when existing coverage is narrower than the invariant. Keep scenarios proportional to risk; this is not a requirement to test every theoretical branch.
 
 For merge regressions, derive the scenario from the original defect and compare it against both parent implementations and the resulting merge. Record a failing run against the defective behavior and a passing run against the fix when feasible. Preserve production-relevant session kinds, non-default configuration, competing revisions, and event order; a default UTC fixture or a save without another writer cannot establish these invariants.
 
@@ -51,6 +51,10 @@ Put a compact table in the skill's existing **Verification gaps** section for th
 | Newer edits survive | Save B overlaps edit/save C | Writer, persistence read/write, and acknowledgment path inspected | Exact controlled ordering test, or missing/not run | Pass / Finding / Unverified |
 
 Use specific paths and symbols (and lines when useful), not general claims. Explain the controlled ordering only when it affects the conclusion. Do not pad the table with low-risk scenarios or mark a row `Pass` because a test with a matching title exists.
+
+## Bulk and mixed-operation evidence
+
+For destructive or bulk reconciliation, keep a compact set ledger: initial entities, freshly observed, attempted, completed, failed, skipped, and remaining. Name the authoritative read and verify that terminal UI/status agrees with it. For previews and imports, distinguish candidates shown to the operator from rows authorized to mutate; test chosen targets after mixed approved and declined operations. Compare the scenario's environment against the production runtime using the fidelity dimensions in the main skill's step 9.
 
 ## Domain matrix routing
 

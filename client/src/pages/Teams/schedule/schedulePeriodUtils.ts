@@ -64,6 +64,15 @@ export const findOverlappingPeriodSchedules = ({
   );
 };
 
+/** A schedule can be displayed on overlap alone; ownership requires full coverage. */
+export const scheduleCoversPeriodRange = (
+  schedule: Pick<TeamScheduleSummary, "startDate" | "endDate"> | null | undefined,
+  range: { start: string; end: string },
+) => Boolean(
+  schedule?.startDate && schedule.endDate &&
+  schedule.startDate <= range.start && schedule.endDate >= range.end,
+);
+
 export const formatSchedulePeriodName = (startDate: string, endDate: string) => {
   const start = parsePlainDate(startDate);
   const end = parsePlainDate(endDate);
@@ -236,13 +245,15 @@ export const mergeCurrentScheduleOccurrences = (
   const saved = Array.isArray(stored) ? stored : [];
   const generated = Array.isArray(current) ? current : [];
   const { matches, ambiguousCurrentIds } = matchOccurrencesByIdentity(saved, generated, timeZone);
-  if (
-    ambiguousCurrentIds.size > 0 ||
-    hasOccurrenceIdentityAmbiguity(saved, generated, timeZone)
-  ) return { occurrences: saved, ambiguous: true };
+  const ambiguous = ambiguousCurrentIds.size > 0 ||
+    hasOccurrenceIdentityAmbiguity(saved, generated, timeZone);
 
   const missing = generated.filter((occurrence) => {
+    // An unsafe row must not suppress unrelated additions in the read-only preview.
+    if (ambiguousCurrentIds.has(occurrence.occurrenceId)) return false;
+    if (matchOccurrencesByIdentity(generated, [occurrence], timeZone).ambiguousCurrentIds.size) return false;
     if (matches.has(occurrence.occurrenceId)) return false;
+    if (saved.some((row) => row.occurrenceId === occurrence.occurrenceId)) return false;
     return !otherSchedules.some((schedule) => {
       if (schedule.archivedAt) return false;
       const match = matchOccurrencesByIdentity(
@@ -257,15 +268,53 @@ export const mergeCurrentScheduleOccurrences = (
     String(left.startsAt).localeCompare(String(right.startsAt)) ||
     String(left.occurrenceId).localeCompare(String(right.occurrenceId)),
   );
-  return { occurrences, ambiguous: false };
+  return { occurrences, ambiguous };
 };
+
+/**
+ * Keep period reconciliation scoped to rows with a unique current identity and
+ * no owner outside the target schedule. This lets the server add safe rows
+ * while preserving unrelated historical rows that need separate review.
+ */
+export const filterSafeScheduleReconciliationOccurrences = ({
+  storedOccurrences,
+  currentOccurrences,
+  schedules,
+  churchId,
+  teamId,
+  scheduleId,
+  timeZone = "UTC",
+}: {
+  storedOccurrences: TeamScheduleOccurrence[];
+  currentOccurrences: TeamScheduleOccurrence[];
+  schedules: TeamScheduleSummary[];
+  churchId: string;
+  teamId: string;
+  scheduleId?: string;
+  timeZone?: string;
+}) => currentOccurrences.filter((occurrence) => {
+  const occurrenceId = String(occurrence.occurrenceId || "");
+  if (!occurrenceId) return false;
+  if (matchOccurrencesByIdentity(currentOccurrences, [occurrence], timeZone)
+    .ambiguousCurrentIds.has(occurrenceId)) return false;
+  if (matchOccurrencesByIdentity(storedOccurrences, [occurrence], timeZone)
+    .ambiguousCurrentIds.has(occurrenceId)) return false;
+  return findScheduleOccurrenceOwnershipConflicts({
+    schedules,
+    churchId,
+    teamId,
+    occurrences: [occurrence],
+    excludeScheduleId: scheduleId,
+    timeZone,
+  }).length === 0;
+});
 
 const isCanonicalGeneratedSchedule = (schedule: TeamScheduleSummary) =>
   schedule.source === "generated-period" &&
   Boolean(schedule.generatedPeriodKey) &&
   schedule.scheduleId === `generated_${schedule.generatedPeriodKey}`;
 
-const hasScheduleData = (schedule: TeamScheduleSummary) => {
+export const hasScheduleData = (schedule: TeamScheduleSummary) => {
   if (schedule.hasScheduleData !== undefined) return schedule.hasScheduleData;
   // Older summaries omit some maps, so their emptiness cannot be established.
   if (schedule.assignmentsOmitted) return true;

@@ -189,6 +189,8 @@ export const COLLECTIONS = {
   teamQualificationAreas: "teamQualificationAreas",
   teamQualificationLevels: "teamQualificationLevels",
   teamSchedules: "teamSchedules",
+  teamScheduleAssignmentBatchReceipts: "teamScheduleAssignmentBatchReceipts",
+  teamSchedulePublicationEvents: "teamSchedulePublicationEvents",
   teamScheduleOccurrenceOwners: "teamScheduleOccurrenceOwners",
   portableImportCreates: "portableImportCreates",
   teamIntakeForms: "teamIntakeForms",
@@ -605,6 +607,8 @@ const memoryState = {
   teamQualificationAreas: new Map(),
   teamQualificationLevels: new Map(),
   teamSchedules: new Map(),
+  teamScheduleAssignmentBatchReceipts: new Map(),
+  teamSchedulePublicationEvents: new Map(),
   teamScheduleOccurrenceOwners: new Map(),
   portableImportCreates: new Map(),
   teamIntakeForms: new Map(),
@@ -709,6 +713,8 @@ const collectionMap = {
   [COLLECTIONS.teamQualificationAreas]: memoryState.teamQualificationAreas,
   [COLLECTIONS.teamQualificationLevels]: memoryState.teamQualificationLevels,
   [COLLECTIONS.teamSchedules]: memoryState.teamSchedules,
+  [COLLECTIONS.teamScheduleAssignmentBatchReceipts]: memoryState.teamScheduleAssignmentBatchReceipts,
+  [COLLECTIONS.teamSchedulePublicationEvents]: memoryState.teamSchedulePublicationEvents,
   [COLLECTIONS.teamScheduleOccurrenceOwners]: memoryState.teamScheduleOccurrenceOwners,
   [COLLECTIONS.portableImportCreates]: memoryState.portableImportCreates,
   [COLLECTIONS.teamIntakeForms]: memoryState.teamIntakeForms,
@@ -1394,7 +1400,7 @@ const updateDocFields = async (
   collectionName,
   id,
   data,
-  { transaction = null } = {},
+  { transaction = null, deleteFields = [] } = {},
 ) => {
   const db = requireFirestore();
   const indexContact = collectionName === COLLECTIONS.teamRosterMembers
@@ -1404,17 +1410,29 @@ const updateDocFields = async (
     if (indexContact) {
       const write = async (tx) => {
         const current = (await tx.get(ref)).data() || {};
-        tx.update(ref, { ...data, ...volunteerContactIndexFields({ ...current, ...data }, process.env.AUTH_VOLUNTEER_PORTAL_SECRET) });
+        const indexedSource = { ...current, ...data };
+        deleteFields.forEach((field) => { delete indexedSource[field]; });
+        const update = {
+          ...data,
+          ...volunteerContactIndexFields(indexedSource, process.env.AUTH_VOLUNTEER_PORTAL_SECRET),
+        };
+        deleteFields.forEach((field) => { update[field] = FieldValue.delete(); });
+        tx.update(ref, update);
       };
       if (transaction) await write(transaction);
       else await db.runTransaction(write);
-    } else if (transaction) transaction.update(ref, data);
-    else await ref.update(data);
+    } else {
+      const update = { ...data };
+      deleteFields.forEach((field) => { update[field] = FieldValue.delete(); });
+      if (transaction) transaction.update(ref, update);
+      else await ref.update(update);
+    }
     return;
   }
   const store = collectionMap[collectionName];
   const current = store.get(id) || {};
   const next = { ...current, ...data };
+  deleteFields.forEach((field) => { delete next[field]; });
   store.set(id, indexContact ? { ...next, ...volunteerContactIndexFields(next, process.env.AUTH_VOLUNTEER_PORTAL_SECRET) } : next);
 };
 
@@ -7285,6 +7303,11 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
   sendRosterMemberInvite,
   logAuthEvent,
 });
+
+export const recoverPendingTeamSchedulePublicationEvents = () =>
+  teamsAuthHandlers.recoverPendingTeamSchedulePublicationEvents();
+export const startTeamSchedulePublicationEventRecovery = () =>
+  teamsAuthHandlers.startTeamSchedulePublicationEventRecovery();
 
 const smsStatusWebhookHandler = createSmsStatusWebhookHandler({
   COLLECTIONS, getDoc, requireFirestore,

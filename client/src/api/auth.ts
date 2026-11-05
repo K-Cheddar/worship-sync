@@ -2557,7 +2557,7 @@ export const ensureTeamScheduleForPeriod = async (
   churchId: string,
   body: EnsureTeamScheduleForPeriodPayload,
 ) =>
-  apiFetch<{ success: boolean; schedule: TeamSchedule; created: boolean }>(
+  apiFetch<{ success: boolean; schedule: TeamSchedule; created: boolean; updated?: boolean }>(
     `api/churches/${churchId}/team-schedules/ensure`,
     { method: "POST", body: JSON.stringify(body) },
   );
@@ -2573,6 +2573,18 @@ export const updateTeamSchedule = async (
       method: "POST",
       body: JSON.stringify(body),
     },
+  );
+
+export const publishTeamSchedule = async (churchId: string, scheduleId: string) =>
+  apiFetch<{ success: boolean; schedule: TeamSchedule }>(
+    `api/churches/${churchId}/team-schedules/${encodeURIComponent(scheduleId)}/publish`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+
+export const unpublishTeamSchedule = async (churchId: string, scheduleId: string) =>
+  apiFetch<{ success: boolean; schedule: TeamSchedule }>(
+    `api/churches/${churchId}/team-schedules/${encodeURIComponent(scheduleId)}/unpublish`,
+    { method: "POST", body: JSON.stringify({}) },
   );
 
 export const archiveTeamSchedule = async (
@@ -2661,6 +2673,7 @@ export const updateTeamScheduleAssignmentsBatch = async (
     }>;
     skipChangedCells?: boolean;
     confirmedOccurrenceConflictFingerprint?: string;
+    operationId?: string;
   },
 ) =>
   apiFetch<{
@@ -2668,6 +2681,7 @@ export const updateTeamScheduleAssignmentsBatch = async (
     schedule: TeamSchedule;
     accepted: Array<{ serviceId: string; positionSlotKey: string }>;
     skipped: Array<{ serviceId: string; positionSlotKey: string }>;
+    replayed?: boolean;
   }>(
     `api/churches/${churchId}/team-schedules/${scheduleId}/assignments/batch`,
     { method: "POST", body: JSON.stringify(body) },

@@ -19,9 +19,12 @@ import {
 import { serializeAuthError } from "./authErrorResponse.js";
 import { isDeepStrictEqual } from "node:util";
 import {
+  addServicePlanSseClient,
   addChurchServiceTimeZoneSseClient,
   emitChurchServiceTimeZoneInvalidation,
+  emitServicePlanEvent,
   emitTeamsEvent,
+  removeServicePlanSseClient,
   removeChurchServiceTimeZoneSseClient,
 } from "./teamsSse.js";
 import {
@@ -111,6 +114,7 @@ import {
   matchOccurrencesByIdentity,
   resolveOccurrenceIdentity,
   serviceDateTimeInTimeZone,
+  oneTimeServiceInstant,
 } from "../shared/teamScheduleOccurrences.ts";
 
 const APP_BASE_URL =
@@ -183,6 +187,51 @@ const BLOCKOUT_HISTORY_RETENTION_DAYS = 365;
 // A generous per-schedule cap prevents an accidental unbounded document while
 // remaining far above the number of one-time helpers a service plan can need.
 const MAX_TEAM_SCHEDULE_GUESTS = 200;
+
+export const runPostCommitSideEffect = async (
+  description,
+  operation,
+  {
+    retryDelaysMs = [250, 1000],
+    onError = (message, error) => console.error(message, error),
+  } = {},
+) => {
+  const attempts = retryDelaysMs.length + 1;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await operation();
+      return true;
+    } catch (error) {
+      try {
+        onError(`Post-commit ${description} failed (attempt ${attempt}/${attempts}).`, error);
+      } catch { /* Logging failures must not change a committed response. */ }
+      if (attempt < attempts) {
+        await new Promise((resolve) => setTimeout(resolve, retryDelaysMs[attempt - 1]));
+      }
+    }
+  }
+  return false;
+};
+
+const TEAM_SCHEDULE_PUBLICATION_EVENT_RECOVERY_INTERVAL_MS = 30_000;
+const TEAM_SCHEDULE_PUBLICATION_EVENT_RECOVERY_LIMIT = 100;
+const TEAM_SCHEDULE_PUBLICATION_EVENT_LEASE_MS = 60_000;
+const TEAM_SCHEDULE_PUBLICATION_EVENT_TTL_MS = 30 * 24 * 60 * 60_000;
+const TEAM_SCHEDULE_PUBLICATION_EVENT_STALE_WARNING_MS = 24 * 60 * 60_000;
+const TEAM_SCHEDULE_PUBLICATION_EVENT_ATTEMPT_WARNING_THRESHOLD = 10;
+let publicationEventDeliveryForServerTests = null;
+
+export const setTeamSchedulePublicationEventDeliveryForServerTests = (handler = null) => {
+  if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
+    throw new Error(
+      "setTeamSchedulePublicationEventDeliveryForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
+    );
+  }
+  if (handler !== null && typeof handler !== "function") {
+    throw new TypeError("The publication event test handler must be a function or null.");
+  }
+  publicationEventDeliveryForServerTests = handler;
+};
 
 export const createTeamsAuthHandlers = ({
   COLLECTIONS,
@@ -1433,12 +1482,19 @@ export const createTeamsAuthHandlers = ({
     schedule.source === "generated-period" &&
     Boolean(schedule.generatedPeriodKey) &&
     schedule.scheduleId === generatedPeriodScheduleId(schedule.generatedPeriodKey);
-  const occurrenceOwnershipEntries = (occurrences, timeZone) => {
+  const occurrenceOwnershipEntries = (occurrences, timeZone, { skipDuplicateLogicalOccurrences = false } = {}) => {
     const entries = new Map();
+    const duplicates = new Set();
     for (const occurrence of Array.isArray(occurrences) ? occurrences : []) {
       const identity = resolveOccurrenceIdentity(occurrence, timeZone);
       if (!identity) throw httpError(409, "A schedule occurrence has no safe logical identity. Review the saved schedule before continuing.");
-      if (entries.has(identity.logicalOccurrenceId)) throw httpError(409, "A schedule contains duplicate logical occurrences. Review it before continuing.");
+      if (entries.has(identity.logicalOccurrenceId)) {
+        if (!skipDuplicateLogicalOccurrences) throw httpError(409, "A schedule contains duplicate logical occurrences. Review it before continuing.");
+        duplicates.add(identity.logicalOccurrenceId);
+        entries.delete(identity.logicalOccurrenceId);
+        continue;
+      }
+      if (duplicates.has(identity.logicalOccurrenceId)) continue;
       entries.set(identity.logicalOccurrenceId, { occurrence, identity });
     }
     return entries;
@@ -1477,11 +1533,14 @@ export const createTeamsAuthHandlers = ({
     previousSchedule = null,
     activeSchedules,
     timeZone,
+    allowUnrelatedDuplicateOccurrences = false,
     transaction,
     db,
   }) => {
     const makeEntries = (sourceChurchId, sourceTeamId, sourceOccurrences) => {
-      const occurrences = occurrenceOwnershipEntries(sourceOccurrences, timeZone);
+      const occurrences = occurrenceOwnershipEntries(sourceOccurrences, timeZone, {
+        skipDuplicateLogicalOccurrences: allowUnrelatedDuplicateOccurrences,
+      });
       return new Map([...occurrences].map(([logicalOccurrenceId, value]) => {
         const key = `${sourceChurchId}\u0000${sourceTeamId}\u0000${logicalOccurrenceId}`;
         return [key, { ...value, churchId: sourceChurchId, teamId: sourceTeamId, logicalOccurrenceId }];
@@ -1865,8 +1924,8 @@ export const createTeamsAuthHandlers = ({
     const weekday = date.getUTCDay();
     if (service.reccurence === "one_time") {
       if (!service.dateTimeISO) return null;
-      const serviceInstant = new Date(service.dateTimeISO);
-      if (Number.isNaN(serviceInstant.getTime())) return null;
+      const serviceInstant = oneTimeServiceInstant(service.dateTimeISO, timeZone);
+      if (!serviceInstant) return null;
       if (
         getOccurrenceCalendarParts(serviceInstant.toISOString(), timeZone)
           .date !== localDate
@@ -1910,18 +1969,23 @@ export const createTeamsAuthHandlers = ({
     return null;
   };
 
-  const assertServiceOccurrence = ({ service, localParts, timeZone }) => {
+  const assertServiceOccurrence = ({ service, localParts, timeZone, occurrenceId, serviceDate }) => {
     const scheduledTime = getServiceOccurrenceTime(
       service,
       localParts.date,
       timeZone,
     );
-    if (!scheduledTime || scheduledTime !== localParts.time) {
-      throw httpError(
-        400,
-        "A target does not match its current service recurrence.",
-      );
-    }
+    const recurrenceMismatch = () => {
+      const serviceId = service?.serviceId || service?.id || "unknown";
+      logAuthEvent?.("warn", "schedule.occurrence.recurrence_mismatch", {
+        serviceId, occurrenceId, recurrence: service?.reccurence,
+        storedDateTimeISO: service?.dateTimeISO || null,
+        expectedLocalTime: scheduledTime, submittedLocalTime: localParts.time,
+        startsAt: localParts.startsAt, serviceDate, computedServiceDate: localParts.date, timeZone,
+      });
+      return httpError(400, `Service "${service?.name || serviceId}" (${serviceId}) does not match its current service recurrence on ${localParts.date}. Check its date and time in Service setup, wait for saving to finish, then refresh Scheduling and try again.`);
+    };
+    if (!scheduledTime || scheduledTime !== localParts.time) throw recurrenceMismatch();
     if (service.reccurence !== "one_time") {
       const expectedInstant = serviceDateTimeInTimeZone(
         localParts.date,
@@ -1934,12 +1998,9 @@ export const createTeamsAuthHandlers = ({
     }
     if (
       service.reccurence === "one_time" &&
-      new Date(service.dateTimeISO).toISOString() !== localParts.startsAt
+      oneTimeServiceInstant(service.dateTimeISO, timeZone)?.toISOString() !== localParts.startsAt
     ) {
-      throw httpError(
-        400,
-        "A target does not match its one-time service occurrence.",
-      );
+      throw recurrenceMismatch();
     }
     return scheduledTime;
   };
@@ -1957,7 +2018,7 @@ export const createTeamsAuthHandlers = ({
     servicesById,
   }) => {
     const primaryService = servicesById.get(serviceId);
-    assertServiceOccurrence({ service: primaryService, localParts, timeZone });
+    assertServiceOccurrence({ service: primaryService, localParts, timeZone, occurrenceId, serviceDate });
     if (serviceDate && serviceDate !== localParts.date) {
       throw httpError(400, "A service occurrence has an invalid calendar date.");
     }
@@ -5656,6 +5717,8 @@ export const createTeamsAuthHandlers = ({
   const resolveScheduleOccurrenceRequirements = async ({
     churchId,
     occurrence,
+    services,
+    fallbackPositionIds = [],
   }) => {
     const stored = sanitizePositionRequirements(
       occurrence?.positionRequirements,
@@ -5667,16 +5730,25 @@ export const createTeamsAuthHandlers = ({
         .map((serviceId) => normalizeShortText(serviceId, { max: 160 }))
         .filter(Boolean),
     );
-    if (serviceIds.size === 0) return stored;
+    if (serviceIds.size === 0) {
+      return fallbackPositionIds.map((positionId) => ({
+        positionId,
+        count: 1,
+      }));
+    }
 
-    const services = await readChurchServiceTimes(churchId);
-    return mergeServicePositionRequirements(
-      services.filter((service) =>
-        serviceIds.has(
-          normalizeShortText(service?.serviceId || service?.id, { max: 160 }),
-        ),
+    const serviceCatalog = services ?? (await readChurchServiceTimes(churchId));
+    const serviceRequirements = mergeServicePositionRequirements(
+      serviceCatalog.filter((service) =>
+        serviceIds.has(normalizeShortText(service?.serviceId || service?.id, { max: 160 })),
       ),
     );
+    return serviceRequirements.length > 0
+      ? serviceRequirements
+      : fallbackPositionIds.map((positionId) => ({
+          positionId,
+          count: 1,
+        }));
   };
 
   const normalizeTeamMemberships = async (value, churchId) => {
@@ -7628,6 +7700,14 @@ export const createTeamsAuthHandlers = ({
   };
 
   const normalizeScheduleAssignmentCell = (cell) => {
+    // Older schedules stored the primary member ID directly in the cell.
+    // Keep those values comparable to the current object-shaped format.
+    if (typeof cell === "string") {
+      return {
+        primaryMemberId: normalizeShortText(cell, { max: 160 }),
+        shadows: [],
+      };
+    }
     if (!cell || typeof cell !== "object") {
       return { primaryMemberId: "", shadows: [] };
     }
@@ -7640,6 +7720,19 @@ export const createTeamsAuthHandlers = ({
         }))
         .filter((shadow) => shadow.memberId),
     };
+  };
+
+  const scheduleAssignmentCellsEqual = (first, second) => {
+    const normalizedFirst = normalizeScheduleAssignmentCell(first);
+    const normalizedSecond = normalizeScheduleAssignmentCell(second);
+    if (normalizedFirst.primaryMemberId !== normalizedSecond.primaryMemberId) {
+      return false;
+    }
+    const sortShadows = (shadows) => [...shadows].sort(
+      (a, b) => a.memberId.localeCompare(b.memberId) || a.kind.localeCompare(b.kind),
+    );
+    return JSON.stringify(sortShadows(normalizedFirst.shadows)) ===
+      JSON.stringify(sortShadows(normalizedSecond.shadows));
   };
 
   const serializeScheduleAssignmentCell = ({ primaryMemberId, shadows }) => {
@@ -8301,10 +8394,14 @@ export const createTeamsAuthHandlers = ({
             { limit: TEAM_COLLECTION_QUERY_LIMIT },
           )
         : [];
-    const teamPositionIds = new Set(
-      positions
-        .filter((position) => !position.archivedAt)
-        .map((position) => position.positionId),
+    const referencedPositions = positions.filter(
+      (position) =>
+        position &&
+        position.churchId === churchId &&
+        position.teamId === schedule.teamId,
+    );
+    const publicPositionIds = new Set(
+      referencedPositions.map((position) => position.positionId),
     );
     const microphoneAssignments = normalizeTeamScheduleMicrophoneAssignments(
       schedule.microphoneAssignments,
@@ -8312,42 +8409,90 @@ export const createTeamsAuthHandlers = ({
     const iemAssignments = normalizeTeamScheduleIemAssignments(
       schedule.iemAssignments,
     );
-    let publicOccurrences = schedule.occurrences || [];
-    if (schedule.source === "generated-period" && teamPositionIds.size > 0) {
-      const services = await readChurchServiceTimes(churchId);
-      const additionalSlots = normalizeTeamScheduleAdditionalPositionSlots(
+    const rawOccurrences = Array.isArray(schedule.occurrences)
+      ? schedule.occurrences
+      : [];
+    const needsServiceFallback = rawOccurrences.some((occurrence) => {
+      if (sanitizePositionRequirements(occurrence?.positionRequirements).length) {
+        return false;
+      }
+      return [occurrence?.serviceId, ...(occurrence?.serviceIds || [])]
+        .some((serviceId) => normalizeShortText(serviceId, { max: 160 }));
+    });
+    const serviceCatalog = needsServiceFallback
+      ? await readChurchServiceTimes(churchId)
+      : [];
+    const fallbackPositionIds =
+      schedule.source === "generated-period" ? [] : [...publicPositionIds];
+    const requirementsByOccurrence = new Map();
+    const resolvedOccurrences = (
+      await Promise.all(
+        rawOccurrences.map(async (occurrence) => {
+          const occurrenceId = normalizeShortText(occurrence?.occurrenceId, {
+            max: 260,
+          });
+          const serviceId = normalizeShortText(occurrence?.serviceId, {
+            max: 160,
+          });
+          if (!occurrenceId || !serviceId) return null;
+          const requirements = await resolveScheduleOccurrenceRequirements({
+            churchId,
+            occurrence,
+            services: serviceCatalog,
+            fallbackPositionIds,
+          });
+          const publicRequirements = requirements.filter((requirement) =>
+            publicPositionIds.has(requirement.positionId),
+          );
+          requirementsByOccurrence.set(occurrenceId, publicRequirements);
+          const serviceDate = normalizeShortText(occurrence?.serviceDate, {
+            max: 10,
+          });
+          return {
+            occurrenceId,
+            serviceId,
+            name: normalizeShortText(occurrence?.name) || "Service",
+            startsAt: normalizeShortText(occurrence?.startsAt, { max: 80 }),
+            ...( /^\d{4}-\d{2}-\d{2}$/.test(serviceDate)
+              ? { serviceDate }
+              : {}),
+            positionRequirements: publicRequirements,
+          };
+        }),
+      )
+    ).filter(Boolean);
+    const sourceOccurrenceIds = new Set(
+      resolvedOccurrences.map((occurrence) => occurrence.occurrenceId),
+    );
+    const normalizedAdditionalPositionSlots =
+      normalizeTeamScheduleAdditionalPositionSlots(
         schedule.additionalPositionSlots ?? schedule.optionalPositionSlots,
       );
+    const scopedAdditionalPositionSlots = Object.fromEntries(
+      Object.entries(normalizedAdditionalPositionSlots)
+        .filter(([occurrenceId]) => sourceOccurrenceIds.has(occurrenceId))
+        .flatMap(([occurrenceId, slotKeys]) => {
+          const scopedSlotKeys = slotKeys.filter((key) => {
+            const slot = parseScheduleSlotKey(key);
+            return Boolean(slot && publicPositionIds.has(slot.positionId));
+          });
+          return scopedSlotKeys.length ? [[occurrenceId, scopedSlotKeys]] : [];
+        }),
+    );
+    let publicOccurrences = resolvedOccurrences;
+    if (schedule.source === "generated-period" && publicPositionIds.size > 0) {
       publicOccurrences = publicOccurrences.filter((occurrence) => {
-        const storedRequirements = sanitizePositionRequirements(
-          occurrence.positionRequirements,
-        );
-        const occurrenceServiceIds = new Set(
-          [occurrence.serviceId, ...(occurrence.serviceIds || [])].filter(
-            Boolean,
-          ),
-        );
-        const requirements = storedRequirements.length
-          ? storedRequirements
-          : mergeServicePositionRequirements(
-              services.filter((service) =>
-                occurrenceServiceIds.has(service.serviceId || service.id),
-              ),
-            );
-        const hasTeamRequirement = requirements.some((item) =>
-          teamPositionIds.has(item.positionId),
-        );
+        const hasTeamRequirement = (
+          requirementsByOccurrence.get(occurrence.occurrenceId) || []
+        ).length > 0;
         const hasTeamSlot = (
-          additionalSlots[occurrence.occurrenceId] || []
-        ).some((key) => {
-          const slot = parseScheduleSlotKey(key);
-          return Boolean(slot && teamPositionIds.has(slot.positionId));
-        });
+          scopedAdditionalPositionSlots[occurrence.occurrenceId] || []
+        ).length > 0;
         const hasTeamAssignment = Object.keys(
           schedule.assignments?.[occurrence.occurrenceId] || {},
         ).some((key) => {
           const slot = parseScheduleSlotKey(key);
-          return Boolean(slot && teamPositionIds.has(slot.positionId));
+          return Boolean(slot && publicPositionIds.has(slot.positionId));
         });
         const hasTeamEquipmentAssignment = [
           microphoneAssignments[occurrence.occurrenceId],
@@ -8355,7 +8500,7 @@ export const createTeamsAuthHandlers = ({
         ].some((row) =>
           Object.keys(row || {}).some((key) => {
             const slot = parseScheduleSlotKey(key);
-            return Boolean(slot && teamPositionIds.has(slot.positionId));
+            return Boolean(slot && publicPositionIds.has(slot.positionId));
           }),
         );
         return (
@@ -8369,24 +8514,59 @@ export const createTeamsAuthHandlers = ({
     const publicOccurrenceIds = new Set(
       publicOccurrences.map((occurrence) => occurrence.occurrenceId),
     );
-    const filterOccurrenceRows = (rows) =>
-      Object.fromEntries(
-        Object.entries(rows || {}).filter(([occurrenceId]) =>
-          publicOccurrenceIds.has(occurrenceId),
-        ),
-      );
-    const publicAssignments =
-      schedule.source === "generated-period"
-        ? filterOccurrenceRows(schedule.assignments)
-        : schedule.assignments || {};
-    const publicMicrophoneAssignments =
-      schedule.source === "generated-period"
-        ? filterOccurrenceRows(microphoneAssignments)
-        : microphoneAssignments;
-    const publicIemAssignments =
-      schedule.source === "generated-period"
-        ? filterOccurrenceRows(iemAssignments)
-        : iemAssignments;
+    const publicAdditionalPositionSlots = Object.fromEntries(
+      Object.entries(scopedAdditionalPositionSlots).filter(([occurrenceId]) =>
+        publicOccurrenceIds.has(occurrenceId),
+      ),
+    );
+    const filterPublicSlotRows = (rows, projectCell) => {
+      const result = {};
+      Object.entries(rows || {}).forEach(([occurrenceId, row]) => {
+        if (!publicOccurrenceIds.has(occurrenceId)) return;
+        const publicRow = {};
+        Object.entries(row || {}).forEach(([slotKey, value]) => {
+          const slot = parseScheduleSlotKey(slotKey);
+          if (!slot || !publicPositionIds.has(slot.positionId)) return;
+          const projected = projectCell(value);
+          if (projected !== undefined) publicRow[slotKey] = projected;
+        });
+        if (Object.keys(publicRow).length) result[occurrenceId] = publicRow;
+      });
+      return result;
+    };
+    const publicAssignments = filterPublicSlotRows(
+      schedule.assignments,
+      (cell) => {
+        const normalizedCell = normalizeScheduleAssignmentCell(cell);
+        const primaryMemberId = normalizedCell.primaryMemberId;
+        const shadows = normalizedCell.shadows
+          .slice(0, 12)
+          .flatMap((shadow) => {
+            const memberId = normalizeShortText(shadow?.memberId, {
+              max: 160,
+            });
+            const kind = shadow?.kind === "reverse_shadow"
+              ? "reverse_shadow"
+              : shadow?.kind === "shadow"
+                ? "shadow"
+                : "";
+            return memberId && kind ? [{ memberId, kind }] : [];
+          });
+        if (!primaryMemberId && shadows.length === 0) return undefined;
+        return {
+          ...(primaryMemberId ? { primaryMemberId } : {}),
+          shadows,
+        };
+      },
+    );
+    const publicMicrophoneAssignments = filterPublicSlotRows(
+      microphoneAssignments,
+      (microphoneIds) => microphoneIds.length ? microphoneIds : undefined,
+    );
+    const publicIemAssignments = filterPublicSlotRows(
+      iemAssignments,
+      (iemIds) => iemIds.length ? iemIds : undefined,
+    );
     const referencedMicrophoneIds = new Set(
       Object.values(publicMicrophoneAssignments).flatMap((row) =>
         Object.values(row).flat(),
@@ -8435,13 +8615,6 @@ export const createTeamsAuthHandlers = ({
     const serviceEquipment = normalizeServiceEquipmentCatalog(
       church?.serviceEquipment,
     ).filter((equipment) => referencedIemIds.has(equipment.id));
-    const referencedPositions = positions.filter(
-      (position) =>
-        position &&
-        position.churchId === churchId &&
-        position.teamId === schedule.teamId,
-    );
-
     const firstNameCounts = new Map();
     const assignedGuests = [...assignedMemberIds]
       .map((guestId) => scheduleGuestById.get(guestId))
@@ -8481,6 +8654,7 @@ export const createTeamsAuthHandlers = ({
         endDate: schedule.endDate || "",
         occurrences: publicOccurrences,
         assignments: publicAssignments,
+        additionalPositionSlots: publicAdditionalPositionSlots,
         microphoneAssignments: publicMicrophoneAssignments,
         iemAssignments: publicIemAssignments,
       },
@@ -10929,8 +11103,61 @@ export const createTeamsAuthHandlers = ({
     confirmedFingerprint,
     skipChangedCells,
     adminUserId,
+    operationId,
+    operationFingerprint,
   }) => {
+    const MAX_SCHEDULE_ASSIGNMENT_BATCH_RECEIPTS = 100;
     const db = requireFirestore();
+    const receiptFor = (schedule, ledger) => {
+      if (!operationId) return null;
+      const receipt = (Array.isArray(ledger?.operations) ? ledger.operations : [])
+        .find((item) => item?.operationId === operationId);
+      if (!receipt) return null;
+      if (
+        ledger.churchId !== churchId ||
+        ledger.scheduleId !== scheduleId ||
+        receipt.adminUserId !== adminUserId ||
+        receipt.fingerprint !== operationFingerprint
+      ) {
+        throw httpError(409, "This assignment operation ID was already used for a different request.");
+      }
+      const toCells = (indexes) => (Array.isArray(indexes) ? indexes : [])
+        .map((index) => changes[index])
+        .filter(Boolean)
+        .map(({ serviceId, positionSlotKey }) => ({ serviceId, positionSlotKey }));
+      return {
+        schedule,
+        accepted: toCells(receipt.acceptedIndexes),
+        skipped: toCells(receipt.skippedIndexes),
+        replayed: true,
+      };
+    };
+    const nextReceiptLedger = (ledger, result) => {
+      if (!operationId) return null;
+      const indexesByCell = new Map(changes.map((change, index) => [
+        `${change.serviceId}\u0000${change.positionSlotKey}`,
+        index,
+      ]));
+      const indexesFor = (cells) => cells
+        .map(({ serviceId, positionSlotKey }) => indexesByCell.get(`${serviceId}\u0000${positionSlotKey}`))
+        .filter((index) => Number.isInteger(index));
+      const receipt = {
+        operationId,
+        adminUserId,
+        fingerprint: operationFingerprint,
+        acceptedIndexes: indexesFor(result.accepted),
+        skippedIndexes: indexesFor(result.skipped),
+      };
+      return {
+        churchId,
+        scheduleId,
+        operations: [
+          ...(Array.isArray(ledger?.operations) ? ledger.operations : [])
+            .filter((item) => item?.operationId !== operationId),
+          receipt,
+        ].slice(-MAX_SCHEDULE_ASSIGNMENT_BATCH_RECEIPTS),
+      };
+    };
     const applyBatch = async (schedule, team, candidateSchedules) => {
       const assignments = JSON.parse(JSON.stringify(schedule.assignments || {}));
       const accepted = [];
@@ -10961,7 +11188,7 @@ export const createTeamsAuthHandlers = ({
         const expectedCell = serializeScheduleAssignmentCell(
           normalizeScheduleAssignmentCell(change.expectedCell),
         ) || "";
-        if (currentCell !== expectedCell) {
+        if (!scheduleAssignmentCellsEqual(currentCell, expectedCell)) {
           if (skipChangedCells) {
             skipped.push({ serviceId: change.serviceId, positionSlotKey: change.positionSlotKey });
             continue;
@@ -11040,6 +11267,11 @@ export const createTeamsAuthHandlers = ({
     if (!db) {
       return enqueueInMemoryScheduleSave(scheduleId, async () => {
         const schedule = await assertTeamEntityInChurch("schedule", scheduleId, churchId, { label: "Schedule", active: false });
+        const receiptLedger = operationId
+          ? await getDoc(COLLECTIONS.teamScheduleAssignmentBatchReceipts, scheduleId)
+          : null;
+        const replay = receiptFor(schedule, receiptLedger);
+        if (replay) return replay;
         const team = await assertTeamEntityInChurch("team", schedule.teamId, churchId, { label: "Team" });
         const candidateSchedules = await listScheduleConflictCandidates({ churchId, schedule, occurrenceIds: [...new Set(changes.map((change) => change.serviceId))] });
         const result = await applyBatch(schedule, team, candidateSchedules);
@@ -11051,6 +11283,14 @@ export const createTeamsAuthHandlers = ({
         };
         const nextSchedule = { ...schedule, ...update };
         await setDoc(COLLECTIONS.teamSchedules, scheduleId, nextSchedule, { merge: false });
+        if (operationId) {
+          await setDoc(
+            COLLECTIONS.teamScheduleAssignmentBatchReceipts,
+            scheduleId,
+            nextReceiptLedger(receiptLedger, result),
+            { merge: false },
+          );
+        }
         return { schedule: nextSchedule, accepted: result.accepted, skipped: result.skipped };
       });
     }
@@ -11060,6 +11300,15 @@ export const createTeamsAuthHandlers = ({
       const scheduleSnap = await transaction.get(scheduleRef);
       const schedule = readTransactionTeamEntity(scheduleSnap, "scheduleId", "Schedule", { active: false });
       if (schedule.churchId !== churchId) throw httpError(404, "Schedule not found.");
+      const receiptRef = operationId
+        ? db.collection(COLLECTIONS.teamScheduleAssignmentBatchReceipts).doc(scheduleId)
+        : null;
+      const receiptSnap = receiptRef ? await transaction.get(receiptRef) : null;
+      const receiptLedger = receiptSnap?.exists
+        ? { id: receiptSnap.id, ...receiptSnap.data() }
+        : null;
+      const replay = receiptFor(schedule, receiptLedger);
+      if (replay) return replay;
       const teamSnap = await transaction.get(db.collection(COLLECTIONS.teams).doc(schedule.teamId));
       const team = readTransactionTeamEntity(teamSnap, "teamId", "Team");
       if (team.churchId !== churchId) throw httpError(404, "Team not found.");
@@ -11078,6 +11327,13 @@ export const createTeamsAuthHandlers = ({
         updatedByUid: adminUserId,
       };
       transaction.update(scheduleRef, update);
+      if (operationId) {
+        transaction.set(
+          receiptRef,
+          nextReceiptLedger(receiptLedger, result),
+          { merge: false },
+        );
+      }
       return { schedule: { ...schedule, ...update }, accepted: result.accepted, skipped: result.skipped };
     });
   };
@@ -12892,6 +13148,443 @@ export const createTeamsAuthHandlers = ({
     }
   };
 
+  const publicationEventInFlight = new Set();
+  const publicationEventRetryTimers = new Map();
+  let publicationEventRecoveryTimer = null;
+  let publicationEventRecoveryInFlight = false;
+  let publicationEventRecoveryCursor = "";
+
+  const publicationEventRetryDelay = (attemptCount) =>
+    Math.min(15 * 60_000, 5_000 * (2 ** Math.min(Math.max(0, attemptCount - 1), 8)));
+
+  const deliverTeamSchedulePublicationEvent = async (event) => {
+    if (publicationEventDeliveryForServerTests) {
+      await publicationEventDeliveryForServerTests(event);
+      return;
+    }
+    if (event.kind === "security_audit") {
+      await addSecurityEvent(event.securityEvent);
+      return;
+    }
+    const current = await getDoc(COLLECTIONS.teamSchedules, event.scheduleId);
+    if (event.kind === "teams_schedule_update") {
+      if (!current || current.churchId !== event.churchId || current.archivedAt) {
+        emitTeamsEvent(event.churchId, "schedule-removed", {
+          scheduleId: event.scheduleId,
+        });
+      } else {
+        emitTeamsEvent(event.churchId, "schedule-updated", { schedule: current });
+      }
+      return;
+    }
+    if (event.kind === "public_plan_invalidation") {
+      await emitPublicPlansForScheduleOccurrences({
+        churchId: event.churchId,
+        occurrences: current?.occurrences || event.occurrences || [],
+        revision: current?.updatedAt || event.revision || event.createdAt,
+      });
+      return;
+    }
+    throw new Error(`Unknown team schedule publication event kind: ${event.kind}`);
+  };
+
+  const claimTeamSchedulePublicationEvent = async (eventId) => {
+    const db = requireFirestore();
+    const leaseToken = createId("schedulePublicationLease");
+    const now = Date.now();
+    const claimedAt = new Date(now).toISOString();
+    const leaseExpiresAt = new Date(now + TEAM_SCHEDULE_PUBLICATION_EVENT_LEASE_MS).toISOString();
+    const isFuture = (value) => {
+      const timestamp = new Date(value || "").getTime();
+      return Number.isFinite(timestamp) && timestamp > now;
+    };
+    if (db?.runTransaction) {
+      return db.runTransaction(async (transaction) => {
+        const ref = db.collection(COLLECTIONS.teamSchedulePublicationEvents).doc(eventId);
+        const snapshot = await transaction.get(ref);
+        if (!snapshot.exists) return null;
+        const current = { id: snapshot.id, ...snapshot.data() };
+        if (
+          current.status !== "pending" || isFuture(current.nextAttemptAt) ||
+          isFuture(current.leaseExpiresAt)
+        ) return null;
+        const attemptCount = Number(current.attemptCount || 0) + 1;
+        const ageMs = Math.max(0, now - new Date(current.createdAt || "").getTime());
+        const warningCodes = [
+          ...(Number.isFinite(ageMs) && ageMs > TEAM_SCHEDULE_PUBLICATION_EVENT_STALE_WARNING_MS
+            ? ["pending_over_24h"] : []),
+          ...(attemptCount > TEAM_SCHEDULE_PUBLICATION_EVENT_ATTEMPT_WARNING_THRESHOLD
+            ? ["over_10_attempts"] : []),
+        ];
+        const warningCodesLogged = Array.isArray(current.warningCodesLogged)
+          ? current.warningCodesLogged
+          : [];
+        const warningsToLog = warningCodes.filter((code) => !warningCodesLogged.includes(code));
+        const nextWarningCodesLogged = [...new Set([...warningCodesLogged, ...warningsToLog])];
+        await updateDocFields(
+          COLLECTIONS.teamSchedulePublicationEvents,
+          eventId,
+          {
+            attemptCount,
+            lastAttemptAt: claimedAt,
+            leaseToken,
+            leaseExpiresAt,
+            ...(warningsToLog.length ? { warningCodesLogged: nextWarningCodesLogged } : {}),
+          },
+          { transaction, deleteFields: Object.hasOwn(current, "expiresAt") ? ["expiresAt"] : [] },
+        );
+        return {
+          ...current,
+          attemptCount,
+          lastAttemptAt: claimedAt,
+          leaseToken,
+          leaseExpiresAt,
+          warningCodesLogged: nextWarningCodesLogged,
+          warningsToLog,
+        };
+      });
+    }
+    const current = await getDoc(COLLECTIONS.teamSchedulePublicationEvents, eventId);
+    if (
+      !current || current.status !== "pending" || isFuture(current.nextAttemptAt) ||
+      isFuture(current.leaseExpiresAt)
+    ) return null;
+    const attemptCount = Number(current.attemptCount || 0) + 1;
+    const ageMs = Math.max(0, now - new Date(current.createdAt || "").getTime());
+    const warningCodes = [
+      ...(Number.isFinite(ageMs) && ageMs > TEAM_SCHEDULE_PUBLICATION_EVENT_STALE_WARNING_MS
+        ? ["pending_over_24h"] : []),
+      ...(attemptCount > TEAM_SCHEDULE_PUBLICATION_EVENT_ATTEMPT_WARNING_THRESHOLD
+        ? ["over_10_attempts"] : []),
+    ];
+    const warningCodesLogged = Array.isArray(current.warningCodesLogged)
+      ? current.warningCodesLogged
+      : [];
+    const warningsToLog = warningCodes.filter((code) => !warningCodesLogged.includes(code));
+    const nextWarningCodesLogged = [...new Set([...warningCodesLogged, ...warningsToLog])];
+    await updateDocFields(
+      COLLECTIONS.teamSchedulePublicationEvents,
+      eventId,
+      {
+        attemptCount,
+        lastAttemptAt: claimedAt,
+        leaseToken,
+        leaseExpiresAt,
+        ...(warningsToLog.length ? { warningCodesLogged: nextWarningCodesLogged } : {}),
+      },
+      { deleteFields: Object.hasOwn(current, "expiresAt") ? ["expiresAt"] : [] },
+    );
+    return {
+      ...current,
+      attemptCount,
+      lastAttemptAt: claimedAt,
+      leaseToken,
+      leaseExpiresAt,
+      warningCodesLogged: nextWarningCodesLogged,
+      warningsToLog,
+    };
+  };
+
+  const finishTeamSchedulePublicationEvent = async (event, fields, deleteFields = []) => {
+    const db = requireFirestore();
+    if (db?.runTransaction) {
+      await db.runTransaction(async (transaction) => {
+        const ref = db.collection(COLLECTIONS.teamSchedulePublicationEvents).doc(event.id);
+        const snapshot = await transaction.get(ref);
+        if (!snapshot.exists || snapshot.data()?.leaseToken !== event.leaseToken) return;
+        await updateDocFields(
+          COLLECTIONS.teamSchedulePublicationEvents,
+          event.id,
+          fields,
+          { transaction, deleteFields },
+        );
+      });
+      return;
+    }
+    const current = await getDoc(COLLECTIONS.teamSchedulePublicationEvents, event.id);
+    if (!current || current.leaseToken !== event.leaseToken) return;
+    await updateDocFields(
+      COLLECTIONS.teamSchedulePublicationEvents,
+      event.id,
+      fields,
+      { deleteFields },
+    );
+  };
+
+  const scheduleTeamSchedulePublicationEventRetry = (eventId, delayMs) => {
+    const previous = publicationEventRetryTimers.get(eventId);
+    if (previous) clearTimeout(previous);
+    const timer = setTimeout(() => {
+      publicationEventRetryTimers.delete(eventId);
+      void processTeamSchedulePublicationEvent(eventId);
+    }, delayMs);
+    timer.unref?.();
+    publicationEventRetryTimers.set(eventId, timer);
+  };
+
+  const processTeamSchedulePublicationEvent = async (eventId) => {
+    if (publicationEventInFlight.has(eventId)) return;
+    publicationEventInFlight.add(eventId);
+    let claimed = null;
+    try {
+      claimed = await claimTeamSchedulePublicationEvent(eventId);
+      if (!claimed) return;
+      for (const warningCode of claimed.warningsToLog || []) {
+        console.error("Team schedule publication event needs attention; automatic retries continue.", {
+          eventId: claimed.id,
+          scheduleId: claimed.scheduleId,
+          kind: claimed.kind,
+          warningCode,
+          attemptCount: claimed.attemptCount,
+          ageHours: Math.floor((Date.now() - new Date(claimed.createdAt).getTime()) / 3_600_000),
+          lastErrorName: claimed.lastErrorName || "",
+          action: "Check the event downstream delivery target and Firestore record; the recovery worker will keep retrying.",
+        });
+      }
+      const delivered = await runPostCommitSideEffect(
+        `schedule publication ${claimed.kind}`,
+        () => deliverTeamSchedulePublicationEvent(claimed),
+      );
+      if (delivered) {
+        const completedAt = nowIso();
+        await finishTeamSchedulePublicationEvent(claimed, {
+          status: "completed",
+          completedAt,
+          expiresAt: new Date(new Date(completedAt).getTime() + TEAM_SCHEDULE_PUBLICATION_EVENT_TTL_MS),
+          leaseToken: "",
+          leaseExpiresAt: "",
+          nextAttemptAt: "",
+          lastErrorName: "",
+        });
+        const timer = publicationEventRetryTimers.get(eventId);
+        if (timer) clearTimeout(timer);
+        publicationEventRetryTimers.delete(eventId);
+      } else {
+        const delayMs = publicationEventRetryDelay(claimed.attemptCount);
+        const nextAttemptAt = new Date(Date.now() + delayMs).toISOString();
+        await finishTeamSchedulePublicationEvent(claimed, {
+          status: "pending",
+          nextAttemptAt,
+          lastErrorName: "PostCommitDeliveryFailed",
+          leaseToken: "",
+          leaseExpiresAt: "",
+        }, ["expiresAt"]);
+        scheduleTeamSchedulePublicationEventRetry(eventId, delayMs);
+      }
+    } catch (error) {
+      console.error("Could not process a durable team schedule publication event.", error);
+      if (claimed) {
+        const delayMs = publicationEventRetryDelay(claimed.attemptCount);
+        try {
+          await finishTeamSchedulePublicationEvent(claimed, {
+            status: "pending",
+            nextAttemptAt: new Date(Date.now() + delayMs).toISOString(),
+            lastErrorName: error?.name || "Error",
+            leaseToken: "",
+            leaseExpiresAt: "",
+          }, ["expiresAt"]);
+        } catch (releaseError) {
+          console.error("Could not release a durable team schedule publication event lease.", releaseError);
+        }
+        scheduleTeamSchedulePublicationEventRetry(eventId, delayMs);
+      }
+    } finally {
+      publicationEventInFlight.delete(eventId);
+    }
+  };
+
+  const recoverPendingTeamSchedulePublicationEvents = async () => {
+    if (publicationEventRecoveryInFlight) return;
+    publicationEventRecoveryInFlight = true;
+    try {
+      const events = await queryDocs(
+        COLLECTIONS.teamSchedulePublicationEvents,
+        [{ field: "status", value: "pending" }],
+        {
+          limit: TEAM_SCHEDULE_PUBLICATION_EVENT_RECOVERY_LIMIT,
+          orderById: true,
+          startAfterId: publicationEventRecoveryCursor,
+        },
+      );
+      publicationEventRecoveryCursor = events.length === TEAM_SCHEDULE_PUBLICATION_EVENT_RECOVERY_LIMIT
+        ? events.at(-1)?.id || ""
+        : "";
+      await Promise.all(events.map((event) => processTeamSchedulePublicationEvent(event.id)));
+    } catch (error) {
+      console.error("Could not scan durable team schedule publication events.", error);
+    } finally {
+      publicationEventRecoveryInFlight = false;
+    }
+  };
+
+  const startTeamSchedulePublicationEventRecovery = () => {
+    if (publicationEventRecoveryTimer) return;
+    void recoverPendingTeamSchedulePublicationEvents();
+    publicationEventRecoveryTimer = setInterval(
+      () => void recoverPendingTeamSchedulePublicationEvents(),
+      TEAM_SCHEDULE_PUBLICATION_EVENT_RECOVERY_INTERVAL_MS,
+    );
+    publicationEventRecoveryTimer.unref?.();
+  };
+
+  const updateTeamSchedulePublication = async (req, published) => {
+    const { churchId, scheduleId } = req.params;
+    const existing = await assertTeamEntityInChurch(
+      "schedule",
+      scheduleId,
+      churchId,
+      { label: "Schedule" },
+    );
+    await assertTeamEntityInChurch("team", existing.teamId, churchId, {
+      label: "Team",
+    });
+    const admin = await requireTeamsEditForTeam(req, churchId, existing.teamId);
+    const actorUid = sessionActorUid(admin);
+    const updatedAt = nowIso();
+    const update = { published, updatedAt, updatedByUid: actorUid };
+    const publicationId = createId("teamSchedulePublication");
+    const securityEvent = {
+      eventId: createId("event"),
+      createdAt: updatedAt,
+      type: published ? "team_schedule_published" : "team_schedule_unpublished",
+      churchId,
+      userId: actorUid,
+      scheduleId,
+    };
+    const buildPublicationEvents = (schedule) => {
+      const base = {
+        churchId,
+        scheduleId,
+        createdAt: updatedAt,
+        status: "pending",
+        attemptCount: 0,
+        nextAttemptAt: updatedAt,
+        leaseToken: "",
+        leaseExpiresAt: "",
+      };
+      const minimalOccurrences = (Array.isArray(schedule.occurrences) ? schedule.occurrences : [])
+        .map((occurrence) => ({
+          startsAt: occurrence?.startsAt || "",
+          serviceId: occurrence?.serviceId || "",
+          ...(Array.isArray(occurrence?.serviceIds) ? { serviceIds: occurrence.serviceIds } : {}),
+        }));
+      return [
+        {
+          ...base,
+          id: `${publicationId}_audit`,
+          kind: "security_audit",
+          securityEvent,
+        },
+        {
+          ...base,
+          id: `${publicationId}_teams`,
+          kind: "teams_schedule_update",
+        },
+        {
+          ...base,
+          id: `${publicationId}_public_plans`,
+          kind: "public_plan_invalidation",
+          revision: updatedAt,
+          occurrences: minimalOccurrences,
+        },
+      ];
+    };
+    const validateCurrent = async (current, readTeam) => {
+      if (!current || current.churchId !== churchId) {
+        throw httpError(404, "Schedule not found.");
+      }
+      if (current.archivedAt) {
+        throw httpError(400, "Schedule is archived.");
+      }
+      if (current.teamId !== existing.teamId) {
+        throw httpError(409, "This schedule's Team changed. Refresh before continuing.");
+      }
+      const team = await readTeam(current.teamId);
+      if (!team || team.churchId !== churchId) {
+        throw httpError(404, "Team not found.");
+      }
+      if (team.archivedAt) {
+        throw httpError(400, "Team is archived.");
+      }
+      return current;
+    };
+
+    const db = requireFirestore();
+    let result;
+    if (db?.runTransaction) {
+      result = await db.runTransaction(async (transaction) => {
+        const scheduleRef = db.collection(COLLECTIONS.teamSchedules).doc(scheduleId);
+        const scheduleSnapshot = await transaction.get(scheduleRef);
+        if (!scheduleSnapshot.exists) {
+          throw httpError(404, "Schedule not found.");
+        }
+        const current = await validateCurrent(
+          { scheduleId: scheduleSnapshot.id, ...scheduleSnapshot.data() },
+          async (teamId) => {
+            const teamSnapshot = await transaction.get(
+              db.collection(COLLECTIONS.teams).doc(teamId),
+            );
+            return teamSnapshot.exists
+              ? { teamId: teamSnapshot.id, ...teamSnapshot.data() }
+              : null;
+          },
+        );
+        if ((current.published !== false) === published) {
+          return { schedule: current, changed: false };
+        }
+        const events = buildPublicationEvents(current);
+        transaction.update(scheduleRef, update);
+        events.forEach((event) => transaction.set(
+          db.collection(COLLECTIONS.teamSchedulePublicationEvents).doc(event.id),
+          event,
+          { merge: false },
+        ));
+        return {
+          schedule: { ...current, ...update },
+          changed: true,
+          operationIds: events.map((event) => event.id),
+        };
+      });
+    } else {
+      result = await enqueueInMemoryScheduleSave(scheduleId, () =>
+        withScheduleOccurrenceLocks(
+          [`schedule:${churchId}:${scheduleId}`],
+          async () => {
+            const rawCurrent = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+            const current = await validateCurrent(
+              rawCurrent ? { scheduleId, ...rawCurrent } : null,
+              (teamId) => getDoc(COLLECTIONS.teams, teamId),
+            );
+            if ((current.published !== false) === published) {
+              return { schedule: current, changed: false };
+            }
+            await updateDocFields(COLLECTIONS.teamSchedules, scheduleId, update);
+            const events = buildPublicationEvents(current);
+            try {
+              await Promise.all(events.map((event) =>
+                setDoc(COLLECTIONS.teamSchedulePublicationEvents, event.id, event),
+              ));
+            } catch (error) {
+              console.error("Could not persist in-memory schedule publication events.", error);
+            }
+            return {
+              schedule: { ...current, ...update },
+              changed: true,
+              operationIds: events.map((event) => event.id),
+            };
+          },
+        ),
+      );
+    }
+
+    if (result.changed) {
+      await Promise.all((result.operationIds || []).map((eventId) =>
+        processTeamSchedulePublicationEvent(eventId),
+      ));
+    }
+    return result.schedule;
+  };
+
   return {
     ...createVolunteerPortalHandlers({
       getAccessStore: getVolunteerAccessStore, appBaseUrl: APP_BASE_URL,
@@ -12903,6 +13596,8 @@ export const createTeamsAuthHandlers = ({
       saveBlockouts: saveVolunteerBlockouts, getAvailability: getVolunteerAvailability,
       submitAvailability: submitVolunteerAvailability,
     }),
+    recoverPendingTeamSchedulePublicationEvents,
+    startTeamSchedulePublicationEventRecovery,
     prepareAvailabilityNotificationRecipients,
     prepareScheduleInitialSmsRecipients,
     resolveAvailabilityNotificationContext,
@@ -17088,6 +17783,26 @@ export const createTeamsAuthHandlers = ({
       }
     },
 
+    async publishTeamSchedule(req, res) {
+      try {
+        await assertCsrf(req);
+        const schedule = await updateTeamSchedulePublication(req, true);
+        return res.json({ success: true, schedule });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not publish this schedule.");
+      }
+    },
+
+    async unpublishTeamSchedule(req, res) {
+      try {
+        await assertCsrf(req);
+        const schedule = await updateTeamSchedulePublication(req, false);
+        return res.json({ success: true, schedule });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not unpublish this schedule.");
+      }
+    },
+
     /**
      * What an emailed link is asking about.
      *
@@ -19320,14 +20035,11 @@ export const createTeamsAuthHandlers = ({
             throw httpError(409, "Team positions changed while this schedule was opening. Refresh and try again.");
           }
         };
-        if (
-          payload.serviceIds.some(
-            (serviceId) => !activeServicesById.has(serviceId),
-          )
-        ) {
+        const missingServiceId = payload.serviceIds.find((serviceId) => !activeServicesById.has(serviceId));
+        if (missingServiceId) {
           throw httpError(
             400,
-            "Choose active services for this schedule period.",
+            `Service (${missingServiceId}) is not saved or is no longer active. Wait for Service setup to finish saving, then refresh Scheduling and try again.`,
           );
         }
         for (const occurrence of payload.occurrences) {
@@ -19432,19 +20144,6 @@ export const createTeamsAuthHandlers = ({
               schedule.churchId === churchId && !schedule.archivedAt &&
               schedule.teamId === payload.teamId,
             );
-            const ambiguousSavedSchedule = activeTeamSchedules.find((schedule) =>
-              schedule.startDate && schedule.endDate &&
-              schedule.startDate <= payload.endDate && schedule.endDate >= payload.startDate &&
-              hasOccurrenceIdentityAmbiguity(
-                schedule.occurrences || [],
-                payload.occurrences,
-                timeZone,
-              ),
-            );
-            if (ambiguousSavedSchedule) {
-              throw ownershipError("A saved schedule has occurrence rows that cannot be matched safely. Its data was preserved; review it before adding services.");
-            }
-
             const ownersByOccurrenceId = new Map();
             for (const occurrence of payload.occurrences) {
               const owners = activeTeamSchedules.filter((schedule) => {
@@ -19453,7 +20152,7 @@ export const createTeamsAuthHandlers = ({
                   [occurrence],
                   timeZone,
                 );
-                if (match.ambiguousCurrentIds.size) throw ownershipError("A saved schedule has an ambiguous service identity. Its data was preserved; review it before adding services.");
+                if (match.ambiguousCurrentIds.size) throw ownershipError("A saved schedule has an ambiguous service identity that cannot be matched safely. Its data was preserved; review it before adding services.");
                 return match.matches.has(occurrence.occurrenceId);
               });
               if (owners.length > 1) throw ownershipError();
@@ -19477,8 +20176,14 @@ export const createTeamsAuthHandlers = ({
             );
             const candidates = exact.length ? exact : periodCandidates;
             const operatorSelectedScheduleId = normalizeShortText(req.body?.operatorSelectedScheduleId, { max: 160 });
+            const operatorSelectedInRange = activeTeamSchedules.find((schedule) =>
+              schedule.scheduleId === operatorSelectedScheduleId &&
+              schedule.startDate && schedule.endDate &&
+              schedule.startDate <= payload.startDate && schedule.endDate >= payload.endDate,
+            );
             const canonicalCandidates = candidates.filter(isCanonicalPeriodSchedule);
             const selected = candidates.find((schedule) => schedule.scheduleId === operatorSelectedScheduleId) ||
+              operatorSelectedInRange ||
               [...candidates].sort((left, right) =>
                 Number(hasScheduleOperationalData(right)) - Number(hasScheduleOperationalData(left)) ||
                 Number(canonicalCandidates.includes(right)) - Number(canonicalCandidates.includes(left)) ||
@@ -19581,6 +20286,7 @@ export const createTeamsAuthHandlers = ({
                   schedule: result.schedule,
                   activeSchedules: allSchedules.filter((item) => item.teamId === payload.teamId && !item.archivedAt),
                   timeZone,
+                  allowUnrelatedDuplicateOccurrences: true,
                   transaction,
                   db,
                 });
@@ -19641,6 +20347,7 @@ export const createTeamsAuthHandlers = ({
                   schedule: result.schedule,
                   activeSchedules: allSchedules.filter((item) => item.teamId === payload.teamId && !item.archivedAt),
                   timeZone,
+                  allowUnrelatedDuplicateOccurrences: true,
                 });
                 if (result.updated) await setDoc(COLLECTIONS.teamSchedules, targetId, result.schedule, { merge: false });
                 return { ...result, created: false };
@@ -19757,7 +20464,7 @@ export const createTeamsAuthHandlers = ({
             payload,
           });
         }
-        payload = { ...payload, source: "custom" };
+        payload = { ...payload, source: "custom", published: false };
         const admin = await requireTeamsEditForTeam(
           req,
           req.params.churchId,
@@ -20283,6 +20990,51 @@ export const createTeamsAuthHandlers = ({
       }
     },
 
+    async streamServicePlanUpdates(req, res) {
+      const churchId = req.params.churchId;
+      let subscriber = null;
+      let heartbeat = null;
+      let streamStarted = false;
+      let closed = false;
+      const cleanup = () => {
+        if (closed) return;
+        closed = true;
+        if (heartbeat) clearInterval(heartbeat);
+        if (subscriber) removeServicePlanSseClient(churchId, subscriber);
+      };
+
+      try {
+        await requireServicesView(req, churchId);
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+        res.flushHeaders?.();
+        streamStarted = true;
+
+        subscriber = { write: (chunk) => res.write(chunk) };
+        addServicePlanSseClient(churchId, subscriber);
+        heartbeat = setInterval(() => {
+          res.write(": keep-alive\n\n");
+        }, 25000);
+        req.on("close", () => {
+          cleanup();
+          res.end();
+        });
+        res.write(`data: ${JSON.stringify({ type: "connected", churchId })}\n\n`);
+      } catch (error) {
+        cleanup();
+        if (streamStarted) {
+          res.end();
+          return;
+        }
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not open the service plan update stream.",
+        );
+      }
+    },
+
     async updateChurchServiceTimeZone(req, res) {
       try {
         await assertCsrf(req);
@@ -20611,7 +21363,7 @@ export const createTeamsAuthHandlers = ({
           });
           servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
         }
-        emitTeamsEvent(churchId, "service-plan-updated", {
+        emitServicePlanEvent(churchId, "service-plan-updated", {
           planKey: servicePlan.planKey,
           saveOperationId: payload.saveOperationId,
         });
@@ -20881,7 +21633,7 @@ export const createTeamsAuthHandlers = ({
             buildServicePlanDocId(churchId, planKey),
           );
           if (plan)
-            emitTeamsEvent(churchId, "service-plan-updated", {
+            emitServicePlanEvent(churchId, "service-plan-updated", {
               planKey: plan.planKey,
             });
         }
@@ -21297,7 +22049,7 @@ export const createTeamsAuthHandlers = ({
           merge: true,
         });
         const servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
-        emitTeamsEvent(churchId, "service-plan-updated", {
+        emitServicePlanEvent(churchId, "service-plan-updated", {
           planKey: servicePlan.planKey,
         });
         await emitPublicServicePlanUpdated(
@@ -21494,7 +22246,7 @@ export const createTeamsAuthHandlers = ({
           { merge: true },
         );
         const servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
-        emitTeamsEvent(churchId, "service-plan-updated", {
+        emitServicePlanEvent(churchId, "service-plan-updated", {
           planKey: servicePlan.planKey,
         });
         await emitPublicServicePlanUpdated(
@@ -21541,7 +22293,7 @@ export const createTeamsAuthHandlers = ({
           { merge: true },
         );
         const servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
-        emitTeamsEvent(churchId, "service-plan-updated", {
+        emitServicePlanEvent(churchId, "service-plan-updated", {
           planKey: servicePlan.planKey,
         });
         await emitPublicServicePlanUpdated(
@@ -21624,7 +22376,7 @@ export const createTeamsAuthHandlers = ({
         const docId = buildServicePlanDocId(churchId, planKey);
         const existing = await getDoc(COLLECTIONS.servicePlans, docId);
         await deleteDoc(COLLECTIONS.servicePlans, docId);
-        emitTeamsEvent(churchId, "service-plan-removed", { planKey });
+        emitServicePlanEvent(churchId, "service-plan-removed", { planKey });
         // Deleting revokes public access just as unpublishing does, so already
         // open viewers must be told to re-fetch (and get a 404) instead of
         // sitting on a snapshot of now-deleted serving notes. `published` is
@@ -22574,15 +23326,55 @@ export const createTeamsAuthHandlers = ({
             assignment: raw?.assignment || "",
           };
         });
+        const rawOperationId = req.body?.operationId;
+        const operationId = rawOperationId == null
+          ? ""
+          : normalizeShortText(rawOperationId, { max: 100 });
+        if (
+          rawOperationId != null &&
+          (typeof rawOperationId !== "string" || !/^[A-Za-z0-9_-]{1,100}$/.test(operationId))
+        ) {
+          throw httpError(400, "An assignment operation ID is invalid.");
+        }
+        const confirmedFingerprint = normalizeAllowOccurrenceConflict(req.body);
+        const skipChangedCells = req.body?.skipChangedCells === true;
+        const canonicalCell = (cell) => {
+          const normalized = normalizeScheduleAssignmentCell(cell);
+          return {
+            primaryMemberId: normalized.primaryMemberId,
+            shadows: [...normalized.shadows].sort(
+              (a, b) => a.memberId.localeCompare(b.memberId) || a.kind.localeCompare(b.kind),
+            ),
+          };
+        };
+        const operationFingerprint = operationId
+          ? hashValue(JSON.stringify({
+              churchId: req.params.churchId,
+              scheduleId: req.params.scheduleId,
+              skipChangedCells,
+              confirmedFingerprint,
+              changes: changes.map((change) => ({
+                serviceId: change.serviceId,
+                positionSlotKey: change.positionSlotKey,
+                serviceDate: change.serviceDate,
+                expectedCell: canonicalCell(change.expectedCell),
+                assignment: canonicalCell(change.assignment),
+              })),
+            }))
+          : "";
         const result = await updateTeamScheduleAssignmentsBatchInStore({
           churchId: req.params.churchId,
           scheduleId: req.params.scheduleId,
           changes,
-          confirmedFingerprint: normalizeAllowOccurrenceConflict(req.body),
-          skipChangedCells: req.body?.skipChangedCells === true,
+          confirmedFingerprint,
+          skipChangedCells,
           adminUserId: admin.user.uid,
+          operationId,
+          operationFingerprint,
         });
-        emitTeamsEvent(req.params.churchId, "schedule-updated", { schedule: result.schedule });
+        if (!result.replayed) {
+          emitTeamsEvent(req.params.churchId, "schedule-updated", { schedule: result.schedule });
+        }
         return res.json({ success: true, ...result });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not update these assignments.");

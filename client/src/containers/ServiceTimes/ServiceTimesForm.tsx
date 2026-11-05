@@ -31,6 +31,8 @@ import { cn } from "@/utils/cnHelper";
 import StreamPreview from "./StreamPreview";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { serverDate } from "../../utils/serverTime";
+import { useChurchServiceTimeZone } from "../../context/churchServiceTimeZone";
+import { oneTimeServiceInstant } from "../../utils/teamScheduleOccurrences";
 
 const DEFAULT_COLOR = "#ffffff";
 const DEFAULT_BG = "#000000a1";
@@ -49,6 +51,7 @@ const ServiceTimesForm = ({
   onCancel,
 }: Props) => {
   const { isMobile } = useContext(ControllerInfoContext) || {};
+  const { timeZone } = useChurchServiceTimeZone();
   const isEditing = Boolean(editingId);
 
   // All form state lives here so typing doesn't re-render the parent
@@ -160,7 +163,7 @@ const ServiceTimesForm = ({
 
   const canSave = useMemo(() => {
     if (!name) return false;
-    if (recurrence === "one_time") return !!dateTimeISO;
+    if (recurrence === "one_time") return Boolean(timeZone && oneTimeServiceInstant(dateTimeISO, timeZone));
     if (recurrence === "weekly") return time.length > 0;
     if (recurrence === "monthly") return time.length > 0;
     if (recurrence === "multi_weekly")
@@ -168,7 +171,7 @@ const ServiceTimesForm = ({
         daysOfWeek.length > 0 && daysOfWeek.every((d) => d.time.length > 0)
       );
     return false;
-  }, [name, recurrence, dateTimeISO, time, daysOfWeek]);
+  }, [name, recurrence, dateTimeISO, time, daysOfWeek, timeZone]);
 
   const handleSave = () => {
     if (!editingId && !canSave) return;
@@ -199,7 +202,9 @@ const ServiceTimesForm = ({
         recurrence !== "one_time" && recurrence !== "multi_weekly"
           ? time
           : undefined,
-      dateTimeISO: recurrence === "one_time" ? dateTimeISO : undefined,
+      dateTimeISO: recurrence === "one_time" && timeZone
+        ? oneTimeServiceInstant(dateTimeISO, timeZone)?.toISOString()
+        : undefined,
       dayOfWeek: recurrence === "weekly" ? dayOfWeek : undefined,
       daysOfWeek: recurrence === "multi_weekly" ? daysOfWeek : undefined,
       startDateISO: hasBounds ? startDateISO || undefined : undefined,
@@ -263,6 +268,7 @@ const ServiceTimesForm = ({
                   labelClassName={labelClassName}
                   value={dateTimeISO}
                   onChange={setDateTimeISO}
+                  disabled={!timeZone}
                 />
               )}
 

@@ -20,6 +20,8 @@ export const SCHEDULE_UNDO_LIMIT = 100;
 export type ScheduleUndoStack = {
   canUndo: boolean;
   canRedo: boolean;
+  undoEntry: ScheduleUndoEntry | undefined;
+  redoEntry: ScheduleUndoEntry | undefined;
   /** Label of the step the next undo would revert, for tooltips. */
   undoLabel: string | null;
   /** Label of the step the next redo would re-apply, for tooltips. */
@@ -80,12 +82,16 @@ export const useScheduleUndoStack = (): ScheduleUndoStack => {
 
   const undoStack = undoRef.current;
   const redoStack = redoRef.current;
+  const undoEntry = undoStack[undoStack.length - 1];
+  const redoEntry = redoStack[redoStack.length - 1];
 
   return {
     canUndo: undoStack.length > 0,
     canRedo: redoStack.length > 0,
-    undoLabel: undoStack.length ? undoStack[undoStack.length - 1].label : null,
-    redoLabel: redoStack.length ? redoStack[redoStack.length - 1].label : null,
+    undoEntry,
+    redoEntry,
+    undoLabel: undoEntry?.label || null,
+    redoLabel: redoEntry?.label || null,
     record,
     takeUndo,
     takeRedo,

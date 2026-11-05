@@ -356,6 +356,11 @@ const normalizePlanningCenter = (raw) => {
       INTEGRATIONS_MAX_LABEL,
       "Planning Center account label",
     ),
+    accountId: clampString(
+      safe.accountId,
+      INTEGRATIONS_MAX_LABEL,
+      "Planning Center account ID",
+    ),
     lastError: clampString(
       safe.lastError,
       INTEGRATIONS_MAX_STRING,

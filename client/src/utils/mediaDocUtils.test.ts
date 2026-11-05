@@ -2,6 +2,7 @@ import {
   addMediaItem,
   loadMediaLibrary,
   mediaItemDocId,
+  MediaFolderMembershipChangedError,
   normalizeMediaDoc,
   parseMediaReplicationDoc,
   persistMediaLibraryChanges,
@@ -191,7 +192,7 @@ describe("v2 media repository", () => {
     expect(db.remove).toHaveBeenCalledWith(expect.objectContaining({ _id: mediaItemDocId("delete") }));
   });
 
-  it("preserves media replicated after a folder operation captured its list", async () => {
+  it("aborts folder finalization when replicated media joins after its membership snapshot", async () => {
     const folder = { id: "folder", name: "Folder", parentId: null } as MediaFolder;
     const beforeItem = { ...media("known"), folderId: "folder" };
     const persisted = new Map<string, any>([
@@ -211,15 +212,45 @@ describe("v2 media repository", () => {
       remove: jest.fn(async (doc: any) => { persisted.delete(doc._id); return { ok: true }; }),
     } as unknown as PouchDB.Database;
 
-    await persistMediaLibraryChanges(
+    await expect(persistMediaLibraryChanges(
       db,
       { list: [beforeItem], folders: [folder] },
       { list: [{ ...beforeItem, folderId: null }], folders: [] },
-    );
+    )).rejects.toBeInstanceOf(MediaFolderMembershipChangedError);
 
-    expect(persisted.get(mediaItemDocId("known"))?.folderId).toBeNull();
-    expect(persisted.get(mediaItemDocId("remote"))?.folderId).toBeNull();
+    expect(persisted.get(mediaItemDocId("known"))?.folderId).toBe("folder");
+    expect(persisted.get(mediaItemDocId("remote"))?.folderId).toBe("folder");
     expect(db.remove).not.toHaveBeenCalled();
+  });
+
+  it("catches an insertion after the controller check and before the folder write", async () => {
+    const target = folder("deleted", null);
+    const { db, docs } = makePersistedDb([target]);
+    const getMock = db.get as jest.Mock;
+    const originalGet = getMock.getMockImplementation()!;
+    let folderReads = 0;
+    getMock.mockImplementation(async (id: string) => {
+      if (id === "media-folders") {
+        folderReads += 1;
+        if (folderReads === 2) {
+          const item = { ...media("arrived-at-final-write"), folderId: target.id };
+          docs.set(mediaItemDocId(item.id), {
+            ...item, _id: mediaItemDocId(item.id), docType: "mediaItem", _rev: "1",
+          });
+        }
+      }
+      return originalGet(id);
+    });
+
+    await expect(persistMediaLibraryChanges(
+      db,
+      { list: [], folders: [target] },
+      { list: [], folders: [] },
+    )).rejects.toBeInstanceOf(MediaFolderMembershipChangedError);
+
+    expect(docs.get(mediaItemDocId("arrived-at-final-write"))?.folderId).toBe(target.id);
+    expect(docs.get("media-folders").folders).toContainEqual(target);
+    expect(db.put).not.toHaveBeenCalledWith(expect.objectContaining({ _id: "media-folders" }));
   });
 
   it("rehomes a PouchDB-only child when its parent folder is deleted", async () => {
@@ -367,7 +398,7 @@ describe("v2 media repository", () => {
     expect(docs.get("media-folders").folders).not.toContainEqual(expect.objectContaining({ id: target.id }));
   });
 
-  it("rehomes PouchDB-only media through deleted nested folders using the latest parent chain", async () => {
+  it("requires PouchDB-only media in a deleted subtree to be processed before finalization", async () => {
     const originalParent = folder("original-parent", null);
     const latestParent = folder("latest-parent", null);
     const target = folder("deleted", latestParent.id);
@@ -378,17 +409,17 @@ describe("v2 media repository", () => {
       [pouchOnlyMedia],
     );
 
-    await persistMediaLibraryChanges(
+    await expect(persistMediaLibraryChanges(
       db,
       { list: [], folders: [originalParent, latestParent, { ...target, parentId: originalParent.id }, nestedDeleted] },
       { list: [], folders: [originalParent, latestParent] },
-    );
+    )).rejects.toBeInstanceOf(MediaFolderMembershipChangedError);
 
-    expect(docs.get(mediaItemDocId(pouchOnlyMedia.id))?.folderId).toBe(latestParent.id);
-    expect(docs.get("media-folders").folders).toEqual([originalParent, latestParent]);
+    expect(docs.get(mediaItemDocId(pouchOnlyMedia.id))?.folderId).toBe(nestedDeleted.id);
+    expect(docs.get("media-folders").folders).toContainEqual(target);
   });
 
-  it("ignores a stale local media folder assignment when the persisted item moved into the deleted folder", async () => {
+  it("aborts when a persisted item moved into the deleted folder during finalization", async () => {
     const staleFolder = folder("stale-folder", null);
     const survivingParent = folder("surviving-parent", null);
     const deletedFolder = folder("deleted-folder", survivingParent.id);
@@ -399,14 +430,14 @@ describe("v2 media repository", () => {
       [persistedItem],
     );
 
-    await persistMediaLibraryChanges(
+    await expect(persistMediaLibraryChanges(
       db,
       { list: [reduxItem], folders: [staleFolder, survivingParent, deletedFolder] },
       { list: [reduxItem], folders: [staleFolder, survivingParent] },
-    );
+    )).rejects.toBeInstanceOf(MediaFolderMembershipChangedError);
 
-    expect(docs.get(mediaItemDocId(reduxItem.id))?.folderId).toBe(survivingParent.id);
-    expect(docs.get("media-folders").folders).toEqual([staleFolder, survivingParent]);
+    expect(docs.get(mediaItemDocId(reduxItem.id))?.folderId).toBe(deletedFolder.id);
+    expect(docs.get("media-folders").folders).toContainEqual(deletedFolder);
   });
 
   it("rehomes Keep Contents media and child folders through the latest parent after a concurrent folder move", async () => {
@@ -551,19 +582,19 @@ describe("v2 media repository", () => {
     });
   });
 
-  it("moves PouchDB-only media from a deleted root folder to the library root", async () => {
+  it("leaves a deleted root folder intact until its unseen media is processed", async () => {
     const target = folder("deleted-root", null);
     const pouchOnlyMedia = { ...media("pouch-only-root-media"), folderId: target.id };
     const { db, docs } = makePersistedDb([target], [pouchOnlyMedia]);
 
-    await persistMediaLibraryChanges(
+    await expect(persistMediaLibraryChanges(
       db,
       { list: [], folders: [target] },
       { list: [], folders: [] },
-    );
+    )).rejects.toBeInstanceOf(MediaFolderMembershipChangedError);
 
-    expect(docs.get(mediaItemDocId(pouchOnlyMedia.id))?.folderId).toBeNull();
-    expect(docs.get("media-folders").folders).toEqual([]);
+    expect(docs.get(mediaItemDocId(pouchOnlyMedia.id))?.folderId).toBe(target.id);
+    expect(docs.get("media-folders").folders).toContainEqual(target);
   });
 
   it("preserves a concurrent valid media move when the rehome write gets a 409", async () => {

@@ -108,6 +108,40 @@ describe("buildSchedulePdf", () => {
     ).not.toThrow();
   });
 
+  it.each(LAYOUTS)(
+    "keeps required empty cells distinct from inactive cells in the %s PDF",
+    (layout) => {
+      const exportModel = model({
+        columnLabels: ["Camera"],
+        columnKeys: ["cam::0"],
+        groups: [
+          {
+            serviceName: "Sabbath",
+            timingLabel: "",
+            rows: [
+              {
+                occurrenceId: "o1",
+                rowLabel: "Jun 6",
+                cells: [{ state: "empty", highlighted: false, tokens: [] }],
+              },
+              {
+                occurrenceId: "o2",
+                rowLabel: "Jun 13",
+                cells: [{ state: "inactive", highlighted: false, tokens: [] }],
+              },
+            ],
+          },
+        ],
+      });
+      expect(formatExportCellText(exportModel.groups[0].rows[0].cells[0])).toBe("—");
+      expect(formatExportCellText(exportModel.groups[0].rows[1].cells[0])).toBe("");
+
+      const doc = buildSchedulePdf(exportModel, layout as ScheduleExportLayout);
+      expect(doc.getNumberOfPages()).toBeGreaterThanOrEqual(1);
+      expect(doc.output("arraybuffer").byteLength).toBeGreaterThan(0);
+    },
+  );
+
   it("includes microphone and IEM names in the same PDF cell text", () => {
     const exportModel = model({
       groups: [{

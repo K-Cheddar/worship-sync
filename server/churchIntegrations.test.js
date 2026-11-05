@@ -34,6 +34,7 @@ test("normalizeChurchIntegrationsForStorage applies defaults", () => {
   assert.equal(out.planningCenter.enabled, false);
   assert.equal(out.planningCenter.connected, false);
   assert.equal(out.planningCenter.accountLabel, "");
+  assert.equal(out.planningCenter.accountId, "");
 });
 
 test("normalizeChurchIntegrationsForStorage normalizes Canva status", () => {
@@ -59,6 +60,7 @@ test("normalizeChurchIntegrationsForStorage normalizes Planning Center status", 
       enabled: true,
       connected: true,
       accountLabel: "Example Church",
+      accountId: "org-123",
       lastError: "",
     },
   });
@@ -66,6 +68,7 @@ test("normalizeChurchIntegrationsForStorage normalizes Planning Center status", 
   assert.equal(out.planningCenter.enabled, true);
   assert.equal(out.planningCenter.connected, true);
   assert.equal(out.planningCenter.accountLabel, "Example Church");
+  assert.equal(out.planningCenter.accountId, "org-123");
 });
 
 test("normalizeChurchIntegrationsForStorage normalizes a full service planning config", () => {

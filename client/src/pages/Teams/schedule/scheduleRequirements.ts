@@ -104,7 +104,10 @@ export const getRequiredCount = (
 export type ScheduleSlotColumn = {
   /** Storage/assignment key: makeSlotKey(positionId, slot). */
   columnKey: string;
-  position: TeamPosition;
+  position: Pick<
+    TeamPosition,
+    "positionId" | "name" | "icon" | "groupId" | "archivedAt"
+  >;
   positionId: string;
   /** 0-based slot index within the position. */
   slot: number;
@@ -227,7 +230,10 @@ export const buildScheduleColumns = ({
   occurrences: { occurrenceId: string }[];
   requirementsByOccurrence: Map<string, PositionRequirement[]>;
   additionalPositionSlots?: Record<string, string[]>;
-  positions: TeamPosition[];
+  positions: Pick<
+    TeamPosition,
+    "positionId" | "name" | "icon" | "groupId" | "archivedAt"
+  >[];
   teamPositionIds: string[];
 }): ScheduleSlotColumn[] => {
   const maxCountByPosition = new Map<string, number>();

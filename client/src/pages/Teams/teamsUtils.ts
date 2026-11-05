@@ -29,7 +29,7 @@ import type { TeamSchedulePayload } from "../../api/auth";
 import type { MonthWeekOrdinal, ServiceTime, Weekday } from "../../types";
 import generateRandomId from "../../utils/generateRandomId";
 import { formatPlainDate, parsePlainDate } from "../../utils/plainDate";
-import { calendarDateInTimeZone, getOccurrenceDate } from "../../utils/teamScheduleOccurrences";
+import { calendarDateInTimeZone, getOccurrenceDate, oneTimeServiceInstant } from "../../utils/teamScheduleOccurrences";
 import { buildShareablePublicPathUrl } from "../../utils/environment";
 import { emptyData } from "./teamsConstants";
 import {
@@ -514,14 +514,20 @@ export const assignmentFailureKey = (serviceId: string, positionId: string) =>
   `${serviceId}|${positionId}`;
 
 export const normalizeAssignmentCell = (
-  cell?: TeamScheduleCellAssignment | null,
+  cell?: TeamScheduleCellAssignment | string | null,
 ) => {
+  if (typeof cell === "string") {
+    return {
+      primaryMemberId: cell.trim(),
+      shadows: [] as TeamScheduleShadowAssignment[],
+    };
+  }
   return {
-    primaryMemberId: String(cell?.primaryMemberId || ""),
+    primaryMemberId: String(cell?.primaryMemberId || "").trim(),
     shadows: (Array.isArray(cell?.shadows) ? cell.shadows : [])
       .map(
         (shadow): TeamScheduleShadowAssignment => ({
-          memberId: String(shadow.memberId || ""),
+          memberId: String(shadow.memberId || "").trim(),
           kind: shadow.kind === "reverse_shadow" ? "reverse_shadow" : "shadow",
         }),
       )
@@ -1236,10 +1242,10 @@ export const getServiceWeekdays = (
       return (service.daysOfWeek || []).map((entry) => entry.day);
     case "monthly":
       return service.weekday == null ? [] : [service.weekday];
-    case "one_time":
-      return service.dateTimeISO
-        ? [parsePlainDate(calendarDateInTimeZone(new Date(service.dateTimeISO), timeZone))?.getDay() ?? -1]
-        : [];
+    case "one_time": {
+      const instant = oneTimeServiceInstant(service.dateTimeISO, timeZone);
+      return instant ? [parsePlainDate(calendarDateInTimeZone(instant, timeZone))?.getDay() ?? -1] : [];
+    }
     default:
       return [];
   }
@@ -1256,13 +1262,15 @@ export const canServicesShareDay = (
   b: Partial<ServiceDayShape>,
   timeZone = "UTC",
 ): boolean => {
+  const aInstant = a.reccurence === "one_time" ? oneTimeServiceInstant(a.dateTimeISO, timeZone) : null;
+  const bInstant = b.reccurence === "one_time" ? oneTimeServiceInstant(b.dateTimeISO, timeZone) : null;
   const aDate =
-    a.reccurence === "one_time" && a.dateTimeISO
-      ? calendarDateInTimeZone(new Date(a.dateTimeISO), timeZone)
+    aInstant
+      ? calendarDateInTimeZone(aInstant, timeZone)
       : undefined;
   const bDate =
-    b.reccurence === "one_time" && b.dateTimeISO
-      ? calendarDateInTimeZone(new Date(b.dateTimeISO), timeZone)
+    bInstant
+      ? calendarDateInTimeZone(bInstant, timeZone)
       : undefined;
   if (aDate && bDate) return aDate === bDate;
   const aWeekdays = new Set(getServiceWeekdays(a, timeZone));
@@ -1422,6 +1430,10 @@ export const buildServiceTimeUpdate = (
     positionRequirements:
       draft.positionRequirements ?? existing?.positionRequirements,
     defaultPlanTemplateId: draft.defaultPlanTemplateId || undefined,
+    planningCenterServiceTypeId:
+      "planningCenterServiceTypeId" in draft
+        ? String(draft.planningCenterServiceTypeId || "").trim() || undefined
+        : existing?.planningCenterServiceTypeId,
     serviceGroupId: draft.serviceGroupId,
     archivedAt: existing?.archivedAt || null,
     createdAt: existing?.createdAt || new Date().toISOString(),

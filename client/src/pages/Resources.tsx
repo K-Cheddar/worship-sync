@@ -366,12 +366,12 @@ const ResourcesPage = () => {
                           ["source", "Source", "w-[24%]"],
                         ] as const).map(([key, label, width]) => (
                           <th key={key} scope="col" aria-sort={sortKey === key ? sortDirection === "asc" ? "ascending" : "descending" : "none"} className={`${width} px-4 py-1.5`}>
-                            <button type="button" className="flex cursor-pointer items-center gap-1 text-left hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400" onClick={() => changeSort(key)}>
+                            <Button type="button" variant="none" padding="p-0" className="flex max-md:min-h-0 cursor-pointer items-center gap-1 text-left text-sm font-normal hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400" onClick={() => changeSort(key)}>
                               {label}
                               {sortKey === key && sortDirection === "asc" ? <ArrowUp className="size-3.5" aria-hidden /> : null}
                               {sortKey === key && sortDirection === "desc" ? <ArrowDown className="size-3.5" aria-hidden /> : null}
                               {sortKey !== key ? <ArrowUpDown className="size-3.5" aria-hidden /> : null}
-                            </button>
+                            </Button>
                           </th>
                         ))}
                       </tr>

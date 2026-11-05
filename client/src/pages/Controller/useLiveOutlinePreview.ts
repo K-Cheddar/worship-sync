@@ -10,6 +10,7 @@ import {
 import type {
   DBItemLists,
   DBItemListDetails,
+  ItemList,
   ServiceItem as ServiceItemType,
 } from "../../types";
 
@@ -23,14 +24,19 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
   items: ServiceItemType[];
   isLoading: boolean;
 } => {
-  const { db, cloud, updater } = useContext(ControllerInfoContext) || {};
-  const reduxOutlines = useSelector((state) => state.undoable.present.itemLists.currentLists);
-  const registryInitialized = useSelector((state) => state.undoable.present.itemLists.isInitialized);
-  const reduxSelectedId = useSelector((state) =>
-    state.undoable.present.itemLists.selectedIdByScope[outlineScope],
+  const { db, cloud, updater, bootstrapReady } =
+    useContext(ControllerInfoContext) || {};
+  const reduxOutlines = useSelector(
+    (state) => state.undoable.present.itemLists.currentLists,
   );
-  const reduxLiveOutlineId = useSelector((state) =>
-    state.undoable.present.itemLists.activeList?._id,
+  const registryInitialized = useSelector(
+    (state) => state.undoable.present.itemLists.isInitialized,
+  );
+  const reduxSelectedId = useSelector(
+    (state) => state.undoable.present.itemLists.selectedIdByScope[outlineScope],
+  );
+  const reduxLiveOutlineId = useSelector(
+    (state) => state.undoable.present.itemLists.activeList?._id,
   );
   const [fallbackRegistry, setFallbackRegistry] = useState<{
     database: typeof db;
@@ -44,9 +50,35 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
     version: number;
     promise: Promise<DBItemLists>;
   } | undefined>(undefined);
-  const fallbackDocument = fallbackRegistry && fallbackRegistry.database === db
+  const activeListIdRef = useRef<string | undefined>(undefined);
+  const activeListScopeRef = useRef<string | undefined>(undefined);
+  const requestIdRef = useRef(0);
+  const scopeRef = useRef(outlineScope);
+  const bootstrapWasReadyRef = useRef(Boolean(bootstrapReady));
+  scopeRef.current = outlineScope;
+
+  const fallbackDocument = fallbackRegistry?.database === db
     ? fallbackRegistry.document
     : undefined;
+
+  const outlines = registryInitialized
+    ? reduxOutlines
+    : fallbackDocument?.itemLists ?? [];
+  const selectedId = registryInitialized
+    ? reduxSelectedId
+    : fallbackDocument?.selectedIdByScope?.[outlineScope];
+  const liveOutlineId = registryInitialized
+    ? reduxLiveOutlineId
+    : fallbackDocument?.activeList?._id;
+  const outlineId = resolveLiveOutlineId(
+    outlines,
+    outlineScope,
+    selectedId,
+    liveOutlineId,
+  );
+  const isLoadingRegistry = Boolean(
+    db && !registryInitialized && fallbackRegistry?.database !== db,
+  );
 
   useEffect(() => {
     if (registryInitialized || !db) return;
@@ -56,19 +88,25 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
       request = {
         database: db,
         version: registryVersion,
-        promise: db.get("ItemLists") as Promise<DBItemLists>,
+        promise: Promise.resolve().then(
+          () => db.get("ItemLists") as Promise<DBItemLists>,
+        ),
       };
       registryReadRef.current = request;
     }
     request.promise.then(
       (document) => {
         if (cancelled) return;
-        const fallbackOutlineId = resolveOutlineForScope(
+        const fallbackOutlineId = resolveLiveOutlineId(
           document.itemLists ?? [],
           outlineScope,
-          outlineScope === DEFAULT_OUTLINE_SCOPE ? document.activeList?._id : undefined,
-        )?._id;
-        if (activeListScopeRef.current !== outlineScope || activeListIdRef.current !== fallbackOutlineId) {
+          document.selectedIdByScope?.[outlineScope],
+          document.activeList?._id,
+        );
+        if (
+          activeListScopeRef.current !== outlineScope ||
+          activeListIdRef.current !== fallbackOutlineId
+        ) {
           setIsLoading(Boolean(fallbackOutlineId));
         }
         setFallbackRegistry({ database: db, document });
@@ -76,34 +114,15 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
       () => {
         if (cancelled) return;
         setIsLoading(false);
-        setFallbackRegistry((current) => current?.database === db ? current : { database: db });
+        setFallbackRegistry((current) =>
+          current?.database === db ? current : { database: db },
+        );
       },
     );
     return () => {
       cancelled = true;
     };
   }, [db, outlineScope, registryInitialized, registryVersion]);
-
-  const outlines = registryInitialized
-    ? reduxOutlines
-    : fallbackDocument?.itemLists ?? [];
-  const selectedId = registryInitialized ? reduxSelectedId : undefined;
-  const liveOutlineId = registryInitialized
-    ? reduxLiveOutlineId
-    : fallbackDocument?.activeList?._id;
-  const outlineId = resolveOutlineForScope(
-    outlines,
-    outlineScope,
-    selectedId ?? (outlineScope === DEFAULT_OUTLINE_SCOPE ? liveOutlineId : undefined),
-  )?._id;
-  const isLoadingRegistry = Boolean(
-    db && !registryInitialized && fallbackRegistry?.database !== db,
-  );
-  const activeListIdRef = useRef<string | undefined>(undefined);
-  const activeListScopeRef = useRef<string | undefined>(undefined);
-  const requestIdRef = useRef(0);
-  const scopeRef = useRef(outlineScope);
-  scopeRef.current = outlineScope;
 
   const loadOutlineItems = useCallback(
     async (
@@ -135,12 +154,16 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
       } catch {
         if (
           requestIdRef.current === requestId &&
-          scopeRef.current === requestScope
+          scopeRef.current === requestScope &&
+          showLoading
         ) {
-          if (showLoading) setItems([]);
+          setItems([]);
         }
       } finally {
-        if (requestIdRef.current === requestId && scopeRef.current === requestScope) {
+        if (
+          requestIdRef.current === requestId &&
+          scopeRef.current === requestScope
+        ) {
           setIsLoading(false);
         }
       }
@@ -151,12 +174,6 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
   const loadActiveList = useCallback(async () => {
     const requestId = ++requestIdRef.current;
     const requestScope = outlineScope;
-    if (
-      activeListIdRef.current !== undefined &&
-      activeListScopeRef.current !== requestScope
-    ) {
-      setIsLoading(true);
-    }
     const selectionChanged =
       activeListScopeRef.current !== requestScope ||
       activeListIdRef.current !== outlineId;
@@ -173,11 +190,24 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
     };
   }, [loadActiveList]);
 
+  useEffect(() => {
+    const becameReady = Boolean(bootstrapReady) && !bootstrapWasReadyRef.current;
+    bootstrapWasReadyRef.current = Boolean(bootstrapReady);
+    if (!becameReady) return;
+    const listId = activeListIdRef.current;
+    if (!listId || activeListScopeRef.current !== outlineScope) return;
+    const requestId = ++requestIdRef.current;
+    void loadOutlineItems(listId, requestId, outlineScope, false);
+  }, [bootstrapReady, loadOutlineItems, outlineScope]);
+
   const handleExternalUpdate = useCallback(
     (event: CustomEventInit) => {
       const updates = event.detail;
       if (!Array.isArray(updates)) return;
-      if (!registryInitialized && updates.some((update) => update._id === "ItemLists")) {
+      if (
+        !registryInitialized &&
+        updates.some((update) => update._id === "ItemLists")
+      ) {
         setRegistryVersion((version) => version + 1);
       }
       if (
@@ -205,4 +235,19 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
   useGlobalBroadcast(handleExternalUpdate);
 
   return { items, isLoading: isLoading || isLoadingRegistry };
+};
+
+const resolveLiveOutlineId = (
+  outlines: ItemList[],
+  outlineScope: string,
+  selectedId?: string,
+  liveOutlineId?: string,
+): string | undefined => {
+  const activePresentationOutline = outlineScope === DEFAULT_OUTLINE_SCOPE
+    ? resolveOutlineForScope(outlines, outlineScope, liveOutlineId)
+    : undefined;
+  const preferredId = activePresentationOutline?._id === liveOutlineId
+    ? liveOutlineId
+    : selectedId;
+  return resolveOutlineForScope(outlines, outlineScope, preferredId)?._id;
 };

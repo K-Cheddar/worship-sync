@@ -3452,8 +3452,76 @@ const applyServiceTimesAction = (
   services: ServiceTime[],
   action: Action,
   localServices: ServiceTime[],
-): ServiceTime[] => {
+): ServiceTime[] | undefined => {
   const timestamp = serverDate().toISOString();
+  if (serviceTimesSlice.actions.applyServiceGroupMutation.match(action)) {
+    const { primary, partnerUpdates, requiredPartnerIds = [] } = action.payload;
+    if (primary.mode === "delete") {
+      const deleted = services.find((service) => service.id === primary.id);
+      if (!deleted) return services;
+      let next = services.filter((service) => service.id !== primary.id);
+      if (deleted.serviceGroupId) {
+        const remaining = next.filter((service) => service.serviceGroupId === deleted.serviceGroupId);
+        if (remaining.length < 2) {
+          const remainingIds = new Set(remaining.map((service) => service.id));
+          next = next.map((service) => remainingIds.has(service.id)
+            ? { ...service, serviceGroupId: undefined, updatedAt: timestamp }
+            : service,
+          );
+        }
+      }
+      return sortServicesByScheduleOrder(next);
+    }
+    if (primary.mode === "add") {
+      if (services.some((service) => service.id === primary.service.id)) return services;
+    } else if (!services.some((service) => service.id === primary.service.id)) {
+      return services;
+    }
+    const existingIds = new Set(services.map((service) => service.id));
+    if (requiredPartnerIds.some((id) => !existingIds.has(id)) ||
+      (primary.service.serviceGroupId && requiredPartnerIds.length === 0)) {
+      // Returning undefined aborts this RTDB transaction. A stale editor may
+      // never commit a group whose selected partner disappeared concurrently.
+      return undefined;
+    }
+    const next = primary.mode === "add"
+      ? [...services, { ...primary.service, updatedAt: timestamp }]
+      : services.map((service) => service.id === primary.service.id
+        ? { ...service, ...primary.service, updatedAt: timestamp }
+        : service,
+      );
+    const affectedGroupIds = new Set<string>();
+    const addAffectedGroupId = (groupId: string | null | undefined) => {
+      if (groupId) affectedGroupIds.add(groupId);
+    };
+    const originalPrimary = services.find((service) => service.id === primary.service.id);
+    addAffectedGroupId(originalPrimary?.serviceGroupId);
+    addAffectedGroupId(primary.service.serviceGroupId);
+    const originalServicesById = new Map(services.map((service) => [service.id, service]));
+    partnerUpdates.forEach((update) => {
+      addAffectedGroupId(originalServicesById.get(update.id)?.serviceGroupId);
+      addAffectedGroupId(update.serviceGroupId);
+    });
+    const updatesById = new Map(partnerUpdates.map((update) => [update.id, update.serviceGroupId]));
+    const updated = next.map((service) =>
+      updatesById.has(service.id)
+        ? { ...service, serviceGroupId: updatesById.get(service.id), updatedAt: timestamp }
+        : service,
+    );
+    const memberCounts = new Map<string, number>();
+    updated.forEach((service) => {
+      if (service.serviceGroupId) {
+        memberCounts.set(service.serviceGroupId, (memberCounts.get(service.serviceGroupId) || 0) + 1);
+      }
+    });
+    return sortServicesByScheduleOrder(updated.map((service) =>
+      service.serviceGroupId &&
+      affectedGroupIds.has(service.serviceGroupId) &&
+      memberCounts.get(service.serviceGroupId) === 1
+        ? { ...service, serviceGroupId: undefined, updatedAt: timestamp }
+        : service,
+    ));
+  }
   if (serviceTimesSlice.actions.addService.match(action)) {
     if (services.some((service) => service.id === action.payload.id)) {
       return services;
@@ -3534,19 +3602,28 @@ listenerMiddleware.startListening({
       const result = await runTransaction(
         ref(firebaseDb, getChurchDataPath(churchId, "services")),
         (remote) =>
-          cleanObject(
-            applyServiceTimesAction(
+          (() => {
+            const next = applyServiceTimesAction(
               readFirebaseServices(remote),
               action,
               localServices,
-            ),
-          ),
+            );
+            return next === undefined ? undefined : cleanObject(next);
+          })(),
         { applyLocally: false },
       );
       if (globalFireDbInfo.churchId !== churchId) return;
+      const committedServices = readFirebaseServices(result.snapshot.val());
       listenerApi.dispatch(
-        syncServicesFromRemote(readFirebaseServices(result.snapshot.val())),
+        syncServicesFromRemote(committedServices),
       );
+      if (result.committed === false &&
+        serviceTimesSlice.actions.applyServiceGroupMutation.match(action) &&
+        action.payload.primary.mode !== "delete") {
+        notifyPresentationSyncError(
+          "A selected combined-service partner changed before the edit could be saved. Refresh the service list and try again.",
+        );
+      }
     } catch (error) {
       if (globalFireDbInfo.churchId !== churchId) return;
       listenerApi.dispatch(syncServicesFromRemote(previousServices));
@@ -4567,6 +4644,7 @@ const rootReducer: Reducer = (state: RootState, action: OutlineDatabaseAction) =
     itemLists: { ...present.itemLists, contentDatabaseKey: databaseKey },
     itemList: adoptingUnselectedDatabase ? { ...present.itemList, outlineOwnerKey: ownerKey } : itemListSlice.reducer(present.itemList, activate),
     overlays: adoptingUnselectedDatabase ? { ...present.overlays, outlineOwnerKey: ownerKey } : overlaysSlice.reducer(present.overlays, activate),
+    overlay: overlaySlice.reducer(present.overlay, activate),
   };
   return {
     ...next,

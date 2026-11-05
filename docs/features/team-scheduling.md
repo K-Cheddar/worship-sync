@@ -4,7 +4,7 @@
 
 **Approval source:** Product-owner request, “WorshipSync Scheduling Foundation, Phase 1,” supplied for this audit on 2026-10-12.
 
-**Last reviewed:** 2026-10-15
+**Last reviewed:** 2026-11-03
 
 **Phase 1 audit:** [Scheduling foundation audit](../team-scheduling-foundation-phase-1.md)
 
@@ -42,6 +42,14 @@ A schedule follows **Virtual → Draft ↔ Published**.
 - A saved schedule with no publication status is treated as Published so existing member visibility is preserved.
 - Publication applies to the whole schedule document. There is no church-level mode, per-occurrence publication state, or approval workflow.
 
+### Public view-only schedule links
+
+**Approval source:** Current product-owner request, 2026-11-04.
+
+- Each occurrence shows its saved position requirements and only the additional slots saved for that occurrence. Required but unassigned slots stay visible; assignments and equipment do not create staffing requirements by themselves.
+- When an occurrence has no requirement snapshot, resolve its service defaults. If neither the occurrence nor its service defines requirements, use the schedule editor's one-slot-per-team-position fallback only for legacy saved schedules; generated-period schedules do not use this fallback.
+- The public snapshot contains only the schedule fields needed to render the published view, and limits requirement and additional-slot data to the included occurrences and team positions. It excludes responses, guest contact details, and other private schedule data.
+
 ### Ownership and service inclusion
 
 - At most one active schedule owns a given team and logical occurrence. Different teams may schedule the same occurrence.
@@ -61,6 +69,14 @@ A schedule follows **Virtual → Draft ↔ Published**.
 - Archiving or removing a service does not destroy historical schedule records.
 - Publishing controls visibility; sending controls notifications. Both are deliberate and separate.
 - Assignment edits and publishing do not automatically send messages. Support sending relevant updates or selected services without needless resending.
+- An unmatched independent service is an addition, not an identity conflict. Include it automatically in an applicable saved schedule only after authoritative service validation and exclusive ownership checks. Retain the schedule ID, occurrence keys, assignments, equipment, responses, extra/optional slots, publication and notification history.
+- Reconciled services appear in the applicable schedule without a separate new-service banner, dismissal action, or review workflow. The workspace staffing summary uses the visible schedule occurrences and existing staffing calculation; it updates with optimistic assignment edits and incoming schedule changes. A virtual preview or loading schedule must not present an unpersisted assignment map as zero saved staffing. Show a completed state when all required positions are filled, and omit progress when there are no staffing requirements.
+- Genuine grouping and identity conflicts keep populated saved rows visible and their data unchanged. Reconcile only uniquely identifiable rows with no other active owner; leave conflicted rows untouched and block writes to them until their identity is validated. Do not show a comparison panel for routine additions. When duplicate ownership blocks an action, show a concise warning naming the affected service and link to schedule management.
+- Unchanged persisted rows with a unique owner remain editable during an unrelated reconciliation failure or conflict. New, changed or multiply owned rows still require strict validation; a preview is never evidence of persisted ownership.
+- Email and SMS send confirmations use only assignments saved in the selected schedule. They identify visible service previews that are excluded and show affected dates where practical. Sending does not reconcile services, create assignments or resolve conflicts; persisted but unassigned occurrences remain part of the saved schedule, and permitted sends remain available.
+- Historical schedules remain available through Schedule history. Routine reconciliation keeps the current period open and does not require switching to a saved-version comparison view.
+
+**Approval source:** Current product-owner request, 2026-11-03, service-addition scheduling workflow and staffing summary. The existing conservative protection for a name/instant collision with unresolved logical identity remains in force; it does not substitute one service ID for another.
 
 ### Forms and upcoming availability
 
@@ -119,6 +135,12 @@ Shared identity parity and preservation clarified by the October 21, 2026 Shared
 
 ## Product decisions
 
+Service additions and historical differences (product-owner request, 2026-11-03): preserve populated schedules while reconciling only unambiguous, exclusively owned rows. Historical Sabbath grouping differences in the regression fixture come from saved `group:sabbath` occurrences containing Worship + Study while the current test definitions omit `serviceGroupId` and generate two standalone rows. The read model correctly marks those mappings ambiguous; it cannot determine when a service grouping changed because no definition history is stored. The repository does not include a production schedule snapshot, so the live church data must not be inferred from this fixture. Unrelated additions are reconciled through the existing ensure transaction, while mismatched rows and all operational maps remain unchanged. See [root cause and historical verification](../team-scheduling-service-changes.md).
+
+Send scope (product-owner request, 2026-11-03): Email and SMS confirmations state that only saved assignments are included, identify unreconciled current previews and affected dates, and clarify that sending does not reconcile services, create assignments or resolve conflicts. A permitted send continues against the saved schedule when previews or conflicts remain; the email action does not invoke period reconciliation before sending. Delivery, publication, recipient, authorization, consent and deduplication rules are unchanged.
+
+One-time creation regression (product-owner request, 2026-11-03): service setup interprets picker wall times in the configured church timezone and persists an explicit instant. Legacy timezone-less picker values use that same church timezone when generating and validating occurrences. An unrelated reconciliation failure does not block a targeted assignment to an unchanged persisted row; new/unreconciled rows still require strict ensure validation. Existing ownership, operational data, publication, and notification safeguards remain. See [investigation and verification](../book-launch-scheduling-investigation.md).
+
 Review-correction guarantees (product-owner request, 2026-10-15): schedule metadata edits preserve persisted fields outside the validated editable payload, including responses, public links, publication and sending history. Superseded shadow retries cannot restore removed assignments or overwrite newer choices. Imported occurrences acquire the same exclusive ownership protection as schedule creation; absent standalone group IDs compare as null while genuine group conflicts remain blocked. These corrections do not enable messaging or change publication behavior.
 
 Repeatable scheduling verification (product-owner requests, 2026-10-20): browser tests always target built-in church `demo`; `E2E_DEMO_CHURCH_ID` is deprecated and only accepted when its value is `demo`. Before scheduling fixtures are provisioned or recovered, the saved authenticated server session must identify `demo` and have edit access to the reserved test-owned team. Smoke does not open Scheduling and blocks church-scoped mutations. A separate workflow suite exercises virtual viewing, first-edit Draft persistence, real reconciliation, deletion, and regeneration with exact ownership manifests and authoritative cleanup. Existing unowned demo records are preserved; neither suite enables publication or messaging. New generated schedules explicitly persist `published: false`; existing schedules retain their publication metadata. See [browser test configuration and cleanup](../testing/smoke-coverage.md).
@@ -157,11 +179,14 @@ These references locate current code, not additional product requirements.
 - Availability suggestion: client/src/pages/Teams/intakeAvailabilitySuggestion.ts
 - Service-plan occurrence lookup: client/src/pages/Services/servicePlanOccurrences.ts and client/src/utils/servicePlanKeys.ts
 - Server validation, persistence, member/public reads, and explicit sending: server/teamsAuthHandlers.js
+- Public schedule occurrence staffing and export rendering: client/src/pages/Teams/TeamSchedulePublic.tsx and client/src/pages/Teams/schedule/scheduleRequirements.ts
 - Focused current tests: client/src/pages/Teams/schedule/, client/src/utils/teamScheduleOccurrences.test.ts, client/src/pages/Services/servicePlanOccurrences.test.ts, and server/teamsApi.test.js
 
 ## Technical design notes
 
 The current schedule document is persisted in the teamSchedules collection. Its occurrence list is referenced by assignments, responses, guests, microphone and IEM allocations, and additional position slots. Availability forms and service plans keep their own occurrence references/keys. The Phase 1 report maps those relationships and the compatibility risks of changing them.
+
+Schedule Undo and Redo retries use a request ID and a private per-schedule receipt ledger. The server replays the original accepted and skipped cells for the same editor and request payload, so a lost acknowledgment can recover without treating a coincidentally matching cell value as proof of success. The ledger retains the 100 most recent batch outcomes per schedule, matching the local history limit. If a receipt is no longer retained, the request uses the ordinary guarded mutation path; the client never infers acceptance from the cell's final value.
 
 
 
@@ -180,3 +205,17 @@ Regression coverage: ScheduleAssignmentPicker.test.tsx, TeamsAndServices.test.ts
 
 
 Unified workspace Phase 1 (product-owner request, 2026-10-19): establish a pure Team/date-range read model across saved owners and generated occurrences, preserving saved occurrence keys, staffing overrides, custom services and unsafe legacy rows. Summary-only owners remain explicitly unhydrated, never empty staffing. This phase extracts stable period logic but preserves existing selection/editing, overlap review, publication, permissions and communication. Unified grid integration and owner-aware mutations are deferred. See the [Phase 1 implementation and integration boundaries](../unified-scheduling-workspace-phase-1.md).
+
+### Publication event retention and Firestore TTL
+
+`teamSchedulePublicationEvents` is a delivery outbox for publication security audits, Teams updates, and public service-plan invalidations. Pending records have no `expiresAt`; the existing recovery worker continues retrying them. Successful records receive a native timestamp 30 days after `completedAt`. Firestore TTL deletes only documents in this collection group. The durable `securityEvents` audit collection is separate and has no publication-event TTL policy.
+
+The repository declares the policy and a single-field index exemption in `firestore.indexes.json`. This declaration does not configure the live Firestore database until the index configuration is deployed. The current `.firebaserc` default project is `worshipsync-d8e28`, using the default database in `nam5`.
+
+To configure or verify the live policy:
+
+1. Deploy the checked-in configuration: `firebase deploy --only firestore:indexes --project=worshipsync-d8e28`. Its `fieldOverrides` entry enables TTL for collection group `teamSchedulePublicationEvents`, field `expiresAt`, and sets `indexes: []` to exempt that unused field from single-field indexing. This repository's `npm run firebase:update-indexes` script runs the same deployment target.
+2. Or create the policy in Google Cloud Console: open **Firestore > Databases**, select `(default)`, open **Time-to-live**, choose **Create policy**, enter collection group `teamSchedulePublicationEvents` and field `expiresAt`, leave the expiration offset at zero, and create it. In **Indexes > Single-field**, exempt `expiresAt` for that collection group. The Firestore index reference describes combining TTL and an empty `indexes` list in a field override: [TTL and field overrides](https://firebase.google.com/docs/reference/firestore/indexes).
+3. Or run `gcloud firestore fields ttls update expiresAt --collection-group=teamSchedulePublicationEvents --database='(default)' --project=worshipsync-d8e28 --enable-ttl`, then add the same single-field indexing exemption in the Console or deploy the checked-in `firestore.indexes.json` override. Check the active policy with `gcloud firestore fields ttls list --collection-group=teamSchedulePublicationEvents --database='(default)' --project=worshipsync-d8e28` and confirm it in the Console. Writing `expiresAt` alone does not enable deletion. Firestore typically deletes expired documents within 24 hours, but that timing is not guaranteed ([TTL behavior](https://cloud.google.com/firestore/docs/ttl)). TTL deletes require billing and incur delete charges ([Firestore pricing](https://cloud.google.com/firestore/pricing)).
+
+Completed outbox records created before `expiresAt` was introduced will not be TTL-deleted until backfilled. The bounded, idempotent backfill uses `completedAt + 30 days`, skips pending records and already populated fields, and processes at most 500 records per invocation. Preview one page with `npm run backfill:team-schedule-publication-event-ttl -- --limit=500`; apply a reviewed page with `npm run backfill:team-schedule-publication-event-ttl -- --limit=500 --after-id=PASTE_NEXT_AFTER_ID --apply`, using the `nextAfterId` printed by the preceding page until it is `null`. The script requires the normal Firebase server credentials and is not run automatically. No TTL policy has been applied to the live project by this code change.

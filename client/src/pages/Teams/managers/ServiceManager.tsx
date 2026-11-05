@@ -17,7 +17,7 @@ import { useDispatch, useSelector } from "../../../hooks";
 import { AUTOSAVE_DEBOUNCE_KEYS } from "../../../store/autosaveIndicatorSlice";
 import {
   addService,
-  removeService,
+  applyServiceGroupMutation,
   updateService,
 } from "../../../store/serviceTimesSlice";
 import type {
@@ -59,6 +59,11 @@ import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
 import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 import { useChurchServiceTimeZone } from "../../../context/churchServiceTimeZone";
 import ChurchServiceTimeZoneSettings from "../ChurchServiceTimeZoneSettings";
+import { oneTimeServiceInstant, oneTimeServiceLocalValue } from "../../../utils/teamScheduleOccurrences";
+import {
+  listPlanningCenterServiceTypes,
+  type PlanningCenterServiceType,
+} from "../../../api/planningCenter";
 
 const applyPositionCountDrafts = (
   requirements: PositionRequirement[] | undefined,
@@ -97,7 +102,14 @@ const ServiceManager = ({
 }: ServiceManagerProps) => {
   const dispatch = useDispatch();
   const { showToast } = useToast();
-  const churchId = useContext(GlobalInfoContext)?.churchId || "";
+  const globalInfo = useContext(GlobalInfoContext);
+  const churchId = globalInfo?.churchId || "";
+  const planningCenterConnected = Boolean(
+    globalInfo?.churchIntegrations?.planningCenter?.enabled &&
+      globalInfo?.churchIntegrations?.planningCenter?.connected,
+  );
+  const planningCenterAccount = globalInfo?.churchIntegrations?.planningCenter;
+  const planningCenterAccountKey = planningCenterAccount?.accountId || planningCenterAccount?.accountLabel || "";
   const churchTimeZone = useChurchServiceTimeZone();
   const formatServiceTimingForChurch = (service: TeamService | ServiceTime) => {
     if (service.reccurence === "one_time" && !churchTimeZone.timeZone) {
@@ -130,6 +142,11 @@ const ServiceManager = ({
   const [failedEditorKeys, setFailedEditorKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
+  const [planningCenterServiceTypes, setPlanningCenterServiceTypes] = useState<
+    PlanningCenterServiceType[]
+  >([]);
+  const [planningCenterServiceTypesLoading, setPlanningCenterServiceTypesLoading] = useState(false);
+  const [planningCenterServiceTypesError, setPlanningCenterServiceTypesError] = useState(false);
   const savingEditorKeysRef = useRef(new Set<string>());
   const pendingSavesRef = useRef(new Map<string, {
     expectedService: ServiceTime;
@@ -145,6 +162,34 @@ const ServiceManager = ({
       )
       : null,
   );
+
+  useEffect(() => {
+    if (!churchId || !planningCenterConnected) {
+      setPlanningCenterServiceTypes([]);
+      setPlanningCenterServiceTypesLoading(false);
+      setPlanningCenterServiceTypesError(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setPlanningCenterServiceTypesLoading(true);
+    setPlanningCenterServiceTypesError(false);
+    listPlanningCenterServiceTypes(churchId)
+      .then(({ items }) => {
+        if (!cancelled) setPlanningCenterServiceTypes(items);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPlanningCenterServiceTypes([]);
+          setPlanningCenterServiceTypesError(true);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setPlanningCenterServiceTypesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [churchId, planningCenterConnected, planningCenterAccountKey]);
 
   const reset = () => {
     setEditing(null);
@@ -178,6 +223,7 @@ const ServiceManager = ({
       id: current.id,
       name: current.name || "",
       defaultPlanTemplateId: current.defaultPlanTemplateId,
+      planningCenterServiceTypeId: current.planningCenterServiceTypeId,
       reccurence: recurrence,
     }));
   };
@@ -233,15 +279,19 @@ const ServiceManager = ({
       next.delete(editorKey);
       return next;
     });
-    if (editing && !retryingFailedCreate) {
+    const primaryMode = editing && !retryingFailedCreate ? "update" : "add";
+    if (partnerUpdates.length || saved.serviceGroupId || (editing && editing.serviceGroupId !== groupId)) {
+      dispatch(applyServiceGroupMutation({
+        primary: { mode: primaryMode, service: saved },
+        // The store listener sends membership changes through one Firebase transaction.
+        partnerUpdates,
+        requiredPartnerIds: combineWith,
+      }));
+    } else if (editing && !retryingFailedCreate) {
       dispatch(updateService({ id: editing.id, changes: saved }));
     } else {
       dispatch(addService(saved));
     }
-    // Stamp the shared group id on partners (and clear it on services that left).
-    partnerUpdates.forEach(({ id, serviceGroupId }) => {
-      dispatch(updateService({ id, changes: { serviceGroupId } }));
-    });
     // Redux dispatch is optimistic; the store listener commits to Firebase and
     // can roll this change back. Without a per-action acknowledgment, a success
     // toast here would claim persistence before it is confirmed.
@@ -429,6 +479,27 @@ const ServiceManager = ({
       ? [{ label: "Unavailable template", value: selectedDefaultTemplateId }]
       : []),
   ];
+  const selectedPlanningCenterServiceTypeId =
+    String(draft.planningCenterServiceTypeId || "").trim();
+  const selectedPlanningCenterServiceTypeIsMissing = Boolean(
+    selectedPlanningCenterServiceTypeId &&
+      !planningCenterServiceTypes.some(
+        (serviceType) => serviceType.id === selectedPlanningCenterServiceTypeId,
+      ),
+  );
+  const planningCenterServiceTypeOptions = [
+    { label: "No association", value: "" },
+    ...planningCenterServiceTypes.map((serviceType) => ({
+      label: serviceType.name,
+      value: serviceType.id,
+    })),
+    ...(selectedPlanningCenterServiceTypeIsMissing
+      ? [{
+          label: `Unavailable service type (${selectedPlanningCenterServiceTypeId})`,
+          value: selectedPlanningCenterServiceTypeId,
+        }]
+      : []),
+  ];
   // Positions are owned by teams, so group the requirement checklist by team. A
   // service can be run by more than one team, so several groups may show.
   const positionsByTeam = teams
@@ -503,7 +574,7 @@ const ServiceManager = ({
     Boolean(String(draft.name || "").trim()) &&
     !hasIncompletePositionCountDraft &&
     (recurrence === "one_time"
-      ? Boolean(draft.dateTimeISO)
+      ? Boolean(churchTimeZone.timeZone && oneTimeServiceInstant(draft.dateTimeISO, churchTimeZone.timeZone))
       : recurrence === "multi_weekly"
         ? Boolean(draft.daysOfWeek?.length) &&
         (draft.daysOfWeek || []).every((day) => Boolean(day.time))
@@ -623,12 +694,10 @@ const ServiceManager = ({
                 services,
                 serviceId: editing.serviceId,
               });
-              dispatch(removeService(editing.id));
-              // Dissolve a now-orphaned combined group so no service is left
-              // pointing at a one-member group.
-              partnerUpdates.forEach(({ id, serviceGroupId }) => {
-                dispatch(updateService({ id, changes: { serviceGroupId } }));
-              });
+              dispatch(applyServiceGroupMutation({
+                primary: { mode: "delete", id: editing.id },
+                partnerUpdates,
+              }));
               reset();
             }}
           />
@@ -665,8 +734,14 @@ const ServiceManager = ({
       {recurrence === "one_time" ? (
         <DateTimePicker
           label="Date & Time"
-          value={draft.dateTimeISO || ""}
-          onChange={(dateTimeISO) => setDraft((d) => ({ ...d, dateTimeISO }))}
+          value={churchTimeZone.timeZone ? oneTimeServiceLocalValue(draft.dateTimeISO, churchTimeZone.timeZone) : draft.dateTimeISO || ""}
+          disabled={!churchTimeZone.timeZone}
+          onChange={(value) => setDraft((d) => ({
+            ...d,
+            dateTimeISO: churchTimeZone.timeZone
+              ? oneTimeServiceInstant(value, churchTimeZone.timeZone)?.toISOString() || value
+              : "",
+          }))}
         />
       ) : null}
 
@@ -795,6 +870,36 @@ const ServiceManager = ({
           links in the template fill from that date&apos;s team schedules.
         </p>
       </div>
+
+      {planningCenterConnected ? (
+        <div className="space-y-1">
+          <Select
+            label="Planning Center service type"
+            value={selectedPlanningCenterServiceTypeId}
+            onChange={(value) =>
+              setDraft((current) => ({
+                ...current,
+                planningCenterServiceTypeId: String(value || "") || undefined,
+              }))
+            }
+            disabled={planningCenterServiceTypesLoading}
+            options={planningCenterServiceTypeOptions}
+          />
+          <p className="text-xs text-gray-400">
+            Used to find plans for this service. Choose a type only when it matches this service.
+          </p>
+          {planningCenterServiceTypesLoading ? (
+            <p role="status" className="text-xs text-gray-400">
+              Loading Planning Center service types…
+            </p>
+          ) : null}
+          {planningCenterServiceTypesError ? (
+            <p role="status" className="text-xs text-amber-200">
+              Could not load Planning Center service types. Your current association is unchanged.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       {combinableServices.length > 0 ? (
         <MultiCheckboxGroup
