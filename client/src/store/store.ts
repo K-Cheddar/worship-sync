@@ -58,7 +58,7 @@ import { itemLibraryUiSlice } from "./itemLibraryUiSlice";
 import { createItemSlice } from "./createItemSlice";
 import { preferencesSlice } from "./preferencesSlice";
 import { itemListsSlice } from "./itemListsSlice";
-import { activateOutlineContent, getOutlineDatabaseKey, getOutlineOwnerKey, hasPendingOutlineDraftsForDatabase, setOutlineContentDatabase } from "./outlineContent";
+import { activateOutlineContent, getOutlineContentLifecycleLease, getOutlineDatabaseKey, getOutlineOwnerKey, hasPendingOutlineDraftsForDatabase, isOutlineContentLifecycleLeaseCurrent, setOutlineContentDatabase } from "./outlineContent";
 import { isMediaLoadSettled, mediaItemsSlice } from "./mediaSlice";
 import mediaCacheMapReducer, { setMediaCacheMap } from "./mediaCacheMapSlice";
 import { overlaySlice } from "./overlaySlice";
@@ -2041,6 +2041,9 @@ listenerMiddleware.startListening({
       : (listenerApi.getState() as RootState).undoable.present);
     const { list, hasPendingUpdate, isInitialized } = present.itemList;
     const ownerKey = present.itemList.outlineOwnerKey;
+    const lifecycleLease = ownerKey ? getOutlineContentLifecycleLease(ownerKey) : undefined;
+    const lifecycleAllowsPublish = () => lifecycleLease === undefined ||
+      isOutlineContentLifecycleLeaseCurrent(ownerKey!, lifecycleLease);
     const { selectedList } = present.itemLists;
     const baseline = present.itemList.syncBaseline ?? [];
     const loadedOutlineId = present.itemList.loadedOutlineId;
@@ -2092,13 +2095,13 @@ listenerMiddleware.startListening({
 
       persistenceSucceeded = true;
       if (ownerKey) listenerApi.dispatch(itemListSlice.actions.acknowledgeOutlineSave({ ownerKey, list }));
-      listenerApi.throwIfCancelled();
       if (!sessionIsCurrent() || (!isSavingOutgoingOutline && (db !== dbAtStart || globalFireDbInfo?.churchId !== churchAtStart))) return;
       const afterPutState = (listenerApi.getState() as RootState).undoable.present;
       const afterPut = afterPutState.itemList;
       if (conflictReviewIsCurrent() && (!afterPut.loadedOutlineId || afterPut.loadedOutlineId === selectedList._id || afterPut.remoteConflicts?.[selectedList._id]?.resolutionChoice)) {
         listenerApi.dispatch(itemListSlice.actions.markItemListPersisted({
           outlineId: selectedList._id,
+          ownerKey,
           items: [...persisted.items],
           submittedItems: [...(revisionResolution?.draftItems ?? submittedItems)],
         }));
@@ -2111,6 +2114,8 @@ listenerMiddleware.startListening({
           listenerApi.dispatch(itemListSlice.actions.forceUpdate());
         }
       }
+      listenerApi.throwIfCancelled();
+      if (!lifecycleAllowsPublish()) return;
       // Returning to a retained draft can require a retry as well as the
       // outgoing save. Start both through the existing field save lane.
       if (isSavingOutgoingOutline && (listenerApi.getState() as RootState).undoable.present.itemList.hasPendingUpdate) {
@@ -2404,6 +2409,9 @@ listenerMiddleware.startListening({
     }
     const { list } = state.undoable.present.overlays;
     const ownerKey = state.undoable.present.overlays.outlineOwnerKey;
+    const lifecycleLease = ownerKey ? getOutlineContentLifecycleLease(ownerKey) : undefined;
+    const lifecycleAllowsPublish = () => lifecycleLease === undefined ||
+      isOutlineContentLifecycleLeaseCurrent(ownerKey!, lifecycleLease);
     const { selectedList } = state.undoable.present.itemLists;
 
     if (!selectedList) return;
@@ -2423,10 +2431,11 @@ listenerMiddleware.startListening({
       if (!persisted) return;
 
       if (ownerKey) listenerApi.dispatch(overlaysSlice.actions.acknowledgeOutlineSave({ ownerKey, list }));
-      listenerApi.throwIfCancelled();
       if (!sessionIsCurrent() || (!isSavingOutgoingOutline && (db !== dbAtStart || globalFireDbInfo?.churchId !== churchAtStart))) return;
       const latest = (listenerApi.getState() as RootState).undoable.present;
       if (latest.overlays.outlineOwnerKey !== ownerKey || latest.overlays.list !== list) return;
+      listenerApi.throwIfCancelled();
+      if (!lifecycleAllowsPublish()) return;
       safePostMessage({
         type: "update",
         data: { docs: persisted, hostId: globalHostId },

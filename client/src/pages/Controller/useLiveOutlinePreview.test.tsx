@@ -220,6 +220,8 @@ describe("useLiveOutlinePreview", () => {
   it("refreshes cached items when initial replication becomes ready", async () => {
     let bootstrapReady = false;
     let remoteReplicationComplete = false;
+    const cloud = {} as never;
+    const updater = new EventTarget();
     const db = {
       get: jest.fn(async (id: string) =>
         id === "ItemLists"
@@ -236,7 +238,7 @@ describe("useLiveOutlinePreview", () => {
     const wrapper = ({ children }: { children: React.ReactNode }) => (
       <Provider store={store}>
         <ControllerInfoContext.Provider
-          value={{ db, cloud: {} as never, updater: new EventTarget(), bootstrapReady } as never}
+          value={{ db, cloud, updater, bootstrapReady } as never}
         >
           {children}
         </ControllerInfoContext.Provider>
@@ -343,9 +345,10 @@ describe("useLiveOutlinePreview", () => {
       </Provider>
     );
     const { result, unmount } = renderHook(() => useLiveOutlinePreview(), { wrapper });
+    await waitFor(() => expect(registryReads).toHaveLength(1));
     const notify = () => updater.dispatchEvent(new CustomEvent("update", { detail: [{ _id: "ItemLists" }] }));
     act(() => { notify(); });
-    expect(registryReads).toHaveLength(2);
+    await waitFor(() => expect(registryReads).toHaveLength(2));
     const next = { _id: "next-main", name: "Next main", controllerScope: "presentation" };
     const winner = { ...makeItemListsDoc(), itemLists: [next], activeList: next };
     await act(async () => { registryReads[1](winner); });
@@ -355,7 +358,7 @@ describe("useLiveOutlinePreview", () => {
     expect(db.get).not.toHaveBeenCalledWith("main-list");
 
     act(() => { notify(); });
-    expect(registryReads).toHaveLength(3);
+    await waitFor(() => expect(registryReads).toHaveLength(3));
     unmount();
     await act(async () => { registryReads[2](makeItemListsDoc()); });
     act(() => { notify(); });

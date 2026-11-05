@@ -804,11 +804,14 @@ Let Your fire fall`;
   describe("createNewBible", () => {
     it("keeps Bible creation activity active until its local document write settles", async () => {
       let finishPut!: (result: { ok: true; rev: string }) => void;
+      let signalPutStarted!: () => void;
+      const putStarted = new Promise<void>((resolve) => { signalPutStarted = resolve; });
       const db = {
         name: "bible-create-activity-test-db",
         get: jest.fn(async () => { throw Object.assign(new Error("missing"), { status: 404 }); }),
         put: jest.fn(() => new Promise<{ ok: true; rev: string }>((resolve) => {
           finishPut = resolve;
+          signalPutStarted();
         })),
       };
       const pending = createNewBible({
@@ -823,8 +826,7 @@ Let Your fire fall`;
         brightness: 100,
         fontMode: "fit",
       });
-      await Promise.resolve();
-      await Promise.resolve();
+      await putStarted;
       expect(db.put).toHaveBeenCalledTimes(1);
       expect(isBibleDocumentActivityIdle(db.name)).toBe(false);
 

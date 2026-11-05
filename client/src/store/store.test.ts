@@ -587,15 +587,17 @@ describe("item content integrity investigation", () => {
     select("song-B");
     await tick();
     expect(docs.get("song-A")).toMatchObject({
-      slides: [expect.objectContaining({ videoBackgroundLoop: false, videoBackgroundSendMode: "restart" })],
       arrangements: [expect.objectContaining({ slides: [expect.objectContaining({ videoBackgroundLoop: false, videoBackgroundSendMode: "restart" })] })],
     });
+    expect(docs.get("song-A")).not.toHaveProperty("slides");
     expect(docs.get("song-B")).toEqual(beforeB);
     select("song-A");
-    expect(store.getState().undoable.present.item.slides[0]).toMatchObject({ videoBackgroundLoop: false, videoBackgroundSendMode: "restart" });
+    expect(store.getState().undoable.present.item.slides).toEqual([]);
+    expect(store.getState().undoable.present.item.arrangements[0].slides[0]).toMatchObject({ videoBackgroundLoop: false, videoBackgroundSendMode: "restart" });
     await store.dispatch(updateSlideVideoBackgroundLoop({ loop: true }));
     await tick();
-    expect(docs.get("song-A")).toMatchObject({ slides: [expect.objectContaining({ videoBackgroundLoop: true, videoBackgroundSendMode: "restart" })] });
+    expect(docs.get("song-A")).toMatchObject({ arrangements: [expect.objectContaining({ slides: [expect.objectContaining({ videoBackgroundLoop: true, videoBackgroundSendMode: "restart" })] })] });
+    expect(docs.get("song-A")).not.toHaveProperty("slides");
   });
 
   it("preserves newer unsaved input through an earlier local Pouch change and save acknowledgment", async () => {

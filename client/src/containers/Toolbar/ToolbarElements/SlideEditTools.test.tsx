@@ -319,7 +319,11 @@ describe("SlideEditTools", () => {
   });
 
   it("does not render an empty separator between text and brightness for songs", () => {
-    mockState.undoable.present.item = makeItem({ type: "song" });
+    const slide = makeItem().slides[0];
+    mockState.undoable.present.item = makeItem({
+      type: "song",
+      arrangements: [{ id: "arrangement", name: "Default", slides: [slide], formattedLyrics: [], songOrder: [] }],
+    });
     const drawerTarget = document.createElement("div");
     document.body.append(drawerTarget);
     const view = renderTools(null, drawerTarget);

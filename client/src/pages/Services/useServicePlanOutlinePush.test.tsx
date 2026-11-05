@@ -192,7 +192,7 @@ describe("useServicePlanOutlinePush", () => {
     const db = {
       get: jest.fn(async (id: string) => {
         const doc = docs.get(id);
-        if (!doc) throw new Error("missing document");
+        if (!doc) throw Object.assign(new Error("missing document"), { status: 404, name: "not_found" });
         return doc;
       }),
       put: jest.fn(async (doc: ItemState) => {

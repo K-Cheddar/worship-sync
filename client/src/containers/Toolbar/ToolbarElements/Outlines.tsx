@@ -221,7 +221,7 @@ const Services = ({
 
     void getItemLists();
     return () => { cancelled = true; };
-  }, [db, bootstrapReady, canCreateBootstrapDocuments, dispatch, itemListsReady, rememberRegistryRevision, showToast]);
+  }, [db, bootstrapReady, canCreateBootstrapDocuments, dispatch, rememberRegistryRevision, showToast]);
 
   /**
    * Aux controllers with no outlines in their scope get one empty outline so

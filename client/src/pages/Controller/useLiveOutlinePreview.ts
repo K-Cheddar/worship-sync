@@ -57,7 +57,7 @@ export const useLiveOutlinePreview = (outlineScope = DEFAULT_OUTLINE_SCOPE): {
   const bootstrapWasReadyRef = useRef(Boolean(bootstrapReady));
   scopeRef.current = outlineScope;
 
-  const fallbackDocument = fallbackRegistry?.database === db
+  const fallbackDocument = fallbackRegistry && fallbackRegistry.database === db
     ? fallbackRegistry.document
     : undefined;
 

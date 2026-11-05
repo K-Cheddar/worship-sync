@@ -21,6 +21,7 @@ import { useControllerPageLifecycle } from "./useControllerPageLifecycle";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import { upsertMediaItemFromRemote } from "../../store/mediaSlice";
 import { getOverlaysByIds } from "../../utils/dbUtils";
+import { getOutlineDatabaseKey, setOutlineContentDatabase } from "../../store/outlineContent";
 import Overlays from "../../containers/Overlays/Overlays";
 import type { OverlayInfo } from "../../types";
 
@@ -254,6 +255,7 @@ describe("useControllerPageLifecycle selected outline loading", () => {
   });
 
   it("does not reread or show a loading skeleton when the selected outline is only renamed remotely", async () => {
+    const cloud = {} as never;
     const db = {
       get: jest.fn(async (id: string) =>
         id === "outline" ? details("Loaded outline") : undefined,
@@ -269,7 +271,7 @@ describe("useControllerPageLifecycle selected outline loading", () => {
     const { rerender } = renderHook(() => useControllerPageLifecycle(), {
       wrapper: ({ children }) => (
         <Provider store={store}>
-          <ControllerInfoContext.Provider value={{ db, cloud: {} } as any}>
+          <ControllerInfoContext.Provider value={{ db, cloud } as any}>
             {children}
           </ControllerInfoContext.Provider>
         </Provider>
@@ -277,6 +279,10 @@ describe("useControllerPageLifecycle selected outline loading", () => {
     });
 
     await waitFor(() => expect(db.get).toHaveBeenCalledWith("outline", { conflicts: true }));
+    await waitFor(() =>
+      expect(store.getState().undoable.present.itemList.isLoading).toBe(false),
+    );
+    rerender();
     await waitFor(() =>
       expect(store.getState().undoable.present.itemList.isLoading).toBe(false),
     );
@@ -542,15 +548,17 @@ describe("useControllerPageLifecycle selected outline loading", () => {
 
   it("preserves usable rows after a failed background retry and ignores retry results after selection changes", async () => {
     const retry = deferred<ReturnType<typeof details>>();
+    const cloud = {} as never;
     const db = {
       get: jest.fn(async (id: string) => id === "outline" ? Promise.reject(new Error("offline")) : { _id: id, ...details("New outline") }),
       put: jest.fn(),
     } as any;
     store.dispatch(itemListsSlice.actions.initiateItemLists([{ _id: "outline", name: "Sunday" }, { _id: "b", name: "B" }]));
+    store.dispatch(setOutlineContentDatabase(getOutlineDatabaseKey(db)));
     store.dispatch(initiateItemList({ outlineId: "outline", items: [{ _id: "usable", name: "Usable draft", type: "song", listId: "row" }] }));
     store.dispatch(setItemListIsLoading(false));
     const view = renderHook(() => useControllerPageLifecycle(), { wrapper: ({ children }) => (
-      <Provider store={store}><ControllerInfoContext.Provider value={{ db, cloud: {} } as any}>{children}</ControllerInfoContext.Provider></Provider>
+      <Provider store={store}><ControllerInfoContext.Provider value={{ db, cloud } as any}>{children}</ControllerInfoContext.Provider></Provider>
     ) });
     await waitFor(() => expect(store.getState().undoable.present.itemList.loadError).toMatch(/Could not load/));
     expect(store.getState().undoable.present.itemList.list[0].name).toBe("Usable draft");

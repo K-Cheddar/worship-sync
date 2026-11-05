@@ -18,6 +18,7 @@ import {
 } from "../../types";
 import {
   initiateItemList,
+  forceUpdate as forceItemListUpdate,
   setItemListLoadError,
   setIsInitialized as setItemListIsInitialized,
   setItemListIsLoading,
@@ -80,6 +81,7 @@ import {
   requireMediaLibraryV2,
 } from "../../utils/mediaDocUtils";
 import { setIsInitialized as setOverlaysIsInitialized } from "../../store/overlaysSlice";
+import { forceUpdate as forceOverlaysUpdate } from "../../store/overlaysSlice";
 import { setIsInitialized as setItemListsIsInitialized } from "../../store/itemListsSlice";
 import { initiateServices } from "../../store/serviceTimesSlice";
 import { ServiceTime } from "../../types";
@@ -100,7 +102,7 @@ import {
 import { ActionCreators } from "redux-undo";
 import { loadOrCreateControllerMediaRouteFolders } from "../../utils/controllerMediaRouteFolders";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
-import { getOutlineDatabaseKey, getOutlineOwnerKey, setOutlineContentDatabase } from "../../store/outlineContent";
+import { beginOutlineContentLifecycle, getOutlineDatabaseKey, getOutlineOwnerKey, setOutlineContentDatabase } from "../../store/outlineContent";
 
 /**
  * Shared DB sync, preferences, overlays, media cache, and teardown for controller-like pages.
@@ -180,6 +182,11 @@ export const useControllerPageLifecycle = () => {
   useLayoutEffect(() => {
     dispatch(setOutlineContentDatabase(db ? getOutlineDatabaseKey(db) : ""));
   }, [db, dispatch]);
+  const lifecycleOwnerKey = getOutlineOwnerKey(db ? getOutlineDatabaseKey(db) : "", selectedListId);
+  useLayoutEffect(
+    () => beginOutlineContentLifecycle(lifecycleOwnerKey),
+    [lifecycleOwnerKey],
+  );
   const databaseRef = useRef(db);
   databaseRef.current = db;
   const selectedOutlineIdentityRef = useRef({
@@ -914,6 +921,14 @@ export const useControllerPageLifecycle = () => {
             outlineId: selectedListId,
           }));
         }
+        const hydratedItemList = (store.getState() as RootState).undoable.present.itemList;
+        if (
+          hydratedItemList.outlineOwnerKey === ownerKey &&
+          hydratedItemList.hasPendingUpdate &&
+          hydratedItemList.pendingByOutline?.[ownerKey]
+        ) {
+          dispatch(forceItemListUpdate());
+        }
         if (inspection) recordDetectedConflict(selectedListId, inspection);
         lastLoadedOutlineContextRef.current = {
           db,
@@ -927,6 +942,14 @@ export const useControllerPageLifecycle = () => {
           if (!isCurrentLoad()) return;
           if (serviceListSyncGenerationRef.current === contentSyncGeneration) {
             dispatch(initiateOverlayList(formattedOverlays));
+            const hydratedOverlays = (store.getState() as RootState).undoable.present.overlays;
+            if (
+              hydratedOverlays.outlineOwnerKey === ownerKey &&
+              hydratedOverlays.hasPendingUpdate &&
+              hydratedOverlays.pendingByOutline?.[ownerKey]
+            ) {
+              dispatch(forceOverlaysUpdate());
+            }
             const overlayHistory = await getAllOverlayHistory(db);
             if (!isCurrentLoad()) return;
             if (serviceListSyncGenerationRef.current === contentSyncGeneration) {

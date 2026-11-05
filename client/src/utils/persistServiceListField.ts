@@ -4,7 +4,10 @@ import { isPouchConflict } from "./persistOverlayDoc";
 import { getOutlineItemConflicts, reconcileOutlineItems, type OutlineItemChoices } from "./outlineSync";
 
 const SERVICE_LIST_PUT_MAX_ATTEMPTS = 4;
-const savesByDatabase = new WeakMap<ServiceListFieldDb, Map<string, Promise<unknown>>>();
+type QueuedFieldSave = { document: DBItemListDetails; didWrite: boolean; intent: ServiceItem[] | string[] };
+type FieldSaveQueue = { pending?: Promise<QueuedFieldSave>; lastWritten?: QueuedFieldSave };
+const savesByDatabase = new WeakMap<ServiceListFieldDb, Map<string, FieldSaveQueue>>();
+const saveVersionsByDatabase = new WeakMap<ServiceListFieldDb, Map<string, number>>();
 
 type RevisionHistory = { _rev?: string; _revisions?: { start: number; ids: string[] } };
 type RevisionDoc = DBItemListDetails & RevisionHistory & { _conflicts?: string[] };
@@ -337,16 +340,40 @@ function persistServiceListField<K extends "items" | "overlays">(
     saves = new Map();
     savesByDatabase.set(db, saves);
   }
+  let versions = saveVersionsByDatabase.get(db);
+  if (!versions) {
+    versions = new Map();
+    saveVersionsByDatabase.set(db, versions);
+  }
   const key = JSON.stringify([listId, field]);
-  const previous = saves.get(key);
+  const version = (versions.get(key) ?? 0) + 1;
+  versions.set(key, version);
+  const queue = saves.get(key) ?? {};
+  saves.set(key, queue);
+  const previous = queue.pending;
   // Serialize same-field writes so the last user intention is always the last
   // database write, even when an earlier PouchDB put is already in flight.
-  const saving = (previous?.catch(() => undefined) ?? Promise.resolve()).then(() =>
-    persistServiceListFieldNow(db, listId, field, value, baseline, isCurrent),
-  );
-  saves.set(key, saving);
-  return saving.finally(() => {
-    if (saves?.get(key) === saving) saves.delete(key);
+  const saving = (previous?.catch(() => undefined) ?? Promise.resolve(undefined)).then(async () => {
+    const result = await persistServiceListFieldNow(
+      db,
+      listId,
+      field,
+      value,
+      field === "items" && queue.lastWritten?.didWrite
+        ? queue.lastWritten.intent as ServiceItem[]
+        : baseline,
+      isCurrent,
+      () => versions?.get(key) === version,
+    );
+    if (result.didWrite) queue.lastWritten = result;
+    return result;
+  });
+  queue.pending = saving;
+  return saving.then(({ document }) => document).finally(() => {
+    if (saves?.get(key) === queue && queue.pending === saving) {
+      saves.delete(key);
+      if (versions?.get(key) === version) versions.delete(key);
+    }
   });
 }
 
@@ -357,17 +384,20 @@ async function persistServiceListFieldNow<K extends "items" | "overlays">(
   value: K extends "items" ? ServiceItem[] : string[],
   baseline?: ServiceItem[],
   isCurrent = () => true,
-): Promise<DBItemListDetails> {
+  isLatest = () => true,
+): Promise<QueuedFieldSave> {
   let lastError: unknown;
 
   for (let attempt = 0; attempt < SERVICE_LIST_PUT_MAX_ATTEMPTS; attempt += 1) {
     if (!isCurrent()) throw new Error("The outline save session ended");
     let current = await db.get(listId, { conflicts: true }) as RevisionDoc;
+    if (!isLatest()) return { document: current, didWrite: false, intent: value };
     let reviewedGraph: OutlineRevisionGraph | undefined;
     let revisionConflict: OutlineRevisionConflict | undefined;
 
     if (current._conflicts?.length) {
       const branches = await readRevisionBranchSet(db, listId);
+      if (!isLatest()) return { document: current, didWrite: false, intent: value };
       const mergedRemote = await mergeRevisionBranches(db, listId, branches);
       if (!mergedRemote) {
         throw new ServiceListConflictError(
@@ -382,6 +412,7 @@ async function persistServiceListFieldNow<K extends "items" | "overlays">(
         );
       }
       const latestBranches = await readRevisionBranchSet(db, listId);
+      if (!isLatest()) return { document: current, didWrite: false, intent: value };
       if (!sameRevisionGraph(branches.graph, latestBranches.graph)) {
         throw new ServiceListConflictError(
           (latestBranches.winner.items ?? []) as ServiceItem[],
@@ -451,6 +482,7 @@ async function persistServiceListFieldNow<K extends "items" | "overlays">(
         }
       }
       if (!isCurrent()) throw new Error("The outline save session ended");
+      if (!isLatest()) return { document: current, didWrite: false, intent: value };
       const result = await db.put(next);
       const rev = resultRevision(result);
       if (reviewedGraph && !rev) {
@@ -469,9 +501,10 @@ async function persistServiceListFieldNow<K extends "items" | "overlays">(
           );
         }
       }
-      return saved;
+      return { document: saved, didWrite: true, intent: value };
     } catch (error) {
       lastError = error;
+      if (!isLatest()) return { document: current, didWrite: false, intent: value };
       if (
         isPouchConflict(error) &&
         attempt < SERVICE_LIST_PUT_MAX_ATTEMPTS - 1

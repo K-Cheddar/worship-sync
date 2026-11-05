@@ -793,7 +793,10 @@ describe("itemSlice", () => {
       { id: "first", type: "Section" as const, name: "First", boxes: [], videoBackgroundSendMode: "restart" as const },
       { id: "second", type: "Section" as const, name: "Second", boxes: [] },
     ];
-    const item: ItemState = { ...itemSlice.getInitialState(), _id: "item", type, slides, selectedSlide: 0, arrangements: [{ id: "arrangement", name: "Default", slides, formattedLyrics: [], songOrder: [] }] };
+    const arrangements = type === "song"
+      ? [{ id: "arrangement", name: "Default", slides, formattedLyrics: [], songOrder: [] }]
+      : [];
+    const item: ItemState = { ...itemSlice.getInitialState(), _id: "item", type, slides, selectedSlide: 0, arrangements };
     type TestState = { undoable: { present: { item: ItemState } } };
     const store = configureStore({ reducer: (state: TestState = { undoable: { present: { item } } }, action: { type: string }): TestState => ({ undoable: { present: { item: itemSlice.reducer(state.undoable.present.item, action) } } }) });
     store.dispatch(itemSlice.actions.setActiveItem(item));
@@ -802,17 +805,28 @@ describe("itemSlice", () => {
     await store.dispatch(updateSlideVideoBackgroundSendMode({ mode: "continue" }) as never);
     await store.dispatch(updateSlideVideoBackgroundLoop({ loop: true }) as never);
     const saved = store.getState().undoable.present.item;
-    expect(saved.slides[0]).toMatchObject({ videoBackgroundLoop: true, videoBackgroundSendMode: "continue" });
-    expect(saved.arrangements[0].slides[0]).toEqual(saved.slides[0]);
-    expect(saved.slides[1]).toEqual(slides[1]);
-    expect(getItemPersistenceChanges(saved, baseline)).toEqual(expect.arrayContaining(["slides", "arrangements"]));
+    const savedSlides = type === "song" ? saved.arrangements[0].slides : saved.slides;
+    expect(savedSlides[0]).toMatchObject({ videoBackgroundLoop: true, videoBackgroundSendMode: "continue" });
+    expect(savedSlides[1]).toEqual(slides[1]);
+    expect(getItemPersistenceChanges(saved, baseline)).toEqual([
+      type === "song" ? "arrangements" : "slides",
+    ]);
     const restored = createStore();
     restored.dispatch(itemSlice.actions.setActiveItem(JSON.parse(JSON.stringify(saved))));
-    expect(restored.getState().item.slides[0].videoBackgroundLoop).toBe(true);
-    expect(restored.getState().item.baseItem?.arrangements[0].slides[0].videoBackgroundLoop).toBe(true);
+    const restoredSlides = type === "song"
+      ? restored.getState().item.arrangements[0].slides
+      : restored.getState().item.slides;
+    expect(restoredSlides[0].videoBackgroundLoop).toBe(true);
+    expect(restored.getState().item.slides).toEqual(type === "song" ? [] : saved.slides);
+    expect(restored.getState().item.baseItem?.arrangements[0]?.slides[0]?.videoBackgroundLoop).toBe(
+      type === "song" ? true : undefined,
+    );
     expect(itemDocMatchesEditorState(restored.getState().item.baseItem!, restored.getState().item)).toBe(true);
     await store.dispatch(updateSlideVideoBackgroundLoop({ loop: false }) as never);
-    expect(store.getState().undoable.present.item.slides[0]).toMatchObject({ videoBackgroundLoop: false, videoBackgroundSendMode: "continue" });
+    const updatedSlides = type === "song"
+      ? store.getState().undoable.present.item.arrangements[0].slides
+      : store.getState().undoable.present.item.slides;
+    expect(updatedSlides[0]).toMatchObject({ videoBackgroundLoop: false, videoBackgroundSendMode: "continue" });
   });
 
 });
