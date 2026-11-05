@@ -20,9 +20,11 @@ import {
   claimLocalImageUploadJob,
   getLocalImageUploadJob,
   cleanupOrphanedLocalImages,
+  deleteLocalImage,
   getLocalImage,
   listLocalImageUploadJobs,
   persistLocalImageCloudCopy,
+  putLocalImageUploadJob,
   releaseLocalImageUploadJobLease,
   renewLocalImageUploadJobLease,
   subscribeLocalImageUploadJobChanges,
@@ -40,6 +42,8 @@ import {
   signalLocalImageUploadCancellation,
 } from "../../utils/localImageUploadQueue";
 import { dispatchLocalImageCloudCopy } from "../../utils/localImageRedux";
+import { flushMediaLibraryDocToPouch } from "../../utils/flushMediaLibraryDoc";
+import store from "../../store/store";
 import {
   getLocalImageUploadRetryDelay,
   getNextLocalImageUploadAttemptAt,
@@ -86,10 +90,6 @@ const LocalImageUploadManager = () => {
   );
   const mediaIdsRef = useRef(new Set(mediaList.map((item) => item.id)));
   mediaIdsRef.current = new Set(mediaList.map((item) => item.id));
-  const mediaByIdRef = useRef(
-    new Map(mediaList.map((item) => [item.id, item])),
-  );
-  mediaByIdRef.current = new Map(mediaList.map((item) => [item.id, item]));
   const processing = useRef(new Set<string>());
   const leaseOwnerId = useRef("");
   if (!leaseOwnerId.current) {
@@ -196,6 +196,28 @@ const LocalImageUploadManager = () => {
         }
       };
       try {
+        if (job.cleanupOnly) {
+          if (!job.cleanupReady) return;
+          try {
+            if (job.cleanupCloudPublicId && !job.cleanupCloudComplete) {
+              await deleteCloudinaryMediaAsset(churchId, job.cleanupCloudPublicId);
+              await updateClaimedJob({ cleanupCloudComplete: true });
+            }
+            await deleteLocalImage(job.assetId);
+          } catch (error) {
+            await updateClaimedJob({
+              status: "failed",
+              phase: "failed",
+              progress: null,
+              nextAttemptAt: Date.now() + OUTLINE_RETRY_MS,
+              lastError: error instanceof Error
+                ? error.message
+                : "The removed thumbnail could not be cleaned up.",
+            });
+          }
+          return;
+        }
+
         const stored = await getLocalImage(job.assetId);
         if (await stopIfCancelled()) return;
         if (!cloudMedia && providerUploadId) {
@@ -421,12 +443,194 @@ const LocalImageUploadManager = () => {
           }
           return;
         }
-        const localMedia =
-          mediaByIdRef.current.get(job.assetId) ??
-          Array.from(mediaByIdRef.current.values()).find(
-            (item) => item.localImage?.id === job.assetId,
+        const thumbnailTarget = job.localVideoInputThumbnail;
+        const currentMediaList: MediaType[] = store.getState().media.list;
+        const localMedia = thumbnailTarget
+          ? currentMediaList.find((item) => item.id === thumbnailTarget.targetMediaId)
+          : currentMediaList.find((item) => item.id === job.assetId) ??
+            currentMediaList.find(
+              (item) => item.localImage?.id === job.assetId,
+            );
+        if (thumbnailTarget) {
+          if (
+            !localMedia?.localVideoInput ||
+            localMedia.localImage?.id !== job.assetId
+          ) {
+            try {
+              if (
+                cloudMedia.publicId &&
+                !thumbnailTarget.staleCloudCleanupComplete
+              ) {
+                await deleteCloudinaryMediaAsset(churchId, cloudMedia.publicId);
+                await updateClaimedJob({
+                  localVideoInputThumbnail: {
+                    ...thumbnailTarget,
+                    staleCloudCleanupComplete: true,
+                  },
+                });
+              }
+              if (!thumbnailTarget.staleLocalCleanupComplete) {
+                await deleteLocalImage(job.assetId);
+              }
+            } catch (error) {
+              await updateClaimedJob({
+                status: "failed",
+                phase: "failed",
+                progress: null,
+                nextAttemptAt: Date.now() + OUTLINE_RETRY_MS,
+                lastError: error instanceof Error
+                  ? error.message
+                  : "The replaced thumbnail could not be cleaned up.",
+              });
+            }
+            return;
+          }
+
+          const updatedAt = new Date().toISOString();
+          const cloudThumbnailRef = {
+            ...localMedia.localImage!,
+            storagePolicy: "local-and-cloud" as const,
+            cloudMediaId: cloudMedia.id,
+            cloudPublicId: cloudMedia.publicId,
+            cloudUrl: cloudMedia.background,
+          };
+          const updatedMedia = {
+            ...localMedia,
+            updatedAt,
+            thumbnail: cloudMedia.background,
+            localImage: cloudThumbnailRef,
+          };
+          const currentState = store.getState();
+          const mediaList: MediaType[] = currentState.media.list.map((item: MediaType) =>
+            item.id === updatedMedia.id ? updatedMedia : item,
           );
-        if (localMedia?.localImage) {
+          const persisted = await flushMediaLibraryDocToPouch(
+            db,
+            mediaList,
+            currentState.media.folders,
+            () => {
+              const latest = store.getState();
+              const latestMediaList: MediaType[] = latest.media.list.map(
+                (item: MediaType) =>
+                  item.id === updatedMedia.id &&
+                  item.localImage?.id === job.assetId
+                    ? updatedMedia
+                    : item,
+              );
+              return { list: latestMediaList, folders: latest.media.folders };
+            },
+          );
+          if (!persisted.ok) {
+            await updateClaimedJob({
+              status: "uploaded",
+              phase: "finalizing",
+              progress: 95,
+              cloudMedia,
+              nextAttemptAt: Date.now() + OUTLINE_RETRY_MS,
+              lastError: "The thumbnail is uploaded, but its Media update could not be saved.",
+            });
+            return;
+          }
+
+          const stillCurrent = store
+            .getState()
+            .media.list.find((item: MediaType) => item.id === updatedMedia.id)
+            ?.localImage?.id === job.assetId;
+          if (!stillCurrent) {
+            try {
+              if (
+                cloudMedia.publicId &&
+                !thumbnailTarget.staleCloudCleanupComplete
+              ) {
+                await deleteCloudinaryMediaAsset(churchId, cloudMedia.publicId);
+                await updateClaimedJob({
+                  localVideoInputThumbnail: {
+                    ...thumbnailTarget,
+                    staleCloudCleanupComplete: true,
+                  },
+                });
+              }
+              if (!thumbnailTarget.staleLocalCleanupComplete) {
+                await deleteLocalImage(job.assetId);
+              }
+            } catch (error) {
+              await updateClaimedJob({
+                status: "failed",
+                phase: "failed",
+                progress: null,
+                nextAttemptAt: Date.now() + OUTLINE_RETRY_MS,
+                lastError: error instanceof Error
+                  ? error.message
+                  : "The replaced thumbnail could not be cleaned up.",
+              });
+            }
+            return;
+          }
+
+          dispatch(updateMediaItemFields({
+            id: localMedia.id,
+            patch: {
+              updatedAt,
+              thumbnail: cloudMedia.background,
+              localImage: cloudThumbnailRef,
+            },
+          }));
+
+          if (
+            thumbnailTarget.previousCloudPublicId &&
+            !thumbnailTarget.previousCloudCleanupComplete
+          ) {
+            try {
+              await deleteCloudinaryMediaAsset(
+                churchId,
+                thumbnailTarget.previousCloudPublicId,
+              );
+              const cleanup = {
+                ...thumbnailTarget,
+                previousCloudCleanupComplete: true,
+              };
+              await updateClaimedJob({ localVideoInputThumbnail: cleanup });
+              Object.assign(thumbnailTarget, cleanup);
+            } catch (error) {
+              await updateClaimedJob({
+                status: "failed",
+                phase: "failed",
+                progress: null,
+                nextAttemptAt: Date.now() + OUTLINE_RETRY_MS,
+                lastError: error instanceof Error
+                  ? error.message
+                  : "The previous thumbnail cloud copy could not be removed.",
+              });
+              return;
+            }
+          }
+          if (
+            thumbnailTarget.previousAssetId &&
+            thumbnailTarget.previousAssetId !== job.assetId &&
+            !thumbnailTarget.previousLocalCleanupComplete
+          ) {
+            try {
+              await deleteLocalImage(thumbnailTarget.previousAssetId);
+              await updateClaimedJob({
+                localVideoInputThumbnail: {
+                  ...thumbnailTarget,
+                  previousLocalCleanupComplete: true,
+                },
+              });
+            } catch (error) {
+              await updateClaimedJob({
+                status: "failed",
+                phase: "failed",
+                progress: null,
+                nextAttemptAt: Date.now() + OUTLINE_RETRY_MS,
+                lastError: error instanceof Error
+                  ? error.message
+                  : "The previous thumbnail could not be removed from this computer.",
+              });
+              return;
+            }
+          }
+        } else if (localMedia?.localImage) {
           dispatch(updateMediaItemFields({
             id: localMedia.id,
             patch: {
@@ -438,6 +642,7 @@ const LocalImageUploadManager = () => {
                 ...localMedia.localImage,
                 storagePolicy: "local-and-cloud",
                 cloudMediaId: cloudMedia.id,
+                cloudPublicId: cloudMedia.publicId,
                 cloudUrl: cloudMedia.background,
               },
             },
@@ -500,6 +705,26 @@ const LocalImageUploadManager = () => {
     try {
       if (retryTimer.current) window.clearTimeout(retryTimer.current);
       const jobs = await listLocalImageUploadJobs(churchId);
+      for (let index = 0; index < jobs.length; index += 1) {
+        const job = jobs[index];
+        if (!job.cleanupOnly || job.cleanupReady) continue;
+        const target = job.cleanupTargetMediaId
+          ? (store.getState().media.list as MediaType[]).find(
+              (item: MediaType) => item.id === job.cleanupTargetMediaId,
+            )
+          : undefined;
+        if (target?.localImage?.id === job.assetId) continue;
+        const readyJob = {
+          ...job,
+          status: "pending",
+          phase: "queued",
+          cleanupReady: true,
+          nextAttemptAt: 0,
+          updatedAt: new Date().toISOString(),
+        } as LocalImageUploadJob;
+        await putLocalImageUploadJob(readyJob);
+        jobs[index] = readyJob;
+      }
       const now = Date.now();
       const ready = getRunnableLocalImageUploadJobs(jobs, now);
       for (let index = 0; index < ready.length; index += 2) {

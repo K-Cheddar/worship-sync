@@ -150,6 +150,11 @@ describe("localImageAssets IndexedDB lifecycle", () => {
       uploadPreset: "preset",
       mediaId: "media-1",
       status: "pending",
+      localVideoInputThumbnail: {
+        targetMediaId: "local_input_camera-1",
+        previousAssetId: "previous-thumbnail",
+        previousCloudPublicId: "previous-cloud-public-id",
+      },
       attemptCount: 0,
       nextAttemptAt: 0,
       createdAt: "2026-08-12T00:00:00.000Z",

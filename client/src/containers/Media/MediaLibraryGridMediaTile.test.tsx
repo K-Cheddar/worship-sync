@@ -183,6 +183,117 @@ describe("MediaLibraryGridMediaTile", () => {
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
   });
 
+  it("shows a saved local thumbnail with a live-input indicator", () => {
+    const localVideoInput: MediaType = {
+      path: "",
+      createdAt: "2026-08-17T00:00:00.000Z",
+      updatedAt: "2026-08-17T00:00:00.000Z",
+      format: "live",
+      height: 1080,
+      width: 1920,
+      name: "Main camera",
+      publicId: "input-1",
+      type: "video",
+      id: "input-1",
+      background: "local-video-input://source-1",
+      thumbnail: "https://res.cloudinary.com/example/thumbnail.webp",
+      source: "local",
+      localImage: {
+        id: "thumbnail-1",
+        ownerDeviceId: "device-1",
+        ownerLabel: "Booth PC",
+        fileName: "camera.webp",
+        contentType: "image/webp",
+        storagePolicy: "local-and-cloud",
+      },
+      localVideoInput: {
+        kind: "local-video-input",
+        sourceId: "source-1",
+        label: "Main camera",
+      },
+    };
+    mockUseLocalImageUrl.mockReturnValue({
+      isLocalImage: true,
+      isOwner: true,
+      status: "ready",
+      url: "blob:thumbnail-1",
+    });
+
+    render(
+      <MediaLibraryGridMediaTile
+        mediaItem={localVideoInput}
+        index={0}
+        isSelected={false}
+        isMultiSelected={false}
+        mediaMultiSelectMode={false}
+        onMediaTileClick={jest.fn()}
+        onEnterMediaMultiSelectMode={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("img", { name: "input-1" })).toHaveAttribute(
+      "src",
+      "blob:thumbnail-1",
+    );
+    expect(screen.getByLabelText("Live video input")).toBeInTheDocument();
+  });
+
+  it("falls back to the cloud thumbnail when a local asset is unavailable", () => {
+    const remoteThumbnail = "https://res.cloudinary.com/example/camera.webp";
+    const localVideoInput: MediaType = {
+      ...{
+        path: "",
+        createdAt: "2026-08-17T00:00:00.000Z",
+        updatedAt: "2026-08-17T00:00:00.000Z",
+        format: "live",
+        height: 1080,
+        width: 1920,
+        name: "Main camera",
+        publicId: "input-1",
+        type: "video",
+        id: "input-1",
+        background: "local-video-input://source-1",
+        thumbnail: remoteThumbnail,
+        source: "local",
+      },
+      localImage: {
+        id: "thumbnail-remote",
+        ownerDeviceId: "other-device",
+        ownerLabel: "Other booth",
+        fileName: "camera.webp",
+        contentType: "image/webp",
+        storagePolicy: "local-and-cloud",
+      },
+      localVideoInput: {
+        kind: "local-video-input",
+        sourceId: "source-1",
+        label: "Main camera",
+      },
+    } as MediaType;
+    mockUseLocalImageUrl.mockReturnValue({
+      isLocalImage: true,
+      isOwner: false,
+      status: "unavailable",
+    });
+
+    render(
+      <MediaLibraryGridMediaTile
+        mediaItem={localVideoInput}
+        index={0}
+        isSelected={false}
+        isMultiSelected={false}
+        mediaMultiSelectMode={false}
+        onMediaTileClick={jest.fn()}
+        onEnterMediaMultiSelectMode={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("img", { name: "input-1" })).toHaveAttribute(
+      "src",
+      remoteThumbnail,
+    );
+  });
+
   it("prefers the library display name over the device label", () => {
     const localVideoInput: MediaType = {
       path: "",

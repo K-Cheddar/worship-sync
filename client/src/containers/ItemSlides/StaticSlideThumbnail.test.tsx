@@ -53,6 +53,36 @@ const makeSlide = (overrides: Partial<ItemSlideType> = {}) =>
   }) as ItemSlideType;
 
 describe("StaticSlideThumbnail", () => {
+  it.each(["projector", "stream", "monitor"] as const)(
+    "uses the captured input still in %s previews without video playback",
+    (previewMode) => {
+      render(
+        <StaticSlideThumbnail
+          slide={makeSlide({
+            mediaSource: {
+              kind: "local-video-input",
+              sourceId: "camera-1",
+              label: "Main camera",
+              fit: "cover",
+            },
+          })}
+          itemType="song"
+          previewMode={previewMode}
+          localVideoInputThumbnailUrl="blob:camera-thumbnail"
+        />,
+      );
+
+      expect(screen.getByTestId("static-video-input-thumbnail")).toHaveAttribute(
+        "src",
+        "blob:camera-thumbnail",
+      );
+      expect(screen.getByTestId("static-video-input-thumbnail")).toHaveClass(
+        "object-cover",
+      );
+      expect(screen.queryByRole("video")).not.toBeInTheDocument();
+    },
+  );
+
   it("renders text and remote image stills without mounting DisplayWindow machinery", () => {
     render(
       <StaticSlideThumbnail
